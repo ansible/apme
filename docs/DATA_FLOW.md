@@ -211,7 +211,7 @@ Each validator returns `ValidateResponse` containing protobuf `Violation` messag
 Every violation, regardless of source validator, has the same structure:
 
 ```
-rule_id   : string   e.g. "L001", "native:L029", "M002"
+rule_id   : string   e.g. "L024", "native:L029", "M002"
 level     : string   "error", "warning", "info"
 message   : string   human-readable description
 file      : string   relative path to file

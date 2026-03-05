@@ -60,19 +60,18 @@ Phase 3: Scan
   └─► fan out to all validators (Native, OPA, Ansible, Gitleaks)
   └─► merge + deduplicate violations
 
-Phase 4: Remediate
+Phase 4: Remediate (Tier 1 — deterministic)
   └─► partition violations via is_finding_resolvable()
-  └─► apply deterministic transforms (Transform Registry)
-  └─► escalate non-fixable to AI (OpenLLM via gRPC) if available
-  └─► apply accepted patches
+  └─► apply Tier 1 transforms from the Transform Registry
+  └─► re-scan → repeat until converged or oscillation (max --max-passes)
 
-Phase 5: Re-scan + Convergence
-  └─► re-scan to verify fixes
-  └─► if violation count decreased → repeat from Phase 4 (max --max-passes)
-  └─► if count stable or increased → bail (oscillation)
+Phase 5: AI Escalation (Tier 2 — AI-proposable)
+  └─► route Tier 2 violations to OpenLLM (if available)
+  └─► generate patches with confidence scores
+  └─► apply accepted patches (--auto) or present for review
 
 Phase 6: Report
-  └─► summary: fixed, remaining (manual), AI-proposed, failed
+  └─► summary: Tier 1 fixed, Tier 2 proposals, Tier 3 manual review
 ```
 
 ### Where Each Component Lives
@@ -85,34 +84,89 @@ Phase 6: Report
 | Transform Registry | `src/apme_engine/remediation/transforms/` | Pure functions, no container needed |
 | AI Escalation | OpenLLM daemon (gRPC) | Separate container, optional |
 
+## Three-Tier Finding Classification
+
+Every violation flows through a three-tier classification that determines how it is handled:
+
+| Tier | Label | Handler | Confidence | User Action |
+|------|-------|---------|------------|-------------|
+| **1 — Deterministic** | `fixable: true` | Transform Registry | 100% — the transform is a known-correct rewrite | None (auto-applied) |
+| **2 — AI-Proposable** | `ai_proposable: true` | OpenLLM gRPC | Variable — LLM generates a patch with a confidence score | Review proposal, accept/reject (or `--auto` in CI) |
+| **3 — Manual Review** | neither | Human | N/A — requires judgment, policy, or external context | Fix by hand |
+
+### Tier 1: Deterministic Fixes (Transform Registry)
+
+These are mechanical rewrites where the correct output is unambiguous given the input and the rule definition. Examples:
+
+- **L021** — add `mode: '0644'` to `file`/`copy`/`template` tasks missing an explicit mode
+- **L007** — replace `ansible.builtin.shell` with `ansible.builtin.command` when no shell features are used
+- **M001** — rewrite short module names to FQCN (`debug` → `ansible.builtin.debug`)
+- **M005** — rename deprecated parameter (`sudo:` → `become:`)
+
+The transform function receives the file content and violation, returns the corrected content. No ambiguity, no judgment.
+
+### Tier 2: AI-Proposable Fixes (OpenLLM)
+
+These violations have a clear "what needs to change" but the "how" requires understanding context that a static transform cannot capture. The AI generates a patch and attaches a confidence score. Examples:
+
+- **R118** — restructure complex Jinja2 logic in `when:` clauses (many valid refactorings)
+- **M003** — rewrite tasks using removed modules to use their replacement (may require restructuring parameters)
+- **SEC:\*** — replace hardcoded secrets with vault lookups (AI can infer the variable name from context)
+- **L030** — extract complex `ansible.builtin.shell` one-liners into scripts (requires understanding intent)
+
+AI proposals are never auto-applied by default. The user reviews the diff and accepts or rejects. `--auto --min-confidence 0.8` enables unattended mode for CI.
+
+### Tier 3: Manual Review
+
+A small residual category where the "right answer" depends on organizational policy, external systems, or human judgment that neither a transform nor an AI can resolve with confidence. Examples:
+
+- Which vault path to store a rotated secret in
+- Whether to split a 500-line playbook into roles (architectural decision)
+- Which trusted Galaxy source to use for a dependency
+
+These are reported as "manual review required" with the rule message and context. The remediation engine does not attempt a fix.
+
+### Why Three Tiers, Not Two
+
+A binary "fixable / not fixable" misrepresents the AI capability. Many violations *can* be fixed by AI with high confidence — they are not "manual review" in any meaningful sense. The three-tier model:
+
+1. Gives users a clear expectation: Tier 1 is always safe, Tier 2 needs a glance, Tier 3 needs thought.
+2. Lets CI pipelines opt in to AI fixes above a confidence threshold (`--auto --min-confidence N`).
+3. Keeps the `fixable` flag honest — it means "deterministically correct, zero risk of wrong output."
+
 ## Finding Partition
 
 ### `is_finding_resolvable()`
 
-The partition function is the sole decision point between deterministic and AI/manual paths:
+The partition function routes violations into Tier 1 vs. Tier 2+3:
 
 ```python
 def is_finding_resolvable(violation: dict, registry: TransformRegistry) -> bool:
-    """Return True if the violation has a registered deterministic transform."""
+    """Return True if the violation has a registered deterministic transform (Tier 1)."""
     return violation.get("rule_id", "") in registry
 ```
 
 This is intentionally simple. A violation is resolvable if and only if the transform registry has a function for that rule ID. No heuristics, no guessing.
 
+Violations that fail this check proceed to AI escalation (Tier 2) if OpenLLM is available, otherwise they are reported as manual review (Tier 3).
+
 ### Rule Metadata
 
-Each rule across all validators declares a `fixable` attribute in its metadata. This is informational — it tells the user "this rule has an automatic fix available" — but the actual decision is made by the registry lookup.
+Each rule across all validators declares tier-awareness in its metadata:
 
 ```python
 @dataclass
 class RuleMetadata:
     rule_id: str
-    level: str          # "error", "warning", "info"
-    fixable: bool       # True if a transform exists
+    level: str              # "error", "warning", "info"
+    fixable: bool           # True if a Tier 1 deterministic transform exists
+    ai_proposable: bool     # True if the rule is a good candidate for AI fix
     description: str
 ```
 
-The `fixable` flag is set to `True` when a corresponding transform is registered. Rules without transforms have `fixable = False` and are candidates for AI escalation or manual review.
+- `fixable = True` → Tier 1 (transform registered, auto-applied)
+- `fixable = False, ai_proposable = True` → Tier 2 (AI will attempt a patch)
+- `fixable = False, ai_proposable = False` → Tier 3 (manual review only)
 
 ## Transform Registry
 
@@ -294,15 +348,20 @@ def remediate(files, max_passes=5):
         if new_count == 0:
             break  # fully converged
 
-    # After deterministic passes, escalate remaining to AI (if available)
+    # After deterministic passes (Tier 1), partition remaining into Tier 2 + 3
     remaining = scan(files)
-    non_fixable = [v for v in remaining if not is_finding_resolvable(v, registry)]
-    ai_results = escalate_to_ai(non_fixable)  # no-op if AI unavailable
+    tier2 = [v for v in remaining
+             if not is_finding_resolvable(v, registry) and v.get("ai_proposable", True)]
+    tier3 = [v for v in remaining
+             if not is_finding_resolvable(v, registry) and not v.get("ai_proposable", True)]
+
+    ai_results = escalate_to_ai(tier2)  # no-op if AI unavailable
 
     return FixReport(
         passes=pass_num,
         fixed=prev_initial_count - len(remaining),
-        remaining=remaining,
+        remaining_ai=tier2,         # Tier 2: AI-proposed patches
+        remaining_manual=tier3,     # Tier 3: manual review only
         ai_proposed=ai_results,
     )
 ```
@@ -317,8 +376,9 @@ An oscillation occurs when a fix introduces a new violation that triggers anothe
 @dataclass
 class FixReport:
     passes: int                     # number of convergence passes executed
-    fixed: int                      # violations resolved by transforms
-    remaining: list[dict]           # violations still present
+    fixed: int                      # violations resolved by Tier 1 transforms
+    remaining_ai: list[dict]        # Tier 2: violations with AI proposals
+    remaining_manual: list[dict]    # Tier 3: violations requiring manual review
     ai_proposed: list[dict]         # AI-suggested patches (pending review)
     oscillation_detected: bool      # True if loop bailed due to no progress
 ```
@@ -446,14 +506,14 @@ Phase 1: Formatting... 3 file(s) reformatted
 Phase 2: Idempotency check... Passed
 Phase 3: Scanning... 42 violation(s)
 Phase 4: Remediating...
-  Pass 1: 28 fixable → applied 26, 2 failed
-  Pass 2: 4 fixable → applied 4
+  Pass 1: 28 fixable (Tier 1) → applied 26, 2 failed
+  Pass 2: 4 fixable (Tier 1) → applied 4
   Pass 3: 0 fixable → converged
-Phase 5: AI escalation... 12 remaining → 8 proposals (skipped: --no-ai)
+Phase 5: AI escalation (Tier 2)... 10 candidates → 8 proposals (skipped: --no-ai)
 Phase 6: Summary
-  Fixed:     30
-  Remaining: 12 (manual review)
-  AI proposed: 0 (--no-ai)
+  Tier 1 (deterministic):  30 fixed
+  Tier 2 (AI-proposable):  10 remaining → 8 proposals generated
+  Tier 3 (manual review):   2 (policy/judgment required)
   Passes:    3
 ```
 

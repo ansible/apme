@@ -1,6 +1,6 @@
 # Rule coverage vs ansible-lint
 
-Coverage comparison against the **ansible-lint** codebase (rule `id` from `src/ansiblelint/rules/` and `_internal/rules.py`). Shows which ansible-lint rules we cover with OPA (L001–L025), native Python (L026–L056), Ansible runtime (L057–L059, M001–M004), or not at all.
+Coverage comparison against the **ansible-lint** codebase (rule `id` from `src/ansiblelint/rules/` and `_internal/rules.py`). Shows which ansible-lint rules we cover with OPA (L002–L025), native Python (L026–L056), Ansible runtime (L057–L059, M001–M004), or not at all.
 
 ## Summary
 
@@ -15,11 +15,11 @@ Coverage comparison against the **ansible-lint** codebase (rule `id` from `src/a
 
 ## Covered by our rules
 
-### OPA rules (L001–L025, R118)
+### OPA rules (L002–L025, R118)
 
 | ansible-lint rule | Our rule | Description |
 |-------------------|----------|-------------|
-| name | L001 | Task using shell module should have a name |
+| ~~name~~ | ~~L001~~ | ~~Removed: subsumed by L024~~ |
 | fqcn | L002 | Use FQCN for module (syntactic check) |
 | play-name | L003 | Play should have a name |
 | deprecated-module | L004 | Deprecated module (static list) |

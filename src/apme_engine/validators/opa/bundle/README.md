@@ -5,7 +5,7 @@ Rules are split into one file per rule for consistency and easier review.
 ## Layout
 
 - **`_helpers.rego`** — Shared helpers used by several rules (e.g. `short_module_name`, `cmd_shell_modules`, `file_permission_modules`). Do not remove; other rules depend on it.
-- **`L001.rego` … `L025.rego`** — Lint rules. One rule per file. Each adds to the `violations` set.
+- **`L002.rego` … `L025.rego`** — Lint rules. One rule per file. Each adds to the `violations` set. (L001 was removed — subsumed by L024.)
 - **`R118.rego`** — Risk rule (inbound transfer, annotation-based).
 - **`*_test.rego`** — Colocated integration tests. One `_test.rego` next to each rule.
 - **`data.json`** — Bundle data (e.g. `data.apme.ansible`: deprecated_modules, command_to_module, etc.). Required for L004, L006, L012, L013, L017, L020, L021.

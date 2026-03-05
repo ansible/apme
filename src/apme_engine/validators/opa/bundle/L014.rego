@@ -11,25 +11,17 @@ violations contains v if {
 	v := no_handler(tree, node)
 }
 
-no_handler(tree, node) := v if {
-	node.type == "taskcall"
-	when_val := object.get(node, "options", {})["when"]
-	contains(when_val, ".changed")
-	count(node.line) > 0
-	v := {
-		"rule_id": "L014",
-		"level": "info",
-		"message": "Use notify/handler instead of when: result.changed",
-		"file": node.file,
-		"line": node.line[0],
-		"path": node.key,
-	}
-}
+_handler_patterns := [
+	".changed", "is changed", "is not changed",
+	"|changed", "|succeeded", "|failed",
+]
 
 no_handler(tree, node) := v if {
 	node.type == "taskcall"
 	when_val := object.get(node, "options", {})["when"]
-	contains(when_val, "is changed")
+	is_string(when_val)
+	some pat in _handler_patterns
+	contains(when_val, pat)
 	count(node.line) > 0
 	v := {
 		"rule_id": "L014",

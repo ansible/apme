@@ -11,11 +11,13 @@ Rule IDs categorize the **type of check**, not the validator that runs it. The v
 
 **Note:** `src/apme_engine/validators/native/rules/rule_versions.json` includes entries for both previous (R301, R302, ...) and current (L026, L027, ...) IDs for the renumbered rules; the loader uses the current rule_id (L###) when looking up version info.
 
-## OPA (Rego) rules — L001-L025, R118
+## OPA (Rego) rules — L002-L025, R118
+
+L001 was removed — its scope was limited to shell tasks without names, which is a strict subset of L024 (all tasks should have a name).
 
 | Previous rule_id (OPA) | New ID | Description |
 |------------------------|--------|-------------|
-| task-name | L001 | Task using shell module should have a name |
+| ~~task-name~~ | ~~L001~~ | ~~Removed: subsumed by L024~~ |
 | fqcn | L002 | Use FQCN for module (syntactic check) |
 | play-name | L003 | Play should have a name |
 | deprecated-module | L004 | Deprecated module (static list) |
@@ -120,7 +122,7 @@ Note: OPA **L002** also checks for non-FQCN module names but is purely syntactic
 
 ## Usage
 
-- In output, violations use their rule ID directly: **L001**-**L059**, **M001**-**M004**, **R###**.
+- In output, violations use their rule ID directly: **L002**-**L059**, **M001**-**M004**, **R###**.
 - Native (Python) lint violations include the **native:** prefix (e.g. **native:L026**) for backward compatibility.
 - To map an old ID to the current one, use the tables above.
 - Filtering by rule (e.g. `--rule L057`) uses the rule ID.

@@ -19,7 +19,7 @@ class TestOpaValidatorServicer:
         from apme_engine.daemon.opa_validator_server import OpaValidatorServicer
 
         hierarchy = {"hierarchy": [{"tree_type": "playbook", "nodes": []}]}
-        violations = [{"rule_id": "L001", "level": "warning", "message": "m", "file": "f.yml", "line": 1, "path": "p"}]
+        violations = [{"rule_id": "L024", "level": "warning", "message": "m", "file": "f.yml", "line": 1, "path": "p"}]
 
         request = validate_pb2.ValidateRequest(
             hierarchy_payload=json.dumps(hierarchy).encode(),
@@ -38,7 +38,7 @@ class TestOpaValidatorServicer:
         assert "violations" in call_args[0][0]
         assert call_args[1]["json"]["input"] == hierarchy
         assert len(resp.violations) == 1
-        assert resp.violations[0].rule_id == "L001"
+        assert resp.violations[0].rule_id == "L024"
 
     def test_validate_empty_payload_returns_empty(self):
         from apme_engine.daemon.opa_validator_server import OpaValidatorServicer

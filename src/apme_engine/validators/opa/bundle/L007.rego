@@ -11,6 +11,13 @@ violations contains v if {
 	v := command_instead_of_shell(tree, node)
 }
 
+_shell_chars := ["|", "&&", "||", ";", ">", ">>", "<", "$(", "`", "*", "?"]
+
+_uses_shell_features(cmd) if {
+	some ch in _shell_chars
+	contains(cmd, ch)
+}
+
 command_instead_of_shell(tree, node) := v if {
 	node.type == "taskcall"
 	node.module == "ansible.builtin.shell"
@@ -20,7 +27,7 @@ command_instead_of_shell(tree, node) := v if {
 	v := {
 		"rule_id": "L007",
 		"level": "warning",
-		"message": "Prefer ansible.builtin.command when no shell features (e.g. pipes) are needed",
+		"message": "Prefer ansible.builtin.command when no shell features are needed",
 		"file": node.file,
 		"line": node.line[0],
 		"path": node.key,
@@ -31,12 +38,12 @@ command_instead_of_shell(tree, node) := v if {
 	node.type == "taskcall"
 	node.module == "ansible.builtin.shell"
 	cmd := object.get(node, "module_options", {})["cmd"]
-	contains(cmd, "|") == false
+	not _uses_shell_features(cmd)
 	count(node.line) > 0
 	v := {
 		"rule_id": "L007",
 		"level": "warning",
-		"message": "Prefer ansible.builtin.command when no shell features (e.g. pipes) are needed",
+		"message": "Prefer ansible.builtin.command when no shell features are needed",
 		"file": node.file,
 		"line": node.line[0],
 		"path": node.key,

@@ -109,5 +109,5 @@ def test_minimum_rule_count():
     opa = _discover_opa_rule_ids()
     ansible = _discover_ansible_rule_ids()
     assert len(native) >= 20, f"Expected >=20 native rules, got {len(native)}"
-    assert len(opa) >= 25, f"Expected >=25 OPA rules, got {len(opa)}"
+    assert len(opa) >= 24, f"Expected >=24 OPA rules, got {len(opa)}"
     assert len(ansible) >= 6, f"Expected >=6 ansible rules, got {len(ansible)}"

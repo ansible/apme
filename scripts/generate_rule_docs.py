@@ -171,7 +171,6 @@ def main():
         write_native(stub, rid, title, desc, pb_v, pb_p)
 
     for num, rid, title, desc in [
-        (1, "L001", "Task using shell should have name", "Tasks using ansible.builtin.shell should have a name."),
         (2, "L002", "Use FQCN", "Use fully qualified collection name for modules."),
         (3, "L003", "Play should have name", "Each play should have a name."),
         (4, "L004", "Deprecated module", "Do not use deprecated modules."),

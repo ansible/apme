@@ -52,7 +52,7 @@ Every validator returns the same violation shape:
 
 ```python
 {
-    "rule_id": str,    # e.g. "L001", "native:L029", "M002"
+    "rule_id": str,    # e.g. "L024", "native:L029", "M002"
     "level": str,      # "error", "warning", "info"
     "message": str,
     "file": str,       # relative path
@@ -69,7 +69,7 @@ Every validator returns the same violation shape:
 
 - **Input**: `context.hierarchy_payload` (JSON)
 - **Execution**: Rego bundle evaluated by OPA (`data.apme.rules.violations`)
-- **Rules**: L001–L025, R118
+- **Rules**: L002–L025, R118
 - **Container**: OPA binary + Python gRPC wrapper (`apme-opa`)
 - **Why Rego**: Declarative policy language well-suited for structural checks on JSON; rules are data-driven via `bundle/data.json` (deprecated modules list, package modules, etc.)
 

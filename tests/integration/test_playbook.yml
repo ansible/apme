@@ -6,7 +6,7 @@
 - hosts: all
   become: true
   tasks:
-    # L001 (OPA): shell task without name + L024 (OPA): task without name
+    # L024 (OPA): task without name
     - ansible.builtin.shell: echo "hello"
 
     # L002 (OPA): non-FQCN module + ansible:fqcn (ansible validator)

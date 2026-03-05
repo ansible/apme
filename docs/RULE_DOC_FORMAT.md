@@ -5,13 +5,13 @@ Rule `.md` files describe a single rule and provide examples that can be used bo
 ## File location
 
 - **Native rules:** `src/apme_engine/validators/native/rules/<rule_file_stem>.md` (e.g. `R102_command_instead_of_shell.md` next to `R102_command_instead_of_shell.py`).
-- **OPA rules:** `src/apme_engine/validators/opa/bundle/<rule_id>.md` (e.g. `L001.md`, `R118.md` next to the `.rego` file).
+- **OPA rules:** `src/apme_engine/validators/opa/bundle/<rule_id>.md` (e.g. `L002.md`, `R118.md` next to the `.rego` file).
 - **Ansible rules:** `src/apme_engine/validators/ansible/rules/<rule_id>.md` (e.g. `L057.md`, `M001.md`).
 
 ## Structure
 
 1. **YAML frontmatter** (optional but recommended for test harness)
-   - `rule_id` — Rule identifier (e.g. `L029`, `R102`, `L001`).
+   - `rule_id` — Rule identifier (e.g. `L029`, `R102`, `L024`).
    - `validator` — `native` or `opa`.
    - `description` — One-line description.
 

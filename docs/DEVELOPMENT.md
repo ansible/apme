@@ -42,8 +42,8 @@ src/apme_engine/
 │   │   ├── validator.py    OpaValidator (calls opa eval)
 │   │   └── bundle/         Rego rules + tests + data
 │   │       ├── _helpers.rego
-│   │       ├── L001_task_name.rego
-│   │       ├── L001_task_name_test.rego
+│   │       ├── L002.rego
+│   │       ├── L002_test.rego
 │   │       ├── data.json
 │   │       └── README.md
 │   └── ansible/
@@ -297,7 +297,7 @@ The Primary service exposes a `Format` RPC (`FormatRequest` / `FormatResponse` w
 
 | Prefix | Category | Examples |
 |--------|----------|----------|
-| **L** | Lint (style, correctness, best practice) | L001–L059 |
+| **L** | Lint (style, correctness, best practice) | L002–L059 |
 | **M** | Modernize (ansible-core metadata) | M001–M004 |
 | **R** | Risk/security (annotation-based) | R101–R501, R118 |
 | **P** | Policy (legacy, superseded by L058/L059) | P001–P004 |

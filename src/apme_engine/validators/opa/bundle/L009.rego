@@ -11,30 +11,20 @@ violations contains v if {
 	v := empty_string_compare(tree, node)
 }
 
-empty_string_compare(tree, node) := v if {
-	node.type == "taskcall"
-	when_val := object.get(node, "options", {})["when"]
-	when_val == ""
-	count(node.line) > 0
-	v := {
-		"rule_id": "L009",
-		"level": "warning",
-		"message": "Avoid comparison to empty string in when",
-		"file": node.file,
-		"line": node.line[0],
-		"path": node.key,
-	}
-}
+_empty_string_patterns := [" == \"\"", " != \"\"", " == ''", " != ''"]
 
 empty_string_compare(tree, node) := v if {
 	node.type == "taskcall"
 	when_val := object.get(node, "options", {})["when"]
-	contains(when_val, " == \"\"")
+	is_string(when_val)
+	when_val != ""
+	some pat in _empty_string_patterns
+	contains(when_val, pat)
 	count(node.line) > 0
 	v := {
 		"rule_id": "L009",
 		"level": "warning",
-		"message": "Avoid comparison to empty string in when",
+		"message": "Avoid comparison to empty string in when; use truthiness test instead",
 		"file": node.file,
 		"line": node.line[0],
 		"path": node.key,
