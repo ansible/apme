@@ -142,6 +142,8 @@ def run(
                 "file": file_path,
                 "line": line_num,
                 "path": node.get("key", ""),
+                "resolved_fqcn": fqcn,
+                "original_module": module_name,
             })
 
         # M002: Deprecation
@@ -168,6 +170,9 @@ def run(
                 "file": file_path,
                 "line": line_num,
                 "path": node.get("key", ""),
+                "original_module": module_name,
+                "resolved_fqcn": redirects[-1],
+                "redirect_chain": redirects,
             })
 
     return violations

@@ -22,6 +22,8 @@ from apme_engine.collection_cache import (
 )
 from apme_engine.daemon.health_check import run_health_checks
 from apme_engine.formatter import format_file, format_directory, check_idempotent
+from apme_engine.remediation.engine import RemediationEngine
+from apme_engine.remediation.transforms import build_default_registry
 
 
 def _sort_violations(violations: list[dict]) -> list[dict]:
@@ -225,12 +227,41 @@ def _run_format(args):
         sys.stderr.write(f"\n{len(changed)} file(s) would be reformatted (use --apply to write)\n")
 
 
+def _scan_files_local(file_paths: list[str], repo_root: str, opa_bundle: str | None) -> list[dict]:
+    """In-process scan: engine + OPA + native validators. Returns violation dicts."""
+    from apme_engine.runner import run_scan as _run_scan
+
+    yaml_files = [f for f in file_paths if f.endswith((".yml", ".yaml"))]
+    if not yaml_files:
+        return []
+
+    all_violations: list[dict] = []
+    for fpath in yaml_files:
+        try:
+            context = _run_scan(fpath, repo_root, include_scandata=True)
+        except Exception:
+            continue
+
+        if not context.hierarchy_payload:
+            continue
+
+        validators = [
+            ("OPA", OpaValidator(opa_bundle)),
+            ("Native", NativeValidator()),
+        ]
+        for _name, v in validators:
+            all_violations.extend(v.run(context))
+
+    return _deduplicate_violations(_sort_violations(all_violations))
+
+
 def _run_fix(args):
-    """Format then modernize: format → idempotency check → re-scan → modernize."""
+    """Format → idempotency check → scan → remediate (convergence loop)."""
     target = Path(args.target).resolve()
     exclude = getattr(args, "exclude", None) or []
     apply_changes = getattr(args, "apply", False)
     check_only = getattr(args, "check", False)
+    max_passes = getattr(args, "max_passes", 5)
 
     if not target.exists():
         sys.stderr.write(f"Path not found: {target}\n")
@@ -274,16 +305,60 @@ def _run_fix(args):
     still_changed = [r for r in recheck if r.changed]
     if still_changed:
         sys.stderr.write(f"  FAILED: {len(still_changed)} file(s) still have changes after formatting.\n")
-        sys.stderr.write("  This indicates a formatter bug. Aborting before modernization.\n")
+        sys.stderr.write("  This indicates a formatter bug. Aborting.\n")
         for r in still_changed:
             sys.stderr.write(f"    {r.path}\n")
         sys.exit(1)
     sys.stderr.write("  Passed (zero diffs on second run)\n")
 
-    # Phase 3+4: Re-scan and modernize (stub — modernize not yet implemented)
-    sys.stderr.write("Phase 3: Re-scan (modernize not yet implemented)...\n")
-    sys.stderr.write("  Modernization will be available in a future release.\n")
-    sys.stderr.write("  Formatting complete.\n")
+    # Phase 3: Scan + Remediate
+    sys.stderr.write("Phase 3: Scanning...\n")
+
+    if target.is_file():
+        yaml_files = [str(target)]
+    else:
+        yaml_files = [
+            str(p) for p in target.rglob("*")
+            if p.suffix in (".yml", ".yaml") and not any(part.startswith(".") for part in p.parts)
+        ]
+
+    if not yaml_files:
+        sys.stderr.write("  No YAML files found.\n")
+        return
+
+    repo_root = str(Path(__file__).resolve().parent.parent)
+    opa_bundle = getattr(args, "opa_bundle", None)
+
+    def scan_fn(paths: list[str]) -> list[dict]:
+        return _scan_files_local(paths, repo_root, opa_bundle)
+
+    registry = build_default_registry()
+    engine = RemediationEngine(
+        registry=registry,
+        scan_fn=scan_fn,
+        max_passes=max_passes,
+        verbose=True,
+    )
+
+    sys.stderr.write(f"  {len(yaml_files)} YAML file(s), {len(registry)} transforms registered\n")
+    sys.stderr.write(f"  Transforms: {', '.join(registry.rule_ids)}\n")
+
+    sys.stderr.write("Phase 4: Remediating...\n")
+    report = engine.remediate(yaml_files, apply=apply_changes)
+
+    # Phase 5: Report
+    sys.stderr.write("Phase 5: Summary\n")
+    sys.stderr.write(f"  Tier 1 (deterministic):  {report.fixed} fixed\n")
+    sys.stderr.write(f"  Tier 2 (AI-proposable):  {len(report.remaining_ai)} remaining\n")
+    sys.stderr.write(f"  Tier 3 (manual review):  {len(report.remaining_manual)} remaining\n")
+    sys.stderr.write(f"  Passes:                  {report.passes}\n")
+    if report.oscillation_detected:
+        sys.stderr.write("  WARNING: oscillation detected, stopped early\n")
+
+    if not apply_changes and report.applied_patches:
+        sys.stderr.write(f"\n{len(report.applied_patches)} file(s) would be patched (use --apply to write):\n")
+        for p in report.applied_patches:
+            sys.stdout.write(p.diff)
 
 
 def _run_health_check(args):
@@ -396,6 +471,9 @@ def main():
     fix_parser.add_argument("--apply", action="store_true", help="Write changes in place")
     fix_parser.add_argument("--check", action="store_true", help="Exit 1 if changes would be made (CI mode)")
     fix_parser.add_argument("--exclude", nargs="*", default=None, help="Glob patterns to skip")
+    fix_parser.add_argument("--max-passes", type=int, default=5, help="Max convergence passes (default: 5)")
+    fix_parser.add_argument("--no-ai", action="store_true", help="Skip AI escalation (deterministic fixes only)")
+    fix_parser.add_argument("--opa-bundle", default=None, help="Path to OPA bundle directory")
 
     # ── health-check ──
     health_parser = subparsers.add_parser("health-check", help="Check health of all services (Primary, Native, OPA, Ansible, Cache maintainer) via gRPC")

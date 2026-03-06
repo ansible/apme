@@ -101,7 +101,7 @@ L058 and L059 both check module arguments but use different extraction methods:
 
 Both can run simultaneously; each has a unique rule ID so users can enable/disable independently.
 
-## Modernize rules — M001-M004
+## Modernize rules — M001-M004 (ansible validator)
 
 These rules use ansible-core's plugin loader (`find_plugin_with_context()`) to resolve modules against the actual runtime metadata (`ansible_builtin_runtime.yml` and collection `meta/runtime.yml`). They stay current with whichever ansible-core version is in the venv.
 
@@ -113,6 +113,20 @@ These rules use ansible-core's plugin loader (`find_plugin_with_context()`) to r
 | M004 | Removed module -- tombstoned module (raises `AnsiblePluginRemovedError`) |
 
 Note: OPA **L002** also checks for non-FQCN module names but is purely syntactic (counts dot separators). **M001** is semantic -- it actually resolves the module via ansible-core's plugin loader. Both can fire for the same task (different rule IDs, complementary checks). M001 also works for third-party collections.
+
+## Migration rules — M005-M013 (ansible-core 2.19/2.20)
+
+These rules detect patterns that break or behave differently under ansible-core 2.19 and 2.20. See [ANSIBLE_CORE_MIGRATION.md](ANSIBLE_CORE_MIGRATION.md) for full details.
+
+| Rule ID | Validator | Description | Fixable |
+|---------|-----------|-------------|---------|
+| M005 | native | Data tagging — registered var in Jinja template (untrusted in 2.19+) | Tier 2 (AI) |
+| M006 | OPA | become + ignore_errors misses timeout (UNREACHABLE in 2.19+) | **Yes** — adds `ignore_unreachable: true` |
+| M008 | OPA | Bare `include:` removed in 2.19+ | **Yes** — rewrites to `include_tasks:` |
+| M009 | OPA | `with_*` loops deprecated | **Yes** — rewrites simple cases to `loop:` |
+| M010 | native | Python 2 interpreter path (dropped in 2.18+) | Tier 3 (manual) |
+| M011 | OPA | Network collection modules may need upgrade for 2.19+ | Tier 3 (informational) |
+| — | — | M007 (nested var filters), M012 (error string parsing), M013 (smart transport) | Planned |
 
 ## Other rule namespaces (unchanged)
 

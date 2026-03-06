@@ -185,9 +185,12 @@ class TestFixApply:
         r = _cli("format", "--check", str(messy_file))
         assert r.returncode == 0, "File should pass format --check after fix --apply"
 
-    def test_modernize_stub_message(self, messy_file: Path):
+    def test_remediation_runs_full_pipeline(self, messy_file: Path):
         r = _cli("fix", "--apply", str(messy_file))
-        assert "not yet implemented" in r.stderr.lower() or "future release" in r.stderr.lower()
+        assert r.returncode == 0
+        assert "phase 4: remediating" in r.stderr.lower()
+        assert "phase 5: summary" in r.stderr.lower()
+        assert "tier 1" in r.stderr.lower()
 
 
 class TestFixCheck:

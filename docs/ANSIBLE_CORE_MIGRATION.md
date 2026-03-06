@@ -4,20 +4,20 @@ This document catalogues the breaking changes in ansible-core 2.19 and 2.20, map
 
 ## Summary
 
-| # | Breaking change | Severity | Rule | Status |
-|---|----------------|----------|------|--------|
-| 1 | Data tagging — trust model inversion | CRITICAL | M005 | Planned (native) |
-| 2 | Jinja in conditionals (`when: "{{ }}"`) | HIGH | **L015** | **Exists** (OPA) |
-| 3 | Become timeout now unreachable | HIGH | M006 | Planned (OPA) |
-| 4 | Jinja2 filter behavior on nested vars | MEDIUM | M007 | Planned (native) |
-| 5 | `AnsibleVaultEncryptedUnicode` removed | LOW | — | Not codifiable (plugin code) |
-| 6 | Bare `include:` removed | HIGH | M008 | Planned (OPA) |
-| 7 | `with_*` loop deprecation | MEDIUM | M009 | Planned (OPA) |
-| 8 | Python version requirements | MEDIUM | M010 | Planned (native) |
-| 9 | Network collection incompatibilities | MEDIUM | M011 | Planned (OPA) |
-| 10 | Error message string parsing | LOW | M012 | Planned (native) |
-| 11 | `DEFAULT_TRANSPORT: smart` removed (2.20) | LOW | M013 | Planned (native) |
-| 12 | Module string options accept None | LOW | L058/L059 | **Exists** (ansible) |
+| # | Breaking change | Severity | Rule | Status | Fixer |
+|---|----------------|----------|------|--------|-------|
+| 1 | Data tagging — trust model inversion | CRITICAL | M005 | **Implemented** (native) | Tier 2 (AI) |
+| 2 | Jinja in conditionals (`when: "{{ }}"`) | HIGH | **L015** | **Exists** (OPA) | **Yes** (L015 transform) |
+| 3 | Become timeout now unreachable | HIGH | M006 | **Implemented** (OPA) | **Yes** (M006 transform) |
+| 4 | Jinja2 filter behavior on nested vars | MEDIUM | M007 | Planned (native) | — |
+| 5 | `AnsibleVaultEncryptedUnicode` removed | LOW | — | Not codifiable (plugin code) | — |
+| 6 | Bare `include:` removed | HIGH | M008 | **Implemented** (OPA) | **Yes** (M008 transform) |
+| 7 | `with_*` loop deprecation | MEDIUM | M009 | **Implemented** (OPA) | **Yes** (M009 transform, simple cases) |
+| 8 | Python version requirements | MEDIUM | M010 | **Implemented** (native) | Tier 3 (manual) |
+| 9 | Network collection incompatibilities | MEDIUM | M011 | **Implemented** (OPA) | Tier 3 (informational) |
+| 10 | Error message string parsing | LOW | M012 | Planned (native) | — |
+| 11 | `DEFAULT_TRANSPORT: smart` removed (2.20) | LOW | M013 | Planned (native) | — |
+| 12 | Module string options accept None | LOW | L058/L059 | **Exists** (ansible) | — |
 
 ---
 
@@ -42,7 +42,7 @@ This document catalogues the breaking changes in ansible-core 2.19 and 2.20, map
     msg: "Hostname is {{ result.stdout }}"  # 2.19: result.stdout is untrusted
 ```
 
-**Rule**: M005 (planned, native)
+**Rule**: M005 (implemented, native). **Fixer**: Tier 2 — AI-proposable (requires understanding template intent).
 
 ---
 
@@ -82,7 +82,7 @@ This document catalogues the breaking changes in ansible-core 2.19 and 2.20, map
 
 **Fix**: Add `ignore_unreachable: true` or handle the error differently.
 
-**Rule**: M006 (planned, OPA)
+**Rule**: M006 (implemented, OPA). **Fixer**: Deterministic — adds `ignore_unreachable: true`.
 
 ---
 
@@ -127,7 +127,7 @@ This document catalogues the breaking changes in ansible-core 2.19 and 2.20, map
 
 **Fix**: Use `include_tasks:` (dynamic) or `import_tasks:` (static).
 
-**Rule**: M008 (planned, OPA)
+**Rule**: M008 (implemented, OPA). **Fixer**: Deterministic — rewrites to `ansible.builtin.include_tasks`.
 
 ---
 
@@ -150,7 +150,7 @@ This document catalogues the breaking changes in ansible-core 2.19 and 2.20, map
 
 **Fix**: `loop: ["httpd", "nginx"]`
 
-**Rule**: M009 (planned, OPA)
+**Rule**: M009 (implemented, OPA). **Fixer**: Deterministic for `with_items`/`with_list`/`with_flattened` → `loop:`. Complex `with_*` forms (with_dict, with_subelements) are Tier 2 (AI).
 
 ---
 
@@ -166,7 +166,7 @@ vars:
   ansible_python_interpreter: /usr/bin/python2.7   # M010: Python 2 dropped
 ```
 
-**Rule**: M010 (planned, native)
+**Rule**: M010 (implemented, native). **Fixer**: Tier 3 — manual (user must choose the correct Python 3 path).
 
 ---
 
@@ -183,7 +183,7 @@ vars:
     commands: show running-config
 ```
 
-**Rule**: M011 (planned, OPA)
+**Rule**: M011 (implemented, OPA). **Fixer**: Tier 3 — informational (user must upgrade collections).
 
 ---
 
