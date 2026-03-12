@@ -42,6 +42,10 @@ prek run --all-files
 
 Configuration is in `pyproject.toml` under `[tool.ruff]`. Generated gRPC stubs (`src/apme/v1/*_pb2*.py`) are excluded.
 
+### CI
+
+Prek runs automatically on every pull request via GitHub Actions (`.github/workflows/prek.yml`). PRs that fail ruff lint or format checks will not pass CI.
+
 ### Running ruff directly
 
 ```bash
