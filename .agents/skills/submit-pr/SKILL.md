@@ -13,7 +13,7 @@ Always start from the latest upstream main:
 
 ```bash
 git fetch upstream
-git checkout -b <branch-name> upstream/master
+git checkout -b <branch-name> upstream/main
 ```
 
 Use a descriptive branch name (e.g., `feat/add-ruff-prek`, `fix/parser-context-manager`).

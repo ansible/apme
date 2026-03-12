@@ -44,7 +44,7 @@ note the original tag:
 ### Inaccurate documentation
 
 Documentation MUST accurately describe the actual behavior. If a workflow
-triggers on `pull_request` targeting `master`, don't document it as running
+triggers on `pull_request` targeting `main`, don't document it as running
 on "every pull request". Be specific about triggers, branches, and conditions.
 
 ### Markdown table formatting

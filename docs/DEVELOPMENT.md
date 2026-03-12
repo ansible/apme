@@ -44,7 +44,7 @@ Configuration is in `pyproject.toml` under `[tool.ruff]`. Generated gRPC stubs (
 
 ### CI
 
-Prek runs automatically on pull requests targeting the `master` branch via GitHub Actions (`.github/workflows/prek.yml`). PRs that fail ruff lint or format checks will not pass CI.
+Prek runs automatically on pull requests targeting the `main` branch via GitHub Actions (`.github/workflows/prek.yml`). PRs that fail ruff lint or format checks will not pass CI.
 
 ### Running ruff directly
 
