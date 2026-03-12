@@ -1,0 +1,29 @@
+# Build artifacts
+dist/
+build/
+*.egg-info/
+
+# Dependencies
+.venv/
+node_modules/
+vendor/
+
+# Large/binary files
+*.log
+*.sql
+*.map
+
+# Generated gRPC stubs
+src/apme/v1/*_pb2*.py
+src/apme/v1/*_pb2*.pyi
+
+# Secrets
+.env
+*.pem
+*.key
+
+# Cache
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
