@@ -143,3 +143,16 @@ EOF
 ```
 
 The PR targets upstream's `main` branch from the fork. Return the PR URL to the user.
+
+### Maintaining the PR
+
+When pushing additional commits to an existing PR, **always update the PR body** to reflect the new changes:
+
+```bash
+gh pr edit <pr-number> --body "$(cat <<'EOF'
+...updated body...
+EOF
+)"
+```
+
+The Summary, Changes, and Test plan sections must stay current with all commits on the branch, not just the initial one.
