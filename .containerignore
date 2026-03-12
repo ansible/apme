@@ -1,0 +1,224 @@
+# ============================================================================
+# APME .containerignore - Exclude from container builds
+# Also works as .dockerignore (symlink or copy)
+# ============================================================================
+#
+# SECURITY: This file prevents sensitive data from being copied into container
+# images. Container images may be pushed to registries and should NEVER contain
+# secrets, credentials, or unnecessary files.
+# ============================================================================
+
+# ============================================================================
+# SECRETS & CREDENTIALS - CRITICAL
+# ============================================================================
+
+# Environment files
+.env
+.env.*
+.envrc
+*.local
+
+# Ansible Vault
+*.vault.yml
+*.vault.yaml
+*vault*.yml
+
+# Private keys and certificates
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+id_rsa*
+id_dsa*
+id_ecdsa*
+id_ed25519*
+
+# Cloud credentials
+.aws/
+.gcloud/
+.azure/
+.kube/
+kubeconfig
+*.kubeconfig
+
+# SSH
+.ssh/
+
+# Generic secrets
+secrets/
+credentials/
+private/
+*.secret
+*.secrets
+
+# ============================================================================
+# GIT
+# ============================================================================
+
+.git/
+.gitignore
+.gitattributes
+.gitmodules
+.github/
+
+# ============================================================================
+# DEVELOPMENT FILES
+# ============================================================================
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Virtual environments (use container's own)
+.venv/
+venv/
+env/
+ENV/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Test artifacts
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+
+# Type checking cache
+.mypy_cache/
+.ruff_cache/
+
+# ============================================================================
+# BUILD ARTIFACTS
+# ============================================================================
+
+# Python build
+build/
+dist/
+*.egg-info/
+*.egg
+wheels/
+
+# Documentation builds
+docs/_build/
+site/
+
+# ============================================================================
+# DOCUMENTATION & NON-RUNTIME FILES
+# ============================================================================
+
+# Markdown docs (not needed at runtime)
+*.md
+!README.md
+LICENSE
+CHANGELOG*
+CONTRIBUTING*
+CODE_OF_CONDUCT*
+
+# Development configs
+.pre-commit-config.yaml
+.editorconfig
+Makefile
+Taskfile.yml
+justfile
+
+# CI/CD (not needed in runtime image)
+.github/
+.gitlab-ci.yml
+.travis.yml
+.circleci/
+Jenkinsfile
+azure-pipelines.yml
+
+# ============================================================================
+# TEST DATA & FIXTURES
+# ============================================================================
+
+# Test directories
+tests/
+test/
+testing/
+test-playbooks/
+test-data/
+fixtures/
+**/test_*.py
+**/*_test.py
+
+# Test configurations
+pytest.ini
+setup.cfg
+tox.ini
+noxfile.py
+
+# ============================================================================
+# SPEC-DRIVEN DEVELOPMENT (not needed at runtime)
+# ============================================================================
+
+.sdlc/
+
+# ============================================================================
+# PROJECT SPECIFIC
+# ============================================================================
+
+# Scan results
+scan-results.json
+scan-results/
+*.sarif
+results/
+
+# Cache (rebuild in container)
+apme-cache/
+.apme/
+
+# Local configurations
+*.local
+*-local.*
+
+# Backup files
+*.bak
+*.backup
+*.orig
+
+# Temporary files
+tmp/
+temp/
+.tmp/
+
+# ============================================================================
+# OS FILES
+# ============================================================================
+
+.DS_Store
+.DS_Store?
+Thumbs.db
+desktop.ini
+
+# ============================================================================
+# LARGE FILES (reduce image size)
+# ============================================================================
+
+*.tar
+*.tar.gz
+*.zip
+*.rar
+*.7z
+
+# ============================================================================
+# EXAMPLES & SAMPLES (optional - remove if needed in image)
+# ============================================================================
+
+examples/
+samples/
+demo/

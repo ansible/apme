@@ -1,0 +1,87 @@
+# Architecture Decision Records
+
+This directory contains the Architecture Decision Records (ADRs) for APME.
+
+## Index
+
+| ADR | Title | Status | Date |
+|-----|-------|--------|------|
+| [ADR-001](ADR-001-grpc-communication.md) | gRPC for Inter-Service Communication | Accepted | 2026-02 |
+| [ADR-002](ADR-002-opa-rego-policy.md) | OPA/Rego for Declarative Policy Rules | Accepted | 2026-02 |
+| [ADR-003](ADR-003-vendor-ari-engine.md) | Vendor the ARI Engine | Accepted | 2026-02 |
+| [ADR-004](ADR-004-podman-pod-deployment.md) | Podman Pod as Deployment Unit | Accepted | 2026-02 |
+| [ADR-005](ADR-005-no-service-discovery.md) | No etcd/Service Discovery | Accepted | 2026-02 |
+| [ADR-006](ADR-006-ephemeral-venvs.md) | Ephemeral Per-Request venvs | Accepted | 2026-03 |
+| [ADR-007](ADR-007-async-grpc-servers.md) | Fully Async gRPC Servers | Accepted | 2026-03 |
+| [ADR-008](ADR-008-rule-id-conventions.md) | Rule ID Conventions (L/M/R/P) | Accepted | 2026-02 |
+| [ADR-009](ADR-009-remediation-engine.md) | Separate Remediation Engine | Accepted | 2026-03 |
+| [ADR-010](ADR-010-gitleaks-validator.md) | Gitleaks as gRPC Validator | Accepted | 2026-03 |
+| [ADR-011](ADR-011-yaml-formatter-prepass.md) | YAML Formatter as Phase 1 Pre-Pass | Accepted | 2026-03 |
+| [ADR-012](ADR-012-scale-pods-not-services.md) | Scale Pods, Not Services | Accepted | 2026-02 |
+| [ADR-013](ADR-013-structured-diagnostics.md) | Structured Diagnostics in gRPC | Accepted | 2026-03 |
+
+## Categories
+
+### Communication & Infrastructure
+- ADR-001: gRPC communication
+- ADR-004: Podman pod deployment
+- ADR-005: No service discovery
+- ADR-012: Scaling strategy
+
+### Engine & Rules
+- ADR-002: OPA/Rego hybrid rules
+- ADR-003: Vendored ARI engine
+- ADR-008: Rule ID conventions
+
+### Validators
+- ADR-006: Ansible validator venvs
+- ADR-007: Async gRPC servers
+- ADR-010: Gitleaks validator
+- ADR-013: Structured diagnostics
+
+### Remediation
+- ADR-009: Remediation engine architecture
+- ADR-011: YAML formatter pre-pass
+
+## Archived
+
+Original planning ADRs that were superseded by implementation decisions:
+
+| ADR | Title | Status |
+|-----|-------|--------|
+| [archive/ADR-001-tech-stack.md](archive/ADR-001-tech-stack.md) | Initial Tech Stack | Superseded |
+| [archive/ADR-002-langgraph-agents.md](archive/ADR-002-langgraph-agents.md) | LangGraph Agents | Superseded |
+| [archive/ADR-003-ari-integration.md](archive/ADR-003-ari-integration.md) | ARI Wrapper Approach | Superseded by ADR-003 |
+
+## Creating New ADRs
+
+1. Copy the template from `../.sdlc/templates/adr.md`
+2. Use the next available number (currently ADR-014)
+3. Include:
+   - Status (Proposed → Accepted)
+   - Date
+   - Context
+   - Options Considered
+   - Decision
+   - Rationale (include user quotes if available)
+   - Consequences (positive/negative)
+   - Implementation Notes
+   - Related Decisions
+
+## Changelog
+
+| ADR | Date | Summary |
+|-----|------|---------|
+| 001 | 2026-02 | gRPC for inter-service communication |
+| 002 | 2026-02 | OPA/Rego for declarative policy rules |
+| 003 | 2026-02 | Vendor ARI engine, full integration |
+| 004 | 2026-02 | Podman pod as deployment unit |
+| 005 | 2026-02 | Reject etcd/service discovery |
+| 006 | 2026-03 | Ephemeral per-request venvs |
+| 007 | 2026-03 | Fully async gRPC servers (grpc.aio) |
+| 008 | 2026-02 | Rule ID conventions (L/M/R/P) |
+| 009 | 2026-03 | Separate remediation engine |
+| 010 | 2026-03 | Gitleaks as gRPC validator |
+| 011 | 2026-03 | YAML formatter as Phase 1 pre-pass |
+| 012 | 2026-02 | Scale pods, not services |
+| 013 | 2026-03 | Structured diagnostics in gRPC contract |
