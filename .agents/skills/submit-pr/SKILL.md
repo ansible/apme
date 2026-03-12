@@ -57,35 +57,15 @@ If a new rule was added, regenerate the catalog:
 python scripts/generate_rule_catalog.py
 ```
 
-### Step 4: Update ADR (if applicable)
+### Step 4: Update SDLC artifacts (if applicable)
 
-If the change involves an architectural decision (new service, new protocol, new deployment strategy, new tooling adoption), add an entry to `docs/ADR.md`.
+If the change involves an architectural decision (new service, new protocol, new deployment strategy, new tooling adoption), create an ADR in `.sdlc/adrs/` using the `adr-new` skill. The file should follow the naming convention `ADR-NNN-slug.md`.
 
-Follow the existing format:
+If open questions or decisions emerged during the session, create a Decision Request using the `dr-new` skill.
 
-```markdown
-## ADR-NNN: Title
+If requirements or tasks were affected, update them using the `req-new` or `task-new` skills.
 
-**Status:** Accepted
-**Date:** YYYY-MM
-
-### Context
-Why this decision was needed.
-
-### Options considered
-| Option | Pros | Cons |
-|--------|------|------|
-| Option A | ... | ... |
-| Option B | ... | ... |
-
-### Decision
-What was decided and why.
-
-### Rationale
-- Bullet points explaining the reasoning
-```
-
-Update the **Changelog** table at the bottom of `docs/ADR.md` with the new entry.
+The agent should invoke these skills proactively when context warrants it, informing the user of any artifacts created. All artifacts are reviewed in the PR diff.
 
 ### Step 5: Commit with conventional commits
 

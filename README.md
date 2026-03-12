@@ -159,7 +159,7 @@ tests/                  unit, integration, rule doc coverage
 | [DESIGN_REMEDIATION.md](docs/DESIGN_REMEDIATION.md) | Remediation engine: transform registry, AI escalation, convergence loop |
 | [RESEARCH_REVIEW.md](docs/RESEARCH_REVIEW.md) | Analysis of early research concepts and roadmap pull-ins |
 | [DESIGN_DASHBOARD.md](docs/DESIGN_DASHBOARD.md) | Dashboard & presentation layer: API gateway, REST/WebSocket, persistence, auth, frontend |
-| [ADR.md](docs/ADR.md) | Architecture Decision Record — 13 key design decisions with context, alternatives, and rationale |
+| [ADRs](.sdlc/adrs/) | Architecture Decision Records — key design decisions with context, alternatives, and rationale |
 
 ## Roadmap
 

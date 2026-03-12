@@ -7,7 +7,6 @@ description: >-
   or reviewing task status (use sdlc-status instead).
 argument-hint: "[REQ-NNN] [Task Name] [--from-criteria] [--batch]"
 user-invocable: true
-disable-model-invocation: true
 metadata:
   author: APME Team
   version: 1.0.0

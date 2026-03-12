@@ -7,7 +7,6 @@ description: >-
   (use dr-new instead) or reviewing existing ADRs (use sdlc-status instead).
 argument-hint: "[Decision Title] [--from-dr DR-NNN] [--status accepted]"
 user-invocable: true
-disable-model-invocation: true
 metadata:
   author: APME Team
   version: 1.0.0

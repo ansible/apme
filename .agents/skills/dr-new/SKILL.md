@@ -8,7 +8,6 @@ description: >-
   or documenting decided architecture (use adr-new instead).
 argument-hint: "[Question] [--priority blocking|high|medium|low]"
 user-invocable: true
-disable-model-invocation: true
 metadata:
   author: APME Team
   version: 1.0.0

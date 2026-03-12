@@ -8,7 +8,6 @@ description: >-
   req-new instead).
 argument-hint: "[Phase Name]"
 user-invocable: true
-disable-model-invocation: true
 metadata:
   author: APME Team
   version: 1.0.0

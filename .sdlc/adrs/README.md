@@ -19,6 +19,10 @@ This directory contains the Architecture Decision Records (ADRs) for APME.
 | [ADR-011](ADR-011-yaml-formatter-prepass.md) | YAML Formatter as Phase 1 Pre-Pass | Accepted | 2026-03 |
 | [ADR-012](ADR-012-scale-pods-not-services.md) | Scale Pods, Not Services | Accepted | 2026-02 |
 | [ADR-013](ADR-013-structured-diagnostics.md) | Structured Diagnostics in gRPC | Accepted | 2026-03 |
+| [ADR-014](ADR-014-ruff-prek-hooks.md) | Ruff Linter and prek Pre-commit Hooks | Accepted | 2026-03 |
+| [ADR-015](ADR-015-github-actions-prek.md) | GitHub Actions CI with prek | Accepted | 2026-03 |
+| [ADR-016](ADR-016-single-branch-main.md) | Single-branch `main` Strategy | Accepted | 2026-03 |
+| [ADR-017](ADR-017-trust-and-verify-agent-sdlc.md) | Trust-and-verify Agent SDLC Invocation | Accepted | 2026-03 |
 
 ## Categories
 
@@ -43,6 +47,14 @@ This directory contains the Architecture Decision Records (ADRs) for APME.
 - ADR-009: Remediation engine architecture
 - ADR-011: YAML formatter pre-pass
 
+### Tooling & CI
+- ADR-014: Ruff linter and prek pre-commit hooks
+- ADR-015: GitHub Actions CI with prek
+
+### Process
+- ADR-016: Single-branch `main` strategy
+- ADR-017: Trust-and-verify agent SDLC invocation
+
 ## Archived
 
 Original planning ADRs that were superseded by implementation decisions:
@@ -56,7 +68,7 @@ Original planning ADRs that were superseded by implementation decisions:
 ## Creating New ADRs
 
 1. Copy the template from `../.sdlc/templates/adr.md`
-2. Use the next available number (currently ADR-014)
+2. Use the next available number (currently ADR-018)
 3. Include:
    - Status (Proposed → Accepted)
    - Date
@@ -85,3 +97,7 @@ Original planning ADRs that were superseded by implementation decisions:
 | 011 | 2026-03 | YAML formatter as Phase 1 pre-pass |
 | 012 | 2026-02 | Scale pods, not services |
 | 013 | 2026-03 | Structured diagnostics in gRPC contract |
+| 014 | 2026-03 | Ruff linter and prek pre-commit hooks |
+| 015 | 2026-03 | GitHub Actions CI with prek |
+| 016 | 2026-03 | Single-branch `main` strategy |
+| 017 | 2026-03 | Trust-and-verify agent SDLC invocation |

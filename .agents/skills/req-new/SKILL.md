@@ -7,7 +7,6 @@ description: >-
   task-new instead) or bulk importing from PRD (use prd-import instead).
 argument-hint: "[Feature Name] [--phase PHASE-NNN] [--minimal]"
 user-invocable: true
-disable-model-invocation: true
 metadata:
   author: APME Team
   version: 1.0.0

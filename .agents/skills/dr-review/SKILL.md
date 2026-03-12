@@ -7,7 +7,6 @@ description: >-
   DRs (use dr-new instead) or just viewing status (use sdlc-status instead).
 argument-hint: "[DR-NNN] [--quick]"
 user-invocable: true
-disable-model-invocation: true
 metadata:
   author: APME Team
   version: 1.0.0
