@@ -427,7 +427,6 @@ class Parser:
 
     @classmethod
     def restore_definition_objects(cls, input_dir):
-
         collections = _load_object_list(Collection, os.path.join(input_dir, "collections.json"))
 
         # TODO: only repository?
@@ -465,7 +464,6 @@ class Parser:
 
     @classmethod
     def dump_definition_objects(cls, output_dir, definitions, ld):
-
         collections = definitions.get("collections", [])
         if len(collections) > 0:
             _dump_object_list(collections, os.path.join(output_dir, "collections.json"))

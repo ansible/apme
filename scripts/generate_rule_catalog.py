@@ -42,12 +42,14 @@ def _collect_opa_rules() -> list[dict]:
         fm = _parse_frontmatter(md)
         if not fm.get("rule_id"):
             continue
-        rules.append({
-            "rule_id": fm["rule_id"],
-            "validator": "OPA",
-            "description": fm.get("description", ""),
-            "source": md.name,
-        })
+        rules.append(
+            {
+                "rule_id": fm["rule_id"],
+                "validator": "OPA",
+                "description": fm.get("description", ""),
+                "source": md.name,
+            }
+        )
     return rules
 
 
@@ -57,12 +59,14 @@ def _collect_native_rules() -> list[dict]:
         fm = _parse_frontmatter(md)
         if not fm.get("rule_id"):
             continue
-        rules.append({
-            "rule_id": fm["rule_id"],
-            "validator": "Native",
-            "description": fm.get("description", ""),
-            "source": md.name,
-        })
+        rules.append(
+            {
+                "rule_id": fm["rule_id"],
+                "validator": "Native",
+                "description": fm.get("description", ""),
+                "source": md.name,
+            }
+        )
     return rules
 
 
@@ -72,27 +76,32 @@ def _collect_ansible_rules() -> list[dict]:
         fm = _parse_frontmatter(md)
         if not fm.get("rule_id"):
             continue
-        rules.append({
-            "rule_id": fm["rule_id"],
-            "validator": "Ansible",
-            "description": fm.get("description", ""),
-            "source": md.name,
-        })
+        rules.append(
+            {
+                "rule_id": fm["rule_id"],
+                "validator": "Ansible",
+                "description": fm.get("description", ""),
+                "source": md.name,
+            }
+        )
     return rules
 
 
 def _collect_gitleaks_rules() -> list[dict]:
-    return [{
-        "rule_id": "SEC:*",
-        "validator": "Gitleaks",
-        "description": "Secret/credential detection (delegated to Gitleaks binary).",
-        "source": "scanner.py",
-    }]
+    return [
+        {
+            "rule_id": "SEC:*",
+            "validator": "Gitleaks",
+            "description": "Secret/credential detection (delegated to Gitleaks binary).",
+            "source": "scanner.py",
+        }
+    ]
 
 
 def _get_fixable_ids() -> set[str]:
     try:
         from apme_engine.remediation.transforms import build_default_registry
+
         reg = build_default_registry()
         return set(reg.rule_ids)
     except Exception as e:
@@ -103,7 +112,7 @@ def _get_fixable_ids() -> set[str]:
 def _sort_key(rule: dict) -> tuple:
     rid = rule["rule_id"]
     prefix = rid.rstrip("0123456789:*")
-    num_str = rid[len(prefix):].split(":")[0].split("*")[0]
+    num_str = rid[len(prefix) :].split(":")[0].split("*")[0]
     num = int(num_str) if num_str.isdigit() else 9999
     return (prefix, num)
 

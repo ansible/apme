@@ -89,18 +89,53 @@ def main():
     # R103-R109, R111-R116 (convert to frontmatter)
     for stub, rid, title, desc in [
         ("R103_download_exec", "R103", "Download exec (R103)", "Task downloads and executes (annotation-based)."),
-        ("R104_unauthorized_download_src", "R104", "Unauthorized download (R104)", "Download from unauthorized source (annotation-based)."),
+        (
+            "R104_unauthorized_download_src",
+            "R104",
+            "Unauthorized download (R104)",
+            "Download from unauthorized source (annotation-based).",
+        ),
         ("R105_outbound_transfer", "R105", "Outbound transfer (R105)", "Outbound transfer (annotation-based)."),
         ("R106_inbound_transfer", "R106", "Inbound transfer (R106)", "Inbound transfer (annotation-based)."),
-        ("R107_pkg_install_with_insecure_option", "R107", "Pkg install insecure (R107)", "Package install with insecure option (annotation-based)."),
-        ("R108_privilege_escalation", "R108", "Privilege escalation (R108)", "Privilege escalation (annotation-based)."),
+        (
+            "R107_pkg_install_with_insecure_option",
+            "R107",
+            "Pkg install insecure (R107)",
+            "Package install with insecure option (annotation-based).",
+        ),
+        (
+            "R108_privilege_escalation",
+            "R108",
+            "Privilege escalation (R108)",
+            "Privilege escalation (annotation-based).",
+        ),
         ("R109_key_config_change", "R109", "Key config change (R109)", "Key/config change (annotation-based)."),
-        ("R111_parameterized_import_role", "R111", "Parameterized import role (R111)", "Parameterized role import (annotation-based)."),
-        ("R112_parameterized_import_taskfile", "R112", "Parameterized import taskfile (R112)", "Parameterized taskfile import (annotation-based)."),
-        ("R113_parameterized_pkg_install", "R113", "Parameterized pkg install (R113)", "Parameterized package install (annotation-based)."),
+        (
+            "R111_parameterized_import_role",
+            "R111",
+            "Parameterized import role (R111)",
+            "Parameterized role import (annotation-based).",
+        ),
+        (
+            "R112_parameterized_import_taskfile",
+            "R112",
+            "Parameterized import taskfile (R112)",
+            "Parameterized taskfile import (annotation-based).",
+        ),
+        (
+            "R113_parameterized_pkg_install",
+            "R113",
+            "Parameterized pkg install (R113)",
+            "Parameterized package install (annotation-based).",
+        ),
         ("R114_file_change", "R114", "File change (R114)", "File change (annotation-based)."),
         ("R115_file_deletion", "R115", "File deletion (R115)", "File deletion (annotation-based)."),
-        ("R116_insecure_file_permission", "L031", "Insecure file permission (L031)", "File permission may be insecure (annotation-based)."),
+        (
+            "R116_insecure_file_permission",
+            "L031",
+            "Insecure file permission (L031)",
+            "File permission may be insecure (annotation-based).",
+        ),
     ]:
         write_native(stub, rid, title, desc, pb_v, pb_p)
 
@@ -122,9 +157,19 @@ def main():
     )
 
     for stub, rid, title, desc in [
-        ("R302_role_without_metadata", "L027", "Role without metadata (L027)", "Roles should have meta/main.yml with metadata."),
+        (
+            "R302_role_without_metadata",
+            "L027",
+            "Role without metadata (L027)",
+            "Roles should have meta/main.yml with metadata.",
+        ),
         ("R303_task_without_name", "L028", "Task without name (L028)", "Tasks should have a name."),
-        ("R201_changed_data_dependence", "L032", "Changed data dependence (L032)", "Variable redefinition may cause confusion."),
+        (
+            "R201_changed_data_dependence",
+            "L032",
+            "Changed data dependence (L032)",
+            "Variable redefinition may cause confusion.",
+        ),
         ("R202_unconditional_override", "L033", "Unconditional override (L033)", "Overriding vars without conditions."),
         ("R203_unused_override", "L034", "Unused override (L034)", "Lower-precedence override may be unused."),
         ("R204_unnecessary_set_fact", "L035", "Unnecessary set_fact (L035)", "set_fact with random in args."),
@@ -134,16 +179,36 @@ def main():
         ("R306_undefined_variable", "L039", "Undefined variable (L039)", "Variable use may be undefined."),
         ("R117_external_role", "R117", "External role (R117)", "Role is from Galaxy/external source."),
         ("R401_list_all_inbound_src", "R401", "List inbound sources (R401)", "Report inbound transfer sources."),
-        ("R402_list_all_used_variables", "R402", "List used variables (R402)", "Report variables used at end of sequence."),
+        (
+            "R402_list_all_used_variables",
+            "R402",
+            "List used variables (R402)",
+            "Report variables used at end of sequence.",
+        ),
         ("R404_show_variables", "R404", "Show variables (R404)", "Expose variable_set for the task."),
         ("R501_dependency_suggestion", "R501", "Dependency suggestion (R501)", "Suggest collection/role dependency."),
     ]:
         write_native(stub, rid, title, desc, pb_v, pb_p)
 
     for stub, rid, title, desc in [
-        ("P001_module_name_validation", "P001", "Module name validation (P001)", "Validate module name (Ansible required)."),
-        ("P002_module_argument_key_validation", "P002", "Module argument key (P002)", "Validate module argument keys (Ansible required)."),
-        ("P003_module_argument_value_validation", "P003", "Module argument value (P003)", "Validate module argument values (Ansible required)."),
+        (
+            "P001_module_name_validation",
+            "P001",
+            "Module name validation (P001)",
+            "Validate module name (Ansible required).",
+        ),
+        (
+            "P002_module_argument_key_validation",
+            "P002",
+            "Module argument key (P002)",
+            "Validate module argument keys (Ansible required).",
+        ),
+        (
+            "P003_module_argument_value_validation",
+            "P003",
+            "Module argument value (P003)",
+            "Validate module argument values (Ansible required).",
+        ),
         ("P004_variable_validation", "P004", "Variable validation (P004)", "Validate variables (Ansible required)."),
         ("sample_rule", "Sample101", "Sample rule (Sample101)", "Example rule that returns task block."),
     ]:
@@ -151,7 +216,12 @@ def main():
 
     for stub, rid, title, desc in [
         ("L040_no_tabs", "L040", "No tabs (L040)", "YAML should not contain tabs; use spaces."),
-        ("L041_key_order", "L041", "Key order (L041)", "Task keys should follow canonical order (e.g. name before module)."),
+        (
+            "L041_key_order",
+            "L041",
+            "Key order (L041)",
+            "Task keys should follow canonical order (e.g. name before module).",
+        ),
         ("L042_complexity", "L042", "Complexity (L042)", "Play/block has high task count."),
         ("L043_deprecated_bare_vars", "L043", "Deprecated bare vars (L043)", "Avoid {{ foo }}; prefer explicit form."),
         ("L044_avoid_implicit", "L044", "Avoid implicit (L044)", "Set state explicitly where it matters."),
@@ -162,7 +232,12 @@ def main():
         ("L049_loop_var_prefix", "L049", "Loop var prefix (L049)", "Loop variable should use prefix (e.g. item_)."),
         ("L050_var_naming", "L050", "Var naming (L050)", "Variable names: lowercase, underscores."),
         ("L051_jinja", "L051", "Jinja (L051)", "Jinja spacing: {{ var }} not {{var}}."),
-        ("L052_galaxy_version_incorrect", "L052", "Galaxy version (L052)", "Galaxy version in meta should be semantic."),
+        (
+            "L052_galaxy_version_incorrect",
+            "L052",
+            "Galaxy version (L052)",
+            "Galaxy version in meta should be semantic.",
+        ),
         ("L053_meta_incorrect", "L053", "Meta incorrect (L053)", "Role meta should have valid structure."),
         ("L054_meta_no_tags", "L054", "Meta no tags (L054)", "Role meta galaxy_info should include galaxy_tags."),
         ("L055_meta_video_links", "L055", "Meta video links (L055)", "Role meta video_links should be valid URLs."),

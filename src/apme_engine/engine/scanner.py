@@ -400,7 +400,6 @@ class SingleScan:
         return target_path, dep_dirs
 
     def create_load_file(self, target_type, target_name, target_path):
-
         loader_version = get_loader_version()
 
         if not os.path.exists(target_path) and not self.playbook_yaml and not self.taskfile_yaml:
@@ -507,7 +506,6 @@ class SingleScan:
         return target_path
 
     def load_definitions_root(self, target_path=""):
-
         output_dir = self.__path_mappings["root_definitions"]
         root_load = self._set_load_root(target_path=target_path)
 

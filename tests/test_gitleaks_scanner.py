@@ -241,7 +241,6 @@ class TestGitleaksServicer:
         assert resp.request_id == "gl-2"
 
     async def test_health_binary_present(self):
-
         from apme.v1 import common_pb2
         from apme_engine.daemon.gitleaks_validator_server import GitleaksValidatorServicer
 
