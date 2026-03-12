@@ -14,7 +14,6 @@ class RAMCLI:
     _cli = None
 
     def __init__(self):
-
         args = sys.argv
         if len(args) > 2:
             action = args[2]

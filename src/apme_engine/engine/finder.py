@@ -636,7 +636,6 @@ def could_be_taskfile(body: str = "", data: list = None, fpath: str = ""):
 # if a target file has some contents, it should be checked with
 # some dedicated functions like `could_be_taskfile()`.
 def label_empty_file_by_path(fpath: str):
-
     taskfile_dir = ["/tasks/", "/handlers/"]
     for t_d in taskfile_dir:
         if t_d in fpath:

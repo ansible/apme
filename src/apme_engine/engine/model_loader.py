@@ -298,7 +298,6 @@ def load_inventory(path, basedir=""):
 
 
 def load_inventories(path, basedir=""):
-
     if not os.path.exists(path):
         return []
     inventories = []
@@ -1194,7 +1193,6 @@ def load_roles(
     yaml_label_list=None,
     load_children=True,
 ):
-
     if path == "":
         return []
     roles_patterns = ["roles", "playbooks/roles", "playbook/roles"]
@@ -1516,7 +1514,6 @@ def load_task(
     previous_task_line=-1,
     basedir="",
 ):
-
     if collections_in_play is None:
         collections_in_play = []
     taskObj = Task()
@@ -1821,7 +1818,6 @@ def load_collection(
     include_test_contents=False,
     load_children=True,
 ):
-
     colObj = Collection()
     fullpath = ""
     if os.path.exists(collection_dir):
