@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+.r1 {color: #00ff00; text-decoration-color: #00ff00}
+.r2 {color: #000080; text-decoration-color: #000080; font-weight: bold}
+.r3 {color: #000080; text-decoration-color: #000080}
+.r4 {font-weight: bold}
+.r5 {color: #800000; text-decoration-color: #800000}
+.r6 {color: #800000; text-decoration-color: #800000; font-weight: bold}
+.r7 {color: #808000; text-decoration-color: #808000}
+.r8 {color: #7f7f7f; text-decoration-color: #7f7f7f}
+.r9 {font-style: italic}
+.r10 {color: #c0c0c0; text-decoration-color: #c0c0c0; background-color: #000087; font-weight: bold}
+.r11 {color: #008080; text-decoration-color: #008080}
+.r12 {color: #c0c0c0; text-decoration-color: #c0c0c0; background-color: #800000; font-weight: bold}
+.r13 {color: #c0c0c0; text-decoration-color: #c0c0c0}
+.r14 {color: #000000; text-decoration-color: #000000; background-color: #808000}
+.r15 {color: #c0c0c0; text-decoration-color: #c0c0c0; background-color: #000080}
+body {
+    color: #000000;
+    background-color: #ffffff;
+}
+</style>
+</head>
+<body>
+    <pre style="font-family:Menlo,'DejaVu Sans Mono',consolas,'Courier New',monospace"><code style="font-family:inherit">
+<span class="r1">─────────────────────────────────────────────────── </span><span class="r2">APME Scan Report</span><span class="r1"> ───────────────────────────────────────────────────</span>
+
+<span class="r3">╭────────────────────────────────────────────────── Scan Information ──────────────────────────────────────────────────╮</span>
+<span class="r3">│</span> <span class="r4">Target:</span> /home/user/ansible-project                                                                                   <span class="r3">│</span>
+<span class="r3">│</span> <span class="r4">Scanned:</span> 2026-03-13T14:30:00Z                                                                                        <span class="r3">│</span>
+<span class="r3">│</span> <span class="r4">APME Version:</span> 0.1.0                                                                                                  <span class="r3">│</span>
+<span class="r3">╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯</span>
+
+<span class="r5">╭────────────────────────────────────────────────────── Summary ───────────────────────────────────────────────────────╮</span>
+<span class="r5">│</span> <span class="r6">Status: FAILED</span>                                                                                                       <span class="r5">│</span>
+<span class="r5">│</span>                                                                                                                      <span class="r5">│</span>
+<span class="r5">│</span> <span class="r5">● Errors:</span> 2                                                                                                          <span class="r5">│</span>
+<span class="r5">│</span> <span class="r7">● Warnings:</span> 7                                                                                                        <span class="r5">│</span>
+<span class="r5">│</span> <span class="r3">● Hints:</span> 3                                                                                                           <span class="r5">│</span>
+<span class="r5">│</span> <span class="r8">─────────────</span>                                                                                                        <span class="r5">│</span>
+<span class="r5">│</span> <span class="r4">Total:</span> 12                                                                                                            <span class="r5">│</span>
+<span class="r5">╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯</span>
+
+<span class="r9">                                                         Issues                                                         </span>
+<span class="r3">┏━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━┓</span>
+<span class="r3">┃</span><span class="r10">   Rule   </span><span class="r3">┃</span><span class="r10">  Severity  </span><span class="r3">┃</span><span class="r10"> Message                                                          </span><span class="r3">┃</span><span class="r10"> Location                  </span><span class="r3">┃</span>
+<span class="r3">┡━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━┩</span>
+<span class="r3">│</span><span class="r11">   L001   </span><span class="r3">│</span>   <span class="r12"> ERROR</span>   <span class="r3">│</span><span class="r13"> Module &#x27;apt&#x27; should use FQCN &#x27;ansible.builtin.apt&#x27;               </span><span class="r3">│</span><span class="r8"> playbook.yml:15           </span><span class="r3">│</span>
+<span class="r3">├──────────┼────────────┼──────────────────────────────────────────────────────────────────┼───────────────────────────┤</span>
+<span class="r3">│</span><span class="r11">   L001   </span><span class="r3">│</span>   <span class="r12"> ERROR</span>   <span class="r3">│</span><span class="r13"> Module &#x27;yum&#x27; should use FQCN &#x27;ansible.builtin.yum&#x27;               </span><span class="r3">│</span><span class="r8"> playbook.yml:23           </span><span class="r3">│</span>
+<span class="r3">├──────────┼────────────┼──────────────────────────────────────────────────────────────────┼───────────────────────────┤</span>
+<span class="r3">│</span><span class="r11">   M002   </span><span class="r3">│</span>   <span class="r14"> WARN</span>    <span class="r3">│</span><span class="r13"> Parameter &#x27;state=latest&#x27; is deprecated in ansible-core 2.16+     </span><span class="r3">│</span><span class="r8"> tasks/main.yml:8          </span><span class="r3">│</span>
+<span class="r3">├──────────┼────────────┼──────────────────────────────────────────────────────────────────┼───────────────────────────┤</span>
+<span class="r3">│</span><span class="r11">   M003   </span><span class="r3">│</span>   <span class="r14"> WARN</span>    <span class="r3">│</span><span class="r13"> Module &#x27;include&#x27; deprecated, use &#x27;ansible.builtin.include_tasks&#x27; </span><span class="r3">│</span><span class="r8"> playbook.yml:45           </span><span class="r3">│</span>
+<span class="r3">├──────────┼────────────┼──────────────────────────────────────────────────────────────────┼───────────────────────────┤</span>
+<span class="r3">│</span><span class="r11">   R001   </span><span class="r3">│</span>   <span class="r14"> WARN</span>    <span class="r3">│</span><span class="r13"> Using &#x27;shell&#x27; when &#x27;command&#x27; would suffice                       </span><span class="r3">│</span><span class="r8"> handlers/main.yml:12      </span><span class="r3">│</span>
+<span class="r3">├──────────┼────────────┼──────────────────────────────────────────────────────────────────┼───────────────────────────┤</span>
+<span class="r3">│</span><span class="r11">   P001   </span><span class="r3">│</span>   <span class="r14"> WARN</span>    <span class="r3">│</span><span class="r13"> Missing &#x27;become&#x27; declaration at play level                       </span><span class="r3">│</span><span class="r8"> playbook.yml:1            </span><span class="r3">│</span>
+<span class="r3">├──────────┼────────────┼──────────────────────────────────────────────────────────────────┼───────────────────────────┤</span>
+<span class="r3">│</span><span class="r11">  SEC001  </span><span class="r3">│</span>   <span class="r14"> WARN</span>    <span class="r3">│</span><span class="r13"> Potential hardcoded password detected                            </span><span class="r3">│</span><span class="r8"> vars/main.yml:5           </span><span class="r3">│</span>
+<span class="r3">├──────────┼────────────┼──────────────────────────────────────────────────────────────────┼───────────────────────────┤</span>
+<span class="r3">│</span><span class="r11">   M004   </span><span class="r3">│</span>   <span class="r14"> WARN</span>    <span class="r3">│</span><span class="r13"> Collection &#x27;community.general&#x27; not in requirements.yml           </span><span class="r3">│</span><span class="r8"> playbook.yml:30           </span><span class="r3">│</span>
+<span class="r3">├──────────┼────────────┼──────────────────────────────────────────────────────────────────┼───────────────────────────┤</span>
+<span class="r3">│</span><span class="r11">   M005   </span><span class="r3">│</span>   <span class="r14"> WARN</span>    <span class="r3">│</span><span class="r13"> Using deprecated &#x27;with_items&#x27; loop syntax                        </span><span class="r3">│</span><span class="r8"> tasks/main.yml:20         </span><span class="r3">│</span>
+<span class="r3">├──────────┼────────────┼──────────────────────────────────────────────────────────────────┼───────────────────────────┤</span>
+<span class="r3">│</span><span class="r11">   L002   </span><span class="r3">│</span>   <span class="r15"> HINT</span>    <span class="r3">│</span><span class="r13"> Consider using &#x27;ansible.builtin.debug&#x27; instead of &#x27;debug&#x27;        </span><span class="r3">│</span><span class="r8"> playbook.yml:50           </span><span class="r3">│</span>
+<span class="r3">├──────────┼────────────┼──────────────────────────────────────────────────────────────────┼───────────────────────────┤</span>
+<span class="r3">│</span><span class="r11">   L003   </span><span class="r3">│</span>   <span class="r15"> HINT</span>    <span class="r3">│</span><span class="r13"> Task name could be more descriptive                              </span><span class="r3">│</span><span class="r8"> tasks/main.yml:1          </span><span class="r3">│</span>
+<span class="r3">├──────────┼────────────┼──────────────────────────────────────────────────────────────────┼───────────────────────────┤</span>
+<span class="r3">│</span><span class="r11">   L004   </span><span class="r3">│</span>   <span class="r15"> HINT</span>    <span class="r3">│</span><span class="r13"> Consider adding &#x27;changed_when&#x27; for shell task                    </span><span class="r3">│</span><span class="r8"> handlers/main.yml:12      </span><span class="r3">│</span>
+<span class="r3">└──────────┴────────────┴──────────────────────────────────────────────────────────────────┴───────────────────────────┘</span>
+
+<span class="r1">──────────────────────────────────────────────── </span><span class="r8">Generated by APME CLI</span><span class="r1"> ─────────────────────────────────────────────────</span>
+
+</code></pre>
+</body>
+</html>
