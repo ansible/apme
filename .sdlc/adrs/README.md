@@ -25,6 +25,7 @@ This directory contains the Architecture Decision Records (ADRs) for APME.
 | [ADR-017](ADR-017-trust-and-verify-agent-sdlc.md) | Trust-and-verify Agent SDLC Invocation | Accepted | 2026-03 |
 | [ADR-018](ADR-018-mypy-strict-type-checking.md) | mypy Strict Mode Type Checking | Accepted | 2026-03 |
 | [ADR-019](ADR-019-dependency-governance.md) | Dependency Governance Policy | Accepted | 2026-03 |
+| [ADR-020](ADR-020-persistence-layer.md) | Persistence Layer Requirements | Proposed | 2026-03 |
 
 ## Categories
 
@@ -33,6 +34,7 @@ This directory contains the Architecture Decision Records (ADRs) for APME.
 - ADR-004: Podman pod deployment
 - ADR-005: No service discovery
 - ADR-012: Scaling strategy
+- ADR-020: Persistence layer requirements (proposed)
 
 ### Engine & Rules
 - ADR-002: OPA/Rego hybrid rules
@@ -71,7 +73,7 @@ Original planning ADRs that were superseded by implementation decisions:
 ## Creating New ADRs
 
 1. Copy the template from `../.sdlc/templates/adr.md`
-2. Use the next available number (currently ADR-020)
+2. Use the next available number (currently ADR-021)
 3. Include:
    - Status (Proposed → Accepted)
    - Date
@@ -106,3 +108,4 @@ Original planning ADRs that were superseded by implementation decisions:
 | 017 | 2026-03 | Trust-and-verify agent SDLC invocation |
 | 018 | 2026-03 | mypy strict mode type checking |
 | 019 | 2026-03 | Dependency governance policy |
+| 020 | 2026-03 | Persistence layer requirements (proposed) |
