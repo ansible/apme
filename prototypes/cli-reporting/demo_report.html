@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+.r1 {color: #00ff00; text-decoration-color: #00ff00}
+.r2 {color: #000080; text-decoration-color: #000080; font-weight: bold}
+.r3 {color: #800000; text-decoration-color: #800000}
+.r4 {color: #800000; text-decoration-color: #800000; font-weight: bold}
+.r5 {color: #808000; text-decoration-color: #808000}
+.r6 {color: #000080; text-decoration-color: #000080}
+.r7 {color: #7f7f7f; text-decoration-color: #7f7f7f}
+.r8 {font-weight: bold}
+.r9 {font-style: italic}
+.r10 {color: #c0c0c0; text-decoration-color: #c0c0c0; background-color: #000087; font-weight: bold}
+.r11 {color: #008080; text-decoration-color: #008080}
+.r12 {color: #c0c0c0; text-decoration-color: #c0c0c0; background-color: #800000; font-weight: bold}
+.r13 {color: #000000; text-decoration-color: #000000; background-color: #808000}
+.r14 {color: #c0c0c0; text-decoration-color: #c0c0c0; background-color: #000080}
+body {
+    color: #000000;
+    background-color: #ffffff;
+}
+</style>
+</head>
+<body>
+    <pre style="font-family:Menlo,'DejaVu Sans Mono',consolas,'Courier New',monospace"><code style="font-family:inherit">
+<span class="r1">────────────────────────────────────────────────── </span><span class="r2">APME Scan Results</span><span class="r1"> ───────────────────────────────────────────────────</span>
+
+<span class="r3">╭────────────────────────────────────────────────────── Summary ───────────────────────────────────────────────────────╮</span>
+<span class="r3">│</span> Status: <span class="r4">FAILED</span>                                                                                                       <span class="r3">│</span>
+<span class="r3">│</span>                                                                                                                      <span class="r3">│</span>
+<span class="r3">│</span> <span class="r3">● Errors:</span> 2                                                                                                          <span class="r3">│</span>
+<span class="r3">│</span> <span class="r5">● Warnings:</span> 5                                                                                                        <span class="r3">│</span>
+<span class="r3">│</span> <span class="r6">● Hints:</span> 2                                                                                                           <span class="r3">│</span>
+<span class="r3">│</span> <span class="r7">─────────────</span>                                                                                                        <span class="r3">│</span>
+<span class="r3">│</span> <span class="r8">Total:</span> 9 issues in 23 files                                                                                          <span class="r3">│</span>
+<span class="r3">│</span> <span class="r7">Scan time: 847ms</span>                                                                                                     <span class="r3">│</span>
+<span class="r3">╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯</span>
+
+<span class="r9">                                                         Issues                                                         </span>
+<span class="r6">┏━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓</span>
+<span class="r6">┃</span><span class="r10">    Rule    </span><span class="r6">┃</span><span class="r10">  Severity  </span><span class="r6">┃</span><span class="r10"> Message                                                   </span><span class="r6">┃</span><span class="r10"> Location                       </span><span class="r6">┃</span>
+<span class="r6">┡━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩</span>
+<span class="r6">│</span><span class="r11">    L001    </span><span class="r6">│</span>   <span class="r12"> ERROR</span>   <span class="r6">│</span> Module &#x27;apt&#x27; should use FQCN &#x27;ansible.builtin.apt&#x27;        <span class="r6">│</span><span class="r7"> playbook.yml:15                </span><span class="r6">│</span>
+<span class="r6">│</span><span class="r11">    L001    </span><span class="r6">│</span>   <span class="r12"> ERROR</span>   <span class="r6">│</span> Module &#x27;yum&#x27; should use FQCN &#x27;ansible.builtin.yum&#x27;        <span class="r6">│</span><span class="r7"> playbook.yml:23                </span><span class="r6">│</span>
+<span class="r6">│</span><span class="r11">    M002    </span><span class="r6">│</span>   <span class="r13"> WARN</span>    <span class="r6">│</span> Parameter &#x27;state=latest&#x27; deprecated in ansible-core 2.16+ <span class="r6">│</span><span class="r7"> tasks/install.yml:8            </span><span class="r6">│</span>
+<span class="r6">│</span><span class="r11">    M003    </span><span class="r6">│</span>   <span class="r13"> WARN</span>    <span class="r6">│</span> Module &#x27;include&#x27; deprecated, use                          <span class="r6">│</span><span class="r7"> playbook.yml:45                </span><span class="r6">│</span>
+<span class="r6">│</span><span class="r11">            </span><span class="r6">│</span>            <span class="r6">│</span> &#x27;ansible.builtin.include_tasks&#x27;                           <span class="r6">│</span><span class="r7">                                </span><span class="r6">│</span>
+<span class="r6">│</span><span class="r11">    R001    </span><span class="r6">│</span>   <span class="r13"> WARN</span>    <span class="r6">│</span> Using &#x27;shell&#x27; when &#x27;command&#x27; would suffice                <span class="r6">│</span><span class="r7"> handlers/main.yml:12           </span><span class="r6">│</span>
+<span class="r6">│</span><span class="r11">   SEC001   </span><span class="r6">│</span>   <span class="r13"> WARN</span>    <span class="r6">│</span> Potential hardcoded password detected                     <span class="r6">│</span><span class="r7"> vars/secrets.yml:5             </span><span class="r6">│</span>
+<span class="r6">│</span><span class="r11">    P001    </span><span class="r6">│</span>   <span class="r13"> WARN</span>    <span class="r6">│</span> Missing &#x27;become&#x27; declaration at play level                <span class="r6">│</span><span class="r7"> playbook.yml:1                 </span><span class="r6">│</span>
+<span class="r6">│</span><span class="r11">    L002    </span><span class="r6">│</span>   <span class="r14"> HINT</span>    <span class="r6">│</span> Consider using &#x27;ansible.builtin.debug&#x27; instead of &#x27;debug&#x27; <span class="r6">│</span><span class="r7"> playbook.yml:50                </span><span class="r6">│</span>
+<span class="r6">│</span><span class="r11">    L003    </span><span class="r6">│</span>   <span class="r14"> HINT</span>    <span class="r6">│</span> Task name could be more descriptive                       <span class="r6">│</span><span class="r7"> tasks/install.yml:1            </span><span class="r6">│</span>
+<span class="r6">└────────────┴────────────┴───────────────────────────────────────────────────────────┴────────────────────────────────┘</span>
+
+<span class="r8">Issues by File</span>
+<span class="r15">├── </span><span class="r11">playbook.yml</span>
+<span class="r15">│   ├── </span><span class="r3">✗</span> L15: L001 - Module &#x27;apt&#x27; should use FQCN &#x27;ansible.builtin.apt&#x27;
+<span class="r15">│   ├── </span><span class="r3">✗</span> L23: L001 - Module &#x27;yum&#x27; should use FQCN &#x27;ansible.builtin.yum&#x27;
+<span class="r15">│   ├── </span><span class="r5">⚠</span> L45: M003 - Module &#x27;include&#x27; deprecated, use &#x27;ansible.builtin.include_tasks&#x27;
+<span class="r15">│   ├── </span><span class="r5">⚠</span> L1: P001 - Missing &#x27;become&#x27; declaration at play level
+<span class="r15">│   └── </span><span class="r6">ℹ</span> L50: L002 - Consider using &#x27;ansible.builtin.debug&#x27; instead of &#x27;debug&#x27;
+<span class="r15">├── </span><span class="r11">tasks/install.yml</span>
+<span class="r15">│   ├── </span><span class="r5">⚠</span> L8: M002 - Parameter &#x27;state=latest&#x27; deprecated in ansible-core 2.16+
+<span class="r15">│   └── </span><span class="r6">ℹ</span> L1: L003 - Task name could be more descriptive
+<span class="r15">├── </span><span class="r11">handlers/main.yml</span>
+<span class="r15">│   └── </span><span class="r5">⚠</span> L12: R001 - Using &#x27;shell&#x27; when &#x27;command&#x27; would suffice
+<span class="r15">└── </span><span class="r11">vars/secrets.yml</span>
+<span class="r15">    └── </span><span class="r5">⚠</span> L5: SEC001 - Potential hardcoded password detected
+
+</code></pre>
+</body>
+</html>
