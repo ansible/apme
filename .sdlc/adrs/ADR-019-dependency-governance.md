@@ -10,7 +10,7 @@ Accepted
 
 ## Context
 
-APME currently declares 13 runtime dependencies in `pyproject.toml`. A recent audit found 4 that are unused or build-time-only (`setuptools`, `grpcio-tools`, `gitdb`, `smmap`), and 2 (`tabulate`, `filelock`) that could be replaced by internal code or stdlib.
+APME currently declares 14 runtime dependencies in `pyproject.toml`. A recent audit found 4 that are unused or build-time-only (`setuptools`, `grpcio-tools`, `gitdb`, `smmap`), 1 (`requests`) that overlaps with an existing dep (`httpx`), and 2 (`tabulate`, `filelock`) that could be replaced by internal code or stdlib.
 
 Every dependency is a maintenance liability: version bumps, security advisories, license reviews, type-stub availability for mypy strict (ADR-018), and transitive-dependency risk. The project needs a clear philosophy for when a third-party package is justified versus when internal code is the better choice.
 
@@ -32,13 +32,13 @@ The guiding principle: for core data-processing problems (parsing, protocols, al
 
 Dependencies that provide complex, domain-specific functionality we could not reasonably replicate in-house. Justified by deep algorithmic complexity or protocol-level interop:
 
-| Package | Stars | Justification |
-|---------|-------|---------------|
+| Package | Stars (as of 2026-03) | Justification |
+|---------|----------------------|---------------|
 | `grpcio` | ~65k | gRPC protocol implementation |
 | `PyYAML` | ~2.6k | YAML 1.1 parser |
 | `ruamel.yaml` | ~600 | Round-trip YAML 1.2 with comment preservation |
 | `rapidfuzz` | ~2.7k | C-extension fuzzy string matching |
-| `httpx` | ~13.5k | Async-capable HTTP client |
+| `httpx` | ~13.5k | Async-capable HTTP client (also covers sync use cases served by `requests`) |
 | `jsonpickle` | ~1.3k | Complex object serialization |
 | `joblib` | ~3.9k | Parallel execution and caching |
 
@@ -46,10 +46,11 @@ Dependencies that provide complex, domain-specific functionality we could not re
 
 Small, focused functionality where writing and testing our own code gives us full control, eliminates upgrade churn, and keeps the install footprint minimal:
 
-| Package | Stars | Status | Replacement |
-|---------|-------|--------|-------------|
+| Package | Stars (as of 2026-03) | Status | Replacement |
+|---------|----------------------|--------|-------------|
 | `tabulate` | ~2.1k | Replace | Internal ANSI `table()` function |
-| `filelock` | ~940 | Evaluate | `fcntl.flock()` — APME runs exclusively on Linux (Podman) |
+| `requests` | ~52.5k | Consolidate | Already have `httpx`; migrate the 1 file that uses `requests` |
+| `filelock` | ~940 | Evaluate | `fcntl.flock()` — APME targets Linux containers (Podman/Docker); `fcntl` is POSIX-only, so a cross-platform fallback would be needed if non-Linux support is added |
 
 ### New Dependency Checklist
 
@@ -91,6 +92,7 @@ If the answer to question 1 is "convenience wrapper," the default answer is **no
 - Remove `gitdb`, `smmap` from `[project.dependencies]` (unused; leftover from removed GitPython)
 - Move `setuptools` to `[build-system] requires` only; move `grpcio-tools` to `[project.optional-dependencies] dev`
 - Replace `tabulate` with internal ANSI `table()` when the ANSI abstraction lands
+- Consolidate `requests` into `httpx` (1 file to migrate)
 - Evaluate replacing `filelock` with an `fcntl.flock()` wrapper
 
 ## Related Decisions
