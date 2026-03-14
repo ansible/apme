@@ -19,6 +19,7 @@ dependencies = [
     "joblib",
     "grpcio>=1.60",
     "httpx",
+    "ansible-lint",
 ]
 
 [project.optional-dependencies]

@@ -236,6 +236,62 @@ with open(path, "w") as f:
 
 ---
 
+### ansible-lint
+
+**Package**: `ansible-lint`
+**Purpose**: Complementary linting and auto-fixing in the `apme fix` pipeline (Phase 5).
+
+#### Installation
+
+```bash
+pip install ansible-lint
+```
+
+Included as a core dependency in `pyproject.toml` — installed automatically with `pip install .` or `pip install -e .`.
+
+#### Usage Pattern
+
+ansible-lint is invoked as a subprocess in the fix pipeline, not imported as a Python library:
+
+```python
+from apme_engine.lint_runner import run_ansible_lint
+
+# Report-only mode (dry-run)
+result = run_ansible_lint(target_path, fix=False, profile="production")
+
+# Fix mode (auto-correct violations)
+result = run_ansible_lint(target_path, fix=True, profile="production")
+
+# Custom config file
+result = run_ansible_lint(target_path, fix=True, profile="production",
+                          config_file="/path/to/.ansible-lint.yml")
+```
+
+#### CLI Integration
+
+```bash
+# Default: production profile, ansible-lint runs as Phase 5
+apme-scan fix --apply /path/to/project
+
+# Custom profile
+apme-scan fix --apply --lint-profile shared /path/to/project
+
+# Custom config file
+apme-scan fix --apply --lint-config /path/to/.ansible-lint.yml /path/to/project
+
+# Skip ansible-lint
+apme-scan fix --apply --no-lint /path/to/project
+```
+
+#### Key Features Used
+
+- `--fix` flag for auto-correcting violations
+- `--profile` flag for selecting strictness level (min, basic, moderate, safety, shared, production)
+- `-c` flag for custom config files
+- Automatic detection of `.ansible-lint` config in the target repo
+
+---
+
 ## Development Dependencies
 
 ### pytest
@@ -359,6 +415,7 @@ def safe_transform(playbook_path: Path) -> tuple[bool, str]:
 |------------|-------------|-------------|-------|
 | Python | 3.11 | 3.12 | Type syntax requirements |
 | ansible-risk-insight | 0.1.0 | latest | Core scanner |
+| ansible-lint | latest | latest | Fix pipeline Phase 5 (auto-fix + production profile) |
 | langgraph | 0.1.0 | latest | Agent workflows |
 | typer | 0.9.0 | latest | CLI framework |
 | streamlit | 1.28.0 | latest | Dashboard |

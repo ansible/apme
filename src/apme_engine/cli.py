@@ -482,10 +482,11 @@ def _scan_files_local(file_paths: list[str], repo_root: str, opa_bundle: str | N
 
 
 def _run_fix(args: argparse.Namespace) -> None:
-    """Format → idempotency check → scan → remediate (convergence loop).
+    """Format → idempotency check → scan → remediate → ansible-lint (convergence loop).
 
     Args:
-        args: Parsed CLI namespace with target, exclude, apply, check, max_passes, opa_bundle.
+        args: Parsed CLI namespace with target, exclude, apply, check, max_passes, opa_bundle,
+            lint_profile, lint_config, no_lint.
 
     """
     target = Path(args.target).resolve()
@@ -572,14 +573,49 @@ def _run_fix(args: argparse.Namespace) -> None:
     sys.stderr.write("Phase 4: Remediating...\n")
     report = engine.remediate(yaml_files, apply=apply_changes)
 
-    # Phase 5: Report
-    sys.stderr.write("Phase 5: Summary\n")
+    # Phase 5: ansible-lint
+    lint_result = None
+    if not getattr(args, "no_lint", False):
+        from apme_engine.lint_runner import run_ansible_lint
+
+        sys.stderr.write("Phase 5: ansible-lint...\n")
+        lint_profile = getattr(args, "lint_profile", "production")
+        lint_config = getattr(args, "lint_config", None)
+        try:
+            lint_result = run_ansible_lint(
+                target,
+                fix=apply_changes,
+                profile=lint_profile,
+                config_file=lint_config,
+            )
+            if lint_result.stdout:
+                sys.stdout.write(lint_result.stdout)
+            if lint_result.stderr:
+                sys.stderr.write(lint_result.stderr)
+
+            if lint_result.returncode == 0:
+                sys.stderr.write("  ansible-lint: clean\n")
+            elif apply_changes:
+                sys.stderr.write(f"  ansible-lint: applied fixes (exit code {lint_result.returncode})\n")
+            else:
+                sys.stderr.write(f"  ansible-lint: {lint_result.returncode} (violations found)\n")
+        except FileNotFoundError as e:
+            sys.stderr.write(f"  WARNING: {e}\n")
+    else:
+        sys.stderr.write("Phase 5: ansible-lint (skipped)\n")
+
+    # Phase 6: Report
+    sys.stderr.write("Phase 6: Summary\n")
     sys.stderr.write(f"  Tier 1 (deterministic):  {report.fixed} fixed\n")
     sys.stderr.write(f"  Tier 2 (AI-proposable):  {len(report.remaining_ai)} remaining\n")
     sys.stderr.write(f"  Tier 3 (manual review):  {len(report.remaining_manual)} remaining\n")
     sys.stderr.write(f"  Passes:                  {report.passes}\n")
     if report.oscillation_detected:
         sys.stderr.write("  WARNING: oscillation detected, stopped early\n")
+    if lint_result is not None:
+        status = "clean" if lint_result.returncode == 0 else f"exit {lint_result.returncode}"
+        mode = "fix" if lint_result.fixed else "report"
+        sys.stderr.write(f"  ansible-lint ({mode}):    {status}\n")
 
     if not apply_changes and report.applied_patches:
         sys.stderr.write(f"\n{len(report.applied_patches)} file(s) would be patched (use --apply to write):\n")
@@ -722,6 +758,9 @@ def main() -> None:
     fix_parser.add_argument("--max-passes", type=int, default=5, help="Max convergence passes (default: 5)")
     fix_parser.add_argument("--no-ai", action="store_true", help="Skip AI escalation (deterministic fixes only)")
     fix_parser.add_argument("--opa-bundle", default=None, help="Path to OPA bundle directory")
+    fix_parser.add_argument("--lint-profile", default="production", help="ansible-lint profile (default: production)")
+    fix_parser.add_argument("--lint-config", default=None, help="Path to ansible-lint config file (passed as -c)")
+    fix_parser.add_argument("--no-lint", action="store_true", help="Skip the ansible-lint phase")
 
     # ── health-check ──
     health_parser = subparsers.add_parser(
