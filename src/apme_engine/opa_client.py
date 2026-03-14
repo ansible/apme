@@ -10,6 +10,17 @@ from apme_engine.engine.models import ViolationDict, YAMLDict
 
 OPA_IMAGE = "docker.io/openpolicyagent/opa:latest"
 
+_MAX_CONSECUTIVE_TIMEOUTS = 3
+_consecutive_timeouts = 0
+_opa_disabled = False
+
+
+def reset_opa_circuit_breaker() -> None:
+    """Reset the timeout circuit-breaker so OPA eval is re-enabled."""
+    global _consecutive_timeouts, _opa_disabled
+    _consecutive_timeouts = 0
+    _opa_disabled = False
+
 
 def _run_opa_podman(
     input_str: str,
@@ -195,12 +206,16 @@ def run_opa(
     Raises:
         FileNotFoundError: If bundle_path is not a directory.
     """
+    global _consecutive_timeouts, _opa_disabled
+
+    if _opa_disabled:
+        return []
+
     bundle = Path(bundle_path)
     if not bundle.is_dir():
         raise FileNotFoundError(f"OPA bundle path is not a directory: {bundle_path}")
     input_str = json.dumps(input_data)
     timeout = 60
-    # Prefer Podman container unless OPA_USE_PODMAN=0 (then use local opa only).
     use_podman = os.environ.get("OPA_USE_PODMAN", "1").lower() not in ("0", "false", "no")
 
     out = None
@@ -209,6 +224,21 @@ def run_opa(
             out = _run_opa_podman(input_str, bundle, entrypoint, timeout)
         except FileNotFoundError:
             out = None  # fall back to local opa
+        except subprocess.TimeoutExpired:
+            _consecutive_timeouts += 1
+            input_kb = len(input_str) / 1024
+            if _consecutive_timeouts >= _MAX_CONSECUTIVE_TIMEOUTS:
+                _opa_disabled = True
+                sys.stderr.write(
+                    f"OPA eval timed out {_consecutive_timeouts} consecutive times "
+                    f"(input: {input_kb:.0f} KB). Disabling OPA validation for this run.\n"
+                )
+            else:
+                sys.stderr.write(
+                    f"OPA eval timed out after {timeout}s via Podman (input: {input_kb:.0f} KB) "
+                    f"[{_consecutive_timeouts}/{_MAX_CONSECUTIVE_TIMEOUTS}].\n"
+                )
+            return []
     if out is None:
         try:
             out = _run_opa_local(input_str, bundle, entrypoint, timeout)
@@ -222,6 +252,23 @@ def run_opa(
                     "opa: command not found. Install OPA or set OPA_USE_PODMAN=1 to use the OPA container.\n"
                 )
             return []
+        except subprocess.TimeoutExpired:
+            _consecutive_timeouts += 1
+            input_kb = len(input_str) / 1024
+            if _consecutive_timeouts >= _MAX_CONSECUTIVE_TIMEOUTS:
+                _opa_disabled = True
+                sys.stderr.write(
+                    f"OPA eval timed out {_consecutive_timeouts} consecutive times "
+                    f"(input: {input_kb:.0f} KB). Disabling OPA validation for this run.\n"
+                )
+            else:
+                sys.stderr.write(
+                    f"OPA eval timed out after {timeout}s via local binary (input: {input_kb:.0f} KB) "
+                    f"[{_consecutive_timeouts}/{_MAX_CONSECUTIVE_TIMEOUTS}].\n"
+                )
+            return []
+
+    _consecutive_timeouts = 0
 
     if out.returncode != 0:
         sys.stderr.write(f"OPA eval failed: {out.stderr or out.stdout}\n")
