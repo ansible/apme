@@ -1,6 +1,7 @@
 """Tests for apme_engine.opa_client."""
 
 import json
+import subprocess
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock, patch
@@ -8,7 +9,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from apme_engine.engine.models import YAMLDict
-from apme_engine.opa_client import run_opa, run_opa_test
+from apme_engine.opa_client import reset_opa_circuit_breaker, run_opa, run_opa_test
+
+
+@pytest.fixture(autouse=True)  # type: ignore[untyped-decorator]
+def _reset_circuit_breaker() -> None:
+    """Reset the OPA timeout circuit-breaker before each test."""
+    reset_opa_circuit_breaker()
 
 
 class TestRunOpa:
@@ -237,6 +244,84 @@ class TestRunOpa:
             run_opa(cast(YAMLDict, sample_hierarchy_payload), str(opa_bundle_path))
         kwargs = mock_run.call_args[1]
         assert kwargs["input"] == json.dumps(sample_hierarchy_payload)
+
+    def test_timeout_circuit_breaker_disables_after_3(self, opa_bundle_path: Path) -> None:
+        """After 3 consecutive timeouts, run_opa short-circuits without calling subprocess.
+
+        Args:
+            opa_bundle_path: Fixture providing path to OPA bundle.
+
+        """
+        import apme_engine.opa_client as mod
+
+        with (
+            patch.dict("os.environ", {"OPA_USE_PODMAN": "0"}),
+            patch("apme_engine.opa_client.subprocess.run", side_effect=subprocess.TimeoutExpired("opa", 60)),
+            patch("sys.stderr.write"),
+        ):
+            for _ in range(3):
+                run_opa({"hierarchy": []}, str(opa_bundle_path))
+
+        assert mod._opa_disabled is True
+        assert mod._consecutive_timeouts == 3
+
+        with patch("apme_engine.opa_client.subprocess.run") as mock_run:
+            result = run_opa({"hierarchy": []}, str(opa_bundle_path))
+        assert result == []
+        mock_run.assert_not_called()
+
+    def test_successful_call_resets_timeout_counter(
+        self, opa_bundle_path: Path, sample_hierarchy_payload: YAMLDict, opa_eval_result_empty: YAMLDict
+    ) -> None:
+        """A successful OPA call resets the consecutive timeout counter to 0.
+
+        Args:
+            opa_bundle_path: Fixture providing path to OPA bundle.
+            sample_hierarchy_payload: Fixture providing sample hierarchy data.
+            opa_eval_result_empty: Fixture providing empty OPA eval result.
+
+        """
+        import apme_engine.opa_client as mod
+
+        with (
+            patch.dict("os.environ", {"OPA_USE_PODMAN": "0"}),
+            patch("apme_engine.opa_client.subprocess.run", side_effect=subprocess.TimeoutExpired("opa", 60)),
+            patch("sys.stderr.write"),
+        ):
+            run_opa({"hierarchy": []}, str(opa_bundle_path))
+            run_opa({"hierarchy": []}, str(opa_bundle_path))
+
+        assert mod._consecutive_timeouts == 2
+
+        with patch("apme_engine.opa_client.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout=json.dumps(opa_eval_result_empty), stderr="")
+            run_opa(sample_hierarchy_payload, str(opa_bundle_path))
+
+        assert mod._consecutive_timeouts == 0
+        assert mod._opa_disabled is False
+
+    def test_reset_circuit_breaker_re_enables(self, opa_bundle_path: Path) -> None:
+        """reset_opa_circuit_breaker re-enables OPA after it was disabled by timeouts.
+
+        Args:
+            opa_bundle_path: Fixture providing path to OPA bundle.
+
+        """
+        import apme_engine.opa_client as mod
+
+        mod._opa_disabled = True
+        mod._consecutive_timeouts = 3
+
+        reset_opa_circuit_breaker()
+
+        assert mod._opa_disabled is False
+        assert mod._consecutive_timeouts == 0
+
+        with patch("apme_engine.opa_client.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout=json.dumps({"result": []}), stderr="")
+            result = run_opa({"hierarchy": []}, str(opa_bundle_path))
+        mock_run.assert_called_once()
+        assert result == []
 
 
 class TestRunOpaTest:

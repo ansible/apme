@@ -334,6 +334,9 @@ def identify_lines_with_jsonpath(
             pass
         elif p in ["pre_tasks", "tasks", "post_tasks", "handlers", "block", "rescue", "always"]:
             blocks = find_child_yaml_block(current_lines, key=p, line_num_offset=current_line_num)
+            if not blocks:
+                logger.debug(f"no blocks found for key '{p}' in jsonpath '{jsonpath}'")
+                return None, None
             current_lines, line_num_tuple = blocks[0]
             current_line_num = line_num_tuple[0]
         else:
