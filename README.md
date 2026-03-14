@@ -36,6 +36,7 @@ Seven containers, one pod. All inter-service communication is gRPC. The CLI is r
 - **Structured diagnostics** — every validator reports per-rule timing data via the gRPC contract; use `-v` for summaries or `-vv` for full per-rule breakdowns.
 - **Collection cache** — pull from Galaxy or clone GitHub orgs; mount read-only into the Ansible validator. Managed by a dedicated Cache Maintainer service.
 - **YAML formatter** — normalize indentation, key ordering, Jinja spacing, and tab removal with comment preservation. Idempotent by design; runs as a pre-pass before semantic fixes.
+- **ansible-lint integration** — runs `ansible-lint --fix` with the `production` profile as a final polish step in the `fix` pipeline. Configurable via `--lint-profile`, `--lint-config`, or `--no-lint`.
 - **Colocated tests** — every rule has a `*_test.py` (native), `*_test.rego` (OPA), or `.md` doc with violation/pass examples usable as integration tests.
 
 ## Quick start
@@ -72,8 +73,17 @@ apme-scan format --apply /path/to/project
 # CI check mode (exit 1 if changes needed)
 apme-scan format --check /path/to/project
 
-# Full fix pipeline: format → idempotency check → re-scan → modernize
+# Full fix pipeline: format → idempotency check → scan → remediate → ansible-lint
 apme-scan fix --apply /path/to/project
+
+# Fix with custom ansible-lint profile
+apme-scan fix --apply --lint-profile shared /path/to/project
+
+# Fix with custom ansible-lint config file
+apme-scan fix --apply --lint-config /path/to/.ansible-lint.yml /path/to/project
+
+# Fix without ansible-lint phase
+apme-scan fix --apply --no-lint /path/to/project
 ```
 
 ### Container deployment (Podman)
@@ -135,6 +145,7 @@ src/apme_engine/
   ├── daemon/           gRPC server implementations
   ├── collection_cache/ Galaxy/GitHub cache management
   ├── formatter.py      YAML formatter (phase 1 remediation)
+  ├── lint_runner.py    ansible-lint subprocess runner (phase 5)
   ├── cli.py            CLI entry point (scan, format, fix, health-check)
   └── runner.py         scan orchestration
 containers/             Dockerfiles + Podman pod config
@@ -169,7 +180,7 @@ tests/                  unit, integration, rule doc coverage
 
 ### Phase 2 — Modernization Engine
 
-- `fix` subcommand: format → idempotency gate → re-scan → semantic transforms.
+- `fix` subcommand: format → idempotency gate → scan → remediate → ansible-lint → report.
 - **`is_finding_resolvable()` partition**: each rule declares a `fixable` attribute; the fix pipeline splits findings into auto-fixable vs manual/AI.
 - **Multi-pass convergence loop**: scan → fix → rescan → repeat until stable or oscillation detected (max N passes).
 - **`module_metadata.json`**: machine-readable module lifecycle data (introduced, deprecated, removed, parameter renames) generated from `ansible-doc` across core versions. M-series rules become data-driven lookups instead of per-rule hardcoded logic.

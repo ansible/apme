@@ -73,13 +73,19 @@ Phase 4: Remediate (Tier 1 — deterministic)
   └─► apply Tier 1 transforms from the Transform Registry
   └─► re-scan → repeat until converged or oscillation (max --max-passes)
 
-Phase 5: AI Escalation (Tier 2 — AI-proposable)
+Phase 5: ansible-lint
+  └─► run ansible-lint with production profile (default)
+  └─► if --apply: run with --fix to auto-correct violations
+  └─► if not --apply: report-only mode (show findings)
+  └─► configurable via --lint-profile, --lint-config, --no-lint
+
+Phase 6: AI Escalation (Tier 2 — AI-proposable)
   └─► route Tier 2 violations to OpenLLM (if available)
   └─► generate patches with confidence scores
   └─► apply accepted patches (--auto) or present for review
 
-Phase 6: Report
-  └─► summary: Tier 1 fixed, Tier 2 proposals, Tier 3 manual review
+Phase 7: Report
+  └─► summary: Tier 1 fixed, ansible-lint results, Tier 2 proposals, Tier 3 manual review
 ```
 
 ---
@@ -92,6 +98,7 @@ Phase 6: Report
 | Scan | Primary service (gRPC) or CLI (in-process) | Already implemented |
 | Remediation Engine | Primary service (`Fix` RPC) | Needs access to scan results and file content; can call OpenLLM |
 | Transform Registry | `src/apme_engine/remediation/transforms/` | Pure functions, no container needed |
+| ansible-lint | CLI (in-process, subprocess) | Runs `ansible-lint --fix` as a final polish step; pip dependency |
 | AI Escalation | OpenLLM daemon (gRPC) | Separate container, optional |
 
 ---
@@ -529,6 +536,9 @@ Options:
   --min-confidence N   AI confidence threshold (default: 0.0)
   --max-passes N       Max convergence passes (default: 5)
   --exclude PATTERN    Glob patterns to skip
+  --lint-profile NAME  ansible-lint profile (default: production)
+  --lint-config PATH   Path to ansible-lint config file (passed as -c)
+  --no-lint            Skip the ansible-lint phase
 ```
 
 ### Output
@@ -541,9 +551,13 @@ Phase 4: Remediating...
   Pass 1: 28 fixable (Tier 1) → applied 26, 2 failed
   Pass 2: 4 fixable (Tier 1) → applied 4
   Pass 3: 0 fixable → converged
-Phase 5: AI escalation (Tier 2)... 10 candidates → 8 proposals (skipped: --no-ai)
-Phase 6: Summary
+Phase 5: ansible-lint...
+  Running: ansible-lint --fix --profile production .
+  ansible-lint: applied fixes (exit code 2)
+Phase 6: AI escalation (Tier 2)... 10 candidates → 8 proposals (skipped: --no-ai)
+Phase 7: Summary
   Tier 1 (deterministic):  30 fixed
+  ansible-lint (fix):      exit 2
   Tier 2 (AI-proposable):  10 remaining → 8 proposals generated
   Tier 3 (manual review):   2 (policy/judgment required)
   Passes:    3
@@ -558,8 +572,9 @@ Phase 6: Summary
 3. **Convergence loop** — scan → transform → re-scan loop with oscillation detection
 4. **Fix RPC** — gRPC contract on Primary
 5. **CLI fix integration** — wire the existing `_run_fix` stub to the real engine
-6. **AI escalation** — OpenLLM gRPC client + prompt builder (Phase 3)
-7. **Web UI remediation queue** — accept/reject AI proposals (Phase 4)
+6. **ansible-lint integration** — subprocess runner with `--fix`/`--profile` support (done)
+7. **AI escalation** — OpenLLM gRPC client + prompt builder (Phase 3)
+8. **Web UI remediation queue** — accept/reject AI proposals (Phase 4)
 
 ---
 

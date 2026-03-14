@@ -64,6 +64,7 @@ src/apme_engine/
 ├── cli.py                  CLI entry point (scan, format, fix, health-check)
 ├── runner.py               run_scan() → ScanContext
 ├── formatter.py            YAML formatter (format_file, format_directory)
+├── lint_runner.py           ansible-lint subprocess runner (Phase 5 of fix pipeline)
 ├── opa_client.py           OPA eval (Podman or local binary)
 │
 ├── engine/                 ARI-based scanner
@@ -332,13 +333,23 @@ apme-scan format --apply --exclude "vendor/*" "tests/fixtures/*" .
 
 ### Fix pipeline
 
-The `fix` subcommand chains format → idempotency check → re-scan → modernize:
+The `fix` subcommand chains format → idempotency check → scan → remediate → ansible-lint → report:
 
 ```bash
+# Apply all fixes including ansible-lint --fix
 apme-scan fix --apply /path/to/project
+
+# Custom ansible-lint profile (default: production)
+apme-scan fix --apply --lint-profile shared /path/to/project
+
+# Custom ansible-lint config file
+apme-scan fix --apply --lint-config /path/to/.ansible-lint.yml /path/to/project
+
+# Skip ansible-lint phase
+apme-scan fix --apply --no-lint /path/to/project
 ```
 
-This runs the formatter, verifies idempotency (a second format pass produces zero diffs), then re-scans. The modernization step will be added in Phase 2.
+This runs the formatter, verifies idempotency (a second format pass produces zero diffs), scans for violations, applies deterministic remediation transforms, runs ansible-lint (with `--fix` when `--apply` is set), and reports results.
 
 ### gRPC Format RPC
 

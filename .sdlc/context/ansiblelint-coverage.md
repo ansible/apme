@@ -145,8 +145,9 @@ These are **APME-specific rules** with no direct ansible-lint equivalent. They u
 | **OPA** | Structural JSON checks (fast, declarative, data-driven) |
 | **Native** | Model-walking checks that need Python (variable tracking, heuristics, complex logic) |
 | **Ansible** | Checks that require ansible-core runtime (syntax check, argspec, plugin resolution) |
+| **ansible-lint** | Fix pipeline Phase 5: runs `ansible-lint --fix` with production profile as a final polish step |
 
-**No ansible-lint adapter** — we implement our own rules walking the ARI model. See `DESIGN_VALIDATORS.md` for rationale.
+**No ansible-lint adapter for scanning** — APME implements its own rules walking the ARI model for the scan/validation phase. See `DESIGN_VALIDATORS.md` for rationale. ansible-lint is used only in the fix pipeline as a complementary auto-fix step.
 
 ---
 

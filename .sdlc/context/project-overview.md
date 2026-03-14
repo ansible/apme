@@ -64,4 +64,4 @@ APME provides:
 
 - **ARI (Ansible Risk Insights)**: The underlying scanning engine
 - **x2a-convertor**: Reference implementation for conversion patterns
-- **ansible-lint**: Complementary linting tool
+- **ansible-lint**: Integrated as Phase 5 of the fix pipeline (`ansible-lint --fix --profile production`)
