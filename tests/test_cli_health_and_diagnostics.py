@@ -314,7 +314,7 @@ class TestScanDiagnosticsOutput:
         # Should include rule IDs
         assert "L026" in output or "L002" in output
 
-    def test_scan_vv_prints_per_rule_breakdown(self, mock_scan_response):
+    def test_scan_vv_prints_per_rule_breakdown(self, mock_scan_response, tmp_path):
         """scan -vv prints full per-rule breakdown for each validator."""
         stderr_io = StringIO()
         stdout_io = StringIO()
@@ -328,7 +328,10 @@ class TestScanDiagnosticsOutput:
             patch("apme_engine.cli.primary_pb2_grpc.PrimaryStub", return_value=mock_stub),
             patch("sys.stderr", stderr_io),
             patch("sys.stdout", stdout_io),
-            patch("sys.argv", ["apme-scan", "scan", "-vv", "--primary-addr", "localhost:50051", "."]),
+            patch(
+                "sys.argv",
+                ["apme-scan", "scan", "-vv", "--primary-addr", "localhost:50051", str(tmp_path)],
+            ),
         ):
             cli_module.main()
 
@@ -340,7 +343,7 @@ class TestScanDiagnosticsOutput:
         assert "L002" in output
         assert "L003" in output
 
-    def test_scan_vv_shows_metadata(self, mock_scan_response):
+    def test_scan_vv_shows_metadata(self, mock_scan_response, tmp_path):
         """scan -vv shows validator metadata."""
         stderr_io = StringIO()
         stdout_io = StringIO()
@@ -354,7 +357,10 @@ class TestScanDiagnosticsOutput:
             patch("apme_engine.cli.primary_pb2_grpc.PrimaryStub", return_value=mock_stub),
             patch("sys.stderr", stderr_io),
             patch("sys.stdout", stdout_io),
-            patch("sys.argv", ["apme-scan", "scan", "-vv", "--primary-addr", "localhost:50051", "."]),
+            patch(
+                "sys.argv",
+                ["apme-scan", "scan", "-vv", "--primary-addr", "localhost:50051", str(tmp_path)],
+            ),
         ):
             cli_module.main()
 
@@ -363,7 +369,7 @@ class TestScanDiagnosticsOutput:
         assert "metadata" in output.lower()
         assert "rules_checked" in output
 
-    def test_scan_json_v_includes_diagnostics(self, mock_scan_response):
+    def test_scan_json_v_includes_diagnostics(self, mock_scan_response, tmp_path):
         """scan --json -v includes diagnostics in JSON output."""
         stdout_io = StringIO()
 
@@ -375,7 +381,18 @@ class TestScanDiagnosticsOutput:
             patch("grpc.insecure_channel", return_value=mock_channel),
             patch("apme_engine.cli.primary_pb2_grpc.PrimaryStub", return_value=mock_stub),
             patch("sys.stdout", stdout_io),
-            patch("sys.argv", ["apme-scan", "scan", "--json", "-v", "--primary-addr", "localhost:50051", "."]),
+            patch(
+                "sys.argv",
+                [
+                    "apme-scan",
+                    "scan",
+                    "--json",
+                    "-v",
+                    "--primary-addr",
+                    "localhost:50051",
+                    str(tmp_path),
+                ],
+            ),
         ):
             cli_module.main()
 
