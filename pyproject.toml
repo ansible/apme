@@ -18,6 +18,7 @@ dependencies = [
     "rapidfuzz",
     "joblib",
     "grpcio>=1.60",
+    "protobuf>=4.21",
     "httpx",
 ]
 
