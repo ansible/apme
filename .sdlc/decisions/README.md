@@ -101,16 +101,6 @@ Decision Requests (DRs) provide a formal mechanism for:
 
 | DR | Title | Category | Priority | Raised |
 |----|-------|----------|----------|--------|
-| [DR-004](open/DR-004-aap-integration.md) | AAP Pre-Flight Integration | Architecture | Blocking | 2026-03-11 |
-| [DR-008](open/DR-008-data-persistence.md) | Scan Result Persistence | Architecture | Blocking | 2026-03-11 |
-| [DR-001](open/DR-001-version-specific-analysis.md) | Version-Specific Analysis Behavior | Product | High | 2026-03-11 |
-| [DR-007](open/DR-007-target-persona.md) | Target Persona Priority | Strategy | High | 2026-03-11 |
-| [DR-009](open/DR-009-licensing-model.md) | Licensing Model (OSS vs Open Core) | Strategy | High | 2026-03-11 |
-| [DR-002](open/DR-002-sbom-format.md) | SBOM Format and Scope | Technical | Medium | 2026-03-11 |
-| [DR-003](open/DR-003-dashboard-architecture.md) | Dashboard Architecture | Architecture | Medium | 2026-03-11 |
-| [DR-005](open/DR-005-ai-remediation.md) | AI-Assisted Remediation Execution | Technical | Medium | 2026-03-11 |
-| [DR-010](open/DR-010-version-coverage.md) | Ansible Version Coverage Range | Technical | Medium | 2026-03-11 |
-| [DR-006](open/DR-006-success-metrics.md) | Success Metrics Baselines | Product | Low | 2026-03-11 |
 
 ### Closed: Decided
 
@@ -118,12 +108,21 @@ Decision Requests (DRs) provide a formal mechanism for:
 |----|-------|----------|------|
 | [DR-011](closed/decided/DR-011-repository-location.md) | Repository Location and Visibility | GitHub public (ansible/apme) | 2026-03-12 |
 | [DR-012](closed/decided/DR-012-test-dr-process.md) | Just Testing the DR Process | Keep Current Approach | 2026-03-11 |
+| [DR-009](closed/decided/DR-009-licensing-model.md) | Licensing Model (OSS vs Open Core) | Apache 2.0 (Fully Open Source) | 2026-03-16 |
+| [DR-003](closed/decided/DR-003-dashboard-architecture.md) | Dashboard Architecture | Defer to v2 (mockups for feedback) | 2026-03-16 |
+| [DR-007](closed/decided/DR-007-target-persona.md) | Target Persona Priority | Balanced MVP (AAP UI patterns) | 2026-03-16 |
+| [DR-001](closed/decided/DR-001-version-specific-analysis.md) | Version-Specific Analysis | All options: default + single + matrix | 2026-03-16 |
+| [DR-006](closed/decided/DR-006-success-metrics.md) | Success Metrics Baselines | Establish baselines now | 2026-03-16 |
+| [DR-010](closed/decided/DR-010-version-coverage.md) | Ansible Version Coverage | Start minimal (2.18-2.20), expand on demand | 2026-03-16 |
 
 ### Closed: Deferred
 
 | DR | Title | Reason | Revisit |
 |----|-------|--------|---------|
-| *No deferrals yet* | | | |
+| [DR-004](closed/deferred/DR-004-aap-integration.md) | AAP Pre-Flight Integration | CLI-first focus for v1 | After v1 CLI complete |
+| [DR-008](closed/deferred/DR-008-data-persistence.md) | Scan Result Persistence | Follows DR-003 deferral | When dashboard work begins |
+| [DR-002](closed/deferred/DR-002-sbom-format.md) | SBOM Format and Scope | Part of REQ-003 scope | When security/compliance prioritized |
+| [DR-005](closed/deferred/DR-005-ai-remediation.md) | AI-Assisted Remediation | Brad investigating | When investigation complete |
 
 ### Closed: Superseded
 

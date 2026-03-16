@@ -155,13 +155,19 @@ Rationale:
 
 ## Decision
 
-**Status**: Open
-**Date**: —
-**Decided By**: —
+**Status**: Decided
+**Date**: 2026-03-16
+**Decided By**: Team
 
-**Decision**: —
+**Decision**: Option A — Fully Open Source (Apache 2.0)
 
-**Rationale**: —
+**Rationale**:
+- ansible-lint is MIT, x2a is Apache — ecosystem expectation
+- Enterprise adoption prioritizes permissive licenses
+- Differentiation from Spotter's commercial model
+- Can monetize via support contracts, SaaS, or professional services
 
 **Action Items**:
-- [ ] —
+- [ ] Add LICENSE file (Apache 2.0) to repository root
+- [ ] Add license badge to README.md
+- [ ] Update CONTRIBUTING.md with license terms

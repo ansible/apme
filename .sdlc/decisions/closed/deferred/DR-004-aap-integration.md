@@ -154,13 +154,21 @@ Phase 2 could add callback plugin for "zero-config" AAP experience.
 
 ## Decision
 
-**Status**: Open
-**Date**: —
-**Decided By**: —
+**Status**: Deferred
+**Date**: 2026-03-16
+**Decided By**: Team
 
-**Decision**: —
+**Decision**: Deferred — revisit after v1 CLI is complete
 
-**Rationale**: —
+**Rationale**:
+- CLI-first focus for v1 (per DR-007)
+- AAP integration is a significant architectural effort
+- Need v1 CLI complete before scoping AAP integration points
+- Will revisit when ready to prioritize enterprise AAP features
+
+**Revisit**: After v1 CLI is complete, when ready to think about AAP integration points
 
 **Action Items**:
-- [ ] —
+- [ ] Complete v1 CLI features first
+- [ ] Gather feedback from AAP users on integration preferences
+- [ ] Re-open this DR when AAP integration is prioritized

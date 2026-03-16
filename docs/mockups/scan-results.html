@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>APME Dashboard - All Scans</title>
+  <link rel="stylesheet" href="https://unpkg.com/@patternfly/patternfly@5.4.2/patternfly.min.css">
+  <style>
+    body {
+      background-color: #1b1d21;
+      color: #e0e0e0;
+      margin: 0;
+      font-family: var(--pf-v5-global--FontFamily--text);
+    }
+    .page-wrapper {
+      display: flex;
+      min-height: 100vh;
+    }
+    .sidebar {
+      width: 240px;
+      background-color: #151515;
+      border-right: 1px solid #3c3f42;
+    }
+    .sidebar-header {
+      padding: 16px 20px;
+      border-bottom: 1px solid #3c3f42;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .sidebar-logo {
+      width: 32px;
+      height: 32px;
+      background: linear-gradient(135deg, #ee0000, #a30000);
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: bold;
+      font-size: 14px;
+    }
+    .sidebar-title {
+      font-size: 16px;
+      font-weight: 600;
+    }
+    .nav-section {
+      padding: 16px 0;
+    }
+    .nav-item {
+      display: flex;
+      align-items: center;
+      padding: 10px 20px;
+      color: #b8bbbe;
+      text-decoration: none;
+      gap: 12px;
+      font-size: 14px;
+    }
+    .nav-item:hover {
+      background-color: #292c30;
+      color: #fff;
+    }
+    .nav-item.active {
+      background-color: #292c30;
+      color: #fff;
+      border-left: 3px solid #06c;
+      padding-left: 17px;
+    }
+    .nav-icon {
+      width: 20px;
+      text-align: center;
+    }
+    .main-content {
+      flex: 1;
+      padding: 24px 32px;
+      background-color: #1b1d21;
+    }
+    .page-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 24px;
+    }
+    .page-title {
+      font-size: 24px;
+      font-weight: 400;
+      margin: 0;
+    }
+    .header-actions {
+      display: flex;
+      gap: 12px;
+    }
+    .btn {
+      border: none;
+      padding: 8px 16px;
+      border-radius: 4px;
+      font-size: 14px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .btn-primary {
+      background-color: #06c;
+      color: #fff;
+    }
+    .btn-primary:hover {
+      background-color: #004d99;
+    }
+    .btn-secondary {
+      background-color: transparent;
+      color: #73bcf7;
+      border: 1px solid #3c3f42;
+    }
+    .btn-secondary:hover {
+      background-color: #292c30;
+    }
+    .toolbar {
+      display: flex;
+      gap: 16px;
+      margin-bottom: 16px;
+      align-items: center;
+    }
+    .search-input {
+      background-color: #212427;
+      border: 1px solid #3c3f42;
+      border-radius: 4px;
+      padding: 8px 12px;
+      color: #e0e0e0;
+      font-size: 14px;
+      width: 300px;
+    }
+    .search-input::placeholder {
+      color: #6a6e73;
+    }
+    .filter-dropdown {
+      background-color: #212427;
+      border: 1px solid #3c3f42;
+      border-radius: 4px;
+      padding: 8px 12px;
+      color: #e0e0e0;
+      font-size: 14px;
+    }
+    .data-table {
+      width: 100%;
+      background-color: #212427;
+      border: 1px solid #3c3f42;
+      border-radius: 4px;
+      border-collapse: collapse;
+    }
+    .data-table th {
+      text-align: left;
+      padding: 12px 16px;
+      background-color: #292c30;
+      border-bottom: 1px solid #3c3f42;
+      font-weight: 600;
+      font-size: 14px;
+      color: #e0e0e0;
+      cursor: pointer;
+    }
+    .data-table th:hover {
+      background-color: #3c3f42;
+    }
+    .data-table th .sort-icon {
+      margin-left: 8px;
+      opacity: 0.5;
+    }
+    .data-table td {
+      padding: 12px 16px;
+      border-bottom: 1px solid #3c3f42;
+      font-size: 14px;
+    }
+    .data-table tr:last-child td {
+      border-bottom: none;
+    }
+    .data-table tr:hover {
+      background-color: #292c30;
+      cursor: pointer;
+    }
+    .data-table .checkbox-cell {
+      width: 40px;
+    }
+    .checkbox {
+      width: 16px;
+      height: 16px;
+      accent-color: #06c;
+    }
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 12px;
+      border-radius: 12px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .status-passed {
+      background-color: rgba(91, 163, 82, 0.2);
+      color: #5ba352;
+    }
+    .status-failed {
+      background-color: rgba(201, 25, 11, 0.2);
+      color: #c9190b;
+    }
+    .count-cell {
+      text-align: center;
+      font-weight: 600;
+    }
+    .count-error { color: #c9190b; }
+    .count-warning { color: #f0ab00; }
+    .count-hint { color: #73bcf7; }
+    .count-zero { color: #6a6e73; }
+    .target-path {
+      font-family: var(--pf-v5-global--FontFamily--monospace);
+      color: #73bcf7;
+    }
+    .date-cell {
+      color: #b8bbbe;
+    }
+    .pagination {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 16px;
+      padding: 12px 0;
+    }
+    .pagination-info {
+      color: #8a8d90;
+      font-size: 14px;
+    }
+    .pagination-controls {
+      display: flex;
+      gap: 4px;
+    }
+    .page-btn {
+      background-color: #212427;
+      border: 1px solid #3c3f42;
+      color: #e0e0e0;
+      padding: 6px 12px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    .page-btn:hover {
+      background-color: #292c30;
+    }
+    .page-btn.active {
+      background-color: #06c;
+      border-color: #06c;
+    }
+    .page-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+  </style>
+  <script src="https://mcp.figma.com/mcp/html-to-design/capture.js" async></script>
+</head>
+<body>
+  <div class="page-wrapper">
+    <nav class="sidebar">
+      <div class="sidebar-header">
+        <div class="sidebar-logo">A</div>
+        <span class="sidebar-title">APME</span>
+      </div>
+      <div class="nav-section">
+        <a href="dashboard-home.html" class="nav-item">
+          <span class="nav-icon">&#9632;</span>
+          Dashboard
+        </a>
+        <a href="#" class="nav-item active">
+          <span class="nav-icon">&#9776;</span>
+          Scans
+        </a>
+        <a href="roi-metrics.html" class="nav-item">
+          <span class="nav-icon">&#9650;</span>
+          ROI Metrics
+        </a>
+        <a href="#" class="nav-item">
+          <span class="nav-icon">&#9881;</span>
+          Settings
+        </a>
+      </div>
+    </nav>
+    
+    <main class="main-content">
+      <header class="page-header">
+        <h1 class="page-title">All Scans</h1>
+        <div class="header-actions">
+          <button class="btn btn-secondary">Export</button>
+          <button class="btn btn-primary">+ New Scan</button>
+        </div>
+      </header>
+      
+      <div class="toolbar">
+        <input type="text" class="search-input" placeholder="Search by target path...">
+        <select class="filter-dropdown">
+          <option>All Statuses</option>
+          <option>Passed</option>
+          <option>Failed</option>
+        </select>
+        <select class="filter-dropdown">
+          <option>Last 7 days</option>
+          <option>Last 30 days</option>
+          <option>Last 90 days</option>
+          <option>All time</option>
+        </select>
+      </div>
+      
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th class="checkbox-cell"><input type="checkbox" class="checkbox"></th>
+            <th>Target <span class="sort-icon">&#9650;</span></th>
+            <th>Status</th>
+            <th>Errors</th>
+            <th>Warnings</th>
+            <th>Hints</th>
+            <th>Date <span class="sort-icon">&#9660;</span></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="checkbox-cell"><input type="checkbox" class="checkbox"></td>
+            <td class="target-path">playbooks/</td>
+            <td><span class="status-badge status-passed">&#10003; PASSED</span></td>
+            <td class="count-cell count-zero">0</td>
+            <td class="count-cell count-warning">2</td>
+            <td class="count-cell count-hint">5</td>
+            <td class="date-cell">Mar 16, 2025 14:32</td>
+          </tr>
+          <tr>
+            <td class="checkbox-cell"><input type="checkbox" class="checkbox"></td>
+            <td class="target-path">roles/webserver/</td>
+            <td><span class="status-badge status-failed">&#10007; FAILED</span></td>
+            <td class="count-cell count-error">3</td>
+            <td class="count-cell count-warning">8</td>
+            <td class="count-cell count-hint">2</td>
+            <td class="date-cell">Mar 16, 2025 13:15</td>
+          </tr>
+          <tr>
+            <td class="checkbox-cell"><input type="checkbox" class="checkbox"></td>
+            <td class="target-path">roles/database/</td>
+            <td><span class="status-badge status-failed">&#10007; FAILED</span></td>
+            <td class="count-cell count-error">1</td>
+            <td class="count-cell count-warning">4</td>
+            <td class="count-cell count-zero">0</td>
+            <td class="date-cell">Mar 16, 2025 11:45</td>
+          </tr>
+          <tr>
+            <td class="checkbox-cell"><input type="checkbox" class="checkbox"></td>
+            <td class="target-path">inventory/production/</td>
+            <td><span class="status-badge status-passed">&#10003; PASSED</span></td>
+            <td class="count-cell count-zero">0</td>
+            <td class="count-cell count-zero">0</td>
+            <td class="count-cell count-hint">1</td>
+            <td class="date-cell">Mar 15, 2025 16:20</td>
+          </tr>
+          <tr>
+            <td class="checkbox-cell"><input type="checkbox" class="checkbox"></td>
+            <td class="target-path">collections/network/</td>
+            <td><span class="status-badge status-passed">&#10003; PASSED</span></td>
+            <td class="count-cell count-zero">0</td>
+            <td class="count-cell count-warning">1</td>
+            <td class="count-cell count-hint">3</td>
+            <td class="date-cell">Mar 14, 2025 09:30</td>
+          </tr>
+          <tr>
+            <td class="checkbox-cell"><input type="checkbox" class="checkbox"></td>
+            <td class="target-path">roles/common/</td>
+            <td><span class="status-badge status-failed">&#10007; FAILED</span></td>
+            <td class="count-cell count-error">5</td>
+            <td class="count-cell count-warning">12</td>
+            <td class="count-cell count-hint">8</td>
+            <td class="date-cell">Mar 14, 2025 08:15</td>
+          </tr>
+          <tr>
+            <td class="checkbox-cell"><input type="checkbox" class="checkbox"></td>
+            <td class="target-path">playbooks/deploy/</td>
+            <td><span class="status-badge status-passed">&#10003; PASSED</span></td>
+            <td class="count-cell count-zero">0</td>
+            <td class="count-cell count-zero">0</td>
+            <td class="count-cell count-zero">0</td>
+            <td class="date-cell">Mar 13, 2025 17:45</td>
+          </tr>
+          <tr>
+            <td class="checkbox-cell"><input type="checkbox" class="checkbox"></td>
+            <td class="target-path">roles/monitoring/</td>
+            <td><span class="status-badge status-passed">&#10003; PASSED</span></td>
+            <td class="count-cell count-zero">0</td>
+            <td class="count-cell count-warning">3</td>
+            <td class="count-cell count-hint">2</td>
+            <td class="date-cell">Mar 13, 2025 14:20</td>
+          </tr>
+        </tbody>
+      </table>
+      
+      <div class="pagination">
+        <span class="pagination-info">Showing 1-8 of 47 scans</span>
+        <div class="pagination-controls">
+          <button class="page-btn" disabled>&lt;</button>
+          <button class="page-btn active">1</button>
+          <button class="page-btn">2</button>
+          <button class="page-btn">3</button>
+          <button class="page-btn">...</button>
+          <button class="page-btn">6</button>
+          <button class="page-btn">&gt;</button>
+        </div>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

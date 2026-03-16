@@ -141,13 +141,27 @@ No CVE lookup — let users feed SBOM into their existing vuln scanners (Snyk, G
 
 ## Decision
 
-**Status**: Open
-**Date**: —
-**Decided By**: —
+**Status**: Deferred
+**Date**: 2026-03-16
+**Decided By**: Team
 
-**Decision**: —
+**Decision**: Deferred — part of REQ-003 (Security & Compliance) scope
 
-**Rationale**: —
+**Rationale**:
+- Core scanning features prioritized for v1
+- SBOM is part of REQ-003 (Security & Compliance) in PHASE-003
+- Dashboard deferred (DR-003) — CVE display would need dashboard
+- CycloneDX likely choice based on research, but defer final decision
+
+**Research Notes** (for future reference):
+- CycloneDX preferred for security use cases
+- All major vuln scanners support CycloneDX
+- Scope: Collections + Roles + Python deps (including transitive)
+- CVE correlation via OSV API is viable for v2
+
+**Revisit**: When security/compliance features are prioritized (REQ-003)
 
 **Action Items**:
-- [ ] —
+- [ ] Re-open when REQ-003 is in scope
+- [ ] Validate CycloneDX recommendation with enterprise users
+- [ ] Evaluate OSV API for CVE correlation

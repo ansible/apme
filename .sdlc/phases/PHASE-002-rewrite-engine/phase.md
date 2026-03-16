@@ -26,7 +26,7 @@ Automated "Rewrite" engine for the 50 most common module deprecations. Safe auto
 
 | REQ | Name | Status |
 |-----|------|--------|
-| REQ-002 | Automated Remediation | Draft |
+| — | No requirements (moved to PHASE-004) | — |
 
 ## Dependencies
 

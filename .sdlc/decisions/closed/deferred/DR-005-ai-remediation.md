@@ -149,13 +149,21 @@ Rationale:
 
 ## Decision
 
-**Status**: Open
-**Date**: —
-**Decided By**: —
+**Status**: Deferred
+**Date**: 2026-03-16
+**Decided By**: Team
 
-**Decision**: —
+**Decision**: Deferred — Brad investigating as part of PHASE-001 delivery
 
-**Rationale**: —
+**Rationale**:
+- Active investigation underway by Brad
+- Part of PHASE-001 delivery scope
+- Decision will be informed by Brad's findings
+- Will revisit when investigation complete
+
+**Revisit**: When Brad's investigation is complete
 
 **Action Items**:
-- [ ] —
+- [ ] Brad to complete AI remediation investigation
+- [ ] Schedule DR review with Brad's findings
+- [ ] Update ADR-009 if approach changes

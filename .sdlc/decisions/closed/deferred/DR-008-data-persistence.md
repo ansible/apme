@@ -173,13 +173,21 @@ If dashboard is required for v1, then **Option B** (SQLite) is the right balance
 
 ## Decision
 
-**Status**: Open
-**Date**: —
-**Decided By**: —
+**Status**: Deferred
+**Date**: 2026-03-16
+**Decided By**: Team
 
-**Decision**: —
+**Decision**: Deferred — follows DR-003 (Dashboard Architecture) deferral
 
-**Rationale**: —
+**Rationale**:
+- Dashboard deferred to v2 (DR-003)
+- Persistence is only needed for dashboard features
+- v1 remains stateless with JSON export capability
+- Will decide persistence approach when dashboard work begins
+
+**Revisit**: When dashboard work begins (v2 planning)
 
 **Action Items**:
-- [ ] —
+- [ ] Ensure CLI JSON output is well-structured for future persistence
+- [ ] Re-open this DR when dashboard is prioritized
+- [ ] Evaluate SQLite vs PostgreSQL based on v2 requirements

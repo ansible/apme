@@ -155,13 +155,22 @@ Rationale:
 
 ## Decision
 
-**Status**: Open
-**Date**: —
-**Decided By**: —
+**Status**: Decided
+**Date**: 2026-03-16
+**Decided By**: Team
 
-**Decision**: —
+**Decision**: Option D — Start Minimal, Expand Based on Demand (potentially back to 2.9)
 
-**Rationale**: —
+**Rationale**:
+- Start with 2.18, 2.19, 2.20 (already in Ansible container venvs per ADR-006)
+- Add 2.16 and 2.14 in v1.1/v1.2 if enterprise users request
+- Most users targeting AAP 2.5 (ansible-core 2.18)
+- Expanding is easier than cutting scope
+- Demand-driven approach avoids premature work
+- May need to go as far back as 2.9 if technically possible (based on user demand)
 
 **Action Items**:
-- [ ] —
+- [ ] Confirm 2.18/2.19/2.20 venvs work for version-specific scanning
+- [ ] Track user requests for older version support
+- [ ] Investigate technical feasibility of 2.9-2.14 support (pre-collections era challenges)
+- [ ] Prioritize 2.16/2.14 expansion based on enterprise feedback

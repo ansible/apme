@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>APME Dashboard - Scan Detail</title>
+  <link rel="stylesheet" href="https://unpkg.com/@patternfly/patternfly@5.4.2/patternfly.min.css">
+  <style>
+    body {
+      background-color: #1b1d21;
+      color: #e0e0e0;
+      margin: 0;
+      font-family: var(--pf-v5-global--FontFamily--text);
+    }
+    .page-wrapper {
+      display: flex;
+      min-height: 100vh;
+    }
+    .sidebar {
+      width: 240px;
+      background-color: #151515;
+      border-right: 1px solid #3c3f42;
+    }
+    .sidebar-header {
+      padding: 16px 20px;
+      border-bottom: 1px solid #3c3f42;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .sidebar-logo {
+      width: 32px;
+      height: 32px;
+      background: linear-gradient(135deg, #ee0000, #a30000);
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: bold;
+      font-size: 14px;
+    }
+    .sidebar-title {
+      font-size: 16px;
+      font-weight: 600;
+    }
+    .nav-section {
+      padding: 16px 0;
+    }
+    .nav-item {
+      display: flex;
+      align-items: center;
+      padding: 10px 20px;
+      color: #b8bbbe;
+      text-decoration: none;
+      gap: 12px;
+      font-size: 14px;
+    }
+    .nav-item:hover {
+      background-color: #292c30;
+      color: #fff;
+    }
+    .nav-item.active {
+      background-color: #292c30;
+      color: #fff;
+      border-left: 3px solid #06c;
+      padding-left: 17px;
+    }
+    .nav-icon {
+      width: 20px;
+      text-align: center;
+    }
+    .main-content {
+      flex: 1;
+      padding: 24px 32px;
+      background-color: #1b1d21;
+    }
+    .breadcrumb {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 16px;
+      font-size: 14px;
+    }
+    .breadcrumb a {
+      color: #73bcf7;
+      text-decoration: none;
+    }
+    .breadcrumb a:hover {
+      text-decoration: underline;
+    }
+    .breadcrumb-sep {
+      color: #6a6e73;
+    }
+    .breadcrumb-current {
+      color: #e0e0e0;
+    }
+    .page-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 24px;
+    }
+    .page-title {
+      font-size: 24px;
+      font-weight: 400;
+      margin: 0 0 8px 0;
+      font-family: var(--pf-v5-global--FontFamily--monospace);
+    }
+    .page-meta {
+      font-size: 14px;
+      color: #8a8d90;
+    }
+    .header-actions {
+      display: flex;
+      gap: 12px;
+    }
+    .btn {
+      border: none;
+      padding: 8px 16px;
+      border-radius: 4px;
+      font-size: 14px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .btn-primary {
+      background-color: #06c;
+      color: #fff;
+    }
+    .btn-secondary {
+      background-color: transparent;
+      color: #73bcf7;
+      border: 1px solid #3c3f42;
+    }
+    .summary-card {
+      background-color: #212427;
+      border: 1px solid #3c3f42;
+      border-radius: 4px;
+      padding: 20px 24px;
+      margin-bottom: 24px;
+      display: flex;
+      align-items: center;
+      gap: 32px;
+    }
+    .summary-status {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .status-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 24px;
+    }
+    .status-icon.failed {
+      background-color: rgba(201, 25, 11, 0.2);
+      color: #c9190b;
+    }
+    .status-icon.passed {
+      background-color: rgba(91, 163, 82, 0.2);
+      color: #5ba352;
+    }
+    .status-text {
+      font-size: 20px;
+      font-weight: 600;
+    }
+    .status-text.failed { color: #c9190b; }
+    .status-text.passed { color: #5ba352; }
+    .summary-counts {
+      display: flex;
+      gap: 24px;
+      margin-left: auto;
+    }
+    .count-box {
+      text-align: center;
+      padding: 0 16px;
+      border-left: 1px solid #3c3f42;
+    }
+    .count-box:first-child {
+      border-left: none;
+    }
+    .count-value {
+      font-size: 28px;
+      font-weight: 600;
+      line-height: 1;
+    }
+    .count-value.error { color: #c9190b; }
+    .count-value.warning { color: #f0ab00; }
+    .count-value.hint { color: #73bcf7; }
+    .count-label {
+      font-size: 12px;
+      color: #8a8d90;
+      text-transform: uppercase;
+      margin-top: 4px;
+    }
+    .violations-section {
+      background-color: #212427;
+      border: 1px solid #3c3f42;
+      border-radius: 4px;
+    }
+    .section-header {
+      padding: 16px 20px;
+      border-bottom: 1px solid #3c3f42;
+      font-size: 16px;
+      font-weight: 600;
+    }
+    .file-group {
+      border-bottom: 1px solid #3c3f42;
+    }
+    .file-group:last-child {
+      border-bottom: none;
+    }
+    .file-header {
+      display: flex;
+      align-items: center;
+      padding: 12px 20px;
+      background-color: #292c30;
+      cursor: pointer;
+      gap: 12px;
+    }
+    .file-header:hover {
+      background-color: #3c3f42;
+    }
+    .file-icon {
+      color: #6a6e73;
+    }
+    .file-name {
+      font-family: var(--pf-v5-global--FontFamily--monospace);
+      color: #73bcf7;
+      flex: 1;
+    }
+    .file-count {
+      font-size: 13px;
+      color: #8a8d90;
+    }
+    .violation-list {
+      padding: 0;
+    }
+    .violation-item {
+      display: flex;
+      align-items: flex-start;
+      padding: 12px 20px 12px 52px;
+      border-top: 1px solid #292c30;
+      gap: 12px;
+    }
+    .violation-item:hover {
+      background-color: #1b1d21;
+    }
+    .severity-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      min-width: 50px;
+      justify-content: center;
+    }
+    .severity-error {
+      background-color: rgba(201, 25, 11, 0.2);
+      color: #c9190b;
+    }
+    .severity-warning {
+      background-color: rgba(240, 171, 0, 0.2);
+      color: #f0ab00;
+    }
+    .severity-hint {
+      background-color: rgba(115, 188, 247, 0.2);
+      color: #73bcf7;
+    }
+    .rule-id {
+      font-family: var(--pf-v5-global--FontFamily--monospace);
+      color: #b8bbbe;
+      font-size: 13px;
+      min-width: 50px;
+    }
+    .line-number {
+      font-family: var(--pf-v5-global--FontFamily--monospace);
+      color: #6a6e73;
+      font-size: 13px;
+      min-width: 40px;
+    }
+    .violation-message {
+      flex: 1;
+      font-size: 14px;
+    }
+    .code-preview {
+      margin-top: 8px;
+      background-color: #151515;
+      border-radius: 4px;
+      padding: 8px 12px;
+      font-family: var(--pf-v5-global--FontFamily--monospace);
+      font-size: 12px;
+      color: #b8bbbe;
+      overflow-x: auto;
+    }
+    .code-preview .highlight {
+      background-color: rgba(201, 25, 11, 0.3);
+      color: #fff;
+      padding: 0 2px;
+    }
+  </style>
+  <script src="https://mcp.figma.com/mcp/html-to-design/capture.js" async></script>
+</head>
+<body>
+  <div class="page-wrapper">
+    <nav class="sidebar">
+      <div class="sidebar-header">
+        <div class="sidebar-logo">A</div>
+        <span class="sidebar-title">APME</span>
+      </div>
+      <div class="nav-section">
+        <a href="dashboard-home.html" class="nav-item">
+          <span class="nav-icon">&#9632;</span>
+          Dashboard
+        </a>
+        <a href="scan-results.html" class="nav-item active">
+          <span class="nav-icon">&#9776;</span>
+          Scans
+        </a>
+        <a href="roi-metrics.html" class="nav-item">
+          <span class="nav-icon">&#9650;</span>
+          ROI Metrics
+        </a>
+        <a href="#" class="nav-item">
+          <span class="nav-icon">&#9881;</span>
+          Settings
+        </a>
+      </div>
+    </nav>
+    
+    <main class="main-content">
+      <nav class="breadcrumb">
+        <a href="scan-results.html">All Scans</a>
+        <span class="breadcrumb-sep">/</span>
+        <span class="breadcrumb-current">roles/webserver/</span>
+      </nav>
+      
+      <header class="page-header">
+        <div>
+          <h1 class="page-title">roles/webserver/</h1>
+          <p class="page-meta">Scanned Mar 16, 2025 at 13:15 &bull; Duration: 2.4s</p>
+        </div>
+        <div class="header-actions">
+          <button class="btn btn-secondary">Export Report</button>
+          <button class="btn btn-primary">Re-scan</button>
+        </div>
+      </header>
+      
+      <div class="summary-card">
+        <div class="summary-status">
+          <div class="status-icon failed">&#10007;</div>
+          <span class="status-text failed">FAILED</span>
+        </div>
+        <div class="summary-counts">
+          <div class="count-box">
+            <div class="count-value error">3</div>
+            <div class="count-label">Errors</div>
+          </div>
+          <div class="count-box">
+            <div class="count-value warning">8</div>
+            <div class="count-label">Warnings</div>
+          </div>
+          <div class="count-box">
+            <div class="count-value hint">2</div>
+            <div class="count-label">Hints</div>
+          </div>
+        </div>
+      </div>
+      
+      <div class="violations-section">
+        <div class="section-header">Violations by File</div>
+        
+        <div class="file-group">
+          <div class="file-header">
+            <span class="file-icon">&#128196;</span>
+            <span class="file-name">tasks/main.yml</span>
+            <span class="file-count">6 issues</span>
+          </div>
+          <div class="violation-list">
+            <div class="violation-item">
+              <span class="severity-badge severity-error">Error</span>
+              <span class="rule-id">L026</span>
+              <span class="line-number">:12</span>
+              <div class="violation-message">
+                Use FQCN for module actions
+                <div class="code-preview">- <span class="highlight">copy</span>: src=nginx.conf dest=/etc/nginx/</div>
+              </div>
+            </div>
+            <div class="violation-item">
+              <span class="severity-badge severity-error">Error</span>
+              <span class="rule-id">L026</span>
+              <span class="line-number">:18</span>
+              <div class="violation-message">
+                Use FQCN for module actions
+                <div class="code-preview">- <span class="highlight">service</span>: name=nginx state=started</div>
+              </div>
+            </div>
+            <div class="violation-item">
+              <span class="severity-badge severity-warning">Warn</span>
+              <span class="rule-id">L003</span>
+              <span class="line-number">:12</span>
+              <div class="violation-message">Task should have a name</div>
+            </div>
+            <div class="violation-item">
+              <span class="severity-badge severity-warning">Warn</span>
+              <span class="rule-id">L003</span>
+              <span class="line-number">:18</span>
+              <div class="violation-message">Task should have a name</div>
+            </div>
+            <div class="violation-item">
+              <span class="severity-badge severity-warning">Warn</span>
+              <span class="rule-id">R101</span>
+              <span class="line-number">:25</span>
+              <div class="violation-message">Risky file permissions</div>
+            </div>
+            <div class="violation-item">
+              <span class="severity-badge severity-hint">Hint</span>
+              <span class="rule-id">M001</span>
+              <span class="line-number">:30</span>
+              <div class="violation-message">Consider using loop instead of with_items</div>
+            </div>
+          </div>
+        </div>
+        
+        <div class="file-group">
+          <div class="file-header">
+            <span class="file-icon">&#128196;</span>
+            <span class="file-name">handlers/main.yml</span>
+            <span class="file-count">4 issues</span>
+          </div>
+          <div class="violation-list">
+            <div class="violation-item">
+              <span class="severity-badge severity-error">Error</span>
+              <span class="rule-id">L026</span>
+              <span class="line-number">:5</span>
+              <div class="violation-message">
+                Use FQCN for module actions
+                <div class="code-preview">- <span class="highlight">service</span>: name=nginx state=reloaded</div>
+              </div>
+            </div>
+            <div class="violation-item">
+              <span class="severity-badge severity-warning">Warn</span>
+              <span class="rule-id">L003</span>
+              <span class="line-number">:5</span>
+              <div class="violation-message">Task should have a name</div>
+            </div>
+            <div class="violation-item">
+              <span class="severity-badge severity-warning">Warn</span>
+              <span class="rule-id">L003</span>
+              <span class="line-number">:8</span>
+              <div class="violation-message">Task should have a name</div>
+            </div>
+            <div class="violation-item">
+              <span class="severity-badge severity-hint">Hint</span>
+              <span class="rule-id">M002</span>
+              <span class="line-number">:12</span>
+              <div class="violation-message">Handler could use listen directive</div>
+            </div>
+          </div>
+        </div>
+        
+        <div class="file-group">
+          <div class="file-header">
+            <span class="file-icon">&#128196;</span>
+            <span class="file-name">defaults/main.yml</span>
+            <span class="file-count">3 issues</span>
+          </div>
+          <div class="violation-list">
+            <div class="violation-item">
+              <span class="severity-badge severity-warning">Warn</span>
+              <span class="rule-id">L004</span>
+              <span class="line-number">:1</span>
+              <div class="violation-message">File should end with a newline</div>
+            </div>
+            <div class="violation-item">
+              <span class="severity-badge severity-warning">Warn</span>
+              <span class="rule-id">L005</span>
+              <span class="line-number">:8</span>
+              <div class="violation-message">Trailing whitespace detected</div>
+            </div>
+            <div class="violation-item">
+              <span class="severity-badge severity-warning">Warn</span>
+              <span class="rule-id">L005</span>
+              <span class="line-number">:15</span>
+              <div class="violation-message">Trailing whitespace detected</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

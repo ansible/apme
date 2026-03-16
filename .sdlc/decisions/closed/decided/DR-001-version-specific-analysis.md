@@ -116,13 +116,26 @@ Default behavior: scan against the version specified in the Ansible validator's 
 
 ## Decision
 
-**Status**: Open
-**Date**: —
-**Decided By**: —
+**Status**: Decided
+**Date**: 2026-03-16
+**Decided By**: Team
 
-**Decision**: —
+**Decision**: Combined Approach — implement all three options
 
-**Rationale**: —
+**Rationale**:
+- Default to latest with deprecation timeline for zero-config experience
+- Single target version flag for users migrating to specific AAP version
+- Matrix scan for planning phased upgrades and comparison views
+- Phased implementation: C (default) → A (single) → B (matrix)
+
+**Implementation Plan**:
+1. **Phase 1**: Default to latest with deprecation timeline (Option C)
+2. **Phase 2**: Add `--target-version 2.18` flag (Option A)
+3. **Phase 3**: Add `--target-versions 2.16,2.18,2.20` matrix scan (Option B)
 
 **Action Items**:
-- [ ] —
+- [ ] Implement deprecation timeline in rule messages (M001-M004)
+- [ ] Add `--target-version` CLI flag
+- [ ] Design matrix scan output format
+- [ ] Implement `--target-versions` multi-version scanning
+- [ ] Update REQ-001 acceptance criteria

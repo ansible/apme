@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>APME Dashboard - ROI Metrics</title>
+  <link rel="stylesheet" href="https://unpkg.com/@patternfly/patternfly@5.4.2/patternfly.min.css">
+  <style>
+    body {
+      background-color: #1b1d21;
+      color: #e0e0e0;
+      margin: 0;
+      font-family: var(--pf-v5-global--FontFamily--text);
+    }
+    .page-wrapper {
+      display: flex;
+      min-height: 100vh;
+    }
+    .sidebar {
+      width: 240px;
+      background-color: #151515;
+      border-right: 1px solid #3c3f42;
+    }
+    .sidebar-header {
+      padding: 16px 20px;
+      border-bottom: 1px solid #3c3f42;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .sidebar-logo {
+      width: 32px;
+      height: 32px;
+      background: linear-gradient(135deg, #ee0000, #a30000);
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: bold;
+      font-size: 14px;
+    }
+    .sidebar-title {
+      font-size: 16px;
+      font-weight: 600;
+    }
+    .nav-section {
+      padding: 16px 0;
+    }
+    .nav-item {
+      display: flex;
+      align-items: center;
+      padding: 10px 20px;
+      color: #b8bbbe;
+      text-decoration: none;
+      gap: 12px;
+      font-size: 14px;
+    }
+    .nav-item:hover {
+      background-color: #292c30;
+      color: #fff;
+    }
+    .nav-item.active {
+      background-color: #292c30;
+      color: #fff;
+      border-left: 3px solid #06c;
+      padding-left: 17px;
+    }
+    .nav-icon {
+      width: 20px;
+      text-align: center;
+    }
+    .main-content {
+      flex: 1;
+      padding: 24px 32px;
+      background-color: #1b1d21;
+    }
+    .page-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 24px;
+    }
+    .page-title {
+      font-size: 24px;
+      font-weight: 400;
+      margin: 0;
+    }
+    .date-range {
+      display: flex;
+      gap: 8px;
+    }
+    .date-btn {
+      background-color: #212427;
+      border: 1px solid #3c3f42;
+      color: #b8bbbe;
+      padding: 6px 12px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 13px;
+    }
+    .date-btn:hover {
+      background-color: #292c30;
+      color: #fff;
+    }
+    .date-btn.active {
+      background-color: #06c;
+      border-color: #06c;
+      color: #fff;
+    }
+    .metrics-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 24px;
+      margin-bottom: 32px;
+    }
+    .metric-card {
+      background-color: #212427;
+      border: 1px solid #3c3f42;
+      border-radius: 4px;
+      padding: 32px;
+      text-align: center;
+    }
+    .metric-value {
+      font-size: 56px;
+      font-weight: 300;
+      color: #fff;
+      line-height: 1;
+      margin-bottom: 8px;
+    }
+    .metric-value.success { color: #5ba352; }
+    .metric-value.info { color: #73bcf7; }
+    .metric-label {
+      font-size: 16px;
+      color: #8a8d90;
+    }
+    .metric-delta {
+      margin-top: 12px;
+      font-size: 14px;
+    }
+    .delta-up {
+      color: #5ba352;
+    }
+    .delta-up::before {
+      content: "▲ ";
+    }
+    .charts-grid {
+      display: grid;
+      grid-template-columns: 2fr 1fr;
+      gap: 24px;
+    }
+    .chart-card {
+      background-color: #212427;
+      border: 1px solid #3c3f42;
+      border-radius: 4px;
+      padding: 20px;
+    }
+    .chart-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+    }
+    .chart-title {
+      font-size: 16px;
+      font-weight: 600;
+      margin: 0;
+    }
+    .chart-legend {
+      display: flex;
+      gap: 16px;
+      font-size: 12px;
+    }
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .legend-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+    }
+    .legend-dot.errors { background-color: #c9190b; }
+    .legend-dot.resolved { background-color: #5ba352; }
+    .bar-chart {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      height: 200px;
+      padding: 0 10px;
+      border-bottom: 1px solid #3c3f42;
+    }
+    .bar-group {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      flex: 1;
+    }
+    .bar-container {
+      display: flex;
+      gap: 4px;
+      align-items: flex-end;
+      height: 180px;
+    }
+    .bar {
+      width: 20px;
+      border-radius: 2px 2px 0 0;
+      min-height: 4px;
+    }
+    .bar.errors { background-color: #c9190b; }
+    .bar.resolved { background-color: #5ba352; }
+    .bar-label {
+      font-size: 12px;
+      color: #8a8d90;
+    }
+    .donut-chart {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 24px;
+    }
+    .donut-visual {
+      width: 180px;
+      height: 180px;
+      border-radius: 50%;
+      background: conic-gradient(
+        #c9190b 0deg 162deg,
+        #f0ab00 162deg 270deg,
+        #73bcf7 270deg 324deg,
+        #5ba352 324deg 360deg
+      );
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+    }
+    .donut-visual::after {
+      content: '';
+      width: 100px;
+      height: 100px;
+      background-color: #212427;
+      border-radius: 50%;
+      position: absolute;
+    }
+    .donut-center {
+      position: relative;
+      z-index: 1;
+      text-align: center;
+    }
+    .donut-value {
+      font-size: 32px;
+      font-weight: 600;
+      color: #fff;
+    }
+    .donut-label {
+      font-size: 12px;
+      color: #8a8d90;
+    }
+    .donut-legend {
+      width: 100%;
+    }
+    .donut-legend-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 0;
+      border-bottom: 1px solid #3c3f42;
+    }
+    .donut-legend-item:last-child {
+      border-bottom: none;
+    }
+    .donut-legend-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .donut-legend-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 2px;
+    }
+    .donut-legend-dot.fqcn { background-color: #c9190b; }
+    .donut-legend-dot.deps { background-color: #f0ab00; }
+    .donut-legend-dot.naming { background-color: #73bcf7; }
+    .donut-legend-dot.other { background-color: #5ba352; }
+    .donut-legend-value {
+      font-weight: 600;
+    }
+    .savings-section {
+      margin-top: 32px;
+    }
+    .savings-card {
+      background-color: #212427;
+      border: 1px solid #3c3f42;
+      border-radius: 4px;
+      padding: 24px;
+    }
+    .savings-header {
+      margin-bottom: 20px;
+    }
+    .savings-title {
+      font-size: 16px;
+      font-weight: 600;
+      margin: 0 0 4px 0;
+    }
+    .savings-subtitle {
+      font-size: 14px;
+      color: #8a8d90;
+    }
+    .savings-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 24px;
+    }
+    .savings-item {
+      text-align: center;
+      padding: 16px;
+      background-color: #292c30;
+      border-radius: 4px;
+    }
+    .savings-value {
+      font-size: 28px;
+      font-weight: 600;
+      color: #5ba352;
+      margin-bottom: 4px;
+    }
+    .savings-label {
+      font-size: 13px;
+      color: #8a8d90;
+    }
+  </style>
+  <script src="https://mcp.figma.com/mcp/html-to-design/capture.js" async></script>
+</head>
+<body>
+  <div class="page-wrapper">
+    <nav class="sidebar">
+      <div class="sidebar-header">
+        <div class="sidebar-logo">A</div>
+        <span class="sidebar-title">APME</span>
+      </div>
+      <div class="nav-section">
+        <a href="dashboard-home.html" class="nav-item">
+          <span class="nav-icon">&#9632;</span>
+          Dashboard
+        </a>
+        <a href="scan-results.html" class="nav-item">
+          <span class="nav-icon">&#9776;</span>
+          Scans
+        </a>
+        <a href="#" class="nav-item active">
+          <span class="nav-icon">&#9650;</span>
+          ROI Metrics
+        </a>
+        <a href="#" class="nav-item">
+          <span class="nav-icon">&#9881;</span>
+          Settings
+        </a>
+      </div>
+    </nav>
+    
+    <main class="main-content">
+      <header class="page-header">
+        <h1 class="page-title">ROI Metrics</h1>
+        <div class="date-range">
+          <button class="date-btn">7 days</button>
+          <button class="date-btn active">30 days</button>
+          <button class="date-btn">90 days</button>
+          <button class="date-btn">All time</button>
+        </div>
+      </header>
+      
+      <div class="metrics-grid">
+        <div class="metric-card">
+          <div class="metric-value success">1,247</div>
+          <div class="metric-label">Errors Resolved</div>
+          <div class="metric-delta delta-up">23% from last period</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-value info">156 hrs</div>
+          <div class="metric-label">Estimated Time Saved</div>
+          <div class="metric-delta delta-up">18% from last period</div>
+        </div>
+      </div>
+      
+      <div class="charts-grid">
+        <div class="chart-card">
+          <div class="chart-header">
+            <h3 class="chart-title">Weekly Trend</h3>
+            <div class="chart-legend">
+              <div class="legend-item">
+                <span class="legend-dot errors"></span>
+                <span>Errors Found</span>
+              </div>
+              <div class="legend-item">
+                <span class="legend-dot resolved"></span>
+                <span>Resolved</span>
+              </div>
+            </div>
+          </div>
+          <div class="bar-chart">
+            <div class="bar-group">
+              <div class="bar-container">
+                <div class="bar errors" style="height: 60px;"></div>
+                <div class="bar resolved" style="height: 45px;"></div>
+              </div>
+              <span class="bar-label">Week 1</span>
+            </div>
+            <div class="bar-group">
+              <div class="bar-container">
+                <div class="bar errors" style="height: 85px;"></div>
+                <div class="bar resolved" style="height: 70px;"></div>
+              </div>
+              <span class="bar-label">Week 2</span>
+            </div>
+            <div class="bar-group">
+              <div class="bar-container">
+                <div class="bar errors" style="height: 120px;"></div>
+                <div class="bar resolved" style="height: 110px;"></div>
+              </div>
+              <span class="bar-label">Week 3</span>
+            </div>
+            <div class="bar-group">
+              <div class="bar-container">
+                <div class="bar errors" style="height: 95px;"></div>
+                <div class="bar resolved" style="height: 95px;"></div>
+              </div>
+              <span class="bar-label">Week 4</span>
+            </div>
+          </div>
+        </div>
+        
+        <div class="chart-card">
+          <div class="chart-header">
+            <h3 class="chart-title">Errors by Category</h3>
+          </div>
+          <div class="donut-chart">
+            <div class="donut-visual">
+              <div class="donut-center">
+                <div class="donut-value">1,247</div>
+                <div class="donut-label">Total</div>
+              </div>
+            </div>
+            <div class="donut-legend">
+              <div class="donut-legend-item">
+                <div class="donut-legend-left">
+                  <span class="donut-legend-dot fqcn"></span>
+                  <span>FQCN Issues</span>
+                </div>
+                <span class="donut-legend-value">45%</span>
+              </div>
+              <div class="donut-legend-item">
+                <div class="donut-legend-left">
+                  <span class="donut-legend-dot deps"></span>
+                  <span>Deprecated Modules</span>
+                </div>
+                <span class="donut-legend-value">30%</span>
+              </div>
+              <div class="donut-legend-item">
+                <div class="donut-legend-left">
+                  <span class="donut-legend-dot naming"></span>
+                  <span>Naming Conventions</span>
+                </div>
+                <span class="donut-legend-value">15%</span>
+              </div>
+              <div class="donut-legend-item">
+                <div class="donut-legend-left">
+                  <span class="donut-legend-dot other"></span>
+                  <span>Other</span>
+                </div>
+                <span class="donut-legend-value">10%</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      <section class="savings-section">
+        <div class="savings-card">
+          <div class="savings-header">
+            <h3 class="savings-title">Cost Savings Breakdown</h3>
+            <p class="savings-subtitle">Based on average developer hourly rate of $75</p>
+          </div>
+          <div class="savings-grid">
+            <div class="savings-item">
+              <div class="savings-value">$11,700</div>
+              <div class="savings-label">Total Savings</div>
+            </div>
+            <div class="savings-item">
+              <div class="savings-value">47</div>
+              <div class="savings-label">Scans Run</div>
+            </div>
+            <div class="savings-item">
+              <div class="savings-value">$249</div>
+              <div class="savings-label">Avg. per Scan</div>
+            </div>
+            <div class="savings-item">
+              <div class="savings-value">7.5 min</div>
+              <div class="savings-label">Avg. per Error</div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

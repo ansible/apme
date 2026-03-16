@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>APME Dashboard - Home</title>
+  <link rel="stylesheet" href="https://unpkg.com/@patternfly/patternfly@5.4.2/patternfly.min.css">
+  <style>
+    :root {
+      --pf-v5-global--BackgroundColor--dark-300: #1b1d21;
+    }
+    body {
+      background-color: #1b1d21;
+      color: #e0e0e0;
+      margin: 0;
+      font-family: var(--pf-v5-global--FontFamily--text);
+    }
+    .page-wrapper {
+      display: flex;
+      min-height: 100vh;
+    }
+    .sidebar {
+      width: 240px;
+      background-color: #151515;
+      border-right: 1px solid #3c3f42;
+      padding: 0;
+    }
+    .sidebar-header {
+      padding: 16px 20px;
+      border-bottom: 1px solid #3c3f42;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .sidebar-logo {
+      width: 32px;
+      height: 32px;
+      background: linear-gradient(135deg, #ee0000, #a30000);
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: bold;
+      font-size: 14px;
+    }
+    .sidebar-title {
+      font-size: 16px;
+      font-weight: 600;
+    }
+    .nav-section {
+      padding: 16px 0;
+    }
+    .nav-item {
+      display: flex;
+      align-items: center;
+      padding: 10px 20px;
+      color: #b8bbbe;
+      text-decoration: none;
+      gap: 12px;
+      font-size: 14px;
+    }
+    .nav-item:hover {
+      background-color: #292c30;
+      color: #fff;
+    }
+    .nav-item.active {
+      background-color: #292c30;
+      color: #fff;
+      border-left: 3px solid #06c;
+      padding-left: 17px;
+    }
+    .nav-icon {
+      width: 20px;
+      text-align: center;
+    }
+    .main-content {
+      flex: 1;
+      padding: 24px 32px;
+      background-color: #1b1d21;
+    }
+    .page-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 24px;
+    }
+    .page-title {
+      font-size: 24px;
+      font-weight: 400;
+      margin: 0;
+    }
+    .btn-primary {
+      background-color: #06c;
+      color: #fff;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 4px;
+      font-size: 14px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .btn-primary:hover {
+      background-color: #004d99;
+    }
+    .cards-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 24px;
+      margin-bottom: 32px;
+    }
+    .metric-card {
+      background-color: #212427;
+      border: 1px solid #3c3f42;
+      border-radius: 4px;
+      padding: 24px;
+      text-align: center;
+    }
+    .metric-value {
+      font-size: 48px;
+      font-weight: 300;
+      color: #fff;
+      line-height: 1;
+      margin-bottom: 8px;
+    }
+    .metric-label {
+      font-size: 14px;
+      color: #8a8d90;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .metric-card.success .metric-value { color: #5ba352; }
+    .metric-card.warning .metric-value { color: #f0ab00; }
+    .section-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+    .section-title {
+      font-size: 18px;
+      font-weight: 400;
+      margin: 0;
+    }
+    .link {
+      color: #73bcf7;
+      text-decoration: none;
+      font-size: 14px;
+    }
+    .link:hover {
+      text-decoration: underline;
+    }
+    .data-table {
+      width: 100%;
+      background-color: #212427;
+      border: 1px solid #3c3f42;
+      border-radius: 4px;
+      border-collapse: collapse;
+    }
+    .data-table th {
+      text-align: left;
+      padding: 12px 16px;
+      background-color: #292c30;
+      border-bottom: 1px solid #3c3f42;
+      font-weight: 600;
+      font-size: 14px;
+      color: #e0e0e0;
+    }
+    .data-table td {
+      padding: 12px 16px;
+      border-bottom: 1px solid #3c3f42;
+      font-size: 14px;
+    }
+    .data-table tr:last-child td {
+      border-bottom: none;
+    }
+    .data-table tr:hover {
+      background-color: #292c30;
+    }
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 12px;
+      border-radius: 12px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .status-passed {
+      background-color: rgba(91, 163, 82, 0.2);
+      color: #5ba352;
+    }
+    .status-failed {
+      background-color: rgba(201, 25, 11, 0.2);
+      color: #c9190b;
+    }
+    .violation-counts {
+      display: flex;
+      gap: 12px;
+      font-size: 13px;
+    }
+    .count-error { color: #c9190b; }
+    .count-warning { color: #f0ab00; }
+    .count-hint { color: #73bcf7; }
+    .time-ago {
+      color: #8a8d90;
+      font-size: 13px;
+    }
+    .target-path {
+      font-family: var(--pf-v5-global--FontFamily--monospace);
+      color: #73bcf7;
+    }
+  </style>
+  <script src="https://mcp.figma.com/mcp/html-to-design/capture.js" async></script>
+</head>
+<body>
+  <div class="page-wrapper">
+    <nav class="sidebar">
+      <div class="sidebar-header">
+        <div class="sidebar-logo">A</div>
+        <span class="sidebar-title">APME</span>
+      </div>
+      <div class="nav-section">
+        <a href="#" class="nav-item active">
+          <span class="nav-icon">&#9632;</span>
+          Dashboard
+        </a>
+        <a href="scan-results.html" class="nav-item">
+          <span class="nav-icon">&#9776;</span>
+          Scans
+        </a>
+        <a href="roi-metrics.html" class="nav-item">
+          <span class="nav-icon">&#9650;</span>
+          ROI Metrics
+        </a>
+        <a href="#" class="nav-item">
+          <span class="nav-icon">&#9881;</span>
+          Settings
+        </a>
+      </div>
+    </nav>
+    
+    <main class="main-content">
+      <header class="page-header">
+        <h1 class="page-title">Dashboard</h1>
+        <button class="btn-primary">
+          <span>+</span> New Scan
+        </button>
+      </header>
+      
+      <div class="cards-grid">
+        <div class="metric-card">
+          <div class="metric-value">47</div>
+          <div class="metric-label">Total Scans</div>
+        </div>
+        <div class="metric-card warning">
+          <div class="metric-value">12</div>
+          <div class="metric-label">Open Issues</div>
+        </div>
+        <div class="metric-card success">
+          <div class="metric-value">35</div>
+          <div class="metric-label">Fixed This Week</div>
+        </div>
+      </div>
+      
+      <section>
+        <div class="section-header">
+          <h2 class="section-title">Recent Scans</h2>
+          <a href="scan-results.html" class="link">View all</a>
+        </div>
+        
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Target</th>
+              <th>Status</th>
+              <th>Violations</th>
+              <th>Time</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="target-path">playbooks/</td>
+              <td><span class="status-badge status-passed">&#10003; PASSED</span></td>
+              <td>
+                <div class="violation-counts">
+                  <span class="count-error">0 errors</span>
+                  <span class="count-warning">2 warnings</span>
+                  <span class="count-hint">5 hints</span>
+                </div>
+              </td>
+              <td class="time-ago">2 minutes ago</td>
+            </tr>
+            <tr>
+              <td class="target-path">roles/webserver/</td>
+              <td><span class="status-badge status-failed">&#10007; FAILED</span></td>
+              <td>
+                <div class="violation-counts">
+                  <span class="count-error">3 errors</span>
+                  <span class="count-warning">8 warnings</span>
+                  <span class="count-hint">2 hints</span>
+                </div>
+              </td>
+              <td class="time-ago">1 hour ago</td>
+            </tr>
+            <tr>
+              <td class="target-path">roles/database/</td>
+              <td><span class="status-badge status-failed">&#10007; FAILED</span></td>
+              <td>
+                <div class="violation-counts">
+                  <span class="count-error">1 error</span>
+                  <span class="count-warning">4 warnings</span>
+                  <span class="count-hint">0 hints</span>
+                </div>
+              </td>
+              <td class="time-ago">3 hours ago</td>
+            </tr>
+            <tr>
+              <td class="target-path">inventory/</td>
+              <td><span class="status-badge status-passed">&#10003; PASSED</span></td>
+              <td>
+                <div class="violation-counts">
+                  <span class="count-error">0 errors</span>
+                  <span class="count-warning">0 warnings</span>
+                  <span class="count-hint">1 hint</span>
+                </div>
+              </td>
+              <td class="time-ago">Yesterday</td>
+            </tr>
+            <tr>
+              <td class="target-path">collections/network/</td>
+              <td><span class="status-badge status-passed">&#10003; PASSED</span></td>
+              <td>
+                <div class="violation-counts">
+                  <span class="count-error">0 errors</span>
+                  <span class="count-warning">1 warning</span>
+                  <span class="count-hint">3 hints</span>
+                </div>
+              </td>
+              <td class="time-ago">2 days ago</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

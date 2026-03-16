@@ -2,7 +2,7 @@
 
 ## Status
 
-Not Started
+In Progress
 
 ## Overview
 
@@ -26,7 +26,7 @@ AI-assisted remediation for complex logic transitions that cannot be handled by 
 
 | REQ | Name | Status |
 |-----|------|--------|
-| — | No requirements yet | — |
+| REQ-002 | Automated Remediation | Draft |
 
 ## Dependencies
 

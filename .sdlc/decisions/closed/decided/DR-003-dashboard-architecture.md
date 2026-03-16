@@ -149,13 +149,20 @@ If dashboard is a v1 requirement, then **Option A** (Streamlit + JSON files) is 
 
 ## Decision
 
-**Status**: Open
-**Date**: —
-**Decided By**: —
+**Status**: Decided
+**Date**: 2026-03-16
+**Decided By**: Team
 
-**Decision**: —
+**Decision**: Option D — Defer Dashboard to v2
 
-**Rationale**: —
+**Rationale**:
+- Ship CLI-first v1 with `--json` output
+- Create UI mockups using AAP UI patterns for user surfacing and feedback
+- Define dashboard requirements in v2 based on real user feedback
+- Revisit DR-008 (data persistence) when dashboard implementation is in scope
 
 **Action Items**:
-- [ ] —
+- [ ] Ensure CLI outputs clean JSON format for future dashboard consumption
+- [x] Create UI mockups using AAP UI / PatternFly patterns (TASK-002 complete)
+- [ ] Gather user feedback on mockups before v2 planning
+- [ ] Revisit DR-008 (data persistence) when dashboard is prioritized

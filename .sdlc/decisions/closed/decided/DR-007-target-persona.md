@@ -140,13 +140,21 @@ Rationale:
 
 ## Decision
 
-**Status**: Open
-**Date**: —
-**Decided By**: —
+**Status**: Decided
+**Date**: 2026-03-16
+**Decided By**: Team
 
-**Decision**: —
+**Decision**: Option C — Balanced MVP (AAP UI patterns, not Streamlit)
 
-**Rationale**: —
+**Rationale**:
+- Provide minimum viable for both personas in v1
+- DevOps: CLI with `--fix`, `--json`, basic CI integration
+- PM/Architect: Basic dashboard using AAP UI / PatternFly patterns (not Streamlit)
+- Consistent UI language with AAP ecosystem from day one
+- Can iterate based on adoption and user feedback
 
 **Action Items**:
-- [ ] —
+- [ ] Prioritize CLI features: `--fix`, `--json`, SARIF/JUnit output
+- [ ] Build basic dashboard using AAP UI / PatternFly components
+- [ ] Ensure both personas have usable v1 experience
+- [ ] Gather feedback from both personas post-launch

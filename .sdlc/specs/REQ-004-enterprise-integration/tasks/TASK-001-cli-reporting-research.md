@@ -62,10 +62,10 @@ Research spike for config-only reporting options for the CLI. Evaluate lightweig
 Before marking complete:
 
 - [x] Multiple reporting options evaluated (5 options in research doc)
-- [x] PoC demonstrates config-only setup (Rich already a dependency)
+- [x] PoC demonstrates config-only setup (Rich prototype, then internal ANSI)
 - [x] Works standalone with CLI output (terminal + HTML export)
-- [x] Recommendation documented with rationale (Rich + HTML Export)
-- [x] DR/ADR created if architectural decision needed (No new ADR needed - uses existing deps)
+- [x] Recommendation documented with rationale (Rich initially, then internal ANSI)
+- [x] ADR created for architectural decision (ADR-014: CLI Output Formats)
 
 ## Acceptance Criteria Reference
 
@@ -91,27 +91,53 @@ From REQ-004:
 
 ## Results Summary
 
-**Recommendation**: Use Rich + HTML Export (already a dependency)
+**Initial Recommendation**: Use Rich + HTML Export (already a dependency)
+
+**Final Decision (ADR-014)**: Use **internal zero-dependency ANSI module** instead of Rich
+
+**Rationale for change**:
+- Rich + dependencies = ~1.6 MB (rich + pygments + markdown-it-py + mdurl)
+- Internal ANSI module = ~200 lines, single file, fully typed
+- Feature surface is tiny (8 colors, badges, boxes, tables, tree chars)
+- Rich would add 30K+ lines of code, 95% unused
+- Internal module provides pixel-perfect control over badge styling
 
 **Deliverables**:
 - `.sdlc/research/cli-reporting-options.md` - Full evaluation of 5 options + implementation guide
-- `prototypes/cli-reporting/output_formatter.py` - **Complete implementation reference** (all 4 formats)
-- `prototypes/cli-reporting/rich_terminal.py` - Terminal output demo
-- `prototypes/cli-reporting/rich_html_export.py` - HTML export demo
-- `prototypes/cli-reporting/demo_report.html` - Generated HTML example
-- `prototypes/cli-reporting/README.md` - Usage instructions
+- `prototypes/cli-reporting/output_formatter.py` - Rich-based reference (superseded)
+- `src/apme_engine/ansi.py` - **Final implementation** (zero-dependency ANSI styling)
+- `tests/test_ansi.py` - 45 unit tests for ANSI module
 
-**Key Finding**: No new dependencies needed. Rich's `Console.save_html()` provides shareable HTML reports with zero additional packages.
+**Implementation** (ADR-014):
+| Format | Flag | Implementation |
+|--------|------|----------------|
+| ANSI terminal | `--format rich` (default) | `src/apme_engine/ansi.py` |
+| JSON | `--format json` / `--json` | stdlib `json` |
+| JUnit XML | `--format junit` | stdlib `xml.etree` |
+| HTML | `--format html` | ANSI-to-HTML conversion |
 
-## Re-Running This Research
+**Key Finding**: Zero new dependencies achieved. Internal ANSI module provides all needed terminal styling with NO_COLOR/FORCE_COLOR support (no-color.org compliant).
 
-To regenerate example outputs or test changes:
+## Testing the Implementation
+
+To test the ANSI styling module:
 ```bash
-uv run python prototypes/cli-reporting/output_formatter.py
+uv run pytest tests/test_ansi.py -v
 ```
 
-This produces sample output for all 4 formats:
-- `apme scan .` (Rich terminal)
-- `apme scan . --json` (JSON)
-- `apme scan . --junit` (JUnit XML)
-- `apme scan . --html report.html` (HTML)
+To see the CLI output formats in action:
+```bash
+# ANSI terminal output (default)
+apme-scan scan .
+
+# JSON output
+apme-scan scan . --json
+
+# With diagnostics
+apme-scan scan . -v --primary-addr localhost:50051
+```
+
+**Related PRs**:
+- PR #17: ADR-014 and SDLC documentation
+- PR #18: `src/apme_engine/ansi.py` implementation
+- PR #19: Test coverage for CLI health-check and diagnostics

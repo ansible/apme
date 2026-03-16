@@ -141,13 +141,22 @@ Even rough baselines are better than none.
 
 ## Decision
 
-**Status**: Open
-**Date**: —
-**Decided By**: —
+**Status**: Decided
+**Date**: 2026-03-16
+**Decided By**: Team
 
-**Decision**: —
+**Decision**: Option A — Establish Baselines Now
 
-**Rationale**: —
+**Rationale**:
+- Even rough baselines are better than none
+- Enables honest, defensible marketing claims
+- Tracks improvement over time
+- Sets realistic expectations with stakeholders
+- Key metrics: manual remediation time, automation coverage, false positive rate
 
 **Action Items**:
-- [ ] —
+- [ ] Measure manual remediation time: Time 2-3 team members fixing FQCN issues manually on sample role
+- [ ] Measure automation coverage: % of issues auto-fixable by Tier 1 transforms
+- [ ] Measure accuracy: False positive rate on 3 real-world projects
+- [ ] Document methodology for reproducible measurement
+- [ ] Update PRD/marketing with measured baselines
