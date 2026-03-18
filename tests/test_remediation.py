@@ -6,7 +6,11 @@ from typing import cast
 
 from apme_engine.engine.models import ViolationDict
 from apme_engine.remediation.engine import RemediationEngine
-from apme_engine.remediation.partition import is_finding_resolvable, partition_violations
+from apme_engine.remediation.partition import (
+    is_finding_resolvable,
+    normalize_rule_id,
+    partition_violations,
+)
 from apme_engine.remediation.registry import TransformRegistry, TransformResult
 from apme_engine.remediation.transforms import build_default_registry
 from apme_engine.remediation.transforms.L007_shell_to_command import fix_shell_to_command
@@ -88,6 +92,35 @@ class TestPartition:
         reg.register("L021", lambda c, v: TransformResult(c, False))
         assert is_finding_resolvable({"rule_id": "L021"}, reg) is True
         assert is_finding_resolvable({"rule_id": "L999"}, reg) is False
+
+    def test_normalize_rule_id_strips_native_prefix(self) -> None:
+        """Verifies normalize_rule_id strips 'native:' prefix."""
+        assert normalize_rule_id("native:L021") == "L021"
+        assert normalize_rule_id("L021") == "L021"
+        assert normalize_rule_id("native:M001") == "M001"
+        assert normalize_rule_id("") == ""
+
+    def test_is_finding_resolvable_with_native_prefix(self) -> None:
+        """Verifies native:L021 is resolvable when L021 is registered."""
+        reg = TransformRegistry()
+        reg.register("L021", lambda c, v: TransformResult(c, False))
+        assert is_finding_resolvable({"rule_id": "native:L021"}, reg) is True
+        assert is_finding_resolvable({"rule_id": "native:L999"}, reg) is False
+
+    def test_partition_native_prefix_to_tier1(self) -> None:
+        """Verifies native:-prefixed violations partition into Tier 1."""
+        reg = TransformRegistry()
+        reg.register("L021", lambda c, v: TransformResult(c, False))
+
+        violations: list[ViolationDict] = [
+            {"rule_id": "native:L021"},
+            {"rule_id": "R118"},
+        ]
+        t1, t2, t3 = partition_violations(violations, reg)
+        assert len(t1) == 1
+        assert t1[0]["rule_id"] == "native:L021"
+        assert len(t2) == 1
+        assert len(t3) == 0
 
     def test_partition_three_tiers(self) -> None:
         """Verifies partition_violations splits into resolvable, AI, manual tiers."""
@@ -503,6 +536,111 @@ class TestRemediationEngine:
         assert report.fixed == 0
         assert report.passes == 1
         assert report.oscillation_detected is False
+
+    def test_resolves_relative_file_path(self, tmp_path: Path) -> None:
+        """Verifies violations with relative file paths are resolved to absolute paths.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+
+        """
+        playbook = tmp_path / "play.yml"
+        playbook.write_text(
+            textwrap.dedent("""\
+        - name: Copy file
+          ansible.builtin.copy:
+            src: /a
+            dest: /b
+        """)
+        )
+
+        def scan_fn(paths: list[str]) -> list[ViolationDict]:
+            content = playbook.read_text()
+            if "mode:" not in content:
+                return [{"rule_id": "L021", "file": "play.yml", "line": 1}]
+            return []
+
+        reg = TransformRegistry()
+        reg.register("L021", fix_missing_mode)
+        engine = RemediationEngine(reg, scan_fn, max_passes=5)
+
+        report = engine.remediate([str(playbook)], apply=True)
+        assert report.fixed >= 1
+        assert "mode:" in playbook.read_text()
+
+    def test_resolves_native_prefixed_rule_id(self, tmp_path: Path) -> None:
+        """Verifies violations with native:-prefixed rule IDs are matched to transforms.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+
+        """
+        playbook = tmp_path / "play.yml"
+        playbook.write_text(
+            textwrap.dedent("""\
+        - name: Copy file
+          ansible.builtin.copy:
+            src: /a
+            dest: /b
+        """)
+        )
+
+        def scan_fn(paths: list[str]) -> list[ViolationDict]:
+            content = playbook.read_text()
+            if "mode:" not in content:
+                return [{"rule_id": "native:L021", "file": str(playbook), "line": 1}]
+            return []
+
+        reg = TransformRegistry()
+        reg.register("L021", fix_missing_mode)
+        engine = RemediationEngine(reg, scan_fn, max_passes=5)
+
+        report = engine.remediate([str(playbook)], apply=True)
+        assert report.fixed >= 1
+        assert "mode:" in playbook.read_text()
+
+    def test_ambiguous_basename_skipped(self, tmp_path: Path) -> None:
+        """Verifies violations with ambiguous basenames are skipped, not misapplied.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+
+        """
+        dir_a = tmp_path / "a"
+        dir_b = tmp_path / "b"
+        dir_a.mkdir()
+        dir_b.mkdir()
+
+        play_a = dir_a / "main.yml"
+        play_b = dir_b / "main.yml"
+        play_a.write_text(
+            textwrap.dedent("""\
+        - name: Copy A
+          ansible.builtin.copy:
+            src: /a
+            dest: /b
+        """)
+        )
+        play_b.write_text(
+            textwrap.dedent("""\
+        - name: Copy B
+          ansible.builtin.copy:
+            src: /c
+            dest: /d
+        """)
+        )
+
+        def scan_fn(paths: list[str]) -> list[ViolationDict]:
+            return [{"rule_id": "L021", "file": "main.yml", "line": 1}]
+
+        reg = TransformRegistry()
+        reg.register("L021", fix_missing_mode)
+        engine = RemediationEngine(reg, scan_fn, max_passes=2)
+
+        report = engine.remediate([str(play_a), str(play_b)], apply=False)
+        assert report.fixed == 0
+        assert "mode:" not in play_a.read_text()
+        assert "mode:" not in play_b.read_text()
 
     def test_report_tiers(self, tmp_path: Path) -> None:
         """Verifies remaining_ai and remaining_manual populated from partition.

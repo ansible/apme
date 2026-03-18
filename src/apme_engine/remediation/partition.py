@@ -9,6 +9,20 @@ if TYPE_CHECKING:
 from apme_engine.remediation.registry import TransformRegistry
 
 
+def normalize_rule_id(rule_id: str) -> str:
+    """Strip validator-specific prefixes from a rule ID for registry lookup.
+
+    Args:
+        rule_id: Raw rule ID, possibly prefixed (e.g. ``native:L021``).
+
+    Returns:
+        Bare rule ID suitable for registry lookup (e.g. ``L021``).
+    """
+    if rule_id.startswith("native:"):
+        rule_id = rule_id[len("native:") :]
+    return rule_id
+
+
 def is_finding_resolvable(violation: ViolationDict, registry: TransformRegistry) -> bool:
     """Return True if the violation has a registered deterministic transform (Tier 1).
 
@@ -19,7 +33,7 @@ def is_finding_resolvable(violation: ViolationDict, registry: TransformRegistry)
     Returns:
         True if rule_id has a registered transform.
     """
-    return str(violation.get("rule_id", "")) in registry
+    return normalize_rule_id(str(violation.get("rule_id", ""))) in registry
 
 
 def partition_violations(
