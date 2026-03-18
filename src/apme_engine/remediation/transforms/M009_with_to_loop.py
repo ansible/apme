@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 from apme_engine.engine.models import ViolationDict
-from apme_engine.engine.yaml_utils import FormattedYAML
-from apme_engine.remediation.registry import TransformResult
-from apme_engine.remediation.transforms._helpers import find_task_at_line, violation_line_to_int
+from apme_engine.remediation.structured import StructuredFile
+from apme_engine.remediation.transforms._helpers import violation_line_to_int
 
 _WITH_SIMPLE = frozenset(
     {
@@ -16,7 +15,7 @@ _WITH_SIMPLE = frozenset(
 )
 
 
-def fix_with_to_loop(content: str, violation: ViolationDict) -> TransformResult:
+def fix_with_to_loop(sf: StructuredFile, violation: ViolationDict) -> bool:
     """Convert simple ``with_items`` to ``loop:``.
 
     Only handles the straightforward cases (with_items, with_list,
@@ -24,35 +23,27 @@ def fix_with_to_loop(content: str, violation: ViolationDict) -> TransformResult:
     with_subelements) need manual review or AI.
 
     Args:
-        content: YAML file content.
+        sf: Parsed YAML file to modify in-place.
         violation: Violation dict with line and optional with_key.
 
     Returns:
-        TransformResult with modified content if applied.
+        True if a change was applied.
     """
-    yaml = FormattedYAML(typ="rt", pure=True, version=(1, 1))
-
-    try:
-        data = yaml.load(content)
-    except Exception:
-        return TransformResult(content=content, applied=False)
-
-    line = violation_line_to_int(violation)
-    task = find_task_at_line(data, line)
+    task = sf.find_task(violation_line_to_int(violation))
     if task is None:
-        return TransformResult(content=content, applied=False)
+        return False
 
     with_key = violation.get("with_key", "")
 
     if with_key in _WITH_SIMPLE and with_key in task:
         value = task.pop(with_key)
         task["loop"] = value
-        return TransformResult(content=yaml.dumps(data), applied=True)
+        return True
 
     for k in list(_WITH_SIMPLE):
         if k in task:
             value = task.pop(k)
             task["loop"] = value
-            return TransformResult(content=yaml.dumps(data), applied=True)
+            return True
 
-    return TransformResult(content=content, applied=False)
+    return False

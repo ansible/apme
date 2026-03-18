@@ -3,39 +3,30 @@
 from __future__ import annotations
 
 from apme_engine.engine.models import ViolationDict
-from apme_engine.engine.yaml_utils import FormattedYAML
-from apme_engine.remediation.registry import TransformResult
-from apme_engine.remediation.transforms._helpers import find_task_at_line, violation_line_to_int
+from apme_engine.remediation.structured import StructuredFile
+from apme_engine.remediation.transforms._helpers import violation_line_to_int
 
 
-def fix_name_casing(content: str, violation: ViolationDict) -> TransformResult:
+def fix_name_casing(sf: StructuredFile, violation: ViolationDict) -> bool:
     """Capitalize the first letter of a task or play name.
 
     Args:
-        content: YAML file content.
+        sf: Parsed YAML file to modify in-place.
         violation: Violation dict with line.
 
     Returns:
-        TransformResult with modified content if applied.
+        True if a change was applied.
     """
-    yaml = FormattedYAML(typ="rt", pure=True, version=(1, 1))
-
-    try:
-        data = yaml.load(content)
-    except Exception:
-        return TransformResult(content=content, applied=False)
-
-    line = violation_line_to_int(violation)
-    task = find_task_at_line(data, line)
+    task = sf.find_task(violation_line_to_int(violation))
     if task is None:
-        return TransformResult(content=content, applied=False)
+        return False
 
     name = task.get("name")
     if not isinstance(name, str) or not name:
-        return TransformResult(content=content, applied=False)
+        return False
 
     if name[0].isupper():
-        return TransformResult(content=content, applied=False)
+        return False
 
     task["name"] = name[0].upper() + name[1:]
-    return TransformResult(content=yaml.dumps(data), applied=True)
+    return True

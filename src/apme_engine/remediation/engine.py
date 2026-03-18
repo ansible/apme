@@ -1,8 +1,14 @@
-"""Remediation engine — convergence loop that applies Tier 1 transforms."""
+"""Remediation engine — convergence loop that applies Tier 1 transforms.
+
+Uses ``StructuredFile`` to parse each YAML file once, apply all transforms
+on the in-memory ``CommentedMap``/``CommentedSeq``, and serialize only when
+needed (once per convergence pass, for re-scanning).
+"""
 
 from __future__ import annotations
 
 import difflib
+import logging
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -15,7 +21,10 @@ from apme_engine.remediation.partition import (
     partition_violations,
 )
 from apme_engine.remediation.registry import TransformRegistry
+from apme_engine.remediation.structured import StructuredFile
 from apme_engine.remediation.transforms._helpers import violation_line_to_int
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -136,6 +145,15 @@ class RemediationEngine:
         for fp in file_paths:
             file_contents[fp] = Path(fp).read_text(encoding="utf-8")
 
+        # Build StructuredFile wrappers — parse each file once.
+        # Files that fail to parse are left in file_contents as raw strings
+        # and handled via the legacy string path in the registry.
+        structured: dict[str, StructuredFile] = {}
+        for fp, content in file_contents.items():
+            sf = StructuredFile.from_content(fp, content)
+            if sf is not None:
+                structured[fp] = sf
+
         # Violations may report relative filenames (e.g. "site.yml") while
         # file_contents keys are absolute paths.  Build a reverse lookup so we
         # can resolve either form to the canonical key.  When multiple files
@@ -188,14 +206,30 @@ class RemediationEngine:
                 if vf is None:
                     continue
 
-                result = self._registry.apply(rule_id, file_contents[vf], v)
-                if result.applied:
-                    file_contents[vf] = result.content
-                    all_applied_rules[vf].append(rule_id)
-                    applied_this_pass += 1
+                sf = structured.get(vf)
+                if sf is not None:
+                    applied = self._registry.apply_structured(rule_id, sf, v)
+                    if applied:
+                        all_applied_rules[vf].append(rule_id)
+                        applied_this_pass += 1
+                    else:
+                        v["remediation_class"] = RemediationClass.AI_CANDIDATE
+                        v["remediation_resolution"] = RemediationResolution.TRANSFORM_FAILED
                 else:
-                    v["remediation_class"] = RemediationClass.AI_CANDIDATE
-                    v["remediation_resolution"] = RemediationResolution.TRANSFORM_FAILED
+                    result = self._registry.apply(rule_id, file_contents[vf], v)
+                    if result.applied:
+                        file_contents[vf] = result.content
+                        all_applied_rules[vf].append(rule_id)
+                        applied_this_pass += 1
+                    else:
+                        v["remediation_class"] = RemediationClass.AI_CANDIDATE
+                        v["remediation_resolution"] = RemediationResolution.TRANSFORM_FAILED
+
+            # Serialize dirty structured files once per pass
+            for fp, sf in structured.items():
+                if sf.dirty:
+                    file_contents[fp] = sf.serialize()
+                    sf.reset_dirty()
 
             self._log(f"  Pass {pass_num}: applied {applied_this_pass}")
 
@@ -221,6 +255,13 @@ class RemediationEngine:
             if new_fixable == 0:
                 self._log(f"  Pass {pass_num}: fully converged (0 fixable)")
                 break
+
+            # Re-parse structured files from the serialized content
+            # so line numbers match the on-disk state for the next pass
+            for fp in list(structured):
+                sf = StructuredFile.from_content(fp, file_contents[fp])
+                if sf is not None:
+                    structured[fp] = sf
 
         # Final partition of remaining violations
         self._write_files(file_contents)

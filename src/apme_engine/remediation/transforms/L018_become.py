@@ -3,38 +3,29 @@
 from __future__ import annotations
 
 from apme_engine.engine.models import ViolationDict
-from apme_engine.engine.yaml_utils import FormattedYAML
-from apme_engine.remediation.registry import TransformResult
-from apme_engine.remediation.transforms._helpers import find_task_at_line, violation_line_to_int
+from apme_engine.remediation.structured import StructuredFile
+from apme_engine.remediation.transforms._helpers import violation_line_to_int
 
 
-def fix_become(content: str, violation: ViolationDict) -> TransformResult:
+def fix_become(sf: StructuredFile, violation: ViolationDict) -> bool:
     """Add ``become: true`` when ``become_user`` is set.
 
     Args:
-        content: YAML file content.
+        sf: Parsed YAML file to modify in-place.
         violation: Violation dict with line.
 
     Returns:
-        TransformResult with modified content if applied.
+        True if a change was applied.
     """
-    yaml = FormattedYAML(typ="rt", pure=True, version=(1, 1))
-
-    try:
-        data = yaml.load(content)
-    except Exception:
-        return TransformResult(content=content, applied=False)
-
-    line = violation_line_to_int(violation)
-    task = find_task_at_line(data, line)
+    task = sf.find_task(violation_line_to_int(violation))
     if task is None:
-        return TransformResult(content=content, applied=False)
+        return False
 
     if "become_user" not in task:
-        return TransformResult(content=content, applied=False)
+        return False
 
     if "become" in task:
-        return TransformResult(content=content, applied=False)
+        return False
 
     items = list(task.items())
     task.clear()
@@ -43,4 +34,4 @@ def fix_become(content: str, violation: ViolationDict) -> TransformResult:
         if k == "become_user":
             task["become"] = True
 
-    return TransformResult(content=yaml.dumps(data), applied=True)
+    return True

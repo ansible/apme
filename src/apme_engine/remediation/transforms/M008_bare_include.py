@@ -3,36 +3,26 @@
 from __future__ import annotations
 
 from apme_engine.engine.models import ViolationDict
-from apme_engine.engine.yaml_utils import FormattedYAML
-from apme_engine.remediation.registry import TransformResult
-from apme_engine.remediation.transforms._helpers import find_task_at_line, rename_key, violation_line_to_int
+from apme_engine.remediation.structured import StructuredFile
+from apme_engine.remediation.transforms._helpers import rename_key, violation_line_to_int
 
 
-def fix_bare_include(content: str, violation: ViolationDict) -> TransformResult:
+def fix_bare_include(sf: StructuredFile, violation: ViolationDict) -> bool:
     """Replace ``include:`` with ``ansible.builtin.include_tasks:``.
 
     Args:
-        content: YAML file content.
+        sf: Parsed YAML file to modify in-place.
         violation: Violation dict with line.
 
     Returns:
-        TransformResult with modified content if applied.
+        True if a change was applied.
     """
-    yaml = FormattedYAML(typ="rt", pure=True, version=(1, 1))
-
-    try:
-        data = yaml.load(content)
-    except Exception:
-        return TransformResult(content=content, applied=False)
-
-    line = violation_line_to_int(violation)
-    task = find_task_at_line(data, line)
+    task = sf.find_task(violation_line_to_int(violation))
     if task is None:
-        return TransformResult(content=content, applied=False)
+        return False
 
     if "include" not in task:
-        return TransformResult(content=content, applied=False)
+        return False
 
     rename_key(task, "include", "ansible.builtin.include_tasks")
-
-    return TransformResult(content=yaml.dumps(data), applied=True)
+    return True

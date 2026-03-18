@@ -31,29 +31,31 @@ def build_default_registry() -> TransformRegistry:
     """
     reg = TransformRegistry()
 
-    # OPA lint rules
-    reg.register("L007", fix_shell_to_command)
-    reg.register("L008", fix_local_action)
-    reg.register("L009", fix_empty_string)
-    reg.register("L011", fix_literal_bool)
-    reg.register("L012", fix_latest)
-    reg.register("L013", fix_changed_when)
-    reg.register("L015", fix_jinja_when)
-    reg.register("L018", fix_become)
+    # Structured transforms (parse-once, modify in-place)
+    reg.register("L007", structured=fix_shell_to_command)
+    reg.register("L008", structured=fix_local_action)
+    reg.register("L009", structured=fix_empty_string)
+    reg.register("L011", structured=fix_literal_bool)
+    reg.register("L012", structured=fix_latest)
+    reg.register("L013", structured=fix_changed_when)
+    reg.register("L015", structured=fix_jinja_when)
+    reg.register("L018", structured=fix_become)
+    reg.register("L021", structured=fix_missing_mode)
+    reg.register("L022", structured=fix_pipefail)
+    reg.register("L025", structured=fix_name_casing)
+    reg.register("L043", structured=fix_bare_vars)
+    reg.register("L046", structured=fix_free_form)
+
+    # L020 operates on raw lines (YAML 1.1 octal ambiguity) — legacy string path
     reg.register("L020", fix_octal_mode)
-    reg.register("L021", fix_missing_mode)
-    reg.register("L022", fix_pipefail)
-    reg.register("L025", fix_name_casing)
-    reg.register("L043", fix_bare_vars)
-    reg.register("L046", fix_free_form)
 
     # Ansible validator rules (carry resolved_fqcn from ansible-core)
-    reg.register("M001", fix_fqcn)
-    reg.register("M003", fix_fqcn)
+    reg.register("M001", structured=fix_fqcn)
+    reg.register("M003", structured=fix_fqcn)
 
     # Migration rules
-    reg.register("M006", fix_become_unreachable)
-    reg.register("M008", fix_bare_include)
-    reg.register("M009", fix_with_to_loop)
+    reg.register("M006", structured=fix_become_unreachable)
+    reg.register("M008", structured=fix_bare_include)
+    reg.register("M009", structured=fix_with_to_loop)
 
     return reg

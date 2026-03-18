@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 from apme_engine.engine.models import ViolationDict
-from apme_engine.engine.yaml_utils import FormattedYAML
-from apme_engine.remediation.registry import TransformResult
-from apme_engine.remediation.transforms._helpers import find_task_at_line, get_module_key, violation_line_to_int
+from apme_engine.remediation.structured import StructuredFile
+from apme_engine.remediation.transforms._helpers import get_module_key, violation_line_to_int
 
 _FILE_MODULES = frozenset(
     {
@@ -31,42 +30,34 @@ _FILE_MODULES = frozenset(
 )
 
 
-def fix_missing_mode(content: str, violation: ViolationDict) -> TransformResult:
+def fix_missing_mode(sf: StructuredFile, violation: ViolationDict) -> bool:
     """Add mode: '0644' to file-related tasks that lack an explicit mode.
 
     Args:
-        content: YAML file content.
+        sf: Parsed YAML file to modify in-place.
         violation: Violation dict with line.
 
     Returns:
-        TransformResult with modified content if applied.
+        True if a change was applied.
     """
-    yaml = FormattedYAML(typ="rt", pure=True, version=(1, 1))
-
-    try:
-        data = yaml.load(content)
-    except Exception:
-        return TransformResult(content=content, applied=False)
-
-    line = violation_line_to_int(violation)
-    task = find_task_at_line(data, line)
+    task = sf.find_task(violation_line_to_int(violation))
     if task is None:
-        return TransformResult(content=content, applied=False)
+        return False
 
     module_key = get_module_key(task)
     if module_key is None or module_key not in _FILE_MODULES:
-        return TransformResult(content=content, applied=False)
+        return False
 
     module_args = task.get(module_key)
 
     if isinstance(module_args, dict):
         if "mode" in module_args:
-            return TransformResult(content=content, applied=False)
+            return False
         module_args["mode"] = "0644"
     else:
         if "mode" not in task:
             task["mode"] = "0644"
         else:
-            return TransformResult(content=content, applied=False)
+            return False
 
-    return TransformResult(content=yaml.dumps(data), applied=True)
+    return True

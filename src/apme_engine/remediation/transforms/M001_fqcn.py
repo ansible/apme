@@ -7,10 +7,8 @@ Falls back to a static builtin map when resolved_fqcn is not available.
 from __future__ import annotations
 
 from apme_engine.engine.models import ViolationDict
-from apme_engine.engine.yaml_utils import FormattedYAML
-from apme_engine.remediation.registry import TransformResult
+from apme_engine.remediation.structured import StructuredFile
 from apme_engine.remediation.transforms._helpers import (
-    find_task_at_line,
     get_module_key,
     rename_key,
     violation_line_to_int,
@@ -91,36 +89,27 @@ def _resolve_fqcn(violation: ViolationDict, current_key: str) -> str | None:
     return _BUILTIN_FQCN.get(current_key)
 
 
-def fix_fqcn(content: str, violation: ViolationDict) -> TransformResult:
+def fix_fqcn(sf: StructuredFile, violation: ViolationDict) -> bool:
     """Rename a short module name to its FQCN.
 
     Args:
-        content: YAML file content.
+        sf: Parsed YAML file to modify in-place.
         violation: Violation dict with line and optional resolved_fqcn.
 
     Returns:
-        TransformResult with modified content if applied.
+        True if a change was applied.
     """
-    yaml = FormattedYAML(typ="rt", pure=True, version=(1, 1))
-
-    try:
-        data = yaml.load(content)
-    except Exception:
-        return TransformResult(content=content, applied=False)
-
-    line = violation_line_to_int(violation)
-    task = find_task_at_line(data, line)
+    task = sf.find_task(violation_line_to_int(violation))
     if task is None:
-        return TransformResult(content=content, applied=False)
+        return False
 
     module_key = get_module_key(task)
     if module_key is None:
-        return TransformResult(content=content, applied=False)
+        return False
 
     fqcn = _resolve_fqcn(violation, module_key)
     if fqcn is None or fqcn == module_key:
-        return TransformResult(content=content, applied=False)
+        return False
 
     rename_key(task, module_key, fqcn)
-
-    return TransformResult(content=yaml.dumps(data), applied=True)
+    return True

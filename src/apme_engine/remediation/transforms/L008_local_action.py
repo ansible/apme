@@ -5,36 +5,27 @@ from __future__ import annotations
 from ruamel.yaml.comments import CommentedMap
 
 from apme_engine.engine.models import ViolationDict
-from apme_engine.engine.yaml_utils import FormattedYAML
-from apme_engine.remediation.registry import TransformResult
-from apme_engine.remediation.transforms._helpers import find_task_at_line, violation_line_to_int
+from apme_engine.remediation.structured import StructuredFile
+from apme_engine.remediation.transforms._helpers import violation_line_to_int
 
 
-def fix_local_action(content: str, violation: ViolationDict) -> TransformResult:
+def fix_local_action(sf: StructuredFile, violation: ViolationDict) -> bool:
     """Convert local_action to the module key + delegate_to: localhost.
 
     Args:
-        content: YAML file content.
+        sf: Parsed YAML file to modify in-place.
         violation: Violation dict with line.
 
     Returns:
-        TransformResult with modified content if applied.
+        True if a change was applied.
     """
-    yaml = FormattedYAML(typ="rt", pure=True, version=(1, 1))
-
-    try:
-        data = yaml.load(content)
-    except Exception:
-        return TransformResult(content=content, applied=False)
-
-    line = violation_line_to_int(violation)
-    task = find_task_at_line(data, line)
+    task = sf.find_task(violation_line_to_int(violation))
     if task is None:
-        return TransformResult(content=content, applied=False)
+        return False
 
     la_value = task.get("local_action")
     if la_value is None:
-        return TransformResult(content=content, applied=False)
+        return False
 
     if isinstance(la_value, str):
         parts = la_value.split(None, 1)
@@ -51,13 +42,13 @@ def fix_local_action(content: str, violation: ViolationDict) -> TransformResult:
     elif isinstance(la_value, CommentedMap):
         module_name = la_value.pop("module", None)
         if not module_name:
-            return TransformResult(content=content, applied=False)
+            return False
 
         del task["local_action"]
         task[module_name] = la_value if la_value else CommentedMap()
         task["delegate_to"] = "localhost"
 
     else:
-        return TransformResult(content=content, applied=False)
+        return False
 
-    return TransformResult(content=yaml.dumps(data), applied=True)
+    return True
