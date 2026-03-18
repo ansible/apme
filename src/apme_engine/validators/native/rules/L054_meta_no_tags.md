@@ -8,24 +8,11 @@ description: Role meta galaxy_info should include galaxy_tags.
 
 Role meta galaxy_info should include galaxy_tags.
 
-### Example: violation
-
-```yaml
-- name: Example play
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Bad
-      ansible.builtin.shell: whoami
-```
-
 ### Example: pass
 
 ```yaml
-- name: Example play
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Ok
-      ansible.builtin.command: whoami
+galaxy_info:
+  role_name: my_role
+  galaxy_tags:
+    - web
 ```

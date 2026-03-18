@@ -11,21 +11,15 @@ Role could not be resolved.
 ### Example: violation
 
 ```yaml
-- name: Example play
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Bad
-      ansible.builtin.shell: whoami
+- name: Include missing role
+  ansible.builtin.include_role:
+    name: nonexistent_role_xyz_999
 ```
 
 ### Example: pass
 
 ```yaml
-- name: Example play
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Ok
-      ansible.builtin.command: whoami
+- name: Debug
+  ansible.builtin.debug:
+    msg: no role include
 ```

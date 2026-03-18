@@ -3,7 +3,6 @@ setuptools
 jsonpickle
 PyYAML
 ruamel.yaml
-tabulate
 filelock
 rapidfuzz
 requests

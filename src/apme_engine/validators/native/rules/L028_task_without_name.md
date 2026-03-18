@@ -11,21 +11,14 @@ Tasks should have a name.
 ### Example: violation
 
 ```yaml
-- name: Example play
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Bad
-      ansible.builtin.shell: whoami
+- ansible.builtin.debug:
+    msg: hello
 ```
 
 ### Example: pass
 
 ```yaml
-- name: Example play
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Ok
-      ansible.builtin.command: whoami
+- name: Debug message
+  ansible.builtin.debug:
+    msg: hello
 ```

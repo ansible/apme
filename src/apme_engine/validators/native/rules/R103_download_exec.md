@@ -6,26 +6,27 @@ description: Task downloads and executes (annotation-based).
 
 ## Download exec (R103)
 
-Task downloads and executes (annotation-based).
+Task downloads and executes (annotation-based). Depends on annotations for INBOUND (mutable src) and CMD_EXEC.
 
 ### Example: violation
 
 ```yaml
-- name: Example play
+- name: Test play
   hosts: localhost
-  connection: local
   tasks:
-    - name: Bad
-      ansible.builtin.shell: whoami
+    - name: Download script
+      ansible.builtin.get_url:
+        url: "{{ download_url }}"
+        dest: /tmp/script.sh
+    - name: Execute downloaded script
+      ansible.builtin.command:
+        cmd: /tmp/script.sh
 ```
 
 ### Example: pass
 
 ```yaml
-- name: Example play
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Ok
-      ansible.builtin.command: whoami
+- name: Simple command
+  ansible.builtin.command:
+    cmd: whoami
 ```

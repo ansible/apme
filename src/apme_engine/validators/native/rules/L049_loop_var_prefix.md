@@ -11,21 +11,23 @@ Loop variable should use prefix (e.g. item_).
 ### Example: violation
 
 ```yaml
-- name: Example play
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Bad
-      ansible.builtin.shell: whoami
+- name: Process items
+  ansible.builtin.debug:
+    msg: "{{ item }}"
+  loop:
+    - a
+    - b
 ```
 
 ### Example: pass
 
 ```yaml
-- name: Example play
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Ok
-      ansible.builtin.command: whoami
+- name: Process items
+  ansible.builtin.debug:
+    msg: "{{ item_name }}"
+  loop:
+    - a
+    - b
+  loop_control:
+    loop_var: item_name
 ```

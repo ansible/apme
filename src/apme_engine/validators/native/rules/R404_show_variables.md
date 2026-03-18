@@ -6,18 +6,7 @@ description: Expose variable_set for the task.
 
 ## Show variables (R404)
 
-Expose variable_set for the task.
-
-### Example: violation
-
-```yaml
-- name: Example play
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Bad
-      ansible.builtin.shell: whoami
-```
+Expose variable_set for the task. Disabled by default.
 
 ### Example: pass
 

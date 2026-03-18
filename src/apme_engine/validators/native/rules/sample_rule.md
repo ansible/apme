@@ -6,18 +6,7 @@ description: Example rule that returns task block.
 
 ## Sample rule (Sample101)
 
-Example rule that returns task block.
-
-### Example: violation
-
-```yaml
-- name: Example play
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Bad
-      ansible.builtin.shell: whoami
-```
+Example rule that returns task block. Disabled by default.
 
 ### Example: pass
 

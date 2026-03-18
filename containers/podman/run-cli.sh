@@ -16,4 +16,4 @@ podman run --rm \
   -w /workspace \
   -e APME_PRIMARY_ADDRESS=127.0.0.1:50051 \
   apme-cli:latest \
-  apme-scan scan "${@:-.}"
+  "${@:-.}"

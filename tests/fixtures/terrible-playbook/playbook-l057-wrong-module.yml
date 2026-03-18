@@ -1,0 +1,11 @@
+---
+# L057: Wrong module FQCN — community.general.sysctl does not exist (sysctl is ansible.posix).
+# Isolated so site.yml can pass syntax-check and get full validation.
+- hosts: localhost
+  tasks:
+    - name: Manage a sysctl value (wrong collection)
+      community.general.sysctl:
+        name: net.ipv4.ip_forward
+        value: "1"
+        state: absent
+        sysctl_set: "not_a_bool"

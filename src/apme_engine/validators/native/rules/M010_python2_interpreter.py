@@ -19,6 +19,27 @@ from apme_engine.engine.models import (
 _PY2_PATH = re.compile(r"python2(\.\d+)?$")
 
 
+def _play_vars_for_task(ctx: AnsibleRunContext, task_key: str) -> YAMLDict:
+    """Collect play-level variables from the sequence before the current task.
+
+    Args:
+        ctx: Current Ansible run context.
+        task_key: Key identifying the current task.
+
+    Returns:
+        Dict of play-level variables.
+    """
+    play_vars: YAMLDict = {}
+    for rt in ctx.sequence:
+        if rt.key == task_key:
+            break
+        if rt.type == RunTargetType.Play:
+            spec = getattr(rt, "spec", None)
+            if spec is not None:
+                play_vars = dict(getattr(spec, "variables", None) or {})
+    return play_vars
+
+
 @dataclass
 class Python2InterpreterRule(Rule):
     """Rule for ansible_python_interpreter set to Python 2 (dropped in 2.18+).
@@ -69,19 +90,22 @@ class Python2InterpreterRule(Rule):
         options = getattr(task.spec, "options", None) or {}
         module_options = getattr(task.spec, "module_options", None) or {}
         task_vars = options.get("vars") or {}
+        play_vars = _play_vars_for_task(ctx, task.key)
 
         interpreter = (
             task_vars.get("ansible_python_interpreter")
+            or play_vars.get("ansible_python_interpreter")
             or options.get("ansible_python_interpreter")
             or module_options.get("ansible_python_interpreter")
             or ""
         )
+        interpreter_str = str(interpreter) if interpreter else ""
 
-        verdict = bool(_PY2_PATH.search(interpreter))
+        verdict = bool(_PY2_PATH.search(interpreter_str))
         detail: YAMLDict = {}
         if verdict:
-            detail["message"] = f"ansible_python_interpreter set to Python 2 path: {interpreter}"
-            detail["interpreter"] = interpreter
+            detail["message"] = f"ansible_python_interpreter set to Python 2 path: {interpreter_str}"
+            detail["interpreter"] = interpreter_str
         return RuleResult(
             verdict=verdict,
             detail=detail,

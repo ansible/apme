@@ -6,26 +6,13 @@ description: Suggest collection/role dependency.
 
 ## Dependency suggestion (R501)
 
-Suggest collection/role dependency.
-
-### Example: violation
-
-```yaml
-- name: Example play
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Bad
-      ansible.builtin.shell: whoami
-```
+Suggest collection/role dependency for unresolved modules with possible candidates. Requires unresolved module with possible_candidates (harness may resolve short names).
 
 ### Example: pass
 
 ```yaml
-- name: Example play
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Ok
-      ansible.builtin.command: whoami
+- name: Copy file with FQCN
+  ansible.builtin.copy:
+    src: files/config.yml
+    dest: /etc/config.yml
 ```

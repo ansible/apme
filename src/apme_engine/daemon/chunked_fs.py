@@ -1,10 +1,14 @@
 """Build a ScanRequest from a local path (chunked filesystem)."""
 
 import os
+from collections.abc import Iterator
 from pathlib import Path
 
 from apme.v1.common_pb2 import File
-from apme.v1.primary_pb2 import ScanOptions, ScanRequest
+from apme.v1.primary_pb2 import ScanChunk, ScanOptions, ScanRequest  # type: ignore[attr-defined]
+
+# Max bytes per ScanChunk message to stay under typical gRPC max message size (e.g. 4 MiB).
+CHUNK_MAX_BYTES = 1024 * 1024  # 1 MiB
 
 # Skip these dirs when walking (same kind of ignores as many linters)
 SKIP_DIRS = {".git", "__pycache__", ".venv", "venv", "node_modules", ".tox", "htmlcov"}
@@ -135,3 +139,76 @@ def build_scan_request(
         files=files,
         options=options,
     )
+
+
+def yield_scan_chunks(
+    target_path: str | Path,
+    scan_id: str | None = None,
+    project_root_name: str = "project",
+    ansible_core_version: str | None = None,
+    collection_specs: list[str] | None = None,
+    chunk_max_bytes: int = CHUNK_MAX_BYTES,
+) -> Iterator[ScanChunk]:
+    """Yield ScanChunk messages for ScanStream so the total request stays under gRPC message limits.
+
+    First chunk includes scan_id, project_root, options; subsequent chunks carry only files.
+    Last chunk has last=True.
+
+    Args:
+        target_path: File or directory to scan.
+        scan_id: Optional scan identifier.
+        project_root_name: Name for project root.
+        ansible_core_version: Optional Ansible core version.
+        collection_specs: Optional list of collection specifiers.
+        chunk_max_bytes: Max serialized size per chunk (default 1 MiB).
+
+    Yields:
+        ScanChunk: ScanChunk messages for streaming.
+    """
+    req = build_scan_request(
+        target_path,
+        scan_id=scan_id,
+        project_root_name=project_root_name,
+        ansible_core_version=ansible_core_version,
+        collection_specs=collection_specs,
+    )
+    files: list[File] = list(req.files)  # type: ignore[arg-type]
+    if not files:
+        yield ScanChunk(
+            scan_id=req.scan_id or "",
+            project_root=req.project_root,
+            options=req.options,
+            files=[],
+            last=True,
+        )
+        return
+    opts = req.options
+    batch: list[File] = []
+    batch_bytes = 0
+    first_chunk = True
+    for f in files:
+        msg_size = len(f.path.encode()) + len(f.content)
+        if batch and batch_bytes + msg_size > chunk_max_bytes:
+            chunk_kwargs: dict[str, object] = {
+                "files": batch,
+                "last": False,
+            }
+            if first_chunk:
+                chunk_kwargs["scan_id"] = req.scan_id or ""
+                chunk_kwargs["project_root"] = req.project_root
+                chunk_kwargs["options"] = opts
+            yield ScanChunk(**chunk_kwargs)
+            first_chunk = False
+            batch = []
+            batch_bytes = 0
+        batch.append(f)
+        batch_bytes += msg_size
+    final_kwargs: dict[str, object] = {
+        "files": batch,
+        "last": True,
+    }
+    if first_chunk:
+        final_kwargs["scan_id"] = req.scan_id or ""
+        final_kwargs["project_root"] = req.project_root
+        final_kwargs["options"] = opts
+    yield ScanChunk(**final_kwargs)

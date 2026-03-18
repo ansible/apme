@@ -6,26 +6,22 @@ description: Parameterized package install (annotation-based).
 
 ## Parameterized pkg install (R113)
 
-Parameterized package install (annotation-based).
+Package install with variable package name (annotation-based).
 
 ### Example: violation
 
 ```yaml
-- name: Example play
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Bad
-      ansible.builtin.shell: whoami
+- name: Install package
+  ansible.builtin.apt:
+    name: "{{ pkg_name }}"
+    state: present
 ```
 
 ### Example: pass
 
 ```yaml
-- name: Example play
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Ok
-      ansible.builtin.command: whoami
+- name: Install package
+  ansible.builtin.apt:
+    name: nginx
+    state: present
 ```

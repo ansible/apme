@@ -6,26 +6,13 @@ description: Package install with insecure option (annotation-based).
 
 ## Pkg install insecure (R107)
 
-Package install with insecure option (annotation-based).
-
-### Example: violation
-
-```yaml
-- name: Example play
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Bad
-      ansible.builtin.shell: whoami
-```
+Package install with insecure option (e.g. validate_certs: false). Depends on PACKAGE_INSTALL annotation.
 
 ### Example: pass
 
 ```yaml
-- name: Example play
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Ok
-      ansible.builtin.command: whoami
+- name: Install package
+  ansible.builtin.apt:
+    name: nginx
+    state: present
 ```

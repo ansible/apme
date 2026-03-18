@@ -10,7 +10,7 @@
 **Rationale**:
 - ARI is already declared as a dependency in x2a-convertor's `pyproject.toml`
 - It has a clean programmatic Python API via `ARIScanner` class - no need to shell out to CLI
-- All ARI dependencies (jsonpickle, PyYAML, ruamel.yaml, requests, tabulate, rapidfuzz, joblib, filelock, gitdb, smmap) are compatible with x2a-convertor's existing deps
+- All ARI dependencies (jsonpickle, PyYAML, ruamel.yaml, requests, rapidfuzz, joblib, filelock, gitdb, smmap) are compatible with x2a-convertor's existing deps
 - The local `ansible-risk-insight/` directory serves as reference code for custom rule development
 
 **Alternatives Considered**:

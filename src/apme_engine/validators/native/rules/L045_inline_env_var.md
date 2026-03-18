@@ -11,21 +11,17 @@ Avoid inline environment in tasks.
 ### Example: violation
 
 ```yaml
-- name: Example play
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Bad
-      ansible.builtin.shell: whoami
+- name: Run with env
+  ansible.builtin.command:
+    cmd: echo hello
+  environment:
+    MY_VAR: value
 ```
 
 ### Example: pass
 
 ```yaml
-- name: Example play
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Ok
-      ansible.builtin.command: whoami
+- name: Run without env
+  ansible.builtin.command:
+    cmd: echo hello
 ```

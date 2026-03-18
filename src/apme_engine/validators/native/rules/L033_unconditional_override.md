@@ -11,21 +11,26 @@ Overriding vars without conditions.
 ### Example: violation
 
 ```yaml
-- name: Example play
+- name: Test play
   hosts: localhost
-  connection: local
+  vars:
+    x: a
   tasks:
-    - name: Bad
-      ansible.builtin.shell: whoami
+    - name: Override unconditionally
+      ansible.builtin.set_fact:
+        x: b
 ```
 
 ### Example: pass
 
 ```yaml
-- name: Example play
+- name: Test play
   hosts: localhost
-  connection: local
+  vars:
+    x: a
   tasks:
-    - name: Ok
-      ansible.builtin.command: whoami
+    - name: Conditional override
+      ansible.builtin.set_fact:
+        x: b
+      when: some_condition is defined
 ```

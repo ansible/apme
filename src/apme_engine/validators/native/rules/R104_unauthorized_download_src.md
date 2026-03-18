@@ -6,26 +6,22 @@ description: Download from unauthorized source (annotation-based).
 
 ## Unauthorized download (R104)
 
-Download from unauthorized source (annotation-based).
+Download from unauthorized source. Flags HTTP (non-HTTPS) URLs.
 
 ### Example: violation
 
 ```yaml
-- name: Example play
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Bad
-      ansible.builtin.shell: whoami
+- name: Download from HTTP
+  ansible.builtin.get_url:
+    url: http://example.com/file.tar.gz
+    dest: /tmp/file.tar.gz
 ```
 
 ### Example: pass
 
 ```yaml
-- name: Example play
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Ok
-      ansible.builtin.command: whoami
+- name: Download from HTTPS
+  ansible.builtin.get_url:
+    url: https://example.com/file.tar.gz
+    dest: /tmp/file.tar.gz
 ```

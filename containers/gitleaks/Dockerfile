@@ -1,7 +1,7 @@
 # Gitleaks validator: gitleaks binary + Python gRPC shim.
 # Multi-stage: copies gitleaks from the official image into a Python image
 # that runs our gRPC wrapper.
-FROM zricethezav/gitleaks:latest AS gitleaks-bin
+FROM docker.io/zricethezav/gitleaks:latest AS gitleaks-bin
 
 FROM python:3.12-slim
 

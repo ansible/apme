@@ -25,27 +25,29 @@ _sym_db = _symbol_database.Default()
 from apme.v1 import common_pb2 as apme_dot_v1_dot_common__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x15\x61pme/v1/primary.proto\x12\x07\x61pme.v1\x1a\x14\x61pme/v1/common.proto\"_\n\x0bScanOptions\x12\x18\n\x10include_scandata\x18\x01 \x01(\x08\x12\x1c\n\x14\x61nsible_core_version\x18\x02 \x01(\t\x12\x18\n\x10\x63ollection_specs\x18\x03 \x03(\t\"y\n\x0bScanRequest\x12\x0f\n\x07scan_id\x18\x01 \x01(\t\x12\x14\n\x0cproject_root\x18\x02 \x01(\t\x12\x1c\n\x05\x66iles\x18\x03 \x03(\x0b\x32\r.apme.v1.File\x12%\n\x07options\x18\x04 \x01(\x0b\x32\x14.apme.v1.ScanOptions\"\x91\x01\n\x0cScanResponse\x12&\n\nviolations\x18\x01 \x03(\x0b\x32\x12.apme.v1.Violation\x12\x0f\n\x07scan_id\x18\x02 \x01(\t\x12\x19\n\x11hierarchy_payload\x18\x03 \x01(\x0c\x12-\n\x0b\x64iagnostics\x18\x04 \x01(\x0b\x32\x18.apme.v1.ScanDiagnostics\"\xfe\x01\n\x0fScanDiagnostics\x12\x17\n\x0f\x65ngine_parse_ms\x18\x01 \x01(\x01\x12\x1a\n\x12\x65ngine_annotate_ms\x18\x02 \x01(\x01\x12\x17\n\x0f\x65ngine_total_ms\x18\x03 \x01(\x01\x12\x15\n\rfiles_scanned\x18\x04 \x01(\x05\x12\x13\n\x0btrees_built\x18\x05 \x01(\x05\x12\x18\n\x10total_violations\x18\x06 \x01(\x05\x12\x31\n\nvalidators\x18\x07 \x03(\x0b\x32\x1d.apme.v1.ValidatorDiagnostics\x12\x12\n\nfan_out_ms\x18\x08 \x01(\x01\x12\x10\n\x08total_ms\x18\t \x01(\x01\"-\n\rFormatRequest\x12\x1c\n\x05\x66iles\x18\x01 \x03(\x0b\x32\r.apme.v1.File\"2\n\x0e\x46ormatResponse\x12 \n\x05\x64iffs\x18\x01 \x03(\x0b\x32\x11.apme.v1.FileDiff\"K\n\x08\x46ileDiff\x12\x0c\n\x04path\x18\x01 \x01(\t\x12\x10\n\x08original\x18\x02 \x01(\x0c\x12\x11\n\tformatted\x18\x03 \x01(\x0c\x12\x0c\n\x04\x64iff\x18\x04 \x01(\t2\xb4\x01\n\x07Primary\x12\x33\n\x04Scan\x12\x14.apme.v1.ScanRequest\x1a\x15.apme.v1.ScanResponse\x12\x39\n\x06\x46ormat\x12\x16.apme.v1.FormatRequest\x1a\x17.apme.v1.FormatResponse\x12\x39\n\x06Health\x12\x16.apme.v1.HealthRequest\x1a\x17.apme.v1.HealthResponseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x15\x61pme/v1/primary.proto\x12\x07\x61pme.v1\x1a\x14\x61pme/v1/common.proto\"\x85\x01\n\tScanChunk\x12\x0f\n\x07scan_id\x18\x01 \x01(\t\x12\x14\n\x0cproject_root\x18\x02 \x01(\t\x12%\n\x07options\x18\x03 \x01(\x0b\x32\x14.apme.v1.ScanOptions\x12\x1c\n\x05\x66iles\x18\x04 \x03(\x0b\x32\r.apme.v1.File\x12\x0c\n\x04last\x18\x05 \x01(\x08\"_\n\x0bScanOptions\x12\x18\n\x10include_scandata\x18\x01 \x01(\x08\x12\x1c\n\x14\x61nsible_core_version\x18\x02 \x01(\t\x12\x18\n\x10\x63ollection_specs\x18\x03 \x03(\t\"y\n\x0bScanRequest\x12\x0f\n\x07scan_id\x18\x01 \x01(\t\x12\x14\n\x0cproject_root\x18\x02 \x01(\t\x12\x1c\n\x05\x66iles\x18\x03 \x03(\x0b\x32\r.apme.v1.File\x12%\n\x07options\x18\x04 \x01(\x0b\x32\x14.apme.v1.ScanOptions\"\x91\x01\n\x0cScanResponse\x12&\n\nviolations\x18\x01 \x03(\x0b\x32\x12.apme.v1.Violation\x12\x0f\n\x07scan_id\x18\x02 \x01(\t\x12\x19\n\x11hierarchy_payload\x18\x03 \x01(\x0c\x12-\n\x0b\x64iagnostics\x18\x04 \x01(\x0b\x32\x18.apme.v1.ScanDiagnostics\"\xfe\x01\n\x0fScanDiagnostics\x12\x17\n\x0f\x65ngine_parse_ms\x18\x01 \x01(\x01\x12\x1a\n\x12\x65ngine_annotate_ms\x18\x02 \x01(\x01\x12\x17\n\x0f\x65ngine_total_ms\x18\x03 \x01(\x01\x12\x15\n\rfiles_scanned\x18\x04 \x01(\x05\x12\x13\n\x0btrees_built\x18\x05 \x01(\x05\x12\x18\n\x10total_violations\x18\x06 \x01(\x05\x12\x31\n\nvalidators\x18\x07 \x03(\x0b\x32\x1d.apme.v1.ValidatorDiagnostics\x12\x12\n\nfan_out_ms\x18\x08 \x01(\x01\x12\x10\n\x08total_ms\x18\t \x01(\x01\"-\n\rFormatRequest\x12\x1c\n\x05\x66iles\x18\x01 \x03(\x0b\x32\r.apme.v1.File\"2\n\x0e\x46ormatResponse\x12 \n\x05\x64iffs\x18\x01 \x03(\x0b\x32\x11.apme.v1.FileDiff\"K\n\x08\x46ileDiff\x12\x0c\n\x04path\x18\x01 \x01(\t\x12\x10\n\x08original\x18\x02 \x01(\x0c\x12\x11\n\tformatted\x18\x03 \x01(\x0c\x12\x0c\n\x04\x64iff\x18\x04 \x01(\t2\xef\x01\n\x07Primary\x12\x33\n\x04Scan\x12\x14.apme.v1.ScanRequest\x1a\x15.apme.v1.ScanResponse\x12\x39\n\nScanStream\x12\x12.apme.v1.ScanChunk\x1a\x15.apme.v1.ScanResponse(\x01\x12\x39\n\x06\x46ormat\x12\x16.apme.v1.FormatRequest\x1a\x17.apme.v1.FormatResponse\x12\x39\n\x06Health\x12\x16.apme.v1.HealthRequest\x1a\x17.apme.v1.HealthResponseb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'apme.v1.primary_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
-  _globals['_SCANOPTIONS']._serialized_start=56
-  _globals['_SCANOPTIONS']._serialized_end=151
-  _globals['_SCANREQUEST']._serialized_start=153
-  _globals['_SCANREQUEST']._serialized_end=274
-  _globals['_SCANRESPONSE']._serialized_start=277
-  _globals['_SCANRESPONSE']._serialized_end=422
-  _globals['_SCANDIAGNOSTICS']._serialized_start=425
-  _globals['_SCANDIAGNOSTICS']._serialized_end=679
-  _globals['_FORMATREQUEST']._serialized_start=681
-  _globals['_FORMATREQUEST']._serialized_end=726
-  _globals['_FORMATRESPONSE']._serialized_start=728
-  _globals['_FORMATRESPONSE']._serialized_end=778
-  _globals['_FILEDIFF']._serialized_start=780
-  _globals['_FILEDIFF']._serialized_end=855
-  _globals['_PRIMARY']._serialized_start=858
-  _globals['_PRIMARY']._serialized_end=1038
+  _globals['_SCANCHUNK']._serialized_start=57
+  _globals['_SCANCHUNK']._serialized_end=190
+  _globals['_SCANOPTIONS']._serialized_start=192
+  _globals['_SCANOPTIONS']._serialized_end=287
+  _globals['_SCANREQUEST']._serialized_start=289
+  _globals['_SCANREQUEST']._serialized_end=410
+  _globals['_SCANRESPONSE']._serialized_start=413
+  _globals['_SCANRESPONSE']._serialized_end=558
+  _globals['_SCANDIAGNOSTICS']._serialized_start=561
+  _globals['_SCANDIAGNOSTICS']._serialized_end=815
+  _globals['_FORMATREQUEST']._serialized_start=817
+  _globals['_FORMATREQUEST']._serialized_end=862
+  _globals['_FORMATRESPONSE']._serialized_start=864
+  _globals['_FORMATRESPONSE']._serialized_end=914
+  _globals['_FILEDIFF']._serialized_start=916
+  _globals['_FILEDIFF']._serialized_end=991
+  _globals['_PRIMARY']._serialized_start=994
+  _globals['_PRIMARY']._serialized_end=1233
 # @@protoc_insertion_point(module_scope)

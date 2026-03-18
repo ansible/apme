@@ -11,21 +11,23 @@ Variable redefinition may cause confusion.
 ### Example: violation
 
 ```yaml
-- name: Example play
+- name: Test play
   hosts: localhost
-  connection: local
+  vars:
+    my_var: original
   tasks:
-    - name: Bad
-      ansible.builtin.shell: whoami
+    - name: Override var
+      ansible.builtin.set_fact:
+        my_var: overridden
 ```
 
 ### Example: pass
 
 ```yaml
-- name: Example play
+- name: Test play
   hosts: localhost
-  connection: local
   tasks:
-    - name: Ok
-      ansible.builtin.command: whoami
+    - name: Set var
+      ansible.builtin.set_fact:
+        new_var: value
 ```

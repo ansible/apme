@@ -25,6 +25,8 @@ spec:
           value: "127.0.0.1:50053"
         - name: GITLEAKS_GRPC_ADDRESS
           value: "127.0.0.1:50056"
+        - name: APME_CACHE_GRPC_ADDRESS
+          value: "127.0.0.1:50052"
       ports:
         - containerPort: 50051
           hostPort: 50051

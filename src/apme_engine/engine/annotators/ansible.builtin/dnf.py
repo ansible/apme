@@ -29,11 +29,15 @@ class DnfAnnotator(ModuleAnnotator):
         pkg = task.args.get("name")
         allow_downgrade = task.args.get("allow_downgrade")
         validate_certs = task.args.get("validate_certs")
+        disable_gpg_check = task.args.get("disable_gpg_check")
 
         annotation = RiskAnnotation.init(
             risk_type=DefaultRiskType.PACKAGE_INSTALL,
             detail=PackageInstallDetail(
-                _pkg_arg=pkg, _validate_certs_arg=validate_certs, _allow_downgrade_arg=allow_downgrade
+                _pkg_arg=pkg,
+                _validate_certs_arg=validate_certs,
+                _allow_downgrade_arg=allow_downgrade,
+                _disable_gpg_check_arg=disable_gpg_check,
             ),
         )
         return ModuleAnnotatorResult(annotations=[annotation])

@@ -1,6 +1,7 @@
 """ARI native validator: runs in-tree rules on context.scandata. Built-in rules in this package."""
 
 import os
+import sys
 from collections import defaultdict
 from dataclasses import dataclass, field
 
@@ -153,8 +154,17 @@ class NativeValidator:
         scandata = context.scandata
         if not scandata:
             return NativeRunResult()
-        contexts = getattr(scandata, "contexts", None) or []
+        # jsonpickle may decode to dict if engine classes were not importable before decode
+        if isinstance(scandata, dict):
+            contexts = scandata.get("contexts") or []
+        else:
+            contexts = getattr(scandata, "contexts", None) or []
         if not contexts:
+            sys.stderr.write(
+                "Native: scandata has no contexts (decode may have returned dict; "
+                "ensure apme_engine.engine.scanner/models imported before jsonpickle.decode)\n"
+            )
+            sys.stderr.flush()
             return NativeRunResult()
         if not os.path.isdir(self._rules_dir):
             return NativeRunResult()

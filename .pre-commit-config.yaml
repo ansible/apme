@@ -14,7 +14,6 @@ repos:
         additional_dependencies:
           - types-protobuf
           - types-PyYAML
-          - types-tabulate
           - grpc-stubs
   - repo: https://github.com/jsh9/pydoclint
     rev: 0.8.3

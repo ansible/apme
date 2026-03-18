@@ -80,6 +80,73 @@ def _resolve_collection_path(
     return collection_path_in_cache(namespace, collection, cache_root=cache_root, source="github")
 
 
+def _install_collection_python_deps(
+    venv_root: Path,
+    site_packages: Path,
+    pip_python: Path,
+    use_uv: bool,
+) -> None:
+    """Discover and install Python dependencies declared by collections.
+
+    Uses ``ansible-builder introspect`` to scan all installed collections
+    for Python deps (handles ``meta/execution-environment.yml`` and
+    fallback ``requirements.txt``, filters out ansible-core/test tools,
+    consolidates into one file).  Then installs via uv/pip.
+
+    Failures are logged but do not abort the build — missing Python
+    deps only affect rules that fully import module code (e.g. L059).
+
+    Args:
+        venv_root: Root of the ephemeral venv.
+        site_packages: Path to the venv's site-packages directory.
+        pip_python: Path to the venv's python executable.
+        use_uv: Whether to use uv for installation.
+    """
+    discovered_reqs = venv_root / "discovered_requirements.txt"
+    try:
+        subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "ansible_builder",
+                "introspect",
+                str(site_packages),
+                "--write-pip",
+                str(discovered_reqs),
+                "--sanitize",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        sys.stderr.write(f"Warning: ansible-builder introspect failed: {e}\n")
+        sys.stderr.flush()
+        return
+
+    if not discovered_reqs.is_file() or not discovered_reqs.read_text().strip():
+        return
+
+    try:
+        if use_uv:
+            subprocess.run(
+                ["uv", "pip", "install", "--python", str(pip_python), "-r", str(discovered_reqs)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        else:
+            subprocess.run(
+                [str(pip_python), "-m", "pip", "install", "-r", str(discovered_reqs)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+    except subprocess.CalledProcessError as e:
+        sys.stderr.write(f"Warning: failed to install collection Python deps: {e.stderr or e}\n")
+        sys.stderr.flush()
+
+
 def build_venv(
     ansible_core_version: str,
     collection_specs: list[str],
@@ -187,6 +254,9 @@ def build_venv(
             dest.symlink_to(path.resolve())
         else:
             shutil.copytree(path, dest)
+
+    if collection_specs:
+        _install_collection_python_deps(venv_root, site, pip_python, use_uv)
 
     return venv_root
 

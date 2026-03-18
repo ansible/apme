@@ -923,25 +923,37 @@ class SingleScan:
             d["line"] = None
             d["defined_in"] = ""
         node_type = getattr(node, "type", "")
+        # Play has no line_num_in_file in loader; give playcall a fallback line so OPA L003 can fire
+        if node_type == "playcall" and d.get("line") is None and spec:
+            play_index = getattr(spec, "index", 0)
+            d["line"] = [max(1, play_index + 1), max(1, play_index + 1)]
         # Playcall: name + options (become, become_user) for partial-become and play-name
+        # Use null for missing name so OPA L003 (play should have name) can fire
         if node_type == "playcall" and spec:
-            d["name"] = getattr(spec, "name", "") or ""
+            name_val = getattr(spec, "name", "") or ""
+            d["name"] = name_val if name_val else None
             opts = getattr(spec, "options", None)
             if isinstance(opts, dict):
                 d["options"] = self._opts_for_opa(opts, ["become", "become_user"])
             else:
                 d["options"] = {}
         if node_type == "taskcall":
-            d["module"] = getattr(node, "resolved_name", "") or getattr(node, "resolved_action", "") or ""
+            d["module"] = (
+                getattr(node, "resolved_name", "")
+                or getattr(node, "resolved_action", "")
+                or (getattr(spec, "module", "") if spec else "")
+                or ""
+            )
             anns = []
             for an in getattr(node, "annotations", []) or []:
                 anns.append(self._annotation_to_dict(an))
             d["annotations"] = anns
-            d["name"] = ""
+            d["name"] = None
             d["options"] = {}
             d["module_options"] = {}
             if spec:
-                d["name"] = getattr(spec, "name", "") or ""
+                name_val = getattr(spec, "name", "") or ""
+                d["name"] = name_val if name_val else None
                 opts = getattr(spec, "options", None)
                 if isinstance(opts, dict):
                     d["options"] = self._opts_for_opa(
@@ -950,17 +962,40 @@ class SingleScan:
                             "when",
                             "tags",
                             "ignore_errors",
+                            "ignore_unreachable",
                             "register",
                             "changed_when",
                             "become",
                             "become_user",
                             "run_once",
                             "local_action",
+                            # with_* for M009 (deprecated loops)
+                            "with_items",
+                            "with_dict",
+                            "with_fileglob",
+                            "with_subelements",
+                            "with_sequence",
+                            "with_nested",
+                            "with_first_found",
+                            "with_indexed_items",
+                            "with_flattened",
+                            "with_together",
+                            "with_random_choice",
+                            "with_lines",
+                            "with_ini",
+                            "with_inventory_hostnames",
+                            "with_cartesian",
                         ],
                     )
                 mo = getattr(spec, "module_options", None)
                 if isinstance(mo, dict):
-                    d["module_options"] = {str(k): self._json_safe(v) for k, v in mo.items()}
+                    mo_dict: dict[str, object] = {str(k): self._json_safe(v) for k, v in mo.items()}
+                    # OPA L006/L013/L022 expect "cmd"; loader stores free-form shell/command as "_raw"
+                    if "_raw" in mo_dict and "cmd" not in mo_dict:
+                        raw_val = mo_dict.get("_raw")
+                        if isinstance(raw_val, str):
+                            mo_dict["cmd"] = raw_val
+                    d["module_options"] = mo_dict
         return d
 
     def _opts_for_opa(self, opts: YAMLDict, keys: list[str]) -> YAMLDict:

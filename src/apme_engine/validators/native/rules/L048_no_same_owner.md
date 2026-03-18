@@ -11,21 +11,20 @@ copy with remote_src should set owner.
 ### Example: violation
 
 ```yaml
-- name: Example play
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Bad
-      ansible.builtin.shell: whoami
+- name: Copy remote file
+  ansible.builtin.copy:
+    src: /tmp/remote_file
+    dest: /opt/app/file
+    remote_src: true
 ```
 
 ### Example: pass
 
 ```yaml
-- name: Example play
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Ok
-      ansible.builtin.command: whoami
+- name: Copy remote file
+  ansible.builtin.copy:
+    src: /tmp/remote_file
+    dest: /opt/app/file
+    remote_src: true
+    owner: root
 ```

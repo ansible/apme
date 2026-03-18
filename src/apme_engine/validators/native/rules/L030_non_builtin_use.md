@@ -6,30 +6,13 @@ description: Prefer ansible.builtin modules when available.
 
 ## Non-builtin use (L030)
 
-Prefer ansible.builtin modules when available.
-
-### Example: violation
-
-```yaml
-- name: Example play
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Copy
-      copy:
-        src: a
-        dest: /tmp/b
-```
+Prefer ansible.builtin modules when available. Triggers when a task uses a module whose resolved FQCN is outside the `ansible.builtin` namespace (e.g. `community.general.*`). Requires the target collection to be installed for resolution.
 
 ### Example: pass
 
 ```yaml
-- name: Example play
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Copy
-      ansible.builtin.copy:
-        src: a
-        dest: /tmp/b
+- name: Copy file
+  ansible.builtin.copy:
+    src: a
+    dest: /tmp/b
 ```

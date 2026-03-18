@@ -11,21 +11,16 @@ include_vars without when/tags.
 ### Example: violation
 
 ```yaml
-- name: Example play
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Bad
-      ansible.builtin.shell: whoami
+- name: Load vars
+  ansible.builtin.include_vars:
+    file: vars.yml
 ```
 
 ### Example: pass
 
 ```yaml
-- name: Example play
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Ok
-      ansible.builtin.command: whoami
+- name: Load vars conditionally
+  ansible.builtin.include_vars:
+    file: vars.yml
+  when: some_condition is defined
 ```

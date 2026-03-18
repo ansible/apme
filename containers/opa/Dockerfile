@@ -2,7 +2,7 @@
 # Multi-stage: copies the OPA binary from the official image into a Python image
 # that runs our gRPC wrapper service.  The wrapper translates Validate RPCs into
 # OPA REST queries against localhost:8181.
-FROM openpolicyagent/opa:latest AS opa-bin
+FROM docker.io/openpolicyagent/opa:latest AS opa-bin
 
 FROM python:3.12-slim
 

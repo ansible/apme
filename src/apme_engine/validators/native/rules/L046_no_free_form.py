@@ -26,6 +26,9 @@ FREE_FORM_ACTIONS = frozenset(
         "ansible.legacy.raw",
         "ansible.legacy.command",
         "ansible.legacy.shell",
+        "raw",
+        "command",
+        "shell",
     }
 )
 
@@ -94,7 +97,9 @@ class NoFreeFormRule(Rule):
             )
         args = getattr(task, "args", None)
         raw = getattr(args, "raw", None) if args is not None else None
-        # Free-form: args passed as a single string (no structured key)
+        # Free-form: args.raw is a string, or module_options has "_raw" string (loader stores free-form there)
+        if isinstance(raw, dict) and "_raw" in raw:
+            raw = raw.get("_raw")
         is_free_form = isinstance(raw, str) and raw.strip() != ""
         verdict = is_free_form
         detail = {}

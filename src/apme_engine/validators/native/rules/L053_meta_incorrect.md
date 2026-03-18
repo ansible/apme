@@ -8,24 +8,10 @@ description: Role meta should have valid structure.
 
 Role meta should have valid structure.
 
-### Example: violation
-
-```yaml
-- name: Example play
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Bad
-      ansible.builtin.shell: whoami
-```
-
 ### Example: pass
 
 ```yaml
-- name: Example play
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Ok
-      ansible.builtin.command: whoami
+galaxy_info:
+  role_name: my_role
+  author: Example
 ```

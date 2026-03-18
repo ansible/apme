@@ -12,6 +12,7 @@
       ],
       "command_to_module": {
         "apt-get": "apt-get",
+        "cat": "slurp or copy",
         "chkconfig": "service",
         "curl": "get_url or uri",
         "git": "git",

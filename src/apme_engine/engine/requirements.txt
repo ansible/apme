@@ -4,4 +4,3 @@ joblib==1.2.0
 jsonpickle==2.2.0
 PyYAML==6.0
 smmap==5.0.0
-tabulate==0.8.10

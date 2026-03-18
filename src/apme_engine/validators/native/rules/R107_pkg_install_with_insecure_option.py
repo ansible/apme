@@ -70,16 +70,20 @@ class InsecurePkgInstallRule(Rule):
 
         ac = AnnotationCondition().risk_type(RiskType.PACKAGE_INSTALL).attr("disable_validate_certs", True)
         ac2 = AnnotationCondition().risk_type(RiskType.PACKAGE_INSTALL).attr("allow_downgrade", True)
-        verdict = task.has_annotation_by_condition(ac) or task.has_annotation_by_condition(ac2)
+        ac3 = AnnotationCondition().risk_type(RiskType.PACKAGE_INSTALL).attr("disable_gpg_check", True)
+        verdict = (
+            task.has_annotation_by_condition(ac)
+            or task.has_annotation_by_condition(ac2)
+            or task.has_annotation_by_condition(ac3)
+        )
 
         detail = {}
         if verdict:
-            anno = task.get_annotation_by_condition(ac)
-            if anno:
-                detail["pkg"] = getattr(anno, "pkg", None)
-            anno2 = task.get_annotation_by_condition(ac2)
-            if anno2:
-                detail["pkg"] = getattr(anno2, "pkg", None)
+            for cond in (ac, ac2, ac3):
+                anno = task.get_annotation_by_condition(cond)
+                if anno:
+                    detail["pkg"] = getattr(anno, "pkg", None)
+                    break
 
         return RuleResult(
             verdict=verdict,

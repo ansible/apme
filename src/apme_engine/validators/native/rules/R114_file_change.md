@@ -6,26 +6,13 @@ description: File change (annotation-based).
 
 ## File change (R114)
 
-File change (annotation-based).
-
-### Example: violation
-
-```yaml
-- name: Example play
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Bad
-      ansible.builtin.shell: whoami
-```
+File change with mutable path/src (annotation-based). Depends on FILE_CHANGE + is_mutable_path/is_mutable_src annotation.
 
 ### Example: pass
 
 ```yaml
-- name: Example play
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Ok
-      ansible.builtin.command: whoami
+- name: Copy file
+  ansible.builtin.copy:
+    src: files/config.yml
+    dest: /etc/app/config.yml
 ```

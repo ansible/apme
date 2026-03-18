@@ -8,24 +8,10 @@ description: Galaxy version in meta should be semantic.
 
 Galaxy version in meta should be semantic.
 
-### Example: violation
-
-```yaml
-- name: Example play
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Bad
-      ansible.builtin.shell: whoami
-```
-
 ### Example: pass
 
 ```yaml
-- name: Example play
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Ok
-      ansible.builtin.command: whoami
+galaxy_info:
+  role_name: my_role
+  version: "1.0.0"
 ```

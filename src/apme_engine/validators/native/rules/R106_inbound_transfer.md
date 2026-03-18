@@ -6,26 +6,13 @@ description: Inbound transfer (annotation-based).
 
 ## Inbound transfer (R106)
 
-Inbound transfer (annotation-based).
-
-### Example: violation
-
-```yaml
-- name: Example play
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Bad
-      ansible.builtin.shell: whoami
-```
+Inbound transfer from parameterized source (annotation-based). Depends on INBOUND + is_mutable_src annotation.
 
 ### Example: pass
 
 ```yaml
-- name: Example play
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Ok
-      ansible.builtin.command: whoami
+- name: Download from fixed URL
+  ansible.builtin.get_url:
+    url: https://example.com/stable.tar.gz
+    dest: /tmp/stable.tar.gz
 ```

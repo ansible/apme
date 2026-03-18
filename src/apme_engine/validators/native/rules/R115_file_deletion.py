@@ -33,7 +33,7 @@ class FileDeletionRule(Rule):
 
     rule_id: str = "R115"
     description: str = "File deletion found. Directories will be recursively deleted."
-    enabled: bool = False
+    enabled: bool = True
     name: str = "FileDeletionRule"
     version: str = "v0.0.1"
     severity: str = Severity.LOW
@@ -66,7 +66,12 @@ class FileDeletionRule(Rule):
             return None
 
         # define a condition for this rule here
-        ac = AnnotationCondition().risk_type(RiskType.FILE_CHANGE).attr("is_delete", True).attr("is_mutable_path", True)
+        ac = (
+            AnnotationCondition()
+            .risk_type(RiskType.FILE_CHANGE)
+            .attr("is_deletion", True)
+            .attr("is_mutable_path", True)
+        )
         verdict = task.has_annotation_by_condition(ac)
 
         detail: dict[str, object] = {}

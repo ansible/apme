@@ -19,6 +19,7 @@ COPY_MODULES = frozenset(
     {
         "ansible.builtin.copy",
         "ansible.legacy.copy",
+        "copy",
     }
 )
 
@@ -39,7 +40,7 @@ class NoSameOwnerRule(Rule):
 
     rule_id: str = "L048"
     description: str = "copy with remote_src should set owner explicitly; avoid same-owner default"
-    enabled: bool = False
+    enabled: bool = True
     name: str = "NoSameOwner"
     version: str = "v0.0.1"
     severity: str = Severity.LOW

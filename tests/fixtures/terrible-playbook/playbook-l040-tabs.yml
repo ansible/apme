@@ -1,0 +1,8 @@
+---
+# L040: Tabs in YAML — isolated so the main playbook is not blocked by parse/syntax.
+# This file intentionally contains a TAB character before "hosts".
+- 	hosts: localhost
+  tasks:
+    - name: Task with tab-indented play
+      ansible.builtin.debug:
+        msg: "This playbook exists only to trigger L040 (no tabs in YAML)."

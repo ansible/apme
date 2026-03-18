@@ -11,21 +11,15 @@ set_fact with random in args.
 ### Example: violation
 
 ```yaml
-- name: Example play
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Bad
-      ansible.builtin.shell: whoami
+- name: Random port
+  ansible.builtin.set_fact:
+    port: "{{ 10000 | random }}"
 ```
 
 ### Example: pass
 
 ```yaml
-- name: Example play
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Ok
-      ansible.builtin.command: whoami
+- name: Fixed value
+  ansible.builtin.set_fact:
+    my_var: fixed_value
 ```

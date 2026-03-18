@@ -14,7 +14,8 @@ from typing import TYPE_CHECKING, Any, Protocol, cast
 import jsonpickle
 from rapidfuzz.distance import Levenshtein
 from ruamel.yaml.scalarstring import DoubleQuotedScalarString
-from tabulate import tabulate
+
+from apme_engine.ansi import table as ansi_table
 
 # Recursive type for YAML/JSON values (defined before local imports to avoid circular import)
 YAMLScalar = str | int | float | bool | None
@@ -842,7 +843,7 @@ class Collection(Object, Resolvable):
 
         """
         return cast(
-            list["Resolvable" | str],
+            list["Resolvable | str"],
             list(self.playbooks) + list(self.taskfiles) + list(self.roles) + list(self.modules),
         )
 
@@ -1092,19 +1093,18 @@ class VariableDict:
 
     @staticmethod
     def print_table(data: dict[str, list[Variable]]) -> str:
-        """Format variable data as a tabulate table string.
+        """Format variable data as a table string.
 
         Args:
             data: Map from variable name to list of Variable by precedence.
 
         Returns:
-            Tabulated string.
+            Formatted table string.
 
         """
         d = VariableDict(_dict=data)
-        table = []
-        type_labels = []
-        found_type_label_names = []
+        type_labels: list[VariablePrecedence] = []
+        found_type_label_names: list[str] = []
         for v_list in d._dict.values():
             for v in v_list:
                 if not v.type or v.type.name in found_type_label_names:
@@ -1113,9 +1113,11 @@ class VariableDict:
                 found_type_label_names.append(v.type.name)
         type_labels = sorted(type_labels, key=lambda x: x.order, reverse=True)
 
+        headers = ["NAME", *(t.name.upper() for t in type_labels)]
+        rows: list[list[str]] = []
         for v_name in d._dict:
             v_list = d._dict[v_name]
-            row: dict[str, YAMLValue] = {"NAME": v_name}
+            row: list[str] = [v_name]
             for t in type_labels:
                 cell_value: YAMLValue = "-"
                 for v in v_list:
@@ -1124,10 +1126,9 @@ class VariableDict:
                     cell_value = v.value
                     if isinstance(cell_value, str) and cell_value == "":
                         cell_value = '""'
-                type_label = t.name.upper()
-                row[type_label] = cell_value
-            table.append(row)
-        return str(tabulate(table, headers="keys"))
+                row.append(str(cell_value))
+            rows.append(row)
+        return ansi_table(headers, rows)
 
 
 class ArgumentsType:
@@ -1414,6 +1415,7 @@ class PackageInstallDetail(AnnotationDetail):
         version: Version string, Arguments, or list of Variables.
         is_mutable_pkg: True if pkg contains variable refs.
         disable_validate_certs: True if validate_certs is disabled.
+        disable_gpg_check: True if GPG signature checking is disabled.
         allow_downgrade: True if allow_downgrade is set.
 
     """
@@ -1422,12 +1424,14 @@ class PackageInstallDetail(AnnotationDetail):
     version: str | Arguments | list[Variable] = ""
     is_mutable_pkg: bool = False
     disable_validate_certs: bool = False
+    disable_gpg_check: bool = False
     allow_downgrade: bool = False
 
     _pkg_arg: Arguments | None = None
     _version_arg: Arguments | None = None
     _allow_downgrade_arg: Arguments | None = None
     _validate_certs_arg: Arguments | None = None
+    _disable_gpg_check_arg: Arguments | None = None
 
     def __post_init__(self) -> None:
         """Build pkg/version from _pkg_arg/_version_arg if provided."""
@@ -1441,6 +1445,8 @@ class PackageInstallDetail(AnnotationDetail):
             self.allow_downgrade = True
         if self._validate_certs_arg and not _convert_to_bool(self._validate_certs_arg.raw):
             self.disable_validate_certs = True
+        if self._disable_gpg_check_arg and _convert_to_bool(self._disable_gpg_check_arg.raw):
+            self.disable_gpg_check = True
 
 
 @dataclass
@@ -1529,14 +1535,18 @@ class CommandExecDetail(AnnotationDetail):
     Attributes:
         command: Arguments wrapping the shell/command string.
         exec_files: Locations of executable files parsed from the command.
+        is_mutable_cmd: True if the command contains variable references.
 
     """
 
     command: Arguments | None = None
     exec_files: list[Location] = field(default_factory=list)
+    is_mutable_cmd: bool = False
 
     def __post_init__(self) -> None:
         """Parse command into exec_files on construction."""
+        if self.command and getattr(self.command, "is_mutable", False):
+            self.is_mutable_cmd = True
         self.exec_files = self.extract_exec_files()
 
     def extract_exec_files(self) -> list[Location]:
@@ -3468,7 +3478,7 @@ class TaskFile(Object, Resolvable):
             Self.
         """
         task_keys = [t.key if isinstance(t, Task) else t for t in self.tasks]
-        self.tasks = cast(list["Task" | str], sorted(task_keys))
+        self.tasks = cast(list["Task | str"], sorted(task_keys))
         return self
 
     @property
@@ -3557,13 +3567,13 @@ class Role(Object, Resolvable):
             Self.
         """
         module_keys = [m.key if isinstance(m, Module) else m for m in self.modules]
-        self.modules = cast(list["Module" | str], sorted(module_keys))
+        self.modules = cast(list["Module | str"], sorted(module_keys))
 
         playbook_keys = [p.key if isinstance(p, Playbook) else p for p in self.playbooks]
-        self.playbooks = cast(list["Playbook" | str], sorted(playbook_keys))
+        self.playbooks = cast(list["Playbook | str"], sorted(playbook_keys))
 
         taskfile_keys = [tf.key if isinstance(tf, TaskFile) else tf for tf in self.taskfiles]
-        self.taskfiles = cast(list["TaskFile" | str], sorted(taskfile_keys))
+        self.taskfiles = cast(list["TaskFile | str"], sorted(taskfile_keys))
         return self
 
     @property
@@ -3573,7 +3583,7 @@ class Role(Object, Resolvable):
         Returns:
             List of taskfiles and modules.
         """
-        return cast(list["Resolvable" | str], list(self.taskfiles) + list(self.modules))
+        return cast(list["Resolvable | str"], list(self.taskfiles) + list(self.modules))
 
 
 @dataclass
@@ -3722,16 +3732,16 @@ class Play(Object, Resolvable):
             Self.
         """
         pre_task_keys = [t.key if isinstance(t, Task) else t for t in self.pre_tasks]
-        self.pre_tasks = cast(list["Task" | str], sorted(pre_task_keys))
+        self.pre_tasks = cast(list["Task | str"], sorted(pre_task_keys))
 
         task_keys = [t.key if isinstance(t, Task) else t for t in self.tasks]
-        self.tasks = cast(list["Task" | str], sorted(task_keys))
+        self.tasks = cast(list["Task | str"], sorted(task_keys))
 
         post_task_keys = [t.key if isinstance(t, Task) else t for t in self.post_tasks]
-        self.post_tasks = cast(list["Task" | str], sorted(post_task_keys))
+        self.post_tasks = cast(list["Task | str"], sorted(post_task_keys))
 
         handler_task_keys = [t.key if isinstance(t, Task) else t for t in self.handlers]
-        self.handlers = cast(list["Task" | str], sorted(handler_task_keys))
+        self.handlers = cast(list["Task | str"], sorted(handler_task_keys))
         return self
 
     @property
@@ -3751,7 +3761,7 @@ class Play(Object, Resolvable):
             List of pre_tasks, tasks, and roles.
         """
         return cast(
-            list["Resolvable" | str],
+            list["Resolvable | str"],
             list(self.pre_tasks) + list(self.tasks) + list(self.roles),
         )
 
@@ -3818,7 +3828,7 @@ class Playbook(Object, Resolvable):
             Self.
         """
         play_keys = [play.key if isinstance(play, Play) else play for play in self.plays]
-        self.plays = cast(list["Play" | str], sorted(play_keys))
+        self.plays = cast(list["Play | str"], sorted(play_keys))
         return self
 
     @property
@@ -3829,9 +3839,9 @@ class Playbook(Object, Resolvable):
             List of plays or roles and tasks.
         """
         if "plays" in self.__dict__:
-            return cast(list["Resolvable" | str], self.plays)
+            return cast(list["Resolvable | str"], self.plays)
         return cast(
-            list["Resolvable" | str],
+            list["Resolvable | str"],
             list(getattr(self, "roles", [])) + list(getattr(self, "tasks", [])),
         )
 
@@ -3959,16 +3969,16 @@ class Repository(Object, Resolvable):
             Self.
         """
         module_keys = [m.key if isinstance(m, Module) else m for m in self.modules]
-        self.modules = cast(list["Module" | str], sorted(module_keys))
+        self.modules = cast(list["Module | str"], sorted(module_keys))
 
         playbook_keys = [p.key if isinstance(p, Playbook) else p for p in self.playbooks]
-        self.playbooks = cast(list["Playbook" | str], sorted(playbook_keys))
+        self.playbooks = cast(list["Playbook | str"], sorted(playbook_keys))
 
         taskfile_keys = [tf.key if isinstance(tf, TaskFile) else tf for tf in self.taskfiles]
-        self.taskfiles = cast(list["TaskFile" | str], sorted(taskfile_keys))
+        self.taskfiles = cast(list["TaskFile | str"], sorted(taskfile_keys))
 
         role_keys = [r.key if isinstance(r, Role) else r for r in self.roles]
-        self.roles = cast(list["Role" | str], sorted(role_keys))
+        self.roles = cast(list["Role | str"], sorted(role_keys))
         return self
 
     @property
@@ -3979,7 +3989,7 @@ class Repository(Object, Resolvable):
             List of resolver targets.
         """
         return cast(
-            list["Resolvable" | str],
+            list["Resolvable | str"],
             list(self.playbooks)
             + list(self.roles)
             + list(self.modules)

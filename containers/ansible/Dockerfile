@@ -3,7 +3,7 @@
 # Mount collection cache volume at /cache (read-only).
 FROM python:3.12-slim
 
-RUN pip install --no-cache-dir uv
+RUN pip install --no-cache-dir uv ansible-builder
 
 WORKDIR /app
 COPY . .

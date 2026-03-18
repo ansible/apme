@@ -11,21 +11,17 @@ Module name could not be resolved.
 ### Example: violation
 
 ```yaml
-- name: Example play
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Bad
-      ansible.builtin.shell: whoami
+- name: Typo in module
+  ansible.builtin.copyyy:
+    src: a
+    dest: /tmp/b
 ```
 
 ### Example: pass
 
 ```yaml
-- name: Example play
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Ok
-      ansible.builtin.command: whoami
+- name: Copy file
+  ansible.builtin.copy:
+    src: a
+    dest: /tmp/b
 ```

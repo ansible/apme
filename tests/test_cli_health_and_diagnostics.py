@@ -400,7 +400,7 @@ class TestScanDiagnosticsOutput:
 
         mock_channel = MagicMock()
         mock_stub = MagicMock()
-        mock_stub.Scan.return_value = mock_scan_response
+        mock_stub.ScanStream.return_value = mock_scan_response
 
         with (
             patch("grpc.insecure_channel", return_value=mock_channel),
@@ -438,7 +438,7 @@ class TestScanDiagnosticsOutput:
 
         mock_channel = MagicMock()
         mock_stub = MagicMock()
-        mock_stub.Scan.return_value = mock_scan_response
+        mock_stub.ScanStream.return_value = mock_scan_response
 
         with (
             patch("grpc.insecure_channel", return_value=mock_channel),
@@ -473,7 +473,7 @@ class TestScanDiagnosticsOutput:
 
         mock_channel = MagicMock()
         mock_stub = MagicMock()
-        mock_stub.Scan.return_value = mock_scan_response
+        mock_stub.ScanStream.return_value = mock_scan_response
 
         with (
             patch("grpc.insecure_channel", return_value=mock_channel),
@@ -518,7 +518,7 @@ class TestScanDiagnosticsOutput:
 
         mock_channel = MagicMock()
         mock_stub = MagicMock()
-        mock_stub.Scan.return_value = mock_scan_response
+        mock_stub.ScanStream.return_value = mock_scan_response
 
         with (
             patch("grpc.insecure_channel", return_value=mock_channel),
@@ -559,7 +559,7 @@ class TestScanDiagnosticsOutput:
 
         mock_channel = MagicMock()
         mock_stub = MagicMock()
-        mock_stub.Scan.return_value = mock_scan_response
+        mock_stub.ScanStream.return_value = mock_scan_response
 
         with (
             patch("grpc.insecure_channel", return_value=mock_channel),
@@ -602,7 +602,7 @@ class TestScanDiagnosticsOutput:
 
         mock_channel = MagicMock()
         mock_stub = MagicMock()
-        mock_stub.Scan.return_value = mock_scan_response
+        mock_stub.ScanStream.return_value = mock_scan_response
 
         with (
             patch("grpc.insecure_channel", return_value=mock_channel),
@@ -642,7 +642,7 @@ class TestScanDiagnosticsOutput:
 
         mock_channel = MagicMock()
         mock_stub = MagicMock()
-        mock_stub.Scan.return_value = mock_scan_response
+        mock_stub.ScanStream.return_value = mock_scan_response
 
         with (
             patch("grpc.insecure_channel", return_value=mock_channel),

@@ -11,21 +11,15 @@ Variable names: lowercase, underscores.
 ### Example: violation
 
 ```yaml
-- name: Example play
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Bad
-      ansible.builtin.shell: whoami
+- name: Use variable
+  ansible.builtin.debug:
+    msg: "{{ MyVariable }}"
 ```
 
 ### Example: pass
 
 ```yaml
-- name: Example play
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Ok
-      ansible.builtin.command: whoami
+- name: Use variable
+  ansible.builtin.debug:
+    msg: "{{ my_variable }}"
 ```

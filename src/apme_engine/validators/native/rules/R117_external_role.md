@@ -6,26 +6,12 @@ description: Role is from Galaxy/external source.
 
 ## External role (R117)
 
-Role is from Galaxy/external source.
-
-### Example: violation
-
-```yaml
-- name: Example play
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Bad
-      ansible.builtin.shell: whoami
-```
+Role is from Galaxy/external source. Requires role metadata; cannot test in playbook harness.
 
 ### Example: pass
 
 ```yaml
-- name: Example play
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Ok
-      ansible.builtin.command: whoami
+galaxy_info:
+  role_name: my_role
+  author: Example
 ```

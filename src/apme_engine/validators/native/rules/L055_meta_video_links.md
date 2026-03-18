@@ -8,24 +8,11 @@ description: Role meta video_links should be valid URLs.
 
 Role meta video_links should be valid URLs.
 
-### Example: violation
-
-```yaml
-- name: Example play
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Bad
-      ansible.builtin.shell: whoami
-```
-
 ### Example: pass
 
 ```yaml
-- name: Example play
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Ok
-      ansible.builtin.command: whoami
+galaxy_info:
+  role_name: my_role
+  video_links:
+    - https://www.youtube.com/watch?v=example
 ```

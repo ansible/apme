@@ -91,7 +91,7 @@ If the answer to question 1 is "convenience wrapper," the default answer is **no
 
 - Remove `gitdb`, `smmap` from `[project.dependencies]` (unused; leftover from removed GitPython)
 - Move `setuptools` to `[build-system] requires` only; move `grpcio-tools` to `[project.optional-dependencies] dev`
-- Replace `tabulate` with internal ANSI `table()` when the ANSI abstraction lands
+- ~~Replace `tabulate` with internal ANSI `table()` when the ANSI abstraction lands~~ **Done**
 - Consolidate `requests` into `httpx` (1 file to migrate)
 - Evaluate replacing `filelock` with an `fcntl.flock()` wrapper
 

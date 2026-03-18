@@ -6,26 +6,20 @@ description: Parameterized role import (annotation-based).
 
 ## Parameterized import role (R111)
 
-Parameterized role import (annotation-based).
+include_role with variable role name.
 
 ### Example: violation
 
 ```yaml
-- name: Example play
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Bad
-      ansible.builtin.shell: whoami
+- name: Include role
+  ansible.builtin.include_role:
+    name: "{{ role_name }}"
 ```
 
 ### Example: pass
 
 ```yaml
-- name: Example play
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Ok
-      ansible.builtin.command: whoami
+- name: Include role
+  ansible.builtin.include_role:
+    name: my_role
 ```

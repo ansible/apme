@@ -13,7 +13,6 @@ dependencies = [
     "jsonpickle",
     "PyYAML",
     "ruamel.yaml",
-    "tabulate",
     "filelock",
     "rapidfuzz",
     "joblib",
@@ -33,7 +32,6 @@ dev = [
     "pydoclint>=0.8.0",
     "types-protobuf",
     "types-PyYAML",
-    "types-tabulate",
     "grpc-stubs",
     "grpcio-tools>=1.60",
 ]
@@ -102,7 +100,6 @@ module = [
     "rapidfuzz.*",
     "joblib",
     "httpx",
-    "tabulate",
     "yaml",
     "grpc",
     "grpc.*",

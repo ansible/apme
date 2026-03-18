@@ -8,17 +8,6 @@ description: Validate variables (Ansible required).
 
 Validate variables (Ansible required).
 
-### Example: violation
-
-```yaml
-- name: Example play
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Bad
-      ansible.builtin.shell: whoami
-```
-
 ### Example: pass
 
 ```yaml

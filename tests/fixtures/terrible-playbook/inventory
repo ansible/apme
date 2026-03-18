@@ -1,0 +1,10 @@
+[webservers]
+web1.example.com
+web2.example.com
+
+[dbservers]
+db1.example.com
+
+[all:vars]
+ansible_user=root
+ansible_ssh_pass=PlaintextPassword123

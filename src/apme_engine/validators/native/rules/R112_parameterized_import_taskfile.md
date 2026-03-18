@@ -6,26 +6,18 @@ description: Parameterized taskfile import (annotation-based).
 
 ## Parameterized import taskfile (R112)
 
-Parameterized taskfile import (annotation-based).
+import_tasks with variable path.
 
 ### Example: violation
 
 ```yaml
-- name: Example play
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Bad
-      ansible.builtin.shell: whoami
+- name: Import tasks
+  ansible.builtin.import_tasks: "{{ task_file }}"
 ```
 
 ### Example: pass
 
 ```yaml
-- name: Example play
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Ok
-      ansible.builtin.command: whoami
+- name: Import tasks
+  ansible.builtin.import_tasks: tasks/main.yml
 ```

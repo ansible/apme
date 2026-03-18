@@ -48,7 +48,7 @@ class NoLogPasswordRule(Rule):
 
     rule_id: str = "L047"
     description: str = "Tasks with password-like parameters should set no_log: true"
-    enabled: bool = False
+    enabled: bool = True
     name: str = "NoLogPassword"
     version: str = "v0.0.1"
     severity: str = Severity.MEDIUM

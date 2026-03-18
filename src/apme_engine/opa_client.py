@@ -80,8 +80,7 @@ def _run_opa_podman(
         f"{bundle_abs}:/bundle:ro,z",
         OPA_IMAGE,
         "eval",
-        "-i",
-        "-",
+        "-I",
         "-d",
         "/bundle",
         entrypoint,
@@ -115,7 +114,7 @@ def _run_opa_local(
         CompletedProcess from subprocess.run.
     """
     return subprocess.run(
-        ["opa", "eval", "-i", "-", "-d", str(bundle_path), entrypoint, "--format", "json"],
+        ["opa", "eval", "-I", "-d", str(bundle_path), entrypoint, "--format", "json"],
         input=input_str,
         capture_output=True,
         text=True,

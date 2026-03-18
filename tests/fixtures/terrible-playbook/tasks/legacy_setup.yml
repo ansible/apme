@@ -1,0 +1,6 @@
+---
+# Included via bare 'include:' (M008)
+
+- name: Legacy setup step
+  command: /opt/legacy/setup.sh
+  become: true

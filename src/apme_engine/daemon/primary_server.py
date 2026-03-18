@@ -9,6 +9,7 @@ import sys
 import tempfile
 import time
 import uuid
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -16,12 +17,22 @@ import grpc
 import grpc.aio
 import jsonpickle
 
-from apme.v1 import common_pb2, primary_pb2, primary_pb2_grpc, validate_pb2_grpc
+from apme.v1 import cache_pb2, cache_pb2_grpc, common_pb2, primary_pb2, primary_pb2_grpc, validate_pb2_grpc
 from apme.v1.common_pb2 import File, HealthResponse, ValidatorDiagnostics
-from apme.v1.primary_pb2 import FileDiff, FormatRequest, FormatResponse, ScanDiagnostics, ScanRequest, ScanResponse
+from apme.v1.primary_pb2 import (  # type: ignore[attr-defined]
+    FileDiff,
+    FormatRequest,
+    FormatResponse,
+    ScanChunk,
+    ScanDiagnostics,
+    ScanOptions,
+    ScanRequest,
+    ScanResponse,
+)
 from apme.v1.validate_pb2 import ValidateRequest
 from apme_engine.daemon.violation_convert import violation_proto_to_dict
-from apme_engine.engine.models import ViolationDict
+from apme_engine.engine.jsonpickle_handlers import register_engine_handlers
+from apme_engine.engine.models import AnsibleRunContext, ViolationDict
 from apme_engine.runner import run_scan
 
 _MAX_CONCURRENT_RPCS = int(os.environ.get("APME_PRIMARY_MAX_RPCS", "16"))
@@ -84,6 +95,31 @@ def _deduplicate_violations(violations: list[ViolationDict]) -> list[ViolationDi
     return out
 
 
+def _normalize_scandata_contexts(scandata: object) -> None:
+    """Ensure scandata.contexts is a list of AnsibleRunContext (mutates in place).
+
+    Materializes iterators and drops non-AnsibleRunContext items so jsonpickle
+    never encodes iterators, which decode as list_iterator on the native side.
+
+    Args:
+        scandata: The scan data object whose contexts attribute will be normalized.
+    """
+    if not scandata or not hasattr(scandata, "contexts"):
+        return
+    raw = getattr(scandata, "contexts", None)
+    if raw is None:
+        return
+    materialized = list(raw) if not isinstance(raw, list) else raw
+    valid = [c for c in materialized if isinstance(c, AnsibleRunContext)]
+    if len(valid) != len(materialized):
+        sys.stderr.write(
+            f"Primary: normalized scandata.contexts {len(materialized)} -> {len(valid)} "
+            f"(dropped non-AnsibleRunContext)\n"
+        )
+        sys.stderr.flush()
+    scandata.contexts = valid
+
+
 def _write_chunked_fs(project_root: str, files: list[File]) -> Path:
     """Write request.files into a temp directory; return path to that directory.
 
@@ -130,6 +166,85 @@ async def _call_validator(
         sys.stderr.write(f"[req={req_id}] Validator at {address} failed: {e}\n")
         sys.stderr.flush()
         return _ValidatorResult()
+    finally:
+        await channel.close(grace=None)
+
+
+_REQUIREMENTS_PATHS = {"requirements.yml", "collections/requirements.yml"}
+
+
+def _discover_collection_specs(files: list[File]) -> list[str]:
+    """Extract collection specs from requirements.yml files in the uploaded file set.
+
+    Looks for ``requirements.yml`` and ``collections/requirements.yml``.
+    Parses the ``collections`` key and returns ``name[:version]`` strings.
+
+    Args:
+        files: Uploaded File protos from the ScanRequest.
+
+    Returns:
+        Deduplicated list of collection specifiers found in requirements files.
+    """
+    import yaml
+
+    specs: dict[str, str] = {}
+    for f in files:
+        norm = f.path.replace("\\", "/").lstrip("/")
+        if norm not in _REQUIREMENTS_PATHS:
+            continue
+        try:
+            data = yaml.safe_load(f.content.decode("utf-8"))
+        except Exception:
+            continue
+        if not isinstance(data, dict):
+            continue
+        collections = data.get("collections")
+        if not isinstance(collections, list):
+            continue
+        for entry in collections:
+            if isinstance(entry, str):
+                specs.setdefault(entry, entry)
+            elif isinstance(entry, dict) and entry.get("name"):
+                name = str(entry["name"])
+                version = entry.get("version")
+                spec = (
+                    f"{name}:{version}"
+                    if version and not str(version).startswith((">=", ">", "<", "!=", "*"))
+                    else name
+                )
+                specs.setdefault(name, spec)
+    return list(specs.values())
+
+
+async def _ensure_collections_cached(collection_specs: list[str], scan_id: str) -> None:
+    """Pull any missing collections into the cache via the CacheMaintainer.
+
+    Calls PullGalaxy for each spec (idempotent — no-op if already cached).
+    Failures are logged but never abort the scan.
+
+    Args:
+        collection_specs: Collection specifiers (e.g. community.general:9.0.0).
+        scan_id: Request ID for log correlation.
+    """
+    cache_addr = os.environ.get("APME_CACHE_GRPC_ADDRESS")
+    if not cache_addr or not collection_specs:
+        return
+    channel = grpc.aio.insecure_channel(cache_addr)
+    try:
+        stub = cache_pb2_grpc.CacheMaintainerStub(channel)  # type: ignore[no-untyped-call]
+        for spec in collection_specs:
+            try:
+                resp = await stub.PullGalaxy(
+                    cache_pb2.PullGalaxyRequest(spec=spec),
+                    timeout=120,
+                )
+                if resp.success:
+                    sys.stderr.write(f"[req={scan_id}] Cache: {spec} ready\n")
+                else:
+                    sys.stderr.write(f"[req={scan_id}] Cache: {spec} failed: {resp.error_message}\n")
+            except grpc.RpcError as e:
+                sys.stderr.write(f"[req={scan_id}] Cache: {spec} RPC error: {e}\n")
+            sys.stderr.flush()
     finally:
         await channel.close(grace=None)
 
@@ -195,6 +310,27 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                 return ScanResponse(scan_id=scan_id, violations=[])
 
             opts = request.options if request.HasField("options") else None
+            collection_specs = list(opts.collection_specs) if opts else []
+
+            discovered = _discover_collection_specs(
+                list(request.files),  # type: ignore[arg-type]
+            )
+            if discovered:
+                existing = {s.split(":")[0] for s in collection_specs}
+                for spec in discovered:
+                    if spec.split(":")[0] not in existing:
+                        collection_specs.append(spec)
+                sys.stderr.write(
+                    f"[req={scan_id}] Collections: {len(discovered)} discovered from requirements.yml, "
+                    f"{len(collection_specs)} total\n"
+                )
+                sys.stderr.flush()
+
+            # Ensure scandata.contexts is a concrete list of AnsibleRunContext so
+            # jsonpickle never encodes iterators (which decode as list_iterator on native).
+            _normalize_scandata_contexts(context_obj.scandata)
+            register_engine_handlers()
+
             validate_request = ValidateRequest(
                 request_id=scan_id,
                 project_root=request.project_root or "",
@@ -202,8 +338,11 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                 hierarchy_payload=json.dumps(context_obj.hierarchy_payload).encode(),
                 scandata=jsonpickle.encode(context_obj.scandata).encode(),
                 ansible_core_version=opts.ansible_core_version if opts else "",
-                collection_specs=list(opts.collection_specs) if opts else [],
+                collection_specs=collection_specs,
             )
+
+            if collection_specs:
+                await _ensure_collections_cached(collection_specs, scan_id)
 
             tasks = {}
             for name, env_var in VALIDATOR_ENV_VARS.items():
@@ -272,6 +411,44 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             if temp_dir is not None and temp_dir.is_dir():
                 with contextlib.suppress(OSError):
                     shutil.rmtree(temp_dir)
+
+    async def ScanStream(
+        self,
+        request_stream: AsyncIterator[ScanChunk],
+        context: grpc.aio.ServicerContext,  # type: ignore[type-arg]
+    ) -> primary_pb2.ScanResponse:
+        """Handle ScanStream RPC: receive file batches, then run same logic as Scan.
+
+        Avoids gRPC default max message size (4 MiB) by sending files in multiple messages.
+
+        Args:
+            request_stream: Async iterator of ScanChunk messages.
+            context: gRPC servicer context.
+
+        Returns:
+            ScanResponse with violations and diagnostics.
+        """
+        all_files: list[File] = []
+        scan_id = ""
+        project_root = "project"
+        opts: ScanOptions | None = None
+        async for chunk in request_stream:
+            if chunk.scan_id:
+                scan_id = chunk.scan_id
+            if chunk.project_root:
+                project_root = chunk.project_root
+            if chunk.HasField("options"):
+                opts = chunk.options
+            all_files.extend(chunk.files)
+            if chunk.last:
+                break
+        req = ScanRequest(
+            scan_id=scan_id or str(uuid.uuid4()),
+            project_root=project_root,
+            files=all_files,
+            options=opts or ScanOptions(),
+        )
+        return await self.Scan(req, context)
 
     async def Format(self, request: FormatRequest, context: grpc.aio.ServicerContext) -> FormatResponse:  # type: ignore[type-arg]
         """Handle Format RPC: format YAML files and return diffs for changed ones.

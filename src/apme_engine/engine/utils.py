@@ -16,7 +16,8 @@ from typing import TYPE_CHECKING, cast
 import httpx
 import yaml
 from filelock import FileLock
-from tabulate import tabulate
+
+from apme_engine.ansi import table as ansi_table
 
 from . import logger
 from .models import YAMLDict
@@ -569,7 +570,7 @@ def summarize_findings_data(
 
     if len(dependencies) > 0:
         output_lines.append("External Dependencies")
-        dep_table = [("NAME", "VERSION", "HASH")]
+        dep_rows: list[list[str]] = []
         for dep_info in dependencies:
             dep_meta = cast(dict[str, object], dep_info.get("metadata", {}))
             dep_name = str(dep_meta.get("name", ""))
@@ -577,8 +578,8 @@ def summarize_findings_data(
                 continue
             dep_version = str(dep_meta.get("version", ""))
             dep_hash = str(dep_meta.get("hash", ""))
-            dep_table.append((dep_name, dep_version, dep_hash))
-        output_lines.append(tabulate(dep_table))
+            dep_rows.append([dep_name, dep_version, dep_hash])
+        output_lines.append(ansi_table(["NAME", "VERSION", "HASH"], dep_rows))
 
     #     print("-" * 90)
     #     print("ARI scan completed!")
@@ -647,38 +648,38 @@ def summarize_findings_data(
 
         if len(unresolved_modules) > 0:
             output_lines.append("Unresolved modules:")
-            table = [("NAME", "USED_IN")]
+            mod_rows: list[list[str]] = []
             thresh = 4
             for ext_req in unresolved_modules[:thresh]:
                 obj_name = str(ext_req.get("name", ""))
                 used_in = str(ext_req.get("used_in", ""))
                 req_name = cast(dict[str, object], ext_req.get("defined_in", {})).get("name", None)
                 short_name = obj_name.replace(f"{req_name}.", "") if req_name else obj_name
-                table.append((short_name, used_in))
+                mod_rows.append([short_name, used_in])
             if len(unresolved_modules) > thresh:
                 rest_num = len(unresolved_modules) - thresh
-                table.append(("", f"... and {rest_num} other modules"))
-            output_lines.append(tabulate(table))
+                mod_rows.append(["", f"... and {rest_num} other modules"])
+            output_lines.append(ansi_table(["NAME", "USED_IN"], mod_rows))
 
         if len(unresolved_roles) > 0:
             output_lines.append("Unresolved roles:")
-            table = [("NAME", "USED_IN")]
+            role_rows: list[list[str]] = []
             thresh = 4
             for ext_req in unresolved_roles[:thresh]:
                 obj_name = str(ext_req.get("name", ""))
                 used_in = str(ext_req.get("used_in", ""))
                 req_name = cast(dict[str, object], ext_req.get("defined_in", {})).get("name", None)
                 short_name = obj_name.replace(f"{req_name}.", "") if req_name else obj_name
-                table.append((short_name, used_in))
+                role_rows.append([short_name, used_in])
             if len(unresolved_roles) > thresh:
                 rest_num = len(unresolved_roles) - thresh
-                table.append(("", f"... and {rest_num} other roles"))
-            output_lines.append(tabulate(table))
+                role_rows.append(["", f"... and {rest_num} other roles"])
+            output_lines.append(ansi_table(["NAME", "USED_IN"], role_rows))
 
         req_name_keys = sorted(list(suggestion.keys()))
         output_lines.append("")
         output_lines.append("-- Suggested Dependencies --")
-        table_data = [("NAME", "VERSION", "SUGGESTED_FOR")]
+        suggest_rows: list[list[str]] = []
         for req_str in req_name_keys:
             req_dict = suggestion[req_str]
             req_module_list = req_dict["module"]
@@ -712,8 +713,8 @@ def summarize_findings_data(
                 prefix = "role" if req_role_num == 1 else "roles"
                 role_names += f" (total {req_role_num} {prefix})"
                 summary_str += role_names
-            table_data.append((req_name, req_version, summary_str))
-        output_lines.append(tabulate(table_data))
+            suggest_rows.append([req_name, req_version, summary_str])
+        output_lines.append(ansi_table(["NAME", "VERSION", "SUGGESTED_FOR"], suggest_rows))
     output = "\n".join(output_lines)
     return output
 
@@ -725,10 +726,10 @@ def show_all_ram_metadata(ram_meta_list: list[dict[str, str]]) -> None:
         ram_meta_list: List of dicts with name, version, hash keys.
 
     """
-    table: list[tuple[str, str, str]] = [("NAME", "VERSION", "HASH")]
-    for meta in ram_meta_list:
-        table.append((str(meta.get("name", "")), str(meta.get("version", "")), str(meta.get("hash", ""))))
-    print(tabulate(table))
+    rows = [
+        [str(meta.get("name", "")), str(meta.get("version", "")), str(meta.get("hash", ""))] for meta in ram_meta_list
+    ]
+    print(ansi_table(["NAME", "VERSION", "HASH"], rows))
 
 
 def diff_files_data(files1: dict[str, object], files2: dict[str, object]) -> list[dict[str, str]]:
@@ -812,10 +813,8 @@ def show_diffs(diffs: list[dict[str, str]]) -> None:
         diffs: List of dicts with filepath and type keys.
 
     """
-    table = [("NAME", "DIFF_TYPE")]
-    for d in diffs:
-        table.append((d["filepath"], d["type"]))
-    print(tabulate(table))
+    rows = [[d["filepath"], d["type"]] for d in diffs]
+    print(ansi_table(["NAME", "DIFF_TYPE"], rows))
 
 
 def get_module_specs_by_ansible_doc(

@@ -70,6 +70,23 @@ class NativeValidatorServicer(validate_pb2_grpc.ValidatorServicer):
             scandata = None
             if request.scandata:
                 try:
+                    # Ensure engine classes and jsonpickle handlers are loaded so decode
+                    # restores AnsibleRunContext (not list_iterator) and nested types.
+                    from apme_engine.engine import jsonpickle_handlers as _jp  # noqa: F401
+                    from apme_engine.engine import models as _models  # noqa: F401
+                    from apme_engine.engine import scanner as _scanner  # noqa: F401
+
+                    _jp.register_engine_handlers()
+                    for name in ("SingleScan",):
+                        getattr(_scanner, name, None)
+                    for name in (
+                        "AnsibleRunContext",
+                        "RunTargetList",
+                        "RunTarget",
+                        "TaskCall",
+                        "Object",
+                    ):
+                        getattr(_models, name, None)
                     scandata = jsonpickle.decode(request.scandata.decode("utf-8"))
                 except Exception as e:
                     sys.stderr.write(f"[req={req_id}] Native: failed to decode scandata: {e}\n")

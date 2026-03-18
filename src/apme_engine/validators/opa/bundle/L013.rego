@@ -16,9 +16,9 @@ no_changed_when(tree, node) := v if {
 	cmd_shell_modules[node.module]
 	opts := object.get(node, "options", {})
 	mo := object.get(node, "module_options", {})
-	opts["changed_when"] == null
-	mo["creates"] == null
-	mo["removes"] == null
+	object.get(opts, "changed_when", null) == null
+	object.get(mo, "creates", null) == null
+	object.get(mo, "removes", null) == null
 	count(node.line) > 0
 	v := {
 		"rule_id": "L013",

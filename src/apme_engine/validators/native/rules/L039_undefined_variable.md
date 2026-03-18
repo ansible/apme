@@ -11,21 +11,20 @@ Variable use may be undefined.
 ### Example: violation
 
 ```yaml
-- name: Example play
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Bad
-      ansible.builtin.shell: whoami
+- name: Use undefined var
+  ansible.builtin.debug:
+    msg: "{{ never_defined_var_xyz }}"
 ```
 
 ### Example: pass
 
 ```yaml
-- name: Example play
+- name: Test play
   hosts: localhost
-  connection: local
+  vars:
+    my_var: value
   tasks:
-    - name: Ok
-      ansible.builtin.command: whoami
+    - name: Use defined var
+      ansible.builtin.debug:
+        msg: "{{ my_var }}"
 ```

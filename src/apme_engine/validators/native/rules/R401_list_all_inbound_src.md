@@ -6,26 +6,12 @@ description: Report inbound transfer sources.
 
 ## List inbound sources (R401)
 
-Report inbound transfer sources.
-
-### Example: violation
-
-```yaml
-- name: Example play
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Bad
-      ansible.builtin.shell: whoami
-```
+Report inbound transfer sources (annotation-based). Lists tasks with INBOUND annotation at end of play. Depends on annotator.
 
 ### Example: pass
 
 ```yaml
-- name: Example play
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Ok
-      ansible.builtin.command: whoami
+- name: Debug message
+  ansible.builtin.debug:
+    msg: hello
 ```

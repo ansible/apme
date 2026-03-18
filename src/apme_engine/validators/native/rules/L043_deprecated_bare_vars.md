@@ -11,21 +11,15 @@ Avoid {{ foo }}; prefer explicit form.
 ### Example: violation
 
 ```yaml
-- name: Example play
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Bad
-      ansible.builtin.shell: whoami
+- name: Bare var
+  ansible.builtin.debug:
+    msg: "{{ my_var }}"
 ```
 
 ### Example: pass
 
 ```yaml
-- name: Example play
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Ok
-      ansible.builtin.command: whoami
+- name: Filtered var
+  ansible.builtin.debug:
+    msg: "{{ my_var | default('') }}"
 ```

@@ -7,8 +7,19 @@ import "apme/v1/common.proto";
 // Primary is the orchestrator daemon: receives chunked fs, runs engine + validators, returns violations.
 service Primary {
   rpc Scan(ScanRequest) returns (ScanResponse);
+  // ScanStream sends file batches in multiple messages to avoid gRPC max message size (default 4 MiB).
+  rpc ScanStream(stream ScanChunk) returns (ScanResponse);
   rpc Format(FormatRequest) returns (FormatResponse);
   rpc Health(HealthRequest) returns (HealthResponse);
+}
+
+// ScanChunk is one batch of files for ScanStream. Send metadata (scan_id, project_root, options) on the first chunk; then one or more chunks with files; set last=true on the final chunk.
+message ScanChunk {
+  string scan_id = 1;
+  string project_root = 2;
+  ScanOptions options = 3;  // only used from first chunk
+  repeated File files = 4;
+  bool last = 5;
 }
 
 message ScanOptions {

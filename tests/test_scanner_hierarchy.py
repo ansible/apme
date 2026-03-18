@@ -109,7 +109,7 @@ class TestScannerHierarchy:
         assert task_node["type"] == "taskcall"
         assert task_node["module"] == "ansible.builtin.shell"
         assert task_node["annotations"] == []
-        assert task_node["name"] == ""
+        assert task_node["name"] is None
         assert task_node["options"] == {}
         assert task_node["module_options"] == {}
 

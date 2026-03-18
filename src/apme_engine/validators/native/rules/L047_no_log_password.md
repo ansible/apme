@@ -11,21 +11,18 @@ Set no_log for password-like parameters.
 ### Example: violation
 
 ```yaml
-- name: Example play
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Bad
-      ansible.builtin.shell: whoami
+- name: Connect with password
+  ansible.builtin.uri:
+    url: https://api.example.com/login
+    password: "{{ secret_password }}"
 ```
 
 ### Example: pass
 
 ```yaml
-- name: Example play
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Ok
-      ansible.builtin.command: whoami
+- name: Connect with password
+  ansible.builtin.uri:
+    url: https://api.example.com/login
+    password: "{{ secret_password }}"
+  no_log: true
 ```

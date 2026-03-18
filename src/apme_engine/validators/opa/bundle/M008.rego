@@ -13,7 +13,7 @@ violations contains v if {
 
 bare_include(tree, node) := v if {
 	node.type == "taskcall"
-	node.module == "include"
+	{"include", "ansible.builtin.include", "ansible.legacy.include"}[node.module]
 	count(node.line) > 0
 	v := {
 		"rule_id": "M008",

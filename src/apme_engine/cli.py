@@ -36,7 +36,7 @@ from apme_engine.collection_cache import (
     pull_github_org,
     pull_github_repos,
 )
-from apme_engine.daemon.chunked_fs import build_scan_request
+from apme_engine.daemon.chunked_fs import yield_scan_chunks
 from apme_engine.daemon.health_check import run_health_checks
 from apme_engine.daemon.violation_convert import violation_proto_to_dict
 from apme_engine.engine.models import ViolationDict, YAMLDict
@@ -462,7 +462,7 @@ def _run_scan_grpc(args: argparse.Namespace, primary_addr: str) -> None:
     verbosity = getattr(args, "verbose", 0) or 0
 
     try:
-        req = build_scan_request(
+        chunks = yield_scan_chunks(
             args.target,
             project_root_name="project",
             ansible_core_version=getattr(args, "ansible_version", None),
@@ -475,7 +475,7 @@ def _run_scan_grpc(args: argparse.Namespace, primary_addr: str) -> None:
     channel = grpc.insecure_channel(primary_addr)
     stub = primary_pb2_grpc.PrimaryStub(channel)  # type: ignore[no-untyped-call]
     try:
-        resp = stub.Scan(req, timeout=120)
+        resp = stub.ScanStream(chunks, timeout=120)
     except grpc.RpcError as e:
         sys.stderr.write(f"Primary daemon error: {e.details()}\n")
         sys.exit(1)

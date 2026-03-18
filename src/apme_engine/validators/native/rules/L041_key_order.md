@@ -6,26 +6,13 @@ description: Task keys should follow canonical order (e.g. name before module).
 
 ## Key order (L041)
 
-Task keys should follow canonical order (e.g. name before module).
-
-### Example: violation
-
-```yaml
-- name: Example play
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Bad
-      ansible.builtin.shell: whoami
-```
+Task keys should follow canonical order. The `name` key should appear before the action/module key. This rule requires the raw YAML source lines to be preserved on the task spec, which is only available during file-based scanning.
 
 ### Example: pass
 
 ```yaml
-- name: Example play
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Ok
-      ansible.builtin.command: whoami
+- name: Copy file
+  ansible.builtin.copy:
+    src: a
+    dest: /tmp/b
 ```

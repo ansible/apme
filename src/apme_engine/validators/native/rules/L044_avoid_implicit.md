@@ -11,21 +11,16 @@ Set state explicitly where it matters.
 ### Example: violation
 
 ```yaml
-- name: Example play
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Bad
-      ansible.builtin.shell: whoami
+- name: Create file
+  ansible.builtin.file:
+    path: /tmp/foo
 ```
 
 ### Example: pass
 
 ```yaml
-- name: Example play
-  hosts: localhost
-  connection: local
-  tasks:
-    - name: Ok
-      ansible.builtin.command: whoami
+- name: Create file
+  ansible.builtin.file:
+    path: /tmp/foo
+    state: touch
 ```
