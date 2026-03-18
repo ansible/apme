@@ -44,6 +44,9 @@ from apme_engine.formatter import format_directory, format_file
 from apme_engine.remediation.engine import RemediationEngine
 from apme_engine.remediation.transforms import build_default_registry
 from apme_engine.runner import run_scan
+from apme_engine.validators.ansible import AnsibleValidator
+from apme_engine.validators.ansible._venv import DEFAULT_VERSION as ANSIBLE_DEFAULT_VERSION
+from apme_engine.validators.ansible._venv import resolve_venv_root
 from apme_engine.validators.native import NativeValidator
 from apme_engine.validators.opa import OpaValidator
 
@@ -420,11 +423,18 @@ def _run_scan(args: argparse.Namespace) -> None:
             print(json.dumps({"violations": [], "hierarchy_payload": context.hierarchy_payload}))
         sys.exit(0)
 
-    validators: list[tuple[str, OpaValidator | NativeValidator]] = []
+    validators: list[tuple[str, OpaValidator | NativeValidator | AnsibleValidator]] = []
     if not args.no_opa:
         validators.append(("OPA", OpaValidator(args.opa_bundle)))
     if not args.no_native:
         validators.append(("Native", NativeValidator()))
+    if not getattr(args, "no_ansible", False):
+        av = getattr(args, "ansible_version", None) or ANSIBLE_DEFAULT_VERSION
+        venv_root = resolve_venv_root(av)
+        if venv_root is not None:
+            validators.append(("Ansible", AnsibleValidator(venv_root)))
+        else:
+            sys.stderr.write(f"Ansible validator skipped: no venv found for ansible-core {av}\n")
 
     violations: list[ViolationDict] = []
     for name, v in validators:
@@ -600,13 +610,19 @@ def _run_format(args: argparse.Namespace) -> None:
         sys.stderr.write(f"\n{len(changed)} file(s) would be reformatted (use --apply to write)\n")
 
 
-def _scan_files_local(file_paths: list[str], repo_root: str, opa_bundle: str | None) -> list[ViolationDict]:
-    """In-process scan: engine + OPA + native validators. Returns violation dicts.
+def _scan_files_local(
+    file_paths: list[str],
+    repo_root: str,
+    opa_bundle: str | None,
+    ansible_version: str | None = None,
+) -> list[ViolationDict]:
+    """In-process scan: engine + OPA + native + ansible validators. Returns violation dicts.
 
     Args:
         file_paths: Paths to YAML files to scan.
         repo_root: Project root path for engine context.
         opa_bundle: Optional path to OPA bundle; None uses built-in.
+        ansible_version: ansible-core version for plugin introspection; None uses default.
 
     Returns:
         Deduplicated, sorted list of violation dicts.
@@ -618,6 +634,11 @@ def _scan_files_local(file_paths: list[str], repo_root: str, opa_bundle: str | N
     if not yaml_files:
         return []
 
+    venv_root = resolve_venv_root(ansible_version or ANSIBLE_DEFAULT_VERSION)
+    ansible_validator: AnsibleValidator | None = None
+    if venv_root is not None:
+        ansible_validator = AnsibleValidator(venv_root)
+
     all_violations: list[ViolationDict] = []
     for fpath in yaml_files:
         try:
@@ -628,10 +649,12 @@ def _scan_files_local(file_paths: list[str], repo_root: str, opa_bundle: str | N
         if not context.hierarchy_payload:
             continue
 
-        validators: list[tuple[str, OpaValidator | NativeValidator]] = [
+        validators: list[tuple[str, OpaValidator | NativeValidator | AnsibleValidator]] = [
             ("OPA", OpaValidator(opa_bundle)),
             ("Native", NativeValidator()),
         ]
+        if ansible_validator is not None:
+            validators.append(("Ansible", ansible_validator))
         for _name, v in validators:
             all_violations.extend(v.run(context))  # type: ignore[arg-type]
 
@@ -711,9 +734,10 @@ def _run_fix(args: argparse.Namespace) -> None:
 
     repo_root = str(Path(__file__).resolve().parent.parent)
     opa_bundle = getattr(args, "opa_bundle", None)
+    ansible_version = getattr(args, "ansible_version", None)
 
     def scan_fn(paths: list[str]) -> list[ViolationDict]:
-        return _scan_files_local(paths, repo_root, opa_bundle)
+        return _scan_files_local(paths, repo_root, opa_bundle, ansible_version=ansible_version)
 
     registry = build_default_registry()
     engine = RemediationEngine(
@@ -828,6 +852,7 @@ def main() -> None:
     scan_parser.add_argument("--json", action="store_true", help="Output violations as JSON")
     scan_parser.add_argument("--no-opa", action="store_true", help="Skip OPA validator")
     scan_parser.add_argument("--no-native", action="store_true", help="Skip native (Python) validator")
+    scan_parser.add_argument("--no-ansible", action="store_true", help="Skip Ansible validator (plugin introspection)")
     scan_parser.add_argument(
         "--ansible-version",
         default=None,
@@ -899,6 +924,11 @@ def main() -> None:
     fix_parser.add_argument("--max-passes", type=int, default=5, help="Max convergence passes (default: 5)")
     fix_parser.add_argument("--no-ai", action="store_true", help="Skip AI escalation (deterministic fixes only)")
     fix_parser.add_argument("--opa-bundle", default=None, help="Path to OPA bundle directory")
+    fix_parser.add_argument(
+        "--ansible-version",
+        default=None,
+        help="ansible-core version for plugin introspection (e.g. 2.18, 2.20). Default: 2.20",
+    )
 
     # ── health-check ──
     health_parser = subparsers.add_parser(

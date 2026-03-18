@@ -28,7 +28,7 @@
     - name: read the hosts file
       command: cat /etc/hosts
 
-    # L002/L026/L030: short module name, not FQCN, not builtin
+    # M001/L026/L030: short module name, not FQCN, not builtin
     # L021: no mode on copy
     # L017: relative path in src
     - name: copy a config file

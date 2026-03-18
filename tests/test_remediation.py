@@ -153,7 +153,6 @@ class TestDefaultRegistry:
         """Verifies default registry contains expected rule IDs and count."""
         reg = build_default_registry()
         for rule_id in (
-            "L002",
             "L007",
             "L008",
             "L009",
@@ -175,7 +174,7 @@ class TestDefaultRegistry:
             "M009",
         ):
             assert rule_id in reg, f"{rule_id} missing from default registry"
-        assert len(reg) == 20
+        assert len(reg) == 19
 
 
 # ---------------------------------------------------------------------------
@@ -319,12 +318,12 @@ class TestL007ShellToCommand:
 
 
 # ---------------------------------------------------------------------------
-# M001/L002 transform: FQCN
+# M001/M003 transform: FQCN
 # ---------------------------------------------------------------------------
 
 
 class TestFQCNTransform:
-    """Tests for fix_fqcn M001/L002/M003 transforms."""
+    """Tests for fix_fqcn M001/M003 transforms."""
 
     def test_rewrites_short_name_with_resolved_fqcn(self) -> None:
         """Verifies short module name replaced with resolved_fqcn from violation."""
@@ -347,15 +346,15 @@ class TestFQCNTransform:
         assert "ansible.builtin.debug" in result.content
         assert "\n  debug:" not in result.content
 
-    def test_falls_back_to_static_map_for_l002(self) -> None:
-        """Verifies L002 uses static FQCN map when no resolved_fqcn."""
+    def test_falls_back_to_static_map(self) -> None:
+        """Verifies static FQCN map used when no resolved_fqcn."""
         content = textwrap.dedent("""\
         - name: Copy file
           copy:
             src: /a
             dest: /b
         """)
-        violation = cast(ViolationDict, {"rule_id": "L002", "line": 1})
+        violation = cast(ViolationDict, {"rule_id": "M001", "line": 1})
         result = fix_fqcn(content, violation)
         assert result.applied is True
         assert "ansible.builtin.copy" in result.content
@@ -367,7 +366,7 @@ class TestFQCNTransform:
           ansible.builtin.debug:
             msg: hello
         """)
-        violation = cast(ViolationDict, {"rule_id": "L002", "line": 1})
+        violation = cast(ViolationDict, {"rule_id": "M001", "line": 1})
         result = fix_fqcn(content, violation)
         assert result.applied is False
 
@@ -378,7 +377,7 @@ class TestFQCNTransform:
           my_custom_module:
             param: value
         """)
-        violation = cast(ViolationDict, {"rule_id": "L002", "line": 1})
+        violation = cast(ViolationDict, {"rule_id": "M001", "line": 1})
         result = fix_fqcn(content, violation)
         assert result.applied is False
 
@@ -390,9 +389,9 @@ class TestFQCNTransform:
             name: httpd
             state: present
         """)
-        r1 = fix_fqcn(content, cast(ViolationDict, {"rule_id": "L002", "line": 1}))
+        r1 = fix_fqcn(content, cast(ViolationDict, {"rule_id": "M001", "line": 1}))
         assert r1.applied is True
-        r2 = fix_fqcn(r1.content, cast(ViolationDict, {"rule_id": "L002", "line": 1}))
+        r2 = fix_fqcn(r1.content, cast(ViolationDict, {"rule_id": "M001", "line": 1}))
         assert r2.applied is False
 
     def test_m003_redirect_uses_resolved_fqcn(self) -> None:

@@ -1,7 +1,7 @@
-"""M001/L002: Rewrite short module names to FQCN.
+"""M001/M003: Rewrite short module names to FQCN.
 
 M001 violations carry ``resolved_fqcn`` from ansible-core's plugin loader.
-L002 violations are syntactic-only; we fall back to a static builtin map.
+Falls back to a static builtin map when resolved_fqcn is not available.
 """
 
 from __future__ import annotations

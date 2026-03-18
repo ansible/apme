@@ -1,70 +1,43 @@
-"""Venv resolution and collection environment helpers for ansible validator rules."""
+"""Venv resolution and collection environment helpers for ansible validator rules.
 
-import os
-import shutil
+Venvs are ephemeral — created on demand via ``build_venv`` and cached by UV
+wheels so subsequent builds are near-instant.  Same code path in containers
+(UV cache pre-warmed at image build) and local developer machines.
+"""
+
+import sys
 from pathlib import Path
 
 SUPPORTED_VERSIONS = ["2.18", "2.19", "2.20"]
 DEFAULT_VERSION = "2.20"
 
 
-def prebuilt_venvs_root() -> Path | None:
-    """Return root directory for pre-built ansible venvs from env, or None.
-
-    Returns:
-        Path to venvs root if APME_ANSIBLE_VENVS_ROOT is set and valid, else None.
-    """
-    root = os.environ.get("APME_ANSIBLE_VENVS_ROOT", "").strip()
-    if root:
-        p = Path(root)
-        if p.is_dir():
-            return p
-    return None
-
-
-def find_prebuilt_venv(version: str) -> Path | None:
-    """Find pre-built venv for given ansible version.
-
-    Args:
-        version: Ansible version string (e.g. 2.20).
-
-    Returns:
-        Path to venv if found, else None.
-    """
-    root = prebuilt_venvs_root()
-    if root is None:
-        return None
-    parts = version.split(".")
-    major_minor = ".".join(parts[:2]) if len(parts) >= 2 else version
-    venv = root / major_minor
-    if venv.is_dir() and (venv / "bin" / "ansible-playbook").is_file():
-        return venv
-    return None
-
-
 def resolve_venv_root(version: str) -> Path | None:
-    """Return the venv root directory for a given version, or None.
+    """Return a venv root with ansible-core for the given version.
+
+    Delegates to ``build_venv`` which reuses an existing cached venv or
+    creates a new one.  UV wheel cache makes repeated builds near-instant.
 
     Args:
-        version: Ansible version string.
+        version: Ansible version string (e.g. "2.20").
 
     Returns:
-        Path to venv root (pre-built or system), or None.
+        Path to venv root, or None if build fails.
     """
-    venv = find_prebuilt_venv(version)
-    if venv is not None:
-        return venv
-    which = shutil.which("ansible-playbook")
-    if which:
-        bin_dir = Path(which).parent
-        candidate = bin_dir.parent
-        if (candidate / "pyvenv.cfg").is_file():
-            return candidate
-    return None
+    from apme_engine.collection_cache.venv_builder import build_venv
+
+    parts = version.split(".")
+    pip_version = ".".join(parts[:2]) + ".0" if len(parts) < 3 else version
+    try:
+        return build_venv(pip_version, collection_specs=[])
+    except Exception as exc:
+        sys.stderr.write(f"Ansible venv build failed for {version}: {exc}\n")
+        sys.stderr.flush()
+        return None
 
 
 def resolve_ansible_playbook(version: str) -> Path | None:
-    """Find ansible-playbook for a given version: pre-built venv first, then system PATH.
+    """Find ansible-playbook for a given version.
 
     Args:
         version: Ansible version string.
@@ -72,12 +45,11 @@ def resolve_ansible_playbook(version: str) -> Path | None:
     Returns:
         Path to ansible-playbook binary, or None.
     """
-    venv = find_prebuilt_venv(version)
+    venv = resolve_venv_root(version)
     if venv is not None:
-        return venv / "bin" / "ansible-playbook"
-    which = shutil.which("ansible-playbook")
-    if which:
-        return Path(which)
+        candidate = venv / "bin" / "ansible-playbook"
+        if candidate.is_file():
+            return candidate
     return None
 
 

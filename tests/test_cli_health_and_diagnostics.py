@@ -59,7 +59,7 @@ def mock_scan_diagnostics() -> primary_pb2.ScanDiagnostics:
         files_received=5,
         violations_found=3,
     )
-    opa_diag.rule_timings.append(common_pb2.RuleTiming(rule_id="L002", elapsed_ms=12.0, violations=2))
+    opa_diag.rule_timings.append(common_pb2.RuleTiming(rule_id="L006", elapsed_ms=12.0, violations=2))
     opa_diag.rule_timings.append(common_pb2.RuleTiming(rule_id="L003", elapsed_ms=8.0, violations=1))
     opa_diag.metadata["opa_response_size"] = "1234"
 
@@ -454,7 +454,7 @@ class TestScanDiagnosticsOutput:
 
         output = stderr_io.getvalue()
         assert "slowest" in output.lower() or "Top" in output
-        assert "L026" in output or "L002" in output
+        assert "L026" in output or "L006" in output
 
     def test_scan_vv_prints_per_rule_breakdown(
         self,
@@ -498,7 +498,7 @@ class TestScanDiagnosticsOutput:
         assert "L026" in output
         assert "L027" in output
         assert "R101" in output
-        assert "L002" in output
+        assert "L006" in output
         assert "L003" in output
 
     def test_scan_vv_shows_metadata(
@@ -848,7 +848,7 @@ class TestPrintDiagnosticsVV:
         assert "L026" in output
         assert "L027" in output
         assert "R101" in output
-        assert "L002" in output
+        assert "L006" in output
         assert "L003" in output
 
     def test_prints_trees_built(

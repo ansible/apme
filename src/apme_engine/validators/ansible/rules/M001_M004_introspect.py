@@ -120,7 +120,12 @@ def run(
     Returns:
         List of violation dicts for M001, M002, M003, M004.
     """
-    unique_modules: list[str] = [str(m) for m in {n.get("module", "") for n in task_nodes if n.get("module")}]
+    module_set: set[str] = set()
+    for n in task_nodes:
+        om = str(n.get("original_module", "") or n.get("module", ""))
+        if om:
+            module_set.add(om)
+    unique_modules = list(module_set)
     if not unique_modules:
         return []
 
@@ -130,7 +135,7 @@ def run(
 
     violations = []
     for node in task_nodes:
-        module_name = str(node.get("module", ""))
+        module_name = str(node.get("original_module", "") or node.get("module", ""))
         if not module_name:
             continue
 

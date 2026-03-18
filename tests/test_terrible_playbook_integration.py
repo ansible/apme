@@ -52,7 +52,6 @@ EXPECTED_NATIVE_RULES = {
 }
 
 EXPECTED_OPA_RULES = {
-    "L002",
     "L003",
     "L006",
     "L007",

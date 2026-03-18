@@ -79,7 +79,7 @@ class TestMain:
         assert "No hierarchy payload" in stderr_io.getvalue()
 
     def test_main_no_validators_json_outputs_hierarchy_only(self, sample_hierarchy_payload: YAMLDict) -> None:
-        """With --no-opa --no-native and --json, output is hierarchy_payload only.
+        """With --no-opa --no-native --no-ansible and --json, output is hierarchy_payload only.
 
         Args:
             sample_hierarchy_payload: Fixture providing sample hierarchy data.
@@ -88,7 +88,7 @@ class TestMain:
         stdout_io = StringIO()
         with (
             patch.object(cli_module, "run_scan", return_value=_make_context(sample_hierarchy_payload)),
-            patch("sys.argv", ["apme-scan", "scan", "--no-opa", "--no-native", "--json", "."]),
+            patch("sys.argv", ["apme-scan", "scan", "--no-opa", "--no-native", "--no-ansible", "--json", "."]),
             patch("sys.stdout", stdout_io),
         ):
             cli_module.main()
@@ -99,7 +99,7 @@ class TestMain:
         assert "violations" not in data
 
     def test_main_no_validators_no_json_prints_message(self, sample_hierarchy_payload: YAMLDict) -> None:
-        """With --no-opa --no-native and no --json, print message about validators skipped.
+        """With --no-opa --no-native --no-ansible and no --json, print message about validators skipped.
 
         Args:
             sample_hierarchy_payload: Fixture providing sample hierarchy data.
@@ -108,7 +108,7 @@ class TestMain:
         stdout_io = StringIO()
         with (
             patch.object(cli_module, "run_scan", return_value=_make_context(sample_hierarchy_payload)),
-            patch("sys.argv", ["apme-scan", "scan", "--no-opa", "--no-native", "."]),
+            patch("sys.argv", ["apme-scan", "scan", "--no-opa", "--no-native", "--no-ansible", "."]),
             patch("sys.stdout", stdout_io),
         ):
             cli_module.main()

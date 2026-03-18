@@ -32,7 +32,6 @@ def build_default_registry() -> TransformRegistry:
     reg = TransformRegistry()
 
     # OPA lint rules
-    reg.register("L002", fix_fqcn)
     reg.register("L007", fix_shell_to_command)
     reg.register("L008", fix_local_action)
     reg.register("L009", fix_empty_string)

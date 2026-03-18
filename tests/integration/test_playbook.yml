@@ -9,7 +9,7 @@
     # L024 (OPA): task without name
     - ansible.builtin.shell: echo "hello"
 
-    # L002 (OPA): non-FQCN module + ansible:fqcn (ansible validator)
+    # M001 (ansible): non-FQCN module
     - name: Install package
       yum:
         name: httpd
@@ -53,7 +53,7 @@
 - name: Second play
   hosts: webservers
   tasks:
-    # L002 (OPA): non-FQCN (copy) + ansible:fqcn
+    # M001 (ansible): non-FQCN (copy)
     - name: Copy a file
       copy:
         src: /tmp/foo
