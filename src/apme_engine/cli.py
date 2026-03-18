@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import sys
+import time
 from pathlib import Path
 from typing import cast
 
@@ -46,7 +47,7 @@ from apme_engine.remediation.transforms import build_default_registry
 from apme_engine.runner import run_scan
 from apme_engine.validators.ansible import AnsibleValidator
 from apme_engine.validators.ansible._venv import DEFAULT_VERSION as ANSIBLE_DEFAULT_VERSION
-from apme_engine.validators.ansible._venv import resolve_venv_root
+from apme_engine.validators.ansible._venv import release_session, resolve_session, resolve_venv_root
 from apme_engine.validators.native import NativeValidator
 from apme_engine.validators.opa import OpaValidator
 
@@ -430,7 +431,9 @@ def _run_scan(args: argparse.Namespace) -> None:
         validators.append(("Native", NativeValidator()))
     if not getattr(args, "no_ansible", False):
         av = getattr(args, "ansible_version", None) or ANSIBLE_DEFAULT_VERSION
-        venv_root = resolve_venv_root(av)
+        collections = getattr(args, "collections", None)
+        sid = getattr(args, "session", None)
+        venv_root = resolve_venv_root(av, collection_specs=collections, session_id=sid)
         if venv_root is not None:
             validators.append(("Ansible", AnsibleValidator(venv_root)))
         else:
@@ -615,6 +618,8 @@ def _scan_files_local(
     repo_root: str,
     opa_bundle: str | None,
     ansible_version: str | None = None,
+    collection_specs: list[str] | None = None,
+    session_id: str | None = None,
 ) -> list[ViolationDict]:
     """In-process scan: engine + OPA + native + ansible validators. Returns violation dicts.
 
@@ -623,6 +628,8 @@ def _scan_files_local(
         repo_root: Project root path for engine context.
         opa_bundle: Optional path to OPA bundle; None uses built-in.
         ansible_version: ansible-core version for plugin introspection; None uses default.
+        collection_specs: Optional collection specifiers for venv.
+        session_id: Optional session ID for venv reuse across invocations.
 
     Returns:
         Deduplicated, sorted list of violation dicts.
@@ -634,7 +641,11 @@ def _scan_files_local(
     if not yaml_files:
         return []
 
-    venv_root = resolve_venv_root(ansible_version or ANSIBLE_DEFAULT_VERSION)
+    venv_root = resolve_venv_root(
+        ansible_version or ANSIBLE_DEFAULT_VERSION,
+        collection_specs=collection_specs,
+        session_id=session_id,
+    )
     ansible_validator: AnsibleValidator | None = None
     if venv_root is not None:
         ansible_validator = AnsibleValidator(venv_root)
@@ -735,9 +746,26 @@ def _run_fix(args: argparse.Namespace) -> None:
     repo_root = str(Path(__file__).resolve().parent.parent)
     opa_bundle = getattr(args, "opa_bundle", None)
     ansible_version = getattr(args, "ansible_version", None)
+    collection_specs = getattr(args, "collections", None)
+    session_id = getattr(args, "session", None)
+
+    # Acquire a session venv up-front so the scan closure reuses it
+    session = resolve_session(
+        ansible_version or ANSIBLE_DEFAULT_VERSION,
+        collection_specs=collection_specs,
+        session_id=session_id,
+    )
+    active_session_id = session.session_id if session else None
 
     def scan_fn(paths: list[str]) -> list[ViolationDict]:
-        return _scan_files_local(paths, repo_root, opa_bundle, ansible_version=ansible_version)
+        return _scan_files_local(
+            paths,
+            repo_root,
+            opa_bundle,
+            ansible_version=ansible_version,
+            collection_specs=collection_specs,
+            session_id=active_session_id,
+        )
 
     registry = build_default_registry()
     engine = RemediationEngine(
@@ -769,10 +797,75 @@ def _run_fix(args: argparse.Namespace) -> None:
     if report.oscillation_detected:
         sys.stderr.write("  WARNING: oscillation detected, stopped early\n")
 
+    # Release ephemeral session venvs (named sessions persist for TTL)
+    if active_session_id is not None:
+        release_session(active_session_id)
+
     if not apply_changes and report.applied_patches:
         sys.stderr.write(f"\n{len(report.applied_patches)} file(s) would be patched (use --apply to write):\n")
         for p in report.applied_patches:
             sys.stdout.write(p.diff)
+
+
+def _run_session(args: argparse.Namespace) -> None:
+    """Manage named venv sessions (list, info, delete, reap).
+
+    Args:
+        args: Parsed CLI namespace with session_command and optional session_id/ttl.
+    """
+    from datetime import datetime, timezone
+
+    from apme_engine.collection_cache.venv_session import VenvSessionManager
+
+    cmd = args.session_command
+    ttl = getattr(args, "ttl", 3600)
+    mgr = VenvSessionManager(ttl_seconds=ttl)
+
+    if cmd == "list":
+        sessions = mgr.list_sessions()
+        if not sessions:
+            print("No active sessions.")
+            return
+        print(f"{'SESSION ID':<20} {'ANSIBLE':<10} {'COLLECTIONS':<30} {'AGE':<12} {'TYPE':<10}")
+        print("-" * 82)
+        now = time.time()
+        for s in sessions:
+            age_s = int(now - s.created_at)
+            if age_s < 60:
+                age = f"{age_s}s"
+            elif age_s < 3600:
+                age = f"{age_s // 60}m"
+            else:
+                age = f"{age_s // 3600}h {(age_s % 3600) // 60}m"
+            colls = ", ".join(s.collection_specs) if s.collection_specs else "-"
+            kind = "ephemeral" if s.ephemeral else "named"
+            print(f"{s.session_id:<20} {s.ansible_version:<10} {colls:<30} {age:<12} {kind:<10}")
+
+    elif cmd == "info":
+        session = mgr.get(args.session_id)
+        if session is None:
+            sys.stderr.write(f"Session not found: {args.session_id}\n")
+            sys.exit(1)
+        created = datetime.fromtimestamp(session.created_at, tz=timezone.utc).isoformat()
+        last_used = datetime.fromtimestamp(session.last_used_at, tz=timezone.utc).isoformat()
+        print(f"Session ID:     {session.session_id}")
+        print(f"Ansible:        {session.ansible_version}")
+        print(f"Collections:    {', '.join(session.collection_specs) or '-'}")
+        print(f"Venv root:      {session.venv_root}")
+        print(f"Created:        {created}")
+        print(f"Last used:      {last_used}")
+        print(f"Type:           {'ephemeral' if session.ephemeral else 'named'}")
+
+    elif cmd == "delete":
+        if mgr.delete(args.session_id):
+            print(f"Deleted session: {args.session_id}")
+        else:
+            sys.stderr.write(f"Session not found: {args.session_id}\n")
+            sys.exit(1)
+
+    elif cmd == "reap":
+        count = mgr.reap_expired()
+        print(f"Reaped {count} expired session(s).")
 
 
 def _run_health_check(args: argparse.Namespace) -> None:
@@ -865,6 +958,17 @@ def main() -> None:
         help="Collection specs to make available (e.g. community.general:9.0.0 amazon.aws)",
     )
     scan_parser.add_argument(
+        "--session",
+        default=None,
+        help="Named session ID for venv reuse across invocations (omit for ephemeral)",
+    )
+    scan_parser.add_argument(
+        "--session-ttl",
+        type=int,
+        default=3600,
+        help="TTL in seconds for named sessions before auto-expiry (default: 3600)",
+    )
+    scan_parser.add_argument(
         "-v",
         "--verbose",
         action="count",
@@ -929,6 +1033,44 @@ def main() -> None:
         default=None,
         help="ansible-core version for plugin introspection (e.g. 2.18, 2.20). Default: 2.20",
     )
+    fix_parser.add_argument(
+        "--collections",
+        nargs="*",
+        default=None,
+        help="Collection specs to make available (e.g. community.general:9.0.0 amazon.aws)",
+    )
+    fix_parser.add_argument(
+        "--session",
+        default=None,
+        help="Named session ID for venv reuse across invocations (omit for ephemeral)",
+    )
+    fix_parser.add_argument(
+        "--session-ttl",
+        type=int,
+        default=3600,
+        help="TTL in seconds for named sessions before auto-expiry (default: 3600)",
+    )
+
+    # ── session ──
+    session_parser = subparsers.add_parser(
+        "session",
+        parents=[global_opts],
+        help="Manage named venv sessions (list, info, delete, reap)",
+    )
+    session_sub = session_parser.add_subparsers(dest="session_command", required=True)
+
+    session_sub.add_parser("list", help="List all active sessions")
+    session_info = session_sub.add_parser("info", help="Show details for a session")
+    session_info.add_argument("session_id", help="Session ID to inspect")
+    session_del = session_sub.add_parser("delete", help="Delete a session and its venv")
+    session_del.add_argument("session_id", help="Session ID to delete")
+    session_reap = session_sub.add_parser("reap", help="Delete all expired sessions")
+    session_reap.add_argument(
+        "--ttl",
+        type=int,
+        default=3600,
+        help="TTL in seconds; sessions unused longer than this are reaped (default: 3600)",
+    )
 
     # ── health-check ──
     health_parser = subparsers.add_parser(
@@ -963,12 +1105,21 @@ def main() -> None:
 
         force_no_color()
 
+    # Set session TTL if provided
+    ttl = getattr(args, "session_ttl", 3600)
+    if ttl != 3600:
+        from apme_engine.validators.ansible._venv import get_session_manager  # noqa: PLC0415
+
+        get_session_manager(ttl_seconds=ttl)
+
     if args.command == "scan":
         _run_scan(args)
     elif args.command == "format":
         _run_format(args)
     elif args.command == "fix":
         _run_fix(args)
+    elif args.command == "session":
+        _run_session(args)
     elif args.command == "health-check":
         _run_health_check(args)
     else:
