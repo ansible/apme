@@ -23,7 +23,7 @@ dependencies = [
 
 [project.optional-dependencies]
 ai = [
-    "abbenay-client>=2026.3.4a0",
+    "abbenay-client @ git+https://github.com/redhat-developer/abbenay.git@main#subdirectory=packages/python",
 ]
 dev = [
     "pytest",
