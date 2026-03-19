@@ -42,6 +42,7 @@ from apme_engine.daemon.chunked_fs import yield_scan_chunks
 from apme_engine.daemon.health_check import run_health_checks
 from apme_engine.daemon.violation_convert import violation_proto_to_dict
 from apme_engine.engine.models import RemediationClass, RemediationResolution, ViolationDict, YAMLDict
+from apme_engine.engine.node_index import NodeIndex
 from apme_engine.formatter import format_directory, format_file
 from apme_engine.remediation.engine import RemediationEngine
 from apme_engine.remediation.partition import (
@@ -815,6 +816,36 @@ def _scan_files_local(
     return _deduplicate_violations(_sort_violations(all_violations))
 
 
+def _build_node_index_local(
+    file_paths: list[str],
+    repo_root: str,
+) -> NodeIndex | None:
+    """Run a lightweight scan to build a NodeIndex from hierarchy payloads.
+
+    Args:
+        file_paths: YAML file paths to scan.
+        repo_root: Project root for engine context.
+
+    Returns:
+        NodeIndex if hierarchy data was found, else None.
+    """
+    from apme_engine.runner import run_scan as _run_scan
+
+    merged: dict = {"hierarchy": []}
+    for fpath in file_paths:
+        try:
+            context = _run_scan(fpath, repo_root, include_scandata=False)
+        except Exception:  # noqa: BLE001
+            continue
+        if context.hierarchy_payload:
+            merged["hierarchy"].extend(
+                context.hierarchy_payload.get("hierarchy", []),
+            )
+    if not merged["hierarchy"]:
+        return None
+    return NodeIndex(merged)
+
+
 def _apply_remediation(
     target: Path,
     *,
@@ -882,12 +913,21 @@ def _apply_remediation(
                 session_id=active_session_id,
             )
 
+    # Build hierarchy index for violation enrichment (local mode only)
+    node_index: NodeIndex | None = None
+    if not primary_addr:
+        sys.stderr.write("  Building hierarchy index...\n")
+        node_index = _build_node_index_local(yaml_files, repo_root)
+        if node_index is not None:
+            sys.stderr.write(f"  Indexed {len(node_index)} hierarchy nodes\n")
+
     registry = build_default_registry()
     engine = RemediationEngine(
         registry=registry,
         scan_fn=scan_fn,
         max_passes=max_passes,
         verbose=True,
+        node_index=node_index,
     )
 
     sys.stderr.write(f"  {len(yaml_files)} YAML file(s), {len(registry)} transforms registered\n")
