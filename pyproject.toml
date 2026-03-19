@@ -47,7 +47,7 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "src/apme_engine/validators/native/rules"]
+testpaths = ["tests", "tests/gateway", "src/apme_engine/validators/native/rules"]
 pythonpath = ["src"]
 addopts = "-v --tb=short -m 'not integration'"
 markers = ["integration: marks tests as integration (may use network or external deps)"]
@@ -128,6 +128,11 @@ module = [
     "pydantic.*",
 ]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["apme_gateway", "apme_gateway.*", "tests.gateway.*"]
+follow_imports = "skip"
+ignore_errors = true
 
 [[tool.mypy.overrides]]
 module = [

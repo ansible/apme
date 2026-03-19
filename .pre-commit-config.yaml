@@ -9,7 +9,7 @@ repos:
     rev: v1.19.1
     hooks:
       - id: mypy
-        args: [--strict, src/, tests/, scripts/]
+        args: [--strict, --exclude, "apme_gateway", src/apme_engine/, src/apme/, tests/, scripts/]
         pass_filenames: false
         additional_dependencies:
           - types-protobuf
@@ -19,5 +19,13 @@ repos:
     rev: 0.8.3
     hooks:
       - id: pydoclint
-        args: [--exclude=src/apme/v1/|src/apme_gateway/, src/, tests/, scripts/]
+        args: [--exclude=src/apme/v1/|src/apme_gateway/|tests/gateway/, src/, tests/, scripts/]
+        pass_filenames: false
+  - repo: local
+    hooks:
+      - id: ui-lint
+        name: ui-lint
+        entry: scripts/ui-lint.sh
+        language: script
+        files: ^ui/.*\.(ts|tsx)$
         pass_filenames: false

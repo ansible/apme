@@ -22,7 +22,6 @@ import {
   SEVERITY_COLORS,
   type ScanStatus,
   type Diagnostics,
-  type ViolationLevel,
 } from '@apme/ui-shared';
 
 export const ScanDetailPage: React.FC = () => {
