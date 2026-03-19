@@ -13,7 +13,7 @@ import grpc
 
 from apme.v1 import primary_pb2_grpc
 from apme.v1.primary_pb2 import ScanDiagnostics
-from apme_engine.ansi import (
+from apme_engine.cli.ansi import (
     TREE_LAST,
     TREE_MID,
     TREE_PIPE,
@@ -791,7 +791,7 @@ def _scan_files_grpc(
         return []
 
     from apme.v1.common_pb2 import File
-    from apme.v1.primary_pb2 import ScanChunk, ScanOptions  # type: ignore[attr-defined]
+    from apme.v1.primary_pb2 import ScanChunk, ScanOptions
     from apme_engine.daemon.chunked_fs import CHUNK_MAX_BYTES
 
     groups = _group_files_by_scan_root(yaml_files)
@@ -1704,7 +1704,7 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.no_ansi:
-        from apme_engine.ansi import force_no_color  # noqa: PLC0415
+        from apme_engine.cli.ansi import force_no_color  # noqa: PLC0415
 
         force_no_color()
 

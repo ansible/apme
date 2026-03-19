@@ -16,7 +16,30 @@ import jsonpickle
 from rapidfuzz.distance import Levenshtein
 from ruamel.yaml.scalarstring import DoubleQuotedScalarString
 
-from apme_engine.ansi import table as ansi_table
+
+def _plain_table(headers: list[str], rows: list[list[str]]) -> str:
+    """Column-aligned plain text table (no ANSI, no external deps).
+
+    Args:
+        headers: Column header strings.
+        rows: Row data as lists of cell strings.
+
+    Returns:
+        Formatted multi-line table string.
+    """
+    num_cols = len(headers)
+    widths = [len(h) for h in headers]
+    for row in rows:
+        for i, cell in enumerate(row):
+            if i < num_cols:
+                widths[i] = max(widths[i], len(cell))
+    lines = ["  ".join(h.ljust(widths[i]) for i, h in enumerate(headers))]
+    lines.append("  ".join("-" * w for w in widths))
+    for row in rows:
+        cells = [(row[i] if i < len(row) else "").ljust(widths[i]) for i in range(num_cols)]
+        lines.append("  ".join(cells))
+    return "\n".join(lines)
+
 
 # Recursive type for YAML/JSON values (defined before local imports to avoid circular import)
 YAMLScalar = str | int | float | bool | None
@@ -1170,7 +1193,7 @@ class VariableDict:
                         cell_value = '""'
                 row.append(str(cell_value))
             rows.append(row)
-        return ansi_table(headers, rows)
+        return _plain_table(headers, rows)
 
 
 class ArgumentsType:

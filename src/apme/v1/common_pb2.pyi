@@ -28,7 +28,22 @@ class HealthRequest:
 
 class HealthResponse:
     status: str
+    downstream: list[ServiceHealth]
     def __init__(self, *, status: str = "", **kwargs: object) -> None: ...
+
+class ServiceHealth:
+    name: str
+    status: str
+    address: str
+    def __init__(self, *, name: str = "", status: str = "", address: str = "", **kwargs: object) -> None: ...
+
+class ScanSummary:
+    total: int
+    auto_fixable: int
+    ai_candidate: int
+    manual_review: int
+    by_resolution: dict[str, int]
+    def __init__(self, **kwargs: object) -> None: ...
 
 class RuleTiming:
     rule_id: str

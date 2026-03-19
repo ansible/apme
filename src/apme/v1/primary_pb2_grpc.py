@@ -3,6 +3,7 @@
 import grpc
 import warnings
 
+from apme.v1 import cache_pb2 as apme_dot_v1_dot_cache__pb2
 from apme.v1 import common_pb2 as apme_dot_v1_dot_common__pb2
 from apme.v1 import primary_pb2 as apme_dot_v1_dot_primary__pb2
 
@@ -27,7 +28,10 @@ if _version_not_supported:
 
 
 class PrimaryStub(object):
-    """Primary is the orchestrator daemon: receives chunked fs, runs engine + validators, returns violations.
+    """Primary is the orchestrator daemon and sole API surface for all clients.
+    Clients send file bytes in, receive processed bytes out. The Primary
+    delegates internally to validators, cache, and remediation — clients
+    never need to know the internal service topology.
     """
 
     def __init__(self, channel):
@@ -51,15 +55,43 @@ class PrimaryStub(object):
                 request_serializer=apme_dot_v1_dot_primary__pb2.FormatRequest.SerializeToString,
                 response_deserializer=apme_dot_v1_dot_primary__pb2.FormatResponse.FromString,
                 _registered_method=True)
+        self.FormatStream = channel.stream_unary(
+                '/apme.v1.Primary/FormatStream',
+                request_serializer=apme_dot_v1_dot_primary__pb2.ScanChunk.SerializeToString,
+                response_deserializer=apme_dot_v1_dot_primary__pb2.FormatResponse.FromString,
+                _registered_method=True)
         self.Health = channel.unary_unary(
                 '/apme.v1.Primary/Health',
                 request_serializer=apme_dot_v1_dot_common__pb2.HealthRequest.SerializeToString,
                 response_deserializer=apme_dot_v1_dot_common__pb2.HealthResponse.FromString,
                 _registered_method=True)
+        self.FixSession = channel.stream_stream(
+                '/apme.v1.Primary/FixSession',
+                request_serializer=apme_dot_v1_dot_primary__pb2.SessionCommand.SerializeToString,
+                response_deserializer=apme_dot_v1_dot_primary__pb2.SessionEvent.FromString,
+                _registered_method=True)
+        self.PullGalaxy = channel.unary_unary(
+                '/apme.v1.Primary/PullGalaxy',
+                request_serializer=apme_dot_v1_dot_cache__pb2.PullGalaxyRequest.SerializeToString,
+                response_deserializer=apme_dot_v1_dot_cache__pb2.PullGalaxyResponse.FromString,
+                _registered_method=True)
+        self.PullRequirements = channel.unary_unary(
+                '/apme.v1.Primary/PullRequirements',
+                request_serializer=apme_dot_v1_dot_cache__pb2.PullRequirementsRequest.SerializeToString,
+                response_deserializer=apme_dot_v1_dot_cache__pb2.PullRequirementsResponse.FromString,
+                _registered_method=True)
+        self.CloneOrg = channel.unary_unary(
+                '/apme.v1.Primary/CloneOrg',
+                request_serializer=apme_dot_v1_dot_cache__pb2.CloneOrgRequest.SerializeToString,
+                response_deserializer=apme_dot_v1_dot_cache__pb2.CloneOrgResponse.FromString,
+                _registered_method=True)
 
 
 class PrimaryServicer(object):
-    """Primary is the orchestrator daemon: receives chunked fs, runs engine + validators, returns violations.
+    """Primary is the orchestrator daemon and sole API surface for all clients.
+    Clients send file bytes in, receive processed bytes out. The Primary
+    delegates internally to validators, cache, and remediation — clients
+    never need to know the internal service topology.
     """
 
     def Scan(self, request, context):
@@ -69,8 +101,7 @@ class PrimaryServicer(object):
         raise NotImplementedError('Method not implemented!')
 
     def ScanStream(self, request_iterator, context):
-        """ScanStream sends file batches in multiple messages to avoid gRPC max message size (default 4 MiB).
-        """
+        """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
@@ -81,7 +112,41 @@ class PrimaryServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def FormatStream(self, request_iterator, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def Health(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def FixSession(self, request_iterator, context):
+        """Session-based fix workflow (ADR-028). Bidirectional stream: client sends
+        file chunks then approval commands; server streams progress, proposals,
+        and results. Replaces the former one-shot FixStream RPC.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def PullGalaxy(self, request, context):
+        """Cache proxy — delegates to CacheMaintainer internally.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def PullRequirements(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def CloneOrg(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -105,10 +170,35 @@ def add_PrimaryServicer_to_server(servicer, server):
                     request_deserializer=apme_dot_v1_dot_primary__pb2.FormatRequest.FromString,
                     response_serializer=apme_dot_v1_dot_primary__pb2.FormatResponse.SerializeToString,
             ),
+            'FormatStream': grpc.stream_unary_rpc_method_handler(
+                    servicer.FormatStream,
+                    request_deserializer=apme_dot_v1_dot_primary__pb2.ScanChunk.FromString,
+                    response_serializer=apme_dot_v1_dot_primary__pb2.FormatResponse.SerializeToString,
+            ),
             'Health': grpc.unary_unary_rpc_method_handler(
                     servicer.Health,
                     request_deserializer=apme_dot_v1_dot_common__pb2.HealthRequest.FromString,
                     response_serializer=apme_dot_v1_dot_common__pb2.HealthResponse.SerializeToString,
+            ),
+            'FixSession': grpc.stream_stream_rpc_method_handler(
+                    servicer.FixSession,
+                    request_deserializer=apme_dot_v1_dot_primary__pb2.SessionCommand.FromString,
+                    response_serializer=apme_dot_v1_dot_primary__pb2.SessionEvent.SerializeToString,
+            ),
+            'PullGalaxy': grpc.unary_unary_rpc_method_handler(
+                    servicer.PullGalaxy,
+                    request_deserializer=apme_dot_v1_dot_cache__pb2.PullGalaxyRequest.FromString,
+                    response_serializer=apme_dot_v1_dot_cache__pb2.PullGalaxyResponse.SerializeToString,
+            ),
+            'PullRequirements': grpc.unary_unary_rpc_method_handler(
+                    servicer.PullRequirements,
+                    request_deserializer=apme_dot_v1_dot_cache__pb2.PullRequirementsRequest.FromString,
+                    response_serializer=apme_dot_v1_dot_cache__pb2.PullRequirementsResponse.SerializeToString,
+            ),
+            'CloneOrg': grpc.unary_unary_rpc_method_handler(
+                    servicer.CloneOrg,
+                    request_deserializer=apme_dot_v1_dot_cache__pb2.CloneOrgRequest.FromString,
+                    response_serializer=apme_dot_v1_dot_cache__pb2.CloneOrgResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -119,7 +209,10 @@ def add_PrimaryServicer_to_server(servicer, server):
 
  # This class is part of an EXPERIMENTAL API.
 class Primary(object):
-    """Primary is the orchestrator daemon: receives chunked fs, runs engine + validators, returns violations.
+    """Primary is the orchestrator daemon and sole API surface for all clients.
+    Clients send file bytes in, receive processed bytes out. The Primary
+    delegates internally to validators, cache, and remediation — clients
+    never need to know the internal service topology.
     """
 
     @staticmethod
@@ -204,6 +297,33 @@ class Primary(object):
             _registered_method=True)
 
     @staticmethod
+    def FormatStream(request_iterator,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.stream_unary(
+            request_iterator,
+            target,
+            '/apme.v1.Primary/FormatStream',
+            apme_dot_v1_dot_primary__pb2.ScanChunk.SerializeToString,
+            apme_dot_v1_dot_primary__pb2.FormatResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
     def Health(request,
             target,
             options=(),
@@ -220,6 +340,114 @@ class Primary(object):
             '/apme.v1.Primary/Health',
             apme_dot_v1_dot_common__pb2.HealthRequest.SerializeToString,
             apme_dot_v1_dot_common__pb2.HealthResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def FixSession(request_iterator,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.stream_stream(
+            request_iterator,
+            target,
+            '/apme.v1.Primary/FixSession',
+            apme_dot_v1_dot_primary__pb2.SessionCommand.SerializeToString,
+            apme_dot_v1_dot_primary__pb2.SessionEvent.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def PullGalaxy(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/apme.v1.Primary/PullGalaxy',
+            apme_dot_v1_dot_cache__pb2.PullGalaxyRequest.SerializeToString,
+            apme_dot_v1_dot_cache__pb2.PullGalaxyResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def PullRequirements(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/apme.v1.Primary/PullRequirements',
+            apme_dot_v1_dot_cache__pb2.PullRequirementsRequest.SerializeToString,
+            apme_dot_v1_dot_cache__pb2.PullRequirementsResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def CloneOrg(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/apme.v1.Primary/CloneOrg',
+            apme_dot_v1_dot_cache__pb2.CloneOrgRequest.SerializeToString,
+            apme_dot_v1_dot_cache__pb2.CloneOrgResponse.FromString,
             options,
             channel_credentials,
             insecure,

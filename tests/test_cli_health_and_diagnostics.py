@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-import apme_engine.cli as cli_module
+import apme_engine._cli_legacy as cli_module
 from apme.v1 import common_pb2, primary_pb2
 
 # ---------------------------------------------------------------------------
@@ -169,7 +169,7 @@ class TestHealthCheckCLI:
         """
         stdout_io = StringIO()
         with (
-            patch("apme_engine.cli.run_health_checks", return_value=health_results_all_ok),
+            patch("apme_engine._cli_legacy.run_health_checks", return_value=health_results_all_ok),
             patch("sys.stdout", stdout_io),
             patch(
                 "sys.argv",
@@ -191,7 +191,7 @@ class TestHealthCheckCLI:
         """
         stdout_io = StringIO()
         with (
-            patch("apme_engine.cli.run_health_checks", return_value=health_results_some_fail),
+            patch("apme_engine._cli_legacy.run_health_checks", return_value=health_results_some_fail),
             patch("sys.stdout", stdout_io),
             patch(
                 "sys.argv",
@@ -213,7 +213,7 @@ class TestHealthCheckCLI:
         """
         stdout_io = StringIO()
         with (
-            patch("apme_engine.cli.run_health_checks", return_value=health_results_all_ok),
+            patch("apme_engine._cli_legacy.run_health_checks", return_value=health_results_all_ok),
             patch("sys.stdout", stdout_io),
             patch(
                 "sys.argv",
@@ -238,7 +238,7 @@ class TestHealthCheckCLI:
         """
         stdout_io = StringIO()
         with (
-            patch("apme_engine.cli.run_health_checks", return_value=health_results_all_ok),
+            patch("apme_engine._cli_legacy.run_health_checks", return_value=health_results_all_ok),
             patch("sys.stdout", stdout_io),
             patch(
                 "sys.argv",
@@ -259,7 +259,7 @@ class TestHealthCheckCLI:
         """
         stdout_io = StringIO()
         with (
-            patch("apme_engine.cli.run_health_checks", return_value=health_results_some_fail),
+            patch("apme_engine._cli_legacy.run_health_checks", return_value=health_results_some_fail),
             patch("sys.stdout", stdout_io),
             patch(
                 "sys.argv",
@@ -281,7 +281,7 @@ class TestHealthCheckCLI:
         """
         stdout_io = StringIO()
         with (
-            patch("apme_engine.cli.run_health_checks", return_value=health_results_all_ok),
+            patch("apme_engine._cli_legacy.run_health_checks", return_value=health_results_all_ok),
             patch("sys.stdout", stdout_io),
             patch(
                 "sys.argv",
@@ -311,7 +311,7 @@ class TestHealthCheckCLI:
         """
         stdout_io = StringIO()
         with (
-            patch("apme_engine.cli.run_health_checks", return_value=health_results_some_fail),
+            patch("apme_engine._cli_legacy.run_health_checks", return_value=health_results_some_fail),
             patch("sys.stdout", stdout_io),
             patch(
                 "sys.argv",
@@ -338,7 +338,7 @@ class TestHealthCheckCLI:
         stdout_io = StringIO()
         with (
             patch.dict("os.environ", {"APME_PRIMARY_ADDRESS": "envhost:50051"}),
-            patch("apme_engine.cli.run_health_checks", return_value=health_results_all_ok) as mock_run,
+            patch("apme_engine._cli_legacy.run_health_checks", return_value=health_results_all_ok) as mock_run,
             patch("sys.stdout", stdout_io),
             patch("sys.argv", ["apme-scan", "health-check"]),
             pytest.raises(SystemExit),
@@ -356,7 +356,7 @@ class TestHealthCheckCLI:
         """
         stdout_io = StringIO()
         with (
-            patch("apme_engine.cli.run_health_checks", return_value=health_results_all_ok) as mock_run,
+            patch("apme_engine._cli_legacy.run_health_checks", return_value=health_results_all_ok) as mock_run,
             patch("sys.stdout", stdout_io),
             patch(
                 "sys.argv",
@@ -404,7 +404,7 @@ class TestScanDiagnosticsOutput:
 
         with (
             patch("grpc.insecure_channel", return_value=mock_channel),
-            patch("apme_engine.cli.primary_pb2_grpc.PrimaryStub", return_value=mock_stub),
+            patch("apme_engine._cli_legacy.primary_pb2_grpc.PrimaryStub", return_value=mock_stub),
             patch("sys.stderr", stderr_io),
             patch("sys.stdout", stdout_io),
             patch(
@@ -442,7 +442,7 @@ class TestScanDiagnosticsOutput:
 
         with (
             patch("grpc.insecure_channel", return_value=mock_channel),
-            patch("apme_engine.cli.primary_pb2_grpc.PrimaryStub", return_value=mock_stub),
+            patch("apme_engine._cli_legacy.primary_pb2_grpc.PrimaryStub", return_value=mock_stub),
             patch("sys.stderr", stderr_io),
             patch("sys.stdout", stdout_io),
             patch(
@@ -477,7 +477,7 @@ class TestScanDiagnosticsOutput:
 
         with (
             patch("grpc.insecure_channel", return_value=mock_channel),
-            patch("apme_engine.cli.primary_pb2_grpc.PrimaryStub", return_value=mock_stub),
+            patch("apme_engine._cli_legacy.primary_pb2_grpc.PrimaryStub", return_value=mock_stub),
             patch("sys.stderr", stderr_io),
             patch("sys.stdout", stdout_io),
             patch(
@@ -522,7 +522,7 @@ class TestScanDiagnosticsOutput:
 
         with (
             patch("grpc.insecure_channel", return_value=mock_channel),
-            patch("apme_engine.cli.primary_pb2_grpc.PrimaryStub", return_value=mock_stub),
+            patch("apme_engine._cli_legacy.primary_pb2_grpc.PrimaryStub", return_value=mock_stub),
             patch("sys.stderr", stderr_io),
             patch("sys.stdout", stdout_io),
             patch(
@@ -563,7 +563,7 @@ class TestScanDiagnosticsOutput:
 
         with (
             patch("grpc.insecure_channel", return_value=mock_channel),
-            patch("apme_engine.cli.primary_pb2_grpc.PrimaryStub", return_value=mock_stub),
+            patch("apme_engine._cli_legacy.primary_pb2_grpc.PrimaryStub", return_value=mock_stub),
             patch("sys.stdout", stdout_io),
             patch(
                 "sys.argv",
@@ -606,7 +606,7 @@ class TestScanDiagnosticsOutput:
 
         with (
             patch("grpc.insecure_channel", return_value=mock_channel),
-            patch("apme_engine.cli.primary_pb2_grpc.PrimaryStub", return_value=mock_stub),
+            patch("apme_engine._cli_legacy.primary_pb2_grpc.PrimaryStub", return_value=mock_stub),
             patch("sys.stdout", stdout_io),
             patch(
                 "sys.argv",
@@ -646,7 +646,7 @@ class TestScanDiagnosticsOutput:
 
         with (
             patch("grpc.insecure_channel", return_value=mock_channel),
-            patch("apme_engine.cli.primary_pb2_grpc.PrimaryStub", return_value=mock_stub),
+            patch("apme_engine._cli_legacy.primary_pb2_grpc.PrimaryStub", return_value=mock_stub),
             patch("sys.stderr", stderr_io),
             patch("sys.stdout", stdout_io),
             patch(

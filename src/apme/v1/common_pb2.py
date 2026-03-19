@@ -24,19 +24,21 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x14\x61pme/v1/common.proto\x12\x07\x61pme.v1\"\x96\x02\n\tViolation\x12\x0f\n\x07rule_id\x18\x01 \x01(\t\x12\r\n\x05level\x18\x02 \x01(\t\x12\x0f\n\x07message\x18\x03 \x01(\t\x12\x0c\n\x04\x66ile\x18\x04 \x01(\t\x12\x0e\n\x04line\x18\x05 \x01(\x05H\x00\x12(\n\nline_range\x18\x06 \x01(\x0b\x32\x12.apme.v1.LineRangeH\x00\x12\x0c\n\x04path\x18\x07 \x01(\t\x12\x34\n\x11remediation_class\x18\x08 \x01(\x0e\x32\x19.apme.v1.RemediationClass\x12>\n\x16remediation_resolution\x18\t \x01(\x0e\x32\x1e.apme.v1.RemediationResolutionB\x0c\n\nline_oneof\"\'\n\tLineRange\x12\r\n\x05start\x18\x01 \x01(\x05\x12\x0b\n\x03\x65nd\x18\x02 \x01(\x05\"%\n\x04\x46ile\x12\x0c\n\x04path\x18\x01 \x01(\t\x12\x0f\n\x07\x63ontent\x18\x02 \x01(\x0c\"\x0f\n\rHealthRequest\" \n\x0eHealthResponse\x12\x0e\n\x06status\x18\x01 \x01(\t\"E\n\nRuleTiming\x12\x0f\n\x07rule_id\x18\x01 \x01(\t\x12\x12\n\nelapsed_ms\x18\x02 \x01(\x01\x12\x12\n\nviolations\x18\x03 \x01(\x05\"\xa1\x02\n\x14ValidatorDiagnostics\x12\x16\n\x0evalidator_name\x18\x01 \x01(\t\x12\x12\n\nrequest_id\x18\x02 \x01(\t\x12\x10\n\x08total_ms\x18\x03 \x01(\x01\x12\x16\n\x0e\x66iles_received\x18\x04 \x01(\x05\x12\x18\n\x10violations_found\x18\x05 \x01(\x05\x12)\n\x0crule_timings\x18\x06 \x03(\x0b\x32\x13.apme.v1.RuleTiming\x12=\n\x08metadata\x18\x07 \x03(\x0b\x32+.apme.v1.ValidatorDiagnostics.MetadataEntry\x1a/\n\rMetadataEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t:\x02\x38\x01*\xa2\x01\n\x10RemediationClass\x12!\n\x1dREMEDIATION_CLASS_UNSPECIFIED\x10\x00\x12\"\n\x1eREMEDIATION_CLASS_AUTO_FIXABLE\x10\x01\x12\"\n\x1eREMEDIATION_CLASS_AI_CANDIDATE\x10\x02\x12#\n\x1fREMEDIATION_CLASS_MANUAL_REVIEW\x10\x03*\xb1\x03\n\x15RemediationResolution\x12&\n\"REMEDIATION_RESOLUTION_UNSPECIFIED\x10\x00\x12%\n!REMEDIATION_RESOLUTION_UNRESOLVED\x10\x01\x12+\n\'REMEDIATION_RESOLUTION_TRANSFORM_FAILED\x10\x02\x12&\n\"REMEDIATION_RESOLUTION_OSCILLATION\x10\x03\x12&\n\"REMEDIATION_RESOLUTION_AI_PROPOSED\x10\x04\x12$\n REMEDIATION_RESOLUTION_AI_FAILED\x10\x05\x12,\n(REMEDIATION_RESOLUTION_AI_LOW_CONFIDENCE\x10\x06\x12(\n$REMEDIATION_RESOLUTION_USER_REJECTED\x10\x07\x12+\n\'REMEDIATION_RESOLUTION_NEEDS_CROSS_FILE\x10\x08\x12!\n\x1dREMEDIATION_RESOLUTION_MANUAL\x10\tb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x14\x61pme/v1/common.proto\x12\x07\x61pme.v1\"\x96\x02\n\tViolation\x12\x0f\n\x07rule_id\x18\x01 \x01(\t\x12\r\n\x05level\x18\x02 \x01(\t\x12\x0f\n\x07message\x18\x03 \x01(\t\x12\x0c\n\x04\x66ile\x18\x04 \x01(\t\x12\x0e\n\x04line\x18\x05 \x01(\x05H\x00\x12(\n\nline_range\x18\x06 \x01(\x0b\x32\x12.apme.v1.LineRangeH\x00\x12\x0c\n\x04path\x18\x07 \x01(\t\x12\x34\n\x11remediation_class\x18\x08 \x01(\x0e\x32\x19.apme.v1.RemediationClass\x12>\n\x16remediation_resolution\x18\t \x01(\x0e\x32\x1e.apme.v1.RemediationResolutionB\x0c\n\nline_oneof\"\'\n\tLineRange\x12\r\n\x05start\x18\x01 \x01(\x05\x12\x0b\n\x03\x65nd\x18\x02 \x01(\x05\"%\n\x04\x46ile\x12\x0c\n\x04path\x18\x01 \x01(\t\x12\x0f\n\x07\x63ontent\x18\x02 \x01(\x0c\"\x0f\n\rHealthRequest\"L\n\x0eHealthResponse\x12\x0e\n\x06status\x18\x01 \x01(\t\x12*\n\ndownstream\x18\x02 \x03(\x0b\x32\x16.apme.v1.ServiceHealth\">\n\rServiceHealth\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\x0e\n\x06status\x18\x02 \x01(\t\x12\x0f\n\x07\x61\x64\x64ress\x18\x03 \x01(\t\"\xd3\x01\n\x0bScanSummary\x12\r\n\x05total\x18\x01 \x01(\x05\x12\x14\n\x0c\x61uto_fixable\x18\x02 \x01(\x05\x12\x14\n\x0c\x61i_candidate\x18\x03 \x01(\x05\x12\x15\n\rmanual_review\x18\x04 \x01(\x05\x12=\n\rby_resolution\x18\x05 \x03(\x0b\x32&.apme.v1.ScanSummary.ByResolutionEntry\x1a\x33\n\x11\x42yResolutionEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\x05:\x02\x38\x01\"E\n\nRuleTiming\x12\x0f\n\x07rule_id\x18\x01 \x01(\t\x12\x12\n\nelapsed_ms\x18\x02 \x01(\x01\x12\x12\n\nviolations\x18\x03 \x01(\x05\"\xa1\x02\n\x14ValidatorDiagnostics\x12\x16\n\x0evalidator_name\x18\x01 \x01(\t\x12\x12\n\nrequest_id\x18\x02 \x01(\t\x12\x10\n\x08total_ms\x18\x03 \x01(\x01\x12\x16\n\x0e\x66iles_received\x18\x04 \x01(\x05\x12\x18\n\x10violations_found\x18\x05 \x01(\x05\x12)\n\x0crule_timings\x18\x06 \x03(\x0b\x32\x13.apme.v1.RuleTiming\x12=\n\x08metadata\x18\x07 \x03(\x0b\x32+.apme.v1.ValidatorDiagnostics.MetadataEntry\x1a/\n\rMetadataEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t:\x02\x38\x01*\xa2\x01\n\x10RemediationClass\x12!\n\x1dREMEDIATION_CLASS_UNSPECIFIED\x10\x00\x12\"\n\x1eREMEDIATION_CLASS_AUTO_FIXABLE\x10\x01\x12\"\n\x1eREMEDIATION_CLASS_AI_CANDIDATE\x10\x02\x12#\n\x1fREMEDIATION_CLASS_MANUAL_REVIEW\x10\x03*\xb1\x03\n\x15RemediationResolution\x12&\n\"REMEDIATION_RESOLUTION_UNSPECIFIED\x10\x00\x12%\n!REMEDIATION_RESOLUTION_UNRESOLVED\x10\x01\x12+\n\'REMEDIATION_RESOLUTION_TRANSFORM_FAILED\x10\x02\x12&\n\"REMEDIATION_RESOLUTION_OSCILLATION\x10\x03\x12&\n\"REMEDIATION_RESOLUTION_AI_PROPOSED\x10\x04\x12$\n REMEDIATION_RESOLUTION_AI_FAILED\x10\x05\x12,\n(REMEDIATION_RESOLUTION_AI_LOW_CONFIDENCE\x10\x06\x12(\n$REMEDIATION_RESOLUTION_USER_REJECTED\x10\x07\x12+\n\'REMEDIATION_RESOLUTION_NEEDS_CROSS_FILE\x10\x08\x12!\n\x1dREMEDIATION_RESOLUTION_MANUAL\x10\tb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'apme.v1.common_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
+  _globals['_SCANSUMMARY_BYRESOLUTIONENTRY']._loaded_options = None
+  _globals['_SCANSUMMARY_BYRESOLUTIONENTRY']._serialized_options = b'8\001'
   _globals['_VALIDATORDIAGNOSTICS_METADATAENTRY']._loaded_options = None
   _globals['_VALIDATORDIAGNOSTICS_METADATAENTRY']._serialized_options = b'8\001'
-  _globals['_REMEDIATIONCLASS']._serialized_start=809
-  _globals['_REMEDIATIONCLASS']._serialized_end=971
-  _globals['_REMEDIATIONRESOLUTION']._serialized_start=974
-  _globals['_REMEDIATIONRESOLUTION']._serialized_end=1407
+  _globals['_REMEDIATIONCLASS']._serialized_start=1131
+  _globals['_REMEDIATIONCLASS']._serialized_end=1293
+  _globals['_REMEDIATIONRESOLUTION']._serialized_start=1296
+  _globals['_REMEDIATIONRESOLUTION']._serialized_end=1729
   _globals['_VIOLATION']._serialized_start=34
   _globals['_VIOLATION']._serialized_end=312
   _globals['_LINERANGE']._serialized_start=314
@@ -46,11 +48,17 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_HEALTHREQUEST']._serialized_start=394
   _globals['_HEALTHREQUEST']._serialized_end=409
   _globals['_HEALTHRESPONSE']._serialized_start=411
-  _globals['_HEALTHRESPONSE']._serialized_end=443
-  _globals['_RULETIMING']._serialized_start=445
-  _globals['_RULETIMING']._serialized_end=514
-  _globals['_VALIDATORDIAGNOSTICS']._serialized_start=517
-  _globals['_VALIDATORDIAGNOSTICS']._serialized_end=806
-  _globals['_VALIDATORDIAGNOSTICS_METADATAENTRY']._serialized_start=759
-  _globals['_VALIDATORDIAGNOSTICS_METADATAENTRY']._serialized_end=806
+  _globals['_HEALTHRESPONSE']._serialized_end=487
+  _globals['_SERVICEHEALTH']._serialized_start=489
+  _globals['_SERVICEHEALTH']._serialized_end=551
+  _globals['_SCANSUMMARY']._serialized_start=554
+  _globals['_SCANSUMMARY']._serialized_end=765
+  _globals['_SCANSUMMARY_BYRESOLUTIONENTRY']._serialized_start=714
+  _globals['_SCANSUMMARY_BYRESOLUTIONENTRY']._serialized_end=765
+  _globals['_RULETIMING']._serialized_start=767
+  _globals['_RULETIMING']._serialized_end=836
+  _globals['_VALIDATORDIAGNOSTICS']._serialized_start=839
+  _globals['_VALIDATORDIAGNOSTICS']._serialized_end=1128
+  _globals['_VALIDATORDIAGNOSTICS_METADATAENTRY']._serialized_start=1081
+  _globals['_VALIDATORDIAGNOSTICS_METADATAENTRY']._serialized_end=1128
 # @@protoc_insertion_point(module_scope)

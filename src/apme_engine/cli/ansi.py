@@ -4,7 +4,7 @@ Provides terminal styling with NO_COLOR/FORCE_COLOR support, severity badges,
 box drawing, simple tables, and tree connectors.
 
 Usage:
-    from apme_engine.ansi import bold, red, green, severity_badge, box, table
+    from apme_engine.cli.ansi import bold, red, green, severity_badge, box, table
 
     print(bold(red("Error:")), "something went wrong")
     print(severity_badge("high"))  # -> " ERROR " on red background

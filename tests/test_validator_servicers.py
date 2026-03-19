@@ -35,10 +35,10 @@ class FakeGrpcContext:
 
 
 class TestOpaValidatorServicer:
-    """Tests for OPA validator gRPC servicer."""
+    """Tests for OPA validator gRPC servicer (in-process via OpaValidator)."""
 
-    async def test_validate_posts_to_opa_rest(self) -> None:
-        """Validate posts hierarchy to OPA REST and returns violations."""
+    async def test_validate_runs_opa_and_returns_violations(self) -> None:
+        """Validate runs OPA via subprocess and returns violations."""
         from apme_engine.daemon.opa_validator_server import OpaValidatorServicer
 
         hierarchy: YAMLDict = {"hierarchy": [{"tree_type": "playbook", "nodes": []}]}
@@ -51,17 +51,9 @@ class TestOpaValidatorServicer:
 
         servicer = OpaValidatorServicer()
 
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"result": violations}
-        mock_response.content = b'{"result": [{"rule_id": "L024"}]}'
-
-        with patch.object(servicer._client, "post", new_callable=AsyncMock, return_value=mock_response) as mock_post:
+        with patch("apme_engine.daemon.opa_validator_server._run_opa", return_value=violations):
             resp = await servicer.Validate(request, FakeGrpcContext())  # type: ignore[arg-type]
 
-        mock_post.assert_called_once()
-        call_args = mock_post.call_args
-        assert call_args[1]["json"]["input"] == hierarchy
         assert len(resp.violations) == 1  # type: ignore[attr-defined]
         assert resp.violations[0].rule_id == "L024"  # type: ignore[attr-defined]
         assert resp.request_id == "test-req-1"  # type: ignore[attr-defined]
@@ -70,7 +62,6 @@ class TestOpaValidatorServicer:
         """Validate returns ValidatorDiagnostics with rule timings."""
         from apme_engine.daemon.opa_validator_server import OpaValidatorServicer
 
-        hierarchy: dict[str, object] = {"hierarchy": []}
         violations = [
             {"rule_id": "L024", "level": "warning", "message": "m1", "file": "a.yml", "line": 1, "path": ""},
             {"rule_id": "L024", "level": "warning", "message": "m2", "file": "a.yml", "line": 5, "path": ""},
@@ -79,16 +70,11 @@ class TestOpaValidatorServicer:
 
         request = validate_pb2.ValidateRequest(
             request_id="diag-opa-1",
-            hierarchy_payload=json.dumps(hierarchy).encode(),
+            hierarchy_payload=json.dumps({"hierarchy": []}).encode(),
         )
         servicer = OpaValidatorServicer()
 
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"result": violations}
-        mock_response.content = b'{"result": []}'
-
-        with patch.object(servicer._client, "post", new_callable=AsyncMock, return_value=mock_response):
+        with patch("apme_engine.daemon.opa_validator_server._run_opa", return_value=violations):
             resp = await servicer.Validate(request, FakeGrpcContext())  # type: ignore[arg-type]
 
         assert resp.HasField("diagnostics")  # type: ignore[attr-defined]
@@ -97,11 +83,8 @@ class TestOpaValidatorServicer:
         assert diag.request_id == "diag-opa-1"
         assert diag.violations_found == 3
         assert diag.total_ms > 0
-        assert "opa_query_ms" in diag.metadata
-        assert "opa_response_size" in diag.metadata
 
         rule_ids = [rt.rule_id for rt in diag.rule_timings]
-        assert "opa_query" in rule_ids
         assert "L007" in rule_ids
         assert "L024" in rule_ids
         l024_timing = next(rt for rt in diag.rule_timings if rt.rule_id == "L024")
@@ -114,54 +97,36 @@ class TestOpaValidatorServicer:
         request = validate_pb2.ValidateRequest(request_id="test-req-2")
         servicer = OpaValidatorServicer()
 
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"result": []}
-        mock_response.content = b'{"result": []}'
-
-        with patch.object(servicer._client, "post", new_callable=AsyncMock, return_value=mock_response):
+        with patch("apme_engine.daemon.opa_validator_server._run_opa", return_value=[]):
             resp = await servicer.Validate(request, FakeGrpcContext())  # type: ignore[arg-type]
         assert len(resp.violations) == 0  # type: ignore[attr-defined]
         assert resp.request_id == "test-req-2"  # type: ignore[attr-defined]
         assert resp.HasField("diagnostics")  # type: ignore[attr-defined]
         assert resp.diagnostics.violations_found == 0  # type: ignore[attr-defined]
 
-    async def test_validate_opa_http_error_returns_empty(self) -> None:
-        """Validate returns empty violations when OPA HTTP errors."""
+    async def test_validate_opa_error_returns_empty(self) -> None:
+        """Validate returns empty violations when OPA evaluation fails."""
         from apme_engine.daemon.opa_validator_server import OpaValidatorServicer
 
         request = validate_pb2.ValidateRequest(
             request_id="test-req-3",
             hierarchy_payload=json.dumps({"hierarchy": []}).encode(),
         )
-        mock_response = MagicMock()
-        mock_response.status_code = 500
 
         servicer = OpaValidatorServicer()
-        with patch.object(servicer._client, "post", new_callable=AsyncMock, return_value=mock_response):
+        with patch(
+            "apme_engine.daemon.opa_validator_server._run_opa", side_effect=RuntimeError("opa binary not found")
+        ):
             resp = await servicer.Validate(request, FakeGrpcContext())  # type: ignore[arg-type]
         assert len(resp.violations) == 0  # type: ignore[attr-defined]
 
-    async def test_health_opa_up(self) -> None:
-        """Health returns ok when OPA is reachable."""
+    async def test_health_returns_ok(self) -> None:
+        """Health always returns ok (no external dependency)."""
         from apme_engine.daemon.opa_validator_server import OpaValidatorServicer
 
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-
         servicer = OpaValidatorServicer()
-        with patch.object(servicer._client, "get", new_callable=AsyncMock, return_value=mock_response):
-            resp = await servicer.Health(common_pb2.HealthRequest(), FakeGrpcContext())  # type: ignore[arg-type]
+        resp = await servicer.Health(common_pb2.HealthRequest(), FakeGrpcContext())  # type: ignore[arg-type]
         assert resp.status == "ok"
-
-    async def test_health_opa_down(self) -> None:
-        """Health returns unreachable when OPA connection fails."""
-        from apme_engine.daemon.opa_validator_server import OpaValidatorServicer
-
-        servicer = OpaValidatorServicer()
-        with patch.object(servicer._client, "get", new_callable=AsyncMock, side_effect=ConnectionError("refused")):
-            resp = await servicer.Health(common_pb2.HealthRequest(), FakeGrpcContext())  # type: ignore[arg-type]
-        assert "unreachable" in resp.status
 
 
 class TestNativeValidatorServicer:
@@ -663,26 +628,26 @@ class TestCliDiagnosticsDisplay:
 
     def test_fmt_ms_sub_1(self) -> None:
         """_fmt_ms formats sub-millisecond as '<1ms'."""
-        from apme_engine.cli import _fmt_ms
+        from apme_engine.cli.output import fmt_ms
 
-        assert _fmt_ms(0.5) == "<1ms"
+        assert fmt_ms(0.5) == "<1ms"
 
     def test_fmt_ms_normal(self) -> None:
         """_fmt_ms formats milliseconds with 'ms' suffix."""
-        from apme_engine.cli import _fmt_ms
+        from apme_engine.cli.output import fmt_ms
 
-        assert _fmt_ms(42.3) == "42ms"
+        assert fmt_ms(42.3) == "42ms"
 
     def test_fmt_ms_seconds(self) -> None:
         """_fmt_ms formats seconds with 's' suffix."""
-        from apme_engine.cli import _fmt_ms
+        from apme_engine.cli.output import fmt_ms
 
-        assert _fmt_ms(1500.0) == "1.5s"
+        assert fmt_ms(1500.0) == "1.5s"
 
     def test_diag_to_dict(self) -> None:
         """_diag_to_dict converts ScanDiagnostics to dict."""
         from apme.v1 import primary_pb2
-        from apme_engine.cli import _diag_to_dict
+        from apme_engine.cli.output import diag_to_dict as _diag_to_dict
 
         vd = common_pb2.ValidatorDiagnostics(
             validator_name="native",
@@ -726,7 +691,7 @@ class TestCliDiagnosticsDisplay:
 
         """
         from apme.v1 import primary_pb2
-        from apme_engine.cli import _print_diagnostics_v
+        from apme_engine.cli.output import print_diagnostics_v as _print_diagnostics_v
 
         vd = common_pb2.ValidatorDiagnostics(
             validator_name="native",
@@ -755,7 +720,7 @@ class TestCliDiagnosticsDisplay:
 
         """
         from apme.v1 import primary_pb2
-        from apme_engine.cli import _print_diagnostics_vv
+        from apme_engine.cli.output import print_diagnostics_vv as _print_diagnostics_vv
 
         vd = common_pb2.ValidatorDiagnostics(
             validator_name="opa",

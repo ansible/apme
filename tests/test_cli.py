@@ -1,4 +1,4 @@
-"""Tests for apme_engine.cli."""
+"""Tests for apme_engine._cli_legacy."""
 
 import json
 from io import StringIO
@@ -7,15 +7,15 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-import apme_engine.cli as cli_module
-from apme_engine.ansi import strip_ansi
-from apme_engine.cli import (
+import apme_engine._cli_legacy as cli_module
+from apme_engine._cli_legacy import (
     _deduplicate_violations,
     _find_role_root,
     _fmt_ms,
     _group_files_by_scan_root,
     _sort_violations,
 )
+from apme_engine.cli.ansi import strip_ansi
 from apme_engine.engine.models import ViolationDict, YAMLDict
 from apme_engine.validators.base import ScanContext
 
@@ -415,7 +415,7 @@ class TestFormatCommand:
         mock_result.changed = False
         mock_result.path = yml
         with (
-            patch("apme_engine.cli.format_file", return_value=mock_result),
+            patch("apme_engine._cli_legacy.format_file", return_value=mock_result),
             patch("sys.argv", ["apme", "format", "--check", str(yml)]),
             pytest.raises(SystemExit) as exc_info,
         ):
@@ -435,7 +435,7 @@ class TestFormatCommand:
         mock_result.changed = True
         mock_result.path = yml
         with (
-            patch("apme_engine.cli.format_file", return_value=mock_result),
+            patch("apme_engine._cli_legacy.format_file", return_value=mock_result),
             patch("sys.stderr", StringIO()),
             patch("sys.argv", ["apme", "format", "--check", str(yml)]),
             pytest.raises(SystemExit) as exc_info,
@@ -456,7 +456,7 @@ class TestFormatCommand:
         mock_result.changed = False
         stdout_io = StringIO()
         with (
-            patch("apme_engine.cli.format_file", return_value=mock_result),
+            patch("apme_engine._cli_legacy.format_file", return_value=mock_result),
             patch("sys.stdout", stdout_io),
             patch("sys.argv", ["apme", "format", str(yml)]),
         ):
@@ -478,7 +478,7 @@ class TestFormatCommand:
         mock_result.path = yml
         stdout_io = StringIO()
         with (
-            patch("apme_engine.cli.format_file", return_value=mock_result),
+            patch("apme_engine._cli_legacy.format_file", return_value=mock_result),
             patch("sys.stdout", stdout_io),
             patch("sys.argv", ["apme", "format", "--apply", str(yml)]),
         ):
@@ -496,7 +496,7 @@ class TestFormatCommand:
         mock_result.changed = False
         stdout_io = StringIO()
         with (
-            patch("apme_engine.cli.format_directory", return_value=[mock_result]),
+            patch("apme_engine._cli_legacy.format_directory", return_value=[mock_result]),
             patch("sys.stdout", stdout_io),
             patch("sys.argv", ["apme", "format", str(tmp_path)]),
         ):
@@ -518,7 +518,7 @@ class TestFormatCommand:
         mock_result.path = yml
         stdout_io = StringIO()
         with (
-            patch("apme_engine.cli.format_file", return_value=mock_result),
+            patch("apme_engine._cli_legacy.format_file", return_value=mock_result),
             patch("sys.stdout", stdout_io),
             patch("sys.stderr", StringIO()),
             patch("sys.argv", ["apme", "format", str(yml)]),
@@ -549,7 +549,7 @@ class TestHealthCheckCommand:
         }
         stdout_io = StringIO()
         with (
-            patch("apme_engine.cli.run_health_checks", return_value=mock_results),
+            patch("apme_engine._cli_legacy.run_health_checks", return_value=mock_results),
             patch("sys.stdout", stdout_io),
             patch("sys.argv", ["apme", "health-check", "--primary-addr", "localhost:50051", "--json"]),
             pytest.raises(SystemExit) as exc_info,
@@ -566,7 +566,7 @@ class TestHealthCheckCommand:
         }
         stdout_io = StringIO()
         with (
-            patch("apme_engine.cli.run_health_checks", return_value=mock_results),
+            patch("apme_engine._cli_legacy.run_health_checks", return_value=mock_results),
             patch("sys.stdout", stdout_io),
             patch("sys.argv", ["apme", "health-check", "--primary-addr", "localhost:50051", "--json"]),
             pytest.raises(SystemExit) as exc_info,
@@ -582,7 +582,7 @@ class TestHealthCheckCommand:
         }
         stdout_io = StringIO()
         with (
-            patch("apme_engine.cli.run_health_checks", return_value=mock_results),
+            patch("apme_engine._cli_legacy.run_health_checks", return_value=mock_results),
             patch("sys.stdout", stdout_io),
             patch("sys.argv", ["apme", "health-check", "--primary-addr", "localhost:50051"]),
             pytest.raises(SystemExit) as exc_info,
@@ -607,7 +607,7 @@ class TestCacheCommand:
         """
         stdout_io = StringIO()
         with (
-            patch("apme_engine.cli.pull_galaxy_collection") as mock_pull,
+            patch("apme_engine._cli_legacy.pull_galaxy_collection") as mock_pull,
             patch("sys.stdout", stdout_io),
             patch(
                 "sys.argv",
@@ -629,7 +629,7 @@ class TestCacheCommand:
         req_file = tmp_path / "requirements.yml"
         req_file.write_text("---\ncollections: []\n")
         with (
-            patch("apme_engine.cli.pull_galaxy_requirements") as mock_pull,
+            patch("apme_engine._cli_legacy.pull_galaxy_requirements") as mock_pull,
             patch("sys.stdout", stdout_io),
             patch(
                 "sys.argv",
@@ -649,7 +649,7 @@ class TestCacheCommand:
         """
         stdout_io = StringIO()
         with (
-            patch("apme_engine.cli.pull_github_org") as mock_pull,
+            patch("apme_engine._cli_legacy.pull_github_org") as mock_pull,
             patch("sys.stdout", stdout_io),
             patch(
                 "sys.argv",
@@ -669,7 +669,7 @@ class TestCacheCommand:
         """
         stdout_io = StringIO()
         with (
-            patch("apme_engine.cli.pull_github_repos") as mock_pull,
+            patch("apme_engine._cli_legacy.pull_github_repos") as mock_pull,
             patch("sys.stdout", stdout_io),
             patch(
                 "sys.argv",
@@ -707,7 +707,7 @@ class TestFixCommand:
         mock_result = MagicMock()
         mock_result.changed = False
         with (
-            patch("apme_engine.cli.format_file", return_value=mock_result),
+            patch("apme_engine._cli_legacy.format_file", return_value=mock_result),
             patch("sys.stderr", StringIO()),
             patch("sys.argv", ["apme", "fix", "--check", str(yml)]),
             pytest.raises(SystemExit) as exc_info,

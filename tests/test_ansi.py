@@ -7,7 +7,7 @@ from unittest import mock
 
 import pytest
 
-from apme_engine.ansi import (
+from apme_engine.cli.ansi import (
     Style,
     bold,
     box,
@@ -641,7 +641,7 @@ class TestNoAnsiFlag:
         from io import StringIO  # noqa: PLC0415
         from unittest.mock import patch  # noqa: PLC0415
 
-        import apme_engine.cli as cli_module  # noqa: PLC0415
+        import apme_engine._cli_legacy as cli_module  # noqa: PLC0415
         from apme_engine.validators.base import ScanContext  # noqa: PLC0415
 
         ctx = ScanContext(

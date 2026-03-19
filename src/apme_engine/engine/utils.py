@@ -17,7 +17,7 @@ import httpx
 import yaml
 from filelock import FileLock
 
-from apme_engine.ansi import table as ansi_table
+from apme_engine.engine.models import _plain_table as ansi_table
 
 from . import logger
 from .models import YAMLDict

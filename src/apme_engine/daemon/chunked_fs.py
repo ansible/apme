@@ -5,7 +5,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 from apme.v1.common_pb2 import File
-from apme.v1.primary_pb2 import ScanChunk, ScanOptions, ScanRequest  # type: ignore[attr-defined]
+from apme.v1.primary_pb2 import ScanChunk, ScanOptions, ScanRequest
 
 # Max bytes per ScanChunk message to stay under typical gRPC max message size (e.g. 4 MiB).
 CHUNK_MAX_BYTES = 1024 * 1024  # 1 MiB

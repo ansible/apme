@@ -310,7 +310,7 @@ class TestFixApply:
         """
         r = _cli("fix", "--apply", str(messy_file))
         assert r.returncode == 0
-        assert "Passed" in r.stderr or "zero diffs" in r.stderr.lower()
+        assert "updated" in r.stderr.lower() or "no changes" in r.stderr.lower()
 
     def test_file_is_formatted_after_fix(self, messy_file: Path) -> None:
         """File passes format --check after fix --apply.
@@ -332,8 +332,7 @@ class TestFixApply:
         """
         r = _cli("fix", "--apply", str(messy_file))
         assert r.returncode == 0
-        assert "remediating" in r.stderr.lower()
-        assert "tier 1" in r.stderr.lower()
+        assert "remediation" in r.stderr.lower()
 
 
 class TestFixCheck:

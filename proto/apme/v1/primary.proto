@@ -3,29 +3,61 @@ syntax = "proto3";
 package apme.v1;
 
 import "apme/v1/common.proto";
+import "apme/v1/cache.proto";
+import "google/protobuf/struct.proto";
 
-// Primary is the orchestrator daemon: receives chunked fs, runs engine + validators, returns violations.
+// Primary is the orchestrator daemon and sole API surface for all clients.
+// Clients send file bytes in, receive processed bytes out. The Primary
+// delegates internally to validators, cache, and remediation — clients
+// never need to know the internal service topology.
 service Primary {
   rpc Scan(ScanRequest) returns (ScanResponse);
-  // ScanStream sends file batches in multiple messages to avoid gRPC max message size (default 4 MiB).
   rpc ScanStream(stream ScanChunk) returns (ScanResponse);
   rpc Format(FormatRequest) returns (FormatResponse);
+  rpc FormatStream(stream ScanChunk) returns (FormatResponse);
   rpc Health(HealthRequest) returns (HealthResponse);
+
+  // Session-based fix workflow (ADR-028). Bidirectional stream: client sends
+  // file chunks then approval commands; server streams progress, proposals,
+  // and results. Replaces the former one-shot FixStream RPC.
+  rpc FixSession(stream SessionCommand) returns (stream SessionEvent);
+
+  // Cache proxy — delegates to CacheMaintainer internally.
+  rpc PullGalaxy(PullGalaxyRequest) returns (PullGalaxyResponse);
+  rpc PullRequirements(PullRequirementsRequest) returns (PullRequirementsResponse);
+  rpc CloneOrg(CloneOrgRequest) returns (CloneOrgResponse);
 }
 
-// ScanChunk is one batch of files for ScanStream. Send metadata (scan_id, project_root, options) on the first chunk; then one or more chunks with files; set last=true on the final chunk.
+// ---------------------------------------------------------------------------
+// Shared messages (used by Scan, Format, and FixSession)
+// ---------------------------------------------------------------------------
+
+// ScanChunk is one batch of files for streaming RPCs (ScanStream, FormatStream,
+// FixSession upload phase). Send metadata on the first chunk; then one or more
+// chunks with files; set last=true on the final chunk.
 message ScanChunk {
   string scan_id = 1;
   string project_root = 2;
-  ScanOptions options = 3;  // only used from first chunk
+  ScanOptions options = 3;      // scan/format: only used from first chunk
   repeated File files = 4;
   bool last = 5;
+  FixOptions fix_options = 6;   // FixSession: only used from first chunk
 }
 
 message ScanOptions {
   bool include_scandata = 1;
   string ansible_core_version = 2;
   repeated string collection_specs = 3;
+}
+
+message FixOptions {
+  int32 max_passes = 1;
+  string ansible_core_version = 2;
+  repeated string collection_specs = 3;
+  repeated string exclude_patterns = 4;
+  bool enable_ai = 5;
+  bool enable_agentic = 6;       // Tier 3 (future)
+  string ai_model = 7;
 }
 
 message ScanRequest {
@@ -38,8 +70,9 @@ message ScanRequest {
 message ScanResponse {
   repeated Violation violations = 1;
   string scan_id = 2;
-  bytes hierarchy_payload = 3;  // optional, for debugging
+  bytes hierarchy_payload = 3;
   ScanDiagnostics diagnostics = 4;
+  ScanSummary summary = 5;
 }
 
 message ScanDiagnostics {
@@ -67,4 +100,143 @@ message FileDiff {
   bytes original = 2;
   bytes formatted = 3;
   string diff = 4;
+}
+
+message FilePatch {
+  string path = 1;
+  bytes original = 2;
+  bytes patched = 3;
+  string diff = 4;
+  repeated string applied_rules = 5;
+}
+
+message FixReport {
+  int32 passes = 1;
+  int32 fixed = 2;
+  int32 remaining_ai = 3;
+  int32 remaining_manual = 4;
+  bool oscillation_detected = 5;
+  repeated Violation remaining_violations = 6;
+}
+
+// ---------------------------------------------------------------------------
+// FixSession: bidirectional streaming (ADR-028)
+// ---------------------------------------------------------------------------
+
+// Client -> Server commands. The first N messages are ScanChunk uploads;
+// after SessionCreated the client sends approval/extend/close commands.
+message SessionCommand {
+  oneof command {
+    ScanChunk upload = 1;
+    ApprovalRequest approve = 2;
+    ExtendRequest extend = 3;
+    CloseRequest close = 4;
+    ResumeRequest resume = 5;
+  }
+}
+
+message ApprovalRequest {
+  repeated string approved_ids = 1;
+}
+
+message ExtendRequest {}
+
+message CloseRequest {}
+
+message ResumeRequest {
+  string session_id = 1;
+}
+
+// Server -> Client events streamed during the fix session.
+message SessionEvent {
+  oneof event {
+    SessionCreated created = 1;
+    ProgressUpdate progress = 2;
+    Tier1Summary tier1_complete = 3;
+    ProposalsReady proposals = 4;
+    ApprovalAck approval_ack = 5;
+    SessionResult result = 6;
+    ExpirationWarning expiring = 7;
+    SessionClosed closed = 8;
+    DataPayload data = 9;
+  }
+}
+
+message SessionCreated {
+  string session_id = 1;
+  int32 ttl_seconds = 2;
+}
+
+enum LogLevel {
+  LOG_LEVEL_UNSPECIFIED = 0;
+  DEBUG = 1;
+  INFO = 2;
+  WARNING = 3;
+  ERROR = 4;
+}
+
+message ProgressUpdate {
+  string message = 1;
+  string phase = 2;       // "format", "tier1", "tier2", "tier3"
+  float progress = 3;     // 0.0-1.0, optional
+  LogLevel level = 4;
+}
+
+message Tier1Summary {
+  repeated FilePatch applied_patches = 1;
+  repeated FileDiff format_diffs = 2;
+  bool idempotency_ok = 3;
+  FixReport report = 4;
+}
+
+message Proposal {
+  string id = 1;
+  string file = 2;
+  string rule_id = 3;
+  int32 line_start = 4;
+  int32 line_end = 5;
+  string before_text = 6;
+  string after_text = 7;
+  string diff_hunk = 8;
+  float confidence = 9;
+  string explanation = 10;
+  int32 tier = 11;
+}
+
+message ProposalsReady {
+  repeated Proposal proposals = 1;
+  int32 tier = 2;
+  SessionStatus status = 3;
+}
+
+message ApprovalAck {
+  int32 applied_count = 1;
+  SessionStatus status = 2;
+  int32 ttl_seconds = 3;
+}
+
+message SessionResult {
+  repeated FilePatch patches = 1;
+  FixReport report = 2;
+  repeated Violation remaining_violations = 3;
+}
+
+message ExpirationWarning {
+  int32 ttl_seconds = 1;
+}
+
+message SessionClosed {}
+
+// Generic structured data payload. The 'kind' field tells the client what
+// type of data this is; 'data' is a JSON-native Struct.
+message DataPayload {
+  string kind = 1;
+  google.protobuf.Struct data = 2;
+}
+
+enum SessionStatus {
+  SESSION_STATUS_UNSPECIFIED = 0;
+  AWAITING_APPROVAL = 1;
+  PROCESSING = 2;
+  COMPLETE = 3;
 }

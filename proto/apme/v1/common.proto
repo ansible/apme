@@ -55,6 +55,23 @@ message HealthRequest {}
 
 message HealthResponse {
   string status = 1;  // "ok" or error description
+  repeated ServiceHealth downstream = 2;  // Primary populates with downstream service status
+}
+
+message ServiceHealth {
+  string name = 1;
+  string status = 2;     // "ok" or error description
+  string address = 3;
+}
+
+// Pre-computed violation counts by remediation class and resolution.
+// Populated server-side so clients don't need to import counting logic.
+message ScanSummary {
+  int32 total = 1;
+  int32 auto_fixable = 2;
+  int32 ai_candidate = 3;
+  int32 manual_review = 4;
+  map<string, int32> by_resolution = 5;
 }
 
 // Diagnostics — always collected, displayed with -v / -vv.

@@ -1,11 +1,34 @@
 """Stub for generated primary_pb2 (proto types)."""
 
-from apme.v1.common_pb2 import ValidatorDiagnostics
+from google.protobuf.struct_pb2 import Struct
+
+from apme.v1.common_pb2 import ValidatorDiagnostics, Violation
 
 class ScanOptions:
+    include_scandata: bool
     ansible_core_version: str
     collection_specs: list[str]
     def __init__(self, **kwargs: object) -> None: ...
+
+class FixOptions:
+    max_passes: int
+    ansible_core_version: str
+    collection_specs: list[str]
+    exclude_patterns: list[str]
+    enable_ai: bool
+    enable_agentic: bool
+    ai_model: str
+    def __init__(self, **kwargs: object) -> None: ...
+
+class ScanChunk:
+    scan_id: str
+    project_root: str
+    options: ScanOptions | None
+    files: list[object]
+    last: bool
+    fix_options: FixOptions | None
+    def __init__(self, **kwargs: object) -> None: ...
+    def HasField(self, field_name: str) -> bool: ...
 
 class ScanRequest:
     scan_id: str
@@ -16,7 +39,9 @@ class ScanRequest:
     def HasField(self, field_name: str) -> bool: ...
 
 class ScanResponse:
+    summary: object | None
     def __init__(self, **kwargs: object) -> None: ...
+    def HasField(self, field_name: str) -> bool: ...
 
 class ScanDiagnostics:
     engine_parse_ms: float
@@ -38,4 +63,142 @@ class FormatResponse:
     def __init__(self, **kwargs: object) -> None: ...
 
 class FileDiff:
+    path: str
+    original: bytes
+    formatted: bytes
+    diff: str
     def __init__(self, **kwargs: object) -> None: ...
+
+class FilePatch:
+    path: str
+    original: bytes
+    patched: bytes
+    diff: str
+    applied_rules: list[str]
+    def __init__(self, **kwargs: object) -> None: ...
+
+class FixReport:
+    passes: int
+    fixed: int
+    remaining_ai: int
+    remaining_manual: int
+    oscillation_detected: bool
+    remaining_violations: list[Violation]
+    def __init__(self, **kwargs: object) -> None: ...
+
+# ---------------------------------------------------------------------------
+# FixSession: bidirectional streaming (ADR-028)
+# ---------------------------------------------------------------------------
+
+class SessionCommand:
+    upload: ScanChunk
+    approve: ApprovalRequest
+    extend: ExtendRequest
+    close: CloseRequest
+    resume: ResumeRequest
+    def __init__(self, **kwargs: object) -> None: ...
+    def HasField(self, field_name: str) -> bool: ...
+    def WhichOneof(self, oneof_group: str) -> str | None: ...
+
+class ApprovalRequest:
+    approved_ids: list[str]
+    def __init__(self, **kwargs: object) -> None: ...
+
+class ExtendRequest:
+    def __init__(self, **kwargs: object) -> None: ...
+
+class CloseRequest:
+    def __init__(self, **kwargs: object) -> None: ...
+
+class ResumeRequest:
+    session_id: str
+    def __init__(self, **kwargs: object) -> None: ...
+
+class SessionEvent:
+    created: SessionCreated
+    progress: ProgressUpdate
+    tier1_complete: Tier1Summary
+    proposals: ProposalsReady
+    approval_ack: ApprovalAck
+    result: SessionResult
+    expiring: ExpirationWarning
+    closed: SessionClosed
+    data: DataPayload
+    def __init__(self, **kwargs: object) -> None: ...
+    def HasField(self, field_name: str) -> bool: ...
+    def WhichOneof(self, oneof_group: str) -> str | None: ...
+
+class SessionCreated:
+    session_id: str
+    ttl_seconds: int
+    def __init__(self, **kwargs: object) -> None: ...
+
+class ProgressUpdate:
+    message: str
+    phase: str
+    progress: float
+    level: int
+    def __init__(self, **kwargs: object) -> None: ...
+
+class Tier1Summary:
+    applied_patches: list[FilePatch]
+    format_diffs: list[FileDiff]
+    idempotency_ok: bool
+    report: FixReport | None
+    def __init__(self, **kwargs: object) -> None: ...
+
+class Proposal:
+    id: str
+    file: str
+    rule_id: str
+    line_start: int
+    line_end: int
+    before_text: str
+    after_text: str
+    diff_hunk: str
+    confidence: float
+    explanation: str
+    tier: int
+    def __init__(self, **kwargs: object) -> None: ...
+
+class ProposalsReady:
+    proposals: list[Proposal]
+    tier: int
+    status: int
+    def __init__(self, **kwargs: object) -> None: ...
+
+class ApprovalAck:
+    applied_count: int
+    status: int
+    ttl_seconds: int
+    def __init__(self, **kwargs: object) -> None: ...
+
+class SessionResult:
+    patches: list[FilePatch]
+    report: FixReport | None
+    remaining_violations: list[Violation]
+    def __init__(self, **kwargs: object) -> None: ...
+
+class ExpirationWarning:
+    ttl_seconds: int
+    def __init__(self, **kwargs: object) -> None: ...
+
+class SessionClosed:
+    def __init__(self, **kwargs: object) -> None: ...
+
+class DataPayload:
+    kind: str
+    data: Struct
+    def __init__(self, **kwargs: object) -> None: ...
+
+# Enum constants
+LOG_LEVEL_UNSPECIFIED: int
+DEBUG: int
+INFO: int
+WARNING: int
+ERROR: int
+
+SESSION_STATUS_UNSPECIFIED: int
+AWAITING_APPROVAL: int
+PROCESSING: int
+COMPLETE: int
