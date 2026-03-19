@@ -1,8 +1,13 @@
 """Pytest configuration and shared fixtures."""
 
+import importlib
 from pathlib import Path
 
 import pytest
+
+# Skip gateway tests when the gateway optional deps are not installed.
+if not importlib.util.find_spec("sqlalchemy"):
+    collect_ignore_glob = ["gateway/*"]
 
 from apme_engine.engine.models import YAMLDict
 

@@ -5,22 +5,16 @@ it instead of the default on-disk database.  The gRPC PrimaryClient is
 replaced with a mock so gateway tests run without backend services.
 
 Requires the ``gateway`` optional dependency group (sqlalchemy, fastapi, etc.).
-When those packages are absent (e.g. in base CI), the entire module is skipped
-so ``pytest`` collection does not fail.
+When those packages are absent (e.g. in base CI), the parent conftest
+excludes this directory via ``collect_ignore_glob``.
 """
 
 from __future__ import annotations
 
-import importlib
 from collections.abc import AsyncGenerator
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
-# Guard: skip the whole module when gateway deps are not installed.
-if not importlib.util.find_spec("sqlalchemy"):
-    pytest.skip("gateway extras not installed", allow_module_level=True)
-
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 

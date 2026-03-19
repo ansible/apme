@@ -2,13 +2,7 @@
 
 from __future__ import annotations
 
-import importlib
 from datetime import datetime, timezone
-
-import pytest
-
-if not importlib.util.find_spec("sqlalchemy"):
-    pytest.skip("gateway extras not installed", allow_module_level=True)
 
 from apme_gateway.models.schemas import (
     HealthOut,

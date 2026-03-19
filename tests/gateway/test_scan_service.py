@@ -2,13 +2,7 @@
 
 from __future__ import annotations
 
-import importlib
 import uuid
-
-import pytest
-
-if not importlib.util.find_spec("sqlalchemy"):
-    pytest.skip("gateway extras not installed", allow_module_level=True)
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
