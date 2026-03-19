@@ -5,6 +5,7 @@ import json
 import os
 import sys
 import time
+import uuid
 from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import cast
@@ -525,6 +526,9 @@ def _run_scan(args: argparse.Namespace) -> None:
         return
 
     payload: YAMLDict = context.hierarchy_payload or {}
+    project_name = Path(args.target).resolve().name
+    _forward_to_gateway(project_name, violations, request_id=str(uuid.uuid4()))
+
     _render_scan_results(
         violations,
         scan_id=str(payload.get("scan_id", "")),
@@ -546,6 +550,83 @@ def _run_scan(args: argparse.Namespace) -> None:
             )
         else:
             sys.stderr.write("\nNo auto-fixable issues found.\n")
+
+
+def _forward_to_gateway(
+    project_name: str,
+    violations: list[ViolationDict],
+    diagnostics: YAMLDict | None = None,
+    status: str = "completed",
+    scan_type: str = "scan",
+    fixed_count: int = 0,
+    request_id: str = "",
+) -> None:
+    """POST scan results to the API gateway for UI persistence (best-effort).
+
+    Args:
+        project_name: Name of the scanned project/directory.
+        violations: List of violation dicts from the scan.
+        diagnostics: Optional scan diagnostics dict.
+        status: Scan status string.
+        scan_type: Type of scan — "scan" or "fix".
+        fixed_count: Number of violations auto-fixed (for fix runs).
+        request_id: Idempotency key to prevent duplicate ingestion.
+    """
+    gateway_url = os.environ.get("APME_GATEWAY_URL")
+    if not gateway_url:
+        return
+
+    import httpx  # noqa: PLC0415
+
+    ingest_violations = []
+    for v in violations:
+        line = v.get("line")
+        line_val = None
+        line_end = None
+        if isinstance(line, list | tuple) and len(line) >= 2:
+            line_val = int(line[0])
+            line_end = int(line[1])
+        elif isinstance(line, list | tuple) and line:
+            line_val = int(line[0])
+        elif isinstance(line, int):
+            line_val = line
+
+        ingest_violations.append(
+            {
+                "rule_id": str(v.get("rule_id", "")),
+                "level": str(v.get("level", "hint")),
+                "message": str(v.get("message", "")),
+                "file": str(v.get("file", "")),
+                "line": line_val,
+                "line_end": line_end,
+                "path": v.get("path"),
+            }
+        )
+
+    payload: dict[str, object] = {
+        "project_name": project_name,
+        "scan_type": scan_type,
+        "status": status,
+        "violations": ingest_violations,
+        "fixed_count": fixed_count,
+        "diagnostics": diagnostics,
+    }
+    if request_id:
+        payload["request_id"] = request_id
+
+    try:
+        url = f"{gateway_url.rstrip('/')}/api/v1/scans/ingest"
+        transport = httpx.HTTPTransport(retries=0)
+        with httpx.Client(transport=transport) as client:
+            resp = client.post(url, json=payload, timeout=10)
+        if resp.is_success:
+            sys.stderr.write(
+                f"Results forwarded to dashboard ({len(ingest_violations)} violations, type={scan_type})\n"
+            )
+        else:
+            sys.stderr.write(f"Dashboard forward failed: HTTP {resp.status_code}\n")
+    except Exception as exc:
+        sys.stderr.write(f"Dashboard forward failed: {exc}\n")
 
 
 def _run_scan_grpc(args: argparse.Namespace, primary_addr: str) -> None:
@@ -583,6 +664,12 @@ def _run_scan_grpc(args: argparse.Namespace, primary_addr: str) -> None:
     violations = _deduplicate_violations(_sort_violations(violations))
 
     has_diag = resp.HasField("diagnostics")
+    project_name = Path(args.target).resolve().name
+    scan_request_id = resp.scan_id or str(uuid.uuid4())
+
+    # Forward results to gateway for UI persistence
+    diag_dict = _diag_to_dict(resp.diagnostics) if has_diag else None
+    _forward_to_gateway(project_name, violations, diagnostics=diag_dict, request_id=scan_request_id)
 
     if args.json:
         rem_counts = count_by_remediation_class(violations)
@@ -968,7 +1055,7 @@ def _apply_remediation(
     ai_provider: object | None = None,
     max_ai_attempts: int = 2,
     ci_mode: bool = False,
-) -> None:
+) -> int:
     """Scan files and run the remediation convergence loop.
 
     Args:
@@ -982,6 +1069,9 @@ def _apply_remediation(
         ai_provider: Optional AIProvider for Tier 2 escalation.
         max_ai_attempts: Max retry attempts for AI proposals per file batch.
         ci_mode: If True, apply AI proposals without interactive review.
+
+    Returns:
+        Number of violations fixed (0 if no YAML files found).
     """
     if target.is_file():
         yaml_files = [str(target)]
@@ -994,7 +1084,7 @@ def _apply_remediation(
 
     if not yaml_files:
         sys.stderr.write("  No YAML files found.\n")
-        return
+        return 0
 
     primary_addr = os.environ.get("APME_PRIMARY_ADDRESS")
 
@@ -1110,6 +1200,8 @@ def _apply_remediation(
         sys.stderr.write(f"\n{len(report.applied_patches)} file(s) would be patched (use --apply to write):\n")
         for p in report.applied_patches:
             sys.stdout.write(p.diff)
+
+    return report.fixed
 
 
 def _review_ai_proposals(
@@ -1361,7 +1453,7 @@ def _run_fix(args: argparse.Namespace) -> None:
 
     # Phase 3: Scan + Remediate
     sys.stderr.write("Phase 3: Scanning & remediating...\n")
-    _apply_remediation(
+    fixed_count = _apply_remediation(
         target,
         apply=apply_changes,
         max_passes=max_passes,
@@ -1373,6 +1465,23 @@ def _run_fix(args: argparse.Namespace) -> None:
         max_ai_attempts=getattr(args, "max_ai_attempts", 2),
         ci_mode=getattr(args, "ci", False),
     )
+
+    # Forward post-fix results to the gateway
+    primary_addr = os.environ.get("APME_PRIMARY_ADDRESS")
+    if primary_addr and apply_changes:
+        remaining = _scan_files_grpc(
+            [str(p) for p in target.rglob("*") if p.suffix in (".yml", ".yaml")] if target.is_dir() else [str(target)],
+            primary_addr,
+            ansible_version=getattr(args, "ansible_version", None),
+            collection_specs=getattr(args, "collections", None),
+        )
+        _forward_to_gateway(
+            target.name,
+            remaining,
+            scan_type="fix",
+            fixed_count=fixed_count,
+            request_id=str(uuid.uuid4()),
+        )
 
 
 def _run_session(args: argparse.Namespace) -> None:

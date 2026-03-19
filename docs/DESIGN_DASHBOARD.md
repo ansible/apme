@@ -33,7 +33,7 @@ The presentation layer adds two components to the pod:
 │  └────┬─────┘  └──────────┘  └──────────┘  └──────────┘          │
 │       │                                                           │
 │  ┌────┴──────────────────────────────────────────┐                │
-│  │            API Gateway :8080                   │                │
+│  │            API Gateway :50050                   │                │
 │  │  FastAPI (async) — REST + WebSocket            │                │
 │  │  gRPC client → Primary.Scan / Primary.Format   │                │
 │  │  SQLite/PostgreSQL for scan history             │                │
@@ -50,7 +50,7 @@ The presentation layer adds two components to the pod:
 
 The **API Gateway** is a new container in the pod. It:
 
-1. Speaks HTTP/WebSocket externally (port 8080)
+1. Speaks HTTP/WebSocket externally (port 50050)
 2. Speaks gRPC internally to Primary (localhost:50051)
 3. Owns the persistence layer (scan history, user sessions, remediation queue)
 4. Serves the static SPA assets (or delegates to a CDN in production)
@@ -194,18 +194,18 @@ Phase 4 starts with a single role (all authenticated users can do everything). R
 
 ### Technology
 
-| Option | Pros | Cons |
-|--------|------|------|
-| React + TypeScript | Large ecosystem, component libraries | Heavy, complex toolchain |
-| Vue 3 + TypeScript | Lighter, good DX, Composition API | Smaller ecosystem |
-| HTMX + server-rendered | No build step, progressive enhancement | Limited interactivity for complex views |
+**Decision: React 18 + TypeScript 5 + PatternFly 6** (see [ADR-028](/.sdlc/adrs/ADR-028-react-patternfly-frontend.md))
 
-**Recommendation: Vue 3 + TypeScript** with Vite for bundling. Rationale:
+React was chosen over the original Vue 3 recommendation because:
 
-- Lighter than React for a dashboard (fewer dependencies)
-- Composition API maps well to the data-driven violation/rule model
-- Vite produces a static bundle that the gateway serves from `/static/`
-- PrimeVue or Vuetify for table/filter/chart components
+- PatternFly 6 is native to React (Red Hat's design system)
+- Backstage is React-based, enabling a shared component library ([ADR-029](/.sdlc/adrs/ADR-029-dual-ui-strategy.md))
+- AAP uses `@ansible/ansible-ui-framework` (React + PatternFly)
+- The HTML mockups already target PatternFly 6 component names
+
+Two UI surfaces share a common `@apme/ui-shared` package:
+- **Standalone SPA** (`ui/standalone/`) — Vite + React + PatternFly 6
+- **Backstage plugin** (`ui/backstage-plugin/`) — Native Backstage plugin with PatternFly components
 
 ### Key views
 
@@ -230,15 +230,14 @@ Phase 4 starts with a single role (all authenticated users can do everything). R
 4. **`GET /api/v1/scans/{id}`** — return violations + diagnostics
 5. **Persistence** — SQLite backend with SQLAlchemy async
 6. **Health endpoint** — aggregate health from all backend services
-7. **Dockerfile + pod YAML update** — add gateway container on port 8080
+7. **Dockerfile + pod YAML update** — add gateway container on port 50050
 
-### Phase 4b: Frontend SPA
+### Phase 4b: Frontend (Dual-UI)
 
-8. **Vue 3 scaffold** — Vite project in `frontend/`, build output to `static/`
-9. **Scan list view** — table with filters, sorting, pagination
-10. **Scan detail view** — violation list with code context, diagnostics panel
-11. **Rule catalog view** — browsable rule list with search
-12. **Dashboard view** — charts (violations over time, top rules)
+8. **Shared package** (`ui/shared/`) — API types, React hooks, PatternFly components
+9. **Standalone SPA** (`ui/standalone/`) — Vite + React 18 + PatternFly 6 with all views
+10. **Backstage plugin** (`ui/backstage-plugin/`) — Frontend + backend proxy plugin
+11. **Views** — Dashboard, scan list, scan detail, rule catalog, ROI metrics, remediation queue, health, settings
 
 ### Phase 4c: Remediation queue
 

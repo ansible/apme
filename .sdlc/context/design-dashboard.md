@@ -42,7 +42,7 @@ The standalone UI is a lightweight dashboard for individual use. It runs as part
 │  └────┬─────┘  └──────────┘  └──────────┘  └──────────┘          │
 │       │                                                           │
 │  ┌────┴──────────────────────────────────────────┐                │
-│  │          Standalone UI :8080                   │                │
+│  │          Standalone UI :50050                   │                │
 │  │  FastAPI (async) — serves SPA + REST API       │                │
 │  │  gRPC client → Primary.Scan / Primary.Format   │                │
 │  │  SQLite for local scan history                 │                │
@@ -151,7 +151,7 @@ The UI uses **PatternFly**, Red Hat's open source design system. This is mandato
 
 | Aspect | Choice |
 |--------|--------|
-| **Design System** | [PatternFly 5](https://www.patternfly.org/) |
+| **Design System** | [PatternFly 6](https://www.patternfly.org/) |
 | **Framework** | React + TypeScript (PatternFly's primary target) |
 | **Bundler** | Vite |
 | **Charts** | PatternFly Charts (Victory-based) |

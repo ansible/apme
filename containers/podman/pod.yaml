@@ -1,5 +1,6 @@
-# Podman pod: Primary, Native, OPA, Ansible, Cache maintainer.
+# Podman pod: Primary, Native, OPA, Ansible, Gitleaks, Cache maintainer, API Gateway.
 # All validators implement the unified Validator gRPC service (validate.proto).
+# The gateway exposes REST/WebSocket on :50050 (serves the standalone UI + API).
 # CLI is run on-the-fly with: ./run-cli.sh [args]
 # Start from repo root: podman play kube pod.yaml
 # Requires: images built first (./build.sh) and cache paths (defaults below).
@@ -81,6 +82,28 @@ spec:
       volumeMounts:
         - name: cache
           mountPath: /cache
+    - name: gateway
+      image: apme-gateway:latest
+      env:
+        - name: APME_GATEWAY_HOST
+          value: "0.0.0.0"
+        - name: APME_GATEWAY_PORT
+          value: "50050"
+        - name: APME_PRIMARY_ADDRESS
+          value: "127.0.0.1:50051"
+        - name: NATIVE_GRPC_ADDRESS
+          value: "127.0.0.1:50055"
+        - name: OPA_GRPC_ADDRESS
+          value: "127.0.0.1:50054"
+        - name: ANSIBLE_GRPC_ADDRESS
+          value: "127.0.0.1:50053"
+        - name: GITLEAKS_GRPC_ADDRESS
+          value: "127.0.0.1:50056"
+        - name: APME_CACHE_GRPC_ADDRESS
+          value: "127.0.0.1:50052"
+      ports:
+        - containerPort: 50050
+          hostPort: 50050
   volumes:
     - name: cache
       hostPath:

@@ -1,0 +1,6 @@
+/* Shared custom utilities — applied in both light and dark mode. */
+
+.apme-mono {
+  font-family: 'RedHatMono', 'Menlo', 'Monaco', 'Courier New', monospace;
+  font-size: 0.85rem;
+}

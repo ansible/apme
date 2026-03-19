@@ -25,6 +25,13 @@ dependencies = [
 ai = [
     "abbenay-client @ git+https://github.com/redhat-developer/abbenay.git@516742428c5b074ce7d098cfcf4f69413658f5f6#subdirectory=packages/python",
 ]
+gateway = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.34",
+    "sqlalchemy[asyncio]>=2.0",
+    "aiosqlite>=0.20",
+    "pydantic>=2.0",
+]
 dev = [
     "pytest",
     "pytest-cov",
@@ -69,6 +76,7 @@ apme-ansible-validator = "apme_engine.daemon.ansible_validator_main:main"
 apme-native-validator = "apme_engine.daemon.native_validator_main:main"
 apme-opa-validator = "apme_engine.daemon.opa_validator_main:main"
 apme-gitleaks-validator = "apme_engine.daemon.gitleaks_validator_main:main"
+apme-gateway = "apme_gateway.__main__:main"
 
 [tool.ruff]
 target-version = "py310"
@@ -85,13 +93,14 @@ ignore-var-parameters = true
 
 [tool.ruff.lint.per-file-ignores]
 "src/apme_engine/engine/annotators/ansible.builtin/*.py" = ["E501"]
+"src/apme_gateway/**/*.py" = ["D101", "D102", "D103", "D107", "B008"]
 
 [tool.mypy]
 strict = true
 disallow_any_explicit = true
 python_version = "3.10"
 mypy_path = "src"
-exclude = ["src/apme/v1/.*_pb2"]
+exclude = ["src/apme/v1/.*_pb2", "src/apme_gateway/"]
 
 [[tool.mypy.overrides]]
 module = [
@@ -108,6 +117,15 @@ module = [
     "grpc.*",
     "abbenay_grpc",
     "abbenay_grpc.*",
+    "uvicorn",
+    "uvicorn.*",
+    "fastapi",
+    "fastapi.*",
+    "sqlalchemy",
+    "sqlalchemy.*",
+    "aiosqlite",
+    "pydantic",
+    "pydantic.*",
 ]
 ignore_missing_imports = true
 

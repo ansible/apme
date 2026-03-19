@@ -19,5 +19,5 @@ repos:
     rev: 0.8.3
     hooks:
       - id: pydoclint
-        args: [--exclude=src/apme/v1/, src/, tests/, scripts/]
+        args: [--exclude=src/apme/v1/|src/apme_gateway/, src/, tests/, scripts/]
         pass_filenames: false

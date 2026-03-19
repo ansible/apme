@@ -29,4 +29,7 @@ ESCAPED_PATH=$(printf '%s\n' "$CACHE_PATH" | sed -e 's/\\/\\\\/g' -e 's/[&|]/\\&
 sed "s|path: __APME_CACHE_PATH__|path: ${ESCAPED_PATH}|" containers/podman/pod.yaml \
   | podman play kube -
 
-echo "Pod apme-pod started (cache: $CACHE_PATH). Run a scan: containers/podman/run-cli.sh"
+echo "Pod apme-pod started (cache: $CACHE_PATH)."
+echo "  Run a scan:     containers/podman/run-cli.sh"
+echo "  API Gateway:    http://localhost:50050/api/v1/docs"
+echo "  Health check:   curl http://localhost:50050/api/v1/health"

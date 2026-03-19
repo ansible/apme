@@ -1,0 +1,19 @@
+{
+  "private": true,
+  "workspaces": [
+    "shared",
+    "standalone",
+    "backstage-plugin/plugins/*"
+  ],
+  "scripts": {
+    "build:shared": "pnpm --filter @apme/ui-shared build",
+    "build:standalone": "pnpm --filter @apme/standalone build",
+    "dev:standalone": "pnpm --filter @apme/standalone dev",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck"
+  },
+  "engines": {
+    "node": ">=18",
+    "pnpm": ">=9"
+  }
+}

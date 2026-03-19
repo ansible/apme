@@ -7,25 +7,22 @@ Ansible Policy & Modernization Engine — a multi-validator static analysis plat
 ## Architecture at a glance
 
 ```
-┌─────────┐      gRPC       ┌───────────┐      gRPC (parallel)      ┌────────────┐
-│   CLI   │ ──────────────► │  Primary   │ ──────────────────────►   │   Native   │ :50055
-│ (on-the │  ScanRequest    │ (orchestr) │   ValidateRequest         │  (Python)  │
-│  -fly)  │  chunked fs     │            │ ┌─────────────────────►   ├────────────┤
-└─────────┘                 │   Engine   │ │                         │    OPA     │ :50054
-     ▲                      │  ┌──────┐  │ │  ┌──────────────────►   │  (Rego)   │
-     │   ScanResponse       │  │parse │  │ │  │                      ├────────────┤
-     │   violations         │  │annot.│  │ │  │  ┌───────────────►   │  Ansible   │ :50053
-     └──────────────────────│  │hier. │  ├─┘  │  │                   │ (runtime)  │
-                            │  └──────┘  ├────┘  │                   ├────────────┤
-                            └───────────┘ ├──────┘                   │  Gitleaks  │ :50056
-                                 │                                   │ (secrets)  │
-                            ┌────┴────┐                              └────────────┘
-                            │  Cache  │ :50052
-                            │Maintainr│
-                            └─────────┘
+                            ┌───────────────────────────────────────────────────┐
+ ┌─────────┐                │                   apme-pod                        │
+ │   CLI   │──gRPC─────────►│  ┌────────────┐      gRPC (parallel)              │
+ │ (on-the │                │  │  Primary   │──────────────────►  Native :50055 │
+ │  -fly)  │                │  │ (orchestr) │──────────────────►  OPA    :50054 │
+ └─────────┘                │  │   :50051   │──────────────────►  Ansible:50053 │
+                            │  └─────┬──────┘──────────────────►  Gitleaks:50056│
+ ┌─────────┐   HTTP/WS      │        │                                          │
+ │ Browser │──────────────► │   ┌────┴──────┐    ┌──────────┐                   │
+ │  (SPA)  │                │   │  Gateway  │    │  Cache   │ :50052            │
+ └─────────┘                │   │   :50050  │    │Maintainer│                   │
+                            │   └───────────┘    └──────────┘                   │
+                            └───────────────────────────────────────────────────┘
 ```
 
-Seven containers, one pod. All inter-service communication is gRPC. The CLI is run on-the-fly with the project directory mounted. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design.
+Eight containers, one pod. Backend services communicate over gRPC. The gateway exposes REST/WebSocket on port 50050 for the web UI and API consumers. The CLI is run on-the-fly with the project directory mounted. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design.
 
 ## Key features
 
@@ -87,10 +84,13 @@ apme-scan fix --ai --model openai/gpt-4o --ci --apply /path/to/project
 ### Container deployment (Podman)
 
 ```bash
-# Build all images
+# Build all images — everything runs in containers, no host dependencies beyond Podman
 ./containers/podman/build.sh
 
-# Start the pod (Primary + Native + OPA + Ansible + Cache Maintainer)
+# Or include the standalone web dashboard (built inside the container)
+./containers/podman/build.sh --with-ui
+
+# Start the pod (Primary + Native + OPA + Ansible + Gitleaks + Cache Maintainer + Gateway)
 ./containers/podman/up.sh
 
 # Scan a project (CLI container, on-the-fly)
@@ -104,7 +104,11 @@ containers/podman/run-cli.sh --json .
 ### Health check
 
 ```bash
+# Via CLI
 apme-scan health-check --primary-addr 127.0.0.1:50051
+
+# Via API gateway
+curl http://localhost:50050/api/v1/health
 ```
 
 ## AI escalation
@@ -169,6 +173,143 @@ apme-scan fix --ai --abbenay-addr localhost:50051 --apply .
 3. **Interactive review**: accepted proposals are applied (or shown as diffs without `--apply`)
 4. **Tier 3 (manual)**: violations that neither transforms nor AI can fix are reported for human review
 
+## Web UI
+
+APME provides two web UI options — a **standalone PatternFly dashboard** and a **Backstage plugin**. Both consume the same REST API from the FastAPI gateway on port 50050. Use whichever fits your deployment model.
+
+### API Gateway
+
+The gateway is included in the pod automatically. Once the pod is running:
+
+- **Swagger UI**: http://localhost:50050/api/v1/docs
+- **OpenAPI spec**: http://localhost:50050/api/v1/openapi.json
+- **Health**: http://localhost:50050/api/v1/health
+
+The gateway translates REST/WebSocket to gRPC calls against the Primary orchestrator. It owns scan history persistence (SQLite by default, PostgreSQL for multi-pod). It never runs the engine directly.
+
+### Option A: Standalone PatternFly Dashboard
+
+A self-contained React SPA using PatternFly 6 dark mode. Everything builds inside containers — no Node.js or pnpm required on your host.
+
+```bash
+# Build all images including the standalone UI (multi-stage container build)
+./containers/podman/build.sh --with-ui
+
+# Start the pod
+./containers/podman/up.sh
+
+# Dashboard is now at http://localhost:50050
+# API docs at http://localhost:50050/api/v1/docs
+```
+
+Without `--with-ui`, the gateway starts in API-only mode (Swagger UI at `/api/v1/docs`, no SPA).
+
+**Local UI development** (requires Node.js >= 18 and pnpm >= 9 on the host):
+
+```bash
+# Start the pod (API-only backend)
+./containers/podman/build.sh
+./containers/podman/up.sh
+
+# In a separate terminal, run the UI dev server with hot reload
+cd ui
+pnpm install
+pnpm dev:standalone
+# Dev dashboard at http://localhost:3000 (proxies /api to :50050)
+```
+
+The standalone UI includes: Dashboard home, scan list with search/filters, scan detail with violations grouped by file, rule catalog, ROI metrics, remediation queue with diff viewer, service health, and settings.
+
+### Option B: Backstage Plugin
+
+For teams running [Backstage](https://backstage.io) as their developer portal. The APME plugin provides the same full feature set inside your existing Backstage instance.
+
+**Quick start — containerized Backstage with APME pre-installed:**
+
+```bash
+# Build the APME Backstage container (no host dependencies beyond Podman)
+podman build -t apme-backstage:latest -f containers/backstage/Dockerfile .
+
+# Make sure the APME pod is running first
+./containers/podman/build.sh
+./containers/podman/up.sh
+
+# Run Backstage, pointing at the APME gateway
+podman run -p 7007:7007 \
+  -e APME_GATEWAY_URL=http://host.containers.internal:50050 \
+  apme-backstage:latest
+
+# Backstage with APME at http://localhost:7007
+```
+
+**Install into an existing Backstage app:**
+
+```bash
+# From your Backstage app root
+yarn add @apme/backstage-plugin @apme/backstage-plugin-backend
+```
+
+Register the backend plugin (`packages/backend/src/index.ts`):
+
+```typescript
+backend.add(import('@apme/backstage-plugin-backend'));
+```
+
+Configure the gateway URL (`app-config.yaml`):
+
+```yaml
+apme:
+  gatewayUrl: http://localhost:50050  # or your gateway address
+```
+
+Add the frontend pages (`packages/app/src/App.tsx`):
+
+```typescript
+import { ApmePage } from '@apme/backstage-plugin';
+
+// In your routes:
+<Route path="/apme" element={<ApmePage />} />
+```
+
+Add the nav item (`packages/app/src/components/Root/Root.tsx`):
+
+```typescript
+<SidebarItem icon={ExtensionIcon} to="apme" text="APME" />
+```
+
+Add entity cards (optional — shows scan summary on catalog entity pages):
+
+```typescript
+import { EntityApmeCard } from '@apme/backstage-plugin';
+
+// In your entity page:
+<EntityApmeCard />
+```
+
+The entity card uses the `apme.io/project-name` annotation to link a catalog component to its scan history. Add the annotation to your entity YAML:
+
+```yaml
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: my-ansible-roles
+  annotations:
+    apme.io/project-name: my-ansible-roles
+```
+
+### Choosing between Standalone and Backstage
+
+| Consideration | Standalone | Backstage Plugin |
+|--------------|------------|------------------|
+| **Host deps** | Podman only | Podman only (containerized) or existing Backstage |
+| **Setup** | `build.sh --with-ui` — one command | `podman build` the Backstage container, or `yarn add` into existing |
+| **Auth** | Gateway-native (API tokens, OAuth2/OIDC) | Backstage identity forwarded to gateway |
+| **Best for** | Small teams, CI dashboards, standalone deployments | Enterprise portal, multi-tool integration |
+| **Entity integration** | N/A | Catalog cards show scan status per component |
+| **Features** | All views | All views + entity cards + Backstage search |
+
+Both options can be used simultaneously — the gateway serves the standalone SPA while the Backstage plugin proxies to the same gateway. Both build entirely inside containers with no host toolchain required.
+
 ## Scaling
 
 Scale pods, not services within a pod. Each pod is a self-contained stack that can process a scan request end-to-end. For more throughput, run multiple pods behind a load balancer. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#scaling).
@@ -207,6 +348,14 @@ src/apme_engine/
   ├── formatter.py      YAML formatter (phase 1 remediation)
   ├── cli.py            CLI entry point (scan, format, fix, health-check)
   └── runner.py         scan orchestration
+src/apme_gateway/       FastAPI REST/WS gateway (gRPC → HTTP translation)
+  ├── routers/          endpoint modules (scans, rules, format, health, fix, remediation)
+  ├── models/           SQLAlchemy ORM + Pydantic schemas
+  └── services/         gRPC client, rule catalog, scan lifecycle
+ui/                     frontend monorepo (pnpm workspaces)
+  ├── shared/           @apme/ui-shared — types, hooks, components shared by both UIs
+  ├── standalone/       @apme/standalone — Vite + React 18 + PatternFly 6 SPA
+  └── backstage-plugin/ @apme/backstage-plugin — Backstage frontend + backend proxy
 containers/             Dockerfiles + Podman pod config
 docs/                   architecture, design, rule mapping
 tests/                  unit, integration, rule doc coverage
@@ -231,6 +380,8 @@ tests/                  unit, integration, rule doc coverage
 | [RESEARCH_REVIEW.md](docs/RESEARCH_REVIEW.md) | Analysis of early research concepts and roadmap pull-ins |
 | [DESIGN_DASHBOARD.md](docs/DESIGN_DASHBOARD.md) | Dashboard & presentation layer: API gateway, REST/WebSocket, persistence, auth, frontend |
 | [ADRs](.sdlc/adrs/) | Architecture Decision Records — key design decisions with context, alternatives, and rationale |
+| [ADR-028](.sdlc/adrs/ADR-028-react-patternfly-frontend.md) | React 18 + PatternFly 6 for frontend (supersedes Vue 3 recommendation) |
+| [ADR-029](.sdlc/adrs/ADR-029-dual-ui-strategy.md) | Dual-UI strategy: standalone SPA + Backstage plugin with shared package |
 
 ## Roadmap
 
@@ -261,9 +412,13 @@ tests/                  unit, integration, rule doc coverage
 - **Preflight checks**: auto-discover Abbenay daemon socket, health check before AI calls.
 - See [DESIGN_AI_ESCALATION.md](docs/DESIGN_AI_ESCALATION.md) for the full design.
 
-### Phase 4 — Web UI
+### Phase 4 — Web UI (in progress)
 
-Dashboards, findings management, remediation queue, enterprise tracking. See [DESIGN_DASHBOARD.md](docs/DESIGN_DASHBOARD.md) for the full design: API gateway (FastAPI), REST/WebSocket API, persistence (SQLite/PostgreSQL), auth (OAuth2/OIDC), and Vue 3 frontend.
+- **API Gateway** (done) — FastAPI on port 50050: REST/WebSocket to gRPC translation, SQLite/PostgreSQL persistence, OpenAPI spec, aggregate health checks.
+- **Standalone PatternFly Dashboard** (done) — React 18 + PatternFly 6 dark mode SPA: dashboard home, scan list/detail, rule catalog, ROI metrics, remediation queue, health monitoring. See [ADR-028](.sdlc/adrs/ADR-028-react-patternfly-frontend.md).
+- **Backstage Plugin** (done) — Full-featured frontend + backend proxy plugin: all standalone views + entity catalog cards. See [ADR-029](.sdlc/adrs/ADR-029-dual-ui-strategy.md).
+- **Auth** (planned) — OAuth2/OIDC integration, API tokens, role-based access.
+- See [DESIGN_DASHBOARD.md](docs/DESIGN_DASHBOARD.md) for the full architecture.
 
 ## License
 

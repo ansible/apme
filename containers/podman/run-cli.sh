@@ -26,6 +26,7 @@ podman run \
   -v "$(pwd)":/workspace:Z \
   -w /workspace \
   -e APME_PRIMARY_ADDRESS=127.0.0.1:50051 \
+  -e APME_GATEWAY_URL=http://127.0.0.1:50050 \
   apme-cli:latest \
   "$@" || rc=$?
 exit "$rc"

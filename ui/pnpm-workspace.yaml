@@ -1,0 +1,4 @@
+packages:
+  - "shared"
+  - "standalone"
+  - "backstage-plugin/plugins/*"
