@@ -173,11 +173,11 @@ If dashboard is required for v1, then **Option B** (SQLite) is the right balance
 
 ## Decision
 
-**Status**: Deferred
-**Date**: 2026-03-16
+**Status**: Deferred → Resolved by ADR-029
+**Date**: 2026-03-16 (original), 2026-03-19 (resolved)
 **Decided By**: Team
 
-**Decision**: Deferred — follows DR-003 (Dashboard Architecture) deferral
+**Original Decision**: Deferred — follows DR-003 (Dashboard Architecture) deferral
 
 **Rationale**:
 - Dashboard deferred to v2 (DR-003)
@@ -185,9 +185,15 @@ If dashboard is required for v1, then **Option B** (SQLite) is the right balance
 - v1 remains stateless with JSON export capability
 - Will decide persistence approach when dashboard work begins
 
-**Revisit**: When dashboard work begins (v2 planning)
+**Resolution (2026-03-19)**: Persistence approach decided in
+[ADR-029: Web Gateway Architecture](/.sdlc/adrs/ADR-029-web-gateway-architecture.md).
+The web gateway owns persistence as a presentation concern (consistent with
+ADR-020). **SQLite for V1** (zero infrastructure, embedded in gateway container),
+with PostgreSQL as a documented upgrade path for enterprise deployments. The
+engine remains stateless — persistence lives entirely in the gateway/reporting
+layer.
 
 **Action Items**:
-- [ ] Ensure CLI JSON output is well-structured for future persistence
-- [ ] Re-open this DR when dashboard is prioritized
-- [ ] Evaluate SQLite vs PostgreSQL based on v2 requirements
+- [x] Ensure CLI JSON output is well-structured for future persistence
+- [x] Re-open this DR when dashboard is prioritized → resolved by ADR-029
+- [x] Evaluate SQLite vs PostgreSQL based on v2 requirements → ADR-029 documents both

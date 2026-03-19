@@ -120,7 +120,7 @@ Decision Requests (DRs) provide a formal mechanism for:
 | DR | Title | Reason | Revisit |
 |----|-------|--------|---------|
 | [DR-004](closed/deferred/DR-004-aap-integration.md) | AAP Pre-Flight Integration | CLI-first focus for v1 | After v1 CLI complete |
-| [DR-008](closed/deferred/DR-008-data-persistence.md) | Scan Result Persistence | Follows DR-003 deferral | When dashboard work begins |
+| [DR-008](closed/decided/DR-008-data-persistence.md) | Scan Result Persistence | Resolved by ADR-029 (SQLite in web gateway) | — |
 | [DR-002](closed/deferred/DR-002-sbom-format.md) | SBOM Format and Scope | Part of REQ-003 scope | When security/compliance prioritized |
 | [DR-005](closed/deferred/DR-005-ai-remediation.md) | AI-Assisted Remediation | Brad investigating | When investigation complete |
 

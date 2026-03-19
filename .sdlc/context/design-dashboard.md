@@ -1,6 +1,8 @@
 # Dashboard & Presentation Layer Design
 
-This document outlines the architecture for adding a web-based presentation layer to APME. The design follows a two-tier approach: a **standalone UI** for individual developers and small teams, and an **enterprise integration path** that leverages AAP's existing gateway infrastructure. The standalone UI is the initial development focus — a lightweight, single-user dashboard that runs alongside the APME pod without external dependencies. For enterprise deployments requiring multi-user access, authentication, and persistent history, APME integrates behind the existing AAP Gateway component rather than duplicating that infrastructure. The frontend uses PatternFly, Red Hat's open source design system, ensuring visual and UX consistency with other Red Hat products.
+> **Governing decisions**: [ADR-029 (Web Gateway Architecture)](/.sdlc/adrs/ADR-029-web-gateway-architecture.md) and [ADR-030 (Frontend Deployment Model)](/.sdlc/adrs/ADR-030-frontend-deployment-model.md) formalize the architectural decisions for the web gateway and presentation layer. This document provides detailed implementation design (schema, components, API, views). ADR-029 also resolves [DR-003 (Dashboard Architecture)](/.sdlc/decisions/closed/decided/DR-003-dashboard-architecture.md) and [DR-008 (Data Persistence)](/.sdlc/decisions/closed/deferred/DR-008-data-persistence.md).
+
+This document outlines the architecture for adding a web-based presentation layer to APME. The design follows a two-tier approach: a **standalone UI** for individual developers and small teams, and an **enterprise integration path** that leverages AAP's existing gateway infrastructure or RHDH/Backstage (see ADR-030). The standalone UI is the initial development focus — a lightweight, single-user dashboard that runs alongside the APME engine pod without external dependencies. For enterprise deployments requiring multi-user access, authentication, and persistent history, APME integrates behind the existing AAP Gateway component or as an RHDH/Backstage plugin rather than duplicating that infrastructure. The frontend uses PatternFly, Red Hat's open source design system, ensuring visual and UX consistency with other Red Hat products.
 
 ---
 
@@ -29,32 +31,44 @@ This avoids duplicating mature infrastructure and ensures APME fits naturally in
 
 ## Standalone UI (Initial Development Focus)
 
-The standalone UI is a lightweight dashboard for individual use. It runs as part of the APME pod and requires no external authentication or database infrastructure.
+The standalone UI is a lightweight dashboard for individual use. Per ADR-029, it runs as a separate container **outside** the engine pod (to enable cross-pod aggregation) and requires no external authentication or database infrastructure.
 
 ### Architecture
 
+Per ADR-029, the web gateway lives **outside** the engine pod. This enables
+cross-pod aggregation for multi-pod deployments (ADR-012) and keeps persistence
+in the presentation layer (ADR-020).
+
 ```
-┌──────────────────────────── apme-pod ─────────────────────────────┐
+                   ┌──────────────────── apme-pod ────────────────────┐
+                   │  ┌──────────┐  ┌──────────┐  ┌──────────┐      │
+                   │  │ Primary  │  │  Native  │  │   OPA    │  ... │
+                   │  │  :50051  │  │  :50055  │  │  :50054  │      │
+                   │  └──────────┘  └──────────┘  └──────────┘      │
+                   └─────────┬──────────────────────────────────────┘
+                             │ gRPC (ScanStream, FixSession, Health)
+                             │
+┌────────────────────────────┼──────────────────────────────────────┐
+│  Web Gateway :8080         │                                      │
+│  FastAPI (async)           │                                      │
+│  ├── REST API + WebSocket  │                                      │
+│  ├── gRPC client ──────────┘                                      │
+│  ├── File discovery + chunking (mounted vol or SCM clone)         │
+│  ├── WebSocket ↔ FixSession bidi gRPC bridge (ADR-028)            │
+│  └── SQLite persistence (scan history, violations, proposals)     │
 │                                                                    │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐          │
-│  │ Primary  │  │  Native  │  │   OPA    │  │ Ansible  │  ...     │
-│  │  :50051  │  │  :50055  │  │  :50054  │  │  :50053  │          │
-│  └────┬─────┘  └──────────┘  └──────────┘  └──────────┘          │
-│       │                                                           │
-│  ┌────┴──────────────────────────────────────────┐                │
-│  │          Standalone UI :8080                   │                │
-│  │  FastAPI (async) — serves SPA + REST API       │                │
-│  │  gRPC client → Primary.Scan / Primary.Format   │                │
-│  │  SQLite for local scan history                 │                │
-│  └────┬──────────────────────────────────────────┘                │
-│       │                                                           │
-└───────┼───────────────────────────────────────────────────────────┘
-        │ HTTP
-        ▼
-   ┌──────────┐
-   │  Browser │  Single user, no auth
-   └──────────┘
+│  Static SPA (PatternFly/React — standalone mode; see ADR-030)     │
+└───────────────────────────┬────────────────────────────────────────┘
+                            │ HTTP + WebSocket
+                            ▼
+                       ┌──────────┐
+                       │  Browser  │  Single user, no auth (standalone)
+                       └──────────┘
 ```
+
+For multi-pod scaling, the gateway connects to engine pods via a standard L4
+load balancer. FixSession bidi streams get natural session affinity (pinned to
+one pod for the stream's lifetime). See ADR-029 for details.
 
 ### Characteristics
 
@@ -204,6 +218,29 @@ GET    /api/v1/remediation/queue      List pending AI proposals
 POST   /api/v1/remediation/{id}/accept    Accept a proposal
 POST   /api/v1/remediation/{id}/reject    Reject a proposal
 ```
+
+### WebSocket-to-FixSession Mapping (HITL Remediation)
+
+The remediation queue's real-time approval flow uses a WebSocket connection
+that maps 1:1 to a `FixSession` bidi gRPC stream (ADR-028). The gateway
+translates between JSON WebSocket messages and protobuf SessionCommand/Event
+messages:
+
+| Direction | WebSocket (JSON) | gRPC (protobuf) |
+|---|---|---|
+| Client → Server | `{"type": "approve", "ids": [...]}` | `SessionCommand.approve` |
+| Client → Server | `{"type": "extend"}` | `SessionCommand.extend` |
+| Client → Server | `{"type": "close"}` | `SessionCommand.close` |
+| Client → Server | `{"type": "resume", "session_id": "..."}` | `SessionCommand.resume` |
+| Server → Client | `{"type": "progress", ...}` | `SessionEvent.progress` |
+| Server → Client | `{"type": "proposals", ...}` | `SessionEvent.proposals` |
+| Server → Client | `{"type": "tier1_summary", ...}` | `SessionEvent.tier1_summary` |
+| Server → Client | `{"type": "result", ...}` | `SessionEvent.result` |
+| Server → Client | `{"type": "expiration_warning", ...}` | `SessionEvent.expiration_warning` |
+
+Files flow server-side only — the browser submits a target (repo URL or
+directory path) and the gateway handles clone/read → discover → chunk → gRPC
+stream. WebSocket carries only the HITL event stream.
 
 ### No Authentication
 
@@ -411,7 +448,11 @@ The `ScanDiagnostics` proto (ADR-013) is stored as JSON and rendered:
 
 ## Related Documents
 
+- [ADR-029: Web Gateway Architecture](/.sdlc/adrs/ADR-029-web-gateway-architecture.md) — Governing ADR for the gateway backend
+- [ADR-030: Frontend Deployment Model](/.sdlc/adrs/ADR-030-frontend-deployment-model.md) — Standalone SPA vs. Backstage plugin
+- [ADR-028: Session-Based Fix Workflow](/.sdlc/adrs/ADR-028-session-based-fix-workflow.md) — FixSession bidi streaming protocol
 - [ADR-013: Structured Diagnostics](/.sdlc/adrs/ADR-013-structured-diagnostics.md) — Timing data captured per scan
+- [ADR-020: Reporting Service](/.sdlc/adrs/ADR-020-reporting-service.md) — Event delivery model and persistence principles
 - [design-remediation.md](design-remediation.md) — Remediation engine (Phase 3)
 - [design-validators.md](design-validators.md) — Validator abstraction
 - [architecture.md](architecture.md) — Container topology

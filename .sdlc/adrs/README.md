@@ -34,6 +34,8 @@ This directory contains the Architecture Decision Records (ADRs) for APME.
 | [ADR-026](ADR-026-rule-scope-metadata.md) | Rule Scope as First-Class Metadata | Proposed | 2026-03 |
 | [ADR-027](ADR-027-agentic-project-remediation.md) | Agentic Project-Level AI Remediation | Proposed | 2026-03 |
 | [ADR-028](ADR-028-session-based-fix-workflow.md) | Session-Based Fix Workflow with Bidirectional Streaming | Accepted | 2026-03 |
+| [ADR-029](ADR-029-web-gateway-architecture.md) | Web Gateway Architecture | Proposed | 2026-03 |
+| [ADR-030](ADR-030-frontend-deployment-model.md) | Frontend Deployment Model | Proposed | 2026-03 |
 
 ## Categories
 
@@ -45,6 +47,7 @@ This directory contains the Architecture Decision Records (ADRs) for APME.
 - ADR-020: Reporting service and event delivery model (proposed)
 - ADR-024: Thin CLI with local daemon mode
 - ADR-028: Session-based fix workflow with bidirectional streaming
+- ADR-029: Web gateway architecture (proposed)
 
 ### Engine & Rules
 - ADR-002: OPA/Rego hybrid rules
@@ -66,6 +69,10 @@ This directory contains the Architecture Decision Records (ADRs) for APME.
 - ADR-025: AIProvider protocol abstraction
 - ADR-027: Agentic project-level AI remediation (proposed)
 - ADR-028: Session-based fix workflow with bidirectional streaming
+
+### Dashboard & Presentation
+- ADR-029: Web gateway architecture (proposed)
+- ADR-030: Frontend deployment model (proposed)
 
 ### Tooling & CI
 - ADR-014: Ruff linter and prek pre-commit hooks
@@ -90,7 +97,7 @@ Original planning ADRs that were superseded by implementation decisions:
 ## Creating New ADRs
 
 1. Copy the template from `../.sdlc/templates/adr.md`
-2. Use the next available number (currently ADR-029)
+2. Use the next available number (currently ADR-031)
 3. Include:
    - Status (Proposed → Accepted)
    - Date
@@ -134,3 +141,5 @@ Original planning ADRs that were superseded by implementation decisions:
 | 026 | 2026-03 | Rule scope as first-class metadata (proposed) |
 | 027 | 2026-03 | Agentic project-level AI remediation (proposed) |
 | 028 | 2026-03 | Session-based fix workflow with bidirectional streaming |
+| 029 | 2026-03 | Web gateway architecture (proposed) |
+| 030 | 2026-03 | Frontend deployment model (proposed) |

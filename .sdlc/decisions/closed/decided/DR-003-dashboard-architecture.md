@@ -149,11 +149,11 @@ If dashboard is a v1 requirement, then **Option A** (Streamlit + JSON files) is 
 
 ## Decision
 
-**Status**: Decided
-**Date**: 2026-03-16
+**Status**: Decided → Resolved by ADR-029
+**Date**: 2026-03-16 (original), 2026-03-19 (resolved)
 **Decided By**: Team
 
-**Decision**: Option D — Defer Dashboard to v2
+**Original Decision**: Option D — Defer Dashboard to v2
 
 **Rationale**:
 - Ship CLI-first v1 with `--json` output
@@ -161,8 +161,14 @@ If dashboard is a v1 requirement, then **Option A** (Streamlit + JSON files) is 
 - Define dashboard requirements in v2 based on real user feedback
 - Revisit DR-008 (data persistence) when dashboard implementation is in scope
 
+**Resolution (2026-03-19)**: Dashboard architecture is now defined in
+[ADR-029: Web Gateway Architecture](/.sdlc/adrs/ADR-029-web-gateway-architecture.md)
+(Python/FastAPI gateway, cross-pod deployment, SQLite persistence, WebSocket-to-FixSession
+HITL bridge) and [ADR-030: Frontend Deployment Model](/.sdlc/adrs/ADR-030-frontend-deployment-model.md)
+(standalone PatternFly/React SPA with Backstage plugin as enterprise path).
+
 **Action Items**:
-- [ ] Ensure CLI outputs clean JSON format for future dashboard consumption
+- [x] Ensure CLI outputs clean JSON format for future dashboard consumption
 - [x] Create UI mockups using AAP UI / PatternFly patterns (TASK-002 complete)
 - [ ] Gather user feedback on mockups before v2 planning
-- [ ] Revisit DR-008 (data persistence) when dashboard is prioritized
+- [x] Revisit DR-008 (data persistence) when dashboard is prioritized → resolved by ADR-029
