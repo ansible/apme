@@ -28,6 +28,7 @@ This directory contains the Architecture Decision Records (ADRs) for APME.
 | [ADR-020](ADR-020-reporting-service.md) | Reporting Service and Event Delivery Model | Proposed | 2026-03 |
 | [ADR-021](ADR-021-proactive-pr-feedback.md) | Proactive PR Feedback via GitHub Actions | Accepted | 2026-03 |
 | [ADR-023](ADR-023-per-finding-classification.md) | Per-Finding Remediation Classification and Resolution | Accepted | 2026-03 |
+| [ADR-024](ADR-024-thin-cli-daemon-mode.md) | Thin CLI with Local Daemon Mode | Proposed | 2026-03 |
 
 ## Categories
 
@@ -37,6 +38,7 @@ This directory contains the Architecture Decision Records (ADRs) for APME.
 - ADR-005: No service discovery
 - ADR-012: Scaling strategy
 - ADR-020: Reporting service and event delivery model (proposed)
+- ADR-024: Thin CLI with local daemon mode (proposed)
 
 ### Engine & Rules
 - ADR-002: OPA/Rego hybrid rules
@@ -77,7 +79,7 @@ Original planning ADRs that were superseded by implementation decisions:
 ## Creating New ADRs
 
 1. Copy the template from `../.sdlc/templates/adr.md`
-2. Use the next available number (currently ADR-024)
+2. Use the next available number (currently ADR-025)
 3. Include:
    - Status (Proposed → Accepted)
    - Date
@@ -115,3 +117,4 @@ Original planning ADRs that were superseded by implementation decisions:
 | 020 | 2026-03 | Reporting service and event delivery model (proposed) |
 | 021 | 2026-03 | Proactive PR feedback via GitHub Actions |
 | 023 | 2026-03 | Per-finding remediation classification and resolution |
+| 024 | 2026-03 | Thin CLI with local daemon mode (proposed) |
