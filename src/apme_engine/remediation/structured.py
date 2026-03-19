@@ -63,22 +63,41 @@ class StructuredFile:
         """
         return self._yaml.dumps(self.data)
 
-    def find_task(self, line: int) -> CommentedMap | None:
-        """Locate the task CommentedMap at a 1-based line number.
+    def find_task(
+        self,
+        line: int,
+        violation: dict[str, str | int | list[int] | bool | None] | None = None,
+    ) -> CommentedMap | None:
+        """Locate the task CommentedMap by line number or violation path index.
 
-        Defers the import of ``find_task_at_line`` to avoid a circular
-        dependency (structured -> transforms._helpers -> transforms.__init__
-        -> L007 etc. -> structured).
+        Tries the 1-based ``line`` first.  When that fails (e.g. ``line=0``
+        because the validator didn't supply one), falls back to extracting
+        a ``task:[N]`` index from the violation's ``path`` field.
 
         Args:
             line: 1-indexed line number from a violation.
+            violation: Optional full violation dict for path-based fallback.
 
         Returns:
             Task CommentedMap or None if not found.
         """
-        from apme_engine.remediation.transforms._helpers import find_task_at_line
+        from apme_engine.remediation.transforms._helpers import (
+            find_task_at_line,
+            find_task_by_index,
+            violation_task_index,
+        )
 
-        return find_task_at_line(self.data, line)
+        if line > 0:
+            result = find_task_at_line(self.data, line)
+            if result is not None:
+                return result
+
+        if violation is not None:
+            idx = violation_task_index(violation)
+            if idx is not None:
+                return find_task_by_index(self.data, idx)
+
+        return None
 
     def mark_dirty(self) -> None:
         """Mark this file as having been modified by a transform."""

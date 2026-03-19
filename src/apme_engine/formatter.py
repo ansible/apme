@@ -104,6 +104,64 @@ def _fix_tabs(text: str) -> str:
     return text.replace("\t", "  ")
 
 
+_FREE_FORM_MODULE_NAMES = frozenset(
+    {
+        "ansible.builtin.command",
+        "ansible.builtin.shell",
+        "ansible.builtin.raw",
+        "ansible.builtin.script",
+        "ansible.legacy.command",
+        "ansible.legacy.shell",
+        "ansible.legacy.raw",
+        "command",
+        "shell",
+        "raw",
+        "script",
+    }
+)
+
+_FREE_FORM_LINE_RE = re.compile(
+    r"^(?P<indent>\s*-?\s*)(?P<module>"
+    + "|".join(re.escape(m) for m in sorted(_FREE_FORM_MODULE_NAMES, key=len, reverse=True))
+    + r"):\s+(?P<value>.+)$"
+)
+
+
+def _quote_free_form_args(text: str) -> str:
+    """Quote free-form module arguments that contain YAML-unsafe characters.
+
+    Runs before ``yaml.load()`` to prevent parse failures on lines like::
+
+        ansible.builtin.shell: cat /etc/passwd | cut -d: -f1
+
+    The colon inside the value is valid for Ansible but invalid YAML.
+    This wraps such values in double quotes so ruamel can parse the file.
+
+    Args:
+        text: Raw YAML content.
+
+    Returns:
+        Text with free-form values quoted where necessary.
+    """
+    lines = text.split("\n")
+    changed = False
+    for i, line in enumerate(lines):
+        m = _FREE_FORM_LINE_RE.match(line)
+        if m is None:
+            continue
+        value = m.group("value")
+        if value.startswith(('"', "'")):
+            continue
+        if ":" not in value:
+            continue
+        escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+        lines[i] = f'{m.group("indent")}{m.group("module")}: "{escaped}"'
+        changed = True
+    if not changed:
+        return text
+    return "\n".join(lines)
+
+
 def _strip_stray_blanks(text: str) -> str:
     """Remove interior blank lines inserted by ruamel round-trip dumping.
 
@@ -464,6 +522,7 @@ def format_content(text: str, filename: str = "<stdin>") -> FormatResult:
     original = text
 
     text = _fix_tabs(text)
+    text = _quote_free_form_args(text)
 
     yaml = FormattedYAML(typ="rt", pure=True, version=(1, 1))
 

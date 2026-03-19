@@ -783,6 +783,7 @@ class TreeLoader:
         self.root_definitions = load_all_definitions(root_definitions)
         self.ext_definitions = load_all_definitions(ext_definitions)
         self.add_builtin_modules()
+        self._register_handler_taskfiles()
 
         self.dicts = make_dicts(self.root_definitions, self.ext_definitions)
 
@@ -1160,6 +1161,32 @@ class TreeLoader:
         obj_list = ObjectList(items=[cast(Object | CallObject, m) for m in builtin_modules])
         self.ext_definitions["modules"].merge(obj_list)
 
+    def _register_handler_taskfiles(self) -> None:
+        """Add handler TaskFiles (and their tasks) from roles into root_definitions.
+
+        The ARI engine stores handler files in ``role.handlers`` but excludes
+        them from the definitions dict that the tree walker uses.  This method
+        copies them into ``root_definitions["taskfiles"]`` (and their child
+        tasks into ``root_definitions["tasks"]``) so that ``get_object()`` can
+        resolve handler keys during tree traversal.
+        """
+        taskfiles_list = self.root_definitions.get("taskfiles", ObjectList())
+        tasks_list = self.root_definitions.get("tasks", ObjectList())
+        if not isinstance(taskfiles_list, ObjectList) or not isinstance(tasks_list, ObjectList):
+            return
+        roles_list = self.root_definitions.get("roles", ObjectList())
+        if not isinstance(roles_list, ObjectList):
+            return
+        for obj in roles_list.items:
+            if not isinstance(obj, Role):
+                continue
+            for h in obj.handlers:
+                if isinstance(h, TaskFile) and h.key:
+                    taskfiles_list.add(cast(Object | CallObject, h))
+                    for task in h.tasks:
+                        if hasattr(task, "key") and task.key:
+                            tasks_list.add(cast(Object | CallObject, task))
+
     def _get_children_keys(
         self,
         obj: Object | CallObject,
@@ -1282,6 +1309,10 @@ class TreeLoader:
                 if tf_str.split(key_delimiter)[-1].split("/")[-1] in target_taskfiles and "/handlers/" not in tf_str
             ]
             children_keys.extend(target_taskfile_key)
+            for h in obj.handlers:
+                h_key = h.key if isinstance(h, TaskFile) else str(h)
+                if h_key:
+                    children_keys.append(h_key)
         elif isinstance(obj, TaskFile):
             children_keys = [t.key if isinstance(t, Task) else str(t) for t in obj.tasks]
         elif isinstance(obj, Task):

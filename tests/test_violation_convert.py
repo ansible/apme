@@ -241,3 +241,36 @@ class TestRoundTrip:
             proto = violation_dict_to_proto(original)
             result = violation_proto_to_dict(proto)
             assert result["remediation_resolution"] == res, f"Failed for {res}"
+
+
+class TestStringLineParsing:
+    """Tests for string line format parsing in violation_dict_to_proto."""
+
+    def test_string_line_range(self) -> None:
+        """String line 'L15-19' is parsed as a LineRange."""
+        v: ViolationDict = {"rule_id": "L007", "line": "L15-19"}
+        proto = violation_dict_to_proto(v)
+        assert proto.HasField("line_range")
+        assert proto.line_range.start == 15
+        assert proto.line_range.end == 19
+
+    def test_string_single_line(self) -> None:
+        """String line 'L42' is parsed as a single line number."""
+        v: ViolationDict = {"rule_id": "L007", "line": "L42"}
+        proto = violation_dict_to_proto(v)
+        assert proto.line == 42
+
+    def test_string_line_without_prefix(self) -> None:
+        """String line '10-20' (no L prefix) is parsed as a range."""
+        v: ViolationDict = {"rule_id": "L007", "line": "10-20"}
+        proto = violation_dict_to_proto(v)
+        assert proto.HasField("line_range")
+        assert proto.line_range.start == 10
+        assert proto.line_range.end == 20
+
+    def test_invalid_string_line_ignored(self) -> None:
+        """Non-numeric string line is silently ignored."""
+        v: ViolationDict = {"rule_id": "L007", "line": "unknown"}
+        proto = violation_dict_to_proto(v)
+        assert proto.line == 0
+        assert not proto.HasField("line_range")

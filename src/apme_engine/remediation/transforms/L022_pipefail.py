@@ -25,7 +25,7 @@ def fix_pipefail(sf: StructuredFile, violation: ViolationDict) -> bool:
     Returns:
         True if a change was applied.
     """
-    task = sf.find_task(violation_line_to_int(violation))
+    task = sf.find_task(violation_line_to_int(violation), violation)
     if task is None:
         return False
 

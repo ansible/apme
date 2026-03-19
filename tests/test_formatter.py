@@ -661,3 +661,45 @@ class TestForceTagsBlockStyle:
         result = format_content(text)
         assert "- users" in result.formatted
         assert "- groups" in result.formatted
+
+
+# ---------------------------------------------------------------------------
+# Free-form quoting
+# ---------------------------------------------------------------------------
+
+
+class TestQuoteFreeFormArgs:
+    """Tests for _quote_free_form_args via format_content."""
+
+    def test_colon_in_shell_value_quoted(self) -> None:
+        """Shell args with colons are quoted to avoid YAML parse errors."""
+        text = "- name: Extract users\n  ansible.builtin.shell: cat /etc/passwd | cut -d: -f1\n"
+        result = format_content(text)
+        assert result.formatted is not None
+        assert "cut -d" in result.formatted
+
+    def test_shell_without_colon_unchanged(self) -> None:
+        """Shell args without colons are left alone."""
+        text = "- name: List files\n  ansible.builtin.shell: ls -la /tmp\n"
+        result = format_content(text)
+        assert "ls -la /tmp" in result.formatted
+
+    def test_already_quoted_unchanged(self) -> None:
+        """Already-quoted values are not double-quoted."""
+        text = '- name: Test\n  shell: "echo hello: world"\n'
+        result = format_content(text)
+        assert "echo hello: world" in result.formatted
+
+    def test_list_item_form_matched(self) -> None:
+        """The ``- shell: ...`` list-item form is also matched."""
+        text = "- shell: cat /etc/passwd | cut -d: -f1\n"
+        result = format_content(text)
+        assert result.formatted is not None
+        assert "cut -d" in result.formatted
+
+    def test_free_form_quoting_idempotent(self) -> None:
+        """Applying format twice produces the same output."""
+        text = "- name: Extract\n  ansible.builtin.shell: cat /etc/passwd | cut -d: -f1\n"
+        r1 = format_content(text)
+        r2 = format_content(r1.formatted)
+        assert r1.formatted == r2.formatted

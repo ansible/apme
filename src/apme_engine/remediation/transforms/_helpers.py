@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import re
+
 from ruamel.yaml.comments import CommentedMap, CommentedSeq
 
 from apme_engine.engine.models import ViolationDict
+
+_TASK_INDEX_RE = re.compile(r"task:\[(\d+)\]")
 
 
 def violation_line_to_int(violation: ViolationDict) -> int:
@@ -30,6 +34,54 @@ def violation_line_to_int(violation: ViolationDict) -> int:
         except ValueError:
             return 0
     return 0
+
+
+def violation_task_index(violation: ViolationDict) -> int | None:
+    """Extract the task index from the violation ``path`` field.
+
+    The native validator encodes the task position as ``task:[N]`` in the
+    hierarchy node key.  This is useful when ``line`` is ``None``.
+
+    Args:
+        violation: Violation dict with optional path field.
+
+    Returns:
+        0-based task index, or None if not present.
+    """
+    path = violation.get("path", "")
+    if not isinstance(path, str):
+        return None
+    m = _TASK_INDEX_RE.search(path)
+    return int(m.group(1)) if m else None
+
+
+def find_task_by_index(data: CommentedMap | CommentedSeq, index: int) -> CommentedMap | None:
+    """Return the Nth task from a top-level task list.
+
+    Works on bare task lists (CommentedSeq) and play mappings that contain
+    a ``tasks``, ``pre_tasks``, ``post_tasks``, or ``handlers`` key.
+
+    Args:
+        data: Playbook root (CommentedMap or CommentedSeq).
+        index: 0-based task index.
+
+    Returns:
+        Task CommentedMap, or None if index is out of range.
+    """
+    seq: CommentedSeq | None = None
+    if isinstance(data, CommentedSeq):
+        seq = data
+    elif isinstance(data, CommentedMap):
+        for key in ("tasks", "pre_tasks", "post_tasks", "handlers"):
+            candidate = data.get(key)
+            if isinstance(candidate, CommentedSeq):
+                seq = candidate
+                break
+    if seq is not None and 0 <= index < len(seq):
+        item = seq[index]
+        if isinstance(item, CommentedMap):
+            return item
+    return None
 
 
 def find_task_at_line(data: CommentedMap | CommentedSeq, line: int) -> CommentedMap | None:

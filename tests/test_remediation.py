@@ -19,6 +19,7 @@ from apme_engine.remediation.partition import (
 from apme_engine.remediation.registry import TransformRegistry, TransformResult
 from apme_engine.remediation.structured import StructuredFile
 from apme_engine.remediation.transforms import build_default_registry
+from apme_engine.remediation.transforms._helpers import find_task_by_index, violation_task_index
 from apme_engine.remediation.transforms.L007_shell_to_command import fix_shell_to_command
 from apme_engine.remediation.transforms.L008_local_action import fix_local_action
 from apme_engine.remediation.transforms.L009_empty_string import fix_empty_string
@@ -1643,3 +1644,103 @@ class TestM009WithToLoop:
         r1 = _apply(fix_with_to_loop, content, {"rule_id": "M009", "line": 1, "with_key": "with_items"})
         r2 = _apply(fix_with_to_loop, r1.content, {"rule_id": "M009", "line": 1, "with_key": "with_items"})
         assert r2.applied is False
+
+
+# ---------------------------------------------------------------------------
+# violation_task_index / find_task_by_index
+# ---------------------------------------------------------------------------
+
+
+class TestViolationTaskIndex:
+    """Tests for violation_task_index()."""
+
+    def test_extracts_index_from_path(self) -> None:
+        """Extracts task index from a native validator path field."""
+        v: ViolationDict = {"rule_id": "L007", "path": "task:playbook.yml#task:[2]"}
+        assert violation_task_index(v) == 2
+
+    def test_returns_none_without_path(self) -> None:
+        """Returns None when violation has no path field."""
+        v: ViolationDict = {"rule_id": "L007"}
+        assert violation_task_index(v) is None
+
+    def test_returns_none_for_non_task_path(self) -> None:
+        """Returns None when path does not contain task:[N]."""
+        v: ViolationDict = {"rule_id": "L007", "path": "playbook.yml"}
+        assert violation_task_index(v) is None
+
+    def test_returns_none_for_non_string_path(self) -> None:
+        """Returns None when path is not a string."""
+        v: ViolationDict = {"rule_id": "L007", "path": 42}
+        assert violation_task_index(v) is None
+
+
+class TestFindTaskByIndex:
+    """Tests for find_task_by_index()."""
+
+    def test_finds_task_in_seq(self) -> None:
+        """Finds a task by index in a bare CommentedSeq."""
+        sf = StructuredFile.from_content(
+            "tasks.yml",
+            textwrap.dedent("""\
+            - name: First
+              ansible.builtin.debug:
+                msg: one
+            - name: Second
+              ansible.builtin.debug:
+                msg: two
+            """),
+        )
+        assert sf is not None
+        task = find_task_by_index(sf.data, 1)
+        assert task is not None
+        assert task["name"] == "Second"
+
+    def test_finds_task_in_play_tasks(self) -> None:
+        """Finds a task by index in a play's tasks list."""
+        sf = StructuredFile.from_content(
+            "play.yml",
+            textwrap.dedent("""\
+            tasks:
+              - name: First
+                ansible.builtin.debug:
+                  msg: one
+              - name: Second
+                ansible.builtin.debug:
+                  msg: two
+            """),
+        )
+        assert sf is not None
+        task = find_task_by_index(sf.data, 0)
+        assert task is not None
+        assert task["name"] == "First"
+
+    def test_returns_none_for_out_of_range(self) -> None:
+        """Returns None when index is out of range."""
+        sf = StructuredFile.from_content(
+            "tasks.yml",
+            textwrap.dedent("""\
+            - name: Only task
+              ansible.builtin.debug:
+                msg: hi
+            """),
+        )
+        assert sf is not None
+        assert find_task_by_index(sf.data, 5) is None
+
+    def test_finds_task_in_handlers(self) -> None:
+        """Finds a task by index in a play's handlers list."""
+        sf = StructuredFile.from_content(
+            "play.yml",
+            textwrap.dedent("""\
+            handlers:
+              - name: Restart service
+                ansible.builtin.service:
+                  name: httpd
+                  state: restarted
+            """),
+        )
+        assert sf is not None
+        task = find_task_by_index(sf.data, 0)
+        assert task is not None
+        assert task["name"] == "Restart service"

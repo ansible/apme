@@ -619,7 +619,8 @@ class FormattedYAML(YAML):  # type: ignore[misc]
             data = None
             logger.error("Invalid yaml, verify the file contents and try again. %s", ex)  # noqa: TRY400
         except Exception as ex:
-            print(ex)
+            data = None
+            logger.error("YAML load error: %s", ex)  # noqa: TRY400
         if preamble_comment is not None and isinstance(
             data,
             CommentedMap | CommentedSeq,

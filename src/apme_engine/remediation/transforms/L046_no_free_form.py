@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from ruamel.yaml.comments import CommentedMap
+from ruamel.yaml.scalarstring import DoubleQuotedScalarString
 
 from apme_engine.engine.models import ViolationDict
 from apme_engine.remediation.structured import StructuredFile
 from apme_engine.remediation.transforms._helpers import get_module_key, violation_line_to_int
+
+_YAML_UNSAFE_RE_CHARS = frozenset(":{}[]|>&*!%#`@,")
 
 _FREE_FORM_MODULES = frozenset(
     {
@@ -35,7 +38,7 @@ def fix_free_form(sf: StructuredFile, violation: ViolationDict) -> bool:
     Returns:
         True if a change was applied.
     """
-    task = sf.find_task(violation_line_to_int(violation))
+    task = sf.find_task(violation_line_to_int(violation), violation)
     if task is None:
         return False
 
@@ -48,7 +51,10 @@ def fix_free_form(sf: StructuredFile, violation: ViolationDict) -> bool:
         return False
 
     new_args = CommentedMap()
-    new_args["cmd"] = module_args
+    cmd_val: str | DoubleQuotedScalarString = module_args
+    if any(c in module_args for c in _YAML_UNSAFE_RE_CHARS):
+        cmd_val = DoubleQuotedScalarString(module_args)
+    new_args["cmd"] = cmd_val
     task[module_key] = new_args
 
     return True

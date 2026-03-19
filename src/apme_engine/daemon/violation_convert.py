@@ -86,6 +86,16 @@ def violation_dict_to_proto(v: ViolationDict | Mapping[str, str | int | list[int
         out.line_range.CopyFrom(LineRange(start=int(line[0]), end=int(line[1])))
     elif isinstance(line, int):
         out.line = line
+    elif isinstance(line, str) and line:
+        raw = line.lstrip("L")
+        parts = raw.split("-")
+        try:
+            if len(parts) >= 2:
+                out.line_range.CopyFrom(LineRange(start=int(parts[0]), end=int(parts[1])))
+            else:
+                out.line = int(parts[0])
+        except (ValueError, IndexError):
+            pass
     return out
 
 
