@@ -50,8 +50,11 @@ def build_default_registry() -> TransformRegistry:
     reg.register("L020", fix_octal_mode)
 
     # Ansible validator rules (carry resolved_fqcn from ansible-core)
+    # M001-M004 all report FQCN violations, so the same fix applies
     reg.register("M001", structured=fix_fqcn)
+    reg.register("M002", structured=fix_fqcn)
     reg.register("M003", structured=fix_fqcn)
+    reg.register("M004", structured=fix_fqcn)
 
     # Migration rules
     reg.register("M006", structured=fix_become_unreachable)

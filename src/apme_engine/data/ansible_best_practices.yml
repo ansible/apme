@@ -1,0 +1,126 @@
+---
+_meta:
+  source: https://raw.githubusercontent.com/ansible/ansible-creator/refs/heads/main/docs/agents.md
+  updated: "2026-03-17"
+  description: >
+    Structured extraction of Ansible best practices from the ansible-creator
+    coding guidelines. Keyed by rule category for efficient prompt building.
+    Maintained via the update-ansible-best-practices SKILL.
+
+universal:
+  - "Use .yml extension for all YAML files"
+  - "Start YAML files with --- document start marker"
+  - "Use true and false for boolean values, not yes/no or True/False"
+  - "Spell out task arguments in YAML style, not key=value format"
+  - "Use double quotes for YAML strings except Jinja2 strings which use single quotes"
+  - "Do not use quotes for module keywords like present or absent"
+  - "Indent at two spaces"
+  - "Indent list contents beyond the list definition"
+  - "All tasks must have descriptive names using the name parameter"
+  - "Task names should start with an uppercase letter"
+  - "Write task names in imperative form"
+  - "All tasks must be idempotent with no changes on second run"
+  - "Include newline character at end of file"
+  - "Avoid trailing spaces at end of lines"
+
+fqcn:
+  - "Use FQCN for all modules, roles, and playbooks"
+  - "Prefer ansible.builtin collection for internal Ansible actions"
+  - "Use ansible.legacy if you need local overrides"
+  - "Avoid the collections keyword, use FQCN instead"
+  - "Use canonical module names for better performance and compatibility"
+  - "Avoid nesting modules in deep directories within collections"
+  - "Migrate deep directory structures using redirects in meta/runtime.yml"
+
+yaml_formatting:
+  - "Keep lines under 160 characters when possible"
+  - "Split long lines using YAML folding sign >- not >"
+  - "Break long when conditions into lists"
+  - "Avoid blank lines exceeding reasonable limits"
+  - "Ensure proper spacing around colons, commas, and brackets"
+  - "Comment indentation should match content indentation"
+  - "Avoid key duplicates in mappings"
+  - "Quote octal values to avoid confusion across YAML versions"
+  - "Maintain proper indentation for comments aligned with content"
+
+module_usage:
+  - "Use specific modules instead of generic command or shell"
+  - "Prefer command module over shell unless shell features are needed"
+  - "Always use changed_when with command and shell modules"
+  - "Use creates or removes argument when appropriate"
+  - "Add justifying comments when using command or shell modules"
+  - "Always specify state parameter in modules for clarity and consistency"
+  - "Explicitly define desired state rather than relying on defaults"
+  - "Avoid calling package module iteratively, use lists instead"
+  - "Use template module over copy for most file pushes"
+  - "Avoid lineinfile where feasible, prefer template or specific modules"
+  - "Prefer Ansible built-in modules to leverage idempotency and error handling"
+
+naming:
+  - "Use snake_case_naming_schemes for all YAML and Python files, variables, arguments"
+  - "Use mnemonic, descriptive names without unnecessary abbreviations"
+  - "Name all tasks, plays, and task blocks"
+  - "Place Jinja2 templates at the end of task names, not at the beginning"
+  - "Do not use variables in play names as they do not expand properly"
+  - "Task names within a single play should be unique"
+  - "Prefix task names in sub-task files with file identifier"
+  - "Variable names must contain only lowercase alphanumeric characters and underscore"
+  - "Variable names must start with an alphabetic or underscore character"
+  - "Prefix role variables with role name to avoid collisions"
+  - "Use double underscore prefix for role internal variables"
+
+jinja2:
+  - "Use single space separating template markers from variable name"
+  - "Maintain proper spacing around operators and filters"
+  - "Remove braces for implicit templating fields like when, changed_when, failed_when, until"
+  - "Use filter plugins for data transformations instead of complex Jinja"
+  - "Wrap long Jinja expressions across multiple lines for readability"
+  - "Use bool filter with bare variables in when conditions"
+  - "Use type filters for type safety: float, int, bool"
+  - "Do not use eq, equalto, or == Jinja tests, use match, search, or regex"
+  - "Avoid invalid Jinja2 templates that would cause runtime errors"
+
+roles:
+  - "Design roles focused on functionality, not software implementation"
+  - "Design for specific, guaranteed outcomes with limited scope"
+  - "Use meta/argument_specs.yml for argument validation in Ansible 2.11+"
+  - "All defaults and arguments prefixed with role name"
+  - "Internal variables prefixed with double underscore"
+  - "Add ansible_managed comment at top of templates"
+  - "Do not include timestamps in templates"
+  - "Use backup: true until user requests configurability"
+  - "Append .j2 to template filenames"
+  - "Keep filenames close to destination system names"
+  - "Role names must contain only lowercase alphanumeric characters and underscore"
+  - "Break complex task files down into discrete parts"
+
+variables:
+  - "Use bracket notation instead of dot notation for value retrieval"
+  - "Avoid playbook and play variables, use inventory instead"
+  - "Use smallest scope for variables"
+  - "Limit use of set_fact as facts are global"
+  - "Do not override role defaults or vars using set_fact"
+  - "Use role defaults for default values"
+  - "Use inventory vars for desired state"
+  - "Use role vars for constants"
+  - "Reserve extra_vars for troubleshooting and validation only"
+  - "Do not use extra vars to define desired state"
+
+control_flow:
+  - "Avoid when: foo_result is changed, use handlers instead"
+  - "Do not use meta: end_play, use meta: end_host if needed"
+  - "Beware of ignore_errors: true especially with blocks containing asserts"
+  - "Use include and import statements to reduce repetition"
+  - "Use notify to trigger handlers instead of conditional tasks"
+  - "Support check mode and report changes accurately"
+  - "Tasks should not fail in check mode"
+
+playbooks:
+  - "Keep playbooks as simple as possible with logic in roles"
+  - "Limit playbooks to lists of roles when possible"
+  - "Use either tasks or roles section, not both"
+  - "Avoid mixing roles and tasks sections"
+  - "Use verbosity parameter with debug statements"
+  - "Wait for specific conditions instead of arbitrary delays"
+  - "Use wait_for module with appropriate conditions"
+  - "Implement retries with until loops for reliability"

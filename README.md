@@ -76,6 +76,12 @@ apme-scan format --check /path/to/project
 
 # Full fix pipeline: format → idempotency check → re-scan → modernize
 apme-scan fix --apply /path/to/project
+
+# AI-assisted fixes (requires Abbenay daemon)
+apme-scan fix --ai --apply /path/to/project
+
+# AI with explicit model and CI mode (no interactive review)
+apme-scan fix --ai --model openai/gpt-4o --ci --apply /path/to/project
 ```
 
 ### Container deployment (Podman)
@@ -100,6 +106,68 @@ containers/podman/run-cli.sh --json .
 ```bash
 apme-scan health-check --primary-addr 127.0.0.1:50051
 ```
+
+## AI escalation
+
+APME can escalate Tier 2 violations (no deterministic transform) to an AI provider for proposed fixes. This requires the [Abbenay](https://github.com/redhat-developer/abbenay) daemon.
+
+### Prerequisites
+
+```bash
+pip install apme-engine[ai]
+
+# Consumer auth token (required for inline policy)
+export APME_ABBENAY_TOKEN="your-token"
+```
+
+### Binary daemon
+
+```bash
+# Start Abbenay daemon (auto-discovers socket at $XDG_RUNTIME_DIR/abbenay/)
+abbenay daemon start
+# Or from a Sea binary:
+./abbenay-daemon-linux-x64 start
+
+# Set consumer auth token for inline policy (required)
+export APME_ABBENAY_TOKEN="your-token"
+
+# Fix with AI
+apme-scan fix --ai --model openrouter/anthropic/claude-sonnet-4 --apply /path/to/project
+```
+
+### Container daemon
+
+See the [Abbenay container documentation](https://github.com/redhat-developer/abbenay/blob/main/docs/CONTAINER.md) for full container setup instructions.
+
+```bash
+# Build and run the Abbenay container (from abbenay repo)
+podman build -f Containerfile -t abbenay:latest .
+podman run -d --name abbenay \
+  -e OPENROUTER_API_KEY="$OPENROUTER_API_KEY" \
+  -p 8787:8787 -p 50051:50051 \
+  abbenay:latest
+
+# Point APME at the container via gRPC TCP
+apme-scan fix --ai --abbenay-addr localhost:50051 --apply .
+```
+
+### CLI flags
+
+| Flag | Description |
+|------|-------------|
+| `--ai` | Enable AI escalation (opt-in) |
+| `--model MODEL` | AI model identifier (e.g. `openai/gpt-4o`) |
+| `--abbenay-addr ADDR` | Daemon address (default: auto-discover socket) |
+| `--abbenay-token TOKEN` | Consumer auth token for inline policy (or set `APME_ABBENAY_TOKEN` env var) |
+| `--max-ai-attempts N` | Max LLM calls per violation (default: 2) |
+| `--ci` | CI mode: apply AI proposals without interactive review |
+
+### Remediation flow
+
+1. **Tier 1 (deterministic)**: convergence loop applies transforms until stable
+2. **Tier 2 (AI)**: remaining violations are sent to the AI provider one at a time; each proposal is re-validated, cleaned with Tier 1 transforms, and retried with feedback if needed
+3. **Interactive review**: accepted proposals are applied (or shown as diffs without `--apply`)
+4. **Tier 3 (manual)**: violations that neither transforms nor AI can fix are reported for human review
 
 ## Scaling
 
@@ -159,6 +227,7 @@ tests/                  unit, integration, rule doc coverage
 | [ANSIBLE_CORE_MIGRATION.md](docs/ANSIBLE_CORE_MIGRATION.md) | ansible-core 2.19/2.20 breaking changes and rule mapping |
 | [PODMAN_OPA_ISSUES.md](docs/PODMAN_OPA_ISSUES.md) | Podman rootless troubleshooting |
 | [DESIGN_REMEDIATION.md](docs/DESIGN_REMEDIATION.md) | Remediation engine: transform registry, AI escalation, convergence loop |
+| [DESIGN_AI_ESCALATION.md](docs/DESIGN_AI_ESCALATION.md) | AI integration: Abbenay provider, hybrid validation loop, prompt engineering |
 | [RESEARCH_REVIEW.md](docs/RESEARCH_REVIEW.md) | Analysis of early research concepts and roadmap pull-ins |
 | [DESIGN_DASHBOARD.md](docs/DESIGN_DASHBOARD.md) | Dashboard & presentation layer: API gateway, REST/WebSocket, persistence, auth, frontend |
 | [ADRs](.sdlc/adrs/) | Architecture Decision Records — key design decisions with context, alternatives, and rationale |
@@ -182,11 +251,15 @@ tests/                  unit, integration, rule doc coverage
 - **EE compatibility rules** (R505–R507): undeclared collections, system path assumptions, undeclared Python deps. Requires static `ee_baseline.json` from `ee-supported-rhel9` inspection.
 - **Version auto-detection**: infer source Ansible version from playbook signals (short-form module names → ≤2.9, `include:` → ≤2.7, `tower_*` → ≤2.13). Auto-scope M-rules without an explicit `--ansible-core-version` flag.
 
-### Phase 3 — AI Integration
+### Phase 3 — AI Integration (in progress)
 
-- OpenLLM daemon via gRPC for explanations, YAML generation, Q&A, review summaries.
-- **AI prompt template**: structured prompts with finding metadata + 10-line code window + constrained response schema (explanation, suggested_code, confidence, reasoning).
-- Handles findings where `fixable = false`; LLM proposes patches, human reviews.
+- **Abbenay daemon** as the AI backend via gRPC: `pip install apme-engine[ai]`.
+- **AIProvider Protocol** (`ADR-024`): pluggable abstraction for LLM providers; `AbbenayProvider` is the default.
+- **Hybrid validation loop**: AI proposals are re-scanned through APME validators, cleaned up with Tier 1 transforms, and retried with feedback if issues persist (max 2 attempts).
+- **Interactive review** (`--ai` flag): per-fix diff review (y/n/skip) like `git add -p`, or `--ci` for automatic application.
+- **Structured best practices**: curated Ansible guidelines injected into prompts for higher-quality fixes.
+- **Preflight checks**: auto-discover Abbenay daemon socket, health check before AI calls.
+- See [DESIGN_AI_ESCALATION.md](docs/DESIGN_AI_ESCALATION.md) for the full design.
 
 ### Phase 4 — Web UI
 

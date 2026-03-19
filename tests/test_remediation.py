@@ -243,7 +243,7 @@ class TestPartition:
         """Verifies RemediationResolution members have string values."""
         assert RemediationResolution.UNRESOLVED.value == "unresolved"
         assert RemediationResolution.TRANSFORM_FAILED.value == "transform-failed"
-        assert len(list(RemediationResolution)) == 7
+        assert len(list(RemediationResolution)) == 9
 
     def test_all_registered_rules_classify(self) -> None:
         """Verifies every registered rule ID classifies as AUTO_FIXABLE."""
@@ -288,7 +288,7 @@ class TestDefaultRegistry:
             "M009",
         ):
             assert rule_id in reg, f"{rule_id} missing from default registry"
-        assert len(reg) == 19
+        assert len(reg) == 21
 
 
 # ---------------------------------------------------------------------------

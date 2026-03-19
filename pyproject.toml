@@ -22,6 +22,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+ai = [
+    "abbenay-client @ git+https://github.com/redhat-developer/abbenay.git@516742428c5b074ce7d098cfcf4f69413658f5f6#subdirectory=packages/python",
+]
 dev = [
     "pytest",
     "pytest-cov",
@@ -103,6 +106,8 @@ module = [
     "yaml",
     "grpc",
     "grpc.*",
+    "abbenay_grpc",
+    "abbenay_grpc.*",
 ]
 ignore_missing_imports = true
 
@@ -136,3 +141,4 @@ where = ["src"]
 "apme_engine.engine" = ["*.txt", "*.json"]
 "apme_engine.engine.annotators" = ["ansible.builtin/*.py"]
 "apme_engine.validators.opa" = ["bundle/*.rego", "bundle/*.json", "bundle/*.md"]
+"apme_engine.data" = ["*.yml", "*.yaml"]

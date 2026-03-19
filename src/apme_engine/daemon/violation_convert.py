@@ -30,6 +30,8 @@ _RESOLUTION_TO_PROTO: dict[str, int] = {
     RemediationResolution.AI_FAILED.value: common_pb2.REMEDIATION_RESOLUTION_AI_FAILED,  # type: ignore[attr-defined]
     RemediationResolution.AI_LOW_CONFIDENCE.value: common_pb2.REMEDIATION_RESOLUTION_AI_LOW_CONFIDENCE,  # type: ignore[attr-defined]
     RemediationResolution.USER_REJECTED.value: common_pb2.REMEDIATION_RESOLUTION_USER_REJECTED,  # type: ignore[attr-defined]
+    RemediationResolution.NEEDS_CROSS_FILE.value: common_pb2.REMEDIATION_RESOLUTION_NEEDS_CROSS_FILE,  # type: ignore[attr-defined]
+    RemediationResolution.MANUAL.value: common_pb2.REMEDIATION_RESOLUTION_MANUAL,  # type: ignore[attr-defined]
 }
 
 # Map proto enum to string remediation resolution
@@ -42,6 +44,8 @@ _PROTO_TO_RESOLUTION: dict[int, str] = {
     common_pb2.REMEDIATION_RESOLUTION_AI_FAILED: RemediationResolution.AI_FAILED.value,  # type: ignore[attr-defined]
     common_pb2.REMEDIATION_RESOLUTION_AI_LOW_CONFIDENCE: RemediationResolution.AI_LOW_CONFIDENCE.value,  # type: ignore[attr-defined]
     common_pb2.REMEDIATION_RESOLUTION_USER_REJECTED: RemediationResolution.USER_REJECTED.value,  # type: ignore[attr-defined]
+    common_pb2.REMEDIATION_RESOLUTION_NEEDS_CROSS_FILE: RemediationResolution.NEEDS_CROSS_FILE.value,  # type: ignore[attr-defined]
+    common_pb2.REMEDIATION_RESOLUTION_MANUAL: RemediationResolution.MANUAL.value,  # type: ignore[attr-defined]
 }
 
 

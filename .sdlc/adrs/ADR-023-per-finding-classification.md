@@ -172,7 +172,7 @@ Classification happens server-side in `primary_server.py` before proto serializa
 ### Neutral
 
 - The `TransformRegistry` remains the initial authority for `auto-fixable` — this decision does not change how transforms are registered, only how their outcomes are tracked
-- AI resolution states (`ai-proposed`, `ai-failed`, `ai-low-confidence`, `user-rejected`) are defined now but only populated when the Abbenay integration is wired
+- AI resolution states (`ai-proposed`, `ai-failed`, `ai-low-confidence`, `user-rejected`) are populated by the `AIProvider` integration — see ADR-024 and `docs/DESIGN_AI_ESCALATION.md`
 
 ## Implementation Notes
 
@@ -187,6 +187,7 @@ Classification happens server-side in `primary_server.py` before proto serializa
 - ADR-008: Rule ID conventions — classification is orthogonal to rule IDs; the same rule can have different classification per finding
 - ADR-009: Remediation engine — this ADR refines the three-tier model from static per-rule to dynamic per-finding
 - ADR-020: Reporting service — will consume `remediation_class` and `remediation_resolution` fields for funnel metrics and trend analysis
+- ADR-024: AIProvider protocol — defines the abstraction that populates the AI resolution states
 
 ---
 

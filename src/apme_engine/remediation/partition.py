@@ -9,6 +9,27 @@ if TYPE_CHECKING:
 from apme_engine.engine.models import RemediationClass, RemediationResolution
 from apme_engine.remediation.registry import TransformRegistry
 
+CROSS_FILE_RULES: frozenset[str] = frozenset(
+    {
+        "L027",  # role without metadata — needs roles/ directory
+        "L038",  # unresolved role — needs roles/ directory
+        "L039",  # undefined variable — vars in group_vars, host_vars, defaults
+        "L050",  # variable naming — variables defined across files
+        "R111",  # parameterized role import — needs role inventory
+        "R112",  # parameterized task import — needs taskfile inventory
+    }
+)
+
+# Rules that target play/block-level structure, not individual tasks.
+# These require manual restructuring and shouldn't go to AI.
+PLAY_LEVEL_RULES: frozenset[str] = frozenset(
+    {
+        "L042",  # high task count complexity — restructure play/block
+        "M010",  # Python 2 interpreter — set at play/inventory level
+        "R108",  # privilege escalation — play-level become directive
+    }
+)
+
 
 def normalize_rule_id(rule_id: str) -> str:
     """Strip validator-specific prefixes from a rule ID for registry lookup.
@@ -59,8 +80,15 @@ def partition_violations(
     tier3: list[ViolationDict] = []
 
     for v in violations:
+        bare_id = normalize_rule_id(str(v.get("rule_id", "")))
         if is_finding_resolvable(v, registry):
             tier1.append(v)
+        elif bare_id in CROSS_FILE_RULES:
+            v["remediation_resolution"] = RemediationResolution.NEEDS_CROSS_FILE
+            tier3.append(v)
+        elif bare_id in PLAY_LEVEL_RULES:
+            v["remediation_resolution"] = RemediationResolution.MANUAL
+            tier3.append(v)
         elif v.get("ai_proposable", True):
             tier2.append(v)
         else:
@@ -79,8 +107,11 @@ def classify_violation(violation: ViolationDict, registry: TransformRegistry) ->
     Returns:
         One of RemediationClass.AUTO_FIXABLE, AI_CANDIDATE, or MANUAL_REVIEW.
     """
+    bare_id = normalize_rule_id(str(violation.get("rule_id", "")))
     if is_finding_resolvable(violation, registry):
         return RemediationClass.AUTO_FIXABLE
+    elif bare_id in CROSS_FILE_RULES or bare_id in PLAY_LEVEL_RULES:
+        return RemediationClass.MANUAL_REVIEW
     elif violation.get("ai_proposable", True):
         return RemediationClass.AI_CANDIDATE
     else:

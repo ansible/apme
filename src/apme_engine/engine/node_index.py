@@ -89,6 +89,67 @@ class NodeIndex:
         """
         return len(self._by_key)
 
+    def __iter__(self) -> NodeIndex.NodeIterator:
+        """Iterate over all node keys.
+
+        Returns:
+            Iterator yielding node key strings.
+        """
+        return NodeIndex.NodeIterator(iter(self._by_key))
+
+    class NodeIterator:
+        """Iterator over node keys."""
+
+        __slots__ = ("_iter",)
+
+        def __init__(self, key_iter: iter) -> None:  # type: ignore[valid-type]
+            """Initialize iterator.
+
+            Args:
+                key_iter: Iterator over keys.
+            """
+            self._iter = key_iter
+
+        def __iter__(self) -> NodeIndex.NodeIterator:
+            """Return self for iterator protocol.
+
+            Returns:
+                Self.
+            """
+            return self
+
+        def __next__(self) -> str:
+            """Return next key.
+
+            Returns:
+                Next node key string.
+            """
+            return next(self._iter)
+
+    def keys(self) -> list[str]:
+        """Return all node keys.
+
+        Returns:
+            List of node key strings.
+        """
+        return list(self._by_key.keys())
+
+    def values(self) -> list[NodeDict]:
+        """Return all node dicts.
+
+        Returns:
+            List of node dicts.
+        """
+        return list(self._by_key.values())
+
+    def items(self) -> list[tuple[str, NodeDict]]:
+        """Return all (key, node) pairs.
+
+        Returns:
+            List of (key, node_dict) tuples.
+        """
+        return list(self._by_key.items())
+
     def find_by_file_line(self, file: str, line: int) -> NodeDict | None:
         """Look up a node by file path and first line number.
 

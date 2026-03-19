@@ -7,15 +7,25 @@ needed (once per convergence pass, for re-scanning).
 
 from __future__ import annotations
 
+import asyncio
 import difflib
 import logging
 import sys
+from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from apme_engine.engine.models import RemediationClass, RemediationResolution, ViolationDict
 from apme_engine.engine.node_index import NodeIndex
+from apme_engine.remediation.ai_provider import (
+    AIPatch,
+    AIProposal,
+    AIProvider,
+    AISkipped,
+    apply_patches,
+    generate_patch_hunks,
+)
 from apme_engine.remediation.enrich import enrich_violations
 from apme_engine.remediation.partition import (
     add_classification_to_violations,
@@ -25,6 +35,11 @@ from apme_engine.remediation.partition import (
 from apme_engine.remediation.registry import TransformRegistry
 from apme_engine.remediation.structured import StructuredFile
 from apme_engine.remediation.transforms._helpers import violation_line_to_int
+from apme_engine.remediation.unit_segmenter import (
+    FixableUnit,
+    assign_violations_to_units,
+    extract_units,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +73,7 @@ class FixReport:
         applied_patches: List of file patches applied.
         remaining_ai: Violations with no transform but ai_proposable.
         remaining_manual: Violations requiring manual fix.
-        ai_proposed: Violations proposed by AI (unused in Tier 1).
+        ai_proposed: AI proposals that passed validation.
         oscillation_detected: True if oscillation was detected and loop bailed.
     """
 
@@ -67,7 +82,7 @@ class FixReport:
     applied_patches: list[FilePatch]
     remaining_ai: list[ViolationDict]
     remaining_manual: list[ViolationDict]
-    ai_proposed: list[ViolationDict]
+    ai_proposed: list[AIProposal]
     oscillation_detected: bool
 
 
@@ -89,8 +104,10 @@ class RemediationEngine:
         scan_fn: ScanFn,
         *,
         max_passes: int = 5,
+        max_ai_attempts: int = 2,
         verbose: bool = False,
         node_index: NodeIndex | None = None,
+        ai_provider: AIProvider | None = None,
     ) -> None:
         """Initialize the remediation engine.
 
@@ -98,14 +115,18 @@ class RemediationEngine:
             registry: Transform registry mapping rule IDs to fix functions.
             scan_fn: Callable that scans file paths and returns violations.
             max_passes: Maximum convergence passes (default 5).
+            max_ai_attempts: Max LLM calls per file batch (default 2).
             verbose: If True, log progress to stderr.
             node_index: Optional hierarchy node index for enrichment.
+            ai_provider: Optional AI provider for Tier 2 escalation.
         """
         self._registry = registry
         self._scan_fn = scan_fn
         self._max_passes = max_passes
+        self._max_ai_attempts = max_ai_attempts
         self._verbose = verbose
         self._node_index = node_index
+        self._ai_provider = ai_provider
 
     def set_node_index(self, node_index: NodeIndex) -> None:
         """Set or replace the hierarchy node index.
@@ -340,12 +361,447 @@ class RemediationEngine:
 
         fixed_count = sum(len(p.rule_ids) for p in patches)
 
+        # Tier 2 AI escalation (only if provider is set and violations exist)
+        ai_proposals: list[AIProposal] = []
+        if self._ai_provider is not None and tier2:
+            self._log(f"  AI escalation: {len(tier2)} Tier 2 candidate(s)")
+            ai_proposals = self._escalate_tier2(tier2, file_contents, _resolve_file)
+
         return FixReport(
             passes=passes,
             fixed=fixed_count,
             applied_patches=patches,
             remaining_ai=tier2,
             remaining_manual=tier3,
-            ai_proposed=[],
+            ai_proposed=ai_proposals,
             oscillation_detected=oscillation,
         )
+
+    def _escalate_tier2(
+        self,
+        violations: list[ViolationDict],
+        file_contents: dict[str, str],
+        resolve_file: Callable[[str], str | None],
+    ) -> list[AIProposal]:
+        """Run AI escalation for Tier 2 violations with hybrid validation.
+
+        Groups violations by file, sends one batch LLM call per file
+        (chunked if >MAX_VIOLATIONS_PER_CHUNK), validates patches.
+
+        Args:
+            violations: Tier 2 violations to escalate.
+            file_contents: Current file contents (post Tier 1 fixes).
+            resolve_file: Resolves relative violation paths to absolute keys.
+
+        Returns:
+            list[AIProposal]: Validated proposals (one per file).
+        """
+        if self._ai_provider is None:
+            return []
+
+        return asyncio.run(self._escalate_tier2_async(violations, file_contents, resolve_file))
+
+    async def _escalate_tier2_async(
+        self,
+        violations: list[ViolationDict],
+        file_contents: dict[str, str],
+        resolve_file: Callable[[str], str | None],
+    ) -> list[AIProposal]:
+        """Async inner loop: segment by unit, call LLM per unit, reassemble.
+
+        When a NodeIndex is available, violations are mapped to
+        individual FixableUnits (tasks) and the LLM receives only the
+        unit snippet — drastically reducing token usage and improving
+        fix quality.  Orphan violations that cannot be mapped to a unit
+        fall back to a full-file batch call.
+
+        Args:
+            violations: Tier 2 violations to escalate.
+            file_contents: Current file contents (post Tier 1 fixes).
+            resolve_file: Resolves relative violation paths to absolute keys.
+
+        Returns:
+            list[AIProposal]: Validated proposals.
+        """
+        if hasattr(self._ai_provider, "reconnect"):
+            await self._ai_provider.reconnect()  # type: ignore[union-attr]
+
+        by_file: dict[str, list[ViolationDict]] = defaultdict(list)
+        for v in violations:
+            vf_raw = str(v.get("file", ""))
+            vf = resolve_file(vf_raw)
+            if vf is None:
+                continue
+            by_file[vf].append(v)
+
+        results: list[AIProposal] = []
+
+        for file_path in sorted(by_file):
+            file_violations = by_file[file_path]
+            content = file_contents.get(file_path, "")
+            if not content:
+                continue
+
+            self._log(f"  AI file: {Path(file_path).name} ({len(file_violations)} violation(s))")
+
+            if self._node_index is not None and hasattr(self._ai_provider, "propose_unit_fixes"):
+                proposal = await self._escalate_by_units(file_path, file_violations, content)
+            else:
+                proposal = await self._try_batch_proposal(file_path, file_violations, content)
+
+            if proposal is not None:
+                results.append(proposal)
+
+        return results
+
+    async def _escalate_by_units(
+        self,
+        file_path: str,
+        violations: list[ViolationDict],
+        file_content: str,
+    ) -> AIProposal | None:
+        """Segment a file into units, call LLM per unit, reassemble.
+
+        Args:
+            file_path: Absolute file path.
+            violations: All Tier 2 violations for this file.
+            file_content: Current file content.
+
+        Returns:
+            AIProposal combining all unit-level patches, or None.
+        """
+        if self._ai_provider is None or self._node_index is None:
+            return None
+
+        units = extract_units(file_path, file_content, self._node_index)
+        if not units:
+            self._log("    No units found, falling back to full-file")
+            return await self._try_batch_proposal(file_path, violations, file_content)
+
+        orphans = assign_violations_to_units(units, violations)
+        units_with_violations = [u for u in units if u.violations]
+
+        self._log(f"    {len(units_with_violations)} unit(s) with violations, {len(orphans)} orphan(s)")
+
+        # Limit concurrency to avoid overwhelming the LLM backend
+        max_concurrent = 8
+        semaphore = asyncio.Semaphore(max_concurrent)
+
+        async def _process_unit(
+            unit: FixableUnit,
+        ) -> tuple[list[AIPatch], list[AISkipped]]:
+            async with semaphore:
+                patches, skipped = await self._ai_provider.propose_unit_fixes(  # type: ignore[union-attr]
+                    unit.violations,
+                    unit.snippet,
+                    file_path,
+                    unit.line_start,
+                    unit.line_end,
+                )
+                valid = [p for p in patches if p.confidence >= 0.01] if patches else []
+                return valid, skipped or []
+
+        # Process all units in parallel (bounded by semaphore)
+        unit_results: list[tuple[list[AIPatch], list[AISkipped]] | BaseException] = await asyncio.gather(
+            *[_process_unit(u) for u in units_with_violations],
+            return_exceptions=True,
+        )
+
+        all_patches: list[AIPatch] = []
+        all_skipped: list[AISkipped] = []
+
+        for i, result in enumerate(unit_results):
+            unit = units_with_violations[i]
+            if isinstance(result, BaseException):
+                self._log(f"    Unit L{unit.line_start}-{unit.line_end}: ERROR {result}")
+                continue
+            patches, skipped = result
+            if patches:
+                all_patches.extend(patches)
+            if skipped:
+                all_skipped.extend(skipped)
+
+        if orphans:
+            self._log(f"    Fallback: {len(orphans)} orphan violation(s)")
+            fallback_patches, fallback_skipped = await self._ai_provider.propose_fixes(orphans, file_content)
+            if fallback_patches:
+                all_patches.extend(p for p in fallback_patches if p.confidence >= 0.01)
+            all_skipped.extend(fallback_skipped)
+
+        if not all_patches and not all_skipped:
+            return None
+
+        # Re-validate unit patches the same way as batch patches
+        is_valid, transforms_applied, feedback = self._validate_batch_patches(all_patches, file_path, file_content)
+
+        if not is_valid and feedback:
+            self._log(f"    Unit patches failed validation: {feedback.split(chr(10))[0]}")
+            # Mark as AI_FAILED instead of returning a broken proposal
+            for v in violations:
+                v["remediation_resolution"] = RemediationResolution.AI_FAILED
+            return None
+
+        for v in violations:
+            rid = str(v.get("rule_id", ""))
+            patched_rules = {p.rule_id for p in all_patches}
+            if rid in patched_rules:
+                conf = min(p.confidence for p in all_patches if p.rule_id == rid)
+                v["remediation_resolution"] = (
+                    RemediationResolution.AI_LOW_CONFIDENCE if conf < 0.7 else RemediationResolution.AI_PROPOSED
+                )
+
+        generate_patch_hunks(file_content, all_patches, file_path)
+        patched_content = apply_patches(file_content, all_patches)
+        full_diff = "".join(
+            difflib.unified_diff(
+                file_content.splitlines(keepends=True),
+                patched_content.splitlines(keepends=True),
+                fromfile=f"a/{file_path}",
+                tofile=f"b/{file_path} (AI proposed)",
+            )
+        )
+
+        return AIProposal(
+            file=file_path,
+            original_yaml=file_content,
+            fixed_yaml=patched_content,
+            patches=all_patches,
+            diff=full_diff,
+            skipped=all_skipped,
+            hybrid_transforms_applied=transforms_applied,
+        )
+
+    async def _try_batch_proposal(
+        self,
+        file_path: str,
+        violations: list[ViolationDict],
+        file_content: str,
+    ) -> AIProposal | None:
+        """Send all violations for a file in a single LLM call with retry.
+
+        Assumes a frontier model with large context/output window.
+
+        Args:
+            file_path: Absolute path to the file.
+            violations: All violations for this file.
+            file_content: Current file content.
+
+        Returns:
+            Validated AIProposal, or None if all attempts fail.
+        """
+        if self._ai_provider is None:
+            return None
+
+        all_patches: list[AIPatch] = []
+        all_skipped: list[AISkipped] = []
+        total_t1_applied = 0
+        feedback: str | None = None
+
+        for attempt in range(self._max_ai_attempts):
+            patches, skipped = await self._ai_provider.propose_fixes(
+                violations,
+                file_content,
+                feedback=feedback,
+            )
+
+            all_skipped = skipped
+
+            if patches is None:
+                self._log(f"    Attempt {attempt + 1}: AI returned no patches")
+                for v in violations:
+                    v["remediation_resolution"] = RemediationResolution.AI_FAILED
+                return None
+
+            patches = [p for p in patches if p.confidence >= 0.01]
+
+            if not patches:
+                self._log(f"    Attempt {attempt + 1}: all patches below confidence threshold")
+                for v in violations:
+                    v["remediation_resolution"] = RemediationResolution.AI_FAILED
+                return None
+
+            validated, t1_applied, new_feedback = self._validate_batch_patches(patches, file_path, file_content)
+
+            if validated:
+                total_t1_applied += t1_applied
+                self._log(
+                    f"    Attempt {attempt + 1}: validated ({len(patches)} patches, {t1_applied} hybrid transforms)"
+                )
+                all_patches = patches
+                break
+
+            feedback = new_feedback
+            self._log(
+                f"    Attempt {attempt + 1}: validation failed, "
+                f"{'retrying' if attempt < self._max_ai_attempts - 1 else 'giving up'}"
+            )
+        else:
+            for v in violations:
+                v["remediation_resolution"] = RemediationResolution.AI_FAILED
+            return None
+
+        if not all_patches:
+            return None
+
+        # Generate diff hunks and build proposal
+        generate_patch_hunks(
+            file_content,
+            all_patches,
+            file_path,
+        )
+        patched_content = apply_patches(file_content, all_patches)
+        full_diff = "".join(
+            difflib.unified_diff(
+                file_content.splitlines(keepends=True),
+                patched_content.splitlines(keepends=True),
+                fromfile=f"a/{file_path}",
+                tofile=f"b/{file_path} (AI proposed)",
+            )
+        )
+
+        # Set resolution on violations that have matching patches
+        patched_rules = {p.rule_id for p in all_patches}
+        for v in violations:
+            rid = str(v.get("rule_id", ""))
+            if rid in patched_rules:
+                conf = min(p.confidence for p in all_patches if p.rule_id == rid)
+                if conf < 0.7:
+                    v["remediation_resolution"] = RemediationResolution.AI_LOW_CONFIDENCE
+                else:
+                    v["remediation_resolution"] = RemediationResolution.AI_PROPOSED
+
+        return AIProposal(
+            file=file_path,
+            original_yaml=file_content,
+            fixed_yaml=patched_content,
+            patches=all_patches,
+            diff=full_diff,
+            skipped=all_skipped,
+            hybrid_transforms_applied=total_t1_applied,
+        )
+
+    def _validate_batch_patches(
+        self,
+        patches: list[AIPatch],
+        file_path: str,
+        original_content: str,
+    ) -> tuple[bool, int, str | None]:
+        """Re-validate AI patches through APME validators.
+
+        Applies all patches, scans, checks that no new violations were
+        introduced (pre-existing ones are expected and ignored).
+
+        Args:
+            patches: AI patches to validate.
+            file_path: Path to the file.
+            original_content: Original file content (for restoration).
+
+        Returns:
+            Tuple of (is_valid, transforms_applied, feedback_for_retry).
+        """
+        baseline_keys = {(str(v.get("rule_id", "")), str(v.get("line", ""))) for v in self._scan_fn([file_path])}
+
+        patched = apply_patches(original_content, patches)
+
+        try:
+            import yaml  # noqa: PLC0415
+            from yaml import SafeLoader  # noqa: PLC0415
+
+            class _StrictLoader(SafeLoader):
+                """SafeLoader that rejects duplicate keys."""
+
+            def _no_dup_keys(loader: _StrictLoader, node: yaml.MappingNode) -> dict:  # type: ignore[type-arg]
+                seen: set[str] = set()
+                for key_node, _ in node.value:
+                    key = loader.construct_object(key_node)  # type: ignore[no-untyped-call]
+                    if key in seen:
+                        msg = f"duplicate key: {key}"
+                        raise yaml.constructor.ConstructorError(
+                            "while constructing a mapping",
+                            node.start_mark,
+                            msg,
+                            key_node.start_mark,
+                        )
+                    seen.add(key)
+                return loader.construct_mapping(node)
+
+            _StrictLoader.add_constructor(
+                yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
+                _no_dup_keys,
+            )
+            yaml.load(patched, Loader=_StrictLoader)  # noqa: S506
+        except yaml.YAMLError as exc:
+            short = str(exc).split("\n")[0]
+            self._log(f"    AI output is invalid YAML: {short}")
+            return (
+                False,
+                0,
+                f"Your patches produced invalid YAML:\n{exc}\n"
+                "Do NOT include structural keys (tasks:, vars:, handlers:) "
+                "in your patch unless they fall within your line_start:line_end. "
+                "Including them creates duplicates.",
+            )
+
+        try:
+            Path(file_path).write_text(patched, encoding="utf-8")
+            post_violations = self._scan_fn([file_path])
+
+            new_violations = [
+                v for v in post_violations if (str(v.get("rule_id", "")), str(v.get("line", ""))) not in baseline_keys
+            ]
+
+            if not new_violations:
+                return True, 0, None
+
+            # Hybrid cleanup: apply Tier 1 transforms to fix new issues
+            tier1, _, _ = partition_violations(new_violations, self._registry)
+            transforms_applied = 0
+
+            if tier1:
+                content = patched
+                tier1.sort(key=violation_line_to_int, reverse=True)
+
+                for v in tier1:
+                    rule_id = normalize_rule_id(str(v.get("rule_id", "")))
+                    result = self._registry.apply(rule_id, content, v)
+                    if result.applied:
+                        content = result.content
+                        transforms_applied += 1
+
+                Path(file_path).write_text(content, encoding="utf-8")
+                remaining_all = self._scan_fn([file_path])
+                remaining_new = [
+                    v for v in remaining_all if (str(v.get("rule_id", "")), str(v.get("line", ""))) not in baseline_keys
+                ]
+
+                if not remaining_new:
+                    return True, transforms_applied, None
+
+                new_violations = remaining_new
+
+            feedback_lines = ["Your patches introduced new violations:"]
+            for v in new_violations[:5]:
+                feedback_lines.append(f"- {v.get('rule_id')}: {v.get('message')} (line {v.get('line')})")
+            if len(new_violations) > 5:
+                feedback_lines.append(f"  ... and {len(new_violations) - 5} more")
+            return False, transforms_applied, "\n".join(feedback_lines)
+        finally:
+            Path(file_path).write_text(original_content, encoding="utf-8")
+
+
+def _chunk_violations(
+    violations: list[ViolationDict],
+    max_per_chunk: int,
+) -> list[list[ViolationDict]]:
+    """Split violations into chunks of at most max_per_chunk.
+
+    Args:
+        violations: Full list of violations.
+        max_per_chunk: Maximum violations per chunk.
+
+    Returns:
+        List of violation sub-lists.
+    """
+    if len(violations) <= max_per_chunk:
+        return [violations]
+    return [violations[i : i + max_per_chunk] for i in range(0, len(violations), max_per_chunk)]

@@ -45,6 +45,7 @@ from apme_engine.daemon.violation_convert import violation_proto_to_dict
 from apme_engine.engine.models import RemediationClass, RemediationResolution, ViolationDict, YAMLDict
 from apme_engine.engine.node_index import NodeIndex
 from apme_engine.formatter import format_directory, format_file
+from apme_engine.remediation.ai_provider import AIPatch, AIProposal, apply_patches
 from apme_engine.remediation.engine import RemediationEngine
 from apme_engine.remediation.partition import (
     add_classification_to_violations,
@@ -857,6 +858,9 @@ def _apply_remediation(
     ansible_version: str | None = None,
     collection_specs: list[str] | None = None,
     session_id: str | None = None,
+    ai_provider: object | None = None,
+    max_ai_attempts: int = 2,
+    ci_mode: bool = False,
 ) -> None:
     """Scan files and run the remediation convergence loop.
 
@@ -868,6 +872,9 @@ def _apply_remediation(
         ansible_version: ansible-core version for introspection.
         collection_specs: Optional collection specifiers for venv.
         session_id: Optional session ID for venv reuse.
+        ai_provider: Optional AIProvider for Tier 2 escalation.
+        max_ai_attempts: Max retry attempts for AI proposals per file batch.
+        ci_mode: If True, apply AI proposals without interactive review.
     """
     if target.is_file():
         yaml_files = [str(target)]
@@ -937,12 +944,16 @@ def _apply_remediation(
         registry=registry,
         scan_fn=scan_fn,
         max_passes=max_passes,
+        max_ai_attempts=max_ai_attempts,
         verbose=True,
         node_index=node_index,
+        ai_provider=ai_provider,  # type: ignore[arg-type]
     )
 
     sys.stderr.write(f"  {len(yaml_files)} YAML file(s), {len(registry)} transforms registered\n")
     sys.stderr.write(f"  Transforms: {', '.join(registry.rule_ids)}\n")
+    if ai_provider is not None:
+        sys.stderr.write("  AI escalation: enabled\n")
     sys.stderr.write("  Remediating...\n")
 
     report = engine.remediate(
@@ -962,8 +973,28 @@ def _apply_remediation(
     sys.stderr.write(f"  Tier 2 (AI-proposable):  {len(report.remaining_ai)} remaining\n")
     sys.stderr.write(f"  Tier 3 (manual review):  {len(report.remaining_manual)} remaining\n")
     sys.stderr.write(f"  Passes:                  {report.passes}\n")
+    if report.ai_proposed:
+        total_patches = sum(len(p.patches) for p in report.ai_proposed)
+        total_skipped = sum(len(p.skipped) for p in report.ai_proposed)
+        sys.stderr.write(f"  AI proposals:            {len(report.ai_proposed)} file(s), {total_patches} patch(es)\n")
+        if total_skipped:
+            sys.stderr.write(f"  AI skipped:              {total_skipped} violation(s) (see below for guidance)\n")
     if report.oscillation_detected:
         sys.stderr.write("  WARNING: oscillation detected, stopped early\n")
+
+    # Interactive review of AI proposals
+    if report.ai_proposed and not ci_mode:
+        _review_ai_proposals(report.ai_proposed, apply=apply)
+    elif report.ai_proposed and ci_mode:
+        if apply:
+            for proposal in report.ai_proposed:
+                Path(proposal.file).write_text(proposal.fixed_yaml, encoding="utf-8")
+            sys.stderr.write(f"  CI mode: applied {total_patches} AI patch(es) automatically\n")
+        else:
+            sys.stderr.write(f"  CI mode: {total_patches} AI patch(es) ready (use --apply to write)\n")
+
+    # Print AI skipped violations with guidance
+    _print_ai_skipped(report.ai_proposed)
 
     if active_session_id is not None:
         release_session(active_session_id)
@@ -974,11 +1005,200 @@ def _apply_remediation(
             sys.stdout.write(p.diff)
 
 
-def _run_fix(args: argparse.Namespace) -> None:
-    """Format → idempotency check → scan → remediate (convergence loop).
+def _review_ai_proposals(
+    proposals: list[AIProposal],
+    *,
+    apply: bool = False,
+) -> None:
+    """Interactive per-hunk review loop (like git add -p).
+
+    Iterates per file, then per patch within each file.
+    Only accepted patches are applied.
 
     Args:
-        args: Parsed CLI namespace with target, exclude, apply, check, max_passes, opa_bundle.
+        proposals: List of AIProposal objects (one per file).
+        apply: If True, accepted patches are written to disk.
+    """
+    total_patches = sum(len(p.patches) for p in proposals)
+    accepted_total = 0
+    skip_all = False
+
+    for proposal in proposals:
+        if skip_all:
+            break
+
+        sys.stderr.write(
+            f"\n{'=' * 60}\n"
+            f"File: {proposal.file}\n"
+            f"Patches: {len(proposal.patches)} | "
+            f"Min confidence: {proposal.confidence:.0%}\n"
+            f"{'=' * 60}\n"
+        )
+
+        if proposal.hybrid_transforms_applied:
+            sys.stderr.write(
+                f"  ({proposal.hybrid_transforms_applied} deterministic cleanup(s) applied to AI output)\n"
+            )
+
+        accepted_patches: list[AIPatch] = []
+
+        for pidx, patch in enumerate(proposal.patches, 1):
+            sys.stderr.write(
+                f"\n--- Patch {pidx}/{len(proposal.patches)} "
+                f"[{patch.rule_id}] "
+                f"lines {patch.line_start}-{patch.line_end} "
+                f"({patch.confidence:.0%})\n"
+                f"    {patch.explanation}\n"
+            )
+
+            if patch.diff_hunk:
+                sys.stdout.write(patch.diff_hunk + "\n")
+            else:
+                sys.stderr.write("  (no diff available)\n")
+
+            answer = _prompt_ynsa()
+            if answer == "y":
+                accepted_patches.append(patch)
+                accepted_total += 1
+            elif answer == "n":
+                sys.stderr.write("  Skipped\n")
+            elif answer == "a":
+                accepted_patches.extend(proposal.patches[pidx - 1 :])
+                accepted_total += len(proposal.patches) - pidx + 1
+                sys.stderr.write(f"  Accepted remaining {len(proposal.patches) - pidx + 1} patch(es) for this file\n")
+                break
+            elif answer == "s":
+                skip_all = True
+                break
+            elif answer == "q":
+                sys.stderr.write("\nAborted.\n")
+                sys.stderr.write(f"\n{accepted_total} of {total_patches} AI patch(es) accepted\n")
+                return
+
+        if accepted_patches and apply:
+            patched = apply_patches(proposal.original_yaml, accepted_patches)
+            Path(proposal.file).write_text(patched, encoding="utf-8")
+            sys.stderr.write(f"  Applied {len(accepted_patches)} patch(es) to {proposal.file}\n")
+        elif accepted_patches:
+            sys.stderr.write(f"  Accepted {len(accepted_patches)} patch(es) (use --apply to write)\n")
+
+    sys.stderr.write(f"\n{accepted_total} of {total_patches} AI patch(es) accepted\n")
+
+
+def _prompt_ynsa() -> str:
+    """Prompt user for y/n/a/s/q response.
+
+    Returns:
+        One of 'y', 'n', 'a', 's', 'q'.
+    """
+    while True:
+        try:
+            answer = (
+                input("\nAccept? [y]es / [n]o / [a]ccept rest of file / [s]kip remaining / [q]uit: ").strip().lower()
+            )
+        except (EOFError, KeyboardInterrupt):
+            return "q"
+
+        if answer in ("y", "yes"):
+            return "y"
+        if answer in ("n", "no"):
+            return "n"
+        if answer in ("a", "accept"):
+            return "a"
+        if answer in ("s", "skip"):
+            return "s"
+        if answer in ("q", "quit"):
+            return "q"
+        sys.stderr.write("  Please enter y, n, a, s, or q\n")
+
+
+def _print_ai_skipped(proposals: list[AIProposal]) -> None:
+    """Print violations the AI could not fix with reasons and suggestions.
+
+    Args:
+        proposals: AI proposals (may contain skipped entries).
+    """
+    all_skipped = [(p.file, s) for p in proposals for s in p.skipped]
+    if not all_skipped:
+        return
+
+    sys.stderr.write(f"\n{yellow('AI could not auto-fix')} ({len(all_skipped)} violation(s)):\n")
+
+    current_file = ""
+    for file_path, skip in all_skipped:
+        if file_path != current_file:
+            current_file = file_path
+            sys.stderr.write(f"\n  {bold(Path(file_path).name)}\n")
+
+        sys.stderr.write(f"    {dim(skip.rule_id)} line {skip.line}: {skip.reason}\n")
+        if skip.suggestion:
+            sys.stderr.write(f"      {cyan('suggestion:')} {skip.suggestion}\n")
+
+
+def _resolve_ai_provider(args: argparse.Namespace) -> object | None:
+    """Set up the AI provider if --ai is enabled.
+
+    Runs preflight and exits on failure.
+
+    Args:
+        args: CLI namespace with ai, model, abbenay_addr, abbenay_token.
+
+    Returns:
+        AbbenayProvider instance if --ai, else None.
+    """
+    if not getattr(args, "ai", False):
+        return None
+
+    import asyncio  # noqa: PLC0415
+
+    from apme_engine.remediation.abbenay_provider import (  # noqa: PLC0415
+        AbbenayProvider,
+        discover_abbenay,
+    )
+
+    addr = getattr(args, "abbenay_addr", None)
+    if addr is None:
+        addr = discover_abbenay()
+
+    if addr is None:
+        sys.stderr.write(
+            "ERROR: --ai requires a running Abbenay daemon.\n"
+            "Start with: abbenay daemon start\n"
+            "Or pass --abbenay-addr explicitly.\n"
+        )
+        sys.exit(1)
+
+    model = getattr(args, "model", None)
+    if not model:
+        sys.stderr.write("ERROR: --ai requires a model.\nPass --model 'provider/model' or set APME_AI_MODEL.\n")
+        sys.exit(1)
+
+    try:
+        provider = AbbenayProvider(
+            addr,
+            token=getattr(args, "abbenay_token", None),
+            model=model,
+        )
+    except ImportError as exc:
+        sys.stderr.write(f"ERROR: {exc}\n")
+        sys.exit(1)
+
+    sys.stderr.write(f"  Abbenay daemon: {addr}\n")
+
+    healthy = asyncio.run(provider.preflight())
+    if not healthy:
+        sys.stderr.write("ERROR: Abbenay daemon health check failed.\nEnsure the daemon is running and accessible.\n")
+        sys.exit(1)
+
+    sys.stderr.write("  Abbenay preflight: OK\n")
+    return provider
+
+
+def _run_fix(args: argparse.Namespace) -> None:
+    """Format -> idempotency check -> scan -> remediate (convergence loop).
+
+    Args:
+        args: Parsed CLI namespace with target, exclude, apply, check, max_passes, opa_bundle, ai flags.
 
     """
     target = Path(args.target).resolve()
@@ -1029,6 +1249,9 @@ def _run_fix(args: argparse.Namespace) -> None:
         sys.exit(1)
     sys.stderr.write("  Passed (zero diffs on second run)\n")
 
+    # Phase 2.5: AI preflight (if --ai)
+    ai_provider = _resolve_ai_provider(args)
+
     # Phase 3: Scan + Remediate
     sys.stderr.write("Phase 3: Scanning & remediating...\n")
     _apply_remediation(
@@ -1039,6 +1262,9 @@ def _run_fix(args: argparse.Namespace) -> None:
         ansible_version=getattr(args, "ansible_version", None),
         collection_specs=getattr(args, "collections", None),
         session_id=getattr(args, "session", None),
+        ai_provider=ai_provider,
+        max_ai_attempts=getattr(args, "max_ai_attempts", 2),
+        ci_mode=getattr(args, "ci", False),
     )
 
 
@@ -1266,7 +1492,37 @@ def main() -> None:
     fix_parser.add_argument("--check", action="store_true", help="Exit 1 if changes would be made (CI mode)")
     fix_parser.add_argument("--exclude", nargs="*", default=None, help="Glob patterns to skip")
     fix_parser.add_argument("--max-passes", type=int, default=5, help="Max convergence passes (default: 5)")
-    fix_parser.add_argument("--no-ai", action="store_true", help="Skip AI escalation (deterministic fixes only)")
+    fix_parser.add_argument(
+        "--ai",
+        action="store_true",
+        help="Enable AI escalation for Tier 2 violations (requires Abbenay daemon)",
+    )
+    fix_parser.add_argument(
+        "--model",
+        default=os.environ.get("APME_AI_MODEL"),
+        help="AI model identifier (e.g. 'openrouter/anthropic/claude-opus-4.6'). Falls back to APME_AI_MODEL env var.",
+    )
+    fix_parser.add_argument(
+        "--abbenay-addr",
+        default=None,
+        help="Abbenay daemon address (default: auto-discover from runtime socket)",
+    )
+    fix_parser.add_argument(
+        "--abbenay-token",
+        default=os.environ.get("APME_ABBENAY_TOKEN"),
+        help="Consumer auth token for Abbenay inline policy. Falls back to APME_ABBENAY_TOKEN env var.",
+    )
+    fix_parser.add_argument(
+        "--max-ai-attempts",
+        type=int,
+        default=2,
+        help="Max retry attempts for AI proposals per file batch (default: 2)",
+    )
+    fix_parser.add_argument(
+        "--ci",
+        action="store_true",
+        help="CI mode: apply AI proposals without interactive review",
+    )
     fix_parser.add_argument("--opa-bundle", default=None, help="Path to OPA bundle directory")
     fix_parser.add_argument(
         "--ansible-version",

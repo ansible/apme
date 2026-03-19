@@ -30,6 +30,9 @@ This directory contains the Architecture Decision Records (ADRs) for APME.
 | [ADR-022](ADR-022-session-scoped-venvs.md) | Session-Scoped Venvs with Lifecycle Management | Accepted | 2026-03 |
 | [ADR-023](ADR-023-per-finding-classification.md) | Per-Finding Remediation Classification and Resolution | Accepted | 2026-03 |
 | [ADR-024](ADR-024-thin-cli-daemon-mode.md) | Thin CLI with Local Daemon Mode | Proposed | 2026-03 |
+| [ADR-025](ADR-025-ai-provider-protocol.md) | AIProvider Protocol Abstraction | Accepted | 2026-03 |
+| [ADR-026](ADR-026-rule-scope-metadata.md) | Rule Scope as First-Class Metadata | Proposed | 2026-03 |
+| [ADR-027](ADR-027-agentic-project-remediation.md) | Agentic Project-Level AI Remediation | Proposed | 2026-03 |
 
 ## Categories
 
@@ -45,6 +48,7 @@ This directory contains the Architecture Decision Records (ADRs) for APME.
 - ADR-002: OPA/Rego hybrid rules
 - ADR-003: Vendored ARI engine
 - ADR-008: Rule ID conventions
+- ADR-026: Rule scope metadata (proposed)
 
 ### Validators
 - ADR-006: Ansible validator venvs
@@ -57,6 +61,8 @@ This directory contains the Architecture Decision Records (ADRs) for APME.
 - ADR-009: Remediation engine architecture
 - ADR-011: YAML formatter pre-pass
 - ADR-023: Per-finding remediation classification and resolution
+- ADR-025: AIProvider protocol abstraction
+- ADR-027: Agentic project-level AI remediation (proposed)
 
 ### Tooling & CI
 - ADR-014: Ruff linter and prek pre-commit hooks
@@ -81,7 +87,7 @@ Original planning ADRs that were superseded by implementation decisions:
 ## Creating New ADRs
 
 1. Copy the template from `../.sdlc/templates/adr.md`
-2. Use the next available number (currently ADR-025)
+2. Use the next available number (currently ADR-028)
 3. Include:
    - Status (Proposed → Accepted)
    - Date
@@ -121,3 +127,6 @@ Original planning ADRs that were superseded by implementation decisions:
 | 022 | 2026-03 | Session-scoped venvs with lifecycle management |
 | 023 | 2026-03 | Per-finding remediation classification and resolution |
 | 024 | 2026-03 | Thin CLI with local daemon mode (proposed) |
+| 025 | 2026-03 | AIProvider protocol abstraction |
+| 026 | 2026-03 | Rule scope as first-class metadata (proposed) |
+| 027 | 2026-03 | Agentic project-level AI remediation (proposed) |
