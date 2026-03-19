@@ -11,7 +11,9 @@ import apme_engine.cli as cli_module
 from apme_engine.ansi import strip_ansi
 from apme_engine.cli import (
     _deduplicate_violations,
+    _find_role_root,
     _fmt_ms,
+    _group_files_by_scan_root,
     _sort_violations,
 )
 from apme_engine.engine.models import ViolationDict, YAMLDict
@@ -712,3 +714,173 @@ class TestFixCommand:
         ):
             cli_module.main()
         assert exc_info.value.code == 0
+
+
+# ---------------------------------------------------------------------------
+# _find_role_root
+# ---------------------------------------------------------------------------
+
+
+class TestFindRoleRoot:
+    """Tests for _find_role_root()."""
+
+    def test_file_inside_role_tasks(self, tmp_path: Path) -> None:
+        """File under tasks/ returns the role root.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        role = tmp_path / "my_role"
+        (role / "tasks").mkdir(parents=True)
+        (role / "defaults").mkdir()
+        yml = role / "tasks" / "main.yml"
+        yml.write_text("---\n")
+        assert _find_role_root(yml.resolve()) == role
+
+    def test_file_inside_role_handlers(self, tmp_path: Path) -> None:
+        """File under handlers/ returns the role root.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        role = tmp_path / "my_role"
+        (role / "handlers").mkdir(parents=True)
+        yml = role / "handlers" / "main.yml"
+        yml.write_text("---\n")
+        assert _find_role_root(yml.resolve()) == role
+
+    def test_file_not_in_role(self, tmp_path: Path) -> None:
+        """File outside any role structure returns None.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        yml = tmp_path / "playbook.yml"
+        yml.write_text("---\n")
+        assert _find_role_root(yml.resolve()) is None
+
+    def test_nested_role(self, tmp_path: Path) -> None:
+        """Finds the nearest role root when roles are nested.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        outer = tmp_path / "roles" / "outer"
+        (outer / "tasks").mkdir(parents=True)
+        inner = outer / "tasks" / "inner_role"
+        (inner / "tasks").mkdir(parents=True)
+        yml = inner / "tasks" / "main.yml"
+        yml.write_text("---\n")
+        assert _find_role_root(yml.resolve()) == inner
+
+    def test_role_with_meta_only(self, tmp_path: Path) -> None:
+        """A directory with only meta/ is still detected as a role root.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        role = tmp_path / "meta_role"
+        (role / "meta").mkdir(parents=True)
+        yml = role / "meta" / "main.yml"
+        yml.write_text("---\n")
+        assert _find_role_root(yml.resolve()) == role
+
+
+# ---------------------------------------------------------------------------
+# _group_files_by_scan_root
+# ---------------------------------------------------------------------------
+
+
+class TestGroupFilesByScanRoot:
+    """Tests for _group_files_by_scan_root()."""
+
+    def test_single_role(self, tmp_path: Path) -> None:
+        """All files in one role group under the role root.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        role = tmp_path / "my_role"
+        (role / "tasks").mkdir(parents=True)
+        (role / "handlers").mkdir()
+        t = role / "tasks" / "main.yml"
+        h = role / "handlers" / "main.yml"
+        t.write_text("---\n")
+        h.write_text("---\n")
+
+        groups = _group_files_by_scan_root([str(t), str(h)])
+        assert len(groups) == 1
+        root = next(iter(groups))
+        assert root == role
+        assert set(groups[root]) == {t.resolve(), h.resolve()}
+
+    def test_two_roles(self, tmp_path: Path) -> None:
+        """Files from different roles are grouped separately.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        r1 = tmp_path / "role_a"
+        (r1 / "tasks").mkdir(parents=True)
+        r2 = tmp_path / "role_b"
+        (r2 / "tasks").mkdir(parents=True)
+        f1 = r1 / "tasks" / "main.yml"
+        f2 = r2 / "tasks" / "main.yml"
+        f1.write_text("---\n")
+        f2.write_text("---\n")
+
+        groups = _group_files_by_scan_root([str(f1), str(f2)])
+        assert len(groups) == 2
+        roots = set(groups.keys())
+        assert roots == {r1, r2}
+
+    def test_ungrouped_files_share_common_ancestor(self, tmp_path: Path) -> None:
+        """Non-role files are grouped under their common ancestor.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        d = tmp_path / "project"
+        d.mkdir()
+        a = d / "site.yml"
+        b = d / "deploy.yml"
+        a.write_text("---\n")
+        b.write_text("---\n")
+
+        groups = _group_files_by_scan_root([str(a), str(b)])
+        assert len(groups) == 1
+        root = next(iter(groups))
+        assert root == d
+
+    def test_mixed_role_and_loose_files(self, tmp_path: Path) -> None:
+        """Role files and loose playbooks are grouped separately.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        role = tmp_path / "my_role"
+        (role / "tasks").mkdir(parents=True)
+        rf = role / "tasks" / "main.yml"
+        rf.write_text("---\n")
+        loose = tmp_path / "site.yml"
+        loose.write_text("---\n")
+
+        groups = _group_files_by_scan_root([str(rf), str(loose)])
+        assert len(groups) == 2
+        assert role in groups
+        resolved_loose = [p for root, paths in groups.items() if root != role for p in paths]
+        assert loose.resolve() in resolved_loose
+
+    def test_single_ungrouped_file(self, tmp_path: Path) -> None:
+        """A single non-role file is grouped under its parent directory.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        f = tmp_path / "playbook.yml"
+        f.write_text("---\n")
+
+        groups = _group_files_by_scan_root([str(f)])
+        assert len(groups) == 1
+        root = next(iter(groups))
+        assert root == tmp_path

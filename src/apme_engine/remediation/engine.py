@@ -211,11 +211,11 @@ class RemediationEngine:
             if sf is not None:
                 structured[fp] = sf
 
-        # Violations may report relative filenames (e.g. "site.yml") while
-        # file_contents keys are absolute paths.  Build a reverse lookup so we
-        # can resolve either form to the canonical key.  When multiple files
-        # share a basename the entry is set to None so we skip rather than
-        # resolving to the wrong file.
+        # Violations may report relative filenames (e.g. "site.yml" or
+        # "tasks/main.yml") while file_contents keys are absolute paths.
+        # Build a reverse lookup so we can resolve either form to the
+        # canonical key.  When multiple files share a basename the entry
+        # is set to None so we skip rather than resolving to the wrong file.
         _basename_to_key: dict[str, str | None] = {}
         for fp in file_paths:
             bn = Path(fp).name
@@ -229,9 +229,18 @@ class RemediationEngine:
             if vf in file_contents:
                 return vf
             candidate = _basename_to_key.get(vf) or _basename_to_key.get(Path(vf).name)
-            if candidate is None and vf:
+            if candidate is not None:
+                return candidate
+            # Try suffix matching for relative paths (e.g. "tasks/main.yml"
+            # matching "/workspace/role/tasks/main.yml").
+            if vf and "/" in vf:
+                suffix = "/" + vf
+                matches = [fp for fp in file_paths if fp.endswith(suffix)]
+                if len(matches) == 1:
+                    return matches[0]
+            if vf:
                 self._log(f"  Skipping violation: ambiguous or unknown file '{vf}'")
-            return candidate
+            return None
 
         originals = dict(file_contents)
         all_applied_rules: dict[str, list[str]] = {fp: [] for fp in file_paths}

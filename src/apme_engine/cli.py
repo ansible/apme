@@ -5,7 +5,7 @@ import json
 import os
 import sys
 import time
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import cast
 
@@ -710,6 +710,60 @@ def _run_format(args: argparse.Namespace) -> None:
         sys.stderr.write(f"\n{len(changed)} file(s) would be reformatted (use --apply to write)\n")
 
 
+_ROLE_MARKER_DIRS = frozenset({"tasks", "handlers", "defaults", "vars", "meta", "files", "templates"})
+
+
+def _find_role_root(file_path: Path) -> Path | None:
+    """Walk up from *file_path* and return the Ansible role root, if any.
+
+    A role root is a directory that directly contains at least one of the
+    standard role sub-directories (tasks/, handlers/, defaults/, …).
+
+    Args:
+        file_path: Resolved path to a YAML file.
+
+    Returns:
+        Role root Path, or None if the file is not inside a role.
+    """
+    for ancestor in file_path.parents:
+        children = {p.name for p in ancestor.iterdir() if p.is_dir()}
+        if children & _ROLE_MARKER_DIRS:
+            return ancestor
+    return None
+
+
+def _group_files_by_scan_root(file_paths: list[str]) -> dict[Path, list[Path]]:
+    """Partition resolved file paths so each group shares one scan root.
+
+    Files inside an Ansible role are grouped under the role root.
+    Remaining files are grouped under their common ancestor directory.
+
+    Args:
+        file_paths: Absolute paths to YAML files.
+
+    Returns:
+        Mapping from scan-root directory to the files that belong to it.
+    """
+    groups: dict[Path, list[Path]] = {}
+    ungrouped: list[Path] = []
+
+    for fp in file_paths:
+        p = Path(fp).resolve()
+        role_root = _find_role_root(p)
+        if role_root is not None:
+            groups.setdefault(role_root, []).append(p)
+        else:
+            ungrouped.append(p)
+
+    if ungrouped:
+        common = Path(os.path.commonpath([str(u) for u in ungrouped]))
+        if common.is_file():
+            common = common.parent
+        groups.setdefault(common, []).extend(ungrouped)
+
+    return groups
+
+
 def _scan_files_grpc(
     file_paths: list[str],
     primary_addr: str,
@@ -718,9 +772,9 @@ def _scan_files_grpc(
 ) -> list[ViolationDict]:
     """Scan files via Primary gRPC daemon (fans out to all validators including OPA).
 
-    Each file gets its own ScanStream call so only the requested files are
-    scanned — avoids pulling in unrelated siblings from a shared parent
-    directory, which would inflate violation counts in the remediation loop.
+    Files are grouped by Ansible role boundary so each role is sent as a
+    self-contained scan request.  This preserves the directory structure
+    validators need for FQCN detection, modernization rules, etc.
 
     Args:
         file_paths: Paths to YAML files to scan.
@@ -736,23 +790,76 @@ def _scan_files_grpc(
     if not yaml_files:
         return []
 
+    from apme.v1.common_pb2 import File
+    from apme.v1.primary_pb2 import ScanChunk, ScanOptions  # type: ignore[attr-defined]
+    from apme_engine.daemon.chunked_fs import CHUNK_MAX_BYTES
+
+    groups = _group_files_by_scan_root(yaml_files)
+
     all_violations: list[ViolationDict] = []
     channel = grpc.insecure_channel(primary_addr)
     stub = primary_pb2_grpc.PrimaryStub(channel)  # type: ignore[no-untyped-call]
     try:
-        for fpath in yaml_files:
-            chunks = yield_scan_chunks(
-                fpath,
-                project_root_name="project",
-                ansible_core_version=ansible_version,
-                collection_specs=collection_specs,
-            )
+        for root, paths in groups.items():
+            files: list[File] = []
+            for p in paths:
+                try:
+                    rel = str(p.relative_to(root))
+                except ValueError:
+                    rel = p.name
+                try:
+                    content = p.read_bytes()
+                except OSError:
+                    continue
+                files.append(File(path=rel, content=content))
+
+            options = ScanOptions()
+            if ansible_version:
+                options.ansible_core_version = ansible_version
+            if collection_specs:
+                options.collection_specs.extend(collection_specs)
+
+            def _chunk_iter(
+                _files: list[File] = files,
+                _options: ScanOptions = options,
+            ) -> Iterator[ScanChunk]:
+                batch: list[File] = []
+                batch_bytes = 0
+                first_chunk = True
+                for f in _files:
+                    msg_size = len(f.path.encode()) + len(f.content)
+                    if batch and batch_bytes + msg_size > CHUNK_MAX_BYTES:
+                        kwargs: dict[str, object] = {"files": batch, "last": False}
+                        if first_chunk:
+                            kwargs["scan_id"] = ""
+                            kwargs["project_root"] = "project"
+                            kwargs["options"] = _options
+                        yield ScanChunk(**kwargs)
+                        first_chunk = False
+                        batch = []
+                        batch_bytes = 0
+                    batch.append(f)
+                    batch_bytes += msg_size
+                final_kwargs: dict[str, object] = {"files": batch, "last": True}
+                if first_chunk:
+                    final_kwargs["scan_id"] = ""
+                    final_kwargs["project_root"] = "project"
+                    final_kwargs["options"] = _options
+                yield ScanChunk(**final_kwargs)
+
             try:
-                resp = stub.ScanStream(chunks, timeout=120)
+                resp = stub.ScanStream(_chunk_iter(), timeout=120)
             except grpc.RpcError as e:
-                sys.stderr.write(f"gRPC scan error for {fpath}: {e.details()}\n")
+                sys.stderr.write(f"gRPC scan error for {root}: {e.details()}\n")
                 continue
-            all_violations.extend(violation_proto_to_dict(v) for v in resp.violations)
+            for v in resp.violations:
+                vd = violation_proto_to_dict(v)
+                vf = vd.get("file", "")
+                if isinstance(vf, str) and vf and not Path(vf).is_absolute():
+                    absolute = root / vf
+                    if absolute.exists():
+                        vd["file"] = str(absolute)
+                all_violations.append(vd)
     finally:
         channel.close()
 

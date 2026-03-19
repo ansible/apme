@@ -250,6 +250,207 @@ def _reorder_single_task(mapping: CommentedMap) -> None:
         mapping[k] = v
 
 
+_FORMAT_META_KEYS = frozenset(
+    {
+        "name",
+        "when",
+        "changed_when",
+        "failed_when",
+        "register",
+        "notify",
+        "listen",
+        "become",
+        "become_user",
+        "become_method",
+        "become_flags",
+        "delegate_to",
+        "run_once",
+        "connection",
+        "ignore_errors",
+        "ignore_unreachable",
+        "no_log",
+        "tags",
+        "environment",
+        "vars",
+        "args",
+        "loop",
+        "loop_control",
+        "with_items",
+        "with_dict",
+        "with_fileglob",
+        "with_subelements",
+        "with_sequence",
+        "with_nested",
+        "with_first_found",
+        "block",
+        "rescue",
+        "always",
+        "any_errors_fatal",
+        "max_fail_percentage",
+        "check_mode",
+        "diff",
+        "throttle",
+        "timeout",
+        "retries",
+        "delay",
+        "until",
+        "debugger",
+        "module_defaults",
+        "collections",
+        "local_action",
+    }
+)
+
+_KV_RE = re.compile(r"(\w+)=")
+
+_COMMAND_MODULES = frozenset(
+    {
+        "command",
+        "shell",
+        "raw",
+        "script",
+        "ansible.builtin.command",
+        "ansible.builtin.shell",
+        "ansible.builtin.raw",
+        "ansible.builtin.script",
+        "ansible.legacy.command",
+        "ansible.legacy.shell",
+        "ansible.legacy.raw",
+    }
+)
+
+
+def _find_closing_quote(s: str, quote_char: str) -> int:
+    """Return index of the unescaped closing quote in *s*, or -1.
+
+    Args:
+        s: String starting with the opening quote character.
+        quote_char: The quote character to match (``"`` or ``'``).
+
+    Returns:
+        Index of the closing quote, or -1 if not found.
+    """
+    i = 1
+    while i < len(s):
+        if s[i] == "\\" and i + 1 < len(s):
+            i += 2
+            continue
+        if s[i] == quote_char:
+            return i
+        i += 1
+    return -1
+
+
+def _parse_kv_string(value: str) -> CommentedMap | None:
+    """Parse an old-style ``key=value key2=value2`` string into a CommentedMap.
+
+    Handles quoted values (double and single quotes) and values containing
+    spaces/Jinja expressions.
+
+    Args:
+        value: String containing key=value pairs (e.g. ``name="foo" gid="bar"``).
+
+    Returns:
+        CommentedMap with parsed key-value pairs, or None if the string
+        doesn't look like key=value pairs.
+    """
+    if "=" not in value:
+        return None
+
+    result = CommentedMap()
+    remaining = value.strip()
+
+    while remaining:
+        m = _KV_RE.match(remaining)
+        if m is None:
+            return None
+
+        key = m.group(1)
+        remaining = remaining[m.end() :]
+
+        if remaining.startswith('"') or remaining.startswith("'"):
+            quote_char = remaining[0]
+            end = _find_closing_quote(remaining, quote_char)
+            if end == -1:
+                return None
+            val = remaining[1:end]
+            remaining = remaining[end + 1 :].lstrip()
+        else:
+            parts = remaining.split(None, 1)
+            val = parts[0]
+            remaining = parts[1] if len(parts) > 1 else ""
+
+        result[key] = val
+
+    return result if len(result) > 0 else None
+
+
+def _expand_inline_kv_args(data: object) -> None:
+    """Walk task mappings and expand old-style ``module: key=val key2=val2`` to dict form.
+
+    Skips command/shell/raw/script modules whose string value is a command,
+    not key=value pairs.
+
+    Args:
+        data: CommentedSeq, CommentedMap, or nested structure with tasks.
+    """
+    if isinstance(data, CommentedSeq):
+        for item in data:
+            _expand_inline_kv_args(item)
+    elif isinstance(data, CommentedMap):
+        for task_list_key in ("tasks", "pre_tasks", "post_tasks", "handlers", "block", "rescue", "always"):
+            if task_list_key in data:
+                _expand_inline_kv_args(data[task_list_key])
+
+        _expand_single_task_kv(data)
+
+
+def _expand_single_task_kv(mapping: CommentedMap) -> None:
+    """Expand key=value string on a module key to a proper YAML mapping.
+
+    Args:
+        mapping: CommentedMap for a single task.
+    """
+    module_key = None
+    for k in mapping:
+        if k not in _FORMAT_META_KEYS:
+            module_key = k
+            break
+
+    if module_key is None:
+        return
+
+    if module_key in _COMMAND_MODULES:
+        return
+
+    value = mapping.get(module_key)
+    if not isinstance(value, str) or "=" not in value:
+        return
+
+    parsed = _parse_kv_string(value)
+    if parsed is not None and len(parsed) > 0:
+        mapping[module_key] = parsed
+
+
+def _force_tags_block_style(data: object) -> None:
+    """Walk task/play mappings and convert flow-style ``tags`` lists to block style.
+
+    Args:
+        data: CommentedSeq, CommentedMap, or nested structure with tasks.
+    """
+    if isinstance(data, CommentedSeq):
+        for item in data:
+            _force_tags_block_style(item)
+    elif isinstance(data, CommentedMap):
+        tags = data.get("tags")
+        if isinstance(tags, CommentedSeq) and tags.fa.flow_style():
+            tags.fa.set_block_style()
+
+        for nested_key in ("tasks", "pre_tasks", "post_tasks", "handlers", "block", "rescue", "always"):
+            if nested_key in data:
+                _force_tags_block_style(data[nested_key])
+
+
 def format_content(text: str, filename: str = "<stdin>") -> FormatResult:
     """Format a YAML string.
 
@@ -288,8 +489,12 @@ def format_content(text: str, filename: str = "<stdin>") -> FormatResult:
 
     if isinstance(data, CommentedSeq):
         for item in data:
+            _expand_inline_kv_args(item)
+            _force_tags_block_style(item)
             _reorder_task_keys(item)
     elif isinstance(data, CommentedMap):
+        _expand_inline_kv_args(data)
+        _force_tags_block_style(data)
         _reorder_task_keys(data)
 
     formatted = yaml.dumps(data)

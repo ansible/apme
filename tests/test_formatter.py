@@ -578,3 +578,86 @@ class TestDiffOutput:
         result = format_content(text)
         if not result.changed:
             assert result.diff == ""
+
+
+# ---------------------------------------------------------------------------
+# Inline key=value expansion
+# ---------------------------------------------------------------------------
+
+
+class TestExpandInlineKVArgs:
+    """Tests for _expand_inline_kv_args via format_content."""
+
+    def test_simple_kv_expansion(self) -> None:
+        """Simple key=value pairs are expanded to a YAML mapping."""
+        text = '- name: Add group\n  group: name="mygroup" gid="1000"\n'
+        result = format_content(text)
+        assert "name: mygroup" in result.formatted
+        assert "gid: '1000'" in result.formatted or 'gid: "1000"' in result.formatted
+
+    def test_kv_with_jinja(self) -> None:
+        """Jinja expressions inside quoted values are preserved."""
+        text = '- name: Add group\n  group: name="{{ item.name }}" gid="{{ item.gid }}"\n'
+        result = format_content(text)
+        assert "{{ item.name }}" in result.formatted
+        assert "{{ item.gid }}" in result.formatted
+
+    def test_command_module_excluded(self) -> None:
+        """Command modules keep their string value unchanged."""
+        text = "- name: Run cmd\n  command: echo hello world\n"
+        result = format_content(text)
+        assert "echo hello world" in result.formatted
+
+    def test_shell_module_excluded(self) -> None:
+        """Shell modules keep their string value unchanged."""
+        text = "- name: Run shell\n  shell: ls -la /tmp\n"
+        result = format_content(text)
+        assert "ls -la /tmp" in result.formatted
+
+    def test_raw_module_excluded(self) -> None:
+        """Raw module keeps its string value unchanged."""
+        text = "- name: Raw cmd\n  raw: yum install -y httpd\n"
+        result = format_content(text)
+        assert "yum install -y httpd" in result.formatted
+
+    def test_script_module_excluded(self) -> None:
+        """Script module keeps its string value unchanged."""
+        text = "- name: Run script\n  script: /opt/run.sh --flag\n"
+        result = format_content(text)
+        assert "/opt/run.sh --flag" in result.formatted
+
+    def test_no_kv_string_unchanged(self) -> None:
+        """Strings without = are left as-is."""
+        text = "- name: Debug\n  ansible.builtin.debug:\n    msg: hello world\n"
+        result = format_content(text)
+        assert "msg: hello world" in result.formatted
+
+    def test_kv_expansion_idempotent(self) -> None:
+        """Applying format twice produces the same output."""
+        text = '- name: Add group\n  group: name="mygroup" gid="1000"\n'
+        r1 = format_content(text)
+        r2 = format_content(r1.formatted)
+        assert r1.formatted == r2.formatted
+
+
+# ---------------------------------------------------------------------------
+# Tags block style
+# ---------------------------------------------------------------------------
+
+
+class TestForceTagsBlockStyle:
+    """Tests for _force_tags_block_style via format_content."""
+
+    def test_flow_tags_to_block(self) -> None:
+        """Flow-style tags list is converted to block style."""
+        text = "- name: Test\n  ansible.builtin.debug:\n    msg: hi\n  tags: [users, groups]\n"
+        result = format_content(text)
+        assert "- users" in result.formatted
+        assert "- groups" in result.formatted
+
+    def test_block_tags_unchanged(self) -> None:
+        """Already block-style tags are not modified."""
+        text = "- name: Test\n  ansible.builtin.debug:\n    msg: hi\n  tags:\n    - users\n    - groups\n"
+        result = format_content(text)
+        assert "- users" in result.formatted
+        assert "- groups" in result.formatted

@@ -286,9 +286,10 @@ class TestDefaultRegistry:
             "M006",
             "M008",
             "M009",
+            "L005",
         ):
             assert rule_id in reg, f"{rule_id} missing from default registry"
-        assert len(reg) == 21
+        assert len(reg) == 22
 
 
 # ---------------------------------------------------------------------------

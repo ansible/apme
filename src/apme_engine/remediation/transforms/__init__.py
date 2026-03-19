@@ -56,6 +56,9 @@ def build_default_registry() -> TransformRegistry:
     reg.register("M003", structured=fix_fqcn)
     reg.register("M004", structured=fix_fqcn)
 
+    # OPA L005 also detects non-FQCN; reuse the same fixer (falls back to static map)
+    reg.register("L005", structured=fix_fqcn)
+
     # Migration rules
     reg.register("M006", structured=fix_become_unreachable)
     reg.register("M008", structured=fix_bare_include)
