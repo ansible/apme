@@ -170,7 +170,7 @@ async def escalate_tier3(project_path: Path, violations: list[Violation]) -> Age
 
 ### Integration with Abbenay
 
-This design assumes Abbenay will support dynamic MCP tool registration. The integration:
+Abbenay `v2026.3.6-alpha` supports dynamic MCP tool registration (DR-025 merged). The integration:
 
 ```python
 async def call_agent(violations, mcp_server, feedback=None):
@@ -190,7 +190,7 @@ async def call_agent(violations, mcp_server, feedback=None):
     return await execute_agent_loop(response, mcp_server)
 ```
 
-If Abbenay MCP integration is not available, direct Anthropic API calls work for prototyping.
+Direct Anthropic API calls also work as a fallback for prototyping without Abbenay.
 
 ## Alternatives Considered
 
@@ -258,19 +258,20 @@ If Abbenay MCP integration is not available, direct Anthropic API calls work for
 ### Neutral
 
 - Only triggered for violations that Tier 2 cannot fix
-- Requires Abbenay MCP support or fallback to direct API
+- Abbenay MCP support is available (v2026.3.6-alpha); direct API also works as fallback
 - Human review still required before applying changes
 
 ## Implementation Notes
 
-1. **Phase 1: Prototype without Abbenay MCP**
-   - Use direct Anthropic API with tool definitions
+1. **Phase 1: Abbenay MCP integration**
+   - Abbenay `v2026.3.6-alpha` supports dynamic tool registration
+   - Wire sandbox MCP tools through Abbenay's unified interface
    - Prove sandbox + tool + re-validation loop works
    - Measure success rate and cost
 
-2. **Phase 2: Integrate with Abbenay**
-   - Once Abbenay supports dynamic tool registration
-   - Migrate prototype to Abbenay unified interface
+2. **Phase 2: Harden and optimize**
+   - Direct Anthropic API available as fallback
+   - Performance tuning based on Phase 1 metrics
 
 3. **Sandbox implementation**:
    ```python

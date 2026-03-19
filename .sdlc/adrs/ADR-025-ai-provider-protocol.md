@@ -10,13 +10,13 @@ Accepted
 
 ## Context
 
-APME's remediation engine needs LLM integration for Tier 2 (AI-proposable) violations. The initial implementation uses Abbenay as the AI backend via its `abbenay_client` Python library. However, the engine should not be tightly coupled to any specific LLM provider or client library because:
+APME's remediation engine needs LLM integration for Tier 2 (AI-proposable) violations. The initial implementation uses Abbenay as the AI backend via its `abbenay-client` Python package (import: `abbenay_grpc`). However, the engine should not be tightly coupled to any specific LLM provider or client library because:
 
 1. **Testability.** Unit tests for the remediation engine should not require a running Abbenay daemon or network access. A mock provider must be trivially substitutable.
 
 2. **Provider flexibility.** While Abbenay abstracts multiple LLM providers behind a single gRPC interface, some deployments may want to call an LLM SDK directly (OpenAI, Anthropic) without running a daemon, or use a different abstraction layer entirely.
 
-3. **Optional dependency.** The `abbenay_client` package is an optional install (`pip install apme-engine[ai]`). The core engine must function without it. Importing `abbenay_client` at module level would make it a hard dependency.
+3. **Optional dependency.** The `abbenay-client` package is an optional install (`pip install apme-engine[ai]`). The core engine must function without it. Importing `abbenay_grpc` at module level would make it a hard dependency.
 
 4. **Single coupling point.** If the Abbenay client API changes (method signatures, async behavior, response format), the blast radius should be exactly one file, not spread across the engine and CLI.
 
@@ -36,23 +36,23 @@ class AIProvider(Protocol):
     ) -> AIProposal | None: ...
 ```
 
-The default implementation is `AbbenayProvider` in `src/apme_engine/remediation/abbenay_provider.py` -- the only file in the codebase that imports `abbenay_client`.
+The default implementation is `AbbenayProvider` in `src/apme_engine/remediation/abbenay_provider.py` -- the only file in the codebase that imports `abbenay_grpc`.
 
 The engine accepts `ai_provider: AIProvider | None = None` in its constructor. When `None`, AI escalation is skipped entirely (Tier 2 violations remain as "AI-candidate" in the report).
 
 ## Options Considered
 
-### Option A: Direct `abbenay_client` import in engine (rejected)
+### Option A: Direct `abbenay_grpc` import in engine (rejected)
 
 ```python
-from abbenay_client import AbbenayClient
+from abbenay_grpc import AbbenayClient
 
 class RemediationEngine:
     def __init__(self, ..., abbenay_host="localhost", abbenay_port=50057):
         self._client = AbbenayClient(host=abbenay_host, port=abbenay_port)
 ```
 
-**Rejected.** Hard couples the engine to `abbenay_client`. Cannot test without mocking at the import level. Makes `abbenay_client` a de-facto hard dependency. Changing the client API requires modifying engine internals.
+**Rejected.** Hard couples the engine to `abbenay_grpc`. Cannot test without mocking at the import level. Makes `abbenay-client` a de-facto hard dependency. Changing the client API requires modifying engine internals.
 
 ### Option B: ABC base class (rejected)
 
@@ -83,9 +83,9 @@ provider = AI_PROVIDERS[config["ai_provider"]]()
 
 ### Positive
 
-- **One coupling point.** Only `abbenay_provider.py` imports `abbenay_client`. The rest of the codebase is provider-agnostic.
+- **One coupling point.** Only `abbenay_provider.py` imports `abbenay_grpc`. The rest of the codebase is provider-agnostic.
 - **Testable.** Tests use a `MockAIProvider` that returns canned `AIProposal` objects. No network, no daemon, no mocking library gymnastics.
-- **Optional dependency.** `abbenay_client` is only imported inside `AbbenayProvider.__init__()`, wrapped in a try/except with a clear error message. The core package installs and runs without it.
+- **Optional dependency.** `abbenay_grpc` is only imported inside `AbbenayProvider.__init__()`, wrapped in a try/except with a clear error message. The core package installs and runs without it.
 - **Future-proof.** Adding a `DirectOpenAIProvider` or `OllamaProvider` requires writing one file that satisfies the protocol. No engine changes, no factory registration.
 
 ### Negative

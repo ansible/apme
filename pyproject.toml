@@ -23,7 +23,7 @@ dependencies = [
 
 [project.optional-dependencies]
 ai = [
-    "abbenay-client @ git+https://github.com/redhat-developer/abbenay.git@516742428c5b074ce7d098cfcf4f69413658f5f6#subdirectory=packages/python",
+    "abbenay-client @ git+https://github.com/redhat-developer/abbenay.git@v2026.3.6-alpha#subdirectory=packages/python",
 ]
 gateway = [
     "fastapi>=0.115",

@@ -58,7 +58,7 @@ The design prioritizes:
   |  +--------v--------+                                             |
   |  | AbbenayProvider  | <-- sole coupling point                   |
   |  | (default impl)   |                                            |
-  |  | abbenay_client   |                                            |
+  |  | abbenay_grpc     |                                            |
   |  +--------+---------+                                            |
   +-----------|----------------------------------------------------- +
               | gRPC (Unix socket or TCP)
@@ -418,10 +418,10 @@ if addr is None:
 
 provider = AbbenayProvider(addr, token=args.abbenay_token)
 if not await provider.preflight():
-    sys.exit("Error: Abbenay daemon at {addr} is not healthy.")
+    sys.exit(f"Error: Abbenay daemon at {addr} is not healthy.")
 ```
 
-The `preflight()` method calls `abbenay_client.health_check()` -- the same `HealthCheck` RPC exposed by the Abbenay daemon.
+The `preflight()` method calls the Abbenay client's `health_check()` RPC -- the same `HealthCheck` service exposed by the Abbenay daemon.
 
 ### Health Check Extension
 
@@ -435,7 +435,7 @@ $ apme-scan health-check --include-ai
   opa      (localhost:50054)  ok   15ms
   ansible  (localhost:50053)  ok   22ms
   cache    (localhost:50052)  ok    5ms
-  abbenay  (unix:///run/user/1000/abbenay/daemon.sock)  ok  v2026.3.3  18ms
+  abbenay  (unix:///run/user/1000/abbenay/daemon.sock)  ok  v2026.3.6-alpha  18ms
 ```
 
 ---
@@ -451,7 +451,7 @@ AI Escalation:
   --ai                 Enable AI escalation for Tier 2 violations (opt-in)
   --model MODEL        Model for AI proposals (e.g., openai/gpt-4o)
   --abbenay-addr ADDR  Daemon address (default: auto-discover from socket)
-  --abbenay-token TOK  Consumer auth token (or ABBENAY_TOKEN env var)
+  --abbenay-token TOK  Consumer auth token (or APME_ABBENAY_TOKEN env var)
 ```
 
 The existing `--no-ai` flag is replaced by `--ai` (opt-in). AI never runs unless explicitly requested.
@@ -517,7 +517,7 @@ When `--apply` is set without a TTY (non-interactive), proposals with `confidenc
 
 ### Communication
 
-The `abbenay_client` Python library runs in-process with the engine (no separate container for the client). It connects to the Abbenay daemon via Unix socket (local) or TCP (remote/container).
+The `abbenay-client` Python package (import: `abbenay_grpc`) runs in-process with the engine (no separate container for the client). It connects to the Abbenay daemon via Unix socket (local) or TCP (remote/container).
 
 ### Inline Policy
 
@@ -525,7 +525,7 @@ Every `ChatRequest` includes an inline `PolicyConfig` (see `DESIGN-inline-policy
 
 ### Consumer Auth
 
-If the Abbenay daemon has a `consumers` section in its config, APME passes its token via `x-abbenay-token` metadata. The token is sourced from `--abbenay-token` or `ABBENAY_TOKEN` env var.
+If the Abbenay daemon has a `consumers` section in its config, APME passes its token via `x-abbenay-token` metadata. The token is sourced from `--abbenay-token` or `APME_ABBENAY_TOKEN` env var.
 
 ### Model Selection
 
@@ -533,21 +533,21 @@ The `--model` flag is passed through to `AbbenayClient.chat(model=...)`. If omit
 
 ---
 
-## Deferred: MCP Tools
+## MCP Tools
 
-Blocked on Abbenay implementing `RegisterMcpServer` RPC (see `DESIGN-dynamic-mcp-registration.md`).
+Dynamic MCP registration is available in Abbenay `v2026.3.6-alpha` (DR-025 merged).
 
 ### Ansible Docstring Server
 
 `src/apme_engine/mcp/ansible_doc_server.py` -- a lightweight MCP server (stdio transport) wrapping `ansible-doc` via APME's venv sessions. The LLM can autonomously call `get_ansible_doc(fqcn)` when it needs module documentation.
 
-**Until then**: the prompt builder pre-fetches `ansible-doc` output for the relevant module and embeds it in the prompt.
+**Fallback**: the prompt builder pre-fetches `ansible-doc` output for the relevant module and embeds it in the prompt.
 
 ### Best Practices Server
 
 `src/apme_engine/mcp/ansible_best_practices_server.py` -- MCP server exposing the structured best practices mapping. The LLM calls `get_ansible_best_practices(category)` to look up guidelines.
 
-**Until then**: best practices are pre-selected by the prompt builder based on violation category.
+**Fallback**: best practices are pre-selected by the prompt builder based on violation category.
 
 ---
 
@@ -575,14 +575,24 @@ If `--ai` is set but the daemon is unreachable, the CLI exits with a clear error
 
 `abbenay-client` is an optional dependency:
 
+Currently pinned via VCS URL to the release tag:
+
 ```toml
 [project.optional-dependencies]
-ai = ["abbenay-client>=2026.3.3a0"]
+ai = [
+    "abbenay-client @ git+https://github.com/redhat-developer/abbenay.git@v2026.3.6-alpha#subdirectory=packages/python",
+]
+```
+
+Once `abbenay-client` is published to PyPI, this can be simplified to:
+
+```toml
+ai = ["abbenay-client>=2026.3.6a0"]
 ```
 
 Install with: `pip install apme-engine[ai]`
 
-If `--ai` is set but `abbenay_client` is not installed:
+If `--ai` is set but `abbenay-client` is not installed:
 
 ```
 Error: AI escalation requires the 'ai' extra.
@@ -592,6 +602,19 @@ Install with: pip install apme-engine[ai]
 ---
 
 ## Container Topology (with AI Escalation)
+
+Pre-built multi-arch Abbenay images (amd64 + arm64) are available on GHCR:
+
+```bash
+podman pull ghcr.io/redhat-developer/abbenay:latest
+```
+
+| Tag | Meaning |
+|-----|---------|
+| `:main` | Latest merged code |
+| `:sha-<short>` | Specific commit |
+| `:2026.3.6-alpha` | Release (no `v` prefix) |
+| `:latest` | Latest stable release |
 
 ```
 +--------------------------- apme-pod ----------------------------+
@@ -608,7 +631,7 @@ Install with: pip install apme-engine[ai]
 |       v                                                           |
 |  +----------+                                                     |
 |  | Abbenay  |  AI daemon -- manages LLM providers                |
-|  |  :50057  |  binary or container                                |
+|  |  :50057  |  GHCR image or binary                               |
 |  +----------+                                                     |
 |                                                                   |
 |  +--------------------------------------------+                  |
@@ -616,6 +639,8 @@ Install with: pip install apme-engine[ai]
 |  +--------------------------------------------+                  |
 +-------------------------------------------------------------------+
 ```
+
+Note: the Abbenay container's `CMD` sets `--grpc-host 0.0.0.0` so published ports work. A bare-metal daemon defaults to `--grpc-host 127.0.0.1` (localhost only); pass `--grpc-host 0.0.0.0` explicitly if connecting from another host.
 
 ---
 
