@@ -618,7 +618,23 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         Returns:
             ScanResponse with violations and diagnostics.
         """
+        _debug = os.environ.get("APME_DEBUG")
+        peer = context.peer() if _debug else None
+        if _debug:
+            sys.stderr.write(
+                f"[primary] ScanStream ENTER peer={peer} t={time.time():.3f}\n"
+            )
+            sys.stderr.flush()
+
         all_files, scan_id, project_root, opts, _ = await self._accumulate_chunks(request_stream)
+
+        if _debug:
+            sys.stderr.write(
+                f"[primary] ScanStream ACCUMULATED scan_id={scan_id} peer={peer} "
+                f"files={len(all_files)} t={time.time():.3f}\n"
+            )
+            sys.stderr.flush()
+
         req = ScanRequest(
             scan_id=scan_id,
             project_root=project_root,
@@ -628,6 +644,12 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         response = await self.Scan(req, context)
 
         from apme_engine.daemon.scan_events import publish
+
+        if _debug:
+            sys.stderr.write(
+                f"[primary] ScanStream PUBLISH scan_id={scan_id} peer={peer} t={time.time():.3f}\n"
+            )
+            sys.stderr.flush()
 
         publish(
             ScanCompletedEvent(

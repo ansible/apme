@@ -26,19 +26,13 @@ _MAX_BACKOFF = 60
 _task: asyncio.Task[None] | None = None
 
 
-_DEDUP_WINDOW_SECONDS = 5
-
-
 async def _persist_event(
     event: ScanCompletedEvent,
     session_factory: object,
 ) -> None:
     """Write a ScanCompletedEvent to the database.
 
-    Idempotent: skips if a scan with the same ID exists, or if a scan
-    with the same source + project_path was persisted within the last
-    few seconds (guards against gRPC transport-level retries that
-    generate a new scan_id).
+    Idempotent: skips if a scan with the same scan_id already exists.
 
     Args:
         event: The protobuf event from Primary.
@@ -47,32 +41,11 @@ async def _persist_event(
     import json
 
     from google.protobuf.json_format import MessageToDict
-    from sqlalchemy import select
 
     async with session_factory() as session:  # type: ignore[operator]
         existing = await session.get(Scan, event.scan_id)
         if existing is not None:
-            return
-
-        from datetime import timedelta
-
-        cutoff = (datetime.now(tz=timezone.utc) - timedelta(seconds=_DEDUP_WINDOW_SECONDS)).isoformat()
-        dup_q = (
-            select(Scan)
-            .where(
-                Scan.project_path == event.project_path,
-                Scan.source == (event.source or "engine"),
-                Scan.created_at > cutoff,
-            )
-            .limit(1)
-        )
-        dup = (await session.execute(dup_q)).scalar_one_or_none()
-        if dup is not None:
-            logger.debug(
-                "Skipping duplicate event scan_id=%s (recent scan %s exists)",
-                event.scan_id,
-                dup.id,
-            )
+            logger.debug("Skipping duplicate event scan_id=%s (already persisted)", event.scan_id)
             return
 
         diag_json = None

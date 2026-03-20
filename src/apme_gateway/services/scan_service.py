@@ -1,12 +1,17 @@
-"""Scan orchestration — file discovery, gRPC streaming, and persistence."""
+"""Scan orchestration — file discovery, gRPC streaming, and DB queries.
+
+Persistence of scan results is handled exclusively by the event subscriber
+(see ``event_subscriber.py``).  ``trigger_scan()`` only calls Primary's
+ScanStream and returns the scan_id; the caller polls the DB until the event
+subscriber has persisted the result.
+"""
 
 from __future__ import annotations
 
-import json
+import asyncio
 import logging
 import uuid
 from collections.abc import AsyncIterator
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -15,10 +20,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apme.v1.common_pb2 import File
 from apme.v1.primary_pb2 import ScanChunk, ScanOptions
-from apme_gateway.models.tables import Scan, Violation
+from apme_gateway.models.tables import Scan
 
 if TYPE_CHECKING:
-    from apme.v1.primary_pb2 import ScanResponse
     from apme_gateway.services.grpc_client import PrimaryClient
 
 logger = logging.getLogger(__name__)
@@ -134,42 +138,29 @@ async def _chunk_iter(
     yield ScanChunk(**final)
 
 
-def _violation_id() -> str:
-    return uuid.uuid4().hex[:16]
+_POLL_INTERVAL = 0.25
+_POLL_TIMEOUT = 30.0
 
 
-def _diagnostics_to_dict(diag: object) -> dict[str, object]:
-    """Convert a ScanDiagnostics protobuf to a JSON-safe dict.
-
-    Args:
-        diag: ScanDiagnostics protobuf message.
-
-    Returns:
-        Dict suitable for JSON serialisation.
-    """
-    from google.protobuf.json_format import MessageToDict
-
-    return MessageToDict(diag, preserving_proto_field_name=True)  # type: ignore[arg-type]
-
-
-async def create_scan(
+async def trigger_scan(
     project_path: str,
     client: PrimaryClient,
-    session: AsyncSession,
     ansible_core_version: str | None = None,
     collection_specs: list[str] | None = None,
-) -> Scan:
-    """Discover files, stream to Primary, persist results.
+) -> str:
+    """Discover files, stream to Primary, return scan_id.
+
+    Does NOT persist results — the event subscriber handles that
+    when it receives the ``ScanCompletedEvent`` from Primary.
 
     Args:
         project_path: Local directory or file to scan.
         client: gRPC client to Primary.
-        session: Async DB session for persistence.
         ansible_core_version: Optional ansible-core version pin.
         collection_specs: Optional Galaxy collection specs.
 
     Returns:
-        The persisted Scan ORM object with violations loaded.
+        The scan_id that Primary assigned to this scan.
 
     Raises:
         FileNotFoundError: If project_path does not exist.
@@ -181,17 +172,6 @@ async def create_scan(
         raise FileNotFoundError(msg)
 
     scan_id = uuid.uuid4().hex
-    now = datetime.now(tz=timezone.utc).isoformat()
-
-    scan = Scan(
-        id=scan_id,
-        project_path=str(root),
-        created_at=now,
-        status="running",
-    )
-    session.add(scan)
-    await session.flush()
-
     files = _discover_files(root)
 
     opts = ScanOptions()
@@ -200,44 +180,37 @@ async def create_scan(
     if collection_specs:
         opts.collection_specs.extend(collection_specs)
 
-    resp: ScanResponse = await client.scan_stream(
+    await client.scan_stream(
         _chunk_iter(files, scan_id, "project", opts),
     )
 
-    violations_orm: list[Violation] = []
-    for v in resp.violations:
-        line_val = None
-        if v.HasField("line_oneof"):
-            variant = v.WhichOneof("line_oneof")
-            if variant == "line":
-                line_val = v.line
-            elif variant == "line_range":
-                line_val = v.line_range.start
+    return scan_id
 
-        violations_orm.append(
-            Violation(
-                id=_violation_id(),
-                scan_id=scan_id,
-                rule_id=v.rule_id,
-                level=v.level,
-                message=v.message,
-                file=v.file,
-                line=line_val,
-                path=v.path,
-            ),
-        )
 
-    diag_json: str | None = None
-    if resp.HasField("diagnostics"):
-        diag_json = json.dumps(_diagnostics_to_dict(resp.diagnostics))
+async def wait_for_scan(
+    session: AsyncSession,
+    scan_id: str,
+    timeout: float = _POLL_TIMEOUT,
+) -> Scan | None:
+    """Poll until the event subscriber has persisted *scan_id*.
 
-    scan.status = "completed"
-    scan.total_violations = len(violations_orm)
-    scan.diagnostics = diag_json
-    session.add_all(violations_orm)
-    await session.commit()
-    await session.refresh(scan)
-    return scan
+    Args:
+        session: Async DB session.
+        scan_id: The scan_id returned by ``trigger_scan()``.
+        timeout: Maximum seconds to wait.
+
+    Returns:
+        The persisted Scan or None if the timeout expires.
+    """
+    elapsed = 0.0
+    while elapsed < timeout:
+        await session.expire_all()
+        scan = await session.get(Scan, scan_id)
+        if scan is not None:
+            return scan
+        await asyncio.sleep(_POLL_INTERVAL)
+        elapsed += _POLL_INTERVAL
+    return None
 
 
 async def list_scans(

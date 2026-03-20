@@ -36,17 +36,11 @@ spec:
       env:
         - name: APME_NATIVE_VALIDATOR_LISTEN
           value: "0.0.0.0:50055"
-      ports:
-        - containerPort: 50055
-          hostPort: 50055
     - name: opa
       image: apme-opa:latest
       env:
         - name: APME_OPA_VALIDATOR_LISTEN
           value: "0.0.0.0:50054"
-      ports:
-        - containerPort: 50054
-          hostPort: 50054
     - name: ansible
       image: apme-ansible:latest
       env:
@@ -54,9 +48,15 @@ spec:
           value: "0.0.0.0:50053"
         - name: APME_GALAXY_PROXY_URL
           value: "http://127.0.0.1:8765"
+        - name: APME_CACHE_ROOT
+          value: "/cache"
       ports:
         - containerPort: 50053
           hostPort: 50053
+      volumeMounts:
+        - name: cache
+          mountPath: /cache
+          readOnly: true
     - name: gitleaks
       image: apme-gitleaks:latest
       env:
@@ -70,6 +70,13 @@ spec:
       ports:
         - containerPort: 8765
           hostPort: 8765
+    - name: cache-maintainer
+      image: apme-cache-maintainer:latest
+      env:
+        - name: APME_CACHE_MAINTAINER_LISTEN
+          value: "0.0.0.0:50052"
+        - name: APME_CACHE_ROOT
+          value: "/cache"
       volumeMounts:
         - name: proxy-cache
           mountPath: /cache
@@ -77,4 +84,8 @@ spec:
     - name: proxy-cache
       hostPath:
         path: __APME_CACHE_PATH__/proxy
+        type: DirectoryOrCreate
+    - name: cache
+      hostPath:
+        path: __APME_CACHE_PATH__
         type: DirectoryOrCreate

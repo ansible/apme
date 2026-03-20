@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+import time
+import uuid
 
 import grpc
 
@@ -31,9 +34,17 @@ def run_scan(args: argparse.Namespace) -> None:
     """
     verbosity = getattr(args, "verbose", 0) or 0
 
+    scan_id = str(uuid.uuid4())
+    if verbosity:
+        sys.stderr.write(
+            f"[cli] ScanStream START pid={os.getpid()} scan_id={scan_id} t={time.time():.3f}\n"
+        )
+        sys.stderr.flush()
+
     try:
         chunks = yield_scan_chunks(
             args.target,
+            scan_id=scan_id,
             project_root_name="project",
             ansible_core_version=getattr(args, "ansible_version", None),
             collection_specs=getattr(args, "collections", None),
@@ -52,6 +63,12 @@ def run_scan(args: argparse.Namespace) -> None:
         sys.exit(1)
     finally:
         channel.close()
+
+    if verbosity:
+        sys.stderr.write(
+            f"[cli] ScanStream DONE pid={os.getpid()} scan_id={scan_id} t={time.time():.3f}\n"
+        )
+        sys.stderr.flush()
 
     violations: list[ViolationDict] = [violation_proto_to_dict(v) for v in resp.violations]
     violations = deduplicate_violations(sort_violations(violations))

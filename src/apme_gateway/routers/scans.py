@@ -18,7 +18,13 @@ from apme_gateway.models.schemas import (
     ViolationOut,
 )
 from apme_gateway.services.grpc_client import PrimaryClient
-from apme_gateway.services.scan_service import create_scan, delete_scan, get_scan, list_scans
+from apme_gateway.services.scan_service import (
+    delete_scan,
+    get_scan,
+    list_scans,
+    trigger_scan,
+    wait_for_scan,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["scans"])
@@ -30,12 +36,15 @@ async def initiate_scan(
     client: PrimaryClient = Depends(get_primary_client),
     session: AsyncSession = Depends(get_db),
 ) -> ScanOut:
-    """Initiate a scan against a local directory or repository URL."""
+    """Initiate a scan against a local directory or repository URL.
+
+    Triggers Primary's ScanStream, then polls the DB until the event
+    subscriber has persisted the result (single-writer pattern).
+    """
     try:
-        scan = await create_scan(
+        scan_id = await trigger_scan(
             project_path=body.project_path,
             client=client,
-            session=session,
             ansible_core_version=body.ansible_core_version,
             collection_specs=body.collection_specs or None,
         )
@@ -44,6 +53,13 @@ async def initiate_scan(
     except Exception as exc:
         logger.exception("Scan failed")
         raise HTTPException(status_code=502, detail=f"Engine error: {exc}") from exc
+
+    scan = await wait_for_scan(session, scan_id)
+    if scan is None:
+        raise HTTPException(
+            status_code=504,
+            detail=f"Scan {scan_id} completed but event subscriber did not persist within timeout",
+        )
 
     return _scan_to_out(scan)
 
