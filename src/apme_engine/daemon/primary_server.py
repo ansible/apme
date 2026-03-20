@@ -627,7 +627,10 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         all_files, scan_id, project_root, opts, _ = await self._accumulate_chunks(request_stream)
 
         if _debug:
-            sys.stderr.write(f"[primary] ScanStream ACCUMULATED scan_id={scan_id} peer={peer} files={len(all_files)} t={time.time():.3f}\n")
+            sys.stderr.write(
+                f"[primary] ScanStream ACCUMULATED scan_id={scan_id} peer={peer}"
+                f" files={len(all_files)} t={time.time():.3f}\n"
+            )
             sys.stderr.flush()
 
         req = ScanRequest(
@@ -1084,8 +1087,8 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                 summary=ScanSummary(
                     total=len(remaining_violations),
                     auto_fixable=session.report.fixed,
-                    ai_candidate=len(session.report.remaining_ai),
-                    manual_review=len(session.report.remaining_manual),
+                    ai_candidate=session.report.remaining_ai,
+                    manual_review=session.report.remaining_manual,
                 ),
                 source="fix",
             )

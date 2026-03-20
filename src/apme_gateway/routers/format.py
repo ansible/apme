@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 from collections.abc import AsyncIterator
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 
