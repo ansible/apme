@@ -64,13 +64,17 @@ def _is_valid_fqcn(candidate: str, current_key: str) -> bool:
     Returns:
         True if candidate is a well-formed FQCN.
     """
-    return (
-        "." in candidate
-        and candidate != current_key
-        and " " not in candidate
-        and "#" not in candidate
-        and not candidate.startswith("taskfile")
-    )
+    if candidate == current_key:
+        return False
+    if " " in candidate or "#" in candidate:
+        return False
+    if "/" in candidate or "\\" in candidate:
+        return False
+    if candidate.startswith("taskfile"):
+        return False
+    if candidate.endswith((".yml", ".yaml", ".json")):
+        return False
+    return "." in candidate
 
 
 def fix_fqcn(sf: StructuredFile, violation: ViolationDict) -> bool:

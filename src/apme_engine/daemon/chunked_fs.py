@@ -75,13 +75,23 @@ def _matches_ignore(rel_path: str, patterns: list[str]) -> bool:
     Returns:
         True if the path matches at least one pattern.
     """
+    rel_parts = Path(rel_path).parts
     for pat in patterns:
+        is_dir_pattern = pat.endswith("/")
+        normalized = pat.rstrip("/") if is_dir_pattern else pat
+
+        if is_dir_pattern:
+            dir_parts = Path(normalized).parts
+            if len(rel_parts) >= len(dir_parts) and rel_parts[: len(dir_parts)] == dir_parts:
+                return True
+
         if fnmatch.fnmatch(rel_path, pat):
             return True
-        if "/" in pat and fnmatch.fnmatch(rel_path, pat.rstrip("/")):
+        if "/" in pat and fnmatch.fnmatch(rel_path, normalized):
             return True
-        for part in Path(rel_path).parts:
-            if fnmatch.fnmatch(part, pat):
+
+        for part in rel_parts:
+            if fnmatch.fnmatch(part, normalized):
                 return True
     return False
 

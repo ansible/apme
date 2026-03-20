@@ -18,6 +18,7 @@ violations contains v if {
 
 _is_fqcn(s) if {
 	contains(s, ".")
+	not contains(s, "/")
 	not contains(s, " ")
 	not contains(s, "#")
 	not startswith(s, "taskfile")
