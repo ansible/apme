@@ -653,7 +653,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             "violations": list(response.violations),  # type: ignore[attr-defined]
             "source": "scan",
         }
-        if response.HasField("diagnostics"):  # type: ignore[attr-defined]
+        if response.HasField("diagnostics"):
             event_kwargs["diagnostics"] = response.diagnostics  # type: ignore[attr-defined]
         if response.HasField("summary"):
             event_kwargs["summary"] = response.summary
