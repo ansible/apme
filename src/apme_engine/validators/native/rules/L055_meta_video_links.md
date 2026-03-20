@@ -2,6 +2,7 @@
 rule_id: L055
 validator: native
 description: Role meta video_links should be valid URLs.
+scope: role
 ---
 
 ## Meta video links (L055)

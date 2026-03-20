@@ -2,6 +2,7 @@
 rule_id: P004
 validator: native
 description: Validate variables (Ansible required).
+scope: inventory
 ---
 
 ## Variable validation (P004)

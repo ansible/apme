@@ -2,6 +2,7 @@
 rule_id: R113
 validator: native
 description: Parameterized package install (annotation-based).
+scope: task
 ---
 
 ## Parameterized pkg install (R113)

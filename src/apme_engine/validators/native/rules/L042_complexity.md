@@ -2,6 +2,7 @@
 rule_id: L042
 validator: native
 description: Play/block has high task count.
+scope: play
 ---
 
 ## Complexity (L042)

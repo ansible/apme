@@ -2,6 +2,7 @@
 rule_id: P001
 validator: native
 description: Validate module name (Ansible required).
+scope: task
 ---
 
 ## Module name validation (P001)

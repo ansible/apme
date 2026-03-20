@@ -7,6 +7,7 @@ from apme_engine.engine.models import (
     AnsibleRunContext,
     Rule,
     RuleResult,
+    RuleScope,
     RunTargetType,
     Severity,
     YAMLDict,
@@ -28,6 +29,7 @@ class UnusedOverrideRule(Rule):
         version: Rule version.
         severity: Severity level.
         tags: Rule tags.
+        scope: Structural scope.
     """
 
     rule_id: str = "L034"
@@ -37,6 +39,7 @@ class UnusedOverrideRule(Rule):
     version: str = "v0.0.1"
     severity: str = Severity.VERY_LOW
     tags: tuple[str, ...] = (Tag.VARIABLE,)
+    scope: str = RuleScope.INVENTORY
 
     def match(self, ctx: AnsibleRunContext) -> bool:
         """Check if context has a task target.

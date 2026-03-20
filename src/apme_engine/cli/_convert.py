@@ -25,6 +25,17 @@ _PROTO_TO_RESOLUTION: dict[int, str] = {
     common_pb2.REMEDIATION_RESOLUTION_MANUAL: "manual",  # type: ignore[attr-defined]
 }
 
+_PROTO_TO_SCOPE: dict[int, str] = {
+    common_pb2.RULE_SCOPE_UNSPECIFIED: "task",  # type: ignore[attr-defined]
+    common_pb2.RULE_SCOPE_TASK: "task",  # type: ignore[attr-defined]
+    common_pb2.RULE_SCOPE_BLOCK: "block",  # type: ignore[attr-defined]
+    common_pb2.RULE_SCOPE_PLAY: "play",  # type: ignore[attr-defined]
+    common_pb2.RULE_SCOPE_PLAYBOOK: "playbook",  # type: ignore[attr-defined]
+    common_pb2.RULE_SCOPE_ROLE: "role",  # type: ignore[attr-defined]
+    common_pb2.RULE_SCOPE_INVENTORY: "inventory",  # type: ignore[attr-defined]
+    common_pb2.RULE_SCOPE_COLLECTION: "collection",  # type: ignore[attr-defined]
+}
+
 
 def violation_proto_to_dict(
     v: Violation,
@@ -54,5 +65,9 @@ def violation_proto_to_dict(
         "remediation_resolution": _PROTO_TO_RESOLUTION.get(
             v.remediation_resolution,
             "unresolved",
+        ),
+        "scope": _PROTO_TO_SCOPE.get(
+            v.scope,
+            "task",
         ),
     }

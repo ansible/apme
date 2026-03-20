@@ -8,6 +8,7 @@ from apme_engine.engine.models import (
     RoleCall,
     Rule,
     RuleResult,
+    RuleScope,
     RunTargetType,
     Severity,
 )
@@ -31,6 +32,7 @@ class ExternalRoleRule(Rule):
         version: Rule version.
         severity: Severity level.
         tags: Rule tags.
+        scope: Structural scope.
         result_type: Type of RuleResult to produce.
     """
 
@@ -41,6 +43,7 @@ class ExternalRoleRule(Rule):
     version: str = "v0.0.1"
     severity: str = Severity.VERY_LOW
     tags: tuple[str, ...] = (Tag.DEPENDENCY,)
+    scope: str = RuleScope.ROLE
     result_type: type[RuleResult] = ExternalRoleRuleResult
 
     def match(self, ctx: AnsibleRunContext) -> bool:

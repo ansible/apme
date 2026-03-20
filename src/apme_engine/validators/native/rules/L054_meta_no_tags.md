@@ -2,6 +2,7 @@
 rule_id: L054
 validator: native
 description: Role meta galaxy_info should include galaxy_tags.
+scope: role
 ---
 
 ## Meta no tags (L054)

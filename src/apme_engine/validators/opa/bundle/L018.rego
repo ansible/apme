@@ -30,6 +30,7 @@ partial_become_task(tree, node) := v if {
 		"file": node.file,
 		"line": node.line[0],
 		"path": node.key,
+		"scope": "play",
 	}
 }
 
@@ -46,5 +47,6 @@ partial_become_play(tree, node) := v if {
 		"file": node.file,
 		"line": node.line[0],
 		"path": node.key,
+		"scope": "play",
 	}
 }

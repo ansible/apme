@@ -5,6 +5,7 @@ import sys
 from collections import defaultdict
 from dataclasses import dataclass, field
 
+from apme_engine.engine.models import RuleScope
 from apme_engine.engine.risk_detector import detect
 from apme_engine.validators.base import ScanContext
 
@@ -93,6 +94,8 @@ def _extract_results(data_report: dict[str, object]) -> NativeRunResult:
                 path = ""
                 if node and hasattr(node, "spec") and hasattr(node.spec, "key"):
                     path = getattr(node.spec, "key", "") or ""
+                scope_raw = getattr(rule_meta, "scope", RuleScope.TASK) if rule_meta else RuleScope.TASK
+                scope = scope_raw.value if hasattr(scope_raw, "value") else str(scope_raw)
                 violations.append(
                     {
                         "rule_id": f"native:{rule_id}" if rule_id else "native:unknown",
@@ -101,6 +104,7 @@ def _extract_results(data_report: dict[str, object]) -> NativeRunResult:
                         "file": file_path,
                         "line": line,
                         "path": path,
+                        "scope": scope,
                     }
                 )
 

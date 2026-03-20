@@ -2,6 +2,7 @@
 rule_id: R402
 validator: native
 description: Report variables used at end of sequence.
+scope: task
 ---
 
 ## List used variables (R402)

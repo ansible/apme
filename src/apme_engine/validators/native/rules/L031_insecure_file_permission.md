@@ -2,6 +2,7 @@
 rule_id: L031
 validator: native
 description: File permission may be insecure (annotation-based).
+scope: task
 ---
 
 ## Insecure file permission (L031)

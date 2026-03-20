@@ -166,6 +166,7 @@ def _convert_findings(
                 "file": rel,
                 "line": line if line == end_line else [line, end_line],
                 "path": "",
+                "scope": "playbook",
             }
         )
 

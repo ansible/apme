@@ -4,7 +4,7 @@ from collections.abc import Mapping
 
 from apme.v1 import common_pb2
 from apme.v1.common_pb2 import LineRange, Violation
-from apme_engine.engine.models import RemediationClass, RemediationResolution, ViolationDict
+from apme_engine.engine.models import RemediationClass, RemediationResolution, RuleScope, ViolationDict
 
 # Keys that live in the common Violation proto fields (not in metadata).
 _COMMON_KEYS = frozenset(
@@ -17,6 +17,7 @@ _COMMON_KEYS = frozenset(
         "path",
         "remediation_class",
         "remediation_resolution",
+        "scope",
     }
 )
 
@@ -74,6 +75,27 @@ _PROTO_TO_RESOLUTION: dict[int, str] = {
     common_pb2.REMEDIATION_RESOLUTION_MANUAL: RemediationResolution.MANUAL.value,  # type: ignore[attr-defined]
 }
 
+_SCOPE_TO_PROTO: dict[str, int] = {
+    RuleScope.TASK.value: common_pb2.RULE_SCOPE_TASK,  # type: ignore[attr-defined]
+    RuleScope.BLOCK.value: common_pb2.RULE_SCOPE_BLOCK,  # type: ignore[attr-defined]
+    RuleScope.PLAY.value: common_pb2.RULE_SCOPE_PLAY,  # type: ignore[attr-defined]
+    RuleScope.PLAYBOOK.value: common_pb2.RULE_SCOPE_PLAYBOOK,  # type: ignore[attr-defined]
+    RuleScope.ROLE.value: common_pb2.RULE_SCOPE_ROLE,  # type: ignore[attr-defined]
+    RuleScope.INVENTORY.value: common_pb2.RULE_SCOPE_INVENTORY,  # type: ignore[attr-defined]
+    RuleScope.COLLECTION.value: common_pb2.RULE_SCOPE_COLLECTION,  # type: ignore[attr-defined]
+}
+
+_PROTO_TO_SCOPE: dict[int, str] = {
+    common_pb2.RULE_SCOPE_UNSPECIFIED: RuleScope.TASK.value,  # type: ignore[attr-defined]
+    common_pb2.RULE_SCOPE_TASK: RuleScope.TASK.value,  # type: ignore[attr-defined]
+    common_pb2.RULE_SCOPE_BLOCK: RuleScope.BLOCK.value,  # type: ignore[attr-defined]
+    common_pb2.RULE_SCOPE_PLAY: RuleScope.PLAY.value,  # type: ignore[attr-defined]
+    common_pb2.RULE_SCOPE_PLAYBOOK: RuleScope.PLAYBOOK.value,  # type: ignore[attr-defined]
+    common_pb2.RULE_SCOPE_ROLE: RuleScope.ROLE.value,  # type: ignore[attr-defined]
+    common_pb2.RULE_SCOPE_INVENTORY: RuleScope.INVENTORY.value,  # type: ignore[attr-defined]
+    common_pb2.RULE_SCOPE_COLLECTION: RuleScope.COLLECTION.value,  # type: ignore[attr-defined]
+}
+
 
 def violation_dict_to_proto(v: ViolationDict | Mapping[str, str | int | list[int] | bool | None]) -> Violation:
     """Build a proto Violation from a dict with rule_id, level, message, file, line, path.
@@ -98,6 +120,13 @@ def violation_dict_to_proto(v: ViolationDict | Mapping[str, str | int | list[int
         common_pb2.REMEDIATION_RESOLUTION_UNRESOLVED,  # type: ignore[attr-defined]
     )
 
+    scope_raw = v.get("scope") or RuleScope.TASK
+    scope_str = scope_raw.value if hasattr(scope_raw, "value") else str(scope_raw)
+    scope_proto = _SCOPE_TO_PROTO.get(
+        scope_str,
+        common_pb2.RULE_SCOPE_TASK,  # type: ignore[attr-defined]
+    )
+
     out = Violation(
         rule_id=str(v.get("rule_id") or ""),
         level=str(v.get("level") or ""),
@@ -106,6 +135,7 @@ def violation_dict_to_proto(v: ViolationDict | Mapping[str, str | int | list[int
         path=str(v.get("path") or ""),
         remediation_class=remediation_class_proto,
         remediation_resolution=resolution_proto,
+        scope=scope_proto,
     )
     line = v.get("line")
     if isinstance(line, list | tuple) and len(line) >= 2:
@@ -127,9 +157,9 @@ def violation_dict_to_proto(v: ViolationDict | Mapping[str, str | int | list[int
         val = v.get(key)
         if val is not None:
             if isinstance(val, list):
-                out.metadata[key] = ",".join(str(x) for x in val)  # type: ignore[attr-defined]
+                out.metadata[key] = ",".join(str(x) for x in val)
             else:
-                out.metadata[key] = str(val)  # type: ignore[attr-defined]
+                out.metadata[key] = str(val)
 
     return out
 
@@ -155,6 +185,10 @@ def violation_proto_to_dict(v: Violation) -> ViolationDict:
         v.remediation_resolution,
         RemediationResolution.UNRESOLVED.value,
     )
+    scope = _PROTO_TO_SCOPE.get(
+        v.scope,
+        RuleScope.TASK.value,
+    )
     result: ViolationDict = {
         "rule_id": v.rule_id,
         "level": v.level,
@@ -164,12 +198,13 @@ def violation_proto_to_dict(v: Violation) -> ViolationDict:
         "path": v.path,
         "remediation_class": remediation_class,
         "remediation_resolution": resolution,
+        "scope": scope,
     }
 
-    for key, val in v.metadata.items():  # type: ignore[attr-defined]
+    for key, val in v.metadata.items():
         if key in _METADATA_KEYS and val:
             if key == "redirect_chain":
-                result[key] = val.split(",")
+                result[key] = val.split(",")  # type: ignore[assignment]
             else:
                 result[key] = val
 

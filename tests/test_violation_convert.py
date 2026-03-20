@@ -7,7 +7,7 @@ from apme_engine.daemon.violation_convert import (
     violation_dict_to_proto,
     violation_proto_to_dict,
 )
-from apme_engine.engine.models import RemediationClass, RemediationResolution, ViolationDict
+from apme_engine.engine.models import RemediationClass, RemediationResolution, RuleScope, ViolationDict
 
 
 class TestViolationDictToProto:
@@ -92,6 +92,36 @@ class TestViolationDictToProto:
         v = {"rule_id": "L021"}
         proto = violation_dict_to_proto(v)
         assert proto.remediation_resolution == common_pb2.REMEDIATION_RESOLUTION_UNRESOLVED
+
+    def test_scope_task(self) -> None:
+        """Task scope converts to proto enum."""
+        v = {"rule_id": "L021", "scope": RuleScope.TASK}
+        proto = violation_dict_to_proto(v)
+        assert proto.scope == common_pb2.RULE_SCOPE_TASK
+
+    def test_scope_play(self) -> None:
+        """Play scope converts to proto enum."""
+        v = {"rule_id": "L042", "scope": "play"}
+        proto = violation_dict_to_proto(v)
+        assert proto.scope == common_pb2.RULE_SCOPE_PLAY
+
+    def test_scope_role(self) -> None:
+        """Role scope converts to proto enum."""
+        v = {"rule_id": "L027", "scope": RuleScope.ROLE}
+        proto = violation_dict_to_proto(v)
+        assert proto.scope == common_pb2.RULE_SCOPE_ROLE
+
+    def test_scope_collection(self) -> None:
+        """Collection scope converts to proto enum."""
+        v = {"rule_id": "L037", "scope": "collection"}
+        proto = violation_dict_to_proto(v)
+        assert proto.scope == common_pb2.RULE_SCOPE_COLLECTION
+
+    def test_missing_scope_defaults_to_task(self) -> None:
+        """Missing scope defaults to TASK."""
+        v = {"rule_id": "L021"}
+        proto = violation_dict_to_proto(v)
+        assert proto.scope == common_pb2.RULE_SCOPE_TASK
 
 
 class TestViolationProtoToDict:
@@ -185,6 +215,30 @@ class TestViolationProtoToDict:
         d = violation_proto_to_dict(proto)
         assert d["remediation_resolution"] == RemediationResolution.UNRESOLVED
 
+    def test_scope_task(self) -> None:
+        """Proto TASK scope converts to string."""
+        proto = Violation(rule_id="L021", scope=common_pb2.RULE_SCOPE_TASK)
+        d = violation_proto_to_dict(proto)
+        assert d["scope"] == RuleScope.TASK.value
+
+    def test_scope_play(self) -> None:
+        """Proto PLAY scope converts to string."""
+        proto = Violation(rule_id="L042", scope=common_pb2.RULE_SCOPE_PLAY)
+        d = violation_proto_to_dict(proto)
+        assert d["scope"] == RuleScope.PLAY.value
+
+    def test_scope_collection(self) -> None:
+        """Proto COLLECTION scope converts to string."""
+        proto = Violation(rule_id="L037", scope=common_pb2.RULE_SCOPE_COLLECTION)
+        d = violation_proto_to_dict(proto)
+        assert d["scope"] == RuleScope.COLLECTION.value
+
+    def test_unspecified_scope_defaults_to_task(self) -> None:
+        """Unspecified scope defaults to task."""
+        proto = Violation(rule_id="L021", scope=common_pb2.RULE_SCOPE_UNSPECIFIED)
+        d = violation_proto_to_dict(proto)
+        assert d["scope"] == RuleScope.TASK.value
+
     def test_resolution_all_ai_values(self) -> None:
         """All AI resolution proto enums convert to strings."""
         for proto_val, expected in [
@@ -212,6 +266,7 @@ class TestRoundTrip:
             "path": "tasks",
             "remediation_class": RemediationClass.AUTO_FIXABLE,
             "remediation_resolution": RemediationResolution.UNRESOLVED,
+            "scope": RuleScope.TASK,
         }
         proto = violation_dict_to_proto(original)
         result = violation_proto_to_dict(proto)
@@ -223,6 +278,7 @@ class TestRoundTrip:
         assert result["path"] == original["path"]
         assert result["remediation_class"] == original["remediation_class"]
         assert result["remediation_resolution"] == original["remediation_resolution"]
+        assert result["scope"] == RuleScope.TASK.value
 
     def test_round_trip_line_range(self) -> None:
         """Line range round-trips correctly."""
@@ -241,6 +297,17 @@ class TestRoundTrip:
             proto = violation_dict_to_proto(original)
             result = violation_proto_to_dict(proto)
             assert result["remediation_resolution"] == res, f"Failed for {res}"
+
+    def test_round_trip_scope(self) -> None:
+        """All scope values round-trip correctly."""
+        for scope in RuleScope:
+            original: ViolationDict = {
+                "rule_id": "L021",
+                "scope": scope,
+            }
+            proto = violation_dict_to_proto(original)
+            result = violation_proto_to_dict(proto)
+            assert result["scope"] == scope.value, f"Failed for {scope}"
 
 
 class TestStringLineParsing:

@@ -2,6 +2,7 @@
 rule_id: R111
 validator: native
 description: Parameterized role import (annotation-based).
+scope: task
 ---
 
 ## Parameterized import role (R111)

@@ -2,6 +2,7 @@
 rule_id: L048
 validator: native
 description: copy with remote_src should set owner.
+scope: task
 ---
 
 ## No same owner (L048)

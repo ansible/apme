@@ -2,6 +2,7 @@
 rule_id: P002
 validator: native
 description: Validate module argument keys (Ansible required).
+scope: task
 ---
 
 ## Module argument key (P002)

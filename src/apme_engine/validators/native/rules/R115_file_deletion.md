@@ -2,6 +2,7 @@
 rule_id: R115
 validator: native
 description: File deletion (annotation-based).
+scope: task
 ---
 
 ## File deletion (R115)

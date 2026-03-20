@@ -2,6 +2,7 @@
 rule_id: L029
 validator: native
 description: Prefer command over shell when no shell features are needed
+scope: task
 ---
 
 ## Command instead of shell (L029)

@@ -2,6 +2,7 @@
 rule_id: L035
 validator: native
 description: set_fact with random in args.
+scope: task
 ---
 
 ## Unnecessary set_fact (L035)

@@ -8,6 +8,7 @@ from apme_engine.engine.models import (
     AnsibleRunContext,
     Rule,
     RuleResult,
+    RuleScope,
     RunTargetType,
     Severity,
     YAMLDict,
@@ -52,6 +53,7 @@ class Python2InterpreterRule(Rule):
         version: Rule version.
         severity: Severity level.
         tags: Rule tags.
+        scope: Structural scope.
     """
 
     rule_id: str = "M010"
@@ -61,6 +63,7 @@ class Python2InterpreterRule(Rule):
     version: str = "v0.0.1"
     severity: str = Severity.HIGH
     tags: tuple[str, ...] = (Tag.CODING,)
+    scope: str = RuleScope.PLAY
 
     def match(self, ctx: AnsibleRunContext) -> bool:
         """Check if context has a task target.

@@ -2,6 +2,7 @@
 rule_id: L037
 validator: native
 description: Module name could not be resolved.
+scope: collection
 ---
 
 ## Unresolved module (L037)

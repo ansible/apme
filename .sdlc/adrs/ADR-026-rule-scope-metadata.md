@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed
+Accepted
 
 ## Date
 
@@ -151,31 +151,19 @@ def partition_violations(...):
 
 ## Implementation Notes
 
-1. **Add `RuleScope` enum to `models.py`** alongside `RemediationClass` and `RemediationResolution`
+All steps completed in the initial implementation PR:
 
-2. **Extend proto schema**:
-   ```protobuf
-   enum RuleScope {
-     RULE_SCOPE_UNSPECIFIED = 0;
-     RULE_SCOPE_TASK = 1;
-     RULE_SCOPE_BLOCK = 2;
-     RULE_SCOPE_PLAY = 3;
-     RULE_SCOPE_PLAYBOOK = 4;
-     RULE_SCOPE_ROLE = 5;
-     RULE_SCOPE_INVENTORY = 6;
-     RULE_SCOPE_COLLECTION = 7;
-   }
-   ```
-
-3. **Update OPA policies** — each rule's `violation` output should include `"scope": "play"` etc.
-
-4. **Update native validators** — rule classes should define `scope` as a class attribute
-
-5. **Update Ansible validator** — introspection rules (M001-M004) are task-scoped
-
-6. **Migrate partition.py** — replace hardcoded sets with scope-based routing
-
-7. **Backward compatibility** — violations without `scope` default to `TASK` (most permissive)
+1. **`RuleScope` enum added to `models.py`** alongside `RemediationClass` and `RemediationResolution`
+2. **Proto schema extended**: `RuleScope` enum + `scope = 10` field on `Violation` in `common.proto`; stubs regenerated
+3. **`RuleMetadata` base class** gains `scope: str = RuleScope.TASK` — all 19 non-TASK native rules override explicitly
+4. **OPA policies**: all 28 Rego rules emit `"scope": "<value>"` in violation objects
+5. **Ansible validator**: M001-M004 (task), L057 (playbook), L058/L059 (task)
+6. **Gitleaks validator**: SEC violations emit `"scope": "playbook"`
+7. **`_extract_results`**: threads `scope` from `RuleMetadata` into native violation dicts
+8. **Violation converters**: `violation_dict_to_proto` / `violation_proto_to_dict` in both daemon and CLI carry `scope`
+9. **`partition.py` rewritten**: `PLAY_LEVEL_RULES` eliminated; routing uses `AI_PROPOSABLE_SCOPES = {TASK, BLOCK}`. `CROSS_FILE_RULES` reduced to `{R111, R112}` — the remaining task-scoped rules that need cross-file context
+10. **Rule docs**: 92 `.md` files updated with `scope:` in YAML front matter
+11. **Backward compatibility**: violations without `scope` default to `TASK` (most permissive)
 
 ## Related Decisions
 
@@ -197,3 +185,4 @@ def partition_violations(...):
 | Date | Author | Change |
 |------|--------|--------|
 | 2026-03-19 | AI Agent | Initial proposal |
+| 2026-03-19 | AI Agent | Accepted — full implementation: proto schema, models, all rule classes/docs/Rego, converters, partition logic, 11 new tests |

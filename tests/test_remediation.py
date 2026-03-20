@@ -5,7 +5,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import cast
 
-from apme_engine.engine.models import RemediationClass, RemediationResolution, ViolationDict
+from apme_engine.engine.models import RemediationClass, RemediationResolution, RuleScope, ViolationDict
 from apme_engine.remediation.engine import RemediationEngine
 from apme_engine.remediation.partition import (
     add_classification_to_violations,
@@ -254,6 +254,89 @@ class TestPartition:
             assert classify_violation(v, reg) == RemediationClass.AUTO_FIXABLE, (
                 f"Rule {rule_id} should classify as AUTO_FIXABLE"
             )
+
+    def test_partition_play_scope_to_tier3(self) -> None:
+        """Verifies play-scoped violations route to tier3 via scope metadata."""
+        reg = TransformRegistry()
+        violations: list[ViolationDict] = [
+            {"rule_id": "L042", "scope": RuleScope.PLAY},
+            {"rule_id": "M010", "scope": "play"},
+            {"rule_id": "R108", "scope": RuleScope.PLAY},
+        ]
+        t1, t2, t3 = partition_violations(violations, reg)
+        assert len(t1) == 0
+        assert len(t2) == 0
+        assert len(t3) == 3
+        for v in t3:
+            assert v["remediation_resolution"] == RemediationResolution.MANUAL
+
+    def test_partition_role_scope_to_tier3(self) -> None:
+        """Verifies role-scoped violations route to tier3."""
+        reg = TransformRegistry()
+        violations: list[ViolationDict] = [
+            {"rule_id": "L027", "scope": RuleScope.ROLE},
+            {"rule_id": "L052", "scope": "role"},
+        ]
+        t1, t2, t3 = partition_violations(violations, reg)
+        assert len(t3) == 2
+
+    def test_partition_task_scope_to_tier2(self) -> None:
+        """Verifies task-scoped violations route to tier2 (AI proposable)."""
+        reg = TransformRegistry()
+        violations: list[ViolationDict] = [
+            {"rule_id": "L026", "scope": RuleScope.TASK},
+            {"rule_id": "L028", "scope": "task"},
+        ]
+        t1, t2, t3 = partition_violations(violations, reg)
+        assert len(t2) == 2
+
+    def test_partition_block_scope_to_tier2(self) -> None:
+        """Verifies block-scoped violations are AI-proposable."""
+        reg = TransformRegistry()
+        violations: list[ViolationDict] = [
+            {"rule_id": "BLOCK001", "scope": RuleScope.BLOCK},
+        ]
+        t1, t2, t3 = partition_violations(violations, reg)
+        assert len(t2) == 1
+
+    def test_partition_cross_file_rules_still_tier3(self) -> None:
+        """Verifies R111/R112 still route to tier3 with NEEDS_CROSS_FILE."""
+        reg = TransformRegistry()
+        violations: list[ViolationDict] = [
+            {"rule_id": "R111", "scope": RuleScope.TASK},
+            {"rule_id": "R112", "scope": "task"},
+        ]
+        t1, t2, t3 = partition_violations(violations, reg)
+        assert len(t3) == 2
+        for v in t3:
+            assert v["remediation_resolution"] == RemediationResolution.NEEDS_CROSS_FILE
+
+    def test_partition_missing_scope_defaults_to_task(self) -> None:
+        """Verifies violations without scope default to task (AI proposable)."""
+        reg = TransformRegistry()
+        violations: list[ViolationDict] = [
+            {"rule_id": "L999"},
+        ]
+        t1, t2, t3 = partition_violations(violations, reg)
+        assert len(t2) == 1
+
+    def test_classify_play_scope_manual_review(self) -> None:
+        """Verifies play-scoped violations classify as manual-review."""
+        reg = TransformRegistry()
+        assert classify_violation({"rule_id": "L042", "scope": RuleScope.PLAY}, reg) == RemediationClass.MANUAL_REVIEW
+
+    def test_classify_collection_scope_manual_review(self) -> None:
+        """Verifies collection-scoped violations classify as manual-review."""
+        reg = TransformRegistry()
+        assert (
+            classify_violation({"rule_id": "L037", "scope": RuleScope.COLLECTION}, reg)
+            == RemediationClass.MANUAL_REVIEW
+        )
+
+    def test_classify_task_scope_ai_candidate(self) -> None:
+        """Verifies task-scoped violations classify as AI candidate."""
+        reg = TransformRegistry()
+        assert classify_violation({"rule_id": "L026", "scope": RuleScope.TASK}, reg) == RemediationClass.AI_CANDIDATE
 
 
 # ---------------------------------------------------------------------------

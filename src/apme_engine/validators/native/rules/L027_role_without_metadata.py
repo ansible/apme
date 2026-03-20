@@ -7,6 +7,7 @@ from apme_engine.engine.models import (
     AnsibleRunContext,
     Rule,
     RuleResult,
+    RuleScope,
     RunTargetType,
     Severity,
 )
@@ -27,6 +28,7 @@ class RoleWithoutMetadataRule(Rule):
         version: Rule version.
         severity: Severity level.
         tags: Rule tags.
+        scope: Structural scope.
     """
 
     rule_id: str = "L027"
@@ -36,6 +38,7 @@ class RoleWithoutMetadataRule(Rule):
     version: str = "v0.0.1"
     severity: str = Severity.LOW
     tags: tuple[str, ...] = (Tag.DEPENDENCY,)
+    scope: str = RuleScope.ROLE
 
     def match(self, ctx: AnsibleRunContext) -> bool:
         """Return True if the current target is a role.

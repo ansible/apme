@@ -261,6 +261,7 @@ def run(
                 "file": task.get("file", ""),
                 "line": line_num,
                 "path": task_key,
+                "scope": "task",
             }
         )
 

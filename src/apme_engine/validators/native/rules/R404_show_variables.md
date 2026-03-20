@@ -2,6 +2,7 @@
 rule_id: R404
 validator: native
 description: Expose variable_set for the task.
+scope: task
 ---
 
 ## Show variables (R404)

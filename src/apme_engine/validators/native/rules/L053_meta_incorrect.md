@@ -2,6 +2,7 @@
 rule_id: L053
 validator: native
 description: Role meta should have valid structure.
+scope: role
 ---
 
 ## Meta incorrect (L053)

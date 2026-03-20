@@ -2,6 +2,7 @@
 rule_id: L052
 validator: native
 description: Galaxy version in meta should be semantic.
+scope: role
 ---
 
 ## Galaxy version (L052)

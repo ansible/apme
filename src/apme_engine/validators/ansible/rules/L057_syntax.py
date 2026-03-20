@@ -60,6 +60,7 @@ def run(
                 "file": "",
                 "line": 1,
                 "path": "",
+                "scope": "playbook",
             }
         )
         return violations
@@ -88,6 +89,7 @@ def run(
                     "file": rel_path,
                     "line": 1,
                     "path": "",
+                    "scope": "playbook",
                 }
             )
             continue
@@ -106,6 +108,7 @@ def run(
                     "file": rel_path,
                     "line": line,
                     "path": "",
+                    "scope": "playbook",
                 }
             )
 

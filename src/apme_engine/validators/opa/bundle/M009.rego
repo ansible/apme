@@ -33,5 +33,6 @@ deprecated_with_loop(tree, node) := v if {
 		"line": node.line[0],
 		"path": node.key,
 		"with_key": wk,
+		"scope": "task",
 	}
 }

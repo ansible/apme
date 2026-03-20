@@ -23,5 +23,6 @@ playbook_extension(tree) := v if {
 		"file": root_path,
 		"line": 1,
 		"path": tree.root_key,
+		"scope": "playbook",
 	}
 }

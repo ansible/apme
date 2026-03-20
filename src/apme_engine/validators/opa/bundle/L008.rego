@@ -22,5 +22,6 @@ deprecated_local_action(tree, node) := v if {
 		"file": node.file,
 		"line": node.line[0],
 		"path": node.key,
+		"scope": "task",
 	}
 }

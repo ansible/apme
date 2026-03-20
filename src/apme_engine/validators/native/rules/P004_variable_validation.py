@@ -8,6 +8,7 @@ from apme_engine.engine.models import (
     ArgumentsType,
     Rule,
     RuleResult,
+    RuleScope,
     RunTargetType,
     Severity,
     TaskCall,
@@ -54,6 +55,7 @@ class VariableValidationRule(Rule):
         version: Rule version.
         severity: Severity level.
         tags: Rule tags.
+        scope: Structural scope.
         precedence: Evaluation order.
     """
 
@@ -64,6 +66,7 @@ class VariableValidationRule(Rule):
     version: str = "v0.0.1"
     severity: str = Severity.NONE
     tags: tuple[str, ...] = (Tag.QUALITY,)
+    scope: str = RuleScope.INVENTORY
     precedence: int = 0
 
     def match(self, ctx: AnsibleRunContext) -> bool:

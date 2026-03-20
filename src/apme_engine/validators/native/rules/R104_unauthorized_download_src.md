@@ -2,6 +2,7 @@
 rule_id: R104
 validator: native
 description: Download from unauthorized source (annotation-based).
+scope: task
 ---
 
 ## Unauthorized download (R104)

@@ -2,6 +2,7 @@
 rule_id: L032
 validator: native
 description: Variable redefinition may cause confusion.
+scope: task
 ---
 
 ## Changed data dependence (L032)

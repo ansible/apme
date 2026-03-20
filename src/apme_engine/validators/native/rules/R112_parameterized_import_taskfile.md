@@ -2,6 +2,7 @@
 rule_id: R112
 validator: native
 description: Parameterized taskfile import (annotation-based).
+scope: task
 ---
 
 ## Parameterized import taskfile (R112)

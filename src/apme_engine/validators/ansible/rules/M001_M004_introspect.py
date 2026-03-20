@@ -162,6 +162,7 @@ def run(
                 "file": file_path,
                 "line": line_num,
                 "path": node.get("key", ""),
+                "scope": "task",
                 "original_module": module_name,
                 "removal_msg": str(info.get("removal_msg", "")),
             }
@@ -181,6 +182,7 @@ def run(
                     "file": file_path,
                     "line": line_num,
                     "path": node.get("key", ""),
+                    "scope": "task",
                     "resolved_fqcn": fqcn,
                     "original_module": module_name,
                 }
@@ -198,6 +200,7 @@ def run(
                 "file": file_path,
                 "line": line_num,
                 "path": node.get("key", ""),
+                "scope": "task",
                 "original_module": module_name,
             }
             if fqcn:
@@ -216,6 +219,7 @@ def run(
                     "file": file_path,
                     "line": line_num,
                     "path": node.get("key", ""),
+                    "scope": "task",
                     "original_module": module_name,
                     "resolved_fqcn": str(redirects[-1]) if redirects else "",
                     "redirect_chain": [str(r) for r in redirects],

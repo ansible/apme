@@ -2,6 +2,7 @@
 rule_id: L050
 validator: native
 description: Variable names: lowercase, underscores.
+scope: inventory
 ---
 
 ## Var naming (L050)

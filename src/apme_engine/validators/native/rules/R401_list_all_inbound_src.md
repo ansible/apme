@@ -2,6 +2,7 @@
 rule_id: R401
 validator: native
 description: Report inbound transfer sources.
+scope: task
 ---
 
 ## List inbound sources (R401)

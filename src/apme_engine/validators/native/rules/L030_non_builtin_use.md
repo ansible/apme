@@ -2,6 +2,7 @@
 rule_id: L030
 validator: native
 description: Prefer ansible.builtin modules when available.
+scope: task
 ---
 
 ## Non-builtin use (L030)

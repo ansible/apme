@@ -2,6 +2,7 @@
 rule_id: Sample101
 validator: native
 description: Example rule that returns task block.
+scope: task
 ---
 
 ## Sample rule (Sample101)

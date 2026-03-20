@@ -2,6 +2,7 @@
 rule_id: L051
 validator: native
 description: Jinja spacing: {{ var }} not {{var}}.
+scope: task
 ---
 
 ## Jinja (L051)

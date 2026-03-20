@@ -7,6 +7,7 @@ from apme_engine.engine.models import (
     AnsibleRunContext,
     Rule,
     RuleResult,
+    RuleScope,
     RunTargetType,
     Severity,
     YAMLDict,
@@ -31,6 +32,7 @@ class UnresolvedModuleRule(Rule):
         version: Rule version.
         severity: Severity level.
         tags: Rule tags.
+        scope: Structural scope.
     """
 
     rule_id: str = "L037"
@@ -40,6 +42,7 @@ class UnresolvedModuleRule(Rule):
     version: str = "v0.0.1"
     severity: str = Severity.LOW
     tags: tuple[str, ...] = (Tag.DEPENDENCY,)
+    scope: str = RuleScope.COLLECTION
 
     def match(self, ctx: AnsibleRunContext) -> bool:
         """Check if context has a task target.

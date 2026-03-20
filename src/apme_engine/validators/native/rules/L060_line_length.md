@@ -2,6 +2,7 @@
 rule_id: L060
 validator: native
 description: Line too long (exceeds 160 characters).
+scope: playbook
 ---
 
 ## Line length (L060)

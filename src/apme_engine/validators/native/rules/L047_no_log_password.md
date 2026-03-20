@@ -2,6 +2,7 @@
 rule_id: L047
 validator: native
 description: Set no_log for password-like parameters.
+scope: task
 ---
 
 ## No log password (L047)

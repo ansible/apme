@@ -23,6 +23,7 @@ no_jinja_when(tree, node) := v if {
 		"file": node.file,
 		"line": node.line[0],
 		"path": node.key,
+		"scope": "task",
 	}
 }
 
@@ -38,5 +39,6 @@ no_jinja_when(tree, node) := v if {
 		"file": node.file,
 		"line": node.line[0],
 		"path": node.key,
+		"scope": "task",
 	}
 }

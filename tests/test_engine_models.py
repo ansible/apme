@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import cast
 
 import pytest
@@ -36,8 +37,10 @@ from apme_engine.engine.models import (
     RiskAnnotation,
     RiskAnnotationList,
     RoleMetadata,
+    Rule,
     RuleMetadata,
     RuleResult,
+    RuleScope,
     RunTarget,
     RunTargetList,
     Severity,
@@ -819,6 +822,45 @@ class TestRuleMetadata:
         rm = RuleMetadata()
         assert rm.rule_id == ""
         assert rm.tags == ()
+
+    def test_default_scope_is_task(self) -> None:
+        """Verifies RuleMetadata defaults scope to TASK."""
+        rm = RuleMetadata()
+        assert rm.scope == RuleScope.TASK
+
+    def test_get_metadata_preserves_scope(self) -> None:
+        """Verifies Rule.get_metadata() copies the declared scope."""
+
+        @dataclass
+        class PlayRule(Rule):
+            rule_id: str = "L042"
+            description: str = "test"
+            scope: str = RuleScope.PLAY
+            enabled: bool = True
+
+        rule = PlayRule()
+        meta = rule.get_metadata()
+        assert meta.scope == RuleScope.PLAY
+
+    def test_get_metadata_preserves_non_default_scopes(self) -> None:
+        """Verifies get_metadata() works for all non-TASK scopes."""
+        for scope_val in (
+            RuleScope.BLOCK,
+            RuleScope.PLAYBOOK,
+            RuleScope.ROLE,
+            RuleScope.INVENTORY,
+            RuleScope.COLLECTION,
+        ):
+
+            @dataclass
+            class ScopedRule(Rule):
+                rule_id: str = "TEST"
+                description: str = "test"
+                scope: str = scope_val
+                enabled: bool = True
+
+            meta = ScopedRule().get_metadata()
+            assert meta.scope == scope_val, f"Expected {scope_val}, got {meta.scope}"
 
 
 class TestSpecMutation:

@@ -2,6 +2,7 @@
 rule_id: R114
 validator: native
 description: File change (annotation-based).
+scope: task
 ---
 
 ## File change (R114)

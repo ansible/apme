@@ -2,6 +2,7 @@
 rule_id: L044
 validator: native
 description: Set state explicitly where it matters.
+scope: task
 ---
 
 ## Avoid implicit (L044)

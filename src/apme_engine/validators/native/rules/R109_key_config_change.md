@@ -2,6 +2,7 @@
 rule_id: R109
 validator: native
 description: Key/config change (annotation-based).
+scope: task
 ---
 
 ## Key config change (R109)

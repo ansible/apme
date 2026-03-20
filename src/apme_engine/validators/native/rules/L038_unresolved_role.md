@@ -2,6 +2,7 @@
 rule_id: L038
 validator: native
 description: Role could not be resolved.
+scope: role
 ---
 
 ## Unresolved role (L038)

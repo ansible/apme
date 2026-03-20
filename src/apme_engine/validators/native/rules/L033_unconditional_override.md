@@ -2,6 +2,7 @@
 rule_id: L033
 validator: native
 description: Overriding vars without conditions.
+scope: task
 ---
 
 ## Unconditional override (L033)

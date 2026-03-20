@@ -2,6 +2,7 @@
 rule_id: L045
 validator: native
 description: Avoid inline environment in tasks.
+scope: task
 ---
 
 ## Inline env var (L045)

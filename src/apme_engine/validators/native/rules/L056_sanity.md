@@ -2,6 +2,7 @@
 rule_id: L056
 validator: native
 description: Path may match ignore pattern.
+scope: playbook
 ---
 
 ## Sanity (L056)

@@ -2,6 +2,7 @@
 rule_id: R117
 validator: native
 description: Role is from Galaxy/external source.
+scope: role
 ---
 
 ## External role (R117)

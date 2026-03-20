@@ -2,6 +2,7 @@
 rule_id: R103
 validator: native
 description: Task downloads and executes (annotation-based).
+scope: task
 ---
 
 ## Download exec (R103)

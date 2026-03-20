@@ -2,6 +2,7 @@
 rule_id: L036
 validator: native
 description: include_vars without when/tags.
+scope: task
 ---
 
 ## Unnecessary include_vars (L036)

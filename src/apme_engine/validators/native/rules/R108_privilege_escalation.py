@@ -7,6 +7,7 @@ from apme_engine.engine.models import (
     AnsibleRunContext,
     Rule,
     RuleResult,
+    RuleScope,
     RunTargetType,
     Severity,
     TaskCall,
@@ -27,6 +28,7 @@ class PrivilegeEscalationRule(Rule):
         version: Rule version.
         severity: Severity level.
         tags: Rule tags.
+        scope: Structural scope.
     """
 
     rule_id: str = "R108"
@@ -36,6 +38,7 @@ class PrivilegeEscalationRule(Rule):
     version: str = "v0.0.1"
     severity: str = Severity.HIGH
     tags: tuple[str, ...] = (Tag.SYSTEM,)
+    scope: str = RuleScope.PLAY
 
     def match(self, ctx: AnsibleRunContext) -> bool:
         """Check if context has a task target.

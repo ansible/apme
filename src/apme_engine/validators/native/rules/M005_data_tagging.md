@@ -2,6 +2,7 @@
 rule_id: M005
 validator: native
 description: Registered variable used in Jinja template may be untrusted in 2.19+.
+scope: task
 ---
 
 ## Data tagging trust model (M005)

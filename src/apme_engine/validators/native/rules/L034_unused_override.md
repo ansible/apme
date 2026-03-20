@@ -2,6 +2,7 @@
 rule_id: L034
 validator: native
 description: Lower-precedence override may be unused.
+scope: inventory
 ---
 
 ## Unused override (L034)

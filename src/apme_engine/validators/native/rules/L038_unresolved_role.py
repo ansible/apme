@@ -7,6 +7,7 @@ from apme_engine.engine.models import (
     AnsibleRunContext,
     Rule,
     RuleResult,
+    RuleScope,
     RunTargetType,
     Severity,
     YAMLDict,
@@ -36,6 +37,7 @@ class UnresolvedRoleRule(Rule):
         version: Rule version.
         severity: Severity level.
         tags: Rule tags.
+        scope: Structural scope.
         result_type: Type of RuleResult to produce.
     """
 
@@ -46,6 +48,7 @@ class UnresolvedRoleRule(Rule):
     version: str = "v0.0.1"
     severity: str = Severity.LOW
     tags: tuple[str, ...] = (Tag.DEPENDENCY,)
+    scope: str = RuleScope.ROLE
     result_type: type = UnresolvedRoleRuleResult
 
     def match(self, ctx: AnsibleRunContext) -> bool:

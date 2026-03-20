@@ -2,6 +2,7 @@
 rule_id: L027
 validator: native
 description: Roles should have meta/main.yml with metadata.
+scope: role
 ---
 
 ## Role without metadata (L027)

@@ -31,7 +31,7 @@ This directory contains the Architecture Decision Records (ADRs) for APME.
 | [ADR-023](ADR-023-per-finding-classification.md) | Per-Finding Remediation Classification and Resolution | Accepted | 2026-03 |
 | [ADR-024](ADR-024-thin-cli-daemon-mode.md) | Thin CLI with Local Daemon Mode | Accepted | 2026-03 |
 | [ADR-025](ADR-025-ai-provider-protocol.md) | AIProvider Protocol Abstraction | Accepted | 2026-03 |
-| [ADR-026](ADR-026-rule-scope-metadata.md) | Rule Scope as First-Class Metadata | Proposed | 2026-03 |
+| [ADR-026](ADR-026-rule-scope-metadata.md) | Rule Scope as First-Class Metadata | Accepted | 2026-03 |
 | [ADR-027](ADR-027-agentic-project-remediation.md) | Agentic Project-Level AI Remediation | Proposed | 2026-03 |
 | [ADR-028](ADR-028-session-based-fix-workflow.md) | Session-Based Fix Workflow with Bidirectional Streaming | Accepted | 2026-03 |
 | [ADR-029](ADR-029-web-gateway-architecture.md) | Web Gateway Architecture | Proposed | 2026-03 |
@@ -54,7 +54,7 @@ This directory contains the Architecture Decision Records (ADRs) for APME.
 - ADR-002: OPA/Rego hybrid rules
 - ADR-003: Vendored ARI engine
 - ADR-008: Rule ID conventions
-- ADR-026: Rule scope metadata (proposed)
+- ADR-026: Rule scope metadata (accepted)
 - ADR-031: Unified collection cache (proposed)
 
 ### Validators

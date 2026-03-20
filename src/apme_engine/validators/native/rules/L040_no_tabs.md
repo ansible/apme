@@ -2,6 +2,7 @@
 rule_id: L040
 validator: native
 description: YAML should not contain tabs; use spaces.
+scope: playbook
 ---
 
 ## No tabs (L040)

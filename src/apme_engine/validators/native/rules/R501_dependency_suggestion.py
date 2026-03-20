@@ -7,6 +7,7 @@ from apme_engine.engine.models import (
     AnsibleRunContext,
     Rule,
     RuleResult,
+    RuleScope,
     RunTargetType,
     Severity,
     Task,
@@ -27,6 +28,7 @@ class DependencySuggestionRule(Rule):
         version: Rule version.
         severity: Severity level.
         tags: Rule tags.
+        scope: Structural scope.
     """
 
     rule_id: str = "R501"
@@ -36,6 +38,7 @@ class DependencySuggestionRule(Rule):
     version: str = "v0.0.1"
     severity: str = Severity.NONE
     tags: tuple[str, ...] = (Tag.DEPENDENCY,)
+    scope: str = RuleScope.COLLECTION
 
     def match(self, ctx: AnsibleRunContext) -> bool:
         """Check if context has a task target.

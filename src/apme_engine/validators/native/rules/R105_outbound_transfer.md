@@ -2,6 +2,7 @@
 rule_id: R105
 validator: native
 description: Outbound transfer (annotation-based).
+scope: task
 ---
 
 ## Outbound transfer (R105)

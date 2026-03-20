@@ -2,6 +2,7 @@
 rule_id: L043
 validator: native
 description: Avoid {{ foo }}; prefer explicit form.
+scope: task
 ---
 
 ## Deprecated bare vars (L043)

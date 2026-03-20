@@ -43,6 +43,7 @@ only_builtins(tree, node) := v if {
 		"path": node.key,
 		"original_module": om,
 		"resolved_fqcn": resolved,
+		"scope": "task",
 	}
 }
 
@@ -64,5 +65,6 @@ only_builtins(tree, node) := v if {
 		"line": node.line[0],
 		"path": node.key,
 		"original_module": om,
+		"scope": "task",
 	}
 }

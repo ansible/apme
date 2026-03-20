@@ -24,6 +24,18 @@ enum RemediationResolution {
   REMEDIATION_RESOLUTION_MANUAL = 9;
 }
 
+// RuleScope indicates the structural scope at which a rule operates.
+enum RuleScope {
+  RULE_SCOPE_UNSPECIFIED = 0;
+  RULE_SCOPE_TASK = 1;        // Individual task — AI can propose fixes
+  RULE_SCOPE_BLOCK = 2;       // Block structure — AI may help
+  RULE_SCOPE_PLAY = 3;        // Play header, vars, become — manual
+  RULE_SCOPE_PLAYBOOK = 4;    // Multi-play structure — manual
+  RULE_SCOPE_ROLE = 5;        // Role-level (meta, defaults) — manual
+  RULE_SCOPE_INVENTORY = 6;   // Inventory/group_vars — manual
+  RULE_SCOPE_COLLECTION = 7;  // Cross-repo scope — manual
+}
+
 // Violation is the shared shape for a single lint/policy violation.
 message Violation {
   string rule_id = 1;
@@ -40,6 +52,7 @@ message Violation {
   // Rule-specific metadata (e.g. resolved_fqcn, original_module, with_key).
   // Preserves fields that transforms need but don't fit the common schema.
   map<string, string> metadata = 10;
+  RuleScope scope = 11;
 }
 
 message LineRange {

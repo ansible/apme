@@ -2,6 +2,7 @@
 rule_id: L028
 validator: native
 description: Tasks should have a name.
+scope: task
 ---
 
 ## Task without name (L028)

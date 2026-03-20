@@ -2,6 +2,7 @@
 rule_id: L039
 validator: native
 description: Variable use may be undefined.
+scope: inventory
 ---
 
 ## Undefined variable (L039)

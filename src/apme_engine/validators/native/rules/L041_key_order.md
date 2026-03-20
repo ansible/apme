@@ -2,6 +2,7 @@
 rule_id: L041
 validator: native
 description: Task keys should follow canonical order (e.g. name before module).
+scope: task
 ---
 
 ## Key order (L041)

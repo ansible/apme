@@ -2,6 +2,7 @@
 rule_id: R501
 validator: native
 description: Suggest collection/role dependency.
+scope: collection
 ---
 
 ## Dependency suggestion (R501)

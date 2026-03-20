@@ -2,6 +2,7 @@
 rule_id: R101
 validator: native
 description: Task executes parameterized command (annotation-based)
+scope: task
 ---
 
 ## Command exec (R101)

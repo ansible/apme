@@ -2,6 +2,7 @@
 rule_id: L026
 validator: native
 description: Tasks should use FQCN for modules.
+scope: task
 ---
 
 ## Non-FQCN use (L026)

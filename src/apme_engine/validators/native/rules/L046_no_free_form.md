@@ -2,6 +2,7 @@
 rule_id: L046
 validator: native
 description: Avoid raw/command/shell without args key.
+scope: task
 ---
 
 ## No free form (L046)

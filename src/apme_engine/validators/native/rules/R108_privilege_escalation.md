@@ -2,6 +2,7 @@
 rule_id: R108
 validator: native
 description: Privilege escalation (annotation-based).
+scope: play
 ---
 
 ## Privilege escalation (R108)

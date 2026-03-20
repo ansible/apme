@@ -51,6 +51,28 @@ YAMLList = list[YAMLValue]
 ViolationDict = dict[str, str | int | list[int] | bool | None]
 
 
+class RuleScope(str, Enum):
+    """Structural scope at which a rule operates.
+
+    Attributes:
+        TASK: Individual task — AI can propose fixes.
+        BLOCK: Block structure — AI may help.
+        PLAY: Play header, vars, become — manual review.
+        PLAYBOOK: Multi-play structure — manual review.
+        ROLE: Role-level (meta, defaults) — manual review.
+        INVENTORY: Inventory/group_vars — manual review.
+        COLLECTION: Cross-repo scope — manual review.
+    """
+
+    TASK = "task"
+    BLOCK = "block"
+    PLAY = "play"
+    PLAYBOOK = "playbook"
+    ROLE = "role"
+    INVENTORY = "inventory"
+    COLLECTION = "collection"
+
+
 class RemediationClass(str, Enum):
     """Classification of remediation complexity for violations.
 
@@ -4545,7 +4567,7 @@ class RuleTag:
 
 @dataclass
 class RuleMetadata:
-    """Metadata for a rule (id, description, name, version, severity, tags).
+    """Metadata for a rule (id, description, name, version, severity, tags, scope).
 
     Attributes:
         rule_id: Unique rule identifier.
@@ -4555,6 +4577,7 @@ class RuleMetadata:
         commit_id: Commit ID.
         severity: Severity level.
         tags: Tags for categorization.
+        scope: Structural scope at which the rule operates.
     """
 
     rule_id: str = ""
@@ -4565,6 +4588,7 @@ class RuleMetadata:
     commit_id: str = ""
     severity: str = ""
     tags: tuple[str, ...] = ()
+    scope: str = RuleScope.TASK
 
 
 @dataclass
@@ -4752,7 +4776,7 @@ class Rule(RuleMetadata):
         """Return RuleMetadata for this rule.
 
         Returns:
-            RuleMetadata with rule_id, description, name, version, commit_id, severity, tags.
+            RuleMetadata with rule_id, description, name, version, commit_id, severity, tags, scope.
         """
         return RuleMetadata(
             rule_id=self.rule_id,
@@ -4762,6 +4786,7 @@ class Rule(RuleMetadata):
             commit_id=self.commit_id,
             severity=self.severity,
             tags=self.tags,
+            scope=self.scope,
         )
 
 

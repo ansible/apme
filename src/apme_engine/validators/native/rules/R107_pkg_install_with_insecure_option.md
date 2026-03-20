@@ -2,6 +2,7 @@
 rule_id: R107
 validator: native
 description: Package install with insecure option (annotation-based).
+scope: task
 ---
 
 ## Pkg install insecure (R107)

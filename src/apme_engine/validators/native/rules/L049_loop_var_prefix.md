@@ -2,6 +2,7 @@
 rule_id: L049
 validator: native
 description: Loop variable should use prefix (e.g. item_).
+scope: task
 ---
 
 ## Loop var prefix (L049)
