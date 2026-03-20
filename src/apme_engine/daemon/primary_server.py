@@ -15,7 +15,7 @@ import sys
 import tempfile
 import time
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -246,7 +246,7 @@ def _discover_collection_specs(files: list[File]) -> list[str]:
 def merge_collection_specs(
     request_specs: list[str],
     discovered_specs: list[str],
-    hierarchy_collections: list[object],
+    hierarchy_collections: Sequence[object],
 ) -> list[str]:
     """Merge collection specs with precedence: request > requirements.yml > FQCN-derived.
 
@@ -379,7 +379,9 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             hierarchy_collections = []
 
         collection_specs = merge_collection_specs(
-            collection_specs, discovered, hierarchy_collections,
+            collection_specs,
+            discovered,
+            hierarchy_collections,
         )
 
         _normalize_scandata_contexts(context_obj.scandata)

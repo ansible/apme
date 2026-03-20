@@ -144,7 +144,7 @@ def _restore_env(saved: dict[str, str | None]) -> None:
             os.environ[key] = val
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="session")  # type: ignore[untyped-decorator]
 def infrastructure() -> Infrastructure:
     """Provide the daemon infrastructure to tests.
 
@@ -158,7 +158,7 @@ def infrastructure() -> Infrastructure:
 FIXTURE_DIR = Path(__file__).resolve().parent.parent / "fixtures" / "terrible-playbook"
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="session")  # type: ignore[untyped-decorator]
 def fixture_dir() -> Path:
     """Path to the terrible-playbook fixture directory.
 

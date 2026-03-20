@@ -48,7 +48,7 @@ def _scan_json(fixture_dir: Path) -> YAMLDict:
         return {}  # unreachable
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="module")  # type: ignore[untyped-decorator]
 def scan_data(infrastructure: object) -> YAMLDict:
     """Scan terrible-playbook once and cache for all tests in this module.
 
@@ -61,7 +61,7 @@ def scan_data(infrastructure: object) -> YAMLDict:
     return _scan_json(FIXTURE_DIR)
 
 
-@pytest.mark.integration
+@pytest.mark.integration  # type: ignore[untyped-decorator]
 def test_posix_argspec_violation(scan_data: YAMLDict) -> None:
     """L058/L059 fires for ansible.posix.sysctl with bogus_param (ADR-032 proof).
 
