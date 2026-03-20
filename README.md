@@ -7,17 +7,17 @@ Ansible Policy & Modernization Engine — a multi-validator static analysis plat
 ## Architecture at a glance
 
 ```
-┌─────────┐      gRPC       ┌───────────┐      gRPC (parallel)      ┌────────────┐
+┌─────────┐      gRPC       ┌────────────┐      gRPC (parallel)      ┌────────────┐
 │   CLI   │ ──────────────► │  Primary   │ ──────────────────────►   │   Native   │ :50055
 │ (on-the │  ScanRequest    │ (orchestr) │   ValidateRequest         │  (Python)  │
 │  -fly)  │  chunked fs     │            │ ┌─────────────────────►   ├────────────┤
 └─────────┘                 │   Engine   │ │                         │    OPA     │ :50054
-     ▲                      │  ┌──────┐  │ │  ┌──────────────────►   │  (Rego)   │
+     ▲                      │  ┌──────┐  │ │  ┌──────────────────►   │  (Rego)    │
      │   ScanResponse       │  │parse │  │ │  │                      ├────────────┤
      │   violations         │  │annot.│  │ │  │  ┌───────────────►   │  Ansible   │ :50053
      └──────────────────────│  │hier. │  ├─┘  │  │                   │ (runtime)  │
                             │  └──────┘  ├────┘  │                   ├────────────┤
-                            └───────────┘ ├──────┘                   │  Gitleaks  │ :50056
+                            └────────────┘───────┘                   │  Gitleaks  │ :50056
                                  │                                   │ (secrets)  │
                             ┌────┴────┐                              └────────────┘
                             │  Cache  │ :50052
