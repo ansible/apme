@@ -2,6 +2,7 @@
 
 import fnmatch
 import os
+import uuid
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -233,6 +234,8 @@ def yield_scan_chunks(
     Yields:
         ScanChunk: ScanChunk messages for streaming.
     """
+    if not scan_id:
+        scan_id = str(uuid.uuid4())
     req = build_scan_request(
         target_path,
         scan_id=scan_id,

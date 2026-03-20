@@ -70,6 +70,11 @@ class PrimaryStub(object):
                 request_serializer=apme_dot_v1_dot_primary__pb2.SessionCommand.SerializeToString,
                 response_deserializer=apme_dot_v1_dot_primary__pb2.SessionEvent.FromString,
                 _registered_method=True)
+        self.SubscribeScanEvents = channel.unary_stream(
+                '/apme.v1.Primary/SubscribeScanEvents',
+                request_serializer=apme_dot_v1_dot_primary__pb2.SubscribeRequest.SerializeToString,
+                response_deserializer=apme_dot_v1_dot_primary__pb2.ScanCompletedEvent.FromString,
+                _registered_method=True)
         self.PullGalaxy = channel.unary_unary(
                 '/apme.v1.Primary/PullGalaxy',
                 request_serializer=apme_dot_v1_dot_cache__pb2.PullGalaxyRequest.SerializeToString,
@@ -133,6 +138,15 @@ class PrimaryServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def SubscribeScanEvents(self, request, context):
+        """Event subscription — gateway (or any listener) opens a persistent stream
+        and receives ScanCompletedEvent after every scan, regardless of origin
+        (CLI, CI, web). Implements the listener model from ADR-020.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def PullGalaxy(self, request, context):
         """Cache proxy — delegates to CacheMaintainer internally.
         """
@@ -184,6 +198,11 @@ def add_PrimaryServicer_to_server(servicer, server):
                     servicer.FixSession,
                     request_deserializer=apme_dot_v1_dot_primary__pb2.SessionCommand.FromString,
                     response_serializer=apme_dot_v1_dot_primary__pb2.SessionEvent.SerializeToString,
+            ),
+            'SubscribeScanEvents': grpc.unary_stream_rpc_method_handler(
+                    servicer.SubscribeScanEvents,
+                    request_deserializer=apme_dot_v1_dot_primary__pb2.SubscribeRequest.FromString,
+                    response_serializer=apme_dot_v1_dot_primary__pb2.ScanCompletedEvent.SerializeToString,
             ),
             'PullGalaxy': grpc.unary_unary_rpc_method_handler(
                     servicer.PullGalaxy,
@@ -367,6 +386,33 @@ class Primary(object):
             '/apme.v1.Primary/FixSession',
             apme_dot_v1_dot_primary__pb2.SessionCommand.SerializeToString,
             apme_dot_v1_dot_primary__pb2.SessionEvent.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def SubscribeScanEvents(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_stream(
+            request,
+            target,
+            '/apme.v1.Primary/SubscribeScanEvents',
+            apme_dot_v1_dot_primary__pb2.SubscribeRequest.SerializeToString,
+            apme_dot_v1_dot_primary__pb2.ScanCompletedEvent.FromString,
             options,
             channel_credentials,
             insecure,

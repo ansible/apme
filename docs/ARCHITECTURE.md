@@ -2,9 +2,11 @@
 
 ## Overview
 
-APME is a seven-container gRPC microservice deployed as a single Podman pod. The Primary service runs the engine (parse + annotate), then fans validation out **in parallel** to four independent validator backends over a unified gRPC contract. The CLI is ephemeral — run on-the-fly with the project directory mounted.
+APME is a gRPC microservice deployed as a single Podman pod (Primary + validators + cache maintainer). The Primary service runs the engine (parse + annotate), then fans validation out **in parallel** to four independent validator backends over a unified gRPC contract. The CLI is ephemeral — run on-the-fly with the project directory mounted.
 
-All inter-service communication is gRPC. There is no REST, no message queue, no service discovery. Containers in the same pod share `localhost`; addresses are fixed by convention.
+All inter-service communication is gRPC. There is no REST or message queue between engine services. Containers in the same pod share `localhost`; addresses are fixed by convention.
+
+An **optional presentation layer** (gateway + UI) can be deployed outside the engine pod. The gateway translates HTTP/WebSocket to gRPC and subscribes to Primary's scan event stream for real-time dashboard updates. See [ADR-029](.sdlc/adrs/ADR-029-web-gateway-architecture.md) and [ADR-030](.sdlc/adrs/ADR-030-frontend-deployment-model.md).
 
 All gRPC servers use **`grpc.aio`** (fully async). Blocking work (engine scan, subprocess calls, CPU-bound rules) is dispatched via `asyncio.get_event_loop().run_in_executor()`. Each request carries a **`request_id`** (correlation ID) from Primary through every validator for end-to-end tracing.
 
@@ -34,6 +36,15 @@ All gRPC servers use **`grpc.aio`** (fully async). Blocking work (engine scan, s
      │ (on-the  │  -v $(pwd):/workspace:ro,Z
      │  -fly)   │  apme-cli:latest apme-scan scan .
      └──────────┘
+
+Optional presentation layer (outside the engine pod):
+
+  ┌──────────┐         ┌──────────────┐
+  │   UI     │──/api──►│   Gateway    │──gRPC──► Primary :50051
+  │ (nginx)  │         │  (FastAPI)   │
+  │  :8081   │         │   :8080      │◄──SubscribeScanEvents──
+  └──────────┘         │  SQLite DB   │
+                       └──────────────┘
 ```
 
 ## Services
@@ -47,6 +58,8 @@ All gRPC servers use **`grpc.aio`** (fully async). Blocking work (engine scan, s
 | **Gitleaks** | `apme-gitleaks` | 50056 | Gitleaks binary + Python gRPC wrapper. Scans raw files for hardcoded secrets, API keys, private keys. Filters vault-encrypted content and Jinja2 expressions. Rules SEC:* (800+ patterns) |
 | **Cache Maintainer** | `apme-cache-maintainer` | 50052 | Populates the collection cache from Galaxy and GitHub orgs. Writes to `/cache`; Ansible reads it `ro` |
 | **CLI** | `apme-cli` | — | Ephemeral. Reads project files, builds chunked `ScanRequest`, calls `Primary.Scan`, prints violations. Run with `--pod apme-pod` and CWD mounted |
+| **Gateway** *(optional)* | `apme-gateway` | 8080 | FastAPI service outside the engine pod. Translates HTTP/WebSocket to gRPC. Subscribes to Primary's `SubscribeScanEvents` stream and persists results to SQLite. ADR-029 |
+| **UI** *(optional)* | `apme-ui` | 8081 | nginx serving a React/PatternFly SPA. Proxies `/api` to the gateway. ADR-030 |
 
 ## gRPC service contracts
 
@@ -61,14 +74,15 @@ service Primary {
   rpc Format(FormatRequest) returns (FormatResponse);
   rpc FormatStream(stream ScanChunk) returns (FormatResponse);
   rpc Health(HealthRequest) returns (HealthResponse);
-  rpc FixSession(stream SessionCommand) returns (stream SessionEvent);  // ADR-028
-  rpc PullGalaxy(PullGalaxyRequest) returns (PullGalaxyResponse);       // cache proxy
+  rpc FixSession(stream SessionCommand) returns (stream SessionEvent);              // ADR-028
+  rpc SubscribeScanEvents(SubscribeRequest) returns (stream ScanCompletedEvent);   // ADR-020
+  rpc PullGalaxy(PullGalaxyRequest) returns (PullGalaxyResponse);                  // cache proxy
   rpc PullRequirements(PullRequirementsRequest) returns (PullRequirementsResponse);
   rpc CloneOrg(CloneOrgRequest) returns (CloneOrgResponse);
 }
 ```
 
-The CLI sends project files as chunked `ScanChunk` messages via `ScanStream` (streaming) or as a single `ScanRequest` (unary). Both include an optional `ScanOptions` (ansible-core version, collection specs) and a `scan_id`. Primary returns `ScanResponse` with merged violations, `ScanDiagnostics` (engine + validator timing data), and a `ScanSummary` (counts by remediation class). The `FixSession` RPC uses bidirectional streaming (ADR-028) for real-time progress, interactive AI proposal review, and session resume.
+The CLI sends project files as chunked `ScanChunk` messages via `ScanStream` (streaming) or as a single `ScanRequest` (unary). Both include an optional `ScanOptions` (ansible-core version, collection specs) and a `scan_id`. Primary returns `ScanResponse` with merged violations, `ScanDiagnostics` (engine + validator timing data), and a `ScanSummary` (counts by remediation class). The `FixSession` RPC uses bidirectional streaming (ADR-028) for real-time progress, interactive AI proposal review, and session resume. `SubscribeScanEvents` is a server-streaming RPC (ADR-020) that pushes `ScanCompletedEvent` to listeners (e.g. the gateway) whenever a scan or fix completes.
 
 ### Validator (`validate.proto`) — unified contract
 
@@ -213,6 +227,8 @@ The wrapper adds Ansible-aware filtering:
 | 50054 | OPA | gRPC (wrapper; OPA REST on 8181 internal) |
 | 50055 | Native | gRPC |
 | 50056 | Gitleaks | gRPC (wrapper; gitleaks binary for detection) |
+| 8080 | Gateway *(optional)* | HTTP / WebSocket |
+| 8081 | UI *(optional)* | HTTP (nginx) |
 
 ## Scaling
 
@@ -327,4 +343,4 @@ Primary, Native, OPA, Ansible, Gitleaks, and Cache Maintainer all implement the 
 
 ## Decision records
 
-See [ADR.md](ADR.md) for the full Architecture Decision Record covering all major design choices.
+See [`.sdlc/adrs/`](../.sdlc/adrs/README.md) for the full list of Architecture Decision Records.

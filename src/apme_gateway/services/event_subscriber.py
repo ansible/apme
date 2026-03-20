@@ -1,0 +1,222 @@
+"""Persistent gRPC subscriber for ScanCompletedEvent (ADR-020).
+
+On gateway startup, opens a server-streaming RPC to Primary's
+SubscribeScanEvents and persists each event to the local database.
+Auto-reconnects on disconnect with exponential backoff.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import uuid
+from datetime import datetime, timezone
+
+import grpc
+import grpc.aio
+
+from apme.v1 import primary_pb2_grpc
+from apme.v1.primary_pb2 import ScanCompletedEvent, SubscribeRequest
+from apme_gateway.models.tables import Scan, Violation
+
+logger = logging.getLogger(__name__)
+
+_INITIAL_BACKOFF = 2
+_MAX_BACKOFF = 60
+_task: asyncio.Task[None] | None = None
+
+
+_DEDUP_WINDOW_SECONDS = 5
+
+
+async def _persist_event(
+    event: ScanCompletedEvent,
+    session_factory: object,
+) -> None:
+    """Write a ScanCompletedEvent to the database.
+
+    Idempotent: skips if a scan with the same ID exists, or if a scan
+    with the same source + project_path was persisted within the last
+    few seconds (guards against gRPC transport-level retries that
+    generate a new scan_id).
+
+    Args:
+        event: The protobuf event from Primary.
+        session_factory: SQLAlchemy async_sessionmaker.
+    """
+    import json
+
+    from google.protobuf.json_format import MessageToDict
+    from sqlalchemy import select
+
+    async with session_factory() as session:  # type: ignore[operator]
+        existing = await session.get(Scan, event.scan_id)
+        if existing is not None:
+            return
+
+        from datetime import timedelta
+
+        cutoff = (datetime.now(tz=timezone.utc) - timedelta(seconds=_DEDUP_WINDOW_SECONDS)).isoformat()
+        dup_q = (
+            select(Scan)
+            .where(
+                Scan.project_path == event.project_path,
+                Scan.source == (event.source or "engine"),
+                Scan.created_at > cutoff,
+            )
+            .limit(1)
+        )
+        dup = (await session.execute(dup_q)).scalar_one_or_none()
+        if dup is not None:
+            logger.debug(
+                "Skipping duplicate event scan_id=%s (recent scan %s exists)",
+                event.scan_id,
+                dup.id,
+            )
+            return
+
+        diag_json = None
+        if event.HasField("diagnostics"):
+            diag_json = json.dumps(MessageToDict(event.diagnostics, preserving_proto_field_name=True))
+
+        now = datetime.now(tz=timezone.utc).isoformat()
+
+        summary_json = None
+        if event.HasField("summary"):
+            summary_json = json.dumps(MessageToDict(event.summary, preserving_proto_field_name=True))
+
+        scan = Scan(
+            id=event.scan_id,
+            project_path=event.project_path,
+            created_at=now,
+            status="completed",
+            total_violations=len(event.violations),
+            source=event.source or "engine",
+            diagnostics=diag_json,
+            summary_json=summary_json,
+        )
+
+        violations_orm = []
+        for v in event.violations:
+            line_val = None
+            if v.HasField("line_oneof"):
+                variant = v.WhichOneof("line_oneof")
+                if variant == "line":
+                    line_val = v.line
+                elif variant == "line_range":
+                    line_val = v.line_range.start
+
+            violations_orm.append(
+                Violation(
+                    id=uuid.uuid4().hex[:16],
+                    scan_id=event.scan_id,
+                    rule_id=v.rule_id,
+                    level=v.level,
+                    message=v.message,
+                    file=v.file,
+                    line=line_val,
+                    path=v.path,
+                ),
+            )
+
+        session.add(scan)
+        session.add_all(violations_orm)
+        await session.commit()
+
+        logger.info(
+            "Persisted scan event: scan_id=%s violations=%d source=%s",
+            event.scan_id,
+            len(violations_orm),
+            event.source,
+        )
+
+
+async def _subscribe_loop(
+    primary_address: str,
+    session_factory: object,
+    max_msg_bytes: int,
+) -> None:
+    """Connect to Primary and consume ScanCompletedEvent stream forever.
+
+    Reconnects with exponential backoff on any failure.
+
+    Args:
+        primary_address: Primary gRPC host:port.
+        session_factory: SQLAlchemy async_sessionmaker for persistence.
+        max_msg_bytes: Max gRPC message size.
+    """
+    backoff = _INITIAL_BACKOFF
+
+    while True:
+        try:
+            channel = grpc.aio.insecure_channel(
+                primary_address,
+                options=[
+                    ("grpc.max_receive_message_length", max_msg_bytes),
+                ],
+            )
+            stub = primary_pb2_grpc.PrimaryStub(channel)  # type: ignore[no-untyped-call]
+            logger.info("Subscribing to scan events from %s", primary_address)
+
+            stream = stub.SubscribeScanEvents(SubscribeRequest())
+            backoff = _INITIAL_BACKOFF
+
+            async for event in stream:
+                try:
+                    await _persist_event(event, session_factory)
+                except Exception:
+                    logger.exception("Failed to persist scan event %s", event.scan_id)
+
+        except grpc.aio.AioRpcError as exc:
+            if exc.code() == grpc.StatusCode.UNAVAILABLE:
+                logger.warning(
+                    "Primary unavailable for scan events — retrying in %ds",
+                    backoff,
+                )
+            else:
+                logger.warning(
+                    "Scan event stream error (%s) — retrying in %ds",
+                    exc.code(),
+                    backoff,
+                )
+        except asyncio.CancelledError:
+            logger.info("Scan event subscriber cancelled")
+            return
+        except Exception:
+            logger.exception("Unexpected error in scan event subscriber — retrying in %ds", backoff)
+
+        await asyncio.sleep(backoff)
+        backoff = min(backoff * 2, _MAX_BACKOFF)
+
+
+def start(primary_address: str, session_factory: object, max_msg_bytes: int) -> None:
+    """Launch the subscriber background task.
+
+    Safe to call multiple times — only starts once.
+
+    Args:
+        primary_address: Primary gRPC host:port.
+        session_factory: SQLAlchemy async_sessionmaker.
+        max_msg_bytes: Max gRPC message size.
+    """
+    global _task  # noqa: PLW0603
+
+    if _task is not None and not _task.done():
+        return
+
+    _task = asyncio.create_task(
+        _subscribe_loop(primary_address, session_factory, max_msg_bytes),
+    )
+    logger.info("Scan event subscriber started — listening to %s", primary_address)
+
+
+async def stop() -> None:
+    """Cancel the subscriber task."""
+    global _task  # noqa: PLW0603
+    import contextlib
+
+    if _task is not None and not _task.done():
+        _task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await _task
+        _task = None

@@ -22,6 +22,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+gateway = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.34",
+    "sqlalchemy>=2.0",
+    "aiosqlite>=0.20",
+    "websockets>=14.0",
+]
 ai = [
     "abbenay-client @ git+https://github.com/redhat-developer/abbenay.git@v2026.3.6-alpha#subdirectory=packages/python",
 ]
@@ -74,6 +81,7 @@ apme-native-validator = "apme_engine.daemon.native_validator_main:main"
 apme-opa-validator = "apme_engine.daemon.opa_validator_main:main"
 apme-gitleaks-validator = "apme_engine.daemon.gitleaks_validator_main:main"
 galaxy-proxy = "galaxy_proxy.cli:main"
+apme-gateway = "apme_gateway.__main__:main"
 
 [tool.ruff]
 target-version = "py310"
@@ -90,6 +98,7 @@ ignore-var-parameters = true
 
 [tool.ruff.lint.per-file-ignores]
 "src/apme_engine/engine/annotators/ansible.builtin/*.py" = ["E501"]
+"src/apme_gateway/routers/*.py" = ["B008"]
 
 [tool.mypy]
 strict = true
@@ -127,6 +136,16 @@ module = [
     "fastapi.*",
     "uvicorn",
     "uvicorn.*",
+    "sqlalchemy",
+    "sqlalchemy.*",
+    "aiosqlite",
+    "aiosqlite.*",
+    "websockets",
+    "websockets.*",
+    "pydantic",
+    "pydantic.*",
+    "starlette",
+    "starlette.*",
 ]
 ignore_missing_imports = true
 
@@ -139,6 +158,10 @@ module = [
     "apme.v1.primary_pb2_grpc",
     "apme.v1.validate_pb2_grpc",
 ]
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+module = "apme_gateway.*"
 ignore_errors = true
 
 [tool.pydoclint]

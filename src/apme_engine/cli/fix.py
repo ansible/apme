@@ -124,6 +124,7 @@ def run_fix(args: argparse.Namespace) -> None:
                     else:
                         sys.stderr.write("No changes needed.\n")
                     cmd_queue.put(SessionCommand(close=CloseRequest()))
+                    cmd_queue.put(None)
                     continue
 
             elif oneof == "proposals":
@@ -155,6 +156,7 @@ def run_fix(args: argparse.Namespace) -> None:
 
                 _render_remaining(result)
                 cmd_queue.put(SessionCommand(close=CloseRequest()))
+                cmd_queue.put(None)
 
             elif oneof == "expiring":
                 sys.stderr.write(

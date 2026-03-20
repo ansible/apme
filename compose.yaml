@@ -2,6 +2,8 @@
 # All validators implement the unified Validator gRPC service (validate.proto).
 # CLI is run on-the-fly with CWD mounted (see containers/podman/run-cli.sh for Podman).
 # Docker: docker compose build && docker compose up -d
+# With UI: docker compose --profile ui build && docker compose --profile ui up -d
+#          Scans via CLI only for now; web-initiated scans deferred.
 # Scan:    docker compose run --rm -v "$(pwd)":/workspace -w /workspace cli apme-scan scan .
 
 services:
@@ -61,6 +63,43 @@ services:
     ports:
       - "50052:50052"
 
+  # Web Gateway: FastAPI container outside the engine pod (ADR-029).
+  # Translates HTTP/WebSocket to gRPC; owns SQLite persistence.
+  # Start with: docker compose --profile ui up
+  gateway:
+    build:
+      context: .
+      dockerfile: containers/gateway/Dockerfile
+    ports:
+      - "${APME_GATEWAY_PORT:-8080}:8080"
+    environment:
+      APME_PRIMARY_ADDRESS: primary:50051
+      APME_DATABASE_URL: "sqlite+aiosqlite:////data/apme.db"
+    volumes:
+      - gateway-data:/data
+    depends_on:
+      - primary
+    networks:
+      default:
+        aliases:
+          - apme-gateway
+    profiles:
+      - ui
+
+  # Standalone UI: React SPA served by nginx (ADR-030).
+  # Proxies /api to gateway; talks only to the gateway, never the engine.
+  # Start with: docker compose --profile ui up
+  ui:
+    build:
+      context: .
+      dockerfile: containers/ui/Dockerfile
+    ports:
+      - "${APME_UI_PORT:-8081}:8081"
+    depends_on:
+      - gateway
+    profiles:
+      - ui
+
   # CLI: run on-the-fly only (never 'up'). Example: docker compose run --rm -v "$(pwd)":/workspace -w /workspace cli
   cli:
     build:
@@ -69,7 +108,7 @@ services:
     environment:
       APME_PRIMARY_ADDRESS: primary:50051
     volumes:
-      - workspace:/workspace
+      - ${APME_WORKSPACE:-.}:/workspace
     entrypoint: ["apme-scan", "scan"]
     command: ["."]
     profiles:
@@ -77,4 +116,4 @@ services:
 
 volumes:
   cache:
-  workspace:
+  gateway-data:

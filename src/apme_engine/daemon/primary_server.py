@@ -25,7 +25,7 @@ import jsonpickle
 
 from apme.v1 import cache_pb2, cache_pb2_grpc, primary_pb2_grpc, validate_pb2_grpc
 from apme.v1.common_pb2 import File, HealthRequest, HealthResponse, ScanSummary, ServiceHealth, ValidatorDiagnostics
-from apme.v1.primary_pb2 import (
+from apme.v1.primary_pb2 import (  # type: ignore[attr-defined]
     ApprovalAck,
     FileDiff,
     FilePatch,
@@ -37,6 +37,7 @@ from apme.v1.primary_pb2 import (
     Proposal,
     ProposalsReady,
     ScanChunk,
+    ScanCompletedEvent,
     ScanDiagnostics,
     ScanOptions,
     ScanRequest,
@@ -46,6 +47,7 @@ from apme.v1.primary_pb2 import (
     SessionCreated,
     SessionEvent,
     SessionResult,
+    SubscribeRequest,
     Tier1Summary,
 )
 from apme.v1.validate_pb2 import ValidateRequest
@@ -580,12 +582,16 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                 by_resolution=res_counts,
             )
 
-            return ScanResponse(
-                violations=[violation_dict_to_proto(v) for v in violations],
+            violation_protos = [violation_dict_to_proto(v) for v in violations]
+
+            response = ScanResponse(
+                violations=violation_protos,
                 scan_id=scan_id,
                 diagnostics=diag,
                 summary=summary,
             )
+
+            return response
         except Exception as e:
             import traceback
 
@@ -619,7 +625,22 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             files=all_files,
             options=opts or ScanOptions(),
         )
-        return await self.Scan(req, context)
+        response = await self.Scan(req, context)
+
+        from apme_engine.daemon.scan_events import publish
+
+        publish(
+            ScanCompletedEvent(
+                scan_id=response.scan_id,  # type: ignore[attr-defined]
+                project_path=project_root,
+                violations=list(response.violations),  # type: ignore[attr-defined]
+                diagnostics=response.diagnostics if response.HasField("diagnostics") else None,  # type: ignore[attr-defined]
+                summary=response.summary if response.HasField("summary") else None,
+                source="scan",
+            )
+        )
+
+        return response
 
     # ── Format RPCs ───────────────────────────────────────────────────
 
@@ -1037,6 +1058,23 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             ),
         )
 
+        from apme_engine.daemon.scan_events import publish
+
+        publish(
+            ScanCompletedEvent(
+                scan_id=scan_id,
+                project_path="project",
+                violations=remaining_violations,
+                summary=ScanSummary(
+                    total=len(remaining_violations),
+                    auto_fixable=session.report.remaining_ai,
+                    ai_candidate=session.report.remaining_ai,
+                    manual_review=session.report.remaining_manual,
+                ),
+                source="fix",
+            )
+        )
+
         # Only present proposals if AI is enabled via FixOptions
         ai_enabled = fix_opts.enable_ai if fix_opts else False
         if report.remaining_ai and ai_enabled:
@@ -1343,6 +1381,40 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                 downstream.append(ServiceHealth(name="cache", status=f"error: {e}", address=cache_addr))
 
         return HealthResponse(status="ok", downstream=downstream)
+
+    # ── Scan event subscription (ADR-020) ─────────────────────────────
+
+    async def SubscribeScanEvents(
+        self,
+        request: SubscribeRequest,
+        context: grpc.aio.ServicerContext,  # type: ignore[type-arg]
+    ) -> AsyncIterator[ScanCompletedEvent]:
+        """Stream ScanCompletedEvent to any connected listener.
+
+        The gateway connects here on startup to receive all scan results
+        regardless of origin (CLI, CI, web). The dependency flows
+        gateway → Primary, keeping the engine unaware of downstream
+        consumers.
+
+        Args:
+            request: Subscribe request (unused, reserved for future filters).
+            context: gRPC servicer context.
+
+        Yields:
+            ScanCompletedEvent: Event for each completed scan.
+        """
+        from apme_engine.daemon.scan_events import subscribe, unsubscribe
+
+        queue = subscribe()
+        try:
+            while not context.cancelled():
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=30)
+                    yield event
+                except asyncio.TimeoutError:
+                    continue
+        finally:
+            unsubscribe(queue)
 
 
 async def serve(listen_address: str = "0.0.0.0:50051") -> grpc.aio.Server:

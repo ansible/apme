@@ -22,6 +22,11 @@ service Primary {
   // and results. Replaces the former one-shot FixStream RPC.
   rpc FixSession(stream SessionCommand) returns (stream SessionEvent);
 
+  // Event subscription — gateway (or any listener) opens a persistent stream
+  // and receives ScanCompletedEvent after every scan, regardless of origin
+  // (CLI, CI, web). Implements the listener model from ADR-020.
+  rpc SubscribeScanEvents(SubscribeRequest) returns (stream ScanCompletedEvent);
+
   // Cache proxy — delegates to CacheMaintainer internally.
   rpc PullGalaxy(PullGalaxyRequest) returns (PullGalaxyResponse);
   rpc PullRequirements(PullRequirementsRequest) returns (PullRequirementsResponse);
@@ -85,6 +90,21 @@ message ScanDiagnostics {
   repeated ValidatorDiagnostics validators = 7;
   double fan_out_ms = 8;
   double total_ms = 9;
+}
+
+// ---------------------------------------------------------------------------
+// Scan event subscription (ADR-020)
+// ---------------------------------------------------------------------------
+
+message SubscribeRequest {}
+
+message ScanCompletedEvent {
+  string scan_id = 1;
+  string project_path = 2;
+  repeated Violation violations = 3;
+  ScanDiagnostics diagnostics = 4;
+  ScanSummary summary = 5;
+  string source = 6;  // "cli", "gateway", "ci"
 }
 
 message FormatRequest {
