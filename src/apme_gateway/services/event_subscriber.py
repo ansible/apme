@@ -121,6 +121,7 @@ async def _subscribe_loop(
     backoff = _INITIAL_BACKOFF
 
     while True:
+        channel = None
         try:
             channel = grpc.aio.insecure_channel(
                 primary_address,
@@ -157,6 +158,9 @@ async def _subscribe_loop(
             return
         except Exception:
             logger.exception("Unexpected error in scan event subscriber — retrying in %ds", backoff)
+        finally:
+            if channel is not None:
+                await channel.close(grace=None)
 
         await asyncio.sleep(backoff)
         backoff = min(backoff * 2, _MAX_BACKOFF)

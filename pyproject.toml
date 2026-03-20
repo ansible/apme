@@ -162,7 +162,7 @@ ignore_errors = true
 
 [[tool.mypy.overrides]]
 module = "apme_gateway.*"
-ignore_errors = true
+disallow_untyped_defs = false
 
 [tool.pydoclint]
 style = "google"

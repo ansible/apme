@@ -3,6 +3,15 @@
 # Usage: ./down.sh [--wipe]
 #   --wipe  Also delete the gateway SQLite database
 set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+# Source .env if present (same as up.sh) so overrides like APME_GATEWAY_DATA are respected.
+if [[ -f "$ROOT/.env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$ROOT/.env"
+  set +a
+fi
 
 WIPE=""
 for arg in "$@"; do

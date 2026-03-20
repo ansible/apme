@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { getScan } from "../services/api";
 import type { ScanOut, ViolationOut } from "../types/api";
 
@@ -34,7 +34,6 @@ function severityLabel(level: string, ruleId?: string): string {
 
 export function ScanDetailPage() {
   const { scanId } = useParams<{ scanId: string }>();
-  const navigate = useNavigate();
   const [scan, setScan] = useState<ScanOut | null>(null);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -71,7 +70,7 @@ export function ScanDetailPage() {
   return (
     <>
       <nav className="apme-breadcrumb">
-        <a onClick={() => navigate("/scans")}>All Scans</a>
+        <Link to="/scans">All Scans</Link>
         <span className="apme-breadcrumb-sep">/</span>
         <span>{scan.project_path}</span>
       </nav>

@@ -68,11 +68,13 @@ if [[ -n "$START_UI" ]]; then
   GATEWAY_DATA="${APME_GATEWAY_DATA:-${XDG_DATA_HOME:-$HOME/.local/share}/apme/gateway}"
   mkdir -p "$GATEWAY_DATA"
 
+  WORKSPACE="${APME_WORKSPACE_PATH:-$(pwd)}"
   podman run -d \
     --name apme-gateway \
     --network apme-ui-net \
     -p "$GATEWAY_PORT":8080 \
     -v "$GATEWAY_DATA":/data:Z \
+    -v "$WORKSPACE":/workspace:ro,Z \
     -e APME_PRIMARY_ADDRESS=host.containers.internal:50051 \
     -e APME_DATABASE_URL="sqlite+aiosqlite:////data/apme.db" \
     -e APME_GATEWAY_HOST=0.0.0.0 \

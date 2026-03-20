@@ -108,7 +108,7 @@ def get_rule(rule_id: str) -> RuleInfo | None:
     """Look up a single rule by ID.
 
     Args:
-        rule_id: Rule identifier (e.g. ``L-001``).
+        rule_id: Rule identifier (e.g. ``L002``).
 
     Returns:
         RuleInfo or None.

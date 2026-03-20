@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import uuid
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -65,8 +66,9 @@ def _discover_files(root: Path) -> list[tuple[str, bytes]]:
         results.append((root.name, content))
         return results
 
-    for dirpath, dirnames, filenames in root.walk():
+    for dirpath_str, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+        dirpath = Path(dirpath_str)
         for name in filenames:
             fp = dirpath / name
             try:

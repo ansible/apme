@@ -36,9 +36,7 @@ def run_scan(args: argparse.Namespace) -> None:
 
     scan_id = str(uuid.uuid4())
     if verbosity:
-        sys.stderr.write(
-            f"[cli] ScanStream START pid={os.getpid()} scan_id={scan_id} t={time.time():.3f}\n"
-        )
+        sys.stderr.write(f"[cli] ScanStream START pid={os.getpid()} scan_id={scan_id} t={time.time():.3f}\n")
         sys.stderr.flush()
 
     try:
@@ -65,9 +63,7 @@ def run_scan(args: argparse.Namespace) -> None:
         channel.close()
 
     if verbosity:
-        sys.stderr.write(
-            f"[cli] ScanStream DONE pid={os.getpid()} scan_id={scan_id} t={time.time():.3f}\n"
-        )
+        sys.stderr.write(f"[cli] ScanStream DONE pid={os.getpid()} scan_id={scan_id} t={time.time():.3f}\n")
         sys.stderr.flush()
 
     violations: list[ViolationDict] = [violation_proto_to_dict(v) for v in resp.violations]

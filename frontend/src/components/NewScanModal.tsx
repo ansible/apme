@@ -14,7 +14,7 @@ export function NewScanModal({ onSubmit, onCancel, loading }: NewScanModalProps)
       <div className="apme-modal" onClick={(e) => e.stopPropagation()}>
         <h2>New Scan</h2>
         <label style={{ fontSize: 14, color: "#8a8d90", marginBottom: 8, display: "block" }}>
-          Path inside the gateway container (host workspace is mounted at /workspace)
+          Path under the gateway workspace root (default: /workspace)
         </label>
         <input
           type="text"

@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from apme.v1.common_pb2 import File
 from apme.v1.primary_pb2 import ScanChunk
-from apme_gateway.deps import get_primary_client
+from apme_gateway.deps import get_primary_client, validate_project_path
 from apme_gateway.models.schemas import FileDiffOut, FormatOut, FormatRequest
 from apme_gateway.services.grpc_client import PrimaryClient
 from apme_gateway.services.scan_service import _discover_files
@@ -55,16 +55,14 @@ async def format_files(
     client: PrimaryClient = Depends(get_primary_client),
 ) -> FormatOut:
     """Format Ansible files and return diffs."""
-    root = Path(body.project_path).resolve()
-    if not root.exists():
-        raise HTTPException(status_code=404, detail=f"Path not found: {body.project_path}")
+    root = validate_project_path(body.project_path)
 
     files = _discover_files(root)
     try:
         resp = await client.format_stream(_format_chunks(files))
     except Exception as exc:
         logger.exception("Format failed")
-        raise HTTPException(status_code=502, detail=f"Engine error: {exc}") from exc
+        raise HTTPException(status_code=502, detail="Engine error: format failed") from exc
 
     diffs = [FileDiffOut(path=d.path, diff=d.diff) for d in resp.diffs]
     return FormatOut(diffs=diffs, total=len(diffs))

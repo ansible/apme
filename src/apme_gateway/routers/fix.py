@@ -33,6 +33,7 @@ from apme.v1.primary_pb2 import (
     ScanChunk,
     SessionCommand,
 )
+from apme_gateway.config import load_config
 from apme_gateway.deps import get_primary_client
 from apme_gateway.models.schemas import WSCommand
 from apme_gateway.services.grpc_client import PrimaryClient
@@ -128,7 +129,13 @@ async def fix_websocket(
         await ws.close()
         return
 
+    config = load_config()
+    workspace = Path(config.workspace_root).resolve()
     root = Path(start_msg.project_path).resolve()
+    if not str(root).startswith(str(workspace) + "/") and root != workspace:
+        await ws.send_json({"type": "error", "message": "Path outside workspace root"})
+        await ws.close()
+        return
     if not root.exists():
         await ws.send_json({"type": "error", "message": f"Path not found: {start_msg.project_path}"})
         await ws.close()
@@ -140,7 +147,7 @@ async def fix_websocket(
     if start_msg.ansible_core_version:
         fix_opts.ansible_core_version = start_msg.ansible_core_version
     if start_msg.collection_specs:
-        fix_opts.exclude_patterns.extend(start_msg.collection_specs)
+        fix_opts.collection_specs.extend(start_msg.collection_specs)
 
     cmd_queue: asyncio.Queue[SessionCommand | None] = asyncio.Queue()
 

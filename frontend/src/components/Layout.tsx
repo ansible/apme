@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { useTheme } from "../hooks/useTheme";
 
 interface LayoutProps {
@@ -15,7 +15,6 @@ const NAV_ITEMS = [
 
 export function Layout({ children }: LayoutProps) {
   const location = useLocation();
-  const navigate = useNavigate();
   const { theme, toggle } = useTheme();
 
   const isActive = (path: string) => {
@@ -33,15 +32,15 @@ export function Layout({ children }: LayoutProps) {
         <ul className="apme-nav">
           {NAV_ITEMS.map((item) => (
             <li key={item.path}>
-              <a
+              <Link
+                to={item.path}
                 className={`apme-nav-item ${isActive(item.path) ? "active" : ""}`}
-                onClick={() => navigate(item.path)}
               >
                 <span style={{ width: 20, textAlign: "center" }}>
                   {item.icon}
                 </span>
                 {item.label}
-              </a>
+              </Link>
             </li>
           ))}
         </ul>

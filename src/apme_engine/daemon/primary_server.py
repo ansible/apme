@@ -621,18 +621,13 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         _debug = os.environ.get("APME_DEBUG")
         peer = context.peer() if _debug else None
         if _debug:
-            sys.stderr.write(
-                f"[primary] ScanStream ENTER peer={peer} t={time.time():.3f}\n"
-            )
+            sys.stderr.write(f"[primary] ScanStream ENTER peer={peer} t={time.time():.3f}\n")
             sys.stderr.flush()
 
         all_files, scan_id, project_root, opts, _ = await self._accumulate_chunks(request_stream)
 
         if _debug:
-            sys.stderr.write(
-                f"[primary] ScanStream ACCUMULATED scan_id={scan_id} peer={peer} "
-                f"files={len(all_files)} t={time.time():.3f}\n"
-            )
+            sys.stderr.write(f"[primary] ScanStream ACCUMULATED scan_id={scan_id} peer={peer} files={len(all_files)} t={time.time():.3f}\n")
             sys.stderr.flush()
 
         req = ScanRequest(
@@ -646,21 +641,20 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         from apme_engine.daemon.scan_events import publish
 
         if _debug:
-            sys.stderr.write(
-                f"[primary] ScanStream PUBLISH scan_id={scan_id} peer={peer} t={time.time():.3f}\n"
-            )
+            sys.stderr.write(f"[primary] ScanStream PUBLISH scan_id={scan_id} peer={peer} t={time.time():.3f}\n")
             sys.stderr.flush()
 
-        publish(
-            ScanCompletedEvent(
-                scan_id=response.scan_id,  # type: ignore[attr-defined]
-                project_path=project_root,
-                violations=list(response.violations),  # type: ignore[attr-defined]
-                diagnostics=response.diagnostics if response.HasField("diagnostics") else None,  # type: ignore[attr-defined]
-                summary=response.summary if response.HasField("summary") else None,
-                source="scan",
-            )
-        )
+        event_kwargs: dict[str, object] = {
+            "scan_id": response.scan_id,  # type: ignore[attr-defined]
+            "project_path": project_root,
+            "violations": list(response.violations),  # type: ignore[attr-defined]
+            "source": "scan",
+        }
+        if response.HasField("diagnostics"):  # type: ignore[attr-defined]
+            event_kwargs["diagnostics"] = response.diagnostics  # type: ignore[attr-defined]
+        if response.HasField("summary"):
+            event_kwargs["summary"] = response.summary
+        publish(ScanCompletedEvent(**event_kwargs))
 
         return response
 
@@ -1089,9 +1083,9 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                 violations=remaining_violations,
                 summary=ScanSummary(
                     total=len(remaining_violations),
-                    auto_fixable=session.report.remaining_ai,
-                    ai_candidate=session.report.remaining_ai,
-                    manual_review=session.report.remaining_manual,
+                    auto_fixable=session.report.fixed,
+                    ai_candidate=len(session.report.remaining_ai),
+                    manual_review=len(session.report.remaining_manual),
                 ),
                 source="fix",
             )

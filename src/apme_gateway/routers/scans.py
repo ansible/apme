@@ -8,7 +8,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apme_gateway.deps import get_db, get_primary_client
+from apme_gateway.deps import get_db, get_primary_client, validate_project_path
 from apme_gateway.models.schemas import (
     ScanCreate,
     ScanListItem,
@@ -36,23 +36,22 @@ async def initiate_scan(
     client: PrimaryClient = Depends(get_primary_client),
     session: AsyncSession = Depends(get_db),
 ) -> ScanOut:
-    """Initiate a scan against a local directory or repository URL.
+    """Initiate a scan against a local directory.
 
     Triggers Primary's ScanStream, then polls the DB until the event
     subscriber has persisted the result (single-writer pattern).
     """
+    root = validate_project_path(body.project_path)
     try:
         scan_id = await trigger_scan(
-            project_path=body.project_path,
+            project_path=str(root),
             client=client,
             ansible_core_version=body.ansible_core_version,
             collection_specs=body.collection_specs or None,
         )
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("Scan failed")
-        raise HTTPException(status_code=502, detail=f"Engine error: {exc}") from exc
+        raise HTTPException(status_code=502, detail="Engine error: scan failed") from exc
 
     scan = await wait_for_scan(session, scan_id)
     if scan is None:

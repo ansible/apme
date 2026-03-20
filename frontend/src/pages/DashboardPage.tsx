@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { createScan, listScans } from "../services/api";
 import type { ScanListItem } from "../types/api";
 import { StatusBadge } from "../components/StatusBadge";
@@ -74,7 +74,7 @@ export function DashboardPage() {
 
       <div className="apme-section-header">
         <h2 className="apme-section-title">Recent Scans</h2>
-        <a className="apme-link" onClick={() => navigate("/scans")}>View all</a>
+        <Link to="/scans" className="apme-link">View all</Link>
       </div>
 
       {loading ? (
