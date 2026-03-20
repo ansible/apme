@@ -54,7 +54,7 @@ class PrimaryClient:
     async def close(self) -> None:
         """Shut down the gRPC channel."""
         if self._channel is not None:
-            await self._channel.close()
+            await self._channel.close(grace=None)
             self._channel = None
             self._stub = None
 
@@ -69,7 +69,7 @@ class PrimaryClient:
             HealthResponse from the engine.
         """
         stub = self._ensure_channel()
-        return await stub.Health(HealthRequest(), timeout=self._config.grpc_timeout)
+        return await stub.Health(HealthRequest(), timeout=self._config.grpc_timeout)  # type: ignore[no-any-return]  # type: ignore[no-any-return]
 
     async def scan_stream(self, chunks: AsyncIterator[ScanChunk]) -> ScanResponse:
         """Stream ScanChunk messages and return the aggregate ScanResponse.
@@ -81,7 +81,7 @@ class PrimaryClient:
             ScanResponse with violations, diagnostics, and summary.
         """
         stub = self._ensure_channel()
-        return await stub.ScanStream(chunks, timeout=self._config.grpc_timeout)
+        return await stub.ScanStream(chunks, timeout=self._config.grpc_timeout)  # type: ignore[no-any-return]  # type: ignore[no-any-return]
 
     async def format_stream(self, chunks: AsyncIterator[ScanChunk]) -> FormatResponse:
         """Stream ScanChunk messages for formatting.
@@ -93,7 +93,7 @@ class PrimaryClient:
             FormatResponse with file diffs.
         """
         stub = self._ensure_channel()
-        return await stub.FormatStream(chunks, timeout=self._config.grpc_timeout)
+        return await stub.FormatStream(chunks, timeout=self._config.grpc_timeout)  # type: ignore[no-any-return]  # type: ignore[no-any-return]
 
     # ------------------------------------------------------------------
     # Bidi streaming (FixSession)
@@ -112,4 +112,4 @@ class PrimaryClient:
             The bidi stream call object (async-iterable of SessionEvent).
         """
         stub = self._ensure_channel()
-        return stub.FixSession(commands, timeout=600)
+        return stub.FixSession(commands, timeout=600)  # type: ignore[no-any-return]  # type: ignore[no-any-return]

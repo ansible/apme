@@ -206,7 +206,7 @@ async def wait_for_scan(
     """
     elapsed = 0.0
     while elapsed < timeout:
-        await session.expire_all()
+        session.expire_all()
         scan = await session.get(Scan, scan_id)
         if scan is not None:
             return scan

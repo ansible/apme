@@ -1,8 +1,9 @@
 """Stub for generated primary_pb2 (proto types)."""
 
+from google.protobuf.message import Message
 from google.protobuf.struct_pb2 import Struct
 
-from apme.v1.common_pb2 import ValidatorDiagnostics, Violation
+from apme.v1.common_pb2 import ScanSummary, ValidatorDiagnostics, Violation
 
 class ScanOptions:
     include_scandata: bool
@@ -39,11 +40,14 @@ class ScanRequest:
     def HasField(self, field_name: str) -> bool: ...
 
 class ScanResponse:
-    summary: object | None
+    scan_id: str
+    violations: list[Violation]
+    diagnostics: ScanDiagnostics | None
+    summary: ScanSummary | None
     def __init__(self, **kwargs: object) -> None: ...
     def HasField(self, field_name: str) -> bool: ...
 
-class ScanDiagnostics:
+class ScanDiagnostics(Message):
     engine_parse_ms: float
     engine_annotate_ms: float
     engine_total_ms: float
@@ -60,6 +64,7 @@ class FormatRequest:
     def __init__(self, **kwargs: object) -> None: ...
 
 class FormatResponse:
+    diffs: list[FileDiff]
     def __init__(self, **kwargs: object) -> None: ...
 
 class FileDiff:
@@ -85,6 +90,19 @@ class FixReport:
     oscillation_detected: bool
     remaining_violations: list[Violation]
     def __init__(self, **kwargs: object) -> None: ...
+
+class SubscribeRequest:
+    def __init__(self) -> None: ...
+
+class ScanCompletedEvent:
+    scan_id: str
+    project_path: str
+    violations: list[Violation]
+    diagnostics: ScanDiagnostics | None
+    summary: ScanSummary | None
+    source: str
+    def __init__(self, **kwargs: object) -> None: ...
+    def HasField(self, field_name: str) -> bool: ...
 
 # ---------------------------------------------------------------------------
 # FixSession: bidirectional streaming (ADR-028)

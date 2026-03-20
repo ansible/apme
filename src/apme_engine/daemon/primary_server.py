@@ -25,7 +25,7 @@ import jsonpickle
 
 from apme.v1 import cache_pb2, cache_pb2_grpc, primary_pb2_grpc, validate_pb2_grpc
 from apme.v1.common_pb2 import File, HealthRequest, HealthResponse, ScanSummary, ServiceHealth, ValidatorDiagnostics
-from apme.v1.primary_pb2 import (  # type: ignore[attr-defined]
+from apme.v1.primary_pb2 import (
     ApprovalAck,
     FileDiff,
     FilePatch,
@@ -648,13 +648,13 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             sys.stderr.flush()
 
         event_kwargs: dict[str, object] = {
-            "scan_id": response.scan_id,  # type: ignore[attr-defined]
+            "scan_id": response.scan_id,
             "project_path": project_root,
-            "violations": list(response.violations),  # type: ignore[attr-defined]
+            "violations": list(response.violations),
             "source": "scan",
         }
         if response.HasField("diagnostics"):
-            event_kwargs["diagnostics"] = response.diagnostics  # type: ignore[attr-defined]
+            event_kwargs["diagnostics"] = response.diagnostics
         if response.HasField("summary"):
             event_kwargs["summary"] = response.summary
         publish(ScanCompletedEvent(**event_kwargs))

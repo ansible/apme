@@ -49,13 +49,13 @@ async def _persist_event(
             return
 
         diag_json = None
-        if event.HasField("diagnostics"):
+        if event.HasField("diagnostics") and event.diagnostics is not None:
             diag_json = json.dumps(MessageToDict(event.diagnostics, preserving_proto_field_name=True))
 
         now = datetime.now(tz=timezone.utc).isoformat()
 
         summary_json = None
-        if event.HasField("summary"):
+        if event.HasField("summary") and event.summary is not None:
             summary_json = json.dumps(MessageToDict(event.summary, preserving_proto_field_name=True))
 
         scan = Scan(

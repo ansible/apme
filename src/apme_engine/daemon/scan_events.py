@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from apme.v1.primary_pb2 import ScanCompletedEvent  # type: ignore[attr-defined]
+from apme.v1.primary_pb2 import ScanCompletedEvent
 
 logger = logging.getLogger(__name__)
 

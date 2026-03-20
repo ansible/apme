@@ -1,5 +1,7 @@
 """Stub for generated common_pb2 (proto types)."""
 
+from google.protobuf.message import Message
+
 class Violation:
     rule_id: str
     level: str
@@ -14,6 +16,7 @@ class Violation:
     scope: int
     def __init__(self, **kwargs: object) -> None: ...
     def HasField(self, name: str) -> bool: ...
+    def WhichOneof(self, oneof_group: str) -> str | None: ...
     def CopyFrom(self, other: Violation) -> None: ...
 
 class LineRange:
@@ -41,7 +44,7 @@ class ServiceHealth:
     address: str
     def __init__(self, *, name: str = "", status: str = "", address: str = "", **kwargs: object) -> None: ...
 
-class ScanSummary:
+class ScanSummary(Message):
     total: int
     auto_fixable: int
     ai_candidate: int

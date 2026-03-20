@@ -85,7 +85,8 @@ def mock_scan_response(
     resp = primary_pb2.ScanResponse(
         scan_id="test-scan-123",
     )
-    resp.diagnostics.CopyFrom(mock_scan_diagnostics)  # type: ignore[attr-defined]
+    assert resp.diagnostics is not None
+    resp.diagnostics.CopyFrom(mock_scan_diagnostics)
     v = resp.violations.add()  # type: ignore[attr-defined]
     v.rule_id = "L026"
     v.level = "warning"

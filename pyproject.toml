@@ -106,6 +106,7 @@ disallow_any_explicit = true
 python_version = "3.10"
 mypy_path = "src"
 exclude = ["src/apme/v1/.*_pb2"]
+plugins = ["pydantic.mypy"]
 
 # Vendored galaxy-proxy: parsed Galaxy YAML/JSON is inherently unstructured.
 [[tool.mypy.overrides]]
@@ -132,20 +133,10 @@ module = [
     "grpc.*",
     "abbenay_grpc",
     "abbenay_grpc.*",
-    "fastapi",
-    "fastapi.*",
     "uvicorn",
     "uvicorn.*",
-    "sqlalchemy",
-    "sqlalchemy.*",
-    "aiosqlite",
-    "aiosqlite.*",
     "websockets",
     "websockets.*",
-    "pydantic",
-    "pydantic.*",
-    "starlette",
-    "starlette.*",
 ]
 ignore_missing_imports = true
 
@@ -161,8 +152,8 @@ module = [
 ignore_errors = true
 
 [[tool.mypy.overrides]]
-module = "apme_gateway.*"
-ignore_errors = true
+module = ["apme_gateway.models.*", "apme_gateway.routers.reports"]
+disallow_any_explicit = false
 
 [tool.pydoclint]
 style = "google"
