@@ -163,8 +163,9 @@ Collections from the cache volume are symlinked or copied into the venv's `site-
 ## Local development (daemon mode)
 
 For development and testing without the Podman pod, the CLI can start a
-local daemon that runs the Primary, Native, OPA, and Ansible validators
-in-process (ADR-024):
+local daemon that runs the Primary, Cache Maintainer, Native, and OPA validators
+as localhost gRPC servers (ADR-024). Ansible and Gitleaks are optional
+(`--include-optional`):
 
 ```bash
 python -m venv .venv && source .venv/bin/activate

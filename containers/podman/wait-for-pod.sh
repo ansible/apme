@@ -20,7 +20,7 @@ for i in $(seq 1 "$MAX"); do
     if [[ -n "$RUN_HEALTH_CHECK" ]]; then
       echo "Running health-check..."
       podman run --rm --pod apme-pod -e APME_PRIMARY_ADDRESS=127.0.0.1:50051 \
-        --entrypoint apme-scan apme-cli:latest health-check --primary-addr 127.0.0.1:50051
+        --entrypoint apme-scan apme-cli:latest health-check
     fi
     exit 0
   fi
