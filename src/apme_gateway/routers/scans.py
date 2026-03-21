@@ -168,9 +168,21 @@ def _scan_to_out(scan: object) -> ScanOut:
             diag = None
 
     summary = None
-    if violations:
-        auto = sum(1 for v in violations if v.rule_id.startswith(("L-", "M-")))
-        ai = sum(1 for v in violations if v.rule_id.startswith("R-"))
+    if s.summary_json:
+        try:
+            summ = json.loads(s.summary_json)
+            summary = ScanSummaryOut(
+                total=summ.get("total", len(violations)),
+                auto_fixable=summ.get("auto_fixable", 0),
+                ai_candidate=summ.get("ai_candidate", 0),
+                manual_review=summ.get("manual_review", 0),
+            )
+        except (json.JSONDecodeError, ValueError, TypeError):
+            summary = None
+
+    if summary is None and violations:
+        auto = sum(1 for v in violations if v.rule_id.startswith(("L", "M")))
+        ai = sum(1 for v in violations if v.rule_id.startswith("R"))
         manual = len(violations) - auto - ai
         summary = ScanSummaryOut(
             total=len(violations),

@@ -19,10 +19,6 @@ repos:
           - fastapi>=0.115
           - sqlalchemy>=2.0
           - aiosqlite>=0.20
-          - pydantic>=2.0
-          - fastapi>=0.115
-          - sqlalchemy>=2.0
-          - aiosqlite>=0.20
   - repo: https://github.com/jsh9/pydoclint
     rev: 0.8.3
     hooks:

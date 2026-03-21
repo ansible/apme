@@ -3,7 +3,7 @@
 # CLI is run on-the-fly with CWD mounted (see containers/podman/run-cli.sh for Podman).
 # Docker: docker compose build && docker compose up -d
 # With UI: docker compose --profile ui build && docker compose --profile ui up -d
-#          Scans via CLI only for now; web-initiated scans deferred.
+#          Web-initiated scans require a workspace mount (APME_WORKSPACE_PATH).
 # Scan:    docker compose run --rm -v "$(pwd)":/workspace -w /workspace cli apme-scan scan .
 
 services:
@@ -109,7 +109,7 @@ services:
     environment:
       APME_PRIMARY_ADDRESS: primary:50051
     volumes:
-      - ${APME_WORKSPACE:-.}:/workspace
+      - ${APME_WORKSPACE_PATH:-.}:/workspace
     entrypoint: ["apme-scan", "scan"]
     command: ["."]
     profiles:
