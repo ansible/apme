@@ -3,13 +3,12 @@ syntax = "proto3";
 package apme.v1;
 
 import "apme/v1/common.proto";
-import "apme/v1/cache.proto";
 import "google/protobuf/struct.proto";
 
 // Primary is the orchestrator daemon and sole API surface for all clients.
 // Clients send file bytes in, receive processed bytes out. The Primary
-// delegates internally to validators, cache, and remediation — clients
-// never need to know the internal service topology.
+// delegates internally to validators and remediation — clients never need
+// to know the internal service topology.
 service Primary {
   rpc Scan(ScanRequest) returns (ScanResponse);
   rpc ScanStream(stream ScanChunk) returns (ScanResponse);
@@ -21,11 +20,6 @@ service Primary {
   // file chunks then approval commands; server streams progress, proposals,
   // and results. Replaces the former one-shot FixStream RPC.
   rpc FixSession(stream SessionCommand) returns (stream SessionEvent);
-
-  // Cache proxy — delegates to CacheMaintainer internally.
-  rpc PullGalaxy(PullGalaxyRequest) returns (PullGalaxyResponse);
-  rpc PullRequirements(PullRequirementsRequest) returns (PullRequirementsResponse);
-  rpc CloneOrg(CloneOrgRequest) returns (CloneOrgResponse);
 }
 
 // ---------------------------------------------------------------------------
@@ -48,6 +42,7 @@ message ScanOptions {
   bool include_scandata = 1;
   string ansible_core_version = 2;
   repeated string collection_specs = 3;
+  string session_id = 4;             // client-provided session identifier for venv reuse
 }
 
 message FixOptions {
@@ -58,6 +53,7 @@ message FixOptions {
   bool enable_ai = 5;
   bool enable_agentic = 6;       // Tier 3 (future)
   string ai_model = 7;
+  string session_id = 8;         // client-provided session for venv reuse
 }
 
 message ScanRequest {
@@ -65,6 +61,7 @@ message ScanRequest {
   string project_root = 2;
   repeated File files = 3;
   ScanOptions options = 4;
+  string session_id = 5;             // client-provided session for venv reuse
 }
 
 message ScanResponse {
@@ -73,6 +70,7 @@ message ScanResponse {
   bytes hierarchy_payload = 3;
   ScanDiagnostics diagnostics = 4;
   ScanSummary summary = 5;
+  string session_id = 6;             // echoed back for client reuse
 }
 
 message ScanDiagnostics {

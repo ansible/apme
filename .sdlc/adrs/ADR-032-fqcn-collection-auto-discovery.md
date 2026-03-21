@@ -34,14 +34,14 @@ A collection already covered by a higher-priority source is not added again. Thi
 
 ### Blocking behavior
 
-`_ensure_collections_cached()` continues to block before the validator fan-out. This is correct: the Ansible validator needs collections symlinked into the venv. No changes to the blocking model.
+`VenvSessionManager.acquire()` is called after collection discovery and before the validator fan-out. This ensures all discovered collections are installed into the session venv via the Galaxy Proxy before validators receive the `venv_path`.
 
 ## Consequences
 
 - Projects without `requirements.yml` will automatically have their required collections identified and cached before validation.
 - Short module names (`copy`, `nmcli` without FQCN prefix) are not resolved — that requires collections to already be installed (chicken-and-egg). Only explicit FQCNs are extracted.
 - The `collection_set` in the hierarchy payload is available to any consumer (CLI, web gateway, reporting) without re-parsing the project.
-- No changes to the cache manager, venv builder, or dependency preparator (those are ADR-031 territory).
+- The dependency preparator has been removed (ADR-031 Phase 4). Collections are now installed into session venvs via the Galaxy Proxy.
 
 ## Relates to
 

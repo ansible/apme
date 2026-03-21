@@ -21,7 +21,7 @@ The original gRPC servers used synchronous `grpc.server()` with `ThreadPoolExecu
 
 ## Decision
 
-**grpc.aio for all five gRPC servers.**
+**grpc.aio for all gRPC servers** (Primary, Native, OPA, Ansible, Gitleaks).
 
 - CPU-bound work runs via `run_in_executor()`
 - I/O-bound work uses native async libraries:

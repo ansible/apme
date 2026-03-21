@@ -68,7 +68,6 @@ fail_under = 50
 [project.scripts]
 apme-scan = "apme_engine.cli:main"
 apme-primary = "apme_engine.daemon.primary_main:main"
-apme-cache-maintainer = "apme_engine.daemon.cache_maintainer_main:main"
 apme-ansible-validator = "apme_engine.daemon.ansible_validator_main:main"
 apme-native-validator = "apme_engine.daemon.native_validator_main:main"
 apme-opa-validator = "apme_engine.daemon.opa_validator_main:main"
@@ -134,7 +133,6 @@ ignore_missing_imports = true
 module = [
     "apme.v1.ansible_pb2",
     "apme.v1.ansible_pb2_grpc",
-    "apme.v1.cache_pb2_grpc",
     "apme.v1.common_pb2_grpc",
     "apme.v1.primary_pb2_grpc",
     "apme.v1.validate_pb2_grpc",

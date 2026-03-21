@@ -83,12 +83,13 @@ def _run_ansible_validate(
     collection_specs: list[str],
     hierarchy_payload: YAMLDict,
     req_id: str,
+    venv_path: str = "",
 ) -> _AnsibleResult:
-    """Blocking function: build/reuse cached venv, run validator, return result with timing.
+    """Blocking function: use provided venv or build/reuse cached venv, run validator.
 
-    Uses ``build_venv`` with the persistent default ``venvs_root``
-    (``$CACHE_ROOT/venvs/``).  The venv is keyed by ``(version, specs)``
-    hash, so repeated scans with the same inputs reuse it instantly.
+    When ``venv_path`` is set (Primary already prepared a session-scoped venv),
+    it is used directly — no ``build_venv`` call.  Otherwise falls back to
+    the legacy ``build_venv`` path for backward compatibility.
 
     Args:
         files: List of File protos to validate.
@@ -96,6 +97,7 @@ def _run_ansible_validate(
         collection_specs: Collection specs to install.
         hierarchy_payload: Parsed hierarchy payload for context.
         req_id: Request ID for logging.
+        venv_path: Pre-built venv path from Primary (read-only).
 
     Returns:
         _AnsibleResult with violations, venv build time, and version.
@@ -109,32 +111,39 @@ def _run_ansible_validate(
         cache = _cache_root()
 
         tv = time.monotonic()
-        try:
-            venv_root = build_venv(
-                ansible_core_version=raw_version,
-                collection_specs=collection_specs,
-                cache_root=cache,
-            )
-        except (FileNotFoundError, subprocess.CalledProcessError) as e:
+
+        if venv_path:
+            venv_root = Path(venv_path)
             venv_build_ms = (time.monotonic() - tv) * 1000
-            sys.stderr.write(f"[req={req_id}] Ansible: venv build failed for {raw_version}: {e}\n")
+            sys.stderr.write(f"[req={req_id}] Ansible: using session venv {venv_path} (0ms build)\n")
             sys.stderr.flush()
-            err_viol: ViolationDict = {
-                "rule_id": "L057",
-                "level": "error",
-                "message": f"Venv build failed for {raw_version}: {e}",
-                "file": "",
-                "line": 1,
-                "path": "",
-            }
-            return _AnsibleResult(
-                run_result=AnsibleRunResult(violations=[err_viol]),  # type: ignore[list-item]
-                venv_build_ms=venv_build_ms,
-                ansible_core_version=raw_version,
-            )
-        venv_build_ms = (time.monotonic() - tv) * 1000
-        sys.stderr.write(f"[req={req_id}] Ansible: venv ready in {venv_build_ms:.0f}ms\n")
-        sys.stderr.flush()
+        else:
+            try:
+                venv_root = build_venv(
+                    ansible_core_version=raw_version,
+                    collection_specs=collection_specs,
+                    cache_root=cache,
+                )
+            except (FileNotFoundError, subprocess.CalledProcessError) as e:
+                venv_build_ms = (time.monotonic() - tv) * 1000
+                sys.stderr.write(f"[req={req_id}] Ansible: venv build failed for {raw_version}: {e}\n")
+                sys.stderr.flush()
+                err_viol: ViolationDict = {
+                    "rule_id": "L057",
+                    "level": "error",
+                    "message": f"Venv build failed for {raw_version}: {e}",
+                    "file": "",
+                    "line": 1,
+                    "path": "",
+                }
+                return _AnsibleResult(
+                    run_result=AnsibleRunResult(violations=[err_viol]),  # type: ignore[list-item]
+                    venv_build_ms=venv_build_ms,
+                    ansible_core_version=raw_version,
+                )
+            venv_build_ms = (time.monotonic() - tv) * 1000
+            sys.stderr.write(f"[req={req_id}] Ansible: venv ready in {venv_build_ms:.0f}ms\n")
+            sys.stderr.flush()
 
         env_extra = None
         if collection_specs:
@@ -220,6 +229,7 @@ class AnsibleValidatorServicer(validate_pb2_grpc.ValidatorServicer):
                 collection_specs,
                 hierarchy_payload,
                 req_id,
+                request.venv_path or "",
             )
 
             total_ms = (time.monotonic() - t0) * 1000

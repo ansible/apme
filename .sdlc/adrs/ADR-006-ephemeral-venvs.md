@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Superseded by [ADR-022](ADR-022-session-scoped-venvs.md) and [ADR-031](ADR-031-unified-collection-cache.md)
 
 ## Date
 
@@ -70,3 +70,5 @@ async def validate(self, request):
 ## Related Decisions
 
 - ADR-007: Async gRPC servers (enables concurrent venv creation)
+- ADR-022: Session-scoped venvs with lifecycle management (replaces ephemeral model)
+- ADR-031: Unified collection cache — session-scoped venvs owned by Primary, shared read-only with validators

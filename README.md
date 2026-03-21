@@ -32,12 +32,12 @@ Ansible Policy & Modernization Engine — a multi-validator static analysis plat
                             └────────────┘───────┘                   │  Gitleaks  │ :50056
                                  │                                   │ (secrets)  │
                             ┌────┴────┐                              └────────────┘
-                            │  Cache  │ :50052
-                            │Maintainr│
+                            │ Galaxy  │ :8765
+                            │ Proxy   │ (PEP 503)
                             └─────────┘
 ```
 
-Seven containers, one pod. All inter-service communication is gRPC. The CLI is run on-the-fly with the project directory mounted. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design.
+Six app containers, one pod. All inter-service communication is gRPC. The Galaxy Proxy serves Ansible collections as Python wheels (PEP 503). The CLI is run on-the-fly with the project directory mounted. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design.
 
 ## Key features
 
@@ -46,9 +46,9 @@ Seven containers, one pod. All inter-service communication is gRPC. The CLI is r
 - **Unified gRPC contract** — every validator implements the same `Validator` service (`validate.proto`); adding a new validator means implementing one RPC.
 - **100+ rules** across four backends: OPA Rego (L002–L025, R118), native Python (L026–L056, R101–R501), Ansible runtime (L057–L059, M001–M004), Gitleaks (SEC:* — 800+ secret patterns).
 - **Secret scanning** — Gitleaks binary wrapped in gRPC; scans all project files for hardcoded credentials, API keys, private keys. Vault-encrypted files and Jinja2 expressions are automatically filtered.
-- **Multi ansible-core version support** — the Ansible validator creates ephemeral per-request venvs (UV-cached) for ansible-core 2.18, 2.19, 2.20; argspec and deprecation checks run against the requested version.
+- **Multi ansible-core version support** — the Primary orchestrator builds session-scoped venvs per ansible-core version (UV-cached); argspec and deprecation checks run against the requested version. Venvs are shared read-only with validators via a `/sessions` volume.
 - **Structured diagnostics** — every validator reports per-rule timing data via the gRPC contract; use `-v` for summaries or `-vv` for full per-rule breakdowns.
-- **Collection cache** — pull from Galaxy or clone GitHub orgs; mount read-only into the Ansible validator. Managed by a dedicated Cache Maintainer service.
+- **Galaxy Proxy** — converts Ansible Galaxy collection tarballs into pip-installable Python wheels (PEP 503/427); collections are `uv pip install`'d into session venvs, leveraging standard Python caching and dependency resolution.
 - **YAML formatter** — normalize indentation, key ordering, Jinja spacing, and tab removal with comment preservation. Idempotent by design; runs as a pre-pass before semantic fixes.
 - **Colocated tests** — every rule has a `*_test.py` (native), `*_test.rego` (OPA), or `.md` doc with violation/pass examples usable as integration tests.
 
@@ -98,7 +98,7 @@ apme-scan fix --ai --auto-approve --apply /path/to/project
 # Build all images
 ./containers/podman/build.sh
 
-# Start the pod (Primary + Native + OPA + Ansible + Gitleaks + Cache Maintainer)
+# Start the pod (Primary + Native + OPA + Ansible + Gitleaks + Galaxy Proxy)
 ./containers/podman/up.sh
 
 # Scan a project (CLI container, on-the-fly)
@@ -174,6 +174,7 @@ APME_ABBENAY_ADDR=localhost:50057 apme-scan fix --ai --apply .
 | `--apply` | Write changes in place |
 | `--check` | Exit 1 if changes would be made (CI mode) |
 | `--json` | Output structured data payloads as JSON |
+| `--session ID` | Explicit session ID for venv reuse (default: auto-derived from project root) |
 
 ### Remediation flow
 
@@ -216,7 +217,7 @@ src/apme_engine/
   │   ├── ansible/      Ansible-runtime rules (L057–L059, M001–M004)
   │   └── gitleaks/     Gitleaks wrapper (SEC:* — secret detection)
   ├── daemon/           gRPC server implementations
-  ├── collection_cache/ Galaxy/GitHub cache management
+  ├── collection_cache/ Session venv management (VenvSessionManager)
   ├── formatter.py      YAML formatter (phase 1 remediation)
   ├── cli.py            CLI entry point (scan, format, fix, health-check)
   └── runner.py         scan orchestration

@@ -22,12 +22,12 @@ This builds seven images:
 
 | Image | Dockerfile | Purpose |
 |-------|------------|---------|
-| `apme-primary:latest` | `containers/primary/Dockerfile` | Orchestrator + engine |
+| `apme-primary:latest` | `containers/primary/Dockerfile` | Orchestrator + engine + session venv manager |
 | `apme-native:latest` | `containers/native/Dockerfile` | Native Python validator |
 | `apme-opa:latest` | `containers/opa/Dockerfile` | OPA + gRPC wrapper |
-| `apme-ansible:latest` | `containers/ansible/Dockerfile` | Ansible validator with pre-built venvs |
+| `apme-ansible:latest` | `containers/ansible/Dockerfile` | Ansible validator (reads session venvs) |
 | `apme-gitleaks:latest` | `containers/gitleaks/Dockerfile` | Gitleaks secret scanner + gRPC wrapper |
-| `apme-cache-maintainer:latest` | `containers/cache-maintainer/Dockerfile` | Collection cache manager |
+| `apme-galaxy-proxy:latest` | `containers/galaxy-proxy/Dockerfile` | PEP 503 proxy: Galaxy tarballs → Python wheels |
 | `apme-cli:latest` | `containers/cli/Dockerfile` | CLI client |
 
 ### Start the pod
@@ -36,7 +36,7 @@ This builds seven images:
 ./containers/podman/up.sh
 ```
 
-This runs `podman play kube containers/podman/pod.yaml`, which starts the pod `apme-pod` with six containers (Primary, Native, OPA, Ansible, Gitleaks, Cache Maintainer). A cache directory (`apme-cache/`) is created in the repo root.
+This runs `podman play kube containers/podman/pod.yaml`, which starts the pod `apme-pod` with six containers (Primary, Native, OPA, Ansible, Gitleaks, Galaxy Proxy). A sessions directory is created for session-scoped venvs.
 
 ### Run CLI commands
 
@@ -77,7 +77,7 @@ apme-scan health-check
 
 The CLI discovers the Primary via `APME_PRIMARY_ADDRESS` env var, a running daemon, or auto-starts one locally.
 
-Reports status of all services (Primary, Native, OPA, Ansible, Gitleaks, Cache Maintainer) with latency.
+Reports status of all services (Primary, Native, OPA, Ansible, Gitleaks) with latency.
 
 ## Container configuration
 
@@ -114,21 +114,19 @@ The OPA binary runs internally on `localhost:8181`; the gRPC wrapper proxies to 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `APME_ANSIBLE_VALIDATOR_LISTEN` | `0.0.0.0:50053` | gRPC listen address |
-| `APME_CACHE_ROOT` | `/cache` | Collection cache mount point |
 
-#### Cache Maintainer
+#### Galaxy Proxy
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `APME_CACHE_MAINTAINER_LISTEN` | `0.0.0.0:50052` | gRPC listen address |
-| `APME_CACHE_ROOT` | `/cache` | Collection cache directory |
+| `APME_GALAXY_PROXY_URL` | `http://127.0.0.1:8765` | Galaxy proxy base URL |
 
 ### Volumes
 
-| Name | Host path | Container mount | Services | Access |
+| Name | Host Path | Container Mount | Services | Access |
 |------|-----------|-----------------|----------|--------|
-| `cache` | `apme-cache/` | `/cache` | Cache Maintainer, Ansible | rw (cache-maintainer), ro (ansible) |
-| workspace | CWD (CLI only) | `/workspace` | CLI | rw |
+| `sessions` | `apme-sessions/` | `/sessions` | Primary, Ansible | rw (primary), ro (ansible) |
+| `workspace` | CWD (CLI only) | `/workspace` | CLI | rw |
 
 ## OPA container details
 
@@ -147,25 +145,17 @@ The Rego bundle is baked into the image at build time (no volume mount needed).
 
 ### Ansible container details
 
-The Ansible container pre-builds venvs for multiple ansible-core versions during `podman build`:
+The Ansible container receives session-scoped venvs via the `/sessions` volume (read-only). The Primary orchestrator builds and manages these venvs using `VenvSessionManager`; the Ansible validator simply uses the `venv_path` provided in each `ValidateRequest`.
 
-```
-/opt/apme-venvs/
-  ├── 2.18/    # venv with ansible-core==2.18.*
-  ├── 2.19/    # venv with ansible-core==2.19.*
-  └── 2.20/    # venv with ansible-core==2.20.*
-```
+Collections are installed into the venv's `site-packages/ansible_collections/` directory by `uv pip install` through the Galaxy Proxy — they're on the Python path natively (no `ANSIBLE_COLLECTIONS_PATH` or `ansible.cfg` needed).
 
-`prebuild-venvs.sh` runs during the Docker build to create these. At runtime, the validator selects the appropriate venv based on `ansible_core_version` from the `ValidateRequest`.
-
-Collections from the cache volume are symlinked or copied into the venv's `site-packages/ansible_collections/` directory so they're on the Python path (no `ANSIBLE_COLLECTIONS_PATH` or `ansible.cfg` needed).
+When no `venv_path` is provided (e.g., standalone testing), the validator falls back to building an ephemeral venv locally.
 
 ## Local development (daemon mode)
 
 For development and testing without the Podman pod, the CLI can start a
-local daemon that runs the Primary, Cache Maintainer, Native, and OPA validators
-as localhost gRPC servers (ADR-024). Ansible and Gitleaks are optional
-(`--include-optional`):
+local daemon that runs the Primary, Native, OPA, Ansible, and Galaxy Proxy services
+as localhost gRPC servers (ADR-024). Gitleaks is excluded (requires the gitleaks binary).
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
@@ -184,12 +174,7 @@ python -m apme_engine.cli fix .
 python -m apme_engine.cli daemon stop
 ```
 
-Daemon mode starts a background process with Primary, Cache Maintainer,
-Native, and OPA validators as localhost gRPC servers. Ansible and Gitleaks
-are optional (`_OPTIONAL_SERVICES` in `launcher.py`) and not started by
-default — Ansible requires pre-built venvs and Gitleaks requires the
-gitleaks binary. OPA runs via the local `opa` binary; if `opa` is not
-installed, the OPA validator is automatically skipped.
+**Daemon mode** starts a local Primary server with Native, OPA, and Ansible validators plus the Galaxy Proxy running in-process. OPA runs via the local `opa` binary; if `opa` is not installed, the OPA validator is automatically skipped.
 
 ## Troubleshooting
 
@@ -198,3 +183,18 @@ See [PODMAN_OPA_ISSUES.md](PODMAN_OPA_ISSUES.md) for common Podman rootless issu
 - `/run/libpod: permission denied` — run in a real login shell, enable linger
 - Short-name resolution — use fully qualified image names (`docker.io/...`)
 - `/bundle: permission denied` — use `--userns=keep-id` and `:z` volume suffix
+
+## Port Map quick reference
+
+| Port | Service | Listen Variable |
+|------|---------|-----------------|
+| 50051 | Primary | `APME_PRIMARY_LISTEN` |
+| 50053 | Ansible | `APME_ANSIBLE_VALIDATOR_LISTEN` |
+| 50054 | OPA | `APME_OPA_VALIDATOR_LISTEN` |
+| 50055 | Native | `APME_NATIVE_VALIDATOR_LISTEN` |
+| 50056 | Gitleaks | `APME_GITLEAKS_VALIDATOR_LISTEN` |
+| 8765 | Galaxy Proxy | `APME_GALAXY_PROXY_URL` |
+
+## Related Documents
+
+- [ADR-006](../.sdlc/adrs/ADR-006-ephemeral-venvs.md) — Ephemeral venvs for Ansible (superseded by ADR-022/ADR-031)

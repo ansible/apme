@@ -121,7 +121,6 @@ class ARIScanner:
         base_dir: str = "",
         collection_name: str = "",
         role_name: str = "",
-        install_dependencies: bool = True,
         use_ansible_path: bool = False,
         version: str = "",
         hash: str = "",
@@ -155,7 +154,6 @@ class ARIScanner:
             base_dir: Base directory for path resolution.
             collection_name: Parent collection when scanning a role.
             role_name: Parent role when scanning a taskfile.
-            install_dependencies: Whether to install dependencies.
             use_ansible_path: Use ansible.cfg paths.
             version: Target version.
             hash: Target content hash.
@@ -202,7 +200,6 @@ class ARIScanner:
             name=name,
             collection_name=collection_name,
             role_name=role_name,
-            install_dependencies=install_dependencies,
             use_ansible_path=use_ansible_path,
             version=version,
             hash=hash,
@@ -234,10 +231,11 @@ class ARIScanner:
             _parser=self._parser,
         )
         self._current = scandata
+        if not scandata.target_path:
+            scandata.target_path = scandata.make_target_path(scandata.type, scandata.name)
         self.record_end(time_records, "scandata_init")
 
         self.record_begin(time_records, "metadata_load")
-        metdata_loaded = False
         read_root_from_ram = (
             self.read_ram
             and scandata.type not in [LoadType.PLAYBOOK, LoadType.TASKFILE, LoadType.PROJECT]
@@ -248,14 +246,8 @@ class ARIScanner:
             logger.debug(f"metadata loaded: {loaded}")
             if loaded and metadata is not None and dependencies is not None:
                 scandata.set_metadata(metadata, dependencies)
-                metdata_loaded = True
                 if not self.silent:
                     logger.debug(f'Use metadata for "{scandata.name}" in RAM DB')
-
-        if scandata.install_dependencies and not metdata_loaded:
-            logger.debug(f"start preparing {scandata.type} {scandata.name}")
-            scandata._prepare_dependencies()
-            logger.debug(f"finished preparing {scandata.type} {scandata.name}")
 
         if download_only:
             return None
@@ -343,7 +335,6 @@ class ARIScanner:
                             hash=ext_hash,
                             target_path=ext_target_path,
                             dependency_dir=scandata.dependency_dir,
-                            install_dependencies=False,
                             use_ansible_path=False,
                             skip_dependency=True,
                             source_repository=scandata.source_repository,
@@ -507,7 +498,6 @@ class ARIScanner:
                         path=path,
                         collection_name=collection_name,
                         role_name=role_name,
-                        install_dependencies=install_dependencies,
                         use_ansible_path=use_ansible_path,
                         version=version,
                         hash=hash,

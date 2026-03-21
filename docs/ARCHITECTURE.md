@@ -2,7 +2,7 @@
 
 ## Overview
 
-APME is a seven-container gRPC microservice deployed as a single Podman pod. The Primary service runs the engine (parse + annotate), then fans validation out **in parallel** to four independent validator backends over a unified gRPC contract. The CLI is ephemeral — run on-the-fly with the project directory mounted.
+APME is a six-container gRPC microservice deployed as a single Podman pod. The Primary service runs the engine (parse + annotate), then fans validation out **in parallel** to four independent validator backends over a unified gRPC contract. The CLI is ephemeral — run on-the-fly with the project directory mounted.
 
 All inter-service communication is gRPC. There is no REST, no message queue, no service discovery. Containers in the same pod share `localhost`; addresses are fixed by convention.
 
@@ -19,15 +19,16 @@ All gRPC servers use **`grpc.aio`** (fully async). Blocking work (engine scan, s
 │  │          │  │          │  │          │  │          │  │          │  │
 │  │ engine + │  │ Python   │  │ OPA bin  │  │ ansible- │  │ gitleaks │  │
 │  │ orchestr │  │ rules on │  │ + gRPC   │  │ core     │  │ + gRPC   │  │
-│  │          │  │ scandata │  │ wrapper  │  │ venvs    │  │ wrapper  │  │
-│  └────┬─────┘  └──────────┘  └──────────┘  └────┬─────┘  └──────────┘  │
-│       │                                          │ ro             │
-│  ┌────┴─────────────────────────────────────┐    │                │
-│  │         Cache Maintainer :50052          │    │                │
-│  │  pull-galaxy / pull-requirements /       ├────┘                │
-│  │  clone-org → /cache (rw)                 │                     │
-│  └──────────────────────────────────────────┘                     │
-└──────────────────────────────────────────────────────────────────┘
+│  │ session  │  │ scandata │  │ wrapper  │  │ venvs    │  │ wrapper  │  │
+│  │  venvs   │  │          │  │          │  │ (ro)     │  │          │  │
+│  └────┬─────┘  └──────────┘  └──────────┘  └──────────┘  └──────────┘  │
+│       │                                                                │
+│  ┌────┴─────────────────────────────────────┐                         │
+│  │      Galaxy Proxy :8765 (PEP 503)       │                         │
+│  │  Ansible Galaxy → Python wheels on      │                         │
+│  │  demand; caching handled by proxy + uv  │                         │
+│  └──────────────────────────────────────────┘                         │
+└──────────────────────────────────────────────────────────────────────┘
 
      ┌──────────┐
      │   CLI    │  podman run --rm --pod apme-pod
@@ -40,12 +41,12 @@ All gRPC servers use **`grpc.aio`** (fully async). Blocking work (engine scan, s
 
 | Service | Image | Port | Role |
 |---------|-------|------|------|
-| **Primary** | `apme-primary` | 50051 | Runs the engine (parse → annotate → hierarchy); fans out `ValidateRequest` to all validators in parallel; merges, deduplicates, and returns violations |
+| **Primary** | `apme-primary` | 50051 | Runs the engine (parse → annotate → hierarchy); manages session-scoped venvs (`VenvSessionManager`); fans out `ValidateRequest` to all validators in parallel; merges, deduplicates, and returns violations |
 | **Native** | `apme-native` | 50055 | Python rules operating on deserialized `scandata` (the full in-memory model). Rules L026–L060, M005/M010, P001–P004, R101–R501 |
 | **OPA** | `apme-opa` | 50054 | OPA binary (REST on 8181 internally) + Python gRPC wrapper. Rego rules L003–L025, M006/M008/M009/M011, R118 on the hierarchy JSON |
-| **Ansible** | `apme-ansible` | 50053 | Ansible-runtime checks using ephemeral per-request venvs (ansible-core 2.18/2.19/2.20). UV cache pre-warmed at build time; venvs created per request (~1-2s) and destroyed after. Rules L057–L059, M001–M004 |
+| **Ansible** | `apme-ansible` | 50053 | Ansible-runtime checks using session-scoped venvs (shared read-only via `/sessions` volume). Rules L057–L059, M001–M004 |
 | **Gitleaks** | `apme-gitleaks` | 50056 | Gitleaks binary + Python gRPC wrapper. Scans raw files for hardcoded secrets, API keys, private keys. Filters vault-encrypted content and Jinja2 expressions. Rules SEC:* (800+ patterns) |
-| **Cache Maintainer** | `apme-cache-maintainer` | 50052 | Populates the collection cache from Galaxy and GitHub orgs. Writes to `/cache`; Ansible reads it `ro` |
+| **Galaxy Proxy** | `apme-galaxy-proxy` | 8765 | PEP 503 simple repository API that converts Galaxy collection tarballs to pip-installable Python wheels. Caching is the proxy's concern — the engine has zero cache management code |
 | **CLI** | `apme-cli` | — | Ephemeral. Reads project files, builds chunked `ScanRequest`, calls `Primary.Scan`, prints violations. Run with `--pod apme-pod` and CWD mounted |
 
 ## gRPC service contracts
@@ -93,17 +94,6 @@ Every validator container implements this service. The `ValidateRequest` carries
 
 The `ValidateResponse` echoes back `request_id` for correlation and includes a `ValidatorDiagnostics` message with timing data, violation counts, and validator-specific metadata. Each validator ignores the data fields it doesn't need. This keeps the contract uniform — adding a new validator means implementing one RPC and choosing which fields to consume.
 
-### CacheMaintainer (`cache.proto`)
-
-```protobuf
-service CacheMaintainer {
-  rpc PullGalaxy(PullGalaxyRequest) returns (PullGalaxyResponse);
-  rpc PullRequirements(PullRequirementsRequest) returns (PullRequirementsResponse);
-  rpc CloneOrg(CloneOrgRequest) returns (CloneOrgResponse);
-  rpc Health(HealthRequest) returns (HealthResponse);
-}
-```
-
 ### Common types (`common.proto`)
 
 - **`Violation`** — `rule_id`, `level`, `message`, `file`, `line` (int or range), `path`, `remediation_class` (AUTO_FIXABLE / AI_CANDIDATE / MANUAL_REVIEW), `remediation_resolution`
@@ -143,14 +133,15 @@ All gRPC servers use `grpc.aio` (fully async). This means multiple scan requests
 
 Each service's `maximum_concurrent_rpcs` is configurable via environment variable (e.g., `APME_PRIMARY_MAX_RPCS`).
 
-### Ansible ephemeral venvs
+### Session-scoped venvs
 
-Each Ansible `Validate()` call creates a fresh temporary venv using UV (pre-warmed cache at container build time), runs all rules (L057–L059, M001–M004), then destroys the venv. This provides:
+The Primary orchestrator manages session-scoped venvs via `VenvSessionManager`. Within each session, venvs are keyed by `ansible_core_version` — like tox matrix entries. Collections discovered by FQCN auto-discovery (ADR-032) are installed incrementally via the Galaxy Proxy. Venvs are shared read-only with validators via a `/sessions` volume.
 
-- **Perfect isolation**: no shared venv state between concurrent requests
-- **Automatic cleanup**: venvs are destroyed after each request
-- **Fast creation**: UV cache hit means ~1-2s to create a full venv
-- **No locking**: each request operates on its own venv
+- **Single writer, many readers**: Primary owns venv creation/updates (rw); validators mount read-only
+- **Additive, never destructive**: Collections are only added; a new core version creates a sibling venv
+- **Idempotent installs**: `uv pip install` is a no-op for already-installed packages — warm sessions pay near-zero cost
+- **Client-controlled identity**: `session_id` is always client-provided (VS Code workspace hash, CI job ID)
+- **TTL-based reaping**: Individual core-version venvs can expire independently
 
 ## Session tracking (request_id)
 
@@ -200,7 +191,7 @@ The wrapper adds Ansible-aware filtering:
 
 | Volume | Mount | Services | Access |
 |--------|-------|----------|--------|
-| **cache** | `/cache` | Cache Maintainer (rw), Ansible (ro) | Collection cache (Galaxy + GitHub) |
+| **sessions** | `/sessions` | Primary (rw), Ansible (ro) | Session-scoped venvs with ansible-core + collections |
 | **workspace** | `/workspace` | CLI (ro) | Project being scanned (mounted from host CWD) |
 
 ## Port map
@@ -208,15 +199,15 @@ The wrapper adds Ansible-aware filtering:
 | Port | Service | Protocol |
 |------|---------|----------|
 | 50051 | Primary | gRPC |
-| 50052 | Cache Maintainer | gRPC |
 | 50053 | Ansible | gRPC |
 | 50054 | OPA | gRPC (wrapper; OPA REST on 8181 internal) |
 | 50055 | Native | gRPC |
 | 50056 | Gitleaks | gRPC (wrapper; gitleaks binary for detection) |
+| 8765 | Galaxy Proxy | HTTP (PEP 503 simple repository API) |
 
 ## Scaling
 
-**Scale pods, not services within a pod.** Each pod is a self-contained stack (Primary + Native + OPA + Ansible + Gitleaks + Cache Maintainer) that can process a scan request end-to-end.
+**Scale pods, not services within a pod.** Each pod is a self-contained stack (Primary + Native + OPA + Ansible + Gitleaks + Galaxy Proxy) that can process a scan request end-to-end.
 
 ```
                     ┌─────────────┐
@@ -236,7 +227,7 @@ The wrapper adds Ansible-aware filtering:
 
 Within a pod, containers share `localhost` — no config change needed. If a single validator is the bottleneck for one request, the fix is parallelism *inside* that validator (e.g., task-level concurrency), not more containers.
 
-The Cache Maintainer is the one exception: it could be extracted to a shared service across pods if multiple pods need to share a single cache volume. For single-pod deployments this is unnecessary.
+The **Galaxy Proxy** could be extracted to a shared service across pods to share a single wheel cache. For single-pod deployments this is unnecessary.
 
 ## Diagnostics instrumentation
 
@@ -323,7 +314,7 @@ apme-scan health-check
 
 The CLI discovers the Primary via `APME_PRIMARY_ADDRESS` env var, a running daemon, or auto-starts one locally.
 
-Primary, Native, OPA, Ansible, Gitleaks, and Cache Maintainer all implement the `Health` RPC. A service returning `status: "ok"` is healthy; any gRPC error marks it degraded.
+Primary, Native, OPA, Ansible, and Gitleaks all implement the `Health` RPC. A service returning `status: "ok"` is healthy; any gRPC error marks it degraded.
 
 ## Decision records
 

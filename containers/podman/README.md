@@ -1,6 +1,6 @@
 # Podman pod (6 app containers + 1 infra; CLI on-the-fly)
 
-Backend services run in a single **pod** so they share a network (localhost). Podman creates one extra **infra** container per pod to hold the pod’s shared network namespace, so `podman pod list` shows **7** containers (primary, native, ansible, opa, gitleaks, cache-maintainer, plus the infra container). That’s expected. The **CLI is not part of the pod** and is run on-the-fly with your current directory mounted so you can scan any project without baking a path into the pod.
+Backend services run in a single **pod** so they share a network (localhost). Podman creates one extra **infra** container per pod to hold the pod’s shared network namespace, so `podman pod list` shows **7** containers (primary, native, ansible, opa, gitleaks, galaxy-proxy, plus the infra container). That’s expected. The **CLI is not part of the pod** and is run on-the-fly with your current directory mounted so you can scan any project without baking a path into the pod.
 
 ## Prerequisites
 
@@ -12,7 +12,7 @@ Backend services run in a single **pod** so they share a network (localhost). Po
 ```bash
 # From repo root
 ./containers/podman/build.sh   # build all images
-./containers/podman/up.sh      # start the pod (primary, native, ansible, opa, gitleaks, cache-maintainer)
+./containers/podman/up.sh      # start the pod (primary, native, ansible, opa, gitleaks, galaxy-proxy)
 ./containers/podman/wait-for-pod.sh   # wait until pod status is Running (not Degraded)
 ```
 
@@ -20,7 +20,7 @@ Only run the health-check once the pod is **Running**. Use `wait-for-pod.sh` to 
 
 The pod creates:
 
-- **Cache directory** — defaults to `${XDG_CACHE_HOME:-$HOME/.cache}/apme` (persists across reboots). Override with `APME_CACHE_HOST_PATH=/my/cache ./up.sh`. The cache-maintainer writes here; the ansible validator reads it.
+- **Sessions directory** — session-scoped venvs are stored under `/sessions` in the pod. The Primary writes here (rw); the Ansible validator reads it (ro).
 - OPA bundle is mounted from **src/apme_engine/validators/opa/bundle**.
 
 ## Run CLI commands (on-the-fly container)
@@ -64,7 +64,7 @@ Or wait and run the health-check in one step:
 ./containers/podman/wait-for-pod.sh --health-check
 ```
 
-This checks **Primary**, **Native**, **Ansible**, **Gitleaks**, **Cache maintainer** (gRPC) and **OPA** (REST). Use `--json` for machine-readable output. Addresses for Ansible, Cache, and OPA are derived from the primary host (ports 50053, 50052, 8181) or set via env: `ANSIBLE_GRPC_ADDRESS`, `APME_CACHE_GRPC_ADDRESS`, `OPA_URL`.
+This checks **Primary**, **Native**, **Ansible**, **Gitleaks** (gRPC) and **OPA** (REST). Use `--json` for machine-readable output. Addresses for Ansible and OPA are derived from the primary host (ports 50053, 8181) or set via env: `ANSIBLE_GRPC_ADDRESS`, `OPA_URL`.
 
 ## Stop the pod
 
@@ -83,7 +83,7 @@ podman logs apme-pod-primary
 
 Common causes:
 
-- **Port in use** — Ensure no other process on the host is using 50051 (or 50052, 50053, 8181). Restart the pod after stopping any conflicting services.
+- **Port in use** — Ensure no other process on the host is using 50051 (or 50053, 8181, 8765). Restart the pod after stopping any conflicting services.
 - **Import or runtime error** — The primary process logs exceptions to stderr before exiting; the traceback in `podman logs` will show the cause.
 
 To run the primary container interactively to see startup errors:

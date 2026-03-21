@@ -6,7 +6,7 @@ This document is the authoritative source of truth for AI agents. All developmen
 
 ## Overview
 
-APME is a multi-service system that automates policy enforcement and modernization of Ansible content for AAP 2.5+. Services: Primary Orchestrator, Native/OPA/Ansible/Gitleaks Validators, Remediation Engine, CLI.
+APME is a multi-service system that automates policy enforcement and modernization of Ansible content for AAP 2.5+. Services: Primary Orchestrator, Native/OPA/Ansible/Gitleaks Validators, Galaxy Proxy, Remediation Engine, CLI.
 
 ## Architecture
 
@@ -17,7 +17,7 @@ APME is a multi-service system that automates policy enforcement and modernizati
 │  │  :50051  │  │  :50055  │  │  :50054  │  │  :50053  │  │  :50056  │ │
 │  └────┬─────┘  └──────────┘  └──────────┘  └──────────┘  └──────────┘ │
 │  ┌────┴─────────────────────────────────────┐                         │
-│  │         Cache Maintainer :50052          │                         │
+│  │         Galaxy Proxy :8765 (PEP 503)     │                         │
 │  └──────────────────────────────────────────┘                         │
 └────────────────────────────────────────────────────────────────────────┘
 ```

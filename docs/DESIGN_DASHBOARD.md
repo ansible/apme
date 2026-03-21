@@ -216,7 +216,7 @@ Phase 4 starts with a single role (all authenticated users can do everything). R
 | **Rule catalog** | Browsable list of all rules with description, validator, fixer status. Links to rule `.md` docs. |
 | **Remediation queue** | AI-proposed fixes with side-by-side diff viewer. Accept/reject buttons. Batch operations. |
 | **Dashboard (home)** | Scan history chart (violations over time). Top violated rules. Scan frequency. Average scan time. |
-| **Health** | Service status cards (Primary, Native, OPA, Ansible, Gitleaks, Cache Maintainer) with latency. |
+| **Health** | Service status cards (Primary, Native, OPA, Ansible, Gitleaks, Galaxy Proxy) with latency. |
 
 ---
 

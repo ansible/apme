@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (Phase 2 in progress)
+Accepted (Phases 1–4 complete)
 
 ## Date
 
@@ -172,25 +172,82 @@ Concretely:
 - Removed dead utility functions (`diff_files_data`, `show_all_ram_metadata`, `show_diffs`, `version_to_num`)
 - **~3,100 lines removed** across 25 files (14 deleted, 11 trimmed)
 
-### Phase 2: Galaxy proxy integration — IN PROGRESS
+### Phase 2: Galaxy proxy integration — COMPLETE
 - **Proxy repo** (`ansible-collection-proxy`): Multi-Galaxy URL support, Containerfile
 - **APME venv builder**: `build_venv` uses `uv pip install --extra-index-url` when `APME_GALAXY_PROXY_URL` is set; falls back to symlink path otherwise
 - **Primary orchestrator**: `_ensure_collections_cached` skips CacheMaintainer pre-pull when proxy is active (on-demand via pip)
 - **Pod topology**: Galaxy proxy container added to `pod.yaml`, env var wired to ansible + primary containers
 
-### Phase 3: ARI engine `ansible-galaxy` shim
-The vendored ARI engine's `dependency_dir_preparator.py` shells out to `ansible-galaxy collection download/install` in five places to fetch collection dependencies during tree building. Rather than refactoring the preparator's internal structure (which is tightly coupled to ARI's scanning pipeline), we introduce a thin shim function — `install_collection(name, version, target_dir)` — that presents the same contract ARI expects (collection source appears at `{target_dir}/ansible_collections/{ns}/{name}/`) but dispatches to the galaxy proxy via `uv pip install --extra-index-url`. From the preparator's perspective, nothing has changed: it asks for a collection, it appears at the expected path. The implementation switches from `ansible-galaxy` subprocess to standard pip, removing the last use of the proprietary tooling from the engine.
+### Phase 3: Session-scoped venvs as shared assets — COMPLETE
 
-- Replace `download_galaxy_collection()`, `install_galaxy_collection_from_targz()`, `install_galaxy_collection_from_reqfile()`, and related methods with calls to the shim
+Sessions are long-lived containers identified by a client-provided `session_id`. Within a session, venvs are keyed by `ansible_core_version` — like tox matrix entries. Collections are installed **incrementally** (additive, never destructive). Old core-version venvs are retained until TTL reaping.
+
+#### Architecture: single writer, many readers
+
+The **Primary orchestrator** is the sole venv authority. It calls `VenvSessionManager.acquire()` (which may install collections) **before** fanning out to validators. Validators mount the sessions volume **read-only** — they receive a `venv_path` in `ValidateRequest` and use it as-is. This eliminates concurrent validator writes and corruption risk.
+
+```
+Client → ScanRequest(session_id) → Primary
+    Primary → VenvSessionManager.acquire(session_id, core_version, specs) → sessions volume (read-write)
+    Primary → ValidateRequest(venv_path=...) → Ansible Validator (sessions volume read-only)
+    Primary → run_scan(dependency_dir=venv_site_packages) → ARI Engine (reads from session venv)
+```
+
+#### Storage layout
+
+```
+$SESSIONS_ROOT/
+  <session_id>/
+    <core_version>/
+      venv/           # full virtualenv
+      meta.json       # {installed_collections, created_at, last_used_at}
+    session.json      # session-level metadata
+    .lock             # fcntl flock target
+```
+
+#### Key design properties
+
+- **Additive, never destructive**: Collections are only added, never removed. A new core version creates a sibling, not a replacement.
+- **Idempotent installs**: `uv pip install` is a no-op for already-installed packages. Warm sessions pay near-zero cost.
+- **Client controls identity**: `session_id` is always client-provided. The CLI derives it automatically from the project root (SHA-256 hash of the resolved path to the nearest `.git`, `galaxy.yml`, `requirements.yml`, `ansible.cfg`, or `pyproject.toml` directory). Users can override with `--session <id>`.
+- **TTL-based reaping**: Individual core-version venvs can expire independently.
+- **Volume-shared**: One venv build serves all validators in the pod — no double-install.
+
+#### Changes
+
+- **Proto**: `session_id` added to `ScanRequest`, `ScanResponse`, `ScanOptions`, `FixOptions`; `session_id` + `venv_path` added to `ValidateRequest`
+- **VenvSessionManager**: Refactored from flat `sessions/<sid>/venv/` to multi-version `sessions/<sid>/<version>/venv/` layout. `acquire()` does incremental installs. `reap_expired()` operates per core-version venv. New public helpers `create_base_venv()` and `install_collections_incremental()` in `venv_builder.py`.
+- **Primary**: Creates `VenvSessionManager` singleton. Checks for warm session before ARI scan (passes `dependency_dir`). Calls `acquire()` after collection discovery for incremental install. Sets `venv_path` on `ValidateRequest`.
+- **Ansible validator**: When `venv_path` is set in request, uses it directly (read-only). Falls back to `build_venv()` when empty.
+- **ARI scanner**: `run_scan()` receives `dependency_dir` pointing to the session venv's site-packages. The `install_dependencies` parameter and the entire ARI dependency download pipeline have been removed (see Phase 4). ARI never downloads collections — the session manager is the sole authority.
+- **Pod topology**: `sessions` volume added — read-write for Primary, read-only for Ansible validator.
+
+#### Future work
+
+- **Python version as a venv axis**: The venv key could expand from `(session_id, ansible_core_version)` to `(session_id, ansible_core_version, python_version)`, making the matrix three-dimensional (like tox's `{py310,py311} x {ansible2.17,ansible2.18}`). `uv` makes this trivial — `uv venv --python 3.12` downloads and pins the interpreter automatically. Not needed now (pod containers pin a single Python), but essential for scanning content destined for different EE Python versions.
+
+### Phase 4: ARI dependency pipeline dead code removal — COMPLETE
+With Phase 3's session-scoped venvs, the daemon path no longer needs ARI's collection downloading. `SingleScan._prepare_dependencies()` — the sole entry point to the `DependencyDirPreparator` pipeline — was **never reached**. The entire collection-downloading codepath in the vendored ARI engine was removed (~2,000+ lines):
+
+- `dependency_dir_preparator.py` (~1,362 lines): `download_galaxy_collection()`, `install_galaxy_collection_from_targz()`, `install_galaxy_collection_from_reqfile()`, and all `ansible-galaxy` subprocess calls
+- `dependency_loading.py` (~211 lines): Orchestrates the preparator
+- `dependency_finder.py` (~497 lines): Discovers dependencies to download
+- `utils.py` (partial): `install_galaxy_target()` helper
+
+**No shim is needed.** The original shim approach (documented in the previous revision) tried to preserve ARI's internal contract by replacing the *implementation* behind `ansible-galaxy` calls. But since the session manager now handles all collection management *before* ARI runs, the entire pipeline is unreachable. Clean removal is simpler and safer than shimming.
+
+- Removed `dependency_dir_preparator.py`, `dependency_loading.py`, `dependency_finder.py`
+- Removed `install_galaxy_target()` and related helpers from `utils.py`
+- Removed the `install_dependencies` parameter from `scanner.evaluate()` and `run_scan()`
+- Removed `_cli_legacy.py` and its tests (`test_cli.py`, `test_cli_health_and_diagnostics.py`)
 - `ansible-galaxy` is no longer required for collection operations (roles remain on the legacy path for now)
-- RAMClient's `root_dir` changes from temp dir to persistent cache location
-- Parsed Findings written to metadata layer alongside collection source
+- **Net reduction: ~5,100 lines of dead code removed**
 
-### Phase 4: Native validator leverages venv for P-rules
+### Phase 5: Native validator leverages venv for P-rules
 - For `search_action_group()` and argument spec validation, query the Ansible validator's venv (via subprocess or thin gRPC call)
 - Re-enable P001–P004 in daemon mode (currently excluded because they require `ram_client` with populated data)
 
-### Phase 5: Web gateway migration (future, ADR-029)
+### Phase 6: Web gateway migration (future, ADR-029)
 - Migrate the filesystem metadata layer to SQLite/PostgreSQL
 - RAMClient becomes a DB-backed read-through cache
 
@@ -210,3 +267,5 @@ The vendored ARI engine's `dependency_dir_preparator.py` shells out to `ansible-
 | 2026-03-19 | AI-assisted | Initial proposal |
 | 2026-03-19 | AI-assisted | Phase 1 complete (PR #49): ~3,100 lines of dead ARI code removed |
 | 2026-03-21 | AI-assisted | Revised decision: Galaxy proxy approach replaces custom cache. Added proprietary format boundary justification, standards-based caching rationale, and Python ecosystem delegation arguments. |
+| 2026-03-21 | AI-assisted | Phase 3: Session-scoped venvs as shared assets. Multi-version layout, incremental installs, single-writer/many-readers architecture, ARI dependency_dir integration. |
+| 2026-03-21 | AI-assisted | Phase 4 revised: shim replaced with dead code removal (~2,000 lines). Session manager makes ARI's dependency pipeline unreachable. |

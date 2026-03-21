@@ -23,13 +23,12 @@ _STATE_FILE = _DATA_DIR / "daemon.json"
 
 _DEFAULT_PORTS = {
     "primary": 50051,
-    "cache": 50052,
     "native": 50055,
     "opa": 50054,
+    "ansible": 50053,
 }
 
 _OPTIONAL_SERVICES = {
-    "ansible": 50053,
     "gitleaks": 50056,
 }
 
@@ -143,9 +142,6 @@ async def _run_daemon(services: dict[str, str]) -> None:
         if name in services:
             os.environ[env_var] = services[name]
 
-    if "cache" in services:
-        os.environ["APME_CACHE_GRPC_ADDRESS"] = services["cache"]
-
     # Start async validators
     if "native" in services:
         from apme_engine.daemon.native_validator_server import serve as native_serve
@@ -171,14 +167,6 @@ async def _run_daemon(services: dict[str, str]) -> None:
         servers.append(await gitleaks_serve(services["gitleaks"]))
         sys.stderr.write(f"  Gitleaks validator on {services['gitleaks']}\n")
 
-    # Start sync cache in a thread
-    if "cache" in services:
-        from apme_engine.daemon.cache_maintainer_server import serve as cache_serve
-
-        cache_server = cache_serve(services["cache"])
-        cache_server.start()
-        sys.stderr.write(f"  Cache maintainer on {services['cache']}\n")
-
     # Start Primary last (depends on validators being up)
     primary = await primary_serve(services["primary"])
     servers.append(primary)
@@ -194,10 +182,10 @@ def start_daemon(
     include_optional: bool = False,
     host: str = "127.0.0.1",
 ) -> DaemonState:
-    """Fork a background daemon process running Primary + core validators.
+    """Fork a background daemon process running Primary + all validators.
 
     Args:
-        include_optional: Also start Ansible and Gitleaks validators.
+        include_optional: Also start Gitleaks validator (requires gitleaks binary).
         host: Bind address (default 127.0.0.1 for localhost-only).
 
     Returns:

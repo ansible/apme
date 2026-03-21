@@ -18,15 +18,16 @@ From the repo root:
 ./containers/podman/build.sh
 ```
 
-This builds six images:
+This builds seven images:
 
 | Image | Dockerfile | Purpose |
 |-------|------------|---------|
-| `apme-primary:latest` | `containers/primary/Dockerfile` | Orchestrator + engine |
+| `apme-primary:latest` | `containers/primary/Dockerfile` | Orchestrator + engine + session venv manager |
 | `apme-native:latest` | `containers/native/Dockerfile` | Native Python validator |
 | `apme-opa:latest` | `containers/opa/Dockerfile` | OPA + gRPC wrapper |
-| `apme-ansible:latest` | `containers/ansible/Dockerfile` | Ansible validator with pre-built venvs |
-| `apme-cache-maintainer:latest` | `containers/cache-maintainer/Dockerfile` | Collection cache manager |
+| `apme-ansible:latest` | `containers/ansible/Dockerfile` | Ansible validator (reads session venvs) |
+| `apme-gitleaks:latest` | `containers/gitleaks/Dockerfile` | Gitleaks secret scanner + gRPC wrapper |
+| `apme-galaxy-proxy:latest` | `containers/galaxy-proxy/Dockerfile` | PEP 503 proxy: Galaxy tarballs → Python wheels |
 | `apme-cli:latest` | `containers/cli/Dockerfile` | CLI client |
 
 ### Start the Pod
@@ -35,7 +36,7 @@ This builds six images:
 ./containers/podman/up.sh
 ```
 
-This runs `podman play kube containers/podman/pod.yaml`, which starts the pod `apme-pod` with five containers (Primary, Native, OPA, Ansible, Cache Maintainer). A cache directory (`apme-cache/`) is created in the repo root.
+This runs `podman play kube containers/podman/pod.yaml`, which starts the pod `apme-pod` with six containers (Primary, Native, OPA, Ansible, Gitleaks, Galaxy Proxy). A sessions directory is created for session-scoped venvs.
 
 ### Run CLI Commands
 
@@ -66,7 +67,7 @@ podman pod rm apme-pod
 apme-scan health-check --primary-addr 127.0.0.1:50051
 ```
 
-Reports status of all services (Primary, Native, OPA, Ansible, Cache Maintainer) with latency.
+Reports status of all services (Primary, Native, OPA, Ansible, Gitleaks) with latency.
 
 ---
 
@@ -104,20 +105,18 @@ Reports status of all services (Primary, Native, OPA, Ansible, Cache Maintainer)
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `APME_ANSIBLE_VALIDATOR_LISTEN` | `0.0.0.0:50053` | gRPC listen address |
-| `APME_CACHE_ROOT` | `/cache` | Collection cache mount point |
 
-#### Cache Maintainer
+#### Galaxy Proxy
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `APME_CACHE_MAINTAINER_LISTEN` | `0.0.0.0:50052` | gRPC listen address |
-| `APME_CACHE_ROOT` | `/cache` | Collection cache directory |
+| `APME_GALAXY_PROXY_URL` | `http://127.0.0.1:8765` | Galaxy proxy base URL |
 
 ### Volumes
 
 | Name | Host Path | Container Mount | Services | Access |
 |------|-----------|-----------------|----------|--------|
-| `cache` | `apme-cache/` | `/cache` | Cache Maintainer, Ansible | rw (cache-maintainer), ro (ansible) |
+| `sessions` | `apme-sessions/` | `/sessions` | Primary, Ansible | rw (primary), ro (ansible) |
 | `workspace` | CWD (CLI only) | `/workspace` | CLI | rw |
 
 ---
@@ -141,25 +140,18 @@ The **Rego bundle is baked into the image** at build time (no volume mount neede
 
 ## Ansible Container Details
 
-The Ansible container **pre-builds venvs** for multiple ansible-core versions during `podman build`:
+The Ansible container receives session-scoped venvs via the `/sessions` volume (read-only). The Primary orchestrator builds and manages these venvs using `VenvSessionManager`; the Ansible validator simply uses the `venv_path` provided in each `ValidateRequest`.
 
-```
-/opt/apme-venvs/
-  ├── 2.18/    # venv with ansible-core==2.18.*
-  ├── 2.19/    # venv with ansible-core==2.19.*
-  └── 2.20/    # venv with ansible-core==2.20.*
-```
+Collections are installed into the venv's `site-packages/ansible_collections/` directory by `uv pip install` through the Galaxy Proxy — they're on the Python path natively (no `ANSIBLE_COLLECTIONS_PATH` or `ansible.cfg` needed).
 
-`prebuild-venvs.sh` runs during the Docker build to create these. At runtime, the validator selects the appropriate venv based on `ansible_core_version` from the `ValidateRequest`.
-
-**Collections** from the cache volume are symlinked or copied into the venv's `site-packages/ansible_collections/` directory so they're on the Python path (no `ANSIBLE_COLLECTIONS_PATH` or `ansible.cfg` needed).
+When no `venv_path` is provided (e.g., standalone testing), the validator falls back to building an ephemeral venv locally.
 
 ---
 
 ## Local Development (Daemon Mode)
 
 For development and testing without the Podman pod, the CLI can start a
-local daemon that runs the Primary, Native, OPA, and Ansible validators
+local daemon that runs the Primary, Native, OPA, and Ansible validators plus the Galaxy Proxy
 in-process (ADR-024):
 
 ```bash
@@ -180,8 +172,7 @@ python -m apme_engine.cli daemon stop
 ```
 
 **Daemon mode** starts a local Primary server with Native, OPA, and Ansible
-validators running in-process. Gitleaks is excluded (requires the container
-with the gitleaks binary). OPA runs via the local `opa` binary (no container
+validators running in-process. Gitleaks is excluded (requires the gitleaks binary). OPA runs via the local `opa` binary (no container
 needed); skip it with `--no-opa` if `opa` is not installed.
 
 The CLI is a **thin gRPC client** — it sends file bytes to the daemon and
@@ -224,11 +215,11 @@ podman pod stop apme-pod && podman pod rm apme-pod
 | Port | Service | Listen Variable |
 |------|---------|-----------------|
 | 50051 | Primary | `APME_PRIMARY_LISTEN` |
-| 50052 | Cache Maintainer | `APME_CACHE_MAINTAINER_LISTEN` |
 | 50053 | Ansible | `APME_ANSIBLE_VALIDATOR_LISTEN` |
 | 50054 | OPA | `APME_OPA_VALIDATOR_LISTEN` |
 | 50055 | Native | `APME_NATIVE_VALIDATOR_LISTEN` |
 | 50056 | Gitleaks | `APME_GITLEAKS_VALIDATOR_LISTEN` |
+| 8765 | Galaxy Proxy | `APME_GALAXY_PROXY_URL` |
 
 ---
 
@@ -237,6 +228,6 @@ podman pod stop apme-pod && podman pod rm apme-pod
 - [ARCHITECTURE.md](/ARCHITECTURE.md) — Container topology and service contracts
 - [DATA_FLOW.md](/DATA_FLOW.md) — Request lifecycle and serialization
 - [ADR-004](/.sdlc/adrs/ADR-004-podman-pod-deployment.md) — Podman pod decision
-- [ADR-006](/.sdlc/adrs/ADR-006-ephemeral-venvs.md) — Ephemeral venvs for Ansible
+- [ADR-006](/.sdlc/adrs/ADR-006-ephemeral-venvs.md) — Ephemeral venvs for Ansible (superseded by ADR-022/ADR-031)
 - [ADR-024](/.sdlc/adrs/ADR-024-thin-cli-daemon-mode.md) — Thin CLI with local daemon mode
 - [ADR-028](/.sdlc/adrs/ADR-028-session-based-fix-workflow.md) — Session-based fix workflow (FixSession bidi stream)

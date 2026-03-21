@@ -55,6 +55,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=120,
         help="gRPC timeout in seconds (default: 120)",
     )
+    scan_p.add_argument(
+        "--session",
+        default=None,
+        help="Session ID for venv reuse (default: hash of project root)",
+    )
 
     # ── format ──
     fmt_p = subparsers.add_parser(
@@ -66,6 +71,11 @@ def build_parser() -> argparse.ArgumentParser:
     fmt_p.add_argument("--apply", action="store_true", help="Write formatted files in place")
     fmt_p.add_argument("--check", action="store_true", help="Exit 1 if files would change (CI mode)")
     fmt_p.add_argument("--exclude", nargs="*", default=None, help="Glob patterns to skip")
+    fmt_p.add_argument(
+        "--session",
+        default=None,
+        help="Session ID for venv reuse (default: hash of project root)",
+    )
 
     # ── fix ──
     fix_p = subparsers.add_parser(
@@ -107,28 +117,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=False,
         help="Output structured data payloads as JSON",
     )
-
-    # ── cache ──
-    cache_p = subparsers.add_parser(
-        "cache",
-        parents=[global_opts],
-        help="Manage collection cache (Galaxy + GitHub)",
+    fix_p.add_argument(
+        "--session",
+        default=None,
+        help="Session ID for venv reuse (default: hash of project root)",
     )
-    cache_sub = cache_p.add_subparsers(dest="cache_command", required=True)
-
-    pg = cache_sub.add_parser("pull-galaxy", help="Install a Galaxy collection")
-    pg.add_argument("spec", help="Collection spec: namespace.collection[:version]")
-    pg.add_argument("--galaxy-server", default=None, help="Galaxy server URL")
-
-    pr = cache_sub.add_parser("pull-requirements", help="Install collections from requirements.yml")
-    pr.add_argument("requirements_path", help="Path to requirements.yml")
-    pr.add_argument("--galaxy-server", default=None, help="Galaxy server URL")
-
-    co = cache_sub.add_parser("clone-org", help="Clone GitHub org repos (Ansible collections)")
-    co.add_argument("org", help="GitHub organization name")
-    co.add_argument("--repos", nargs="*", default=None, help="Specific repo names (default: all)")
-    co.add_argument("--depth", type=int, default=1, help="Git clone depth (default: 1)")
-    co.add_argument("--token", default=None, help="GitHub token for API")
 
     # ── daemon ──
     daemon_p = subparsers.add_parser(

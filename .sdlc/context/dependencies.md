@@ -4,51 +4,36 @@
 
 ### Ansible Risk Insights (ARI)
 
-**Package**: `ansible-risk-insight`
-**Purpose**: The underlying scanning engine for detecting playbook issues.
+**Vendored** in `src/apme_engine/engine/` (not a pip dependency — see [ADR-003](/.sdlc/adrs/ADR-003-vendor-ari-engine.md)).
 
-#### Installation
-
-```bash
-pip install ansible-risk-insight
-```
+**Purpose**: The underlying scanning engine that parses Ansible content, builds call trees, resolves variables, annotates risks, and produces a hierarchy payload + scandata for validators.
 
 #### Usage Pattern
 
 ```python
-from ansible_risk_insight.scanner import ARIScanner
-from ansible_risk_insight.models import ScanRequest
+from apme_engine.runner import run_scan
 
-# Initialize scanner
-scanner = ARIScanner()
-
-# Scan a playbook
-request = ScanRequest(
-    target_path="/path/to/playbook.yml",
-    scan_type="playbook",
+# Scan a project directory
+context = run_scan(
+    target_path="/path/to/project",
+    project_root="/path/to/project",
+    include_scandata=True,
+    dependency_dir="/path/to/venv/lib/python3.12/site-packages",
 )
-result = scanner.scan(request)
 
-# Access results
-for finding in result.findings:
-    print(f"{finding.rule_id}: {finding.message}")
-    print(f"  Location: {finding.file}:{finding.line}")
-    print(f"  Severity: {finding.severity}")
+# context.hierarchy_payload — JSON-serializable dict for OPA/Ansible
+# context.scandata — SingleScan object for Native validator
 ```
 
 #### Key Classes
 
-- `ARIScanner` - Main scanner class
-- `ScanRequest` - Scan configuration
-- `ScanResult` - Contains findings
-- `Finding` - Individual issue details
+- `ARIScanner` — Main scanner class (`engine/scanner.py`)
+- `SingleScan` — Per-scan state container (`engine/scan_state.py`)
+- `ScanContext` — Result container with hierarchy_payload + scandata (`validators/base.py`)
 
-#### Output Format
+#### Collection Dependencies
 
-ARI can output in multiple formats:
-- JSON (default)
-- SARIF (for CI integration)
-- Console (human-readable)
+ARI no longer downloads collections. The `VenvSessionManager` (owned by Primary) installs collections into session-scoped venvs via the Galaxy Proxy before ARI runs. ARI receives a `dependency_dir` pointing to the venv's `site-packages` for pre-installed collection content.
 
 ---
 

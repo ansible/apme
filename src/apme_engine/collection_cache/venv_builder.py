@@ -375,3 +375,113 @@ def get_venv_python(venv_root: Path) -> Path:
     if not exe.is_file():
         raise FileNotFoundError(f"venv has no python: {venv_root}")
     return exe
+
+
+def create_base_venv(
+    venv_dir: Path,
+    ansible_core_version: str,
+    python_exe: str | None = None,
+) -> None:
+    """Create a virtual environment and install ansible-core into it.
+
+    Unlike :func:`build_venv`, this writes into a caller-specified directory
+    with no hash-based naming.  Intended for session-scoped venvs where
+    the layout is ``sessions/<sid>/<version>/venv/``.
+
+    Args:
+        venv_dir: Exact directory for the virtualenv (created if absent).
+        ansible_core_version: Pip-compatible version, e.g. ``"2.17.0"``.
+        python_exe: Python interpreter for ``uv venv --python`` (optional).
+    """
+    use_uv = _uv_available()
+    if use_uv:
+        cmd = ["uv", "venv", str(venv_dir)]
+        if python_exe:
+            cmd.extend(["--python", python_exe])
+        subprocess.run(cmd, check=True, capture_output=True, text=True)
+    else:
+        cmd = [sys.executable, "-m", "venv", str(venv_dir)]
+        if python_exe:
+            cmd = [python_exe, "-m", "venv", str(venv_dir)]
+        subprocess.run(cmd, check=True, capture_output=True, text=True)
+
+    pip_python = get_venv_python(venv_dir)
+    if use_uv:
+        subprocess.run(
+            [
+                "uv",
+                "pip",
+                "install",
+                "--python",
+                str(pip_python),
+                f"ansible-core=={ansible_core_version}",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    else:
+        subprocess.run(
+            [str(pip_python), "-m", "pip", "install", f"ansible-core=={ansible_core_version}"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+
+def install_collections_incremental(
+    venv_dir: Path,
+    collection_specs: list[str],
+    cache_root: Path | None = None,
+) -> None:
+    """Install additional collections into an existing venv (additive only).
+
+    Handles both the proxy path (``APME_GALAXY_PROXY_URL`` set — uses
+    ``uv pip install --extra-index-url``) and the local-cache path
+    (symlinks from the collection cache + ``ansible-builder introspect``
+    for Python deps).
+
+    Safe to call repeatedly with overlapping specs — already-installed
+    packages are no-ops for pip/uv, and existing symlinks are updated.
+
+    Args:
+        venv_dir: Root of the virtualenv (must already exist with ansible-core).
+        collection_specs: Collection specifiers to install (e.g. ``"ansible.posix"``).
+        cache_root: Override for the collection cache root (symlink path only).
+
+    Raises:
+        FileNotFoundError: If a collection is not in cache (symlink path).
+    """
+    if not collection_specs:
+        return
+
+    pip_python = get_venv_python(venv_dir)
+    use_uv = _uv_available()
+    proxy = _proxy_url()
+
+    if proxy:
+        _install_collections_via_proxy(pip_python, collection_specs, proxy, use_uv)
+    else:
+        root = cache_root or get_cache_root()
+        site = _venv_site_packages(venv_dir)
+        ac = site / "ansible_collections"
+        ac.mkdir(parents=True, exist_ok=True)
+
+        for spec in collection_specs:
+            path = _resolve_collection_path(spec, root)
+            if path is None:
+                raise FileNotFoundError(
+                    f"Collection not in cache: {spec}. Pull it first (e.g. apme-scan cache pull-galaxy {spec})."
+                )
+            namespace, collection = _parse_collection_spec(spec)
+            ns_dir = ac / namespace
+            ns_dir.mkdir(parents=True, exist_ok=True)
+            dest = ns_dir / collection
+            if dest.exists():
+                if dest.is_symlink():
+                    dest.unlink()
+                else:
+                    shutil.rmtree(dest)
+            dest.symlink_to(path.resolve())
+
+        _install_collection_python_deps(venv_dir, site, pip_python, use_uv)

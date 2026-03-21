@@ -11,12 +11,12 @@ Accepted
 ## Context
 
 APME runs multiple services:
-- Primary (orchestrator)
+- Primary (orchestrator + session venv manager)
 - Native validator
 - OPA validator
 - Ansible validator
 - Gitleaks validator
-- Cache Maintainer
+- Galaxy Proxy (PEP 503 collection proxy)
 - CLI
 
 We needed a deployment model.
@@ -63,7 +63,7 @@ We needed a deployment model.
 - Pod spec: `deploy/pod.yaml`
 - Services share localhost within pod
 - CLI invoked via `podman run --rm` with volume mount
-- Fixed ports: 50051-50056 for validators
+- Fixed ports: 50051–50056 for gRPC services, 8765 for Galaxy Proxy
 
 ## Related Decisions
 

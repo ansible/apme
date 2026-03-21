@@ -54,11 +54,13 @@ No etcd, no registration, no heartbeats.
 ```yaml
 # Example env vars in pod spec
 - name: NATIVE_GRPC_ADDRESS
-  value: "localhost:50051"
+  value: "localhost:50055"
 - name: OPA_GRPC_ADDRESS
-  value: "localhost:50052"
+  value: "localhost:50054"
 - name: ANSIBLE_GRPC_ADDRESS
   value: "localhost:50053"
+- name: GITLEAKS_GRPC_ADDRESS
+  value: "localhost:50056"
 ```
 
 ## Related Decisions

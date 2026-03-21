@@ -10,7 +10,6 @@ PY_OUT="$ROOT/src"
 PROTOS=(
   apme/v1/common.proto
   apme/v1/primary.proto
-  apme/v1/cache.proto
   apme/v1/ansible.proto
   apme/v1/validate.proto
 )

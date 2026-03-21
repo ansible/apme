@@ -40,10 +40,6 @@ def main() -> None:
         from apme_engine.cli.fix import run_fix
 
         run_fix(args)
-    elif cmd == "cache":
-        from apme_engine.cli.cache import run_cache
-
-        run_cache(args)
     elif cmd == "health-check":
         from apme_engine.cli.health import run_health_check
 

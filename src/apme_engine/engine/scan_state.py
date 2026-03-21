@@ -5,7 +5,6 @@ from __future__ import annotations
 import datetime
 import json
 import os
-import tempfile
 from dataclasses import dataclass, field
 from typing import cast
 
@@ -60,8 +59,6 @@ class SingleScan:
         taskfile_only: Whether to scan only the taskfile.
         skip_playbook_format_error: Whether to skip malformed playbooks.
         skip_task_format_error: Whether to skip malformed tasks.
-        install_log: Log output from dependency installation.
-        tmp_install_dir: Temporary directory for installed dependencies.
         index: Index data for the scanned target.
         root_definitions: Definitions from the root target.
         ext_definitions: Definitions from external dependencies.
@@ -71,7 +68,6 @@ class SingleScan:
         taskcalls_in_trees: Task calls organized by tree.
         contexts: Ansible run contexts built during scanning.
         data_report: Data report dict for the scan.
-        install_dependencies: Whether to install dependencies before scanning.
         use_ansible_path: Whether to use ansible path resolution.
         dependency_dir: Directory containing dependencies.
         base_dir: Base directory for path resolution.
@@ -97,7 +93,7 @@ class SingleScan:
         rules_dir: Directory containing rule definitions.
         rules: List of rule IDs or paths to enable.
         rules_cache: Cached Rule objects.
-        persist_dependency_cache: Whether to keep dependency cache after scan.
+        persist_dependency_cache: Whether to keep the dependency cache after scan.
         spec_mutations_from_previous_scan: Spec mutations carried from prior scan.
         spec_mutations: Spec mutations detected in this scan.
         use_ansible_doc: Whether to use ansible-doc for module specs.
@@ -120,9 +116,6 @@ class SingleScan:
     skip_playbook_format_error: bool = True
     skip_task_format_error: bool = True
 
-    install_log: str = ""
-    tmp_install_dir: tempfile.TemporaryDirectory[str] | None = None
-
     index: YAMLDict = field(default_factory=dict)
 
     root_definitions: YAMLDict = field(default_factory=dict)
@@ -141,7 +134,6 @@ class SingleScan:
 
     _path_mappings: YAMLDict = field(default_factory=dict)
 
-    install_dependencies: bool = False
     use_ansible_path: bool = False
 
     dependency_dir: str = ""
@@ -217,11 +209,6 @@ class SingleScan:
                     type_root,
                     f"{self.type}-{target_name}-index-ext.json",
                 ),
-                "install_log": os.path.join(
-                    self.root_dir,
-                    type_root,
-                    f"{self.type}-{target_name}-install.log",
-                ),
             }
 
         elif self.type == LoadType.PROJECT or self.type == LoadType.PLAYBOOK or self.type == LoadType.TASKFILE:
@@ -268,12 +255,6 @@ class SingleScan:
                     type_root,
                     proj_name,
                     "index-ext.json",
-                ),
-                "install_log": os.path.join(
-                    self.root_dir,
-                    type_root,
-                    proj_name,
-                    f"{self.type}-{proj_name}-install.log",
                 ),
                 "dependencies": os.path.join(self.root_dir, type_root, proj_name, "dependencies"),
             }
@@ -325,44 +306,6 @@ class SingleScan:
         """
         index_location = self._path_mappings.get("index")
         return isinstance(index_location, str) and os.path.exists(index_location)
-
-    def _prepare_dependencies(self, root_install: bool = True) -> tuple[str, list[YAMLDict]]:
-        """Install dependencies and prepare dependency directories.
-
-        Args:
-            root_install: If True, install the root target.
-
-        Returns:
-            Tuple of (target_path, list of dependency dir metadata dicts).
-        """
-        from .dependency_loading import prepare_dependencies
-
-        target_path = self.make_target_path(self.type, self.name)
-        target_path, version, hash_, download_url, dep_dirs = prepare_dependencies(
-            root_dir=self.root_dir,
-            source_repository=self.source_repository,
-            target_type=self.type,
-            target_name=self.name,
-            target_version=self.version,
-            target_path=target_path,
-            target_dependency_dir=self.dependency_dir,
-            target_path_mappings=self._path_mappings,
-            do_save=self.do_save,
-            silent=self.silent,
-            tmp_install_dir=self.tmp_install_dir,
-            persist_dependency_cache=self.persist_dependency_cache,
-            use_ansible_path=self.use_ansible_path,
-            is_src_installed=self.is_src_installed(),
-            use_src_cache=self.use_src_cache,
-            root_install=root_install,
-        )
-        self.target_path = target_path
-        self.version = version
-        self.hash = hash_
-        self.download_url = download_url
-        self.loaded_dependency_dirs = dep_dirs
-
-        return target_path, dep_dirs
 
     def create_load_file(self, target_type: str, target_name: str, target_path: str) -> Load:
         """Create and populate a Load object for the target.

@@ -1,4 +1,4 @@
-"""Health check for APME services: Primary, Native, OPA, Ansible, Cache maintainer (all gRPC)."""
+"""Health check for APME services: Primary, Native, OPA, Ansible (all gRPC)."""
 
 import os
 import time
@@ -7,7 +7,7 @@ from typing import Protocol
 
 import grpc
 
-from apme.v1 import cache_pb2_grpc, common_pb2, primary_pb2_grpc, validate_pb2_grpc
+from apme.v1 import common_pb2, primary_pb2_grpc, validate_pb2_grpc
 
 
 class _HealthStub(Protocol):
@@ -33,7 +33,7 @@ def _derive_addresses(primary_addr: str) -> dict[str, str]:
         primary_addr: Primary service address (host:port or host).
 
     Returns:
-        Dict mapping service names to addresses (primary, native, opa, ansible, cache_maintainer).
+        Dict mapping service names to addresses (primary, native, opa, ansible).
     """
     if ":" in primary_addr:
         host, _ = primary_addr.rsplit(":", 1)
@@ -44,7 +44,6 @@ def _derive_addresses(primary_addr: str) -> dict[str, str]:
         "native": f"{host}:50055",
         "opa": f"{host}:50054",
         "ansible": f"{host}:50053",
-        "cache_maintainer": f"{host}:50052",
     }
 
 
@@ -98,10 +97,7 @@ def run_health_checks(
     native_addr: str | None = None,
     opa_addr: str | None = None,
     ansible_addr: str | None = None,
-    cache_addr: str | None = None,
     timeout: float = 5.0,
-    # Legacy parameter kept for backward compatibility (ignored)
-    opa_url: str | None = None,
 ) -> dict[str, dict[str, str | float | bool | None]]:
     """Run all health checks. Addresses not provided are derived from primary_addr.
 
@@ -110,9 +106,7 @@ def run_health_checks(
         native_addr: Native validator address (optional).
         opa_addr: OPA validator address (optional).
         ansible_addr: Ansible validator address (optional).
-        cache_addr: Cache maintainer address (optional).
         timeout: RPC timeout in seconds.
-        opa_url: Legacy parameter, ignored.
 
     Returns:
         Dict mapping service names to check_grpc_health result dicts.
@@ -121,12 +115,10 @@ def run_health_checks(
     native_addr = native_addr or os.environ.get("NATIVE_GRPC_ADDRESS") or defaults["native"]
     opa_addr = opa_addr or os.environ.get("OPA_GRPC_ADDRESS") or defaults["opa"]
     ansible_addr = ansible_addr or os.environ.get("ANSIBLE_GRPC_ADDRESS") or defaults["ansible"]
-    cache_addr = cache_addr or os.environ.get("APME_CACHE_GRPC_ADDRESS") or defaults["cache_maintainer"]
 
     results = {}
     results["primary"] = check_grpc_health(primary_addr, primary_pb2_grpc.PrimaryStub, timeout)
     results["native"] = check_grpc_health(native_addr, validate_pb2_grpc.ValidatorStub, timeout)
     results["opa"] = check_grpc_health(opa_addr, validate_pb2_grpc.ValidatorStub, timeout)
     results["ansible"] = check_grpc_health(ansible_addr, validate_pb2_grpc.ValidatorStub, timeout)
-    results["cache_maintainer"] = check_grpc_health(cache_addr, cache_pb2_grpc.CacheMaintainerStub, timeout)
     return results

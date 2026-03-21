@@ -18,26 +18,30 @@ The Ansible validator creates Python venvs containing `ansible-core` (and option
 
 ## Decision
 
-**Replace the shared hash-keyed venv pool with session-scoped venvs managed by `VenvSessionManager`.**
+**Replace the shared hash-keyed venv pool with session-scoped venvs managed by `VenvSessionManager`, owned by the Primary orchestrator and shared read-only with validators.**
 
 Each session gets its own isolated directory with:
 - A file lock (`.lock`) for safe concurrent creation via `fcntl.flock()`
-- Metadata (`session.json`) tracking ansible version, collection specs, timestamps
-- A `venv/` subdirectory containing the actual virtualenv
+- Per-core-version subdirectories with metadata (`meta.json`) tracking collections, timestamps
+- A `venv/` subdirectory within each core-version entry containing the actual virtualenv
 
-Sessions come in two flavors:
-- **Ephemeral** (default): auto-generated UUID, cleaned up on `release()`
-- **Named** (via `--session <id>`): persist for a configurable TTL, reusable across CLI invocations
+Sessions use a client-provided `session_id` (VS Code workspace hash, CI job ID, stable user name). Within a session, venvs are keyed by `ansible_core_version` — like tox matrix entries. Collections are installed incrementally (additive, never destructive).
 
 ### Storage Layout
 
 ```
-~/.apme-data/collection-cache/sessions/
+$SESSIONS_ROOT/
     <session_id>/
-        venv/             # the virtualenv
-        session.json      # metadata (version, specs, timestamps, ephemeral flag)
-        .lock             # flock target for creation serialization
+        <core_version>/
+            venv/           # full virtualenv with ansible-core + collections
+            meta.json       # {installed_collections, created_at, last_used_at}
+        session.json        # session-level metadata
+        .lock               # flock target for creation serialization
 ```
+
+### Ownership Model
+
+The **Primary orchestrator** is the sole venv authority (single writer). It calls `VenvSessionManager.acquire()` before fanning out to validators. Validators mount the sessions volume **read-only** — they receive a `venv_path` in `ValidateRequest` and use it as-is. This eliminates concurrent validator writes and corruption risk.
 
 ### CLI Integration
 

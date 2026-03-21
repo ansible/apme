@@ -235,9 +235,10 @@ Version field enables auto-restart when the installed package is updated.
 | `daemon`       | N/A (local process management)        | start / stop / status            |
 
 The `session` subcommand (ADR-022) becomes a gRPC pass-through to the
-Ansible validator service rather than managing venvs locally. The CLI's
+Primary service (which owns session-scoped venvs via `VenvSessionManager`)
+rather than managing venvs locally. The CLI's
 `session list/info/delete/reap` commands remain available but delegate to
-the validator over gRPC instead of directly manipulating `~/.apme-data/`.
+the Primary over gRPC instead of directly manipulating `~/.apme-data/`.
 
 ### Phased rollout (completed)
 
@@ -257,7 +258,7 @@ package: `parser.py`, `scan.py`, `fix.py`, `format_cmd.py`, `output.py`,
 `_convert.py`, `_models.py`.
 
 **Phase D — Remove local-mode code.** Local-mode branches removed from the
-thin CLI. The old monolith preserved as `_cli_legacy.py` for reference.
+thin CLI. The old monolith (`_cli_legacy.py`) has been deleted.
 The CLI imports only proto stubs, gRPC, and presentation utilities.
 
 ### What the thin CLI keeps

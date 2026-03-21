@@ -20,13 +20,10 @@ from apme_engine.engine.utils import (
     escape_url,
     get_class_by_arg_type,
     get_collection_metadata,
-    get_download_metadata,
     get_hash_of_url,
     get_lock_file_name,
     get_role_metadata,
     indent,
-    install_galaxy_target,
-    install_github_target,
     is_local_path,
     is_test_object,
     is_url,
@@ -99,74 +96,6 @@ class TestLockUnlockRemove:
     def test_remove_lock_file_none(self) -> None:
         """Verifies remove_lock_file handles None gracefully."""
         remove_lock_file(None)
-
-
-class TestInstallGalaxyTarget:
-    """Tests for install_galaxy_target subprocess invocation."""
-
-    def test_basic_install(self) -> None:
-        """Verifies ansible-galaxy collection install command with path."""
-        with patch("apme_engine.engine.utils.subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(stdout="installed", stderr="")
-            out, err = install_galaxy_target("ns.col", "collection", "/tmp/out")
-        assert out == "installed"
-        assert err == ""
-        cmd = mock_run.call_args[0][0]
-        assert "ansible-galaxy collection install ns.col" in cmd
-        assert "-p /tmp/out" in cmd
-
-    def test_with_server_and_version(self) -> None:
-        """Verifies install includes --server and version in command."""
-        with patch("apme_engine.engine.utils.subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(stdout="ok", stderr="")
-            install_galaxy_target(
-                "ns.col", "collection", "/tmp/out", source_repository="https://galaxy.example.com", target_version="1.0"
-            )
-        cmd = mock_run.call_args[0][0]
-        assert "--server https://galaxy.example.com" in cmd
-        assert "ns.col:1.0" in cmd
-
-
-class TestInstallGithubTarget:
-    """Tests for install_github_target git clone invocation."""
-
-    def test_clones_repo(self) -> None:
-        """Verifies git clone command for GitHub URL."""
-        with patch("apme_engine.engine.utils.subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(stdout="cloned")
-            result = install_github_target("https://github.com/user/repo", "/tmp/out")
-        assert result == "cloned"
-        cmd = mock_run.call_args[0][0]
-        assert "git clone https://github.com/user/repo /tmp/out" in cmd
-
-
-class TestGetDownloadMetadata:
-    """Tests for get_download_metadata URL, version, hash extraction."""
-
-    def test_collection_download(self) -> None:
-        """Verifies extraction from collection download message."""
-        msg = "Downloading https://galaxy.example.com/ns-col-1.2.3.tar.gz to /tmp\nInstalling..."
-        with patch("apme_engine.engine.utils.get_hash_of_url", return_value="abc123"):
-            url, version, hash_val = get_download_metadata("collection", msg)
-        assert url == "https://galaxy.example.com/ns-col-1.2.3.tar.gz"
-        assert version == "1.2.3"
-        assert hash_val == "abc123"
-
-    def test_role_download(self) -> None:
-        """Verifies extraction from role download message."""
-        msg = "- downloading role from https://galaxy.example.com/role-2.0.0.tar.gz"
-        with patch("apme_engine.engine.utils.get_hash_of_url", return_value="def456"):
-            url, version, hash_val = get_download_metadata("role", msg)
-        assert url == "https://galaxy.example.com/role-2.0.0.tar.gz"
-        assert version == "role-2.0.0"
-        assert hash_val == "def456"
-
-    def test_no_download_url(self) -> None:
-        """Verifies empty strings when message has no download URL."""
-        url, version, hash_val = get_download_metadata("collection", "no download here")
-        assert url == ""
-        assert version == ""
-        assert hash_val == ""
 
 
 class TestGetCollectionMetadata:

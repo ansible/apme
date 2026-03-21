@@ -24,12 +24,12 @@ When throughput needs to increase, where do we scale?
 **Scale pods, not services within a pod.**
 
 Each pod is a self-contained stack:
-- Primary
+- Primary (+ session venv manager)
 - Native validator
 - OPA validator
 - Ansible validator
 - Gitleaks validator
-- Cache Maintainer
+- Galaxy Proxy
 
 To increase throughput, run more pods behind a load balancer.
 
@@ -38,7 +38,7 @@ To increase throughput, run more pods behind a load balancer.
 - The pod is the natural unit for Kubernetes/Podman scaling
 - No intra-pod service discovery or routing needed
 - Each request is handled entirely within one pod — no cross-pod RPC
-- The Cache Maintainer is the one exception that could be extracted to a shared service if multiple pods need a single cache volume
+- The Galaxy Proxy could be extracted to a shared service if multiple pods need a single wheel cache
 
 ## Consequences
 
@@ -50,7 +50,7 @@ To increase throughput, run more pods behind a load balancer.
 
 ### Negative
 - Resource duplication across pods
-- Cache Maintainer may need extraction
+- Galaxy Proxy may need extraction for shared wheel cache
 
 ## Implementation Notes
 
@@ -82,12 +82,12 @@ spec:
       targetPort: 50050
 ```
 
-### Cache Maintainer Exception
+### Galaxy Proxy Exception
 
-If shared cache is needed:
-1. Extract Cache Maintainer to separate deployment
-2. Mount shared volume across pods
-3. Or use external cache (Redis)
+If a shared wheel cache is needed:
+1. Extract Galaxy Proxy to a separate deployment
+2. Point all pods at the shared proxy URL
+3. Each pod's `uv` cache also provides a local acceleration layer
 
 ## Related Decisions
 

@@ -40,13 +40,20 @@ def run_scan(
     target_path: str,
     project_root: str,
     include_scandata: bool = True,
+    dependency_dir: str = "",
 ) -> ScanContext:
     """Run the engine on target_path and return a ScanContext for validators.
+
+    ARI never downloads collections. When a session venv is available,
+    pass its site-packages as ``dependency_dir`` so ARI can resolve
+    external collection definitions.
 
     Args:
         target_path: Path to playbook file, taskfile, or project directory.
         project_root: Root directory for the scan (data dir).
         include_scandata: If True, attach the SingleScan to context for ARI native validator.
+        dependency_dir: Pre-installed dependency directory (e.g. session venv
+            site-packages).  ARI reads from this path but never writes to it.
 
     Returns:
         ScanContext with hierarchy_payload and optionally scandata.
@@ -79,7 +86,7 @@ def run_scan(
         name=name,
         path=name,
         base_dir=base_dir,
-        install_dependencies=True,
+        dependency_dir=dependency_dir,
         skip_dependency=False,
         load_all_taskfiles=True,
         include_test_contents=True,

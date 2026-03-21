@@ -637,25 +637,15 @@ class TestNoAnsiFlag:
         assert args.no_ansi is True
 
     def test_no_ansi_disables_color_via_main(self) -> None:
-        """--no-ansi flag disables color when processed by main()."""
-        from io import StringIO  # noqa: PLC0415
+        """--no-ansi flag triggers force_no_color when processed by main()."""
         from unittest.mock import patch  # noqa: PLC0415
 
-        import apme_engine._cli_legacy as cli_module  # noqa: PLC0415
-        from apme_engine.validators.base import ScanContext  # noqa: PLC0415
+        import apme_engine.cli as cli_module  # noqa: PLC0415
 
-        ctx = ScanContext(
-            hierarchy_payload={"scan_id": "test"},
-            scandata=None,
-            root_dir="",
-        )
-        stdout_io = StringIO()
         with (
-            patch.object(cli_module, "run_scan", return_value=ctx),
-            patch("apme_engine.validators.opa.run_opa", return_value=[]),
-            patch("sys.argv", ["apme-scan", "scan", "--no-ansi", "--no-native", "."]),
-            patch("sys.stdout", stdout_io),
+            patch("apme_engine.cli.ansi.force_no_color") as mock_fnc,
+            patch("apme_engine.cli.scan.run_scan"),
+            patch("sys.argv", ["apme-scan", "scan", "--no-ansi", "."]),
         ):
             cli_module.main()
-        out = stdout_io.getvalue()
-        assert "\033[" not in out
+        mock_fnc.assert_called_once()

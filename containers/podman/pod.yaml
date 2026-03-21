@@ -1,6 +1,8 @@
 # Podman pod: Primary, Native, OPA, Ansible, Gitleaks, Galaxy Proxy.
 # All validators implement the unified Validator gRPC service (validate.proto).
 # Galaxy Proxy serves collections as Python wheels via PEP 503 (ADR-031).
+# Session venvs are built by Primary (read-write) and shared with validators
+# (read-only) via the sessions volume.
 # CLI is run on-the-fly with: ./run-cli.sh [args]
 # Start from repo root: podman play kube pod.yaml
 # Requires: images built first (./build.sh) and cache paths (defaults below).
@@ -31,6 +33,9 @@ spec:
       ports:
         - containerPort: 50051
           hostPort: 50051
+      volumeMounts:
+        - name: sessions
+          mountPath: /sessions
     - name: native
       image: apme-native:latest
       env:
@@ -57,6 +62,10 @@ spec:
       ports:
         - containerPort: 50053
           hostPort: 50053
+      volumeMounts:
+        - name: sessions
+          mountPath: /sessions
+          readOnly: true
     - name: gitleaks
       image: apme-gitleaks:latest
       env:
@@ -74,6 +83,10 @@ spec:
         - name: proxy-cache
           mountPath: /cache
   volumes:
+    - name: sessions
+      hostPath:
+        path: __APME_CACHE_PATH__/sessions
+        type: DirectoryOrCreate
     - name: proxy-cache
       hostPath:
         path: __APME_CACHE_PATH__/proxy

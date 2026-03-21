@@ -52,11 +52,12 @@ def resolve_venv_root(
         Path to venv root, or None if build fails.
     """
     mgr = get_session_manager()
+    sid = session_id or "ephemeral"
     try:
         session = mgr.acquire(
             ansible_version=version,
             collection_specs=collection_specs,
-            session_id=session_id,
+            session_id=sid,
         )
         return session.venv_root
     except Exception as exc:
@@ -81,11 +82,12 @@ def resolve_session(
         VenvSession or None if build fails.
     """
     mgr = get_session_manager()
+    sid = session_id or "ephemeral"
     try:
         return mgr.acquire(
             ansible_version=version,
             collection_specs=collection_specs,
-            session_id=session_id,
+            session_id=sid,
         )
     except Exception as exc:
         sys.stderr.write(f"Ansible venv build failed for {version}: {exc}\n")

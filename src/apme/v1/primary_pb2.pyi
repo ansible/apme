@@ -8,7 +8,8 @@ class ScanOptions:
     include_scandata: bool
     ansible_core_version: str
     collection_specs: list[str]
-    def __init__(self, **kwargs: object) -> None: ...
+    session_id: str
+    def __init__(self, *, session_id: str = "", **kwargs: object) -> None: ...
 
 class FixOptions:
     max_passes: int
@@ -18,7 +19,8 @@ class FixOptions:
     enable_ai: bool
     enable_agentic: bool
     ai_model: str
-    def __init__(self, **kwargs: object) -> None: ...
+    session_id: str
+    def __init__(self, *, session_id: str = "", **kwargs: object) -> None: ...
 
 class ScanChunk:
     scan_id: str
@@ -35,12 +37,14 @@ class ScanRequest:
     project_root: str
     files: list[object]
     options: ScanOptions | None
-    def __init__(self, **kwargs: object) -> None: ...
+    session_id: str
+    def __init__(self, *, session_id: str = "", **kwargs: object) -> None: ...
     def HasField(self, field_name: str) -> bool: ...
 
 class ScanResponse:
     summary: object | None
-    def __init__(self, **kwargs: object) -> None: ...
+    session_id: str
+    def __init__(self, *, session_id: str = "", **kwargs: object) -> None: ...
     def HasField(self, field_name: str) -> bool: ...
 
 class ScanDiagnostics:

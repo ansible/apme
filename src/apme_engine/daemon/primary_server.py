@@ -2,7 +2,7 @@
 
 The Primary is the sole API surface for all clients (CLI, web UI, CI).
 Clients send file bytes via gRPC streams and receive processed bytes back.
-The Primary delegates internally to validators, cache, and remediation.
+The Primary delegates internally to validators and remediation.
 """
 
 import asyncio
@@ -23,7 +23,7 @@ import grpc
 import grpc.aio
 import jsonpickle
 
-from apme.v1 import cache_pb2, cache_pb2_grpc, primary_pb2_grpc, validate_pb2_grpc
+from apme.v1 import primary_pb2_grpc, validate_pb2_grpc
 from apme.v1.common_pb2 import File, HealthRequest, HealthResponse, ScanSummary, ServiceHealth, ValidatorDiagnostics
 from apme.v1.primary_pb2 import (
     ApprovalAck,
@@ -49,6 +49,7 @@ from apme.v1.primary_pb2 import (
     Tier1Summary,
 )
 from apme.v1.validate_pb2 import ValidateRequest
+from apme_engine.collection_cache.venv_session import VenvSessionManager
 from apme_engine.daemon.session import ResourceExhaustedError, SessionState, SessionStore
 from apme_engine.daemon.violation_convert import violation_dict_to_proto, violation_proto_to_dict
 from apme_engine.engine.jsonpickle_handlers import register_engine_handlers
@@ -279,50 +280,6 @@ def merge_collection_specs(
     return result
 
 
-async def _ensure_collections_cached(collection_specs: list[str], scan_id: str) -> None:
-    """Pull any missing collections into the cache via the CacheMaintainer.
-
-    Calls PullGalaxy for each spec (idempotent — no-op if already cached).
-    Failures are logged but never abort the scan.
-
-    When ``APME_GALAXY_PROXY_URL`` is set, collection management is delegated
-    to the proxy (on-demand via ``uv pip install``), so this step is skipped.
-
-    Args:
-        collection_specs: Collection specifiers (e.g. community.general:9.0.0).
-        scan_id: Request ID for log correlation.
-    """
-    if os.environ.get("APME_GALAXY_PROXY_URL", "").strip():
-        sys.stderr.write(f"[req={scan_id}] Cache: skipping pre-pull (galaxy proxy handles on demand)\n")
-        sys.stderr.flush()
-        return
-
-    cache_addr = os.environ.get("APME_CACHE_GRPC_ADDRESS")
-    if not cache_addr or not collection_specs:
-        return
-    channel = grpc.aio.insecure_channel(
-        cache_addr,
-        options=[("grpc.max_receive_message_length", _GRPC_MAX_MSG)],
-    )
-    try:
-        stub = cache_pb2_grpc.CacheMaintainerStub(channel)  # type: ignore[no-untyped-call]
-        for spec in collection_specs:
-            try:
-                resp = await stub.PullGalaxy(
-                    cache_pb2.PullGalaxyRequest(spec=spec),
-                    timeout=120,
-                )
-                if resp.success:
-                    sys.stderr.write(f"[req={scan_id}] Cache: {spec} ready\n")
-                else:
-                    sys.stderr.write(f"[req={scan_id}] Cache: {spec} failed: {resp.error_message}\n")
-            except grpc.RpcError as e:
-                sys.stderr.write(f"[req={scan_id}] Cache: {spec} RPC error: {e}\n")
-            sys.stderr.flush()
-    finally:
-        await channel.close(grace=None)
-
-
 VALIDATOR_ENV_VARS = {
     "native": "NATIVE_GRPC_ADDRESS",
     "opa": "OPA_GRPC_ADDRESS",
@@ -336,7 +293,23 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
 
     Runs engine, fans out to validators, orchestrates format + remediation.
     Clients send file bytes in, receive processed bytes out.
+
+    The Primary is the sole venv authority — it calls
+    ``VenvSessionManager.acquire()`` before fanning out to validators,
+    passing the resolved ``venv_path`` so validators never write to venvs.
     """
+
+    _venv_mgr: VenvSessionManager | None = None
+
+    def _get_venv_manager(self) -> VenvSessionManager:
+        """Return (or create) the singleton VenvSessionManager.
+
+        Returns:
+            The shared VenvSessionManager instance.
+        """
+        if self._venv_mgr is None:
+            self._venv_mgr = VenvSessionManager()
+        return self._venv_mgr
 
     # ── internal: reusable scan pipeline ──────────────────────────────
 
@@ -349,10 +322,23 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         ansible_core_version: str = "",
         collection_specs: list[str] | None = None,
         include_scandata: bool = True,
-    ) -> tuple[list[ViolationDict], ScanDiagnostics | None]:
-        """Core scan pipeline: engine + validator fan-out.
+        session_id: str = "",
+    ) -> tuple[list[ViolationDict], ScanDiagnostics | None, str]:
+        """Core scan pipeline: engine → collection discovery → venv → validators.
 
         Reused by Scan, ScanStream, and FixSession (as scan_fn for remediation).
+
+        Every scan gets a session-scoped venv.  The flow is:
+
+        1. **ARI tree build** — if a warm session venv exists its
+           ``site-packages`` is passed as ``dependency_dir`` so ARI can
+           resolve pre-installed collections.
+        2. **Collection discovery** — FQCNs from files + hierarchy payload.
+        3. **Venv acquire** — ``VenvSessionManager.acquire()`` creates the
+           venv (cold start) or incrementally installs new collections
+           (warm hit).  A transient ``session_id`` is generated when the
+           client does not provide one.
+        4. **Validator fan-out** — all validators receive ``venv_path``.
 
         Args:
             temp_dir: Directory containing the materialized files.
@@ -361,26 +347,49 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             ansible_core_version: Ansible core version constraint.
             collection_specs: Collection specifiers (may be extended by discovery).
             include_scandata: Whether to include scandata in engine call.
+            session_id: Client-provided session ID for venv reuse.
 
         Returns:
-            Tuple of (violations as dicts, ScanDiagnostics or None).
+            Tuple of (violations, ScanDiagnostics or None, resolved session_id).
         """
+        from apme_engine.collection_cache.venv_builder import _venv_site_packages
+        from apme_engine.validators.ansible._venv import DEFAULT_VERSION
+
         scan_t0 = time.monotonic()
         collection_specs = list(collection_specs or [])
 
+        core_version = ansible_core_version or DEFAULT_VERSION
+        sid = session_id or uuid.uuid4().hex[:12]
+
+        # Check for warm session venv so ARI can resolve pre-installed collections
+        ari_dependency_dir = ""
+        warm = self._get_venv_manager().get(sid, core_version)
+        if warm and warm.venv_root.is_dir():
+            with contextlib.suppress(FileNotFoundError):
+                ari_dependency_dir = str(_venv_site_packages(warm.venv_root))
+            if ari_dependency_dir:
+                sys.stderr.write(
+                    f"[req={scan_id}] Session({sid}): warm venv, ARI dependency_dir={ari_dependency_dir}\n"
+                )
+                sys.stderr.flush()
+
+        # 1. ARI tree build
         context_obj = await asyncio.get_event_loop().run_in_executor(
             None,
-            run_scan,
-            str(temp_dir),
-            str(temp_dir),
-            include_scandata,
+            lambda: run_scan(
+                str(temp_dir),
+                str(temp_dir),
+                include_scandata=include_scandata,
+                dependency_dir=ari_dependency_dir,
+            ),
         )
 
         if not context_obj.hierarchy_payload:
             sys.stderr.write(f"[req={scan_id}] Scan: no hierarchy payload produced\n")
             sys.stderr.flush()
-            return [], None
+            return [], None, sid
 
+        # 2. Collection discovery
         discovered = _discover_collection_specs(files)
         hierarchy_collections = context_obj.hierarchy_payload.get("collection_set", [])
         if not isinstance(hierarchy_collections, list):
@@ -395,18 +404,33 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         _normalize_scandata_contexts(context_obj.scandata)
         register_engine_handlers()
 
+        # 3. Venv acquire (always — creates or incrementally installs)
+        venv_session = await asyncio.get_event_loop().run_in_executor(
+            None,
+            self._get_venv_manager().acquire,
+            sid,
+            core_version,
+            collection_specs,
+        )
+        venv_path = str(venv_session.venv_root)
+        sys.stderr.write(
+            f"[req={scan_id}] Session({sid}): venv ready at {venv_path} "
+            f"({len(venv_session.installed_collections)} collections)\n"
+        )
+        sys.stderr.flush()
+
+        # 4. Validator fan-out
         validate_request = ValidateRequest(
             request_id=scan_id,
             project_root="",
             files=files,
             hierarchy_payload=json.dumps(context_obj.hierarchy_payload, default=str).encode(),
             scandata=jsonpickle.encode(context_obj.scandata).encode(),
-            ansible_core_version=ansible_core_version,
+            ansible_core_version=core_version,
             collection_specs=collection_specs,
+            session_id=sid,
+            venv_path=venv_path,
         )
-
-        if collection_specs:
-            await _ensure_collections_cached(collection_specs, scan_id)
 
         tasks = {}
         for name, env_var in VALIDATOR_ENV_VARS.items():
@@ -455,7 +479,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             fan_out_ms=fan_out_ms,
             total_ms=total_ms,
         )
-        return violations, diag
+        return violations, diag, sid
 
     @staticmethod
     def _format_files(files: list[File]) -> list[FileDiff]:
@@ -554,12 +578,14 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             assert temp_dir is not None
 
             opts = request.options if request.HasField("options") else None
-            violations, diag = await self._scan_pipeline(
+            session_id = request.session_id or (opts.session_id if opts else "") or ""
+            violations, diag, resolved_sid = await self._scan_pipeline(
                 temp_dir,
                 list(request.files),  # type: ignore[arg-type]
                 scan_id,
                 ansible_core_version=opts.ansible_core_version if opts else "",
                 collection_specs=list(opts.collection_specs) if opts else [],
+                session_id=session_id,
             )
 
             from apme_engine.remediation.partition import add_classification_to_violations
@@ -585,6 +611,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                 scan_id=scan_id,
                 diagnostics=diag,
                 summary=summary,
+                session_id=resolved_sid,
             )
         except Exception as e:
             import traceback
@@ -613,11 +640,13 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             ScanResponse with violations and diagnostics.
         """
         all_files, scan_id, project_root, opts, _ = await self._accumulate_chunks(request_stream)
+        session_id = opts.session_id if opts else ""
         req = ScanRequest(
             scan_id=scan_id,
             project_root=project_root,
             files=all_files,
             options=opts or ScanOptions(),
+            session_id=session_id,
         )
         return await self.Scan(req, context)
 
@@ -842,14 +871,17 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         ansible_core_version = ""
         collection_specs: list[str] = []
         max_passes = 5
+        fix_session_id = ""
         if fix_opts:
             ansible_core_version = fix_opts.ansible_core_version
             collection_specs = list(fix_opts.collection_specs)
+            fix_session_id = fix_opts.session_id
             if fix_opts.max_passes > 0:
                 max_passes = fix_opts.max_passes
         elif scan_opts:
             ansible_core_version = scan_opts.ansible_core_version
             collection_specs = list(scan_opts.collection_specs)
+            fix_session_id = scan_opts.session_id
 
         sys.stderr.write(
             f"[session={scan_id}] FixSession: processing {len(all_files)} file(s)\n",
@@ -951,9 +983,10 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                 scan_id,
                 ansible_core_version=ansible_core_version,
                 collection_specs=collection_specs,
+                session_id=fix_session_id,
             )
             future = asyncio.run_coroutine_threadsafe(coro, loop)
-            violations, _ = future.result(timeout=300)
+            violations, _, _ = future.result(timeout=300)
             return violations
 
         registry = build_default_registry()
@@ -1212,88 +1245,6 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             async for event in self._session_build_result(session):
                 yield event
 
-    # ── Cache proxy RPCs ──────────────────────────────────────────────
-
-    async def _cache_channel(self) -> grpc.aio.Channel:
-        """Get async gRPC channel to CacheMaintainer.
-
-        Returns:
-            Open gRPC channel.
-
-        Raises:
-            grpc.RpcError: If APME_CACHE_GRPC_ADDRESS is not configured.
-        """
-        addr = os.environ.get("APME_CACHE_GRPC_ADDRESS")
-        if not addr:
-            raise grpc.RpcError("APME_CACHE_GRPC_ADDRESS not configured")
-        return grpc.aio.insecure_channel(
-            addr,
-            options=[("grpc.max_receive_message_length", _GRPC_MAX_MSG)],
-        )
-
-    async def PullGalaxy(
-        self,
-        request: cache_pb2.PullGalaxyRequest,
-        context: grpc.aio.ServicerContext,  # type: ignore[type-arg]
-    ) -> cache_pb2.PullGalaxyResponse:
-        """Proxy PullGalaxy to the CacheMaintainer service.
-
-        Args:
-            request: PullGalaxy request.
-            context: gRPC servicer context.
-
-        Returns:
-            PullGalaxyResponse from the cache service.
-        """
-        channel = await self._cache_channel()
-        try:
-            stub = cache_pb2_grpc.CacheMaintainerStub(channel)  # type: ignore[no-untyped-call]
-            return await stub.PullGalaxy(request, timeout=120)  # type: ignore[no-any-return]
-        finally:
-            await channel.close(grace=None)
-
-    async def PullRequirements(
-        self,
-        request: cache_pb2.PullRequirementsRequest,
-        context: grpc.aio.ServicerContext,  # type: ignore[type-arg]
-    ) -> cache_pb2.PullRequirementsResponse:
-        """Proxy PullRequirements to the CacheMaintainer service.
-
-        Args:
-            request: PullRequirements request.
-            context: gRPC servicer context.
-
-        Returns:
-            PullRequirementsResponse from the cache service.
-        """
-        channel = await self._cache_channel()
-        try:
-            stub = cache_pb2_grpc.CacheMaintainerStub(channel)  # type: ignore[no-untyped-call]
-            return await stub.PullRequirements(request, timeout=120)  # type: ignore[no-any-return]
-        finally:
-            await channel.close(grace=None)
-
-    async def CloneOrg(
-        self,
-        request: cache_pb2.CloneOrgRequest,
-        context: grpc.aio.ServicerContext,  # type: ignore[type-arg]
-    ) -> cache_pb2.CloneOrgResponse:
-        """Proxy CloneOrg to the CacheMaintainer service.
-
-        Args:
-            request: CloneOrg request.
-            context: gRPC servicer context.
-
-        Returns:
-            CloneOrgResponse from the cache service.
-        """
-        channel = await self._cache_channel()
-        try:
-            stub = cache_pb2_grpc.CacheMaintainerStub(channel)  # type: ignore[no-untyped-call]
-            return await stub.CloneOrg(request, timeout=300)  # type: ignore[no-any-return]
-        finally:
-            await channel.close(grace=None)
-
     # ── Health RPC (aggregate) ────────────────────────────────────────
 
     async def Health(
@@ -1327,20 +1278,6 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                     await channel.close(grace=None)
             except Exception as e:
                 downstream.append(ServiceHealth(name=name, status=f"error: {e}", address=addr))
-
-        # Probe cache
-        cache_addr = os.environ.get("APME_CACHE_GRPC_ADDRESS")
-        if cache_addr:
-            try:
-                channel = grpc.aio.insecure_channel(cache_addr)
-                try:
-                    cache_stub = cache_pb2_grpc.CacheMaintainerStub(channel)  # type: ignore[no-untyped-call]
-                    resp = await cache_stub.Health(HealthRequest(), timeout=5)
-                    downstream.append(ServiceHealth(name="cache", status=resp.status, address=cache_addr))
-                finally:
-                    await channel.close(grace=None)
-            except Exception as e:
-                downstream.append(ServiceHealth(name="cache", status=f"error: {e}", address=cache_addr))
 
         return HealthResponse(status="ok", downstream=downstream)
 

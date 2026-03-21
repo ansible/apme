@@ -434,7 +434,7 @@ $ apme-scan health-check --include-ai
   native   (localhost:50055)  ok    8ms
   opa      (localhost:50054)  ok   15ms
   ansible  (localhost:50053)  ok   22ms
-  cache    (localhost:50052)  ok    5ms
+  proxy    (localhost:8765)   ok    5ms
   abbenay  (unix:///run/user/1000/abbenay/daemon.sock)  ok  v2026.3.6-alpha  18ms
 ```
 
@@ -635,7 +635,7 @@ podman pull ghcr.io/redhat-developer/abbenay:latest
 |  +----------+                                                     |
 |                                                                   |
 |  +--------------------------------------------+                  |
-|  |         Cache Maintainer :50052            |                  |
+|  |       Galaxy Proxy :8765 (PEP 503)         |                  |
 |  +--------------------------------------------+                  |
 +-------------------------------------------------------------------+
 ```
