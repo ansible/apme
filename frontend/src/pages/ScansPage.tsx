@@ -66,11 +66,15 @@ export function ScansPage() {
                 <th>Source</th>
                 <th>Status</th>
                 <th>Secrets</th>
-                <th>Errors</th>
-                <th>Warnings</th>
-                <th>Info</th>
-                <th>Hints</th>
-                <th>Fixed</th>
+                <th>Error</th>
+                <th>V.High</th>
+                <th>High</th>
+                <th>Med</th>
+                <th>Warn</th>
+                <th>Low</th>
+                <th>V.Low</th>
+                <th>Hint</th>
+                <th>Fixed / Fixable</th>
                 <th>Time</th>
               </tr>
             </thead>
@@ -79,17 +83,27 @@ export function ScansPage() {
                 <tr key={scan.id} onClick={() => navigate(`/scans/${scan.id}`)} style={{ cursor: "pointer" }}>
                   <td className="apme-target-path">{scan.project_path}</td>
                   <td>
-                    <span className={`apme-badge ${scan.source === "fix" ? "running" : "passed"}`}>
+                    <span className={`apme-badge ${scan.source === "fix" ? "passed" : "running"}`}>
                       {scan.source === "fix" ? "fix" : "scan"}
                     </span>
                   </td>
                   <td><StatusBadge status={scan.status} violations={scan.total_violations} /></td>
                   <td><span className="apme-count-critical">{scan.secrets || ""}</span></td>
-                  <td><span className="apme-count-error">{scan.errors}</span></td>
-                  <td><span className="apme-count-warning">{scan.warnings}</span></td>
-                  <td><span className="apme-count-info">{scan.infos}</span></td>
-                  <td><span className="apme-count-hint">{scan.hints}</span></td>
-                  <td><span className="apme-count-success">{scan.fixed}</span></td>
+                  <td><span className="apme-count-error">{scan.errors || ""}</span></td>
+                  <td><span className="apme-count-very-high">{scan.very_high || ""}</span></td>
+                  <td><span className="apme-count-high">{scan.high || ""}</span></td>
+                  <td><span className="apme-count-medium">{scan.medium || ""}</span></td>
+                  <td><span className="apme-count-warning">{scan.warnings || ""}</span></td>
+                  <td><span className="apme-count-low">{scan.low || ""}</span></td>
+                  <td><span className="apme-count-very-low">{scan.very_low || ""}</span></td>
+                  <td><span className="apme-count-hint">{scan.hints || ""}</span></td>
+                  <td>
+                    {scan.source === "fix" && scan.fixed > 0
+                      ? <span className="apme-count-success">{scan.fixed} fixed</span>
+                      : scan.fixable > 0
+                        ? <span className="apme-count-fixable">{scan.fixable} fixable</span>
+                        : ""}
+                  </td>
                   <td className="apme-time-ago">{timeAgo(scan.created_at)}</td>
                 </tr>
               ))}

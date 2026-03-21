@@ -73,24 +73,39 @@ async def list_scans_endpoint(
     scans, total = await list_scans(session, page=page, page_size=page_size)
     items = []
     for s in scans:
-        secrets = errors = warnings = infos = hints = fixed = 0
+        secret_keys: set[tuple[str, str, str]] = set()
+        errors = very_high = high = medium = warnings = low = very_low = hints = 0
+        fixed = fixable = 0
         for v in s.violations:
             if v.rule_id.startswith("SEC"):
-                secrets += 1
+                secret_keys.add((v.file, v.rule_id, v.message))
                 continue
             lv = v.level.lower()
-            if lv in ("very_high", "high", "error", "fatal"):
+            if lv in ("error", "fatal"):
                 errors += 1
-            elif lv in ("medium", "low", "warning", "warn"):
+            elif lv == "very_high":
+                very_high += 1
+            elif lv == "high":
+                high += 1
+            elif lv == "medium":
+                medium += 1
+            elif lv in ("warning", "warn"):
                 warnings += 1
+            elif lv == "low":
+                low += 1
             elif lv in ("very_low", "info"):
-                infos += 1
+                very_low += 1
             else:
                 hints += 1
+        source = getattr(s, "source", "engine")
         if s.summary_json:
             try:
                 summ = json.loads(s.summary_json)
-                fixed = int(summ.get("auto_fixable", 0))
+                count = int(summ.get("auto_fixable", 0))
+                if source == "fix":
+                    fixed = count
+                else:
+                    fixable = count
             except (json.JSONDecodeError, ValueError, TypeError):
                 pass
         items.append(
@@ -100,13 +115,18 @@ async def list_scans_endpoint(
                 created_at=s.created_at,
                 status=s.status,
                 total_violations=s.total_violations,
-                source=getattr(s, "source", "engine"),
-                secrets=secrets,
+                source=source,
+                secrets=len(secret_keys),
                 errors=errors,
+                very_high=very_high,
+                high=high,
+                medium=medium,
                 warnings=warnings,
-                infos=infos,
+                low=low,
+                very_low=very_low,
                 hints=hints,
                 fixed=fixed,
+                fixable=fixable,
             ),
         )
     return ScanListOut(items=items, total=total, page=page, page_size=page_size)
@@ -197,6 +217,7 @@ def _scan_to_out(scan: object) -> ScanOut:
         created_at=s.created_at,
         status=s.status,
         total_violations=s.total_violations,
+        source=getattr(s, "source", "engine"),
         violations=violations,
         diagnostics=diag,
         summary=summary,

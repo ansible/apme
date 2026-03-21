@@ -37,7 +37,7 @@ class UseShellRule(Rule):
     enabled: bool = True
     name: str = "UseShellRule"
     version: str = "v0.0.1"
-    severity: str = Severity.VERY_LOW
+    severity: str = Severity.MEDIUM
     tags: tuple[str, ...] = (Tag.COMMAND,)
 
     def match(self, ctx: AnsibleRunContext) -> bool:

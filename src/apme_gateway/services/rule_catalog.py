@@ -16,7 +16,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 _RULE_LINE_RE = re.compile(
-    r"^\|\s*(?P<rule_id>[A-Z]+\d+)\s*\|\s*(?P<validator>[^|]+)\|\s*(?P<desc>[^|]+)\|\s*(?P<fixer>[^|]*)\|",
+    r"^\|\s*(?P<rule_id>[A-Z]+[:\d*]+)\s*\|\s*(?P<validator>[^|]+)\|\s*(?P<desc>[^|]+)\|\s*(?P<level>[^|]*)\|\s*(?P<fixer>[^|]*)\|",
 )
 
 
@@ -57,12 +57,14 @@ def _parse_catalog(catalog_path: Path) -> list[RuleInfo]:
         rule_id = m.group("rule_id").strip()
         validator = m.group("validator").strip()
         desc = m.group("desc").strip()
+        level = m.group("level").strip()
         fixer = m.group("fixer").strip()
 
         rules.append(
             RuleInfo(
                 rule_id=rule_id,
                 description=desc,
+                level=level or "warning",
                 validator=validator.lower(),
                 fixable=fixer.lower() in ("yes", "true", "✓"),
             ),

@@ -19,7 +19,7 @@ export function HealthPage() {
   const isOk = (status: string) => status.startsWith("ok");
 
   const statusColor = (status: string) =>
-    isOk(status) ? "var(--apme-green)" : "var(--apme-red)";
+    isOk(status) ? "var(--apme-green)" : "var(--apme-sev-critical)";
 
   const statusIcon = (status: string) =>
     isOk(status) ? "\u2714" : "\u2718";

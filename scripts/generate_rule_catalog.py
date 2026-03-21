@@ -43,11 +43,68 @@ def _parse_frontmatter(path: Path) -> dict[str, str]:
     return dict(_KV.findall(m.group(1)))
 
 
-def _collect_opa_rules() -> list[dict[str, str]]:
-    """Collect rule_id, validator, description, source from OPA bundle .md files.
+def _extract_opa_level(rego_path: Path) -> str:
+    """Extract the first "level" value from a .rego file.
+
+    Args:
+        rego_path: Path to the .rego source file.
 
     Returns:
-        List of rule dicts with rule_id, validator, description, source.
+        Level string (e.g. "warning", "error") or empty string.
+
+    """
+    if not rego_path.is_file():
+        return ""
+    for line in rego_path.read_text(encoding="utf-8").splitlines():
+        m = re.search(r'"level":\s*"([^"]+)"', line)
+        if m:
+            return m.group(1)
+    return ""
+
+
+def _extract_native_level(py_path: Path) -> str:
+    """Extract Severity.XXX from a native rule .py file.
+
+    Args:
+        py_path: Path to the Python rule file.
+
+    Returns:
+        Normalised level string (e.g. "high", "very_low") or empty string.
+
+    """
+    if not py_path.is_file():
+        return ""
+    for line in py_path.read_text(encoding="utf-8").splitlines():
+        m = re.search(r"severity:\s*str\s*=\s*Severity\.(\w+)", line)
+        if m:
+            return m.group(1).lower()
+    return ""
+
+
+def _extract_ansible_level(py_path: Path) -> str:
+    """Extract the first "level" value from an Ansible validator .py file.
+
+    Args:
+        py_path: Path to the Python rule file.
+
+    Returns:
+        Level string or empty string.
+
+    """
+    if not py_path.is_file():
+        return ""
+    for line in py_path.read_text(encoding="utf-8").splitlines():
+        m = re.search(r'"level":\s*"([^"]+)"', line)
+        if m:
+            return m.group(1)
+    return ""
+
+
+def _collect_opa_rules() -> list[dict[str, str]]:
+    """Collect rule_id, validator, description, source, level from OPA bundle .md files.
+
+    Returns:
+        List of rule dicts with rule_id, validator, description, source, level.
 
     """
     rules = []
@@ -55,22 +112,25 @@ def _collect_opa_rules() -> list[dict[str, str]]:
         fm = _parse_frontmatter(md)
         if not fm.get("rule_id"):
             continue
+        rego = md.with_suffix(".rego")
+        level = _extract_opa_level(rego)
         rules.append(
             {
                 "rule_id": fm["rule_id"],
                 "validator": "OPA",
                 "description": fm.get("description", ""),
                 "source": md.name,
+                "level": level,
             }
         )
     return rules
 
 
 def _collect_native_rules() -> list[dict[str, str]]:
-    """Collect rule_id, validator, description, source from native rules .md files.
+    """Collect rule_id, validator, description, source, level from native rules .md files.
 
     Returns:
-        List of rule dicts with rule_id, validator, description, source.
+        List of rule dicts with rule_id, validator, description, source, level.
 
     """
     rules = []
@@ -78,22 +138,26 @@ def _collect_native_rules() -> list[dict[str, str]]:
         fm = _parse_frontmatter(md)
         if not fm.get("rule_id"):
             continue
+        py_stem = md.stem
+        py_candidates = list(NATIVE_DIR.glob(f"{py_stem}*.py"))
+        level = _extract_native_level(py_candidates[0]) if py_candidates else ""
         rules.append(
             {
                 "rule_id": fm["rule_id"],
                 "validator": "Native",
                 "description": fm.get("description", ""),
                 "source": md.name,
+                "level": level,
             }
         )
     return rules
 
 
 def _collect_ansible_rules() -> list[dict[str, str]]:
-    """Collect rule_id, validator, description, source from Ansible rules .md files.
+    """Collect rule_id, validator, description, source, level from Ansible rules .md files.
 
     Returns:
-        List of rule dicts with rule_id, validator, description, source.
+        List of rule dicts with rule_id, validator, description, source, level.
 
     """
     rules = []
@@ -101,12 +165,16 @@ def _collect_ansible_rules() -> list[dict[str, str]]:
         fm = _parse_frontmatter(md)
         if not fm.get("rule_id"):
             continue
+        py_stem = md.stem
+        py_candidates = list(ANSIBLE_DIR.glob(f"{py_stem}*.py"))
+        level = _extract_ansible_level(py_candidates[0]) if py_candidates else ""
         rules.append(
             {
                 "rule_id": fm["rule_id"],
                 "validator": "Ansible",
                 "description": fm.get("description", ""),
                 "source": md.name,
+                "level": level,
             }
         )
     return rules
@@ -125,6 +193,7 @@ def _collect_gitleaks_rules() -> list[dict[str, str]]:
             "validator": "Gitleaks",
             "description": "Secret/credential detection (delegated to Gitleaks binary).",
             "source": "scanner.py",
+            "level": "critical",
         }
     ]
 
@@ -189,14 +258,15 @@ def generate() -> str:
         "",
         "## All Rules",
         "",
-        "| Rule ID | Validator | Description | Fixer |",
-        "|---------|-----------|-------------|-------|",
+        "| Rule ID | Validator | Description | Level | Fixer |",
+        "|---------|-----------|-------------|-------|-------|",
     ]
 
     for r in all_rules:
         rid = r["rule_id"]
         fixer = "Yes" if rid in fixable else ""
-        lines.append(f"| {rid} | {r['validator']} | {r['description']} | {fixer} |")
+        level = r.get("level", "")
+        lines.append(f"| {rid} | {r['validator']} | {r['description']} | {level} | {fixer} |")
 
     lines.append("")
     lines.append("## By Validator")
@@ -213,11 +283,12 @@ def generate() -> str:
         fix_count = sum(1 for r in vrules if r["rule_id"] in fixable)
         lines.append(f"### {vname} ({len(vrules)} rules, {fix_count} fixers)")
         lines.append("")
-        lines.append("| Rule ID | Description | Fixer |")
-        lines.append("|---------|-------------|-------|")
+        lines.append("| Rule ID | Description | Level | Fixer |")
+        lines.append("|---------|-------------|-------|-------|")
         for r in vrules:
             fixer = "Yes" if r["rule_id"] in fixable else ""
-            lines.append(f"| {r['rule_id']} | {r['description']} | {fixer} |")
+            level = r.get("level", "")
+            lines.append(f"| {r['rule_id']} | {r['description']} | {level} | {fixer} |")
         lines.append("")
 
     lines.append("## Fixer Summary")

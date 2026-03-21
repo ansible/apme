@@ -7,6 +7,40 @@ from pathlib import Path
 
 RULE_ID = "L057"
 
+_TASK_DIRS = {"tasks", "handlers"}
+
+_PLAY_STRUCTURE_PATTERNS = (
+    "is not a valid attribute for a play",
+    "hosts is not set",
+    "a play is missing",
+    "playbook must be a list of plays",
+)
+
+
+def _is_task_file(path: Path) -> bool:
+    """Return True if the file lives in a tasks/ or handlers/ directory.
+
+    Args:
+        path: File path to check.
+
+    Returns:
+        True if any path component matches a known task directory.
+    """
+    return any(part in _TASK_DIRS for part in path.parts)
+
+
+def _is_play_structure_error(stderr: str) -> bool:
+    """Return True if the error is about play structure (expected for task files).
+
+    Args:
+        stderr: Captured stderr from ansible-playbook --syntax-check.
+
+    Returns:
+        True if the error matches a known play-structure pattern.
+    """
+    lower = stderr.lower()
+    return any(p in lower for p in _PLAY_STRUCTURE_PATTERNS)
+
 
 def _find_playbooks(root: Path) -> list[Path]:
     """Return paths to YAML files that look like playbooks.
@@ -96,6 +130,8 @@ def run(
 
         if result.returncode != 0:
             stderr = (result.stderr or result.stdout or "").strip()
+            if _is_task_file(playbook_path) and _is_play_structure_error(stderr):
+                continue
             line = 1
             line_match = re.search(r"\bline\s+(\d+)\b", stderr, re.I)
             if line_match:

@@ -18,9 +18,39 @@ export function RulesPage() {
     ? rules.filter(
         (r) =>
           r.rule_id.toLowerCase().includes(filter.toLowerCase()) ||
-          r.description.toLowerCase().includes(filter.toLowerCase())
+          r.description.toLowerCase().includes(filter.toLowerCase()) ||
+          r.level.toLowerCase().includes(filter.toLowerCase())
       )
     : rules;
+
+  const levelClass = (level: string): string => {
+    const l = level.toLowerCase();
+    if (l === "critical") return "critical";
+    if (l === "fatal" || l === "error") return "error";
+    if (l === "very_high") return "very-high";
+    if (l === "high") return "high";
+    if (l === "medium") return "medium";
+    if (l === "warning" || l === "warn") return "warning";
+    if (l === "low") return "low";
+    if (l === "very_low" || l === "info") return "very-low";
+    return "hint";
+  };
+
+  const levelLabel = (level: string): string => {
+    const l = level.toLowerCase();
+    if (l === "critical") return "Critical";
+    if (l === "fatal") return "Fatal";
+    if (l === "error") return "Error";
+    if (l === "very_high") return "Very High";
+    if (l === "high") return "High";
+    if (l === "medium") return "Medium";
+    if (l === "warning" || l === "warn") return "Warning";
+    if (l === "low") return "Low";
+    if (l === "very_low") return "Very Low";
+    if (l === "info") return "Info";
+    if (l === "none") return "None";
+    return level || "—";
+  };
 
   return (
     <>
@@ -58,6 +88,7 @@ export function RulesPage() {
                 <th>Rule ID</th>
                 <th>Description</th>
                 <th>Validator</th>
+                <th>Level</th>
                 <th>Fixable</th>
               </tr>
             </thead>
@@ -68,6 +99,11 @@ export function RulesPage() {
                   <td>{rule.description}</td>
                   <td>
                     <span className="apme-badge running">{rule.validator}</span>
+                  </td>
+                  <td>
+                    <span className={`apme-severity ${levelClass(rule.level)}`}>
+                      {levelLabel(rule.level)}
+                    </span>
                   </td>
                   <td>
                     {rule.fixable

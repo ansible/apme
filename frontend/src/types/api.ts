@@ -21,6 +21,7 @@ export interface ScanOut {
   created_at: string;
   status: string;
   total_violations: number;
+  source: string;
   violations: ViolationOut[];
   diagnostics: Record<string, unknown> | null;
   summary: ScanSummary | null;
@@ -35,10 +36,15 @@ export interface ScanListItem {
   source: string;
   secrets: number;
   errors: number;
+  very_high: number;
+  high: number;
+  medium: number;
   warnings: number;
-  infos: number;
+  low: number;
+  very_low: number;
   hints: number;
   fixed: number;
+  fixable: number;
 }
 
 export interface ScanListOut {

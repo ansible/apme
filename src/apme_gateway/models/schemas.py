@@ -46,6 +46,7 @@ class ScanOut(BaseModel):
     created_at: str
     status: str
     total_violations: int
+    source: str = "engine"
     violations: list[ViolationOut] = Field(default_factory=list)
     diagnostics: dict[str, object] | None = None
     summary: ScanSummaryOut | None = None
@@ -62,10 +63,15 @@ class ScanListItem(BaseModel):
     source: str = "engine"
     secrets: int = 0
     errors: int = 0
+    very_high: int = 0
+    high: int = 0
+    medium: int = 0
     warnings: int = 0
-    infos: int = 0
+    low: int = 0
+    very_low: int = 0
     hints: int = 0
     fixed: int = 0
+    fixable: int = 0
 
 
 class ScanListOut(BaseModel):

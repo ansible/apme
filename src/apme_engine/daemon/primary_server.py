@@ -641,23 +641,31 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         )
         response = await self.Scan(req, context)
 
-        from apme_engine.daemon.scan_events import publish
+        # Only publish when real files were processed; empty streams from
+        # gRPC transport retries (exhausted iterator) are silently skipped.
+        if all_files:
+            from apme_engine.daemon.scan_events import publish
 
-        if _debug:
-            sys.stderr.write(f"[primary] ScanStream PUBLISH scan_id={scan_id} peer={peer} t={time.time():.3f}\n")
+            if _debug:
+                sys.stderr.write(f"[primary] ScanStream PUBLISH scan_id={scan_id} peer={peer} t={time.time():.3f}\n")
+                sys.stderr.flush()
+
+            event_kwargs: dict[str, object] = {
+                "scan_id": response.scan_id,
+                "project_path": project_root,
+                "violations": list(response.violations),
+                "source": "scan",
+            }
+            if response.HasField("diagnostics"):
+                event_kwargs["diagnostics"] = response.diagnostics
+            if response.HasField("summary"):
+                event_kwargs["summary"] = response.summary
+            publish(ScanCompletedEvent(**event_kwargs))
+        elif _debug:
+            sys.stderr.write(
+                f"[primary] ScanStream SKIP empty retry scan_id={scan_id} peer={peer} t={time.time():.3f}\n"
+            )
             sys.stderr.flush()
-
-        event_kwargs: dict[str, object] = {
-            "scan_id": response.scan_id,
-            "project_path": project_root,
-            "violations": list(response.violations),
-            "source": "scan",
-        }
-        if response.HasField("diagnostics"):
-            event_kwargs["diagnostics"] = response.diagnostics
-        if response.HasField("summary"):
-            event_kwargs["summary"] = response.summary
-        publish(ScanCompletedEvent(**event_kwargs))
 
         return response
 

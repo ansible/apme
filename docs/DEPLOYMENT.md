@@ -15,10 +15,11 @@ The primary deployment target is a Podman pod. All backend services run in a sin
 From the repo root:
 
 ```bash
-./containers/podman/build.sh
+./containers/podman/build.sh          # engine images only
+./containers/podman/build.sh --ui     # engine + gateway + UI images
 ```
 
-This builds seven images:
+Engine images (always built):
 
 | Image | Dockerfile | Purpose |
 |-------|------------|---------|
@@ -30,13 +31,32 @@ This builds seven images:
 | `apme-cache-maintainer:latest` | `containers/cache-maintainer/Dockerfile` | Collection cache manager |
 | `apme-cli:latest` | `containers/cli/Dockerfile` | CLI client |
 
+UI images (built with `--ui`):
+
+| Image | Dockerfile | Purpose |
+|-------|------------|---------|
+| `apme-gateway:latest` | `containers/gateway/Dockerfile` | FastAPI HTTP/WS → gRPC gateway |
+| `apme-ui:latest` | `containers/ui/Dockerfile` | React SPA served by Nginx |
+
 ### Start the pod
 
 ```bash
-./containers/podman/up.sh
+./containers/podman/up.sh          # engine pod only
+./containers/podman/up.sh --ui     # engine pod + gateway + UI containers
 ```
 
-This runs `podman play kube containers/podman/pod.yaml`, which starts the pod `apme-pod` with six containers (Primary, Native, OPA, Ansible, Gitleaks, Cache Maintainer). A cache directory (`apme-cache/`) is created in the repo root.
+This runs `podman play kube containers/podman/pod.yaml`, which starts the pod `apme-pod` with six containers (Primary, Native, OPA, Ansible, Gitleaks, Cache Maintainer). A cache directory is created under `$XDG_CACHE_HOME/apme` (default `~/.cache/apme`).
+
+With `--ui`, the gateway and UI containers are started **outside** the pod on a separate `apme-ui-net` Podman network (ADR-012, ADR-029). The gateway connects to Primary via `host.containers.internal:50051`.
+
+Port and path overrides are read from `.env` in the repo root:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `APME_GATEWAY_PORT` | `8080` | Host port for the HTTP/WS gateway |
+| `APME_UI_PORT` | `8081` | Host port for the web dashboard |
+| `APME_GATEWAY_DATA` | `~/.local/share/apme/gateway` | SQLite database directory |
+| `APME_CACHE_HOST_PATH` | `~/.cache/apme` | Engine cache directory |
 
 ### Run CLI commands
 
@@ -62,12 +82,14 @@ The CLI container joins `apme-pod`, mounts CWD as `/workspace:Z` (read-write for
 
 The `fix` command uses a bidirectional streaming RPC (`FixSession`, ADR-028) for real-time progress and interactive AI proposal review.
 
-### Stop the pod
+### Stop everything
 
 ```bash
-podman pod stop apme-pod
-podman pod rm apme-pod
+./containers/podman/down.sh          # stop engine pod + gateway + UI
+./containers/podman/down.sh --wipe   # also delete the gateway SQLite database
 ```
+
+This removes the gateway and UI containers, cleans up any lingering CLI containers, and stops/removes the engine pod.
 
 ### Health check
 
@@ -123,12 +145,24 @@ The OPA binary runs internally on `localhost:8181`; the gRPC wrapper proxies to 
 | `APME_CACHE_MAINTAINER_LISTEN` | `0.0.0.0:50052` | gRPC listen address |
 | `APME_CACHE_ROOT` | `/cache` | Collection cache directory |
 
+#### Gateway (outside pod)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `APME_PRIMARY_ADDRESS` | `host.containers.internal:50051` | Primary gRPC address |
+| `APME_DATABASE_URL` | `sqlite+aiosqlite:////data/apme.db` | SQLAlchemy database URL |
+| `APME_GATEWAY_HOST` | `0.0.0.0` | HTTP listen host |
+| `APME_GATEWAY_PORT` | `8080` | HTTP listen port |
+
+The gateway subscribes to Primary's `SubscribeScanEvents` stream (ADR-020) to automatically persist CLI-initiated scan results in its SQLite database.
+
 ### Volumes
 
 | Name | Host path | Container mount | Services | Access |
 |------|-----------|-----------------|----------|--------|
-| `cache` | `apme-cache/` | `/cache` | Cache Maintainer, Ansible | rw (cache-maintainer), ro (ansible) |
+| `cache` | `~/.cache/apme` | `/cache` | Cache Maintainer, Ansible | rw (cache-maintainer), ro (ansible) |
 | workspace | CWD (CLI only) | `/workspace` | CLI | rw |
+| gateway-data | `~/.local/share/apme/gateway` | `/data` | Gateway | rw |
 
 ## OPA container details
 

@@ -40,7 +40,7 @@ class ComplexityRule(Rule):
     enabled: bool = True
     name: str = "Complexity"
     version: str = "v0.0.1"
-    severity: str = Severity.VERY_LOW
+    severity: str = Severity.LOW
     tags: tuple[str, ...] = (Tag.DEPENDENCY,)
     scope: str = RuleScope.PLAY
 

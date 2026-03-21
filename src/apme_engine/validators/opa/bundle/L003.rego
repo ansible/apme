@@ -17,7 +17,7 @@ play_has_no_name(tree, node) := v if {
 	count(node.line) > 0
 	v := {
 		"rule_id": "L003",
-		"level": "info",
+		"level": "low",
 		"message": "Play should have a name",
 		"file": node.file,
 		"line": node.line[0],

@@ -33,6 +33,8 @@ async def _persist_event(
     """Write a ScanCompletedEvent to the database.
 
     Idempotent: skips if a scan with the same scan_id already exists.
+    Uses INSERT + IntegrityError catch to handle races where two events
+    with the same scan_id arrive near-simultaneously.
 
     Args:
         event: The protobuf event from Primary.
@@ -41,6 +43,7 @@ async def _persist_event(
     import json
 
     from google.protobuf.json_format import MessageToDict
+    from sqlalchemy.exc import IntegrityError
 
     async with session_factory() as session:  # type: ignore[operator]
         existing = await session.get(Scan, event.scan_id)
@@ -94,7 +97,12 @@ async def _persist_event(
 
         session.add(scan)
         session.add_all(violations_orm)
-        await session.commit()
+        try:
+            await session.commit()
+        except IntegrityError:
+            await session.rollback()
+            logger.debug("Race-condition duplicate scan_id=%s — already persisted by another task", event.scan_id)
+            return
 
         logger.info(
             "Persisted scan event: scan_id=%s violations=%d source=%s",
