@@ -12,7 +12,7 @@ from apme.v1.primary_pb2 import ScanChunk, ScanOptions, ScanRequest
 CHUNK_MAX_BYTES = 1024 * 1024  # 1 MiB
 
 # Skip these dirs when walking (same kind of ignores as many linters)
-SKIP_DIRS = {".git", "__pycache__", ".venv", "venv", "node_modules", ".tox", "htmlcov", ".github"}
+SKIP_DIRS = {".git", "__pycache__", ".venv", "venv", "node_modules", ".tox", "htmlcov", ".github", "archives"}
 
 SKIP_FILENAMES = {".travis.yml", ".travis.yaml"}
 

@@ -5,6 +5,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from apme_engine.daemon.primary_server import merge_collection_specs
+from apme_engine.engine.opa_payload import _extract_collection_set
+
 if TYPE_CHECKING:
     from apme_engine.engine.scanner import SingleScan
 
@@ -167,3 +170,209 @@ class TestScannerHierarchy:
         assert d["file"] == ""
         assert d["line"] is None
         assert d["defined_in"] == ""
+
+    def test_build_hierarchy_payload_includes_collection_set(
+        self, single_scan_with_mock_contexts: "SingleScan"
+    ) -> None:
+        """build_hierarchy_payload includes collection_set derived from FQCN modules.
+
+        The fixture uses ansible.builtin.shell which should be excluded,
+        so the collection_set should be empty.
+
+        Args:
+            single_scan_with_mock_contexts: Fixture providing a SingleScan with mocked contexts.
+        """
+        scan = single_scan_with_mock_contexts
+        payload = scan.build_hierarchy_payload(scan_id="cs-test")
+        assert "collection_set" in payload
+        assert payload["collection_set"] == []
+
+
+class TestExtractCollectionSet:
+    """Tests for _extract_collection_set (FQCN-based collection discovery)."""
+
+    @staticmethod
+    def _make_tree(modules: list[tuple[str, str]]) -> list[dict[str, object]]:
+        """Build a minimal trees_data list from (module, original_module) pairs.
+
+        Args:
+            modules: List of (module, original_module) tuples.
+
+        Returns:
+            Single-element list of tree dicts with taskcall nodes.
+        """
+        nodes: list[dict[str, object]] = []
+        for mod, orig in modules:
+            nodes.append({"type": "taskcall", "module": mod, "original_module": orig})
+        return [{"root_key": "playbook :/test.yml", "nodes": nodes}]
+
+    def test_extracts_fqcn_collections(self) -> None:
+        """Standard FQCN modules yield their namespace.collection prefix."""
+        trees = self._make_tree(
+            [
+                ("community.general.nmcli", "nmcli"),
+                ("ansible.posix.mount", "mount"),
+            ]
+        )
+        result = _extract_collection_set(trees)
+        assert result == ["ansible.posix", "community.general"]
+
+    def test_excludes_ansible_builtin(self) -> None:
+        """ansible.builtin is always available and must be excluded."""
+        trees = self._make_tree(
+            [
+                ("ansible.builtin.shell", "shell"),
+                ("ansible.builtin.copy", "copy"),
+            ]
+        )
+        assert _extract_collection_set(trees) == []
+
+    def test_deduplicates(self) -> None:
+        """Multiple modules from the same collection produce one entry."""
+        trees = self._make_tree(
+            [
+                ("community.general.nmcli", "nmcli"),
+                ("community.general.parted", "parted"),
+                ("community.general.timezone", "timezone"),
+            ]
+        )
+        assert _extract_collection_set(trees) == ["community.general"]
+
+    def test_short_names_ignored(self) -> None:
+        """Short module names (< 3 parts) are not treated as FQCNs."""
+        trees = self._make_tree(
+            [
+                ("copy", ""),
+                ("ansible.legacy", ""),
+            ]
+        )
+        assert _extract_collection_set(trees) == []
+
+    def test_path_like_values_rejected(self) -> None:
+        """Taskfile paths and URLs with dots are not misidentified as FQCNs."""
+        trees = self._make_tree(
+            [
+                ("roles/my.task.yml", ""),
+                ("includes/setup.network.tasks", ""),
+                ("/absolute/path.to.file", ""),
+                ("http://example.com.foo", ""),
+                ("has spaces.not.fqcn", ""),
+            ]
+        )
+        assert _extract_collection_set(trees) == []
+
+    def test_empty_trees(self) -> None:
+        """Empty tree list produces empty collection set."""
+        assert _extract_collection_set([]) == []
+
+    def test_no_taskcall_nodes(self) -> None:
+        """Trees with only non-taskcall nodes produce empty collection set."""
+        trees: list[dict[str, object]] = [
+            {"nodes": [{"type": "playcall", "module": "community.general.nmcli"}]},
+        ]
+        assert _extract_collection_set(trees) == []
+
+    def test_uses_original_module_field(self) -> None:
+        """Collections are extracted from original_module when module differs."""
+        trees = self._make_tree(
+            [
+                ("ansible.builtin.shell", "custom.collection.my_shell"),
+            ]
+        )
+        result = _extract_collection_set(trees)
+        assert "custom.collection" in result
+
+    def test_none_module_values_handled(self) -> None:
+        """None values for module fields don't cause errors."""
+        trees: list[dict[str, object]] = [
+            {"nodes": [{"type": "taskcall", "module": None, "original_module": None}]},
+        ]
+        assert _extract_collection_set(trees) == []
+
+    def test_sorted_output(self) -> None:
+        """Output is deterministically sorted."""
+        trees = self._make_tree(
+            [
+                ("z_vendor.z_coll.mod", ""),
+                ("a_vendor.a_coll.mod", ""),
+                ("m_vendor.m_coll.mod", ""),
+            ]
+        )
+        result = _extract_collection_set(trees)
+        assert result == ["a_vendor.a_coll", "m_vendor.m_coll", "z_vendor.z_coll"]
+
+    def test_multiple_trees(self) -> None:
+        """Collections from multiple trees are aggregated and deduplicated."""
+        tree1: dict[str, object] = {
+            "nodes": [{"type": "taskcall", "module": "community.general.nmcli", "original_module": ""}],
+        }
+        tree2: dict[str, object] = {
+            "nodes": [{"type": "taskcall", "module": "ansible.posix.mount", "original_module": ""}],
+        }
+        tree3: dict[str, object] = {
+            "nodes": [{"type": "taskcall", "module": "community.general.parted", "original_module": ""}],
+        }
+        result = _extract_collection_set([tree1, tree2, tree3])
+        assert result == ["ansible.posix", "community.general"]
+
+
+class TestCollectionSpecMerge:
+    """Tests for merge_collection_specs (collection precedence logic).
+
+    Exercises the merge semantics: explicit specs (from the request or
+    requirements.yml) take precedence over bare FQCN-derived specs.
+    Calls the real production helper directly.
+    """
+
+    def test_requirements_yml_wins_over_hierarchy(self) -> None:
+        """Versioned spec from requirements.yml supersedes bare hierarchy spec."""
+        result = merge_collection_specs(
+            request_specs=[],
+            discovered_specs=["community.general:>=5.0.0"],
+            hierarchy_collections=["community.general"],
+        )
+        assert result == ["community.general:>=5.0.0"]
+
+    def test_request_specs_win_over_both(self) -> None:
+        """Specs from the original request take highest precedence."""
+        result = merge_collection_specs(
+            request_specs=["community.general:==4.0.0"],
+            discovered_specs=["community.general:>=5.0.0"],
+            hierarchy_collections=["community.general"],
+        )
+        assert result == ["community.general:==4.0.0"]
+
+    def test_hierarchy_supplements_missing(self) -> None:
+        """Hierarchy-derived collections fill gaps not covered by requirements.yml."""
+        result = merge_collection_specs(
+            request_specs=[],
+            discovered_specs=["community.general:>=5.0.0"],
+            hierarchy_collections=["ansible.posix", "community.crypto"],
+        )
+        assert "community.general:>=5.0.0" in result
+        assert "ansible.posix" in result
+        assert "community.crypto" in result
+        assert len(result) == 3
+
+    def test_all_empty(self) -> None:
+        """No specs from any source produces empty list."""
+        assert merge_collection_specs([], [], []) == []
+
+    def test_deduplication_across_sources(self) -> None:
+        """Same collection in all three sources appears only once."""
+        result = merge_collection_specs(
+            request_specs=["community.general:==4.0.0"],
+            discovered_specs=["community.general:>=5.0.0"],
+            hierarchy_collections=["community.general"],
+        )
+        bare_names = [s.split(":")[0] for s in result]
+        assert bare_names.count("community.general") == 1
+
+    def test_hierarchy_only(self) -> None:
+        """When no requirements.yml exists, hierarchy provides all specs as bare."""
+        result = merge_collection_specs(
+            request_specs=[],
+            discovered_specs=[],
+            hierarchy_collections=["community.general", "ansible.posix"],
+        )
+        assert sorted(result) == ["ansible.posix", "community.general"]

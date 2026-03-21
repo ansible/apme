@@ -15,7 +15,7 @@ import sys
 import tempfile
 import time
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -243,6 +243,42 @@ def _discover_collection_specs(files: list[File]) -> list[str]:
     return list(specs.values())
 
 
+def merge_collection_specs(
+    request_specs: list[str],
+    discovered_specs: list[str],
+    hierarchy_collections: Sequence[object],
+) -> list[str]:
+    """Merge collection specs with precedence: request > requirements.yml > FQCN-derived.
+
+    Each source is deduplicated by bare ``namespace.collection`` name so
+    versioned specs from earlier sources take priority over bare names
+    discovered later.
+
+    Args:
+        request_specs: Specs from the gRPC request (highest precedence).
+        discovered_specs: Specs from requirements.yml (may include versions).
+        hierarchy_collections: Bare namespace.collection strings from FQCN auto-discovery.
+
+    Returns:
+        Merged list with duplicates removed by precedence.
+    """
+    result = list(request_specs)
+    existing = {s.split(":")[0] for s in result}
+
+    for spec in discovered_specs:
+        bare = spec.split(":")[0]
+        if bare not in existing:
+            result.append(spec)
+            existing.add(bare)
+
+    for coll in hierarchy_collections:
+        if isinstance(coll, str) and coll not in existing:
+            result.append(coll)
+            existing.add(coll)
+
+    return result
+
+
 async def _ensure_collections_cached(collection_specs: list[str], scan_id: str) -> None:
     """Pull any missing collections into the cache via the CacheMaintainer.
 
@@ -338,11 +374,15 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             return [], None
 
         discovered = _discover_collection_specs(files)
-        if discovered:
-            existing = {s.split(":")[0] for s in collection_specs}
-            for spec in discovered:
-                if spec.split(":")[0] not in existing:
-                    collection_specs.append(spec)
+        hierarchy_collections = context_obj.hierarchy_payload.get("collection_set", [])
+        if not isinstance(hierarchy_collections, list):
+            hierarchy_collections = []
+
+        collection_specs = merge_collection_specs(
+            collection_specs,
+            discovered,
+            hierarchy_collections,
+        )
 
         _normalize_scandata_contexts(context_obj.scandata)
         register_engine_handlers()

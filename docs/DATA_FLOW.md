@@ -55,7 +55,9 @@ User runs:  apme-scan scan /path/to/project
 │     │     { scan_id, hierarchy: [{root_key, root_type,   │       │
 │     │       root_path, nodes: [{type, key, file, line,   │       │
 │     │       module, options, module_options,              │       │
-│     │       annotations}]}], metadata }                  │       │
+│     │       annotations}]}],                             │       │
+│     │       collection_set: ["ns.coll", ...],            │       │
+│     │       metadata }                                   │       │
 │     │                                                    │       │
 │     │  Returns: ScanContext                              │       │
 │     │    .hierarchy_payload = dict (JSON-serializable)   │       │
@@ -201,6 +203,7 @@ Serializes the tree into a flat JSON structure consumable by OPA and other paylo
       ]
     }
   ],
+  "collection_set": ["ansible.posix", "community.general"],
   "metadata": { "type": "project", "name": "myproject" }
 }
 ```

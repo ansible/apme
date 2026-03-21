@@ -1,4 +1,4 @@
-"""Ansible validator daemon: async gRPC adapter with ephemeral per-request venvs."""
+"""Ansible validator daemon: async gRPC adapter with cached venvs."""
 
 import asyncio
 import contextlib
@@ -77,32 +77,6 @@ def _write_chunked_fs(files: list[File]) -> Path:
     return tmp
 
 
-def _build_ephemeral_venv(
-    version: str,
-    collection_specs: list[str],
-    cache_root: Path,
-) -> Path:
-    """Build a fresh ephemeral venv for this request.
-
-    UV cache makes this fast.
-
-    Args:
-        version: Ansible core version string.
-        collection_specs: List of collection specifiers.
-        cache_root: Root path for collection cache.
-
-    Returns:
-        Path to the created venv root.
-    """
-    venvs_root = Path(tempfile.mkdtemp(prefix="apme_venvs_"))
-    return build_venv(
-        ansible_core_version=version,
-        collection_specs=collection_specs,
-        cache_root=cache_root,
-        venvs_root=venvs_root,
-    )
-
-
 def _run_ansible_validate(
     files: list[File],
     raw_version: str,
@@ -110,7 +84,11 @@ def _run_ansible_validate(
     hierarchy_payload: YAMLDict,
     req_id: str,
 ) -> _AnsibleResult:
-    """Blocking function: build ephemeral venv, run validator, return result with timing.
+    """Blocking function: build/reuse cached venv, run validator, return result with timing.
+
+    Uses ``build_venv`` with the persistent default ``venvs_root``
+    (``$CACHE_ROOT/venvs/``).  The venv is keyed by ``(version, specs)``
+    hash, so repeated scans with the same inputs reuse it instantly.
 
     Args:
         files: List of File protos to validate.
@@ -132,7 +110,11 @@ def _run_ansible_validate(
 
         tv = time.monotonic()
         try:
-            venv_root = _build_ephemeral_venv(raw_version, collection_specs, cache)
+            venv_root = build_venv(
+                ansible_core_version=raw_version,
+                collection_specs=collection_specs,
+                cache_root=cache,
+            )
         except (FileNotFoundError, subprocess.CalledProcessError) as e:
             venv_build_ms = (time.monotonic() - tv) * 1000
             sys.stderr.write(f"[req={req_id}] Ansible: venv build failed for {raw_version}: {e}\n")
@@ -140,7 +122,7 @@ def _run_ansible_validate(
             err_viol: ViolationDict = {
                 "rule_id": "L057",
                 "level": "error",
-                "message": f"Ephemeral venv build failed for {raw_version}: {e}",
+                "message": f"Venv build failed for {raw_version}: {e}",
                 "file": "",
                 "line": 1,
                 "path": "",
@@ -151,6 +133,8 @@ def _run_ansible_validate(
                 ansible_core_version=raw_version,
             )
         venv_build_ms = (time.monotonic() - tv) * 1000
+        sys.stderr.write(f"[req={req_id}] Ansible: venv ready in {venv_build_ms:.0f}ms\n")
+        sys.stderr.flush()
 
         env_extra = None
         if collection_specs:
@@ -191,16 +175,13 @@ def _run_ansible_validate(
         if temp_dir is not None and temp_dir.is_dir():
             with contextlib.suppress(OSError):
                 shutil.rmtree(temp_dir)
-        if venv_root is not None and venv_root.is_dir():
-            with contextlib.suppress(OSError):
-                shutil.rmtree(venv_root.parent)
 
 
 class AnsibleValidatorServicer(validate_pb2_grpc.ValidatorServicer):
-    """Async gRPC adapter: builds ephemeral venv per request, runs AnsibleValidator."""
+    """Async gRPC adapter: builds/reuses cached venv, runs AnsibleValidator."""
 
     async def Validate(self, request: ValidateRequest, context: grpc.aio.ServicerContext) -> ValidateResponse:  # type: ignore[type-arg]
-        """Handle Validate RPC: build ephemeral venv, run AnsibleValidator, return violations.
+        """Handle Validate RPC: build/reuse venv, run AnsibleValidator, return violations.
 
         Args:
             request: ValidateRequest with files, version, collection specs.

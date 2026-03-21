@@ -2,7 +2,11 @@
 collections:
   - name: community.general
     version: ">=5.0.0"
-  - name: ansible.posix
-    version: ">=1.0.0"
+  # ansible.posix is intentionally omitted here to test FQCN-based
+  # collection auto-discovery (ADR-032). The playbook uses
+  # ansible.posix.sysctl via FQCN, so collection_set extraction
+  # should discover it without an explicit requirements entry.
+  # - name: ansible.posix
+  #   version: ">=1.0.0"
   - name: cisco.ios
     version: ">=4.0.0"

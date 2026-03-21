@@ -37,6 +37,7 @@ This directory contains the Architecture Decision Records (ADRs) for APME.
 | [ADR-029](ADR-029-web-gateway-architecture.md) | Web Gateway Architecture | Proposed | 2026-03 |
 | [ADR-030](ADR-030-frontend-deployment-model.md) | Frontend Deployment Model | Proposed | 2026-03 |
 | [ADR-031](ADR-031-unified-collection-cache.md) | Unified Collection Cache as Single Authoritative Source | Proposed | 2026-03 |
+| [ADR-032](ADR-032-fqcn-collection-auto-discovery.md) | FQCN-Based Collection Auto-Discovery | Accepted | 2026-03 |
 
 ## Categories
 
@@ -56,6 +57,7 @@ This directory contains the Architecture Decision Records (ADRs) for APME.
 - ADR-008: Rule ID conventions
 - ADR-026: Rule scope metadata (accepted)
 - ADR-031: Unified collection cache (proposed)
+- ADR-032: FQCN-based collection auto-discovery
 
 ### Validators
 - ADR-006: Ansible validator venvs
@@ -99,7 +101,7 @@ Original planning ADRs that were superseded by implementation decisions:
 ## Creating New ADRs
 
 1. Copy the template from `../.sdlc/templates/adr.md`
-2. Use the next available number (currently ADR-032)
+2. Use the next available number (currently ADR-033)
 3. Include:
    - Status (Proposed → Accepted)
    - Date
@@ -146,3 +148,4 @@ Original planning ADRs that were superseded by implementation decisions:
 | 029 | 2026-03 | Web gateway architecture (proposed) |
 | 030 | 2026-03 | Frontend deployment model (proposed) |
 | 031 | 2026-03 | Unified collection cache as single authoritative source (proposed) |
+| 032 | 2026-03 | FQCN-based collection auto-discovery |

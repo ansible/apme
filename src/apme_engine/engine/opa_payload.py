@@ -247,6 +247,62 @@ def node_to_dict(node: RunTarget) -> YAMLDict:
     return d
 
 
+_FQCN_REJECT = frozenset("/\\: \t\n")
+
+
+def _looks_like_fqcn(value: str) -> bool:
+    """Return True if *value* looks like a valid Ansible FQCN module name.
+
+    Rejects taskfile paths, URLs, and other non-FQCN strings that happen
+    to contain 3+ dot-separated parts (e.g. ``roles/my.task.yml``).
+
+    Args:
+        value: Candidate module string from a taskcall node.
+
+    Returns:
+        True if *value* has >= 3 dot-separated identifier parts and contains
+        no path/URL characters.
+    """
+    if any(ch in value for ch in _FQCN_REJECT):
+        return False
+    parts = value.split(".")
+    return len(parts) >= 3 and all(parts)
+
+
+def _extract_collection_set(trees_data: list[dict[str, object]]) -> list[str]:
+    """Derive unique namespace.collection pairs from FQCN module names in the tree.
+
+    Walks all taskcall nodes and extracts the ``namespace.collection`` prefix
+    from any module name with 3+ dot-separated parts (the FQCN pattern).
+    ``ansible.builtin`` is excluded — it ships with ansible-core and never
+    needs a Galaxy install.  Values that look like file paths or URLs are
+    rejected to avoid false positives from ``include_tasks`` / ``import_role``.
+
+    Args:
+        trees_data: List of tree dicts, each with a ``nodes`` list of node dicts.
+
+    Returns:
+        Sorted, deduplicated list of ``namespace.collection`` strings.
+    """
+    collections: set[str] = set()
+    for tree in trees_data:
+        nodes = tree.get("nodes")
+        if not isinstance(nodes, list):
+            continue
+        for node in nodes:
+            if not isinstance(node, dict) or node.get("type") != "taskcall":
+                continue
+            for field in ("module", "original_module"):
+                mod = node.get(field, "") or ""
+                if not isinstance(mod, str) or not _looks_like_fqcn(mod):
+                    continue
+                parts = mod.split(".")
+                fqcn_prefix = f"{parts[0]}.{parts[1]}"
+                if fqcn_prefix != "ansible.builtin":
+                    collections.add(fqcn_prefix)
+    return sorted(collections)
+
+
 def build_hierarchy_payload(
     contexts: list[AnsibleRunContext],
     scan_type: str,
@@ -266,7 +322,7 @@ def build_hierarchy_payload(
         scan_id: Optional scan ID; defaults to current UTC timestamp.
 
     Returns:
-        Dict with scan_id, hierarchy (trees with nodes), and metadata.
+        Dict with scan_id, hierarchy (trees with nodes), collection_set, and metadata.
     """
     if not scan_id:
         scan_id = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d%H%M%S")
@@ -288,6 +344,7 @@ def build_hierarchy_payload(
         {
             "scan_id": scan_id,
             "hierarchy": trees_data,
+            "collection_set": _extract_collection_set(trees_data),
             "metadata": {
                 "type": scan_type,
                 "name": scan_name,

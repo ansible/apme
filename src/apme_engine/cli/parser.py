@@ -49,6 +49,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=0,
         help="-v for summary, -vv for full per-rule breakdown",
     )
+    scan_p.add_argument(
+        "--timeout",
+        type=int,
+        default=120,
+        help="gRPC timeout in seconds (default: 120)",
+    )
 
     # ── format ──
     fmt_p = subparsers.add_parser(

@@ -218,6 +218,15 @@
         value: "1"
         state: present
 
+    # L058/L059: argspec violation — bogus_param is not a valid parameter.
+    # ansible.posix is intentionally omitted from requirements.yml (ADR-032)
+    # so this only fires if FQCN auto-discovery installs the collection.
+    - name: Sysctl with bad param
+      ansible.posix.sysctl:
+        name: net.ipv4.ip_forward
+        value: "1"
+        bogus_param: true
+
     # community.general with wrong types
     - name: Create a cron job badly
       community.general.cronvar:

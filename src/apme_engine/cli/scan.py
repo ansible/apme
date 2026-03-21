@@ -45,7 +45,8 @@ def run_scan(args: argparse.Namespace) -> None:
     channel, _ = resolve_primary(args)
     stub = primary_pb2_grpc.PrimaryStub(channel)  # type: ignore[no-untyped-call]
     try:
-        resp = stub.ScanStream(chunks, timeout=120)
+        scan_timeout = getattr(args, "timeout", None) or 120
+        resp = stub.ScanStream(chunks, timeout=scan_timeout)
     except grpc.RpcError as e:
         sys.stderr.write(f"Engine error: {e.details()}\n")
         sys.exit(1)
