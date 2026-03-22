@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
 from collections.abc import Sequence
+from datetime import datetime, timezone
 
 import grpc
 from sqlalchemy import select as sa_select
@@ -165,12 +165,11 @@ def _add_violations(db: AsyncSession, scan_id: str, violations: Sequence[object]
     """
     for v in violations:
         line_val: int | None = None
-        if v.HasField("line_oneof"):  # type: ignore[attr-defined]
-            oneof = v.WhichOneof("line_oneof")  # type: ignore[attr-defined]
-            if oneof == "line":
-                line_val = v.line  # type: ignore[attr-defined]
-            elif oneof == "line_range":
-                line_val = v.line_range.start  # type: ignore[attr-defined]
+        oneof = v.WhichOneof("line_oneof")  # type: ignore[attr-defined]
+        if oneof == "line":
+            line_val = v.line  # type: ignore[attr-defined]
+        elif oneof == "line_range":
+            line_val = v.line_range.start  # type: ignore[attr-defined]
         db.add(
             Violation(
                 scan_id=scan_id,

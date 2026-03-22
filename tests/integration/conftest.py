@@ -1,8 +1,9 @@
-"""Integration test infrastructure: daemon + galaxy proxy lifecycle.
+"""Integration test infrastructure: daemon + gateway + galaxy proxy lifecycle.
 
-Starts a galaxy proxy (for collection installs) and the local APME daemon
-(Primary + Native + OPA + Ansible) when integration-marked tests are
-collected, and tears both down in ``pytest_sessionfinish``.
+Starts a galaxy proxy (for collection installs), the reporting gateway
+(gRPC + REST), and the local APME daemon (Primary + Native + OPA + Ansible)
+when integration-marked tests are collected, and tears all down in
+``pytest_sessionfinish``.
 
 Run with::
 
@@ -29,24 +30,32 @@ _ENV_KEYS = (
     "APME_DATA_DIR",
     "APME_PRIMARY_ADDRESS",
     "APME_GALAXY_PROXY_URL",
+    "APME_REPORTING_ENDPOINT",
+    "APME_DB_PATH",
     "OPA_USE_PODMAN",
 )
 
 
 @dataclass
 class Infrastructure:
-    """Holds daemon and proxy state for restoration on teardown.
+    """Holds daemon, proxy, and gateway state for restoration on teardown.
 
     Attributes:
         primary_address: gRPC address of the Primary service.
         data_dir: Temporary directory used for daemon state isolation.
         proxy_process: Galaxy proxy subprocess (terminated on teardown).
+        gateway_process: Gateway subprocess (terminated on teardown).
+        gateway_db_path: Path to the gateway SQLite database file.
+        gateway_http_url: Base URL for the gateway REST API.
         original_env: Snapshot of env vars before daemon start.
     """
 
     primary_address: str = ""
     data_dir: str = ""
     proxy_process: subprocess.Popen[bytes] | None = None
+    gateway_process: subprocess.Popen[bytes] | None = None
+    gateway_db_path: str = ""
+    gateway_http_url: str = ""
     original_env: dict[str, str | None] = field(default_factory=dict)
 
 
@@ -87,7 +96,7 @@ def pytest_collection_modifyitems(
     config: pytest.Config,
     items: list[pytest.Item],
 ) -> None:
-    """Start proxy + daemon if integration-marked tests will actually run.
+    """Start proxy + gateway + daemon if integration-marked tests will actually run.
 
     This hook fires *before* pytest applies ``-m`` deselection, so we must
     check ``markexpr`` ourselves to avoid starting infrastructure when the
@@ -110,7 +119,7 @@ def pytest_collection_modifyitems(
 
 
 def pytest_sessionfinish(session: pytest.Session) -> None:
-    """Stop daemon and proxy, restore environment.
+    """Stop daemon, gateway, and proxy, restore environment.
 
     Args:
         session: Pytest session (unused beyond signature).
@@ -121,7 +130,7 @@ def pytest_sessionfinish(session: pytest.Session) -> None:
 
 
 def _start_infrastructure() -> None:
-    """Start galaxy proxy, then fork the daemon with all validators."""
+    """Start galaxy proxy, gateway, then fork the daemon with all validators."""
     global INFRASTRUCTURE  # noqa: PLW0603
 
     from apme_engine.daemon.launcher import start_daemon
@@ -154,11 +163,56 @@ def _start_infrastructure() -> None:
     os.environ["APME_GALAXY_PROXY_URL"] = proxy_url
     os.environ["OPA_USE_PODMAN"] = "0"
 
+    # --- Gateway (gRPC reporting + REST API) ---
+    gateway_grpc_port = _free_port()
+    gateway_http_port = _free_port()
+    gateway_db_path = str(Path(data_dir) / "gateway.db")
+    gateway_env = {
+        **os.environ,
+        "APME_DB_PATH": gateway_db_path,
+        "APME_GATEWAY_GRPC_LISTEN": f"127.0.0.1:{gateway_grpc_port}",
+        "APME_GATEWAY_HTTP_HOST": "127.0.0.1",
+        "APME_GATEWAY_HTTP_PORT": str(gateway_http_port),
+    }
+    gateway_stderr = Path(data_dir) / "gateway_stderr.log"
+    gateway_stderr_fh = open(gateway_stderr, "w")  # noqa: SIM115
+    gateway_proc = subprocess.Popen(
+        [sys.executable, "-m", "apme_gateway.main"],
+        stdout=subprocess.DEVNULL,
+        stderr=gateway_stderr_fh,
+        env=gateway_env,
+    )
+    if not _wait_for_port(gateway_grpc_port):
+        gateway_proc.terminate()
+        gateway_proc.wait(timeout=5)
+        gateway_stderr_fh.close()
+        proxy_proc.terminate()
+        proxy_proc.wait(timeout=5)
+        _restore_env(original_env)
+        pytest.exit(
+            f"Gateway did not start on port {gateway_grpc_port}: {gateway_stderr.read_text()[:2000]}",
+            returncode=2,
+        )
+        return
+
+    LOGGER.warning(
+        "Gateway ready gRPC=%d HTTP=%d DB=%s (pid %d)",
+        gateway_grpc_port,
+        gateway_http_port,
+        gateway_db_path,
+        gateway_proc.pid,
+    )
+
+    os.environ["APME_REPORTING_ENDPOINT"] = f"127.0.0.1:{gateway_grpc_port}"
+    os.environ["APME_DB_PATH"] = gateway_db_path
+
     LOGGER.warning("Starting APME daemon (data_dir=%s)", data_dir)
 
     try:
         state = start_daemon(include_optional=True)
     except RuntimeError as exc:
+        gateway_proc.terminate()
+        gateway_proc.wait(timeout=5)
         proxy_proc.terminate()
         proxy_proc.wait(timeout=5)
         _restore_env(original_env)
@@ -172,12 +226,15 @@ def _start_infrastructure() -> None:
         primary_address=state.primary,
         data_dir=data_dir,
         proxy_process=proxy_proc,
+        gateway_process=gateway_proc,
+        gateway_db_path=gateway_db_path,
+        gateway_http_url=f"http://127.0.0.1:{gateway_http_port}",
         original_env=original_env,
     )
 
 
 def _stop_infrastructure() -> None:
-    """Stop daemon and proxy, restore saved environment variables."""
+    """Stop daemon, gateway, and proxy, restore saved environment variables."""
     global INFRASTRUCTURE  # noqa: PLW0603
 
     if INFRASTRUCTURE is None:
@@ -190,6 +247,15 @@ def _stop_infrastructure() -> None:
         stop_daemon()
     except Exception:
         LOGGER.exception("Error stopping daemon")
+
+    if INFRASTRUCTURE.gateway_process is not None:
+        LOGGER.warning("Stopping gateway")
+        INFRASTRUCTURE.gateway_process.terminate()
+        try:
+            INFRASTRUCTURE.gateway_process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            INFRASTRUCTURE.gateway_process.kill()
+            INFRASTRUCTURE.gateway_process.wait()
 
     if INFRASTRUCTURE.proxy_process is not None:
         LOGGER.warning("Stopping galaxy proxy")

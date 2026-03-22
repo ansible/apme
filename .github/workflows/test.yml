@@ -19,7 +19,7 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - uses: astral-sh/setup-uv@e06108dd0aef18192324c70427afc47652e63a82 # v7
-      - run: uv sync --extra dev --extra proxy
+      - run: uv sync --extra dev --extra proxy --extra gateway
       - run: uv run pytest --cov=src/apme_engine --cov-report=term-missing --cov-fail-under=36
       - name: Fail if git reports dirty
         run: |
@@ -40,7 +40,7 @@ jobs:
             https://openpolicyagent.org/downloads/latest/opa_linux_amd64_static
           chmod +x /usr/local/bin/opa
           opa version
-      - run: uv sync --extra dev --extra proxy
+      - run: uv sync --extra dev --extra proxy --extra gateway
       - run: uv run pytest -m integration tests/integration/test_daemon_pipeline.py -v --tb=long
         env:
           OPA_USE_PODMAN: "0"

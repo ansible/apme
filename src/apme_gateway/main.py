@@ -37,13 +37,19 @@ async def _run_grpc(listen: str, stop_event: asyncio.Event) -> None:
     server = grpc.aio.server()
     reporting_pb2_grpc.add_ReportingServicer_to_server(ReportingServicer(), server)  # type: ignore[no-untyped-call]
 
-    from grpc_health.v1 import health, health_pb2_grpc
+    from grpc_health.v1 import health, health_pb2, health_pb2_grpc
 
     health_servicer = health.aio.HealthServicer()  # type: ignore[attr-defined]
     health_pb2_grpc.add_HealthServicer_to_server(health_servicer, server)
 
     server.add_insecure_port(listen)
     await server.start()
+
+    await health_servicer.set(
+        "",
+        health_pb2.HealthCheckResponse.SERVING,
+    )
+
     logger.info("gRPC Reporting server listening on %s", listen)
     await stop_event.wait()
     await server.stop(grace=5)
@@ -83,8 +89,11 @@ async def _run() -> None:
     stop_event = asyncio.Event()
 
     loop = asyncio.get_running_loop()
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, stop_event.set)
+    try:
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            loop.add_signal_handler(sig, stop_event.set)
+    except NotImplementedError:
+        logger.warning("Signal handlers not supported on this platform")
 
     logger.info(
         "APME Gateway starting — gRPC=%s  HTTP=%s:%d  DB=%s",

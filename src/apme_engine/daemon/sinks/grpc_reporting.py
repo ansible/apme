@@ -38,9 +38,10 @@ class GrpcReportingSink:
         self._health_task: asyncio.Task[None] | None = None
 
     async def start(self) -> None:
-        """Open channel, create stub, and launch health-check loop."""
+        """Open channel, create stub, probe once, then launch health-check loop."""
         self._channel = grpc.aio.insecure_channel(self._endpoint)
         self._stub = reporting_pb2_grpc.ReportingStub(self._channel)  # type: ignore[no-untyped-call]
+        await self._probe()
         self._health_task = asyncio.create_task(self._health_loop())
 
     async def stop(self) -> None:
@@ -80,25 +81,29 @@ class GrpcReportingSink:
             self._available = False
             logger.warning("Failed to emit FixCompletedEvent scan_id=%s", event.scan_id)
 
-    async def _health_loop(self) -> None:
-        """Periodically probe the endpoint via gRPC health check.
+    async def _probe(self) -> None:
+        """Single gRPC health probe — sets ``_available`` accordingly.
 
         Raises:
             asyncio.CancelledError: Re-raised for clean task cancellation.
         """
         from grpc_health.v1 import health_pb2, health_pb2_grpc
 
+        try:
+            stub = health_pb2_grpc.HealthStub(self._channel)
+            await stub.Check(health_pb2.HealthCheckRequest(), timeout=5)
+            if not self._available:
+                logger.info("Reporting endpoint available: %s", self._endpoint)
+            self._available = True
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            if self._available:
+                logger.warning("Reporting endpoint unavailable: %s", self._endpoint)
+            self._available = False
+
+    async def _health_loop(self) -> None:
+        """Periodically probe the endpoint via gRPC health check."""
         while True:
-            try:
-                stub = health_pb2_grpc.HealthStub(self._channel)
-                await stub.Check(health_pb2.HealthCheckRequest(), timeout=5)
-                if not self._available:
-                    logger.info("Reporting endpoint available: %s", self._endpoint)
-                self._available = True
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                if self._available:
-                    logger.warning("Reporting endpoint unavailable: %s", self._endpoint)
-                self._available = False
             await asyncio.sleep(_HEALTH_INTERVAL_S)
+            await self._probe()

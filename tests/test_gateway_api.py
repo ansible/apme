@@ -29,15 +29,16 @@ async def _db(tmp_path: Path) -> AsyncIterator[None]:
 
 
 @pytest.fixture  # type: ignore[untyped-decorator]
-def client() -> AsyncClient:
+async def client() -> AsyncIterator[AsyncClient]:
     """Build an async test client for the gateway app.
 
-    Returns:
-        AsyncClient bound to the ASGI app.
+    Yields:
+        AsyncClient: Client bound to the ASGI app.
     """
     app = create_app()
     transport = ASGITransport(app=app)
-    return AsyncClient(transport=transport, base_url="http://test")
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        yield c
 
 
 async def _seed(

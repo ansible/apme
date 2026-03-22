@@ -30,6 +30,8 @@ spec:
           value: "127.0.0.1:50056"
         - name: APME_GALAXY_PROXY_URL
           value: "http://127.0.0.1:8765"
+        - name: APME_REPORTING_ENDPOINT
+          value: "127.0.0.1:50060"
       ports:
         - containerPort: 50051
           hostPort: 50051
@@ -74,6 +76,25 @@ spec:
       ports:
         - containerPort: 50056
           hostPort: 50056
+    - name: gateway
+      image: apme-gateway:latest
+      env:
+        - name: APME_DB_PATH
+          value: "/data/apme.db"
+        - name: APME_GATEWAY_GRPC_LISTEN
+          value: "0.0.0.0:50060"
+        - name: APME_GATEWAY_HTTP_HOST
+          value: "0.0.0.0"
+        - name: APME_GATEWAY_HTTP_PORT
+          value: "8080"
+      ports:
+        - containerPort: 50060
+          hostPort: 50060
+        - containerPort: 8080
+          hostPort: 8080
+      volumeMounts:
+        - name: gateway-data
+          mountPath: /data
     - name: galaxy-proxy
       image: apme-galaxy-proxy:latest
       ports:
@@ -83,6 +104,10 @@ spec:
         - name: proxy-cache
           mountPath: /cache
   volumes:
+    - name: gateway-data
+      hostPath:
+        path: __APME_CACHE_PATH__/gateway
+        type: DirectoryOrCreate
     - name: sessions
       hostPath:
         path: __APME_CACHE_PATH__/sessions

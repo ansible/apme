@@ -178,9 +178,7 @@ async def test_report_scan_updates_session_last_seen() -> None:
 async def test_report_scan_with_summary() -> None:
     """Summary fields are extracted from the event."""
     servicer = ReportingServicer()
-    summary = common_pb2.ScanSummary(
-        total=10, auto_fixable=3, ai_candidate=4, manual_review=3
-    )
+    summary = common_pb2.ScanSummary(total=10, auto_fixable=3, ai_candidate=4, manual_review=3)
     event = reporting_pb2.ScanCompletedEvent(
         scan_id="s1",
         session_id="sess-1",
