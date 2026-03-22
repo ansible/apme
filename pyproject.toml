@@ -30,6 +30,12 @@ proxy = [
     "fastapi>=0.100",
     "uvicorn[standard]>=0.20",
 ]
+gateway = [
+    "fastapi>=0.100",
+    "uvicorn[standard]>=0.20",
+    "sqlalchemy>=2.0",
+    "aiosqlite>=0.20",
+]
 dev = [
     "pytest",
     "pytest-cov",
@@ -74,6 +80,7 @@ apme-native-validator = "apme_engine.daemon.native_validator_main:main"
 apme-opa-validator = "apme_engine.daemon.opa_validator_main:main"
 apme-gitleaks-validator = "apme_engine.daemon.gitleaks_validator_main:main"
 galaxy-proxy = "galaxy_proxy.cli:main"
+apme-gateway = "apme_gateway.main:main"
 
 [tool.ruff]
 target-version = "py310"
@@ -103,6 +110,11 @@ exclude = ["src/apme/v1/.*_pb2"]
 module = ["galaxy_proxy", "galaxy_proxy.*"]
 disallow_any_explicit = false
 
+# Gateway DB layer: SQLAlchemy mapped columns use generic types.
+[[tool.mypy.overrides]]
+module = ["apme_gateway", "apme_gateway.*"]
+disallow_any_explicit = false
+
 # httpx stubs type Response.content as bytes; ignore is for ambiguous/alternate stubs.
 [[tool.mypy.overrides]]
 module = "galaxy_proxy.galaxy_client"
@@ -129,6 +141,12 @@ module = [
     "fastapi.*",
     "uvicorn",
     "uvicorn.*",
+    "sqlalchemy",
+    "sqlalchemy.*",
+    "aiosqlite",
+    "aiosqlite.*",
+    "pydantic",
+    "pydantic.*",
 ]
 ignore_missing_imports = true
 
