@@ -75,16 +75,15 @@ async def _persist_event(
         violations_orm = []
         for v in event.violations:
             line_val = None
-            if v.HasField("line_oneof"):
-                variant = v.WhichOneof("line_oneof")
-                if variant == "line":
-                    line_val = v.line
-                elif variant == "line_range":
-                    line_val = v.line_range.start
+            variant = v.WhichOneof("line_oneof")
+            if variant == "line":
+                line_val = v.line
+            elif variant == "line_range":
+                line_val = v.line_range.start
 
             violations_orm.append(
                 Violation(
-                    id=uuid.uuid4().hex[:16],
+                    id=uuid.uuid4().hex,
                     scan_id=event.scan_id,
                     rule_id=v.rule_id,
                     level=v.level,

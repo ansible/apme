@@ -78,7 +78,7 @@ async def ingest_scan_completed(
 
     violations_orm = [
         Violation(
-            id=uuid.uuid4().hex[:16],
+            id=uuid.uuid4().hex,
             scan_id=event.scan_id,
             rule_id=v.rule_id,
             level=v.level,

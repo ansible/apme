@@ -24,7 +24,7 @@ echo "Stopping UI containers..."
 podman rm -f apme-gateway apme-ui 2>/dev/null || true
 
 echo "Cleaning up CLI containers..."
-for c in $(podman ps -a --format '{{.Names}}' 2>/dev/null | grep '^apme-cli-'); do
+for c in $(podman ps -a --format '{{.Names}}' 2>/dev/null | grep '^apme-cli-' || true); do
   podman rm -f "$c" 2>/dev/null || true
 done
 

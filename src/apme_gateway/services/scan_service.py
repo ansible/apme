@@ -162,7 +162,7 @@ async def trigger_scan(
         collection_specs: Optional Galaxy collection specs.
 
     Returns:
-        The scan_id that Primary assigned to this scan.
+        The gateway-generated scan_id sent to Primary.
 
     Raises:
         FileNotFoundError: If project_path does not exist.

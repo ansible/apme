@@ -52,7 +52,7 @@ def publish(event: ScanCompletedEvent) -> None:
     if not _subscribers:
         return
 
-    for q in _subscribers:
+    for q in list(_subscribers):
         try:
             q.put_nowait(event)
         except asyncio.QueueFull:
