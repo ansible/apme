@@ -57,6 +57,10 @@ class SessionState:
         ai_proposals: Raw engine AI proposals for downstream use.
         remaining_ai: Remaining AI-candidate violations.
         remaining_manual: Remaining manual-review violations.
+        approved_ids: Set of proposal IDs approved by the user.
+        approved_proposals: Metadata snapshots of approved proposals.
+        scan_id: Client-provided scan identifier for event correlation.
+        project_root: Project root path from the first upload chunk.
     """
 
     session_id: str
@@ -84,6 +88,12 @@ class SessionState:
 
     # Proposal IDs approved by the user (for FixCompletedEvent)
     approved_ids: set[str] = field(default_factory=set)
+    # Metadata snapshots of approved proposals (rule_id, file, tier, confidence)
+    approved_proposals: list[dict[str, object]] = field(default_factory=list)
+
+    # Identifiers captured from the first upload chunk for event emission
+    scan_id: str = ""
+    project_root: str = ""
 
     @property
     def ttl_seconds(self) -> int:

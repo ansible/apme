@@ -8,6 +8,7 @@ When it recovers, emission resumes automatically.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 
 import grpc
@@ -25,6 +26,11 @@ class GrpcReportingSink:
     """Pushes ScanCompleted / FixCompleted events to a gRPC Reporting service."""
 
     def __init__(self, endpoint: str) -> None:
+        """Initialize with target endpoint.
+
+        Args:
+            endpoint: ``host:port`` of the Reporting gRPC service.
+        """
         self._endpoint = endpoint
         self._channel: grpc.aio.Channel | None = None
         self._stub: reporting_pb2_grpc.ReportingStub | None = None
@@ -34,18 +40,24 @@ class GrpcReportingSink:
     async def start(self) -> None:
         """Open channel, create stub, and launch health-check loop."""
         self._channel = grpc.aio.insecure_channel(self._endpoint)
-        self._stub = reporting_pb2_grpc.ReportingStub(self._channel)
+        self._stub = reporting_pb2_grpc.ReportingStub(self._channel)  # type: ignore[no-untyped-call]
         self._health_task = asyncio.create_task(self._health_loop())
 
     async def stop(self) -> None:
         """Cancel health loop and close channel."""
         if self._health_task:
             self._health_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._health_task
         if self._channel:
             await self._channel.close(grace=None)
 
     async def on_scan_completed(self, event: reporting_pb2.ScanCompletedEvent) -> None:
-        """Push scan event; silently skip if endpoint is unavailable."""
+        """Push scan event; silently skip if endpoint is unavailable.
+
+        Args:
+            event: Completed scan event to deliver.
+        """
         if not self._available or self._stub is None:
             return
         try:
@@ -55,7 +67,11 @@ class GrpcReportingSink:
             logger.warning("Failed to emit ScanCompletedEvent scan_id=%s", event.scan_id)
 
     async def on_fix_completed(self, event: reporting_pb2.FixCompletedEvent) -> None:
-        """Push fix event; silently skip if endpoint is unavailable."""
+        """Push fix event; silently skip if endpoint is unavailable.
+
+        Args:
+            event: Completed fix event to deliver.
+        """
         if not self._available or self._stub is None:
             return
         try:
@@ -65,7 +81,11 @@ class GrpcReportingSink:
             logger.warning("Failed to emit FixCompletedEvent scan_id=%s", event.scan_id)
 
     async def _health_loop(self) -> None:
-        """Periodically probe the endpoint via gRPC health check."""
+        """Periodically probe the endpoint via gRPC health check.
+
+        Raises:
+            asyncio.CancelledError: Re-raised for clean task cancellation.
+        """
         from grpc_health.v1 import health_pb2, health_pb2_grpc
 
         while True:
@@ -75,6 +95,8 @@ class GrpcReportingSink:
                 if not self._available:
                     logger.info("Reporting endpoint available: %s", self._endpoint)
                 self._available = True
+            except asyncio.CancelledError:
+                raise
             except Exception:
                 if self._available:
                     logger.warning("Reporting endpoint unavailable: %s", self._endpoint)
