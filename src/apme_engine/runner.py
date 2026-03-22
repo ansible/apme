@@ -27,7 +27,6 @@ def run_scan_playbook_yaml(
         ScanContext with hierarchy_payload and optionally scandata.
 
     """
-    project_root or os.path.expanduser("~/.apme-data")
     with tempfile.TemporaryDirectory(prefix="apme_rule_doc_") as tmpdir:
         playbook_path = os.path.join(tmpdir, "playbook.yml")
         with open(playbook_path, "w") as f:

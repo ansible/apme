@@ -44,9 +44,6 @@ def main() -> None:
         from apme_engine.cli.health import run_health_check
 
         run_health_check(args)
-    elif cmd == "session":
-        sys.stderr.write("Session management via gRPC is not yet implemented.\n")
-        sys.exit(1)
     else:
         parser.print_help()
         sys.exit(1)

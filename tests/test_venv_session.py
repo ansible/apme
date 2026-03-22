@@ -7,10 +7,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from apme_engine.collection_cache.venv_session import VenvSessionManager
+from apme_engine.venv.session import VenvSessionManager
 
-_PATCH_CREATE = "apme_engine.collection_cache.venv_session.create_base_venv"
-_PATCH_INSTALL = "apme_engine.collection_cache.venv_session.install_collections_incremental"
+_PATCH_CREATE = "apme_engine.venv.session.create_base_venv"
+_PATCH_INSTALL = "apme_engine.venv.session.install_collections_incremental"
 
 
 def _fake_create_base_venv(venv_dir: Path, ansible_core_version: str, **_kw: object) -> None:

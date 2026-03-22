@@ -23,10 +23,10 @@ from typing import cast
 
 import pytest
 
-from apme_engine.collection_cache.venv_session import VenvSession, VenvSessionManager, _venv_site_packages
 from apme_engine.runner import run_scan
 from apme_engine.validators.native import NativeValidator
 from apme_engine.validators.opa import OpaValidator
+from apme_engine.venv.session import VenvSession, VenvSessionManager, _venv_site_packages
 
 _SESSION_ID = "e2e-integration-shared"
 _CORE_VERSION = "2.18.0"

@@ -143,11 +143,4 @@ def build_parser() -> argparse.ArgumentParser:
     health_p.add_argument("--timeout", type=float, default=5.0, help="Timeout per check (default: 5s)")
     health_p.add_argument("--json", action="store_true", help="Output as JSON")
 
-    # ── session (stub) ──
-    subparsers.add_parser(
-        "session",
-        parents=[global_opts],
-        help="Manage named venv sessions (not yet available via gRPC)",
-    )
-
     return parser

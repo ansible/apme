@@ -17,7 +17,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
-import grpc
 import grpc.aio
 
 from apme.v1 import common_pb2, validate_pb2, validate_pb2_grpc
@@ -141,7 +140,7 @@ def _run_ansible_validate(
 
 
 class AnsibleValidatorServicer(validate_pb2_grpc.ValidatorServicer):
-    """Async gRPC adapter: builds/reuses cached venv, runs AnsibleValidator."""
+    """Async gRPC adapter: runs AnsibleValidator against a session venv from Primary."""
 
     async def Validate(self, request: ValidateRequest, context: grpc.aio.ServicerContext) -> ValidateResponse:  # type: ignore[type-arg]
         """Handle Validate RPC: run AnsibleValidator against session venv.
