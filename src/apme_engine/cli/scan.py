@@ -23,6 +23,8 @@ from apme_engine.cli.output import (
 )
 from apme_engine.daemon.chunked_fs import yield_scan_chunks
 
+_SAFE_SESSION_RE = __import__("re").compile(r"^[A-Za-z0-9_\-]+$")
+
 
 def _resolve_session_id(args: argparse.Namespace) -> str:
     """Resolve the session ID from CLI args or project root discovery.
@@ -32,9 +34,18 @@ def _resolve_session_id(args: argparse.Namespace) -> str:
 
     Returns:
         Session ID string.
+
+    Raises:
+        SystemExit: If explicit --session value contains invalid characters.
     """
     explicit: str | None = getattr(args, "session", None)
     if explicit:
+        if not _SAFE_SESSION_RE.match(explicit):
+            sys.stderr.write(
+                f"Error: --session value {explicit!r} is invalid. "
+                "Must contain only letters, digits, hyphens, and underscores.\n"
+            )
+            raise SystemExit(2)
         return explicit
     target: str = getattr(args, "target", ".")
     project_root = discover_project_root(target)

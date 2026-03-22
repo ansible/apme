@@ -58,7 +58,7 @@ def build_parser() -> argparse.ArgumentParser:
     scan_p.add_argument(
         "--session",
         default=None,
-        help="Session ID for venv reuse (default: hash of project root)",
+        help="Session ID for venv reuse; [A-Za-z0-9_-] only (default: hash of project root)",
     )
 
     # ── format ──
@@ -74,7 +74,7 @@ def build_parser() -> argparse.ArgumentParser:
     fmt_p.add_argument(
         "--session",
         default=None,
-        help="Session ID for venv reuse (default: hash of project root)",
+        help="Session ID for venv reuse; [A-Za-z0-9_-] only (default: hash of project root)",
     )
 
     # ── fix ──
@@ -120,7 +120,7 @@ def build_parser() -> argparse.ArgumentParser:
     fix_p.add_argument(
         "--session",
         default=None,
-        help="Session ID for venv reuse (default: hash of project root)",
+        help="Session ID for venv reuse; [A-Za-z0-9_-] only (default: hash of project root)",
     )
 
     # ── daemon ──

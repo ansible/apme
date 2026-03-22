@@ -96,27 +96,38 @@ def galaxy_proxy_url(tmp_path_factory: pytest.TempPathFactory) -> Generator[str,
 
 
 @pytest.fixture(scope="module")  # type: ignore[untyped-decorator]
+def session_mgr(tmp_path_factory: pytest.TempPathFactory) -> VenvSessionManager:
+    """Create a VenvSessionManager with a temp sessions root.
+
+    Args:
+        tmp_path_factory: Pytest temp path factory.
+
+    Returns:
+        VenvSessionManager instance.
+    """
+    sessions_root = tmp_path_factory.mktemp("sessions")
+    return VenvSessionManager(sessions_root=sessions_root, ttl_seconds=3600)
+
+
+@pytest.fixture(scope="module")  # type: ignore[untyped-decorator]
 def session_venv(
-    tmp_path_factory: pytest.TempPathFactory,
+    session_mgr: VenvSessionManager,
     galaxy_proxy_url: str,
 ) -> VenvSession:
     """Acquire a session venv once for the entire module (cold start).
 
     Args:
-        tmp_path_factory: Pytest temp path factory.
+        session_mgr: Shared VenvSessionManager.
         galaxy_proxy_url: URL of the running galaxy proxy.
 
     Returns:
         VenvSession with ansible-core and collections installed.
     """
-    sessions_root = tmp_path_factory.mktemp("sessions")
-    mgr = VenvSessionManager(sessions_root=sessions_root, ttl_seconds=3600)
-
     old_env = os.environ.get("APME_GALAXY_PROXY_URL", "")
     os.environ["APME_GALAXY_PROXY_URL"] = galaxy_proxy_url
     try:
         t0 = time.monotonic()
-        session = mgr.acquire(_SESSION_ID, _CORE_VERSION, _COLLECTIONS)
+        session = session_mgr.acquire(_SESSION_ID, _CORE_VERSION, _COLLECTIONS)
         elapsed = time.monotonic() - t0
         sys.stderr.write(f"\n[e2e] Cold start venv acquire: {elapsed:.1f}s\n")
         sys.stderr.flush()
@@ -129,20 +140,6 @@ def session_venv(
     assert session.venv_root.is_dir()
     assert session.installed_collections == sorted(_COLLECTIONS)
     return session
-
-
-@pytest.fixture(scope="module")  # type: ignore[untyped-decorator]
-def session_mgr(session_venv: VenvSession) -> VenvSessionManager:
-    """Return a VenvSessionManager pointing at the shared sessions root.
-
-    Args:
-        session_venv: The session venv fixture (ensures cold start happened).
-
-    Returns:
-        VenvSessionManager instance.
-    """
-    sessions_root = session_venv.venv_root.parent.parent.parent
-    return VenvSessionManager(sessions_root=sessions_root, ttl_seconds=3600)
 
 
 @pytest.fixture(scope="module")  # type: ignore[untyped-decorator]
@@ -163,17 +160,31 @@ def dep_dir(session_venv: VenvSession) -> str:
 # ---------------------------------------------------------------------------
 
 
-def test_warm_acquire_is_fast(session_mgr: VenvSessionManager) -> None:
+def test_warm_acquire_is_fast(
+    session_venv: VenvSession,
+    session_mgr: VenvSessionManager,
+    galaxy_proxy_url: str,
+) -> None:
     """Re-acquiring the same session+version+collections is near-instant.
 
     Args:
+        session_venv: Ensures cold start happened first.
         session_mgr: Shared VenvSessionManager.
+        galaxy_proxy_url: URL of the running galaxy proxy.
     """
-    t0 = time.monotonic()
-    warm = session_mgr.acquire(_SESSION_ID, _CORE_VERSION, _COLLECTIONS)
-    elapsed_ms = (time.monotonic() - t0) * 1000
-    sys.stderr.write(f"[e2e] Warm acquire: {elapsed_ms:.1f}ms\n")
-    sys.stderr.flush()
+    old_env = os.environ.get("APME_GALAXY_PROXY_URL", "")
+    os.environ["APME_GALAXY_PROXY_URL"] = galaxy_proxy_url
+    try:
+        t0 = time.monotonic()
+        warm = session_mgr.acquire(_SESSION_ID, _CORE_VERSION, _COLLECTIONS)
+        elapsed_ms = (time.monotonic() - t0) * 1000
+        sys.stderr.write(f"[e2e] Warm acquire: {elapsed_ms:.1f}ms\n")
+        sys.stderr.flush()
+    finally:
+        if old_env:
+            os.environ["APME_GALAXY_PROXY_URL"] = old_env
+        else:
+            os.environ.pop("APME_GALAXY_PROXY_URL", None)
 
     assert warm.venv_root.is_dir()
     assert set(warm.installed_collections) >= set(_COLLECTIONS), (

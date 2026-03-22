@@ -149,7 +149,7 @@ The Ansible container receives session-scoped venvs via the `/sessions` volume (
 
 Collections are installed into the venv's `site-packages/ansible_collections/` directory by `uv pip install` through the Galaxy Proxy — they're on the Python path natively (no `ANSIBLE_COLLECTIONS_PATH` or `ansible.cfg` needed).
 
-When no `venv_path` is provided (e.g., standalone testing), the validator falls back to building an ephemeral venv locally.
+The Ansible validator requires a `venv_path` from the Primary orchestrator. If none is provided (e.g., standalone testing without Primary), the validator returns an infrastructure error and skips validation.
 
 ## Local development (daemon mode)
 

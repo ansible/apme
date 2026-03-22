@@ -91,7 +91,7 @@ def _run_ansible_validate(
             sys.stderr.write(f"[req={req_id}] Ansible: no venv_path provided, skipping\n")
             sys.stderr.flush()
             err_viol: ViolationDict = {
-                "rule_id": "L057",
+                "rule_id": "INFRA-001",
                 "level": "error",
                 "message": "No session venv provided by Primary orchestrator",
                 "file": "",
@@ -123,7 +123,7 @@ def _run_ansible_validate(
         traceback.print_exc(file=sys.stderr)
         sys.stderr.flush()
         err_viol_exc: ViolationDict = {
-            "rule_id": "L057",
+            "rule_id": "INFRA-002",
             "level": "error",
             "message": str(e),
             "file": "",
