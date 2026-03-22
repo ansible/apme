@@ -73,11 +73,11 @@ def create_app(
 
     app = FastAPI(title="Ansible Collection Proxy", version="0.1.0", lifespan=lifespan)
 
-    @app.get("/health")  # type: ignore[untyped-decorator]
+    @app.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "ok"}
 
-    @app.get("/simple/", response_class=HTMLResponse)  # type: ignore[untyped-decorator]
+    @app.get("/simple/", response_class=HTMLResponse)
     async def root_index() -> str:
         """Root index page.
 
@@ -95,7 +95,7 @@ def create_app(
             "</body></html>\n"
         )
 
-    @app.get("/simple/{package_name}/", response_class=HTMLResponse)  # type: ignore[untyped-decorator]
+    @app.get("/simple/{package_name}/", response_class=HTMLResponse)
     async def project_page(package_name: str) -> HTMLResponse:
         """PEP 503 project page listing available versions.
 
@@ -152,7 +152,7 @@ def create_app(
         html = "<!DOCTYPE html>\n<html><body>\n" + "\n".join(links) + "\n</body></html>\n"
         return HTMLResponse(content=html)
 
-    @app.get("/wheels/{filename}")  # type: ignore[untyped-decorator]
+    @app.get("/wheels/{filename}")
     async def serve_wheel(filename: str) -> Response:
         """Serve a wheel file, converting from Galaxy tarball on cache miss.
 

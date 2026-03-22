@@ -44,11 +44,6 @@ jobs:
       - run: uv run pytest -m integration tests/integration/test_daemon_pipeline.py -v --tb=long
         env:
           OPA_USE_PODMAN: "0"
-      - name: Retry integration on timeout
-        if: failure()
-        run: uv run pytest -m integration tests/integration/test_daemon_pipeline.py -v --tb=long
-        env:
-          OPA_USE_PODMAN: "0"
 
   test-ai-extra:
     runs-on: ubuntu-24.04
