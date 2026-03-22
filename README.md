@@ -62,10 +62,10 @@ pip install -r requirements.txt
 pip install -e ".[dev]"
 
 # Run a scan
-apme-scan /path/to/playbook-or-project
+apme-scan scan /path/to/playbook-or-project
 
 # JSON output
-apme-scan --json .
+apme-scan scan --json .
 
 # Diagnostics: summary + top 10 slowest rules
 apme-scan scan -v .
@@ -106,7 +106,7 @@ cd /path/to/your/project
 /path/to/apme/containers/podman/run-cli.sh
 
 # With options
-containers/podman/run-cli.sh --json .
+containers/podman/run-cli.sh scan --json .
 ```
 
 ### Health check
