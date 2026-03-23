@@ -703,6 +703,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         temp_dir: Path | None = None
 
         queue: asyncio.Queue[ProgressUpdate] = asyncio.Queue()
+        streamed_entries: list[ProgressUpdate] = []
 
         with attach_stream_sink(queue):
             try:
@@ -736,14 +737,20 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                 while not pipeline_task.done():
                     try:
                         entry = await asyncio.wait_for(queue.get(), timeout=0.25)
+                        streamed_entries.append(entry)
                         yield ScanEvent(progress=entry)
                     except asyncio.TimeoutError:
                         continue
 
                 while not queue.empty():
-                    yield ScanEvent(progress=queue.get_nowait())
+                    entry = queue.get_nowait()
+                    streamed_entries.append(entry)
+                    yield ScanEvent(progress=entry)
 
                 violations, diag, resolved_sid, vlogs = pipeline_task.result()
+
+                for vlog in vlogs:
+                    yield ScanEvent(progress=vlog)
 
                 from apme_engine.remediation.partition import add_classification_to_violations
                 from apme_engine.remediation.transforms import build_default_registry
@@ -763,7 +770,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                     by_resolution=res_counts,
                 )
 
-                all_logs = merge_logs([], vlogs)
+                all_logs = merge_logs(streamed_entries, vlogs)
                 proto_violations = [violation_dict_to_proto(v) for v in violations]
 
                 asyncio.create_task(
