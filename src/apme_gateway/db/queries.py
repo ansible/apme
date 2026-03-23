@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import cast
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -187,3 +187,76 @@ async def get_proposals(db: AsyncSession, scan_id: str) -> list[Proposal]:
     stmt = select(Proposal).where(Proposal.scan_id == scan_id).order_by(Proposal.id)
     result = await db.execute(stmt)
     return list(result.scalars().all())
+
+
+async def session_trend(db: AsyncSession, session_id: str) -> list[Scan]:
+    """Return scans for a session ordered by creation time (for trend charts).
+
+    Args:
+        db: Active async database session.
+        session_id: Session to query.
+
+    Returns:
+        List of Scan objects ordered chronologically.
+    """
+    stmt = select(Scan).where(Scan.session_id == session_id).order_by(Scan.created_at)
+    result = await db.execute(stmt)
+    return list(result.scalars().all())
+
+
+async def fix_rates(db: AsyncSession, *, limit: int = 20) -> list[tuple[str, int]]:
+    """Return the most frequently violated rules in fix-type scans.
+
+    Args:
+        db: Active async database session.
+        limit: Maximum rules to return.
+
+    Returns:
+        List of (rule_id, count) tuples sorted descending.
+    """
+    stmt = (
+        select(Violation.rule_id, func.count().label("cnt"))
+        .join(Scan, Violation.scan_id == Scan.scan_id)
+        .where(Scan.scan_type == "fix")
+        .group_by(Violation.rule_id)
+        .order_by(func.count().desc())
+        .limit(limit)
+    )
+    result = await db.execute(stmt)
+    return [(row[0], row[1]) for row in result.all()]
+
+
+async def ai_acceptance(db: AsyncSession) -> list[tuple[str, int, int, int, float]]:
+    """Return per-rule AI proposal acceptance statistics.
+
+    Args:
+        db: Active async database session.
+
+    Returns:
+        List of (rule_id, approved, rejected, pending, avg_confidence) tuples.
+    """
+    approved_expr = case((Proposal.status == "approved", 1), else_=0)
+    rejected_expr = case((Proposal.status == "rejected", 1), else_=0)
+    pending_expr = case((Proposal.status == "pending", 1), else_=0)
+    stmt = (
+        select(
+            Proposal.rule_id,
+            func.sum(approved_expr).label("approved"),
+            func.sum(rejected_expr).label("rejected"),
+            func.sum(pending_expr).label("pending"),
+            func.avg(Proposal.confidence).label("avg_conf"),
+        )
+        .group_by(Proposal.rule_id)
+        .order_by(func.count().desc())
+    )
+    result = await db.execute(stmt)
+    return [
+        (
+            row[0],
+            int(row[1] or 0),
+            int(row[2] or 0),
+            int(row[3] or 0),
+            float(row[4] or 0.0),
+        )
+        for row in result.all()
+    ]

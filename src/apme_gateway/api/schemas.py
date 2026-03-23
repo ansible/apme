@@ -181,6 +181,54 @@ class TopViolation(BaseModel):  # type: ignore[misc]
     count: int
 
 
+class TrendPoint(BaseModel):  # type: ignore[misc]
+    """Violation trend data point for a session.
+
+    Attributes:
+        scan_id: UUID of the scan run.
+        created_at: ISO 8601 timestamp.
+        total_violations: Total violation count.
+        auto_fixable: Count of auto-fixable violations.
+        scan_type: Either "scan" or "fix".
+    """
+
+    scan_id: str
+    created_at: str
+    total_violations: int
+    auto_fixable: int
+    scan_type: str
+
+
+class FixRateEntry(BaseModel):  # type: ignore[misc]
+    """Fix frequency for a specific rule.
+
+    Attributes:
+        rule_id: Rule identifier.
+        fix_count: Number of times this rule appeared in fix scans.
+    """
+
+    rule_id: str
+    fix_count: int
+
+
+class AiAcceptanceEntry(BaseModel):  # type: ignore[misc]
+    """AI proposal acceptance statistics per rule.
+
+    Attributes:
+        rule_id: Rule identifier.
+        approved: Count of approved proposals.
+        rejected: Count of rejected proposals.
+        pending: Count of pending proposals.
+        avg_confidence: Average AI confidence score.
+    """
+
+    rule_id: str
+    approved: int
+    rejected: int
+    pending: int
+    avg_confidence: float
+
+
 class PaginatedResponse(BaseModel):  # type: ignore[misc]
     """Wrapper for paginated list responses.
 

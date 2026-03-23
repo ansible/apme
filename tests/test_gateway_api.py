@@ -257,3 +257,50 @@ async def test_top_violations(client: AsyncClient) -> None:
     body = resp.json()
     assert body[0]["rule_id"] == "L001"
     assert body[0]["count"] == 2
+
+
+async def test_session_trend(client: AsyncClient) -> None:
+    """GET /sessions/{id}/trend returns trend points.
+
+    Args:
+        client: Async HTTP test client.
+    """
+    await _seed(session_id="trend-s", scan_id="ts1")
+    resp = await client.get("/api/v1/sessions/trend-s/trend")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert isinstance(data, list)
+    assert len(data) == 1
+    assert data[0]["scan_id"] == "ts1"
+
+
+async def test_session_trend_not_found(client: AsyncClient) -> None:
+    """GET /sessions/{id}/trend returns 404 for unknown session.
+
+    Args:
+        client: Async HTTP test client.
+    """
+    resp = await client.get("/api/v1/sessions/nope/trend")
+    assert resp.status_code == 404
+
+
+async def test_fix_rates(client: AsyncClient) -> None:
+    """GET /stats/fix-rates returns fix rate entries.
+
+    Args:
+        client: Async HTTP test client.
+    """
+    resp = await client.get("/api/v1/stats/fix-rates")
+    assert resp.status_code == 200
+    assert isinstance(resp.json(), list)
+
+
+async def test_ai_acceptance(client: AsyncClient) -> None:
+    """GET /stats/ai-acceptance returns acceptance entries.
+
+    Args:
+        client: Async HTTP test client.
+    """
+    resp = await client.get("/api/v1/stats/ai-acceptance")
+    assert resp.status_code == 200
+    assert isinstance(resp.json(), list)

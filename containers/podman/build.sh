@@ -11,4 +11,5 @@ podman build -t apme-gitleaks:latest -f containers/gitleaks/Dockerfile .
 podman build -t apme-galaxy-proxy:latest -f containers/galaxy-proxy/Dockerfile .
 podman build -t apme-gateway:latest -f containers/gateway/Dockerfile .
 podman build -t apme-cli:latest -f containers/cli/Dockerfile .
+podman build -t apme-ui:latest -f containers/ui/Dockerfile .
 echo "Images built. Start pod from repo root: podman play kube containers/podman/pod.yaml"

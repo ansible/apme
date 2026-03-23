@@ -95,6 +95,11 @@ spec:
       volumeMounts:
         - name: gateway-data
           mountPath: /data
+    - name: ui
+      image: apme-ui:latest
+      ports:
+        - containerPort: 8081
+          hostPort: 8081
     - name: galaxy-proxy
       image: apme-galaxy-proxy:latest
       ports:

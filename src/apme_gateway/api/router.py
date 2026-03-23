@@ -10,6 +10,8 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query
 
 from apme_gateway.api.schemas import (
+    AiAcceptanceEntry,
+    FixRateEntry,
     HealthStatus,
     LogEntry,
     PaginatedResponse,
@@ -19,6 +21,7 @@ from apme_gateway.api.schemas import (
     SessionDetail,
     SessionSummary,
     TopViolation,
+    TrendPoint,
     ViolationDetail,
 )
 from apme_gateway.db import get_session
@@ -220,6 +223,74 @@ async def top_violations(
     async with get_session() as db:
         rows = await q.top_violations(db, limit=limit)
     return [TopViolation(rule_id=rule_id, count=count) for rule_id, count in rows]
+
+
+@router.get("/sessions/{session_id}/trend")  # type: ignore[untyped-decorator]
+async def session_trend_endpoint(session_id: str) -> list[TrendPoint]:
+    """Return violation trend for a session over time.
+
+    Args:
+        session_id: Deterministic session hash.
+
+    Returns:
+        List of trend data points.
+
+    Raises:
+        HTTPException: 404 if session not found.
+    """
+    async with get_session() as db:
+        sess = await q.get_session(db, session_id)
+        if sess is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+        scans = await q.session_trend(db, session_id)
+    return [
+        TrendPoint(
+            scan_id=s.scan_id,
+            created_at=s.created_at,
+            total_violations=s.total_violations,
+            auto_fixable=s.auto_fixable,
+            scan_type=s.scan_type,
+        )
+        for s in scans
+    ]
+
+
+@router.get("/stats/fix-rates")  # type: ignore[untyped-decorator]
+async def fix_rates_endpoint(
+    limit: int = Query(default=20, ge=1, le=100),
+) -> list[FixRateEntry]:
+    """Return most frequently violated rules in fix scans.
+
+    Args:
+        limit: Maximum number of rules to return.
+
+    Returns:
+        List of rules sorted by fix count descending.
+    """
+    async with get_session() as db:
+        rows = await q.fix_rates(db, limit=limit)
+    return [FixRateEntry(rule_id=rule_id, fix_count=count) for rule_id, count in rows]
+
+
+@router.get("/stats/ai-acceptance")  # type: ignore[untyped-decorator]
+async def ai_acceptance_endpoint() -> list[AiAcceptanceEntry]:
+    """Return per-rule AI proposal acceptance statistics.
+
+    Returns:
+        List of rules with approval/rejection counts and confidence.
+    """
+    async with get_session() as db:
+        rows = await q.ai_acceptance(db)
+    return [
+        AiAcceptanceEntry(
+            rule_id=rule_id,
+            approved=approved,
+            rejected=rejected,
+            pending=pending,
+            avg_confidence=round(avg_conf, 3),
+        )
+        for rule_id, approved, rejected, pending, avg_conf in rows
+    ]
 
 
 def _scan_to_summary(scan: Scan) -> ScanSummary:

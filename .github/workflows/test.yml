@@ -50,6 +50,39 @@ jobs:
         env:
           OPA_USE_PODMAN: "0"
 
+  ui:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: astral-sh/setup-uv@e06108dd0aef18192324c70427afc47652e63a82 # v7
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install OPA binary
+        run: |
+          curl -fsSL -o /usr/local/bin/opa \
+            https://openpolicyagent.org/downloads/latest/opa_linux_amd64_static
+          chmod +x /usr/local/bin/opa
+      - run: uv sync --extra dev --extra proxy --extra gateway
+      - run: uv run playwright install --with-deps chromium
+      - name: Build and serve UI
+        run: |
+          cd frontend && npm ci && npm run build && cd ..
+          uv run python -m apme_gateway.main &
+          npx serve frontend/dist -l 8081 -s &
+          sleep 3
+        env:
+          APME_DB_PATH: /tmp/apme-ui-test.db
+          APME_GATEWAY_GRPC_LISTEN: 127.0.0.1:50060
+          APME_GATEWAY_HTTP_HOST: 127.0.0.1
+          APME_GATEWAY_HTTP_PORT: 8080
+      - run: uv run pytest -m ui tests/test_ui_playwright.py -v --tb=long
+        env:
+          APME_UI_URL: http://localhost:8081
+          APME_DB_PATH: /tmp/apme-ui-test.db
+          APME_GATEWAY_HTTP_HOST: 127.0.0.1
+          APME_GATEWAY_HTTP_PORT: 8080
+
   test-ai-extra:
     runs-on: ubuntu-24.04
     steps:

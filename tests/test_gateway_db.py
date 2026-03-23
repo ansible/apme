@@ -211,3 +211,136 @@ async def test_proposals_stored() -> None:
         props = await q.get_proposals(db, "scan-1")
     assert len(props) == 1
     assert props[0].status == "approved"
+
+
+async def test_session_trend() -> None:
+    """Trend returns scans in chronological order."""
+    async with get_session() as db:
+        db.add(Session(session_id="trend-s", project_path="/p", first_seen="t1", last_seen="t2"))
+        db.add(
+            Scan(
+                scan_id="t1",
+                session_id="trend-s",
+                project_path="/p",
+                created_at="2024-01-01T00:00:00Z",
+                scan_type="scan",
+                total_violations=10,
+                auto_fixable=3,
+            )
+        )
+        db.add(
+            Scan(
+                scan_id="t2",
+                session_id="trend-s",
+                project_path="/p",
+                created_at="2024-01-02T00:00:00Z",
+                scan_type="fix",
+                total_violations=5,
+                auto_fixable=2,
+            )
+        )
+        await db.commit()
+
+    async with get_session() as db:
+        rows = await q.session_trend(db, "trend-s")
+
+    assert len(rows) == 2
+    assert rows[0].scan_id == "t1"
+    assert rows[1].scan_id == "t2"
+    assert rows[0].total_violations == 10
+
+
+async def test_fix_rates() -> None:
+    """Fix rates counts violations in fix-type scans only."""
+    async with get_session() as db:
+        db.add(Session(session_id="fr-s", project_path="/p", first_seen="t1", last_seen="t2"))
+        db.add(
+            Scan(
+                scan_id="fr-scan",
+                session_id="fr-s",
+                project_path="/p",
+                created_at="t1",
+                scan_type="scan",
+                total_violations=2,
+            )
+        )
+        db.add(
+            Scan(
+                scan_id="fr-fix",
+                session_id="fr-s",
+                project_path="/p",
+                created_at="t2",
+                scan_type="fix",
+                total_violations=1,
+            )
+        )
+        db.add(Violation(scan_id="fr-scan", rule_id="L001", level="warning", message="m"))
+        db.add(Violation(scan_id="fr-fix", rule_id="L001", level="warning", message="m"))
+        db.add(Violation(scan_id="fr-fix", rule_id="L002", level="error", message="m"))
+        await db.commit()
+
+    async with get_session() as db:
+        rows = await q.fix_rates(db)
+
+    rule_ids = {r[0] for r in rows}
+    assert "L001" in rule_ids
+    assert "L002" in rule_ids
+    scan_only = [r for r in rows if r[0] == "L001"]
+    assert scan_only[0][1] == 1  # only the fix-scan violation counts
+
+
+async def test_ai_acceptance() -> None:
+    """AI acceptance aggregates proposal statuses per rule."""
+    async with get_session() as db:
+        db.add(Session(session_id="ai-s", project_path="/p", first_seen="t1", last_seen="t2"))
+        db.add(
+            Scan(
+                scan_id="ai-scan",
+                session_id="ai-s",
+                project_path="/p",
+                created_at="t1",
+                scan_type="fix",
+            )
+        )
+        db.add(
+            Proposal(
+                scan_id="ai-scan",
+                proposal_id="p1",
+                rule_id="L010",
+                tier=2,
+                confidence=0.9,
+                status="approved",
+            )
+        )
+        db.add(
+            Proposal(
+                scan_id="ai-scan",
+                proposal_id="p2",
+                rule_id="L010",
+                tier=2,
+                confidence=0.8,
+                status="rejected",
+            )
+        )
+        db.add(
+            Proposal(
+                scan_id="ai-scan",
+                proposal_id="p3",
+                rule_id="L010",
+                tier=3,
+                confidence=0.7,
+                status="pending",
+            )
+        )
+        await db.commit()
+
+    async with get_session() as db:
+        rows = await q.ai_acceptance(db)
+
+    assert len(rows) == 1
+    rule_id, approved, rejected, pending, avg_conf = rows[0]
+    assert rule_id == "L010"
+    assert approved == 1
+    assert rejected == 1
+    assert pending == 1
+    assert 0.79 < avg_conf < 0.81
