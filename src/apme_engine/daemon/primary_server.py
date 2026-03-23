@@ -749,8 +749,9 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
 
                 violations, diag, resolved_sid, vlogs = pipeline_task.result()
 
-                for vlog in vlogs:
-                    yield ScanEvent(progress=vlog)
+                for vlog_batch in vlogs:
+                    for vlog in vlog_batch:
+                        yield ScanEvent(progress=vlog)
 
                 from apme_engine.remediation.partition import add_classification_to_violations
                 from apme_engine.remediation.transforms import build_default_registry
