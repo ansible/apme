@@ -30,6 +30,7 @@ Enterprise Dashboard with ROI/Time-Saved reporting and Custom Policy engine. Sec
 |-----|------|--------|
 | REQ-003 | Security & Compliance | Draft |
 | REQ-004 | Enterprise Integration | Draft |
+| REQ-010 | Dependency & Collection Security Scanning | Draft |
 
 ## Dependencies
 
