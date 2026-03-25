@@ -95,6 +95,7 @@ Six app containers, one pod. All inter-service communication is gRPC. The Galaxy
 - **Structured diagnostics** — every validator reports per-rule timing data via the gRPC contract; use `-v` for summaries or `-vv` for full per-rule breakdowns.
 - **Galaxy Proxy** — converts Ansible Galaxy collection tarballs into pip-installable Python wheels (PEP 503/427); collections are `uv pip install`'d into session venvs, leveraging standard Python caching and dependency resolution.
 - **YAML formatter** — normalize indentation, key ordering, Jinja spacing, and tab removal with comment preservation. Idempotent by design; runs as a pre-pass before semantic fixes.
+- **SBOM generation (data model)** — CycloneDX 1.5 data model with PURL identifiers for Ansible collections, roles, and Python packages. Multi-error validation collects all findings without dropping components. Stdlib-only, zero external dependencies.
 - **Colocated tests** — every rule has a `*_test.py` (native), `*_test.rego` (OPA), or `.md` doc with violation/pass examples usable as integration tests.
 
 ## Quick start
@@ -261,6 +262,7 @@ src/apme_engine/
   │   └── gitleaks/     Gitleaks wrapper (SEC:* — secret detection)
   ├── daemon/           gRPC server implementations
   ├── venv_manager/     Session-scoped venv lifecycle (VenvSessionManager)
+  ├── sbom/             CycloneDX 1.5 SBOM data model + PURL + validation
   ├── remediation/      Tier 1 transforms + AI escalation
   ├── formatter.py      YAML formatter (phase 1 remediation)
   ├── cli/              CLI entry point (check, format, remediate, health-check)
@@ -321,6 +323,14 @@ tests/                  unit, integration, rule doc coverage
 - **Structured best practices**: curated Ansible guidelines injected into prompts for higher-quality fixes.
 - **Preflight checks**: auto-discover Abbenay daemon socket, health check before AI calls.
 - See [DESIGN_AI_ESCALATION.md](docs/DESIGN_AI_ESCALATION.md) for the full design.
+
+### Phase 5 — SBOM Generation (in progress)
+
+- **CycloneDX 1.5 data model** (done) — `Bom`, `Component`, `Dependency` dataclasses with NTIA minimum element compliance. PURL generation for Ansible collections (`pkg:generic/ns.name@ver`), roles, and Python packages (PEP 503 normalized).
+- **Multi-error validation** (done) — advisory validation that collects all findings (errors + warnings) without rejecting components. Duplicate `bom_ref` detection, actionable suggestions on every finding.
+- **Inventory collection** — discover installed collections, roles, and Python packages from the filesystem.
+- **JSON serialization** — CycloneDX 1.5 JSON output.
+- **CLI integration** — `--sbom` flag for BOM generation, `--validate` flag for validation reports.
 
 ### Phase 4 — Web UI (in progress)
 
