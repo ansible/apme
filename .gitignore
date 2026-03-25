@@ -48,6 +48,9 @@ apme-cache/
 *~
 .cursor/
 
+# Planning (local-only, not committed)
+.planning/
+
 # OS
 .DS_Store
 Thumbs.db

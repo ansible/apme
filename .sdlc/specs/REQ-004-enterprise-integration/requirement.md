@@ -3,8 +3,9 @@
 ## Metadata
 
 - **Phase**: PHASE-003 - Enterprise Dashboard
-- **Status**: Draft
+- **Status**: In Progress
 - **Created**: 2026-03-12
+- **Updated**: 2026-03-25
 
 ## Overview
 
@@ -21,14 +22,17 @@ Enterprise integration capabilities including CLI tooling, web dashboard, and AA
 ## Acceptance Criteria
 
 ### CLI Tooling
-- [ ] GIVEN a local environment
-- [ ] WHEN `apme check` runs
-- [ ] THEN results are displayed in terminal and/or saved to file
+- [x] GIVEN a local environment
+- [x] WHEN `apme check` runs
+- [x] THEN results are displayed in terminal and/or saved to file
 
 ### Web Dashboard
-- [ ] GIVEN enterprise-wide scan data
+- [x] GIVEN enterprise-wide scan data
+- [x] WHEN dashboard is accessed
+- [x] THEN scan results and current violations are displayed
+- [ ] GIVEN aggregated scan history
 - [ ] WHEN dashboard is accessed
-- [ ] THEN aggregated metrics are displayed (errors resolved, hours saved)
+- [ ] THEN ROI metrics are displayed (errors resolved, hours saved)
 
 ### AAP Pre-Flight Integration
 - [ ] GIVEN an AAP Job Template
@@ -40,6 +44,31 @@ Enterprise integration capabilities including CLI tooling, web dashboard, and AA
 - REQ-001: Core Scanning Engine
 - REQ-003: Security & Compliance (for policy checks)
 
+## Implementation Notes
+
+Significant progress by Brad (cidrblock) across multiple PRs. Current state:
+
+**CLI (complete):**
+- Thin CLI with daemon mode (ADR-024)
+- `apme check`, `apme remediate`, `apme format` subcommands (argparse-based)
+- JSON output for automation (`--json`)
+
+**Web Dashboard (in progress):**
+- Web gateway architecture (ADR-029)
+- Frontend deployment model (ADR-030)
+- Project-centric UI model (ADR-037) — projects linked to scan operations
+- Sidebar navigation with Reporting, Operations, Settings groups
+- Scan result summaries with current violations display
+- Shared operation UI components
+- Settings page with AI model picker
+- Session management with approval flow
+- Playwright test coverage for UI
+- WebSocket-based progress streaming
+
+**AAP Pre-Flight (not started):**
+- Deferred per DR-004 — revisit after v1 CLI is complete
+
 ## Notes
 
 Dashboard provides ROI visibility for Product Managers. AAP integration provides enforcement point.
+ROI/time-saved metrics remain to be implemented.

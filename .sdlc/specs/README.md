@@ -15,9 +15,9 @@ Specs answer "What does this feature do?" They provide:
 | REQ | Feature | Phase | Status |
 |-----|---------|-------|--------|
 | REQ-001 | Core Scanning Engine | PHASE-001 | In Progress |
-| REQ-002 | Automated Remediation | PHASE-002 | Draft |
+| REQ-002 | Automated Remediation | PHASE-002 | Implemented |
 | REQ-003 | Security & Compliance | PHASE-003 | Draft |
-| REQ-004 | Enterprise Integration | PHASE-003 | Draft |
+| REQ-004 | Enterprise Integration | PHASE-003 | In Progress |
 | REQ-008 | ROI Dashboard | PHASE-003 | Draft |
 | REQ-010 | Dependency Health Assessment | PHASE-003 | Draft |
 | REQ-011 | AA Deprecated Module Reporting | PHASE-003 | Draft |
@@ -53,21 +53,24 @@ specs/
 Requirements are grouped by delivery phase:
 
 ```
-PHASE-001: CLI Scanner
-└── REQ-001: Core Scanning Engine
+PHASE-001: CLI Scanner (In Progress)
+└── REQ-001: Core Scanning Engine (In Progress)
 
-PHASE-002: Rewrite Engine
-└── REQ-002: Automated Remediation
+PHASE-002: Rewrite Engine (Implemented)
+└── REQ-002: Automated Remediation (Implemented)
 
-PHASE-003: Enterprise Dashboard
-├── REQ-003: Security & Compliance
-├── REQ-004: Enterprise Integration
-├── REQ-008: ROI Dashboard
-├── REQ-010: Dependency Health Assessment
-├── REQ-011: AA Deprecated Module Reporting
-├── REQ-012: EDA Rulebook Validation
-├── REQ-013: Extended OPA Policy Inputs
-└── REQ-014: Policy Permissive Mode
+PHASE-003: Enterprise Dashboard (In Progress)
+├── REQ-003: Security & Compliance (Draft)
+├── REQ-004: Enterprise Integration (In Progress)
+├── REQ-008: ROI Dashboard (Draft)
+├── REQ-010: Dependency Health Assessment (Draft)
+├── REQ-011: AA Deprecated Module Reporting (Draft)
+├── REQ-012: EDA Rulebook Validation (Draft)
+├── REQ-013: Extended OPA Policy Inputs (Draft)
+└── REQ-014: Policy Permissive Mode (Draft)
+
+PHASE-004: AI Remediation (Implemented)
+└── DR-005: AI-Assisted Remediation (Decided)
 ```
 
 See [phases/README.md](../phases/README.md) for phase details.

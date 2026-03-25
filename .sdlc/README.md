@@ -103,9 +103,9 @@ The framework provides **9 interactive skills** organized by purpose:
 | Phase | Name | Requirements | Status |
 |-------|------|--------------|--------|
 | PHASE-001 | CLI Scanner | REQ-001 (Scanning Engine) | **In Progress** |
-| PHASE-002 | Rewrite Engine | REQ-002 (Automated Remediation) | Not Started |
-| PHASE-003 | Enterprise Dashboard | REQ-003 (Security), REQ-004 (Integration) | Not Started |
-| PHASE-004 | AI Remediation | TBD | Not Started |
+| PHASE-002 | Rewrite Engine | REQ-002 (Automated Remediation) | **Implemented** |
+| PHASE-003 | Enterprise Dashboard | REQ-003 (Security), REQ-004 (Integration) | **In Progress** |
+| PHASE-004 | AI Remediation | Abbenay AI integration (DR-005 decided) | **Implemented** |
 
 **Phase status is derived from requirements:**
 - **Not Started** = All REQs are Draft
@@ -228,10 +228,10 @@ Each requirement lives in its own directory:
 
 | Metric | Value |
 |--------|-------|
-| Phases | 4 defined |
-| Requirements | 4 specified |
-| Open DRs | 11 (2 blocking) |
-| ADRs | 13 accepted |
-| Current Phase | PHASE-001: CLI Scanner |
+| Phases | 4 defined (2 implemented, 1 in progress, 1 in progress) |
+| Requirements | 4 specified (1 implemented, 2 in progress, 1 draft) |
+| Deferred DRs | 2 (DR-002 SBOM, DR-004 AAP) |
+| ADRs | 37 accepted |
+| Current Focus | PHASE-001/003: CLI Scanner + Enterprise Dashboard |
 
 Run `/sdlc-status` for live dashboard.
