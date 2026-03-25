@@ -482,7 +482,7 @@ The `.github/workflows/deprecation-scrape.yml` workflow runs monthly (or on manu
 | Prefix | Category | Examples |
 |--------|----------|----------|
 | **L** | Lint (style, correctness, best practice) | L002–L059 |
-| **M** | Modernize (ansible-core metadata) | M001–M004 |
+| **M** | Modernize (ansible-core metadata) | M001–M030 |
 | **R** | Risk/security (annotation-based) | R101–R501, R118 |
 | **P** | Policy (legacy, superseded by L058/L059) | P001–P004 |
 
