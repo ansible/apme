@@ -15,6 +15,7 @@ from apme_engine.sbom.models import (
     Component,
     ComponentType,
     Dependency,
+    LicenseChoice,
     OrganizationalEntity,
     Property,
     mark_name_inferred,
@@ -113,6 +114,58 @@ class TestProperty:
         assert prop.value == "galaxy"
 
 
+class TestLicenseChoice:
+    """Tests for LicenseChoice dataclass."""
+
+    def test_license_choice_spdx_id(self) -> None:
+        """LicenseChoice(license_id='Apache-2.0') stores SPDX ID."""
+        lc = LicenseChoice(license_id="Apache-2.0")
+        assert lc.license_id == "Apache-2.0"
+        assert lc.license_name == ""
+
+    def test_license_choice_free_text(self) -> None:
+        """LicenseChoice(license_name='Custom License') stores free-text name."""
+        lc = LicenseChoice(license_name="Custom License")
+        assert lc.license_name == "Custom License"
+        assert lc.license_id == ""
+
+    def test_license_choice_defaults(self) -> None:
+        """LicenseChoice() defaults to empty strings for both fields."""
+        lc = LicenseChoice()
+        assert lc.license_id == ""
+        assert lc.license_name == ""
+
+    def test_component_licenses_default_empty(self) -> None:
+        """Component().licenses defaults to empty list."""
+        comp = Component(
+            type=ComponentType.LIBRARY,
+            name="test",
+            version="1.0.0",
+            purl="pkg:pypi/test@1.0.0",
+            bom_ref="pkg:pypi/test@1.0.0",
+        )
+        assert comp.licenses == []
+        assert isinstance(comp.licenses, list)
+
+    def test_component_with_licenses(self) -> None:
+        """Component(licenses=[LicenseChoice(license_id='MIT')]) stores license data."""
+        comp = Component(
+            type=ComponentType.LIBRARY,
+            name="test",
+            version="1.0.0",
+            purl="pkg:pypi/test@1.0.0",
+            bom_ref="pkg:pypi/test@1.0.0",
+            licenses=[LicenseChoice(license_id="MIT")],
+        )
+        assert len(comp.licenses) == 1
+        assert comp.licenses[0].license_id == "MIT"
+
+    def test_license_choice_has_docstring(self) -> None:
+        """LicenseChoice has a docstring with Attributes section."""
+        assert LicenseChoice.__doc__ is not None
+        assert "Attributes" in LicenseChoice.__doc__
+
+
 class TestMarkNameInferred:
     """Tests for mark_name_inferred function."""
 
@@ -142,6 +195,7 @@ class TestNoExternalImports:
         stdlib_modules = {
             "collections", "dataclasses", "enum", "uuid", "re", "datetime",
             "typing", "logging", "urllib", "__future__", "importlib",
+            "json", "pathlib", "email",
         }
 
         for py_file in sbom_dir.glob("*.py"):

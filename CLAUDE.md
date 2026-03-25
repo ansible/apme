@@ -56,6 +56,7 @@ Full workflow: [workflow.md](/.sdlc/context/workflow.md) | Getting started: [get
 
 ## Agent Constraints
 
+- **Use `python3`** — always use `python3` (not `python`) in commands and scripts
 - **Follow ADRs** — no deviation without a new ADR
 - **Validators are read-only** — detection only, no file modification; user-facing **check** is read-only, while **remediate** is a separate write path (not validator code)
 - **Use gRPC** — all inter-service communication

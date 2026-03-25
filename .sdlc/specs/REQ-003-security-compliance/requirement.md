@@ -26,9 +26,16 @@ Security scanning capabilities including secret detection, SBOM generation, and 
 - [ ] THEN secrets are flagged with remediation guidance (Vault, env vars)
 
 ### SBOM Generation
-- [ ] GIVEN an enterprise codebase
+- [x] GIVEN a target environment with Ansible content
+- [x] WHEN inventory is collected
+- [x] THEN all installed collections are discovered with version, namespace, and dependency metadata
+- [x] THEN all Python packages are enumerated with version and license metadata
+- [x] THEN all roles are cataloged with galaxy_info metadata
+- [x] THEN components are represented as CycloneDX 1.5 data model with PURL identifiers
+- [ ] GIVEN collected inventory
 - [ ] WHEN SBOM requested
-- [ ] THEN a complete list of collections, modules, and versions is generated
+- [ ] THEN a CycloneDX 1.5 JSON/XML document is generated
+- [ ] THEN the output passes schema validation
 
 ### Custom Policy Enforcement
 - [ ] GIVEN a custom rule (e.g., "prohibit shell where command suffices")
