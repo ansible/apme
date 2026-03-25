@@ -101,6 +101,7 @@ Decision Requests (DRs) provide a formal mechanism for:
 
 | DR | Title | Category | Priority | Raised |
 |----|-------|----------|----------|--------|
+| [DR-013](open/DR-013-aa-integration-approach.md) | Automation Analytics Integration Approach | Architecture | High | 2026-03-25 |
 
 ### Closed: Decided
 

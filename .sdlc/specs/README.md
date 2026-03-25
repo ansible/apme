@@ -18,6 +18,7 @@ Specs answer "What does this feature do?" They provide:
 | REQ-002 | Automated Remediation | PHASE-002 | Draft |
 | REQ-003 | Security & Compliance | PHASE-003 | Draft |
 | REQ-004 | Enterprise Integration | PHASE-003 | Draft |
+| REQ-011 | AA Deprecated Module Reporting | PHASE-003 | Draft |
 
 ## Directory Structure
 
@@ -33,7 +34,8 @@ specs/
 │   └── tasks/            # Implementation tasks
 ├── REQ-002-automated-remediation/
 ├── REQ-003-security-compliance/
-└── REQ-004-enterprise-integration/
+├── REQ-004-enterprise-integration/
+└── REQ-011-aa-deprecated-reporting/
 ```
 
 ## Phase Relationship
