@@ -126,6 +126,35 @@ def build_parser() -> argparse.ArgumentParser:
         help="Session ID for venv reuse; [A-Za-z0-9_-] only (default: hash of project root)",
     )
 
+    # ── sbom ──
+    sbom_p = subparsers.add_parser(
+        "sbom",
+        parents=[global_opts],
+        help="Generate a CycloneDX 1.5 SBOM of all Ansible content and dependencies",
+    )
+    sbom_p.add_argument("target", nargs="?", default=".", help="Path to Ansible project")
+    sbom_p.add_argument(
+        "--output",
+        "-o",
+        default=None,
+        help="Write SBOM JSON to file (default: stdout)",
+    )
+    sbom_p.add_argument(
+        "--session",
+        default=None,
+        help="Session ID for venv reuse; [A-Za-z0-9_-] only (default: hash of project root)",
+    )
+    sbom_p.add_argument(
+        "--summary",
+        action="store_true",
+        help="Show summary of existing session inventory (no file upload)",
+    )
+    sbom_p.add_argument(
+        "--refresh",
+        action="store_true",
+        help="Force re-discovery even when session venv exists",
+    )
+
     # ── daemon ──
     daemon_p = subparsers.add_parser(
         "daemon",

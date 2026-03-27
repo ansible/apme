@@ -21,6 +21,10 @@ service Primary {
 
   // List AI models available from the configured Abbenay daemon.
   rpc ListAIModels(ListAIModelsRequest) returns (ListAIModelsResponse);
+
+  // Generate a CycloneDX SBOM from uploaded project files.
+  // Client streams ScanChunk with project files; server returns SbomResponse.
+  rpc GenerateSbom(stream ScanChunk) returns (SbomResponse);
 }
 
 // ---------------------------------------------------------------------------
@@ -44,6 +48,8 @@ message ScanOptions {
   string ansible_core_version = 2;
   repeated string collection_specs = 3;
   string session_id = 4;             // client-provided session identifier for venv reuse
+  bool summary_only = 5;             // skip file upload, just inventory existing venv
+  bool refresh = 6;                  // force re-discovery even if venv exists
 }
 
 message FixOptions {
@@ -200,6 +206,28 @@ message ExpirationWarning {
 }
 
 message SessionClosed {}
+
+// ---------------------------------------------------------------------------
+// SBOM generation
+// ---------------------------------------------------------------------------
+
+message SbomComponentDetail {
+  string type = 1;        // "collection", "package", "role"
+  string name = 2;
+  string version = 3;
+  string license = 4;
+  bool name_inferred = 5;
+  bool version_missing = 6;
+}
+
+message SbomResponse {
+  bytes sbom_json = 1;
+  int32 collection_count = 2;
+  int32 package_count = 3;
+  int32 role_count = 4;
+  int32 total_count = 5;
+  repeated SbomComponentDetail components = 6;
+}
 
 // Generic structured data payload. The 'kind' field tells the client what
 // type of data this is; 'data' is a JSON-native Struct.

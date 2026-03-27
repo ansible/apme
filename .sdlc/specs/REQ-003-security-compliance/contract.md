@@ -56,6 +56,51 @@ CycloneDX 1.5 (JSON). Implemented in `src/apme_engine/sbom/`.
 - Empty/None fields omitted from output
 - Schema validation via vendored `tests/sbom/schemas/bom-1.5.schema.json`
 
+### gRPC Contract
+
+| RPC | Service | Type | Purpose |
+|-----|---------|------|---------|
+| `GenerateSbom` | `Primary` | client-streaming | Stream file chunks, return SBOM JSON + component summary |
+
+#### SbomResponse Message
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `sbom_json` | `bytes` | CycloneDX 1.5 JSON document |
+| `collection_count` | `int32` | Number of Ansible collections discovered |
+| `package_count` | `int32` | Number of Python packages discovered |
+| `role_count` | `int32` | Number of Ansible roles discovered |
+| `total_count` | `int32` | Total component count |
+| `components` | `repeated SbomComponentDetail` | Per-component detail for summary rendering |
+
+#### SbomComponentDetail Message
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | `string` | Component type: "collection", "package", "role" |
+| `name` | `string` | Component name |
+| `version` | `string` | Version string (empty if missing) |
+| `license` | `string` | License identifier or name |
+| `name_inferred` | `bool` | True if name was inferred from directory |
+| `version_missing` | `bool` | True if no version metadata found |
+
+#### ScanOptions Extensions
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `summary_only` | `bool` | Re-query existing session inventory without file upload |
+| `refresh` | `bool` | Force re-discovery even when session venv exists |
+
+### CLI Contract
+
+| Command | Description |
+|---------|-------------|
+| `apme sbom [target]` | Generate CycloneDX 1.5 SBOM (default: stdout) |
+| `apme sbom --output FILE` | Write SBOM JSON to file |
+| `apme sbom --summary --session ID` | Show summary of existing session (no upload) |
+| `apme sbom --refresh` | Force re-discovery of inventory |
+| `apme sbom -v` | Verbose grouped table instead of counts-only |
+
 ## Policy Rule Format
 
 TBD - Define Rego rule structure for custom policies.

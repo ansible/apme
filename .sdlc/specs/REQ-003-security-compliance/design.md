@@ -52,15 +52,23 @@ src/apme_engine/sbom/
 - **Schema validation**: Vendored official CycloneDX 1.5 JSON Schema (`bom-1.5.schema.json`, Draft-07) and SPDX schema in `tests/sbom/schemas/`. Integration tests prove serializer output is fully spec-compliant
 - **TDD approach**: RED commit (failing tests) before GREEN commit (implementation)
 
+### Phase 4 — gRPC & CLI Integration (Complete)
+
+- **GenerateSbom RPC**: Client-streaming gRPC RPC on Primary service. Receives file chunks, materializes to temp directory, resolves session venv, runs all three collectors in executor, serializes BOM, returns `SbomResponse` with JSON bytes and component summary
+- **Summary-only mode**: `summary_only` flag on `ScanOptions` re-queries existing session inventory without file upload. Always renders verbose grouped table
+- **Proto messages**: `SbomResponse` (sbom_json, collection_count, package_count, role_count, total_count, components) and `SbomComponentDetail` (type, name, version, license, name_inferred, version_missing)
+- **CLI subcommand**: `apme sbom [target]` with `--output`/`-o`, `--session`, `--summary`, `--refresh`, `-v` flags
+- **Summary rendering**: Counts-only one-liner (default) or verbose grouped table (Name/Version/License per component type) with `[inferred]` and version-missing flags
+- **gRPC client integration**: Reuses `yield_scan_chunks` and `_resolve_session_id` from check module. Summary to stderr when no `--output` (keeps stdout clean for piping)
+
 ### Test Coverage
 
-- 143 tests across `tests/sbom/` (models: 18, purl: 12, validation: 14, yaml_subset: 12, collections: 20, packages: 28, roles: 11, serializer: 20, schema_validation: 8)
-- Tests run with: `PYTHONPATH=src pytest tests/sbom/ -v`
+- 167 tests total: 143 across `tests/sbom/` (models: 18, purl: 12, validation: 14, yaml_subset: 12, collections: 20, packages: 28, roles: 11, serializer: 20, schema_validation: 8), 11 in `tests/test_sbom_grpc.py`, 13 in `tests/test_sbom_cli.py`
+- Tests run with: `PYTHONPATH=src pytest tests/sbom/ tests/test_sbom_grpc.py tests/test_sbom_cli.py -v`
 
 ## Remaining Implementation (Future Phases)
 
-- **CLI Integration**: `--sbom` flag for BOM generation, `--validate` flag for validation reports
-- **gRPC Integration**: SBOM generation via service API
+- **`--validate` flag**: Validation report output for SBOM quality checks
 
 ## Key Components
 

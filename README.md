@@ -95,7 +95,7 @@ Six app containers, one pod. All inter-service communication is gRPC. The Galaxy
 - **Structured diagnostics** — every validator reports per-rule timing data via the gRPC contract; use `-v` for summaries or `-vv` for full per-rule breakdowns.
 - **Galaxy Proxy** — converts Ansible Galaxy collection tarballs into pip-installable Python wheels (PEP 503/427); collections are `uv pip install`'d into session venvs, leveraging standard Python caching and dependency resolution.
 - **YAML formatter** — normalize indentation, key ordering, Jinja spacing, and tab removal with comment preservation. Idempotent by design; runs as a pre-pass before semantic fixes.
-- **SBOM generation** — CycloneDX 1.5 data model with PURL identifiers for Ansible collections, roles, and Python packages. Inventory collectors discover installed collections (3-tier metadata cascade), Python packages (importlib.metadata with infrastructure filtering), and roles (galaxy_info parsing). JSON serializer produces spec-compliant output validated against the official CycloneDX 1.5 JSON Schema. Multi-error validation collects all findings without dropping components. Stdlib-only, zero external dependencies.
+- **SBOM generation** — `apme sbom` generates CycloneDX 1.5 SBOMs via gRPC. Inventory collectors discover installed Ansible collections (3-tier metadata cascade), Python packages (importlib.metadata with infrastructure filtering), and roles (galaxy_info parsing). Supports `--output` for file output, `--summary` for session re-query, `-v` for verbose grouped tables, and `--refresh` to force re-discovery. JSON serializer produces spec-compliant output validated against the official CycloneDX 1.5 JSON Schema (167 tests). Stdlib-only, zero external dependencies.
 - **Colocated tests** — every rule has a `*_test.py` (native), `*_test.rego` (OPA), or `.md` doc with violation/pass examples usable as integration tests.
 
 ## Quick start
@@ -121,6 +121,18 @@ apme check -vv .
 
 # Format YAML files (show diff)
 apme format /path/to/project
+
+# Generate SBOM (CycloneDX 1.5 JSON to stdout)
+apme sbom /path/to/project
+
+# SBOM to file
+apme sbom --output sbom.json /path/to/project
+
+# SBOM verbose summary (grouped table)
+apme sbom -v /path/to/project
+
+# Re-query existing session inventory
+apme sbom --summary --session <id>
 
 # Format and apply changes in place
 apme format --apply /path/to/project
@@ -265,7 +277,7 @@ src/apme_engine/
   ├── sbom/             CycloneDX 1.5 SBOM: data model, PURL, validation, inventory collectors, JSON serializer
   ├── remediation/      Tier 1 transforms + AI escalation
   ├── formatter.py      YAML formatter (phase 1 remediation)
-  ├── cli/              CLI entry point (check, format, remediate, health-check)
+  ├── cli/              CLI entry point (check, format, remediate, sbom, health-check)
   └── runner.py         scan orchestration (engine-internal pipeline)
 src/apme_gateway/       API gateway (FastAPI, REST/WebSocket, SQLite)
 src/galaxy_proxy/       Galaxy → PEP 503 wheel proxy
@@ -324,13 +336,14 @@ tests/                  unit, integration, rule doc coverage
 - **Preflight checks**: auto-discover Abbenay daemon socket, health check before AI calls.
 - See [DESIGN_AI_ESCALATION.md](docs/DESIGN_AI_ESCALATION.md) for the full design.
 
-### Phase 5 — SBOM Generation (in progress)
+### Phase 5 — SBOM Generation (done)
 
-- **CycloneDX 1.5 data model** (done) — `Bom`, `Component`, `Dependency`, `LicenseChoice` dataclasses with NTIA minimum element compliance. PURL generation for Ansible collections (`pkg:generic/ns.name@ver`), roles, and Python packages (PEP 503 normalized).
-- **Multi-error validation** (done) — advisory validation that collects all findings (errors + warnings) without rejecting components. Duplicate `bom_ref` detection, actionable suggestions on every finding.
-- **Inventory collection** (done) — three collectors discover installed Ansible collections (MANIFEST.json/galaxy.yml/directory cascade with dependency mapping), Python packages (importlib.metadata with infrastructure filtering and license extraction), and roles (galaxy_info parsing with bare role inference). Stdlib-only YAML subset parser for metadata files.
-- **JSON serialization** (done) — `bom_to_dict()` and `bom_to_json()` produce CycloneDX 1.5 spec-compliant output, validated against the official JSON Schema (8 integration tests). 143 total SBOM tests.
-- **CLI integration** — `--sbom` flag for BOM generation, `--validate` flag for validation reports.
+- **CycloneDX 1.5 data model** — `Bom`, `Component`, `Dependency`, `LicenseChoice` dataclasses with NTIA minimum element compliance. PURL generation for Ansible collections (`pkg:generic/ns.name@ver`), roles, and Python packages (PEP 503 normalized).
+- **Multi-error validation** — advisory validation that collects all findings (errors + warnings) without rejecting components. Duplicate `bom_ref` detection, actionable suggestions on every finding.
+- **Inventory collection** — three collectors discover installed Ansible collections (MANIFEST.json/galaxy.yml/directory cascade with dependency mapping), Python packages (importlib.metadata with infrastructure filtering and license extraction), and roles (galaxy_info parsing with bare role inference). Stdlib-only YAML subset parser for metadata files.
+- **JSON serialization** — `bom_to_dict()` and `bom_to_json()` produce CycloneDX 1.5 spec-compliant output, validated against the official JSON Schema (8 integration tests).
+- **gRPC integration** — `GenerateSbom` client-streaming RPC on Primary service with full and summary-only paths. Collectors run in executor to avoid blocking the async event loop.
+- **CLI subcommand** — `apme sbom [target]` with `--output`, `--session`, `--summary`, `--refresh`, `-v` flags. Summary rendering (counts-only or verbose grouped table). 167 total SBOM tests.
 
 ### Phase 4 — Web UI (in progress)
 

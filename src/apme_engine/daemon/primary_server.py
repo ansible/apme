@@ -52,6 +52,8 @@ from apme.v1.primary_pb2 import (
     ScanChunk,
     ScanDiagnostics,
     ScanOptions,
+    SbomComponentDetail,
+    SbomResponse,
     SessionClosed,
     SessionCommand,
     SessionCreated,
@@ -807,6 +809,193 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             dur = (time.monotonic() - t0) * 1000
             logger.info("FormatStream: done (%.0fms, %d files changed, req=%s)", dur, len(diffs), scan_id)
             return FormatResponse(diffs=diffs, logs=sink.entries)
+
+    # ── GenerateSbom RPC ────────────────────────────────────────────────
+
+    @staticmethod
+    def _build_component_details(
+        components: list[object],
+        component_type: str,
+    ) -> list[SbomComponentDetail]:
+        """Convert SBOM Component objects to SbomComponentDetail protos.
+
+        Args:
+            components: List of SBOM Component dataclass objects.
+            component_type: Type label ("collection", "package", "role").
+
+        Returns:
+            List of SbomComponentDetail proto messages.
+        """
+        from apme_engine.sbom.models import APME_PROPERTY_NAMESPACE
+
+        details: list[SbomComponentDetail] = []
+        for comp in components:
+            # Check for name-inferred property
+            name_inferred = any(
+                p.name == f"{APME_PROPERTY_NAMESPACE}:name-source"
+                and p.value == "inferred-from-directory"
+                for p in comp.properties
+            )
+
+            # Extract license from first LicenseChoice if available
+            license_str = ""
+            if comp.licenses:
+                lc = comp.licenses[0]
+                license_str = lc.license_id or lc.license_name or ""
+
+            details.append(
+                SbomComponentDetail(
+                    type=component_type,
+                    name=comp.name,
+                    version=comp.version or "",
+                    license=license_str,
+                    name_inferred=name_inferred,
+                    version_missing=not bool(comp.version),
+                )
+            )
+        return details
+
+    async def GenerateSbom(
+        self,
+        request_stream: AsyncIterator[ScanChunk],
+        context: grpc.aio.ServicerContext,  # type: ignore[type-arg]
+    ) -> SbomResponse:
+        """Generate a CycloneDX SBOM from uploaded project files.
+
+        Supports two modes:
+        - Full: Uploads files, resolves venv, runs collectors, returns SBOM.
+        - Summary-only: Re-queries existing session venv without file upload.
+
+        Args:
+            request_stream: Async iterator of ScanChunk messages.
+            context: gRPC servicer context.
+
+        Returns:
+            SbomResponse with serialized CycloneDX JSON and component summary.
+        """
+        from apme_engine.sbom import (
+            Bom,
+            BomMetadata,
+            collect_collections,
+            collect_packages,
+            collect_roles,
+            bom_to_json,
+        )
+        from apme_engine.validators.ansible._venv import DEFAULT_VERSION
+
+        files, scan_id, project_root, opts, _ = await self._accumulate_chunks(request_stream)
+
+        session_id = ""
+        summary_only = False
+        refresh = False
+        core_version = DEFAULT_VERSION
+
+        if opts:
+            session_id = opts.session_id or ""
+            summary_only = opts.summary_only
+            refresh = opts.refresh
+            if opts.ansible_core_version:
+                core_version = opts.ansible_core_version
+
+        if not session_id:
+            session_id = uuid.uuid4().hex[:12]
+
+        loop = asyncio.get_event_loop()
+
+        if summary_only:
+            # Summary-only path: use existing venv, no file upload needed
+            warm = self._get_venv_manager().get(session_id, core_version)
+            if warm is None or not warm.venv_root.is_dir():
+                await context.abort(
+                    grpc.StatusCode.NOT_FOUND,
+                    "No existing session. Run 'apme sbom [target]' first.",
+                )
+                return SbomResponse()  # unreachable but satisfies type checker
+
+            venv_root = warm.venv_root
+            temp_dir = Path(tempfile.mkdtemp(prefix="apme_sbom_empty_"))
+
+            # Run collectors in executor (collectors resolve site-packages internally)
+            coll_components, coll_deps = await loop.run_in_executor(
+                None, collect_collections, venv_root,
+            )
+            pkg_components = await loop.run_in_executor(
+                None, collect_packages, venv_root,
+            )
+            role_components = await loop.run_in_executor(
+                None, collect_roles, temp_dir,
+            )
+        else:
+            # Full SBOM path: materialize files, resolve venv, run collectors
+            temp_dir = await loop.run_in_executor(None, _write_chunked_fs, files)
+
+            # Check for warm venv
+            warm = self._get_venv_manager().get(session_id, core_version)
+
+            if warm is None or not warm.venv_root.is_dir() or refresh:
+                # Cold start or refresh: run ARI discovery + venv acquire
+                ctx = contextvars.copy_context()
+                discovered, _ = _discover_collection_specs(files)
+                collection_specs = list(opts.collection_specs) if opts else []
+                collection_specs = merge_collection_specs(collection_specs, discovered, [])
+
+                venv_session = await loop.run_in_executor(
+                    None,
+                    ctx.run,
+                    self._get_venv_manager().acquire,
+                    session_id,
+                    core_version,
+                    collection_specs,
+                )
+                venv_root = venv_session.venv_root
+            else:
+                # Warm venv: fast path
+                venv_root = warm.venv_root
+
+            # Run collectors in executor (collectors resolve site-packages internally)
+            coll_components, coll_deps = await loop.run_in_executor(
+                None, collect_collections, venv_root,
+            )
+            pkg_components = await loop.run_in_executor(
+                None, collect_packages, venv_root,
+            )
+            role_components = await loop.run_in_executor(
+                None, collect_roles, temp_dir,
+            )
+
+        # Build BOM and serialize
+        all_components = coll_components + pkg_components + role_components
+        bom = Bom(
+            metadata=BomMetadata(),
+            components=all_components,
+            dependencies=coll_deps,
+        )
+        sbom_json = await loop.run_in_executor(None, bom_to_json, bom)
+        sbom_bytes = sbom_json.encode("utf-8")
+
+        # Build component details
+        details: list[SbomComponentDetail] = []
+        details.extend(self._build_component_details(coll_components, "collection"))
+        details.extend(self._build_component_details(pkg_components, "package"))
+        details.extend(self._build_component_details(role_components, "role"))
+
+        logger.info(
+            "GenerateSbom: done (collections=%d, packages=%d, roles=%d, total=%d, req=%s)",
+            len(coll_components),
+            len(pkg_components),
+            len(role_components),
+            len(all_components),
+            scan_id,
+        )
+
+        return SbomResponse(
+            sbom_json=sbom_bytes,
+            collection_count=len(coll_components),
+            package_count=len(pkg_components),
+            role_count=len(role_components),
+            total_count=len(all_components),
+            components=details,
+        )
 
     # ── FixSession RPC (bidirectional stream, ADR-028) ─────────────────
 

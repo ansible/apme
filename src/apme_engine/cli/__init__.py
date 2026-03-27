@@ -40,6 +40,10 @@ def main() -> None:
         from apme_engine.cli.remediate import run_remediate
 
         run_remediate(args)
+    elif cmd == "sbom":
+        from apme_engine.cli.sbom_cmd import run_sbom
+
+        run_sbom(args)
     elif cmd == "health-check":
         from apme_engine.cli.health import run_health_check
 

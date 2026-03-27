@@ -64,6 +64,11 @@ class PrimaryStub(object):
                 request_serializer=apme_dot_v1_dot_primary__pb2.ListAIModelsRequest.SerializeToString,
                 response_deserializer=apme_dot_v1_dot_primary__pb2.ListAIModelsResponse.FromString,
                 _registered_method=True)
+        self.GenerateSbom = channel.stream_unary(
+                '/apme.v1.Primary/GenerateSbom',
+                request_serializer=apme_dot_v1_dot_primary__pb2.ScanChunk.SerializeToString,
+                response_deserializer=apme_dot_v1_dot_primary__pb2.SbomResponse.FromString,
+                _registered_method=True)
 
 
 class PrimaryServicer(object):
@@ -107,6 +112,14 @@ class PrimaryServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def GenerateSbom(self, request_iterator, context):
+        """Generate a CycloneDX SBOM from uploaded project files.
+        Client streams ScanChunk with project files; server returns SbomResponse.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_PrimaryServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -134,6 +147,11 @@ def add_PrimaryServicer_to_server(servicer, server):
                     servicer.ListAIModels,
                     request_deserializer=apme_dot_v1_dot_primary__pb2.ListAIModelsRequest.FromString,
                     response_serializer=apme_dot_v1_dot_primary__pb2.ListAIModelsResponse.SerializeToString,
+            ),
+            'GenerateSbom': grpc.stream_unary_rpc_method_handler(
+                    servicer.GenerateSbom,
+                    request_deserializer=apme_dot_v1_dot_primary__pb2.ScanChunk.FromString,
+                    response_serializer=apme_dot_v1_dot_primary__pb2.SbomResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -275,6 +293,33 @@ class Primary(object):
             '/apme.v1.Primary/ListAIModels',
             apme_dot_v1_dot_primary__pb2.ListAIModelsRequest.SerializeToString,
             apme_dot_v1_dot_primary__pb2.ListAIModelsResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GenerateSbom(request_iterator,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.stream_unary(
+            request_iterator,
+            target,
+            '/apme.v1.Primary/GenerateSbom',
+            apme_dot_v1_dot_primary__pb2.ScanChunk.SerializeToString,
+            apme_dot_v1_dot_primary__pb2.SbomResponse.FromString,
             options,
             channel_credentials,
             insecure,

@@ -36,6 +36,16 @@ Security scanning capabilities including secret detection, SBOM generation, and 
 - [x] WHEN SBOM requested
 - [x] THEN a CycloneDX 1.5 JSON document is generated
 - [x] THEN the output passes schema validation (CycloneDX 1.5 JSON Schema, 8 integration tests)
+- [x] GIVEN a running APME daemon
+- [x] WHEN `apme sbom <target>` is run
+- [x] THEN the GenerateSbom gRPC RPC streams files to Primary, runs collectors, and returns CycloneDX JSON
+- [x] THEN a one-line summary (collection/package/role counts) appears on stderr
+- [x] WHEN `apme sbom --output <file>` is used
+- [x] THEN the SBOM JSON is written to the specified file
+- [x] WHEN `apme sbom --summary --session <id>` is used
+- [x] THEN a grouped table of existing session inventory is displayed without file upload
+- [x] WHEN `apme sbom -v` is used
+- [x] THEN a verbose grouped table (Name/Version/License per component type) is rendered
 
 ### Custom Policy Enforcement
 - [ ] GIVEN a custom rule (e.g., "prohibit shell where command suffices")
