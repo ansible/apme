@@ -10,10 +10,11 @@ See [architecture.md](../../context/architecture.md) for system design.
 
 ```
 src/apme_engine/sbom/
-    __init__.py              # Public API re-exports (models + collectors)
+    __init__.py              # Public API re-exports (models + collectors + serializer)
     models.py                # CycloneDX 1.5 dataclasses (Bom, Component, Dependency, LicenseChoice, etc.)
     purl.py                  # PURL generation with PEP 503 normalization
     validation.py            # Multi-error validation (advisory, never drops components)
+    serializer.py            # CycloneDX 1.5 JSON serializer (bom_to_dict, bom_to_json)
     _yaml_subset.py          # Minimal stdlib-only YAML parser for galaxy.yml / meta/main.yml
     collect_collections.py   # Ansible collection inventory collector
     collect_packages.py      # Python package inventory collector
@@ -45,15 +46,20 @@ src/apme_engine/sbom/
 - **Validation philosophy**: Collect all errors, never reject components — maximum inventory visibility
 - **Never-raise collectors**: Collectors return partial results on error rather than raising — maximizes inventory visibility even with malformed metadata
 
+### Phase 3 — Serialization & Schema Validation (Complete)
+
+- **JSON serializer**: `bom_to_dict()` and `bom_to_json()` in `serializer.py` — explicit dict-builder approach converting internal data model to CycloneDX 1.5 spec-compliant JSON. Handles all CycloneDX camelCase mappings (bom-ref, bomFormat, specVersion, tools.components)
+- **Schema validation**: Vendored official CycloneDX 1.5 JSON Schema (`bom-1.5.schema.json`, Draft-07) and SPDX schema in `tests/sbom/schemas/`. Integration tests prove serializer output is fully spec-compliant
+- **TDD approach**: RED commit (failing tests) before GREEN commit (implementation)
+
 ### Test Coverage
 
-- 115 tests across `tests/sbom/` (models: 18, purl: 12, validation: 14, yaml_subset: 12, collections: 20, packages: 28, roles: 11)
+- 143 tests across `tests/sbom/` (models: 18, purl: 12, validation: 14, yaml_subset: 12, collections: 20, packages: 28, roles: 11, serializer: 20, schema_validation: 8)
 - Tests run with: `PYTHONPATH=src pytest tests/sbom/ -v`
 
 ## Remaining Implementation (Future Phases)
 
-- **Serialization**: CycloneDX JSON output
-- **CLI Integration**: `--sbom` and `--validate` flags
+- **CLI Integration**: `--sbom` flag for BOM generation, `--validate` flag for validation reports
 - **gRPC Integration**: SBOM generation via service API
 
 ## Key Components

@@ -44,6 +44,18 @@ CycloneDX 1.5 (JSON). Implemented in `src/apme_engine/sbom/`.
 - Multi-error collection — all findings gathered, no fail-fast
 - Every finding includes an actionable `suggestion`
 
+### Serialization Contract
+
+| Function | Module | Purpose |
+|----------|--------|---------|
+| `bom_to_dict()` | `serializer.py` | Convert Bom dataclass to CycloneDX 1.5 spec-compliant dict |
+| `bom_to_json()` | `serializer.py` | Convert Bom dataclass to CycloneDX 1.5 JSON string (pretty-printed) |
+
+- Output conforms to CycloneDX 1.5 JSON Schema (Draft-07)
+- CamelCase field mapping: `bom_ref` → `bom-ref`, `spec_version` → `specVersion`, `bom_format` → `bomFormat`
+- Empty/None fields omitted from output
+- Schema validation via vendored `tests/sbom/schemas/bom-1.5.schema.json`
+
 ## Policy Rule Format
 
 TBD - Define Rego rule structure for custom policies.

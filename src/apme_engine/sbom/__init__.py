@@ -23,6 +23,7 @@ from apme_engine.sbom.models import (
     mark_name_inferred,
 )
 from apme_engine.sbom._yaml_subset import parse_yaml_subset
+from apme_engine.sbom.serializer import bom_to_dict, bom_to_json
 from apme_engine.sbom.purl import (
     make_collection_purl,
     make_pypi_purl,
@@ -38,6 +39,8 @@ from apme_engine.sbom.validation import (
 
 __all__ = [
     "APME_PROPERTY_NAMESPACE",
+    "bom_to_dict",
+    "bom_to_json",
     "collect_collections",
     "collect_packages",
     "collect_roles",

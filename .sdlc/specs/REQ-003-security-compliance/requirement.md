@@ -32,10 +32,10 @@ Security scanning capabilities including secret detection, SBOM generation, and 
 - [x] THEN all Python packages are enumerated with version and license metadata
 - [x] THEN all roles are cataloged with galaxy_info metadata
 - [x] THEN components are represented as CycloneDX 1.5 data model with PURL identifiers
-- [ ] GIVEN collected inventory
-- [ ] WHEN SBOM requested
-- [ ] THEN a CycloneDX 1.5 JSON/XML document is generated
-- [ ] THEN the output passes schema validation
+- [x] GIVEN collected inventory
+- [x] WHEN SBOM requested
+- [x] THEN a CycloneDX 1.5 JSON document is generated
+- [x] THEN the output passes schema validation (CycloneDX 1.5 JSON Schema, 8 integration tests)
 
 ### Custom Policy Enforcement
 - [ ] GIVEN a custom rule (e.g., "prohibit shell where command suffices")

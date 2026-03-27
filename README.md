@@ -95,7 +95,7 @@ Six app containers, one pod. All inter-service communication is gRPC. The Galaxy
 - **Structured diagnostics** — every validator reports per-rule timing data via the gRPC contract; use `-v` for summaries or `-vv` for full per-rule breakdowns.
 - **Galaxy Proxy** — converts Ansible Galaxy collection tarballs into pip-installable Python wheels (PEP 503/427); collections are `uv pip install`'d into session venvs, leveraging standard Python caching and dependency resolution.
 - **YAML formatter** — normalize indentation, key ordering, Jinja spacing, and tab removal with comment preservation. Idempotent by design; runs as a pre-pass before semantic fixes.
-- **SBOM generation** — CycloneDX 1.5 data model with PURL identifiers for Ansible collections, roles, and Python packages. Inventory collectors discover installed collections (3-tier metadata cascade), Python packages (importlib.metadata with infrastructure filtering), and roles (galaxy_info parsing). Multi-error validation collects all findings without dropping components. Stdlib-only, zero external dependencies.
+- **SBOM generation** — CycloneDX 1.5 data model with PURL identifiers for Ansible collections, roles, and Python packages. Inventory collectors discover installed collections (3-tier metadata cascade), Python packages (importlib.metadata with infrastructure filtering), and roles (galaxy_info parsing). JSON serializer produces spec-compliant output validated against the official CycloneDX 1.5 JSON Schema. Multi-error validation collects all findings without dropping components. Stdlib-only, zero external dependencies.
 - **Colocated tests** — every rule has a `*_test.py` (native), `*_test.rego` (OPA), or `.md` doc with violation/pass examples usable as integration tests.
 
 ## Quick start
@@ -262,7 +262,7 @@ src/apme_engine/
   │   └── gitleaks/     Gitleaks wrapper (SEC:* — secret detection)
   ├── daemon/           gRPC server implementations
   ├── venv_manager/     Session-scoped venv lifecycle (VenvSessionManager)
-  ├── sbom/             CycloneDX 1.5 SBOM: data model, PURL, validation, inventory collectors
+  ├── sbom/             CycloneDX 1.5 SBOM: data model, PURL, validation, inventory collectors, JSON serializer
   ├── remediation/      Tier 1 transforms + AI escalation
   ├── formatter.py      YAML formatter (phase 1 remediation)
   ├── cli/              CLI entry point (check, format, remediate, health-check)
@@ -329,7 +329,7 @@ tests/                  unit, integration, rule doc coverage
 - **CycloneDX 1.5 data model** (done) — `Bom`, `Component`, `Dependency`, `LicenseChoice` dataclasses with NTIA minimum element compliance. PURL generation for Ansible collections (`pkg:generic/ns.name@ver`), roles, and Python packages (PEP 503 normalized).
 - **Multi-error validation** (done) — advisory validation that collects all findings (errors + warnings) without rejecting components. Duplicate `bom_ref` detection, actionable suggestions on every finding.
 - **Inventory collection** (done) — three collectors discover installed Ansible collections (MANIFEST.json/galaxy.yml/directory cascade with dependency mapping), Python packages (importlib.metadata with infrastructure filtering and license extraction), and roles (galaxy_info parsing with bare role inference). Stdlib-only YAML subset parser for metadata files.
-- **JSON serialization** — CycloneDX 1.5 JSON output.
+- **JSON serialization** (done) — `bom_to_dict()` and `bom_to_json()` produce CycloneDX 1.5 spec-compliant output, validated against the official JSON Schema (8 integration tests). 143 total SBOM tests.
 - **CLI integration** — `--sbom` flag for BOM generation, `--validate` flag for validation reports.
 
 ### Phase 4 — Web UI (in progress)

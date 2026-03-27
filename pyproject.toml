@@ -47,6 +47,7 @@ dev = [
     "grpc-stubs",
     "grpcio-tools>=1.78.0",
     "pytest-playwright",
+    "jsonschema>=4.20,<5",
 ]
 
 [tool.pytest.ini_options]
@@ -151,6 +152,10 @@ module = [
     "pydantic.*",
     "playwright",
     "playwright.*",
+    "jsonschema",
+    "jsonschema.*",
+    "referencing",
+    "referencing.*",
 ]
 ignore_missing_imports = true
 
