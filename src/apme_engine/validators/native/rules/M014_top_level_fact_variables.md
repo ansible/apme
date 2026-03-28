@@ -30,7 +30,7 @@ Scan Jinja2 expressions for ansible_* variable references that are known facts
 ```yaml
 - name: Show hostname
   ansible.builtin.debug:
-    msg: "Host is {{ ansible_facts["hostname"] }}"
+    msg: 'Host is {{ ansible_facts["hostname"] }}'
 ```
 
 ### Remediation

@@ -1,8 +1,13 @@
 """M014: Top-level fact variables — use ansible_facts["name"] (removed in 2.24).
 
 Higher severity than L076 (lint/style): this is a *breaking change* in 2.24
-where top-level fact injection is removed entirely. L076 is a best-practice
-recommendation; M014 fires only when the target ansible_core_version >= 2.24.
+where top-level fact injection is removed entirely.  L076 is a best-practice
+recommendation; M014 signals that the code *will break* on 2.24+.
+
+Note: detection matches any ``ansible_*`` variable not in the magic-vars
+allowlist, which may include connection/inventory variables like
+``ansible_user`` or ``ansible_host`` that are not injected facts.  A future
+refinement could restrict matches to known injected fact names.
 """
 
 import re
