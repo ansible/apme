@@ -199,7 +199,7 @@ def create_app(
         )
 
         try:
-            _detail, tarball_data = await galaxy.get_version_and_download(ns, coll_name, version)
+            _detail, tarball_data = await galaxy.fetch_collection(ns, coll_name, version)
         except Exception as exc:
             logger.exception("Failed to fetch %s.%s %s from Galaxy", ns, coll_name, version)
             raise HTTPException(

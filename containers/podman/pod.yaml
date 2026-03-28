@@ -131,6 +131,13 @@ spec:
           readOnly: true
     - name: galaxy-proxy
       image: apme-galaxy-proxy:latest
+      env:
+        - name: GALAXY_URL
+          value: "${GALAXY_URL:-https://galaxy.ansible.com}"
+        - name: GALAXY_TOKEN
+          value: "${GALAXY_TOKEN:-}"
+        - name: GALAXY_SERVER_LIST
+          value: "${GALAXY_SERVER_LIST:-}"
       ports:
         - containerPort: 8765
           hostPort: 8765

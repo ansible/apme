@@ -140,6 +140,35 @@ The OPA binary runs internally on `localhost:8181`; the gRPC wrapper proxies to 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `APME_GALAXY_PROXY_URL` | `http://127.0.0.1:8765` | Galaxy proxy base URL |
+| `GALAXY_URL` | `https://galaxy.ansible.com` | Single-server fallback Galaxy URL |
+| `GALAXY_TOKEN` | — | Token for the fallback Galaxy URL |
+| `GALAXY_SERVER_LIST` | — | Comma-separated server names for multi-server config (e.g., `certified,community`) |
+
+**Multi-server configuration (ansible.cfg-style):**
+
+For each server name in `GALAXY_SERVER_LIST`, set corresponding env vars:
+
+| Variable Pattern | Description |
+|------------------|-------------|
+| `GALAXY_SERVER_<NAME>_URL` | Server base URL (required) |
+| `GALAXY_SERVER_<NAME>_TOKEN` | API token or offline token |
+| `GALAXY_SERVER_<NAME>_AUTH_URL` | SSO/OIDC token endpoint for offline-token exchange |
+| `GALAXY_SERVER_<NAME>_AUTH_TYPE` | `token` (default), `bearer`, or `sso` |
+
+Example for Red Hat Automation Hub + community Galaxy:
+
+```bash
+GALAXY_SERVER_LIST=certified,community
+
+GALAXY_SERVER_CERTIFIED_URL=https://console.redhat.com/api/automation-hub/
+GALAXY_SERVER_CERTIFIED_TOKEN=<offline-token-from-console.redhat.com>
+GALAXY_SERVER_CERTIFIED_AUTH_URL=https://sso.redhat.com/auth/realms/redhat-external/protocol/openid-connect/token
+GALAXY_SERVER_CERTIFIED_AUTH_TYPE=sso
+
+GALAXY_SERVER_COMMUNITY_URL=https://galaxy.ansible.com
+```
+
+Servers are tried in order; the first to return a successful response wins.
 
 #### Gateway
 

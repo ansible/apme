@@ -5,9 +5,12 @@ from __future__ import annotations
 import csv
 import hashlib
 import io
+import re
 from typing import TYPE_CHECKING, Any
 
 from galaxy_proxy.naming import fqcn_to_python
+
+_INLINE_COMMENT_RE = re.compile(r"\s+#.*$")
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -87,6 +90,9 @@ def galaxy_to_metadata_with_python_deps(
     for line in requirements_txt.splitlines():
         line = line.strip()
         if not line or line.startswith("#") or line.startswith("-"):
+            continue
+        line = _INLINE_COMMENT_RE.sub("", line).strip()
+        if not line:
             continue
         extra_lines.append(f"Requires-Dist: {line}")
 
