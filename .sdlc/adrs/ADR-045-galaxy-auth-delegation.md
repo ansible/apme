@@ -58,68 +58,10 @@ server credentials are already configured.
 - The Galaxy Proxy container currently does not have `ansible-core` installed
 - No gRPC proto fields exist for Galaxy server configuration today
 - Credentials must not be persisted by the engine (ADR-020, ADR-029)
-- The engine never queries out (architectural invariant 11) — but
+- The engine never queries out to external systems; it only emits via
+  fire-and-forget event sinks (see AGENTS.md, architectural invariant 11).
   `ansible-galaxy collection download` is a subprocess invocation within the
-  pod, not an outbound query from engine code
-
-## Options Considered
-
-### Option 1: Delegate to ansible-galaxy + scan-scoped config (proposed)
-
-Galaxy server configuration becomes scan-scoped metadata flowing through the
-gRPC proto.  The CLI reads the user's `ansible.cfg` Galaxy sections and sends
-them as `GalaxyServerDef` messages.  The UI/Gateway stores per-project Galaxy
-server defs and injects them into scan requests.  The engine writes a temporary
-`ansible.cfg` per session and delegates fetching to
-`ansible-galaxy collection download`.  The proxy simplifies to tarball-to-wheel
-conversion + PEP 503 serving.
-
-**Pros:**
-- Zero custom SSO/OIDC code — ansible-galaxy handles all auth
-- Tracks upstream Galaxy API changes automatically
-- CLI users get zero-config: their existing `ansible.cfg` just works
-- UI can offer per-project Automation Hub credential management
-- Single auth implementation shared with all Ansible tooling
-
-**Cons:**
-- `ansible-core` must be available where `ansible-galaxy collection download`
-  runs (session venv, proxy container, or a shared utility)
-- Proto change needed (`GalaxyServerDef` message on `ScanOptions`/`FixOptions`)
-- Subprocess invocation adds latency vs direct HTTP (mitigated by caching)
-
-### Option 2: Reimplement Galaxy auth in the proxy (PR #130's approach)
-
-The proxy implements its own Galaxy V3 REST API client with SSO token exchange,
-API root normalization, multi-server config via env vars, and auth header
-forwarding.
-
-**Pros:**
-- Self-contained — proxy has no dependency on ansible-core
-- Direct HTTP is slightly faster than subprocess
-
-**Cons:**
-- Duplicates battle-tested auth logic from ansible-galaxy
-- Must track upstream Galaxy API, SSO endpoint, and auth protocol changes
-- Ignores the user's existing `ansible.cfg` (requires separate env var config)
-- No path for UI-driven per-project credentials (env vars are process-global)
-- SSO token refresh, Keycloak quirks, and API path normalization are complex
-  and error-prone to reimplement
-
-### Option 3: Hybrid — proxy keeps simple token auth, adds ansible-galaxy for SSO
-
-The proxy retains its existing `Authorization: Token` auth for simple Galaxy
-servers.  For SSO-authenticated servers (Automation Hub), it delegates to
-`ansible-galaxy collection download`.
-
-**Pros:**
-- Minimal change for simple Galaxy (public, private with token)
-- SSO complexity delegated to ansible-galaxy
-
-**Cons:**
-- Two auth paths to maintain and reason about
-- Still ignores the user's `ansible.cfg` for the token path
-- Inconsistent behavior between auth types
-- Eventually the simple path will also want ansible.cfg-style config
+  pod, not an outbound query from engine code.
 
 ## Decision
 
@@ -148,21 +90,51 @@ UI  (per-project config) ──► Gateway ──► gRPC ScanOptions     ──
                                               pip/uv install wheel
 ```
 
-### Why not Option 2
+## Alternatives Considered
 
-Reimplementing `ansible-galaxy`'s auth stack creates a parallel implementation
-that must track upstream changes to the Galaxy V3 API, Red Hat SSO endpoints,
-Keycloak OIDC flows, and Automation Hub URL conventions.  The initial design of
-the proxy's `GalaxyClient` was over-engineered — it took on Galaxy API client
-responsibilities that already have a well-maintained upstream implementation.
+### Alternative 1: Reimplement Galaxy auth in the proxy (PR #130's approach)
+
+**Description**: The proxy implements its own Galaxy V3 REST API client with SSO
+token exchange, API root normalization, multi-server config via env vars, and
+auth header forwarding.
+
+**Pros**:
+- Self-contained — proxy has no dependency on ansible-core
+- Direct HTTP is slightly faster than subprocess
+
+**Cons**:
+- Duplicates battle-tested auth logic from ansible-galaxy
+- Must track upstream Galaxy API, SSO endpoint, and auth protocol changes
+- Ignores the user's existing `ansible.cfg` (requires separate env var config)
+- No path for UI-driven per-project credentials (env vars are process-global)
+- SSO token refresh, Keycloak quirks, and API path normalization are complex
+  and error-prone to reimplement
+
+**Why not chosen**: Reimplementing `ansible-galaxy`'s auth stack creates a
+parallel implementation that must track upstream changes to the Galaxy V3 API,
+Red Hat SSO endpoints, Keycloak OIDC flows, and Automation Hub URL conventions.
 The proxy should focus on what only it can do: format conversion at the boundary.
 
-### Why not Option 3
+### Alternative 2: Hybrid — proxy keeps simple token auth, adds ansible-galaxy for SSO
 
-A hybrid approach creates two code paths for the same operation (fetching a
-collection tarball), making the system harder to reason about and test.  If we
-are going to use ansible-galaxy for the hard cases, we should use it for all
-cases and eliminate the custom client entirely.
+**Description**: The proxy retains its existing `Authorization: Token` auth for
+simple Galaxy servers.  For SSO-authenticated servers (Automation Hub), it
+delegates to `ansible-galaxy collection download`.
+
+**Pros**:
+- Minimal change for simple Galaxy (public, private with token)
+- SSO complexity delegated to ansible-galaxy
+
+**Cons**:
+- Two auth paths to maintain and reason about
+- Still ignores the user's `ansible.cfg` for the token path
+- Inconsistent behavior between auth types
+- Eventually the simple path will also want ansible.cfg-style config
+
+**Why not chosen**: A hybrid approach creates two code paths for the same
+operation (fetching a collection tarball), making the system harder to reason
+about and test.  If we are going to use ansible-galaxy for the hard cases, we
+should use it for all cases and eliminate the custom client entirely.
 
 ## Consequences
 
@@ -255,6 +227,15 @@ These changes are valuable regardless of the auth delegation decision:
 - [ADR-040](ADR-040-scan-metadata-enrichment.md): Scan Metadata Enrichment —
   Galaxy server config is another form of scan metadata
 
+## References
+
+- [PR #130](https://github.com/ansible/apme/pull/130): Galaxy multi-server
+  and SSO auth — the PR that prompted this architectural review
+- [ansible-galaxy CLI](https://docs.ansible.com/ansible/latest/cli/ansible-galaxy.html):
+  Upstream CLI for Galaxy operations including `collection download`
+- [Configuring Galaxy servers (ansible.cfg)](https://docs.ansible.com/ansible/latest/galaxy/user_guide.html#configuring-the-ansible-galaxy-client):
+  Upstream documentation for `[galaxy_server_list]` and per-server sections
+
 ---
 
 ## Revision History
@@ -262,3 +243,4 @@ These changes are valuable regardless of the auth delegation decision:
 | Date | Author | Change |
 |------|--------|--------|
 | 2026-03-28 | AI-assisted | Initial proposal |
+| 2026-03-28 | AI-assisted | Restructured to match ADR template (Copilot review) |
