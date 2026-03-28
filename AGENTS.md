@@ -300,7 +300,7 @@ Understanding where code lives prevents accidental duplication or misplacement.
 src/
 ├── apme/v1/                     # Generated proto stubs — NEVER edit by hand
 ├── apme_engine/                  # Core product
-│   ├── cli/                      # apme: check, remediate, format, health
+│   ├── cli/                      # apme: check, remediate, format, health-check
 │   ├── daemon/                   # gRPC servers: primary, native, opa, ansible, gitleaks
 │   │   └── sinks/                # Event sinks (grpc_reporting)
 │   ├── engine/                   # ARI-backed: parser, scanner, models, annotators

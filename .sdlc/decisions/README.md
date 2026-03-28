@@ -117,15 +117,15 @@ Decision Requests (DRs) provide a formal mechanism for:
 | [DR-001](closed/decided/DR-001-version-specific-analysis.md) | Version-Specific Analysis | All options: default + single + matrix | 2026-03-16 |
 | [DR-006](closed/decided/DR-006-success-metrics.md) | Success Metrics Baselines | Establish baselines now | 2026-03-16 |
 | [DR-010](closed/decided/DR-010-version-coverage.md) | Ansible Version Coverage | Start minimal (2.18-2.20), expand on demand | 2026-03-16 |
+| [DR-008](closed/decided/DR-008-data-persistence.md) | Scan Result Persistence | Resolved by ADR-029 (SQLite in web gateway) | 2026-03-19 |
+| [DR-005](closed/decided/DR-005-ai-remediation.md) | AI-Assisted Remediation | Option C (Hybrid) — Abbenay AI with provider abstraction (ADR-025) | 2026-03-25 |
 
 ### Closed: Deferred
 
 | DR | Title | Reason | Revisit |
 |----|-------|--------|---------|
 | [DR-004](closed/deferred/DR-004-aap-integration.md) | AAP Pre-Flight Integration | CLI-first focus for v1 | After v1 CLI complete |
-| [DR-008](closed/decided/DR-008-data-persistence.md) | Scan Result Persistence | Resolved by ADR-029 (SQLite in web gateway) | — |
 | [DR-002](closed/deferred/DR-002-sbom-format.md) | SBOM Format and Scope | Part of REQ-003 scope | When security/compliance prioritized |
-| [DR-005](closed/deferred/DR-005-ai-remediation.md) | AI-Assisted Remediation | Brad investigating | When investigation complete |
 
 ### Closed: Superseded
 

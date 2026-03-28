@@ -11,7 +11,7 @@ CLI implemented as thin client with daemon mode (ADR-024). Web dashboard built w
 
 ## Key Components
 
-- **CLI Application** (Typer) — Thin CLI with daemon mode, implemented
+- **CLI Application** (argparse) — Thin CLI with daemon mode, implemented
 - **Web Gateway** — HTTP/WebSocket gateway service (ADR-029)
 - **Frontend** — Project-centric UI with sidebar navigation (ADR-037)
 - **AAP Pre-Flight Hook** — Deferred (DR-004)

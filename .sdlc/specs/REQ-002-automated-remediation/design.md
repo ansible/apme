@@ -14,7 +14,7 @@ Implemented as a two-pass remediation engine (ADR-036) within the Primary servic
 - **TransformRegistry** (`src/apme_engine/remediation/registry.py`) — Maps rule IDs to deterministic fix functions
 - **Convergence Loop** (`src/apme_engine/remediation/engine.py`) — Scan-transform-rescan with oscillation detection
 - **Finding Partition** (`src/apme_engine/remediation/partition.py`) — Routes violations to Tier 1/2/3
-- **AI Escalation** (`src/apme_engine/remediation/ai_escalation.py`) — Abbenay gRPC client for Tier 2 proposals
+- **AI Escalation** (`src/apme_engine/remediation/engine.py:_escalate_tier2*`, `src/apme_engine/remediation/abbenay_provider.py`) — Tier 2 orchestration and Abbenay gRPC-backed provider
 - **Transform Functions** (`src/apme_engine/remediation/transforms/`) — Per-rule deterministic fix implementations
 
 ## Key ADRs

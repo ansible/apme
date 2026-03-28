@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Decided
 
 ## Raised By
 
@@ -167,9 +167,9 @@ Rationale:
 **Implementation**:
 - Abbenay AI container integrated into pod topology
 - `ListAIModels` gRPC endpoint for model discovery
-- AI escalation path in remediation engine (`ai_escalation.py`)
+- AI escalation path in remediation engine (`engine.py:_escalate_tier2*`, `abbenay_provider.py`)
 - UI Settings page with model picker
-- CLI flags: `--no-ai`, `--auto`, `--min-confidence`
+- CLI flags: `--ai` (enable Tier 2), `--auto-approve` (non-interactive CI mode)
 
 **Action Items**:
 - [x] Brad to complete AI remediation investigation
