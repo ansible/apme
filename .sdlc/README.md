@@ -55,16 +55,17 @@ Traditional development often loses context between planning and implementation.
 
 ## Skills & Automation
 
-The framework provides **9 interactive skills** organized by purpose:
+The framework provides **16 interactive skills** organized by purpose:
 
 ### Skill Categories
 
 | Category | Skills | Purpose |
 |----------|--------|---------|
-| **Bootstrap** | `/prd-import`, `/sdlc-status` | Start projects, check status |
-| **Plan** | `/phase-new`, `/workflow` | Define roadmap, get guidance |
-| **Build** | `/req-new`, `/task-new` | Create specifications |
+| **Bootstrap** | `/prd-import`, `/sdlc-status`, `/workflow` | Start projects, check status |
+| **Plan** | `/phase-new`, `/req-new`, `/task-new` | Define roadmap, create specs |
 | **Decide** | `/dr-new`, `/dr-review`, `/adr-new` | Manage decisions |
+| **Review** | `/pr-review`, `/review-contributor-pr`, `/submit-pr` | Code review and PRs |
+| **Operations** | `/lean-ci`, `/rfe-capture`, `/branch-align`, `/security-scan` | CI, RFEs, branch ops |
 
 ### Skill Reference
 
@@ -103,9 +104,9 @@ The framework provides **9 interactive skills** organized by purpose:
 | Phase | Name | Requirements | Status |
 |-------|------|--------------|--------|
 | PHASE-001 | CLI Scanner | REQ-001 (Scanning Engine) | **In Progress** |
-| PHASE-002 | Rewrite Engine | REQ-002 (Automated Remediation) | Not Started |
-| PHASE-003 | Enterprise Dashboard | REQ-003 (Security), REQ-004 (Integration) | Not Started |
-| PHASE-004 | AI Remediation | TBD | Not Started |
+| PHASE-002 | Rewrite Engine | REQ-002 (Automated Remediation) | **Implemented** |
+| PHASE-003 | Enterprise Dashboard | REQ-003, REQ-004, REQ-008, REQ-010–014 | **In Progress** |
+| PHASE-004 | AI Remediation | Abbenay AI integration (DR-005 decided) | **Implemented** |
 
 **Phase status is derived from requirements:**
 - **Not Started** = All REQs are Draft
@@ -228,10 +229,10 @@ Each requirement lives in its own directory:
 
 | Metric | Value |
 |--------|-------|
-| Phases | 4 defined |
-| Requirements | 4 specified |
-| Open DRs | 11 (2 blocking) |
-| ADRs | 13 accepted |
-| Current Phase | PHASE-001: CLI Scanner |
+| Phases | 4 defined (2 implemented, 2 in progress) |
+| Requirements | 10 specified (1 implemented, 2 in progress, 7 draft) |
+| DRs | 3 open, 10 decided, 2 deferred |
+| ADRs | 44 total (31 implemented, 4 accepted, 7 proposed, 2 superseded) |
+| Current Focus | PHASE-001/003: CLI Scanner + Enterprise Dashboard |
 
 Run `/sdlc-status` for live dashboard.

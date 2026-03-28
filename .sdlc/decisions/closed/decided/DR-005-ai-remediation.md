@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Decided
 
 ## Raised By
 
@@ -149,21 +149,31 @@ Rationale:
 
 ## Decision
 
-**Status**: Deferred
-**Date**: 2026-03-16
-**Decided By**: Team
+**Status**: Decided
+**Date**: 2026-03-25
+**Decided By**: Brad (cidrblock)
 
-**Decision**: Deferred — Brad investigating as part of PHASE-001 delivery
+**Decision**: Option C (Hybrid) implemented — Abbenay AI service with provider abstraction (ADR-025)
 
 **Rationale**:
-- Active investigation underway by Brad
-- Part of PHASE-001 delivery scope
-- Decision will be informed by Brad's findings
-- Will revisit when investigation complete
+- Brad completed the AI remediation investigation and implemented it
+- Abbenay AI container (:50057) provides the LLM backend via gRPC
+- AI provider protocol (ADR-025) abstracts the LLM provider, enabling both external API and self-hosted models
+- Unit-level AI proposals with snippet replacement (decoupled from line numbers)
+- Confidence scoring on proposals; user review required by default
+- Graceful degradation: if Abbenay is unavailable, Tier 2 violations fall through to manual review (Tier 3)
+- Settings page in UI allows AI model selection
 
-**Revisit**: When Brad's investigation is complete
+**Implementation**:
+- Abbenay AI container integrated into pod topology
+- `ListAIModels` gRPC endpoint for model discovery
+- AI escalation path in remediation engine (`engine.py:_escalate_tier2*`, `abbenay_provider.py`)
+- UI Settings page with model picker
+- CLI flags: `--ai` (enable Tier 2), `--auto-approve` (non-interactive CI mode)
 
 **Action Items**:
-- [ ] Brad to complete AI remediation investigation
-- [ ] Schedule DR review with Brad's findings
-- [ ] Update ADR-009 if approach changes
+- [x] Brad to complete AI remediation investigation
+- [x] Schedule DR review with Brad's findings
+- [x] Update ADR-009 if approach changes
+- [x] Implement AI provider protocol (ADR-025)
+- [x] Integrate Abbenay AI container
