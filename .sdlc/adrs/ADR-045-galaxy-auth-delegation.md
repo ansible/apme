@@ -60,12 +60,17 @@ server credentials are already configured.
 - Credentials must not be persisted by the engine (ADR-020, ADR-029)
 - The engine never queries out to external systems; it only emits via
   fire-and-forget event sinks (see AGENTS.md, architectural invariant 11).
-  `ansible-galaxy collection download` is a subprocess invocation within the
-  pod, not an outbound query from engine code.
+  Today the Galaxy Proxy already performs outbound fetches to Galaxy/AH servers
+  on behalf of the engine — it is the pod's designated external-facing download
+  service.  `ansible-galaxy collection download` should run in the proxy
+  container (or a sidecar with outbound access), not in Primary, to preserve
+  the invariant.  If implementation requires running it in Primary, this ADR
+  proposes a narrowly scoped exception to invariant 11 for Galaxy/AH tarball
+  downloads, to be documented in AGENTS.md.
 
 ## Decision
 
-**Option 1: Delegate Galaxy authentication to ansible-galaxy and flow Galaxy
+**We will delegate Galaxy authentication to ansible-galaxy and flow Galaxy
 server configuration as scan-scoped metadata through the gRPC proto.**
 
 The proxy's role narrows to its core value: tarball-to-wheel conversion and
@@ -152,8 +157,9 @@ should use it for all cases and eliminate the custom client entirely.
 - **Simplified proxy**: `galaxy_client.py` reduces to tarball-to-wheel
   conversion; no `httpx` dependency for Galaxy API calls
 - **Security**: Credentials flow as scan-scoped metadata (in-transit on
-  pod-local gRPC), never persisted by the engine, stored encrypted in
-  Gateway DB
+  pod-local gRPC), never persisted by the engine.  Gateway DB stores
+  per-project credentials; encrypting these at rest (application-layer
+  encryption or a secrets manager) is a follow-up requirement
 
 ### Negative
 
@@ -192,10 +198,13 @@ should use it for all cases and eliminate the custom client entirely.
 
 ### Phase 2: Engine integration
 
-- Primary: use `ansible-galaxy collection download -p <session_dir>/tarballs/`
-  with the generated `ansible.cfg` to fetch tarballs
-- Proxy: add endpoint or filesystem watcher to convert local tarballs to
-  wheels (or Primary hands tarballs directly to the converter)
+- Preferred: proxy runs `ansible-galaxy collection download` (keeps outbound
+  fetches in the pod's designated external-facing service, preserving
+  invariant 11).  Primary sends the temp `ansible.cfg` path + collection
+  specs to the proxy via gRPC or shared volume.
+- Fallback: Primary runs `ansible-galaxy collection download` directly —
+  requires documenting a narrow invariant 11 exception in AGENTS.md
+- Proxy: convert local tarballs to wheels (endpoint or filesystem watcher)
 - Remove `GalaxyClient` upstream fetching from proxy
 
 ### Phase 3: Gateway + UI
