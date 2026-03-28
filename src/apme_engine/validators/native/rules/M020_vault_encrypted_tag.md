@@ -17,21 +17,9 @@ Use !vault instead of deprecated !vault-encrypted tag (2.23)
 
 Scan YAML content for !vault-encrypted tag
 
-### Example: violation
-
-```yaml
-secret: !vault-encrypted |
-  $ANSIBLE_VAULT;1.1;AES256
-  ...
-```
-
-### Example: pass
-
-```yaml
-secret: !vault |
-  $ANSIBLE_VAULT;1.1;AES256
-  ...
-```
+Scans raw YAML content for the `!vault-encrypted` tag. YAML tags are consumed
+by the parser before reaching task-level `yaml_lines`, so doc examples cannot be
+tested in the integration harness. The rule operates on pre-parsed raw content.
 
 ### Remediation
 

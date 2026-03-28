@@ -20,17 +20,19 @@ Validate variable names in host/group vars against Python identifier rules
 ### Example: violation
 
 ```yaml
-# host_vars/myhost.yml
-my-var: some_value
-3rd_party: other_value
+- name: Set facts with invalid names
+  ansible.builtin.set_fact:
+    my-var: some_value
+    3rd_party: other_value
 ```
 
 ### Example: pass
 
 ```yaml
-# host_vars/myhost.yml
-my_var: some_value
-third_party: other_value
+- name: Set facts with valid names
+  ansible.builtin.set_fact:
+    my_var: some_value
+    third_party: other_value
 ```
 
 ### Remediation

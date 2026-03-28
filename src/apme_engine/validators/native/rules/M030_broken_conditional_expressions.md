@@ -17,23 +17,9 @@ Conditional expressions that fail Jinja2 parsing will error in 2.23 instead of b
 
 Parse when: values as Jinja2 expressions and flag parse failures
 
-### Example: violation
-
-```yaml
-- name: Conditional
-  ansible.builtin.debug:
-    msg: "test"
-  when: foo == (bar
-```
-
-### Example: pass
-
-```yaml
-- name: Conditional
-  ansible.builtin.debug:
-    msg: "test"
-  when: foo == bar
-```
+Parses each `when:` value as a Jinja2 expression and flags parse failures.
+Broken conditionals (unmatched parens, invalid syntax) may also cause YAML
+parsing issues, making doc integration tests unreliable for this rule.
 
 ### Remediation
 

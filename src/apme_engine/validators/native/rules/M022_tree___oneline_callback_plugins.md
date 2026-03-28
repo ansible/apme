@@ -17,19 +17,9 @@ tree and oneline callback plugins are removed in 2.23; choose an alternative
 
 Detect callback_plugins: tree/oneline or stdout_callback = tree/oneline in ansible.cfg
 
-### Example: violation
-
-```yaml
-[defaults]
-stdout_callback = tree
-```
-
-### Example: pass
-
-```yaml
-[defaults]
-stdout_callback = yaml
-```
+Detects `stdout_callback`, `callback_whitelist`, or `callbacks_enabled` referencing
+`tree` or `oneline` in task environment variables or configuration. Examples are
+ansible.cfg-based and cannot be expressed as playbook YAML for automated testing.
 
 ### Remediation
 

@@ -43,8 +43,8 @@ first_found_auto_split(tree, node) := v if {
 	terms := mopts["terms"]
 	is_string(terms)
 	contains(terms, ":")
-	not re_match(`^[a-zA-Z]:\\`, terms)
-	not re_match(`^https?://`, terms)
+	not regex.match(`^[a-zA-Z]:\\\\`, terms)
+	not regex.match(`^https?://`, terms)
 	count(node.line) > 0
 	v := {
 		"rule_id": "M028",
