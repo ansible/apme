@@ -11,7 +11,10 @@ from typing import cast
 from . import logger
 from .analyzer import analyze
 from .annotators.variable_resolver import resolve_variables
+from .content_graph import ContentGraph, GraphBuilder
 from .findings import Findings
+from .graph_scanner import GraphScanReport
+from .graph_scanner import scan as graph_scan
 from .loader import (
     get_loader_version,
 )
@@ -89,6 +92,8 @@ class SingleScan:
         findings: Findings object with scan results.
         result: ARIResult summary object.
         hierarchy_payload: OPA input payload with hierarchy and annotations.
+        content_graph: ContentGraph (ADR-044) when APME_USE_CONTENT_GRAPH is set.
+        graph_scan_report: Results from running GraphRule evaluation on the content graph.
         root_dir: Root data directory from scanner config.
         rules_dir: Directory containing rule definitions.
         rules: List of rule IDs or paths to enable.
@@ -165,6 +170,10 @@ class SingleScan:
 
     # OPA input: hierarchy + annotations (set by build_hierarchy_payload when native rules are disabled)
     hierarchy_payload: YAMLDict = field(default_factory=dict)
+
+    # ContentGraph (ADR-044) — populated when APME_USE_CONTENT_GRAPH is set
+    content_graph: ContentGraph | None = None
+    graph_scan_report: GraphScanReport | None = None
 
     # the following are set by ARIScanner
     root_dir: str = ""
@@ -554,11 +563,73 @@ class SingleScan:
         self.extra_requirements = cast(YAMLList, extra_requirements)
         self.resolve_failures = cast(YAMLDict, resolve_failures)
 
+        if os.environ.get("APME_USE_CONTENT_GRAPH"):
+            self._build_content_graph()
+            self._run_graph_rules()
+
         if self.do_save:
             from .result_writer import get_root_def_dir, save_trees
 
             save_trees(get_root_def_dir(self._path_mappings), self.trees, self.silent)
         return
+
+    def _build_content_graph(self) -> None:
+        """Build ContentGraph in parallel with existing pipeline (ADR-044 Phase 1).
+
+        Behind the ``APME_USE_CONTENT_GRAPH`` env var.  Builds the graph
+        from the same definitions that TreeLoader consumed, then logs
+        structural comparison metrics.
+        """
+        try:
+            builder = GraphBuilder(
+                cast(dict[str, object], self.root_definitions),
+                cast(dict[str, object], self.ext_definitions),
+            )
+            self.content_graph = builder.build()
+            tree_node_count = sum(len(t.items) for t in self.trees)
+            graph_node_count = self.content_graph.node_count()
+            graph_edge_count = self.content_graph.edge_count()
+            logger.debug(
+                "ContentGraph built: %d nodes, %d edges (TreeLoader: %d call objects)",
+                graph_node_count,
+                graph_edge_count,
+                tree_node_count,
+            )
+        except Exception:
+            logger.warning("ContentGraph build failed; continuing with TreeLoader pipeline", exc_info=True)
+            self.content_graph = None
+
+    def _run_graph_rules(self) -> None:
+        """Run GraphRule evaluation against the ContentGraph (ADR-044 Phase 2).
+
+        Behind the ``APME_USE_CONTENT_GRAPH`` env var.  Loads any
+        ``GraphRule`` subclasses from ``rules_dir`` and evaluates them
+        against the content graph.  Results are stored in
+        ``graph_scan_report`` for comparison with the old pipeline.
+        """
+        if self.content_graph is None:
+            return
+        try:
+            from .graph_scanner import load_graph_rules
+
+            graph_rules = load_graph_rules(
+                rules_dir=self.rules_dir,
+                rule_id_list=self.rules or None,
+                exclude_rule_ids=[],
+            )
+            if not graph_rules:
+                logger.debug("No GraphRule implementations found; skipping graph scan")
+                return
+            self.graph_scan_report = graph_scan(self.content_graph, graph_rules)
+            logger.debug(
+                "Graph scan complete: %d nodes scanned, %d results, %.1fms",
+                self.graph_scan_report.nodes_scanned,
+                len(self.graph_scan_report.node_results),
+                self.graph_scan_report.elapsed_ms,
+            )
+        except Exception:
+            logger.warning("Graph rule scan failed; continuing with old pipeline", exc_info=True)
+            self.graph_scan_report = None
 
     def resolve_variables(self, ram_client: RAMClient | None = None) -> None:
         """Resolve variables in trees and build AnsibleRunContext for each tree.

@@ -1,0 +1,5 @@
+# Inventory host_vars — highest variable precedence from file sources.
+---
+nginx_worker_processes: 4
+nginx_worker_connections: 2048
+cert_expiring: false

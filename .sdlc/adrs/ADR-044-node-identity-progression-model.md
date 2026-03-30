@@ -202,11 +202,21 @@ This preserves ARI's valuable parsing logic while decoupling APME from ARI's sta
 
 ### Phased adoption
 
-1. **Phase A — NodeIdentity**: Assign stable IDs based on YAML path at initial parse. Thread IDs through violations. This alone fixes snippet accuracy and violation tracking. Can coexist with current pipeline.
+The migration uses three phases with zero throwaway code. No intermediate adapter layer is built — the graph and rule porting happen together so every artifact is permanent.
 
-2. **Phase B — Progression logging**: Record NodeState at each pipeline phase. Enables audit trails and enriched feedback. Requires changes to the convergence loop in `RemediationEngine`.
+1. **Phase 1 — ContentGraph core + validation**: Build comprehensive graph-pattern test fixtures (`tests/fixtures/graph-patterns/`) covering every edge type (handlers, rescue/always, import_playbook, import_tasks, import_role, static roles, vars_files, host_vars, nested blocks, collection layout with `galaxy.yml`). Build the ContentGraph, `GraphBuilder`, `VariableProvenanceResolver`, `build_hierarchy_from_graph()`, and `GraphRule` base class. Run in parallel behind a feature flag, validating structural equivalence against the existing `TreeLoader` and `build_hierarchy_payload()` outputs. Add `node_id` to the `Violation` proto in `common.proto`. The old pipeline remains primary — nothing switches over.
 
-3. **Phase C — Unified model**: Replace the three-representation pattern (ARI tree + StructuredFile + file bytes) with `ContentGraph` as the single source of truth. Largest change, highest payoff.
+2. **Phase 2 — Rules + switchover**: Port **all** ~96 native rules to the unified `GraphRule` interface and switch `ContentGraph` as the primary model. Annotators adapted to read from `ContentNode` directly. Once stable, remove `TreeLoader`, `AnsibleRunContext`, `RunTarget`, `ObjectList`, `Context.add()`, and the old `build_hierarchy_payload()`. One rule interface, zero adapter, zero throwaway code.
+
+   Rule classification determines porting **priority**, not porting **scope** — all rules are ported:
+
+   | Category | Count | Examples | Porting priority |
+   |----------|-------|----------|-----------------|
+   | INHERITED_PROPERTY | ~10 | R108 (become), L047 (no_log), L045 (environment), L033/M030 (when), M010 (interpreter), M026 (vars) | First — algorithmic change, high value |
+   | SCOPE_AWARE | ~8 | L042 (complexity), L097 (name uniqueness), L086 (play vars), L032/L034 (variable precedence), R117 (external role) | Second — algorithmic change, medium value |
+   | TASK_LOCAL | ~78 | R101–R115 (risk), L031 (permissions), L046 (free-form), P001–P004 (policy), all module-arg rules | Last — mechanical signature change (`ctx.current` → `graph.get_node(node_id)`), no algorithmic change |
+
+3. **Phase 3 — Progression + provenance**: Record `NodeState` at each pipeline phase. `PropertyOrigin` consumed by the already-ported rules. Gateway accumulates `ScanSnapshot` per node across scans. Complexity metrics, AI escalation enrichment, topology visualization, best-practices pattern rules, dependency quality scorecards.
 
 ### NodeIdentity derivation
 
@@ -296,10 +306,11 @@ community.general.ufw      → referenced (declared dependency)
 
 ### Compatibility
 
-- `NodeIndex` (current YAML-path lookup) evolves into `ContentGraph`
+- `NodeIndex` (current YAML-path lookup in `engine/node_index.py`) evolves into `ContentGraph`
 - `StructuredFile` (ruamel.yaml) becomes the serialization layer for `NodeState`, not a parallel model
 - `_attach_snippets` is replaced by node-level state queries
-- Validators are unaffected — they still receive `ValidateRequest` with files and hierarchy
+- The gRPC `ValidateRequest` contract is unchanged — validators still receive files and hierarchy
+- `AnsibleRunContext`, `RunTarget`, and `ObjectList` are replaced by `GraphRule` + `ContentGraph` in Phase 2. No intermediate adapter is built — rules are ported directly to the graph interface as part of the switchover, eliminating the old model entirely
 
 ### Graph implementation: networkx MultiDiGraph
 
@@ -508,3 +519,5 @@ The ContentGraph unlocks capabilities beyond the core identity and progression m
 | 2026-03-27 | Bradley A. Thornton | Added inherited property attribution, scope-level violations |
 | 2026-03-27 | Bradley A. Thornton | Added ansible-core lessons, DAG topology, ownership borders |
 | 2026-03-28 | Bradley A. Thornton | Refined graph model: networkx MultiDiGraph, node/edge taxonomy, worst-case include policy, variable provenance, Python file analysis, temporal progression, enabled capabilities (complexity, AI escalation, visualization, best-practices patterns, dependency quality) |
+| 2026-03-30 | Bradley A. Thornton | Replaced 5-phase plan (A-E) with direct 3-phase plan (zero throwaway code); eliminated intermediate adapter layer; all ~96 native rules ported to GraphRule in Phase 2; added rule classification taxonomy |
+| 2026-03-30 | Bradley A. Thornton | Added comprehensive graph-pattern test fixtures as Phase 1 deliverable; `tests/fixtures/graph-patterns/` covering every edge type in the node/edge taxonomy |

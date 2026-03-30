@@ -44,7 +44,9 @@ server credentials are already configured.
 ### Forces
 
 - CLI users already have `ansible.cfg` with Galaxy/AH server credentials
-- UI users need per-project Galaxy server configuration (stored in Gateway DB)
+- UI users need Galaxy server configuration (global in Gateway DB — per-project
+  scoping would create cache ambiguity since the proxy's wheel cache is
+  collection-scoped, not credential-scoped)
 - The engine is stateless (ADR-020) — it should not store credentials
 - Galaxy auth complexity (SSO, token refresh, API path normalization) belongs
   in ansible-galaxy, not in our codebase
@@ -81,18 +83,21 @@ which is the authoritative, maintained implementation.
 Galaxy server configuration flows as scan metadata:
 
 ```
-CLI (reads ansible.cfg) ──► gRPC ScanOptions.galaxy_servers ──► Primary
-UI  (per-project config) ──► Gateway ──► gRPC ScanOptions     ──► Primary
+CLI (reads ansible.cfg)  ──► gRPC ScanOptions.galaxy_servers ──► Primary
+UI  (global server defs) ──► Gateway ──► gRPC ScanOptions     ──► Primary
                                                                      │
-                                            Primary writes temp ansible.cfg
-                                            ansible-galaxy collection download
-                                                     │
-                                              tarballs on disk
-                                                     │
-                                              Proxy: tarball → wheel
-                                              PEP 503 serving
-                                                     │
-                                              pip/uv install wheel
+                                                          galaxy_servers + collection specs
+                                                                     │
+                                                                     ▼
+                                                               Galaxy Proxy
+                                                          writes temp ansible.cfg
+                                                     ansible-galaxy collection download
+                                                                     │
+                                                              tarballs on disk
+                                                              tarball → wheel
+                                                              PEP 503 serving
+                                                                     │
+                                                              pip/uv install wheel
 ```
 
 ## Alternatives Considered
@@ -151,14 +156,14 @@ should use it for all cases and eliminate the custom client entirely.
   Automation Hub URL conventions are picked up via ansible-core upgrades
 - **CLI zero-config**: Users' existing `ansible.cfg` Galaxy server sections
   work without any APME-specific configuration
-- **UI credential management**: Per-project Galaxy server defs stored in
-  Gateway DB, injected into scan requests — enables Automation Hub integration
-  from the web UI
+- **UI credential management**: Global Galaxy server defs stored in Gateway
+  DB, injected into all scan requests — enables Automation Hub integration
+  from the web UI without per-project duplication
 - **Simplified proxy**: `galaxy_client.py` reduces to tarball-to-wheel
   conversion; no `httpx` dependency for Galaxy API calls
 - **Security**: Credentials flow as scan-scoped metadata (in-transit on
   pod-local gRPC), never persisted by the engine.  Gateway DB stores
-  per-project credentials; encrypting these at rest (application-layer
+  global credentials; encrypting these at rest (application-layer
   encryption or a secrets manager) is a follow-up requirement
 
 ### Negative
@@ -186,17 +191,13 @@ should use it for all cases and eliminate the custom client entirely.
 
 ## Implementation Notes
 
-### Phase 1: Proto + CLI plumbing
+Implementation is three PRs, ordered by dependency:
 
-- Add `GalaxyServerDef` message to `common.proto` (`url`, `token`,
-  `auth_url`, `name`, `auth_type`)
-- Add `repeated GalaxyServerDef galaxy_servers` to `ScanOptions` and
-  `FixOptions`
-- CLI: parse `ansible.cfg` `[galaxy_server_list]` sections, populate
-  `galaxy_servers` on scan requests
-- Primary: write temp `ansible.cfg` from `galaxy_servers`, scope to session
+### PR 1: Proxy — replace Galaxy API client with ansible-galaxy CLI
 
-### Phase 2: Engine integration
+Remove the custom `GalaxyClient` (httpx-based Galaxy V3 REST client, SSO
+token exchange, API root normalization) from the proxy.  Replace with
+`ansible-galaxy collection download` to fetch tarballs.
 
 - Preferred: proxy runs `ansible-galaxy collection download` (keeps outbound
   fetches in the pod's designated external-facing service, preserving
@@ -207,11 +208,23 @@ should use it for all cases and eliminate the custom client entirely.
 - Proxy: convert local tarballs to wheels (endpoint or filesystem watcher)
 - Remove `GalaxyClient` upstream fetching from proxy
 
-### Phase 3: Gateway + UI
+### PR 2: CLI + proto — Galaxy server config as scan metadata
 
-- Gateway: add `galaxy_servers` to project model (encrypted token storage)
-- Gateway: inject `galaxy_servers` into gRPC requests when calling engine
-- UI: per-project Galaxy server configuration form
+Add proto fields and wire the CLI to read the user's `ansible.cfg`.
+
+- Add `GalaxyServerDef` message to `common.proto` (`url`, `token`,
+  `auth_url`, `name`, `auth_type`)
+- Add `repeated GalaxyServerDef galaxy_servers` to `ScanOptions` and
+  `FixOptions`
+- CLI: parse `ansible.cfg` `[galaxy_server_list]` sections, populate
+  `galaxy_servers` on scan requests
+- Primary: write temp `ansible.cfg` from `galaxy_servers`, scope to session
+
+### PR 3: Gateway + UI — global Galaxy server management
+
+- Gateway: add global `galaxy_servers` table (encrypted token storage)
+- Gateway: inject `galaxy_servers` into all gRPC requests when calling engine
+- UI: global Galaxy server configuration (settings page, not per-project)
 
 ### Cherry-pick from PR #130
 
@@ -253,3 +266,5 @@ These changes are valuable regardless of the auth delegation decision:
 |------|--------|--------|
 | 2026-03-28 | AI-assisted | Initial proposal |
 | 2026-03-28 | AI-assisted | Restructured to match ADR template (Copilot review) |
+| 2026-03-28 | Human review | Galaxy server defs are global, not per-project (cache coherence) |
+| 2026-03-28 | Human review | Implementation split into 3 PRs: proxy, CLI+proto, UI |

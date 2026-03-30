@@ -1,0 +1,21 @@
+---
+- name: Deploy nginx main config
+  ansible.builtin.template:
+    src: nginx.conf.j2
+    dest: "{{ nginx_config_dir }}/nginx.conf"
+    mode: "0644"
+    validate: "nginx -t -c %s"
+  notify: reload nginx
+
+- name: Deploy application vhost
+  ansible.builtin.template:
+    src: vhost.conf.j2
+    dest: "{{ nginx_config_dir }}/sites-enabled/app.conf"
+    mode: "0644"
+  notify: reload nginx
+
+- name: Ensure nginx is running
+  ansible.builtin.service:
+    name: nginx
+    state: started
+    enabled: true

@@ -1,0 +1,9 @@
+---
+app_name: graph-patterns-app
+app_dir: /opt/app
+app_user: appuser
+app_repo: https://git.example.com/org/app.git
+app_version: "1.0.0"
+app_image: registry.example.com/org/app
+deploy_enabled: true
+system_timezone: UTC

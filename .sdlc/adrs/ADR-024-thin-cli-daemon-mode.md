@@ -305,6 +305,34 @@ no longer imported by the CLI.
 
 > **Note (ADR-039):** The user-facing terminology was renamed: `scan` → `check`, `fix` → `remediate`, `Scans` UI → `Activity`. Engine-internal names (`ScanChunk`, `scan_id`, `_scan_pipeline`) are unchanged. The `ScanStream` RPC was removed; `FixSession` serves both check and remediate modes. The `apme` binary name is unchanged.
 
+## Future Direction: CLI → Gateway REST
+
+ADR-024 made the CLI a thin gRPC client to the Primary. As the Gateway
+matures (ADR-029, ADR-038, ADR-040), it is becoming the natural API surface
+for the system — it owns persistence, context enrichment, and the public
+REST API.
+
+For CLI operations that **consume persisted data** rather than orchestrating
+engine work, the Gateway REST API is a better fit than direct gRPC to
+Primary:
+
+| Operation | Current path | Future path |
+|-----------|-------------|-------------|
+| `sbom` | (not implemented) | CLI → Gateway REST (`GET /api/v1/projects/{id}/sbom?format=cyclonedx`) |
+| `health-check` | CLI → gRPC Health probes | CLI → Gateway REST (aggregated health) |
+| `session list/info` | (not implemented) | CLI → Gateway REST (persisted session data) |
+
+Streaming operations (`check`, `remediate`) that require real-time progress
+and bidirectional interaction stay on gRPC to Primary (via `FixSession`).
+The Gateway may eventually proxy these over WebSocket for browser clients,
+but the CLI's gRPC path remains efficient for interactive terminal use.
+
+`apme sbom` (ADR-040) is the first CLI subcommand to use this pattern.
+The CLI calls the Gateway REST API to retrieve a formatted SBOM
+(CycloneDX, SPDX, etc.) from persisted manifest data — no engine RPC,
+no local serializer, one code path shared with the web UI and external
+consumers.
+
 ## References
 
 - [PR #37](https://github.com/ansible/apme/pull/37): This ADR proposal and
@@ -322,3 +350,4 @@ no longer imported by the CLI.
 | 2026-03-18 | Architecture review | Initial proposal |
 | 2026-03-19 | AI Agent      | Accepted: implemented in PR #43. Updated FixStream → FixSession (bidi, ADR-028), updated subcommand table and phased rollout to reflect implementation. |
 | 2026-03-25 | APME Team     | ADR-039 addendum; subcommand table and examples: check/remediate, `FixSession` for check; module names `check.py` / `remediate.py`. |
+| 2026-03-30 | Architecture review | Future direction: CLI → Gateway REST for read-heavy operations (SBOM first case) |

@@ -1,0 +1,19 @@
+# Target of import_role from site.yml
+---
+- name: Install monitoring agent
+  ansible.builtin.package:
+    name: node-exporter
+    state: present
+
+- name: Configure monitoring agent
+  ansible.builtin.template:
+    src: node_exporter.conf.j2
+    dest: /etc/default/node_exporter
+    mode: "0644"
+  notify: restart node exporter
+
+- name: Ensure monitoring agent running
+  ansible.builtin.service:
+    name: node_exporter
+    state: started
+    enabled: true

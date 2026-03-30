@@ -1,0 +1,17 @@
+worker_processes {{ nginx_worker_processes }};
+
+events {
+    worker_connections {{ nginx_worker_connections }};
+}
+
+http {
+    include       /etc/nginx/mime.types;
+    default_type  application/octet-stream;
+    sendfile      on;
+
+    access_log {{ nginx_log_dir }}/access.log;
+    error_log  {{ nginx_log_dir }}/error.log;
+
+    include {{ nginx_config_dir }}/conf.d/*.conf;
+    include {{ nginx_config_dir }}/sites-enabled/*.conf;
+}

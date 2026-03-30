@@ -1,0 +1,9 @@
+# Minimal collection layout — establishes FQCN namespace.
+# The GraphBuilder uses this to determine collection ownership of
+# modules, plugins, and roles.
+---
+namespace: testorg
+name: graph_patterns
+version: 1.0.0
+readme: README.md
+description: Test collection for ContentGraph edge type coverage

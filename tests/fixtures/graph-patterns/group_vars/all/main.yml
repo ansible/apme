@@ -1,0 +1,6 @@
+# Inventory group_vars — resolved at group scope.
+# The GraphBuilder must discover these without inventory plugin.
+---
+env: production
+log_level: info
+ca_api_url: https://ca.example.com/api/v1

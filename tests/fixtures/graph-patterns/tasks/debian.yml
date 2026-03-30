@@ -1,0 +1,12 @@
+# Target of dynamic include_tasks: "tasks/{{ ansible_os_family | lower }}.yml"
+---
+- name: Update apt cache
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Configure AppArmor
+  ansible.builtin.service:
+    name: apparmor
+    state: started
+    enabled: true

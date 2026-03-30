@@ -1,0 +1,9 @@
+# Edge type: import (cross-playbook)
+# master.yml imports two playbooks, creating cross-playbook edges.
+# Graph: master.yml → site.yml, master.yml → deploy.yml
+---
+- name: Import infrastructure playbook
+  ansible.builtin.import_playbook: site.yml
+
+- name: Import deployment playbook
+  ansible.builtin.import_playbook: deploy.yml

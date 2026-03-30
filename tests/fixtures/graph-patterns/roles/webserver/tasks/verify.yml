@@ -1,0 +1,13 @@
+# Target of include_role + tasks_from from site.yml Play 2.
+---
+- name: Check nginx process
+  ansible.builtin.command: pgrep nginx
+  register: nginx_proc
+  changed_when: false
+  failed_when: nginx_proc.rc != 0
+
+- name: Verify nginx responds
+  ansible.builtin.uri:
+    url: "http://localhost:{{ nginx_listen_port }}/healthz"
+    status_code: 200
+  register: nginx_response

@@ -1,0 +1,20 @@
+# Imported by master.yml — target of a cross-playbook import edge.
+---
+- name: Application deployment
+  hosts: webservers
+  become: true
+
+  tasks:
+    - name: Pull application image
+      containers.podman.podman_image:
+        name: "{{ app_image }}:{{ app_version }}"
+      register: image_pull
+
+    - name: Deploy container
+      containers.podman.podman_container:
+        name: "{{ app_name }}"
+        image: "{{ app_image }}:{{ app_version }}"
+        state: started
+        ports:
+          - "{{ app_port }}:8080"
+      when: image_pull is changed

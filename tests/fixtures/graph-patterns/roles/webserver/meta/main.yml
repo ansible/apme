@@ -1,0 +1,15 @@
+# Edge type: dependency (role depends on common)
+---
+galaxy_info:
+  role_name: webserver
+  description: Nginx web server configuration
+  min_ansible_version: "2.14"
+
+dependencies:
+  - role: common
+    vars:
+      common_packages:
+        - curl
+        - jq
+        - unzip
+        - nginx

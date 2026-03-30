@@ -1,0 +1,147 @@
+# Primary playbook exercising every graph edge type.
+# Multi-play, static roles, imports, includes, handlers, blocks, vars_files,
+# data flow, dynamic includes, nested blocks.
+---
+
+# --- Play 1: Infrastructure setup ---
+# Edge types: dependency (static roles:), vars_include (vars_files),
+# import (import_tasks, import_role), notify, rescue, always,
+# data_flow (register/set_fact)
+- name: Infrastructure setup
+  hosts: webservers
+  become: true
+  become_user: deployer
+
+  vars_files:
+    - vars/secrets.yml
+    - vars/app_config.yml
+
+  roles:
+    - role: common
+      tags: [common]
+    - role: webserver
+      tags: [web]
+
+  pre_tasks:
+    - name: Gather deployment facts
+      ansible.builtin.setup:
+        gather_subset:
+          - min
+      register: setup_result
+
+    - name: Set deployment timestamp
+      ansible.builtin.set_fact:
+        deploy_ts: "{{ ansible_date_time.iso8601 }}"
+
+  tasks:
+    - name: Import base configuration tasks
+      ansible.builtin.import_tasks: tasks/base_config.yml
+
+    - name: Import role for monitoring
+      ansible.builtin.import_role:
+        name: monitoring
+
+    - name: Include OS-specific tasks
+      ansible.builtin.include_tasks: "tasks/{{ ansible_os_family | lower }}.yml"
+
+    - name: Include deployment tasks
+      ansible.builtin.include_tasks: tasks/deploy_app.yml
+      when: deploy_enabled | default(false)
+
+    - name: Verify deployment
+      ansible.builtin.uri:
+        url: "http://{{ inventory_hostname }}:{{ app_port }}/health"
+        return_content: true
+      register: health_check
+      notify: restart nginx
+
+    # Block with rescue and always
+    - name: Database migration block
+      block:
+        - name: Run database migrations
+          ansible.builtin.command: "{{ app_dir }}/manage.py migrate"
+          register: migration_result
+          changed_when: "'No migrations to apply' not in migration_result.stdout"
+
+        - name: Verify migration state
+          ansible.builtin.command: "{{ app_dir }}/manage.py showmigrations --plan"
+          register: migration_state
+          changed_when: false
+
+      rescue:
+        - name: Rollback migrations
+          ansible.builtin.command: "{{ app_dir }}/manage.py migrate --backward"
+          when: migration_result is defined
+
+        - name: Alert on migration failure
+          ansible.builtin.debug:
+            msg: "Migration failed: {{ migration_result.stderr | default('unknown') }}"
+
+      always:
+        - name: Record migration outcome
+          ansible.builtin.set_fact:
+            migration_completed: "{{ migration_result is defined and migration_result.rc == 0 }}"
+
+    # Nested blocks
+    - name: Outer certificate block
+      block:
+        - name: Check certificate expiry
+          ansible.builtin.command: openssl x509 -enddate -noout -in /etc/ssl/certs/app.crt
+          register: cert_check
+          changed_when: false
+
+        - name: Inner certificate renewal block
+          block:
+            - name: Generate CSR
+              ansible.builtin.command: openssl req -new -key /etc/ssl/private/app.key -out /tmp/app.csr
+              when: cert_expiring
+
+            - name: Submit CSR to CA
+              ansible.builtin.uri:
+                url: "{{ ca_api_url }}/sign"
+                method: POST
+                body: "{{ lookup('file', '/tmp/app.csr') }}"
+              register: signed_cert
+              notify:
+                - install certificate
+                - restart nginx
+
+  handlers:
+    - name: restart nginx
+      ansible.builtin.service:
+        name: nginx
+        state: restarted
+      notify: verify nginx
+
+    - name: verify nginx
+      ansible.builtin.uri:
+        url: "http://localhost/healthz"
+      register: nginx_health
+
+    - name: install certificate
+      ansible.builtin.copy:
+        content: "{{ signed_cert.json.certificate }}"
+        dest: /etc/ssl/certs/app.crt
+        mode: "0644"
+
+    # Handler subscribing to a topic via listen
+    - name: reload all services
+      ansible.builtin.debug:
+        msg: "Reloading all services"
+      listen: "restart web services"
+
+# --- Play 2: Smoke tests ---
+# Edge types: include_role (dynamic)
+- name: Smoke tests
+  hosts: webservers
+  gather_facts: false
+
+  tasks:
+    - name: Include smoke test role
+      ansible.builtin.include_role:
+        name: "{{ smoke_test_role | default('webserver') }}"
+        tasks_from: verify.yml
+
+    - name: Report results
+      ansible.builtin.debug:
+        msg: "Smoke tests passed on {{ inventory_hostname }}"

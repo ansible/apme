@@ -1,0 +1,14 @@
+# Target of import_tasks — statically included into site.yml.
+---
+- name: Configure sysctl
+  ansible.posix.sysctl:
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    state: present
+  loop:
+    - { name: net.core.somaxconn, value: "1024" }
+    - { name: vm.swappiness, value: "10" }
+
+- name: Set system timezone
+  community.general.timezone:
+    name: "{{ system_timezone | default('UTC') }}"

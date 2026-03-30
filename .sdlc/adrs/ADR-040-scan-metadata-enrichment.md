@@ -47,11 +47,16 @@ message CollectionRef {
   string fqcn = 1;           // e.g. "community.general"
   string version = 2;        // e.g. "8.0.0"
   string source = 3;         // "specified", "learned", or "dependency"
+  string license = 4;        // SPDX identifier or free-text (from MANIFEST.json / galaxy.yml)
+  string supplier = 5;       // namespace (e.g. "community", "ansible"); from galaxy.yml namespace field
 }
 
 message PythonPackageRef {
-  string name = 1;            // e.g. "jmespath"
+  string name = 1;            // e.g. "jmespath" (PEP 503 normalized)
   string version = 2;         // e.g. "1.0.1"
+  reserved 3;                 // was required_by (removed)
+  string license = 4;         // from package METADATA
+  string supplier = 5;        // from package METADATA Author field
 }
 
 message ProjectManifest {
@@ -62,6 +67,12 @@ message ProjectManifest {
   string dependency_tree = 5;               // raw `uv pip tree` output
 }
 ```
+
+**Note on roles:** Role inventory is deferred until the ContentGraph (ADR-044)
+lands. The ContentGraph models roles as first-class graph nodes with metadata,
+parent-child relationships, and quality attributes. Adding a flat `RoleRef` to
+the manifest now would be superseded by the richer graph model. Once ADR-044
+is implemented, role data flows naturally from the graph into the manifest.
 
 ### Data flow
 
@@ -89,11 +100,38 @@ Consumers (query)
 | Endpoint | Description |
 |----------|-------------|
 | `GET /api/v1/projects/{id}/dependencies` | Collections and Python packages for a project |
+| `GET /api/v1/projects/{id}/sbom?format=cyclonedx` | SBOM in CycloneDX 1.5 JSON (serialized from manifest) |
 | `GET /api/v1/collections` | All collections seen across projects, with usage counts |
 | `GET /api/v1/collections/{fqcn}` | Collection detail: version, projects using it, health score |
 | `GET /api/v1/collections/{fqcn}/projects` | Projects that depend on this collection |
 | `GET /api/v1/python-packages` | All Python packages seen across projects, with usage counts |
 | `GET /api/v1/python-packages/{name}` | Package detail: version(s), projects using it, CVE status |
+
+### SBOM as a derivative view
+
+SBOM generation (DR-002) is a presentation concern, not an engine concern. The
+`ProjectManifest` carries the same data as an SBOM — collections, packages,
+versions, licenses, suppliers — just in protobuf rather than CycloneDX or SPDX
+format. The engine discovers and emits the data; the Gateway serializes it into
+consumer formats.
+
+CycloneDX, SPDX, CSV, or any future format is a serializer in the Gateway — a
+function from persisted manifest data to a specific output shape. Adding a new
+format means adding a Gateway serializer, not touching the engine. The engine
+remains format-agnostic.
+
+The `apme sbom` CLI subcommand calls the Gateway REST API to retrieve the
+formatted output, establishing the pattern for CLI operations that consume
+persisted data rather than orchestrating engine work directly (see ADR-024
+future direction).
+
+PURLs (Package URLs) are derived from manifest fields at serialization time:
+
+| Component type | PURL pattern |
+|----------------|-------------|
+| Collection | `pkg:generic/{namespace}.{name}@{version}?repository_url=...` |
+| Python package | `pkg:pypi/{pep503_name}@{version}` |
+| Role | Deferred until ADR-044 (ContentGraph) provides the role model |
 
 ## Alternatives Considered
 
@@ -151,15 +189,51 @@ Consumers (query)
 
 ### Engine changes
 
-1. After session venv build, enumerate installed collections and Python packages (`uv pip list --format json` or `importlib.metadata`).
-2. During FQCN resolution (M001-M004), collect resolved collection references.
-3. Populate `ProjectManifest` and attach to `FixCompletedEvent`.
+The scan pipeline already enumerates the session venv (`list_installed_collections`,
+`list_installed_packages`, `get_dependency_tree` in `venv_manager/session.py`),
+captures the results in `SessionState` via `scan_fn`, and assembles a
+`ProjectManifest` via `_build_manifest()` attached to `FixCompletedEvent`.
+
+Remaining work:
+1. Extend `list_installed_packages` — replace the `pip list` subprocess with
+   `importlib.metadata` run in the venv's Python. One subprocess, returns
+   name, version, license, and author in a single pass.
+2. Extend `list_installed_collections` — after `ansible-galaxy collection list`
+   returns `(fqcn, version)` pairs, walk the collection install paths to read
+   `license` and `supplier` from each collection's `MANIFEST.json` /
+   `galaxy.yml`. This is new filesystem access — the current function only
+   parses the JSON output from `ansible-galaxy`.
+3. Update `_build_manifest` to populate the new `license`/`supplier` proto fields.
 
 ### Gateway changes
 
 1. New DB tables: `scan_manifests`, `scan_collections`, `scan_python_packages` (scan-scoped; project views derived from latest scan).
 2. `grpc_reporting/servicer.py`: Extract and persist manifest from `FixCompletedEvent`.
 3. New REST endpoints under `/api/v1/`.
+4. SBOM serializer(s) — CycloneDX 1.5 JSON initially, additional formats (SPDX, CSV) as needed. Serializers live in the Gateway, not the engine.
+
+### Implementation PRs
+
+**PR 1: Engine + Proto — hydrate `ProjectManifest`.**
+Extend `CollectionRef` and `PythonPackageRef` with `license` and `supplier`
+proto fields. The collection and package enumeration pipeline already exists
+(`list_installed_collections`, `list_installed_packages` → `SessionState` →
+`_build_manifest` → `FixCompletedEvent`). This PR extends the existing
+functions to also extract license/supplier: replace `pip list` with
+`importlib.metadata` for packages, read `MANIFEST.json`/`galaxy.yml` for
+collections. No new collectors needed. No roles — deferred to ADR-044.
+
+**PR 2: Gateway — DB schema + persistence + SBOM endpoint.**
+New tables for manifest data. `ReportingServicer` extracts and persists
+the manifest. `GET /api/v1/projects/{id}/sbom?format=cyclonedx` with
+CycloneDX serializer. `GET /api/v1/projects/{id}/dependencies` for raw
+manifest data.
+
+**PR 3: CLI — `apme sbom` via Gateway REST.**
+The CLI calls the Gateway REST API to retrieve formatted SBOM output.
+First CLI subcommand that uses REST instead of gRPC, establishing the
+pattern for read-heavy operations on persisted data (see ADR-024 future
+direction).
 
 ### Galaxy Proxy (no changes)
 
@@ -171,7 +245,9 @@ The proxy already resolves transitive dependencies. The engine reads the install
 - ADR-029: Web Gateway architecture (persistence layer, REST API)
 - ADR-037: Project-centric UI model (project entity that manifests attach to)
 - ADR-038: Public data API (the REST API surface these endpoints extend)
-- DR-002: SBOM generation (deferred; manifest data is the prerequisite)
+- DR-002: SBOM Format and Scope (manifest data is the prerequisite; CycloneDX serialization is a Gateway view)
+- ADR-024: Thin CLI — future direction for CLI → Gateway REST migration; `apme sbom` is the first case
+- ADR-044: Node Identity / ContentGraph — role inventory deferred until the graph model is available
 
 ## References
 
@@ -185,3 +261,4 @@ The proxy already resolves transitive dependencies. The engine reads the install
 | Date | Author | Change |
 |------|--------|--------|
 | 2026-03-25 | Brad (cidrblock) | Initial proposal |
+| 2026-03-30 | Architecture review | Extended manifest with license/supplier; SBOM as Gateway view; roles deferred to ADR-044; 3-PR implementation plan |

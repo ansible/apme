@@ -56,6 +56,7 @@ message Violation {
   RuleScope scope = 11;
   string source = 12;  // Validator that produced this violation (e.g. "native", "opa", "ansible", "gitleaks")
   string snippet = 13; // Source lines around the violation (numbered, ~10 lines context)
+  string node_id = 14; // Stable ContentGraph node identity (YAML-path-based, ADR-044)
 }
 
 message LineRange {

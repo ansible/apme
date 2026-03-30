@@ -1,0 +1,12 @@
+# Target of dynamic include_tasks: "tasks/{{ ansible_os_family | lower }}.yml"
+# The include path is variable-dependent — edge gets ``dynamic: true``.
+---
+- name: Enable EPEL repository
+  ansible.builtin.dnf:
+    name: epel-release
+    state: present
+
+- name: Configure SELinux
+  ansible.posix.selinux:
+    state: enforcing
+    policy: targeted

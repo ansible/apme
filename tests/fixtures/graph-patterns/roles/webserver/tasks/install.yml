@@ -1,0 +1,17 @@
+---
+- name: Install nginx
+  ansible.builtin.package:
+    name: nginx
+    state: present
+
+- name: Ensure nginx directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - "{{ nginx_config_dir }}/conf.d"
+    - "{{ nginx_config_dir }}/sites-enabled"
+    - "{{ nginx_log_dir }}"

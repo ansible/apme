@@ -1,0 +1,7 @@
+# Edge types: import (import_tasks for modular task files)
+---
+- name: Import nginx installation tasks
+  ansible.builtin.import_tasks: install.yml
+
+- name: Import nginx configuration tasks
+  ansible.builtin.import_tasks: configure.yml

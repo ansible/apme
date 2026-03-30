@@ -1,0 +1,7 @@
+---
+nginx_worker_processes: auto
+nginx_worker_connections: 1024
+nginx_listen_port: 80
+nginx_ssl_enabled: false
+nginx_ssl_port: 443
+app_port: 8080

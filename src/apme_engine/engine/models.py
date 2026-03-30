@@ -4592,6 +4592,24 @@ class RuleMetadata:
     tags: tuple[str, ...] = ()
     scope: str = RuleScope.TASK
 
+    def get_metadata(self) -> RuleMetadata:
+        """Return a standalone RuleMetadata copy of this rule's metadata.
+
+        Returns:
+            RuleMetadata with rule_id, description, name, version, commit_id,
+            severity, tags, scope.
+        """
+        return RuleMetadata(
+            rule_id=self.rule_id,
+            description=self.description,
+            name=self.name,
+            version=self.version,
+            commit_id=self.commit_id,
+            severity=self.severity,
+            tags=self.tags,
+            scope=self.scope,
+        )
+
 
 @dataclass
 class SpecMutation:
@@ -4773,23 +4791,6 @@ class Rule(RuleMetadata):
         if result.error:
             return result.error
         return None
-
-    def get_metadata(self) -> RuleMetadata:
-        """Return RuleMetadata for this rule.
-
-        Returns:
-            RuleMetadata with rule_id, description, name, version, commit_id, severity, tags, scope.
-        """
-        return RuleMetadata(
-            rule_id=self.rule_id,
-            description=self.description,
-            name=self.name,
-            version=self.version,
-            commit_id=self.commit_id,
-            severity=self.severity,
-            tags=self.tags,
-            scope=self.scope,
-        )
 
 
 @dataclass

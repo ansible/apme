@@ -784,7 +784,13 @@ In ContentGraph, task nodes carry the same `resolved_module_options` after
 
 ```python
 class GraphAnnotator:
-    """Runs existing ModuleAnnotator subclasses on ContentGraph task nodes."""
+    """Runs ModuleAnnotator subclasses directly on ContentGraph task nodes.
+
+    Annotators are ported to read from ContentNode directly (22 files,
+    ~20 lines each). No proxy layer — ContentNode carries the same
+    attributes annotators need: module_options, resolved_module_options,
+    module, resolved_module_name, name, annotations.
+    """
 
     def __init__(self):
         self.risk_annotators = [AnsibleBuiltinRiskAnnotator()]
@@ -795,36 +801,11 @@ class GraphAnnotator:
             if node.node_type != "task":
                 continue
 
-            # Build a lightweight TaskCall-compatible wrapper
-            task_proxy = TaskCallProxy(node)
             for annotator in self.risk_annotators:
-                if annotator.match(task_proxy):
-                    result = annotator.run(task_proxy)
+                if annotator.match(node):
+                    result = annotator.run(node)
                     if result and result.annotations:
                         node.annotations.extend(result.annotations)
-
-
-class TaskCallProxy:
-    """Adapts a ContentNode to the TaskCall interface that annotators expect.
-
-    Annotators only access: .args, .spec.resolved_name, .spec.module.
-    This proxy provides those from the ContentNode's attributes.
-    """
-
-    def __init__(self, node: ContentNode):
-        self.args = Arguments(
-            type=ArgumentsType.DICT,
-            raw=node.module_options,
-            resolved=True,
-            templated=[node.resolved_module_options],
-        )
-        self.spec = SimpleNamespace(
-            resolved_name=node.resolved_module_name,
-            module=node.module,
-            name=node.name,
-        )
-        self.annotations = node.annotations
-        self.key = str(node.identity)
 ```
 
 ---
@@ -868,35 +849,37 @@ OPA rules consume the JSON hierarchy payload built by `opa_payload.py`:
 is **unchanged**. Validators receive `files` (file bytes) and `hierarchy`
 (JSON). The ContentGraph is internal to the engine — validators never see it.
 
-In ContentGraph, `AnsibleRunContext` is built from a graph traversal rather than
-from an `ObjectList`:
+**No adapter is built.** All ~96 native rules are ported directly to a unified
+`GraphRule` interface in Phase 2. Inherited-property and scope-aware rules
+gain new capabilities (PropertyOrigin, graph queries). Task-local rules
+undergo a mechanical signature change (`ctx.current` → `graph.get_node(node_id)`)
+with no algorithmic change — they are ported for interface consistency, not
+because they need graph access. Two rule interfaces is worse than one.
+
+Once all rules are on `GraphRule`, `AnsibleRunContext`, `RunTarget`, and
+`ObjectList` are removed entirely. One interface for all rules.
+
+See [Phase 2 — Rules + switchover](#phase-2--rules--switchover-feature-flagged)
+for the full rule classification and porting strategy.
+
+In ContentGraph, rules consume the graph directly — no intermediate
+`AnsibleRunContext` conversion:
 
 ```python
-def graph_to_run_context(graph: ContentGraph, root_id: str) -> AnsibleRunContext:
-    """Build AnsibleRunContext from a ContentGraph subgraph.
+class NativeValidatorServicer:
+    """Runs GraphRule instances against ContentGraph nodes."""
 
-    Produces the same RunTarget sequence that rules expect, but derived
-    from graph nodes rather than ObjectList items.
-    """
-    ctx = AnsibleRunContext()
-    ctx.root_key = root_id
-
-    # Topological order within the subgraph rooted at root_id
-    subgraph_nodes = nx.descendants(graph.g, root_id) | {root_id}
-    subgraph = graph.g.subgraph(subgraph_nodes)
-
-    for node_id in nx.topological_sort(subgraph):
-        node = graph.get_node(node_id)
-        target = RunTarget(
-            type=node.node_type + "call",  # playcall, taskcall, rolecall
-            key=str(node.identity),
-            spec=node_to_spec_object(node),  # convert back to Object shape
-        )
-        # Attach annotations
-        target.annotations = node.annotations
-        ctx.sequence.add(target)
-
-    return ctx
+    def validate(self, graph: ContentGraph) -> list[Violation]:
+        violations = []
+        for node_id in graph.g.nodes:
+            node = graph.get_node(node_id)
+            if node.scope != NodeScope.OWNED:
+                continue
+            for rule in self._rules_for_node_type(node.node_type):
+                result = rule.process(graph, node_id)
+                if result:
+                    violations.append(result.to_violation(node_id, node))
+        return violations
 ```
 
 ---
@@ -1159,18 +1142,12 @@ class ContentGraphScanner:
         annotator.annotate(graph)
 
         # Phase 5: Build outputs for validators
-        # 5a: AnsibleRunContext for native rules (backward-compatible)
-        contexts = []
-        for root_id in graph.get_roots():
-            ctx = graph_to_run_context(graph, root_id)
-            contexts.append(ctx)
-
-        # 5b: Hierarchy payload for OPA rules (backward-compatible)
+        # Native rules consume the graph directly via GraphRule (no adapter)
+        # OPA rules consume hierarchy JSON (backward-compatible)
         hierarchy = build_hierarchy_from_graph(graph, load.target_type, load.target_name)
 
         return ScanContext(
             graph=graph,
-            contexts=contexts,
             hierarchy_payload=hierarchy,
             files=file_bytes,
         )
@@ -2364,114 +2341,219 @@ Rejecting the group also cascades to pass 3+ for all nodes in it.
 
 ## Migration Path
 
-### Phase A — Identity (non-breaking, additive)
+The migration uses three phases with zero throwaway code. No intermediate
+adapter layer (`graph_to_run_context()`, `TaskCallProxy`, `node_to_spec_object()`)
+is built — the graph and rule porting happen together so every artifact is
+permanent.
 
-**Goal**: Assign `NodeIdentity` to every node without changing the pipeline.
+### Phase 1 — ContentGraph core + validation (parallel, feature-flagged)
 
-**Changes**:
-
-1. Add `node_id: str = ""` field to `Object` base class (models.py:324)
-2. In `load_task()` (model_loader.py:1828), assign:
-   ```python
-   taskObj.node_id = f"{defined_in}::task[{index}]"
-   ```
-3. In `load_play()` (model_loader.py:517), assign:
-   ```python
-   pbObj.node_id = f"{path}::play[{index}]"
-   ```
-4. Thread `node_id` through `CallObject` → `TaskCall` → `RunTarget`
-5. Add `node_id` field to `Violation` proto (backward-compatible)
-6. In `_attach_snippets()`, use `node_id` for stable violation identity
-
-**Risk**: Zero — additive field, no behavioral change.
-
-**Validation**: Existing tests pass unchanged. New tests verify `node_id`
-is populated and stable across re-parses of the same content.
-
-### Phase B — Graph Construction (parallel path, feature-flagged)
-
-**Goal**: Build `ContentGraph` alongside existing `TreeLoader` and validate equivalence.
+**Goal**: Build all permanent infrastructure and validate it against the
+existing pipeline. The old pipeline remains primary — nothing switches over.
 
 **Changes**:
 
-1. Add `networkx` dependency (pure Python, ~3 MB, Apache-2.0)
-2. Implement `ContentGraph`, `ContentNode`, `GraphBuilder` in new module
-   `engine/content_graph.py`
-3. In `SingleScan.construct_trees()`, after existing `TreeLoader.run()`:
+1. Add comprehensive graph-pattern test fixtures in
+   `tests/fixtures/graph-patterns/` covering every edge type the
+   `GraphBuilder` must handle: handlers/notify, block rescue/always,
+   import_playbook, import_tasks, import_role, static `roles:` list,
+   vars_files, host_vars, nested blocks, and a minimal collection layout
+   with `galaxy.yml`. These fixtures are the validation corpus for all
+   subsequent implementation.
+2. Add `node_id` field to `Violation` proto in `common.proto`
+   (backward-compatible)
+3. Add `networkx` dependency (pure Python, ~3 MB, Apache-2.0)
+4. Implement `ContentGraph`, `ContentNode`, `NodeIdentity`, `GraphBuilder`
+   in new module `engine/content_graph.py`
+5. Implement `VariableProvenanceResolver`, `PropertyOrigin`,
+   `VariableProvenance` in new module `engine/variable_provenance.py`
+6. Implement `build_hierarchy_from_graph()`, `content_node_to_opa_dict()`
+   in new module `engine/graph_opa_payload.py`
+7. Implement `GraphRule` base class in new module
+   `validators/native/rules/graph_rule_base.py`
+8. Implement `PythonFileAnalyzer` in new module `engine/python_analyzer.py`
+9. In `SingleScan.construct_trees()`, after existing `TreeLoader.run()`:
    ```python
    if os.environ.get("APME_USE_CONTENT_GRAPH"):
        self.content_graph = GraphBuilder(root_defs, ext_defs).build(load)
        self._validate_graph_tree_equivalence(self.trees, self.content_graph)
    ```
-4. Shadow-run `VariableProvenanceResolver` and compare resolved values
-   against existing `Context` output
-5. Log discrepancies for debugging
+
+**What is NOT built**: No `node_id` on `Object`, `CallObject`, `TaskCall`,
+or `RunTarget`. No `graph_to_run_context()`. No `TaskCallProxy`. No
+`node_to_spec_object()`. None of these are needed because we never adapt
+the graph back to the old model — rules are ported directly in Phase 2.
+
+**Validation** (runs in parallel behind feature flag):
+- `GraphBuilder` output compared to `TreeLoader` output for structural
+  equivalence (graph has fewer nodes due to deduplication — expected)
+- `build_hierarchy_from_graph()` output compared to existing
+  `build_hierarchy_payload()` — OPA JSON must be identical
+- `VariableProvenanceResolver` output compared to existing `Context.add()`
+  variable resolution — resolved values must match
+
+This validation is test infrastructure, not throwaway — it becomes permanent
+integration tests that verify the graph builder works correctly.
 
 **Risk**: Low — existing pipeline unchanged; graph construction is a parallel
 code path behind a feature flag.
 
-**Validation**: Integration tests that compare `TreeLoader` output vs
-`GraphBuilder` output for every test fixture. Structural equivalence checked
-via node count and edge count (graph will have fewer nodes due to
-deduplication — this is expected and logged).
+### Phase 2 — Rules + switchover (feature-flagged)
 
-### Phase C — Graph Primary (breaking, behind feature flag)
+**Goal**: Port all ~96 native rules to `GraphRule`, adapt annotators to read
+from `ContentNode` directly, and switch `ContentGraph` as the primary model.
+Every line of code is permanent.
 
-**Goal**: `ContentGraph` becomes the primary data model; `TreeLoader` removed.
+**Rule porting** (priority order):
 
-**Changes**:
+#### INHERITED_PROPERTY rules (~10) — algorithmic change, high value
 
-1. `ContentGraphScanner` replaces `ARIScanner.evaluate()` pipeline
-2. `graph_to_run_context()` builds `AnsibleRunContext` from graph
-   (native rules unchanged)
-3. `build_hierarchy_from_graph()` builds OPA payload from graph
-   (OPA rules unchanged)
-4. `GraphAnnotator` runs existing `ModuleAnnotator` subclasses via
-   `TaskCallProxy` adapter
-5. Remove `TreeLoader`, `TreeNode`, `_recursive_get_calls()`,
-   `_recursive_make_graph()`
-6. Remove `Context.add()` linear walk; replaced by
-   `VariableProvenanceResolver`
-7. `StructuredFile` (ruamel.yaml) becomes the serialization layer for
-   `NodeState` content, not a parallel model
+These rules detect properties that can be inherited from parent scopes
+(play → block → task). Today they fire on every inheriting child. With
+`PropertyOrigin`, they fire once on the defining scope.
 
-**Risk**: Highest phase — changes the engine core. Mitigated by:
+| Rule | File | Property | Porting impact |
+|------|------|----------|----------------|
+| R108 | `R108_privilege_escalation.py` | `become` | 50 violations → 1 on the play |
+| L047 | `L047_no_log_password.py` | `no_log` | Fire at defining scope |
+| L045 | `L045_inline_env_var.py` | `environment` | Fire at defining scope |
+| L033 | `L033_unconditional_override.py` | `when` | Effective `when` from block/play |
+| M030 | `M030_broken_conditional_expressions.py` | `when` | Effective `when` from ancestry |
+| L049 | `L049_loop_var_prefix.py` | `loop_control` | Scoped above the task |
+| M010 | `M010_python2_interpreter.py` | play vars | `ansible_python_interpreter` from play |
+| M022 | `M022_tree___oneline_callback_plugins.py` | `environment` | Inheritable from play |
+| M026 | `M026_invalid_inventory_variable_names.py` | `vars` | `vars` inherited from block/play |
+
+**Porting pattern** for inherited-property rules:
+
+```python
+# BEFORE (AnsibleRunContext): fires on every task with become=true
+class PrivilegeEscalationRule(Rule):
+    def process(self, ctx: AnsibleRunContext) -> RuleResult | None:
+        task = ctx.current
+        if task.become.enabled:
+            return RuleResult(...)
+
+# AFTER (ContentGraph): fires once on the defining node
+class PrivilegeEscalationRule(GraphRule):
+    def process(self, graph: ContentGraph, node_id: str) -> RuleResult | None:
+        node = graph.get_node(node_id)
+        origin = node.property_origins.get("become")
+        if origin and not origin.inherited:
+            affected = len([
+                d for d in nx.descendants(graph.g, node_id)
+                if graph.get_node(d).node_type == "task"
+            ])
+            return RuleResult(
+                message=f"Play enables privilege escalation "
+                        f"(affects {affected} tasks)",
+            )
+        return None
+```
+
+#### SCOPE_AWARE rules (~8) — algorithmic change, medium value
+
+These rules reason about ordering, siblings, or cross-scope data where
+graph structure improves accuracy.
+
+| Rule | File | Graph benefit |
+|------|------|---------------|
+| L042 | `L042_complexity.py` | Subgraph node count replaces `ctx.sequence` counting |
+| L097 | `L097_name_unique.py` | Graph siblings vs flat sequence ordering |
+| L086 | `L086_play_vars_usage.py` | Play node type + vars in graph |
+| L032 | `L032_changed_data_dependence.py` | `data_flow` edges for variable precedence |
+| L034 | `L034_unused_override.py` | Variable precedence via graph ancestry |
+| L093 | `L093_set_fact_override.py` | Role defaults/vars via graph edges |
+| M005 | `M005_data_tagging.py` | `data_flow` edges for register → consume |
+| R117 | `R117_external_role.py` | Role position via graph edges |
+
+#### TASK_LOCAL rules (~78) — mechanical signature change
+
+These rules examine only the current task's own attributes. They gain no
+new capability from graph access but are ported for interface consistency.
+
+```python
+# BEFORE (AnsibleRunContext)
+class CommandExecRule(Rule):
+    def process(self, ctx: AnsibleRunContext) -> RuleResult | None:
+        task = ctx.current
+        ac = AnnotationCondition().risk_type(RiskType.CMD_EXEC).attr("is_mutable_cmd", True)
+        verdict = task.has_annotation_by_condition(ac)
+        ...
+
+# AFTER (GraphRule) — same logic, different entry point
+class CommandExecRule(GraphRule):
+    def process(self, graph: ContentGraph, node_id: str) -> RuleResult | None:
+        node = graph.get_node(node_id)
+        # same annotation check on node.annotations
+        ...
+```
+
+Examples: R101–R115 (risk annotation rules), L031 (file permissions),
+L046 (free-form), L040 (tabs), L060 (line length), P001–P004 (policy),
+L073 (indentation), all collection/role metadata rules (L052–L055,
+L087–L090, L096, L103–L105).
+
+**Switchover**:
+
+1. `ContentGraphScanner` replaces `ARIScanner.evaluate()` (feature-flagged)
+2. Annotators adapted to read from `ContentNode` directly (22 files,
+   ~20 lines each — no `TaskCallProxy` needed)
+3. All rules consume `ContentGraph` directly via `GraphRule`
+4. OPA payload produced by `build_hierarchy_from_graph()`
+5. `StructuredFile` (ruamel.yaml) becomes the serialization layer for
+   `NodeState`, not a parallel model
+
+**Removal** (once flag is stable):
+
+1. `TreeLoader`, `_recursive_get_calls()` from `engine/tree.py`
+2. `Context.add()` linear walk from `engine/context.py`
+3. `AnsibleRunContext`, `RunTarget`, `ObjectList` from `engine/models.py`
+4. Old `build_hierarchy_payload()` from `engine/opa_payload.py`
+5. Old `resolve_variables()` from `engine/annotators/variable_resolver.py`
+
+**Risk**: Largest phase — graph switchover + rule porting. Mitigated by:
 - Feature flag (`APME_USE_CONTENT_GRAPH=1`) during transition
-- `AnsibleRunContext` adapter ensures rules see identical data
-- OPA hierarchy JSON shape is preserved
+- Rules are independent — each can be ported and tested individually
+- TASK_LOCAL porting is mechanical (search-and-replace)
+- OPA hierarchy JSON shape is preserved (validated in Phase 1)
+- Old pipeline runs in parallel until validation passes
 
-**Validation**: Full test suite passes with `APME_USE_CONTENT_GRAPH=1`.
-Integration tests run both paths and compare final violation sets.
+**Validation**:
+- INHERITED_PROPERTY/SCOPE_AWARE: test against `terrible-playbook/`
+  fixture. Same issues detected, fewer violations with better attribution.
+- TASK_LOCAL: exact violation parity — graph output must match old output
+  identically. Any divergence is a porting bug.
+- OPA rules: hierarchy JSON diff between old and new must be empty.
+- Full test suite passes with feature flag enabled.
+- Final gate: full test suite passes with old code removed.
 
-### Phase D — Progression + Provenance (post-migration)
+### Phase 3 — Progression + Provenance
 
-**Goal**: Unlock the capabilities that motivated ContentGraph.
+**Goal**: Unlock the capabilities that motivated ContentGraph. `PropertyOrigin`
+is consumed by the already-ported rules from Phase 2.
 
 **Changes**:
 
 1. `NodeState` recorded at each pipeline phase (format, scan, transform)
    — see [Formatter → NodeState recording](#formatter--nodestate-recording)
-2. `PropertyOrigin` drives scope-level violations:
-   - R108 fires once on the play node that defines `become`, not on
-     every inheriting task
-   - Violation message includes: "inherited from play at site.yml:3"
-3. `variable_provenance` enables:
+2. `variable_provenance` enables:
    - Auto-generated argument specs (M-rule)
    - Duplicate/collision detection across roles
    - External interface identification (`external` provenance)
-4. Gateway accumulates `ScanSnapshot` per node across scans
+3. Gateway accumulates `ScanSnapshot` per node across scans
    (temporal progression per ADR-044)
-5. Snippets trivially extracted from `NodeState.content` at any pass
-6. Complexity metrics — see [Complexity metrics](#complexity-metrics)
-7. AI escalation enrichment — see [AI escalation enrichment](#ai-escalation-enrichment)
-8. Topology visualization — see [Topology visualization serialization](#topology-visualization-serialization)
-9. Best-practices pattern rules (M201, M202, R501, R502) —
+4. Snippets trivially extracted from `NodeState.content` at any pass
+5. Complexity metrics — see [Complexity metrics](#complexity-metrics)
+6. AI escalation enrichment — see [AI escalation enrichment](#ai-escalation-enrichment)
+7. Topology visualization — see [Topology visualization serialization](#topology-visualization-serialization)
+8. Best-practices pattern rules (M201, M202, R501, R502) —
    see [Best-practices pattern rules](#best-practices-pattern-rules)
-10. Dependency quality scorecards —
-    see [Dependency quality scorecards](#dependency-quality-scorecards)
-11. Graph topology stability assertions —
+9. Dependency quality scorecards —
+   see [Dependency quality scorecards](#dependency-quality-scorecards)
+10. Graph topology stability assertions —
     see [Graph topology stability assertions](#graph-topology-stability-assertions)
-12. Remediation convergence loop integration —
+11. Remediation convergence loop integration —
     see [Remediation convergence loop integration](#remediation-convergence-loop-integration)
 
 **Risk**: Medium — new features, not behavioral changes. Each capability
@@ -2484,18 +2566,20 @@ the [Phase D Enabler Architecture](#phase-d-enabler-architecture) section.
 
 | Risk | Severity | Likelihood | Mitigation |
 |------|----------|------------|------------|
-| `model_loader.py` output format change breaks downstream | High | Medium | Phase B adapter: graph builder consumes existing `Object` output, no loader changes needed |
-| OPA payload shape change breaks OPA rules | High | Low | `content_node_to_opa_dict()` produces identical JSON; tested by diffing output |
-| Native rule `AnsibleRunContext` shape change | High | Low | `graph_to_run_context()` produces identical `RunTarget` sequence; tested by diffing |
+| `model_loader.py` output format change breaks downstream | High | Medium | Graph builder consumes existing `Object` output; no loader changes needed in Phase 1 |
+| OPA payload shape change breaks OPA rules | High | Low | `content_node_to_opa_dict()` produces identical JSON; validated by diffing output in Phase 1 |
 | Graph deduplication changes violation counts | Medium | High | Expected and desired — shared roles produce 1 violation instead of N duplicates. Document in changelog. |
 | `networkx` dependency adds weight | Low | Certain | ~3 MB pure Python, no compiled extensions, passes ADR-019 checklist |
-| Variable resolution produces different results | Medium | Medium | Shadow-run in Phase B, compare every resolved value, fix discrepancies before Phase C |
+| Variable resolution produces different results | Medium | Medium | Shadow-run in Phase 1, compare every resolved value, fix discrepancies before Phase 2 |
 | Performance regression (graph construction overhead) | Medium | Low | `networkx` graph construction is O(V+E); current `TreeLoader` is also O(V+E) but with higher constant factor due to duplication |
 | Python AST analysis adds scan time | Low | Medium | Only scans `owned` Python files by default; `referenced` analysis opt-in. `ast.parse` is fast for typical module sizes |
 | Complexity metrics produce unexpected thresholds | Low | Medium | Thresholds (M201: 20, R501: 15) are configurable; start conservative and tune based on real-world playbook data |
 | AI context extraction overhead per escalation | Low | Low | `build_ai_context` is O(ancestors) per node; graph is already in memory. Negligible vs AI inference cost |
 | Graph-based rules create noisy findings | Medium | Medium | New rules (M201, M202, R501, R502) ship disabled by default; enable via policy config. Tune thresholds per-organization |
 | Per-unit approval rejection cascades across passes | Medium | Medium | By design: within a pass, changes are independently approvable; across passes for the same node, rejection cascades. Inheritance-aware grouping detects cross-node impact via `PropertyOrigin`. See [Per-unit approval model](#per-unit-approval-model-future-not-day-one) |
+| Native rule porting changes violation counts | Medium | Certain | INHERITED_PROPERTY/SCOPE_AWARE rules produce fewer, more accurate violations (expected, documented per rule). TASK_LOCAL rules produce identical output (exact parity verified). |
+| All ~96 rules ported simultaneously in Phase 2 | Medium | Certain | Rules are independent — each ported and tested individually. TASK_LOCAL porting is mechanical. Old pipeline runs in parallel behind feature flag until validation passes. |
+| `AnsibleRunContext` removal breaks external consumers | Low | Low | `AnsibleRunContext` is internal to the native validator. No external API exposure. Removal is a cleanup, not a breaking change. |
 
 ---
 
@@ -2503,35 +2587,51 @@ the [Phase D Enabler Architecture](#phase-d-enabler-architecture) section.
 
 | File | Phase | Change type | Description |
 |------|-------|-------------|-------------|
-| `engine/models.py` | A | Additive | Add `node_id` field to `Object`, `CallObject` |
-| `engine/model_loader.py` | A | Additive | Assign `node_id` in `load_task()`, `load_play()`, etc. |
-| `engine/content_graph.py` | B | New | `ContentGraph`, `ContentNode`, `GraphBuilder`, `NodeIdentity` |
-| `engine/variable_provenance.py` | B | New | `VariableProvenanceResolver`, `PropertyOrigin`, `VariableProvenance` |
-| `engine/graph_annotator.py` | C | New | `GraphAnnotator`, `TaskCallProxy` |
-| `engine/graph_opa_payload.py` | C | New | `build_hierarchy_from_graph()`, `content_node_to_opa_dict()` |
-| `engine/graph_scanner.py` | C | New | `ContentGraphScanner` (replaces `ARIScanner.evaluate`) |
-| `engine/scanner.py` | C | Modified | Delegates to `ContentGraphScanner` when flag enabled |
-| `engine/scan_state.py` | C | Modified | `SingleScan` uses graph when flag enabled |
-| `engine/tree.py` | C | Deprecated | `TreeLoader` removed after validation |
-| `engine/context.py` | C | Deprecated | `Context.add()` linear walk replaced |
-| `engine/annotators/variable_resolver.py` | C | Modified | `resolve_variables()` delegates to graph resolver |
-| `engine/annotators/risk_annotator_base.py` | C | Unchanged | Annotators work via `TaskCallProxy` adapter |
-| `engine/annotators/ansible.builtin/*.py` | C | Unchanged | All 22 module annotators unchanged |
-| `engine/opa_payload.py` | C | Deprecated | Replaced by `graph_opa_payload.py` |
-| `validators/native/rules/*.py` | — | Unchanged | Rules consume same `AnsibleRunContext` interface |
+| `tests/fixtures/graph-patterns/` | 1 | New | Comprehensive fixtures for every ContentGraph edge type |
+| `proto/apme/v1/common.proto` | 1 | Additive | `node_id` field on `Violation` message |
+| `engine/content_graph.py` | 1 | New | `ContentGraph`, `ContentNode`, `GraphBuilder`, `NodeIdentity` |
+| `engine/variable_provenance.py` | 1 | New | `VariableProvenanceResolver`, `PropertyOrigin`, `VariableProvenance` |
+| `engine/graph_opa_payload.py` | 1 | New | `build_hierarchy_from_graph()`, `content_node_to_opa_dict()` |
+| `engine/python_analyzer.py` | 1 | New | `PythonFileAnalyzer` — AST-based quality extraction, `py_imports` edge construction |
+| `validators/native/rules/graph_rule_base.py` | 1 | New | `GraphRule` base class — `process(graph, node_id)` interface |
+| `engine/graph_scanner.py` | 2 | New | `ContentGraphScanner` (replaces `ARIScanner.evaluate`) |
+| `engine/scanner.py` | 2 | Modified | Delegates to `ContentGraphScanner` when flag enabled |
+| `engine/scan_state.py` | 2 | Modified | `SingleScan` uses graph when flag enabled |
+| `engine/annotators/risk_annotator_base.py` | 2 | Modified | Annotators read from `ContentNode` directly |
+| `engine/annotators/ansible.builtin/*.py` | 2 | Modified | 22 module annotators adapted to `ContentNode` (minimal change) |
+| `engine/annotators/variable_resolver.py` | 2 | Replaced | `resolve_variables()` replaced by `VariableProvenanceResolver` |
+| `validators/native/rules/R108_privilege_escalation.py` | 2 | Ported | Fires on defining scope via `PropertyOrigin` |
+| `validators/native/rules/L047_no_log_password.py` | 2 | Ported | `no_log` attributed to defining scope |
+| `validators/native/rules/L045_inline_env_var.py` | 2 | Ported | `environment` attributed to defining scope |
+| `validators/native/rules/L033_unconditional_override.py` | 2 | Ported | Effective `when` from ancestry |
+| `validators/native/rules/M030_broken_conditional_expressions.py` | 2 | Ported | Effective `when` from ancestry |
+| `validators/native/rules/L049_loop_var_prefix.py` | 2 | Ported | `loop_control` scoped to defining node |
+| `validators/native/rules/M010_python2_interpreter.py` | 2 | Ported | Play vars via graph ancestry |
+| `validators/native/rules/M022_tree___oneline_callback_plugins.py` | 2 | Ported | `environment` via graph ancestry |
+| `validators/native/rules/M026_invalid_inventory_variable_names.py` | 2 | Ported | `vars` inheritance via graph |
+| `validators/native/rules/L042_complexity.py` | 2 | Ported | Subgraph metrics replace `ctx.sequence` |
+| `validators/native/rules/L097_name_unique.py` | 2 | Ported | Graph siblings replace flat sequence |
+| `validators/native/rules/L086_play_vars_usage.py` | 2 | Ported | Play node type in graph |
+| `validators/native/rules/L032_changed_data_dependence.py` | 2 | Ported | `data_flow` edges for variable chains |
+| `validators/native/rules/L034_unused_override.py` | 2 | Ported | Variable precedence via graph ancestry |
+| `validators/native/rules/L093_set_fact_override.py` | 2 | Ported | Role defaults/vars via graph edges |
+| `validators/native/rules/M005_data_tagging.py` | 2 | Ported | `data_flow` edges replace `ctx.previous_tasks` |
+| `validators/native/rules/R117_external_role.py` | 2 | Ported | Role position via graph edges |
+| `validators/native/rules/*.py` (TASK_LOCAL, ~78) | 2 | Ported (mechanical) | `ctx.current` → `graph.get_node(node_id)`. No algorithmic change. |
+| `engine/tree.py` | 2 | Removed | `TreeLoader` removed after validation |
+| `engine/context.py` | 2 | Removed | `Context.add()` linear walk removed |
+| `engine/opa_payload.py` | 2 | Removed | Replaced by `engine/graph_opa_payload.py` |
+| `engine/models.py` (`AnsibleRunContext`, `RunTarget`, `ObjectList`) | 2 | Removed | Replaced by `GraphRule` + `ContentGraph` |
 | `validators/opa/bundle/*.rego` | — | Unchanged | OPA rules consume same hierarchy JSON |
-| `proto/apme/v1/validate.proto` | A | Additive | `node_id` field on `Violation` message |
-| `engine/python_analyzer.py` | C | New | `PythonFileAnalyzer` — AST-based quality extraction, `py_imports` edge construction |
-| `engine/complexity.py` | D | New | `compute_complexity()`, `ComplexityReport`, `project_complexity_summary()` |
-| `engine/ai_context.py` | D | New | `build_ai_context()`, `AIEscalationContext`, `ai_as_transform()` adapter |
-| `engine/topology_stability.py` | D | New | `assert_topology_stable()`, `verify_remediation_safety()`, `TopologyDriftError` |
-| `engine/graph_visualization.py` | D | New | `serialize_for_visualization()`, `GraphVisualization` |
-| `engine/graph_rules.py` | D | New | Graph-based rules: M201, M202, R501, R502 |
-| `engine/dependency_scorecard.py` | D | New | `compute_dependency_scorecards()`, `DependencyScorecard` |
-
-| `remediation/graph_engine.py` | D | New | `GraphAwareRemediationEngine` — per-node convergence with TransformSession |
-| `remediation/transform_session.py` | D | New | `TransformSession` — ephemeral copy, tracked changes, `submit()` → `ChangeSet` |
-| `remediation/approval.py` | D | New | `compute_approval_group()`, `ApprovalGroup` — submitted + inherited propagation |
+| `engine/complexity.py` | 3 | New | `compute_complexity()`, `ComplexityReport`, `project_complexity_summary()` |
+| `engine/ai_context.py` | 3 | New | `build_ai_context()`, `AIEscalationContext` |
+| `engine/topology_stability.py` | 3 | New | `assert_topology_stable()`, `verify_remediation_safety()`, `TopologyDriftError` |
+| `engine/graph_visualization.py` | 3 | New | `serialize_for_visualization()`, `GraphVisualization` |
+| `engine/graph_rules.py` | 3 | New | Graph-based rules: M201, M202, R501, R502 |
+| `engine/dependency_scorecard.py` | 3 | New | `compute_dependency_scorecards()`, `DependencyScorecard` |
+| `remediation/graph_engine.py` | 3 | New | `GraphAwareRemediationEngine` — per-node convergence with TransformSession |
+| `remediation/transform_session.py` | 3 | New | `TransformSession` — ephemeral copy, tracked changes, `submit()` → `ChangeSet` |
+| `remediation/approval.py` | 3 | New | `compute_approval_group()`, `ApprovalGroup` — submitted + inherited propagation |
 
 ---
 
