@@ -932,6 +932,11 @@ class GraphBuilder:
         delegate_raw = options.get("delegate_to")
         delegate_to = delegate_raw if isinstance(delegate_raw, str) else None
 
+        exec_type = getattr(task, "executable_type", None)
+        resolved_module = ""
+        if exec_type == ExecutableType.MODULE_TYPE:
+            resolved_module = getattr(task, "resolved_name", "") or ""
+
         node = ContentNode(
             identity=identity,
             file_path=file_path,
@@ -939,6 +944,7 @@ class GraphBuilder:
             line_end=line_end,
             name=getattr(task, "name", None),
             module=getattr(task, "module", "") or "",
+            resolved_module_name=resolved_module,
             module_options=module_options,
             options=options,
             variables=_safe_dict(getattr(task, "variables", {})),
@@ -966,7 +972,6 @@ class GraphBuilder:
             self._wire_block_children(task, nid, file_path, play_index, scope)
 
         # Executable edges (import_tasks, include_tasks, import_role, include_role, module)
-        exec_type = getattr(task, "executable_type", None)
         executable = getattr(task, "executable", "") or ""
         if executable and exec_type:
             is_dynamic = _has_template(executable)
@@ -1026,8 +1031,14 @@ class GraphBuilder:
         identity = NodeIdentity(path=path_prefix, node_type=NodeType.HANDLER)
         nid = identity.path
 
+        from .models import ExecutableType as _ET
+
         line_start, line_end = _extract_lines(task)
         options = _safe_dict(getattr(task, "options", {}))
+
+        resolved_module = ""
+        if getattr(task, "executable_type", None) == _ET.MODULE_TYPE:
+            resolved_module = getattr(task, "resolved_name", "") or ""
 
         node = ContentNode(
             identity=identity,
@@ -1036,6 +1047,7 @@ class GraphBuilder:
             line_end=line_end,
             name=getattr(task, "name", None),
             module=getattr(task, "module", "") or "",
+            resolved_module_name=resolved_module,
             module_options=_safe_dict(getattr(task, "module_options", {})),
             options=options,
             notify=_as_str_list(options.get("notify")),
