@@ -1,5 +1,12 @@
 """Async client for the Ansible Galaxy V3 REST API.
 
+.. deprecated:: 0.2.0
+    This module is superseded by :mod:`galaxy_proxy.collection_downloader`
+    (ADR-045).  Galaxy authentication and tarball downloading are now
+    delegated to ``ansible-galaxy collection download``.  This module is
+    retained for backward compatibility and will be removed in a future
+    release.
+
 Supports multiple upstream Galaxy servers (public Galaxy, Automation Hub,
 private instances) with per-server auth tokens.  Servers are tried in order;
 the first successful response wins.

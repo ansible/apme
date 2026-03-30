@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from galaxy_proxy.galaxy_client import GalaxyServer
+    from galaxy_proxy.collection_downloader import GalaxyServerConfig
 
 
 def _setup_logging(verbose: int) -> None:
@@ -25,29 +25,34 @@ def _setup_logging(verbose: int) -> None:
     )
 
 
-def _parse_galaxy_server(raw: str) -> GalaxyServer:
-    """Parse a ``--galaxy-server`` value into a :class:`GalaxyServer`.
+def _parse_galaxy_server(raw: str) -> GalaxyServerConfig:
+    """Parse a ``--galaxy-server`` value into a :class:`GalaxyServerConfig`.
 
-    Format: ``URL[,token=TOK][,name=LABEL]``
+    Format: ``URL[,token=TOK][,name=LABEL][,auth_url=URL]``
 
     Args:
         raw: Raw server string from CLI or env var.
 
     Returns:
-        Parsed GalaxyServer instance.
+        Parsed GalaxyServerConfig instance.
     """
-    from galaxy_proxy.galaxy_client import GalaxyServer
+    from galaxy_proxy.collection_downloader import GalaxyServerConfig
 
     parts = [p.strip() for p in raw.split(",")]
     url = parts[0]
     token: str | None = None
     name: str | None = None
+    auth_url: str | None = None
     for part in parts[1:]:
         if part.startswith("token="):
             token = part[len("token=") :]
         elif part.startswith("name="):
             name = part[len("name=") :]
-    return GalaxyServer(url=url, token=token, name=name)
+        elif part.startswith("auth_url="):
+            auth_url = part[len("auth_url=") :]
+
+    label = name or url.split("//")[-1].split("/")[0]
+    return GalaxyServerConfig(name=label, url=url, token=token, auth_url=auth_url)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -63,21 +68,22 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--port", "-p", type=int, default=8765, help="Port to bind to (default: 8765).")
     parser.add_argument("--host", default="0.0.0.0", help="Host to bind to (default: 0.0.0.0).")
     parser.add_argument(
-        "--galaxy-url",
-        default=os.environ.get("GALAXY_URL", "https://galaxy.ansible.com"),
-        help="Default Galaxy server URL (env: GALAXY_URL).",
-    )
-    parser.add_argument(
-        "--galaxy-token",
-        default=os.environ.get("GALAXY_TOKEN"),
-        help="Auth token (env: GALAXY_TOKEN).",
+        "--ansible-cfg",
+        default=os.environ.get("ANSIBLE_CONFIG"),
+        type=Path,
+        help="Path to ansible.cfg for Galaxy server auth (env: ANSIBLE_CONFIG).",
     )
     parser.add_argument(
         "--galaxy-server",
         dest="galaxy_servers",
         action="append",
         default=[],
-        help="Upstream Galaxy server: URL[,token=TOK][,name=LABEL]. Repeatable.",
+        help="Upstream Galaxy server: URL[,token=TOK][,name=LABEL][,auth_url=URL]. Repeatable.",
+    )
+    parser.add_argument(
+        "--ansible-galaxy-bin",
+        default=os.environ.get("ANSIBLE_GALAXY_BIN"),
+        help="Path to ansible-galaxy binary (env: ANSIBLE_GALAXY_BIN).",
     )
     parser.add_argument("--pypi-url", default="https://pypi.org", help="Upstream PyPI URL for passthrough.")
     parser.add_argument("--cache-dir", type=Path, default=None, help="Wheel cache directory.")
@@ -92,18 +98,18 @@ def main(argv: list[str] | None = None) -> None:
 
     from galaxy_proxy.proxy.server import create_app
 
-    parsed_servers: list[GalaxyServer] | None = None
+    parsed_servers: list[GalaxyServerConfig] | None = None
     if args.galaxy_servers:
         parsed_servers = [_parse_galaxy_server(s) for s in args.galaxy_servers]
 
     app = create_app(
-        galaxy_url=args.galaxy_url,
-        galaxy_token=args.galaxy_token,
         pypi_url=args.pypi_url,
         cache_dir=args.cache_dir,
         metadata_ttl=float(args.metadata_ttl),
         enable_passthrough=not args.no_passthrough,
+        ansible_cfg_path=args.ansible_cfg,
         galaxy_servers=parsed_servers,
+        ansible_galaxy_bin=args.ansible_galaxy_bin,
     )
 
     host, port = args.host, args.port
@@ -111,9 +117,11 @@ def main(argv: list[str] | None = None) -> None:
     if parsed_servers:
         for i, srv in enumerate(parsed_servers, 1):
             auth = " (authenticated)" if srv.token else ""
-            sys.stderr.write(f"  Galaxy [{i}]: {srv.label()}{auth}\n")
+            sys.stderr.write(f"  Galaxy [{i}]: {srv.name}{auth}\n")
+    elif args.ansible_cfg:
+        sys.stderr.write(f"Galaxy auth: {args.ansible_cfg}\n")
     else:
-        sys.stderr.write(f"Galaxy: {args.galaxy_url}\n")
+        sys.stderr.write("Galaxy auth: ansible-galaxy default config discovery\n")
     sys.stderr.write(f"PyPI passthrough: {'disabled' if args.no_passthrough else args.pypi_url}\n")
     sys.stderr.write(f"Cache: {args.cache_dir or '~/.cache/ansible-collection-proxy'}\n")
     sys.stderr.flush()
