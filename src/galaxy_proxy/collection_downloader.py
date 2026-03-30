@@ -63,9 +63,9 @@ def write_temp_ansible_cfg(
 ) -> Path:
     """Write a temporary ``ansible.cfg`` with Galaxy server sections.
 
-    The generated config uses ``[galaxy_server_list]`` ordering and
-    per-server ``[galaxy_server.<name>]`` sections — the same format
-    ``ansible-galaxy`` reads natively.
+    The generated config uses a ``[galaxy]`` section with ``server_list``
+    pointing to per-server ``[galaxy_server.<name>]`` sections — the same
+    format ``ansible-galaxy`` reads natively.
 
     Args:
         servers: Ordered list of Galaxy server configurations.
@@ -90,7 +90,8 @@ def write_temp_ansible_cfg(
             cfg.set(section, "auth_url", srv.auth_url)
 
     cfg_path = dest_dir / "ansible.cfg"
-    with open(cfg_path, "w") as f:
+    fd = os.open(str(cfg_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
         cfg.write(f)
     return cfg_path
 

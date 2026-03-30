@@ -56,6 +56,7 @@ class TestWriteTempAnsibleCfg:
         cfg_path = write_temp_ansible_cfg(servers, tmp_path)
 
         assert cfg_path.is_file()
+        assert oct(cfg_path.stat().st_mode & 0o777) == oct(0o600)
         parser = configparser.ConfigParser()
         parser.read(cfg_path)
         assert parser.get("galaxy", "server_list") == "galaxy"

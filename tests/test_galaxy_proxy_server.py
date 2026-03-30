@@ -65,13 +65,55 @@ class TestProjectPage:
         resp = app.get("/simple/requests/")
         assert resp.status_code == 404
 
-    def test_collection_no_cached_wheels(self, app: TestClient) -> None:
-        """Collection with no cached wheels returns empty body.
+    def test_collection_no_cached_wheels_downloads_latest(self, tmp_path: Path) -> None:
+        """Collection with no cached wheels triggers on-demand download.
 
         Args:
-            app: Test client fixture.
+            tmp_path: Pytest-provided temporary directory.
         """
-        resp = app.get("/simple/ansible-collection-ansible-posix/")
+        from galaxy_proxy.collection_downloader import DownloadResult
+
+        cache_dir = tmp_path / "cache"
+        application = create_app(cache_dir=cache_dir, enable_passthrough=False)
+        client = TestClient(application)
+
+        fake_tarball = tmp_path / "ansible-posix-1.5.4.tar.gz"
+        fake_tarball.touch()
+
+        mock_download = AsyncMock(
+            return_value=DownloadResult(tarball_paths=[fake_tarball]),
+        )
+        whl_data = b"PK\x03\x04converted-wheel"
+        whl_name = "ansible_collection_ansible_posix-1.5.4-py3-none-any.whl"
+
+        with (
+            patch("galaxy_proxy.proxy.server.download_collections", mock_download),
+            patch(
+                "galaxy_proxy.proxy.server.tarball_to_wheel",
+                return_value=(whl_name, whl_data),
+            ),
+        ):
+            resp = client.get("/simple/ansible-collection-ansible-posix/")
+
+        assert resp.status_code == 200
+        assert whl_name in resp.text
+        assert "/wheels/" in resp.text
+
+    def test_collection_no_cached_wheels_download_fails_empty(self, tmp_path: Path) -> None:
+        """When on-demand download fails, project page returns empty listing.
+
+        Args:
+            tmp_path: Pytest-provided temporary directory.
+        """
+        cache_dir = tmp_path / "cache"
+        application = create_app(cache_dir=cache_dir, enable_passthrough=False)
+        client = TestClient(application)
+
+        mock_download = AsyncMock(side_effect=RuntimeError("Galaxy unreachable"))
+
+        with patch("galaxy_proxy.proxy.server.download_collections", mock_download):
+            resp = client.get("/simple/ansible-collection-ansible-posix/")
+
         assert resp.status_code == 200
         assert "<a href" not in resp.text
 

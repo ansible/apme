@@ -133,6 +133,27 @@ def create_app(
 
         cached_wheels = _list_cached_wheels(cache, namespace, name)
 
+        if not cached_wheels:
+            try:
+                whl_name, whl_data = await _download_and_convert(
+                    namespace,
+                    name,
+                    "",
+                    ansible_cfg_path=ansible_cfg_path,
+                    galaxy_servers=galaxy_servers,
+                    ansible_galaxy_bin=ansible_galaxy_bin,
+                )
+                cache.put_wheel(whl_name, whl_data)
+                logger.info("On-demand download for %s.%s: %s", namespace, name, whl_name)
+                cached_wheels = [whl_name]
+            except Exception:
+                logger.warning(
+                    "On-demand download failed for %s.%s — returning empty listing",
+                    namespace,
+                    name,
+                    exc_info=True,
+                )
+
         links: list[str] = []
         for whl_name in cached_wheels:
             cached_wheel = cache.wheel_path(whl_name)
@@ -174,15 +195,19 @@ def create_app(
                 headers={"Content-Disposition": f"attachment; filename={filename}"},
             )
 
-        parts = filename.replace(".whl", "").split("-")
-        if len(parts) < 5 or not parts[0].startswith("ansible_collection_"):
+        dist_name = filename.split("-")[0] if "-" in filename else ""
+        pkg_name = normalize_pep503(dist_name.replace("_", "-"))
+        if not is_collection_package(pkg_name):
             raise HTTPException(status_code=404, detail=f"Invalid wheel filename: {filename}")
 
-        prefix_parts = parts[0].removeprefix("ansible_collection_").split("_", 1)
-        if len(prefix_parts) != 2:
-            raise HTTPException(status_code=404, detail=f"Cannot parse namespace/name: {filename}")
+        try:
+            ns, coll_name = python_to_fqcn(pkg_name)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=f"Cannot parse namespace/name: {filename}") from exc
 
-        ns, coll_name = prefix_parts
+        parts = filename.replace(".whl", "").split("-")
+        if len(parts) < 5:
+            raise HTTPException(status_code=404, detail=f"Invalid wheel filename: {filename}")
         version = parts[1]
 
         logger.info(
@@ -234,9 +259,11 @@ def create_app(
         Raises:
             HTTPException: When the tarball directory does not exist.
         """
-        tarball_path = Path(tarball_dir)
+        tarball_path = Path(tarball_dir).resolve()
         if not tarball_path.is_dir():
             raise HTTPException(status_code=400, detail=f"Not a directory: {tarball_dir}")
+        if tarball_path.is_symlink():
+            raise HTTPException(status_code=400, detail="Symlinks not allowed")
 
         converted: list[str] = []
         failed: list[str] = []
@@ -290,10 +317,13 @@ async def _download_and_convert(
 ) -> tuple[str, bytes]:
     """Download a single collection tarball and convert to a wheel.
 
+    When *version* is empty, ``ansible-galaxy`` downloads the latest
+    available version.
+
     Args:
         namespace: Collection namespace.
         name: Collection name.
-        version: Collection version string.
+        version: Collection version string (empty for latest).
         ansible_cfg_path: Path to an existing ``ansible.cfg``.
         galaxy_servers: Galaxy server configs for temp ansible.cfg.
         ansible_galaxy_bin: Override path to ``ansible-galaxy``.
@@ -304,7 +334,7 @@ async def _download_and_convert(
     Raises:
         RuntimeError: If download or conversion fails.
     """
-    spec = f"{namespace}.{name}:{version}"
+    spec = f"{namespace}.{name}:{version}" if version else f"{namespace}.{name}"
 
     with tempfile.TemporaryDirectory(prefix="apme-galaxy-dl-") as tmp:
         download_dir = Path(tmp)
@@ -325,6 +355,7 @@ async def _download_and_convert(
             msg = f"No tarball found after downloading {spec}"
             raise RuntimeError(msg)
 
-        tarball_data = result.tarball_paths[0].read_bytes()
-        whl_name, whl_data = tarball_to_wheel(tarball_data)
+        tarball_path = result.tarball_paths[0]
+        tarball_data = await asyncio.to_thread(tarball_path.read_bytes)
+        whl_name, whl_data = await asyncio.to_thread(tarball_to_wheel, tarball_data)
         return whl_name, whl_data

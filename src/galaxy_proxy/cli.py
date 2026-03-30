@@ -69,7 +69,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--host", default="0.0.0.0", help="Host to bind to (default: 0.0.0.0).")
     parser.add_argument(
         "--ansible-cfg",
-        default=os.environ.get("ANSIBLE_CONFIG"),
+        default=Path(os.environ["ANSIBLE_CONFIG"]) if "ANSIBLE_CONFIG" in os.environ else None,
         type=Path,
         help="Path to ansible.cfg for Galaxy server auth (env: ANSIBLE_CONFIG).",
     )
