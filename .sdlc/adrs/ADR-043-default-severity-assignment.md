@@ -72,6 +72,8 @@ When assigning a default severity, apply these questions in order:
 
 This is a decision tree, not a point system. Each rule gets exactly one default severity based on the **first matching criterion**.
 
+> **Note:** Service-affecting actions (§7) are flagged via a separate `service_affecting` boolean, not a severity level. A rule that detects a reboot is assigned severity by the criteria above (typically Info or Low), then additionally marked `service_affecting = true`.
+
 ### 4. Representative assignments
 
 These examples illustrate the criteria applied to real rules:
@@ -122,6 +124,16 @@ These examples illustrate the criteria applied to real rules:
 - R401, R402, R404 — Reports (inbound sources, variable sets)
 - R501 — Dependency suggestion
 
+**Service-affecting (flag, not severity):**
+- R201 — Server reboot detected (`ansible.builtin.reboot`, `ansible.windows.win_reboot`)
+- R202 — Service restart detected (`state: restarted`)
+- R203 — Service reload detected (`state: reloaded`)
+- R204 — Package upgrade detected (`state: latest`)
+- R205 — Firewall/network rule change detected
+- R206 — Destructive filesystem operation detected (`state: absent` with recurse)
+
+These rules have **Info** or **Low** severity (the code is correct) but `service_affecting = true`.
+
 ### 5. Normalization of existing levels
 
 The current `Violation.level` string field must be normalized to the new enum. This requires:
@@ -144,7 +156,7 @@ enum Severity {
 
 | Legacy string | New enum |
 |---------------|----------|
-| `very_high` | `SEVERITY_ERROR` |
+| `very_high` | `SEVERITY_HIGH` |
 | `high` | `SEVERITY_HIGH` |
 | `medium` | `SEVERITY_MEDIUM` |
 | `low` | `SEVERITY_LOW` |
@@ -153,6 +165,8 @@ enum Severity {
 | `error` | (per-rule — see assignment table) |
 | `warning` | (per-rule — see assignment table) |
 | `info` | `SEVERITY_INFO` |
+
+> **`very_high` rationale:** The legacy `very_high` level indicated behavioral risk or deprecation importance, not a guaranteed runtime failure. Mapping it to `SEVERITY_ERROR` would overstate the immediacy — Error means "will fail at runtime today." `SEVERITY_HIGH` correctly reflects that these findings are urgent but not broken-today.
 
 The ambiguous legacy strings (`error`, `warning`) cannot be mechanically mapped because they were assigned inconsistently — OPA's `error` means different things for L004 (deprecated module → High) vs. L003 (missing play name → Low). These are resolved by the per-rule assignment table, not by string mapping.
 
@@ -169,7 +183,60 @@ The complete per-rule default severity is maintained as a **static mapping** tha
 
 During ADR-041 registration, Primary reads this table and includes `default_severity` for each rule in the `RegisterRulesRequest`.
 
-### 7. Plugin severity
+### 7. Service-affecting action flag
+
+Certain rules detect **inherently disruptive runtime actions** — tasks that, even when executed as intended, can directly cause service disruption or outages. These are not code quality issues; they are warnings about **what the code will do when it runs**.
+
+This is modeled as a **separate boolean flag** (`service_affecting: bool`), not a severity level:
+
+| Dimension | What it measures | Example |
+|-----------|-----------------|---------|
+| **Severity** | Consequence of code being *wrong* | Syntax error = Error, deprecated module = High |
+| **Service-affecting** | Consequence of code being *executed correctly* | `reboot` task runs successfully = outage |
+
+A perfectly correct `reboot` task has no code quality issues (severity may be Info), but executing it causes downtime. The `service_affecting` flag captures this orthogonal dimension.
+
+#### Service-affecting action types
+
+| Action | Modules | Risk |
+|--------|---------|------|
+| **Server reboot** (R201) | `ansible.builtin.reboot`, `ansible.windows.win_reboot` | Service downtime, potential boot failures, dependency cascade |
+| **Service restart** (R202) | `ansible.builtin.service`, `ansible.builtin.systemd` with `state: restarted` | Momentary outage, connection drops, dependent service failures |
+| **Service reload** (R203) | `ansible.builtin.service` with `state: reloaded` | Config errors cause service failure |
+| **Package upgrade** (R204) | `ansible.builtin.yum`, `ansible.builtin.apt` with `state: latest` | Breaking changes, service restarts, compatibility issues |
+| **Network/firewall changes** (R205) | `ansible.builtin.iptables`, network modules | Connectivity loss, lockout |
+| **Destructive filesystem operations** (R206) | `ansible.builtin.file` with `state: absent`, recursive deletes | Data loss |
+
+#### Rule metadata extension
+
+The rule registration schema (ADR-041) gains an additional field:
+
+```protobuf
+message RuleInfo {
+  string rule_id = 1;
+  string description = 2;
+  Severity default_severity = 3;
+  Scope scope = 4;
+  bool service_affecting = 5;  // NEW: flags runtime-disruptive actions
+}
+```
+
+Rules detecting service-affecting actions set `service_affecting = true`. These rules typically have **Low** or **Info** severity (the code itself is correct), but the flag triggers special handling.
+
+#### UI/CLI behavior for service-affecting rules
+
+When a finding has `service_affecting = true`:
+
+1. **Warning badge** — display a "Service-Affecting" indicator distinct from severity
+2. **Guidance panel** — recommend that plays and tasks are configured so that:
+   - Tasks have proper `when` conditions limiting scope
+   - The containing play or deployment strategy uses rolling/serial execution (e.g., `serial: 1`)
+   - Tasks are followed by health checks or `wait_for` conditions after the action
+   - There are **automated tests** validating the behavior (molecule, integration tests)
+3. **Review prompt** — in batch operations, prompt for confirmation even if severity is Low/Info
+4. **(Future) Test coverage check** — rules could verify if service-affecting tasks have corresponding molecule/integration tests in the repository
+
+### 8. Plugin severity
 
 Third-party plugins ([ADR-042](ADR-042-third-party-plugin-services.md)) provide their own `default_severity` via the `Describe` RPC. The framework in this ADR (the enum and criteria) applies to plugins, but the assignment is the plugin author's responsibility. The Gateway may flag plugin rules that claim Critical severity for admin review, since Critical is reserved for security findings.
 
@@ -247,6 +314,7 @@ Third-party plugins ([ADR-042](ADR-042-third-party-plugin-services.md)) provide 
 - **Threshold gating** — numeric values enable CI policies like "fail if any >= Error" without enumerating specific rules
 - **Single vocabulary** — eliminates the `very_high`/`error`/`warning` soup; one enum everywhere
 - **Auditable** — a single file shows every rule's default severity
+- **Service outage awareness** — service-affecting actions (reboots, restarts, network changes) are flagged, prompting operators to ensure proper testing and review before production deployment
 
 ### Negative
 
@@ -259,6 +327,7 @@ Third-party plugins ([ADR-042](ADR-042-third-party-plugin-services.md)) provide 
 - ADR-041's `default_severity` field and override flow are unchanged — this ADR extends the enum from 5 to 6 values (adding Error) and defines the assignment criteria. ADR-041's registration table should be updated to reference the 6-value enum when this ADR is implemented
 - Override mechanism (ADR-041 §4) is unaffected — admins can still override any rule's severity regardless of the default
 - Plugin authors use the same enum and criteria but own their own assignments
+- The `service_affecting` flag is a new orthogonal dimension — it does not affect severity assignment or thresholds, but enables UI/CLI to provide additional warnings for runtime-dangerous actions
 
 ## Implementation Notes
 
@@ -289,6 +358,23 @@ Third-party plugins ([ADR-042](ADR-042-third-party-plugin-services.md)) provide 
 2. Update `docs/RULE_CATALOG.md` to show default severity per rule
 3. Document the criteria decision tree in contributor docs
 
+### Phase 5: Service-affecting action rules
+
+> **Prerequisite:** Phase 5 depends on ADR-041 Phase 1 (rule registration schema and `catalog.proto` definition).
+
+1. Add `service_affecting: bool` field to `RuleInfo` in `catalog.proto` (ADR-041)
+2. Create R2xx rules detecting service-affecting actions:
+   - R201: Server reboot (`ansible.builtin.reboot`, `ansible.windows.win_reboot`)
+   - R202: Service restart (`state: restarted`)
+   - R203: Service reload (`state: reloaded`)
+   - R204: Package upgrade (`state: latest`)
+   - R205: Network/firewall changes (`ansible.builtin.iptables`, network modules)
+   - R206: Destructive filesystem operations (`state: absent` with `recurse: true`)
+3. Assign severity **Info** or **Low** (code is correct); set `service_affecting = true`
+4. Update UI to display "Service-Affecting" warning badge with guidance panel
+5. Update CLI to display warning and prompt for confirmation in batch operations
+6. (Future) Implement test coverage detection — check if service-affecting tasks have corresponding molecule/integration tests
+
 ## Related Decisions
 
 - [ADR-041](ADR-041-rule-catalog-override-architecture.md): Rule Catalog & Override Architecture — defines `default_severity` field; this ADR defines how values are assigned
@@ -311,3 +397,4 @@ Third-party plugins ([ADR-042](ADR-042-third-party-plugin-services.md)) provide 
 | Date | Author | Change |
 |------|--------|--------|
 | 2026-03-26 | APME Team | Initial proposal |
+| 2026-03-30 | APME Team | Added §7 service-affecting action flag (orthogonal to severity) with R2xx rule definitions; changed `very_high` → `SEVERITY_HIGH` mapping (was `SEVERITY_ERROR`) |
