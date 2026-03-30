@@ -915,3 +915,12 @@
   overflow: visible;
   text-overflow: unset;
 }
+
+/* ── Analytics grid ──────────────────────────────────── */
+
+.apme-analytics-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  padding: 0 24px 24px;
+}

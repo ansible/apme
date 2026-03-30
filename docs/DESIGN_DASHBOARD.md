@@ -74,18 +74,54 @@ Primary stays pure gRPC and stateless. The gateway handles everything HTTP, auth
 ### Endpoints
 
 ```
+# Health & System
+GET    /api/v1/health                 Aggregate health (gateway + all backend services)
+GET    /api/v1/ai/models              List available AI models from Abbenay
+
+# Dashboard
+GET    /api/v1/dashboard/summary      Aggregate statistics (projects, scans, violations, health)
+GET    /api/v1/dashboard/rankings     Ranked project lists (by health, violations, activity)
+
+# Projects (ADR-037)
+POST   /api/v1/projects               Create a project
+GET    /api/v1/projects               List projects with summary data
+GET    /api/v1/projects/{id}          Project detail with latest scan info
+PATCH  /api/v1/projects/{id}          Update project metadata
+DELETE /api/v1/projects/{id}          Delete project and cascade activity
+GET    /api/v1/projects/{id}/activity Project activity history
+GET    /api/v1/projects/{id}/violations Violations from latest scan
+GET    /api/v1/projects/{id}/trend    Violation trend over time
+GET    /api/v1/projects/{id}/dependencies Collections and Python packages (ADR-040)
+WS     /api/v1/projects/{id}/ws/operate Check/remediate via WebSocket
+
+# Dependencies (ADR-040)
+GET    /api/v1/collections            All collections with usage counts
+GET    /api/v1/collections/{fqcn}     Collection detail with dependent projects
+GET    /api/v1/collections/{fqcn}/projects Projects using this collection
+GET    /api/v1/python-packages        All Python packages with usage counts
+GET    /api/v1/python-packages/{name} Package detail with dependent projects
+
+# Sessions & Activity
+GET    /api/v1/sessions               List sessions
+GET    /api/v1/sessions/{id}          Session detail with activity
+GET    /api/v1/sessions/{id}/trend    Session violation trend
+GET    /api/v1/activity               List activity (paginated, filterable)
+GET    /api/v1/activity/{id}          Activity detail (violations, proposals, logs, patches)
+DELETE /api/v1/activity/{id}          Delete activity record
+
+# Statistics
+GET    /api/v1/violations/top         Most frequently violated rules
+GET    /api/v1/stats/remediation-rates Remediation counts by rule
+GET    /api/v1/stats/ai-acceptance    AI proposal acceptance rates by rule
+
+# Feedback (pre-production)
+GET    /api/v1/feedback/enabled       Check if feedback feature is enabled
+POST   /api/v1/feedback               Submit feedback (creates GitHub issue)
+
+# Playground
 WS     /api/v1/ws/session             Unified check + remediate session (file upload,
                                        real-time progress, Tier 1 results,
                                        AI proposals, approval — single connection)
-
-GET    /api/v1/activity               List activity (paginated, filterable)
-GET    /api/v1/activity/{scan_id}     Get one run's result (violations, diagnostics; `scan_id` is engine-internal correlation)
-DELETE /api/v1/activity/{scan_id}     Delete an activity record
-
-GET    /api/v1/health                 Aggregate health (gateway + all backend services)
-
-GET    /api/v1/rules                  List all rules (from RULE_CATALOG)
-GET    /api/v1/rules/{rule_id}        Rule detail (description, examples, fixer status)
 ```
 
 ### WebSocket Session Protocol
@@ -198,29 +234,29 @@ Phase 4 starts with a single role (all authenticated users can do everything). R
 
 ### Technology
 
-| Option | Pros | Cons |
-|--------|------|------|
-| React + TypeScript | Large ecosystem, component libraries | Heavy, complex toolchain |
-| Vue 3 + TypeScript | Lighter, good DX, Composition API | Smaller ecosystem |
-| HTMX + server-rendered | No build step, progressive enhancement | Limited interactivity for complex views |
+**Implemented: React + TypeScript** with Vite for bundling.
 
-**Recommendation: Vue 3 + TypeScript** with Vite for bundling. Rationale:
-
-- Lighter than React for a dashboard (fewer dependencies)
-- Composition API maps well to the data-driven violation/rule model
-- Vite produces a static bundle that the gateway serves from `/static/`
-- PrimeVue or Vuetify for table/filter/chart components
+- **React 18** with functional components and hooks
+- **PatternFly 6** component library (Red Hat design system, consistent with AAP)
+- **@ansible/ansible-ui-framework** for navigation and page layout patterns
+- **Vite** for fast development and production builds
+- Served by nginx in the UI container, proxies `/api/` to Gateway
 
 ### Key views
 
 | View | Description |
 |------|-------------|
+| **Dashboard (home)** | Aggregate metrics (projects, avg health, violations, remediated). Project rankings (cleanest, most violations, stale, most active). |
+| **Analytics** | Top violated rules. Remediation rates by rule. AI proposal acceptance rates with confidence scores. |
+| **Projects list** | Paginated table with health score, violation count, trend, last checked. Sortable columns. Create/edit/delete. |
+| **Project detail** | Overview (health score, violations, severity breakdown), Activity tab (check/remediate history), Violations tab (expandable messages), Dependencies tab (ansible-core, collections, Python packages), Settings tab. |
+| **Collections** | All collections seen across projects with version and usage count. Click through to collection detail showing dependent projects. |
+| **Python Packages** | All Python packages seen across projects with version and usage count. Click through to package detail showing dependent projects. |
 | **Activity list** | Paginated table of runs with status, violation count, date. Filter by project, date range, status. |
 | **Activity detail** | Violations grouped by file or rule. Severity badges. Expandable code context (3-5 lines around the violation). Diagnostics panel (engine timing, validator breakdown). |
-| **Rule catalog** | Browsable list of all rules with description, validator, fixer status. Links to rule `.md` docs. |
-| **Remediation queue** | AI-proposed fixes with side-by-side diff viewer. Accept/reject buttons. Batch operations. |
-| **Dashboard (home)** | Activity chart (violations over time). Top violated rules. Check frequency. Average check time. |
-| **Health** | Service status cards (Primary, Native, OPA, Ansible, Gitleaks, Galaxy Proxy) with latency. |
+| **Playground** | File upload for ad-hoc check/remediate. Real-time progress. AI proposal review with diff viewer. |
+| **Health** | Service status cards (Primary, Native, OPA, Ansible, Gitleaks, Galaxy Proxy, Abbenay AI) with latency. |
+| **Settings** | AI model selection for remediation. |
 
 ---
 

@@ -3,13 +3,18 @@ import type {
   ActivitySummary,
   AiAcceptanceEntry,
   AiModelInfo,
+  CollectionDetail,
+  CollectionSummary,
   CreateProjectRequest,
   DashboardSummary,
   HealthStatus,
   PaginatedResponse,
+  ProjectDependencies,
   ProjectDetail,
   ProjectRanking,
   ProjectSummary,
+  PythonPackageDetail,
+  PythonPackageSummary,
   RemediationRateEntry,
   SessionDetail,
   SessionSummary,
@@ -107,14 +112,14 @@ export function listProjects(
 }
 
 export function getProject(projectId: string): Promise<ProjectDetail> {
-  return request(`/projects/${projectId}`);
+  return request(`/projects/${encodeURIComponent(projectId)}`);
 }
 
 export function updateProject(
   projectId: string,
   body: UpdateProjectRequest,
 ): Promise<ProjectSummary> {
-  return request(`/projects/${projectId}`, {
+  return request(`/projects/${encodeURIComponent(projectId)}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -122,7 +127,7 @@ export function updateProject(
 }
 
 export async function deleteProject(projectId: string): Promise<void> {
-  const res = await fetch(`${BASE}/projects/${projectId}`, { method: "DELETE" });
+  const res = await fetch(`${BASE}/projects/${encodeURIComponent(projectId)}`, { method: "DELETE" });
   if (!res.ok) throw new Error(`${res.status}`);
 }
 
@@ -131,7 +136,7 @@ export function listProjectActivity(
   limit = 50,
   offset = 0,
 ): Promise<PaginatedResponse<ActivitySummary>> {
-  return request(`/projects/${projectId}/activity?limit=${limit}&offset=${offset}`);
+  return request(`/projects/${encodeURIComponent(projectId)}/activity?limit=${limit}&offset=${offset}`);
 }
 
 export function listProjectViolations(
@@ -141,7 +146,7 @@ export function listProjectViolations(
   severity?: string,
   ruleId?: string,
 ): Promise<ViolationDetail[]> {
-  let url = `/projects/${projectId}/violations?limit=${limit}&offset=${offset}`;
+  let url = `/projects/${encodeURIComponent(projectId)}/violations?limit=${limit}&offset=${offset}`;
   if (severity) url += `&severity=${severity}`;
   if (ruleId) url += `&rule_id=${ruleId}`;
   return request(url);
@@ -151,7 +156,7 @@ export function getProjectTrend(
   projectId: string,
   limit = 20,
 ): Promise<TrendPoint[]> {
-  return request(`/projects/${projectId}/trend?limit=${limit}`);
+  return request(`/projects/${encodeURIComponent(projectId)}/trend?limit=${limit}`);
 }
 
 export function getDashboardSummary(): Promise<DashboardSummary> {
@@ -164,6 +169,34 @@ export function getDashboardRankings(
   limit = 10,
 ): Promise<ProjectRanking[]> {
   return request(`/dashboard/rankings?sort_by=${sortBy}&order=${order}&limit=${limit}`);
+}
+
+// ── Dependencies (ADR-040) ─────────────────────────────────────────────
+
+export function getProjectDependencies(projectId: string): Promise<ProjectDependencies> {
+  return request(`/projects/${encodeURIComponent(projectId)}/dependencies`);
+}
+
+export function listCollections(
+  limit = 200,
+  offset = 0,
+): Promise<CollectionSummary[]> {
+  return request(`/collections?limit=${limit}&offset=${offset}`);
+}
+
+export function getCollectionDetail(fqcn: string): Promise<CollectionDetail> {
+  return request(`/collections/${encodeURIComponent(fqcn)}`);
+}
+
+export function listPythonPackages(
+  limit = 200,
+  offset = 0,
+): Promise<PythonPackageSummary[]> {
+  return request(`/python-packages?limit=${limit}&offset=${offset}`);
+}
+
+export function getPythonPackageDetail(name: string): Promise<PythonPackageDetail> {
+  return request(`/python-packages/${encodeURIComponent(name)}`);
 }
 
 // ── Feedback (POC) ─────────────────────────────────────────────────────

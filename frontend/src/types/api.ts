@@ -176,3 +176,66 @@ export interface ProjectRanking {
   last_scanned_at: string | null;
   days_since_last_scan: number | null;
 }
+
+// ── Dependencies types (ADR-040) ─────────────────────────────────────
+
+export interface CollectionRef {
+  fqcn: string;
+  version: string;
+  source: string;
+}
+
+export interface PythonPackageRef {
+  name: string;
+  version: string;
+}
+
+export interface ProjectDependencies {
+  ansible_core_version: string;
+  collections: CollectionRef[];
+  python_packages: PythonPackageRef[];
+  requirements_files: string[];
+  dependency_tree: string;
+}
+
+export interface CollectionSummary {
+  fqcn: string;
+  version: string;
+  source: string;
+  project_count: number;
+}
+
+export interface CollectionProjectRef {
+  id: string;
+  name: string;
+  health_score: number;
+  collection_version: string;
+}
+
+export interface CollectionDetail {
+  fqcn: string;
+  versions: string[];
+  source: string;
+  project_count: number;
+  projects: CollectionProjectRef[];
+}
+
+export interface PythonPackageSummary {
+  name: string;
+  version: string;
+  project_count: number;
+}
+
+export interface PythonPackageProjectRef {
+  id: string;
+  name: string;
+  health_score: number;
+  package_version: string;
+}
+
+export interface PythonPackageDetail {
+  name: string;
+  versions: string[];
+  project_count: number;
+  projects: PythonPackageProjectRef[];
+}

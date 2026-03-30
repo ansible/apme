@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link, useParams, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { PageLayout, PageHeader } from '@ansible/ansible-ui-framework';
 import { severityClass, severityLabel, severityOrder, SEVERITY_LABELS, bareRuleId, healthColor } from '../components/severity';
 import {
@@ -15,8 +15,8 @@ import {
   TabTitleText,
   TextInput,
 } from '@patternfly/react-core';
-import { deleteProject, getProject, listProjectActivity, listProjectViolations, updateProject } from '../services/api';
-import type { ActivitySummary, ProjectDetail, ViolationDetail } from '../types/api';
+import { deleteProject, getProject, getProjectDependencies, listProjectActivity, listProjectViolations, updateProject } from '../services/api';
+import type { ActivitySummary, ProjectDependencies, ProjectDetail, ViolationDetail } from '../types/api';
 import type { OperationStatus, OperationProgress, OperationProposal, OperationResult } from '../types/operation';
 import { StatusBadge } from '../components/StatusBadge';
 import { CheckOptionsForm } from '../components/CheckOptionsForm';
@@ -27,7 +27,6 @@ import { timeAgo } from '../services/format';
 import { useFeedbackEnabled } from '../hooks/useFeedbackEnabled';
 import { useProjectOperation, type ProjectOperationOptions } from '../hooks/useProjectOperation';
 import { AI_MODEL_STORAGE_KEY } from './SettingsPage';
-import { useNavigate } from 'react-router-dom';
 
 function mapProjectStatus(s: string): OperationStatus {
   return s as OperationStatus;
@@ -40,9 +39,12 @@ export function ProjectDetailPage() {
   const [project, setProject] = useState<ProjectDetail | null>(null);
   const [scans, setScans] = useState<ActivitySummary[]>([]);
   const [violations, setViolations] = useState<ViolationDetail[]>([]);
+  const [dependencies, setDependencies] = useState<ProjectDependencies | null>(null);
   const [loading, setLoading] = useState(true);
   const tabParam = searchParams.get('tab');
-  const [activeTab, setActiveTab] = useState(tabParam === 'settings' ? 3 : 0);
+  const [activeTab, setActiveTab] = useState(
+    tabParam === 'settings' ? 4 : tabParam === 'dependencies' ? 3 : 0
+  );
 
   const [ansibleVersion, setAnsibleVersion] = useState('');
   const [collections, setCollections] = useState('');
@@ -96,15 +98,20 @@ export function ProjectDetailPage() {
   const fetchData = useCallback(async () => {
     if (!projectId) return;
     setLoading(true);
+    setScans([]);
+    setViolations([]);
+    setDependencies(null);
     try {
       const proj = await getProject(projectId);
       setProject(proj);
-      const [scanResult, violResult] = await Promise.allSettled([
+      const [scanResult, violResult, depsResult] = await Promise.allSettled([
         listProjectActivity(projectId, 20, 0),
         listProjectViolations(projectId, 100, 0),
+        getProjectDependencies(projectId),
       ]);
       if (scanResult.status === 'fulfilled') setScans(scanResult.value.items);
       if (violResult.status === 'fulfilled') setViolations(violResult.value);
+      if (depsResult.status === 'fulfilled') setDependencies(depsResult.value);
     } catch {
       setProject(null);
     } finally {
@@ -407,7 +414,11 @@ export function ProjectDetailPage() {
             <ViolationsTab violations={violations} />
           </Tab>
 
-          <Tab eventKey={3} title={<TabTitleText>Settings</TabTitleText>}>
+          <Tab eventKey={3} title={<TabTitleText>Dependencies</TabTitleText>}>
+            <DependenciesTab dependencies={dependencies} loading={loading} />
+          </Tab>
+
+          <Tab eventKey={4} title={<TabTitleText>Settings</TabTitleText>}>
             <div style={{ marginTop: 16, maxWidth: 600 }}>
               <Card>
                 <CardBody>
@@ -519,6 +530,134 @@ function ViolationsTab({ violations }: { violations: ViolationDetail[] }) {
             })}
           </tbody>
         </table>
+      )}
+    </div>
+  );
+}
+
+function DependenciesTab({ dependencies, loading }: { dependencies: ProjectDependencies | null; loading: boolean }) {
+  const navigate = useNavigate();
+
+  if (loading && !dependencies) {
+    return (
+      <div style={{ marginTop: 16, padding: 24, textAlign: 'center', opacity: 0.6 }}>
+        Loading dependencies...
+      </div>
+    );
+  }
+
+  if (!dependencies) {
+    return (
+      <div style={{ marginTop: 16, padding: 24, textAlign: 'center', opacity: 0.6 }}>
+        No dependency information available. Run a check to collect dependencies.
+      </div>
+    );
+  }
+
+  const hasCollections = dependencies.collections.length > 0;
+  const hasPackages = dependencies.python_packages.length > 0;
+  const hasAnsibleCore = !!dependencies.ansible_core_version;
+
+  if (!hasCollections && !hasPackages && !hasAnsibleCore) {
+    return (
+      <div style={{ marginTop: 16, padding: 24, textAlign: 'center', opacity: 0.6 }}>
+        No dependency information available. Run a check to collect dependencies.
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ marginTop: 16 }}>
+      {hasAnsibleCore && (
+        <Card style={{ marginBottom: 16 }}>
+          <CardBody>
+            <h3 style={{ marginBottom: 8 }}>Ansible Core</h3>
+            <div style={{ fontFamily: 'var(--pf-t--global--font--family--mono)' }}>
+              ansible-core=={dependencies.ansible_core_version}
+            </div>
+          </CardBody>
+        </Card>
+      )}
+
+      {hasCollections && (
+        <Card style={{ marginBottom: 16 }}>
+          <CardBody>
+            <h3 style={{ marginBottom: 8 }}>Collections ({dependencies.collections.length})</h3>
+            <table className="pf-v6-c-table pf-m-compact pf-m-grid-md" role="grid">
+              <thead>
+                <tr role="row">
+                  <th role="columnheader">FQCN</th>
+                  <th role="columnheader">Version</th>
+                  <th role="columnheader">Source</th>
+                </tr>
+              </thead>
+              <tbody>
+                {dependencies.collections.map((c) => (
+                  <tr
+                    key={`${c.fqcn}-${c.version}`}
+                    role="row"
+                    tabIndex={0}
+                    style={{ cursor: 'pointer' }}
+                    onClick={() => navigate(`/collections/${encodeURIComponent(c.fqcn)}`)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') navigate(`/collections/${encodeURIComponent(c.fqcn)}`); }}
+                  >
+                    <td role="cell" style={{ fontFamily: 'var(--pf-t--global--font--family--mono)', fontWeight: 600 }}>
+                      {c.fqcn}
+                    </td>
+                    <td role="cell">{c.version}</td>
+                    <td role="cell" style={{ opacity: 0.7 }}>{c.source}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </CardBody>
+        </Card>
+      )}
+
+      {hasPackages && (
+        <Card style={{ marginBottom: 16 }}>
+          <CardBody>
+            <h3 style={{ marginBottom: 8 }}>Python Packages ({dependencies.python_packages.length})</h3>
+            <table className="pf-v6-c-table pf-m-compact pf-m-grid-md" role="grid">
+              <thead>
+                <tr role="row">
+                  <th role="columnheader">Package</th>
+                  <th role="columnheader">Version</th>
+                </tr>
+              </thead>
+              <tbody>
+                {dependencies.python_packages.map((p) => (
+                  <tr
+                    key={`${p.name}-${p.version}`}
+                    role="row"
+                    tabIndex={0}
+                    style={{ cursor: 'pointer' }}
+                    onClick={() => navigate(`/python-packages/${encodeURIComponent(p.name)}`)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') navigate(`/python-packages/${encodeURIComponent(p.name)}`); }}
+                  >
+                    <td role="cell" style={{ fontFamily: 'var(--pf-t--global--font--family--mono)', fontWeight: 600 }}>
+                      {p.name}
+                    </td>
+                    <td role="cell">{p.version}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </CardBody>
+        </Card>
+      )}
+
+      {dependencies.requirements_files.length > 0 && (
+        <Card>
+          <CardBody>
+            <h3 style={{ marginBottom: 8 }}>Requirements Files</h3>
+            <ul style={{ margin: 0, paddingLeft: 20 }}>
+              {dependencies.requirements_files.map((f) => (
+                <li key={f} style={{ fontFamily: 'var(--pf-t--global--font--family--mono)' }}>{f}</li>
+              ))}
+            </ul>
+          </CardBody>
+        </Card>
       )}
     </div>
   );

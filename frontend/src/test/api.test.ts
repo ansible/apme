@@ -105,4 +105,83 @@ describe("api service", () => {
     const result = await listAiModels();
     expect(result).toHaveLength(0);
   });
+
+  // ADR-040 Dependencies API tests
+
+  it("getProjectDependencies calls correct path", async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse({
+      ansible_core_version: "2.16.0",
+      collections: [],
+      python_packages: [],
+      requirements_files: [],
+      dependency_tree: "",
+    }));
+    const { getProjectDependencies } = await import("../services/api");
+    const result = await getProjectDependencies("proj-123");
+    expect(result.ansible_core_version).toBe("2.16.0");
+    expect(mockFetch).toHaveBeenCalledWith("/api/v1/projects/proj-123/dependencies", expect.anything());
+  });
+
+  it("getProjectDependencies encodes project name in path", async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse({
+      ansible_core_version: "2.16.0",
+      collections: [],
+      python_packages: [],
+      requirements_files: [],
+      dependency_tree: "",
+    }));
+    const { getProjectDependencies } = await import("../services/api");
+    await getProjectDependencies("My Project/01");
+    expect(mockFetch).toHaveBeenCalledWith(
+      "/api/v1/projects/My%20Project%2F01/dependencies",
+      expect.anything(),
+    );
+  });
+
+  it("listCollections calls correct path with pagination", async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse([
+      { fqcn: "community.general", version: "8.0.0", source: "galaxy", project_count: 5 },
+    ]));
+    const { listCollections } = await import("../services/api");
+    const result = await listCollections(100, 10);
+    expect(result).toHaveLength(1);
+    expect(result[0]!.fqcn).toBe("community.general");
+    expect(mockFetch).toHaveBeenCalledWith("/api/v1/collections?limit=100&offset=10", expect.anything());
+  });
+
+  it("getCollectionDetail encodes FQCN in path", async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse({
+      fqcn: "community/general",
+      versions: ["8.0.0"],
+      source: "galaxy",
+      project_count: 3,
+      projects: [],
+    }));
+    const { getCollectionDetail } = await import("../services/api");
+    await getCollectionDetail("community/general");
+    expect(mockFetch).toHaveBeenCalledWith("/api/v1/collections/community%2Fgeneral", expect.anything());
+  });
+
+  it("listPythonPackages calls correct path with pagination", async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse([
+      { name: "jmespath", version: "1.0.1", project_count: 2 },
+    ]));
+    const { listPythonPackages } = await import("../services/api");
+    const result = await listPythonPackages(50, 0);
+    expect(result).toHaveLength(1);
+    expect(result[0]!.name).toBe("jmespath");
+    expect(mockFetch).toHaveBeenCalledWith("/api/v1/python-packages?limit=50&offset=0", expect.anything());
+  });
+
+  it("getPythonPackageDetail encodes package name in path", async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse({
+      name: "my package",
+      versions: ["2.16.0"],
+      project_count: 5,
+      projects: [],
+    }));
+    const { getPythonPackageDetail } = await import("../services/api");
+    await getPythonPackageDetail("my package");
+    expect(mockFetch).toHaveBeenCalledWith("/api/v1/python-packages/my%20package", expect.anything());
+  });
 });
