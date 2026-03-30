@@ -22,35 +22,39 @@ from apme_engine.venv_manager.session import _venv_site_packages
 
 logger = logging.getLogger(__name__)
 
-_INFRASTRUCTURE_PACKAGES: frozenset[str] = frozenset({
-    "pip",
-    "setuptools",
-    "wheel",
-    "pkg-resources",
-    "-distutils-hack",  # _distutils_hack normalized
-    "distlib",
-    "filelock",
-    "platformdirs",
-})
+_INFRASTRUCTURE_PACKAGES: frozenset[str] = frozenset(
+    {
+        "pip",
+        "setuptools",
+        "wheel",
+        "pkg-resources",
+        "-distutils-hack",  # _distutils_hack normalized
+        "distlib",
+        "filelock",
+        "platformdirs",
+    }
+)
 """Package names (PEP 503 normalized) that are venv infrastructure, not user deps."""
 
 _COLLECTION_WRAPPER_PREFIX: str = "ansible-collection-"
 """Prefix for PyPI packages that are thin wrappers around Ansible collections."""
 
-_KNOWN_SPDX_IDS: frozenset[str] = frozenset({
-    "MIT",
-    "Apache-2.0",
-    "GPL-2.0-only",
-    "GPL-3.0-only",
-    "BSD-2-Clause",
-    "BSD-3-Clause",
-    "ISC",
-    "MPL-2.0",
-    "LGPL-2.1-only",
-    "LGPL-3.0-only",
-    "Unlicense",
-    "PSF-2.0",
-})
+_KNOWN_SPDX_IDS: frozenset[str] = frozenset(
+    {
+        "MIT",
+        "Apache-2.0",
+        "GPL-2.0-only",
+        "GPL-3.0-only",
+        "BSD-2-Clause",
+        "BSD-3-Clause",
+        "ISC",
+        "MPL-2.0",
+        "LGPL-2.1-only",
+        "LGPL-3.0-only",
+        "Unlicense",
+        "PSF-2.0",
+    }
+)
 """Common SPDX license identifiers recognized for LicenseChoice.license_id."""
 
 
@@ -69,9 +73,7 @@ def _is_excluded_package(name: str) -> bool:
     normalized = normalize_pypi_name(name)
     if normalized in _INFRASTRUCTURE_PACKAGES:
         return True
-    if normalized.startswith(_COLLECTION_WRAPPER_PREFIX):
-        return True
-    return False
+    return bool(normalized.startswith(_COLLECTION_WRAPPER_PREFIX))
 
 
 def _make_license(license_str: str) -> LicenseChoice:

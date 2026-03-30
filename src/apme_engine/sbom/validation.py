@@ -144,11 +144,7 @@ def validate_bom(bom: Bom) -> ValidationResult:
     for ref, count in ref_counts.items():
         if count > 1:
             # Find components with this duplicate ref
-            dup_names = [
-                c.name or c.purl or "<unknown>"
-                for c in bom.components
-                if c.bom_ref == ref
-            ]
+            dup_names = [c.name or c.purl or "<unknown>" for c in bom.components if c.bom_ref == ref]
             all_errors.append(
                 ValidationError(
                     component_name=", ".join(dup_names),

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from apme_engine.sbom.models import (
     Bom,
     Component,
@@ -27,7 +25,19 @@ def _make_valid_component(
     supplier_name: str = "Cisco",
     author: str = "Cisco Systems",
 ) -> Component:
-    """Create a valid component with all required and recommended fields."""
+    """Create a valid component with all required and recommended fields.
+
+    Args:
+        name: Component name.
+        version: Component version.
+        purl: Package URL.
+        bom_ref: BOM reference identifier.
+        supplier_name: Supplier organization name.
+        author: Author name.
+
+    Returns:
+        Component instance with all fields populated.
+    """
     return Component(
         type=ComponentType.LIBRARY,
         name=name,
@@ -43,41 +53,41 @@ class TestValidateComponent:
     """Tests for validate_component function."""
 
     def test_valid_component_no_errors(self) -> None:
-        """A fully populated component returns empty error list and is_valid=True."""
+        """A fully populated component returns empty error list."""
         component = _make_valid_component()
         errors = validate_component(component)
         assert errors == []
 
     def test_missing_name_is_error(self) -> None:
-        """Component with name='' produces error-level finding for 'name' field."""
+        """Component with name='' produces error-level finding."""
         component = _make_valid_component(name="")
         errors = validate_component(component)
         name_errors = [e for e in errors if e.field == "name" and e.severity == "error"]
         assert len(name_errors) == 1
 
     def test_missing_version_is_error(self) -> None:
-        """Component with version='' produces error-level finding for 'version' field."""
+        """Component with version='' produces error-level finding."""
         component = _make_valid_component(version="")
         errors = validate_component(component)
         version_errors = [e for e in errors if e.field == "version" and e.severity == "error"]
         assert len(version_errors) == 1
 
     def test_missing_purl_is_error(self) -> None:
-        """Component with purl='' produces error-level finding for 'purl' field."""
+        """Component with purl='' produces error-level finding."""
         component = _make_valid_component(purl="")
         errors = validate_component(component)
         purl_errors = [e for e in errors if e.field == "purl" and e.severity == "error"]
         assert len(purl_errors) == 1
 
     def test_missing_bom_ref_is_error(self) -> None:
-        """Component with bom_ref='' produces error-level finding for 'bom_ref' field."""
+        """Component with bom_ref='' produces error-level finding."""
         component = _make_valid_component(bom_ref="")
         errors = validate_component(component)
         bom_ref_errors = [e for e in errors if e.field == "bom_ref" and e.severity == "error"]
         assert len(bom_ref_errors) == 1
 
     def test_missing_multiple_fields_collects_all(self) -> None:
-        """Component missing name, version, and purl returns 3 errors (not just 1)."""
+        """Component missing multiple fields returns all errors."""
         component = _make_valid_component(name="", version="", purl="")
         errors = validate_component(component)
         error_findings = [e for e in errors if e.severity == "error"]
@@ -86,23 +96,21 @@ class TestValidateComponent:
         assert fields == {"name", "version", "purl"}
 
     def test_unknown_supplier_is_warning(self) -> None:
-        """Component with supplier.name='unknown' produces warning-level finding."""
+        """Component with supplier.name='unknown' produces warning."""
         component = _make_valid_component(supplier_name="unknown")
         errors = validate_component(component)
-        supplier_warnings = [
-            e for e in errors if e.field == "supplier" and e.severity == "warning"
-        ]
+        supplier_warnings = [e for e in errors if e.field == "supplier" and e.severity == "warning"]
         assert len(supplier_warnings) == 1
 
     def test_unknown_author_is_warning(self) -> None:
-        """Component with author='unknown' produces warning-level finding."""
+        """Component with author='unknown' produces warning."""
         component = _make_valid_component(author="unknown")
         errors = validate_component(component)
         author_warnings = [e for e in errors if e.field == "author" and e.severity == "warning"]
         assert len(author_warnings) == 1
 
     def test_warnings_dont_fail_validation(self) -> None:
-        """Component with only warnings has is_valid=True."""
+        """Component with only warnings still validates as True."""
         component = _make_valid_component(supplier_name="unknown", author="unknown")
         errors = validate_component(component)
         result = ValidationResult(errors=errors)
@@ -110,7 +118,7 @@ class TestValidateComponent:
         assert len(errors) == 2
 
     def test_error_fields_populated(self) -> None:
-        """Each ValidationError has non-empty component_name, field, severity, message, suggestion."""
+        """Each ValidationError has all required fields populated."""
         component = _make_valid_component(name="test-comp", version="")
         errors = validate_component(component)
         assert len(errors) >= 1
@@ -126,7 +134,7 @@ class TestValidateBom:
     """Tests for validate_bom function."""
 
     def test_validate_bom_checks_all_components(self) -> None:
-        """BOM with 3 components validates each one."""
+        """BOM with multiple components validates each one."""
         components = [
             _make_valid_component(name="", bom_ref="ref1", purl="purl1"),
             _make_valid_component(name="", bom_ref="ref2", purl="purl2"),
@@ -138,7 +146,7 @@ class TestValidateBom:
         assert len(name_errors) == 3
 
     def test_validate_bom_duplicate_bom_ref(self) -> None:
-        """BOM with two components sharing same bom_ref produces error."""
+        """BOM with duplicate bom_ref produces error."""
         components = [
             _make_valid_component(name="comp1", bom_ref="dup-ref", purl="purl1"),
             _make_valid_component(name="comp2", bom_ref="dup-ref", purl="purl2"),
@@ -149,7 +157,7 @@ class TestValidateBom:
         assert len(dup_errors) >= 1
 
     def test_validate_bom_valid(self) -> None:
-        """BOM with unique bom_refs and valid components returns is_valid=True."""
+        """BOM with unique bom_refs and valid components validates successfully."""
         components = [
             _make_valid_component(name="comp1", bom_ref="ref1", purl="purl1"),
             _make_valid_component(name="comp2", bom_ref="ref2", purl="purl2"),
@@ -163,7 +171,7 @@ class TestValidationResult:
     """Tests for ValidationResult dataclass."""
 
     def test_validation_result_is_valid_property(self) -> None:
-        """ValidationResult.is_valid returns True when no error-level findings, False when any error exists."""
+        """ValidationResult.is_valid returns True when no errors exist."""
         # No errors at all
         result_empty = ValidationResult()
         assert result_empty.is_valid is True

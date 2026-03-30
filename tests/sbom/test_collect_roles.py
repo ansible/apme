@@ -4,11 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from apme_engine.sbom.collect_roles import collect_roles
 from apme_engine.sbom.models import APME_PROPERTY_NAMESPACE, ComponentType
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -55,10 +52,18 @@ class TestCollectRolesWithMeta:
     """Tests for roles with meta/main.yml."""
 
     def test_role_with_full_galaxy_info(self, tmp_path: Path) -> None:
+        """Verify role with complete galaxy_info metadata is parsed correctly.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
         target = tmp_path / "project"
         roles = target / "roles"
         roles.mkdir(parents=True)
-        _make_role(roles, "my_role", meta_content="""\
+        _make_role(
+            roles,
+            "my_role",
+            meta_content="""\
 ---
 galaxy_info:
   role_name: my_role
@@ -68,7 +73,8 @@ galaxy_info:
   license: MIT
   description: A test role
   min_ansible_version: "2.9"
-""")
+""",
+        )
         components = collect_roles(target)
         assert len(components) == 1
         c = components[0]
@@ -86,30 +92,48 @@ galaxy_info:
         assert props.get(f"{APME_PROPERTY_NAMESPACE}:min-ansible-version") == "2.9"
 
     def test_role_name_fallback_to_dir_name(self, tmp_path: Path) -> None:
+        """Verify role_name falls back to directory name when not specified.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
         target = tmp_path / "project"
         roles = target / "roles"
         roles.mkdir(parents=True)
         # galaxy_info without role_name
-        _make_role(roles, "webserver", meta_content="""\
+        _make_role(
+            roles,
+            "webserver",
+            meta_content="""\
 ---
 galaxy_info:
   author: Bob
   version: 0.5.0
-""")
+""",
+        )
         components = collect_roles(target)
         assert len(components) == 1
         assert components[0].name == "webserver"
 
     def test_version_fallback_to_unversioned(self, tmp_path: Path) -> None:
+        """Verify version defaults to 'unversioned' when not specified.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
         target = tmp_path / "project"
         roles = target / "roles"
         roles.mkdir(parents=True)
-        _make_role(roles, "norole", meta_content="""\
+        _make_role(
+            roles,
+            "norole",
+            meta_content="""\
 ---
 galaxy_info:
   role_name: norole
   author: Bob
-""")
+""",
+        )
         components = collect_roles(target)
         assert components[0].version == "unversioned"
 
@@ -118,6 +142,11 @@ class TestCollectBareRoles:
     """Tests for bare roles (tasks/main.yml only, no meta)."""
 
     def test_bare_role_included(self, tmp_path: Path) -> None:
+        """Verify bare roles without meta are discovered and included.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
         target = tmp_path / "project"
         roles = target / "roles"
         roles.mkdir(parents=True)
@@ -132,6 +161,11 @@ class TestCollectBareRoles:
         assert f"{APME_PROPERTY_NAMESPACE}:name-source" in props
 
     def test_bare_role_uses_dir_name(self, tmp_path: Path) -> None:
+        """Verify bare role name is inferred from directory name.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
         target = tmp_path / "project"
         roles = target / "roles"
         roles.mkdir(parents=True)
@@ -144,33 +178,57 @@ class TestCollectRolesEdgeCases:
     """Edge cases for role collection."""
 
     def test_no_roles_dir(self, tmp_path: Path) -> None:
+        """Verify empty list returned when roles directory doesn't exist.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
         target = tmp_path / "project"
         target.mkdir()
         components = collect_roles(target)
         assert components == []
 
     def test_empty_roles_dir(self, tmp_path: Path) -> None:
+        """Verify empty list returned when roles directory is empty.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
         target = tmp_path / "project"
         (target / "roles").mkdir(parents=True)
         components = collect_roles(target)
         assert components == []
 
     def test_collection_embedded_roles_not_scanned(self, tmp_path: Path) -> None:
+        """Verify roles inside ansible_collections are not discovered.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
         target = tmp_path / "project"
         target.mkdir()
         # Roles inside ansible_collections should NOT be found
         coll_roles = target / "ansible_collections" / "ns" / "coll" / "roles"
         coll_roles.mkdir(parents=True)
-        _make_role(coll_roles, "embedded_role", meta_content="""\
+        _make_role(
+            coll_roles,
+            "embedded_role",
+            meta_content="""\
 ---
 galaxy_info:
   role_name: embedded_role
   version: 1.0.0
-""")
+""",
+        )
         components = collect_roles(target)
         assert components == []
 
     def test_malformed_meta_falls_back(self, tmp_path: Path) -> None:
+        """Verify malformed meta/main.yml falls back to directory inference.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
         target = tmp_path / "project"
         roles = target / "roles"
         roles.mkdir(parents=True)
@@ -186,22 +244,35 @@ galaxy_info:
         assert components[0].version == "unversioned"
 
     def test_multiple_roles(self, tmp_path: Path) -> None:
+        """Verify multiple roles in roles directory are all discovered.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
         target = tmp_path / "project"
         roles = target / "roles"
         roles.mkdir(parents=True)
-        _make_role(roles, "role_a", meta_content="""\
+        _make_role(
+            roles,
+            "role_a",
+            meta_content="""\
 ---
 galaxy_info:
   role_name: role_a
   version: 1.0.0
-""")
+""",
+        )
         _make_role(roles, "role_b", bare=True)
         components = collect_roles(target)
         names = {c.name for c in components}
         assert names == {"role_a", "role_b"}
 
     def test_non_role_subdir_ignored(self, tmp_path: Path) -> None:
-        """Subdirectories without meta/main.yml or tasks/main.yml are skipped."""
+        """Verify subdirectories without role structure are ignored.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
         target = tmp_path / "project"
         roles = target / "roles"
         roles.mkdir(parents=True)

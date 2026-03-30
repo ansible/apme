@@ -106,7 +106,7 @@ def run_sbom(args: argparse.Namespace) -> None:
         )
 
         # Set refresh flag on first chunk if requested
-        if getattr(args, "refresh", False) and chunks:
+        if getattr(args, "refresh", False) and chunks and chunks[0].options is not None:
             chunks[0].options.refresh = True
 
         response = stub.GenerateSbom(iter(chunks), timeout=120)

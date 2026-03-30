@@ -108,6 +108,21 @@ python_version = "3.10"
 mypy_path = "src"
 exclude = ["src/apme/v1/.*_pb2"]
 
+# SBOM tests: pytest fixture/parametrize stubs vary across environments.
+[[tool.mypy.overrides]]
+module = [
+    "tests.sbom.conftest",
+    "tests.sbom.test_schema_validation",
+    "tests.sbom.test_collect_packages",
+    "tests.test_sbom_grpc",
+]
+disable_error_code = ["unused-ignore"]
+
+# SBOM serializer: CycloneDX JSON output is inherently unstructured.
+[[tool.mypy.overrides]]
+module = "apme_engine.sbom.serializer"
+disallow_any_explicit = false
+
 # Vendored galaxy-proxy: parsed Galaxy YAML/JSON is inherently unstructured.
 [[tool.mypy.overrides]]
 module = ["galaxy_proxy", "galaxy_proxy.*"]

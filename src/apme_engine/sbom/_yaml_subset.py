@@ -21,9 +21,8 @@ def _strip_quotes(value: str) -> str:
     Returns:
         The unquoted string, or the original if not quoted.
     """
-    if len(value) >= 2:
-        if (value[0] == "'" and value[-1] == "'") or (value[0] == '"' and value[-1] == '"'):
-            return value[1:-1]
+    if len(value) >= 2 and ((value[0] == "'" and value[-1] == "'") or (value[0] == '"' and value[-1] == '"')):
+        return value[1:-1]
     return value
 
 

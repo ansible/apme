@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Union
+from typing import Any
 
 from apme_engine.sbom.models import (
     Bom,
@@ -53,9 +53,7 @@ def bom_to_dict(bom: Bom, include_empty: bool = False) -> dict[str, Any]:
 
     # Dependencies are handled separately to preserve empty dependsOn lists
     if bom.dependencies:
-        result["dependencies"] = [
-            _dependency_to_dict(dep) for dep in bom.dependencies
-        ]
+        result["dependencies"] = [_dependency_to_dict(dep) for dep in bom.dependencies]
 
     # Strip empty values from everything except dependencies and components
     # (components are already stripped individually above with correct flags)
@@ -70,9 +68,7 @@ def bom_to_dict(bom: Bom, include_empty: bool = False) -> dict[str, Any]:
     return result
 
 
-def bom_to_json(
-    bom: Bom, indent: int = 2, include_empty: bool = False
-) -> str:
+def bom_to_json(bom: Bom, indent: int = 2, include_empty: bool = False) -> str:
     """Convert a Bom dataclass to a CycloneDX 1.5 JSON string.
 
     Args:
@@ -122,9 +118,7 @@ def _strip_empty(obj: Any, preserve_empty_strings: bool = False) -> Any:
         for item in obj:
             if item is None:
                 continue
-            stripped = _strip_empty(
-                item, preserve_empty_strings=preserve_empty_strings
-            )
+            stripped = _strip_empty(item, preserve_empty_strings=preserve_empty_strings)
             if stripped is None:
                 continue
             if isinstance(stripped, dict) and len(stripped) == 0:
@@ -134,9 +128,7 @@ def _strip_empty(obj: Any, preserve_empty_strings: bool = False) -> Any:
     return obj
 
 
-def _component_to_dict(
-    comp: Component, include_empty: bool = False
-) -> dict[str, Any]:
+def _component_to_dict(comp: Component, include_empty: bool = False) -> dict[str, Any]:
     """Map a Component dataclass to a CycloneDX camelCase dict.
 
     Args:

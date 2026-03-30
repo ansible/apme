@@ -29,15 +29,15 @@ from apme_engine.sbom.serializer import bom_to_dict
 SCHEMA_DIR = Path(__file__).parent / "schemas"
 
 
-@pytest.fixture()
+@pytest.fixture  # type: ignore[untyped-decorator]
 def cdx_validator() -> Draft7Validator:
-    """Create a Draft7Validator with CycloneDX 1.5 schema and SPDX ref resolution."""
-    bom_schema = json.loads(
-        (SCHEMA_DIR / "bom-1.5.schema.json").read_text(encoding="utf-8")
-    )
-    spdx_schema = json.loads(
-        (SCHEMA_DIR / "spdx.schema.json").read_text(encoding="utf-8")
-    )
+    """Create a Draft7Validator with CycloneDX 1.5 schema and SPDX ref resolution.
+
+    Returns:
+        Draft7Validator configured with CycloneDX 1.5 and SPDX schemas.
+    """
+    bom_schema = json.loads((SCHEMA_DIR / "bom-1.5.schema.json").read_text(encoding="utf-8"))
+    spdx_schema = json.loads((SCHEMA_DIR / "spdx.schema.json").read_text(encoding="utf-8"))
     registry = Registry().with_resource(
         "spdx.schema.json",
         Resource.from_contents(spdx_schema),
@@ -49,10 +49,12 @@ def cdx_validator() -> Draft7Validator:
 class TestSchemaValidation:
     """CycloneDX 1.5 schema validation integration tests."""
 
-    def test_minimal_bom_passes_schema(
-        self, cdx_validator: Draft7Validator
-    ) -> None:
-        """Default Bom() serialized via bom_to_dict passes schema validation."""
+    def test_minimal_bom_passes_schema(self, cdx_validator: Draft7Validator) -> None:
+        """Default Bom() serialized via bom_to_dict passes schema validation.
+
+        Args:
+            cdx_validator: CycloneDX JSON schema validator fixture.
+        """
         bom = Bom(
             serial_number="urn:uuid:00000000-0000-0000-0000-000000000000",
             metadata=BomMetadata(timestamp="2026-03-27T00:00:00+00:00"),
@@ -60,10 +62,12 @@ class TestSchemaValidation:
         result = bom_to_dict(bom)
         cdx_validator.validate(result)
 
-    def test_single_component_passes_schema(
-        self, cdx_validator: Draft7Validator
-    ) -> None:
-        """Bom with one Component passes schema validation."""
+    def test_single_component_passes_schema(self, cdx_validator: Draft7Validator) -> None:
+        """Bom with one Component passes schema validation.
+
+        Args:
+            cdx_validator: CycloneDX JSON schema validator fixture.
+        """
         bom = Bom(
             serial_number="urn:uuid:00000000-0000-0000-0000-000000000000",
             metadata=BomMetadata(timestamp="2026-03-27T00:00:00+00:00"),
@@ -80,10 +84,12 @@ class TestSchemaValidation:
         result = bom_to_dict(bom)
         cdx_validator.validate(result)
 
-    def test_component_with_licenses_passes_schema(
-        self, cdx_validator: Draft7Validator
-    ) -> None:
-        """Component with LicenseChoice(license_id='MIT') passes validation."""
+    def test_component_with_licenses_passes_schema(self, cdx_validator: Draft7Validator) -> None:
+        """Component with LicenseChoice(license_id='MIT') passes validation.
+
+        Args:
+            cdx_validator: CycloneDX JSON schema validator fixture.
+        """
         bom = Bom(
             serial_number="urn:uuid:00000000-0000-0000-0000-000000000000",
             metadata=BomMetadata(timestamp="2026-03-27T00:00:00+00:00"),
@@ -101,10 +107,12 @@ class TestSchemaValidation:
         result = bom_to_dict(bom)
         cdx_validator.validate(result)
 
-    def test_component_with_properties_passes_schema(
-        self, cdx_validator: Draft7Validator
-    ) -> None:
-        """Component with Property entries passes validation."""
+    def test_component_with_properties_passes_schema(self, cdx_validator: Draft7Validator) -> None:
+        """Component with Property entries passes validation.
+
+        Args:
+            cdx_validator: CycloneDX JSON schema validator fixture.
+        """
         bom = Bom(
             serial_number="urn:uuid:00000000-0000-0000-0000-000000000000",
             metadata=BomMetadata(timestamp="2026-03-27T00:00:00+00:00"),
@@ -125,10 +133,12 @@ class TestSchemaValidation:
         result = bom_to_dict(bom)
         cdx_validator.validate(result)
 
-    def test_dependencies_pass_schema(
-        self, cdx_validator: Draft7Validator
-    ) -> None:
-        """Bom with Dependency entries (including empty dependsOn) passes validation."""
+    def test_dependencies_pass_schema(self, cdx_validator: Draft7Validator) -> None:
+        """Bom with Dependency entries (including empty dependsOn) passes validation.
+
+        Args:
+            cdx_validator: CycloneDX JSON schema validator fixture.
+        """
         bom = Bom(
             serial_number="urn:uuid:00000000-0000-0000-0000-000000000000",
             metadata=BomMetadata(timestamp="2026-03-27T00:00:00+00:00"),
@@ -162,10 +172,12 @@ class TestSchemaValidation:
         result = bom_to_dict(bom)
         cdx_validator.validate(result)
 
-    def test_populated_bom_passes_schema(
-        self, cdx_validator: Draft7Validator
-    ) -> None:
-        """Fully populated BOM with multiple components, deps, licenses, properties passes."""
+    def test_populated_bom_passes_schema(self, cdx_validator: Draft7Validator) -> None:
+        """Fully populated BOM with multiple components, deps, licenses, properties passes.
+
+        Args:
+            cdx_validator: CycloneDX JSON schema validator fixture.
+        """
         bom = Bom(
             serial_number="urn:uuid:00000000-0000-0000-0000-000000000000",
             metadata=BomMetadata(
@@ -228,10 +240,12 @@ class TestSchemaValidation:
         result = bom_to_dict(bom)
         cdx_validator.validate(result)
 
-    def test_tools_metadata_passes_schema(
-        self, cdx_validator: Draft7Validator
-    ) -> None:
-        """The 1.5 tools.components format passes the oneOf discriminator in schema."""
+    def test_tools_metadata_passes_schema(self, cdx_validator: Draft7Validator) -> None:
+        """The 1.5 tools.components format passes the oneOf discriminator in schema.
+
+        Args:
+            cdx_validator: CycloneDX JSON schema validator fixture.
+        """
         bom = Bom(
             serial_number="urn:uuid:00000000-0000-0000-0000-000000000000",
             metadata=BomMetadata(
@@ -246,10 +260,12 @@ class TestSchemaValidation:
         assert "components" in result["metadata"]["tools"]
         cdx_validator.validate(result)
 
-    def test_invalid_bom_fails_schema(
-        self, cdx_validator: Draft7Validator
-    ) -> None:
-        """A dict missing bomFormat fails schema validation (negative test)."""
+    def test_invalid_bom_fails_schema(self, cdx_validator: Draft7Validator) -> None:
+        """A dict missing bomFormat fails schema validation (negative test).
+
+        Args:
+            cdx_validator: CycloneDX JSON schema validator fixture.
+        """
         invalid = {
             "specVersion": "1.5",
             "version": 1,

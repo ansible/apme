@@ -9,6 +9,8 @@ class ScanOptions:
     ansible_core_version: str
     collection_specs: list[str]
     session_id: str
+    summary_only: bool
+    refresh: bool
     def __init__(self, *, session_id: str = "", **kwargs: object) -> None: ...
 
 class FixOptions:
@@ -193,6 +195,24 @@ class AIModelInfo:
 
 class ListAIModelsResponse:
     models: list[AIModelInfo]
+    def __init__(self, **kwargs: object) -> None: ...
+
+class SbomComponentDetail:
+    type: str
+    name: str
+    version: str
+    license: str
+    name_inferred: bool
+    version_missing: bool
+    def __init__(self, **kwargs: object) -> None: ...
+
+class SbomResponse:
+    sbom_json: bytes
+    collection_count: int
+    package_count: int
+    role_count: int
+    total_count: int
+    components: list[SbomComponentDetail]
     def __init__(self, **kwargs: object) -> None: ...
 
 SESSION_STATUS_UNSPECIFIED: int

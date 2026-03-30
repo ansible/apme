@@ -6,15 +6,12 @@ import pytest
 
 from apme_engine.sbom.models import (
     Bom,
-    BomMetadata,
     Component,
     ComponentType,
-    OrganizationalEntity,
-    Property,
 )
 
 
-@pytest.fixture()
+@pytest.fixture  # type: ignore[untyped-decorator]
 def sample_component() -> Component:
     """Create a sample Component for testing.
 
@@ -30,7 +27,7 @@ def sample_component() -> Component:
     )
 
 
-@pytest.fixture()
+@pytest.fixture  # type: ignore[untyped-decorator]
 def sample_bom(sample_component: Component) -> Bom:
     """Create a sample Bom for testing.
 

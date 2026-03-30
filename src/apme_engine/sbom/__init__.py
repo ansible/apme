@@ -7,6 +7,7 @@ and collector functions for building component inventories.
 
 from __future__ import annotations
 
+from apme_engine.sbom._yaml_subset import parse_yaml_subset
 from apme_engine.sbom.collect_collections import collect_collections
 from apme_engine.sbom.collect_packages import collect_packages
 from apme_engine.sbom.collect_roles import collect_roles
@@ -22,14 +23,13 @@ from apme_engine.sbom.models import (
     Property,
     mark_name_inferred,
 )
-from apme_engine.sbom._yaml_subset import parse_yaml_subset
-from apme_engine.sbom.serializer import bom_to_dict, bom_to_json
 from apme_engine.sbom.purl import (
     make_collection_purl,
     make_pypi_purl,
     make_role_purl,
     normalize_pypi_name,
 )
+from apme_engine.sbom.serializer import bom_to_dict, bom_to_json
 from apme_engine.sbom.validation import (
     ValidationError,
     ValidationResult,

@@ -25,20 +25,22 @@ from apme_engine.sbom.purl import make_role_purl
 
 logger = logging.getLogger(__name__)
 
-_KNOWN_SPDX_IDS: frozenset[str] = frozenset({
-    "MIT",
-    "Apache-2.0",
-    "GPL-2.0-only",
-    "GPL-3.0-only",
-    "BSD-2-Clause",
-    "BSD-3-Clause",
-    "ISC",
-    "MPL-2.0",
-    "LGPL-2.1-only",
-    "LGPL-3.0-only",
-    "Unlicense",
-    "PSF-2.0",
-})
+_KNOWN_SPDX_IDS: frozenset[str] = frozenset(
+    {
+        "MIT",
+        "Apache-2.0",
+        "GPL-2.0-only",
+        "GPL-3.0-only",
+        "BSD-2-Clause",
+        "BSD-3-Clause",
+        "ISC",
+        "MPL-2.0",
+        "LGPL-2.1-only",
+        "LGPL-3.0-only",
+        "Unlicense",
+        "PSF-2.0",
+    }
+)
 """Common SPDX license identifiers recognized for LicenseChoice.license_id."""
 
 

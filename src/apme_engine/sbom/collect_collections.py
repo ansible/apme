@@ -56,11 +56,14 @@ _KNOWN_SPDX: frozenset[str] = frozenset(
 # ---------------------------------------------------------------------------
 
 
-def _read_manifest_json(collection_dir: Path) -> dict:
+def _read_manifest_json(collection_dir: Path) -> dict[str, object]:
     """Read MANIFEST.json and return normalised collection_info dict.
 
-    Raises ``Exception`` on parse error or missing key so callers can
-    fall through to the next metadata source.
+    Args:
+        collection_dir: Path to the collection directory.
+
+    Returns:
+        Dictionary with collection metadata (namespace, name, version, etc.).
     """
     text = (collection_dir / "MANIFEST.json").read_text(encoding="utf-8")
     data = json.loads(text)
@@ -75,10 +78,18 @@ def _read_manifest_json(collection_dir: Path) -> dict:
     }
 
 
-def _read_galaxy_yml(collection_dir: Path) -> dict:
+def _read_galaxy_yml(collection_dir: Path) -> dict[str, object]:
     """Read galaxy.yml via the stdlib YAML subset parser.
 
-    Raises ``Exception`` on missing file or empty parse.
+    Args:
+        collection_dir: Path to the collection directory.
+
+    Returns:
+        Dictionary with collection metadata (namespace, name, version, etc.).
+
+    Raises:
+        FileNotFoundError: If galaxy.yml is missing.
+        ValueError: If parse result is empty or missing namespace/name.
     """
     path = collection_dir / "galaxy.yml"
     if not path.is_file():
@@ -113,10 +124,16 @@ def _read_galaxy_yml(collection_dir: Path) -> dict:
     }
 
 
-def _infer_from_path(collection_dir: Path) -> dict:
+def _infer_from_path(collection_dir: Path) -> dict[str, object]:
     """Infer collection metadata from directory path.
 
     The directory structure is ``ansible_collections/{namespace}/{name}/``.
+
+    Args:
+        collection_dir: Path to the collection directory.
+
+    Returns:
+        Dictionary with inferred collection metadata.
     """
     name = collection_dir.name
     namespace = collection_dir.parent.name
@@ -135,6 +152,12 @@ def _iter_collection_dirs(site_packages: Path) -> list[Path]:
     """Walk ``ansible_collections/{namespace}/{name}/`` directories.
 
     Skips namespace dirs starting with ``_``.
+
+    Args:
+        site_packages: Path to the site-packages directory.
+
+    Returns:
+        List of collection directory paths.
     """
     ac_root = site_packages / "ansible_collections"
     if not ac_root.is_dir():
@@ -151,17 +174,27 @@ def _iter_collection_dirs(site_packages: Path) -> list[Path]:
     return dirs
 
 
-def _extract_license(metadata: dict) -> list[LicenseChoice]:
+def _extract_license(metadata: dict[str, object]) -> list[LicenseChoice]:
     """Convert license field to LicenseChoice objects.
 
     Well-known SPDX IDs get ``license_id``; everything else gets
     ``license_name``.
+
+    Args:
+        metadata: Collection metadata dictionary.
+
+    Returns:
+        List of LicenseChoice objects.
     """
     raw = metadata.get("license", [])
     if isinstance(raw, str):
-        raw = [raw] if raw else []
+        raw_list: list[object] = [raw] if raw else []
+    elif isinstance(raw, list):
+        raw_list = raw
+    else:
+        raw_list = []
     choices: list[LicenseChoice] = []
-    for entry in raw:
+    for entry in raw_list:
         entry = str(entry).strip()
         if not entry:
             continue
@@ -175,7 +208,11 @@ def _extract_license(metadata: dict) -> list[LicenseChoice]:
 def _read_galaxy_deps(collection_dir: Path) -> dict[str, str]:
     """Read dependency map from galaxy.yml.
 
-    Returns ``{fqcn: version_spec}`` or empty dict on any failure.
+    Args:
+        collection_dir: Path to the collection directory.
+
+    Returns:
+        Mapping of FQCN to version spec, or empty dict on any failure.
     """
     path = collection_dir / "galaxy.yml"
     if not path.is_file():
@@ -229,7 +266,7 @@ def collect_collections(
     dir_map: dict[str, Path] = {}
 
     for col_dir in col_dirs:
-        metadata: dict | None = None
+        metadata: dict[str, object] | None = None
         inferred = False
 
         # Try MANIFEST.json first
@@ -250,9 +287,9 @@ def collect_collections(
             metadata = _infer_from_path(col_dir)
             inferred = True
 
-        ns = metadata["namespace"]
-        name = metadata["name"]
-        version = metadata["version"]
+        ns = str(metadata["namespace"])
+        name = str(metadata["name"])
+        version = str(metadata["version"])
         fqcn = f"{ns}.{name}"
 
         purl = make_collection_purl(ns, name, version)
@@ -274,7 +311,7 @@ def collect_collections(
             bom_ref=purl,
             supplier=OrganizationalEntity(name=supplier_name),
             author=author_str,
-            description=metadata.get("description", ""),
+            description=str(metadata.get("description", "")),
             licenses=_extract_license(metadata),
         )
 
@@ -304,8 +341,6 @@ def collect_collections(
                 )
 
         if resolved_purls:
-            dependencies.append(
-                Dependency(ref=purl_map[fqcn], depends_on=resolved_purls)
-            )
+            dependencies.append(Dependency(ref=purl_map[fqcn], depends_on=resolved_purls))
 
     return components, dependencies

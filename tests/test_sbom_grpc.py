@@ -8,12 +8,13 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from collections.abc import Callable, Coroutine
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from apme.v1.primary_pb2 import SbomComponentDetail, SbomResponse, ScanChunk, ScanOptions
+from apme.v1.primary_pb2 import SbomResponse, ScanOptions
 from apme_engine.daemon.primary_server import PrimaryServicer
 from apme_engine.sbom.models import (
     APME_PROPERTY_NAMESPACE,
@@ -23,7 +24,6 @@ from apme_engine.sbom.models import (
     LicenseChoice,
     Property,
 )
-
 
 # ── Fixtures ──────────────────────────────────────────────────────────
 
@@ -36,7 +36,18 @@ def _make_component(
     license_name: str = "",
     name_inferred: bool = False,
 ) -> Component:
-    """Create a test Component with optional license and inferred-name property."""
+    """Create a test Component with optional license and inferred-name property.
+
+    Args:
+        name: Component name.
+        version: Component version.
+        license_id: SPDX license identifier.
+        license_name: Custom license name.
+        name_inferred: Whether to add name-source property.
+
+    Returns:
+        Component instance configured for testing.
+    """
     licenses = []
     if license_id or license_name:
         licenses.append(LicenseChoice(license_id=license_id, license_name=license_name))
@@ -65,7 +76,8 @@ def _make_component(
 class TestBuildComponentDetails:
     """Tests for PrimaryServicer._build_component_details."""
 
-    def test_basic_component(self):
+    def test_basic_component(self) -> None:
+        """Basic component builds detail proto with correct fields."""
         comp = _make_component("my-collection", "2.0.0", license_id="MIT")
         details = PrimaryServicer._build_component_details([comp], "collection")
         assert len(details) == 1
@@ -77,37 +89,44 @@ class TestBuildComponentDetails:
         assert d.name_inferred is False
         assert d.version_missing is False
 
-    def test_name_inferred(self):
+    def test_name_inferred(self) -> None:
+        """Component with inferred name sets name_inferred flag."""
         comp = _make_component("bare-role", "1.0.0", name_inferred=True)
         details = PrimaryServicer._build_component_details([comp], "role")
         assert details[0].name_inferred is True
 
-    def test_missing_version(self):
+    def test_missing_version(self) -> None:
+        """Component with empty version sets version_missing flag."""
         comp = _make_component("no-version", "")
         details = PrimaryServicer._build_component_details([comp], "package")
         assert details[0].version_missing is True
         assert details[0].version == ""
 
-    def test_license_name_fallback(self):
+    def test_license_name_fallback(self) -> None:
+        """Component with license_name but no ID uses name."""
         comp = _make_component("pkg", "1.0.0", license_name="Custom License")
         details = PrimaryServicer._build_component_details([comp], "package")
         assert details[0].license == "Custom License"
 
-    def test_license_id_preferred_over_name(self):
+    def test_license_id_preferred_over_name(self) -> None:
+        """License ID is preferred when both ID and name present."""
         comp = _make_component("pkg", "1.0.0", license_id="Apache-2.0", license_name="Apache")
         details = PrimaryServicer._build_component_details([comp], "package")
         assert details[0].license == "Apache-2.0"
 
-    def test_no_license(self):
+    def test_no_license(self) -> None:
+        """Component without license has empty license field."""
         comp = _make_component("pkg", "1.0.0")
         details = PrimaryServicer._build_component_details([comp], "package")
         assert details[0].license == ""
 
-    def test_empty_list(self):
+    def test_empty_list(self) -> None:
+        """Empty component list returns empty details list."""
         details = PrimaryServicer._build_component_details([], "collection")
         assert details == []
 
-    def test_multiple_components(self):
+    def test_multiple_components(self) -> None:
+        """Multiple components all get converted to details."""
         comps = [
             _make_component("a", "1.0"),
             _make_component("b", "2.0", license_id="MIT"),
@@ -121,28 +140,53 @@ class TestBuildComponentDetails:
 # ── GenerateSbom full path tests ─────────────────────────────────────
 
 
-def _mock_accumulate_chunks(files=None, opts=None):
-    """Return an async function that mimics _accumulate_chunks."""
-    async def _acc(request_stream):
+_AccResult = tuple[list[object], str, str, ScanOptions, None]
+
+
+def _mock_accumulate_chunks(
+    files: object = None, opts: object = None
+) -> Callable[[object], Coroutine[object, object, _AccResult]]:
+    """Return an async function that mimics _accumulate_chunks.
+
+    Args:
+        files: List of file paths to simulate, or None for empty.
+        opts: ScanOptions to return, or None for defaults.
+
+    Returns:
+        Async callable matching _accumulate_chunks signature.
+    """
+
+    async def _acc(request_stream: object) -> _AccResult:
         return (
-            files or [],
+            list(files) if isinstance(files, list) else [],
             str(uuid.uuid4()),
             "project",
-            opts or ScanOptions(session_id="test-session"),
+            opts if isinstance(opts, ScanOptions) else ScanOptions(session_id="test-session"),
             None,
         )
+
     return _acc
 
 
-@pytest.fixture()
-def servicer():
+@pytest.fixture  # type: ignore[untyped-decorator]
+def servicer() -> PrimaryServicer:
+    """Create a PrimaryServicer instance for testing.
+
+    Returns:
+        PrimaryServicer instance configured for tests.
+    """
     return PrimaryServicer()
 
 
 class TestGenerateSbomFullPath:
     """Full SBOM generation: mock venv, collectors, and verify response."""
 
-    def test_full_path_returns_complete_sbom(self, servicer):
+    def test_full_path_returns_complete_sbom(self, servicer: PrimaryServicer) -> None:
+        """Full SBOM generation returns complete response with all components.
+
+        Args:
+            servicer: PrimaryServicer instance fixture.
+        """
         coll_comp = _make_component("ansible.netcommon", "5.0.0", license_id="GPL-3.0-or-later")
         pkg_comp = _make_component("requests", "2.31.0", license_id="Apache-2.0")
         role_comp = _make_component("my_role", "", name_inferred=True)
@@ -151,7 +195,7 @@ class TestGenerateSbomFullPath:
         mock_venv_session.venv_root = Path("/fake/venv")
         mock_venv_session.failed_collections = []
 
-        async def _run():
+        async def _run() -> SbomResponse:
             with (
                 patch.object(servicer, "_accumulate_chunks", _mock_accumulate_chunks()),
                 patch(
@@ -207,8 +251,12 @@ class TestGenerateSbomFullPath:
 class TestGenerateSbomSummaryOnly:
     """Summary-only mode tests."""
 
-    def test_summary_only_with_existing_venv(self, servicer):
-        """Summary-only with existing venv should succeed."""
+    def test_summary_only_with_existing_venv(self, servicer: PrimaryServicer) -> None:
+        """Summary-only with existing venv returns counts without full scan.
+
+        Args:
+            servicer: PrimaryServicer instance fixture.
+        """
         coll_comp = _make_component("ansible.utils", "3.0.0")
 
         mock_venv_root = MagicMock(spec=Path)
@@ -218,7 +266,7 @@ class TestGenerateSbomSummaryOnly:
 
         opts = ScanOptions(session_id="test-session", summary_only=True)
 
-        async def _run():
+        async def _run() -> SbomResponse:
             with (
                 patch.object(servicer, "_accumulate_chunks", _mock_accumulate_chunks(opts=opts)),
                 patch.object(
@@ -250,11 +298,15 @@ class TestGenerateSbomSummaryOnly:
         assert response.role_count == 0
         assert response.total_count == 1
 
-    def test_summary_only_no_venv_returns_not_found(self, servicer):
-        """Summary-only without existing venv should abort with NOT_FOUND."""
+    def test_summary_only_no_venv_returns_not_found(self, servicer: PrimaryServicer) -> None:
+        """Summary-only without existing venv aborts with NOT_FOUND.
+
+        Args:
+            servicer: PrimaryServicer instance fixture.
+        """
         opts = ScanOptions(session_id="test-session", summary_only=True)
 
-        async def _run():
+        async def _run() -> AsyncMock:
             with (
                 patch.object(servicer, "_accumulate_chunks", _mock_accumulate_chunks(opts=opts)),
                 patch.object(

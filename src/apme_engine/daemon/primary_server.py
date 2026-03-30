@@ -5,6 +5,8 @@ Clients send file bytes via gRPC streams and receive processed bytes back.
 The Primary delegates internally to validators and remediation.
 """
 
+from __future__ import annotations
+
 import asyncio
 import contextlib
 import contextvars
@@ -18,6 +20,7 @@ import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import grpc
 import grpc.aio
@@ -49,11 +52,11 @@ from apme.v1.primary_pb2 import (
     ListAIModelsResponse,
     Proposal,
     ProposalsReady,
+    SbomComponentDetail,
+    SbomResponse,
     ScanChunk,
     ScanDiagnostics,
     ScanOptions,
-    SbomComponentDetail,
-    SbomResponse,
     SessionClosed,
     SessionCommand,
     SessionCreated,
@@ -80,6 +83,9 @@ from apme_engine.venv_manager.session import (
     list_installed_collections,
     list_installed_packages,
 )
+
+if TYPE_CHECKING:
+    from apme_engine.sbom.models import Component
 
 logger = logging.getLogger("apme.primary")
 
@@ -814,7 +820,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
 
     @staticmethod
     def _build_component_details(
-        components: list[object],
+        components: Sequence[Component],
         component_type: str,
     ) -> list[SbomComponentDetail]:
         """Convert SBOM Component objects to SbomComponentDetail protos.
@@ -832,8 +838,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         for comp in components:
             # Check for name-inferred property
             name_inferred = any(
-                p.name == f"{APME_PROPERTY_NAMESPACE}:name-source"
-                and p.value == "inferred-from-directory"
+                p.name == f"{APME_PROPERTY_NAMESPACE}:name-source" and p.value == "inferred-from-directory"
                 for p in comp.properties
             )
 
@@ -876,10 +881,10 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         from apme_engine.sbom import (
             Bom,
             BomMetadata,
+            bom_to_json,
             collect_collections,
             collect_packages,
             collect_roles,
-            bom_to_json,
         )
         from apme_engine.validators.ansible._venv import DEFAULT_VERSION
 
@@ -917,13 +922,19 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
 
             # Run collectors in executor (collectors resolve site-packages internally)
             coll_components, coll_deps = await loop.run_in_executor(
-                None, collect_collections, venv_root,
+                None,
+                collect_collections,
+                venv_root,
             )
             pkg_components = await loop.run_in_executor(
-                None, collect_packages, venv_root,
+                None,
+                collect_packages,
+                venv_root,
             )
             role_components = await loop.run_in_executor(
-                None, collect_roles, temp_dir,
+                None,
+                collect_roles,
+                temp_dir,
             )
         else:
             # Full SBOM path: materialize files, resolve venv, run collectors
@@ -954,13 +965,19 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
 
             # Run collectors in executor (collectors resolve site-packages internally)
             coll_components, coll_deps = await loop.run_in_executor(
-                None, collect_collections, venv_root,
+                None,
+                collect_collections,
+                venv_root,
             )
             pkg_components = await loop.run_in_executor(
-                None, collect_packages, venv_root,
+                None,
+                collect_packages,
+                venv_root,
             )
             role_components = await loop.run_in_executor(
-                None, collect_roles, temp_dir,
+                None,
+                collect_roles,
+                temp_dir,
             )
 
         # Build BOM and serialize

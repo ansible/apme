@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from apme_engine.sbom.purl import (
     make_collection_purl,
     make_pypi_purl,

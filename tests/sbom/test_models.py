@@ -2,12 +2,8 @@
 
 from __future__ import annotations
 
-import glob
-import re
 import uuid
-from datetime import datetime, timezone
-
-import pytest
+from datetime import datetime
 
 from apme_engine.sbom.models import (
     Bom,
@@ -16,7 +12,6 @@ from apme_engine.sbom.models import (
     ComponentType,
     Dependency,
     LicenseChoice,
-    OrganizationalEntity,
     Property,
     mark_name_inferred,
 )
@@ -26,7 +21,11 @@ class TestComponentFields:
     """Tests for Component dataclass fields and defaults."""
 
     def test_component_has_required_fields(self, sample_component: Component) -> None:
-        """Component dataclass has type, name, version, purl, bom_ref fields."""
+        """Verify Component dataclass has all required fields.
+
+        Args:
+            sample_component: Pre-built component fixture.
+        """
         assert hasattr(sample_component, "type")
         assert hasattr(sample_component, "name")
         assert hasattr(sample_component, "version")
@@ -47,7 +46,6 @@ class TestComponentFields:
 
     def test_component_type_is_library(self) -> None:
         """ComponentType.LIBRARY exists and equals 'library'."""
-        assert ComponentType.LIBRARY == "library"
         assert ComponentType.LIBRARY.value == "library"
 
 
@@ -188,14 +186,25 @@ class TestNoExternalImports:
     """Tests that sbom module uses only stdlib."""
 
     def test_no_external_imports(self) -> None:
-        """sbom module has zero non-stdlib imports."""
+        """Sbom module has zero non-stdlib imports."""
         import pathlib
 
         sbom_dir = pathlib.Path(__file__).resolve().parent.parent.parent / "src" / "apme_engine" / "sbom"
         stdlib_modules = {
-            "collections", "dataclasses", "enum", "uuid", "re", "datetime",
-            "typing", "logging", "urllib", "__future__", "importlib",
-            "json", "pathlib", "email",
+            "collections",
+            "dataclasses",
+            "enum",
+            "uuid",
+            "re",
+            "datetime",
+            "typing",
+            "logging",
+            "urllib",
+            "__future__",
+            "importlib",
+            "json",
+            "pathlib",
+            "email",
         }
 
         for py_file in sbom_dir.glob("*.py"):
@@ -213,6 +222,4 @@ class TestNoExternalImports:
                         module = line.split()[1].split(".")[0]
                     else:
                         module = line.split()[1].split(".")[0]
-                    assert module in stdlib_modules, (
-                        f"External import found in {py_file.name}: {line}"
-                    )
+                    assert module in stdlib_modules, f"External import found in {py_file.name}: {line}"

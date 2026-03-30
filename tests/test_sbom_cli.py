@@ -16,13 +16,21 @@ import pytest
 
 from apme_engine.cli.parser import build_parser
 
-
 # ── Mock response objects ────────────────────────────────────────────
 
 
 @dataclass
 class MockComponentDetail:
-    """Mimics SbomComponentDetail proto for testing."""
+    """Mimics SbomComponentDetail proto for testing.
+
+    Attributes:
+        type: Component type string.
+        name: Component name.
+        version: Component version string.
+        license: License identifier or name.
+        name_inferred: Whether name was inferred from directory.
+        version_missing: Whether version is missing.
+    """
 
     type: str = "collection"
     name: str = ""
@@ -34,7 +42,16 @@ class MockComponentDetail:
 
 @dataclass
 class MockSbomResponse:
-    """Mimics SbomResponse proto for testing."""
+    """Mimics SbomResponse proto for testing.
+
+    Attributes:
+        sbom_json: Serialized SBOM JSON bytes.
+        collection_count: Number of collections in the SBOM.
+        package_count: Number of packages in the SBOM.
+        role_count: Number of roles in the SBOM.
+        total_count: Total component count.
+        components: List of component detail objects.
+    """
 
     sbom_json: bytes = b'{"bomFormat":"CycloneDX"}'
     collection_count: int = 0
@@ -112,7 +129,7 @@ class TestRenderSummary:
             total_count=15,
         )
         buf = io.StringIO()
-        _render_summary(resp, verbose=0, file=buf)
+        _render_summary(resp, verbose=0, file=buf)  # type: ignore[arg-type]
         output = buf.getvalue()
         assert "SBOM: 3 collections, 10 packages, 2 roles (15 total)" in output
 
@@ -149,7 +166,7 @@ class TestRenderSummary:
             ],
         )
         buf = io.StringIO()
-        _render_summary(resp, verbose=1, file=buf)
+        _render_summary(resp, verbose=1, file=buf)  # type: ignore[arg-type]
         output = buf.getvalue()
         assert "Collections (1):" in output
         assert "Packages (1):" in output
@@ -160,7 +177,7 @@ class TestRenderSummary:
         assert "my_role [inferred]" in output
         # version_missing shows "-"
         lines = output.split("\n")
-        role_line = [l for l in lines if "my_role" in l][0]
+        role_line = [line for line in lines if "my_role" in line][0]
         # version column should show "-"
         assert "-" in role_line
 
@@ -172,7 +189,14 @@ class TestRunSbom:
     """Tests for the run_sbom handler function."""
 
     def _make_args(self, **overrides: object) -> MagicMock:
-        """Create mock args namespace with defaults."""
+        """Create mock args namespace with defaults.
+
+        Args:
+            **overrides: Attributes to override in the mock args.
+
+        Returns:
+            MagicMock configured as an args namespace.
+        """
         args = MagicMock()
         args.command = "sbom"
         args.target = "."
@@ -195,7 +219,13 @@ class TestRunSbom:
         mock_chunks: MagicMock,
         mock_resolve: MagicMock,
     ) -> None:
-        """CLI-04: SBOM JSON written to stdout when no --output."""
+        """CLI-04: SBOM JSON written to stdout when no --output.
+
+        Args:
+            mock_session: Mock for _resolve_session_id.
+            mock_chunks: Mock for yield_scan_chunks.
+            mock_resolve: Mock for resolve_primary.
+        """
         from apme_engine.cli.sbom_cmd import run_sbom
 
         sbom_bytes = b'{"bomFormat":"CycloneDX","specVersion":"1.5"}'
@@ -212,12 +242,14 @@ class TestRunSbom:
         mock_stdout.buffer = buf
         mock_stdout.write = MagicMock()  # for stderr summary render
 
-        with patch("apme_engine.cli.sbom_cmd.primary_pb2_grpc.PrimaryStub", return_value=mock_stub):
-            with patch("apme_engine.cli.sbom_cmd.sys") as mock_sys:
-                mock_sys.stdout = mock_stdout
-                mock_sys.stderr = MagicMock()
-                mock_sys.exit = sys.exit
-                run_sbom(self._make_args())
+        with (
+            patch("apme_engine.cli.sbom_cmd.primary_pb2_grpc.PrimaryStub", return_value=mock_stub),
+            patch("apme_engine.cli.sbom_cmd.sys") as mock_sys,
+        ):
+            mock_sys.stdout = mock_stdout
+            mock_sys.stderr = MagicMock()
+            mock_sys.exit = sys.exit
+            run_sbom(self._make_args())
 
         output = buf.getvalue()
         assert sbom_bytes in output
@@ -232,7 +264,14 @@ class TestRunSbom:
         mock_resolve: MagicMock,
         tmp_path: Path,
     ) -> None:
-        """CLI-03: SBOM JSON written to file when --output specified."""
+        """CLI-03: SBOM JSON written to file when --output specified.
+
+        Args:
+            mock_session: Mock for _resolve_session_id.
+            mock_chunks: Mock for yield_scan_chunks.
+            mock_resolve: Mock for resolve_primary.
+            tmp_path: Pytest temporary directory fixture.
+        """
         from apme_engine.cli.sbom_cmd import run_sbom
 
         sbom_bytes = b'{"bomFormat":"CycloneDX"}'
@@ -259,7 +298,13 @@ class TestRunSbom:
         mock_chunks: MagicMock,
         mock_resolve: MagicMock,
     ) -> None:
-        """INT-01: gRPC error produces exit code 1 and stderr message."""
+        """INT-01: gRPC error produces exit code 1 and stderr message.
+
+        Args:
+            mock_session: Mock for _resolve_session_id.
+            mock_chunks: Mock for yield_scan_chunks.
+            mock_resolve: Mock for resolve_primary.
+        """
         from apme_engine.cli.sbom_cmd import run_sbom
 
         mock_stub = MagicMock()
@@ -289,7 +334,12 @@ class TestRunSbom:
         mock_session: MagicMock,
         mock_resolve: MagicMock,
     ) -> None:
-        """CLI-05: --summary calls GenerateSbom with summary_only and renders table."""
+        """CLI-05: --summary calls GenerateSbom with summary_only and renders table.
+
+        Args:
+            mock_session: Mock for _resolve_session_id.
+            mock_resolve: Mock for resolve_primary.
+        """
         from apme_engine.cli.sbom_cmd import run_sbom
 
         mock_response = MockSbomResponse(
