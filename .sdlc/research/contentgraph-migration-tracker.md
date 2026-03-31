@@ -1,6 +1,6 @@
 # ContentGraph Rule Migration Tracker
 
-**Status**: Phase 2 Rule Porting Complete (2 deferred to Phase 3)
+**Status**: Phase 2 Complete — graph path is sole execution path
 **Related**: [ADR-044](/.sdlc/adrs/ADR-044-node-identity-progression-model.md) |
 [Research](/.sdlc/research/ari-to-contentgraph-migration.md)
 
@@ -317,11 +317,17 @@ Rule porting follows the priority taxonomy from ADR-044:
 
 End-of-Phase-2 gates (from ADR-044):
 - [x] All 96 rules accounted for (85 ported, 9 skipped, 2 deferred to Phase 3)
+- [x] Remove `APME_USE_CONTENT_GRAPH` feature flag (PR #153)
+- [x] Rewrite `rule_doc_integration_test.py` to use graph path (PR #157)
+- [x] Single rule interface (`GraphRule`), zero adapter — 85 legacy rule
+      files deleted, graph rules are sole native execution path (PR #156)
+- [x] Graph rules execute in native validator via gRPC (PR #153)
+- [x] OPA hierarchy built from ContentGraph (PR #154)
+- [x] Stop sending jsonpickle scandata via gRPC (PR #156)
 - [ ] Remove `TreeLoader`, `AnsibleRunContext`, `RunTarget`, `ObjectList`,
-      `Context.add()`, old `build_hierarchy_payload()`
-- [ ] Remove `APME_USE_CONTENT_GRAPH` feature flag
-- [ ] Rewrite `rule_doc_integration_test.py` to use `ContentGraphScanner`
-- [ ] Single rule interface (`GraphRule`), zero adapter
+      `Context.add()` (deferred — `GraphBuilder` still uses
+      `load_all_definitions` from `tree.py`; engine pipeline refactor
+      is Phase 3 scope)
 
 ### Phase 3 — Progression + provenance: NOT STARTED
 
@@ -346,18 +352,30 @@ After Phase 2 (all rules ported), Phase 3 adds:
    topology visualization, best-practices pattern rules, dependency quality
    scorecards.
 
-### Rule doc integration tests (short-term gap)
+### Rule doc integration tests (RESOLVED — 11 known gaps)
 
-**Problem**: The old `rule_doc_integration_test.py` harness runs rule `.md`
-examples through the old pipeline (`run_scan_playbook_yaml`). Scope-aware
-and inherited-property graph rules (L097, L093, M005, R117, L034, L086)
-added violation examples with `### Violation (context-dependent)` headings
-to avoid parser matching, since the old pipeline can't test them.
+**Resolved**: `rule_doc_integration_test.py` now uses
+`ContentGraph` + `graph_scanner.scan()` + `graph_report_to_violations()`
+for native rules (PR #157). The old `NativeValidator.run()` path
+is no longer used.
 
-**Resolution**: When Phase 2 completes and the old pipeline is removed, the
-rule doc harness must be rewritten to use `ContentGraphScanner`. At that
-point, all `(context-dependent)` headings revert to standard
-`### Example: violation` and become testable.
+**92 tests pass, 11 rules skipped** (tracked in `_GRAPH_RULE_KNOWN_FAILURES`):
+
+| Rule | Issue |
+|------|-------|
+| L039 | No graph rule — legacy-only |
+| R402 | No graph rule — legacy-only |
+| L032 | ContentGraph attribute coverage gap |
+| L033 | ContentGraph attribute coverage gap |
+| L041 | False-positive on pass example |
+| L042 | Complexity rule not matching single-file examples |
+| L046 | `_raw_params` not populated for free-form tasks |
+| L086 | Scope-aware rule needs multi-file context |
+| L092 | Loop attribute not populated in ContentGraph |
+| R108 | `become` attribute not populated in ContentGraph |
+| R112 | Import taskfile analysis needs multi-file context |
+
+These are Phase 3 follow-ups (ContentGraph attribute enrichment).
 
 ### `tests/fixtures/graph-patterns/` coverage
 
@@ -372,12 +390,18 @@ equivalence), `test_python_analyzer.py`.
 **Not yet used for**: graph-pattern-specific `GraphBuilder` edge-type
 validation tests (e.g., assert every edge type in the taxonomy is produced).
 
-### Old pipeline removal (end of Phase 2)
+### Old pipeline removal (PARTIAL — Phase 2 scope complete)
 
-Once all 96 rules are ported and `ContentGraph` is primary:
+Phase 2 achieved:
 
-- Remove `TreeLoader`, `AnsibleRunContext`, `RunTarget`, `ObjectList`,
-  `Context.add()`, old `build_hierarchy_payload()`
-- Remove `APME_USE_CONTENT_GRAPH` feature flag
-- Rewrite `rule_doc_integration_test.py` to use `ContentGraphScanner`
-- Single rule interface (`GraphRule`), zero adapter
+- [x] `APME_USE_CONTENT_GRAPH` feature flag removed (PR #153)
+- [x] 85 legacy rule files + 29 legacy test files deleted (PR #156)
+- [x] `scandata` / jsonpickle transmission stopped (PR #156)
+- [x] `NativeValidator.detect()` path removed (PR #156)
+- [x] `rule_doc_integration_test.py` rewritten for graph path (PR #157)
+
+Remaining for Phase 3 (engine pipeline refactor):
+
+- [ ] Remove `TreeLoader`, `AnsibleRunContext`, `RunTarget`, `ObjectList`,
+      `Context.add()` — blocked by `GraphBuilder` dependency on
+      `tree.load_all_definitions()`
