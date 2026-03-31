@@ -291,3 +291,36 @@ class TestLoadGraphRules:
         """Verify non-existent directory is skipped."""
         rules = load_graph_rules(rules_dir="/nonexistent/path")
         assert rules == []
+
+    def test_all_graph_rules_load_without_errors(self) -> None:
+        """All native rule modules must load without import errors.
+
+        ``load_classes_in_dir`` imports every ``.py`` file in the rules
+        directory (excluding ``_test.py``).  This is intentionally broader
+        than just ``*_graph.py`` files so that helper modules and shared
+        infrastructure are also validated.
+
+        Regression test for Python 3.14 dataclass loading bug: load_classes_in_dir
+        must register modules in sys.modules before exec_module so @dataclass
+        can resolve cls.__module__.
+        """
+        from pathlib import Path
+
+        import apme_engine.validators.native.rules as rules_pkg
+        from apme_engine.engine.utils import load_classes_in_dir
+        from apme_engine.validators.native.rules.graph_rule_base import (
+            GraphRule as GraphRuleBase,
+        )
+
+        rules_dir = Path(rules_pkg.__file__).parent
+        graph_files = list(rules_dir.glob("*_graph.py"))
+        assert graph_files, "Expected at least one *_graph.py file"
+
+        classes, errors = load_classes_in_dir(
+            str(rules_dir),
+            GraphRuleBase,
+            only_subclass=True,
+            fail_on_error=False,
+        )
+        assert errors == [], f"Graph rule load errors: {errors}"
+        assert len(classes) >= len(graph_files), f"Loaded {len(classes)} rules from {len(graph_files)} *_graph.py files"

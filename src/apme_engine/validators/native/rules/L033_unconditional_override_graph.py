@@ -85,7 +85,10 @@ def _defined_var_names(node: ContentNode) -> list[str]:
 
 
 def _collect_definers_for_var(graph: ContentGraph, var_name: str) -> list[str]:
-    """List task/handler node ids that define ``var_name`` via set_fact or register.
+    """List node ids that define ``var_name``.
+
+    Checks task/handler ``set_facts`` and ``register``, plus play-level
+    ``variables`` so that ``vars:`` blocks count as a definition site.
 
     Args:
         graph: Full content graph.
@@ -96,9 +99,10 @@ def _collect_definers_for_var(graph: ContentGraph, var_name: str) -> list[str]:
     """
     definers: list[str] = []
     for n in graph.nodes(node_type=None):
-        if n.node_type not in _TASK_TYPES:
-            continue
-        if var_name in n.set_facts or n.register == var_name:
+        if n.node_type in _TASK_TYPES:
+            if var_name in n.set_facts or n.register == var_name:
+                definers.append(n.node_id)
+        elif n.node_type == NodeType.PLAY and isinstance(n.variables, dict) and var_name in n.variables:
             definers.append(n.node_id)
     return definers
 

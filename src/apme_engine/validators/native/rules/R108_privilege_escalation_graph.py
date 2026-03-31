@@ -68,7 +68,7 @@ class PrivilegeEscalationGraphRule(GraphRule):
             return False
         if node.node_type not in _TASK_TYPES:
             return False
-        if node.become is not None and bool(node.become.get("become")):
+        if node.become is not None and bool(node.become.get("enabled", node.become.get("become"))):
             return True
         resolver = VariableProvenanceResolver(graph)
         origins = resolver.resolve_property_origins(node_id)
@@ -77,7 +77,7 @@ class PrivilegeEscalationGraphRule(GraphRule):
             return False
         val = become_origin.value
         if isinstance(val, dict):
-            return bool(val.get("become"))
+            return bool(val.get("enabled", val.get("become")))
         return bool(val)
 
     def process(self, graph: ContentGraph, node_id: str) -> GraphRuleResult | None:

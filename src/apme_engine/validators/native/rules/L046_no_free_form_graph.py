@@ -95,7 +95,7 @@ class NoFreeFormGraphRule(GraphRule):
         if not isinstance(mo, dict):
             mo = {}
 
-        raw = mo.get("_raw_params", "")
+        raw = mo.get("_raw_params", "") or mo.get("_raw", "")
         if isinstance(raw, dict) and "_raw" in raw:
             raw = raw.get("_raw", "")
 

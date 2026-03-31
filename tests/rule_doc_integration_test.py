@@ -19,17 +19,6 @@ _GRAPH_RULE_KNOWN_FAILURES: dict[str, str] = {
     # Legacy-only rules with no GraphRule implementation (deferred to Phase 3)
     "L039": "no graph rule — legacy-only (undefined_variable)",
     "R402": "no graph rule — legacy-only (list_all_used_variables)",
-    # Graph rules exist but ContentGraph attributes not fully populated for
-    # simple single-file test examples.  Each needs individual investigation.
-    "L032": "graph rule needs richer ContentGraph attribute coverage",
-    "L033": "graph rule needs richer ContentGraph attribute coverage",
-    "L041": "false-positive on pass example — graph rule key_order",
-    "L042": "graph rule complexity not matching single-file examples",
-    "L046": "ContentGraph does not populate _raw_params for free-form tasks",
-    "L086": "scope-aware rule needs multi-file context",
-    "L092": "loop attribute not populated in ContentGraph for test examples",
-    "R108": "become attribute not populated in ContentGraph for test examples",
-    "R112": "import taskfile analysis needs multi-file context",
 }
 
 
@@ -92,13 +81,13 @@ def _ensure_playbook(yaml_content: str) -> str:
         return (
             "- name: Example play\n  hosts: localhost\n  connection: local\n  tasks:\n"
             + "    - "
-            + str(yaml.dump(data, default_flow_style=False)).strip().replace("\n", "\n    ")
+            + str(yaml.dump(data, default_flow_style=False, sort_keys=False)).strip().replace("\n", "\n    ")
         )
     if isinstance(data, list) and data:
         first = data[0]
         if isinstance(first, dict) and ("hosts" in first or "tasks" in first):
             return yaml_content
-        tasks_yaml = str(yaml.dump(data, default_flow_style=False))
+        tasks_yaml = str(yaml.dump(data, default_flow_style=False, sort_keys=False))
         return "- name: Example play\n  hosts: localhost\n  connection: local\n  tasks:\n" + "\n".join(
             "    " + line for line in tasks_yaml.splitlines()
         )

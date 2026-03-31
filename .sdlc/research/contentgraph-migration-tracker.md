@@ -1,6 +1,6 @@
 # ContentGraph Rule Migration Tracker
 
-**Status**: Phase 2 Complete — graph path is sole execution path
+**Status**: Phase 2 Complete — graph path is sole execution path; 111/113 rule doc tests passing
 **Related**: [ADR-044](/.sdlc/adrs/ADR-044-node-identity-progression-model.md) |
 [Research](/.sdlc/research/ari-to-contentgraph-migration.md)
 
@@ -352,30 +352,29 @@ After Phase 2 (all rules ported), Phase 3 adds:
    topology visualization, best-practices pattern rules, dependency quality
    scorecards.
 
-### Rule doc integration tests (RESOLVED — 11 known gaps)
+### Rule doc integration tests (RESOLVED — 2 remaining gaps)
 
 **Resolved**: `rule_doc_integration_test.py` now uses
 `ContentGraph` + `graph_scanner.scan()` + `graph_report_to_violations()`
 for native rules (PR #157). The old `NativeValidator.run()` path
 is no longer used.
 
-**92 tests pass, 11 rules skipped** (tracked in `_GRAPH_RULE_KNOWN_FAILURES`):
+**111 tests pass, 2 rules skipped** (tracked in `_GRAPH_RULE_KNOWN_FAILURES`):
 
 | Rule | Issue |
 |------|-------|
-| L039 | No graph rule — legacy-only |
-| R402 | No graph rule — legacy-only |
-| L032 | ContentGraph attribute coverage gap |
-| L033 | ContentGraph attribute coverage gap |
-| L041 | False-positive on pass example |
-| L042 | Complexity rule not matching single-file examples |
-| L046 | `_raw_params` not populated for free-form tasks |
-| L086 | Scope-aware rule needs multi-file context |
-| L092 | Loop attribute not populated in ContentGraph |
-| R108 | `become` attribute not populated in ContentGraph |
-| R112 | Import taskfile analysis needs multi-file context |
+| L039 | No graph rule — legacy-only (deferred to Phase 3) |
+| R402 | No graph rule — legacy-only (deferred to Phase 3) |
 
-These are Phase 3 follow-ups (ContentGraph attribute enrichment).
+**Previously tracked gaps resolved in PR #160:**
+
+| Rule | Root Cause | Fix |
+|------|-----------|-----|
+| L032, L042, L086, L092 | Dataclass loading bug — `load_classes_in_dir` did not register modules in `sys.modules`, silently dropping ~12 GraphRule modules on Python 3.14 | Register module before `exec_module`, cleanup after |
+| R108 | Rule read `become["become"]` (empty string) instead of `become["enabled"]` (boolean) from `_extract_become` serialization | Check `"enabled"` key with fallback to `"become"` |
+| L046, R112 | ARI stores free-form args as `_raw` in `module_options`, rules only checked `_raw_params` | Also check `_raw` key |
+| L033 | `_collect_definers_for_var` only searched task/handler nodes, missing play-level `vars:` as a definition site | Include play variables in definer search |
+| L041 | `_ensure_playbook` test helper used `yaml.dump()` default `sort_keys=True`, destroying original key order | Use `sort_keys=False` |
 
 ### `tests/fixtures/graph-patterns/` coverage
 

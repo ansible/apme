@@ -86,7 +86,7 @@ class ParameterizedImportTaskfileGraphRule(GraphRule):
 
         taskfile_ref = mo.get("file", "")
         if not taskfile_ref:
-            taskfile_ref = mo.get("_raw_params", "")
+            taskfile_ref = mo.get("_raw_params", "") or mo.get("_raw", "")
         if not isinstance(taskfile_ref, str):
             taskfile_ref = str(taskfile_ref) if taskfile_ref else ""
 
