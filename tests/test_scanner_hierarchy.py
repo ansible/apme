@@ -316,7 +316,10 @@ class TestClassifyCollections:
 
     def test_specified_from_requirements(self) -> None:
         """Collections in specified_fqcns are classified as 'specified'."""
-        installed = [("community.general", "8.0.0", "GPL-3.0-or-later", "Ansible Project"), ("ansible.posix", "1.5.4", "", "")]
+        installed = [
+            ("community.general", "8.0.0", "GPL-3.0-or-later", "Ansible Project"),
+            ("ansible.posix", "1.5.4", "", ""),
+        ]
         result = _classify_collections(installed, {"community.general"}, set())
         assert result[0] == ("community.general", "8.0.0", "specified", "GPL-3.0-or-later", "Ansible Project")
 

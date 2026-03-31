@@ -590,7 +590,12 @@ class TestListInstalledPackages:
 
         pkg_output = json.dumps(
             [
-                {"name": "ansible-core", "version": "2.20.0", "license": "GPL-3.0-or-later", "author": "Ansible Project"},
+                {
+                    "name": "ansible-core",
+                    "version": "2.20.0",
+                    "license": "GPL-3.0-or-later",
+                    "author": "Ansible Project",
+                },
                 {"name": "jinja2", "version": "3.1.4", "license": "BSD-3-Clause", "author": "Pallets"},
             ]
         )
@@ -732,20 +737,28 @@ class TestListInstalledCollections:
         coll_path = tmp_path / "collections"
         cg_dir = coll_path / "community" / "general"
         cg_dir.mkdir(parents=True)
-        (cg_dir / "MANIFEST.json").write_text(json.dumps({
-            "collection_info": {
-                "license": ["GPL-3.0-or-later"],
-                "authors": ["Ansible Project"],
-            }
-        }))
+        (cg_dir / "MANIFEST.json").write_text(
+            json.dumps(
+                {
+                    "collection_info": {
+                        "license": ["GPL-3.0-or-later"],
+                        "authors": ["Ansible Project"],
+                    }
+                }
+            )
+        )
         ap_dir = coll_path / "ansible" / "posix"
         ap_dir.mkdir(parents=True)
-        (ap_dir / "MANIFEST.json").write_text(json.dumps({
-            "collection_info": {
-                "license": ["GPL-3.0-or-later"],
-                "namespace": "ansible",
-            }
-        }))
+        (ap_dir / "MANIFEST.json").write_text(
+            json.dumps(
+                {
+                    "collection_info": {
+                        "license": ["GPL-3.0-or-later"],
+                        "namespace": "ansible",
+                    }
+                }
+            )
+        )
 
         galaxy_output = json.dumps(
             {
@@ -782,7 +795,9 @@ class TestListInstalledCollections:
         coll_path = tmp_path / "collections"
         cg_dir = coll_path / "community" / "general"
         cg_dir.mkdir(parents=True)
-        (cg_dir / "galaxy.yml").write_text("license:\n  - GPL-3.0-or-later\nauthors:\n  - Community\nnamespace: community\n")
+        (cg_dir / "galaxy.yml").write_text(
+            "license:\n  - GPL-3.0-or-later\nauthors:\n  - Community\nnamespace: community\n"
+        )
 
         galaxy_output = json.dumps({str(coll_path): {"community.general": {"version": "8.0.0"}}})
         mock_result = MagicMock()
