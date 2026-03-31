@@ -170,7 +170,7 @@ class SingleScan:
     # OPA input: hierarchy + annotations (set by build_hierarchy_payload when native rules are disabled)
     hierarchy_payload: YAMLDict = field(default_factory=dict)
 
-    # ContentGraph (ADR-044) — populated when APME_USE_CONTENT_GRAPH is set
+    # ContentGraph (ADR-044) — always populated during tree construction
     content_graph: ContentGraph | None = None
     graph_scan_report: GraphScanReport | None = None
 
@@ -638,7 +638,11 @@ class SingleScan:
         return
 
     def build_hierarchy_payload(self, scan_id: str = "") -> YAMLDict:
-        """Build OPA input: hierarchy (collection/role/playbook/play/task) + annotations. No native rules.
+        """Build OPA input: hierarchy (collection/role/playbook/play/task) + annotations.
+
+        Uses ``build_hierarchy_from_graph`` when a ContentGraph is
+        available; falls back to the legacy ``build_hierarchy_payload``
+        from ``opa_payload`` otherwise.
 
         Args:
             scan_id: Optional scan ID; defaults to current UTC timestamp.
@@ -646,11 +650,23 @@ class SingleScan:
         Returns:
             Dict with scan_id, hierarchy (trees with nodes), and metadata.
         """
-        from .opa_payload import build_hierarchy_payload as _build
+        if self.content_graph is not None:
+            from .graph_opa_payload import build_hierarchy_from_graph
 
-        self.hierarchy_payload = _build(
-            self.contexts, self.type, self.name, self.collection_name, self.role_name, scan_id
-        )
+            self.hierarchy_payload = build_hierarchy_from_graph(
+                self.content_graph,
+                scan_type=self.type,
+                scan_name=self.name,
+                collection_name=self.collection_name,
+                role_name=self.role_name,
+                scan_id=scan_id,
+            )
+        else:
+            from .opa_payload import build_hierarchy_payload as _build
+
+            self.hierarchy_payload = _build(
+                self.contexts, self.type, self.name, self.collection_name, self.role_name, scan_id
+            )
         return self.hierarchy_payload
 
     def apply_rules(self) -> None:
