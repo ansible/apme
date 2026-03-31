@@ -67,14 +67,13 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument("--port", "-p", type=int, default=8765, help="Port to bind to (default: 8765).")
     parser.add_argument("--host", default="0.0.0.0", help="Host to bind to (default: 0.0.0.0).")
-    auth_group = parser.add_mutually_exclusive_group()
-    auth_group.add_argument(
+    parser.add_argument(
         "--ansible-cfg",
-        default=Path(os.environ["ANSIBLE_CONFIG"]) if "ANSIBLE_CONFIG" in os.environ else None,
+        default=None,
         type=Path,
         help="Path to ansible.cfg for Galaxy server auth (env: ANSIBLE_CONFIG).",
     )
-    auth_group.add_argument(
+    parser.add_argument(
         "--galaxy-server",
         dest="galaxy_servers",
         action="append",
@@ -94,6 +93,14 @@ def main(argv: list[str] | None = None) -> None:
 
     args = parser.parse_args(argv)
     _setup_logging(args.verbose)
+
+    if args.ansible_cfg and args.galaxy_servers:
+        parser.error("--ansible-cfg and --galaxy-server are mutually exclusive")
+
+    if args.ansible_cfg is None and not args.galaxy_servers:
+        env_cfg = os.environ.get("ANSIBLE_CONFIG")
+        if env_cfg:
+            args.ansible_cfg = Path(env_cfg)
 
     import uvicorn
 

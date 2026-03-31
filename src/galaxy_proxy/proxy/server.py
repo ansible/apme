@@ -231,7 +231,10 @@ def create_app(
             logger.exception("Failed to download/convert %s.%s %s", ns, coll_name, version)
             raise HTTPException(
                 status_code=502,
-                detail=f"Failed to fetch {ns}.{coll_name} {version} from Galaxy",
+                detail=(
+                    f"Failed to download/convert {ns}.{coll_name} {version} via ansible-galaxy"
+                    + (f": {exc}" if str(exc) else "")
+                ),
             ) from exc
 
         cache.put_wheel(whl_name, whl_data)
@@ -259,11 +262,12 @@ def create_app(
         Raises:
             HTTPException: When the tarball directory does not exist.
         """
-        tarball_path = Path(tarball_dir).resolve()
+        raw_tarball_path = Path(tarball_dir)
+        if raw_tarball_path.is_symlink():
+            raise HTTPException(status_code=400, detail="Symlinks not allowed")
+        tarball_path = raw_tarball_path.resolve()
         if not tarball_path.is_dir():
             raise HTTPException(status_code=400, detail=f"Not a directory: {tarball_dir}")
-        if tarball_path.is_symlink():
-            raise HTTPException(status_code=400, detail="Symlinks not allowed")
 
         converted: list[str] = []
         failed: list[str] = []
@@ -275,7 +279,7 @@ def create_app(
                 continue
             try:
                 tarball_data = await asyncio.to_thread(tb.read_bytes)
-                whl_name, whl_data = tarball_to_wheel(tarball_data)
+                whl_name, whl_data = await asyncio.to_thread(tarball_to_wheel, tarball_data)
                 cache.put_wheel(whl_name, whl_data)
                 converted.append(whl_name)
                 logger.info("Converted tarball: %s -> %s", tb.name, whl_name)

@@ -209,7 +209,7 @@ async def download_collections(
             return DownloadResult(
                 tarball_paths=tarballs,
                 failed_specs=failed,
-                stderr=stderr_text,
+                stderr=stderr_text or stdout_text,
             )
 
         logger.info(
