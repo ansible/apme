@@ -341,8 +341,9 @@ def list_installed_packages(venv_dir: Path) -> list[tuple[str, str, str, str]]:
                 "name": meta["Name"] or "",
                 "version": meta["Version"] or "",
                 "license": meta.get("License", "") or "",
-                "author": meta.get("Author", "") or meta.get("Author-email", "") or "",
+                "supplier": meta.get("Author", "") or meta.get("Author-email", "") or "",
             })
+        result.sort(key=lambda e: (e.get("name", "").lower(), e.get("version", "")))
         json.dump(result, sys.stdout)
     """)
     cmd = [str(pip_python), "-c", script]
@@ -364,7 +365,7 @@ def list_installed_packages(venv_dir: Path) -> list[tuple[str, str, str, str]]:
         return []
 
     return [
-        (e["name"], e.get("version", ""), e.get("license", ""), e.get("author", ""))
+        (e["name"], e.get("version", ""), e.get("license", ""), e.get("supplier", ""))
         for e in entries
         if isinstance(e, dict) and "name" in e
     ]
@@ -421,7 +422,7 @@ def _read_collection_metadata(coll_dir: Path, namespace: str) -> tuple[str, str]
     if manifest_file.is_file():
         try:
             info = json.loads(manifest_file.read_text()).get("collection_info", {})
-            license_val = ", ".join(info.get("license", [])) or info.get("license_file", "") or ""
+            license_val = ", ".join(info.get("license", [])) or ""
             supplier = ", ".join(info.get("authors", [])) or info.get("namespace", namespace) or ""
             return (license_val, supplier)
         except (json.JSONDecodeError, OSError):
@@ -431,14 +432,17 @@ def _read_collection_metadata(coll_dir: Path, namespace: str) -> tuple[str, str]
     if galaxy_file.is_file():
         try:
             import yaml  # noqa: PLC0415
-
-            galaxy = yaml.safe_load(galaxy_file.read_text()) or {}
-            raw_license = galaxy.get("license", [])
-            license_val = ", ".join(raw_license) if isinstance(raw_license, list) else str(raw_license or "")
-            supplier = ", ".join(galaxy.get("authors", [])) or galaxy.get("namespace", namespace) or ""
-            return (license_val, supplier)
-        except (OSError, yaml.YAMLError):
+        except ImportError:
             pass
+        else:
+            try:
+                galaxy = yaml.safe_load(galaxy_file.read_text()) or {}
+                raw_license = galaxy.get("license", [])
+                license_val = ", ".join(raw_license) if isinstance(raw_license, list) else str(raw_license or "")
+                supplier = ", ".join(galaxy.get("authors", [])) or galaxy.get("namespace", namespace) or ""
+                return (license_val, supplier)
+            except (OSError, yaml.YAMLError):
+                pass
 
     return ("", "")
 

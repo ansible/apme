@@ -594,9 +594,9 @@ class TestListInstalledPackages:
                     "name": "ansible-core",
                     "version": "2.20.0",
                     "license": "GPL-3.0-or-later",
-                    "author": "Ansible Project",
+                    "supplier": "Ansible Project",
                 },
-                {"name": "jinja2", "version": "3.1.4", "license": "BSD-3-Clause", "author": "Pallets"},
+                {"name": "jinja2", "version": "3.1.4", "license": "BSD-3-Clause", "supplier": "Pallets"},
             ]
         )
         mock_result = MagicMock()
