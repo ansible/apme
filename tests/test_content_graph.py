@@ -264,3 +264,283 @@ class TestGraphBuilderMinimal:
         builder = GraphBuilder(defs, {})
         graph = builder.build()
         assert graph.node_count() == 0
+
+
+# ---------------------------------------------------------------------------
+# ContentGraph serialization roundtrip
+# ---------------------------------------------------------------------------
+
+
+class TestContentGraphSerialization:
+    """Tests for ``ContentGraph.to_dict()`` / ``from_dict()`` roundtrip."""
+
+    def test_roundtrip_topology(self) -> None:
+        """Verify node count, edge count, and topology survive serialization."""
+        original = _make_graph()
+        d = original.to_dict()
+        restored = ContentGraph.from_dict(d)
+
+        assert restored.node_count() == original.node_count()
+        assert restored.edge_count() == original.edge_count()
+
+    def test_roundtrip_node_attributes(self) -> None:
+        """Verify all ContentNode fields survive a roundtrip."""
+        original = _make_graph()
+        d = original.to_dict()
+        restored = ContentGraph.from_dict(d)
+
+        for orig_node in original.nodes():
+            rest_node = restored.get_node(orig_node.node_id)
+            assert rest_node is not None, f"Missing node {orig_node.node_id}"
+            assert rest_node.node_type == orig_node.node_type
+            assert rest_node.file_path == orig_node.file_path
+            assert rest_node.name == orig_node.name
+            assert rest_node.module == orig_node.module
+            assert rest_node.register == orig_node.register
+            assert rest_node.scope == orig_node.scope
+
+    def test_roundtrip_ari_key_index(self) -> None:
+        """Verify ARI key lookup works after deserialization."""
+        original = _make_graph()
+        restored = ContentGraph.from_dict(original.to_dict())
+
+        node = restored.get_node_by_ari_key("playbook playbook:site.yml")
+        assert node is not None
+        assert node.node_id == "site.yml"
+
+    def test_roundtrip_graph_queries(self) -> None:
+        """Verify ancestors, children, descendants work on deserialized graph."""
+        original = _make_graph()
+        restored = ContentGraph.from_dict(original.to_dict())
+
+        ancs = restored.ancestors("site.yml/plays[0]/tasks[0]")
+        assert len(ancs) == 2
+        assert ancs[0].node_id == "site.yml/plays[0]"
+
+        kids = restored.children("site.yml/plays[0]")
+        assert len(kids) == 3
+
+        desc = restored.descendants("site.yml")
+        assert len(desc) == 4
+
+    def test_roundtrip_edge_attributes(self) -> None:
+        """Verify edge types and custom attributes survive roundtrip."""
+        g = ContentGraph()
+        n1 = ContentNode(identity=NodeIdentity(path="a.yml", node_type=NodeType.PLAYBOOK))
+        n2 = ContentNode(identity=NodeIdentity(path="a.yml/plays[0]", node_type=NodeType.PLAY))
+        g.add_node(n1)
+        g.add_node(n2)
+        g.add_edge(
+            "a.yml",
+            "a.yml/plays[0]",
+            EdgeType.INCLUDE,
+            conditional=True,
+            dynamic=True,
+            when_expr="x is defined",
+            tags=["deploy"],
+        )
+
+        restored = ContentGraph.from_dict(g.to_dict())
+        edges = restored.edges_from("a.yml", EdgeType.INCLUDE)
+        assert len(edges) == 1
+        _, attrs = edges[0]
+        assert attrs["conditional"] is True
+        assert attrs["dynamic"] is True
+        assert attrs["when_expr"] == "x is defined"
+        assert attrs["tags"] == ["deploy"]
+
+    def test_roundtrip_rich_node(self) -> None:
+        """Verify a fully-populated ContentNode roundtrips all fields."""
+        g = ContentGraph()
+        node = ContentNode(
+            identity=NodeIdentity(path="p.yml/plays[0]/tasks[0]", node_type=NodeType.TASK),
+            file_path="p.yml",
+            line_start=10,
+            line_end=25,
+            name="Deploy app",
+            module="ansible.builtin.copy",
+            resolved_module_name="ansible.builtin.copy",
+            module_options={"src": "/app", "dest": "/srv"},
+            options={"when": "deploy_enabled"},
+            variables={"app_version": "1.0"},
+            become={"become": True, "become_user": "root"},
+            when_expr="deploy_enabled",
+            tags=["deploy", "app"],
+            loop=["a", "b"],
+            loop_control={"loop_var": "item"},
+            register="copy_result",
+            set_facts={"deployed": True},
+            notify=["restart app"],
+            listen=["deploy topic"],
+            environment={"PATH": "/usr/bin"},
+            no_log=True,
+            ignore_errors=False,
+            changed_when="false",
+            failed_when="result.rc != 0",
+            delegate_to="localhost",
+            yaml_lines="- name: Deploy app\n  copy:\n    src: /app\n",
+            role_fqcn="myorg.deploy",
+            default_variables={"port": 8080},
+            role_variables={"env": "prod"},
+            role_metadata={"galaxy_info": {"author": "test"}},
+            collection_namespace="myorg",
+            collection_name="deploy",
+            ari_key="task playbook:p.yml#play[0]#task[0]",
+            scope=NodeScope.REFERENCED,
+        )
+        g.add_node(node)
+
+        restored = ContentGraph.from_dict(g.to_dict())
+        rn = restored.get_node("p.yml/plays[0]/tasks[0]")
+        assert rn is not None
+        assert rn.file_path == "p.yml"
+        assert rn.line_start == 10
+        assert rn.line_end == 25
+        assert rn.name == "Deploy app"
+        assert rn.module == "ansible.builtin.copy"
+        assert rn.resolved_module_name == "ansible.builtin.copy"
+        assert rn.module_options == {"src": "/app", "dest": "/srv"}
+        assert rn.options == {"when": "deploy_enabled"}
+        assert rn.variables == {"app_version": "1.0"}
+        assert rn.become == {"become": True, "become_user": "root"}
+        assert rn.when_expr == "deploy_enabled"
+        assert rn.tags == ["deploy", "app"]
+        assert rn.loop == ["a", "b"]
+        assert rn.loop_control == {"loop_var": "item"}
+        assert rn.register == "copy_result"
+        assert rn.set_facts == {"deployed": True}
+        assert rn.notify == ["restart app"]
+        assert rn.listen == ["deploy topic"]
+        assert rn.environment == {"PATH": "/usr/bin"}
+        assert rn.no_log is True
+        assert rn.ignore_errors is False
+        assert rn.changed_when == "false"
+        assert rn.failed_when == "result.rc != 0"
+        assert rn.delegate_to == "localhost"
+        assert rn.yaml_lines == "- name: Deploy app\n  copy:\n    src: /app\n"
+        assert rn.role_fqcn == "myorg.deploy"
+        assert rn.default_variables == {"port": 8080}
+        assert rn.role_variables == {"env": "prod"}
+        assert rn.role_metadata == {"galaxy_info": {"author": "test"}}
+        assert rn.collection_namespace == "myorg"
+        assert rn.collection_name == "deploy"
+        assert rn.ari_key == "task playbook:p.yml#play[0]#task[0]"
+        assert rn.scope == NodeScope.REFERENCED
+
+    def test_empty_graph_roundtrip(self) -> None:
+        """Verify an empty graph survives roundtrip."""
+        g = ContentGraph()
+        restored = ContentGraph.from_dict(g.to_dict())
+        assert restored.node_count() == 0
+        assert restored.edge_count() == 0
+
+    def test_version_check(self) -> None:
+        """Verify unsupported version raises ValueError."""
+        with pytest.raises(ValueError, match="Unsupported"):
+            ContentGraph.from_dict({"version": 99, "nodes": [], "edges": []})
+
+    def test_malformed_payload_raises_valueerror(self) -> None:
+        """Verify malformed payloads raise ValueError, not KeyError/TypeError."""
+        with pytest.raises(ValueError, match="Malformed"):
+            ContentGraph.from_dict({"version": 1})
+        with pytest.raises(ValueError, match="Malformed"):
+            ContentGraph.from_dict({"version": 1, "nodes": [{"bad": True}], "edges": []})
+
+    def test_json_serializable(self) -> None:
+        """Verify to_dict output is JSON-serializable."""
+        import json
+
+        g = _make_graph()
+        d = g.to_dict()
+        serialized = json.dumps(d)
+        assert isinstance(serialized, str)
+        roundtripped = ContentGraph.from_dict(json.loads(serialized))
+        assert roundtripped.node_count() == g.node_count()
+
+
+# ---------------------------------------------------------------------------
+# graph_report_to_violations converter
+# ---------------------------------------------------------------------------
+
+
+class TestGraphReportToViolations:
+    """Tests for ``graph_report_to_violations`` conversion."""
+
+    def test_verdict_true_becomes_violation(self) -> None:
+        """Verify results with verdict=True are included in violations."""
+        from apme_engine.engine.graph_scanner import (
+            GraphNodeResult,
+            GraphScanReport,
+            graph_report_to_violations,
+        )
+        from apme_engine.engine.models import RuleMetadata
+
+        node = ContentNode(
+            identity=NodeIdentity(path="site.yml/plays[0]/tasks[0]", node_type=NodeType.TASK),
+            file_path="site.yml",
+            line_start=5,
+        )
+        from apme_engine.validators.native.rules.graph_rule_base import GraphRuleResult
+
+        report = GraphScanReport(
+            node_results=[
+                GraphNodeResult(
+                    node_id="site.yml/plays[0]/tasks[0]",
+                    node=node,
+                    rule_results=[
+                        GraphRuleResult(
+                            rule=RuleMetadata(rule_id="L042", severity="warning", scope="task"),
+                            verdict=True,
+                            detail={"message": "too complex"},
+                            node_id="site.yml/plays[0]/tasks[0]",
+                            file=("site.yml", 5),
+                        ),
+                    ],
+                ),
+            ],
+        )
+        violations = graph_report_to_violations(report)
+        assert len(violations) == 1
+        assert violations[0]["rule_id"] == "L042"
+        assert violations[0]["message"] == "too complex"
+        assert violations[0]["file"] == "site.yml"
+        assert violations[0]["line"] == 5
+        assert violations[0]["source"] == "native"
+
+    def test_verdict_false_excluded(self) -> None:
+        """Verify results with verdict=False are excluded from violations."""
+        from apme_engine.engine.graph_scanner import (
+            GraphNodeResult,
+            GraphScanReport,
+            graph_report_to_violations,
+        )
+        from apme_engine.engine.models import RuleMetadata
+        from apme_engine.validators.native.rules.graph_rule_base import GraphRuleResult
+
+        node = ContentNode(
+            identity=NodeIdentity(path="t.yml/plays[0]/tasks[0]", node_type=NodeType.TASK),
+            file_path="t.yml",
+        )
+        report = GraphScanReport(
+            node_results=[
+                GraphNodeResult(
+                    node_id="t.yml/plays[0]/tasks[0]",
+                    node=node,
+                    rule_results=[
+                        GraphRuleResult(
+                            rule=RuleMetadata(rule_id="L042", severity="warning"),
+                            verdict=False,
+                            node_id="t.yml/plays[0]/tasks[0]",
+                        ),
+                    ],
+                ),
+            ],
+        )
+        violations = graph_report_to_violations(report)
+        assert violations == []
+
+    def test_empty_report(self) -> None:
+        """Verify empty report produces empty violations."""
+        from apme_engine.engine.graph_scanner import GraphScanReport, graph_report_to_violations
+
+        assert graph_report_to_violations(GraphScanReport()) == []

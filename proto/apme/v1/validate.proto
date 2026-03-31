@@ -21,6 +21,7 @@ message ValidateRequest {
   string request_id = 7;          // correlation ID propagated from Primary
   string session_id = 8;          // session identifier for venv reuse
   string venv_path = 9;           // resolved venv path (set by Primary; validators use read-only)
+  bytes content_graph_data = 10;  // JSON-serialized ContentGraph (ADR-044)
 }
 
 message ValidateResponse {

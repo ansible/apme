@@ -25,7 +25,7 @@ _sym_db = _symbol_database.Default()
 from apme.v1 import common_pb2 as apme_dot_v1_dot_common__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x16\x61pme/v1/validate.proto\x12\x07\x61pme.v1\x1a\x14\x61pme/v1/common.proto\"\xe5\x01\n\x0fValidateRequest\x12\x14\n\x0cproject_root\x18\x01 \x01(\t\x12\x1c\n\x05\x66iles\x18\x02 \x03(\x0b\x32\r.apme.v1.File\x12\x19\n\x11hierarchy_payload\x18\x03 \x01(\x0c\x12\x10\n\x08scandata\x18\x04 \x01(\x0c\x12\x1c\n\x14\x61nsible_core_version\x18\x05 \x01(\t\x12\x18\n\x10\x63ollection_specs\x18\x06 \x03(\t\x12\x12\n\nrequest_id\x18\x07 \x01(\t\x12\x12\n\nsession_id\x18\x08 \x01(\t\x12\x11\n\tvenv_path\x18\t \x01(\t\"\xa9\x01\n\x10ValidateResponse\x12&\n\nviolations\x18\x01 \x03(\x0b\x32\x12.apme.v1.Violation\x12\x12\n\nrequest_id\x18\x02 \x01(\t\x12\x32\n\x0b\x64iagnostics\x18\x03 \x01(\x0b\x32\x1d.apme.v1.ValidatorDiagnostics\x12%\n\x04logs\x18\x04 \x03(\x0b\x32\x17.apme.v1.ProgressUpdate2\x87\x01\n\tValidator\x12?\n\x08Validate\x12\x18.apme.v1.ValidateRequest\x1a\x19.apme.v1.ValidateResponse\x12\x39\n\x06Health\x12\x16.apme.v1.HealthRequest\x1a\x17.apme.v1.HealthResponseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x16\x61pme/v1/validate.proto\x12\x07\x61pme.v1\x1a\x14\x61pme/v1/common.proto\"\x81\x02\n\x0fValidateRequest\x12\x14\n\x0cproject_root\x18\x01 \x01(\t\x12\x1c\n\x05\x66iles\x18\x02 \x03(\x0b\x32\r.apme.v1.File\x12\x19\n\x11hierarchy_payload\x18\x03 \x01(\x0c\x12\x10\n\x08scandata\x18\x04 \x01(\x0c\x12\x1c\n\x14\x61nsible_core_version\x18\x05 \x01(\t\x12\x18\n\x10\x63ollection_specs\x18\x06 \x03(\t\x12\x12\n\nrequest_id\x18\x07 \x01(\t\x12\x12\n\nsession_id\x18\x08 \x01(\t\x12\x11\n\tvenv_path\x18\t \x01(\t\x12\x1a\n\x12\x63ontent_graph_data\x18\n \x01(\x0c\"\xa9\x01\n\x10ValidateResponse\x12&\n\nviolations\x18\x01 \x03(\x0b\x32\x12.apme.v1.Violation\x12\x12\n\nrequest_id\x18\x02 \x01(\t\x12\x32\n\x0b\x64iagnostics\x18\x03 \x01(\x0b\x32\x1d.apme.v1.ValidatorDiagnostics\x12%\n\x04logs\x18\x04 \x03(\x0b\x32\x17.apme.v1.ProgressUpdate2\x87\x01\n\tValidator\x12?\n\x08Validate\x12\x18.apme.v1.ValidateRequest\x1a\x19.apme.v1.ValidateResponse\x12\x39\n\x06Health\x12\x16.apme.v1.HealthRequest\x1a\x17.apme.v1.HealthResponseb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -33,9 +33,9 @@ _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'apme.v1.validate_pb2', _glo
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
   _globals['_VALIDATEREQUEST']._serialized_start=58
-  _globals['_VALIDATEREQUEST']._serialized_end=287
-  _globals['_VALIDATERESPONSE']._serialized_start=290
-  _globals['_VALIDATERESPONSE']._serialized_end=459
-  _globals['_VALIDATOR']._serialized_start=462
-  _globals['_VALIDATOR']._serialized_end=597
+  _globals['_VALIDATEREQUEST']._serialized_end=315
+  _globals['_VALIDATERESPONSE']._serialized_start=318
+  _globals['_VALIDATERESPONSE']._serialized_end=487
+  _globals['_VALIDATOR']._serialized_start=490
+  _globals['_VALIDATOR']._serialized_end=625
 # @@protoc_insertion_point(module_scope)

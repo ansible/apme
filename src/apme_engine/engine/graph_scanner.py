@@ -5,7 +5,8 @@ Iterates over all owned nodes in the graph, applying each GraphRule's
 ``match`` / ``process`` contract.  Results are collected as
 ``GraphRuleResult`` objects and aggregated into a ``GraphScanReport``.
 
-Used behind the ``APME_USE_CONTENT_GRAPH`` feature flag during Phase 2.
+Also provides ``graph_report_to_violations`` for converting results to
+the ``ViolationDict`` format expected by the gRPC response path.
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from apme_engine.validators.native.rules.graph_rule_base import (
 )
 
 from .content_graph import ContentGraph, ContentNode, NodeScope, NodeType
+from .models import ViolationDict
 from .utils import load_classes_in_dir
 
 logger = logging.getLogger(__name__)
@@ -203,3 +205,62 @@ def scan(
 
     report.elapsed_ms = round((time.monotonic() - start) * 1000, 3)
     return report
+
+
+# ---------------------------------------------------------------------------
+# Result conversion (graph -> violation dicts for gRPC response)
+# ---------------------------------------------------------------------------
+
+
+def graph_report_to_violations(report: GraphScanReport) -> list[ViolationDict]:
+    """Convert a GraphScanReport to the flat violation dict list the gRPC response uses.
+
+    Only results with ``verdict=True`` (rule fired, violation detected) are
+    included.  Results with ``verdict=False`` are clean passes or errors.
+
+    Args:
+        report: Completed scan report from ``scan()``.
+
+    Returns:
+        List of ``ViolationDict`` dicts ready for ``violation_dict_to_proto``.
+    """
+    violations: list[ViolationDict] = []
+    for node_result in report.node_results:
+        node = node_result.node
+        for rr in node_result.rule_results:
+            if not rr.verdict:
+                continue
+            rule = rr.rule
+            detail = rr.detail or {}
+
+            file_path = ""
+            line: int | list[int] | None = None
+            if rr.file:
+                if len(rr.file) >= 1:
+                    file_path = str(rr.file[0])
+                if len(rr.file) >= 2:
+                    line = int(rr.file[1])
+            elif node:
+                file_path = node.file_path
+                line = node.line_start if node.line_start else None
+
+            msg = str(detail.get("message", "")) or (rule.description if rule else "")
+            v: ViolationDict = {
+                "rule_id": rule.rule_id if rule else "",
+                "level": rule.severity if rule else "",
+                "message": msg,
+                "file": file_path,
+                "line": line,
+                "path": rr.node_id,
+                "source": "native",
+                "scope": rule.scope if rule else "task",
+            }
+
+            for key in ("resolved_fqcn", "original_module", "fqcn", "with_key"):
+                val = detail.get(key)
+                if val is not None:
+                    v[key] = str(val)
+
+            violations.append(v)
+
+    return violations

@@ -584,6 +584,20 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         )
 
         # 4. Validator fan-out
+        content_graph_data = b""
+        if context_obj.scandata and hasattr(context_obj.scandata, "content_graph"):
+            cg = context_obj.scandata.content_graph
+            if cg is not None:
+                loop = asyncio.get_event_loop()
+                content_graph_data = await loop.run_in_executor(
+                    None, lambda: json.dumps(cg.to_dict(), default=str).encode()
+                )
+                logger.debug(
+                    "ContentGraph serialized: %d bytes (req=%s)",
+                    len(content_graph_data),
+                    scan_id,
+                )
+
         validate_request = ValidateRequest(
             request_id=scan_id,
             project_root="",
@@ -594,6 +608,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             collection_specs=collection_specs,
             session_id=sid,
             venv_path=venv_path,
+            content_graph_data=content_graph_data,
         )
 
         _pcb = progress_callback

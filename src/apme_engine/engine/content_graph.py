@@ -303,6 +303,84 @@ class ContentGraph:
         self.g: nx.MultiDiGraph = nx.MultiDiGraph()
         self._nodes_by_ari_key: dict[str, str] = {}
 
+    # -- Serialization (ADR-044 Phase 2 switchover) -------------------------
+
+    def to_dict(self) -> dict[str, object]:
+        """Serialize the graph to a JSON-compatible dict.
+
+        Produces a deterministic representation suitable for transmission
+        over gRPC as JSON bytes.  Nodes carry all serializable
+        ``ContentNode`` fields (``annotations`` is excluded because its
+        elements are not guaranteed to be JSON-safe).  Edges carry typed
+        attributes and are sorted by ``(source, target)`` for stability.
+
+        Returns:
+            Dict with ``nodes`` and ``edges`` lists plus metadata.
+        """
+        nodes: list[dict[str, object]] = []
+        for nid in sorted(self.g.nodes):
+            node = self.get_node(nid)
+            if node is not None:
+                nodes.append({"id": nid, "data": _node_to_dict(node)})
+
+        edges: list[dict[str, object]] = []
+        for src, tgt, data in self.g.edges(data=True):
+            edge: dict[str, object] = {
+                "source": src,
+                "target": tgt,
+            }
+            edge.update(data)
+            edges.append(edge)
+        edges.sort(key=lambda e: (str(e["source"]), str(e["target"])))
+
+        return {
+            "version": 1,
+            "nodes": nodes,
+            "edges": edges,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, object]) -> ContentGraph:
+        """Reconstruct a ContentGraph from a serialized dict.
+
+        Args:
+            d: Dict produced by ``to_dict()``.
+
+        Returns:
+            A new ``ContentGraph`` with identical topology and node data.
+
+        Raises:
+            ValueError: If the dict version is unsupported or the payload
+                is malformed (missing keys, unexpected types).
+        """
+        try:
+            version = d.get("version", 0)
+            if version != 1:
+                msg = f"Unsupported ContentGraph serialization version: {version}"
+                raise ValueError(msg)
+
+            graph = cls()
+            for raw_node in cast(list[dict[str, object]], d["nodes"]):
+                nid = str(raw_node["id"])
+                node = _node_from_dict(cast(dict[str, object], raw_node["data"]))
+                graph.g.add_node(nid, node=node)
+                if node.ari_key:
+                    graph._nodes_by_ari_key[node.ari_key] = nid
+
+            for raw_edge in cast(list[dict[str, object]], d["edges"]):
+                src = str(raw_edge["source"])
+                tgt = str(raw_edge["target"])
+                attrs = {k: v for k, v in raw_edge.items() if k not in ("source", "target")}
+                graph.g.add_edge(src, tgt, **attrs)
+
+        except ValueError:
+            raise
+        except (KeyError, TypeError, AttributeError) as exc:
+            msg = f"Malformed ContentGraph payload: {exc}"
+            raise ValueError(msg) from exc
+
+        return graph
+
     # -- Node operations ----------------------------------------------------
 
     def add_node(self, node: ContentNode) -> None:
@@ -550,6 +628,93 @@ class ContentGraph:
             ``True`` if no directed cycles exist.
         """
         return bool(nx.is_directed_acyclic_graph(self.g))
+
+
+# ---------------------------------------------------------------------------
+# Node serialization helpers (ADR-044 Phase 2)
+# ---------------------------------------------------------------------------
+
+_CONTENT_NODE_SIMPLE_FIELDS: tuple[str, ...] = (
+    "file_path",
+    "line_start",
+    "line_end",
+    "name",
+    "module",
+    "resolved_module_name",
+    "module_options",
+    "resolved_module_options",
+    "options",
+    "variables",
+    "become",
+    "when_expr",
+    "tags",
+    "loop",
+    "loop_control",
+    "register",
+    "set_facts",
+    "notify",
+    "listen",
+    "environment",
+    "no_log",
+    "ignore_errors",
+    "changed_when",
+    "failed_when",
+    "delegate_to",
+    "yaml_lines",
+    "role_fqcn",
+    "default_variables",
+    "role_variables",
+    "role_metadata",
+    "collection_namespace",
+    "collection_name",
+    "ari_key",
+)
+
+
+def _node_to_dict(node: ContentNode) -> dict[str, object]:
+    """Serialize a ContentNode to a JSON-compatible dict.
+
+    Args:
+        node: ContentNode to serialize.
+
+    Returns:
+        Dict with identity, scope, and all content fields.
+    """
+    d: dict[str, object] = {
+        "identity": {
+            "path": node.identity.path,
+            "node_type": node.identity.node_type.value,
+        },
+        "scope": node.scope.value,
+    }
+    for fname in _CONTENT_NODE_SIMPLE_FIELDS:
+        d[fname] = getattr(node, fname)
+    return d
+
+
+def _node_from_dict(d: dict[str, object]) -> ContentNode:
+    """Reconstruct a ContentNode from a serialized dict.
+
+    Args:
+        d: Dict produced by ``_node_to_dict``.
+
+    Returns:
+        Reconstructed ContentNode.
+    """
+    raw_identity = cast(dict[str, str], d["identity"])
+    identity = NodeIdentity(
+        path=raw_identity["path"],
+        node_type=NodeType(raw_identity["node_type"]),
+    )
+
+    kwargs: dict[str, object] = {"identity": identity}
+    kwargs["scope"] = NodeScope(cast(str, d.get("scope", "owned")))
+
+    for fname in _CONTENT_NODE_SIMPLE_FIELDS:
+        if fname in d:
+            kwargs[fname] = d[fname]
+
+    return ContentNode(**kwargs)  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------

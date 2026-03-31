@@ -12,11 +12,13 @@ class ValidateRequest:
     files: list[object]
     session_id: str
     venv_path: str
+    content_graph_data: bytes
     def __init__(
         self,
         *,
         session_id: str = "",
         venv_path: str = "",
+        content_graph_data: bytes = b"",
         **kwargs: object,
     ) -> None: ...
     def HasField(self, field_name: str) -> bool: ...
