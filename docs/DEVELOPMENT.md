@@ -86,22 +86,17 @@ src/apme_engine/
 │   ├── models.py           SingleScan, TaskCall, RiskAnnotation, etc.
 │   ├── context.py          Scan/parse context wiring
 │   ├── findings.py         Finding/violation structures
-│   ├── risk_assessment_model.py / risk_detector.py  risk model + detect() bridge
-│   └── annotators/         per-module risk annotators
-│       ├── annotator_base.py / module_annotator_base.py / risk_annotator_base.py
-│       ├── variable_resolver.py
-│       └── ansible.builtin/  shell, command, copy, file, get_url, ...
+│   ├── content_graph.py    ContentGraph DAG model (ADR-044)
+│   ├── graph_scanner.py    GraphRule evaluation engine
+│   └── graph_opa_payload.py  OPA hierarchy from ContentGraph
 │
 ├── validators/
 │   ├── base.py             Validator protocol + ScanContext
-│   ├── native/             Python rules
-│   │   ├── __init__.py     NativeValidator, rule discovery via risk_detector.detect
-│   │   ├── rules/          one file per rule + colocated tests
-│   │   │   ├── L026_non_fqcn_use.py ... L060_line_length.py
-│   │   │   ├── M005_data_tagging.py, M010_*.py
-│   │   │   ├── P001–P004, R101–R501
-│   │   │   ├── *_test.py (colocated)
-│   │   │   ├── _test_helpers.py
+│   ├── native/             GraphRule-based Python rules
+│   │   ├── __init__.py     Rule discovery, rules_dir helper
+│   │   ├── rules/          one GraphRule per rule + .md docs
+│   │   │   ├── *_graph.py  GraphRule implementations
+│   │   │   ├── *.md        Rule documentation with examples
 │   │   │   └── rule_versions.json
 │   │   └── README.md
 │   ├── opa/

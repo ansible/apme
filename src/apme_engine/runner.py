@@ -138,7 +138,7 @@ def _extract_engine_diagnostics(scandata: object, engine_total_ms: float) -> Eng
         return float(tr.get(key, {}).get("elapsed", 0.0)) * 1000
 
     diag.parse_ms = _ms("target_load") + _ms("prm_load") + _ms("metadata_load")
-    diag.annotate_ms = _ms("module_annotators") + _ms("variable_resolution")
+    diag.annotate_ms = 0.0
     diag.tree_build_ms = _ms("tree_construction")
 
     trees = getattr(scandata, "trees", None)

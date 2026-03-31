@@ -1,6 +1,6 @@
 # ContentGraph Rule Migration Tracker
 
-**Status**: Phase 2 Complete — all stub rules activated; 111/113 rule doc tests passing
+**Status**: Phase 3 In Progress — legacy pipeline removed; ContentGraph is the sole execution path
 **Related**: [ADR-044](/.sdlc/adrs/ADR-044-node-identity-progression-model.md) |
 [Research](/.sdlc/research/ari-to-contentgraph-migration.md)
 

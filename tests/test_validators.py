@@ -1,11 +1,10 @@
-"""Tests for validator abstraction (ScanContext, OpaValidator, NativeValidator)."""
+"""Tests for validator abstraction (ScanContext, OpaValidator)."""
 
 from pathlib import Path
 from typing import cast
 
 from apme_engine.engine.models import YAMLDict
 from apme_engine.validators.base import ScanContext
-from apme_engine.validators.native import NativeValidator
 from apme_engine.validators.opa import OpaValidator
 
 
@@ -70,26 +69,3 @@ class TestOpaValidator:
         with patch("apme_engine.validators.opa.run_opa", return_value=violations):
             result = v.run(ctx)
         assert result == violations
-
-
-class TestNativeValidator:
-    """Tests for NativeValidator."""
-
-    def test_native_empty_context_returns_empty(self) -> None:
-        """NativeValidator with empty context returns empty list."""
-        ctx = ScanContext(hierarchy_payload=cast(YAMLDict, {}), scandata=None)
-        v = NativeValidator()
-        assert v.run(ctx) == []
-
-    def test_native_no_scandata_returns_empty(self) -> None:
-        """NativeValidator with no scandata returns empty list."""
-        ctx = ScanContext(hierarchy_payload=cast(YAMLDict, {"scan_id": "x"}), scandata=None)
-        v = NativeValidator()
-        assert v.run(ctx) == []
-
-    def test_native_scandata_without_contexts_returns_empty(self) -> None:
-        """NativeValidator with scandata but empty contexts returns empty."""
-        mock_scandata = type("Scandata", (), {"contexts": []})()
-        ctx = ScanContext(hierarchy_payload=cast(YAMLDict, {}), scandata=mock_scandata)
-        v = NativeValidator()
-        assert v.run(ctx) == []

@@ -411,18 +411,6 @@ class ARIScanner:
         if not self.silent:
             logger.debug("construct_trees() done")
 
-        self.record_begin(time_records, "variable_resolution")
-        scandata.resolve_variables(_ram_client)
-        self.record_end(time_records, "variable_resolution")
-        if not self.silent:
-            logger.debug("resolve_variables() done")
-
-        self.record_begin(time_records, "module_annotators")
-        scandata.annotate()
-        self.record_end(time_records, "module_annotators")
-        if not self.silent:
-            logger.debug("annotate() done")
-
         self.record_begin(time_records, "apply_rules")
         scandata.apply_rules()
         self.record_end(time_records, "apply_rules")

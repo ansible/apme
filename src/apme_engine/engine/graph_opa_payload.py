@@ -18,8 +18,111 @@ import datetime
 from typing import cast
 
 from .content_graph import ContentGraph, ContentNode, EdgeType, NodeType
-from .models import Annotation, YAMLDict, YAMLValue
-from .opa_payload import annotation_to_dict, json_safe
+from .models import Annotation, Location, RiskAnnotation, YAMLDict, YAMLValue
+
+
+def json_safe(v: YAMLValue) -> YAMLValue:
+    """Coerce value to a JSON-serializable form.
+
+    Args:
+        v: Value to coerce (str, int, float, bool, list, dict, or other).
+
+    Returns:
+        JSON-serializable value; non-primitives are stringified.
+    """
+    if v is None:
+        return None
+    if isinstance(v, str | int | float | bool):
+        return v
+    if isinstance(v, list | tuple):
+        return [json_safe(x) for x in v]
+    if isinstance(v, dict):
+        return {str(k): json_safe(x) for k, x in v.items()}
+    return str(v)
+
+
+def _location_to_dict(loc: Location | None) -> YAMLDict | None:
+    """Serialize a Location to a JSON-safe dict for OPA.
+
+    Args:
+        loc: Location to serialize, or None.
+
+    Returns:
+        Dict with type, value, is_mutable, or None if loc is empty/None.
+    """
+    if loc is None or getattr(loc, "is_empty", False):
+        return None
+    return {
+        "type": getattr(loc, "type", "") or "",
+        "value": json_safe(getattr(loc, "value", "")) or "",
+        "is_mutable": getattr(loc, "is_mutable", False),
+    }
+
+
+def annotation_to_dict(an: Annotation) -> YAMLDict:
+    """Serialize an Annotation (including RiskAnnotation detail) for OPA input.
+
+    Args:
+        an: Annotation to serialize.
+
+    Returns:
+        Dict with type, key, risk_type, and detail-specific fields.
+    """
+    d: YAMLDict = {
+        "type": getattr(an, "type", ""),
+        "key": getattr(an, "key", ""),
+    }
+    if not isinstance(an, RiskAnnotation):
+        d["risk_type"] = ""
+        return d
+
+    d["risk_type"] = getattr(an, "risk_type", "") or ""
+
+    cmd = getattr(an, "command", None)
+    if cmd is not None:
+        d["command"] = json_safe(getattr(cmd, "raw", None)) or ""
+    exec_files = getattr(an, "exec_files", None)
+    if exec_files:
+        d["exec_files"] = [_location_to_dict(ef) for ef in exec_files if ef]
+
+    src = getattr(an, "src", None)
+    dest = getattr(an, "dest", None)
+    if isinstance(src, Location):
+        d["src"] = _location_to_dict(src)
+    if isinstance(dest, Location):
+        d["dest"] = _location_to_dict(dest)
+    for flag in ("is_mutable_src", "is_mutable_dest"):
+        val = getattr(an, flag, None)
+        if val is not None:
+            d[flag] = bool(val)
+
+    pkg = getattr(an, "pkg", None)
+    if pkg is not None and pkg != "":
+        d["pkg"] = json_safe(pkg)
+    version = getattr(an, "version", None)
+    if version is not None and version != "":
+        d["version"] = json_safe(version)
+    for flag in ("is_mutable_pkg", "disable_validate_certs", "allow_downgrade"):
+        val = getattr(an, flag, None)
+        if val is not None:
+            d[flag] = bool(val)
+
+    path_loc = getattr(an, "path", None)
+    if isinstance(path_loc, Location):
+        d["path_loc"] = _location_to_dict(path_loc)
+    for flag in ("is_mutable_path", "is_mutable_src", "is_unsafe_write", "is_deletion", "is_insecure_permissions"):
+        val = getattr(an, flag, None)
+        if val is not None:
+            d[flag] = bool(val)
+
+    config_key = getattr(an, "key", None)
+    if config_key and d.get("key") != config_key:
+        d["config_key"] = json_safe(config_key)
+    if getattr(an, "is_mutable_key", None) is not None:
+        d["is_mutable_key"] = bool(getattr(an, "is_mutable_key", False))
+
+    return d
+
 
 # ---------------------------------------------------------------------------
 # Per-node serialization

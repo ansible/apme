@@ -285,8 +285,7 @@ message ScanDiagnostics {
 
 The engine (`run_scan()`) reports per-phase timing:
 - `parse_ms` — target load + PRM load + metadata load
-- `annotate_ms` — module annotators + variable resolution
-- `tree_build_ms` — call-graph construction
+- `tree_build_ms` — call-graph construction (includes ContentGraph build)
 - `total_ms` — wall-clock for the full engine run
 
 ### Data flow

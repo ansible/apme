@@ -77,11 +77,11 @@ Every validator returns the same violation shape:
 
 ### Native (Python)
 
-- **Input**: `context.scandata` (deserialized `SingleScan`)
-- **Execution**: Python `Rule` subclasses with `match()` / `process()` methods, invoked in-process by `NativeValidator`
-- **Rules**: L026–L060 (lint), M005/M010 (modernize), R101–R501 (risk), P001–P004 (legacy)
+- **Input**: `ContentGraph` (deserialized from `scandata`)
+- **Execution**: `GraphRule` subclasses with `match()` / `process()` methods, evaluated by `graph_scanner.scan()`
+- **Rules**: L026–L105 (lint), M005–M030 (modernize), R101–R501 (risk)
 - **Container**: `apme-native`
-- **Why Python**: Full access to the in-memory model (trees, contexts, specs, annotations, variable tracking). Rules that need to walk call graphs, inspect variable resolution, or apply complex heuristics that would be awkward in Rego.
+- **Why Python**: Full access to the ContentGraph DAG — node attributes, edges, and structural queries. Rules that need to walk the hierarchy, inspect module options, or apply complex heuristics that would be awkward in Rego.
 
 ### Ansible (runtime)
 
@@ -109,10 +109,10 @@ The engine was originally derived from ARI (Ansible Risk Insights). It is now fu
 
 Rationale:
 
-- Full control over the hierarchy payload shape, annotator behavior, and parser logic
-- Single parse, single model — validators reuse the same `SingleScan` and `hierarchy_payload`
+- Full control over the hierarchy payload shape, ContentGraph structure, and parser logic
+- Single parse, single model — validators reuse the same `ContentGraph` and `hierarchy_payload`
 - No version drift between engine and validators
-- Annotators (risk annotations) are engine concerns that feed into both OPA rules (via hierarchy JSON) and native rules (via scandata)
+- ContentGraph is the sole data model feeding both OPA rules (via hierarchy JSON) and native rules (via GraphRule evaluation)
 
 The engine exposes one public function:
 

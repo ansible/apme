@@ -9,8 +9,6 @@ from dataclasses import dataclass, field
 from typing import cast
 
 from . import logger
-from .analyzer import analyze
-from .annotators.variable_resolver import resolve_variables
 from .content_graph import ContentGraph, GraphBuilder
 from .findings import Findings
 from .graph_scanner import GraphScanReport
@@ -19,7 +17,6 @@ from .loader import (
 )
 from .model_loader import load_object
 from .models import (
-    AnsibleRunContext,
     ARIResult,
     Load,
     LoadType,
@@ -27,7 +24,6 @@ from .models import (
     ObjectList,
     Rule,
     TaskCall,
-    TaskCallsInTree,
     YAMLDict,
     YAMLList,
     YAMLValue,
@@ -67,9 +63,6 @@ class SingleScan:
         target_object: Root Object for the scan target.
         trees: List of object trees built during scanning.
         additional: Additional objects (e.g. inventory).
-        taskcalls_in_trees: Task calls organized by tree.
-        contexts: Ansible run contexts built during scanning.
-        data_report: Data report dict for the scan.
         use_ansible_path: Whether to use ansible path resolution.
         dependency_dir: Directory containing dependencies.
         base_dir: Base directory for path resolution.
@@ -130,11 +123,6 @@ class SingleScan:
     trees: list[ObjectList] = field(default_factory=list)
     # for inventory object
     additional: ObjectList = field(default_factory=ObjectList)
-
-    taskcalls_in_trees: list[TaskCallsInTree] = field(default_factory=list)
-    contexts: list[AnsibleRunContext] = field(default_factory=list)
-
-    data_report: YAMLDict = field(default_factory=dict)
 
     _path_mappings: YAMLDict = field(default_factory=dict)
 
@@ -563,110 +551,52 @@ class SingleScan:
         self.resolve_failures = cast(YAMLDict, resolve_failures)
 
         self._build_content_graph()
-
-        if self.do_save:
-            from .result_writer import get_root_def_dir, save_trees
-
-            save_trees(get_root_def_dir(self._path_mappings), self.trees, self.silent)
         return
 
     def _build_content_graph(self) -> None:
-        """Build ContentGraph from definitions (ADR-044 Phase 2).
+        """Build ContentGraph from definitions (ADR-044).
 
-        Always runs after tree construction.  The graph is serialized and
-        sent to the native validator via gRPC for GraphRule evaluation.
+        The graph is serialized and sent to the native validator via gRPC
+        for GraphRule evaluation.  Failure is fatal — the scan cannot
+        proceed without a ContentGraph.
         """
-        try:
-            builder = GraphBuilder(
-                cast(dict[str, object], self.root_definitions),
-                cast(dict[str, object], self.ext_definitions),
-            )
-            self.content_graph = builder.build()
-            tree_node_count = sum(len(t.items) for t in self.trees)
-            graph_node_count = self.content_graph.node_count()
-            graph_edge_count = self.content_graph.edge_count()
-            logger.debug(
-                "ContentGraph built: %d nodes, %d edges (TreeLoader: %d call objects)",
-                graph_node_count,
-                graph_edge_count,
-                tree_node_count,
-            )
-        except Exception:
-            logger.warning("ContentGraph build failed; continuing with TreeLoader pipeline", exc_info=True)
-            self.content_graph = None
-
-    def resolve_variables(self, ram_client: RAMClient | None = None) -> None:
-        """Resolve variables in trees and build AnsibleRunContext for each tree.
-
-        Args:
-            ram_client: Optional RAM client for context lookups.
-        """
-        taskcalls_in_trees = resolve(self.trees, self.additional)
-        self.taskcalls_in_trees = taskcalls_in_trees
-
-        for i, tree in enumerate(self.trees):
-            last_item = i + 1 == len(self.trees)
-            scan_metadata = {
-                "type": self.type,
-                "name": self.name,
-            }
-            ctx = AnsibleRunContext.from_tree(
-                tree=tree,
-                parent=self.target_object,
-                last_item=last_item,
-                ram_client=ram_client,
-                scan_metadata=cast(YAMLDict, scan_metadata),
-            )
-            self.contexts.append(ctx)
-
-        if self.do_save:
-            from .result_writer import get_root_def_dir, save_tasks_in_trees
-
-            save_tasks_in_trees(get_root_def_dir(self._path_mappings), taskcalls_in_trees)
-        return
-
-    def annotate(self) -> None:
-        """Run analysis on contexts to add annotations (e.g., risk annotations)."""
-        contexts = analyze(self.contexts)
-        self.contexts = contexts
-
-        if self.do_save:
-            from .result_writer import get_root_def_dir, save_contexts
-
-            save_contexts(get_root_def_dir(self._path_mappings), contexts)
-
-        return
+        builder = GraphBuilder(
+            cast(dict[str, object], self.root_definitions),
+            cast(dict[str, object], self.ext_definitions),
+        )
+        self.content_graph = builder.build()
+        graph_node_count = self.content_graph.node_count()
+        graph_edge_count = self.content_graph.edge_count()
+        logger.debug(
+            "ContentGraph built: %d nodes, %d edges",
+            graph_node_count,
+            graph_edge_count,
+        )
 
     def build_hierarchy_payload(self, scan_id: str = "") -> YAMLDict:
         """Build OPA input: hierarchy (collection/role/playbook/play/task) + annotations.
-
-        Uses ``build_hierarchy_from_graph`` when a ContentGraph is
-        available; falls back to the legacy ``build_hierarchy_payload``
-        from ``opa_payload`` otherwise.
 
         Args:
             scan_id: Optional scan ID; defaults to current UTC timestamp.
 
         Returns:
             Dict with scan_id, hierarchy (trees with nodes), and metadata.
+
+        Raises:
+            ValueError: If ContentGraph has not been built yet.
         """
-        if self.content_graph is not None:
-            from .graph_opa_payload import build_hierarchy_from_graph
+        from .graph_opa_payload import build_hierarchy_from_graph
 
-            self.hierarchy_payload = build_hierarchy_from_graph(
-                self.content_graph,
-                scan_type=self.type,
-                scan_name=self.name,
-                collection_name=self.collection_name,
-                role_name=self.role_name,
-                scan_id=scan_id,
-            )
-        else:
-            from .opa_payload import build_hierarchy_payload as _build
-
-            self.hierarchy_payload = _build(
-                self.contexts, self.type, self.name, self.collection_name, self.role_name, scan_id
-            )
+        if self.content_graph is None:
+            raise ValueError(f"ContentGraph must be built before hierarchy payload (scan: {self.type}/{self.name})")
+        self.hierarchy_payload = build_hierarchy_from_graph(
+            self.content_graph,
+            scan_type=self.type,
+            scan_name=self.name,
+            collection_name=self.collection_name,
+            role_name=self.role_name,
+            scan_id=scan_id,
+        )
         return self.hierarchy_payload
 
     def apply_rules(self) -> None:
@@ -819,32 +749,3 @@ def tree(
         tl.extra_requirements,
         tl.resolve_failures,
     )
-
-
-def resolve(trees: list[ObjectList], additional: ObjectList) -> list[TaskCallsInTree]:
-    """Resolve variables in trees and return task calls per tree.
-
-    Args:
-        trees: List of object lists (call trees).
-        additional: Additional objects (e.g., inventory) for variable resolution.
-
-    Returns:
-        List of TaskCallsInTree, one per tree with resolved taskcalls.
-    """
-    taskcalls_in_trees = []
-    for i, tree in enumerate(trees):
-        if not isinstance(tree, ObjectList):
-            continue
-        if len(tree.items) == 0:
-            continue
-        first_item = tree.items[0]
-        spec = getattr(first_item, "spec", None)
-        root_key = spec.key if spec is not None else getattr(first_item, "key", "")
-        logger.debug(f"[{i + 1}/{len(trees)}] {root_key}")
-        taskcalls = resolve_variables(tree, additional)
-        d = TaskCallsInTree(
-            root_key=root_key,
-            taskcalls=taskcalls,
-        )
-        taskcalls_in_trees.append(d)
-    return taskcalls_in_trees

@@ -16,9 +16,8 @@ from apme_engine.validators.opa import OpaValidator
 from tests.rule_doc_parser import discover_rule_docs
 
 _GRAPH_RULE_KNOWN_FAILURES: dict[str, str] = {
-    # Legacy-only rules with no GraphRule implementation (deferred to Phase 3)
-    "L039": "no graph rule — legacy-only (undefined_variable)",
-    "R402": "no graph rule — legacy-only (list_all_used_variables)",
+    "L039": "requires cross-task variable resolution (no GraphRule equivalent yet)",
+    "R402": "informational listing rule (no GraphRule equivalent yet)",
 }
 
 

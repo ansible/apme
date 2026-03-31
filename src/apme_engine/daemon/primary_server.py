@@ -67,8 +67,7 @@ from apme.v1.validate_pb2 import ValidateRequest
 from apme_engine.daemon.event_emitter import emit_fix_completed, start_sinks
 from apme_engine.daemon.session import ResourceExhaustedError, SessionState, SessionStore
 from apme_engine.daemon.violation_convert import violation_dict_to_proto, violation_proto_to_dict
-from apme_engine.engine.jsonpickle_handlers import register_engine_handlers
-from apme_engine.engine.models import AnsibleRunContext, ViolationDict
+from apme_engine.engine.models import ViolationDict
 from apme_engine.log_bridge import attach_collector
 from apme_engine.runner import run_scan
 from apme_engine.venv_manager.session import (
@@ -240,31 +239,6 @@ def _attach_snippets(violations: list[ViolationDict], files: list[File]) -> None
         end = min(len(lines), line_no + _SNIPPET_CONTEXT_LINES)
         numbered = [f"{i + 1:>4}: {lines[i]}" for i in range(start, end)]
         v["snippet"] = "\n".join(numbered)
-
-
-def _normalize_scandata_contexts(scandata: object) -> None:
-    """Ensure scandata.contexts is a list of AnsibleRunContext (mutates in place).
-
-    Materializes iterators and drops non-AnsibleRunContext items so jsonpickle
-    never encodes iterators, which decode as list_iterator on the native side.
-
-    Args:
-        scandata: The scan data object whose contexts attribute will be normalized.
-    """
-    if not scandata or not hasattr(scandata, "contexts"):
-        return
-    raw = getattr(scandata, "contexts", None)
-    if raw is None:
-        return
-    materialized = list(raw) if not isinstance(raw, list) else raw
-    valid = [c for c in materialized if isinstance(c, AnsibleRunContext)]
-    if len(valid) != len(materialized):
-        logger.debug(
-            "Primary: normalized scandata.contexts %d -> %d (dropped non-AnsibleRunContext)",
-            len(materialized),
-            len(valid),
-        )
-    scandata.contexts = valid
 
 
 def _write_chunked_fs(files: list[File]) -> Path:
@@ -612,9 +586,6 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             discovered,
             hierarchy_collections,
         )
-
-        _normalize_scandata_contexts(context_obj.scandata)
-        register_engine_handlers()
 
         # 3. Venv acquire (always — creates or incrementally installs)
         venv_session = await asyncio.get_event_loop().run_in_executor(

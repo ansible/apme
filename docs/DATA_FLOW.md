@@ -45,20 +45,12 @@ User runs:  apme check /path/to/project
 │     │     Parser.run() → playbooks, roles, taskfiles,    │       │
 │     │     tasks, modules, mappings                       │       │
 │     │                                                    │       │
-│     │  b. construct_trees()                              │       │
-│     │     TreeLoader → PlaybookCall → PlayCall →         │       │
-│     │     RoleCall → TaskFileCall → TaskCall trees       │       │
+│     │  b. construct_trees() + _build_content_graph()      │       │
+│     │     TreeLoader → call trees (legacy data path)     │       │
+│     │     GraphBuilder → ContentGraph (ADR-044, sole     │       │
+│     │     execution path for native rules & OPA)         │       │
 │     │                                                    │       │
-│     │  c. resolve_variables()                            │       │
-│     │     Walk trees, resolve variable references,       │       │
-│     │     track set_fact / register / include_vars       │       │
-│     │                                                    │       │
-│     │  d. annotate()                                     │       │
-│     │     RiskAnnotators (per-module: shell, command,     │       │
-│     │     get_url, file, copy, etc.) add RiskAnnotations │       │
-│     │     to each TaskCall                               │       │
-│     │                                                    │       │
-│     │  e. build_hierarchy_payload()                      │       │
+│     │  c. build_hierarchy_payload()                      │       │
 │     │     Serialize trees → JSON hierarchy:              │       │
 │     │     { scan_id, hierarchy: [{root_key, root_type,   │       │
 │     │       root_path, nodes: [{type, key, file, line,   │       │
@@ -82,14 +74,13 @@ User runs:  apme check /path/to/project
 │     ┌─────────────────────────────────────────────────────┐      │
 │     │                                                     │      │
 │     │  ┌─► Native :50055                                  │      │
-│     │  │   - jsonpickle.decode(scandata) → SingleScan     │      │
-│     │  │   - Build ScanContext, run NativeValidator        │      │
-│     │  │   - Python rules on contexts/trees               │      │
+│     │  │   - Deserialize ContentGraph from scandata       │      │
+│     │  │   - GraphRule evaluation via graph_scanner.scan() │      │
 │     │  │   → violations[] + ValidatorDiagnostics          │      │
 │     │  │                                                  │      │
 │     │  ├─► OPA :50054                                     │      │
 │     │  │   - json.loads(hierarchy_payload)                 │      │
-│     │  │   - POST to local OPA REST (:8181)               │      │
+│     │  │   - opa eval via subprocess (ADR-009)            │      │
 │     │  │   - Rego eval: data.apme.rules.violations        │      │
 │     │  │   → violations[] + ValidatorDiagnostics          │      │
 │     │  │                                                  │      │

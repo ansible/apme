@@ -177,14 +177,13 @@ class TestSingleScanInit:
         assert ss.target_taskfile_name == "mytaskfile"
 
     def test_default_fields(self) -> None:
-        """SingleScan has empty trees, contexts, findings, result by default."""
+        """SingleScan has empty trees, findings, result by default."""
         ss = SingleScan(
             type=LoadType.COLLECTION,
             name="test",
             root_dir="/tmp/data",
         )
         assert ss.trees == []
-        assert ss.contexts == []
         assert ss.findings is None
         assert ss.result is None
         assert ss.hierarchy_payload == {}
