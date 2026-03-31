@@ -139,25 +139,126 @@ apme remediate --ai --auto-approve /path/to/playbook-or-project
 
 ### Container deployment (Podman)
 
-```bash
-# Build all images
-./containers/podman/build.sh
+The full pod runs 9 containers: engine services (Primary, Native, OPA, Ansible,
+Gitleaks, Galaxy Proxy), Gateway (REST API + persistence), UI (React dashboard),
+and Abbenay (AI provider). Pod management scripts (`build.sh`, `up.sh`,
+`down.sh`, `wait-for-pod.sh`) run from the **repo root**. The CLI helper
+`run-cli.sh` runs from the directory you want to scan.
 
-# Start the pod (Primary + Native + OPA + Ansible + Gitleaks + Galaxy Proxy)
-./containers/podman/up.sh
-
-# Check a project (CLI container, on-the-fly)
-cd /path/to/your/project
-/path/to/apme/containers/podman/run-cli.sh
-
-# With options
-containers/podman/run-cli.sh check --json .
+```
+Container        Port   Role
+─────────────────────────────────────────────────────
+primary          50051  Engine orchestrator (gRPC)
+native           50055  Python rule validator (gRPC)
+opa              50054  Rego rule validator (gRPC)
+ansible          50053  Ansible runtime validator (gRPC)
+gitleaks         50056  Secret scanner (gRPC)
+galaxy-proxy      8765  Collection → wheel proxy (PEP 503)
+gateway     8080/50060  REST API + WebSocket + persistence
+ui                8081  React dashboard (nginx)
+abbenay          50057  AI provider (gRPC)
 ```
 
-### Health check
+#### Build all images
+
+```bash
+./containers/podman/build.sh            # builds base + 9 service images
+./containers/podman/build.sh --no-cache # rebuild from scratch
+```
+
+The build script creates a shared base image first (`localhost/apme-base:latest`) so pip
+dependencies are resolved once, then builds each service image. It also
+pulls the Abbenay AI image from `ghcr.io`. At the end it offers to start
+the pod automatically.
+
+#### Start the pod
+
+```bash
+./containers/podman/up.sh
+```
+
+This tears down any existing `apme-pod`, injects cache paths and secrets
+into `pod.yaml` via `envsubst`, and starts all containers. Cache defaults
+to `${XDG_CACHE_HOME:-$HOME/.cache}/apme` (override with `APME_CACHE_HOST_PATH`).
+
+Wait for the pod to be healthy before running scans:
+
+```bash
+./containers/podman/wait-for-pod.sh              # wait until Running
+./containers/podman/wait-for-pod.sh --health-check  # wait + verify all services
+```
+
+#### Access the UI
+
+Once the pod is running, open **http://localhost:8081** in your browser.
+The UI proxies API calls to the Gateway on port 8080. No authentication
+is required for local development.
+
+The dashboard provides project management, live scan/remediate operations
+with real-time progress, interactive AI proposal review, dependency
+tracking, and cross-project analytics. See
+[.sdlc/research/ui-capabilities-assessment.md](.sdlc/research/ui-capabilities-assessment.md)
+for a full capabilities inventory.
+
+#### Run CLI scans (on-the-fly container)
+
+The CLI container is **not** part of the pod — it joins the pod network
+on each invocation with your current directory mounted at `/workspace`.
+
+```bash
+cd /path/to/your/project
+
+# Default (no args): runs `scan .`
+/path/to/apme/containers/podman/run-cli.sh
+
+# Check with JSON output
+/path/to/apme/containers/podman/run-cli.sh check --json .
+
+# Remediate (Tier 1 deterministic fixes)
+/path/to/apme/containers/podman/run-cli.sh remediate .
+
+# Remediate with AI (requires Abbenay configured)
+/path/to/apme/containers/podman/run-cli.sh remediate --ai .
+
+# Format YAML (dry-run)
+/path/to/apme/containers/podman/run-cli.sh format --check .
+
+# Health check
+/path/to/apme/containers/podman/run-cli.sh health-check
+```
+
+#### AI setup (optional)
+
+To enable AI-assisted remediation, create `containers/abbenay/.env` from
+the example and add your API key:
+
+```bash
+cp containers/abbenay/.env.example containers/abbenay/.env
+# Edit .env: set OPENROUTER_API_KEY=your-key
+```
+
+The `up.sh` script sources this file automatically. The Abbenay container
+starts on port 50057 and Primary connects to it for Tier 2 AI proposals.
+
+#### Stop the pod
+
+```bash
+./containers/podman/down.sh              # stop and remove pod
+./containers/podman/down.sh --wipe       # also delete database + session cache
+```
+
+#### Health check
+
+From a local development environment (no containers):
 
 ```bash
 apme health-check
+```
+
+From the pod:
+
+```bash
+./containers/podman/wait-for-pod.sh --health-check
 ```
 
 ## AI escalation
