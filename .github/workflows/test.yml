@@ -58,13 +58,27 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
       - name: Install OPA binary
         run: |
           curl -fsSL -o /usr/local/bin/opa \
             https://openpolicyagent.org/downloads/latest/opa_linux_amd64_static
           chmod +x /usr/local/bin/opa
       - run: uv sync --extra dev --extra gateway
-      - run: uv run playwright install --with-deps chromium
+      - name: Get Playwright version
+        id: pw
+        run: echo "version=$(grep -A1 'name = "playwright"' uv.lock | grep version | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        id: pw-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}
+      - name: Install Playwright browsers
+        if: steps.pw-cache.outputs.cache-hit != 'true'
+        run: uv run playwright install chromium
+      - name: Install Playwright system deps
+        run: uv run playwright install-deps chromium
       - name: Build and serve UI
         run: |
           cd frontend && npm ci && npm run build && cd ..
