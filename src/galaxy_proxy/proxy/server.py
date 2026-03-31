@@ -219,7 +219,9 @@ def create_app(
         version = parts[1]
 
         lock_key = f"{ns}.{coll_name}:{version}"
-        lock = _download_locks.setdefault(lock_key, asyncio.Lock())
+        lock = _download_locks.get(lock_key)
+        if lock is None:
+            lock = _download_locks.setdefault(lock_key, asyncio.Lock())
         async with lock:
             cached = cache.get_wheel(filename)
             if cached:
@@ -260,6 +262,9 @@ def create_app(
             cache.put_wheel(whl_name, whl_data)
             logger.info("Converted and cached: %s (%d bytes)", whl_name, len(whl_data))
 
+        if not lock.locked():
+            _download_locks.pop(lock_key, None)
+
         return Response(
             content=whl_data,
             media_type="application/octet-stream",
@@ -284,8 +289,12 @@ def create_app(
             HTTPException: When the tarball directory does not exist.
         """
         raw_tarball_path = Path(tarball_dir)
-        if raw_tarball_path.is_symlink():
-            raise HTTPException(status_code=400, detail="Symlinks not allowed")
+        for component in (raw_tarball_path, *raw_tarball_path.parents):
+            try:
+                if component.is_symlink():
+                    raise HTTPException(status_code=400, detail="Symlinks not allowed")
+            except FileNotFoundError:
+                break
         tarball_path = raw_tarball_path.resolve()
         if not tarball_path.is_dir():
             raise HTTPException(status_code=400, detail=f"Not a directory: {tarball_dir}")
