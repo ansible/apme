@@ -269,6 +269,10 @@ def create_app(
         failed: list[str] = []
 
         for tb in sorted(tarball_path.glob("*.tar.gz")):
+            if tb.is_symlink() or not tb.is_file():
+                logger.warning("Skipping non-regular tarball entry: %s", tb)
+                failed.append(tb.name)
+                continue
             try:
                 tarball_data = await asyncio.to_thread(tb.read_bytes)
                 whl_name, whl_data = tarball_to_wheel(tarball_data)

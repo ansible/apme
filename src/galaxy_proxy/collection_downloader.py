@@ -74,7 +74,7 @@ def write_temp_ansible_cfg(
     Returns:
         Path to the written ``ansible.cfg``.
     """
-    cfg = configparser.ConfigParser()
+    cfg = configparser.ConfigParser(interpolation=None)
 
     server_names = [s.name for s in servers]
     cfg.add_section("galaxy")

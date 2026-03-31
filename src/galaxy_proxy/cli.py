@@ -67,17 +67,18 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument("--port", "-p", type=int, default=8765, help="Port to bind to (default: 8765).")
     parser.add_argument("--host", default="0.0.0.0", help="Host to bind to (default: 0.0.0.0).")
-    parser.add_argument(
+    auth_group = parser.add_mutually_exclusive_group()
+    auth_group.add_argument(
         "--ansible-cfg",
         default=Path(os.environ["ANSIBLE_CONFIG"]) if "ANSIBLE_CONFIG" in os.environ else None,
         type=Path,
         help="Path to ansible.cfg for Galaxy server auth (env: ANSIBLE_CONFIG).",
     )
-    parser.add_argument(
+    auth_group.add_argument(
         "--galaxy-server",
         dest="galaxy_servers",
         action="append",
-        default=[],
+        default=None,
         help="Upstream Galaxy server: URL[,token=TOK][,name=LABEL][,auth_url=URL]. Repeatable.",
     )
     parser.add_argument(
