@@ -45,6 +45,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 from google.protobuf.json_format import MessageToDict
 
 from apme.v1 import primary_pb2_grpc
+from apme.v1.common_pb2 import GalaxyServerDef
 from apme.v1.primary_pb2 import (
     ApprovalRequest,
     CloseRequest,
@@ -445,13 +446,13 @@ async def handle_session(
     from apme_gateway._galaxy_inject import load_galaxy_server_defs  # noqa: PLC0415
 
     temp_dir: Path | None = None
+    galaxy_servers: list[GalaxyServerDef] = []
     try:
-        galaxy_servers = await load_galaxy_server_defs()
-
         if resume_session_id:
             scan_id = resume_scan_id or resume_session_id
             logger.info("Resuming session %s (scan_id=%s)", resume_session_id, scan_id)
         else:
+            galaxy_servers = await load_galaxy_server_defs()
             temp_dir = Path(tempfile.mkdtemp(prefix="apme-gw-session-"))
             options = await _collect_uploads(ws, temp_dir)
 

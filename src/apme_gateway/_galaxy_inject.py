@@ -8,6 +8,7 @@ so that the engine can write a session-scoped ``ansible.cfg`` for
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from apme.v1.common_pb2 import GalaxyServerDef
@@ -21,14 +22,20 @@ async def load_galaxy_server_defs() -> list[GalaxyServerDef]:
     """Fetch global Galaxy servers from the DB and return proto messages.
 
     Returns an empty list (with a warning) if the database is unavailable,
-    so callers never block on a DB failure.
+    so callers never block on a DB failure.  ``CancelledError`` is
+    re-raised so task cancellation propagates correctly.
 
     Returns:
         List of GalaxyServerDef protobuf messages.
+
+    Raises:
+        asyncio.CancelledError: Re-raised to preserve task cancellation.
     """
     try:
         async with get_session() as db:
             servers = await q.list_galaxy_servers(db)
+    except asyncio.CancelledError:
+        raise
     except Exception:
         logger.warning("Failed to load Galaxy servers from DB; proceeding without", exc_info=True)
         return []
