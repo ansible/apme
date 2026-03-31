@@ -84,8 +84,8 @@ function GalaxyServerFormModal({
           name: form.name,
           url: form.url,
           auth_url: form.auth_url,
+          token: form.token,
         };
-        if (form.token) body.token = form.token;
         await updateGalaxyServer(editing.id, body);
       } else {
         await createGalaxyServer({
@@ -225,7 +225,7 @@ function GalaxyServersSection() {
               <Th>URL</Th>
               <Th>Token</Th>
               <Th>Auth URL</Th>
-              <Th />
+              <Th><span className="pf-v6-screen-reader">Actions</span></Th>
             </Tr>
           </Thead>
           <Tbody>

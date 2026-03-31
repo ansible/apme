@@ -221,7 +221,7 @@ export function updateGalaxyServer(
   body: UpdateGalaxyServerRequest,
 ): Promise<GalaxyServer> {
   return request(`/settings/galaxy-servers/${serverId}`, {
-    method: "PUT",
+    method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });

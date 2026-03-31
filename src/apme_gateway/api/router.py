@@ -295,7 +295,7 @@ async def get_galaxy_server(server_id: int) -> GalaxyServerSchema:
     return _to_galaxy_schema(server)
 
 
-@router.put("/settings/galaxy-servers/{server_id}")  # type: ignore[untyped-decorator]
+@router.patch("/settings/galaxy-servers/{server_id}")  # type: ignore[untyped-decorator]
 async def update_galaxy_server(
     server_id: int,
     body: UpdateGalaxyServerRequest,

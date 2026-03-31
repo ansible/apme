@@ -164,7 +164,7 @@ async def test_get_galaxy_server_not_found(client: AsyncClient) -> None:
 
 
 async def test_update_galaxy_server(client: AsyncClient) -> None:
-    """PUT /settings/galaxy-servers/{id} updates the specified fields.
+    """PATCH /settings/galaxy-servers/{id} updates the specified fields.
 
     Args:
         client: Async HTTP test client.
@@ -174,7 +174,7 @@ async def test_update_galaxy_server(client: AsyncClient) -> None:
         json={"name": "hub", "url": "https://old.example.com/"},
     )
     server_id = create_resp.json()["id"]
-    resp = await client.put(
+    resp = await client.patch(
         f"/api/v1/settings/galaxy-servers/{server_id}",
         json={"url": "https://new.example.com/", "token": "new-token"},
     )
@@ -186,12 +186,12 @@ async def test_update_galaxy_server(client: AsyncClient) -> None:
 
 
 async def test_update_galaxy_server_not_found(client: AsyncClient) -> None:
-    """PUT /settings/galaxy-servers/999 returns 404.
+    """PATCH /settings/galaxy-servers/999 returns 404.
 
     Args:
         client: Async HTTP test client.
     """
-    resp = await client.put(
+    resp = await client.patch(
         "/api/v1/settings/galaxy-servers/999",
         json={"name": "new_name"},
     )
@@ -199,7 +199,7 @@ async def test_update_galaxy_server_not_found(client: AsyncClient) -> None:
 
 
 async def test_update_galaxy_server_duplicate_name(client: AsyncClient) -> None:
-    """PUT /settings/galaxy-servers/{id} returns 409 when renaming to an existing name.
+    """PATCH /settings/galaxy-servers/{id} returns 409 when renaming to an existing name.
 
     Args:
         client: Async HTTP test client.
@@ -213,7 +213,7 @@ async def test_update_galaxy_server_duplicate_name(client: AsyncClient) -> None:
         json={"name": "beta", "url": "https://b.example.com/"},
     )
     beta_id = create_resp.json()["id"]
-    resp = await client.put(
+    resp = await client.patch(
         f"/api/v1/settings/galaxy-servers/{beta_id}",
         json={"name": "alpha"},
     )
@@ -221,7 +221,7 @@ async def test_update_galaxy_server_duplicate_name(client: AsyncClient) -> None:
 
 
 async def test_update_galaxy_server_no_fields(client: AsyncClient) -> None:
-    """PUT /settings/galaxy-servers/{id} with empty body returns 400.
+    """PATCH /settings/galaxy-servers/{id} with empty body returns 400.
 
     Args:
         client: Async HTTP test client.
@@ -231,7 +231,7 @@ async def test_update_galaxy_server_no_fields(client: AsyncClient) -> None:
         json={"name": "hub", "url": "https://hub.example.com/"},
     )
     server_id = create_resp.json()["id"]
-    resp = await client.put(
+    resp = await client.patch(
         f"/api/v1/settings/galaxy-servers/{server_id}",
         json={},
     )
