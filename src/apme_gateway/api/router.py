@@ -29,8 +29,10 @@ from apme_gateway.api.schemas import (
     CollectionRefSchema,
     CollectionSummary,
     ComponentHealth,
+    CreateGalaxyServerRequest,
     CreateProjectRequest,
     DashboardSummary,
+    GalaxyServerSchema,
     HealthStatus,
     LogEntry,
     PaginatedResponse,
@@ -49,6 +51,7 @@ from apme_gateway.api.schemas import (
     SessionSummary,
     TopViolation,
     TrendPoint,
+    UpdateGalaxyServerRequest,
     UpdateProjectRequest,
     ViolationDetail,
 )
@@ -201,6 +204,146 @@ async def list_ai_models() -> list[AiModelInfo]:
         return []
     finally:
         await channel.close(grace=None)
+
+
+# ── Galaxy server settings (ADR-045) ─────────────────────────────────
+
+
+def _to_galaxy_schema(gs: object) -> GalaxyServerSchema:
+    """Convert a GalaxyServer ORM row to the API response schema.
+
+    The token value is never exposed; only ``has_token`` is reported.
+
+    Args:
+        gs: GalaxyServer ORM instance.
+
+    Returns:
+        Pydantic GalaxyServerSchema.
+    """
+    return GalaxyServerSchema(
+        id=gs.id,  # type: ignore[attr-defined]
+        name=gs.name,  # type: ignore[attr-defined]
+        url=gs.url,  # type: ignore[attr-defined]
+        auth_url=gs.auth_url,  # type: ignore[attr-defined]
+        has_token=bool(gs.token),  # type: ignore[attr-defined]
+        created_at=gs.created_at,  # type: ignore[attr-defined]
+        updated_at=gs.updated_at,  # type: ignore[attr-defined]
+    )
+
+
+@router.get("/settings/galaxy-servers")  # type: ignore[untyped-decorator]
+async def list_galaxy_servers() -> list[GalaxyServerSchema]:
+    """Return all globally configured Galaxy servers.
+
+    Returns:
+        List of Galaxy server definitions (tokens masked).
+    """
+    async with get_session() as db:
+        servers = await q.list_galaxy_servers(db)
+    return [_to_galaxy_schema(s) for s in servers]
+
+
+@router.post("/settings/galaxy-servers", status_code=201)  # type: ignore[untyped-decorator]
+async def create_galaxy_server(body: CreateGalaxyServerRequest) -> GalaxyServerSchema:
+    """Create a new global Galaxy server definition.
+
+    Args:
+        body: Galaxy server creation payload.
+
+    Returns:
+        Newly created Galaxy server (token masked).
+
+    Raises:
+        HTTPException: 409 if a server with the same name already exists.
+    """
+    from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
+
+    try:
+        async with get_session() as db:
+            server = await q.create_galaxy_server(
+                db,
+                name=body.name,
+                url=body.url,
+                token=body.token,
+                auth_url=body.auth_url,
+            )
+    except IntegrityError:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Galaxy server named '{body.name}' already exists",
+        ) from None
+    return _to_galaxy_schema(server)
+
+
+@router.get("/settings/galaxy-servers/{server_id}")  # type: ignore[untyped-decorator]
+async def get_galaxy_server(server_id: int) -> GalaxyServerSchema:
+    """Fetch a single Galaxy server by ID.
+
+    Args:
+        server_id: Primary key.
+
+    Returns:
+        Galaxy server definition (token masked).
+
+    Raises:
+        HTTPException: 404 if not found.
+    """
+    async with get_session() as db:
+        server = await q.get_galaxy_server(db, server_id)
+    if server is None:
+        raise HTTPException(status_code=404, detail="Galaxy server not found")
+    return _to_galaxy_schema(server)
+
+
+@router.put("/settings/galaxy-servers/{server_id}")  # type: ignore[untyped-decorator]
+async def update_galaxy_server(
+    server_id: int,
+    body: UpdateGalaxyServerRequest,
+) -> GalaxyServerSchema:
+    """Update a Galaxy server definition.
+
+    Args:
+        server_id: Primary key.
+        body: Fields to update.
+
+    Returns:
+        Updated Galaxy server (token masked).
+
+    Raises:
+        HTTPException: 400 if no fields provided, 404 if not found.
+    """
+    updates: dict[str, str] = {}
+    if body.name is not None:
+        updates["name"] = body.name
+    if body.url is not None:
+        updates["url"] = body.url
+    if body.token is not None:
+        updates["token"] = body.token
+    if body.auth_url is not None:
+        updates["auth_url"] = body.auth_url
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    async with get_session() as db:
+        server = await q.update_galaxy_server(db, server_id, **updates)
+    if server is None:
+        raise HTTPException(status_code=404, detail="Galaxy server not found")
+    return _to_galaxy_schema(server)
+
+
+@router.delete("/settings/galaxy-servers/{server_id}", status_code=204)  # type: ignore[untyped-decorator]
+async def delete_galaxy_server(server_id: int) -> None:
+    """Delete a Galaxy server definition.
+
+    Args:
+        server_id: Primary key.
+
+    Raises:
+        HTTPException: 404 if not found.
+    """
+    async with get_session() as db:
+        ok = await q.delete_galaxy_server(db, server_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Galaxy server not found")
 
 
 # ── Project CRUD (ADR-037) ───────────────────────────────────────────
@@ -1067,6 +1210,7 @@ async def project_operate_ws(
         websocket: Incoming WebSocket connection.
         project_id: Target project UUID.
     """
+    from apme_gateway._galaxy_inject import load_galaxy_server_defs
     from apme_gateway.config import load_config
     from apme_gateway.scan.driver import run_project_operation
 
@@ -1084,6 +1228,7 @@ async def project_operate_ws(
             return
 
         cfg = load_config()
+        galaxy_servers = await load_galaxy_server_defs()
 
         op_scan_id = uuid.uuid4().hex
         started_sent = False
@@ -1224,6 +1369,7 @@ async def project_operate_ws(
                     progress_callback=_progress_cb,
                     approval_queue=approval_queue,
                     scan_id=op_scan_id,
+                    galaxy_servers=galaxy_servers or None,
                 )
 
             op_task = asyncio.create_task(_run_op())
@@ -1264,6 +1410,7 @@ async def project_operate_ws(
                 collection_specs=specs,
                 progress_callback=_progress_cb,
                 scan_id=op_scan_id,
+                galaxy_servers=galaxy_servers or None,
             )
             completed_scan_id = scan_id
 

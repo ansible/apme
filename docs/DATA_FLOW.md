@@ -302,6 +302,27 @@ UI (React SPA on :8081)
 
 Event emission uses ``await`` so delivery completes before the operation returns to the client. When the Reporting endpoint is known-down, a fast-fail timeout (1 s) prevents blocking the check/remediate path.
 
+## Galaxy server injection (Gateway → Engine, ADR-045)
+
+The Gateway stores global Galaxy server definitions (name, URL, token, auth URL)
+in its SQLite database.  When initiating any project operation (check or
+remediate) via the WebSocket endpoints or playground session, the Gateway loads
+all configured servers and injects them into the gRPC request:
+
+- `ScanOptions.galaxy_servers` on the first `ScanChunk`
+- `FixOptions.galaxy_servers` on the first chunk (remediate mode)
+
+The Primary writes these into a session-scoped temporary `ansible.cfg` so that
+`ansible-galaxy collection download` can authenticate against private Galaxy /
+Automation Hub instances without any per-project configuration.
+
+For CLI-initiated scans, `galaxy_servers` are parsed from the user's local
+`ansible.cfg` instead (PR 2).
+
+Token values are never exposed in the REST API — the response schema reports
+only `has_token: bool`.  Application-layer encryption of stored tokens is a
+documented follow-up requirement.
+
 ## Local daemon mode
 
 When running without the Podman pod, the CLI connects to a local daemon via `ensure_daemon()`:

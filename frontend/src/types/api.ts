@@ -239,3 +239,29 @@ export interface PythonPackageDetail {
   project_count: number;
   projects: PythonPackageProjectRef[];
 }
+
+// ── Galaxy server types (ADR-045) ────────────────────────────────────
+
+export interface GalaxyServer {
+  id: number;
+  name: string;
+  url: string;
+  auth_url: string;
+  has_token: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateGalaxyServerRequest {
+  name: string;
+  url: string;
+  token?: string;
+  auth_url?: string;
+}
+
+export interface UpdateGalaxyServerRequest {
+  name?: string;
+  url?: string;
+  token?: string;
+  auth_url?: string;
+}

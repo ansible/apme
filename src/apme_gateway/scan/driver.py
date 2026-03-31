@@ -23,6 +23,7 @@ import grpc
 import grpc.aio
 
 from apme.v1 import primary_pb2, primary_pb2_grpc
+from apme.v1.common_pb2 import GalaxyServerDef
 from apme_engine.daemon.chunked_fs import yield_scan_chunks
 
 logger = logging.getLogger(__name__)
@@ -105,6 +106,7 @@ async def run_project_operation(
     progress_callback: ProgressCallback | None = None,
     approval_queue: asyncio.Queue[list[str]] | None = None,
     scan_id: str | None = None,
+    galaxy_servers: list[GalaxyServerDef] | None = None,
 ) -> tuple[str, primary_pb2.SessionResult | None]:
     """Clone a project repo and run check or remediate via Primary ``FixSession``.
 
@@ -124,6 +126,7 @@ async def run_project_operation(
         progress_callback: Optional async callable for each ``SessionEvent``.
         approval_queue: Queue of approved proposal IDs (remediate mode, when AI proposes).
         scan_id: Optional pre-generated scan ID; one is created if omitted.
+        galaxy_servers: Global Galaxy server defs to inject into scan metadata (ADR-045).
 
     Returns:
         Tuple of (scan_id, SessionResult or None).
@@ -145,6 +148,7 @@ async def run_project_operation(
                 ansible_core_version=ansible_version or None,
                 collection_specs=collection_specs or None,
                 session_id=session_id,
+                galaxy_servers=galaxy_servers,
             )
         )
 
@@ -154,6 +158,7 @@ async def run_project_operation(
                 collection_specs=collection_specs or [],
                 enable_ai=enable_ai,
                 ai_model=ai_model,
+                galaxy_servers=galaxy_servers or [],
             )
             chunks[0].fix_options.CopyFrom(fix_opts)  # type: ignore[union-attr]
 
@@ -220,6 +225,7 @@ async def run_project_scan(
     collection_specs: list[str] | None = None,
     progress_callback: ProgressCallback | None = None,
     scan_id: str | None = None,
+    galaxy_servers: list[GalaxyServerDef] | None = None,
 ) -> tuple[str, primary_pb2.SessionResult | None]:
     """Backward-compatible alias for check mode.
 
@@ -235,6 +241,7 @@ async def run_project_scan(
         collection_specs: Collection install specs.
         progress_callback: Optional async callable for each ``SessionEvent``.
         scan_id: Optional pre-generated scan ID.
+        galaxy_servers: Global Galaxy server defs to inject (ADR-045).
 
     Returns:
         Tuple of (scan_id, SessionResult or None).
@@ -249,6 +256,7 @@ async def run_project_scan(
         collection_specs=collection_specs,
         progress_callback=progress_callback,
         scan_id=scan_id,
+        galaxy_servers=galaxy_servers,
     )
 
 
@@ -265,6 +273,7 @@ async def run_project_fix(
     progress_callback: ProgressCallback | None = None,
     approval_queue: asyncio.Queue[list[str]] | None = None,
     scan_id: str | None = None,
+    galaxy_servers: list[GalaxyServerDef] | None = None,
 ) -> tuple[str, primary_pb2.SessionResult | None]:
     """Backward-compatible alias for remediate mode.
 
@@ -283,6 +292,7 @@ async def run_project_fix(
         progress_callback: Optional async callable for each ``SessionEvent``.
         approval_queue: Queue of approved proposal IDs.
         scan_id: Optional pre-generated scan ID.
+        galaxy_servers: Global Galaxy server defs to inject (ADR-045).
 
     Returns:
         Tuple of (scan_id, SessionResult or None).
@@ -300,4 +310,5 @@ async def run_project_fix(
         progress_callback=progress_callback,
         approval_queue=approval_queue,
         scan_id=scan_id,
+        galaxy_servers=galaxy_servers,
     )

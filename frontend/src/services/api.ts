@@ -5,8 +5,10 @@ import type {
   AiModelInfo,
   CollectionDetail,
   CollectionSummary,
+  CreateGalaxyServerRequest,
   CreateProjectRequest,
   DashboardSummary,
+  GalaxyServer,
   HealthStatus,
   PaginatedResponse,
   ProjectDependencies,
@@ -20,6 +22,7 @@ import type {
   SessionSummary,
   TopViolation,
   TrendPoint,
+  UpdateGalaxyServerRequest,
   UpdateProjectRequest,
   ViolationDetail,
 } from "../types/api";
@@ -197,6 +200,36 @@ export function listPythonPackages(
 
 export function getPythonPackageDetail(name: string): Promise<PythonPackageDetail> {
   return request(`/python-packages/${encodeURIComponent(name)}`);
+}
+
+// ── Galaxy server settings (ADR-045) ────────────────────────────────────
+
+export function listGalaxyServers(): Promise<GalaxyServer[]> {
+  return request("/settings/galaxy-servers");
+}
+
+export function createGalaxyServer(body: CreateGalaxyServerRequest): Promise<GalaxyServer> {
+  return request("/settings/galaxy-servers", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export function updateGalaxyServer(
+  serverId: number,
+  body: UpdateGalaxyServerRequest,
+): Promise<GalaxyServer> {
+  return request(`/settings/galaxy-servers/${serverId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export async function deleteGalaxyServer(serverId: number): Promise<void> {
+  const res = await fetch(`${BASE}/settings/galaxy-servers/${serverId}`, { method: "DELETE" });
+  if (!res.ok) throw new Error(`${res.status}`);
 }
 
 // ── Feedback (POC) ─────────────────────────────────────────────────────

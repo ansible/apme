@@ -442,8 +442,12 @@ async def handle_session(
         resume_scan_id: Original scan_id for the session being resumed,
             so event forwarding preserves scan-based links.
     """
+    from apme_gateway._galaxy_inject import load_galaxy_server_defs  # noqa: PLC0415
+
     temp_dir: Path | None = None
     try:
+        galaxy_servers = await load_galaxy_server_defs()
+
         if resume_session_id:
             scan_id = resume_scan_id or resume_session_id
             logger.info("Resuming session %s (scan_id=%s)", resume_session_id, scan_id)
@@ -481,6 +485,7 @@ async def handle_session(
                         project_root_name="upload",
                         ansible_core_version=ansible_version or None,
                         collection_specs=collections or None,
+                        galaxy_servers=galaxy_servers or None,
                     )
                     first_chunk = next(chunk_iter, None)
                     if first_chunk is None:
@@ -490,6 +495,7 @@ async def handle_session(
                         collection_specs=collections or [],
                         enable_ai=enable_ai,
                         ai_model=ai_model,
+                        galaxy_servers=galaxy_servers or [],
                     )
                     first_chunk.fix_options.CopyFrom(fix_opts)  # type: ignore[union-attr]
                     yield first_chunk

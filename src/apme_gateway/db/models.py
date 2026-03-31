@@ -312,3 +312,34 @@ class ScanPythonPackage(Base):
     version: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
     scan: Mapped[Scan] = relationship(back_populates="python_packages")
+
+
+# ── Global settings tables (ADR-045) ─────────────────────────────────
+
+
+class GalaxyServer(Base):
+    """A globally configured Galaxy/Automation Hub server (ADR-045).
+
+    Tokens are stored as plaintext in this release; application-layer
+    encryption is a documented follow-up requirement (see ADR-045
+    Consequences).
+
+    Attributes:
+        id: Auto-increment primary key.
+        name: Short label (e.g. ``automation_hub``).
+        url: Base URL of the Galaxy / Automation Hub API.
+        token: API token (may be empty for public Galaxy).
+        auth_url: SSO/Keycloak token endpoint (optional, for Automation Hub).
+        created_at: ISO 8601 creation timestamp.
+        updated_at: ISO 8601 last-update timestamp.
+    """
+
+    __tablename__ = "galaxy_servers"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    url: Mapped[str] = mapped_column(Text, nullable=False)
+    token: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    auth_url: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[str] = mapped_column(Text, nullable=False)

@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from apme_gateway.db.models import (
+    GalaxyServer,
     Project,
     Proposal,
     Scan,
@@ -1275,3 +1276,116 @@ async def python_package_detail(
         "project_count": len(projects),
         "projects": projects,
     }
+
+
+# ---------------------------------------------------------------------------
+# Galaxy server settings (ADR-045)
+# ---------------------------------------------------------------------------
+
+
+async def list_galaxy_servers(db: AsyncSession) -> list[GalaxyServer]:
+    """Return all globally configured Galaxy servers ordered by name.
+
+    Args:
+        db: Async database session.
+
+    Returns:
+        List of GalaxyServer rows.
+    """
+    result = await db.execute(select(GalaxyServer).order_by(GalaxyServer.name))
+    return list(result.scalars().all())
+
+
+async def get_galaxy_server(db: AsyncSession, server_id: int) -> GalaxyServer | None:
+    """Fetch a single Galaxy server by ID.
+
+    Args:
+        db: Async database session.
+        server_id: Primary key.
+
+    Returns:
+        GalaxyServer or None if not found.
+    """
+    result: GalaxyServer | None = await db.get(GalaxyServer, server_id)
+    return result
+
+
+async def create_galaxy_server(
+    db: AsyncSession,
+    *,
+    name: str,
+    url: str,
+    token: str = "",
+    auth_url: str = "",
+) -> GalaxyServer:
+    """Insert a new Galaxy server definition.
+
+    Args:
+        db: Async database session.
+        name: Short label.
+        url: Base API URL.
+        token: API token (may be empty).
+        auth_url: SSO endpoint (may be empty).
+
+    Returns:
+        The newly created GalaxyServer row.
+    """
+    now = datetime.now(tz=timezone.utc).isoformat()
+    server = GalaxyServer(
+        name=name,
+        url=url,
+        token=token,
+        auth_url=auth_url,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(server)
+    await db.commit()
+    await db.refresh(server)
+    return server
+
+
+async def update_galaxy_server(
+    db: AsyncSession,
+    server_id: int,
+    **fields: str,
+) -> GalaxyServer | None:
+    """Update mutable fields on a Galaxy server.
+
+    Args:
+        db: Async database session.
+        server_id: Primary key.
+        **fields: Column values to update (name, url, token, auth_url).
+
+    Returns:
+        Updated GalaxyServer or None if not found.
+    """
+    server: GalaxyServer | None = await db.get(GalaxyServer, server_id)
+    if server is None:
+        return None
+    allowed = {"name", "url", "token", "auth_url"}
+    for key, value in fields.items():
+        if key in allowed:
+            setattr(server, key, value)
+    server.updated_at = datetime.now(tz=timezone.utc).isoformat()
+    await db.commit()
+    await db.refresh(server)
+    return server
+
+
+async def delete_galaxy_server(db: AsyncSession, server_id: int) -> bool:
+    """Delete a Galaxy server by ID.
+
+    Args:
+        db: Async database session.
+        server_id: Primary key.
+
+    Returns:
+        True if a row was deleted, False if not found.
+    """
+    server = await db.get(GalaxyServer, server_id)
+    if server is None:
+        return False
+    await db.delete(server)
+    await db.commit()
+    return True

@@ -553,6 +553,63 @@ class OperationRequestOptions(BaseModel):  # type: ignore[misc]
     ai_model: str = ""
 
 
+# ── Galaxy server schemas (ADR-045) ──────────────────────────────────
+
+
+class GalaxyServerSchema(BaseModel):  # type: ignore[misc]
+    """A globally configured Galaxy/Automation Hub server.
+
+    Attributes:
+        id: Auto-increment primary key.
+        name: Short label (e.g. ``automation_hub``).
+        url: Base URL of the Galaxy / Automation Hub API.
+        auth_url: SSO/Keycloak token endpoint (empty if not applicable).
+        has_token: Whether a token is configured (token value is never exposed).
+        created_at: ISO 8601 creation timestamp.
+        updated_at: ISO 8601 last-update timestamp.
+    """
+
+    id: int
+    name: str
+    url: str
+    auth_url: str = ""
+    has_token: bool = False
+    created_at: str
+    updated_at: str
+
+
+class CreateGalaxyServerRequest(BaseModel):  # type: ignore[misc]
+    """Request body for creating a Galaxy server.
+
+    Attributes:
+        name: Short label.
+        url: Base API URL.
+        token: API token (optional, empty for public Galaxy).
+        auth_url: SSO/Keycloak token endpoint (optional).
+    """
+
+    name: str
+    url: str
+    token: str = ""
+    auth_url: str = ""
+
+
+class UpdateGalaxyServerRequest(BaseModel):  # type: ignore[misc]
+    """Partial update for Galaxy server fields.
+
+    Attributes:
+        name: New display label.
+        url: New base API URL.
+        token: New API token (omit or None to leave unchanged).
+        auth_url: New SSO endpoint.
+    """
+
+    name: str | None = None
+    url: str | None = None
+    token: str | None = None
+    auth_url: str | None = None
+
+
 class DashboardSummary(BaseModel):  # type: ignore[misc]
     """Cross-project aggregate statistics (ADR-037).
 
