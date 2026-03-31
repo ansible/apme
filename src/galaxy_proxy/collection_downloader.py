@@ -168,6 +168,7 @@ async def download_collections(
 
     env = dict(os.environ)
     temp_cfg_dir = None
+    process: asyncio.subprocess.Process | None = None
 
     try:
         if servers:
@@ -224,6 +225,12 @@ async def download_collections(
             "ansible-galaxy collection download timed out after %.0fs",
             timeout,
         )
+        if process is not None:
+            try:
+                process.kill()
+                await process.wait()
+            except ProcessLookupError:
+                pass
         return DownloadResult(
             failed_specs=list(collection_specs),
             stderr=f"Timed out after {timeout}s",
@@ -345,7 +352,17 @@ def convert_tarballs_in_dir(
                 logger.warning("Unsafe wheel name from %s: %r", tarball_path, whl_name)
                 continue
             whl_path = cache_dir / whl_name
-            whl_path.write_bytes(whl_data)
+            fd, tmp = tempfile.mkstemp(dir=cache_dir, suffix=".tmp")
+            tmp_path = Path(tmp)
+            ok = False
+            try:
+                with os.fdopen(fd, "wb") as f:
+                    f.write(whl_data)
+                os.replace(tmp_path, whl_path)
+                ok = True
+            finally:
+                if not ok:
+                    tmp_path.unlink(missing_ok=True)
             results.append((whl_name, whl_path))
             logger.info("Converted %s -> %s", tarball_path.name, whl_name)
         except Exception:

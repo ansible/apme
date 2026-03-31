@@ -61,7 +61,8 @@ def create_app(
     Args:
         pypi_url: Base URL for PyPI passthrough (non-collection packages).
         cache_dir: Optional cache root; defaults to XDG cache layout.
-        metadata_ttl: Seconds before cached version metadata expires.
+        metadata_ttl: Seconds before cached metadata is considered stale
+            (passed through to :class:`ProxyCache`).
         enable_passthrough: Whether to forward non-collection packages to PyPI.
         ansible_cfg_path: Path to an existing ``ansible.cfg`` for Galaxy auth.
         galaxy_servers: Ordered list of Galaxy server configs (ansible.cfg-style).
@@ -72,6 +73,7 @@ def create_app(
     """
     cache = ProxyCache(cache_dir=cache_dir, metadata_ttl=metadata_ttl)
     passthrough = PyPIPassthrough(pypi_url=pypi_url) if enable_passthrough else None
+    _download_locks: dict[str, asyncio.Lock] = {}
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:  # noqa: ARG001
@@ -129,7 +131,13 @@ def create_app(
             html, status = await passthrough.fetch_project_page(normalized)
             return HTMLResponse(content=html, status_code=status)
 
-        namespace, name = python_to_fqcn(normalized)
+        try:
+            namespace, name = python_to_fqcn(normalized)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Package {package_name!r} is not a valid Ansible collection name",
+            ) from exc
 
         cached_wheels = _list_cached_wheels(cache, namespace, name)
 
@@ -210,35 +218,47 @@ def create_app(
             raise HTTPException(status_code=404, detail=f"Invalid wheel filename: {filename}")
         version = parts[1]
 
-        logger.info(
-            "Cache miss: %s — downloading %s.%s %s via ansible-galaxy",
-            filename,
-            ns,
-            coll_name,
-            version,
-        )
+        lock_key = f"{ns}.{coll_name}:{version}"
+        lock = _download_locks.setdefault(lock_key, asyncio.Lock())
+        async with lock:
+            cached = cache.get_wheel(filename)
+            if cached:
+                logger.info("Cache hit after lock: %s", filename)
+                return Response(
+                    content=cached,
+                    media_type="application/octet-stream",
+                    headers={"Content-Disposition": f"attachment; filename={filename}"},
+                )
 
-        try:
-            whl_name, whl_data = await _download_and_convert(
+            logger.info(
+                "Cache miss: %s — downloading %s.%s %s via ansible-galaxy",
+                filename,
                 ns,
                 coll_name,
                 version,
-                ansible_cfg_path=ansible_cfg_path,
-                galaxy_servers=galaxy_servers,
-                ansible_galaxy_bin=ansible_galaxy_bin,
             )
-        except Exception as exc:
-            logger.exception("Failed to download/convert %s.%s %s", ns, coll_name, version)
-            raise HTTPException(
-                status_code=502,
-                detail=(
-                    f"Failed to download/convert {ns}.{coll_name} {version} via ansible-galaxy"
-                    + (f": {exc}" if str(exc) else "")
-                ),
-            ) from exc
 
-        cache.put_wheel(whl_name, whl_data)
-        logger.info("Converted and cached: %s (%d bytes)", whl_name, len(whl_data))
+            try:
+                whl_name, whl_data = await _download_and_convert(
+                    ns,
+                    coll_name,
+                    version,
+                    ansible_cfg_path=ansible_cfg_path,
+                    galaxy_servers=galaxy_servers,
+                    ansible_galaxy_bin=ansible_galaxy_bin,
+                )
+            except Exception as exc:
+                logger.exception("Failed to download/convert %s.%s %s", ns, coll_name, version)
+                raise HTTPException(
+                    status_code=502,
+                    detail=(
+                        f"Failed to download/convert {ns}.{coll_name} {version} via ansible-galaxy"
+                        + (f": {exc}" if str(exc) else "")
+                    ),
+                ) from exc
+
+            cache.put_wheel(whl_name, whl_data)
+            logger.info("Converted and cached: %s (%d bytes)", whl_name, len(whl_data))
 
         return Response(
             content=whl_data,
