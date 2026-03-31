@@ -137,3 +137,30 @@ class TestWriteSessionGalaxyCfg:
         """Servers missing a url are filtered out."""
         servers = [GalaxyServerDef(name="broken", url="")]
         assert _write_session_galaxy_cfg(servers) is None
+
+    def test_strips_whitespace_urls(self) -> None:
+        """Whitespace-only URLs are treated as empty and skipped."""
+        servers = [GalaxyServerDef(name="ws", url="   ")]
+        assert _write_session_galaxy_cfg(servers) is None
+
+    def test_deduplicates_server_names(self) -> None:
+        """Duplicate server names get a suffix to avoid ValueError."""
+        import shutil
+
+        servers = [
+            GalaxyServerDef(name="hub", url="https://hub1.example.com/"),
+            GalaxyServerDef(name="hub", url="https://hub2.example.com/"),
+        ]
+        cfg_path = _write_session_galaxy_cfg(servers)
+        assert cfg_path is not None
+
+        parser = configparser.ConfigParser()
+        parser.read(str(cfg_path))
+
+        server_list = parser.get("galaxy", "server_list")
+        assert "hub" in server_list
+        assert "hub_1" in server_list
+        assert parser.get("galaxy_server.hub", "url") == "https://hub1.example.com/"
+        assert parser.get("galaxy_server.hub_1", "url") == "https://hub2.example.com/"
+
+        shutil.rmtree(cfg_path.parent)

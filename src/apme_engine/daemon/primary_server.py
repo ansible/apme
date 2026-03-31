@@ -123,21 +123,36 @@ def _write_session_galaxy_cfg(
         write_temp_ansible_cfg,
     )
 
-    configs = [
-        GalaxyServerConfig(
-            name=s.name or f"server_{i}",
-            url=s.url,
-            token=s.token or None,
-            auth_url=s.auth_url or None,
+    seen_names: set[str] = set()
+    configs: list[GalaxyServerConfig] = []
+    for i, s in enumerate(galaxy_servers):
+        url = (s.url or "").strip()
+        if not url:
+            continue
+        base_name = s.name or f"server_{i}"
+        name = base_name
+        suffix = 1
+        while name in seen_names:
+            name = f"{base_name}_{suffix}"
+            suffix += 1
+        seen_names.add(name)
+        configs.append(
+            GalaxyServerConfig(
+                name=name,
+                url=url,
+                token=s.token or None,
+                auth_url=s.auth_url or None,
+            )
         )
-        for i, s in enumerate(galaxy_servers)
-        if s.url
-    ]
     if not configs:
         return None
 
     cfg_dir = Path(tempfile.mkdtemp(prefix="apme-galaxy-session-"))
-    return write_temp_ansible_cfg(configs, cfg_dir)
+    try:
+        return write_temp_ansible_cfg(configs, cfg_dir)
+    except Exception:
+        logger.exception("Failed to write session Galaxy config in %s", cfg_dir)
+        return None
 
 
 def _sort_violations(violations: list[ViolationDict]) -> list[ViolationDict]:
