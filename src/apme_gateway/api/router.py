@@ -17,6 +17,7 @@ import uuid
 from typing import cast
 
 from fastapi import APIRouter, HTTPException, Query, WebSocket
+from fastapi.responses import JSONResponse
 from starlette.websockets import WebSocketDisconnect  # type: ignore[import-not-found]
 
 from apme_gateway.api.schemas import (
@@ -62,6 +63,13 @@ from apme_gateway.db.models import GalaxyServer, Scan, ScanManifest
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1")
+
+try:
+    from importlib.metadata import version as _pkg_version  # noqa: PLC0415
+
+    _TOOLS_VERSION = _pkg_version("apme")
+except Exception:  # noqa: BLE001
+    _TOOLS_VERSION = "0.1.0"
 
 
 _UPSTREAM_SERVICES: list[tuple[str, str, str]] = [
@@ -706,8 +714,14 @@ async def project_dependencies_endpoint(project_id: str) -> ProjectDependencies:
 
     return ProjectDependencies(
         ansible_core_version=manifest.ansible_core_version if manifest else "",
-        collections=[CollectionRefSchema(fqcn=c.fqcn, version=c.version, source=c.source) for c in collections],
-        python_packages=[PythonPackageRefSchema(name=p.name, version=p.version) for p in packages],
+        collections=[
+            CollectionRefSchema(fqcn=c.fqcn, version=c.version, source=c.source, license=c.license, supplier=c.supplier)
+            for c in collections
+        ],
+        python_packages=[
+            PythonPackageRefSchema(name=p.name, version=p.version, license=p.license, supplier=p.supplier)
+            for p in packages
+        ],
         requirements_files=_parse_requirements_files(manifest),
         dependency_tree=manifest.dependency_tree if manifest else "",
     )
@@ -730,6 +744,44 @@ def _parse_requirements_files(manifest: ScanManifest | None) -> list[str]:
         return list(_json.loads(manifest.requirements_files_json))
     except (TypeError, ValueError):
         return []
+
+
+# ── SBOM endpoint ────────────────────────────────────────────────────
+
+
+@router.get("/projects/{project_id}/sbom")  # type: ignore[untyped-decorator]
+async def project_sbom_endpoint(
+    project_id: str,
+    format: str = Query(default="cyclonedx"),
+) -> JSONResponse:
+    """Return an SBOM for a project's latest scan.
+
+    Args:
+        project_id: Project UUID or name.
+        format: SBOM output format (currently only ``cyclonedx``).
+
+    Returns:
+        CycloneDX 1.5 JSON response.
+
+    Raises:
+        HTTPException: 400 for unsupported format, 404 if project or scan data not found.
+    """
+    if format not in ("cyclonedx",):
+        raise HTTPException(status_code=400, detail=f"Unsupported SBOM format: {format}")
+
+    async with get_session() as db:
+        proj = await q.resolve_project(db, project_id)
+        if not proj:
+            raise HTTPException(status_code=404, detail="Project not found")
+        manifest, collections, packages = await q.project_dependencies(db, proj.id)
+
+    if manifest is None:
+        raise HTTPException(status_code=404, detail="No scan data available")
+
+    from apme_gateway.api.sbom import manifest_to_cyclonedx  # noqa: PLC0415
+
+    bom = manifest_to_cyclonedx(manifest, collections, packages, tools_version=_TOOLS_VERSION)
+    return JSONResponse(content=bom, media_type="application/vnd.cyclonedx+json")
 
 
 # ── Collections and packages (ADR-040) ──────────────────────────────

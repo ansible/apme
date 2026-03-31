@@ -277,6 +277,8 @@ class ScanCollection(Base):
         fqcn: Fully-qualified collection name.
         version: Installed version string.
         source: Classification — specified, learned, or dependency.
+        license: SPDX license identifier from collection metadata.
+        supplier: Author or namespace from collection metadata.
         scan: Back-reference to owning Scan.
     """
 
@@ -288,6 +290,8 @@ class ScanCollection(Base):
     fqcn: Mapped[str] = mapped_column(Text, nullable=False)
     version: Mapped[str] = mapped_column(Text, nullable=False, default="")
     source: Mapped[str] = mapped_column(Text, nullable=False, default="unknown")
+    license: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    supplier: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
     scan: Mapped[Scan] = relationship(back_populates="collections")
 
@@ -300,6 +304,8 @@ class ScanPythonPackage(Base):
         scan_id: Owning scan UUID (FK to scans).
         name: PyPI package name.
         version: Installed version string.
+        license: SPDX license identifier from package metadata.
+        supplier: Author or maintainer from package metadata.
         scan: Back-reference to owning Scan.
     """
 
@@ -310,6 +316,8 @@ class ScanPythonPackage(Base):
     scan_id: Mapped[str] = mapped_column(Text, ForeignKey("scans.scan_id"), nullable=False)
     name: Mapped[str] = mapped_column(Text, nullable=False)
     version: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    license: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    supplier: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
     scan: Mapped[Scan] = relationship(back_populates="python_packages")
 

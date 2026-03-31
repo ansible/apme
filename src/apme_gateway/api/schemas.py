@@ -404,11 +404,15 @@ class CollectionRefSchema(BaseModel):  # type: ignore[misc]
         fqcn: Fully-qualified collection name.
         version: Installed version string.
         source: Origin — galaxy, local, or git.
+        license: SPDX license identifier from collection metadata.
+        supplier: Author or namespace from collection metadata.
     """
 
     fqcn: str
     version: str
     source: str
+    license: str = ""
+    supplier: str = ""
 
 
 class PythonPackageRefSchema(BaseModel):  # type: ignore[misc]
@@ -417,10 +421,14 @@ class PythonPackageRefSchema(BaseModel):  # type: ignore[misc]
     Attributes:
         name: PyPI package name.
         version: Installed version string.
+        license: License identifier from package metadata.
+        supplier: Author from package metadata.
     """
 
     name: str
     version: str
+    license: str = ""
+    supplier: str = ""
 
 
 class ProjectDependencies(BaseModel):  # type: ignore[misc]
