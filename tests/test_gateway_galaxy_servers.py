@@ -198,6 +198,28 @@ async def test_update_galaxy_server_not_found(client: AsyncClient) -> None:
     assert resp.status_code == 404
 
 
+async def test_update_galaxy_server_duplicate_name(client: AsyncClient) -> None:
+    """PUT /settings/galaxy-servers/{id} returns 409 when renaming to an existing name.
+
+    Args:
+        client: Async HTTP test client.
+    """
+    await client.post(
+        "/api/v1/settings/galaxy-servers",
+        json={"name": "alpha", "url": "https://a.example.com/"},
+    )
+    create_resp = await client.post(
+        "/api/v1/settings/galaxy-servers",
+        json={"name": "beta", "url": "https://b.example.com/"},
+    )
+    beta_id = create_resp.json()["id"]
+    resp = await client.put(
+        f"/api/v1/settings/galaxy-servers/{beta_id}",
+        json={"name": "alpha"},
+    )
+    assert resp.status_code == 409
+
+
 async def test_update_galaxy_server_no_fields(client: AsyncClient) -> None:
     """PUT /settings/galaxy-servers/{id} with empty body returns 400.
 

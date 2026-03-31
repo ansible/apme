@@ -57,7 +57,7 @@ from apme_gateway.api.schemas import (
 )
 from apme_gateway.db import get_session
 from apme_gateway.db import queries as q
-from apme_gateway.db.models import Scan, ScanManifest
+from apme_gateway.db.models import GalaxyServer, Scan, ScanManifest
 
 logger = logging.getLogger(__name__)
 
@@ -209,7 +209,7 @@ async def list_ai_models() -> list[AiModelInfo]:
 # ── Galaxy server settings (ADR-045) ─────────────────────────────────
 
 
-def _to_galaxy_schema(gs: object) -> GalaxyServerSchema:
+def _to_galaxy_schema(gs: GalaxyServer) -> GalaxyServerSchema:
     """Convert a GalaxyServer ORM row to the API response schema.
 
     The token value is never exposed; only ``has_token`` is reported.
@@ -221,13 +221,13 @@ def _to_galaxy_schema(gs: object) -> GalaxyServerSchema:
         Pydantic GalaxyServerSchema.
     """
     return GalaxyServerSchema(
-        id=gs.id,  # type: ignore[attr-defined]
-        name=gs.name,  # type: ignore[attr-defined]
-        url=gs.url,  # type: ignore[attr-defined]
-        auth_url=gs.auth_url,  # type: ignore[attr-defined]
-        has_token=bool(gs.token),  # type: ignore[attr-defined]
-        created_at=gs.created_at,  # type: ignore[attr-defined]
-        updated_at=gs.updated_at,  # type: ignore[attr-defined]
+        id=gs.id,
+        name=gs.name,
+        url=gs.url,
+        auth_url=gs.auth_url,
+        has_token=bool(gs.token),
+        created_at=gs.created_at,
+        updated_at=gs.updated_at,
     )
 
 
@@ -310,8 +310,11 @@ async def update_galaxy_server(
         Updated Galaxy server (token masked).
 
     Raises:
-        HTTPException: 400 if no fields provided, 404 if not found.
+        HTTPException: 400 if no fields provided, 404 if not found,
+            409 if the new name conflicts with an existing server.
     """
+    from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
+
     updates: dict[str, str] = {}
     if body.name is not None:
         updates["name"] = body.name
@@ -323,8 +326,14 @@ async def update_galaxy_server(
         updates["auth_url"] = body.auth_url
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")
-    async with get_session() as db:
-        server = await q.update_galaxy_server(db, server_id, **updates)
+    try:
+        async with get_session() as db:
+            server = await q.update_galaxy_server(db, server_id, **updates)
+    except IntegrityError:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Galaxy server named '{updates.get('name', '')}' already exists",
+        ) from None
     if server is None:
         raise HTTPException(status_code=404, detail="Galaxy server not found")
     return _to_galaxy_schema(server)
