@@ -24,7 +24,7 @@ User runs:  apme check /path/to/project
 │     - project_root (basename)                                   │
 │     - files[] = File(path=relative, content=bytes) per chunk    │
 │     - ScanOptions on first chunk (ansible_core_version,         │
-│       collection_specs)                                         │
+│       collection_specs, galaxy_servers — ADR-045)               │
 │                                                                 │
 │  gRPC: Primary.FixSession(stream SessionCommand) — ADR-039      │
 │        Each SessionCommand carries upload=ScanChunk until       │

@@ -133,6 +133,15 @@ message ProjectManifest {
   string dependency_tree = 5;               // raw `uv pip tree` output
 }
 
+// Galaxy server definition for scan-scoped credential flow (ADR-045).
+// Mirrors the per-server section in ansible.cfg [galaxy_server.<name>].
+message GalaxyServerDef {
+  string name = 1;         // Short label (ansible.cfg section name)
+  string url = 2;          // Base URL of Galaxy / Automation Hub API
+  string token = 3;        // API token (optional)
+  string auth_url = 4;     // SSO/Keycloak token endpoint (optional, for Automation Hub)
+}
+
 // Log level for structured log transport (ADR-033).
 enum LogLevel {
   LOG_LEVEL_UNSPECIFIED = 0;

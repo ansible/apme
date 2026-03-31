@@ -20,6 +20,7 @@ from apme.v1.primary_pb2 import (
     SessionCommand,
 )
 from apme_engine.cli._convert import violation_proto_to_dict
+from apme_engine.cli._galaxy_config import discover_galaxy_servers
 from apme_engine.cli._models import ViolationDict
 from apme_engine.cli._project_root import derive_session_id, discover_project_root
 from apme_engine.cli.ansi import dim, red, yellow
@@ -92,6 +93,10 @@ def run_check(args: argparse.Namespace) -> None:
     verbosity = getattr(args, "verbose", 0) or 0
     session_id = _resolve_session_id(args)
 
+    target: str = getattr(args, "target", ".")
+    project_root = discover_project_root(target)
+    galaxy_servers = discover_galaxy_servers(project_root) or None
+
     try:
         chunks = yield_scan_chunks(
             args.target,
@@ -99,6 +104,7 @@ def run_check(args: argparse.Namespace) -> None:
             ansible_core_version=getattr(args, "ansible_version", None),
             collection_specs=getattr(args, "collections", None),
             session_id=session_id,
+            galaxy_servers=galaxy_servers,
         )
     except FileNotFoundError as e:
         sys.stderr.write(f"{e}\n")

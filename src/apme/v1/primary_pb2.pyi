@@ -1,15 +1,20 @@
 """Stub for generated primary_pb2 (proto types)."""
 
+from collections.abc import Iterable
+
 from google.protobuf.struct_pb2 import Struct
 
-from apme.v1.common_pb2 import ProgressUpdate, ValidatorDiagnostics, Violation
+from apme.v1.common_pb2 import GalaxyServerDef, ProgressUpdate, ValidatorDiagnostics, Violation
 
 class ScanOptions:
     include_scandata: bool
     ansible_core_version: str
     collection_specs: list[str]
     session_id: str
-    def __init__(self, *, session_id: str = "", **kwargs: object) -> None: ...
+    galaxy_servers: list[GalaxyServerDef]
+    def __init__(
+        self, *, session_id: str = "", galaxy_servers: Iterable[GalaxyServerDef] | None = ..., **kwargs: object
+    ) -> None: ...
 
 class FixOptions:
     max_passes: int
@@ -20,7 +25,10 @@ class FixOptions:
     enable_agentic: bool
     ai_model: str
     session_id: str
-    def __init__(self, *, session_id: str = "", **kwargs: object) -> None: ...
+    galaxy_servers: list[GalaxyServerDef]
+    def __init__(
+        self, *, session_id: str = "", galaxy_servers: Iterable[GalaxyServerDef] | None = ..., **kwargs: object
+    ) -> None: ...
 
 class ScanChunk:
     scan_id: str

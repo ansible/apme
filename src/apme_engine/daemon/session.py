@@ -63,6 +63,7 @@ class SessionState:
         scan_id: Client-provided scan identifier for event correlation.
         project_root: Project root path from the first upload chunk.
         progress_logs: Pipeline milestone logs collected during processing.
+        galaxy_cfg_path: Session-scoped ansible.cfg for Galaxy auth (ADR-045).
         ansible_core_version: Ansible-core version from session venv (ADR-040).
         installed_collections: ``(fqcn, version, source)`` tuples from session venv (ADR-040).
         installed_packages: ``(name, version)`` tuples from ``pip list`` (ADR-040).
@@ -105,6 +106,10 @@ class SessionState:
     # Pipeline milestone logs collected during processing for FixCompletedEvent
     progress_logs: list[ProgressUpdate] = field(default_factory=list)
 
+    # Session-scoped ansible.cfg for Galaxy auth (ADR-045).
+    # Written by Primary from proto galaxy_servers; cleaned up with temp_dir.
+    galaxy_cfg_path: Path | None = None
+
     # Manifest data captured from the first scan pass (ADR-040)
     ansible_core_version: str = ""
     installed_collections: list[tuple[str, str, str]] = field(default_factory=list)
@@ -138,7 +143,11 @@ class SessionState:
         self.last_activity_at = datetime.now(timezone.utc)
 
     def cleanup(self) -> None:
-        """Remove temp directory if present."""
+        """Remove temp directory and session-scoped Galaxy config if present."""
+        if self.galaxy_cfg_path and self.galaxy_cfg_path.parent.is_dir():
+            with contextlib.suppress(OSError):
+                shutil.rmtree(self.galaxy_cfg_path.parent)
+            self.galaxy_cfg_path = None
         if self.temp_dir and self.temp_dir.is_dir():
             with contextlib.suppress(OSError):
                 shutil.rmtree(self.temp_dir)

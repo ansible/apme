@@ -26,6 +26,7 @@ from apme.v1 import primary_pb2_grpc, validate_pb2_grpc
 from apme.v1.common_pb2 import (
     CollectionRef,
     File,
+    GalaxyServerDef,
     HealthRequest,
     HealthResponse,
     ProgressUpdate,
@@ -97,6 +98,46 @@ class _ValidatorResult:
     violations: list[ViolationDict] = field(default_factory=list)
     diagnostics: ValidatorDiagnostics | None = None
     logs: list[ProgressUpdate] = field(default_factory=list)
+
+
+def _write_session_galaxy_cfg(
+    galaxy_servers: Sequence[GalaxyServerDef],
+) -> Path | None:
+    """Write a session-scoped ``ansible.cfg`` from proto Galaxy server defs (ADR-045).
+
+    The caller is responsible for cleaning up the temp directory
+    (typically via ``SessionState.cleanup``).
+
+    Args:
+        galaxy_servers: Ordered sequence of ``GalaxyServerDef`` proto messages.
+
+    Returns:
+        Path to the written ``ansible.cfg``, or ``None`` if no servers were
+        provided or none had a url.
+    """
+    if not galaxy_servers:
+        return None
+
+    from galaxy_proxy.collection_downloader import (  # noqa: PLC0415
+        GalaxyServerConfig,
+        write_temp_ansible_cfg,
+    )
+
+    configs = [
+        GalaxyServerConfig(
+            name=s.name or f"server_{i}",
+            url=s.url,
+            token=s.token or None,
+            auth_url=s.auth_url or None,
+        )
+        for i, s in enumerate(galaxy_servers)
+        if s.url
+    ]
+    if not configs:
+        return None
+
+    cfg_dir = Path(tempfile.mkdtemp(prefix="apme-galaxy-session-"))
+    return write_temp_ansible_cfg(configs, cfg_dir)
 
 
 def _sort_violations(violations: list[ViolationDict]) -> list[ViolationDict]:
@@ -463,6 +504,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         include_scandata: bool = True,
         session_id: str = "",
         progress_callback: Callable[[str, str, float, int], None] | None = None,
+        galaxy_cfg_path: Path | None = None,
     ) -> tuple[
         list[ViolationDict],
         ScanDiagnostics | None,
@@ -500,6 +542,8 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             session_id: Client-provided session ID for venv reuse.
             progress_callback: Optional callback ``(phase, message, fraction)``
                 for streaming per-validator progress to callers.
+            galaxy_cfg_path: Session-scoped ``ansible.cfg`` for Galaxy auth
+                (ADR-045).  Reserved for proxy integration — not yet consumed.
 
         Returns:
             Tuple of (violations, ScanDiagnostics or None, resolved session_id,
@@ -998,16 +1042,29 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         collection_specs: list[str] = []
         max_passes = 5
         fix_session_id = ""
+        galaxy_servers: Sequence[GalaxyServerDef] = ()
         if fix_opts:
             ansible_core_version = fix_opts.ansible_core_version
             collection_specs = list(fix_opts.collection_specs)
             fix_session_id = fix_opts.session_id
             if fix_opts.max_passes > 0:
                 max_passes = fix_opts.max_passes
+            galaxy_servers = fix_opts.galaxy_servers
         elif scan_opts:
             ansible_core_version = scan_opts.ansible_core_version
             collection_specs = list(scan_opts.collection_specs)
             fix_session_id = scan_opts.session_id
+            galaxy_servers = scan_opts.galaxy_servers
+
+        if galaxy_servers:
+            session.galaxy_cfg_path = _write_session_galaxy_cfg(galaxy_servers)
+            if session.galaxy_cfg_path:
+                logger.info(
+                    "Session %s: wrote Galaxy config with %d server(s) at %s",
+                    session.session_id,
+                    len(galaxy_servers),
+                    session.galaxy_cfg_path,
+                )
 
         if not all_files:
             session.status = 3  # COMPLETE
@@ -1124,6 +1181,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                 collection_specs=collection_specs,
                 session_id=fix_session_id,
                 progress_callback=_progress_callback,
+                galaxy_cfg_path=session.galaxy_cfg_path,
             )
             future = asyncio.run_coroutine_threadsafe(coro, loop)
             (

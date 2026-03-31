@@ -71,6 +71,23 @@ class ValidatorDiagnostics:
     metadata: dict[str, str]
     def __init__(self, **kwargs: object) -> None: ...
 
+class GalaxyServerDef:
+    name: str
+    url: str
+    token: str
+    auth_url: str
+    def __init__(
+        self,
+        *,
+        name: str = "",
+        url: str = "",
+        token: str = "",
+        auth_url: str = "",
+        **kwargs: object,
+    ) -> None: ...
+    def SerializeToString(self) -> bytes: ...
+    def ParseFromString(self, data: bytes) -> int: ...
+
 # Log level enum constants (ADR-033)
 LOG_LEVEL_UNSPECIFIED: int
 DEBUG: int

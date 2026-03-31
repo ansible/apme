@@ -25,6 +25,7 @@ from apme.v1.primary_pb2 import (
     ScanChunk,
     SessionCommand,
 )
+from apme_engine.cli._galaxy_config import discover_galaxy_servers
 from apme_engine.cli._project_root import derive_session_id, discover_project_root
 from apme_engine.cli.ansi import dim, red, yellow
 from apme_engine.cli.discovery import resolve_primary
@@ -43,11 +44,10 @@ def run_remediate(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     explicit_session = getattr(args, "session", None)
-    if explicit_session:
-        session_id = explicit_session
-    else:
-        project_root = discover_project_root(target)
-        session_id = derive_session_id(project_root)
+    project_root = discover_project_root(target)
+    session_id = explicit_session or derive_session_id(project_root)
+
+    galaxy_servers = discover_galaxy_servers(project_root) or None
 
     try:
         base_chunks = yield_scan_chunks(
@@ -56,6 +56,7 @@ def run_remediate(args: argparse.Namespace) -> None:
             ansible_core_version=getattr(args, "ansible_version", None),
             collection_specs=getattr(args, "collections", None),
             session_id=session_id,
+            galaxy_servers=galaxy_servers,
         )
     except FileNotFoundError as e:
         sys.stderr.write(f"{e}\n")
@@ -68,6 +69,7 @@ def run_remediate(args: argparse.Namespace) -> None:
         enable_ai=getattr(args, "ai", False),
         ai_model=getattr(args, "model", None) or os.environ.get("APME_AI_MODEL", ""),
         session_id=session_id,
+        galaxy_servers=galaxy_servers or [],
     )
 
     cmd_queue: queue.Queue[SessionCommand | None] = queue.Queue()

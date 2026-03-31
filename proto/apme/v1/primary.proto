@@ -44,6 +44,7 @@ message ScanOptions {
   string ansible_core_version = 2;
   repeated string collection_specs = 3;
   string session_id = 4;             // client-provided session identifier for venv reuse
+  repeated GalaxyServerDef galaxy_servers = 5;  // Galaxy server config as scan metadata (ADR-045)
 }
 
 message FixOptions {
@@ -55,6 +56,7 @@ message FixOptions {
   bool enable_agentic = 6;       // Tier 3 (future)
   string ai_model = 7;
   string session_id = 8;         // client-provided session for venv reuse
+  repeated GalaxyServerDef galaxy_servers = 9;  // Galaxy server config as scan metadata (ADR-045)
 }
 
 message ScanDiagnostics {
