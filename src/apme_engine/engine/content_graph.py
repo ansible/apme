@@ -207,6 +207,7 @@ class ContentNode:
         changed_when: changed_when expression.
         failed_when: failed_when expression.
         delegate_to: delegate_to target string.
+        yaml_lines: Raw YAML source fragment for this node's span.
         role_fqcn: Role FQCN when this node is role-related.
         default_variables: Role defaults mapping.
         role_variables: Role vars mapping.
@@ -250,6 +251,9 @@ class ContentNode:
     changed_when: YAMLValue | None = None
     failed_when: YAMLValue | None = None
     delegate_to: str | None = None
+
+    # Raw YAML source
+    yaml_lines: str = ""
 
     # Role metadata
     role_fqcn: str = ""
@@ -961,6 +965,7 @@ class GraphBuilder:
             ignore_errors=ignore_errors,
             changed_when=options.get("changed_when"),
             failed_when=options.get("failed_when"),
+            yaml_lines=getattr(task, "yaml_lines", "") or "",
             delegate_to=delegate_to,
             ari_key=task.key,
             scope=scope,
@@ -1052,6 +1057,7 @@ class GraphBuilder:
             options=options,
             notify=_as_str_list(options.get("notify")),
             listen=_as_str_list(options.get("listen")),
+            yaml_lines=getattr(task, "yaml_lines", "") or "",
             ari_key=task.key,
             scope=scope,
         )

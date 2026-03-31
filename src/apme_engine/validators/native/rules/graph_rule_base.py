@@ -26,6 +26,20 @@ if TYPE_CHECKING:
     from apme_engine.engine.content_graph import ContentGraph
 
 
+def is_templated(value: str) -> bool:
+    """Return True if ``value`` contains Jinja2 template markers.
+
+    Checks for ``{{`` (variable interpolation) or ``{%`` (block tags).
+
+    Args:
+        value: String to inspect.
+
+    Returns:
+        ``True`` when the string contains Jinja2 syntax.
+    """
+    return "{{" in value or "{%" in value
+
+
 @dataclass
 class GraphRuleResult:
     """Result of applying a GraphRule to a single node.
