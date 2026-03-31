@@ -70,7 +70,15 @@ def create_app(
 
     Returns:
         Configured FastAPI application instance.
+
+    Raises:
+        ValueError: When both ``ansible_cfg_path`` and ``galaxy_servers``
+            are provided.
     """
+    if ansible_cfg_path and galaxy_servers:
+        msg = "ansible_cfg_path and galaxy_servers are mutually exclusive"
+        raise ValueError(msg)
+
     cache = ProxyCache(cache_dir=cache_dir, metadata_ttl=metadata_ttl)
     passthrough = PyPIPassthrough(pypi_url=pypi_url) if enable_passthrough else None
     _download_locks: dict[str, asyncio.Lock] = {}
@@ -142,25 +150,32 @@ def create_app(
         cached_wheels = _list_cached_wheels(cache, namespace, name)
 
         if not cached_wheels:
-            try:
-                whl_name, whl_data = await _download_and_convert(
-                    namespace,
-                    name,
-                    "",
-                    ansible_cfg_path=ansible_cfg_path,
-                    galaxy_servers=galaxy_servers,
-                    ansible_galaxy_bin=ansible_galaxy_bin,
-                )
-                cache.put_wheel(whl_name, whl_data)
-                logger.info("On-demand download for %s.%s: %s", namespace, name, whl_name)
-                cached_wheels = [whl_name]
-            except Exception:
-                logger.warning(
-                    "On-demand download failed for %s.%s — returning empty listing",
-                    namespace,
-                    name,
-                    exc_info=True,
-                )
+            lock_key = f"{namespace}.{name}:latest"
+            lock = _download_locks.get(lock_key)
+            if lock is None:
+                lock = _download_locks.setdefault(lock_key, asyncio.Lock())
+            async with lock:
+                cached_wheels = _list_cached_wheels(cache, namespace, name)
+                if not cached_wheels:
+                    try:
+                        whl_name, whl_data = await _download_and_convert(
+                            namespace,
+                            name,
+                            "",
+                            ansible_cfg_path=ansible_cfg_path,
+                            galaxy_servers=galaxy_servers,
+                            ansible_galaxy_bin=ansible_galaxy_bin,
+                        )
+                        cache.put_wheel(whl_name, whl_data)
+                        logger.info("On-demand download for %s.%s: %s", namespace, name, whl_name)
+                        cached_wheels = [whl_name]
+                    except Exception:
+                        logger.warning(
+                            "On-demand download failed for %s.%s — returning empty listing",
+                            namespace,
+                            name,
+                            exc_info=True,
+                        )
 
         links: list[str] = []
         for whl_name in cached_wheels:
@@ -261,9 +276,6 @@ def create_app(
 
             cache.put_wheel(whl_name, whl_data)
             logger.info("Converted and cached: %s (%d bytes)", whl_name, len(whl_data))
-
-        if not lock.locked():
-            _download_locks.pop(lock_key, None)
 
         return Response(
             content=whl_data,

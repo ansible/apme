@@ -122,8 +122,8 @@ async def download_collections(
     """Download collection tarballs via ``ansible-galaxy collection download``.
 
     Either ``ansible_cfg_path`` (user's existing config) or ``servers``
-    (programmatic config) can be provided.  When ``servers`` is set, a
-    temporary ``ansible.cfg`` is written and pointed to via
+    (programmatic config) can be provided — not both.  When ``servers``
+    is set, a temporary ``ansible.cfg`` is written and pointed to via
     ``ANSIBLE_CONFIG``.
 
     Tarballs are written to ``download_dir``.  The caller is responsible
@@ -140,7 +140,14 @@ async def download_collections(
 
     Returns:
         DownloadResult with paths to downloaded tarballs and any failures.
+
+    Raises:
+        ValueError: When both ``ansible_cfg_path`` and ``servers`` are provided.
     """
+    if ansible_cfg_path and servers:
+        msg = "ansible_cfg_path and servers are mutually exclusive"
+        raise ValueError(msg)
+
     if not collection_specs:
         return DownloadResult()
 
