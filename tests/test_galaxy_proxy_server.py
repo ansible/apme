@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -12,17 +13,18 @@ from galaxy_proxy.proxy.server import create_app
 
 
 @pytest.fixture()  # type: ignore[untyped-decorator]
-def app(tmp_path: Path) -> TestClient:
+def app(tmp_path: Path) -> Iterator[TestClient]:
     """Create a test client for the proxy app with temp cache.
 
     Args:
         tmp_path: Pytest-provided temporary directory.
 
-    Returns:
-        FastAPI TestClient instance.
+    Yields:
+        TestClient: FastAPI TestClient instance.
     """
     application = create_app(cache_dir=tmp_path / "cache", enable_passthrough=False)
-    return TestClient(application)
+    with TestClient(application) as client:
+        yield client
 
 
 class TestHealth:
@@ -75,7 +77,6 @@ class TestProjectPage:
 
         cache_dir = tmp_path / "cache"
         application = create_app(cache_dir=cache_dir, enable_passthrough=False)
-        client = TestClient(application)
 
         fake_tarball = tmp_path / "ansible-posix-1.5.4.tar.gz"
         fake_tarball.touch()
@@ -87,6 +88,7 @@ class TestProjectPage:
         whl_name = "ansible_collection_ansible_posix-1.5.4-py3-none-any.whl"
 
         with (
+            TestClient(application) as client,
             patch("galaxy_proxy.proxy.server.download_collections", mock_download),
             patch(
                 "galaxy_proxy.proxy.server.tarball_to_wheel",
@@ -107,11 +109,13 @@ class TestProjectPage:
         """
         cache_dir = tmp_path / "cache"
         application = create_app(cache_dir=cache_dir, enable_passthrough=False)
-        client = TestClient(application)
 
         mock_download = AsyncMock(side_effect=RuntimeError("Galaxy unreachable"))
 
-        with patch("galaxy_proxy.proxy.server.download_collections", mock_download):
+        with (
+            TestClient(application) as client,
+            patch("galaxy_proxy.proxy.server.download_collections", mock_download),
+        ):
             resp = client.get("/simple/ansible-collection-ansible-posix/")
 
         assert resp.status_code == 200
@@ -130,9 +134,8 @@ class TestProjectPage:
         (wheels_dir / whl_name).write_bytes(b"fake-wheel")
 
         application = create_app(cache_dir=cache_dir, enable_passthrough=False)
-        client = TestClient(application)
-
-        resp = client.get("/simple/ansible-collection-ansible-posix/")
+        with TestClient(application) as client:
+            resp = client.get("/simple/ansible-collection-ansible-posix/")
         assert resp.status_code == 200
         assert whl_name in resp.text
         assert "/wheels/" in resp.text
@@ -155,9 +158,8 @@ class TestServeWheel:
         (wheels_dir / whl_name).write_bytes(whl_data)
 
         application = create_app(cache_dir=cache_dir)
-        client = TestClient(application)
-
-        resp = client.get(f"/wheels/{whl_name}")
+        with TestClient(application) as client:
+            resp = client.get(f"/wheels/{whl_name}")
         assert resp.status_code == 200
         assert resp.content == whl_data
         assert resp.headers["content-disposition"] == f"attachment; filename={whl_name}"
@@ -190,7 +192,6 @@ class TestServeWheel:
 
         cache_dir = tmp_path / "cache"
         application = create_app(cache_dir=cache_dir)
-        client = TestClient(application)
 
         fake_tarball = tmp_path / "ansible-posix-1.5.4.tar.gz"
         fake_tarball.touch()
@@ -201,6 +202,7 @@ class TestServeWheel:
         whl_data = b"PK\x03\x04converted-wheel"
 
         with (
+            TestClient(application) as client,
             patch("galaxy_proxy.proxy.server.download_collections", mock_download),
             patch(
                 "galaxy_proxy.proxy.server.tarball_to_wheel",
@@ -222,7 +224,6 @@ class TestServeWheel:
 
         cache_dir = tmp_path / "cache"
         application = create_app(cache_dir=cache_dir)
-        client = TestClient(application)
 
         mock_download = AsyncMock(
             return_value=DownloadResult(
@@ -231,7 +232,10 @@ class TestServeWheel:
             ),
         )
 
-        with patch("galaxy_proxy.proxy.server.download_collections", mock_download):
+        with (
+            TestClient(application) as client,
+            patch("galaxy_proxy.proxy.server.download_collections", mock_download),
+        ):
             resp = client.get("/wheels/ansible_collection_ansible_posix-1.5.4-py3-none-any.whl")
 
         assert resp.status_code == 502
@@ -257,16 +261,18 @@ class TestConvertTarballs:
         """
         cache_dir = tmp_path / "cache"
         application = create_app(cache_dir=cache_dir)
-        client = TestClient(application)
 
         tarball_dir = tmp_path / "tarballs"
         tarball_dir.mkdir()
         (tarball_dir / "ansible-posix-1.5.4.tar.gz").write_bytes(b"fake-tarball")
 
         whl_data = b"PK\x03\x04fake-wheel"
-        with patch(
-            "galaxy_proxy.proxy.server.tarball_to_wheel",
-            return_value=("ansible_collection_ansible_posix-1.5.4-py3-none-any.whl", whl_data),
+        with (
+            TestClient(application) as client,
+            patch(
+                "galaxy_proxy.proxy.server.tarball_to_wheel",
+                return_value=("ansible_collection_ansible_posix-1.5.4-py3-none-any.whl", whl_data),
+            ),
         ):
             resp = client.post("/convert-tarballs", params={"tarball_dir": str(tarball_dir)})
 
@@ -283,7 +289,6 @@ class TestConvertTarballs:
         """
         cache_dir = tmp_path / "cache"
         application = create_app(cache_dir=cache_dir)
-        client = TestClient(application)
-
-        resp = client.post("/convert-tarballs", params={"tarball_dir": str(tmp_path / "nope")})
+        with TestClient(application) as client:
+            resp = client.post("/convert-tarballs", params={"tarball_dir": str(tmp_path / "nope")})
         assert resp.status_code == 400

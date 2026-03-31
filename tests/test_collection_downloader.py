@@ -100,6 +100,29 @@ class TestWriteTempAnsibleCfg:
         assert not parser.has_option("galaxy_server.pub", "token")
         assert not parser.has_option("galaxy_server.pub", "auth_url")
 
+    def test_duplicate_server_names_rejected(self, tmp_path: Path) -> None:
+        """Duplicate server names raise ValueError.
+
+        Args:
+            tmp_path: Pytest-provided temporary directory.
+        """
+        servers = [
+            GalaxyServerConfig(name="galaxy", url="https://galaxy.ansible.com"),
+            GalaxyServerConfig(name="galaxy", url="https://other.example.com"),
+        ]
+        with pytest.raises(ValueError, match="Duplicate Galaxy server name"):
+            write_temp_ansible_cfg(servers, tmp_path)
+
+    def test_empty_server_name_rejected(self, tmp_path: Path) -> None:
+        """Empty server name raises ValueError.
+
+        Args:
+            tmp_path: Pytest-provided temporary directory.
+        """
+        servers = [GalaxyServerConfig(name="", url="https://galaxy.ansible.com")]
+        with pytest.raises(ValueError, match="must be non-empty"):
+            write_temp_ansible_cfg(servers, tmp_path)
+
 
 class TestFindTarballs:
     """Tests for _find_tarballs."""

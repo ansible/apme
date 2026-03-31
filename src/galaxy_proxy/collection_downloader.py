@@ -73,10 +73,23 @@ def write_temp_ansible_cfg(
 
     Returns:
         Path to the written ``ansible.cfg``.
+
+    Raises:
+        ValueError: If any server name is empty or duplicated.
     """
     cfg = configparser.ConfigParser(interpolation=None)
 
     server_names = [s.name for s in servers]
+    seen: set[str] = set()
+    for name in server_names:
+        if not name:
+            msg = "GalaxyServerConfig.name must be non-empty"
+            raise ValueError(msg)
+        if name in seen:
+            msg = f"Duplicate Galaxy server name {name!r} — pass a unique name= for each server"
+            raise ValueError(msg)
+        seen.add(name)
+
     cfg.add_section("galaxy")
     cfg.set("galaxy", "server_list", ",".join(server_names))
 
