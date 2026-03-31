@@ -212,8 +212,7 @@ async def download_collections(
                 process.returncode,
                 stderr_text or stdout_text,
             )
-            downloaded_fqcns = _extract_fqcns_from_tarballs(tarballs)
-            failed = [s for s in collection_specs if _spec_fqcn(s) not in downloaded_fqcns]
+            failed = _compute_failed_specs(collection_specs, tarballs)
             return DownloadResult(
                 tarball_paths=tarballs,
                 failed_specs=failed,
@@ -305,27 +304,32 @@ def _spec_fqcn(spec: str) -> str:
     return spec.split(":")[0].strip().lower()
 
 
-def _extract_fqcns_from_tarballs(tarballs: list[Path]) -> set[str]:
-    """Extract FQCNs from tarball filenames.
+def _compute_failed_specs(collection_specs: list[str], tarballs: list[Path]) -> list[str]:
+    """Determine which specs were not downloaded by matching tarball prefixes.
 
-    Galaxy tarballs follow the naming pattern ``{namespace}-{name}-{version}.tar.gz``.
+    Builds the expected tarball prefix from each FQCN (``namespace-name-``)
+    and checks whether any downloaded tarball filename starts with it.
+    This avoids ambiguous reverse-parsing of tarball names.
 
     Args:
-        tarballs: Paths to tarball files.
+        collection_specs: Requested collection specifiers.
+        tarballs: Paths to downloaded tarballs.
 
     Returns:
-        Set of lowercase FQCNs extracted from filenames.
+        List of specs that have no matching tarball.
     """
-    fqcns: set[str] = set()
-    for path in tarballs:
-        stem = path.name.removesuffix(".tar.gz")
-        parts = stem.rsplit("-", 1)
-        if len(parts) == 2:
-            ns_name = parts[0]
-            ns_parts = ns_name.split("-", 1)
-            if len(ns_parts) == 2:
-                fqcns.add(f"{ns_parts[0]}.{ns_parts[1]}".lower())
-    return fqcns
+    tarball_names = [t.name.lower() for t in tarballs]
+    failed: list[str] = []
+    for spec in collection_specs:
+        fqcn = _spec_fqcn(spec)
+        ns, _, name = fqcn.partition(".")
+        if not name:
+            failed.append(spec)
+            continue
+        prefix = f"{ns}-{name}-".lower()
+        if not any(tb.startswith(prefix) for tb in tarball_names):
+            failed.append(spec)
+    return failed
 
 
 def convert_tarballs_in_dir(

@@ -11,7 +11,7 @@ import pytest
 from galaxy_proxy.collection_downloader import (
     DownloadResult,
     GalaxyServerConfig,
-    _extract_fqcns_from_tarballs,
+    _compute_failed_specs,
     _find_tarballs,
     _spec_fqcn,
     convert_tarballs_in_dir,
@@ -151,28 +151,45 @@ class TestSpecFqcn:
         assert _spec_fqcn("community.general:>=9.0") == "community.general"
 
 
-class TestExtractFqcnsFromTarballs:
-    """Tests for _extract_fqcns_from_tarballs."""
+class TestComputeFailedSpecs:
+    """Tests for _compute_failed_specs."""
 
-    def test_standard_naming(self, tmp_path: Path) -> None:
-        """Extracts FQCNs from standard Galaxy tarball names.
+    def test_all_downloaded(self, tmp_path: Path) -> None:
+        """No failures when all specs have matching tarballs.
 
         Args:
             tmp_path: Pytest-provided temporary directory.
         """
-        paths = [
+        tarballs = [
             tmp_path / "ansible-posix-1.5.4.tar.gz",
             tmp_path / "community-general-9.0.0.tar.gz",
         ]
-        for p in paths:
-            p.touch()
+        specs = ["ansible.posix", "community.general:>=9.0"]
+        assert _compute_failed_specs(specs, tarballs) == []
 
-        fqcns = _extract_fqcns_from_tarballs(paths)
-        assert fqcns == {"ansible.posix", "community.general"}
+    def test_partial_failure(self, tmp_path: Path) -> None:
+        """Identifies specs missing from downloaded tarballs.
 
-    def test_empty_list(self) -> None:
-        """Returns empty set for no tarballs."""
-        assert _extract_fqcns_from_tarballs([]) == set()
+        Args:
+            tmp_path: Pytest-provided temporary directory.
+        """
+        tarballs = [tmp_path / "ansible-posix-1.5.4.tar.gz"]
+        specs = ["ansible.posix", "community.general"]
+        assert _compute_failed_specs(specs, tarballs) == ["community.general"]
+
+    def test_underscored_namespace(self, tmp_path: Path) -> None:
+        """Handles namespaces containing underscores correctly.
+
+        Args:
+            tmp_path: Pytest-provided temporary directory.
+        """
+        tarballs = [tmp_path / "redhat_cop-controller_configuration-4.0.0.tar.gz"]
+        specs = ["redhat_cop.controller_configuration"]
+        assert _compute_failed_specs(specs, tarballs) == []
+
+    def test_empty_inputs(self) -> None:
+        """Returns empty list for no specs."""
+        assert _compute_failed_specs([], []) == []
 
 
 class TestDownloadCollections:
