@@ -7,7 +7,6 @@ import json
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import jsonpickle
 import pytest
 
 from apme.v1 import common_pb2, validate_pb2
@@ -132,69 +131,79 @@ class TestOpaValidatorServicer:
 class TestNativeValidatorServicer:
     """Tests for Native validator gRPC servicer."""
 
-    async def test_validate_deserializes_scandata_and_runs(self) -> None:
-        """Validate deserializes scandata and runs native rules."""
-        from apme_engine.daemon.native_validator_server import NativeValidatorServicer
-        from apme_engine.validators.native import NativeRuleTiming, NativeRunResult
+    async def test_validate_graph_path_returns_violations(self) -> None:
+        """Validate deserializes ContentGraph and runs GraphRules."""
+        from apme_engine.daemon.native_validator_server import NativeValidatorServicer, _GraphRunResult
+        from apme_engine.engine.content_graph import ContentGraph
 
-        mock_scandata = type("Scandata", (), {"contexts": []})()
-        hierarchy: YAMLDict = {"hierarchy": []}
+        graph = ContentGraph()
+        graph_data = json.dumps(graph.to_dict()).encode()
+
         request = validate_pb2.ValidateRequest(
             request_id="native-1",
-            hierarchy_payload=json.dumps(hierarchy).encode(),
-            scandata=jsonpickle.encode(mock_scandata).encode(),
+            content_graph_data=graph_data,
         )
 
-        mock_result = NativeRunResult(
+        mock_result = _GraphRunResult(
             violations=[
                 {
-                    "rule_id": "native:L026",
+                    "rule_id": "L026",
                     "level": "warning",
                     "message": "non-fqcn",
                     "file": "f.yml",
                     "line": 5,
                     "path": "p",
+                    "source": "native",
                 },
-            ],
-            rule_timings=[
-                NativeRuleTiming(rule_id="L026", elapsed_ms=3.5, violations=1),
             ],
         )
 
         servicer = NativeValidatorServicer()
-        with patch("apme_engine.daemon.native_validator_server._run_native", return_value=mock_result):
+        with patch("apme_engine.daemon.native_validator_server._run_graph", return_value=mock_result):
             resp = await servicer.Validate(request, FakeGrpcContext())  # type: ignore[arg-type]
 
         assert len(resp.violations) == 1  # type: ignore[attr-defined]
-        assert resp.violations[0].rule_id == "native:L026"  # type: ignore[attr-defined]
+        assert resp.violations[0].rule_id == "L026"  # type: ignore[attr-defined]
         assert resp.request_id == "native-1"  # type: ignore[attr-defined]
 
     async def test_validate_returns_diagnostics(self) -> None:
-        """Validate returns ValidatorDiagnostics with rule timings."""
-        from apme_engine.daemon.native_validator_server import NativeValidatorServicer
-        from apme_engine.validators.native import NativeRuleTiming, NativeRunResult
+        """Validate returns ValidatorDiagnostics with violation count."""
+        from apme_engine.daemon.native_validator_server import NativeValidatorServicer, _GraphRunResult
+        from apme_engine.engine.content_graph import ContentGraph
 
-        mock_scandata = type("Scandata", (), {"contexts": []})()
-        hierarchy: YAMLDict = {"hierarchy": []}
+        graph = ContentGraph()
+        graph_data = json.dumps(graph.to_dict()).encode()
+
         request = validate_pb2.ValidateRequest(
             request_id="diag-native-1",
-            hierarchy_payload=json.dumps(hierarchy).encode(),
-            scandata=jsonpickle.encode(mock_scandata).encode(),
+            content_graph_data=graph_data,
         )
 
-        mock_result = NativeRunResult(
+        mock_result = _GraphRunResult(
             violations=[
-                {"rule_id": "native:L026", "level": "warning", "message": "m1", "file": "f.yml", "line": 1, "path": ""},
-                {"rule_id": "native:L030", "level": "warning", "message": "m2", "file": "f.yml", "line": 3, "path": ""},
-            ],
-            rule_timings=[
-                NativeRuleTiming(rule_id="L026", elapsed_ms=2.1, violations=1),
-                NativeRuleTiming(rule_id="L030", elapsed_ms=1.5, violations=1),
+                {
+                    "rule_id": "L026",
+                    "level": "warning",
+                    "message": "m1",
+                    "file": "f.yml",
+                    "line": 1,
+                    "path": "",
+                    "source": "native",
+                },
+                {
+                    "rule_id": "L030",
+                    "level": "warning",
+                    "message": "m2",
+                    "file": "f.yml",
+                    "line": 3,
+                    "path": "",
+                    "source": "native",
+                },
             ],
         )
 
         servicer = NativeValidatorServicer()
-        with patch("apme_engine.daemon.native_validator_server._run_native", return_value=mock_result):
+        with patch("apme_engine.daemon.native_validator_server._run_graph", return_value=mock_result):
             resp = await servicer.Validate(request, FakeGrpcContext())  # type: ignore[arg-type]
 
         assert resp.HasField("diagnostics")  # type: ignore[attr-defined]
@@ -203,37 +212,24 @@ class TestNativeValidatorServicer:
         assert diag.request_id == "diag-native-1"
         assert diag.violations_found == 2
         assert diag.total_ms > 0
-        assert len(diag.rule_timings) == 2
-        rule_ids = {rt.rule_id for rt in diag.rule_timings}
-        assert rule_ids == {"L026", "L030"}
-        l026 = next(rt for rt in diag.rule_timings if rt.rule_id == "L026")
-        assert l026.elapsed_ms == pytest.approx(2.1)
-        assert l026.violations == 1
 
-    async def test_validate_no_scandata_returns_empty(self) -> None:
-        """Validate with no scandata returns empty violations."""
+    async def test_validate_no_graph_data_returns_empty(self) -> None:
+        """Validate with no content_graph_data returns empty violations."""
         from apme_engine.daemon.native_validator_server import NativeValidatorServicer
-        from apme_engine.validators.native import NativeRunResult
 
-        request = validate_pb2.ValidateRequest(
-            request_id="native-2",
-            hierarchy_payload=json.dumps({}).encode(),
-        )
+        request = validate_pb2.ValidateRequest(request_id="native-2")
         servicer = NativeValidatorServicer()
 
-        mock_result = NativeRunResult(violations=[], rule_timings=[])
-        with patch("apme_engine.daemon.native_validator_server._run_native", return_value=mock_result):
-            resp = await servicer.Validate(request, FakeGrpcContext())  # type: ignore[arg-type]
+        resp = await servicer.Validate(request, FakeGrpcContext())  # type: ignore[arg-type]
         assert len(resp.violations) == 0  # type: ignore[attr-defined]
 
-    async def test_validate_bad_scandata_returns_empty(self) -> None:
-        """Validate with invalid scandata returns empty violations."""
+    async def test_validate_bad_graph_data_returns_empty(self) -> None:
+        """Validate with invalid content_graph_data returns empty violations."""
         from apme_engine.daemon.native_validator_server import NativeValidatorServicer
 
         request = validate_pb2.ValidateRequest(
             request_id="native-3",
-            hierarchy_payload=json.dumps({}).encode(),
-            scandata=b"not-valid-jsonpickle{{{",
+            content_graph_data=b"not-valid-json{{{",
         )
         servicer = NativeValidatorServicer()
         resp = await servicer.Validate(request, FakeGrpcContext())  # type: ignore[arg-type]

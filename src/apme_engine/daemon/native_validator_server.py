@@ -1,7 +1,7 @@
 """Native validator daemon: async gRPC server that runs GraphRules on deserialized ContentGraph.
 
-Also keeps the legacy ``detect()`` path as a dual-run for validation
-during the ADR-044 switchover.
+The legacy ``detect()`` + ``AnsibleRunContext`` path has been removed.
+All native rule evaluation runs via ``ContentGraph`` + ``GraphRule``.
 """
 
 import asyncio
@@ -10,14 +10,12 @@ import logging
 import os
 import time
 from dataclasses import dataclass, field
-from typing import cast
 
 import grpc
 import grpc.aio
-import jsonpickle
 
 from apme.v1 import common_pb2, validate_pb2, validate_pb2_grpc
-from apme.v1.common_pb2 import HealthResponse, RuleTiming, ValidatorDiagnostics
+from apme.v1.common_pb2 import HealthResponse, ValidatorDiagnostics
 from apme.v1.validate_pb2 import ValidateResponse
 from apme_engine.daemon.violation_convert import violation_dict_to_proto
 from apme_engine.engine.content_graph import ContentGraph
@@ -26,35 +24,13 @@ from apme_engine.engine.graph_scanner import (
     graph_report_to_violations,
     load_graph_rules,
 )
-from apme_engine.engine.graph_scanner import (
-    scan as graph_scan,
-)
-from apme_engine.engine.models import ViolationDict, YAMLDict
+from apme_engine.engine.graph_scanner import scan as graph_scan
+from apme_engine.engine.models import ViolationDict
 from apme_engine.log_bridge import attach_collector
-from apme_engine.validators.base import ScanContext
-from apme_engine.validators.native import NativeRunResult, NativeValidator
 
 logger = logging.getLogger("apme.native")
 
 _MAX_CONCURRENT_RPCS = int(os.environ.get("APME_NATIVE_MAX_RPCS", "32"))
-
-
-def _run_native(hierarchy_payload: dict[str, object], scandata: object) -> NativeRunResult:
-    """Blocking function: create ScanContext and run NativeValidator with timing (legacy).
-
-    Args:
-        hierarchy_payload: Parsed hierarchy payload for context.
-        scandata: Deserialized scandata object.
-
-    Returns:
-        NativeRunResult with violations and rule timings.
-    """
-    scan_context = ScanContext(
-        hierarchy_payload=cast(YAMLDict, hierarchy_payload),
-        scandata=scandata,
-    )
-    validator = NativeValidator()
-    return validator.run_with_timing(scan_context)
 
 
 @dataclass
@@ -90,7 +66,7 @@ def _run_graph(raw_graph_data: bytes) -> _GraphRunResult:
         raw_graph_data: Raw JSON bytes from ``ValidateRequest.content_graph_data``.
 
     Returns:
-        _GraphRunResult with violations, timings, and the raw report.
+        _GraphRunResult with violations and the raw report.
     """
     graph_dict = json.loads(raw_graph_data)
     content_graph = ContentGraph.from_dict(graph_dict)
@@ -102,17 +78,17 @@ def _run_graph(raw_graph_data: bytes) -> _GraphRunResult:
 
 
 class NativeValidatorServicer(validate_pb2_grpc.ValidatorServicer):
-    """Async gRPC adapter: deserializes scandata, runs native rules in executor."""
+    """Async gRPC adapter: deserializes ContentGraph, runs GraphRules in executor."""
 
     async def Validate(
         self,
         request: validate_pb2.ValidateRequest,
         context: grpc.aio.ServicerContext,  # type: ignore[type-arg]
     ) -> ValidateResponse:
-        """Handle Validate RPC: run GraphRules on ContentGraph, legacy detect() as fallback.
+        """Handle Validate RPC: deserialize ContentGraph and run GraphRules.
 
         Args:
-            request: ValidateRequest with content_graph_data and/or scandata.
+            request: ValidateRequest with content_graph_data.
             context: gRPC servicer context.
 
         Returns:
@@ -124,117 +100,34 @@ class NativeValidatorServicer(validate_pb2_grpc.ValidatorServicer):
             try:
                 logger.info("Native: validate start (req=%s)", req_id)
 
-                # --- Graph path (primary) ---
-                graph_result: _GraphRunResult | None = None
-                if request.content_graph_data:
-                    try:
-                        graph_result = await asyncio.get_event_loop().run_in_executor(
-                            None,
-                            _run_graph,
-                            request.content_graph_data,
-                        )
-                        logger.debug(
-                            "Native: graph path done (%d violations, req=%s)",
-                            len(graph_result.violations),
-                            req_id,
-                        )
-                    except Exception:
-                        logger.warning(
-                            "Native: graph path failed, falling back to legacy (req=%s)", req_id, exc_info=True
-                        )
+                if not request.content_graph_data:
+                    logger.warning("Native: no content_graph_data in request (req=%s)", req_id)
+                    return ValidateResponse(violations=[], request_id=req_id, logs=sink.entries)
 
-                # --- Legacy path (fallback / dual-run comparison) ---
-                legacy_result: NativeRunResult | None = None
-                hierarchy_payload: dict[str, object] = {}
-                if request.hierarchy_payload:
-                    try:
-                        hierarchy_payload = json.loads(request.hierarchy_payload)
-                    except (json.JSONDecodeError, UnicodeDecodeError):
-                        logger.warning("Native: failed to decode hierarchy_payload (req=%s)", req_id)
-
-                if request.scandata:
-                    try:
-                        from apme_engine.engine import jsonpickle_handlers as _jp  # noqa: F401
-                        from apme_engine.engine import models as _models  # noqa: F401
-                        from apme_engine.engine import scanner as _scanner  # noqa: F401
-
-                        _jp.register_engine_handlers()
-                        for name in ("SingleScan",):
-                            getattr(_scanner, name, None)
-                        for name in (
-                            "AnsibleRunContext",
-                            "RunTargetList",
-                            "RunTarget",
-                            "TaskCall",
-                            "Object",
-                        ):
-                            getattr(_models, name, None)
-                        scandata = jsonpickle.decode(request.scandata.decode("utf-8"))
-                        legacy_result = await asyncio.get_event_loop().run_in_executor(
-                            None,
-                            _run_native,
-                            hierarchy_payload,
-                            scandata,
-                        )
-                    except Exception:
-                        logger.warning("Native: legacy path failed (req=%s)", req_id, exc_info=True)
-
-                # --- Dual-run comparison logging ---
-                if graph_result is not None and legacy_result is not None:
-                    graph_ids: set[str] = {str(v.get("rule_id", "")) for v in graph_result.violations}
-                    legacy_ids: set[str] = {str(v.get("rule_id", "")) for v in legacy_result.violations}
-                    only_graph = graph_ids - legacy_ids
-                    only_legacy = legacy_ids - graph_ids
-                    if only_graph or only_legacy:
-                        logger.info(
-                            "Native dual-run diff (req=%s): graph-only=%s legacy-only=%s",
-                            req_id,
-                            sorted(only_graph),
-                            sorted(only_legacy),
-                        )
-
-                # --- Produce response (graph primary, legacy fallback) ---
-                violations_out: list[ViolationDict]
-                if graph_result is not None:
-                    violations_out = graph_result.violations
-                    source_label = "graph"
-                elif legacy_result is not None:
-                    violations_out = [cast(ViolationDict, v) for v in legacy_result.violations]
-                    source_label = "legacy"
-                else:
-                    violations_out = []
-                    source_label = "none"
+                result = await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    _run_graph,
+                    request.content_graph_data,
+                )
 
                 total_ms = (time.monotonic() - t0) * 1000
                 logger.info(
-                    "Native: validate done [%s] (%.0fms, %d violations, req=%s)",
-                    source_label,
+                    "Native: validate done (%.0fms, %d violations, req=%s)",
                     total_ms,
-                    len(violations_out),
+                    len(result.violations),
                     req_id,
                 )
 
-                rule_timings: list[RuleTiming] = []
-                if legacy_result is not None:
-                    rule_timings = [
-                        RuleTiming(
-                            rule_id=rt.rule_id,
-                            elapsed_ms=rt.elapsed_ms,
-                            violations=rt.violations,
-                        )
-                        for rt in legacy_result.rule_timings
-                    ]
                 diag = ValidatorDiagnostics(
                     validator_name="native",
                     request_id=req_id,
                     total_ms=total_ms,
                     files_received=len(request.files),
-                    violations_found=len(violations_out),
-                    rule_timings=rule_timings,
+                    violations_found=len(result.violations),
                 )
 
                 return validate_pb2.ValidateResponse(
-                    violations=[violation_dict_to_proto(v) for v in violations_out],
+                    violations=[violation_dict_to_proto(v) for v in result.violations],
                     request_id=req_id,
                     diagnostics=diag,
                     logs=sink.entries,

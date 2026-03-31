@@ -21,7 +21,6 @@ from pathlib import Path
 
 import grpc
 import grpc.aio
-import jsonpickle
 
 from apme.v1 import primary_pb2_grpc, validate_pb2_grpc
 from apme.v1.common_pb2 import (
@@ -601,7 +600,6 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             project_root="",
             files=files,
             hierarchy_payload=json.dumps(context_obj.hierarchy_payload, default=str).encode(),
-            scandata=jsonpickle.encode(context_obj.scandata).encode(),
             ansible_core_version=core_version,
             collection_specs=collection_specs,
             session_id=sid,

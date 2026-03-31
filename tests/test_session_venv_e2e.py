@@ -4,7 +4,7 @@ Exercises the full pipeline:
     1. Galaxy proxy started as a background process
     2. VenvSessionManager.acquire() — cold start installs ansible-core + collections
     3. run_scan(dependency_dir=<venv site-packages>) — ARI resolves collections
-    4. NativeValidator / OpaValidator consume the scan context
+    4. GraphRules / OpaValidator consume the scan context
 
 All tests share a single session_id so only the first test pays the cold-start
 cost.  Subsequent tests get warm hits (metadata check only).
@@ -23,8 +23,13 @@ from typing import cast
 
 import pytest
 
+from apme_engine.engine.content_graph import ContentGraph
+from apme_engine.engine.graph_scanner import (
+    graph_report_to_violations,
+    load_graph_rules,
+)
+from apme_engine.engine.graph_scanner import scan as graph_scan
 from apme_engine.runner import run_scan
-from apme_engine.validators.native import NativeValidator
 from apme_engine.validators.opa import OpaValidator
 from apme_engine.venv_manager.session import VenvSession, VenvSessionManager, _venv_site_packages
 
@@ -224,7 +229,7 @@ def test_scan_with_session_venv(dep_dir: str) -> None:
 
 
 def test_native_violations_with_session_venv(dep_dir: str) -> None:
-    """Native validator produces violations when scanning with session venv.
+    """Graph rules produce violations when scanning with session venv.
 
     Args:
         dep_dir: Path to session venv site-packages.
@@ -233,12 +238,22 @@ def test_native_violations_with_session_venv(dep_dir: str) -> None:
         pytest.skip("terrible-playbook fixture not found")
 
     ctx = run_scan(str(_FIXTURE / "site.yml"), str(_FIXTURE), include_scandata=True, dependency_dir=dep_dir)
-    native = NativeValidator(exclude_rule_ids=())
-    violations = native.run(ctx)
 
-    rule_ids = {str(v.get("rule_id", "")).removeprefix("native:") for v in violations}
-    assert len(violations) >= 10, f"Expected at least 10 native violations, got {len(violations)}"
-    always_expected = {"L027", "L043", "L044", "L050"}
+    graph: ContentGraph | None = None
+    if ctx.scandata and hasattr(ctx.scandata, "content_graph"):
+        graph = ctx.scandata.content_graph
+    assert graph is not None, "ContentGraph not built — cannot run graph rules"
+
+    import apme_engine.validators.native.rules as _rules_pkg
+
+    rules_dir = str(Path(_rules_pkg.__file__).parent)
+    rules = load_graph_rules(rules_dir=rules_dir)
+    report = graph_scan(graph, rules)
+    violations = cast(list[dict[str, object]], graph_report_to_violations(report))
+
+    rule_ids = {str(v.get("rule_id", "")) for v in violations}
+    assert len(violations) >= 5, f"Expected at least 5 graph-rule violations, got {len(violations)}"
+    always_expected = {"L043", "L044", "L051"}
     missing = always_expected - rule_ids
     assert not missing, (
         f"Expected rules {sorted(always_expected)} to fire, missing {sorted(missing)}; got {sorted(rule_ids)}"

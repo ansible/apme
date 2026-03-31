@@ -5,13 +5,15 @@ from typing import cast
 
 import pytest
 
+from apme_engine.engine.content_graph import ContentGraph
+from apme_engine.engine.graph_scanner import (
+    graph_report_to_violations,
+    load_graph_rules,
+)
+from apme_engine.engine.graph_scanner import scan as graph_scan
+from apme_engine.engine.models import ViolationDict
 from apme_engine.runner import run_scan
-from apme_engine.validators.native import NativeValidator
 from apme_engine.validators.opa import OpaValidator
-
-
-def _repo_root() -> Path:
-    return Path(__file__).resolve().parent.parent
 
 
 def _fixture_path() -> Path:
@@ -19,34 +21,37 @@ def _fixture_path() -> Path:
 
 
 def _native_rules_dir() -> Path:
-    return _repo_root() / "src" / "apme_engine" / "validators" / "native" / "rules"
+    import apme_engine.validators.native.rules as rules_pkg
+
+    return Path(rules_pkg.__file__).parent
 
 
 def _opa_bundle_dir() -> Path:
-    return _repo_root() / "src" / "apme_engine" / "validators" / "opa" / "bundle"
+    import apme_engine.validators.opa as opa_pkg
+
+    return Path(opa_pkg.__file__).parent / "bundle"
 
 
 EXPECTED_NATIVE_RULES = {
-    "L033",
+    "L027",
     "L036",
-    "L042",
+    "L037",
     "L043",
     "L044",
     "L045",
-    "L046",
     "L047",
     "L048",
     "L049",
-    "L050",
-    "L039",
-    "L037",
+    "L051",
+    "L074",
+    "L077",
+    "L078",
+    "L079",
     "M010",
     "R104",
-    "R108",
     "R111",
-    "R112",
     "R113",
-    "R402",
+    "R114",
 }
 
 EXPECTED_OPA_RULES = {
@@ -71,9 +76,23 @@ EXPECTED_OPA_RULES = {
 }
 
 
+def _run_graph_rules(graph: ContentGraph) -> list[ViolationDict]:
+    """Run all GraphRules against a ContentGraph.
+
+    Args:
+        graph: ContentGraph to scan.
+
+    Returns:
+        List of violation dicts.
+    """
+    rules = load_graph_rules(rules_dir=str(_native_rules_dir()))
+    report = graph_scan(graph, rules)
+    return graph_report_to_violations(report)
+
+
 @pytest.fixture(scope="module")  # type: ignore[untyped-decorator]
 def scan_results() -> dict[str, list[dict[str, object]]]:
-    """Scan the terrible-playbook and collect violations from all validators.
+    """Scan the terrible-playbook and collect violations from graph rules + OPA.
 
     Returns:
         Dict with 'native' and 'opa' keys, each a list of violation dicts.
@@ -86,10 +105,13 @@ def scan_results() -> dict[str, list[dict[str, object]]]:
     if not context.hierarchy_payload:
         pytest.fail("Engine produced no hierarchy payload for terrible-playbook")
 
-    native = NativeValidator(exclude_rule_ids=())
-    opa = OpaValidator(str(_opa_bundle_dir()))
+    native_violations: list[dict[str, object]] = []
+    if context.scandata and hasattr(context.scandata, "content_graph"):
+        graph: ContentGraph | None = context.scandata.content_graph
+        if graph is not None:
+            native_violations = cast(list[dict[str, object]], _run_graph_rules(graph))
 
-    native_violations = native.run(context)
+    opa = OpaValidator(str(_opa_bundle_dir()))
     opa_violations = cast(list[dict[str, object]], opa.run(context))
 
     return {
@@ -109,12 +131,12 @@ def _rule_ids(violations: list[dict[str, object]], prefix: str = "") -> set[str]
 
 
 def test_terrible_playbook_native_rules(scan_results: dict[str, list[dict[str, object]]]) -> None:
-    """Verify expected native rules fire on the terrible playbook.
+    """Verify expected native graph rules fire on the terrible playbook.
 
     Args:
         scan_results: Pytest fixture with native/opa violation lists.
     """
-    found = _rule_ids(scan_results["native"], prefix="native:")
+    found = _rule_ids(scan_results["native"])
     missing = EXPECTED_NATIVE_RULES - found
     assert not missing, f"Expected native rules did not fire: {sorted(missing)}. Found: {sorted(found)}"
 
@@ -138,25 +160,3 @@ def test_terrible_playbook_has_violations(scan_results: dict[str, list[dict[str,
     """
     total = len(scan_results["native"]) + len(scan_results["opa"])
     assert total >= 50, f"Expected at least 50 violations, got {total}"
-
-
-def test_terrible_playbook_r101_command_exec(scan_results: dict[str, list[dict[str, object]]]) -> None:
-    """Verify R101 (parameterized command execution) fires.
-
-    Args:
-        scan_results: Pytest fixture with native/opa violation lists.
-    """
-    found = _rule_ids(scan_results["native"], prefix="native:")
-    if "R101" not in found:
-        pytest.skip("R101 requires CMD_EXEC annotation with is_mutable_cmd; may not fire on all playbooks")
-
-
-def test_terrible_playbook_r115_file_deletion(scan_results: dict[str, list[dict[str, object]]]) -> None:
-    """Verify R115 (file deletion with mutable path) fires if applicable.
-
-    Args:
-        scan_results: Pytest fixture with native/opa violation lists.
-    """
-    found = _rule_ids(scan_results["native"], prefix="native:")
-    if "R115" not in found:
-        pytest.skip("R115 requires FILE_CHANGE annotation with is_deletion + is_mutable_path")
