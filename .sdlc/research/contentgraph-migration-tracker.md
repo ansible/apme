@@ -282,12 +282,13 @@ Fields still needed for full migration:
 - [ ] `variable_use: list[VariableRef]` — variables referenced by this node
 - [ ] `variable_set: list[VariableRef]` — variables defined by this node
 - [ ] `COLLECTION` / `PLUGIN` node types in `NodeType` enum
-- [ ] `role_files: dict[str, str]` — role file existence checks (argument_specs, etc.)
-  - **L077 partial port**: currently checks only `role_metadata.get("argument_specs")`
-    (embedded in meta/main.yml). The old rule also scans `spec.files` for a
-    standalone `meta/argument_specs.yml` file. Full parity requires either a
-    `role_files` field on `ContentNode` or having `GraphBuilder` resolve the
-    file during role construction and merge into `role_metadata`.
+- [x] ~~`role_files: dict[str, str]`~~ — **NOT NEEDED as a field**: L077 now
+  checks the filesystem directly for `meta/argument_specs.yml` (or `.yaml`)
+  when `role_metadata` has no `argument_specs`. Parity achieved without
+  schema changes. **Assumption**: `node.file_path` for ROLE nodes is relative
+  to the scan basedir; the on-disk check assumes CWD is the project root
+  (same assumption as CLI and daemon entry-points). If `ContentGraph` later
+  gains a `scan_root` attribute, L077 should resolve against it.
 
 ---
 

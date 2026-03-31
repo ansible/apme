@@ -1,6 +1,7 @@
 """GraphRule L077: Roles should declare argument_specs for fail-fast validation."""
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import cast
 
 from apme_engine.engine.content_graph import ContentGraph, NodeType
@@ -51,6 +52,12 @@ class RoleArgSpecsGraphRule(GraphRule):
     def process(self, graph: ContentGraph, node_id: str) -> GraphRuleResult | None:
         """Flag roles missing ``argument_specs`` in metadata.
 
+        Falls back to a filesystem check for a standalone
+        ``meta/argument_specs.yml`` (or ``.yaml``).  ``node.file_path``
+        for ROLE nodes is relative to the scan basedir, so the on-disk
+        check assumes CWD is the project root (same assumption as the
+        CLI and daemon scan entry-points).
+
         Args:
             graph: The full ContentGraph.
             node_id: ID of the node to evaluate.
@@ -62,15 +69,20 @@ class RoleArgSpecsGraphRule(GraphRule):
         if node is None:
             return None
 
-        argument_specs = node.role_metadata.get("argument_specs")
-        verdict = not bool(argument_specs)
+        has_arg_specs = bool(node.role_metadata.get("argument_specs"))
+        if not has_arg_specs and node.file_path:
+            meta_dir = Path(node.file_path) / "meta"
+            has_arg_specs = (meta_dir / "argument_specs.yml").is_file() or (meta_dir / "argument_specs.yaml").is_file()
+        verdict = not has_arg_specs
         if verdict:
             return GraphRuleResult(
                 verdict=True,
                 detail=cast(
                     YAMLDict,
                     {
-                        "message": "role should have meta/argument_specs.yml for fail-fast validation",
+                        "message": (
+                            "role should have argument_specs in meta/main.yml or a standalone meta/argument_specs.yml"
+                        ),
                     },
                 ),
                 node_id=node_id,

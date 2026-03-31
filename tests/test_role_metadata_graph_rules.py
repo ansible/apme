@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from apme_engine.engine.content_graph import ContentGraph, ContentNode, EdgeType, NodeIdentity, NodeScope, NodeType
@@ -434,6 +436,62 @@ class TestL077RoleArgSpecsGraphRule:
         result = rule.process(g, rid)
         assert result is not None
         assert result.verdict is False
+
+    def test_no_violation_standalone_yml(self, rule: RoleArgSpecsGraphRule, tmp_path: Path) -> None:
+        """Role with standalone ``meta/argument_specs.yml`` passes.
+
+        Args:
+            rule: Rule instance under test.
+            tmp_path: Pytest-provided temporary directory.
+        """
+        role_dir = tmp_path / "myrole"
+        (role_dir / "meta").mkdir(parents=True)
+        (role_dir / "meta" / "argument_specs.yml").write_text("main: {}\n")
+        g, rid = _make_role(
+            role_metadata={},
+            file_path=str(role_dir),
+            path=str(role_dir),
+        )
+        result = rule.process(g, rid)
+        assert result is not None
+        assert result.verdict is False
+
+    def test_no_violation_standalone_yaml(self, rule: RoleArgSpecsGraphRule, tmp_path: Path) -> None:
+        """Role with standalone ``meta/argument_specs.yaml`` passes.
+
+        Args:
+            rule: Rule instance under test.
+            tmp_path: Pytest-provided temporary directory.
+        """
+        role_dir = tmp_path / "myrole"
+        (role_dir / "meta").mkdir(parents=True)
+        (role_dir / "meta" / "argument_specs.yaml").write_text("main: {}\n")
+        g, rid = _make_role(
+            role_metadata={},
+            file_path=str(role_dir),
+            path=str(role_dir),
+        )
+        result = rule.process(g, rid)
+        assert result is not None
+        assert result.verdict is False
+
+    def test_violation_no_standalone_file(self, rule: RoleArgSpecsGraphRule, tmp_path: Path) -> None:
+        """Role with empty meta dir and no argument_specs still violates.
+
+        Args:
+            rule: Rule instance under test.
+            tmp_path: Pytest-provided temporary directory.
+        """
+        role_dir = tmp_path / "myrole"
+        (role_dir / "meta").mkdir(parents=True)
+        g, rid = _make_role(
+            role_metadata={},
+            file_path=str(role_dir),
+            path=str(role_dir),
+        )
+        result = rule.process(g, rid)
+        assert result is not None
+        assert result.verdict is True
 
 
 # ---------------------------------------------------------------------------
