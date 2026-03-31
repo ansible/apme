@@ -334,9 +334,16 @@ def convert_tarballs_in_dir(
     results: list[tuple[str, Path]] = []
 
     for tarball_path in _find_tarballs(tarball_dir):
+        if tarball_path.is_symlink() or not tarball_path.is_file():
+            logger.warning("Skipping non-regular tarball: %s", tarball_path)
+            continue
         try:
             tarball_data = tarball_path.read_bytes()
             whl_name, whl_data = tarball_to_wheel(tarball_data)
+            safe_name = Path(whl_name)
+            if safe_name.is_absolute() or safe_name.name != whl_name:
+                logger.warning("Unsafe wheel name from %s: %r", tarball_path, whl_name)
+                continue
             whl_path = cache_dir / whl_name
             whl_path.write_bytes(whl_data)
             results.append((whl_name, whl_path))

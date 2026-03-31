@@ -254,7 +254,8 @@ def create_app(
         and the proxy converts pre-downloaded tarballs to wheels.
 
         Args:
-            tarball_dir: Absolute path to directory containing ``.tar.gz`` files.
+            tarball_dir: Path to directory containing ``.tar.gz`` files
+                (resolved to absolute internally).
 
         Returns:
             Dict with ``converted`` (wheel filenames) and ``failed`` (tarball names).
