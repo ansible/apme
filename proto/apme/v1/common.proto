@@ -117,12 +117,16 @@ message CollectionRef {
   string fqcn = 1;           // e.g. "community.general"
   string version = 2;        // e.g. "8.0.0"
   string source = 3;         // "specified", "learned", or "dependency"
+  string license = 4;        // SPDX identifier (from MANIFEST.json or galaxy.yml)
+  string supplier = 5;       // author/namespace (from galaxy.yml)
 }
 
 message PythonPackageRef {
   string name = 1;            // e.g. "jmespath"
   string version = 2;         // e.g. "1.0.1"
   reserved 3;                 // was required_by; relationships live in dependency_tree
+  string license = 4;        // from package METADATA (License field)
+  string supplier = 5;       // from package METADATA (Author field)
 }
 
 message ProjectManifest {

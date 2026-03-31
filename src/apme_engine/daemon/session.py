@@ -65,8 +65,8 @@ class SessionState:
         progress_logs: Pipeline milestone logs collected during processing.
         galaxy_cfg_path: Session-scoped ansible.cfg for Galaxy auth (ADR-045).
         ansible_core_version: Ansible-core version from session venv (ADR-040).
-        installed_collections: ``(fqcn, version, source)`` tuples from session venv (ADR-040).
-        installed_packages: ``(name, version)`` tuples from ``pip list`` (ADR-040).
+        installed_collections: ``(fqcn, version, source, license, supplier)`` tuples from session venv (ADR-040).
+        installed_packages: ``(name, version, license, supplier)`` tuples from session venv (ADR-040).
         dependency_tree: Raw ``uv pip tree`` output (ADR-040).
         requirements_files: Requirement file paths found in project (ADR-040).
     """
@@ -112,8 +112,8 @@ class SessionState:
 
     # Manifest data captured from the first scan pass (ADR-040)
     ansible_core_version: str = ""
-    installed_collections: list[tuple[str, str, str]] = field(default_factory=list)
-    installed_packages: list[tuple[str, str]] = field(default_factory=list)
+    installed_collections: list[tuple[str, str, str, str, str]] = field(default_factory=list)
+    installed_packages: list[tuple[str, str, str, str]] = field(default_factory=list)
     dependency_tree: str = ""
     requirements_files: list[str] = field(default_factory=list)
 
