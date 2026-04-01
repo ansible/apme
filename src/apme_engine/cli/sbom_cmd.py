@@ -37,7 +37,7 @@ def run_sbom(args: argparse.Namespace) -> None:
 
     payload = json.dumps(bom, indent=2)
     if args.output:
-        Path(args.output).write_text(payload + "\n")
+        Path(args.output).write_text(payload + "\n", encoding="utf-8")
         print(f"SBOM written to {args.output}", file=sys.stderr)
     else:
         print(payload)

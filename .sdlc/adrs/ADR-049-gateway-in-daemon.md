@@ -1,8 +1,8 @@
-# ADR-048: Gateway Embedded in Local Daemon
+# ADR-049: Gateway Embedded in Local Daemon
 
 ## Status
 
-Proposed
+Accepted
 
 ## Date
 
@@ -212,7 +212,7 @@ start" and add it to the daemon service list.
 - ADR-024: Thin CLI with Local Daemon Mode — establishes daemon pattern,
   documents CLI→REST future direction
 - ADR-029: SQLite in Web Gateway — Gateway persistence design
-- ADR-040: SBOM Generation — first CLI→REST use case
+- ADR-040: Scan Metadata Enrichment — `apme sbom` is PR 3 of this ADR
 - ADR-004: Podman Pod Deployment — pod topology (unchanged)
 - DR-008: Scan Result Persistence — decided: SQLite in Gateway
 - DR-016: Embed Gateway in Local Daemon — this ADR documents that decision

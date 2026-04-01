@@ -54,6 +54,7 @@ Decisions that have been accepted but are not yet fully implemented.
 | [ADR-040](ADR-040-scan-metadata-enrichment.md) | Scan Metadata Enrichment | 2026-03-25 |
 | [ADR-043](ADR-043-default-severity-assignment.md) | Default Severity Assignment for Rule Catalog | 2026-03-26 |
 | [ADR-048](ADR-048-pod-internal-admin-endpoints.md) | Pod-Internal Admin Endpoints Rely on Network Isolation | 2026-04-01 |
+| [ADR-049](ADR-049-gateway-in-daemon.md) | Gateway Embedded in Local Daemon | 2026-04-01 |
 
 ## Proposed
 
@@ -70,7 +71,6 @@ Decisions under consideration — not yet accepted or implemented.
 | [ADR-044](ADR-044-node-identity-progression-model.md) | Node Identity and Progression Model | 2026-03-27 |
 | [ADR-045](ADR-045-galaxy-auth-delegation.md) | Delegate Galaxy Authentication to ansible-galaxy, Galaxy Config as Scan Metadata | 2026-03-28 |
 | [ADR-046](ADR-046-ai-assisted-report-generation.md) | AI-Assisted Report Generation | 2026-03-30 |
-| [ADR-048](ADR-048-gateway-in-daemon.md) | Gateway Embedded in Local Daemon | 2026-04-01 |
 
 ## Superseded
 
@@ -84,7 +84,7 @@ Decisions replaced by newer ADRs.
 ## Creating New ADRs
 
 1. Copy the template from `../templates/adr.md`
-2. Use the next available number (currently ADR-049)
+2. Use the next available number (currently ADR-050)
 3. Include:
    - Status (Proposed → Accepted → Implemented)
    - Date
