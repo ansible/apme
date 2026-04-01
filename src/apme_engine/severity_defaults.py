@@ -44,6 +44,8 @@ class Severity(IntEnum):
 SEVERITY_DEFAULTS: dict[str, Severity] = {
     # ── Native rules ────────────────────────────────────────────────────
     # Low: FQCN / naming / best-practice
+    "L039": Severity.LOW,
+    "L050": Severity.LOW,
     "L026": Severity.LOW,
     "L030": Severity.LOW,
     "L027": Severity.LOW,
@@ -273,13 +275,16 @@ def severity_to_label(sev: Severity) -> str:
 def severity_from_proto(proto_val: int) -> Severity:
     """Convert a proto Severity enum int to the Python Severity.
 
+    Unknown/future enum values fall back to MEDIUM so they remain
+    distinguishable from an explicitly unset severity (UNSPECIFIED).
+
     Args:
         proto_val: Integer value from the proto Severity enum.
 
     Returns:
         Corresponding Severity.
     """
-    return _PROTO_TO_SEVERITY.get(proto_val, Severity.UNSPECIFIED)
+    return _PROTO_TO_SEVERITY.get(proto_val, Severity.MEDIUM)
 
 
 def severity_to_proto(sev: Severity) -> int:

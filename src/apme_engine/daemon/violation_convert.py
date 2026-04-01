@@ -117,7 +117,7 @@ def _resolve_severity(v: ViolationDict | Mapping[str, str | int | list[int] | bo
         if isinstance(sev_raw, Severity):
             return severity_to_proto(sev_raw)
         if isinstance(sev_raw, int):
-            return sev_raw
+            return severity_to_proto(severity_from_proto(sev_raw))
         return severity_to_proto(severity_from_label(str(sev_raw)))
 
     return severity_to_proto(Severity.MEDIUM)
