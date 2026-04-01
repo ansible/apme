@@ -22,15 +22,15 @@ def run_sbom(args: argparse.Namespace) -> None:
     client = GatewayClient(base_url=args.gateway_url)
     try:
         bom = client.get_sbom(args.project_id, format=args.format)
-    except httpx.ConnectError:
-        print(
-            f"Error: could not connect to Gateway at {client.base_url} — is it running?",
-            file=sys.stderr,
-        )
-        sys.exit(1)
     except httpx.HTTPStatusError as exc:
         print(
             f"Error: {exc.response.status_code} — {exc.response.text}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    except httpx.RequestError:
+        print(
+            f"Error: could not connect to Gateway at {client.base_url} — is it running?",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -38,6 +38,6 @@ def run_sbom(args: argparse.Namespace) -> None:
     payload = json.dumps(bom, indent=2)
     if args.output:
         Path(args.output).write_text(payload + "\n")
-        print(f"SBOM written to {args.output}")
+        print(f"SBOM written to {args.output}", file=sys.stderr)
     else:
         print(payload)
