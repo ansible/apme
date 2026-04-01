@@ -304,6 +304,31 @@ class TestOPAPayloadEquivalence:
 
 
 # ---------------------------------------------------------------------------
+# Regression: root must not be misclassified as a role (issue #189)
+# ---------------------------------------------------------------------------
+
+
+class TestNoPhantomRoleForProjectRoot:
+    """The project root must not appear as a ROLE node in the graph.
+
+    The terrible-playbook fixture has a tasks/ directory at the root (with
+    legacy_setup.yml) but no tasks/main.yml — it is a project, not a role.
+    ARI's heuristic previously created a phantom role node for it.
+    """
+
+    def test_no_role_node_named_after_project_root(self, content_graph: ContentGraph) -> None:
+        """No ROLE node should carry the project-root directory name.
+
+        Args:
+            content_graph: ContentGraph from terrible-playbook.
+        """
+        root_name = _fixture_path().name
+        role_nodes = list(content_graph.nodes(NodeType.ROLE))
+        role_names = [n.name for n in role_nodes]
+        assert root_name not in role_names, f"Phantom role '{root_name}' found in graph roles: {role_names}"
+
+
+# ---------------------------------------------------------------------------
 # Variable provenance smoke test
 # ---------------------------------------------------------------------------
 

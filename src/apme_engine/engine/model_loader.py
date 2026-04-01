@@ -205,8 +205,18 @@ def load_repository(
         yaml_label_list=yaml_label_list,
         load_children=load_children,
     )
-    # in case the target project is a role
-    if os.path.exists(os.path.join(repo_path, "tasks")):
+    # Standalone role: check for canonical role entry points rather than
+    # a bare tasks/ dir, which many non-role projects also have.
+    _has_role_markers = any(
+        os.path.exists(os.path.join(repo_path, marker))
+        for marker in (
+            os.path.join("tasks", "main.yml"),
+            os.path.join("tasks", "main.yaml"),
+            os.path.join("meta", "main.yml"),
+            os.path.join("meta", "main.yaml"),
+        )
+    )
+    if _has_role_markers:
         role_name = os.path.basename(repo_path)
         role = load_role(
             path=repo_path,
