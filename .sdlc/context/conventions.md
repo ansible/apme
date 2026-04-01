@@ -4,13 +4,12 @@
 
 ### Version
 
-- Python 3.11+ required
+- Python 3.10+ required (`requires-python = ">=3.10"`)
 - Use modern syntax (match statements, type unions with `|`)
 
 ### Style
 
-- **Formatter**: Black with 88-char line limit
-- **Linter**: Ruff
+- **Linter & Formatter**: Ruff (120-char line limit)
 - **Type Checker**: mypy (strict mode)
 
 ### Imports

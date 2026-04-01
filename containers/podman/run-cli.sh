@@ -2,10 +2,10 @@
 # Run CLI container on-the-fly with current directory mounted at /workspace.
 # Joins the apme-pod network so it can reach Primary. Run from any directory you want to scan.
 # Usage: run-cli.sh [subcommand] [args...]
-# Example: run-cli.sh                     # scan . (default)
-# Example: run-cli.sh scan --json .       # scan with JSON output
-# Example: run-cli.sh fix --check .       # dry-run fix
-# Example: run-cli.sh fix .              # apply Tier 1 fixes
+# Example: run-cli.sh                     # check . (default)
+# Example: run-cli.sh check --json .     # check with JSON output
+# Example: run-cli.sh remediate .        # apply Tier 1 fixes
+# Example: run-cli.sh format --check .   # YAML format dry-run
 # Example: run-cli.sh health-check       # check all services
 set -e
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -17,9 +17,9 @@ podman image exists apme-cli:latest 2>/dev/null || { echo "Run containers/podman
 # name, capture the exit code, then force-remove.
 CLI_NAME="apme-cli-$$"
 trap 'podman rm -f "$CLI_NAME" >/dev/null 2>&1 || true' EXIT
-# Default to "scan ." when no args provided (any arg overrides Dockerfile CMD)
+# Default to "check ." when no args provided (any arg overrides Dockerfile CMD)
 if [ $# -eq 0 ]; then
-  set -- scan .
+  set -- check .
 fi
 rc=0
 podman run \

@@ -2,6 +2,8 @@
 
 Thank you for your interest in contributing to APME! This document provides guidelines and best practices for contributing.
 
+For full local development setup, tooling reference, and tox environments, see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+
 ## Table of Contents
 
 - [License](#license)
@@ -33,65 +35,63 @@ This project follows a standard code of conduct. Be respectful, inclusive, and p
 
 ### Prerequisites
 
-- Python 3.11+
+- Python 3.10+
 - Podman (for container development)
-- UV (recommended) or pip
+- [uv](https://docs.astral.sh/uv/) (package manager)
 - Git
 
 ### Fork and Clone
 
 ```bash
 # Fork via GitHub UI, then:
-git clone https://github.com/YOUR_USERNAME/aap-apme.git
-cd aap-apme
-git remote add upstream https://github.com/ORG/aap-apme.git
+git clone https://github.com/YOUR_USERNAME/apme.git
+cd apme
+git remote add upstream https://github.com/ansible/apme.git
 ```
 
 ---
 
 ## Development Setup
 
-### Local Environment
+### Install Developer Tools
 
 ```bash
-# Create virtual environment
-python -m venv .venv
-source .venv/bin/activate
+# Install tox (sole developer orchestration tool)
+uv tool install tox --with tox-uv
 
-# Install dependencies
-uv pip install -e ".[dev]"
-
-# Install pre-commit hooks (REQUIRED)
-pre-commit install
-pre-commit install --hook-type commit-msg
+# Install prek (git hooks)
+uv tool install prek
+prek install
 ```
+
+### Verify Setup
+
+```bash
+# List all available tox environments
+tox l
+
+# Run lint + typecheck
+tox -e lint
+
+# Run unit tests
+tox -e unit
+```
+
+See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for the full tox environment reference and pod lifecycle commands.
 
 ### Container Environment
 
 ```bash
 # Build all containers
-./containers/podman/build.sh
+tox -e build
 
 # Start the pod
-./containers/podman/up.sh
+tox -e up
 ```
 
-### CLI commands (user-facing)
+### CLI Commands (User-Facing)
 
 The `apme` entry point uses **`check`** to assess content and **`remediate`** to apply fixes. Engine and API layers may still use **scan** for internal pipeline concepts (for example `ScanOptions`, `scan_playbook`, `ScanResult`).
-
-### Verify Setup
-
-```bash
-# Run tests
-pytest
-
-# Run linting
-ruff check src/
-
-# Type check
-mypy src/
-```
 
 ---
 
@@ -112,7 +112,7 @@ docs/update-section-name
 3. **Read relevant specs** in `.sdlc/specs/`
 4. **Make changes** following coding standards
 5. **Write/update tests**
-6. **Run pre-commit hooks** (automatic on commit)
+6. **Run quality gates**: `tox -e lint` and `tox -e unit`
 7. **Create PR** with description
 
 ### Spec-Driven Development
@@ -133,26 +133,24 @@ For new features:
 ### Critical Rules
 
 1. **NEVER commit secrets** — API keys, passwords, tokens, private keys
-2. **Pre-commit hooks are mandatory** — They catch secrets before commit
+2. **Git hooks catch common issues** — prek runs ruff, mypy, and pydoclint on commit
 3. **Validate all input** — Especially paths and user-provided data
 4. **No shell=True** — Never use with user input in subprocess calls
 
-### Pre-commit Checks
+### Pre-commit Hooks
 
-The following security checks run automatically:
+The following quality checks run automatically via prek on each commit:
 
-- `gitleaks` — Detects secrets in code
-- `detect-secrets` — Additional secret patterns
-- `bandit` — Python security linter
-- `detect-private-key` — Catches key files
+- `ruff` — Lint + auto-fix
+- `ruff-format` — Code formatting
+- `mypy` — Strict type checking
+- `pydoclint` — Docstring validation
+- `uv-lock` — Lockfile consistency
 
 If a hook fails:
 ```bash
-# See what failed
-pre-commit run --all-files
-
-# If false positive for secrets, update baseline
-detect-secrets scan --baseline .secrets.baseline
+# Run all hooks manually
+tox -e lint
 ```
 
 ---
@@ -161,12 +159,9 @@ detect-secrets scan --baseline .secrets.baseline
 
 ### Before Submitting
 
-- [ ] All tests pass (`pytest`)
-- [ ] Linting passes (`ruff check src/`)
-- [ ] Type checks pass (`mypy src/`)
-- [ ] Pre-commit hooks pass
+- [ ] Quality gates pass (`tox -e lint`)
+- [ ] Tests pass (`tox -e unit`)
 - [ ] Documentation updated (if applicable)
-- [ ] CHANGELOG.md updated (for user-facing changes)
 
 ### PR Template
 
@@ -193,7 +188,7 @@ Brief description of changes.
 ## Security Checklist
 - [ ] No secrets in code
 - [ ] Input validation added
-- [ ] Pre-commit hooks pass
+- [ ] Quality gates pass
 ```
 
 ### Review Process
@@ -210,10 +205,10 @@ Brief description of changes.
 
 ### Python
 
-- **Style**: Follow PEP 8, enforced by Ruff
-- **Line length**: 88 characters (Black default)
-- **Type hints**: Required for all public functions
-- **Docstrings**: Google style for public APIs
+- **Style**: Enforced by Ruff (replaces flake8, isort, black)
+- **Line length**: 120 characters
+- **Type hints**: Required for all public functions (mypy strict)
+- **Docstrings**: Google style, enforced by pydoclint
 
 ```python
 def scan_playbook(
@@ -239,7 +234,7 @@ def scan_playbook(
 ### Imports
 
 ```python
-# Order: stdlib → third-party → local
+# Order: stdlib -> third-party -> local
 # Sorted alphabetically within groups
 
 from pathlib import Path
@@ -248,8 +243,8 @@ from typing import TYPE_CHECKING
 import grpc
 from ruamel.yaml import YAML
 
-from apme.scanner import ScanResult
-from apme.scanner.issue_types import Issue
+from apme_engine.runner import run_scan
+from apme_engine.validators.base import ScanContext
 ```
 
 ### Testing
@@ -289,13 +284,6 @@ feat(scanner): add SARIF output format
 Implements TASK-003: Reporter with SARIF support for CI integration.
 
 Closes #123
-```
-
-```
-fix(opa): handle empty hierarchy payload
-
-Previously, OPA validator crashed on empty projects.
-Now returns empty violations list.
 ```
 
 ---

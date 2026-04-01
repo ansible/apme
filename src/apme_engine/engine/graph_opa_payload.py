@@ -170,7 +170,7 @@ def content_node_to_opa_dict(node: ContentNode) -> YAMLDict:
                 d["line"] = [max(1, play_index + 1), max(1, play_index + 1)]
 
     elif opa_type == "taskcall":
-        d["module"] = node.resolved_module_name or node.module
+        d["module"] = node.module
         d["original_module"] = node.module
         d["name"] = node.name if node.name else None
 

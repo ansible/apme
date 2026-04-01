@@ -584,11 +584,20 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         if not isinstance(hierarchy_collections, list):
             hierarchy_collections = []
 
+        logger.info(
+            "Collection discovery (req=%s): requirements=%s, hierarchy_fqcns=%s, request_specs=%s",
+            scan_id,
+            discovered,
+            hierarchy_collections,
+            collection_specs,
+        )
+
         collection_specs = merge_collection_specs(
             collection_specs,
             discovered,
             hierarchy_collections,
         )
+        logger.info("Collection specs merged (req=%s): %s", scan_id, collection_specs)
 
         # 3. Venv acquire (always — creates or incrementally installs)
         venv_session = await asyncio.get_event_loop().run_in_executor(
@@ -679,9 +688,22 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                     raise
                 else:
                     validators_done += 1
+                    rule_ids = sorted({str(v.get("rule_id", "")) for v in result.violations if isinstance(v, dict)})
                     if _pcb:
                         count = len(result.violations)
-                        _pcb("scan", f"{name.title()}: {count} findings", validators_done / num_validators, 2)
+                        _pcb(
+                            "scan",
+                            f"{name.title()}: {count} findings {rule_ids}",
+                            validators_done / num_validators,
+                            2,
+                        )
+                    logger.info(
+                        "Fan-out: %s returned %d violations: %s (req=%s)",
+                        name,
+                        len(result.violations),
+                        rule_ids,
+                        scan_id,
+                    )
                     return name, result
 
             named_results = await asyncio.gather(
@@ -716,7 +738,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             engine_annotate_ms=ediag.annotate_ms,
             engine_total_ms=ediag.total_ms,
             files_scanned=ediag.files_scanned,
-            trees_built=ediag.trees_built,
+            graph_nodes_built=ediag.graph_nodes_built,
             total_violations=len(violations),
             validators=validator_diagnostics,
             fan_out_ms=fan_out_ms,

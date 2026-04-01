@@ -118,16 +118,19 @@ gh run view RUN_ID --log-failed 2>&1 | tail -80
 
 Common CI failures and how to fix them:
 
-- **prek (ruff format)**: Run `ruff format` locally on changed files. Long
-  type annotations and function signatures often need line wrapping.
+- **prek (ruff format)**: Run `tox -e lint` to reproduce. Long type annotations
+  and function signatures often need line wrapping.
 - **prek (mypy)**: Add type annotations to all new functions. Use the correct
   `type: ignore` code (e.g., `[assignment]` vs `[method-assign]`). Run
-  `mypy FILE` locally to verify.
+  `tox -e lint` to verify.
 - **prek (pydoclint)**: Ensure all public functions have Google-style
-  docstrings with Args/Returns sections.
-- **test / test-ai**: Run `pytest tests/ -x --ignore=tests/integration` locally
-  to reproduce. Update tests when behavior changes (e.g., new retry logic
-  changes expected call counts).
+  docstrings with Args/Returns sections. Run `tox -e lint`.
+- **test / test-ai**: Run `tox -e unit` (or `tox -e ai`) to reproduce. Update
+  tests when behavior changes (e.g., new retry logic changes expected call
+  counts).
+
+Do **not** run `ruff`, `mypy`, `pytest`, or `prek` directly — always use tox
+(ADR-047). See the `/tox` skill for the full environment reference.
 
 ### Replying to review comments
 

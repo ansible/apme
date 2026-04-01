@@ -45,7 +45,7 @@ class ScanDiagnostics:
     engine_annotate_ms: float
     engine_total_ms: float
     files_scanned: int
-    trees_built: int
+    graph_nodes_built: int
     total_violations: int
     validators: list[ValidatorDiagnostics]
     fan_out_ms: float

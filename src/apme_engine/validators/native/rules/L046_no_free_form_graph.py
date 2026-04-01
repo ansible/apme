@@ -71,7 +71,7 @@ class NoFreeFormGraphRule(GraphRule):
         node = graph.get_node(node_id)
         if node is None or node.node_type not in _TASK_TYPES:
             return False
-        return bool(node.resolved_module_name or node.module)
+        return bool(node.module)
 
     def process(self, graph: ContentGraph, node_id: str) -> GraphRuleResult | None:
         """Report when _raw_params indicates free-form module invocation.
@@ -99,7 +99,7 @@ class NoFreeFormGraphRule(GraphRule):
         if isinstance(raw, dict) and "_raw" in raw:
             raw = raw.get("_raw", "")
 
-        resolved = node.resolved_module_name or node.module
+        resolved = node.module
         is_free_form = False
         if isinstance(raw, str) and raw.strip():
             is_free_form = resolved in _COMMAND_MODULES or bool(_KV_PATTERN.search(raw))

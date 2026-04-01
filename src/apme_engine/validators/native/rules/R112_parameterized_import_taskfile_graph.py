@@ -60,7 +60,7 @@ class ParameterizedImportTaskfileGraphRule(GraphRule):
         node = graph.get_node(node_id)
         if node is None or node.node_type not in _TASK_TYPES:
             return False
-        mod = node.resolved_module_name or node.module
+        mod = node.module
         return mod in _TASKFILE_MODULES
 
     def process(self, graph: ContentGraph, node_id: str) -> GraphRuleResult | None:

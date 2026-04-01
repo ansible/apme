@@ -60,7 +60,7 @@ class DownloadExecGraphRule(GraphRule):
         node = graph.get_node(node_id)
         if node is None or node.node_type not in _TASK_TYPES:
             return False
-        profile = get_risk_profile(node.resolved_module_name, node.module)
+        profile = get_risk_profile(node.module)
         return profile is not None and profile.risk_type == "cmd_exec"
 
     def process(self, graph: ContentGraph, node_id: str) -> GraphRuleResult | None:
@@ -77,7 +77,7 @@ class DownloadExecGraphRule(GraphRule):
         if node is None:
             return None
 
-        cmd_profile = get_risk_profile(node.resolved_module_name, node.module)
+        cmd_profile = get_risk_profile(node.module)
         if cmd_profile is None:
             return None
 
@@ -105,7 +105,7 @@ class DownloadExecGraphRule(GraphRule):
 
         preceding = _preceding_tasks(graph, parent_play.node_id, node)
         for task_node in preceding:
-            sib_profile = get_risk_profile(task_node.resolved_module_name, task_node.module)
+            sib_profile = get_risk_profile(task_node.module)
             if sib_profile is None or sib_profile.risk_type != "inbound":
                 continue
 

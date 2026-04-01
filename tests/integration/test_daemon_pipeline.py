@@ -33,14 +33,14 @@ FIXTURE_DIR = Path(__file__).resolve().parent.parent / "fixtures" / "terrible-pl
 _SESSION_ID = "integ-test-session"
 
 
-def _scan_json(fixture_dir: Path) -> YAMLDict:
-    """Scan the fixture directory and return parsed JSON.
+def _scan_json(fixture_dir: Path) -> tuple[YAMLDict, str]:
+    """Scan the fixture directory and return parsed JSON plus stderr logs.
 
     Args:
         fixture_dir: Path to the Ansible project to scan.
 
     Returns:
-        Parsed JSON dict from scan output.
+        Tuple of (parsed JSON dict, stderr log output).
     """
     r = subprocess.run(
         [
@@ -49,6 +49,7 @@ def _scan_json(fixture_dir: Path) -> YAMLDict:
             "apme_engine.cli",
             "check",
             "--json",
+            "-v",
             "--session",
             _SESSION_ID,
             "--timeout",
@@ -59,25 +60,51 @@ def _scan_json(fixture_dir: Path) -> YAMLDict:
         text=True,
         timeout=300,
     )
-    assert r.returncode == 0, f"Scan exited {r.returncode}:\nstdout: {r.stdout[:2000]}\nstderr: {r.stderr[:2000]}"
+    assert r.returncode == 0, f"Scan exited {r.returncode}:\nstdout: {r.stdout[:2000]}\nstderr: {r.stderr[:4000]}"
     try:
-        return cast(YAMLDict, json.loads(r.stdout))
+        return cast(YAMLDict, json.loads(r.stdout)), r.stderr
     except json.JSONDecodeError:
-        pytest.fail(f"Scan output not valid JSON:\n{r.stdout[:2000]}")
-        return {}  # unreachable
+        pytest.fail(f"Scan output not valid JSON:\n{r.stdout[:2000]}\nstderr: {r.stderr[:4000]}")
+        return {}, ""  # unreachable
 
 
 @pytest.fixture(scope="module")  # type: ignore[untyped-decorator]
-def scan_data(infrastructure: object) -> YAMLDict:
+def scan_result(infrastructure: object) -> tuple[YAMLDict, str]:
     """Scan terrible-playbook once and cache for all tests in this module.
 
     Args:
         infrastructure: Daemon infrastructure fixture (ensures daemon is up).
 
     Returns:
-        Parsed scan JSON.
+        Tuple of (parsed scan JSON, stderr log output).
     """
     return _scan_json(FIXTURE_DIR)
+
+
+@pytest.fixture(scope="module")  # type: ignore[untyped-decorator]
+def scan_data(scan_result: tuple[YAMLDict, str]) -> YAMLDict:
+    """Parsed scan JSON (convenience alias).
+
+    Args:
+        scan_result: Tuple from scan_result fixture.
+
+    Returns:
+        Parsed scan JSON dict.
+    """
+    return scan_result[0]
+
+
+@pytest.fixture(scope="module")  # type: ignore[untyped-decorator]
+def scan_stderr(scan_result: tuple[YAMLDict, str]) -> str:
+    """Stderr log output from the scan (convenience alias).
+
+    Args:
+        scan_result: Tuple from scan_result fixture.
+
+    Returns:
+        Stderr string from the scan subprocess.
+    """
+    return scan_result[1]
 
 
 def _scan_verbose(fixture_dir: Path) -> subprocess.CompletedProcess[str]:
@@ -159,7 +186,7 @@ def test_milestone_logs_displayed(scan_verbose: subprocess.CompletedProcess[str]
 
 
 @pytest.mark.integration  # type: ignore[untyped-decorator]
-def test_posix_argspec_violation(scan_data: YAMLDict) -> None:
+def test_posix_argspec_violation(scan_data: YAMLDict, scan_stderr: str) -> None:
     """L058/L059 fires for ansible.posix.sysctl with bogus_param (ADR-032 proof).
 
     ``ansible.posix`` is intentionally omitted from ``requirements.yml``.
@@ -168,14 +195,18 @@ def test_posix_argspec_violation(scan_data: YAMLDict) -> None:
 
     Args:
         scan_data: Parsed scan result.
+        scan_stderr: Stderr log output from scan.
     """
     violations = cast(list[ViolationDict], scan_data.get("violations", []))
     posix_violations = [v for v in violations if "ansible.posix.sysctl" in str(v.get("message", ""))]
     argspec_hits = [v for v in posix_violations if v.get("rule_id") in ("L058", "L059")]
+
     assert argspec_hits, (
         "Expected L058/L059 for ansible.posix.sysctl bogus_param — "
         "auto-discovery may not have installed the collection.\n"
-        f"All rule_ids: {sorted({str(v.get('rule_id', '')) for v in violations})}"
+        f"All rule_ids: {sorted({str(v.get('rule_id', '')) for v in violations})}\n"
+        f"scan_data keys: {sorted(scan_data.keys())}\n"
+        f"Full stderr ({len(scan_stderr)} chars):\n{scan_stderr[-6000:]}"
     )
 
 

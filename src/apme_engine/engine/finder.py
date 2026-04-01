@@ -200,90 +200,31 @@ def get_task_blocks(
     return tasks, yaml_lines
 
 
-# extract all tasks by flattening block tasks recursively
-# a block task like below will be flattened
-# like [some_module1, some_module2, some_module3]
-#
-# - block:
-#     - some_module1:
-#     - block:
-#         - some_module2
-#         - some_module3
-#
 def flatten_block_tasks(
     task_dict: YAMLDict | None,
     jsonpath_prefix: str = "",
     module_defaults: YAMLDict | None = None,
 ) -> list[tuple[YAMLDict, str]]:
-    """Flatten block/rescue/always into a list of (task_dict, jsonpath).
+    """Return task dicts preserving block wrappers intact.
+
+    Block wrappers (dicts with ``block:``, ``rescue:``, or ``always:``
+    keys) are emitted as single entries.  ``load_task()`` handles
+    recursive child loading.  Non-block dicts are returned as-is.
 
     Args:
         task_dict: Single task dict (may contain block/rescue/always).
         jsonpath_prefix: Prefix for jsonpath.
-        module_defaults: Defaults to merge for tasks in block.
+        module_defaults: Unused (kept for API compat); block-level
+            ``module_defaults`` are now preserved on the wrapper dict
+            and handled by ``load_task``.
 
     Returns:
-        List of (task_dict, jsonpath) for each leaf task.
+        List of ``(task_dict, jsonpath)`` tuples.
 
     """
-    if module_defaults is None:
-        module_defaults = {}
     if task_dict is None:
         return []
-    tasks = []
-
-    # check module_defaults
-    # if found, insert this to tasks under the block
-    _module_defaults = {}
-    if module_defaults and isinstance(module_defaults, dict):
-        _module_defaults = module_defaults
-    if "module_defaults" in task_dict:
-        new_module_defaults = task_dict.get("module_defaults", {})
-        if new_module_defaults and isinstance(new_module_defaults, dict):
-            _module_defaults.update(new_module_defaults)
-
-    # load normal tasks first
-    if "block" in task_dict:
-        task_jsonpath = jsonpath_prefix + ".block"
-        tasks_in_block = task_dict.get("block", [])
-        if isinstance(tasks_in_block, list):
-            for i, t_dict in enumerate(tasks_in_block):
-                if not isinstance(t_dict, dict):
-                    continue
-                _current_prefix = task_jsonpath + f".{i}"
-                tasks_in_item = flatten_block_tasks(t_dict, _current_prefix, _module_defaults)
-                tasks.extend(tasks_in_item)
-        else:
-            tasks = [(task_dict, task_jsonpath)]
-    else:
-        task_jsonpath = jsonpath_prefix
-        tasks = [(task_dict, task_jsonpath)]
-
-    # then add "rescue" block
-    if "rescue" in task_dict:
-        task_jsonpath = jsonpath_prefix + ".rescue"
-        tasks_in_rescue = task_dict.get("rescue", [])
-        if isinstance(tasks_in_rescue, list):
-            for i, t_dict in enumerate(tasks_in_rescue):
-                if not isinstance(t_dict, dict):
-                    continue
-                _current_prefix = task_jsonpath + f".{i}"
-                tasks_in_item = flatten_block_tasks(t_dict, _current_prefix, _module_defaults)
-                tasks.extend(tasks_in_item)
-
-    # finally add "always" block
-    if "always" in task_dict:
-        task_jsonpath = jsonpath_prefix + ".always"
-        tasks_in_always = task_dict.get("always", [])
-        if isinstance(tasks_in_always, list):
-            for i, t_dict in enumerate(tasks_in_always):
-                if not isinstance(t_dict, dict):
-                    continue
-                _current_prefix = task_jsonpath + f".{i}"
-                tasks_in_item = flatten_block_tasks(t_dict, _current_prefix, _module_defaults)
-                tasks.extend(tasks_in_item)
-
-    return tasks
+    return [(task_dict, jsonpath_prefix)]
 
 
 def identify_lines_with_jsonpath(

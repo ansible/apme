@@ -57,7 +57,7 @@ class FileDeletionGraphRule(GraphRule):
         node = graph.get_node(node_id)
         if node is None or node.node_type not in _TASK_TYPES:
             return False
-        profile = get_risk_profile(node.resolved_module_name, node.module)
+        profile = get_risk_profile(node.module)
         if profile is None or profile.risk_type != "file_change":
             return False
         mo = node.module_options
@@ -80,7 +80,7 @@ class FileDeletionGraphRule(GraphRule):
         if node is None:
             return None
 
-        profile = get_risk_profile(node.resolved_module_name, node.module)
+        profile = get_risk_profile(node.module)
         if profile is None:
             return None
 

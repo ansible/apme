@@ -11,7 +11,7 @@ from apme_engine.engine.models import Severity
 from apme_engine.validators.native.rules.graph_rule_base import GraphRule, GraphRuleResult
 
 _TASK_TYPES = frozenset({NodeType.TASK, NodeType.HANDLER})
-_INCLUDE_VARS_FQCN = "ansible.builtin.include_vars"
+_INCLUDE_VARS_NAMES = frozenset({"include_vars", "ansible.builtin.include_vars", "ansible.legacy.include_vars"})
 
 
 @dataclass
@@ -37,22 +37,22 @@ class UnnecessaryIncludeVarsGraphRule(GraphRule):
     tags: tuple[str, ...] = (Tag.VARIABLE,)
 
     def match(self, graph: ContentGraph, node_id: str) -> bool:
-        """Match task/handler nodes that invoke ``ansible.builtin.include_vars``.
+        """Match task/handler nodes that invoke ``include_vars``.
 
         Args:
             graph: The full ContentGraph.
             node_id: ID of the node to check.
 
         Returns:
-            True when the node is a task or handler and the resolved module is
-            ``ansible.builtin.include_vars``.
+            True when the node is a task or handler whose authored module
+            name is an ``include_vars`` variant.
         """
         node = graph.get_node(node_id)
         if node is None:
             return False
         if node.node_type not in _TASK_TYPES:
             return False
-        return node.resolved_module_name == _INCLUDE_VARS_FQCN
+        return node.module in _INCLUDE_VARS_NAMES
 
     def process(self, graph: ContentGraph, node_id: str) -> GraphRuleResult | None:
         """Violate when ``include_vars`` has no tags and no ``when`` expression.

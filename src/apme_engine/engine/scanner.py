@@ -24,7 +24,6 @@ from .risk_assessment_model import RAMClient
 from .scan_state import SingleScan as SingleScan
 from .scanner_config import Config as Config
 from .utils import (
-    equal,
     is_local_path,
     summarize_findings,
 )
@@ -142,8 +141,6 @@ class ARIScanner:
         yaml_label_list: list[str] | None = None,
         objects: bool = False,
         out_dir: str = "",
-        spec_mutations_from_previous_scan: YAMLDict | None = None,
-        _rescan_depth: int = 0,
     ) -> SingleScan | None:
         """Run a full ARI scan for the given target.
 
@@ -175,8 +172,6 @@ class ARIScanner:
             yaml_label_list: YAML labels to include.
             objects: Save definition objects to out_dir.
             out_dir: Output directory.
-            spec_mutations_from_previous_scan: Mutations from prior scan.
-            _rescan_depth: Internal counter to bound recursive rescans (default 0).
 
         Returns:
             SingleScan with findings, or None if download_only or load_only.
@@ -224,7 +219,6 @@ class ARIScanner:
             rules=self.rules,
             rules_cache=self.rules_cache,
             persist_dependency_cache=self.persist_dependency_cache,
-            spec_mutations_from_previous_scan=spec_mutations_from_previous_scan or {},
             use_ansible_doc=self.use_ansible_doc,
             do_save=self.do_save,
             silent=self.silent,
@@ -392,24 +386,14 @@ class ARIScanner:
                 f"tasks: {tasks_num}, modules: {modules_num}"
             )
 
-        self.record_begin(time_records, "apply_spec_rules")
-        scandata.apply_spec_mutations()
-        self.record_end(time_records, "apply_spec_rules")
-        if not self.silent:
-            logger.debug("apply_spec_rules() done")
-
         if load_only:
             return None
 
-        _ram_client = None
-        if self.read_ram:
-            _ram_client = self.ram_client
-
-        self.record_begin(time_records, "tree_construction")
-        scandata.construct_trees(_ram_client)
-        self.record_end(time_records, "tree_construction")
+        self.record_begin(time_records, "graph_construction")
+        scandata.build_content_graph()
+        self.record_end(time_records, "graph_construction")
         if not self.silent:
-            logger.debug("construct_trees() done")
+            logger.debug("build_content_graph() done")
 
         self.record_begin(time_records, "apply_rules")
         scandata.apply_rules()
@@ -457,57 +441,6 @@ class ARIScanner:
             elif self.output_format.lower() == "yaml":
                 data_str = yaml.safe_dump(data)
             print(data_str)
-
-        _MAX_RESCAN_DEPTH = 3
-        if scandata.spec_mutations:
-            trigger_rescan = False
-            _previous = spec_mutations_from_previous_scan
-            if _previous and equal(scandata.spec_mutations, _previous):
-                if not self.silent:
-                    logger.warning(
-                        "Spec mutation loop has been detected! Exitting the scan here but the result may be incomplete."
-                    )
-            else:
-                trigger_rescan = True
-
-            if trigger_rescan:
-                if _rescan_depth >= _MAX_RESCAN_DEPTH:
-                    if not self.silent:
-                        logger.warning(
-                            "Max rescan depth (%d) reached; returning possibly incomplete result.",
-                            _MAX_RESCAN_DEPTH,
-                        )
-                else:
-                    if not self.silent:
-                        print("Spec mutations are found. Triggering ARI scan again...")
-                    return self.evaluate(
-                        type=type,
-                        name=name,
-                        path=path,
-                        collection_name=collection_name,
-                        role_name=role_name,
-                        use_ansible_path=use_ansible_path,
-                        version=version,
-                        hash=hash,
-                        target_path=target_path,
-                        dependency_dir=dependency_dir,
-                        download_only=download_only,
-                        load_only=load_only,
-                        skip_dependency=skip_dependency,
-                        use_src_cache=use_src_cache,
-                        source_repository=source_repository,
-                        playbook_yaml=playbook_yaml,
-                        playbook_only=playbook_only,
-                        taskfile_yaml=taskfile_yaml,
-                        taskfile_only=taskfile_only,
-                        include_test_contents=include_test_contents,
-                        load_all_taskfiles=load_all_taskfiles,
-                        objects=objects,
-                        raw_yaml=raw_yaml,
-                        out_dir=out_dir,
-                        spec_mutations_from_previous_scan=scandata.spec_mutations,
-                        _rescan_depth=_rescan_depth + 1,
-                    )
 
         return cast(SingleScan | None, findings.report.get("ari_result", None)) if findings is not None else None
 

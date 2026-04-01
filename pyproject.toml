@@ -48,6 +48,7 @@ dev = [
     "grpc-stubs",
     "grpcio-tools>=1.78.0",
     "pytest-playwright",
+    "pytest-xdist>=3.5",
 ]
 
 [tool.pytest.ini_options]

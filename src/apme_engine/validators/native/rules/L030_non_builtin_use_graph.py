@@ -15,7 +15,7 @@ _TASK_TYPES = frozenset({NodeType.TASK, NodeType.HANDLER})
 
 @dataclass
 class NonBuiltinUseGraphRule(GraphRule):
-    """Flag tasks whose resolved module is outside ``ansible.builtin``.
+    """Flag tasks whose declared module FQCN is outside ``ansible.builtin``.
 
     Attributes:
         rule_id: Rule identifier.
@@ -36,26 +36,29 @@ class NonBuiltinUseGraphRule(GraphRule):
     tags: tuple[str, ...] = (Tag.DEPENDENCY,)
 
     def match(self, graph: ContentGraph, node_id: str) -> bool:
-        """Match task/handler nodes with a resolved non-builtin module FQCN.
+        """Match task/handler nodes with a non-builtin collection FQCN on ``module``.
+
+        Short module names (no dot) do not match; only explicit FQCNs from
+        outside ``ansible.builtin`` are flagged.
 
         Args:
             graph: The full ContentGraph.
             node_id: ID of the node to check.
 
         Returns:
-            True when the node is a task or handler and ``resolved_module_name``
-            is set and does not start with ``ansible.builtin.``.
+            True when the node is a task or handler, ``module`` is non-empty,
+            contains a dot, and does not start with ``ansible.builtin.``.
         """
         node = graph.get_node(node_id)
         if node is None:
             return False
         if node.node_type not in _TASK_TYPES:
             return False
-        resolved = node.resolved_module_name
-        return bool(resolved and not resolved.startswith("ansible.builtin."))
+        mod = node.module or ""
+        return bool(mod and "." in mod and not mod.startswith("ansible.builtin."))
 
     def process(self, graph: ContentGraph, node_id: str) -> GraphRuleResult | None:
-        """Report the resolved FQCN for non-builtin module usage.
+        """Report the declared FQCN for non-builtin module usage.
 
         Args:
             graph: The full ContentGraph.
@@ -67,9 +70,9 @@ class NonBuiltinUseGraphRule(GraphRule):
         node = graph.get_node(node_id)
         if node is None:
             return None
-        resolved = node.resolved_module_name
-        verdict = bool(resolved and not resolved.startswith("ansible.builtin."))
-        detail: YAMLDict = {"fqcn": resolved}
+        mod = node.module or ""
+        verdict = bool(mod and "." in mod and not mod.startswith("ansible.builtin."))
+        detail: YAMLDict = {"fqcn": mod}
         return GraphRuleResult(
             verdict=verdict,
             detail=detail if verdict else None,

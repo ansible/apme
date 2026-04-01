@@ -9,31 +9,12 @@ from apme_engine.validators.native.rules.graph_rule_base import GraphRule, Graph
 
 _TASK_TYPES = frozenset({NodeType.TASK, NodeType.HANDLER})
 
+_SHORT_NAMES = frozenset(
+    {"file", "copy", "template", "package", "apt", "dnf", "yum", "service", "mount", "user", "group"}
+)
+
 MODULES_NEEDING_STATE = frozenset(
-    {
-        "ansible.builtin.file",
-        "ansible.builtin.copy",
-        "ansible.builtin.template",
-        "ansible.builtin.package",
-        "ansible.builtin.apt",
-        "ansible.builtin.dnf",
-        "ansible.builtin.yum",
-        "ansible.builtin.service",
-        "ansible.builtin.mount",
-        "ansible.builtin.user",
-        "ansible.builtin.group",
-        "ansible.legacy.file",
-        "ansible.legacy.copy",
-        "ansible.legacy.template",
-        "ansible.legacy.package",
-        "ansible.legacy.apt",
-        "ansible.legacy.dnf",
-        "ansible.legacy.yum",
-        "ansible.legacy.service",
-        "ansible.legacy.mount",
-        "ansible.legacy.user",
-        "ansible.legacy.group",
-    }
+    _SHORT_NAMES | {f"ansible.builtin.{n}" for n in _SHORT_NAMES} | {f"ansible.legacy.{n}" for n in _SHORT_NAMES}
 )
 
 
@@ -73,7 +54,7 @@ class AvoidImplicitGraphRule(GraphRule):
         node = graph.get_node(node_id)
         if node is None or node.node_type not in _TASK_TYPES:
             return False
-        resolved = node.resolved_module_name or node.module
+        resolved = node.module
         return resolved in MODULES_NEEDING_STATE
 
     def process(self, graph: ContentGraph, node_id: str) -> GraphRuleResult | None:
@@ -90,7 +71,7 @@ class AvoidImplicitGraphRule(GraphRule):
         node = graph.get_node(node_id)
         if node is None:
             return None
-        resolved = node.resolved_module_name or node.module
+        resolved = node.module
         mo = node.module_options
         if not isinstance(mo, dict):
             mo = {}

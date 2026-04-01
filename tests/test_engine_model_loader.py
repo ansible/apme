@@ -300,7 +300,7 @@ class TestLoadTask:
             load_task(path="nonexistent.yml", index=0, task_block_dict=task_dict)
 
     def test_task_with_block(self) -> None:
-        """Load task with block."""
+        """Load task with block preserves children as Task objects."""
         task_dict: dict[str, object] = {
             "block": [
                 {"name": "Inner task", "ansible.builtin.debug": {"msg": "inside block"}},
@@ -309,6 +309,99 @@ class TestLoadTask:
         yaml_lines = "---\n- block:\n    - name: Inner task\n      ansible.builtin.debug:\n        msg: inside block\n"
         task = load_task(path="tasks/main.yml", index=0, task_block_dict=task_dict, yaml_lines=yaml_lines)
         assert isinstance(task, Task)
+        assert task.module == ""
+        block_children = task.options.get("block")
+        assert isinstance(block_children, list)
+        assert len(block_children) == 1
+        assert isinstance(block_children[0], Task)
+        assert block_children[0].name == "Inner task"
+
+    def test_block_with_rescue_always(self) -> None:
+        """Block with rescue and always sections loads all child tasks."""
+        task_dict: dict[str, object] = {
+            "name": "Migration block",
+            "block": [
+                {"name": "Migrate", "ansible.builtin.command": "migrate.sh"},
+            ],
+            "rescue": [
+                {"name": "Rollback", "ansible.builtin.command": "rollback.sh"},
+            ],
+            "always": [
+                {"name": "Report", "ansible.builtin.debug": {"msg": "done"}},
+            ],
+        }
+        yaml_lines = (
+            "---\n- name: Migration block\n  block:\n"
+            "    - name: Migrate\n      ansible.builtin.command: migrate.sh\n"
+            "  rescue:\n    - name: Rollback\n      ansible.builtin.command: rollback.sh\n"
+            "  always:\n    - name: Report\n      ansible.builtin.debug:\n        msg: done\n"
+        )
+        task = load_task(path="tasks/main.yml", index=0, task_block_dict=task_dict, yaml_lines=yaml_lines)
+        assert task.module == ""
+        assert task.name == "Migration block"
+        block_tasks = task.options["block"]
+        rescue_tasks = task.options["rescue"]
+        always_tasks = task.options["always"]
+        assert isinstance(block_tasks, list) and len(block_tasks) == 1
+        assert isinstance(rescue_tasks, list) and len(rescue_tasks) == 1
+        assert isinstance(always_tasks, list) and len(always_tasks) == 1
+        assert isinstance(block_tasks[0], Task) and block_tasks[0].name == "Migrate"
+        assert isinstance(rescue_tasks[0], Task) and rescue_tasks[0].name == "Rollback"
+        assert isinstance(always_tasks[0], Task) and always_tasks[0].name == "Report"
+
+    def test_block_preserves_inherited_properties(self) -> None:
+        """Block-level when/become/tags are on the block Task, not lost."""
+        task_dict: dict[str, object] = {
+            "name": "Privileged block",
+            "become": True,
+            "become_user": "root",
+            "when": "should_run",
+            "tags": ["deploy"],
+            "block": [
+                {"name": "Inner", "ansible.builtin.debug": {"msg": "hi"}},
+            ],
+        }
+        yaml_lines = (
+            "---\n- name: Privileged block\n  become: true\n  become_user: root\n"
+            "  when: should_run\n  tags: [deploy]\n  block:\n"
+            "    - name: Inner\n      ansible.builtin.debug:\n        msg: hi\n"
+        )
+        task = load_task(path="tasks/main.yml", index=0, task_block_dict=task_dict, yaml_lines=yaml_lines)
+        assert task.options["become"] is True
+        assert task.options["become_user"] == "root"
+        assert task.options["when"] == "should_run"
+        assert task.options["tags"] == ["deploy"]
+
+    def test_nested_blocks(self) -> None:
+        """Nested block inside a block produces nested Task structure."""
+        task_dict: dict[str, object] = {
+            "name": "Outer",
+            "block": [
+                {
+                    "name": "Inner block",
+                    "block": [
+                        {"name": "Leaf", "ansible.builtin.debug": {"msg": "deep"}},
+                    ],
+                },
+            ],
+        }
+        yaml_lines = (
+            "---\n- name: Outer\n  block:\n    - name: Inner block\n"
+            "      block:\n        - name: Leaf\n          ansible.builtin.debug:\n            msg: deep\n"
+        )
+        task = load_task(path="tasks/main.yml", index=0, task_block_dict=task_dict, yaml_lines=yaml_lines)
+        assert task.module == ""
+        outer_block = task.options["block"]
+        assert isinstance(outer_block, list)
+        inner = outer_block[0]
+        assert isinstance(inner, Task)
+        assert inner.module == ""
+        assert inner.name == "Inner block"
+        leaf_children = inner.options.get("block")
+        assert isinstance(leaf_children, list)
+        leaf = leaf_children[0]
+        assert isinstance(leaf, Task)
+        assert leaf.name == "Leaf"
 
 
 class TestLoadRoleInPlay:

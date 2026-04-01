@@ -15,7 +15,7 @@ The primary deployment target is a **Podman pod**. All backend services run in a
 From the repo root:
 
 ```bash
-./containers/podman/build.sh
+tox -e build
 ```
 
 This builds nine images:
@@ -35,7 +35,7 @@ This builds nine images:
 ### Start the Pod
 
 ```bash
-./containers/podman/up.sh
+tox -e up
 ```
 
 This runs `podman play kube containers/podman/pod.yaml`, which starts the pod `apme-pod` with eight containers (Primary, Native, OPA, Ansible, Gitleaks, Galaxy Proxy, Gateway, UI). A sessions directory and gateway data directory are created for session-scoped venvs and persistent activity data.
@@ -43,13 +43,12 @@ This runs `podman play kube containers/podman/pod.yaml`, which starts the pod `a
 ### Run CLI Commands
 
 ```bash
-cd /path/to/your/ansible/project
-/path/to/apme/containers/podman/run-cli.sh                # check (default)
-/path/to/apme/containers/podman/run-cli.sh check --json . # JSON output
-/path/to/apme/containers/podman/run-cli.sh check --diff .  # preview changes
-/path/to/apme/containers/podman/run-cli.sh remediate .    # apply Tier 1 fixes
-/path/to/apme/containers/podman/run-cli.sh format --check .
-/path/to/apme/containers/podman/run-cli.sh health-check
+tox -e cli                              # default: check .
+tox -e cli -- check --json .            # JSON output
+tox -e cli -- check --diff .            # preview changes
+tox -e cli -- remediate .               # Tier 1 fixes
+tox -e cli -- format --check .          # YAML format check
+tox -e cli -- health-check              # health check
 ```
 
 The CLI container joins `apme-pod`, mounts CWD as `/workspace:Z` (read-write for `remediate`/`format`), and communicates with Primary at `127.0.0.1:50051` via gRPC.
@@ -59,8 +58,8 @@ The **`remediate`** command uses a **bidirectional streaming RPC** (`FixSession`
 ### Stop the Pod
 
 ```bash
-./containers/podman/down.sh          # stop pod only
-./containers/podman/down.sh --wipe   # stop pod and delete gateway database
+tox -e down                             # stop pod only
+tox -e wipe                             # stop pod and delete DB + session cache
 ```
 
 ### Health Check
@@ -159,20 +158,20 @@ local daemon that runs the Primary, Native, OPA, and Ansible validators plus the
 in-process (ADR-024):
 
 ```bash
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-pip install -e ".[dev]"
+# Install tox + project (one-time)
+uv tool install tox --with tox-uv
+uv sync --extra dev --extra gateway
 
 # Start the local daemon (background process)
-python -m apme_engine.cli daemon start
+apme daemon start
 
 # Run commands (same thin CLI, talks to local daemon via gRPC)
-python -m apme_engine.cli check /path/to/project
-python -m apme_engine.cli check --diff .
-python -m apme_engine.cli remediate .
+apme check /path/to/project
+apme check --diff .
+apme remediate .
 
 # Stop the daemon
-python -m apme_engine.cli daemon stop
+apme daemon stop
 ```
 
 **Daemon mode** starts a local Primary server with Native, OPA, and Ansible
@@ -201,20 +200,10 @@ See `PODMAN_OPA_ISSUES.md` for common Podman rootless issues:
 ### Build and Run
 
 ```bash
-# Build all images
-./containers/podman/build.sh
-
-# Start the pod
-./containers/podman/up.sh
-
-# Run a scan
-cd /your/project && /path/to/run-cli.sh
-
-# Stop
-./containers/podman/down.sh
-
-# Stop and wipe database
-./containers/podman/down.sh --wipe
+tox -e up                               # build + start
+tox -e cli                              # run a scan (check .)
+tox -e down                             # stop
+tox -e wipe                             # stop + wipe DB/sessions
 ```
 
 ### Port Map

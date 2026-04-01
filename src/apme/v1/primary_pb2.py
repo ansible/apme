@@ -26,15 +26,15 @@ from apme.v1 import common_pb2 as apme_dot_v1_dot_common__pb2
 from google.protobuf import struct_pb2 as google_dot_protobuf_dot_struct__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x15\x61pme/v1/primary.proto\x12\x07\x61pme.v1\x1a\x14\x61pme/v1/common.proto\x1a\x1cgoogle/protobuf/struct.proto\"\xaf\x01\n\tScanChunk\x12\x0f\n\x07scan_id\x18\x01 \x01(\t\x12\x14\n\x0cproject_root\x18\x02 \x01(\t\x12%\n\x07options\x18\x03 \x01(\x0b\x32\x14.apme.v1.ScanOptions\x12\x1c\n\x05\x66iles\x18\x04 \x03(\x0b\x32\r.apme.v1.File\x12\x0c\n\x04last\x18\x05 \x01(\x08\x12(\n\x0b\x66ix_options\x18\x06 \x01(\x0b\x32\x13.apme.v1.FixOptions\"\xa5\x01\n\x0bScanOptions\x12\x18\n\x10include_scandata\x18\x01 \x01(\x08\x12\x1c\n\x14\x61nsible_core_version\x18\x02 \x01(\t\x12\x18\n\x10\x63ollection_specs\x18\x03 \x03(\t\x12\x12\n\nsession_id\x18\x04 \x01(\t\x12\x30\n\x0egalaxy_servers\x18\x05 \x03(\x0b\x32\x18.apme.v1.GalaxyServerDef\"\xf5\x01\n\nFixOptions\x12\x12\n\nmax_passes\x18\x01 \x01(\x05\x12\x1c\n\x14\x61nsible_core_version\x18\x02 \x01(\t\x12\x18\n\x10\x63ollection_specs\x18\x03 \x03(\t\x12\x18\n\x10\x65xclude_patterns\x18\x04 \x03(\t\x12\x11\n\tenable_ai\x18\x05 \x01(\x08\x12\x16\n\x0e\x65nable_agentic\x18\x06 \x01(\x08\x12\x10\n\x08\x61i_model\x18\x07 \x01(\t\x12\x12\n\nsession_id\x18\x08 \x01(\t\x12\x30\n\x0egalaxy_servers\x18\t \x03(\x0b\x32\x18.apme.v1.GalaxyServerDef\"\xfe\x01\n\x0fScanDiagnostics\x12\x17\n\x0f\x65ngine_parse_ms\x18\x01 \x01(\x01\x12\x1a\n\x12\x65ngine_annotate_ms\x18\x02 \x01(\x01\x12\x17\n\x0f\x65ngine_total_ms\x18\x03 \x01(\x01\x12\x15\n\rfiles_scanned\x18\x04 \x01(\x05\x12\x13\n\x0btrees_built\x18\x05 \x01(\x05\x12\x18\n\x10total_violations\x18\x06 \x01(\x05\x12\x31\n\nvalidators\x18\x07 \x03(\x0b\x32\x1d.apme.v1.ValidatorDiagnostics\x12\x12\n\nfan_out_ms\x18\x08 \x01(\x01\x12\x10\n\x08total_ms\x18\t \x01(\x01\"-\n\rFormatRequest\x12\x1c\n\x05\x66iles\x18\x01 \x03(\x0b\x32\r.apme.v1.File\"Y\n\x0e\x46ormatResponse\x12 \n\x05\x64iffs\x18\x01 \x03(\x0b\x32\x11.apme.v1.FileDiff\x12%\n\x04logs\x18\x02 \x03(\x0b\x32\x17.apme.v1.ProgressUpdate\"K\n\x08\x46ileDiff\x12\x0c\n\x04path\x18\x01 \x01(\t\x12\x10\n\x08original\x18\x02 \x01(\x0c\x12\x11\n\tformatted\x18\x03 \x01(\x0c\x12\x0c\n\x04\x64iff\x18\x04 \x01(\t\"a\n\tFilePatch\x12\x0c\n\x04path\x18\x01 \x01(\t\x12\x10\n\x08original\x18\x02 \x01(\x0c\x12\x0f\n\x07patched\x18\x03 \x01(\x0c\x12\x0c\n\x04\x64iff\x18\x04 \x01(\t\x12\x15\n\rapplied_rules\x18\x05 \x03(\t\"\xd8\x01\n\tFixReport\x12\x0e\n\x06passes\x18\x01 \x01(\x05\x12\r\n\x05\x66ixed\x18\x02 \x01(\x05\x12\x14\n\x0cremaining_ai\x18\x03 \x01(\x05\x12\x18\n\x10remaining_manual\x18\x04 \x01(\x05\x12\x1c\n\x14oscillation_detected\x18\x05 \x01(\x08\x12\x30\n\x14remaining_violations\x18\x06 \x03(\x0b\x32\x12.apme.v1.Violation\x12,\n\x10\x66ixed_violations\x18\x07 \x03(\x0b\x32\x12.apme.v1.Violation\"\xea\x01\n\x0eSessionCommand\x12$\n\x06upload\x18\x01 \x01(\x0b\x32\x12.apme.v1.ScanChunkH\x00\x12+\n\x07\x61pprove\x18\x02 \x01(\x0b\x32\x18.apme.v1.ApprovalRequestH\x00\x12(\n\x06\x65xtend\x18\x03 \x01(\x0b\x32\x16.apme.v1.ExtendRequestH\x00\x12&\n\x05\x63lose\x18\x04 \x01(\x0b\x32\x15.apme.v1.CloseRequestH\x00\x12(\n\x06resume\x18\x05 \x01(\x0b\x32\x16.apme.v1.ResumeRequestH\x00\x42\t\n\x07\x63ommand\"\'\n\x0f\x41pprovalRequest\x12\x14\n\x0c\x61pproved_ids\x18\x01 \x03(\t\"\x0f\n\rExtendRequest\"\x0e\n\x0c\x43loseRequest\"#\n\rResumeRequest\x12\x12\n\nsession_id\x18\x01 \x01(\t\"\xa7\x03\n\x0cSessionEvent\x12*\n\x07\x63reated\x18\x01 \x01(\x0b\x32\x17.apme.v1.SessionCreatedH\x00\x12+\n\x08progress\x18\x02 \x01(\x0b\x32\x17.apme.v1.ProgressUpdateH\x00\x12/\n\x0etier1_complete\x18\x03 \x01(\x0b\x32\x15.apme.v1.Tier1SummaryH\x00\x12,\n\tproposals\x18\x04 \x01(\x0b\x32\x17.apme.v1.ProposalsReadyH\x00\x12,\n\x0c\x61pproval_ack\x18\x05 \x01(\x0b\x32\x14.apme.v1.ApprovalAckH\x00\x12(\n\x06result\x18\x06 \x01(\x0b\x32\x16.apme.v1.SessionResultH\x00\x12.\n\x08\x65xpiring\x18\x07 \x01(\x0b\x32\x1a.apme.v1.ExpirationWarningH\x00\x12(\n\x06\x63losed\x18\x08 \x01(\x0b\x32\x16.apme.v1.SessionClosedH\x00\x12$\n\x04\x64\x61ta\x18\t \x01(\x0b\x32\x14.apme.v1.DataPayloadH\x00\x42\x07\n\x05\x65vent\"9\n\x0eSessionCreated\x12\x12\n\nsession_id\x18\x01 \x01(\t\x12\x13\n\x0bttl_seconds\x18\x02 \x01(\x05\"\xa0\x01\n\x0cTier1Summary\x12+\n\x0f\x61pplied_patches\x18\x01 \x03(\x0b\x32\x12.apme.v1.FilePatch\x12\'\n\x0c\x66ormat_diffs\x18\x02 \x03(\x0b\x32\x11.apme.v1.FileDiff\x12\x16\n\x0eidempotency_ok\x18\x03 \x01(\x08\x12\"\n\x06report\x18\x04 \x01(\x0b\x32\x12.apme.v1.FixReport\"\xf2\x01\n\x08Proposal\x12\n\n\x02id\x18\x01 \x01(\t\x12\x0c\n\x04\x66ile\x18\x02 \x01(\t\x12\x0f\n\x07rule_id\x18\x03 \x01(\t\x12\x12\n\nline_start\x18\x04 \x01(\x05\x12\x10\n\x08line_end\x18\x05 \x01(\x05\x12\x13\n\x0b\x62\x65\x66ore_text\x18\x06 \x01(\t\x12\x12\n\nafter_text\x18\x07 \x01(\t\x12\x11\n\tdiff_hunk\x18\x08 \x01(\t\x12\x12\n\nconfidence\x18\t \x01(\x02\x12\x13\n\x0b\x65xplanation\x18\n \x01(\t\x12\x0c\n\x04tier\x18\x0b \x01(\x05\x12\x0e\n\x06status\x18\x0c \x01(\t\x12\x12\n\nsuggestion\x18\r \x01(\t\"l\n\x0eProposalsReady\x12$\n\tproposals\x18\x01 \x03(\x0b\x32\x11.apme.v1.Proposal\x12\x0c\n\x04tier\x18\x02 \x01(\x05\x12&\n\x06status\x18\x03 \x01(\x0e\x32\x16.apme.v1.SessionStatus\"a\n\x0b\x41pprovalAck\x12\x15\n\rapplied_count\x18\x01 \x01(\x05\x12&\n\x06status\x18\x02 \x01(\x0e\x32\x16.apme.v1.SessionStatus\x12\x13\n\x0bttl_seconds\x18\x03 \x01(\x05\"\xb8\x01\n\rSessionResult\x12#\n\x07patches\x18\x01 \x03(\x0b\x32\x12.apme.v1.FilePatch\x12\"\n\x06report\x18\x02 \x01(\x0b\x32\x12.apme.v1.FixReport\x12\x30\n\x14remaining_violations\x18\x03 \x03(\x0b\x32\x12.apme.v1.Violation\x12,\n\x10\x66ixed_violations\x18\x04 \x03(\x0b\x32\x12.apme.v1.Violation\"(\n\x11\x45xpirationWarning\x12\x13\n\x0bttl_seconds\x18\x01 \x01(\x05\"\x0f\n\rSessionClosed\"B\n\x0b\x44\x61taPayload\x12\x0c\n\x04kind\x18\x01 \x01(\t\x12%\n\x04\x64\x61ta\x18\x02 \x01(\x0b\x32\x17.google.protobuf.Struct\"\x15\n\x13ListAIModelsRequest\"9\n\x0b\x41IModelInfo\x12\n\n\x02id\x18\x01 \x01(\t\x12\x10\n\x08provider\x18\x02 \x01(\t\x12\x0c\n\x04name\x18\x03 \x01(\t\"<\n\x14ListAIModelsResponse\x12$\n\x06models\x18\x01 \x03(\x0b\x32\x14.apme.v1.AIModelInfo*d\n\rSessionStatus\x12\x1e\n\x1aSESSION_STATUS_UNSPECIFIED\x10\x00\x12\x15\n\x11\x41WAITING_APPROVAL\x10\x01\x12\x0e\n\nPROCESSING\x10\x02\x12\x0c\n\x08\x43OMPLETE\x10\x03\x32\xcd\x02\n\x07Primary\x12\x39\n\x06\x46ormat\x12\x16.apme.v1.FormatRequest\x1a\x17.apme.v1.FormatResponse\x12=\n\x0c\x46ormatStream\x12\x12.apme.v1.ScanChunk\x1a\x17.apme.v1.FormatResponse(\x01\x12\x39\n\x06Health\x12\x16.apme.v1.HealthRequest\x1a\x17.apme.v1.HealthResponse\x12@\n\nFixSession\x12\x17.apme.v1.SessionCommand\x1a\x15.apme.v1.SessionEvent(\x01\x30\x01\x12K\n\x0cListAIModels\x12\x1c.apme.v1.ListAIModelsRequest\x1a\x1d.apme.v1.ListAIModelsResponseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x15\x61pme/v1/primary.proto\x12\x07\x61pme.v1\x1a\x14\x61pme/v1/common.proto\x1a\x1cgoogle/protobuf/struct.proto\"\xaf\x01\n\tScanChunk\x12\x0f\n\x07scan_id\x18\x01 \x01(\t\x12\x14\n\x0cproject_root\x18\x02 \x01(\t\x12%\n\x07options\x18\x03 \x01(\x0b\x32\x14.apme.v1.ScanOptions\x12\x1c\n\x05\x66iles\x18\x04 \x03(\x0b\x32\r.apme.v1.File\x12\x0c\n\x04last\x18\x05 \x01(\x08\x12(\n\x0b\x66ix_options\x18\x06 \x01(\x0b\x32\x13.apme.v1.FixOptions\"\xa5\x01\n\x0bScanOptions\x12\x18\n\x10include_scandata\x18\x01 \x01(\x08\x12\x1c\n\x14\x61nsible_core_version\x18\x02 \x01(\t\x12\x18\n\x10\x63ollection_specs\x18\x03 \x03(\t\x12\x12\n\nsession_id\x18\x04 \x01(\t\x12\x30\n\x0egalaxy_servers\x18\x05 \x03(\x0b\x32\x18.apme.v1.GalaxyServerDef\"\xf5\x01\n\nFixOptions\x12\x12\n\nmax_passes\x18\x01 \x01(\x05\x12\x1c\n\x14\x61nsible_core_version\x18\x02 \x01(\t\x12\x18\n\x10\x63ollection_specs\x18\x03 \x03(\t\x12\x18\n\x10\x65xclude_patterns\x18\x04 \x03(\t\x12\x11\n\tenable_ai\x18\x05 \x01(\x08\x12\x16\n\x0e\x65nable_agentic\x18\x06 \x01(\x08\x12\x10\n\x08\x61i_model\x18\x07 \x01(\t\x12\x12\n\nsession_id\x18\x08 \x01(\t\x12\x30\n\x0egalaxy_servers\x18\t \x03(\x0b\x32\x18.apme.v1.GalaxyServerDef\"\x84\x02\n\x0fScanDiagnostics\x12\x17\n\x0f\x65ngine_parse_ms\x18\x01 \x01(\x01\x12\x1a\n\x12\x65ngine_annotate_ms\x18\x02 \x01(\x01\x12\x17\n\x0f\x65ngine_total_ms\x18\x03 \x01(\x01\x12\x15\n\rfiles_scanned\x18\x04 \x01(\x05\x12\x19\n\x11graph_nodes_built\x18\x05 \x01(\x05\x12\x18\n\x10total_violations\x18\x06 \x01(\x05\x12\x31\n\nvalidators\x18\x07 \x03(\x0b\x32\x1d.apme.v1.ValidatorDiagnostics\x12\x12\n\nfan_out_ms\x18\x08 \x01(\x01\x12\x10\n\x08total_ms\x18\t \x01(\x01\"-\n\rFormatRequest\x12\x1c\n\x05\x66iles\x18\x01 \x03(\x0b\x32\r.apme.v1.File\"Y\n\x0e\x46ormatResponse\x12 \n\x05\x64iffs\x18\x01 \x03(\x0b\x32\x11.apme.v1.FileDiff\x12%\n\x04logs\x18\x02 \x03(\x0b\x32\x17.apme.v1.ProgressUpdate\"K\n\x08\x46ileDiff\x12\x0c\n\x04path\x18\x01 \x01(\t\x12\x10\n\x08original\x18\x02 \x01(\x0c\x12\x11\n\tformatted\x18\x03 \x01(\x0c\x12\x0c\n\x04\x64iff\x18\x04 \x01(\t\"a\n\tFilePatch\x12\x0c\n\x04path\x18\x01 \x01(\t\x12\x10\n\x08original\x18\x02 \x01(\x0c\x12\x0f\n\x07patched\x18\x03 \x01(\x0c\x12\x0c\n\x04\x64iff\x18\x04 \x01(\t\x12\x15\n\rapplied_rules\x18\x05 \x03(\t\"\xd8\x01\n\tFixReport\x12\x0e\n\x06passes\x18\x01 \x01(\x05\x12\r\n\x05\x66ixed\x18\x02 \x01(\x05\x12\x14\n\x0cremaining_ai\x18\x03 \x01(\x05\x12\x18\n\x10remaining_manual\x18\x04 \x01(\x05\x12\x1c\n\x14oscillation_detected\x18\x05 \x01(\x08\x12\x30\n\x14remaining_violations\x18\x06 \x03(\x0b\x32\x12.apme.v1.Violation\x12,\n\x10\x66ixed_violations\x18\x07 \x03(\x0b\x32\x12.apme.v1.Violation\"\xea\x01\n\x0eSessionCommand\x12$\n\x06upload\x18\x01 \x01(\x0b\x32\x12.apme.v1.ScanChunkH\x00\x12+\n\x07\x61pprove\x18\x02 \x01(\x0b\x32\x18.apme.v1.ApprovalRequestH\x00\x12(\n\x06\x65xtend\x18\x03 \x01(\x0b\x32\x16.apme.v1.ExtendRequestH\x00\x12&\n\x05\x63lose\x18\x04 \x01(\x0b\x32\x15.apme.v1.CloseRequestH\x00\x12(\n\x06resume\x18\x05 \x01(\x0b\x32\x16.apme.v1.ResumeRequestH\x00\x42\t\n\x07\x63ommand\"\'\n\x0f\x41pprovalRequest\x12\x14\n\x0c\x61pproved_ids\x18\x01 \x03(\t\"\x0f\n\rExtendRequest\"\x0e\n\x0c\x43loseRequest\"#\n\rResumeRequest\x12\x12\n\nsession_id\x18\x01 \x01(\t\"\xa7\x03\n\x0cSessionEvent\x12*\n\x07\x63reated\x18\x01 \x01(\x0b\x32\x17.apme.v1.SessionCreatedH\x00\x12+\n\x08progress\x18\x02 \x01(\x0b\x32\x17.apme.v1.ProgressUpdateH\x00\x12/\n\x0etier1_complete\x18\x03 \x01(\x0b\x32\x15.apme.v1.Tier1SummaryH\x00\x12,\n\tproposals\x18\x04 \x01(\x0b\x32\x17.apme.v1.ProposalsReadyH\x00\x12,\n\x0c\x61pproval_ack\x18\x05 \x01(\x0b\x32\x14.apme.v1.ApprovalAckH\x00\x12(\n\x06result\x18\x06 \x01(\x0b\x32\x16.apme.v1.SessionResultH\x00\x12.\n\x08\x65xpiring\x18\x07 \x01(\x0b\x32\x1a.apme.v1.ExpirationWarningH\x00\x12(\n\x06\x63losed\x18\x08 \x01(\x0b\x32\x16.apme.v1.SessionClosedH\x00\x12$\n\x04\x64\x61ta\x18\t \x01(\x0b\x32\x14.apme.v1.DataPayloadH\x00\x42\x07\n\x05\x65vent\"9\n\x0eSessionCreated\x12\x12\n\nsession_id\x18\x01 \x01(\t\x12\x13\n\x0bttl_seconds\x18\x02 \x01(\x05\"\xa0\x01\n\x0cTier1Summary\x12+\n\x0f\x61pplied_patches\x18\x01 \x03(\x0b\x32\x12.apme.v1.FilePatch\x12\'\n\x0c\x66ormat_diffs\x18\x02 \x03(\x0b\x32\x11.apme.v1.FileDiff\x12\x16\n\x0eidempotency_ok\x18\x03 \x01(\x08\x12\"\n\x06report\x18\x04 \x01(\x0b\x32\x12.apme.v1.FixReport\"\xf2\x01\n\x08Proposal\x12\n\n\x02id\x18\x01 \x01(\t\x12\x0c\n\x04\x66ile\x18\x02 \x01(\t\x12\x0f\n\x07rule_id\x18\x03 \x01(\t\x12\x12\n\nline_start\x18\x04 \x01(\x05\x12\x10\n\x08line_end\x18\x05 \x01(\x05\x12\x13\n\x0b\x62\x65\x66ore_text\x18\x06 \x01(\t\x12\x12\n\nafter_text\x18\x07 \x01(\t\x12\x11\n\tdiff_hunk\x18\x08 \x01(\t\x12\x12\n\nconfidence\x18\t \x01(\x02\x12\x13\n\x0b\x65xplanation\x18\n \x01(\t\x12\x0c\n\x04tier\x18\x0b \x01(\x05\x12\x0e\n\x06status\x18\x0c \x01(\t\x12\x12\n\nsuggestion\x18\r \x01(\t\"l\n\x0eProposalsReady\x12$\n\tproposals\x18\x01 \x03(\x0b\x32\x11.apme.v1.Proposal\x12\x0c\n\x04tier\x18\x02 \x01(\x05\x12&\n\x06status\x18\x03 \x01(\x0e\x32\x16.apme.v1.SessionStatus\"a\n\x0b\x41pprovalAck\x12\x15\n\rapplied_count\x18\x01 \x01(\x05\x12&\n\x06status\x18\x02 \x01(\x0e\x32\x16.apme.v1.SessionStatus\x12\x13\n\x0bttl_seconds\x18\x03 \x01(\x05\"\xb8\x01\n\rSessionResult\x12#\n\x07patches\x18\x01 \x03(\x0b\x32\x12.apme.v1.FilePatch\x12\"\n\x06report\x18\x02 \x01(\x0b\x32\x12.apme.v1.FixReport\x12\x30\n\x14remaining_violations\x18\x03 \x03(\x0b\x32\x12.apme.v1.Violation\x12,\n\x10\x66ixed_violations\x18\x04 \x03(\x0b\x32\x12.apme.v1.Violation\"(\n\x11\x45xpirationWarning\x12\x13\n\x0bttl_seconds\x18\x01 \x01(\x05\"\x0f\n\rSessionClosed\"B\n\x0b\x44\x61taPayload\x12\x0c\n\x04kind\x18\x01 \x01(\t\x12%\n\x04\x64\x61ta\x18\x02 \x01(\x0b\x32\x17.google.protobuf.Struct\"\x15\n\x13ListAIModelsRequest\"9\n\x0b\x41IModelInfo\x12\n\n\x02id\x18\x01 \x01(\t\x12\x10\n\x08provider\x18\x02 \x01(\t\x12\x0c\n\x04name\x18\x03 \x01(\t\"<\n\x14ListAIModelsResponse\x12$\n\x06models\x18\x01 \x03(\x0b\x32\x14.apme.v1.AIModelInfo*d\n\rSessionStatus\x12\x1e\n\x1aSESSION_STATUS_UNSPECIFIED\x10\x00\x12\x15\n\x11\x41WAITING_APPROVAL\x10\x01\x12\x0e\n\nPROCESSING\x10\x02\x12\x0c\n\x08\x43OMPLETE\x10\x03\x32\xcd\x02\n\x07Primary\x12\x39\n\x06\x46ormat\x12\x16.apme.v1.FormatRequest\x1a\x17.apme.v1.FormatResponse\x12=\n\x0c\x46ormatStream\x12\x12.apme.v1.ScanChunk\x1a\x17.apme.v1.FormatResponse(\x01\x12\x39\n\x06Health\x12\x16.apme.v1.HealthRequest\x1a\x17.apme.v1.HealthResponse\x12@\n\nFixSession\x12\x17.apme.v1.SessionCommand\x1a\x15.apme.v1.SessionEvent(\x01\x30\x01\x12K\n\x0cListAIModels\x12\x1c.apme.v1.ListAIModelsRequest\x1a\x1d.apme.v1.ListAIModelsResponseb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'apme.v1.primary_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
-  _globals['_SESSIONSTATUS']._serialized_start=3378
-  _globals['_SESSIONSTATUS']._serialized_end=3478
+  _globals['_SESSIONSTATUS']._serialized_start=3384
+  _globals['_SESSIONSTATUS']._serialized_end=3484
   _globals['_SCANCHUNK']._serialized_start=87
   _globals['_SCANCHUNK']._serialized_end=262
   _globals['_SCANOPTIONS']._serialized_start=265
@@ -42,53 +42,53 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_FIXOPTIONS']._serialized_start=433
   _globals['_FIXOPTIONS']._serialized_end=678
   _globals['_SCANDIAGNOSTICS']._serialized_start=681
-  _globals['_SCANDIAGNOSTICS']._serialized_end=935
-  _globals['_FORMATREQUEST']._serialized_start=937
-  _globals['_FORMATREQUEST']._serialized_end=982
-  _globals['_FORMATRESPONSE']._serialized_start=984
-  _globals['_FORMATRESPONSE']._serialized_end=1073
-  _globals['_FILEDIFF']._serialized_start=1075
-  _globals['_FILEDIFF']._serialized_end=1150
-  _globals['_FILEPATCH']._serialized_start=1152
-  _globals['_FILEPATCH']._serialized_end=1249
-  _globals['_FIXREPORT']._serialized_start=1252
-  _globals['_FIXREPORT']._serialized_end=1468
-  _globals['_SESSIONCOMMAND']._serialized_start=1471
-  _globals['_SESSIONCOMMAND']._serialized_end=1705
-  _globals['_APPROVALREQUEST']._serialized_start=1707
-  _globals['_APPROVALREQUEST']._serialized_end=1746
-  _globals['_EXTENDREQUEST']._serialized_start=1748
-  _globals['_EXTENDREQUEST']._serialized_end=1763
-  _globals['_CLOSEREQUEST']._serialized_start=1765
-  _globals['_CLOSEREQUEST']._serialized_end=1779
-  _globals['_RESUMEREQUEST']._serialized_start=1781
-  _globals['_RESUMEREQUEST']._serialized_end=1816
-  _globals['_SESSIONEVENT']._serialized_start=1819
-  _globals['_SESSIONEVENT']._serialized_end=2242
-  _globals['_SESSIONCREATED']._serialized_start=2244
-  _globals['_SESSIONCREATED']._serialized_end=2301
-  _globals['_TIER1SUMMARY']._serialized_start=2304
-  _globals['_TIER1SUMMARY']._serialized_end=2464
-  _globals['_PROPOSAL']._serialized_start=2467
-  _globals['_PROPOSAL']._serialized_end=2709
-  _globals['_PROPOSALSREADY']._serialized_start=2711
-  _globals['_PROPOSALSREADY']._serialized_end=2819
-  _globals['_APPROVALACK']._serialized_start=2821
-  _globals['_APPROVALACK']._serialized_end=2918
-  _globals['_SESSIONRESULT']._serialized_start=2921
-  _globals['_SESSIONRESULT']._serialized_end=3105
-  _globals['_EXPIRATIONWARNING']._serialized_start=3107
-  _globals['_EXPIRATIONWARNING']._serialized_end=3147
-  _globals['_SESSIONCLOSED']._serialized_start=3149
-  _globals['_SESSIONCLOSED']._serialized_end=3164
-  _globals['_DATAPAYLOAD']._serialized_start=3166
-  _globals['_DATAPAYLOAD']._serialized_end=3232
-  _globals['_LISTAIMODELSREQUEST']._serialized_start=3234
-  _globals['_LISTAIMODELSREQUEST']._serialized_end=3255
-  _globals['_AIMODELINFO']._serialized_start=3257
-  _globals['_AIMODELINFO']._serialized_end=3314
-  _globals['_LISTAIMODELSRESPONSE']._serialized_start=3316
-  _globals['_LISTAIMODELSRESPONSE']._serialized_end=3376
-  _globals['_PRIMARY']._serialized_start=3481
-  _globals['_PRIMARY']._serialized_end=3814
+  _globals['_SCANDIAGNOSTICS']._serialized_end=941
+  _globals['_FORMATREQUEST']._serialized_start=943
+  _globals['_FORMATREQUEST']._serialized_end=988
+  _globals['_FORMATRESPONSE']._serialized_start=990
+  _globals['_FORMATRESPONSE']._serialized_end=1079
+  _globals['_FILEDIFF']._serialized_start=1081
+  _globals['_FILEDIFF']._serialized_end=1156
+  _globals['_FILEPATCH']._serialized_start=1158
+  _globals['_FILEPATCH']._serialized_end=1255
+  _globals['_FIXREPORT']._serialized_start=1258
+  _globals['_FIXREPORT']._serialized_end=1474
+  _globals['_SESSIONCOMMAND']._serialized_start=1477
+  _globals['_SESSIONCOMMAND']._serialized_end=1711
+  _globals['_APPROVALREQUEST']._serialized_start=1713
+  _globals['_APPROVALREQUEST']._serialized_end=1752
+  _globals['_EXTENDREQUEST']._serialized_start=1754
+  _globals['_EXTENDREQUEST']._serialized_end=1769
+  _globals['_CLOSEREQUEST']._serialized_start=1771
+  _globals['_CLOSEREQUEST']._serialized_end=1785
+  _globals['_RESUMEREQUEST']._serialized_start=1787
+  _globals['_RESUMEREQUEST']._serialized_end=1822
+  _globals['_SESSIONEVENT']._serialized_start=1825
+  _globals['_SESSIONEVENT']._serialized_end=2248
+  _globals['_SESSIONCREATED']._serialized_start=2250
+  _globals['_SESSIONCREATED']._serialized_end=2307
+  _globals['_TIER1SUMMARY']._serialized_start=2310
+  _globals['_TIER1SUMMARY']._serialized_end=2470
+  _globals['_PROPOSAL']._serialized_start=2473
+  _globals['_PROPOSAL']._serialized_end=2715
+  _globals['_PROPOSALSREADY']._serialized_start=2717
+  _globals['_PROPOSALSREADY']._serialized_end=2825
+  _globals['_APPROVALACK']._serialized_start=2827
+  _globals['_APPROVALACK']._serialized_end=2924
+  _globals['_SESSIONRESULT']._serialized_start=2927
+  _globals['_SESSIONRESULT']._serialized_end=3111
+  _globals['_EXPIRATIONWARNING']._serialized_start=3113
+  _globals['_EXPIRATIONWARNING']._serialized_end=3153
+  _globals['_SESSIONCLOSED']._serialized_start=3155
+  _globals['_SESSIONCLOSED']._serialized_end=3170
+  _globals['_DATAPAYLOAD']._serialized_start=3172
+  _globals['_DATAPAYLOAD']._serialized_end=3238
+  _globals['_LISTAIMODELSREQUEST']._serialized_start=3240
+  _globals['_LISTAIMODELSREQUEST']._serialized_end=3261
+  _globals['_AIMODELINFO']._serialized_start=3263
+  _globals['_AIMODELINFO']._serialized_end=3320
+  _globals['_LISTAIMODELSRESPONSE']._serialized_start=3322
+  _globals['_LISTAIMODELSRESPONSE']._serialized_end=3382
+  _globals['_PRIMARY']._serialized_start=3487
+  _globals['_PRIMARY']._serialized_end=3820
 # @@protoc_insertion_point(module_scope)

@@ -56,6 +56,7 @@ Full workflow: [workflow.md](/.sdlc/context/workflow.md) | Getting started: [get
 
 ## Agent Constraints
 
+- **tox is the only way to run things** (ADR-047) — `tox -e lint` for quality gates, `tox -e unit` for tests, `tox -e grpc` for proto codegen, `tox -e build`, `up`, `down`, and `cli` for containers. Never run `pytest`, `ruff`, `mypy`, `prek`, or shell scripts directly. See `/tox` skill.
 - **Follow ADRs** — no deviation without a new ADR
 - **Validators are read-only** — detection only, no file modification; user-facing **check** is read-only, while **remediate** is a separate write path (not validator code)
 - **Use gRPC** — all inter-service communication
@@ -68,23 +69,23 @@ Full workflow: [workflow.md](/.sdlc/context/workflow.md) | Getting started: [get
 
 ## Quality Gates
 
-Before completing any task:
-- [ ] All unit tests pass
-- [ ] Code follows style guidelines ([conventions.md](/.sdlc/context/conventions.md))
-- [ ] gRPC changes regenerated (`scripts/gen_grpc.sh`)
+Before completing any task, run via **tox only** (ADR-047):
+- [ ] `tox -e lint` passes (style, types, docstrings)
+- [ ] `tox -e unit` passes (tests with coverage)
+- [ ] `tox -e grpc` run after any proto changes
 - [ ] TASK verification steps completed
 
 ## Security
 
 See [SECURITY.md](/SECURITY.md) for comprehensive guidelines.
 
-**Quick reminders:** Pre-commit hooks enforce gitleaks/bandit. Never commit `.env`. Containers run non-root. Log `[REDACTED]` not secrets.
+**Quick reminders:** prek hooks enforce ruff/mypy/pydoclint on commit. Never commit `.env`. Containers run non-root. Log `[REDACTED]` not secrets.
 
 ## Container Rebuild Rules
 
 Rebuild required after modifying: `src/**/*.py`, `proto/**/*.proto`, `pyproject.toml`, `containers/**`
 
-**Workflow:** `stop` → `build` → `start`
+**Workflow:** `tox -e down` → `tox -e build` → `tox -e up`
 
 **No rebuild:** `docs/*.md`, `.sdlc/**/*.md`
 

@@ -1,37 +1,87 @@
-# Development guide
+# Development Guide
+
+## Documentation Map
+
+| Document | Scope |
+|----------|-------|
+| **This file** (`docs/DEVELOPMENT.md`) | Canonical reference for local setup, tox environments, tooling, and pod lifecycle |
+| [`CONTRIBUTING.md`](/CONTRIBUTING.md) | PR process, commit conventions, contributor onboarding |
+| [`SECURITY.md`](/SECURITY.md) | Security policy and practices |
+| [`containers/podman/README.md`](/containers/podman/README.md) | Pod troubleshooting |
+| [`README.md`](/README.md) | Product overview and quick start |
 
 ## Setup
 
+### Install developer tools
+
 ```bash
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-pip install -e ".[dev]"
+# tox — sole developer orchestration tool (ADR-047)
+uv tool install tox --with tox-uv
+
+# prek — git hooks (runs automatically on commit)
+uv tool install prek
+prek install
+
+# Install the project (makes `apme` CLI available locally)
+uv sync --extra dev --extra gateway
+```
+
+### Verify setup
+
+```bash
+# List all available tox environments
+tox l
+
+# Run lint + typecheck
+tox -e lint
+
+# Run unit tests
+tox -e unit
+```
+
+## tox — Developer Orchestration
+
+tox is the single entry point for all developer tasks. Every CI check has a corresponding tox environment you can run locally.
+
+### Environment reference
+
+| Environment | What it runs | Category |
+|-------------|-------------|----------|
+| `tox -e lint` | `prek run --all-files` (ruff, mypy, pydoclint, uv-lock) | Quality gate |
+| `tox -e unit` | `pytest` with coverage (`--cov-fail-under=36`) | Test |
+| `tox -e integration` | `pytest tests/integration/` (requires OPA binary) | Test |
+| `tox -e ai` | `pytest` with AI extras (abbenay) | Test |
+| `tox -e ui` | `pytest -m ui` (Playwright, requires running gateway + UI) | Test |
+| `tox -e grpc` | `scripts/gen_grpc.sh` | Code generation |
+| `tox -e build` | `containers/podman/build.sh` | Pod lifecycle |
+| `tox -e up` | `build.sh` + `up.sh` | Pod lifecycle |
+| `tox -e down` | `containers/podman/down.sh` | Pod lifecycle |
+| `tox -e wipe` | `down --wipe` (stop + delete DB/sessions) | Pod lifecycle |
+| `tox -e build-clean` | `wipe` + `build --no-cache` | Pod lifecycle |
+| `tox -e up-clean` | `wipe` + `build --no-cache` + `up` | Pod lifecycle |
+| `tox -e cli` | `containers/podman/run-cli.sh` | Pod lifecycle |
+| `tox -e pm` | Build + start + health-check + open browser | Product demo |
+
+### Default environments
+
+Running `tox` with no `-e` flag runs the default list: `lint`, `unit`, `integration`, `ai`, `ui`.
+
+### Passing extra arguments
+
+Use `--` to pass arguments through to the underlying command:
+
+```bash
+tox -e unit -- -k test_sbom             # run a single test
+tox -e unit -- --no-cov                 # skip coverage
+tox -e build -- --no-cache          # rebuild from scratch
+tox -e wipe                          # stop + wipe DB/sessions
+tox -e cli -- check .               # run CLI check in pod
+tox -e cli -- health-check          # run health check in pod
 ```
 
 ## Pre-commit hooks (prek)
 
-The project uses [prek](https://github.com/j178/prek) to run [ruff](https://docs.astral.sh/ruff/) (lint + format + docstring D rules), [pydoclint](https://github.com/jsh9/pydoclint) (Google-style docstrings), and mypy as pre-commit hooks.
-
-### Install prek
-
-```bash
-uv tool install prek   # recommended
-# or: pip install prek
-```
-
-### Install git hooks
-
-```bash
-prek install
-```
-
-This installs a Git pre-commit hook so checks run automatically on `git commit`.
-
-### Run manually
-
-```bash
-prek run --all-files
-```
+prek runs automatically on `git commit`. `tox -e lint` runs the same checks manually.
 
 ### What runs
 
@@ -46,7 +96,7 @@ Configuration: `[tool.ruff]` and `[tool.ruff.lint.pydocstyle]` (convention = goo
 
 ### CI
 
-Prek runs automatically on pull requests targeting the `main` branch via GitHub Actions (`.github/workflows/prek.yml`). PRs that fail ruff lint or format checks will not pass CI.
+Prek runs automatically on pull requests targeting `main` via GitHub Actions (`.github/workflows/prek.yml`). Tests run via tox in `.github/workflows/test.yml`.
 
 ### Running ruff directly
 
@@ -82,9 +132,7 @@ src/apme_engine/
 ├── engine/                 ARI-based scanner
 │   ├── scanner.py          ARIScanner.evaluate() pipeline
 │   ├── parser.py           YAML/Ansible content parser
-│   ├── tree.py             TreeLoader (call graph construction)
 │   ├── models.py           SingleScan, TaskCall, RiskAnnotation, etc.
-│   ├── context.py          Scan/parse context wiring
 │   ├── findings.py         Finding/violation structures
 │   ├── content_graph.py    ContentGraph DAG model (ADR-044)
 │   ├── graph_scanner.py    GraphRule evaluation engine
@@ -137,7 +185,7 @@ src/apme_engine/
 │   ├── primary_main.py     entry point: apme-primary (asyncio.run)
 │   ├── native_validator_server.py   (async, CPU work in run_in_executor)
 │   ├── native_validator_main.py
-│   ├── opa_validator_server.py      (async, httpx.AsyncClient for OPA REST)
+│   ├── opa_validator_server.py      (async, OPA via subprocess in executor)
 │   ├── opa_validator_main.py
 │   ├── ansible_validator_server.py  (async, session venvs from /sessions)
 │   ├── ansible_validator_main.py
@@ -155,53 +203,85 @@ src/apme_engine/
 
 ## Adding a new rule
 
-### Native (Python) rule
+### Native (Python) GraphRule
 
-1. Create `src/apme_engine/validators/native/rules/L0XX_rule_name.py`:
+Native rules use the `GraphRule` base class, which operates on the `ContentGraph` DAG.
 
-```python
-from apme_engine.validators.native.rules._base import Rule
-
-class L0XXRuleName(Rule):
-    rule_id = "L0XX"
-    description = "Short description"
-    level = "warning"
-
-    def match(self, ctx):
-        """Return True if this rule applies to the given context."""
-        return ctx.type == "taskcall"
-
-    def process(self, ctx):
-        """Yield violations for matching contexts."""
-        # ctx.spec has task options, module_options, etc.
-        if some_condition(ctx):
-            yield {
-                "rule_id": self.rule_id,
-                "level": self.level,
-                "message": self.description,
-                "file": ctx.file,
-                "line": ctx.line,
-                "path": ctx.path,
-            }
-```
-
-2. Create colocated test `src/apme_engine/validators/native/rules/L0XX_rule_name_test.py`:
+1. Create `src/apme_engine/validators/native/rules/L0XX_rule_name_graph.py`:
 
 ```python
-from apme_engine.validators.native.rules._test_helpers import make_context
-from apme_engine.validators.native.rules.L0XX_rule_name import L0XXRuleName
+"""GraphRule L0XX: Short description of the rule."""
 
-def test_violation():
-    ctx = make_context(type="taskcall", module="ansible.builtin.shell", ...)
-    violations = list(L0XXRuleName().process(ctx))
-    assert len(violations) == 1
-    assert violations[0]["rule_id"] == "L0XX"
+from dataclasses import dataclass
 
-def test_pass():
-    ctx = make_context(type="taskcall", module="ansible.builtin.command", ...)
-    violations = list(L0XXRuleName().process(ctx))
-    assert len(violations) == 0
+from apme_engine.engine.content_graph import ContentGraph, NodeType
+from apme_engine.engine.models import RuleTag as Tag
+from apme_engine.engine.models import Severity
+from apme_engine.validators.native.rules.graph_rule_base import GraphRule, GraphRuleResult
+
+
+@dataclass
+class RuleNameGraphRule(GraphRule):
+    """Detect some condition in the content graph.
+
+    Attributes:
+        rule_id: Rule identifier.
+        description: Rule description.
+        enabled: Whether the rule is enabled.
+        name: Rule name.
+        version: Rule version.
+        severity: Severity level.
+        tags: Rule tags.
+    """
+
+    rule_id: str = "L0XX"
+    description: str = "Short description"
+    enabled: bool = True
+    name: str = "RuleName"
+    version: str = "v0.0.1"
+    severity: str = Severity.VERY_LOW
+    tags: tuple[str, ...] = (Tag.DEPENDENCY,)
+
+    def match(self, graph: ContentGraph, node_id: str) -> bool:
+        """Return True if this rule applies to the given node.
+
+        Args:
+            graph: The full ContentGraph.
+            node_id: ID of the node to check.
+
+        Returns:
+            True when the node should be evaluated by process().
+        """
+        node = graph.get_node(node_id)
+        return node is not None and node.node_type == NodeType.TASK
+
+    def process(self, graph: ContentGraph, node_id: str) -> GraphRuleResult | None:
+        """Evaluate the rule against the node.
+
+        Args:
+            graph: The full ContentGraph.
+            node_id: ID of the node to evaluate.
+
+        Returns:
+            GraphRuleResult with verdict=True when violated, else verdict=False.
+        """
+        node = graph.get_node(node_id)
+        if node is None:
+            return None
+        if some_condition(node):
+            return GraphRuleResult(
+                verdict=True,
+                node_id=node_id,
+                file=(node.file_path, node.line_start),
+            )
+        return GraphRuleResult(
+            verdict=False,
+            node_id=node_id,
+            file=(node.file_path, node.line_start),
+        )
 ```
+
+2. Create colocated test in `tests/` or as a colocated `*_test.py`.
 
 3. Create rule doc `src/apme_engine/validators/native/rules/L0XX_rule_name.md` (see [RULE_DOC_FORMAT.md](RULE_DOC_FORMAT.md)).
 
@@ -259,7 +339,7 @@ Proto definitions: `proto/apme/v1/*.proto`
 After modifying a `.proto` file, regenerate stubs:
 
 ```bash
-./scripts/gen_grpc.sh
+tox -e grpc
 ```
 
 This generates `*_pb2.py` and `*_pb2_grpc.py` in `src/apme/v1/`. Generated files are checked in.
@@ -268,11 +348,23 @@ To add a new service:
 
 1. Create `proto/apme/v1/newservice.proto`
 2. Add it to the `PROTOS` array in `scripts/gen_grpc.sh`
-3. Run `./scripts/gen_grpc.sh`
+3. Run `tox -e grpc`
 4. Implement the servicer in `src/apme_engine/daemon/`
 5. Add an entry point in `pyproject.toml`
 
 ## Testing
+
+### Running tests via tox
+
+```bash
+tox -e unit                          # unit tests with coverage
+tox -e unit -- -k test_validators    # specific test
+tox -e unit -- --no-cov              # skip coverage
+tox -e integration                   # integration tests (requires OPA binary)
+tox -e ai                            # AI extra tests
+tox -e ui                            # Playwright UI tests
+tox                                  # run all default environments
+```
 
 ### Test structure
 
@@ -296,31 +388,6 @@ src/apme_engine/validators/native/rules/
     *_test.py                      Colocated native rule tests
 ```
 
-### Running tests
-
-```bash
-# All tests
-pytest
-
-# Specific test file
-pytest tests/test_validators.py
-
-# Native rule tests only
-pytest src/apme_engine/validators/native/rules/
-
-# With coverage
-pytest --cov=src/apme_engine --cov-report=term-missing --cov-fail-under=36
-
-# Integration test (requires Podman + built images)
-pytest -m integration tests/integration/test_e2e.py
-
-# Skip image rebuild if already built
-APME_E2E_SKIP_BUILD=1 pytest -m integration tests/integration/test_e2e.py
-
-# Keep pod running after test for debugging
-APME_E2E_SKIP_TEARDOWN=1 pytest -m integration tests/integration/test_e2e.py
-```
-
 ### OPA Rego tests
 
 Rego tests run via the OPA binary (Podman or local):
@@ -334,7 +401,33 @@ podman run --rm \
 
 ### Coverage target
 
-Coverage is configured at 50% (`fail_under = 50` in `pyproject.toml`). CI runs with `--cov-fail-under=36` as a lower floor; the pyproject.toml target is the ratchet goal. This is a floor based on current coverage; ratchet it up as tests are added. Rule files under `validators/*/rules/` are excluded from coverage measurement (they have colocated tests instead).
+Coverage is configured at 50% (`fail_under = 50` in `pyproject.toml`). CI and tox run with `--cov-fail-under=36` as a lower floor; the pyproject.toml target is the ratchet goal. Ratchet up as tests are added. Rule files under `validators/*/rules/` are excluded from coverage measurement (they have colocated tests instead).
+
+## Pod lifecycle
+
+### Quick start
+
+```bash
+tox -e up       # build images and start the pod
+tox -e cli      # default: apme check .
+```
+
+### Full reference
+
+```bash
+tox -e up                        # build images and start the pod
+tox -e up -- --no-cache          # rebuild from scratch and start
+tox -e build                     # build images only (no start)
+tox -e build-clean               # wipe DB/sessions + rebuild --no-cache
+tox -e up-clean                  # wipe + rebuild + start (clean slate)
+tox -e down                      # stop the pod
+tox -e wipe                          # stop + wipe DB and session cache
+tox -e cli -- check .            # run check in pod
+tox -e cli -- health-check       # health check all services
+tox -e pm                            # build, start, wait, open browser
+```
+
+The underlying scripts in `containers/podman/` remain directly callable for debugging and low-level troubleshooting, but tox is the expected interface for routine work. See `containers/podman/README.md` for troubleshooting details.
 
 ## YAML formatter
 
@@ -385,10 +478,12 @@ All gRPC servers use `grpc.aio` (fully async). When writing new servicers:
 
 - Servicer methods must be `async def`
 - CPU-bound work (rule evaluation, engine scan) goes in `await loop.run_in_executor(None, fn)`
-- I/O-bound work (HTTP calls) uses async libraries (`httpx.AsyncClient`)
+- I/O-bound work uses async libraries
 - Each server sets `maximum_concurrent_rpcs` to control backpressure
 
 Every validator receives `request.request_id` and should include it in log output (`[req=xxx]`) for end-to-end tracing across concurrent requests. Echo it back in `ValidateResponse.request_id`.
+
+The OPA validator invokes `opa eval` via subprocess (not REST) — see AGENTS.md invariant #9.
 
 The Ansible validator uses session-scoped venvs provided by the Primary (read-only via `/sessions` volume). Warm sessions pay near-zero cost; cold sessions are built once by the Primary's `VenvSessionManager`.
 

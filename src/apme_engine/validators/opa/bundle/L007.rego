@@ -18,9 +18,11 @@ _uses_shell_features(cmd) if {
 	contains(cmd, ch)
 }
 
+_shell_modules := {"shell", "ansible.builtin.shell", "ansible.legacy.shell"}
+
 command_instead_of_shell(tree, node) := v if {
 	node.type == "taskcall"
-	node.module == "ansible.builtin.shell"
+	node.module in _shell_modules
 	mo := object.get(node, "module_options", {})
 	not mo["cmd"]
 	count(node.line) > 0
@@ -37,7 +39,7 @@ command_instead_of_shell(tree, node) := v if {
 
 command_instead_of_shell(tree, node) := v if {
 	node.type == "taskcall"
-	node.module == "ansible.builtin.shell"
+	node.module in _shell_modules
 	cmd := object.get(node, "module_options", {})["cmd"]
 	not _uses_shell_features(cmd)
 	count(node.line) > 0

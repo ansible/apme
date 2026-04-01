@@ -16,6 +16,7 @@ from apme_engine.validators.opa import OpaValidator
 from tests.rule_doc_parser import discover_rule_docs
 
 _GRAPH_RULE_KNOWN_FAILURES: dict[str, str] = {
+    "L037": "requires module resolution from Ansible validator convergence loop",
     "L039": "requires cross-task variable resolution (no GraphRule equivalent yet)",
     "R402": "informational listing rule (no GraphRule equivalent yet)",
 }

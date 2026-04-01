@@ -1,6 +1,6 @@
 ---
 name: submit-pr
-description: Prepare and submit a pull request for the APME project. Syncs with upstream, creates a feature branch, runs pre-commit checks (prek/ruff), updates documentation and ADRs as needed, commits with conventional commits, then creates the PR via gh. Use when the user asks to submit, create, or open a pull request, or says "submit PR", "open PR", "create PR".
+description: Prepare and submit a pull request for the APME project. Syncs with upstream, creates a feature branch, runs quality gates (tox -e lint, tox -e unit), updates documentation and ADRs as needed, commits with conventional commits, then creates the PR via gh. Use when the user asks to submit, create, or open a pull request, or says "submit PR", "open PR", "create PR".
 argument-hint: "[branch-name] [--title 'PR title']"
 user-invocable: true
 metadata:
@@ -25,25 +25,18 @@ Use a descriptive branch name (e.g., `feat/add-ruff-prek`, `fix/parser-context-m
 
 If changes already exist on the current branch (e.g., from an in-progress session), cherry-pick or rebase them onto the new branch.
 
-### Step 2: Run pre-commit checks
+### Step 2: Run quality gates
 
 ```bash
-prek run --all-files
+tox -e lint
+tox -e unit
 ```
 
-If `prek` is not installed, fall back to:
-
-```bash
-ruff check src/ tests/ && ruff format --check src/ tests/
-```
-
-**All `prek` checks must pass cleanly on all files** — not just the files you changed.
+**Both must pass cleanly on the full tree** — not just the files you changed.
 If the branch has pre-existing violations (e.g., from an old base), rebase onto `upstream/main` first.
 
-If violations are found:
-1. Run `ruff check --fix src/ tests/` and `ruff format src/ tests/` to auto-fix
-2. Manually fix any remaining violations
-3. Re-run until clean
+Do **not** run `ruff`, `mypy`, `prek`, or `pytest` directly — always use tox (ADR-047).
+See the `/tox` skill for the full environment reference.
 
 ### Step 3: Update documentation
 
@@ -147,8 +140,8 @@ gh pr create --repo upstream-owner/repo --title "conventional commit style title
 - List of notable changes
 
 ## Test plan
-- [ ] prek run --all-files passes
-- [ ] pytest passes
+- [ ] `tox -e lint` passes
+- [ ] `tox -e unit` passes
 - [ ] Docs updated (if applicable)
 - [ ] ADR added (if applicable)
 EOF

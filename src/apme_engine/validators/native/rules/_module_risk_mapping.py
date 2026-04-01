@@ -4,7 +4,7 @@ Each ``RiskProfile`` captures the *risk type* a module introduces
 and maps its **module_options** keys to semantic roles (``src``,
 ``dest``, ``cmd``, ``pkg``, ``key``, etc.).  Rules use
 ``get_risk_profile()`` to look up the profile for a node's
-resolved module name and then read the relevant fields from
+declared ``module`` field and then read the relevant fields from
 ``ContentNode.module_options``.
 
 The mapping is derived from the legacy per-module annotators in
@@ -176,54 +176,24 @@ RISK_PROFILES: dict[str, RiskProfile] = {
     "ansible.builtin.apt_key": _CONFIG_APT_KEY,
 }
 
-# Short-name aliases for unresolved modules
-_SHORT_ALIASES: dict[str, str] = {
-    "command": "ansible.builtin.command",
-    "shell": "ansible.builtin.shell",
-    "raw": "ansible.builtin.raw",
-    "script": "ansible.builtin.script",
-    "expect": "ansible.builtin.expect",
-    "get_url": "ansible.builtin.get_url",
-    "git": "ansible.builtin.git",
-    "subversion": "ansible.builtin.subversion",
-    "unarchive": "ansible.builtin.unarchive",
-    "uri": "ansible.builtin.uri",
-    "file": "ansible.builtin.file",
-    "lineinfile": "ansible.builtin.lineinfile",
-    "blockinfile": "ansible.builtin.blockinfile",
-    "replace": "ansible.builtin.replace",
-    "template": "ansible.builtin.template",
-    "assemble": "ansible.builtin.assemble",
-    "copy": "ansible.builtin.copy",
-    "yum": "ansible.builtin.yum",
-    "dnf": "ansible.builtin.dnf",
-    "apt": "ansible.builtin.apt",
-    "pip": "ansible.builtin.pip",
-    "rpm_key": "ansible.builtin.rpm_key",
-    "apt_key": "ansible.builtin.apt_key",
-}
+_PREFIX = "ansible.builtin."
+RISK_PROFILES.update({k.removeprefix(_PREFIX): v for k, v in list(RISK_PROFILES.items()) if k.startswith(_PREFIX)})
 
 
-def get_risk_profile(resolved_module_name: str, module: str = "") -> RiskProfile | None:
+def get_risk_profile(module: str) -> RiskProfile | None:
     """Look up the risk profile for a module.
 
-    Tries ``resolved_module_name`` first, then falls back to
-    ``module`` (the unresolved short name).
+    Accepts both FQCN (``ansible.builtin.copy``) and short
+    (``copy``) module names.
 
     Args:
-        resolved_module_name: Fully-qualified collection name.
-        module: Declared short module name (fallback).
+        module: Declared module name from the task.
 
     Returns:
         Matching ``RiskProfile``, or ``None`` if the module has
         no risk mapping.
     """
-    if resolved_module_name and resolved_module_name in RISK_PROFILES:
-        return RISK_PROFILES[resolved_module_name]
-    fqcn = _SHORT_ALIASES.get(module, "")
-    if fqcn:
-        return RISK_PROFILES.get(fqcn)
-    return RISK_PROFILES.get(module)
+    return RISK_PROFILES.get(module) if module else None
 
 
 def resolve_field(

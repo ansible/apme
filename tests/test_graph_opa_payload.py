@@ -50,7 +50,6 @@ def _make_minimal_graph() -> ContentGraph:
         line_end=10,
         name="Install nginx",
         module="ansible.builtin.package",
-        resolved_module_name="ansible.builtin.package",
         module_options={"name": "nginx", "state": "present"},
         options={"when": "ansible_os_family == 'Debian'"},
         ari_key="task playbook:site.yml#play:[0]#task:[0]",
@@ -170,7 +169,6 @@ class TestBuildHierarchyFromGraph:
             identity=NodeIdentity(path="site.yml/plays[0]/tasks[0]", node_type=NodeType.TASK),
             file_path="site.yml",
             module="community.general.timezone",
-            resolved_module_name="community.general.timezone",
         )
         g.add_node(task)
         g.add_edge("site.yml", "site.yml/plays[0]/tasks[0]", EdgeType.CONTAINS)

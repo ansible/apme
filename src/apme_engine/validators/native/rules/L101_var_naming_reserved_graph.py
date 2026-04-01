@@ -116,7 +116,7 @@ class VarNamingReservedGraphRule(GraphRule):
             return None
 
         reserved_vars: list[str] = []
-        resolved = node.resolved_module_name or node.module
+        resolved = node.module
         mo = node.module_options
         if not isinstance(mo, dict):
             mo = {}

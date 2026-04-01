@@ -128,7 +128,7 @@ class KeyOrderGraphRule(GraphRule):
                 file=(node.file_path, node.line_start),
             )
 
-        module_name = (node.resolved_module_name or node.module) or ""
+        module_name = node.module or ""
         first_action = _first_action_key(keys, module_name)
         if not first_action:
             return GraphRuleResult(

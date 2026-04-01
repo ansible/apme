@@ -1,9 +1,9 @@
-"""Shadow-run validation: ContentGraph vs TreeLoader structural equivalence (ADR-044).
+"""ContentGraph structural validation (ADR-044).
 
-These tests feed the terrible-playbook fixture through both pipelines
-and verify that the ContentGraph produces structurally equivalent output.
-This is permanent test infrastructure — it becomes the regression safety
-net for Phase 2.
+These tests feed the terrible-playbook fixture through the ARI pipeline
+and verify that the ContentGraph produces structurally sound output.
+This is permanent test infrastructure — the regression safety net for
+the ContentGraph-backed pipeline.
 """
 
 from __future__ import annotations
@@ -40,7 +40,7 @@ def scandata() -> SingleScan:
     """Parse the terrible-playbook through the full ARI pipeline.
 
     Returns:
-        SingleScan with trees, contexts, definitions, and hierarchy_payload.
+        SingleScan with definitions, content graph, and hierarchy payload.
     """
     fixture = _fixture_path()
     if not fixture.is_dir():
@@ -79,7 +79,7 @@ from apme_engine.runner import run_scan  # noqa: E402
 
 
 class TestStructuralEquivalence:
-    """Compare ContentGraph structure against TreeLoader output."""
+    """Verify ContentGraph structural properties."""
 
     def test_graph_builds_without_error(self, content_graph: ContentGraph) -> None:
         """GraphBuilder completes on the terrible-playbook.
@@ -108,7 +108,7 @@ class TestStructuralEquivalence:
         assert len(playbooks) >= 1, "No playbook nodes found in graph"
 
     def test_graph_has_plays(self, content_graph: ContentGraph) -> None:
-        """Plays from TreeLoader should appear in the graph.
+        """Plays should appear in the graph.
 
         Args:
             content_graph: ContentGraph from fixture.
@@ -117,7 +117,7 @@ class TestStructuralEquivalence:
         assert len(plays) >= 1, "No play nodes found in graph"
 
     def test_graph_has_tasks(self, content_graph: ContentGraph) -> None:
-        """Tasks from TreeLoader should appear in the graph.
+        """Tasks should appear in the graph.
 
         Args:
             content_graph: ContentGraph from fixture.
@@ -125,27 +125,15 @@ class TestStructuralEquivalence:
         tasks = list(content_graph.nodes(NodeType.TASK))
         assert len(tasks) >= 1, "No task nodes found in graph"
 
-    def test_graph_node_count_reasonable(self, scandata: SingleScan, content_graph: ContentGraph) -> None:
-        """Graph node count is in the same order of magnitude as TreeLoader.
-
-        The graph may have fewer nodes (deduplication) or more (vars_file
-        nodes, handler nodes). The relationship should be roughly 0.3x–3x.
+    def test_graph_node_count_reasonable(self, content_graph: ContentGraph) -> None:
+        """Graph should have a reasonable number of nodes for the fixture.
 
         Args:
-            scandata: SingleScan with TreeLoader output.
-            content_graph: ContentGraph from same definitions.
+            content_graph: ContentGraph from fixture.
         """
-        tree_call_count = sum(len(t.items) for t in scandata.trees)
         graph_count = content_graph.node_count()
-
         assert graph_count > 0, "Graph has no nodes"
-        assert tree_call_count > 0, "TreeLoader produced no call objects"
-
-        ratio = graph_count / tree_call_count
-        assert 0.1 < ratio < 10.0, (
-            f"Node count ratio {ratio:.2f} is outside expected range. "
-            f"Graph: {graph_count}, TreeLoader: {tree_call_count}"
-        )
+        assert graph_count >= 5, f"Expected at least 5 nodes for terrible-playbook, got {graph_count}"
 
     def test_graph_has_contains_edges(self, content_graph: ContentGraph) -> None:
         """The graph uses CONTAINS edges for parent-child relationships.
@@ -178,29 +166,31 @@ class TestStructuralEquivalence:
 
 
 class TestARIKeyCrossReference:
-    """Verify ARI keys from TreeLoader exist in the ContentGraph."""
+    """Verify ARI keys are tracked in the ContentGraph."""
 
-    def test_root_keys_present(self, scandata: SingleScan, content_graph: ContentGraph) -> None:
-        """Every tree root key from TreeLoader should map to a ContentNode.
+    def test_playbook_nodes_have_ari_keys(self, content_graph: ContentGraph) -> None:
+        """Every playbook node should carry an ARI key.
 
         Args:
-            scandata: SingleScan with TreeLoader trees.
-            content_graph: ContentGraph from same definitions.
+            content_graph: ContentGraph from fixture.
         """
-        missing_roots: list[str] = []
-        for tree in scandata.trees:
-            if not tree.items:
-                continue
-            first = tree.items[0]
-            spec = getattr(first, "spec", None)
-            root_key = spec.key if spec else getattr(first, "key", "")
-            if root_key and content_graph.get_node_by_ari_key(root_key) is None:
-                missing_roots.append(root_key)
+        playbooks = list(content_graph.nodes(NodeType.PLAYBOOK))
+        assert playbooks, "No playbook nodes"
+        for node in playbooks:
+            assert node.ari_key, f"Playbook node {node.node_id} has no ari_key"
 
-        if missing_roots:
-            total_roots = len(scandata.trees)
-            coverage = (total_roots - len(missing_roots)) / max(total_roots, 1)
-            assert coverage >= 0.5, f"Only {coverage:.0%} of tree roots found in graph. Missing: {missing_roots[:5]}"
+    def test_ari_key_lookup_works(self, content_graph: ContentGraph) -> None:
+        """get_node_by_ari_key should find at least one node.
+
+        Args:
+            content_graph: ContentGraph from fixture.
+        """
+        found = False
+        for node in content_graph.nodes():
+            if node.ari_key and content_graph.get_node_by_ari_key(node.ari_key) is not None:
+                found = True
+                break
+        assert found, "No ARI key lookup returned a node"
 
 
 # ---------------------------------------------------------------------------

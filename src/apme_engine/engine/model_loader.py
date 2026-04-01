@@ -1825,6 +1825,83 @@ def load_modules(
     return modules
 
 
+_BLOCK_SECTIONS = ("block", "rescue", "always")
+
+
+def _load_block_children(
+    task: Task,
+    data_block: dict[str, object],
+    *,
+    path: str,
+    role_name: str,
+    collection_name: str,
+    collections_in_play: list[str] | None,
+    play_index: int,
+    parent_key: str,
+    parent_local_key: str,
+    yaml_lines: str,
+    basedir: str,
+) -> None:
+    """Recursively load block/rescue/always children into *task.options*.
+
+    If *data_block* contains ``block``, ``rescue``, or ``always`` keys
+    whose values are lists of dicts, each child dict is loaded via
+    ``load_task()`` and the resulting ``Task`` objects replace the raw
+    dicts in ``task.options``.  The block task's ``module`` is cleared
+    so ``GraphBuilder`` classifies it as ``NodeType.BLOCK``.
+
+    Args:
+        task: The parent block Task being constructed.
+        data_block: Original YAML dict (may contain block/rescue/always).
+        path: File path forwarded to child ``load_task`` calls.
+        role_name: Role name forwarded to children.
+        collection_name: Collection name forwarded to children.
+        collections_in_play: Collections list forwarded to children.
+        play_index: Play index forwarded to children.
+        parent_key: Parent key forwarded to children.
+        parent_local_key: Parent local key forwarded to children.
+        yaml_lines: YAML source forwarded to children.
+        basedir: Base directory forwarded to children.
+    """
+    has_block = any(isinstance(data_block.get(s), list) for s in _BLOCK_SECTIONS)
+    if not has_block:
+        return
+
+    task.module = ""
+    task.executable = ""
+    task.executable_type = ""
+
+    for section in _BLOCK_SECTIONS:
+        children_raw = data_block.get(section)
+        if not isinstance(children_raw, list):
+            continue
+        child_tasks: list[Task] = []
+        last_child_line = -1
+        for i, child_dict in enumerate(children_raw):
+            if not isinstance(child_dict, dict):
+                continue
+            child_jsonpath = f"{task.jsonpath}.{section}.{i}"
+            child = load_task(
+                path=path,
+                index=i,
+                task_block_dict=child_dict,
+                task_jsonpath=child_jsonpath,
+                role_name=role_name,
+                collection_name=collection_name,
+                collections_in_play=collections_in_play,
+                play_index=play_index,
+                parent_key=task.key,
+                parent_local_key=task.local_key,
+                yaml_lines=yaml_lines,
+                previous_task_line=last_child_line,
+                basedir=basedir,
+            )
+            child_tasks.append(child)
+            if child.line_num_in_file and len(child.line_num_in_file) == 2:
+                last_child_line = child.line_num_in_file[1]
+        task.options[section] = child_tasks  # type: ignore[assignment]
+
+
 def load_task(
     path: str,
     index: int,
@@ -2002,9 +2079,6 @@ def load_task(
             variables.update(vars_in_task)
 
     module_defaults = {}
-    # get module_defaults in the task
-    # NOTE: if module_defaults is defined in the parent block, get_task_blocks()
-    #       automatically embed it to the task's module_defaults)
     if "module_defaults" in task_options:
         m_default_in_task = task_options.get("module_defaults", {})
         if m_default_in_task and isinstance(m_default_in_task, dict):
@@ -2042,6 +2116,20 @@ def load_task(
     taskObj.loop = loop_info
     taskObj.module = module_name
     taskObj.module_options = module_options if isinstance(module_options, dict) else {"_raw": module_options}
+
+    _load_block_children(
+        taskObj,
+        data_block,
+        path=path,
+        role_name=role_name,
+        collection_name=collection_name,
+        collections_in_play=collections_in_play,
+        play_index=play_index,
+        parent_key=parent_key,
+        parent_local_key=parent_local_key,
+        yaml_lines=yaml_lines,
+        basedir=basedir,
+    )
 
     return taskObj
 

@@ -22,7 +22,6 @@ from apme_engine.validators.native.rules.M027_legacy_kv_merged_with_args_graph i
 def _make_task(
     *,
     module: str = "debug",
-    resolved_module: str = "",
     module_options: YAMLDict | None = None,
     set_facts: YAMLDict | None = None,
     options: YAMLDict | None = None,
@@ -35,8 +34,7 @@ def _make_task(
     """Build a minimal playbook -> play -> task graph.
 
     Args:
-        module: Declared module name on the task.
-        resolved_module: Resolved FQCN for the module.
+        module: Module name as authored in YAML (short or FQCN).
         module_options: Module argument mapping.
         set_facts: Extracted set_fact key mapping.
         options: Task options dict.
@@ -66,7 +64,6 @@ def _make_task(
         line_start=line_start,
         name=name,
         module=module,
-        resolved_module_name=resolved_module,
         module_options=module_options or {},
         set_facts=set_facts or {},
         options=options or {},
@@ -104,7 +101,7 @@ class TestL037UnresolvedModuleGraphRule:
         Args:
             rule: Rule instance under test.
         """
-        g, tid = _make_task(module="custom_module", resolved_module="")
+        g, tid = _make_task(module="custom_module")
         assert rule.match(g, tid)
         result = rule.process(g, tid)
         assert result is not None
@@ -118,7 +115,7 @@ class TestL037UnresolvedModuleGraphRule:
         Args:
             rule: Rule instance under test.
         """
-        g, tid = _make_task(module="file", resolved_module="ansible.builtin.file")
+        g, tid = _make_task(module="ansible.builtin.file")
         assert not rule.match(g, tid)
 
     def test_skip_include_tasks(self, rule: UnresolvedModuleGraphRule) -> None:
@@ -127,7 +124,7 @@ class TestL037UnresolvedModuleGraphRule:
         Args:
             rule: Rule instance under test.
         """
-        g, tid = _make_task(module="include_tasks", resolved_module="")
+        g, tid = _make_task(module="include_tasks")
         assert not rule.match(g, tid)
 
     def test_skip_import_role(self, rule: UnresolvedModuleGraphRule) -> None:
@@ -136,7 +133,7 @@ class TestL037UnresolvedModuleGraphRule:
         Args:
             rule: Rule instance under test.
         """
-        g, tid = _make_task(module="import_role", resolved_module="")
+        g, tid = _make_task(module="import_role")
         assert not rule.match(g, tid)
 
     def test_skip_bare_include(self, rule: UnresolvedModuleGraphRule) -> None:
@@ -145,7 +142,7 @@ class TestL037UnresolvedModuleGraphRule:
         Args:
             rule: Rule instance under test.
         """
-        g, tid = _make_task(module="include", resolved_module="")
+        g, tid = _make_task(module="include")
         assert not rule.match(g, tid)
 
     def test_skip_empty_module(self, rule: UnresolvedModuleGraphRule) -> None:
@@ -154,7 +151,7 @@ class TestL037UnresolvedModuleGraphRule:
         Args:
             rule: Rule instance under test.
         """
-        g, tid = _make_task(module="", resolved_module="")
+        g, tid = _make_task(module="")
         assert not rule.match(g, tid)
 
 
@@ -182,9 +179,7 @@ class TestL038UnresolvedRoleGraphRule:
             rule: Rule instance under test.
         """
         mo: YAMLDict = {"name": "missing_role"}
-        g, tid = _make_task(
-            module="ansible.builtin.include_role", resolved_module="ansible.builtin.include_role", module_options=mo
-        )
+        g, tid = _make_task(module="ansible.builtin.include_role", module_options=mo)
         assert rule.match(g, tid)
         result = rule.process(g, tid)
         assert result is not None
@@ -199,9 +194,7 @@ class TestL038UnresolvedRoleGraphRule:
             rule: Rule instance under test.
         """
         mo: YAMLDict = {"name": "webserver"}
-        g, tid = _make_task(
-            module="ansible.builtin.include_role", resolved_module="ansible.builtin.include_role", module_options=mo
-        )
+        g, tid = _make_task(module="ansible.builtin.include_role", module_options=mo)
         role_node = ContentNode(
             identity=NodeIdentity(path="roles/webserver", node_type=NodeType.ROLE),
             file_path="roles/webserver/tasks/main.yml",
@@ -219,7 +212,7 @@ class TestL038UnresolvedRoleGraphRule:
         Args:
             rule: Rule instance under test.
         """
-        g, tid = _make_task(module="debug", resolved_module="ansible.builtin.debug")
+        g, tid = _make_task(module="ansible.builtin.debug")
         assert not rule.match(g, tid)
 
 
@@ -247,7 +240,7 @@ class TestL075AnsibleManagedGraphRule:
             rule: Rule instance under test.
         """
         mo: YAMLDict = {"src": "nginx.conf"}
-        g, tid = _make_task(module="template", resolved_module="ansible.builtin.template", module_options=mo)
+        g, tid = _make_task(module="ansible.builtin.template", module_options=mo)
         assert rule.match(g, tid)
         result = rule.process(g, tid)
         assert result is not None
@@ -260,7 +253,7 @@ class TestL075AnsibleManagedGraphRule:
             rule: Rule instance under test.
         """
         mo: YAMLDict = {"src": "nginx.conf.j2"}
-        g, tid = _make_task(module="template", resolved_module="ansible.builtin.template", module_options=mo)
+        g, tid = _make_task(module="ansible.builtin.template", module_options=mo)
         result = rule.process(g, tid)
         assert result is not None
         assert result.verdict is False
@@ -271,7 +264,7 @@ class TestL075AnsibleManagedGraphRule:
         Args:
             rule: Rule instance under test.
         """
-        g, tid = _make_task(module="copy", resolved_module="ansible.builtin.copy")
+        g, tid = _make_task(module="ansible.builtin.copy")
         assert not rule.match(g, tid)
 
     def test_skip_jinja_src(self, rule: AnsibleManagedGraphRule) -> None:
@@ -281,7 +274,7 @@ class TestL075AnsibleManagedGraphRule:
             rule: Rule instance under test.
         """
         mo: YAMLDict = {"src": "{{ template_name }}"}
-        g, tid = _make_task(module="template", resolved_module="ansible.builtin.template", module_options=mo)
+        g, tid = _make_task(module="ansible.builtin.template", module_options=mo)
         result = rule.process(g, tid)
         assert result is not None
         assert result.verdict is False
@@ -312,8 +305,7 @@ class TestL080InternalVarPrefixGraphRule:
         """
         mo: YAMLDict = {"my_var": "hello", "cacheable": False}
         g, tid = _make_task(
-            module="set_fact",
-            resolved_module="ansible.builtin.set_fact",
+            module="ansible.builtin.set_fact",
             module_options=mo,
             file_path="project/roles/myrole/tasks/main.yml",
         )
@@ -330,8 +322,7 @@ class TestL080InternalVarPrefixGraphRule:
         """
         mo: YAMLDict = {"__internal_var": "hello"}
         g, tid = _make_task(
-            module="set_fact",
-            resolved_module="ansible.builtin.set_fact",
+            module="ansible.builtin.set_fact",
             module_options=mo,
             file_path="project/roles/myrole/tasks/main.yml",
         )
@@ -347,8 +338,7 @@ class TestL080InternalVarPrefixGraphRule:
         """
         mo: YAMLDict = {"my_var": "hello"}
         g, tid = _make_task(
-            module="set_fact",
-            resolved_module="ansible.builtin.set_fact",
+            module="ansible.builtin.set_fact",
             module_options=mo,
             file_path="roles/myrole/tasks/main.yml",
         )
@@ -362,8 +352,7 @@ class TestL080InternalVarPrefixGraphRule:
         """
         mo: YAMLDict = {"my_var": "hello"}
         g, tid = _make_task(
-            module="set_fact",
-            resolved_module="ansible.builtin.set_fact",
+            module="ansible.builtin.set_fact",
             module_options=mo,
             file_path="playbooks/site.yml",
         )
@@ -395,8 +384,7 @@ class TestL085RolePathIncludeGraphRule:
         """
         mo: YAMLDict = {"file": "{{ task_file }}"}
         g, tid = _make_task(
-            module="include_tasks",
-            resolved_module="ansible.builtin.include_tasks",
+            module="ansible.builtin.include_tasks",
             module_options=mo,
             file_path="project/roles/web/tasks/main.yml",
         )
@@ -413,8 +401,7 @@ class TestL085RolePathIncludeGraphRule:
         """
         mo: YAMLDict = {"file": "{{ role_path }}/tasks/setup.yml"}
         g, tid = _make_task(
-            module="include_tasks",
-            resolved_module="ansible.builtin.include_tasks",
+            module="ansible.builtin.include_tasks",
             module_options=mo,
             file_path="project/roles/web/tasks/main.yml",
         )
@@ -430,8 +417,7 @@ class TestL085RolePathIncludeGraphRule:
         """
         mo: YAMLDict = {"file": "tasks/setup.yml"}
         g, tid = _make_task(
-            module="include_tasks",
-            resolved_module="ansible.builtin.include_tasks",
+            module="ansible.builtin.include_tasks",
             module_options=mo,
             file_path="project/roles/web/tasks/main.yml",
         )
@@ -447,8 +433,7 @@ class TestL085RolePathIncludeGraphRule:
         """
         mo: YAMLDict = {"file": "{{ task_file }}"}
         g, tid = _make_task(
-            module="include_tasks",
-            resolved_module="ansible.builtin.include_tasks",
+            module="ansible.builtin.include_tasks",
             module_options=mo,
             file_path="roles/web/tasks/main.yml",
         )
@@ -462,8 +447,7 @@ class TestL085RolePathIncludeGraphRule:
         """
         mo: YAMLDict = {"file": "{{ task_file }}"}
         g, tid = _make_task(
-            module="include_tasks",
-            resolved_module="ansible.builtin.include_tasks",
+            module="ansible.builtin.include_tasks",
             module_options=mo,
             file_path="playbooks/site.yml",
         )
@@ -494,7 +478,7 @@ class TestL100VarNamingKeywordGraphRule:
             rule: Rule instance under test.
         """
         mo: YAMLDict = {"True": "yes", "cacheable": False}
-        g, tid = _make_task(module="set_fact", resolved_module="ansible.builtin.set_fact", module_options=mo)
+        g, tid = _make_task(module="ansible.builtin.set_fact", module_options=mo)
         result = rule.process(g, tid)
         assert result is not None
         assert result.verdict is True
@@ -505,7 +489,7 @@ class TestL100VarNamingKeywordGraphRule:
         Args:
             rule: Rule instance under test.
         """
-        g, tid = _make_task(module="debug", resolved_module="ansible.builtin.debug", register="tags")
+        g, tid = _make_task(module="ansible.builtin.debug", register="tags")
         result = rule.process(g, tid)
         assert result is not None
         assert result.verdict is True
@@ -517,7 +501,7 @@ class TestL100VarNamingKeywordGraphRule:
             rule: Rule instance under test.
         """
         mo: YAMLDict = {"my_fact": "value"}
-        g, tid = _make_task(module="set_fact", resolved_module="ansible.builtin.set_fact", module_options=mo)
+        g, tid = _make_task(module="ansible.builtin.set_fact", module_options=mo)
         result = rule.process(g, tid)
         assert result is not None
         assert result.verdict is False
@@ -529,7 +513,7 @@ class TestL100VarNamingKeywordGraphRule:
             rule: Rule instance under test.
         """
         mo: YAMLDict = {"name": "register", "file": "vars.yml"}
-        g, tid = _make_task(module="include_vars", resolved_module="ansible.builtin.include_vars", module_options=mo)
+        g, tid = _make_task(module="ansible.builtin.include_vars", module_options=mo)
         result = rule.process(g, tid)
         assert result is not None
         assert result.verdict is True
@@ -559,7 +543,7 @@ class TestL101VarNamingReservedGraphRule:
             rule: Rule instance under test.
         """
         mo: YAMLDict = {"ansible_host": "10.0.0.1"}
-        g, tid = _make_task(module="set_fact", resolved_module="ansible.builtin.set_fact", module_options=mo)
+        g, tid = _make_task(module="ansible.builtin.set_fact", module_options=mo)
         result = rule.process(g, tid)
         assert result is not None
         assert result.verdict is True
@@ -570,7 +554,7 @@ class TestL101VarNamingReservedGraphRule:
         Args:
             rule: Rule instance under test.
         """
-        g, tid = _make_task(module="debug", resolved_module="ansible.builtin.debug", register="ansible_facts")
+        g, tid = _make_task(module="ansible.builtin.debug", register="ansible_facts")
         result = rule.process(g, tid)
         assert result is not None
         assert result.verdict is True
@@ -582,7 +566,7 @@ class TestL101VarNamingReservedGraphRule:
             rule: Rule instance under test.
         """
         mo: YAMLDict = {"app_version": "1.0"}
-        g, tid = _make_task(module="set_fact", resolved_module="ansible.builtin.set_fact", module_options=mo)
+        g, tid = _make_task(module="ansible.builtin.set_fact", module_options=mo)
         result = rule.process(g, tid)
         assert result is not None
         assert result.verdict is False
@@ -612,7 +596,7 @@ class TestL102VarNamingReadOnlyGraphRule:
             rule: Rule instance under test.
         """
         mo: YAMLDict = {"inventory_hostname": "override"}
-        g, tid = _make_task(module="set_fact", resolved_module="ansible.builtin.set_fact", module_options=mo)
+        g, tid = _make_task(module="ansible.builtin.set_fact", module_options=mo)
         result = rule.process(g, tid)
         assert result is not None
         assert result.verdict is True
@@ -623,7 +607,7 @@ class TestL102VarNamingReadOnlyGraphRule:
         Args:
             rule: Rule instance under test.
         """
-        g, tid = _make_task(module="command", resolved_module="ansible.builtin.command", register="groups")
+        g, tid = _make_task(module="ansible.builtin.command", register="groups")
         result = rule.process(g, tid)
         assert result is not None
         assert result.verdict is True
@@ -635,7 +619,7 @@ class TestL102VarNamingReadOnlyGraphRule:
             rule: Rule instance under test.
         """
         mo: YAMLDict = {"my_result": "data"}
-        g, tid = _make_task(module="set_fact", resolved_module="ansible.builtin.set_fact", module_options=mo)
+        g, tid = _make_task(module="ansible.builtin.set_fact", module_options=mo)
         result = rule.process(g, tid)
         assert result is not None
         assert result.verdict is False
@@ -666,7 +650,7 @@ class TestM027LegacyKvMergedWithArgsGraphRule:
         """
         mo: YAMLDict = {"_raw_params": "src=/tmp/a dest=/tmp/b"}
         opts: YAMLDict = {"args": {"mode": "0644"}}
-        g, tid = _make_task(module="copy", resolved_module="ansible.builtin.copy", module_options=mo, options=opts)
+        g, tid = _make_task(module="ansible.builtin.copy", module_options=mo, options=opts)
         result = rule.process(g, tid)
         assert result is not None
         assert result.verdict is True
@@ -679,7 +663,7 @@ class TestM027LegacyKvMergedWithArgsGraphRule:
         """
         mo: YAMLDict = {"src": "/tmp/a", "dest": "/tmp/b"}
         opts: YAMLDict = {"args": {"mode": "0644"}}
-        g, tid = _make_task(module="copy", resolved_module="ansible.builtin.copy", module_options=mo, options=opts)
+        g, tid = _make_task(module="ansible.builtin.copy", module_options=mo, options=opts)
         result = rule.process(g, tid)
         assert result is not None
         assert result.verdict is False
@@ -691,7 +675,7 @@ class TestM027LegacyKvMergedWithArgsGraphRule:
             rule: Rule instance under test.
         """
         mo: YAMLDict = {"_raw_params": "src=/tmp/a dest=/tmp/b"}
-        g, tid = _make_task(module="copy", resolved_module="ansible.builtin.copy", module_options=mo)
+        g, tid = _make_task(module="ansible.builtin.copy", module_options=mo)
         result = rule.process(g, tid)
         assert result is not None
         assert result.verdict is False
@@ -707,8 +691,8 @@ class TestBatch2ScannerIntegration:
 
     def test_scan_unresolved_module(self) -> None:
         """Scanner picks up L037 violations."""
-        g, _tid = _make_task(module="unknown_module", resolved_module="")
-        rules: list[GraphRule] = [UnresolvedModuleGraphRule()]
+        g, _tid = _make_task(module="unknown_module")
+        rules: list[GraphRule] = [UnresolvedModuleGraphRule(enabled=True)]
         report = scan(g, rules)
         violations = [rr for nr in report.node_results for rr in nr.rule_results if rr.verdict]
         assert len(violations) == 1
@@ -718,7 +702,7 @@ class TestBatch2ScannerIntegration:
     def test_scan_var_naming_keyword(self) -> None:
         """Scanner picks up L100 violations."""
         mo: YAMLDict = {"True": "yes"}
-        g, _tid = _make_task(module="set_fact", resolved_module="ansible.builtin.set_fact", module_options=mo)
+        g, _tid = _make_task(module="ansible.builtin.set_fact", module_options=mo)
         rules: list[GraphRule] = [VarNamingKeywordGraphRule()]
         report = scan(g, rules)
         violations = [rr for nr in report.node_results for rr in nr.rule_results if rr.verdict]

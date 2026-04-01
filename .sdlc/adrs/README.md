@@ -41,6 +41,7 @@ Decisions that are fully reflected in the codebase.
 | [ADR-033](ADR-033-centralized-log-bridge.md) | Centralized Log Bridge with gRPC Transport | 2026-03-22 |
 | [ADR-037](ADR-037-project-centric-ui-model.md) | Project-Centric UI Model with Session Abstraction | 2026-03-24 |
 | [ADR-039](ADR-039-unified-operation-stream.md) | Unified Operation Stream — Check and Remediate | 2026-03-24 |
+| [ADR-047](ADR-047-tox-developer-orchestration.md) | tox as Sole Developer Orchestration Tool | 2026-03-30 |
 
 ## Accepted
 
@@ -81,7 +82,7 @@ Decisions replaced by newer ADRs.
 ## Creating New ADRs
 
 1. Copy the template from `../templates/adr.md`
-2. Use the next available number (currently ADR-047)
+2. Use the next available number (currently ADR-048)
 3. Include:
    - Status (Proposed → Accepted → Implemented)
    - Date

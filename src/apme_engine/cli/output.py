@@ -352,8 +352,8 @@ def print_diagnostics_vv(diag: ScanDiagnostics) -> None:
     w(f"\n  Engine:       {fmt_ms(diag.engine_total_ms)}{engine_detail}")
     if diag.files_scanned:
         w(f", {diag.files_scanned} file(s)")
-    if diag.trees_built:
-        w(f", {diag.trees_built} tree(s)")
+    if diag.graph_nodes_built:
+        w(f", {diag.graph_nodes_built} graph node(s)")
     w("\n\n")
 
     for vd in diag.validators:
@@ -404,7 +404,7 @@ def diag_to_dict(diag: ScanDiagnostics) -> YAMLDict:
             "engine_annotate_ms": round(diag.engine_annotate_ms, 1),
             "engine_total_ms": round(diag.engine_total_ms, 1),
             "files_scanned": diag.files_scanned,
-            "trees_built": diag.trees_built,
+            "graph_nodes_built": diag.graph_nodes_built,
             "total_violations": diag.total_violations,
             "fan_out_ms": round(diag.fan_out_ms, 1),
             "total_ms": round(diag.total_ms, 1),

@@ -90,7 +90,7 @@ Prerequisites? (other TASKs, or "none")
 ```
 Verification steps?
 ```
-Accept: "pytest, ruff, mypy" or freeform list.
+Accept: "tox -e lint, tox -e unit" or freeform list. Always use tox envs (ADR-047).
 
 ```
 Which acceptance criteria? (numbers from REQ)

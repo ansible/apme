@@ -15,7 +15,7 @@ _TASK_TYPES = frozenset({NodeType.TASK, NodeType.HANDLER})
 
 @dataclass
 class NonFQCNUseGraphRule(GraphRule):
-    """Flag tasks whose declared module name differs from a non-builtin resolved FQCN.
+    """Flag tasks whose declared module is a short name (no dot), not an FQCN.
 
     Attributes:
         rule_id: Rule identifier.
@@ -36,31 +36,29 @@ class NonFQCNUseGraphRule(GraphRule):
     tags: tuple[str, ...] = (Tag.DEPENDENCY,)
 
     def match(self, graph: ContentGraph, node_id: str) -> bool:
-        """Match task/handler nodes with a short name resolving to a non-builtin FQCN.
+        """Match task/handler nodes whose module is a non-empty short name (not FQCN).
+
+        A name containing ``.`` is treated as already FQCN-qualified.
 
         Args:
             graph: The full ContentGraph.
             node_id: ID of the node to check.
 
         Returns:
-            True when the node is a task or handler, both module names are set,
-            they differ, and the resolved name is not ``ansible.builtin.*``.
+            True when the node is a task or handler, ``module`` is non-empty, and
+            it contains no dot (short form such as ``copy`` rather than
+            ``ansible.builtin.copy``).
         """
         node = graph.get_node(node_id)
         if node is None:
             return False
         if node.node_type not in _TASK_TYPES:
             return False
-        spec = node.module
-        resolved = node.resolved_module_name
-        if not spec or not resolved:
-            return False
-        if spec == resolved:
-            return False
-        return not resolved.startswith("ansible.builtin.")
+        mod = node.module or ""
+        return bool(mod and "." not in mod)
 
     def process(self, graph: ContentGraph, node_id: str) -> GraphRuleResult | None:
-        """Report the short module name and resolved FQCN when the rule fires.
+        """Report the short module name when the rule fires.
 
         Args:
             graph: The full ContentGraph.
@@ -72,13 +70,9 @@ class NonFQCNUseGraphRule(GraphRule):
         node = graph.get_node(node_id)
         if node is None:
             return None
-        spec = node.module
-        resolved = node.resolved_module_name
-        verdict = bool(spec and resolved and spec != resolved and not resolved.startswith("ansible.builtin."))
-        detail: YAMLDict = {
-            "module": spec,
-            "fqcn": resolved,
-        }
+        mod = node.module or ""
+        verdict = bool(mod and "." not in mod)
+        detail: YAMLDict = {"module": mod}
         return GraphRuleResult(
             verdict=verdict,
             detail=detail if verdict else None,

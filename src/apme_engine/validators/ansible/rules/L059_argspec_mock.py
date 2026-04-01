@@ -31,14 +31,14 @@ try:
     from unittest.mock import patch
 
     for name in module_names:
-        ctx = module_loader.find_plugin_with_context(name, ignore_deprecated=True)
-        if not ctx.resolved or not getattr(ctx, "plugin_resolved_path", None):
-            continue
-        mod_path = ctx.plugin_resolved_path
-        if not mod_path or mod_path.endswith(".ps1"):
-            continue
-
         try:
+            ctx = module_loader.find_plugin_with_context(name, ignore_deprecated=True)
+            if not ctx.resolved or not getattr(ctx, "plugin_resolved_path", None):
+                continue
+            mod_path = ctx.plugin_resolved_path
+            if not mod_path or mod_path.endswith(".ps1"):
+                continue
+
             spec = importlib.util.spec_from_file_location(f"_argcheck_{name}", mod_path)
             if spec is None or spec.loader is None:
                 continue

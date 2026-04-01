@@ -54,7 +54,7 @@ def _diagnostics_to_json(diag: object) -> str | None:
             "engine_annotate_ms": diag.engine_annotate_ms,  # type: ignore[attr-defined]
             "engine_total_ms": diag.engine_total_ms,  # type: ignore[attr-defined]
             "files_scanned": diag.files_scanned,  # type: ignore[attr-defined]
-            "trees_built": diag.trees_built,  # type: ignore[attr-defined]
+            "graph_nodes_built": diag.graph_nodes_built,  # type: ignore[attr-defined]
             "total_violations": diag.total_violations,  # type: ignore[attr-defined]
             "fan_out_ms": diag.fan_out_ms,  # type: ignore[attr-defined]
             "total_ms": diag.total_ms,  # type: ignore[attr-defined]

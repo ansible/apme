@@ -43,7 +43,7 @@ User: none
 
 Claude: Verification steps?
 
-User: pytest, ruff check, mypy
+User: tox -e lint, tox -e unit
 
 Claude: Which acceptance criteria? (numbers from REQ-001)
 

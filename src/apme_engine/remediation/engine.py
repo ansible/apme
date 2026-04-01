@@ -283,8 +283,16 @@ class RemediationEngine:
                 self._enrich(violations)
             tier1, _, _ = partition_violations(violations, self._registry)
 
+            rule_ids = sorted({str(v.get("rule_id", "")) for v in violations})
+            logger.info(
+                "Remediation: pass %d — %d total, %d fixable — rules: %s",
+                pass_num,
+                len(violations),
+                len(tier1),
+                rule_ids,
+            )
             self._progress("tier1", f"Pass {pass_num}: {len(tier1)} fixable violations")
-            logger.debug("Remediation: pass %d — %d fixable (Tier 1)", pass_num, len(tier1))
+            self._progress("tier1", f"Pass {pass_num} rules ({len(violations)} total): {rule_ids}")
 
             if not tier1:
                 self._progress("tier1", f"Converged at pass {pass_num} (0 fixable)")
@@ -380,6 +388,9 @@ class RemediationEngine:
         self._write_files(file_contents)
         final_violations = self._scan_fn(file_paths)
         self._enrich(final_violations)
+        final_rule_ids = sorted({str(v.get("rule_id", "")) for v in final_violations})
+        logger.info("Remediation: final scan — %d violations — rules: %s", len(final_violations), final_rule_ids)
+        self._progress("tier1", f"Final rules ({len(final_violations)} total): {final_rule_ids}")
         add_classification_to_violations(final_violations, self._registry)
         _, tier2, tier3 = partition_violations(final_violations, self._registry)
 

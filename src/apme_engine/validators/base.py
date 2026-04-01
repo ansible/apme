@@ -13,11 +13,11 @@ class EngineDiagnostics:
     Attributes:
         parse_ms: Time spent parsing.
         annotate_ms: Time spent annotating.
-        tree_build_ms: Time spent building trees.
+        tree_build_ms: Time spent building the content graph.
         variable_resolution_ms: Time spent on variable resolution.
         total_ms: Total time.
         files_scanned: Number of files scanned.
-        trees_built: Number of trees built.
+        graph_nodes_built: Number of ContentGraph nodes built.
     """
 
     parse_ms: float = 0.0
@@ -26,7 +26,7 @@ class EngineDiagnostics:
     variable_resolution_ms: float = 0.0
     total_ms: float = 0.0
     files_scanned: int = 0
-    trees_built: int = 0
+    graph_nodes_built: int = 0
 
 
 @dataclass

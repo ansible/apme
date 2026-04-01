@@ -57,7 +57,7 @@ class InboundTransferGraphRule(GraphRule):
         node = graph.get_node(node_id)
         if node is None or node.node_type not in _TASK_TYPES:
             return False
-        profile = get_risk_profile(node.resolved_module_name, node.module)
+        profile = get_risk_profile(node.module)
         return profile is not None and profile.risk_type == "inbound"
 
     def process(self, graph: ContentGraph, node_id: str) -> GraphRuleResult | None:
@@ -74,7 +74,7 @@ class InboundTransferGraphRule(GraphRule):
         if node is None:
             return None
 
-        profile = get_risk_profile(node.resolved_module_name, node.module)
+        profile = get_risk_profile(node.module)
         if profile is None:
             return None
 

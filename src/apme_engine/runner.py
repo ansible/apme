@@ -139,11 +139,11 @@ def _extract_engine_diagnostics(scandata: object, engine_total_ms: float) -> Eng
 
     diag.parse_ms = _ms("target_load") + _ms("prm_load") + _ms("metadata_load")
     diag.annotate_ms = 0.0
-    diag.tree_build_ms = _ms("tree_construction")
+    diag.tree_build_ms = _ms("graph_construction")
 
-    trees = getattr(scandata, "trees", None)
-    if trees:
-        diag.trees_built = len(trees)
+    cg = getattr(scandata, "content_graph", None)
+    if cg is not None:
+        diag.graph_nodes_built = cg.node_count()
 
     root_defs = getattr(scandata, "root_definitions", None)
     if root_defs:

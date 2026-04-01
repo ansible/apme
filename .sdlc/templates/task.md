@@ -55,8 +55,8 @@ class ClassName:
 
 Before marking complete:
 
-- [ ] Unit tests pass (`pytest tests/`)
-- [ ] Pre-commit checks pass (`prek run --all-files`)
+- [ ] Unit tests pass (`tox -e unit`)
+- [ ] Lint / type-check pass (`tox -e lint`)
 - [ ] Integration test: [specific test description]
 - [ ] Manual verification: [specific steps]
 

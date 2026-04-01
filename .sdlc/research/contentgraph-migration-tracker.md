@@ -1,6 +1,6 @@
 # ContentGraph Rule Migration Tracker
 
-**Status**: Phase 3 In Progress — legacy pipeline removed; ContentGraph is the sole execution path
+**Status**: Phase 3 In Progress — legacy pipeline removed; TreeLoader deleted; ContentGraph is the sole execution path
 **Related**: [ADR-044](/.sdlc/adrs/ADR-044-node-identity-progression-model.md) |
 [Research](/.sdlc/research/ari-to-contentgraph-migration.md)
 
@@ -309,13 +309,18 @@ End-of-Phase-2 gates (from ADR-044):
 - [x] Stop sending jsonpickle scandata via gRPC (PR #156)
 - [x] Decouple `GraphBuilder` from `tree.py` — inlined
       `load_all_definitions` into `content_graph.py` (PR #161)
-- [ ] Remove `TreeLoader`, `AnsibleRunContext`, `RunTarget`, `ObjectList`,
-      `Context.add()` (deferred — `scan_state.py` still uses `TreeLoader`
-      for the legacy scan pipeline; engine pipeline refactor is Phase 3)
+- [x] Remove `TreeLoader` (`tree.py`) and `context.py` — deleted;
+      `GraphBuilder` now tracks `extra_requirements` / `resolve_failures`
+      directly; `trees_built` diagnostic renamed to `graph_nodes_built`
+- [x] Remove `resolved_module_name` from `ContentNode` — the graph
+      stores only the authored `module` name; module resolution to FQCNs
+      occurs through the convergence loop (Ansible validator re-scan),
+      not through pre-mutation. All ~30 graph rules updated to use
+      `node.module` directly. L037 disabled (requires convergence data).
 
-### Phase 3 — Progression + provenance: NOT STARTED
+### Phase 3 — Progression + provenance: IN PROGRESS
 
-Depends on Phase 2 completion. See "Outstanding Work" section below.
+Engine pipeline refactor complete. See "Outstanding Work" section below.
 
 ---
 
@@ -383,9 +388,12 @@ Phase 2 achieved:
 - [x] `NativeValidator.detect()` path removed (PR #156)
 - [x] `rule_doc_integration_test.py` rewritten for graph path (PR #157)
 
-Remaining for Phase 3 (engine pipeline refactor):
+Engine pipeline refactor (Phase 3):
 
 - [x] Decouple `GraphBuilder` from `tree.py` (PR #161)
-- [ ] Remove `TreeLoader`, `AnsibleRunContext`, `RunTarget`, `ObjectList`,
-      `Context.add()` — blocked by `scan_state.py` dependency on
-      `TreeLoader` for the legacy scan pipeline
+- [x] Remove legacy pipeline code (PR #173)
+- [x] Remove `TreeLoader` (`tree.py`) and `context.py`;
+      `GraphBuilder` tracks `extra_requirements` / `resolve_failures`
+      directly; `trees_built` diagnostic renamed to `graph_nodes_built`
+- [x] Remove `resolved_module_name` from `ContentNode`; graph is "pure"
+      (authored names only, no resolution artifacts)

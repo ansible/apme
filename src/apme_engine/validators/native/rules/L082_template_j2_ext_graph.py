@@ -54,7 +54,7 @@ class TemplateJ2ExtGraphRule(GraphRule):
         node = graph.get_node(node_id)
         if node is None or node.node_type not in _TASK_TYPES:
             return False
-        resolved = node.resolved_module_name or node.module
+        resolved = node.module
         return resolved in TEMPLATE_MODULES
 
     def process(self, graph: ContentGraph, node_id: str) -> GraphRuleResult | None:

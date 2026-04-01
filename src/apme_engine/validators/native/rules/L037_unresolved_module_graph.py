@@ -9,6 +9,19 @@ from apme_engine.validators.native.rules.graph_rule_base import GraphRule, Graph
 
 _TASK_TYPES = frozenset({NodeType.TASK, NodeType.HANDLER})
 
+
+def _module_looks_resolved(mod: str) -> bool:
+    """Return whether ``mod`` looks like an Ansible FQCN (``namespace.collection.name``).
+
+    Args:
+        mod: Declared module string from the task node.
+
+    Returns:
+        True when ``mod`` has at least three dot-separated segments.
+    """
+    return len(mod.split(".")) >= 3
+
+
 _INCLUDE_IMPORT_ACTIONS = frozenset(
     {
         "include",
@@ -49,7 +62,7 @@ class UnresolvedModuleGraphRule(GraphRule):
 
     rule_id: str = "L037"
     description: str = "Unresolved module is found"
-    enabled: bool = True
+    enabled: bool = False
     name: str = "UnresolvedModule"
     version: str = "v0.0.1"
     severity: str = Severity.LOW
@@ -64,14 +77,14 @@ class UnresolvedModuleGraphRule(GraphRule):
 
         Returns:
             True when the node is a task or handler, ``module`` is non-empty,
-            ``resolved_module_name`` is empty, and the module is not a dynamic
+            does not look like a resolved FQCN, and the module is not a dynamic
             include or import action name.
         """
         node = graph.get_node(node_id)
         if node is None or node.node_type not in _TASK_TYPES:
             return False
         mod = (node.module or "").strip()
-        if not mod or (node.resolved_module_name or "").strip():
+        if not mod or _module_looks_resolved(mod):
             return False
         return mod not in _INCLUDE_IMPORT_ACTIONS
 
@@ -91,7 +104,7 @@ class UnresolvedModuleGraphRule(GraphRule):
         if node is None:
             return None
         mod = (node.module or "").strip()
-        if not mod or (node.resolved_module_name or "").strip():
+        if not mod or _module_looks_resolved(mod):
             return GraphRuleResult(
                 verdict=False,
                 node_id=node_id,

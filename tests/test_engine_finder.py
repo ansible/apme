@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from apme_engine.engine.finder import identify_lines_with_jsonpath
+from apme_engine.engine.finder import find_module_name, flatten_block_tasks, identify_lines_with_jsonpath
+from apme_engine.engine.models import YAMLDict
 
 
 class TestIdentifyLinesWithJsonpathEmptyBlocks:
@@ -83,3 +84,66 @@ class TestIdentifyLinesWithJsonpathSuccess:
         assert result_range is not None
         assert result_range[0] <= result_range[1]
         assert "name: hello" in result_lines or "ansible.builtin.debug" in result_lines
+
+
+class TestFlattenBlockTasks:
+    """flatten_block_tasks emits block wrappers intact."""
+
+    def test_non_block_task_returned_as_is(self) -> None:
+        """A plain task dict is returned as a single entry."""
+        task: YAMLDict = {"name": "hi", "ansible.builtin.debug": {"msg": "x"}}
+        result = flatten_block_tasks(task, ".tasks.0")
+        assert len(result) == 1
+        assert result[0] == (task, ".tasks.0")
+
+    def test_block_wrapper_emitted_intact(self) -> None:
+        """A dict with block: key is emitted as one entry, not flattened."""
+        task: YAMLDict = {
+            "name": "my block",
+            "block": [
+                {"name": "t1", "ansible.builtin.debug": {"msg": "1"}},
+                {"name": "t2", "ansible.builtin.debug": {"msg": "2"}},
+            ],
+        }
+        result = flatten_block_tasks(task, ".tasks.0")
+        assert len(result) == 1
+        assert result[0][0] is task
+        assert result[0][0]["block"] is task["block"]
+
+    def test_rescue_always_wrapper_emitted_intact(self) -> None:
+        """Block with rescue/always is emitted as a single wrapper."""
+        task: YAMLDict = {
+            "block": [{"ansible.builtin.debug": {"msg": "main"}}],
+            "rescue": [{"ansible.builtin.debug": {"msg": "rescue"}}],
+            "always": [{"ansible.builtin.debug": {"msg": "always"}}],
+        }
+        result = flatten_block_tasks(task, ".tasks.0")
+        assert len(result) == 1
+        assert "rescue" in result[0][0]
+        assert "always" in result[0][0]
+
+    def test_none_returns_empty(self) -> None:
+        """None input returns empty list."""
+        assert flatten_block_tasks(None) == []
+
+
+class TestFindModuleNameBlockKeywords:
+    """find_module_name does not treat block/rescue/always as modules."""
+
+    def test_block_not_module(self) -> None:
+        """A dict with only block: key returns empty module."""
+        task: YAMLDict = {
+            "name": "my block",
+            "block": [{"ansible.builtin.debug": {"msg": "hi"}}],
+        }
+        assert find_module_name(task) == ""
+
+    def test_rescue_not_module(self) -> None:
+        """Rescue is a task keyword, not a module name."""
+        task: YAMLDict = {"rescue": [{"ansible.builtin.debug": {"msg": "hi"}}]}
+        assert find_module_name(task) == ""
+
+    def test_always_not_module(self) -> None:
+        """Always is a task keyword, not a module name."""
+        task: YAMLDict = {"always": [{"ansible.builtin.debug": {"msg": "hi"}}]}
+        assert find_module_name(task) == ""

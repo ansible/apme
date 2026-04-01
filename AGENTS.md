@@ -108,6 +108,13 @@ one needs to change, write an ADR first.
     **Plugin service** (ADR-042) as a separate container — never mixed into
     built-in validators.
 
+15. **tox is the sole orchestration tool** (ADR-047). All lint, test, build,
+    and pod commands go through `tox -e <env>`. **Never invoke `pytest`, `ruff`,
+    `mypy`, `prek`, or shell scripts directly.** Pass extra arguments after
+    `--` (e.g. `tox -e unit -- -k test_sbom`). In CI, use
+    `uvx --with tox-uv tox -e <env>`. See `.agents/skills/tox/SKILL.md` for
+    the full environment reference.
+
 ## Agent Roles
 
 ### 1. Spec Writer Agent
@@ -132,7 +139,7 @@ one needs to change, write an ADR first.
 - Must link related specs (REQ -> TASK -> ADR/DR)
 - Must include acceptance criteria
 - Must verify phase assignment matches `.sdlc/phases/README.md`
-- Verification steps must use `prek run --all-files`, not individual tools
+- Verification steps must use `tox -e lint`, not individual tools
 
 ---
 
@@ -350,6 +357,7 @@ anything else**. If a matching skill exists, read it and follow its instructions
 | `/sdlc-status` | SDLC dashboard status |
 | `/submit-pr` | Create and submit pull requests |
 | `/task-new` | Create implementation task |
+| `/tox` | tox environment reference (lint, test, build, pod) |
 | `/workflow` | Development workflow guidance |
 
 ## Design Thinking
@@ -403,8 +411,28 @@ covers it, write one before implementing.
 All agents must:
 
 1. Follow the spec exactly
-2. Run verification steps (`prek run --all-files`)
+2. Run verification steps via **tox only** (invariant 15):
+   - `tox -e lint` — lint, format, typecheck
+   - `tox -e unit` — unit tests with coverage
+   - `tox -e grpc` — after proto changes
 3. Update task status
 4. Commit with proper message format (Conventional Commits)
 5. Flag any spec ambiguities
 6. Verify no architectural invariants (above) were violated
+
+### Prohibited direct invocations
+
+**Do not run any of these directly. Use the corresponding tox environment.**
+
+| Prohibited | Use instead |
+|------------|-------------|
+| `pytest ...` | `tox -e unit -- ...` |
+| `ruff check ...` | `tox -e lint` |
+| `ruff format ...` | `tox -e lint` |
+| `mypy ...` | `tox -e lint` |
+| `prek run ...` | `tox -e lint` |
+| `./scripts/gen_grpc.sh` | `tox -e grpc` |
+| `./containers/podman/build.sh` | `tox -e build` |
+| `./containers/podman/up.sh` | `tox -e up` |
+| `./containers/podman/down.sh` | `tox -e down` |
+| `./containers/podman/run-cli.sh` | `tox -e cli` |

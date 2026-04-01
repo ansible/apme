@@ -102,9 +102,8 @@ Six app containers, one pod. All inter-service communication is gRPC. The Galaxy
 ### Local development (no containers)
 
 ```bash
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-pip install -e ".[dev]"
+# Install tox (one-time)
+uv tool install tox --with tox-uv
 
 # Run a check (user-facing); engine runs the internal scan pipeline
 apme check /path/to/playbook-or-project
@@ -159,34 +158,17 @@ ui                8081  React dashboard (nginx)
 abbenay          50057  AI provider (gRPC)
 ```
 
-#### Build all images
+#### Build and start
 
 ```bash
-./containers/podman/build.sh            # builds base + 9 service images
-./containers/podman/build.sh --no-cache # rebuild from scratch
+tox -e up                    # build all images and start the pod
+tox -e up -- --no-cache      # rebuild from scratch
+tox -e up-clean              # wipe state + rebuild + start (clean slate)
 ```
 
-The build script creates a shared base image first (`localhost/apme-base:latest`) so pip
-dependencies are resolved once, then builds each service image. It also
-pulls the Abbenay AI image from `ghcr.io`. At the end it offers to start
-the pod automatically.
-
-#### Start the pod
-
-```bash
-./containers/podman/up.sh
-```
-
-This tears down any existing `apme-pod`, injects cache paths and secrets
-into `pod.yaml` via `envsubst`, and starts all containers. Cache defaults
-to `${XDG_CACHE_HOME:-$HOME/.cache}/apme` (override with `APME_CACHE_HOST_PATH`).
-
-Wait for the pod to be healthy before running scans:
-
-```bash
-./containers/podman/wait-for-pod.sh              # wait until Running
-./containers/podman/wait-for-pod.sh --health-check  # wait + verify all services
-```
+This builds a shared base image, nine service images, pulls the Abbenay AI
+image, then starts all containers. Cache defaults to
+`${XDG_CACHE_HOME:-$HOME/.cache}/apme` (override with `APME_CACHE_HOST_PATH`).
 
 #### Access the UI
 
@@ -206,25 +188,12 @@ The CLI container is **not** part of the pod — it joins the pod network
 on each invocation with your current directory mounted at `/workspace`.
 
 ```bash
-cd /path/to/your/project
-
-# Default (no args): runs `scan .`
-/path/to/apme/containers/podman/run-cli.sh
-
-# Check with JSON output
-/path/to/apme/containers/podman/run-cli.sh check --json .
-
-# Remediate (Tier 1 deterministic fixes)
-/path/to/apme/containers/podman/run-cli.sh remediate .
-
-# Remediate with AI (requires Abbenay configured)
-/path/to/apme/containers/podman/run-cli.sh remediate --ai .
-
-# Format YAML (dry-run)
-/path/to/apme/containers/podman/run-cli.sh format --check .
-
-# Health check
-/path/to/apme/containers/podman/run-cli.sh health-check
+tox -e cli                              # default: check .
+tox -e cli -- check --json .            # JSON output
+tox -e cli -- remediate .               # Tier 1 deterministic fixes
+tox -e cli -- remediate --ai .          # include AI proposals (Tier 2)
+tox -e cli -- format --check .          # YAML format dry-run
+tox -e cli -- health-check              # health check all services
 ```
 
 #### AI setup (optional)
@@ -243,22 +212,15 @@ starts on port 50057 and Primary connects to it for Tier 2 AI proposals.
 #### Stop the pod
 
 ```bash
-./containers/podman/down.sh              # stop and remove pod
-./containers/podman/down.sh --wipe       # also delete database + session cache
+tox -e down                              # stop and remove pod
+tox -e wipe                              # also delete database + session cache
 ```
 
 #### Health check
 
-From a local development environment (no containers):
-
 ```bash
-apme health-check
-```
-
-From the pod:
-
-```bash
-./containers/podman/wait-for-pod.sh --health-check
+apme health-check                        # local daemon
+tox -e cli -- health-check               # from pod
 ```
 
 ## AI escalation
@@ -334,17 +296,20 @@ Scale pods, not services within a pod. Each pod is a self-contained stack that c
 ## Tests
 
 ```bash
-pip install -e ".[dev]"
+# Install tox (one-time setup)
+uv tool install tox --with tox-uv
 
-# Unit + colocated rule tests
-pytest
+# Unit tests with coverage
+tox -e unit
 
-# With coverage
-pytest --cov=src/apme_engine --cov-report=term-missing --cov-fail-under=36
+# Integration tests (requires OPA binary)
+tox -e integration
 
-# End-to-end integration (requires Podman + built images)
-pytest -m integration tests/integration/test_e2e.py
+# All default environments (lint + unit + integration + ai + ui)
+tox
 ```
+
+See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for the full tox environment reference.
 
 ## Project layout
 
@@ -418,7 +383,7 @@ tests/                  unit, integration, rule doc coverage
 - **Abbenay daemon** as the AI backend via gRPC: `pip install apme-engine[ai]`.
 - **AIProvider Protocol** (`ADR-024`): pluggable abstraction for LLM providers; `AbbenayProvider` is the default.
 - **Hybrid validation loop**: AI proposals are re-scanned through APME validators, cleaned up with Tier 1 transforms, and retried with feedback if issues persist (max 2 attempts).
-- **Interactive review** (`--ai` flag): per-fix diff review (y/n/skip) like `git add -p`, or `--ci` for automatic application.
+- **Interactive review** (`--ai` flag): per-fix diff review (y/n/skip) like `git add -p`, or `--auto-approve` for automatic application.
 - **Structured best practices**: curated Ansible guidelines injected into prompts for higher-quality fixes.
 - **Preflight checks**: auto-discover Abbenay daemon socket, health check before AI calls.
 - See [DESIGN_AI_ESCALATION.md](docs/DESIGN_AI_ESCALATION.md) for the full design.

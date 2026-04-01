@@ -66,7 +66,7 @@ class RolePathIncludeGraphRule(GraphRule):
         fp = node.file_path or ""
         if "/roles/" not in fp and not fp.startswith("roles/"):
             return False
-        resolved = node.resolved_module_name or node.module
+        resolved = node.module
         return resolved in INCLUDE_MODULES
 
     def process(self, graph: ContentGraph, node_id: str) -> GraphRuleResult | None:

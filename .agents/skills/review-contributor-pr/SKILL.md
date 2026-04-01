@@ -5,7 +5,7 @@ description: >
   Use when the user asks to review a PR, get a contributor PR ready, update a
   contributor's branch, or ensure a PR meets project standards before merge.
   Follow this skill so contributor PRs are reviewed consistently and avoid
-  rework (prek failures, outdated base, weak description).
+  rework (lint/test failures, outdated base, weak description).
 argument-hint: "<PR number or URL>"
 user-invocable: true
 metadata:
@@ -23,7 +23,7 @@ own PR (use `submit-pr` for that).
 ## Goals
 
 - PR is **up to date with upstream main** (no merge conflicts, clean rebase).
-- **Pre-commit checks pass**: prek (or ruff/mypy/pydoclint) on the full tree.
+- **Quality gates pass**: `tox -e lint` and `tox -e unit` on the full tree.
 - **PR description** follows the project template (Summary, Changes, Test plan)
   so reviewers and history have clear context.
 - Avoid pushing to the contributor's branch with failing CI or an outdated base.
@@ -54,29 +54,23 @@ fixes or improving the PR):
   before pushing. That way the PR stays mergeable and CI runs against the
   latest main.
 
-### 3. Run pre-commit checks (prek) before pushing
+### 3. Run quality gates before pushing
 
-- Use the same workflow as **DEVELOPMENT.md** and **submit-pr**: install prek
-  with `uv tool install prek`, then run:
+Run tox quality gates on the **entire** tree, not only the changed files:
 
-  ```bash
-  prek run --all-files
-  ```
+```bash
+tox -e lint
+tox -e unit
+```
 
-  All hooks (ruff, ruff format, mypy, pydoclint) must pass on the **entire**
-  tree, not only the changed files. Fix any failures (line length, untyped
-  decorators, docstring sections, format) before pushing to the contributor's
-  branch.
+Fix any failures (line length, untyped decorators, docstring sections, format,
+test regressions) before pushing to the contributor's branch.
 
-- If prek is not installed, run the equivalent:
+Do **not** run `ruff`, `mypy`, `pytest`, or `prek` directly — always use tox
+(ADR-047). See the `/tox` skill for the full environment reference.
 
-  ```bash
-  uv run ruff check src/ tests/ && uv run ruff format src/ tests/
-  uv run mypy src/
-  ```
-
-- Do **not** push to the contributor's branch if prek fails; fix in a new
-  commit and then push so CI stays green.
+Do **not** push to the contributor's branch if tox fails; fix in a new commit
+and then push so CI stays green.
 
 ### 4. PR description quality
 
@@ -102,7 +96,7 @@ fixes or improving the PR):
 - Before pushing:
 
   1. Rebase onto `upstream/main` so the PR is up to date.
-  2. Ensure `prek run --all-files` passes (or equivalent; see §3).
+  2. Ensure `tox -e lint` and `tox -e unit` pass (see §3).
   3. Use `--force-with-lease` when pushing a rebased branch:
      `git push <remote> <local-branch>:<their-branch> --force-with-lease`.
 
@@ -141,16 +135,18 @@ When reviewing or preparing a contributor PR:
 
 - [ ] Fetched PR and know base/head and remotes.
 - [ ] Branch is up to date with upstream main (rebase if needed before push).
-- [ ] `prek run --all-files` passes (or equivalent; see DEVELOPMENT.md).
+- [ ] `tox -e lint` and `tox -e unit` pass.
 - [ ] PR description has Summary, Changes, and Test plan (submit-pr style).
-- [ ] If pushing to their branch: rebase onto upstream main, prek green, then
+- [ ] If pushing to their branch: rebase onto upstream main, tox green, then
       `git push <remote> <local>:<their-branch> --force-with-lease`.
 - [ ] If you addressed a review comment: reply on that thread (same as pr-review)
       with explanation + commit SHA, using the replies endpoint (replace PR and COMMENT_ID).
 
 ## References
 
+- **tox skill** (`/tox`): Full tox environment reference.
 - **submit-pr** skill: PR body template and commit conventions.
 - **pr-review** skill: Responding to review comments and resolving threads.
 - **CONTRIBUTING.md**: PR template, testing, security checklist.
-- **CLAUDE.md**: Quality gates (tests, gRPC regen, conventions).
+- **CLAUDE.md**: Quality gates (tox -e lint, tox -e unit).
+

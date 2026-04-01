@@ -23,7 +23,6 @@ from apme_engine.validators.native.rules.L092_loop_var_in_name_graph import Loop
 def _make_task(
     *,
     module: str = "debug",
-    resolved_module: str = "",
     module_options: YAMLDict | None = None,
     name: str | None = None,
     file_path: str = "site.yml",
@@ -35,8 +34,7 @@ def _make_task(
     """Build a minimal playbook→play→task graph.
 
     Args:
-        module: Declared module name on the task.
-        resolved_module: Resolved FQCN for the module.
+        module: Module name as authored in YAML (short or FQCN).
         module_options: Module argument mapping.
         name: Optional task name.
         file_path: Source file path for the task.
@@ -65,7 +63,6 @@ def _make_task(
         line_start=line_start,
         name=name,
         module=module,
-        resolved_module_name=resolved_module,
         module_options=module_options or {},
         tags=tags or [],
         when_expr=when_expr,
@@ -137,46 +134,45 @@ class TestL026NonFQCNUseGraphRule:
         return NonFQCNUseGraphRule()
 
     def test_match_short_module_resolves_to_collection(self, rule: NonFQCNUseGraphRule) -> None:
-        """Short module name differing from non-builtin FQCN matches.
+        """Short module name (no dot) matches.
 
         Args:
             rule: Rule instance under test.
         """
-        g, tid = _make_task(module="copy", resolved_module="community.general.copy")
+        g, tid = _make_task(module="copy")
         assert rule.match(g, tid)
 
     def test_no_match_builtin_resolved(self, rule: NonFQCNUseGraphRule) -> None:
-        """Builtin FQCN does not match.
+        """Declared FQCN (builtin) does not match.
 
         Args:
             rule: Rule instance under test.
         """
-        g, tid = _make_task(module="debug", resolved_module="ansible.builtin.debug")
+        g, tid = _make_task(module="ansible.builtin.debug")
         assert not rule.match(g, tid)
 
     def test_no_match_already_fqcn(self, rule: NonFQCNUseGraphRule) -> None:
-        """Declared name same as resolved FQCN does not match.
+        """Declared FQCN form does not match.
 
         Args:
             rule: Rule instance under test.
         """
-        g, tid = _make_task(module="ansible.builtin.copy", resolved_module="ansible.builtin.copy")
+        g, tid = _make_task(module="ansible.builtin.copy")
         assert not rule.match(g, tid)
 
     def test_violation_detail(self, rule: NonFQCNUseGraphRule) -> None:
-        """Violation includes module and fqcn in detail.
+        """Violation includes module in detail.
 
         Args:
             rule: Rule instance under test.
         """
-        g, tid = _make_task(module="copy", resolved_module="community.general.copy")
+        g, tid = _make_task(module="copy")
         result = rule.process(g, tid)
         assert result is not None
         assert result.verdict is True
         assert result.detail is not None
         d: YAMLDict = result.detail
         assert d["module"] == "copy"
-        assert d["fqcn"] == "community.general.copy"
 
 
 class TestL030NonBuiltinUseGraphRule:
@@ -192,21 +188,21 @@ class TestL030NonBuiltinUseGraphRule:
         return NonBuiltinUseGraphRule()
 
     def test_match_collection_module(self, rule: NonBuiltinUseGraphRule) -> None:
-        """Resolved non-builtin FQCN matches.
+        """Declared non-builtin FQCN on module matches.
 
         Args:
             rule: Rule instance under test.
         """
-        g, tid = _make_task(resolved_module="community.general.copy")
+        g, tid = _make_task(module="community.general.copy")
         assert rule.match(g, tid)
 
     def test_no_match_builtin(self, rule: NonBuiltinUseGraphRule) -> None:
-        """Resolved ansible.builtin does not match.
+        """Declared ansible.builtin FQCN does not match.
 
         Args:
             rule: Rule instance under test.
         """
-        g, tid = _make_task(resolved_module="ansible.builtin.debug")
+        g, tid = _make_task(module="ansible.builtin.debug")
         assert not rule.match(g, tid)
 
     def test_violation_detail_has_fqcn(self, rule: NonBuiltinUseGraphRule) -> None:
@@ -215,7 +211,7 @@ class TestL030NonBuiltinUseGraphRule:
         Args:
             rule: Rule instance under test.
         """
-        g, tid = _make_task(resolved_module="community.general.copy")
+        g, tid = _make_task(module="community.general.copy")
         result = rule.process(g, tid)
         assert result is not None
         assert result.verdict is True
@@ -242,7 +238,7 @@ class TestL036UnnecessaryIncludeVarsGraphRule:
         Args:
             rule: Rule instance under test.
         """
-        g, tid = _make_task(resolved_module="ansible.builtin.include_vars")
+        g, tid = _make_task(module="ansible.builtin.include_vars")
         assert rule.match(g, tid)
 
     def test_no_match_debug(self, rule: UnnecessaryIncludeVarsGraphRule) -> None:
@@ -251,7 +247,7 @@ class TestL036UnnecessaryIncludeVarsGraphRule:
         Args:
             rule: Rule instance under test.
         """
-        g, tid = _make_task(module="debug", resolved_module="ansible.builtin.debug")
+        g, tid = _make_task(module="ansible.builtin.debug")
         assert not rule.match(g, tid)
 
     def test_violation_no_tags_no_when(self, rule: UnnecessaryIncludeVarsGraphRule) -> None:
@@ -260,7 +256,7 @@ class TestL036UnnecessaryIncludeVarsGraphRule:
         Args:
             rule: Rule instance under test.
         """
-        g, tid = _make_task(resolved_module="ansible.builtin.include_vars")
+        g, tid = _make_task(module="ansible.builtin.include_vars")
         result = rule.process(g, tid)
         assert result is not None
         assert result.verdict is True
@@ -271,7 +267,7 @@ class TestL036UnnecessaryIncludeVarsGraphRule:
         Args:
             rule: Rule instance under test.
         """
-        g, tid = _make_task(resolved_module="ansible.builtin.include_vars", tags=["setup"])
+        g, tid = _make_task(module="ansible.builtin.include_vars", tags=["setup"])
         result = rule.process(g, tid)
         assert result is not None
         assert result.verdict is False
@@ -282,7 +278,7 @@ class TestL036UnnecessaryIncludeVarsGraphRule:
         Args:
             rule: Rule instance under test.
         """
-        g, tid = _make_task(resolved_module="ansible.builtin.include_vars", when_expr="condition")
+        g, tid = _make_task(module="ansible.builtin.include_vars", when_expr="condition")
         result = rule.process(g, tid)
         assert result is not None
         assert result.verdict is False
@@ -306,7 +302,7 @@ class TestL044AvoidImplicitGraphRule:
         Args:
             rule: Rule instance under test.
         """
-        g, tid = _make_task(resolved_module="ansible.builtin.file", module_options={})
+        g, tid = _make_task(module="ansible.builtin.file", module_options={})
         assert rule.match(g, tid)
         result = rule.process(g, tid)
         assert result is not None
@@ -323,7 +319,7 @@ class TestL044AvoidImplicitGraphRule:
             rule: Rule instance under test.
         """
         g, tid = _make_task(
-            resolved_module="ansible.builtin.file",
+            module="ansible.builtin.file",
             module_options={"state": "present"},
         )
         result = rule.process(g, tid)
@@ -336,7 +332,7 @@ class TestL044AvoidImplicitGraphRule:
         Args:
             rule: Rule instance under test.
         """
-        g, tid = _make_task(resolved_module="ansible.builtin.debug")
+        g, tid = _make_task(module="ansible.builtin.debug")
         assert not rule.match(g, tid)
 
 
@@ -359,7 +355,7 @@ class TestL048NoSameOwnerGraphRule:
             rule: Rule instance under test.
         """
         g, tid = _make_task(
-            resolved_module="ansible.builtin.copy",
+            module="ansible.builtin.copy",
             module_options={"remote_src": True},
         )
         assert rule.match(g, tid)
@@ -370,7 +366,7 @@ class TestL048NoSameOwnerGraphRule:
         Args:
             rule: Rule instance under test.
         """
-        g, tid = _make_task(resolved_module="ansible.builtin.copy", module_options={})
+        g, tid = _make_task(module="ansible.builtin.copy", module_options={})
         assert not rule.match(g, tid)
 
     def test_violation_no_owner(self, rule: NoSameOwnerGraphRule) -> None:
@@ -380,7 +376,7 @@ class TestL048NoSameOwnerGraphRule:
             rule: Rule instance under test.
         """
         g, tid = _make_task(
-            resolved_module="ansible.builtin.copy",
+            module="ansible.builtin.copy",
             module_options={"remote_src": True},
         )
         result = rule.process(g, tid)
@@ -394,7 +390,7 @@ class TestL048NoSameOwnerGraphRule:
             rule: Rule instance under test.
         """
         g, tid = _make_task(
-            resolved_module="ansible.builtin.copy",
+            module="ansible.builtin.copy",
             module_options={"remote_src": True, "owner": "root"},
         )
         result = rule.process(g, tid)
@@ -513,7 +509,7 @@ class TestL082TemplateJ2ExtGraphRule:
             rule: Rule instance under test.
         """
         g, tid = _make_task(
-            resolved_module="ansible.builtin.template",
+            module="ansible.builtin.template",
             module_options={"src": "config.cfg"},
         )
         assert rule.match(g, tid)
@@ -528,7 +524,7 @@ class TestL082TemplateJ2ExtGraphRule:
             rule: Rule instance under test.
         """
         g, tid = _make_task(
-            resolved_module="ansible.builtin.template",
+            module="ansible.builtin.template",
             module_options={"src": "config.j2"},
         )
         result = rule.process(g, tid)
@@ -542,7 +538,7 @@ class TestL082TemplateJ2ExtGraphRule:
             rule: Rule instance under test.
         """
         g, tid = _make_task(
-            resolved_module="ansible.builtin.template",
+            module="ansible.builtin.template",
             module_options={"src": "{{ var }}"},
         )
         result = rule.process(g, tid)
@@ -667,12 +663,12 @@ class TestTaskLocalGraphScanIntegration:
     """Integration tests for ``scan`` with selected graph rules."""
 
     def test_scan_non_fqcn_violation(self) -> None:
-        """L026 fires for short module resolving to a collection FQCN.
+        """L026 fires for short module name (not FQCN).
 
         Returns:
             None; asserts scan report contains an L026 violation.
         """
-        g, _ = _make_task(module="copy", resolved_module="community.general.copy")
+        g, _ = _make_task(module="copy")
         rules: list[GraphRule] = [NonFQCNUseGraphRule()]
         report = scan(g, rules)
         assert report.node_results
@@ -691,7 +687,7 @@ class TestTaskLocalGraphScanIntegration:
         Returns:
             None; asserts scan report contains an L044 violation.
         """
-        g, _ = _make_task(resolved_module="ansible.builtin.file", module_options={})
+        g, _ = _make_task(module="ansible.builtin.file", module_options={})
         rules: list[GraphRule] = [AvoidImplicitGraphRule()]
         report = scan(g, rules)
         assert report.node_results

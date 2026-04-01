@@ -64,7 +64,7 @@ message ScanDiagnostics {
   double engine_annotate_ms = 2;
   double engine_total_ms = 3;
   int32  files_scanned = 4;
-  int32  trees_built = 5;
+  int32  graph_nodes_built = 5;
   int32  total_violations = 6;
   repeated ValidatorDiagnostics validators = 7;
   double fan_out_ms = 8;

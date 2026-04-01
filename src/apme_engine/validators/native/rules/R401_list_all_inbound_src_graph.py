@@ -77,7 +77,7 @@ class ListAllInboundSrcGraphRule(GraphRule):
             desc = graph.get_node(desc_id)
             if desc is None or desc.node_type not in _TASK_TYPES:
                 continue
-            profile = get_risk_profile(desc.resolved_module_name, desc.module)
+            profile = get_risk_profile(desc.module)
             if profile is None or profile.risk_type != "inbound":
                 continue
             mo = desc.module_options

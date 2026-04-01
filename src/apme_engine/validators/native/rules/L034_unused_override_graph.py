@@ -89,7 +89,7 @@ def _defines_variables(graph: ContentGraph, node_id: str) -> bool:
         return True
     if node.register:
         return True
-    if node.resolved_module_name in _SET_FACT_FQCNS or node.module in _SET_FACT_FQCNS:
+    if node.module in _SET_FACT_FQCNS:
         return True
     return bool(node.set_facts)
 

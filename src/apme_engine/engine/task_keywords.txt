@@ -1,8 +1,10 @@
 action
+always
 any_errors_fatal
 args
 async
 become
+block
 become_exe
 become_flags
 become_method
@@ -31,6 +33,7 @@ poll
 port
 register
 remote_user
+rescue
 retries
 run_once
 tags

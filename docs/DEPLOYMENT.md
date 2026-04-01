@@ -15,7 +15,7 @@ The primary deployment target is a Podman pod. All backend services run in a sin
 From the repo root:
 
 ```bash
-./containers/podman/build.sh
+tox -e build
 ```
 
 This builds a shared base image, nine service images, and pulls one official image:
@@ -49,7 +49,7 @@ If `.env` is missing or the key is empty, the Abbenay container starts but model
 ### Start the pod
 
 ```bash
-./containers/podman/up.sh
+tox -e up
 ```
 
 This runs `podman play kube containers/podman/pod.yaml`, which starts the pod `apme-pod` with all service containers (Primary, Native, OPA, Ansible, Gitleaks, Galaxy Proxy, Gateway, UI, Abbenay). The `up.sh` script sources `containers/abbenay/.env` to inject LLM API keys into the Abbenay container. A sessions directory is created for session-scoped venvs.
@@ -57,21 +57,12 @@ This runs `podman play kube containers/podman/pod.yaml`, which starts the pod `a
 ### Run CLI commands
 
 ```bash
-cd /path/to/your/ansible/project
-
-# Check (policy validation; default target is `.` when your wrapper passes it)
-/path/to/apme/containers/podman/run-cli.sh
-/path/to/apme/containers/podman/run-cli.sh check --json .
-
-# Remediate (Tier 1 deterministic fixes; `FixSession` RPC)
-containers/podman/run-cli.sh check --diff .        # dry-run with diffs
-containers/podman/run-cli.sh remediate .           # apply
-
-# Format (YAML normalization)
-containers/podman/run-cli.sh format --check .
-
-# Health check
-containers/podman/run-cli.sh health-check
+tox -e cli                              # default: check .
+tox -e cli -- check --json .            # JSON output
+tox -e cli -- check --diff .            # dry-run with diffs
+tox -e cli -- remediate .               # Tier 1 fixes
+tox -e cli -- format --check .          # YAML format check
+tox -e cli -- health-check              # health check
 ```
 
 The CLI container joins `apme-pod`, mounts CWD as `/workspace:Z` (read-write for `remediate`/`format`), and communicates with Primary at `127.0.0.1:50051` via gRPC.
@@ -81,8 +72,8 @@ The `remediate` command uses a bidirectional streaming RPC (`FixSession`, ADR-02
 ### Stop the pod
 
 ```bash
-podman pod stop apme-pod
-podman pod rm apme-pod
+tox -e down
+tox -e wipe    # also delete database + session cache
 ```
 
 ### Health check
@@ -205,20 +196,20 @@ local daemon that runs the Primary, Native, OPA, Ansible, and Galaxy Proxy servi
 as localhost gRPC servers (ADR-024). Gitleaks is excluded (requires the gitleaks binary).
 
 ```bash
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-pip install -e ".[dev]"
+# Install tox + project (one-time)
+uv tool install tox --with tox-uv
+uv sync --extra dev --extra gateway
 
 # Start the local daemon
-python -m apme_engine.cli daemon start
+apme daemon start
 
 # Run commands (thin CLI talks to local daemon via gRPC)
-python -m apme_engine.cli check /path/to/project
-python -m apme_engine.cli check --diff .
-python -m apme_engine.cli remediate .
+apme check /path/to/project
+apme check --diff .
+apme remediate .
 
 # Stop the daemon
-python -m apme_engine.cli daemon stop
+apme daemon stop
 ```
 
 **Daemon mode** starts a local Primary server with Native, OPA, and Ansible validators plus the Galaxy Proxy running in-process. OPA runs via the local `opa` binary; if `opa` is not installed, the OPA validator is automatically skipped.

@@ -32,7 +32,6 @@ from apme_engine.validators.native.rules.M020_vault_encrypted_tag_graph import V
 def _make_task(
     *,
     module: str = "debug",
-    resolved_module: str = "",
     module_options: YAMLDict | None = None,
     options: YAMLDict | None = None,
     name: str | None = None,
@@ -44,8 +43,7 @@ def _make_task(
     """Build a minimal playbook -> play -> task graph.
 
     Args:
-        module: Declared module name on the task.
-        resolved_module: Resolved FQCN for the module.
+        module: Module name as authored in YAML (short or FQCN).
         module_options: Module argument mapping.
         options: Task-level options (when, etc.).
         name: Optional task name.
@@ -74,7 +72,6 @@ def _make_task(
         line_start=line_start,
         name=name,
         module=module,
-        resolved_module_name=resolved_module,
         module_options=module_options or {},
         options=options or {},
         yaml_lines=yaml_lines,
@@ -215,7 +212,6 @@ class TestL041KeyOrderGraphRule:
         yaml_text = "- ansible.builtin.package:\n    state: present\n  name: Install\n"
         g, tid = _make_task(
             module="ansible.builtin.package",
-            resolved_module="ansible.builtin.package",
             yaml_lines=yaml_text,
         )
         result = rule.process(g, tid)
@@ -865,8 +861,7 @@ class TestL094DynamicTemplateDateGraphRule:
             None
         """
         g, tid = _make_task(
-            module="template",
-            resolved_module="ansible.builtin.template",
+            module="ansible.builtin.template",
             yaml_lines="src: report.j2\ndest: /tmp/out\nwhen: ansible_date_time is defined\n",
         )
         assert rule.match(g, tid) is True
@@ -886,7 +881,6 @@ class TestL094DynamicTemplateDateGraphRule:
         """
         g, tid = _make_task(
             module="template",
-            resolved_module="",
             yaml_lines="src: report.j2\ndest: /tmp/out\nwhen: ansible_date_time is defined\n",
         )
         assert rule.match(g, tid) is True
@@ -904,8 +898,7 @@ class TestL094DynamicTemplateDateGraphRule:
             None
         """
         g, tid = _make_task(
-            module="template",
-            resolved_module="ansible.builtin.template",
+            module="ansible.builtin.template",
             yaml_lines="src: static.j2\n  dest: /tmp/out\n",
         )
         result = rule.process(g, tid)

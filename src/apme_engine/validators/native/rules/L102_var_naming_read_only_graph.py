@@ -103,7 +103,7 @@ class VarNamingReadOnlyGraphRule(GraphRule):
             return None
 
         violations: list[str] = []
-        resolved = node.resolved_module_name or node.module
+        resolved = node.module
         mo = node.module_options
         if not isinstance(mo, dict):
             mo = {}

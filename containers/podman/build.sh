@@ -29,10 +29,4 @@ podman build "${BUILD_ARGS[@]}" -t apme-gateway:latest -f containers/gateway/Doc
 podman build "${BUILD_ARGS[@]}" -t apme-cli:latest -f containers/cli/Dockerfile .
 podman build "${BUILD_ARGS[@]}" -t apme-ui:latest -f containers/ui/Dockerfile .
 
-echo "Images built."
-if [[ -t 0 ]]; then
-  read -rp "Start the pod now? [Y/n] " answer
-  if [[ "${answer:-Y}" =~ ^[Yy]$ ]]; then
-    exec "$ROOT/containers/podman/up.sh"
-  fi
-fi
+echo "Images built. Start with: tox -e up"

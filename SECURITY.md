@@ -16,8 +16,7 @@ We take security seriously. If you discover a security vulnerability in APME, pl
 
 Instead, please report security issues via:
 
-1. **Email**: security@[your-domain].com
-2. **GitHub Security Advisories**: Use the "Report a vulnerability" button in the Security tab
+1. **GitHub Security Advisories**: Use the "Report a vulnerability" button in the Security tab
 
 ### What to Include
 
@@ -53,8 +52,8 @@ We will not pursue legal action against researchers who follow this policy.
 # Check for secrets before committing
 gitleaks detect --source . --verbose
 
-# Use pre-commit hooks (see .pre-commit-config.yaml)
-pre-commit install
+# prek hooks run automatically on commit (ruff, mypy, pydoclint)
+# Install with: uv tool install prek && prek install
 ```
 
 #### What NOT to commit:
@@ -78,7 +77,6 @@ pre-commit install
 ```python
 # Always validate external input
 def scan_path(path: Path) -> ScanResult:
-    # Prevent path traversal
     resolved = path.resolve()
     if not resolved.is_relative_to(allowed_root):
         raise SecurityError("Path traversal detected")
@@ -135,16 +133,14 @@ grype apme-primary:latest
 ```bash
 # Check for vulnerable dependencies
 pip-audit
-safety check
 
-# Update dependencies
-uv pip compile --upgrade requirements.in
+# Dependencies are managed via pyproject.toml and uv.lock
+# Review dependency changes in PRs
 ```
 
 #### Lock Files
-- Always commit lock files (uv.lock, requirements.txt)
+- Always commit lock files (`uv.lock`)
 - Review dependency changes in PRs
-- Use Dependabot or Renovate for automated updates
 
 ### gRPC Security
 
@@ -193,22 +189,10 @@ Before submitting a PR, verify:
 
 ## Security Tools
 
-### Pre-commit Hooks (Recommended)
+### Recommended
 
 ```bash
-pip install pre-commit
-pre-commit install
-```
-
-See `.pre-commit-config.yaml` for configured hooks including:
-- gitleaks (secret detection)
-- bandit (Python security linting)
-- safety (dependency vulnerabilities)
-
-### Manual Scanning
-
-```bash
-# Secret detection
+# Secret detection (manual scan)
 gitleaks detect --source . --verbose
 
 # Python security linting
@@ -216,7 +200,6 @@ bandit -r src/
 
 # Dependency vulnerabilities
 pip-audit
-safety check
 
 # Container scanning
 trivy image apme-primary:latest
@@ -230,7 +213,7 @@ If you believe the project has been compromised:
 
 1. **Rotate all credentials** immediately
 2. **Audit git history** for leaked secrets
-3. **Notify maintainers** via security@[your-domain].com
+3. **Notify maintainers** via GitHub Security Advisory
 4. **Document the incident** for post-mortem
 
 ### Git History Cleanup

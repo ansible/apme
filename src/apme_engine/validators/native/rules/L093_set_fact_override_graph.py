@@ -39,7 +39,7 @@ def _is_set_fact(graph: ContentGraph, node_id: str) -> bool:
     node = graph.get_node(node_id)
     if node is None:
         return False
-    return node.resolved_module_name in _SET_FACT_FQCNS or node.module in _SET_FACT_FQCNS
+    return node.module in _SET_FACT_FQCNS
 
 
 def _find_enclosing_role(graph: ContentGraph, node_id: str) -> str | None:

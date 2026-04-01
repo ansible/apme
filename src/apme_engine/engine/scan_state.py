@@ -1,4 +1,4 @@
-"""SingleScan state container and tree/resolve helpers for the ARI scanner."""
+"""SingleScan state container and graph construction helpers for the ARI scanner."""
 
 from __future__ import annotations
 
@@ -21,16 +21,12 @@ from .models import (
     Load,
     LoadType,
     Object,
-    ObjectList,
     Rule,
-    TaskCall,
     YAMLDict,
     YAMLList,
     YAMLValue,
 )
 from .parser import Parser
-from .risk_assessment_model import RAMClient
-from .tree import TreeLoader
 from .utils import (
     escape_local_path,
     escape_url,
@@ -61,8 +57,6 @@ class SingleScan:
         root_definitions: Definitions from the root target.
         ext_definitions: Definitions from external dependencies.
         target_object: Root Object for the scan target.
-        trees: List of object trees built during scanning.
-        additional: Additional objects (e.g. inventory).
         use_ansible_path: Whether to use ansible path resolution.
         dependency_dir: Directory containing dependencies.
         base_dir: Base directory for path resolution.
@@ -91,8 +85,6 @@ class SingleScan:
         rules: List of rule IDs or paths to enable.
         rules_cache: Cached Rule objects.
         persist_dependency_cache: Whether to keep the dependency cache after scan.
-        spec_mutations_from_previous_scan: Spec mutations carried from prior scan.
-        spec_mutations: Spec mutations detected in this scan.
         use_ansible_doc: Whether to use ansible-doc for module specs.
         do_save: Whether to save scan artifacts to disk.
         silent: Whether to suppress log output.
@@ -119,10 +111,6 @@ class SingleScan:
     ext_definitions: YAMLDict = field(default_factory=dict)
 
     target_object: Object = field(default_factory=Object)
-
-    trees: list[ObjectList] = field(default_factory=list)
-    # for inventory object
-    additional: ObjectList = field(default_factory=ObjectList)
 
     _path_mappings: YAMLDict = field(default_factory=dict)
 
@@ -168,8 +156,6 @@ class SingleScan:
     rules: list[str] = field(default_factory=list)
     rules_cache: list[Rule] = field(default_factory=list)
     persist_dependency_cache: bool = False
-    spec_mutations_from_previous_scan: YAMLDict = field(default_factory=dict)
-    spec_mutations: YAMLDict = field(default_factory=dict)
     use_ansible_doc: bool = True
     do_save: bool = False
     silent: bool = False
@@ -468,30 +454,6 @@ class SingleScan:
             "mappings": mappings,  # type: ignore[dict-item]
         }
 
-    def apply_spec_mutations(self) -> None:
-        """Overwrite root definitions with mutated objects from spec_mutations_from_previous_scan."""
-        if not self.spec_mutations_from_previous_scan:
-            return
-        # overwrite the loaded object with the mutated object in spec mutations
-        definitions = self.root_definitions.get("definitions", {})
-        if not isinstance(definitions, dict):
-            return
-        for type_name in definitions:
-            obj_list = definitions.get(type_name, [])
-            if not isinstance(obj_list, list):
-                continue
-            for i, obj in enumerate(obj_list):
-                if not hasattr(obj, "key"):
-                    continue
-                key = getattr(obj, "key", "")
-                if key in self.spec_mutations_from_previous_scan:
-                    m = self.spec_mutations_from_previous_scan[key]
-                    if m is not None and hasattr(m, "object"):
-                        mutated_spec = m.object
-                        new_list = obj_list[:i] + [cast(Object, mutated_spec)] + obj_list[i + 1 :]
-                        definitions[type_name] = new_list  # type: ignore[assignment]
-        return
-
     def set_target_object(self) -> None:
         """Set target_object from root definitions based on type and name."""
         type_name = self.type + "s"
@@ -512,59 +474,22 @@ class SingleScan:
                     break
         return
 
-    def construct_trees(self, ram_client: RAMClient | None = None) -> None:
-        """Build call trees from root and ext definitions, optionally using RAM for lookups.
-
-        Args:
-            ram_client: Optional RAM client for module/role/taskfile lookups.
-        """
-        trees, additional, extra_requirements, resolve_failures = tree(
-            cast(dict[str, object], self.root_definitions),
-            cast(dict[str, object], self.ext_definitions),
-            ram_client,
-            self.target_playbook_name,
-            self.target_taskfile_name,
-            self.load_all_taskfiles,
-        )
-
-        # set annotation for spec mutations
-        if self.spec_mutations_from_previous_scan:
-            spec_mutations = self.spec_mutations_from_previous_scan
-            for _tree in trees:
-                for callobj in _tree.items:
-                    if not isinstance(callobj, TaskCall):
-                        continue
-                    obj_key = callobj.spec.key
-                    if obj_key in spec_mutations:
-                        m = spec_mutations[obj_key]
-                        if m is not None and hasattr(m, "rule") and hasattr(m, "changes"):
-                            rule_id = getattr(m.rule, "rule_id", "")
-                            value = {
-                                "rule_id": rule_id,
-                                "changes": getattr(m, "changes", []),
-                            }
-                            callobj.set_annotation(key="spec.mutations", value=value, rule_id=rule_id)
-
-        self.trees = trees
-        self.additional = additional
-        self.extra_requirements = cast(YAMLList, extra_requirements)
-        self.resolve_failures = cast(YAMLDict, resolve_failures)
-
-        self._build_content_graph()
-        return
-
-    def _build_content_graph(self) -> None:
+    def build_content_graph(self) -> None:
         """Build ContentGraph from definitions (ADR-044).
 
-        The graph is serialized and sent to the native validator via gRPC
-        for GraphRule evaluation.  Failure is fatal — the scan cannot
-        proceed without a ContentGraph.
+        Constructs the graph and copies ``resolve_failures`` from the
+        builder's resolution bookkeeping.  ``extra_requirements`` is
+        carried forward but currently always empty (reserved for future use).
+        Failure is fatal — the scan cannot proceed without a ContentGraph.
         """
         builder = GraphBuilder(
             cast(dict[str, object], self.root_definitions),
             cast(dict[str, object], self.ext_definitions),
         )
         self.content_graph = builder.build()
+        self.extra_requirements = cast(YAMLList, builder.extra_requirements)
+        self.resolve_failures = cast(YAMLDict, builder.resolve_failures)
+
         graph_node_count = self.content_graph.node_count()
         graph_edge_count = self.content_graph.edge_count()
         logger.debug(
@@ -709,43 +634,3 @@ class SingleScan:
             return
         with open(index_location) as f:
             self.index = json.load(f)
-
-
-def tree(
-    root_definitions: dict[str, object],
-    ext_definitions: dict[str, object],
-    ram_client: RAMClient | None = None,
-    target_playbook_path: str | None = None,
-    target_taskfile_path: str | None = None,
-    load_all_taskfiles: bool = False,
-) -> tuple[list[ObjectList], ObjectList, list[dict[str, object]], dict[str, dict[str, int]]]:
-    """Build call trees from root and external definitions.
-
-    Args:
-        root_definitions: Root definitions (playbooks, roles, etc.).
-        ext_definitions: External dependency definitions.
-        ram_client: Optional RAM client for module/role/taskfile lookups.
-        target_playbook_path: Target playbook path for filtering.
-        target_taskfile_path: Target taskfile path for filtering.
-        load_all_taskfiles: If True, load all taskfiles in roles.
-
-    Returns:
-        Tuple of (trees, additional objects, extra_requirements, resolve_failures).
-
-    Raises:
-        ValueError: If tree construction fails.
-    """
-    tl = TreeLoader(
-        root_definitions, ext_definitions, ram_client, target_playbook_path, target_taskfile_path, load_all_taskfiles
-    )
-    trees, additional = tl.run()
-    if trees is None:
-        raise ValueError("failed to get trees")
-    # if node_objects is None:
-    #     raise ValueError("failed to get node_objects")
-    return (
-        trees,
-        additional,
-        tl.extra_requirements,
-        tl.resolve_failures,
-    )

@@ -45,8 +45,7 @@ User runs:  apme check /path/to/project
 │     │     Parser.run() → playbooks, roles, taskfiles,    │       │
 │     │     tasks, modules, mappings                       │       │
 │     │                                                    │       │
-│     │  b. construct_trees() + _build_content_graph()      │       │
-│     │     TreeLoader → call trees (legacy data path)     │       │
+│     │  b. build_content_graph()                           │       │
 │     │     GraphBuilder → ContentGraph (ADR-044, sole     │       │
 │     │     execution path for native rules & OPA)         │       │
 │     │                                                    │       │
@@ -138,25 +137,19 @@ The engine (`ARIScanner.evaluate()`) runs five stages in sequence. All stages op
 - `ext_definitions` — external dependencies (collections, roles from cache)
 - `mappings` — index of module → FQCN, role → path, etc.
 
-### Stage 2: Construct trees
+### Stage 2: Build ContentGraph
 
-`TreeLoader` builds directed graphs of call objects:
+`GraphBuilder` constructs a `ContentGraph` (ADR-044) — a DAG-backed model where each Ansible content unit (playbook, play, role, task, module, collection) exists as a deduplicated node with typed edges:
 
 ```
-PlaybookCall → PlayCall → RoleCall → TaskFileCall → TaskCall
-                        └──────────► TaskCall (play-level tasks)
+Playbook → Play → Task (CONTAINS)
+                 → Role (DEPENDENCY / INCLUDE / IMPORT)
+                 → TaskFile (IMPORT / INCLUDE)
 ```
 
-Each node has a `spec` (the parsed YAML structure), `key` (unique identifier), and edges to children. The tree preserves execution order and nesting.
+Resolution bookkeeping (`extra_requirements`, `resolve_failures`) is tracked during construction. Variable provenance is resolved via `VariableProvenanceResolver` on the graph.
 
-### Stage 3: Resolve variables
-
-Walks the tree and tracks variable definitions (`set_fact`, `register`, `include_vars`, role defaults/vars) and usages. Produces:
-
-- `variable_use` annotations on tasks (which variables are referenced)
-- Resolution of `{{ var }}` references where statically determinable
-
-### Stage 4: Annotate
+### Stage 3: Annotate
 
 Per-module `RiskAnnotator` subclasses inspect each `TaskCall` and attach `RiskAnnotation` objects:
 
