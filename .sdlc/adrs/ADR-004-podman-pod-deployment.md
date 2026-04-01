@@ -69,3 +69,4 @@ We needed a deployment model.
 
 - ADR-005: No etcd/service discovery
 - ADR-012: Scale pods, not services
+- ADR-048: Pod-internal admin endpoints rely on network isolation — depends on shared-localhost assumption established here

@@ -67,3 +67,4 @@ No etcd, no registration, no heartbeats.
 
 - ADR-004: Podman pod deployment
 - ADR-012: Scale pods, not services
+- ADR-048: Pod-internal admin endpoints rely on network isolation — depends on fixed localhost:port assumption established here

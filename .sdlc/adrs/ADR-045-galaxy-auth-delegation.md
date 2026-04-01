@@ -248,6 +248,9 @@ These changes are valuable regardless of the auth delegation decision:
   persistence, including credential storage
 - [ADR-040](ADR-040-scan-metadata-enrichment.md): Scan Metadata Enrichment —
   Galaxy server config is another form of scan metadata
+- [ADR-048](ADR-048-pod-internal-admin-endpoints.md): Pod-Internal Admin
+  Endpoints — the `/admin/galaxy-config` endpoint introduced by this ADR
+  relies on pod network isolation; auth required if topology changes
 
 ## References
 
