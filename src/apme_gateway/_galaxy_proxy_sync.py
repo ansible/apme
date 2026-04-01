@@ -23,6 +23,8 @@ logger = logging.getLogger(__name__)
 _PROXY_URL_ENV = "APME_GALAXY_PROXY_URL"
 _PROXY_URL_DEFAULT = "http://127.0.0.1:8765"
 
+_pending_push: asyncio.Task[None] | None = None
+
 
 def _proxy_base_url() -> str:
     return os.environ.get(_PROXY_URL_ENV, "").strip() or _PROXY_URL_DEFAULT
@@ -85,20 +87,31 @@ def schedule_push() -> None:
     """Schedule a background push of Galaxy configs to the proxy.
 
     Safe to call from any async context — the push runs as a fire-and-forget
-    task that logs errors but never propagates them.
+    task that logs errors but never propagates them.  Consecutive calls are
+    coalesced: if a push is already in flight the new request is skipped
+    (the in-flight push will pick up the latest DB state anyway).
     """
+    global _pending_push  # noqa: PLW0603
+
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
         logger.debug("No running event loop; skipping Galaxy proxy sync")
         return
 
+    if _pending_push is not None and not _pending_push.done():
+        logger.debug("Galaxy proxy sync already in flight; skipping duplicate")
+        return
+
     async def _bg_push() -> None:
+        global _pending_push  # noqa: PLW0603
         try:
             await push_galaxy_config()
         except asyncio.CancelledError:
             raise
         except Exception:
             logger.debug("Background Galaxy proxy sync failed", exc_info=True)
+        finally:
+            _pending_push = None
 
-    loop.create_task(_bg_push())
+    _pending_push = loop.create_task(_bg_push())
