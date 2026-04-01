@@ -575,7 +575,7 @@ class TestListInstalledPackages:
     """Tests for list_installed_packages (pip list enumeration)."""
 
     def test_parses_json_output(self, tmp_path: Path) -> None:
-        """Parses uv/pip list JSON output into (name, version) tuples.
+        """Parses importlib.metadata JSON output into (name, version, license, supplier) tuples.
 
         Args:
             tmp_path: Pytest-provided temporary directory.
@@ -588,20 +588,28 @@ class TestListInstalledPackages:
         (bindir / "python").write_text("#!/bin/sh\n")
         (bindir / "python").chmod(0o755)
 
-        pip_output = json.dumps(
+        pkg_output = json.dumps(
             [
-                {"name": "ansible-core", "version": "2.20.0"},
-                {"name": "jinja2", "version": "3.1.4"},
+                {
+                    "name": "ansible-core",
+                    "version": "2.20.0",
+                    "license": "GPL-3.0-or-later",
+                    "supplier": "Ansible Project",
+                },
+                {"name": "jinja2", "version": "3.1.4", "license": "BSD-3-Clause", "supplier": "Pallets"},
             ]
         )
         mock_result = MagicMock()
         mock_result.returncode = 0
-        mock_result.stdout = pip_output
+        mock_result.stdout = pkg_output
 
         with patch("apme_engine.venv_manager.session.subprocess.run", return_value=mock_result):
             pkgs = list_installed_packages(venv)
 
-        assert pkgs == [("ansible-core", "2.20.0"), ("jinja2", "3.1.4")]
+        assert pkgs == [
+            ("ansible-core", "2.20.0", "GPL-3.0-or-later", "Ansible Project"),
+            ("jinja2", "3.1.4", "BSD-3-Clause", "Pallets"),
+        ]
 
     def test_returns_empty_on_missing_venv(self, tmp_path: Path) -> None:
         """Returns empty list if venv has no python executable.
@@ -712,8 +720,8 @@ class TestGetDependencyTree:
 class TestListInstalledCollections:
     """Tests for list_installed_collections (ansible-galaxy collection list)."""
 
-    def test_parses_json_output(self, tmp_path: Path) -> None:
-        """Parses ansible-galaxy collection list JSON into (fqcn, version) tuples.
+    def test_parses_json_with_manifest_metadata(self, tmp_path: Path) -> None:
+        """Parses collection list and reads license/supplier from MANIFEST.json.
 
         Args:
             tmp_path: Pytest-provided temporary directory.
@@ -726,9 +734,35 @@ class TestListInstalledCollections:
         (bindir / "python").write_text("#!/bin/sh\n")
         (bindir / "python").chmod(0o755)
 
+        coll_path = tmp_path / "collections"
+        cg_dir = coll_path / "community" / "general"
+        cg_dir.mkdir(parents=True)
+        (cg_dir / "MANIFEST.json").write_text(
+            json.dumps(
+                {
+                    "collection_info": {
+                        "license": ["GPL-3.0-or-later"],
+                        "authors": ["Ansible Project"],
+                    }
+                }
+            )
+        )
+        ap_dir = coll_path / "ansible" / "posix"
+        ap_dir.mkdir(parents=True)
+        (ap_dir / "MANIFEST.json").write_text(
+            json.dumps(
+                {
+                    "collection_info": {
+                        "license": ["GPL-3.0-or-later"],
+                        "namespace": "ansible",
+                    }
+                }
+            )
+        )
+
         galaxy_output = json.dumps(
             {
-                "/path/to/collections": {
+                str(coll_path): {
                     "community.general": {"version": "8.0.0"},
                     "ansible.posix": {"version": "1.5.4"},
                 },
@@ -741,8 +775,67 @@ class TestListInstalledCollections:
         with patch("apme_engine.venv_manager.session.subprocess.run", return_value=mock_result):
             colls = list_installed_collections(venv)
 
-        assert ("ansible.posix", "1.5.4") in colls
-        assert ("community.general", "8.0.0") in colls
+        assert ("ansible.posix", "1.5.4", "GPL-3.0-or-later", "ansible") in colls
+        assert ("community.general", "8.0.0", "GPL-3.0-or-later", "Ansible Project") in colls
+
+    def test_falls_back_to_galaxy_yml(self, tmp_path: Path) -> None:
+        """Reads license/supplier from galaxy.yml when MANIFEST.json is absent.
+
+        Args:
+            tmp_path: Pytest-provided temporary directory.
+        """
+        from apme_engine.venv_manager.session import list_installed_collections
+
+        venv = tmp_path / "venv"
+        bindir = venv / "bin"
+        bindir.mkdir(parents=True)
+        (bindir / "python").write_text("#!/bin/sh\n")
+        (bindir / "python").chmod(0o755)
+
+        coll_path = tmp_path / "collections"
+        cg_dir = coll_path / "community" / "general"
+        cg_dir.mkdir(parents=True)
+        (cg_dir / "galaxy.yml").write_text(
+            "license:\n  - GPL-3.0-or-later\nauthors:\n  - Community\nnamespace: community\n"
+        )
+
+        galaxy_output = json.dumps({str(coll_path): {"community.general": {"version": "8.0.0"}}})
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = galaxy_output
+
+        with patch("apme_engine.venv_manager.session.subprocess.run", return_value=mock_result):
+            colls = list_installed_collections(venv)
+
+        assert colls == [("community.general", "8.0.0", "GPL-3.0-or-later", "Community")]
+
+    def test_missing_metadata_returns_empty_strings(self, tmp_path: Path) -> None:
+        """Returns empty license/supplier when no metadata files exist.
+
+        Args:
+            tmp_path: Pytest-provided temporary directory.
+        """
+        from apme_engine.venv_manager.session import list_installed_collections
+
+        venv = tmp_path / "venv"
+        bindir = venv / "bin"
+        bindir.mkdir(parents=True)
+        (bindir / "python").write_text("#!/bin/sh\n")
+        (bindir / "python").chmod(0o755)
+
+        coll_path = tmp_path / "collections"
+        cg_dir = coll_path / "community" / "general"
+        cg_dir.mkdir(parents=True)
+
+        galaxy_output = json.dumps({str(coll_path): {"community.general": {"version": "8.0.0"}}})
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = galaxy_output
+
+        with patch("apme_engine.venv_manager.session.subprocess.run", return_value=mock_result):
+            colls = list_installed_collections(venv)
+
+        assert colls == [("community.general", "8.0.0", "", "")]
 
     def test_star_version_becomes_empty(self, tmp_path: Path) -> None:
         """Version '*' (missing MANIFEST.json) is normalized to empty string.
@@ -768,7 +861,8 @@ class TestListInstalledCollections:
         with patch("apme_engine.venv_manager.session.subprocess.run", return_value=mock_result):
             colls = list_installed_collections(venv)
 
-        assert colls == [("community.general", "")]
+        assert colls[0][0] == "community.general"
+        assert colls[0][1] == ""
 
     def test_skips_internal_collections(self, tmp_path: Path) -> None:
         """Internal ansible._vendor-like collections are excluded.
@@ -794,7 +888,9 @@ class TestListInstalledCollections:
         with patch("apme_engine.venv_manager.session.subprocess.run", return_value=mock_result):
             colls = list_installed_collections(venv)
 
-        assert colls == [("real.coll", "2.0.0")]
+        assert len(colls) == 1
+        assert colls[0][0] == "real.coll"
+        assert colls[0][1] == "2.0.0"
 
     def test_returns_empty_on_missing_venv(self, tmp_path: Path) -> None:
         """Returns empty list if venv has no python executable.
@@ -854,4 +950,5 @@ class TestListInstalledCollections:
         with patch("apme_engine.venv_manager.session.subprocess.run", return_value=mock_result):
             colls = list_installed_collections(venv)
 
-        assert colls == [("a.a", "2.0"), ("m.m", "3.0"), ("z.z", "1.0")]
+        fqcns = [c[0] for c in colls]
+        assert fqcns == ["a.a", "m.m", "z.z"]

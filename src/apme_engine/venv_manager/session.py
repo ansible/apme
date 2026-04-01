@@ -34,6 +34,7 @@ import os
 import shutil
 import subprocess
 import sys
+import textwrap
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -314,27 +315,38 @@ def install_collections_incremental(
     return _install_collections_via_proxy(pip_python, collection_specs, proxy, use_uv)
 
 
-def list_installed_packages(venv_dir: Path) -> list[tuple[str, str]]:
+def list_installed_packages(venv_dir: Path) -> list[tuple[str, str, str, str]]:
     """List Python packages installed in a session venv.
 
-    Uses ``uv pip list --format json`` when uv is available, falling back to
-    ``pip list --format json``.  Returns ``(name, version)`` pairs.
+    Uses ``importlib.metadata`` via the venv's Python to retrieve name,
+    version, license, and author in a single subprocess call.
 
     Args:
         venv_dir: Root of the virtual environment.
 
     Returns:
-        List of ``(package_name, version)`` tuples.  Empty list on error.
+        List of ``(name, version, license, supplier)`` tuples.  Empty list on error.
     """
     try:
         pip_python = get_venv_python(venv_dir)
     except FileNotFoundError:
         return []
 
-    if _uv_available():
-        cmd = ["uv", "pip", "list", "--format", "json", "--python", str(pip_python)]
-    else:
-        cmd = [str(pip_python), "-m", "pip", "list", "--format", "json"]
+    script = textwrap.dedent("""\
+        import importlib.metadata, json, sys
+        result = []
+        for dist in importlib.metadata.distributions():
+            meta = dist.metadata
+            result.append({
+                "name": meta["Name"] or "",
+                "version": meta["Version"] or "",
+                "license": meta.get("License", "") or "",
+                "supplier": meta.get("Author", "") or meta.get("Author-email", "") or "",
+            })
+        result.sort(key=lambda e: (e.get("name", "").lower(), e.get("version", "")))
+        json.dump(result, sys.stdout)
+    """)
+    cmd = [str(pip_python), "-c", script]
 
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
@@ -343,16 +355,20 @@ def list_installed_packages(venv_dir: Path) -> list[tuple[str, str]]:
         return []
 
     if result.returncode != 0:
-        logger.warning("pip list failed in %s: %s", venv_dir, result.stderr)
+        logger.warning("Package listing failed in %s: %s", venv_dir, result.stderr)
         return []
 
     try:
         entries = json.loads(result.stdout)
     except (json.JSONDecodeError, ValueError):
-        logger.warning("Failed to parse pip list output from %s", venv_dir)
+        logger.warning("Failed to parse package list output from %s", venv_dir)
         return []
 
-    return [(e["name"], e.get("version", "")) for e in entries if isinstance(e, dict) and "name" in e]
+    return [
+        (e["name"], e.get("version", ""), e.get("license", ""), e.get("supplier", ""))
+        for e in entries
+        if isinstance(e, dict) and "name" in e
+    ]
 
 
 def get_dependency_tree(venv_dir: Path) -> str:
@@ -389,19 +405,61 @@ def get_dependency_tree(venv_dir: Path) -> str:
     return result.stdout.strip()
 
 
-def list_installed_collections(venv_dir: Path) -> list[tuple[str, str]]:
+def _read_collection_metadata(coll_dir: Path, namespace: str) -> tuple[str, str]:
+    """Read license and supplier from a collection's metadata files.
+
+    Tries ``MANIFEST.json`` first (installed collections), then falls back
+    to ``galaxy.yml`` (source collections).
+
+    Args:
+        coll_dir: Path to the collection directory.
+        namespace: Collection namespace (used as supplier fallback).
+
+    Returns:
+        ``(license, supplier)`` tuple.  Empty strings if no metadata found.
+    """
+    manifest_file = coll_dir / "MANIFEST.json"
+    if manifest_file.is_file():
+        try:
+            info = json.loads(manifest_file.read_text()).get("collection_info", {})
+            license_val = ", ".join(info.get("license", [])) or ""
+            supplier = ", ".join(info.get("authors", [])) or info.get("namespace", namespace) or ""
+            return (license_val, supplier)
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    galaxy_file = coll_dir / "galaxy.yml"
+    if galaxy_file.is_file():
+        try:
+            import yaml  # noqa: PLC0415
+        except ImportError:
+            pass
+        else:
+            try:
+                galaxy = yaml.safe_load(galaxy_file.read_text()) or {}
+                raw_license = galaxy.get("license", [])
+                license_val = ", ".join(raw_license) if isinstance(raw_license, list) else str(raw_license or "")
+                supplier = ", ".join(galaxy.get("authors", [])) or galaxy.get("namespace", namespace) or ""
+                return (license_val, supplier)
+            except (OSError, yaml.YAMLError):
+                pass
+
+    return ("", "")
+
+
+def list_installed_collections(venv_dir: Path) -> list[tuple[str, str, str, str]]:
     """List Ansible collections installed in a session venv.
 
     Runs ``ansible-galaxy collection list --format json -p /dev/null`` using
     the venv's Python.  The ``-p /dev/null`` suppresses user-level collection
-    paths so only venv-installed collections are reported.
+    paths so only venv-installed collections are reported.  Reads
+    ``MANIFEST.json`` / ``galaxy.yml`` for license and supplier metadata.
 
     Args:
         venv_dir: Root of the virtual environment.
 
     Returns:
-        List of ``(fqcn, version)`` tuples.  Version is ``""`` when
-        ``MANIFEST.json`` is missing.  Empty list on error.
+        List of ``(fqcn, version, license, supplier)`` tuples.  Empty list on error.
     """
     try:
         pip_python = get_venv_python(venv_dir)
@@ -436,8 +494,8 @@ def list_installed_collections(venv_dir: Path) -> list[tuple[str, str]]:
         logger.warning("Failed to parse collection list output from %s", venv_dir)
         return []
 
-    collections: list[tuple[str, str]] = []
-    for _path, entries in data.items():
+    collections: list[tuple[str, str, str, str]] = []
+    for install_path, entries in data.items():
         if not isinstance(entries, dict):
             continue
         for fqcn, info in entries.items():
@@ -446,7 +504,10 @@ def list_installed_collections(venv_dir: Path) -> list[tuple[str, str]]:
             version = info.get("version", "") if isinstance(info, dict) else ""
             if version == "*":
                 version = ""
-            collections.append((fqcn, version))
+            ns, name = fqcn.split(".", 1)
+            coll_dir = Path(install_path) / ns / name
+            lic, supplier = _read_collection_metadata(coll_dir, ns)
+            collections.append((fqcn, version, lic, supplier))
     return sorted(collections)
 
 

@@ -392,30 +392,31 @@ def merge_collection_specs(
 
 
 def _classify_collections(
-    installed: list[tuple[str, str]],
+    installed: list[tuple[str, str, str, str]],
     specified_fqcns: set[str],
     learned_fqcns: set[str],
-) -> list[tuple[str, str, str]]:
+) -> list[tuple[str, str, str, str, str]]:
     """Classify each installed collection by how it was discovered.
 
     Args:
-        installed: ``(fqcn, version)`` pairs from ``list_installed_collections``.
+        installed: ``(fqcn, version, license, supplier)`` tuples from
+            ``list_installed_collections``.
         specified_fqcns: FQCNs explicitly listed in requirements files.
         learned_fqcns: FQCNs discovered via playbook FQCN references.
 
     Returns:
-        List of ``(fqcn, version, source)`` where *source* is one of
-        ``"specified"``, ``"learned"``, or ``"dependency"``.
+        List of ``(fqcn, version, source, license, supplier)`` where *source*
+        is one of ``"specified"``, ``"learned"``, or ``"dependency"``.
     """
-    result: list[tuple[str, str, str]] = []
-    for fqcn, version in installed:
+    result: list[tuple[str, str, str, str, str]] = []
+    for fqcn, version, lic, supplier in installed:
         if fqcn in specified_fqcns:
             source = "specified"
         elif fqcn in learned_fqcns:
             source = "learned"
         else:
             source = "dependency"
-        result.append((fqcn, version, source))
+        result.append((fqcn, version, source, lic, supplier))
     return result
 
 
@@ -423,7 +424,8 @@ def _build_manifest(session: SessionState) -> ProjectManifest:
     """Build a ProjectManifest from session state captured during scanning.
 
     Constructs ``CollectionRef`` messages from classified ``(fqcn, version,
-    source)`` tuples and ``PythonPackageRef`` from ``installed_packages``.
+    source, license, supplier)`` tuples and ``PythonPackageRef`` from
+    ``(name, version, license, supplier)`` tuples in ``installed_packages``.
 
     Args:
         session: Session with manifest fields populated by ``scan_fn``.
@@ -432,12 +434,13 @@ def _build_manifest(session: SessionState) -> ProjectManifest:
         ProjectManifest ready for embedding in FixCompletedEvent.
     """
     collections: list[CollectionRef] = [
-        CollectionRef(fqcn=fqcn, version=version, source=source)
-        for fqcn, version, source in session.installed_collections
+        CollectionRef(fqcn=fqcn, version=version, source=source, license=lic, supplier=sup)
+        for fqcn, version, source, lic, sup in session.installed_collections
     ]
 
     packages: list[PythonPackageRef] = [
-        PythonPackageRef(name=name, version=ver) for name, ver in session.installed_packages
+        PythonPackageRef(name=name, version=ver, license=lic, supplier=sup)
+        for name, ver, lic, sup in session.installed_packages
     ]
 
     return ProjectManifest(

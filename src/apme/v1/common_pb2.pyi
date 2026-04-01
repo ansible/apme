@@ -106,12 +106,27 @@ class CollectionRef:
     fqcn: str
     version: str
     source: str
-    def __init__(self, *, fqcn: str = "", version: str = "", source: str = "", **kwargs: object) -> None: ...
+    license: str
+    supplier: str
+    def __init__(
+        self,
+        *,
+        fqcn: str = "",
+        version: str = "",
+        source: str = "",
+        license: str = "",
+        supplier: str = "",
+        **kwargs: object,
+    ) -> None: ...
 
 class PythonPackageRef:
     name: str
     version: str
-    def __init__(self, *, name: str = "", version: str = "", **kwargs: object) -> None: ...
+    license: str
+    supplier: str
+    def __init__(
+        self, *, name: str = "", version: str = "", license: str = "", supplier: str = "", **kwargs: object
+    ) -> None: ...
 
 class ProjectManifest:
     ansible_core_version: str

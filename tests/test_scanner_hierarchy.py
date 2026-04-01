@@ -263,10 +263,13 @@ class TestBuildManifest:
         session = SessionState(session_id="s1")
         session.ansible_core_version = "2.16.3"
         session.installed_collections = [
-            ("community.general", "8.0.0", "specified"),
-            ("ansible.posix", "1.5.4", "learned"),
+            ("community.general", "8.0.0", "specified", "GPL-3.0-or-later", "Ansible Project"),
+            ("ansible.posix", "1.5.4", "learned", "GPL-3.0-or-later", "Red Hat"),
         ]
-        session.installed_packages = [("ansible-core", "2.16.3"), ("jinja2", "3.1.2")]
+        session.installed_packages = [
+            ("ansible-core", "2.16.3", "GPL-3.0-or-later", "Ansible Project"),
+            ("jinja2", "3.1.2", "BSD-3-Clause", "Pallets"),
+        ]
         session.dependency_tree = "ansible-core v2.16.3\n├── jinja2 v3.1.2"
         session.requirements_files = ["requirements.yml"]
 
@@ -276,14 +279,22 @@ class TestBuildManifest:
         assert manifest.collections[0].fqcn == "community.general"
         assert manifest.collections[0].version == "8.0.0"
         assert manifest.collections[0].source == "specified"
+        assert manifest.collections[0].license == "GPL-3.0-or-later"
+        assert manifest.collections[0].supplier == "Ansible Project"
         assert manifest.collections[1].fqcn == "ansible.posix"
         assert manifest.collections[1].version == "1.5.4"
         assert manifest.collections[1].source == "learned"
+        assert manifest.collections[1].license == "GPL-3.0-or-later"
+        assert manifest.collections[1].supplier == "Red Hat"
         assert len(manifest.python_packages) == 2
         assert manifest.python_packages[0].name == "ansible-core"
         assert manifest.python_packages[0].version == "2.16.3"
+        assert manifest.python_packages[0].license == "GPL-3.0-or-later"
+        assert manifest.python_packages[0].supplier == "Ansible Project"
         assert manifest.python_packages[1].name == "jinja2"
         assert manifest.python_packages[1].version == "3.1.2"
+        assert manifest.python_packages[1].license == "BSD-3-Clause"
+        assert manifest.python_packages[1].supplier == "Pallets"
         assert list(manifest.requirements_files) == ["requirements.yml"]
         assert "ansible-core v2.16.3" in manifest.dependency_tree
 
@@ -305,27 +316,37 @@ class TestClassifyCollections:
 
     def test_specified_from_requirements(self) -> None:
         """Collections in specified_fqcns are classified as 'specified'."""
-        installed = [("community.general", "8.0.0"), ("ansible.posix", "1.5.4")]
+        installed = [
+            ("community.general", "8.0.0", "GPL-3.0-or-later", "Ansible Project"),
+            ("ansible.posix", "1.5.4", "", ""),
+        ]
         result = _classify_collections(installed, {"community.general"}, set())
-        assert result[0] == ("community.general", "8.0.0", "specified")
+        assert result[0] == ("community.general", "8.0.0", "specified", "GPL-3.0-or-later", "Ansible Project")
 
     def test_learned_from_hierarchy(self) -> None:
         """Collections in learned_fqcns are classified as 'learned'."""
-        installed = [("ansible.posix", "1.5.4")]
+        installed = [("ansible.posix", "1.5.4", "GPL-3.0-or-later", "Red Hat")]
         result = _classify_collections(installed, set(), {"ansible.posix"})
-        assert result[0] == ("ansible.posix", "1.5.4", "learned")
+        assert result[0] == ("ansible.posix", "1.5.4", "learned", "GPL-3.0-or-later", "Red Hat")
 
     def test_dependency_for_unknown(self) -> None:
         """Collections in neither set are classified as 'dependency'."""
-        installed = [("ansible.utils", "3.0.0")]
+        installed = [("ansible.utils", "3.0.0", "", "")]
         result = _classify_collections(installed, set(), set())
-        assert result[0] == ("ansible.utils", "3.0.0", "dependency")
+        assert result[0] == ("ansible.utils", "3.0.0", "dependency", "", "")
 
     def test_specified_takes_priority_over_learned(self) -> None:
         """When in both sets, specified wins."""
-        installed = [("community.general", "8.0.0")]
+        installed = [("community.general", "8.0.0", "GPL-3.0-or-later", "")]
         result = _classify_collections(installed, {"community.general"}, {"community.general"})
         assert result[0][2] == "specified"
+
+    def test_license_supplier_passthrough(self) -> None:
+        """License and supplier are passed through during classification."""
+        installed = [("community.general", "8.0.0", "MIT", "Author X")]
+        result = _classify_collections(installed, {"community.general"}, set())
+        assert result[0][3] == "MIT"
+        assert result[0][4] == "Author X"
 
     def test_empty_installed(self) -> None:
         """Empty installed list produces empty result."""

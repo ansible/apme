@@ -22,6 +22,7 @@ from apme.v1.primary_pb2 import (
     CloseRequest,
     ExtendRequest,
     FixOptions,
+    Proposal,
     ScanChunk,
     SessionCommand,
 )
@@ -216,7 +217,7 @@ def _render_tier1(summary: object) -> None:
         sys.stderr.write(f"Applied {len(applied)} Tier 1 patch(es)\n")
 
 
-def _interactive_review(proposals: list[object]) -> list[str]:
+def _interactive_review(proposals: list[Proposal]) -> list[str]:
     """Interactive y/n/a/s/q review loop for proposals.
 
     Args:
@@ -234,27 +235,24 @@ def _interactive_review(proposals: list[object]) -> list[str]:
             break
 
         sys.stderr.write(
-            f"\n--- Proposal {i}/{total} "
-            f"[{prop.rule_id}] "  # type: ignore[attr-defined]
-            f"{prop.file} "  # type: ignore[attr-defined]
-            f"lines {prop.line_start}-{prop.line_end} "  # type: ignore[attr-defined]
+            f"\n--- Proposal {i}/{total} [{prop.rule_id}] {prop.file} lines {prop.line_start}-{prop.line_end} "
         )
-        if prop.confidence:  # type: ignore[attr-defined]
-            sys.stderr.write(f"({prop.confidence:.0%})")  # type: ignore[attr-defined]
+        if prop.confidence:
+            sys.stderr.write(f"({prop.confidence:.0%})")
         sys.stderr.write("\n")
 
-        if prop.explanation:  # type: ignore[attr-defined]
-            sys.stderr.write(f"    {prop.explanation}\n")  # type: ignore[attr-defined]
-        if prop.diff_hunk:  # type: ignore[attr-defined]
-            sys.stdout.write(prop.diff_hunk + "\n")  # type: ignore[attr-defined]
+        if prop.explanation:
+            sys.stderr.write(f"    {prop.explanation}\n")
+        if prop.diff_hunk:
+            sys.stdout.write(prop.diff_hunk + "\n")
 
         answer = _prompt_ynasq()
         if answer == "y":
-            approved.append(prop.id)  # type: ignore[attr-defined]
+            approved.append(prop.id)
         elif answer == "n":
             sys.stderr.write("  Skipped\n")
         elif answer == "a":
-            approved.extend(p.id for p in proposals[i - 1 :])  # type: ignore[attr-defined]
+            approved.extend(p.id for p in proposals[i - 1 :])
             sys.stderr.write(f"  Accepted remaining {total - i + 1} proposal(s)\n")
             break
         elif answer == "s":
