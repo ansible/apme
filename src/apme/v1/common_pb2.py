@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x14\x61pme/v1/common.proto\x12\x07\x61pme.v1\"\xd0\x03\n\tViolation\x12\x0f\n\x07rule_id\x18\x01 \x01(\t\x12\r\n\x05level\x18\x02 \x01(\t\x12\x0f\n\x07message\x18\x03 \x01(\t\x12\x0c\n\x04\x66ile\x18\x04 \x01(\t\x12\x0e\n\x04line\x18\x05 \x01(\x05H\x00\x12(\n\nline_range\x18\x06 \x01(\x0b\x32\x12.apme.v1.LineRangeH\x00\x12\x0c\n\x04path\x18\x07 \x01(\t\x12\x34\n\x11remediation_class\x18\x08 \x01(\x0e\x32\x19.apme.v1.RemediationClass\x12>\n\x16remediation_resolution\x18\t \x01(\x0e\x32\x1e.apme.v1.RemediationResolution\x12\x32\n\x08metadata\x18\n \x03(\x0b\x32 .apme.v1.Violation.MetadataEntry\x12!\n\x05scope\x18\x0b \x01(\x0e\x32\x12.apme.v1.RuleScope\x12\x0e\n\x06source\x18\x0c \x01(\t\x12\x0f\n\x07snippet\x18\r \x01(\t\x12\x0f\n\x07node_id\x18\x0e \x01(\t\x1a/\n\rMetadataEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t:\x02\x38\x01\x42\x0c\n\nline_oneof\"\'\n\tLineRange\x12\r\n\x05start\x18\x01 \x01(\x05\x12\x0b\n\x03\x65nd\x18\x02 \x01(\x05\"%\n\x04\x46ile\x12\x0c\n\x04path\x18\x01 \x01(\t\x12\x0f\n\x07\x63ontent\x18\x02 \x01(\x0c\"\x0f\n\rHealthRequest\"L\n\x0eHealthResponse\x12\x0e\n\x06status\x18\x01 \x01(\t\x12*\n\ndownstream\x18\x02 \x03(\x0b\x32\x16.apme.v1.ServiceHealth\">\n\rServiceHealth\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\x0e\n\x06status\x18\x02 \x01(\t\x12\x0f\n\x07\x61\x64\x64ress\x18\x03 \x01(\t\"\xd3\x01\n\x0bScanSummary\x12\r\n\x05total\x18\x01 \x01(\x05\x12\x14\n\x0c\x61uto_fixable\x18\x02 \x01(\x05\x12\x14\n\x0c\x61i_candidate\x18\x03 \x01(\x05\x12\x15\n\rmanual_review\x18\x04 \x01(\x05\x12=\n\rby_resolution\x18\x05 \x03(\x0b\x32&.apme.v1.ScanSummary.ByResolutionEntry\x1a\x33\n\x11\x42yResolutionEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\x05:\x02\x38\x01\"E\n\nRuleTiming\x12\x0f\n\x07rule_id\x18\x01 \x01(\t\x12\x12\n\nelapsed_ms\x18\x02 \x01(\x01\x12\x12\n\nviolations\x18\x03 \x01(\x05\"\xa1\x02\n\x14ValidatorDiagnostics\x12\x16\n\x0evalidator_name\x18\x01 \x01(\t\x12\x12\n\nrequest_id\x18\x02 \x01(\t\x12\x10\n\x08total_ms\x18\x03 \x01(\x01\x12\x16\n\x0e\x66iles_received\x18\x04 \x01(\x05\x12\x18\n\x10violations_found\x18\x05 \x01(\x05\x12)\n\x0crule_timings\x18\x06 \x03(\x0b\x32\x13.apme.v1.RuleTiming\x12=\n\x08metadata\x18\x07 \x03(\x0b\x32+.apme.v1.ValidatorDiagnostics.MetadataEntry\x1a/\n\rMetadataEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t:\x02\x38\x01\"a\n\rCollectionRef\x12\x0c\n\x04\x66qcn\x18\x01 \x01(\t\x12\x0f\n\x07version\x18\x02 \x01(\t\x12\x0e\n\x06source\x18\x03 \x01(\t\x12\x0f\n\x07license\x18\x04 \x01(\t\x12\x10\n\x08supplier\x18\x05 \x01(\t\"Z\n\x10PythonPackageRef\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\x0f\n\x07version\x18\x02 \x01(\t\x12\x0f\n\x07license\x18\x04 \x01(\t\x12\x10\n\x08supplier\x18\x05 \x01(\tJ\x04\x08\x03\x10\x04\"\xc5\x01\n\x0fProjectManifest\x12\x1c\n\x14\x61nsible_core_version\x18\x01 \x01(\t\x12+\n\x0b\x63ollections\x18\x02 \x03(\x0b\x32\x16.apme.v1.CollectionRef\x12\x32\n\x0fpython_packages\x18\x03 \x03(\x0b\x32\x19.apme.v1.PythonPackageRef\x12\x1a\n\x12requirements_files\x18\x04 \x03(\t\x12\x17\n\x0f\x64\x65pendency_tree\x18\x05 \x01(\t\"M\n\x0fGalaxyServerDef\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\x0b\n\x03url\x18\x02 \x01(\t\x12\r\n\x05token\x18\x03 \x01(\t\x12\x10\n\x08\x61uth_url\x18\x04 \x01(\t\"d\n\x0eProgressUpdate\x12\x0f\n\x07message\x18\x01 \x01(\t\x12\r\n\x05phase\x18\x02 \x01(\t\x12\x10\n\x08progress\x18\x03 \x01(\x02\x12 \n\x05level\x18\x04 \x01(\x0e\x32\x11.apme.v1.LogLevel*\xa2\x01\n\x10RemediationClass\x12!\n\x1dREMEDIATION_CLASS_UNSPECIFIED\x10\x00\x12\"\n\x1eREMEDIATION_CLASS_AUTO_FIXABLE\x10\x01\x12\"\n\x1eREMEDIATION_CLASS_AI_CANDIDATE\x10\x02\x12#\n\x1fREMEDIATION_CLASS_MANUAL_REVIEW\x10\x03*\xdb\x03\n\x15RemediationResolution\x12&\n\"REMEDIATION_RESOLUTION_UNSPECIFIED\x10\x00\x12%\n!REMEDIATION_RESOLUTION_UNRESOLVED\x10\x01\x12+\n\'REMEDIATION_RESOLUTION_TRANSFORM_FAILED\x10\x02\x12&\n\"REMEDIATION_RESOLUTION_OSCILLATION\x10\x03\x12&\n\"REMEDIATION_RESOLUTION_AI_PROPOSED\x10\x04\x12$\n REMEDIATION_RESOLUTION_AI_FAILED\x10\x05\x12,\n(REMEDIATION_RESOLUTION_AI_LOW_CONFIDENCE\x10\x06\x12(\n$REMEDIATION_RESOLUTION_USER_REJECTED\x10\x07\x12+\n\'REMEDIATION_RESOLUTION_NEEDS_CROSS_FILE\x10\x08\x12!\n\x1dREMEDIATION_RESOLUTION_MANUAL\x10\t\x12(\n$REMEDIATION_RESOLUTION_INFORMATIONAL\x10\n*\xca\x01\n\tRuleScope\x12\x1a\n\x16RULE_SCOPE_UNSPECIFIED\x10\x00\x12\x13\n\x0fRULE_SCOPE_TASK\x10\x01\x12\x14\n\x10RULE_SCOPE_BLOCK\x10\x02\x12\x13\n\x0fRULE_SCOPE_PLAY\x10\x03\x12\x17\n\x13RULE_SCOPE_PLAYBOOK\x10\x04\x12\x13\n\x0fRULE_SCOPE_ROLE\x10\x05\x12\x18\n\x14RULE_SCOPE_INVENTORY\x10\x06\x12\x19\n\x15RULE_SCOPE_COLLECTION\x10\x07*R\n\x08LogLevel\x12\x19\n\x15LOG_LEVEL_UNSPECIFIED\x10\x00\x12\t\n\x05\x44\x45\x42UG\x10\x01\x12\x08\n\x04INFO\x10\x02\x12\x0b\n\x07WARNING\x10\x03\x12\t\n\x05\x45RROR\x10\x04\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x14\x61pme/v1/common.proto\x12\x07\x61pme.v1\"\xeb\x03\n\tViolation\x12\x0f\n\x07rule_id\x18\x01 \x01(\t\x12\r\n\x05level\x18\x02 \x01(\t\x12\x0f\n\x07message\x18\x03 \x01(\t\x12\x0c\n\x04\x66ile\x18\x04 \x01(\t\x12\x0e\n\x04line\x18\x05 \x01(\x05H\x00\x12(\n\nline_range\x18\x06 \x01(\x0b\x32\x12.apme.v1.LineRangeH\x00\x12\x0c\n\x04path\x18\x07 \x01(\t\x12\x34\n\x11remediation_class\x18\x08 \x01(\x0e\x32\x19.apme.v1.RemediationClass\x12>\n\x16remediation_resolution\x18\t \x01(\x0e\x32\x1e.apme.v1.RemediationResolution\x12\x32\n\x08metadata\x18\n \x03(\x0b\x32 .apme.v1.Violation.MetadataEntry\x12!\n\x05scope\x18\x0b \x01(\x0e\x32\x12.apme.v1.RuleScope\x12\x0e\n\x06source\x18\x0c \x01(\t\x12\x0f\n\x07snippet\x18\r \x01(\t\x12\x0f\n\x07node_id\x18\x0e \x01(\t\x12\x19\n\x11\x61\x66\x66\x65\x63ted_children\x18\x0f \x01(\x05\x1a/\n\rMetadataEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t:\x02\x38\x01\x42\x0c\n\nline_oneof\"\'\n\tLineRange\x12\r\n\x05start\x18\x01 \x01(\x05\x12\x0b\n\x03\x65nd\x18\x02 \x01(\x05\"%\n\x04\x46ile\x12\x0c\n\x04path\x18\x01 \x01(\t\x12\x0f\n\x07\x63ontent\x18\x02 \x01(\x0c\"\x0f\n\rHealthRequest\"L\n\x0eHealthResponse\x12\x0e\n\x06status\x18\x01 \x01(\t\x12*\n\ndownstream\x18\x02 \x03(\x0b\x32\x16.apme.v1.ServiceHealth\">\n\rServiceHealth\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\x0e\n\x06status\x18\x02 \x01(\t\x12\x0f\n\x07\x61\x64\x64ress\x18\x03 \x01(\t\"\xd3\x01\n\x0bScanSummary\x12\r\n\x05total\x18\x01 \x01(\x05\x12\x14\n\x0c\x61uto_fixable\x18\x02 \x01(\x05\x12\x14\n\x0c\x61i_candidate\x18\x03 \x01(\x05\x12\x15\n\rmanual_review\x18\x04 \x01(\x05\x12=\n\rby_resolution\x18\x05 \x03(\x0b\x32&.apme.v1.ScanSummary.ByResolutionEntry\x1a\x33\n\x11\x42yResolutionEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\x05:\x02\x38\x01\"E\n\nRuleTiming\x12\x0f\n\x07rule_id\x18\x01 \x01(\t\x12\x12\n\nelapsed_ms\x18\x02 \x01(\x01\x12\x12\n\nviolations\x18\x03 \x01(\x05\"\xa1\x02\n\x14ValidatorDiagnostics\x12\x16\n\x0evalidator_name\x18\x01 \x01(\t\x12\x12\n\nrequest_id\x18\x02 \x01(\t\x12\x10\n\x08total_ms\x18\x03 \x01(\x01\x12\x16\n\x0e\x66iles_received\x18\x04 \x01(\x05\x12\x18\n\x10violations_found\x18\x05 \x01(\x05\x12)\n\x0crule_timings\x18\x06 \x03(\x0b\x32\x13.apme.v1.RuleTiming\x12=\n\x08metadata\x18\x07 \x03(\x0b\x32+.apme.v1.ValidatorDiagnostics.MetadataEntry\x1a/\n\rMetadataEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t:\x02\x38\x01\"a\n\rCollectionRef\x12\x0c\n\x04\x66qcn\x18\x01 \x01(\t\x12\x0f\n\x07version\x18\x02 \x01(\t\x12\x0e\n\x06source\x18\x03 \x01(\t\x12\x0f\n\x07license\x18\x04 \x01(\t\x12\x10\n\x08supplier\x18\x05 \x01(\t\"Z\n\x10PythonPackageRef\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\x0f\n\x07version\x18\x02 \x01(\t\x12\x0f\n\x07license\x18\x04 \x01(\t\x12\x10\n\x08supplier\x18\x05 \x01(\tJ\x04\x08\x03\x10\x04\"\xc5\x01\n\x0fProjectManifest\x12\x1c\n\x14\x61nsible_core_version\x18\x01 \x01(\t\x12+\n\x0b\x63ollections\x18\x02 \x03(\x0b\x32\x16.apme.v1.CollectionRef\x12\x32\n\x0fpython_packages\x18\x03 \x03(\x0b\x32\x19.apme.v1.PythonPackageRef\x12\x1a\n\x12requirements_files\x18\x04 \x03(\t\x12\x17\n\x0f\x64\x65pendency_tree\x18\x05 \x01(\t\"M\n\x0fGalaxyServerDef\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\x0b\n\x03url\x18\x02 \x01(\t\x12\r\n\x05token\x18\x03 \x01(\t\x12\x10\n\x08\x61uth_url\x18\x04 \x01(\t\"d\n\x0eProgressUpdate\x12\x0f\n\x07message\x18\x01 \x01(\t\x12\r\n\x05phase\x18\x02 \x01(\t\x12\x10\n\x08progress\x18\x03 \x01(\x02\x12 \n\x05level\x18\x04 \x01(\x0e\x32\x11.apme.v1.LogLevel*\xa2\x01\n\x10RemediationClass\x12!\n\x1dREMEDIATION_CLASS_UNSPECIFIED\x10\x00\x12\"\n\x1eREMEDIATION_CLASS_AUTO_FIXABLE\x10\x01\x12\"\n\x1eREMEDIATION_CLASS_AI_CANDIDATE\x10\x02\x12#\n\x1fREMEDIATION_CLASS_MANUAL_REVIEW\x10\x03*\xdb\x03\n\x15RemediationResolution\x12&\n\"REMEDIATION_RESOLUTION_UNSPECIFIED\x10\x00\x12%\n!REMEDIATION_RESOLUTION_UNRESOLVED\x10\x01\x12+\n\'REMEDIATION_RESOLUTION_TRANSFORM_FAILED\x10\x02\x12&\n\"REMEDIATION_RESOLUTION_OSCILLATION\x10\x03\x12&\n\"REMEDIATION_RESOLUTION_AI_PROPOSED\x10\x04\x12$\n REMEDIATION_RESOLUTION_AI_FAILED\x10\x05\x12,\n(REMEDIATION_RESOLUTION_AI_LOW_CONFIDENCE\x10\x06\x12(\n$REMEDIATION_RESOLUTION_USER_REJECTED\x10\x07\x12+\n\'REMEDIATION_RESOLUTION_NEEDS_CROSS_FILE\x10\x08\x12!\n\x1dREMEDIATION_RESOLUTION_MANUAL\x10\t\x12(\n$REMEDIATION_RESOLUTION_INFORMATIONAL\x10\n*\xca\x01\n\tRuleScope\x12\x1a\n\x16RULE_SCOPE_UNSPECIFIED\x10\x00\x12\x13\n\x0fRULE_SCOPE_TASK\x10\x01\x12\x14\n\x10RULE_SCOPE_BLOCK\x10\x02\x12\x13\n\x0fRULE_SCOPE_PLAY\x10\x03\x12\x17\n\x13RULE_SCOPE_PLAYBOOK\x10\x04\x12\x13\n\x0fRULE_SCOPE_ROLE\x10\x05\x12\x18\n\x14RULE_SCOPE_INVENTORY\x10\x06\x12\x19\n\x15RULE_SCOPE_COLLECTION\x10\x07*R\n\x08LogLevel\x12\x19\n\x15LOG_LEVEL_UNSPECIFIED\x10\x00\x12\t\n\x05\x44\x45\x42UG\x10\x01\x12\x08\n\x04INFO\x10\x02\x12\x0b\n\x07WARNING\x10\x03\x12\t\n\x05\x45RROR\x10\x04\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -37,46 +37,46 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_SCANSUMMARY_BYRESOLUTIONENTRY']._serialized_options = b'8\001'
   _globals['_VALIDATORDIAGNOSTICS_METADATAENTRY']._loaded_options = None
   _globals['_VALIDATORDIAGNOSTICS_METADATAENTRY']._serialized_options = b'8\001'
-  _globals['_REMEDIATIONCLASS']._serialized_start=1889
-  _globals['_REMEDIATIONCLASS']._serialized_end=2051
-  _globals['_REMEDIATIONRESOLUTION']._serialized_start=2054
-  _globals['_REMEDIATIONRESOLUTION']._serialized_end=2529
-  _globals['_RULESCOPE']._serialized_start=2532
-  _globals['_RULESCOPE']._serialized_end=2734
-  _globals['_LOGLEVEL']._serialized_start=2736
-  _globals['_LOGLEVEL']._serialized_end=2818
+  _globals['_REMEDIATIONCLASS']._serialized_start=1916
+  _globals['_REMEDIATIONCLASS']._serialized_end=2078
+  _globals['_REMEDIATIONRESOLUTION']._serialized_start=2081
+  _globals['_REMEDIATIONRESOLUTION']._serialized_end=2556
+  _globals['_RULESCOPE']._serialized_start=2559
+  _globals['_RULESCOPE']._serialized_end=2761
+  _globals['_LOGLEVEL']._serialized_start=2763
+  _globals['_LOGLEVEL']._serialized_end=2845
   _globals['_VIOLATION']._serialized_start=34
-  _globals['_VIOLATION']._serialized_end=498
-  _globals['_VIOLATION_METADATAENTRY']._serialized_start=437
-  _globals['_VIOLATION_METADATAENTRY']._serialized_end=484
-  _globals['_LINERANGE']._serialized_start=500
-  _globals['_LINERANGE']._serialized_end=539
-  _globals['_FILE']._serialized_start=541
-  _globals['_FILE']._serialized_end=578
-  _globals['_HEALTHREQUEST']._serialized_start=580
-  _globals['_HEALTHREQUEST']._serialized_end=595
-  _globals['_HEALTHRESPONSE']._serialized_start=597
-  _globals['_HEALTHRESPONSE']._serialized_end=673
-  _globals['_SERVICEHEALTH']._serialized_start=675
-  _globals['_SERVICEHEALTH']._serialized_end=737
-  _globals['_SCANSUMMARY']._serialized_start=740
-  _globals['_SCANSUMMARY']._serialized_end=951
-  _globals['_SCANSUMMARY_BYRESOLUTIONENTRY']._serialized_start=900
-  _globals['_SCANSUMMARY_BYRESOLUTIONENTRY']._serialized_end=951
-  _globals['_RULETIMING']._serialized_start=953
-  _globals['_RULETIMING']._serialized_end=1022
-  _globals['_VALIDATORDIAGNOSTICS']._serialized_start=1025
-  _globals['_VALIDATORDIAGNOSTICS']._serialized_end=1314
-  _globals['_VALIDATORDIAGNOSTICS_METADATAENTRY']._serialized_start=437
-  _globals['_VALIDATORDIAGNOSTICS_METADATAENTRY']._serialized_end=484
-  _globals['_COLLECTIONREF']._serialized_start=1316
-  _globals['_COLLECTIONREF']._serialized_end=1413
-  _globals['_PYTHONPACKAGEREF']._serialized_start=1415
-  _globals['_PYTHONPACKAGEREF']._serialized_end=1505
-  _globals['_PROJECTMANIFEST']._serialized_start=1508
-  _globals['_PROJECTMANIFEST']._serialized_end=1705
-  _globals['_GALAXYSERVERDEF']._serialized_start=1707
-  _globals['_GALAXYSERVERDEF']._serialized_end=1784
-  _globals['_PROGRESSUPDATE']._serialized_start=1786
-  _globals['_PROGRESSUPDATE']._serialized_end=1886
+  _globals['_VIOLATION']._serialized_end=525
+  _globals['_VIOLATION_METADATAENTRY']._serialized_start=464
+  _globals['_VIOLATION_METADATAENTRY']._serialized_end=511
+  _globals['_LINERANGE']._serialized_start=527
+  _globals['_LINERANGE']._serialized_end=566
+  _globals['_FILE']._serialized_start=568
+  _globals['_FILE']._serialized_end=605
+  _globals['_HEALTHREQUEST']._serialized_start=607
+  _globals['_HEALTHREQUEST']._serialized_end=622
+  _globals['_HEALTHRESPONSE']._serialized_start=624
+  _globals['_HEALTHRESPONSE']._serialized_end=700
+  _globals['_SERVICEHEALTH']._serialized_start=702
+  _globals['_SERVICEHEALTH']._serialized_end=764
+  _globals['_SCANSUMMARY']._serialized_start=767
+  _globals['_SCANSUMMARY']._serialized_end=978
+  _globals['_SCANSUMMARY_BYRESOLUTIONENTRY']._serialized_start=927
+  _globals['_SCANSUMMARY_BYRESOLUTIONENTRY']._serialized_end=978
+  _globals['_RULETIMING']._serialized_start=980
+  _globals['_RULETIMING']._serialized_end=1049
+  _globals['_VALIDATORDIAGNOSTICS']._serialized_start=1052
+  _globals['_VALIDATORDIAGNOSTICS']._serialized_end=1341
+  _globals['_VALIDATORDIAGNOSTICS_METADATAENTRY']._serialized_start=464
+  _globals['_VALIDATORDIAGNOSTICS_METADATAENTRY']._serialized_end=511
+  _globals['_COLLECTIONREF']._serialized_start=1343
+  _globals['_COLLECTIONREF']._serialized_end=1440
+  _globals['_PYTHONPACKAGEREF']._serialized_start=1442
+  _globals['_PYTHONPACKAGEREF']._serialized_end=1532
+  _globals['_PROJECTMANIFEST']._serialized_start=1535
+  _globals['_PROJECTMANIFEST']._serialized_end=1732
+  _globals['_GALAXYSERVERDEF']._serialized_start=1734
+  _globals['_GALAXYSERVERDEF']._serialized_end=1811
+  _globals['_PROGRESSUPDATE']._serialized_start=1813
+  _globals['_PROGRESSUPDATE']._serialized_end=1913
 # @@protoc_insertion_point(module_scope)

@@ -40,6 +40,8 @@ def python_to_fqcn(package_name: str) -> tuple[str, str]:
     ('ansible', 'utils')
     >>> python_to_fqcn("ansible_collection_community_general")
     ('community', 'general')
+    >>> python_to_fqcn("ansible-collection-infra-aap-configuration")
+    ('infra', 'aap_configuration')
 
     Args:
         package_name: Python package name (normalized per PEP 503).
@@ -60,7 +62,9 @@ def python_to_fqcn(package_name: str) -> tuple[str, str]:
     if len(parts) != 2:
         msg = f"Cannot extract namespace and name from {package_name!r}"
         raise ValueError(msg)
-    return parts[0], parts[1]
+    # Galaxy FQCNs only allow [a-z0-9_]; PEP 503 collapses _ to -.
+    # Restore underscores so ansible-galaxy recognises the FQCN.
+    return parts[0].replace("-", "_"), parts[1].replace("-", "_")
 
 
 def is_collection_package(package_name: str) -> bool:

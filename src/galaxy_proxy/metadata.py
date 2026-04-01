@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import io
+import re
 from typing import TYPE_CHECKING, Any
 
 from galaxy_proxy.naming import fqcn_to_python
@@ -85,7 +86,7 @@ def galaxy_to_metadata_with_python_deps(
 
     extra_lines = []
     for line in requirements_txt.splitlines():
-        line = line.strip()
+        line = re.split(r"\s+#", line, maxsplit=1)[0].strip()
         if not line or line.startswith("#") or line.startswith("-"):
             continue
         extra_lines.append(f"Requires-Dist: {line}")

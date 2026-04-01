@@ -11,6 +11,7 @@ import asyncio
 import configparser
 import logging
 import os
+import re
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -123,6 +124,49 @@ def _find_tarballs(directory: Path) -> list[Path]:
     return sorted(directory.glob("*.tar.gz"))
 
 
+def _inject_galaxy_env(env: dict[str, str], servers: list[GalaxyServerConfig]) -> None:
+    """Set ``ANSIBLE_GALAXY_SERVER_*`` env vars for ``ansible-galaxy``.
+
+    ``ansible-galaxy`` reads per-server config from env vars of the form
+    ``ANSIBLE_GALAXY_SERVER_{NAME}_{KEY}`` (e.g.
+    ``ANSIBLE_GALAXY_SERVER_CERTIFIED_URL``).  This avoids writing a temp
+    ``ansible.cfg`` and is the preferred injection path (ADR-045).
+
+    Args:
+        env: Mutable env dict for the subprocess.
+        servers: Galaxy server configurations to inject.
+
+    Raises:
+        ValueError: If any server has an empty name, a name with invalid
+            characters, or if duplicate names exist.
+    """
+    _NAME_RE = re.compile(r"^[A-Za-z0-9_]+$")
+    seen: set[str] = set()
+    for s in servers:
+        name = s.name.strip() if s.name else ""
+        if not name:
+            msg = "Galaxy server name must not be empty"
+            raise ValueError(msg)
+        if not _NAME_RE.match(name):
+            msg = f"Galaxy server name contains invalid characters: {s.name!r}"
+            raise ValueError(msg)
+        upper = name.upper()
+        if upper in seen:
+            msg = f"Duplicate Galaxy server name: {s.name!r}"
+            raise ValueError(msg)
+        seen.add(upper)
+
+    names = [s.name.strip() for s in servers]
+    env["ANSIBLE_GALAXY_SERVER_LIST"] = ",".join(names)
+    for s in servers:
+        prefix = f"ANSIBLE_GALAXY_SERVER_{s.name.strip().upper()}_"
+        env[f"{prefix}URL"] = s.url
+        if s.token:
+            env[f"{prefix}TOKEN"] = s.token
+        if s.auth_url:
+            env[f"{prefix}AUTH_URL"] = s.auth_url
+
+
 async def download_collections(
     collection_specs: list[str],
     download_dir: Path,
@@ -136,18 +180,17 @@ async def download_collections(
 
     Either ``ansible_cfg_path`` (user's existing config) or ``servers``
     (programmatic config) can be provided — not both.  When ``servers``
-    is set, a temporary ``ansible.cfg`` is written and pointed to via
-    ``ANSIBLE_CONFIG``.
-
-    Tarballs are written to ``download_dir``.  The caller is responsible
-    for converting them to wheels afterward.
+    is set, per-server ``ANSIBLE_GALAXY_SERVER_*`` env vars are injected
+    into the subprocess environment.  When neither is provided,
+    ``ansible-galaxy`` inherits the container's environment (which may
+    already have Galaxy server env vars set via pod configuration).
 
     Args:
         collection_specs: Galaxy collection specifiers
             (e.g. ``["community.general:>=9.0", "ansible.posix"]``).
         download_dir: Directory to download tarballs into.
         ansible_cfg_path: Path to an existing ``ansible.cfg``.
-        servers: Galaxy server configs (generates a temp ansible.cfg).
+        servers: Galaxy server configs (injected as env vars).
         ansible_galaxy_bin: Override for the ``ansible-galaxy`` binary path.
         timeout: Subprocess timeout in seconds.
 
@@ -187,20 +230,18 @@ async def download_collections(
     ]
 
     env = dict(os.environ)
-    temp_cfg_dir = None
     process: asyncio.subprocess.Process | None = None
 
     try:
         if servers:
-            temp_cfg_dir = Path(tempfile.mkdtemp(prefix="apme-galaxy-cfg-"))
-            cfg_path = write_temp_ansible_cfg(servers, temp_cfg_dir)
-            env["ANSIBLE_CONFIG"] = str(cfg_path)
+            _inject_galaxy_env(env, servers)
         elif ansible_cfg_path:
             env["ANSIBLE_CONFIG"] = str(ansible_cfg_path)
 
         logger.debug(
-            "Running: %s (ANSIBLE_CONFIG=%s)",
+            "Running: %s (galaxy_servers=%s, ANSIBLE_CONFIG=%s)",
             " ".join(cmd),
+            env.get("ANSIBLE_GALAXY_SERVER_LIST", "<none>"),
             env.get("ANSIBLE_CONFIG", "<default>"),
         )
 
@@ -260,11 +301,6 @@ async def download_collections(
             failed_specs=list(collection_specs),
             stderr=f"ansible-galaxy binary not found: {galaxy_bin}",
         )
-    finally:
-        if temp_cfg_dir and temp_cfg_dir.is_dir():
-            import shutil
-
-            shutil.rmtree(temp_cfg_dir, ignore_errors=True)
 
 
 def download_collections_sync(

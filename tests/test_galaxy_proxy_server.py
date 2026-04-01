@@ -250,6 +250,105 @@ class TestServeWheel:
         assert resp.status_code == 404
 
 
+class TestAdminGalaxyConfig:
+    """Tests for POST /admin/galaxy-config endpoint."""
+
+    def test_push_galaxy_config(self, app: TestClient) -> None:
+        """Pushing galaxy server configs updates app state.
+
+        Args:
+            app: Test client fixture.
+        """
+        resp = app.post(
+            "/admin/galaxy-config",
+            json={
+                "servers": [
+                    {"name": "hub", "url": "https://hub.example.com", "token": "tok"},
+                    {"name": "community", "url": "https://galaxy.ansible.com"},
+                ],
+            },
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["accepted"] == 2
+        assert data["servers"] == ["hub", "community"]
+
+    def test_push_clears_ansible_cfg_path(self, tmp_path: Path) -> None:
+        """Pushing servers clears any pre-existing ansible_cfg_path.
+
+        Args:
+            tmp_path: Pytest-provided temporary directory.
+        """
+        cfg = tmp_path / "ansible.cfg"
+        cfg.touch()
+        application = create_app(
+            cache_dir=tmp_path / "cache",
+            enable_passthrough=False,
+            ansible_cfg_path=cfg,
+        )
+        with TestClient(application) as client:
+            assert client.app.state.ansible_cfg_path == cfg
+            client.post(
+                "/admin/galaxy-config",
+                json={"servers": [{"name": "hub", "url": "https://hub.example.com"}]},
+            )
+            assert client.app.state.ansible_cfg_path is None
+
+    def test_push_empty_servers(self, app: TestClient) -> None:
+        """Pushing empty server list is accepted.
+
+        Args:
+            app: Test client fixture.
+        """
+        resp = app.post("/admin/galaxy-config", json={"servers": []})
+        assert resp.status_code == 200
+        assert resp.json()["accepted"] == 0
+
+    def test_push_updates_app_state(self, tmp_path: Path) -> None:
+        """Pushing config updates app.state.galaxy_servers with correct types.
+
+        Args:
+            tmp_path: Pytest-provided temporary directory.
+        """
+        from galaxy_proxy.collection_downloader import GalaxyServerConfig as GSC
+
+        cache_dir = tmp_path / "cache"
+        application = create_app(cache_dir=cache_dir, enable_passthrough=False)
+
+        with TestClient(application) as client:
+            client.post(
+                "/admin/galaxy-config",
+                json={"servers": [{"name": "myhub", "url": "https://hub.example.com", "token": "secret"}]},
+            )
+            servers = client.app.state.galaxy_servers
+            assert len(servers) == 1
+            assert isinstance(servers[0], GSC)
+            assert servers[0].name == "myhub"
+            assert servers[0].url == "https://hub.example.com"
+            assert servers[0].token == "secret"
+
+    def test_push_rejects_empty_name(self, app: TestClient) -> None:
+        """Empty server name returns 422.
+
+        Args:
+            app: Test client fixture.
+        """
+        resp = app.post("/admin/galaxy-config", json={"servers": [{"name": "", "url": "https://x.com"}]})
+        assert resp.status_code == 422
+
+    def test_push_rejects_duplicate_name(self, app: TestClient) -> None:
+        """Duplicate server names return 422.
+
+        Args:
+            app: Test client fixture.
+        """
+        resp = app.post(
+            "/admin/galaxy-config",
+            json={"servers": [{"name": "hub", "url": "https://a.com"}, {"name": "HUB", "url": "https://b.com"}]},
+        )
+        assert resp.status_code == 422
+
+
 class TestConvertTarballs:
     """Tests for POST /convert-tarballs endpoint."""
 

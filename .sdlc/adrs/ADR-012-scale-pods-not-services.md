@@ -93,3 +93,4 @@ If a shared wheel cache is needed:
 
 - ADR-004: Podman pod deployment
 - ADR-005: No service discovery
+- ADR-048: Pod-internal admin endpoints rely on network isolation — if Galaxy Proxy is extracted (see "Galaxy Proxy Exception" above), auth must be added per ADR-048

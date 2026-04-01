@@ -9,16 +9,18 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, Response
+from pydantic import BaseModel
 
 from galaxy_proxy.collection_downloader import (
     GalaxyServerConfig,
@@ -35,6 +37,32 @@ from galaxy_proxy.proxy.cache import ProxyCache
 from galaxy_proxy.proxy.passthrough import PyPIPassthrough
 
 logger = logging.getLogger(__name__)
+
+
+class _GalaxyServerPayload(BaseModel):  # type: ignore[misc]
+    """Single Galaxy server entry in the admin config push.
+
+    Attributes:
+        name: Server identifier (e.g. ``certified``).
+        url: Galaxy API URL.
+        token: Authentication token (optional).
+        auth_url: SSO auth URL for token refresh (optional).
+    """
+
+    name: str
+    url: str
+    token: str = ""
+    auth_url: str = ""
+
+
+class _GalaxyConfigPayload(BaseModel):  # type: ignore[misc]
+    """Payload for ``POST /admin/galaxy-config``.
+
+    Attributes:
+        servers: List of Galaxy server configurations to register.
+    """
+
+    servers: list[_GalaxyServerPayload]
 
 
 def create_app(
@@ -91,9 +119,66 @@ def create_app(
 
     app = FastAPI(title="Ansible Collection Proxy", version="0.2.0", lifespan=lifespan)
 
+    app.state.galaxy_servers = list(galaxy_servers) if galaxy_servers else []
+    app.state.ansible_cfg_path = ansible_cfg_path
+    app.state.ansible_galaxy_bin = ansible_galaxy_bin
+
+    def _get_galaxy_config() -> tuple[Path | None, list[GalaxyServerConfig] | None, str | None]:
+        """Read current Galaxy config from app state.
+
+        Returns:
+            tuple: (ansible_cfg_path, galaxy_servers, ansible_galaxy_bin).
+        """
+        servers = app.state.galaxy_servers
+        cfg_path = app.state.ansible_cfg_path
+        galaxy_bin = app.state.ansible_galaxy_bin
+        return cfg_path, servers or None, galaxy_bin
+
     @app.get("/health")  # type: ignore[untyped-decorator]
     async def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.post("/admin/galaxy-config")  # type: ignore[untyped-decorator]
+    async def update_galaxy_config(body: _GalaxyConfigPayload) -> dict[str, Any]:
+        """Accept Galaxy server configs pushed from the Gateway (ADR-045).
+
+        The Gateway calls this after startup and after any CRUD change to
+        the Galaxy server settings.  The proxy stores the configs in memory
+        and uses them for all subsequent ``ansible-galaxy`` downloads.
+
+        Args:
+            body: Galaxy server configurations to register.
+
+        Returns:
+            dict: Confirmation with count and names of accepted servers.
+
+        Raises:
+            HTTPException: 422 if any server name is empty, invalid, or duplicated.
+        """
+        seen: set[str] = set()
+        for s in body.servers:
+            name = s.name.strip()
+            if not name:
+                raise HTTPException(status_code=422, detail="Server name must not be empty")
+            if not re.match(r"^[A-Za-z0-9_]+$", name):
+                raise HTTPException(status_code=422, detail=f"Invalid server name: {s.name!r}")
+            if name.upper() in seen:
+                raise HTTPException(status_code=422, detail=f"Duplicate server name: {s.name!r}")
+            seen.add(name.upper())
+
+        app.state.galaxy_servers = [
+            GalaxyServerConfig(
+                name=s.name.strip(),
+                url=s.url,
+                token=s.token or None,
+                auth_url=s.auth_url or None,
+            )
+            for s in body.servers
+        ]
+        app.state.ansible_cfg_path = None
+        names = [s.name.strip() for s in body.servers]
+        logger.info("Galaxy config updated: %d server(s): %s", len(names), ", ".join(names))
+        return {"accepted": len(names), "servers": names}
 
     @app.get("/simple/", response_class=HTMLResponse)  # type: ignore[untyped-decorator]
     async def root_index() -> str:
@@ -158,13 +243,14 @@ def create_app(
                 cached_wheels = _list_cached_wheels(cache, namespace, name)
                 if not cached_wheels:
                     try:
+                        cfg_path, servers, galaxy_bin = _get_galaxy_config()
                         whl_name, whl_data = await _download_and_convert(
                             namespace,
                             name,
                             "",
-                            ansible_cfg_path=ansible_cfg_path,
-                            galaxy_servers=galaxy_servers,
-                            ansible_galaxy_bin=ansible_galaxy_bin,
+                            ansible_cfg_path=cfg_path,
+                            galaxy_servers=servers,
+                            ansible_galaxy_bin=galaxy_bin,
                         )
                         cache.put_wheel(whl_name, whl_data)
                         logger.info("On-demand download for %s.%s: %s", namespace, name, whl_name)
@@ -256,13 +342,14 @@ def create_app(
             )
 
             try:
+                cfg_path, servers, galaxy_bin = _get_galaxy_config()
                 whl_name, whl_data = await _download_and_convert(
                     ns,
                     coll_name,
                     version,
-                    ansible_cfg_path=ansible_cfg_path,
-                    galaxy_servers=galaxy_servers,
-                    ansible_galaxy_bin=ansible_galaxy_bin,
+                    ansible_cfg_path=cfg_path,
+                    galaxy_servers=servers,
+                    ansible_galaxy_bin=galaxy_bin,
                 )
             except Exception as exc:
                 logger.exception("Failed to download/convert %s.%s %s", ns, coll_name, version)

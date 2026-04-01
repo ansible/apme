@@ -16,6 +16,7 @@ from apme_engine.engine.content_graph import (
     NodeScope,
     NodeType,
 )
+from apme_engine.engine.models import BecomeInfo, YAMLDict
 
 # ---------------------------------------------------------------------------
 # NodeIdentity
@@ -804,3 +805,98 @@ class TestGraphBuilderBlockNodes:
         block_nodes = list(block_graph.nodes(NodeType.BLOCK))
         named_blocks = [b for b in block_nodes if b.name]
         assert len(named_blocks) >= 1, "Expected at least one named block node"
+
+
+# ---------------------------------------------------------------------------
+# Play property extraction (_build_play)
+# ---------------------------------------------------------------------------
+
+
+def _build_play_node(
+    play_options: dict[str, object] | None = None,
+    become: BecomeInfo | None = None,
+) -> ContentNode:
+    """Build a PLAY ContentNode from a Play with given options and become.
+
+    Args:
+        play_options: Options dict for the play (environment, no_log, etc.).
+        become: BecomeInfo (or None) for the play.
+
+    Returns:
+        The PLAY ContentNode produced by GraphBuilder.
+    """
+    from apme_engine.engine.models import ObjectList, Play, Playbook
+
+    opts: YAMLDict = cast(YAMLDict, play_options) if play_options else {}
+    play = Play(
+        key="play test_pb.yml#play[0]",
+        defined_in="test_pb.yml",
+        tasks=[],
+        options=opts,
+        become=become,
+    )
+    pb = Playbook(
+        key="playbook test_pb.yml",
+        defined_in="test_pb.yml",
+        plays=[play],
+    )
+    root_defs: dict[str, object] = {
+        "definitions": {
+            "playbooks": ObjectList(items=[pb]),
+        },
+        "mappings": None,
+    }
+    builder = GraphBuilder(root_defs, {})
+    graph = builder.build()
+    play_nodes = list(graph.nodes(NodeType.PLAY))
+    assert len(play_nodes) == 1
+    return play_nodes[0]
+
+
+class TestPlayPropertyExtraction:
+    """Verify _build_play extracts inheritable properties onto PLAY ContentNode."""
+
+    def test_become_extraction(self) -> None:
+        """Play with ``become`` sets ``node.become``."""
+        node = _build_play_node(become=BecomeInfo(enabled=True, user="root"))
+        assert node.become is not None
+        assert node.become.get("enabled") is True
+
+    def test_environment_extraction(self) -> None:
+        """Play with ``environment:`` dict populates ``node.environment``."""
+        node = _build_play_node({"environment": {"FOO": "bar"}})
+        assert node.environment == {"FOO": "bar"}
+
+    def test_no_log_extraction(self) -> None:
+        """Play with ``no_log: true`` sets ``node.no_log``."""
+        node = _build_play_node({"no_log": True})
+        assert node.no_log is True
+
+    def test_ignore_errors_extraction(self) -> None:
+        """Play with ``ignore_errors: true`` sets ``node.ignore_errors``."""
+        node = _build_play_node({"ignore_errors": True})
+        assert node.ignore_errors is True
+
+    def test_tags_extraction(self) -> None:
+        """Play with ``tags:`` list sets ``node.tags``."""
+        node = _build_play_node({"tags": ["deploy", "config"]})
+        assert node.tags == ["deploy", "config"]
+
+    def test_when_extraction_string(self) -> None:
+        """Play with ``when:`` string populates ``node.when_expr``."""
+        node = _build_play_node({"when": "inventory_hostname in groups['web']"})
+        assert node.when_expr == "inventory_hostname in groups['web']"
+
+    def test_when_extraction_list(self) -> None:
+        """Play with ``when:`` list populates ``node.when_expr``."""
+        node = _build_play_node({"when": ["a == 1", "b == 2"]})
+        assert node.when_expr == ["a == 1", "b == 2"]
+
+    def test_absent_properties_are_none(self) -> None:
+        """Play without inheritable properties leaves them None/empty."""
+        node = _build_play_node({})
+        assert node.environment is None
+        assert node.no_log is None
+        assert node.ignore_errors is None
+        assert node.tags in (None, [])
+        assert node.when_expr is None

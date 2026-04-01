@@ -214,6 +214,7 @@ When the registry is empty (no pods have sent heartbeats), the health endpoint f
 - ADR-012: Scale pods, not services — pods self-announce to gateway
 - ADR-020: Reporting service and event delivery — heartbeat extends the same push channel
 - ADR-029: Web gateway architecture — health endpoint is a gateway concern
+- ADR-048: Pod-internal admin endpoints rely on network isolation — if inter-pod routing exposes admin endpoints, auth must be added per ADR-048
 
 ## References
 
