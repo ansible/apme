@@ -18,7 +18,7 @@ no_jinja_when(tree, node) := v if {
 	count(node.line) > 0
 	v := {
 		"rule_id": "L015",
-		"level": "warning",
+		"severity": "low",
 		"message": "Avoid Jinja in when; use variables",
 		"file": node.file,
 		"line": node.line[0],
@@ -34,7 +34,7 @@ no_jinja_when(tree, node) := v if {
 	count(node.line) > 0
 	v := {
 		"rule_id": "L015",
-		"level": "warning",
+		"severity": "low",
 		"message": "Avoid Jinja in when; use variables",
 		"file": node.file,
 		"line": node.line[0],

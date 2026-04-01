@@ -19,7 +19,7 @@ action_as_mapping(tree, node) := v if {
 	count(node.line) > 0
 	v := {
 		"rule_id": "M017",
-		"level": "warning",
+		"severity": "high",
 		"message": "action: with a mapping value is deprecated in 2.23; use the module key directly with args",
 		"file": node.file,
 		"line": node.line[0],

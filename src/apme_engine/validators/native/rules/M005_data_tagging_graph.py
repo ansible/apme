@@ -109,7 +109,7 @@ class DataTaggingGraphRule(GraphRule):
     enabled: bool = True
     name: str = "DataTagging"
     version: str = "v0.0.2"
-    severity: str = Severity.HIGH
+    severity: Severity = Severity.HIGH
     tags: tuple[str, ...] = (Tag.CODING,)
 
     def match(self, graph: ContentGraph, node_id: str) -> bool:

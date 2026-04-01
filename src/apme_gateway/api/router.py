@@ -1390,7 +1390,7 @@ async def project_operate_ws(
                 fixed_violations_json = [
                     {
                         "rule_id": v.rule_id,
-                        "level": v.level,
+                        "severity": v.severity,
                         "message": v.message,
                         "file": v.file,
                         "line": _extract_line(v),

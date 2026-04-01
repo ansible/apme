@@ -82,7 +82,7 @@ async def test_report_fix_with_violations() -> None:
     servicer = ReportingServicer()
     viol = common_pb2.Violation(
         rule_id="L001",
-        level="error",
+        severity=common_pb2.SEVERITY_ERROR,
         message="bad task",
         file="a.yml",
         line=10,

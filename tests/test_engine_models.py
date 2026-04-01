@@ -1001,16 +1001,22 @@ class TestActionGroupMetadata:
 
 
 class TestSeverity:
-    """Tests for Severity enum string values."""
+    """Tests for Severity IntEnum values (ADR-043)."""
 
     def test_levels(self) -> None:
-        """Verifies Severity levels from VERY_HIGH to NONE."""
-        assert Severity.VERY_HIGH == "very_high"
-        assert Severity.HIGH == "high"
-        assert Severity.MEDIUM == "medium"
-        assert Severity.LOW == "low"
-        assert Severity.VERY_LOW == "very_low"
-        assert Severity.NONE == "none"
+        """Verifies Severity levels from CRITICAL to INFO with numeric ordering."""
+        assert int(Severity.CRITICAL) == 6
+        assert int(Severity.ERROR) == 5
+        assert int(Severity.HIGH) == 4
+        assert int(Severity.MEDIUM) == 3
+        assert int(Severity.LOW) == 2
+        assert int(Severity.INFO) == 1
+        assert int(Severity.UNSPECIFIED) == 0
+
+    def test_ordering(self) -> None:
+        """Severity values support comparison for threshold gating."""
+        assert Severity.CRITICAL > Severity.ERROR > Severity.HIGH
+        assert Severity.HIGH > Severity.MEDIUM > Severity.LOW > Severity.INFO
 
 
 class TestVariableDict:

@@ -24,7 +24,7 @@ latest(tree, node) := v if {
 	count(node.line) > 0
 	v := {
 		"rule_id": "L012",
-		"level": "warning",
+		"severity": "low",
 		"message": "Avoid state=latest; pin package versions",
 		"file": node.file,
 		"line": node.line[0],

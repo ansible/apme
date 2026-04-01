@@ -161,7 +161,7 @@ def _convert_findings(
         violations.append(
             {
                 "rule_id": _build_rule_id(gitleaks_rule),
-                "level": "error",
+                "severity": "critical",
                 "message": desc,
                 "file": rel,
                 "line": line if line == end_line else [line, end_line],

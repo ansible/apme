@@ -20,7 +20,7 @@ inbound_transfer(tree, node) := v if {
 	src_value := object.get(src, "value", "unknown source")
 	v := {
 		"rule_id": "R118",
-		"level": "info",
+		"severity": "info",
 		"message": sprintf("Task performs inbound transfer from %s", [src_value]),
 		"file": node.file,
 		"line": node.line[0],

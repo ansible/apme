@@ -31,7 +31,14 @@ logger = logging.getLogger(__name__)
 # Project queries (ADR-037)
 # ---------------------------------------------------------------------------
 
-_SEVERITY_WEIGHTS: dict[str, int] = {"error": 10, "warning": 3, "info": 1}
+_SEVERITY_WEIGHTS: dict[str, int] = {
+    "critical": 20,
+    "error": 10,
+    "high": 6,
+    "medium": 3,
+    "low": 1,
+    "info": 0,
+}
 
 _HEALTH_DECAY_RATE = 150
 

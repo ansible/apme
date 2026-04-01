@@ -20,7 +20,7 @@ class ListAllInboundSrcGraphRule(GraphRule):
 
     Fires once on the PLAYBOOK node, walking all task descendants to
     collect ``src`` values from inbound-transfer modules.  This is an
-    audit/reporting rule (severity VERY_LOW).
+    audit/reporting rule (severity INFO).
 
     Attributes:
         rule_id: Rule identifier.
@@ -37,7 +37,7 @@ class ListAllInboundSrcGraphRule(GraphRule):
     enabled: bool = True
     name: str = "ListAllInboundSrcRule"
     version: str = "v0.0.1"
-    severity: str = Severity.VERY_LOW
+    severity: Severity = Severity.INFO
     tags: tuple[str, ...] = (Tag.DEBUG,)
 
     def match(self, graph: ContentGraph, node_id: str) -> bool:

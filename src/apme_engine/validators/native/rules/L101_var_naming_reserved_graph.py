@@ -84,7 +84,7 @@ class VarNamingReservedGraphRule(GraphRule):
     enabled: bool = True
     name: str = "VarNamingReserved"
     version: str = "v0.0.1"
-    severity: str = Severity.HIGH
+    severity: Severity = Severity.HIGH
     tags: tuple[str, ...] = (Tag.VARIABLE,)
 
     def match(self, graph: ContentGraph, node_id: str) -> bool:

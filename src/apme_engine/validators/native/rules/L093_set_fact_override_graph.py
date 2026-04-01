@@ -82,7 +82,7 @@ class SetFactOverrideGraphRule(GraphRule):
     enabled: bool = True
     name: str = "SetFactOverride"
     version: str = "v0.0.2"
-    severity: str = Severity.LOW
+    severity: Severity = Severity.LOW
     tags: tuple[str, ...] = (Tag.VARIABLE,)
 
     def match(self, graph: ContentGraph, node_id: str) -> bool:

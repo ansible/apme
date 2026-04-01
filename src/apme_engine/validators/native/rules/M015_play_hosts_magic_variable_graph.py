@@ -36,7 +36,7 @@ class PlayHostsMagicVariableGraphRule(GraphRule):
     enabled: bool = True
     name: str = "PlayHostsMagicVariable"
     version: str = "v0.0.1"
-    severity: str = Severity.MEDIUM
+    severity: Severity = Severity.MEDIUM
     tags: tuple[str, ...] = (Tag.CODING,)
 
     def match(self, graph: ContentGraph, node_id: str) -> bool:

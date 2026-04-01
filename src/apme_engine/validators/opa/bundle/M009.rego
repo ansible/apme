@@ -27,7 +27,7 @@ deprecated_with_loop(tree, node) := v if {
 	count(node.line) > 0
 	v := {
 		"rule_id": "M009",
-		"level": "warning",
+		"severity": "high",
 		"message": sprintf("with_* loops are deprecated; use loop: instead of %s", [wk]),
 		"file": node.file,
 		"line": node.line[0],

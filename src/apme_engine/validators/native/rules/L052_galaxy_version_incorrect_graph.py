@@ -31,7 +31,7 @@ class GalaxyVersionIncorrectGraphRule(GraphRule):
     enabled: bool = True
     name: str = "GalaxyVersionIncorrect"
     version: str = "v0.0.1"
-    severity: str = Severity.LOW
+    severity: Severity = Severity.LOW
     tags: tuple[str, ...] = (Tag.DEPENDENCY,)
     precedence: int = 10
 

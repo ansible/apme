@@ -25,7 +25,7 @@ network_compat(tree, node) := v if {
 	count(node.line) > 0
 	v := {
 		"rule_id": "M011",
-		"level": "info",
+		"severity": "high",
 		"message": sprintf("Network module %s may require collection upgrade for ansible-core 2.19+ compatibility", [node.module]),
 		"file": node.file,
 		"line": node.line[0],

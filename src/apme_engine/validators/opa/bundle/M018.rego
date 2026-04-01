@@ -19,7 +19,7 @@ paramiko_ssh_connection(tree, node) := v if {
 	count(node.line) > 0
 	v := {
 		"rule_id": "M018",
-		"level": "error",
+		"severity": "high",
 		"message": "paramiko_ssh connection plugin is removed in 2.21; use connection: ssh",
 		"file": node.file,
 		"line": node.line[0],
@@ -37,7 +37,7 @@ paramiko_ssh_connection(tree, node) := v if {
 	count(node.line) > 0
 	v := {
 		"rule_id": "M018",
-		"level": "error",
+		"severity": "high",
 		"message": "paramiko_ssh connection plugin is removed in 2.21; use ansible_connection: ssh",
 		"file": node.file,
 		"line": node.line[0],

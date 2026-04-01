@@ -58,7 +58,7 @@ class PrivilegeEscalationGraphRule(GraphRule):
     enabled: bool = True
     name: str = "PrivilegeEscalation"
     version: str = "v0.0.3"
-    severity: str = Severity.HIGH
+    severity: Severity = Severity.HIGH
     tags: tuple[str, ...] = (Tag.SYSTEM,)
     scope: str = RuleScope.TASK
 

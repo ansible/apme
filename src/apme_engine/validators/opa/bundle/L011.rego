@@ -26,7 +26,7 @@ literal_compare(tree, node) := v if {
 	count(node.line) > 0
 	v := {
 		"rule_id": "L011",
-		"level": "warning",
+		"severity": "low",
 		"message": "Avoid comparison to literal true/false in when; use truthiness test instead",
 		"file": node.file,
 		"line": node.line[0],

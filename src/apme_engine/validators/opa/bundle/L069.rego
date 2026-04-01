@@ -23,7 +23,7 @@ package_loop(tree, node) := v if {
 	count(node.line) > 0
 	v := {
 		"rule_id": "L069",
-		"level": "info",
+		"severity": "info",
 		"message": "Batch package names in a list instead of looping with item",
 		"file": node.file,
 		"line": node.line[0],
@@ -44,7 +44,7 @@ package_loop(tree, node) := v if {
 	count(node.line) > 0
 	v := {
 		"rule_id": "L069",
-		"level": "info",
+		"severity": "info",
 		"message": "Batch package names in a list instead of looping with with_items",
 		"file": node.file,
 		"line": node.line[0],

@@ -22,7 +22,7 @@ no_changed_when(tree, node) := v if {
 	count(node.line) > 0
 	v := {
 		"rule_id": "L013",
-		"level": "warning",
+		"severity": "medium",
 		"message": "command/shell/raw should have changed_when or creates/removes",
 		"file": node.file,
 		"line": node.line[0],

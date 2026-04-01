@@ -21,7 +21,7 @@ ignore_errors(tree, node) := v if {
 	count(node.line) > 0
 	v := {
 		"rule_id": "L010",
-		"level": "warning",
+		"severity": "medium",
 		"message": "Use failed_when or register instead of ignore_errors",
 		"file": node.file,
 		"line": node.line[0],

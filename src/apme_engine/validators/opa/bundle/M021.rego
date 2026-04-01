@@ -19,7 +19,7 @@ empty_args_keyword(tree, node) := v if {
 	count(node.line) > 0
 	v := {
 		"rule_id": "M021",
-		"level": "warning",
+		"severity": "high",
 		"message": "Empty args: keyword is deprecated in 2.23; remove the args: key",
 		"file": node.file,
 		"line": node.line[0],
@@ -36,7 +36,7 @@ empty_args_keyword(tree, node) := v if {
 	count(node.line) > 0
 	v := {
 		"rule_id": "M021",
-		"level": "warning",
+		"severity": "high",
 		"message": "Empty args: keyword is deprecated in 2.23; remove the args: key",
 		"file": node.file,
 		"line": node.line[0],

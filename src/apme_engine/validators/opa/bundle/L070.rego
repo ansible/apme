@@ -26,7 +26,7 @@ jinja_name_position(tree, node) := v if {
 	count(node.line) > 0
 	v := {
 		"rule_id": "L070",
-		"level": "info",
+		"severity": "info",
 		"message": "Jinja in task names should only appear at the end of the name string",
 		"file": node.file,
 		"line": node.line[0],

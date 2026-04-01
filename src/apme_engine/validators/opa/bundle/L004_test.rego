@@ -9,7 +9,7 @@ test_L004_fires_for_deprecated_module if {
 	node := tree.nodes[0]
 	v := rules.deprecated_module(tree, node)
 	v.rule_id == "L004"
-	v.level == "error"
+	v.severity == "high"
 }
 
 test_L004_does_not_fire_for_non_deprecated if {

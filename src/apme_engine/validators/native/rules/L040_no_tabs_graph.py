@@ -30,7 +30,7 @@ class NoTabsGraphRule(GraphRule):
     enabled: bool = True
     name: str = "NoTabs"
     version: str = "v0.0.1"
-    severity: str = Severity.VERY_LOW
+    severity: Severity = Severity.INFO
     tags: tuple[str, ...] = (Tag.DEPENDENCY,)
 
     def match(self, graph: ContentGraph, node_id: str) -> bool:

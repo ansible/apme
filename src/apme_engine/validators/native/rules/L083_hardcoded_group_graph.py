@@ -35,7 +35,7 @@ class HardcodedGroupGraphRule(GraphRule):
     enabled: bool = True
     name: str = "HardcodedGroup"
     version: str = "v0.0.1"
-    severity: str = Severity.LOW
+    severity: Severity = Severity.LOW
     tags: tuple[str, ...] = (Tag.VARIABLE,)
 
     def match(self, graph: ContentGraph, node_id: str) -> bool:

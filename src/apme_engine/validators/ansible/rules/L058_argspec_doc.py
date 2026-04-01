@@ -217,7 +217,7 @@ def _run_argspec_script(
         violations.append(
             {
                 "rule_id": RULE_ID,
-                "level": "error",
+                "severity": "error",
                 "message": rv.get("message", "argument validation failed"),
                 "file": task.get("file", ""),
                 "line": line_num,

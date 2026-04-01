@@ -19,7 +19,7 @@ mixed_roles_tasks(tree, node) := v if {
 	count(node.line) > 0
 	v := {
 		"rule_id": "L066",
-		"level": "warning",
+		"severity": "low",
 		"message": "Do not mix roles: and tasks: in the same play; use one or the other",
 		"file": node.file,
 		"line": node.line[0],

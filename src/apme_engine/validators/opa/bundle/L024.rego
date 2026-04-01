@@ -17,7 +17,7 @@ name_missing(tree, node) := v if {
 	count(node.line) > 0
 	v := {
 		"rule_id": "L024",
-		"level": "low",
+		"severity": "low",
 		"message": "Task should have a name",
 		"file": node.file,
 		"line": node.line[0],

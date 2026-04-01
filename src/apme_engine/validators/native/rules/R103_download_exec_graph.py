@@ -43,7 +43,7 @@ class DownloadExecGraphRule(GraphRule):
     enabled: bool = True
     name: str = "Download & Exec"
     version: str = "v0.0.1"
-    severity: str = Severity.HIGH
+    severity: Severity = Severity.HIGH
     tags: tuple[str, ...] = (Tag.NETWORK, Tag.COMMAND)
     precedence: int = 11
 

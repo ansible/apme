@@ -40,7 +40,7 @@ class PlayVarsUsageGraphRule(GraphRule):
     enabled: bool = True
     name: str = "PlayVarsUsage"
     version: str = "v0.0.2"
-    severity: str = Severity.VERY_LOW
+    severity: Severity = Severity.LOW
     tags: tuple[str, ...] = (Tag.VARIABLE,)
     scope: str = RuleScope.PLAY
 

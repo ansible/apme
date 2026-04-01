@@ -127,7 +127,7 @@ class UnconditionalOverrideGraphRule(GraphRule):
     enabled: bool = True
     name: str = "UnconditionalOverride"
     version: str = "v0.0.2"
-    severity: str = Severity.VERY_LOW
+    severity: Severity = Severity.LOW
     tags: tuple[str, ...] = (Tag.VARIABLE,)
     precedence: int = 10
 

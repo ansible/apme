@@ -36,7 +36,7 @@ class InvalidInventoryVariableNamesGraphRule(GraphRule):
     enabled: bool = True
     name: str = "InvalidInventoryVariableNames"
     version: str = "v0.0.2"
-    severity: str = Severity.MEDIUM
+    severity: Severity = Severity.MEDIUM
     tags: tuple[str, ...] = (Tag.VARIABLE,)
 
     def match(self, graph: ContentGraph, node_id: str) -> bool:

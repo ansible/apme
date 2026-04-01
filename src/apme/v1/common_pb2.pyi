@@ -4,7 +4,7 @@ from collections.abc import Iterable
 
 class Violation:
     rule_id: str
-    level: str
+    severity: int
     message: str
     file: str
     path: str
@@ -89,6 +89,15 @@ class GalaxyServerDef:
     ) -> None: ...
     def SerializeToString(self) -> bytes: ...
     def ParseFromString(self, data: bytes) -> int: ...
+
+# Severity enum constants (ADR-043)
+SEVERITY_UNSPECIFIED: int
+SEVERITY_INFO: int
+SEVERITY_LOW: int
+SEVERITY_MEDIUM: int
+SEVERITY_HIGH: int
+SEVERITY_ERROR: int
+SEVERITY_CRITICAL: int
 
 # Log level enum constants (ADR-033)
 LOG_LEVEL_UNSPECIFIED: int

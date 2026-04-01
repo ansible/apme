@@ -91,7 +91,7 @@ class TestConvertFindings:
         violations = _convert_findings(findings, tmp_path)
         assert len(violations) == 1
         assert violations[0]["rule_id"] == f"{RULE_PREFIX}:generic-api-key"
-        assert violations[0]["level"] == "error"
+        assert violations[0]["severity"] == "critical"
         assert violations[0]["file"] == "vars.yml"
         assert violations[0]["line"] == 1
 
@@ -291,7 +291,7 @@ class TestGitleaksServicer:
         fake_violations = [
             {
                 "rule_id": "SEC:aws-access-key-id",
-                "level": "error",
+                "severity": "critical",
                 "message": "AWS Key",
                 "file": "vars.yml",
                 "line": 1,

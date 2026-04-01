@@ -25,7 +25,7 @@ no_handler(tree, node) := v if {
 	count(node.line) > 0
 	v := {
 		"rule_id": "L014",
-		"level": "info",
+		"severity": "low",
 		"message": "Use notify/handler instead of when: result.changed",
 		"file": node.file,
 		"line": node.line[0],

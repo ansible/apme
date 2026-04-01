@@ -21,7 +21,7 @@ debug_verbosity(tree, node) := v if {
 	count(node.line) > 0
 	v := {
 		"rule_id": "L067",
-		"level": "info",
+		"severity": "info",
 		"message": "Set verbosity on debug tasks to avoid noisy output in production",
 		"file": node.file,
 		"line": node.line[0],

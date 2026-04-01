@@ -17,6 +17,7 @@ import time
 import traceback
 from dataclasses import dataclass, field
 
+from apme_engine.severity_defaults import get_severity, severity_to_label
 from apme_engine.validators.native.rules.graph_rule_base import (
     GraphRule,
     GraphRuleResult,
@@ -248,9 +249,10 @@ def graph_report_to_violations(report: GraphScanReport) -> list[ViolationDict]:
 
             msg = str(detail.get("message", "")) or (rule.description if rule else "")
             scope = str(detail.get("scope", "")) or (rule.scope if rule else "task")
+            rid = rule.rule_id if rule else ""
             v: ViolationDict = {
-                "rule_id": rule.rule_id if rule else "",
-                "level": rule.severity if rule else "",
+                "rule_id": rid,
+                "severity": severity_to_label(get_severity(rid)),
                 "message": msg,
                 "file": file_path,
                 "line": line,

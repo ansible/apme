@@ -76,7 +76,7 @@ class Python2InterpreterGraphRule(GraphRule):
     enabled: bool = True
     name: str = "Python2Interpreter"
     version: str = "v0.0.2"
-    severity: str = Severity.HIGH
+    severity: Severity = Severity.HIGH
     tags: tuple[str, ...] = (Tag.CODING,)
     scope: str = RuleScope.PLAY
     precedence: int = 10

@@ -41,7 +41,7 @@ class CommandExecGraphRule(GraphRule):
     enabled: bool = True
     name: str = "CommandExec"
     version: str = "v0.0.1"
-    severity: str = Severity.LOW
+    severity: Severity = Severity.LOW
     tags: tuple[str, ...] = (Tag.COMMAND,)
 
     def match(self, graph: ContentGraph, node_id: str) -> bool:

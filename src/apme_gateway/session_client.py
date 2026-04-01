@@ -388,7 +388,7 @@ async def _forward_events(
                     "remaining_violations": [
                         {
                             "rule_id": v.rule_id,
-                            "level": v.level,
+                            "severity": v.severity,
                             "message": v.message,
                             "file": v.file,
                         }

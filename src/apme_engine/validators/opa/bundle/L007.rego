@@ -28,7 +28,7 @@ command_instead_of_shell(tree, node) := v if {
 	count(node.line) > 0
 	v := {
 		"rule_id": "L007",
-		"level": "warning",
+		"severity": "low",
 		"message": "Prefer ansible.builtin.command when no shell features are needed",
 		"file": node.file,
 		"line": node.line[0],
@@ -45,7 +45,7 @@ command_instead_of_shell(tree, node) := v if {
 	count(node.line) > 0
 	v := {
 		"rule_id": "L007",
-		"level": "warning",
+		"severity": "low",
 		"message": "Prefer ansible.builtin.command when no shell features are needed",
 		"file": node.file,
 		"line": node.line[0],

@@ -1,4 +1,4 @@
-"""Tests for violation_convert: dict ↔ proto conversion."""
+"""Tests for violation_convert: dict ↔ proto conversion (ADR-043 severity enum)."""
 # mypy: disable-error-code="attr-defined"
 
 from apme.v1 import common_pb2
@@ -13,11 +13,11 @@ from apme_engine.engine.models import RemediationClass, RemediationResolution, R
 class TestViolationDictToProto:
     """Tests for converting dict violations to proto."""
 
-    def test_basic_conversion(self) -> None:
-        """Dict fields map to proto fields."""
+    def test_basic_conversion_with_severity(self) -> None:
+        """Dict with 'severity' key maps to proto severity enum."""
         v: ViolationDict = {
             "rule_id": "L021",
-            "level": "high",
+            "severity": "low",
             "message": "Missing mode",
             "file": "playbook.yml",
             "line": 10,
@@ -25,11 +25,41 @@ class TestViolationDictToProto:
         }
         proto = violation_dict_to_proto(v)
         assert proto.rule_id == "L021"
-        assert proto.level == "high"
+        assert proto.severity == common_pb2.SEVERITY_LOW
         assert proto.message == "Missing mode"
         assert proto.file == "playbook.yml"
         assert proto.line == 10
         assert proto.path == "tasks"
+
+    def test_severity_critical(self) -> None:
+        """Critical severity maps to SEVERITY_CRITICAL."""
+        v: ViolationDict = {"rule_id": "SEC:generic-api-key", "severity": "critical"}
+        proto = violation_dict_to_proto(v)
+        assert proto.severity == common_pb2.SEVERITY_CRITICAL
+
+    def test_severity_error(self) -> None:
+        """Error severity maps to SEVERITY_ERROR."""
+        v: ViolationDict = {"rule_id": "L057", "severity": "error"}
+        proto = violation_dict_to_proto(v)
+        assert proto.severity == common_pb2.SEVERITY_ERROR
+
+    def test_severity_high(self) -> None:
+        """High severity maps to SEVERITY_HIGH."""
+        v: ViolationDict = {"rule_id": "M001", "severity": "high"}
+        proto = violation_dict_to_proto(v)
+        assert proto.severity == common_pb2.SEVERITY_HIGH
+
+    def test_severity_medium(self) -> None:
+        """Medium severity maps to SEVERITY_MEDIUM."""
+        v: ViolationDict = {"rule_id": "R101", "severity": "medium"}
+        proto = violation_dict_to_proto(v)
+        assert proto.severity == common_pb2.SEVERITY_MEDIUM
+
+    def test_severity_info(self) -> None:
+        """Info severity maps to SEVERITY_INFO."""
+        v: ViolationDict = {"rule_id": "L060", "severity": "info"}
+        proto = violation_dict_to_proto(v)
+        assert proto.severity == common_pb2.SEVERITY_INFO
 
     def test_line_range_conversion(self) -> None:
         """Line range tuple converts to LineRange proto."""
@@ -131,7 +161,7 @@ class TestViolationProtoToDict:
         """Proto fields map to dict fields."""
         proto = Violation(
             rule_id="L021",
-            level="high",
+            severity=common_pb2.SEVERITY_LOW,
             message="Missing mode",
             file="playbook.yml",
             line=10,
@@ -139,11 +169,29 @@ class TestViolationProtoToDict:
         )
         d = violation_proto_to_dict(proto)
         assert d["rule_id"] == "L021"
-        assert d["level"] == "high"
+        assert d["severity"] == "low"
         assert d["message"] == "Missing mode"
         assert d["file"] == "playbook.yml"
         assert d["line"] == 10
         assert d["path"] == "tasks"
+
+    def test_severity_critical(self) -> None:
+        """Proto SEVERITY_CRITICAL converts to 'critical' label."""
+        proto = Violation(rule_id="SEC:key", severity=common_pb2.SEVERITY_CRITICAL)
+        d = violation_proto_to_dict(proto)
+        assert d["severity"] == "critical"
+
+    def test_severity_error(self) -> None:
+        """Proto SEVERITY_ERROR converts to 'error' label."""
+        proto = Violation(rule_id="L057", severity=common_pb2.SEVERITY_ERROR)
+        d = violation_proto_to_dict(proto)
+        assert d["severity"] == "error"
+
+    def test_severity_unspecified(self) -> None:
+        """Proto SEVERITY_UNSPECIFIED converts to 'unspecified' label."""
+        proto = Violation(rule_id="L021", severity=common_pb2.SEVERITY_UNSPECIFIED)
+        d = violation_proto_to_dict(proto)
+        assert d["severity"] == "unspecified"
 
     def test_line_range_conversion(self) -> None:
         """LineRange proto converts to list."""
@@ -259,7 +307,7 @@ class TestRoundTrip:
         """Converting dict to proto and back preserves all fields."""
         original: ViolationDict = {
             "rule_id": "L021",
-            "level": "high",
+            "severity": "low",
             "message": "Missing mode",
             "file": "playbook.yml",
             "line": 10,
@@ -271,7 +319,7 @@ class TestRoundTrip:
         proto = violation_dict_to_proto(original)
         result = violation_proto_to_dict(proto)
         assert result["rule_id"] == original["rule_id"]
-        assert result["level"] == original["level"]
+        assert result["severity"] == original["severity"]
         assert result["message"] == original["message"]
         assert result["file"] == original["file"]
         assert result["line"] == original["line"]
@@ -308,6 +356,17 @@ class TestRoundTrip:
             proto = violation_dict_to_proto(original)
             result = violation_proto_to_dict(proto)
             assert result["scope"] == scope.value, f"Failed for {scope}"
+
+    def test_round_trip_all_severities(self) -> None:
+        """All 6 severity levels round-trip correctly."""
+        for label in ("info", "low", "medium", "high", "error", "critical"):
+            original: ViolationDict = {
+                "rule_id": "L021",
+                "severity": label,
+            }
+            proto = violation_dict_to_proto(original)
+            result = violation_proto_to_dict(proto)
+            assert result["severity"] == label, f"Failed for {label}"
 
 
 class TestStringLineParsing:

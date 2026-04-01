@@ -75,7 +75,7 @@ class InsecurePkgInstallGraphRule(GraphRule):
     enabled: bool = True
     name: str = "InsecurePkgInstall"
     version: str = "v0.0.1"
-    severity: str = Severity.HIGH
+    severity: Severity = Severity.HIGH
     tags: tuple[str, ...] = (Tag.PACKAGE,)
 
     def match(self, graph: ContentGraph, node_id: str) -> bool:

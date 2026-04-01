@@ -23,7 +23,7 @@ third_party_strategy(tree, node) := v if {
 	count(node.line) > 0
 	v := {
 		"rule_id": "M025",
-		"level": "warning",
+		"severity": "high",
 		"message": sprintf("Third-party strategy plugin '%s' is deprecated in 2.23; use an ansible.builtin strategy", [strategy]),
 		"file": node.file,
 		"line": node.line[0],

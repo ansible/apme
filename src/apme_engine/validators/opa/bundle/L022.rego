@@ -31,7 +31,7 @@ risky_shell_pipe(tree, node) := v if {
 	count(node.line) > 0
 	v := {
 		"rule_id": "L022",
-		"level": "warning",
+		"severity": "low",
 		"message": "Shell with pipe should set set -o pipefail or use executable with pipefail",
 		"file": node.file,
 		"line": node.line[0],

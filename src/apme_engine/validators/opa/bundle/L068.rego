@@ -19,7 +19,7 @@ avoid_lineinfile(tree, node) := v if {
 	count(node.line) > 0
 	v := {
 		"rule_id": "L068",
-		"level": "info",
+		"severity": "info",
 		"message": "Avoid lineinfile; prefer template, ini_file, or blockinfile",
 		"file": node.file,
 		"line": node.line[0],

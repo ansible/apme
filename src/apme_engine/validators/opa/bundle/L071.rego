@@ -23,7 +23,7 @@ use_template_over_copy(tree, node) := v if {
 	count(node.line) > 0
 	v := {
 		"rule_id": "L071",
-		"level": "info",
+		"severity": "info",
 		"message": "Consider using template instead of copy with Jinja content",
 		"file": node.file,
 		"line": node.line[0],

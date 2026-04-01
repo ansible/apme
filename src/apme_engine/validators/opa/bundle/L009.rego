@@ -23,7 +23,7 @@ empty_string_compare(tree, node) := v if {
 	count(node.line) > 0
 	v := {
 		"rule_id": "L009",
-		"level": "warning",
+		"severity": "medium",
 		"message": "Avoid comparison to empty string in when; use truthiness test instead",
 		"file": node.file,
 		"line": node.line[0],

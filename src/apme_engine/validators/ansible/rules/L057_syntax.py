@@ -89,7 +89,7 @@ def run(
         violations.append(
             {
                 "rule_id": RULE_ID,
-                "level": "error",
+                "severity": "error",
                 "message": f"ansible-playbook not found: {ansible_playbook}",
                 "file": "",
                 "line": 1,
@@ -118,7 +118,7 @@ def run(
             violations.append(
                 {
                     "rule_id": RULE_ID,
-                    "level": "error",
+                    "severity": "error",
                     "message": "ansible-playbook --syntax-check timed out",
                     "file": rel_path,
                     "line": 1,
@@ -139,7 +139,7 @@ def run(
             violations.append(
                 {
                     "rule_id": RULE_ID,
-                    "level": "error",
+                    "severity": "error",
                     "message": stderr or "syntax check failed",
                     "file": rel_path,
                     "line": line,

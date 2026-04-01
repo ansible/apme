@@ -19,7 +19,7 @@ empty_when_conditional(tree, node) := v if {
 	count(node.line) > 0
 	v := {
 		"rule_id": "M016",
-		"level": "warning",
+		"severity": "high",
 		"message": "Empty when: conditional is deprecated and will be an error in 2.23; remove the when: key or add an explicit condition",
 		"file": node.file,
 		"line": node.line[0],
@@ -36,7 +36,7 @@ empty_when_conditional(tree, node) := v if {
 	count(node.line) > 0
 	v := {
 		"rule_id": "M016",
-		"level": "warning",
+		"severity": "high",
 		"message": "Empty when: conditional is deprecated and will be an error in 2.23; remove the when: key or add an explicit condition",
 		"file": node.file,
 		"line": node.line[0],

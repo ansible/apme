@@ -293,43 +293,43 @@ class TestSeverityBadge:
     """Test severity badge rendering."""
 
     def test_badge_high(self, force_color: None) -> None:
-        """High severity shows ERROR badge.
+        """High severity shows HIGH badge.
 
         Args:
             force_color: Fixture that enables color output.
         """
         badge = severity_badge("high")
-        assert "ERROR" in strip_ansi(badge)
+        assert "HIGH" in strip_ansi(badge)
         assert Style.BG_RED in badge
 
     def test_badge_medium(self, force_color: None) -> None:
-        """Medium severity shows WARN badge.
+        """Medium severity shows MED badge.
 
         Args:
             force_color: Fixture that enables color output.
         """
         badge = severity_badge("medium")
-        assert "WARN" in strip_ansi(badge)
+        assert "MED" in strip_ansi(badge)
         assert Style.BG_YELLOW in badge
 
     def test_badge_low(self, force_color: None) -> None:
-        """Low severity shows WARN badge.
+        """Low severity shows LOW badge.
 
         Args:
             force_color: Fixture that enables color output.
         """
         badge = severity_badge("low")
-        assert "WARN" in strip_ansi(badge)
+        assert "LOW" in strip_ansi(badge)
 
-    def test_badge_very_low(self, force_color: None) -> None:
-        """Very low severity shows HINT badge.
+    def test_badge_info(self, force_color: None) -> None:
+        """Info severity shows INFO badge.
 
         Args:
             force_color: Fixture that enables color output.
         """
-        badge = severity_badge("very_low")
-        assert "HINT" in strip_ansi(badge)
-        assert Style.BG_CYAN in badge
+        badge = severity_badge("info")
+        assert "INFO" in strip_ansi(badge)
+        assert Style.BG_MAGENTA in badge
 
     def test_badge_case_insensitive(self, force_color: None) -> None:
         """Badge lookup is case-insensitive.
@@ -356,7 +356,7 @@ class TestSeverityBadge:
             no_color: Fixture that disables color output.
         """
         badge = severity_badge("high")
-        assert badge == " ERROR "
+        assert badge == " HIGH "
         assert "\033[" not in badge
 
     def test_severity_indicator_error(self, force_color: None) -> None:
@@ -385,7 +385,7 @@ class TestSeverityBadge:
         Args:
             force_color: Fixture that enables color output.
         """
-        indicator = severity_indicator("very_low")
+        indicator = severity_indicator("info")
         assert "i" in strip_ansi(indicator)
         assert Style.CYAN in indicator
 

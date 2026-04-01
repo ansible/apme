@@ -41,7 +41,7 @@ class PkgInstallGraphRule(GraphRule):
     enabled: bool = True
     name: str = "PkgInstall"
     version: str = "v0.0.1"
-    severity: str = Severity.MEDIUM
+    severity: Severity = Severity.MEDIUM
     tags: tuple[str, ...] = (Tag.PACKAGE,)
 
     def match(self, graph: ContentGraph, node_id: str) -> bool:

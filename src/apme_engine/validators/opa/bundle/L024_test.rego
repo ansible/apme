@@ -9,7 +9,7 @@ test_L024_fires_when_task_has_no_name if {
 	node := tree.nodes[0]
 	v := rules.name_missing(tree, node)
 	v.rule_id == "L024"
-	v.level == "low"
+	v.severity == "low"
 }
 
 test_L024_does_not_fire_when_task_has_name if {

@@ -77,7 +77,7 @@ class NameUniqueGraphRule(GraphRule):
     enabled: bool = True
     name: str = "NameUnique"
     version: str = "v0.0.2"
-    severity: str = Severity.LOW
+    severity: Severity = Severity.LOW
     tags: tuple[str, ...] = (Tag.QUALITY,)
     scope: str = RuleScope.PLAYBOOK
 

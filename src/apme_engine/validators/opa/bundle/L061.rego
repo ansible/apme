@@ -22,7 +22,7 @@ truthy_boolean(tree, node) := v if {
 	count(node.line) > 0
 	v := {
 		"rule_id": "L061",
-		"level": "warning",
+		"severity": "low",
 		"message": sprintf("Use true/false for boolean; found '%s' in option '%s'", [val, key]),
 		"file": node.file,
 		"line": node.line[0],
@@ -40,7 +40,7 @@ truthy_boolean(tree, node) := v if {
 	count(node.line) > 0
 	v := {
 		"rule_id": "L061",
-		"level": "warning",
+		"severity": "low",
 		"message": sprintf("Use true/false for boolean; found '%s' in module option '%s'", [val, key]),
 		"file": node.file,
 		"line": node.line[0],

@@ -17,7 +17,7 @@ block_has_no_name(tree, node) := v if {
 	count(node.line) > 0
 	v := {
 		"rule_id": "L063",
-		"level": "low",
+		"severity": "low",
 		"message": "Block should have a name",
 		"file": node.file,
 		"line": node.line[0],
