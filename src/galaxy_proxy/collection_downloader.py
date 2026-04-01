@@ -11,6 +11,7 @@ import asyncio
 import configparser
 import logging
 import os
+import re
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -136,23 +137,29 @@ def _inject_galaxy_env(env: dict[str, str], servers: list[GalaxyServerConfig]) -
         servers: Galaxy server configurations to inject.
 
     Raises:
-        ValueError: If any server has an empty name or if duplicate names exist.
+        ValueError: If any server has an empty name, a name with invalid
+            characters, or if duplicate names exist.
     """
+    _NAME_RE = re.compile(r"^[A-Za-z0-9_]+$")
     seen: set[str] = set()
     for s in servers:
-        if not s.name or not s.name.strip():
+        name = s.name.strip() if s.name else ""
+        if not name:
             msg = "Galaxy server name must not be empty"
             raise ValueError(msg)
-        upper = s.name.upper()
+        if not _NAME_RE.match(name):
+            msg = f"Galaxy server name contains invalid characters: {s.name!r}"
+            raise ValueError(msg)
+        upper = name.upper()
         if upper in seen:
             msg = f"Duplicate Galaxy server name: {s.name!r}"
             raise ValueError(msg)
         seen.add(upper)
 
-    names = [s.name for s in servers]
+    names = [s.name.strip() for s in servers]
     env["ANSIBLE_GALAXY_SERVER_LIST"] = ",".join(names)
     for s in servers:
-        prefix = f"ANSIBLE_GALAXY_SERVER_{s.name.upper()}_"
+        prefix = f"ANSIBLE_GALAXY_SERVER_{s.name.strip().upper()}_"
         env[f"{prefix}URL"] = s.url
         if s.token:
             env[f"{prefix}TOKEN"] = s.token

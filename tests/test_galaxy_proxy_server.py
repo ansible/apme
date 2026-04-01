@@ -304,8 +304,8 @@ class TestAdminGalaxyConfig:
         assert resp.status_code == 200
         assert resp.json()["accepted"] == 0
 
-    def test_updated_config_used_in_download(self, tmp_path: Path) -> None:
-        """After pushing config, downloads use the new servers.
+    def test_push_updates_app_state(self, tmp_path: Path) -> None:
+        """Pushing config updates app.state.galaxy_servers with correct types.
 
         Args:
             tmp_path: Pytest-provided temporary directory.
@@ -326,6 +326,27 @@ class TestAdminGalaxyConfig:
             assert servers[0].name == "myhub"
             assert servers[0].url == "https://hub.example.com"
             assert servers[0].token == "secret"
+
+    def test_push_rejects_empty_name(self, app: TestClient) -> None:
+        """Empty server name returns 422.
+
+        Args:
+            app: Test client fixture.
+        """
+        resp = app.post("/admin/galaxy-config", json={"servers": [{"name": "", "url": "https://x.com"}]})
+        assert resp.status_code == 422
+
+    def test_push_rejects_duplicate_name(self, app: TestClient) -> None:
+        """Duplicate server names return 422.
+
+        Args:
+            app: Test client fixture.
+        """
+        resp = app.post(
+            "/admin/galaxy-config",
+            json={"servers": [{"name": "hub", "url": "https://a.com"}, {"name": "HUB", "url": "https://b.com"}]},
+        )
+        assert resp.status_code == 422
 
 
 class TestConvertTarballs:

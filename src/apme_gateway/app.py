@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -11,8 +10,6 @@ from fastapi import FastAPI
 from apme_gateway._galaxy_proxy_sync import schedule_push
 from apme_gateway.api.feedback import router as feedback_router
 from apme_gateway.api.router import router
-
-logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager

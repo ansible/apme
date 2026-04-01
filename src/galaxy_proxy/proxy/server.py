@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -150,10 +151,24 @@ def create_app(
 
         Returns:
             dict: Confirmation with count and names of accepted servers.
+
+        Raises:
+            HTTPException: 422 if any server name is empty, invalid, or duplicated.
         """
+        seen: set[str] = set()
+        for s in body.servers:
+            name = s.name.strip()
+            if not name:
+                raise HTTPException(status_code=422, detail="Server name must not be empty")
+            if not re.match(r"^[A-Za-z0-9_]+$", name):
+                raise HTTPException(status_code=422, detail=f"Invalid server name: {s.name!r}")
+            if name.upper() in seen:
+                raise HTTPException(status_code=422, detail=f"Duplicate server name: {s.name!r}")
+            seen.add(name.upper())
+
         app.state.galaxy_servers = [
             GalaxyServerConfig(
-                name=s.name,
+                name=s.name.strip(),
                 url=s.url,
                 token=s.token or None,
                 auth_url=s.auth_url or None,
@@ -161,7 +176,7 @@ def create_app(
             for s in body.servers
         ]
         app.state.ansible_cfg_path = None
-        names = [s.name for s in body.servers]
+        names = [s.name.strip() for s in body.servers]
         logger.info("Galaxy config updated: %d server(s): %s", len(names), ", ".join(names))
         return {"accepted": len(names), "servers": names}
 
