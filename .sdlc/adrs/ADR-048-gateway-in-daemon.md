@@ -1,4 +1,4 @@
-# ADR-047: Gateway Embedded in Local Daemon
+# ADR-048: Gateway Embedded in Local Daemon
 
 ## Status
 
