@@ -20,6 +20,7 @@ _COMMON_KEYS = frozenset(
         "scope",
         "source",
         "snippet",
+        "affected_children",
     }
 )
 
@@ -159,6 +160,10 @@ def violation_dict_to_proto(v: ViolationDict | Mapping[str, str | int | list[int
         except (ValueError, IndexError):
             pass
 
+    affected = v.get("affected_children")
+    if isinstance(affected, int) and affected > 0:
+        out.affected_children = affected
+
     for key in _METADATA_KEYS:
         val = v.get(key)
         if val is not None:
@@ -208,6 +213,9 @@ def violation_proto_to_dict(v: Violation) -> ViolationDict:
         "source": v.source,
         "snippet": v.snippet,
     }
+
+    if v.affected_children > 0:
+        result["affected_children"] = v.affected_children
 
     for key, val in v.metadata.items():
         if key in _METADATA_KEYS and val:

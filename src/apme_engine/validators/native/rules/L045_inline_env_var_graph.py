@@ -1,8 +1,9 @@
 """GraphRule L045: inline task environment variables.
 
-Graph-aware port of ``L045_inline_env_var.py``.  Matches tasks whose effective
-environment comes from the task or an ancestor scope and attributes inherited
-definitions in the violation detail.
+Fires **once** on the scope that defines ``environment:`` (play, block,
+or task) instead of on every inheriting child.  When the defining scope
+is a play or block, ``affected_children`` reports how many descendants
+inherit the inline environment.
 """
 
 from dataclasses import dataclass
@@ -11,14 +12,13 @@ from typing import TypeGuard
 from apme_engine.engine.content_graph import ContentGraph, NodeType
 from apme_engine.engine.models import RuleTag as Tag
 from apme_engine.engine.models import Severity, YAMLDict
-from apme_engine.engine.variable_provenance import VariableProvenanceResolver
 from apme_engine.validators.native.rules.graph_rule_base import GraphRule, GraphRuleResult
 
-_TASK_TYPES = frozenset({NodeType.TASK, NodeType.HANDLER})
+_ENV_SCOPES = frozenset({NodeType.PLAY, NodeType.BLOCK, NodeType.TASK, NodeType.HANDLER})
 
 
 def _environment_truthy(value: object) -> TypeGuard[YAMLDict]:
-    """Return True when ``value`` is a non-empty environment mapping.
+    """Return True when *value* is a non-empty environment mapping.
 
     Args:
         value: Candidate environment value from a node or property origin.
@@ -31,7 +31,11 @@ def _environment_truthy(value: object) -> TypeGuard[YAMLDict]:
 
 @dataclass
 class InlineEnvVarGraphRule(GraphRule):
-    """Discourage inline ``environment`` on tasks (including inherited scopes).
+    """Discourage inline ``environment`` at its defining scope.
+
+    Fires once on the play, block, or task that declares ``environment:``
+    instead of on every child that inherits it.  When the defining scope
+    is a play or block, ``affected_children`` counts descendants.
 
     Attributes:
         rule_id: Rule identifier.
@@ -47,63 +51,73 @@ class InlineEnvVarGraphRule(GraphRule):
     description: str = "Avoid inline environment variables in tasks; use env file or role vars"
     enabled: bool = True
     name: str = "InlineEnvVar"
-    version: str = "v0.0.2"
+    version: str = "v0.0.3"
     severity: str = Severity.VERY_LOW
     tags: tuple[str, ...] = (Tag.CODING,)
 
     def match(self, graph: ContentGraph, node_id: str) -> bool:
-        """Match tasks or handlers that have a non-empty effective environment.
+        """Match nodes that **locally define** a non-empty ``environment``.
+
+        Nodes that only inherit environment from an ancestor are not
+        matched; the ancestor will be matched instead.
 
         Args:
             graph: The full ContentGraph.
             node_id: ID of the node to check.
 
         Returns:
-            True when ``environment`` is set on the node or inherited from an ancestor.
+            True when ``environment`` is set on this node (not inherited).
         """
         node = graph.get_node(node_id)
         if node is None:
             return False
-        if node.node_type not in _TASK_TYPES:
+        if node.node_type not in _ENV_SCOPES:
             return False
-        if _environment_truthy(node.environment):
-            return True
-        resolver = VariableProvenanceResolver(graph)
-        origins = resolver.resolve_property_origins(node_id)
-        env_origin = origins.get("environment")
-        return env_origin is not None and _environment_truthy(env_origin.value)
+        return _environment_truthy(node.environment)
 
     def process(self, graph: ContentGraph, node_id: str) -> GraphRuleResult | None:
-        """Report inline environment usage with optional inheritance attribution.
+        """Report inline environment at the defining scope.
+
+        For plays and blocks, counts descendant tasks/handlers that
+        inherit the environment and includes the count as
+        ``affected_children`` in the violation detail.
 
         Args:
             graph: The full ContentGraph.
             node_id: ID of the node to evaluate.
 
         Returns:
-            Graph rule result with environment detail and ``verdict`` True.
+            GraphRuleResult with environment detail and affected count.
         """
         node = graph.get_node(node_id)
         if node is None:
             return None
 
-        resolver = VariableProvenanceResolver(graph)
-        origins = resolver.resolve_property_origins(node_id)
-        env_origin = origins.get("environment")
-
-        env_map: YAMLDict = {}
-        if _environment_truthy(node.environment):
-            env_map = dict(node.environment)
-        elif env_origin is not None and _environment_truthy(env_origin.value):
-            env_map = dict(env_origin.value)
+        scope_label = {
+            NodeType.PLAY: "play",
+            NodeType.BLOCK: "block",
+            NodeType.HANDLER: "handler",
+        }.get(node.node_type, "task")
 
         detail: YAMLDict = {
-            "message": "task uses inline environment; consider env file or variables",
-            "environment": env_map,
+            "message": f"{scope_label} defines inline environment; consider env file or variables",
+            "environment": dict(node.environment) if node.environment else {},
+            "scope": scope_label,
         }
-        if env_origin is not None and env_origin.defining_node_id != node_id:
-            detail["inherited_from"] = env_origin.defining_node_id
-            detail["defined_in_file"] = env_origin.file_path
+
+        if node.node_type in (NodeType.PLAY, NodeType.BLOCK):
+            child_count = 0
+            for desc_id in graph.structural_descendants(node_id):
+                desc = graph.get_node(desc_id)
+                if desc is None:
+                    continue
+                if desc.node_type not in (NodeType.TASK, NodeType.HANDLER):
+                    continue
+                if _environment_truthy(desc.environment):
+                    continue
+                child_count += 1
+            if child_count > 0:
+                detail["affected_children"] = child_count
 
         return GraphRuleResult(
             verdict=True,

@@ -57,6 +57,7 @@ message Violation {
   string source = 12;  // Validator that produced this violation (e.g. "native", "opa", "ansible", "gitleaks")
   string snippet = 13; // Source lines around the violation (numbered, ~10 lines context)
   string node_id = 14; // Stable ContentGraph node identity (YAML-path-based, ADR-044)
+  int32 affected_children = 15; // Number of child nodes affected by a scope-level violation
 }
 
 message LineRange {

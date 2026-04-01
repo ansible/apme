@@ -1,4 +1,4 @@
-"""Tests for R108 privilege escalation GraphRule (ADR-044 Phase 2A)."""
+"""Tests for R108 privilege escalation GraphRule — scope-based deduplication."""
 
 from __future__ import annotations
 
@@ -18,10 +18,10 @@ from apme_engine.validators.native.rules.R108_privilege_escalation_graph import 
 
 
 def _make_become_graph() -> ContentGraph:
-    """Build a graph with two plays: one with become and one without.
+    """Build a graph: play with become (3 tasks), play without (1 normal + 1 explicit).
 
     Returns:
-        A ``ContentGraph`` suitable for R108 become / inheritance tests.
+        A ``ContentGraph`` suitable for R108 scope-dedup tests.
     """
     g = ContentGraph()
     pb = ContentNode(
@@ -42,12 +42,28 @@ def _make_become_graph() -> ContentGraph:
         line_start=20,
         scope=NodeScope.OWNED,
     )
-    t_inherited = ContentNode(
+    t0 = ContentNode(
         identity=NodeIdentity("site.yml::play[0]/tasks[0]", NodeType.TASK),
         file_path="site.yml",
         line_start=5,
-        name="Escalated task (inherited)",
+        name="Task A (inherits become)",
         module="ansible.builtin.yum",
+        scope=NodeScope.OWNED,
+    )
+    t1 = ContentNode(
+        identity=NodeIdentity("site.yml::play[0]/tasks[1]", NodeType.TASK),
+        file_path="site.yml",
+        line_start=10,
+        name="Task B (inherits become)",
+        module="ansible.builtin.copy",
+        scope=NodeScope.OWNED,
+    )
+    t2 = ContentNode(
+        identity=NodeIdentity("site.yml::play[0]/tasks[2]", NodeType.TASK),
+        file_path="site.yml",
+        line_start=15,
+        name="Task C (inherits become)",
+        module="ansible.builtin.service",
         scope=NodeScope.OWNED,
     )
     t_normal = ContentNode(
@@ -67,106 +83,130 @@ def _make_become_graph() -> ContentGraph:
         become={"become": True, "become_user": "admin"},
         scope=NodeScope.OWNED,
     )
-    g.add_node(pb)
-    g.add_node(play_become)
-    g.add_node(play_normal)
-    g.add_node(t_inherited)
-    g.add_node(t_normal)
-    g.add_node(t_explicit)
+    for n in (pb, play_become, play_normal, t0, t1, t2, t_normal, t_explicit):
+        g.add_node(n)
     g.add_edge(pb.node_id, play_become.node_id, EdgeType.CONTAINS)
     g.add_edge(pb.node_id, play_normal.node_id, EdgeType.CONTAINS)
-    g.add_edge(play_become.node_id, t_inherited.node_id, EdgeType.CONTAINS)
+    g.add_edge(play_become.node_id, t0.node_id, EdgeType.CONTAINS)
+    g.add_edge(play_become.node_id, t1.node_id, EdgeType.CONTAINS)
+    g.add_edge(play_become.node_id, t2.node_id, EdgeType.CONTAINS)
     g.add_edge(play_normal.node_id, t_normal.node_id, EdgeType.CONTAINS)
     g.add_edge(play_normal.node_id, t_explicit.node_id, EdgeType.CONTAINS)
     return g
 
 
-class TestR108GraphRule:
-    """Tests for the graph-based R108 privilege escalation rule."""
+class TestR108ScopeDedup:
+    """R108 fires once on the defining scope, not on every inheriting child."""
 
-    def test_match_task_with_become(self) -> None:
-        """Verify match returns True for tasks with become set."""
+    def test_match_play_with_become(self) -> None:
+        """Play that defines become matches."""
         graph = _make_become_graph()
         rule = PrivilegeEscalationGraphRule()
-        assert rule.match(graph, "site.yml::play[0]/tasks[0]")
+        assert rule.match(graph, "site.yml::play[0]")
 
-    def test_no_match_task_without_become(self) -> None:
-        """Verify match returns False for tasks in a play without become."""
+    def test_no_match_inheriting_child(self) -> None:
+        """Task that only inherits become does NOT match."""
+        graph = _make_become_graph()
+        rule = PrivilegeEscalationGraphRule()
+        assert not rule.match(graph, "site.yml::play[0]/tasks[0]")
+
+    def test_match_explicit_task_become(self) -> None:
+        """Task with its own become still matches."""
+        graph = _make_become_graph()
+        rule = PrivilegeEscalationGraphRule()
+        assert rule.match(graph, "site.yml::play[1]/tasks[1]")
+
+    def test_no_match_play_without_become(self) -> None:
+        """Play without become does not match."""
+        graph = _make_become_graph()
+        rule = PrivilegeEscalationGraphRule()
+        assert not rule.match(graph, "site.yml::play[1]")
+
+    def test_no_match_normal_task(self) -> None:
+        """Task without become in a clean play does not match."""
         graph = _make_become_graph()
         rule = PrivilegeEscalationGraphRule()
         assert not rule.match(graph, "site.yml::play[1]/tasks[0]")
 
-    def test_no_match_play_node(self) -> None:
-        """Verify match returns False for non-task nodes."""
+    def test_process_play_affected_children(self) -> None:
+        """Play with become reports affected_children count."""
         graph = _make_become_graph()
         rule = PrivilegeEscalationGraphRule()
-        assert not rule.match(graph, "site.yml::play[0]")
-
-    def test_process_returns_become_detail(self) -> None:
-        """Verify process includes become info and inheritance in detail."""
-        graph = _make_become_graph()
-        rule = PrivilegeEscalationGraphRule()
-        result = rule.process(graph, "site.yml::play[0]/tasks[0]")
+        result = rule.process(graph, "site.yml::play[0]")
 
         assert result is not None
         assert result.verdict is True
         assert result.detail is not None
-        assert "become" in result.detail
-        assert result.detail.get("inherited_from") == "site.yml::play[0]"
+        assert result.detail["affected_children"] == 3
 
-    def test_process_attributes_inherited_become(self) -> None:
-        """Verify inherited_from is set when become comes from play."""
-        graph = _make_become_graph()
-        rule = PrivilegeEscalationGraphRule()
-        result = rule.process(graph, "site.yml::play[0]/tasks[0]")
-
-        assert result is not None
-        assert result.detail is not None
-        assert result.detail.get("inherited_from") == "site.yml::play[0]"
-
-    def test_process_explicit_become_on_task(self) -> None:
-        """Verify task with its own become shows no inherited_from.
-
-        play[1]/tasks[1] declares its own ``become``.  PropertyOrigin
-        finds the task itself as the defining scope, so
-        ``inherited_from`` is not set.
-        """
+    def test_process_task_no_affected_children(self) -> None:
+        """Task-level become has no affected_children."""
         graph = _make_become_graph()
         rule = PrivilegeEscalationGraphRule()
         result = rule.process(graph, "site.yml::play[1]/tasks[1]")
 
         assert result is not None
-        assert result.verdict is True
         assert result.detail is not None
-        assert result.detail.get("become") is True
-        assert result.detail.get("inherited_from") is None
+        assert "affected_children" not in result.detail
 
-    def test_scan_integration(self) -> None:
-        """Verify R108 integrates with the graph scanner."""
+    def test_scan_dedup(self) -> None:
+        """Full scan: 2 violations (play + explicit task), not 4."""
         graph = _make_become_graph()
         rules: list[GraphRule] = [PrivilegeEscalationGraphRule()]
         report = scan(graph, rules)
 
-        flagged_ids = {r.node_id for nr in report.node_results for r in nr.rule_results}
-        assert "site.yml::play[0]/tasks[0]" in flagged_ids
-        assert "site.yml::play[1]/tasks[1]" in flagged_ids
-        assert "site.yml::play[1]/tasks[0]" not in flagged_ids
+        flagged = {r.node_id for nr in report.node_results for r in nr.rule_results if r.verdict}
+        assert "site.yml::play[0]" in flagged
+        assert "site.yml::play[1]/tasks[1]" in flagged
+        assert len(flagged) == 2
 
-    def test_match_nonexistent_node(self) -> None:
-        """Verify match returns False for unknown node IDs."""
-        graph = _make_become_graph()
-        rule = PrivilegeEscalationGraphRule()
-        assert not rule.match(graph, "nonexistent::node")
+    def test_block_with_become(self) -> None:
+        """Block that defines become fires once with affected_children."""
+        g = ContentGraph()
+        play = ContentNode(
+            identity=NodeIdentity("p.yml/plays[0]", NodeType.PLAY),
+            file_path="p.yml",
+            scope=NodeScope.OWNED,
+        )
+        block = ContentNode(
+            identity=NodeIdentity("p.yml/plays[0]/tasks[0]", NodeType.BLOCK),
+            file_path="p.yml",
+            line_start=5,
+            become={"become": True, "become_user": "root"},
+            scope=NodeScope.OWNED,
+        )
+        child1 = ContentNode(
+            identity=NodeIdentity("p.yml/plays[0]/tasks[0]/block[0]", NodeType.TASK),
+            file_path="p.yml",
+            line_start=7,
+            module="ansible.builtin.debug",
+            scope=NodeScope.OWNED,
+        )
+        child2 = ContentNode(
+            identity=NodeIdentity("p.yml/plays[0]/tasks[0]/block[1]", NodeType.TASK),
+            file_path="p.yml",
+            line_start=10,
+            module="ansible.builtin.copy",
+            scope=NodeScope.OWNED,
+        )
+        for n in (play, block, child1, child2):
+            g.add_node(n)
+        g.add_edge(play.node_id, block.node_id, EdgeType.CONTAINS)
+        g.add_edge(block.node_id, child1.node_id, EdgeType.CONTAINS)
+        g.add_edge(block.node_id, child2.node_id, EdgeType.CONTAINS)
 
-    def test_process_nonexistent_node(self) -> None:
-        """Verify process returns None for unknown node IDs."""
-        graph = _make_become_graph()
         rule = PrivilegeEscalationGraphRule()
-        result = rule.process(graph, "nonexistent::node")
-        assert result is None
+        assert rule.match(g, block.node_id)
+        assert not rule.match(g, child1.node_id)
+        assert not rule.match(g, child2.node_id)
+
+        result = rule.process(g, block.node_id)
+        assert result is not None
+        assert result.detail is not None
+        assert result.detail["affected_children"] == 2
 
     def test_handler_with_become(self) -> None:
-        """Verify R108 matches handlers with become."""
+        """Handler with its own become still matches."""
         g = ContentGraph()
         handler = ContentNode(
             identity=NodeIdentity("handlers/main.yml::handler[0]", NodeType.HANDLER),
@@ -179,3 +219,16 @@ class TestR108GraphRule:
         g.add_node(handler)
         rule = PrivilegeEscalationGraphRule()
         assert rule.match(g, handler.node_id)
+
+    def test_match_nonexistent_node(self) -> None:
+        """Match returns False for unknown node IDs."""
+        graph = _make_become_graph()
+        rule = PrivilegeEscalationGraphRule()
+        assert not rule.match(graph, "nonexistent::node")
+
+    def test_process_nonexistent_node(self) -> None:
+        """Process returns None for unknown node IDs."""
+        graph = _make_become_graph()
+        rule = PrivilegeEscalationGraphRule()
+        result = rule.process(graph, "nonexistent::node")
+        assert result is None

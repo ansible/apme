@@ -247,6 +247,7 @@ def graph_report_to_violations(report: GraphScanReport) -> list[ViolationDict]:
                 line = node.line_start if node.line_start else None
 
             msg = str(detail.get("message", "")) or (rule.description if rule else "")
+            scope = str(detail.get("scope", "")) or (rule.scope if rule else "task")
             v: ViolationDict = {
                 "rule_id": rule.rule_id if rule else "",
                 "level": rule.severity if rule else "",
@@ -255,13 +256,17 @@ def graph_report_to_violations(report: GraphScanReport) -> list[ViolationDict]:
                 "line": line,
                 "path": rr.node_id,
                 "source": "native",
-                "scope": rule.scope if rule else "task",
+                "scope": scope,
             }
 
             for key in ("resolved_fqcn", "original_module", "fqcn", "with_key"):
                 val = detail.get(key)
                 if val is not None:
                     v[key] = str(val)
+
+            affected = detail.get("affected_children")
+            if isinstance(affected, int) and affected > 0:
+                v["affected_children"] = affected
 
             violations.append(v)
 

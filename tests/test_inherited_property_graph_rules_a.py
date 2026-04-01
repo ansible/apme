@@ -233,7 +233,10 @@ class TestL047GraphRule:
 
 
 class TestL045GraphRule:
-    """Tests for ``InlineEnvVarGraphRule`` (L045).
+    """Tests for ``InlineEnvVarGraphRule`` (L045) — scope-based deduplication.
+
+    L045 fires once on the scope that defines ``environment:``.  Tasks that
+    only inherit environment from an ancestor are not matched.
 
     The ``rule`` fixture yields a new rule instance for each test.
     """
@@ -281,8 +284,8 @@ class TestL045GraphRule:
         g.add_node(task)
         assert rule.match(g, task.node_id) is False
 
-    def test_match_inherited_env(self, rule: InlineEnvVarGraphRule) -> None:
-        """Environment defined only on the play still matches the child task.
+    def test_no_match_inheriting_child(self, rule: InlineEnvVarGraphRule) -> None:
+        """Task that only inherits environment does NOT match (dedup).
 
         Args:
             rule: Rule instance under test.
@@ -302,7 +305,24 @@ class TestL045GraphRule:
             scope=NodeScope.OWNED,
         )
         g = _add_playbook_play_task_chain(play, task)
-        assert rule.match(g, task.node_id) is True
+        assert rule.match(g, task.node_id) is False
+
+    def test_match_play_with_env(self, rule: InlineEnvVarGraphRule) -> None:
+        """Play that defines environment matches.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        play = ContentNode(
+            identity=NodeIdentity(path="site.yml/plays[0]", node_type=NodeType.PLAY),
+            file_path="site.yml",
+            line_start=1,
+            environment={"X": "1"},
+            scope=NodeScope.OWNED,
+        )
+        g = ContentGraph()
+        g.add_node(play)
+        assert rule.match(g, play.node_id) is True
 
     def test_process_local_env(self, rule: InlineEnvVarGraphRule) -> None:
         """Local inline environment produces a violation with env detail.
@@ -324,10 +344,10 @@ class TestL045GraphRule:
         assert r.verdict is True
         assert r.detail is not None
         assert r.detail.get("environment") == {"FOO": "bar"}
-        assert "inherited_from" not in r.detail
+        assert "affected_children" not in r.detail
 
-    def test_process_inherited_env_attribution(self, rule: InlineEnvVarGraphRule) -> None:
-        """Inherited environment lists ``inherited_from`` and defining file.
+    def test_process_play_affected_children(self, rule: InlineEnvVarGraphRule) -> None:
+        """Play with environment reports affected_children count.
 
         Args:
             rule: Rule instance under test.
@@ -339,38 +359,28 @@ class TestL045GraphRule:
             environment={"FOO": "from_play"},
             scope=NodeScope.OWNED,
         )
-        task = ContentNode(
+        task1 = ContentNode(
             identity=NodeIdentity(path="site.yml/plays[0]/tasks[0]", node_type=NodeType.TASK),
             file_path="site.yml",
             line_start=10,
-            environment=None,
+            module="ansible.builtin.debug",
             scope=NodeScope.OWNED,
         )
-        g = _add_playbook_play_task_chain(play, task)
-        r = rule.process(g, task.node_id)
+        task2 = ContentNode(
+            identity=NodeIdentity(path="site.yml/plays[0]/tasks[1]", node_type=NodeType.TASK),
+            file_path="site.yml",
+            line_start=15,
+            module="ansible.builtin.copy",
+            scope=NodeScope.OWNED,
+        )
+        g = _add_playbook_play_task_chain(play, task1)
+        g.add_node(task2)
+        g.add_edge(play.node_id, task2.node_id, EdgeType.CONTAINS)
+        r = rule.process(g, play.node_id)
         assert r is not None
         assert r.verdict is True
         assert r.detail is not None
-        assert r.detail.get("inherited_from") == play.node_id
-        assert r.detail.get("defined_in_file") == "site.yml"
-        assert r.detail.get("environment") == {"FOO": "from_play"}
-
-    def test_no_match_play_node(self, rule: InlineEnvVarGraphRule) -> None:
-        """Plays are not direct targets for L045 matching.
-
-        Args:
-            rule: Rule instance under test.
-        """
-        play = ContentNode(
-            identity=NodeIdentity(path="site.yml/plays[0]", node_type=NodeType.PLAY),
-            file_path="site.yml",
-            line_start=1,
-            environment={"X": "1"},
-            scope=NodeScope.OWNED,
-        )
-        g = ContentGraph()
-        g.add_node(play)
-        assert rule.match(g, play.node_id) is False
+        assert r.detail["affected_children"] == 2
 
 
 class TestM022GraphRule:
