@@ -85,7 +85,7 @@ def galaxy_to_metadata_with_python_deps(
 
     extra_lines = []
     for line in requirements_txt.splitlines():
-        line = line.strip()
+        line = line.split(" #", 1)[0].strip()
         if not line or line.startswith("#") or line.startswith("-"):
             continue
         extra_lines.append(f"Requires-Dist: {line}")

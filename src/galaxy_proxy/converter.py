@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 from galaxy_proxy.metadata import (
-    galaxy_to_metadata_with_python_deps,
+    galaxy_to_metadata,
     generate_record,
     generate_top_level,
     generate_wheel_file,
@@ -40,10 +40,9 @@ def tarball_to_wheel(tarball_data: bytes) -> tuple[str, bytes]:
     name = galaxy["name"]
     version = galaxy["version"]
 
-    requirements_txt = contents.pop("requirements.txt", None)
-    req_text = requirements_txt.decode() if requirements_txt else None
+    contents.pop("requirements.txt", None)
 
-    metadata_content = galaxy_to_metadata_with_python_deps(galaxy, req_text)
+    metadata_content = galaxy_to_metadata(galaxy)
     wheel_content = generate_wheel_file()
     top_level_content = generate_top_level(namespace)
 

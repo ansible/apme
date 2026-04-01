@@ -280,6 +280,10 @@ async def create_galaxy_server(body: CreateGalaxyServerRequest) -> GalaxyServerS
             status_code=409,
             detail=f"Galaxy server named '{body.name}' already exists",
         ) from None
+
+    from apme_gateway._galaxy_proxy_sync import schedule_push  # noqa: PLC0415
+
+    schedule_push()
     return _to_galaxy_schema(server)
 
 
@@ -344,6 +348,10 @@ async def update_galaxy_server(
         ) from None
     if server is None:
         raise HTTPException(status_code=404, detail="Galaxy server not found")
+
+    from apme_gateway._galaxy_proxy_sync import schedule_push  # noqa: PLC0415
+
+    schedule_push()
     return _to_galaxy_schema(server)
 
 
@@ -361,6 +369,10 @@ async def delete_galaxy_server(server_id: int) -> None:
         ok = await q.delete_galaxy_server(db, server_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Galaxy server not found")
+
+    from apme_gateway._galaxy_proxy_sync import schedule_push  # noqa: PLC0415
+
+    schedule_push()
 
 
 # ── Project CRUD (ADR-037) ───────────────────────────────────────────
