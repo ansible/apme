@@ -13,6 +13,7 @@ from galaxy_proxy.collection_downloader import (
     GalaxyServerConfig,
     _compute_failed_specs,
     _find_tarballs,
+    _inject_galaxy_env,
     _spec_fqcn,
     convert_tarballs_in_dir,
     download_collections,
@@ -338,8 +339,8 @@ class TestDownloadCollections:
         assert captured_env.get("ANSIBLE_CONFIG") == str(cfg_path)
 
     @pytest.mark.asyncio  # type: ignore[untyped-decorator]
-    async def test_uses_servers_generates_cfg(self, tmp_path: Path) -> None:
-        """Generates temp ansible.cfg when servers are provided.
+    async def test_uses_servers_injects_env_vars(self, tmp_path: Path) -> None:
+        """Injects ANSIBLE_GALAXY_SERVER_* env vars when servers are provided.
 
         Args:
             tmp_path: Pytest-provided temporary directory.
@@ -367,7 +368,10 @@ class TestDownloadCollections:
                 servers=servers,
             )
 
-        assert "ANSIBLE_CONFIG" in captured_env
+        assert captured_env.get("ANSIBLE_GALAXY_SERVER_LIST") == "hub"
+        assert captured_env.get("ANSIBLE_GALAXY_SERVER_HUB_URL") == "https://hub.example.com"
+        assert captured_env.get("ANSIBLE_GALAXY_SERVER_HUB_TOKEN") == "tok"
+        assert "ANSIBLE_CONFIG" not in captured_env
 
     @pytest.mark.asyncio  # type: ignore[untyped-decorator]
     async def test_partial_failure(self, tmp_path: Path) -> None:
@@ -458,3 +462,53 @@ class TestConvertTarballsInDir:
 
         results = convert_tarballs_in_dir(tarball_dir, cache_dir)
         assert results == []
+
+
+class TestInjectGalaxyEnv:
+    """Tests for _inject_galaxy_env helper."""
+
+    def test_single_server(self) -> None:
+        """Single server sets SERVER_LIST and per-server vars."""
+        env: dict[str, str] = {}
+        servers = [GalaxyServerConfig(name="hub", url="https://hub.example.com", token="tok123")]
+        _inject_galaxy_env(env, servers)
+
+        assert env["ANSIBLE_GALAXY_SERVER_LIST"] == "hub"
+        assert env["ANSIBLE_GALAXY_SERVER_HUB_URL"] == "https://hub.example.com"
+        assert env["ANSIBLE_GALAXY_SERVER_HUB_TOKEN"] == "tok123"
+        assert "ANSIBLE_GALAXY_SERVER_HUB_AUTH_URL" not in env
+
+    def test_multiple_servers(self) -> None:
+        """Multiple servers are comma-separated in SERVER_LIST."""
+        env: dict[str, str] = {}
+        servers = [
+            GalaxyServerConfig(
+                name="certified", url="https://cert.example.com", token="t1", auth_url="https://sso.example.com"
+            ),
+            GalaxyServerConfig(name="community", url="https://galaxy.ansible.com"),
+        ]
+        _inject_galaxy_env(env, servers)
+
+        assert env["ANSIBLE_GALAXY_SERVER_LIST"] == "certified,community"
+        assert env["ANSIBLE_GALAXY_SERVER_CERTIFIED_URL"] == "https://cert.example.com"
+        assert env["ANSIBLE_GALAXY_SERVER_CERTIFIED_TOKEN"] == "t1"
+        assert env["ANSIBLE_GALAXY_SERVER_CERTIFIED_AUTH_URL"] == "https://sso.example.com"
+        assert env["ANSIBLE_GALAXY_SERVER_COMMUNITY_URL"] == "https://galaxy.ansible.com"
+        assert "ANSIBLE_GALAXY_SERVER_COMMUNITY_TOKEN" not in env
+
+    def test_empty_name_raises(self) -> None:
+        """Empty server name raises ValueError."""
+        env: dict[str, str] = {}
+        servers = [GalaxyServerConfig(name="", url="https://example.com")]
+        with pytest.raises(ValueError, match="must not be empty"):
+            _inject_galaxy_env(env, servers)
+
+    def test_duplicate_name_raises(self) -> None:
+        """Duplicate server names (case-insensitive) raise ValueError."""
+        env: dict[str, str] = {}
+        servers = [
+            GalaxyServerConfig(name="hub", url="https://hub1.example.com"),
+            GalaxyServerConfig(name="HUB", url="https://hub2.example.com"),
+        ]
+        with pytest.raises(ValueError, match="Duplicate"):
+            _inject_galaxy_env(env, servers)

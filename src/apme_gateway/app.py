@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from apme_gateway._galaxy_proxy_sync import push_galaxy_config
+from apme_gateway._galaxy_proxy_sync import schedule_push
 from apme_gateway.api.feedback import router as feedback_router
 from apme_gateway.api.router import router
 
@@ -19,9 +19,9 @@ logger = logging.getLogger(__name__)
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:  # noqa: ARG001
     """Gateway startup/shutdown lifecycle.
 
-    On startup, push the current Galaxy server configs from the DB to the
-    Galaxy Proxy so it can authenticate with Automation Hub from the first
-    download request.
+    On startup, schedule a background push of Galaxy server configs from
+    the DB to the Galaxy Proxy.  The push is fire-and-forget so it never
+    delays application startup even if the proxy is unreachable.
 
     Args:
         app: The FastAPI application instance (unused, required by lifespan protocol).
@@ -29,7 +29,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:  # noqa: ARG001
     Yields:
         None: Control to the application.
     """
-    await push_galaxy_config()
+    schedule_push()
     yield
 
 

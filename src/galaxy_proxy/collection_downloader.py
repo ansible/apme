@@ -134,7 +134,21 @@ def _inject_galaxy_env(env: dict[str, str], servers: list[GalaxyServerConfig]) -
     Args:
         env: Mutable env dict for the subprocess.
         servers: Galaxy server configurations to inject.
+
+    Raises:
+        ValueError: If any server has an empty name or if duplicate names exist.
     """
+    seen: set[str] = set()
+    for s in servers:
+        if not s.name or not s.name.strip():
+            msg = "Galaxy server name must not be empty"
+            raise ValueError(msg)
+        upper = s.name.upper()
+        if upper in seen:
+            msg = f"Duplicate Galaxy server name: {s.name!r}"
+            raise ValueError(msg)
+        seen.add(upper)
+
     names = [s.name for s in servers]
     env["ANSIBLE_GALAXY_SERVER_LIST"] = ",".join(names)
     for s in servers:
