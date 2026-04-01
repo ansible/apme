@@ -248,6 +248,7 @@ def _add_manifest(db: AsyncSession, scan_id: str, manifest: object) -> None:
     seen_fqcns: set[str] = set()
     for c in manifest.collections:  # type: ignore[attr-defined]
         if c.fqcn in seen_fqcns:
+            logger.debug("Skipping duplicate collection FQCN '%s' for scan '%s'", c.fqcn, scan_id)
             continue
         seen_fqcns.add(c.fqcn)
         db.add(
