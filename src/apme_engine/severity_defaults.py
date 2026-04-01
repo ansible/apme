@@ -241,7 +241,7 @@ def get_severity(rule_id: str) -> Severity:
     Returns:
         The default Severity for the rule.
     """
-    if rule_id.startswith("SEC"):
+    if rule_id.startswith("SEC:"):
         return Severity.CRITICAL
     return SEVERITY_DEFAULTS.get(rule_id, Severity.MEDIUM)
 

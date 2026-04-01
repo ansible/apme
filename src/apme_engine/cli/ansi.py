@@ -379,7 +379,7 @@ def severity_indicator(level: str) -> str:
         level: Severity label.
 
     Returns:
-        Colored indicator: ✖ (red), △ (yellow), i (cyan).
+        Colored indicator: x (red), △ (yellow), i (cyan).
     """
     level_lower = level.lower() if level else "info"
     if level_lower in ("critical", "error", "high"):

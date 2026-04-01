@@ -8,6 +8,7 @@ from apme_engine.engine.models import RemediationClass, RemediationResolution, R
 from apme_engine.severity_defaults import (
     Severity,
     severity_from_label,
+    severity_from_proto,
     severity_to_label,
     severity_to_proto,
 )
@@ -225,7 +226,7 @@ def violation_proto_to_dict(v: Violation) -> ViolationDict:
     )
     result: ViolationDict = {
         "rule_id": v.rule_id,
-        "severity": severity_to_label(Severity(v.severity)),
+        "severity": severity_to_label(severity_from_proto(v.severity)),
         "message": v.message,
         "file": v.file,
         "line": line,

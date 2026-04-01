@@ -20,6 +20,7 @@ from fastapi import APIRouter, HTTPException, Query, WebSocket
 from fastapi.responses import JSONResponse
 from starlette.websockets import WebSocketDisconnect  # type: ignore[import-not-found]
 
+from apme_engine.severity_defaults import severity_from_proto, severity_to_label
 from apme_gateway.api.schemas import (
     ActivityDetail,
     ActivitySummary,
@@ -1390,7 +1391,7 @@ async def project_operate_ws(
                 fixed_violations_json = [
                     {
                         "rule_id": v.rule_id,
-                        "severity": v.severity,
+                        "severity": severity_to_label(severity_from_proto(v.severity)),
                         "message": v.message,
                         "file": v.file,
                         "line": _extract_line(v),

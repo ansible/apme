@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from apme.v1 import common_pb2
 from apme.v1.common_pb2 import Violation
-from apme_engine.severity_defaults import Severity, severity_to_label
+from apme_engine.severity_defaults import severity_from_proto, severity_to_label
 
 _PROTO_TO_REMEDIATION_CLASS: dict[int, str] = {
     common_pb2.REMEDIATION_CLASS_UNSPECIFIED: "ai-candidate",  # type: ignore[attr-defined]
@@ -54,7 +54,7 @@ def violation_proto_to_dict(
         line = [v.line_range.start, v.line_range.end]
     return {
         "rule_id": v.rule_id,
-        "severity": severity_to_label(Severity(v.severity)),
+        "severity": severity_to_label(severity_from_proto(v.severity)),
         "message": v.message,
         "file": v.file,
         "line": line,

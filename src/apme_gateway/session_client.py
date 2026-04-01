@@ -56,6 +56,7 @@ from apme.v1.primary_pb2 import (
     SessionCommand,
 )
 from apme_engine.daemon.chunked_fs import yield_scan_chunks
+from apme_engine.severity_defaults import severity_from_proto, severity_to_label
 
 logger = logging.getLogger(__name__)
 
@@ -388,7 +389,7 @@ async def _forward_events(
                     "remaining_violations": [
                         {
                             "rule_id": v.rule_id,
-                            "severity": v.severity,
+                            "severity": severity_to_label(severity_from_proto(v.severity)),
                             "message": v.message,
                             "file": v.file,
                         }

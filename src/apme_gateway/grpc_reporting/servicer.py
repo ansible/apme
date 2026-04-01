@@ -17,7 +17,7 @@ from sqlalchemy import select as sa_select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apme.v1 import reporting_pb2, reporting_pb2_grpc
-from apme_engine.severity_defaults import Severity, severity_to_label
+from apme_engine.severity_defaults import severity_from_proto, severity_to_label
 from apme_gateway.db import get_session
 from apme_gateway.db.models import (
     Proposal,
@@ -151,7 +151,7 @@ def _add_violations(db: AsyncSession, scan_id: str, violations: Sequence[object]
             Violation(
                 scan_id=scan_id,
                 rule_id=v.rule_id,  # type: ignore[attr-defined]
-                level=severity_to_label(Severity(v.severity)),  # type: ignore[attr-defined]
+                level=severity_to_label(severity_from_proto(v.severity)),  # type: ignore[attr-defined]
                 message=v.message,  # type: ignore[attr-defined]
                 file=v.file,  # type: ignore[attr-defined]
                 line=line_val,
