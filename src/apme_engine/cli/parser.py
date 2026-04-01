@@ -146,4 +146,29 @@ def build_parser() -> argparse.ArgumentParser:
     health_p.add_argument("--timeout", type=float, default=5.0, help="Timeout per check (default: 5s)")
     health_p.add_argument("--json", action="store_true", help="Output as JSON")
 
+    # ── sbom ──
+    sbom_p = subparsers.add_parser(
+        "sbom",
+        parents=[global_opts],
+        help="Generate SBOM for a project (via Gateway REST API)",
+    )
+    sbom_p.add_argument("project_id", help="Project identifier (UUID or name)")
+    sbom_p.add_argument(
+        "--format",
+        default="cyclonedx",
+        choices=["cyclonedx"],
+        help="SBOM output format (default: cyclonedx)",
+    )
+    sbom_p.add_argument(
+        "-o",
+        "--output",
+        default=None,
+        help="Write SBOM to file instead of stdout",
+    )
+    sbom_p.add_argument(
+        "--gateway-url",
+        default=None,
+        help="Gateway URL (default: $APME_GATEWAY_URL or http://localhost:8080)",
+    )
+
     return parser

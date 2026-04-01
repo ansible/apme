@@ -70,6 +70,7 @@ Decisions under consideration — not yet accepted or implemented.
 | [ADR-044](ADR-044-node-identity-progression-model.md) | Node Identity and Progression Model | 2026-03-27 |
 | [ADR-045](ADR-045-galaxy-auth-delegation.md) | Delegate Galaxy Authentication to ansible-galaxy, Galaxy Config as Scan Metadata | 2026-03-28 |
 | [ADR-046](ADR-046-ai-assisted-report-generation.md) | AI-Assisted Report Generation | 2026-03-30 |
+| [ADR-047](ADR-047-gateway-in-daemon.md) | Gateway Embedded in Local Daemon | 2026-04-01 |
 
 ## Superseded
 

@@ -44,6 +44,10 @@ def main() -> None:
         from apme_engine.cli.health import run_health_check
 
         run_health_check(args)
+    elif cmd == "sbom":
+        from apme_engine.cli.sbom_cmd import run_sbom
+
+        run_sbom(args)
     else:
         parser.print_help()
         sys.exit(1)
