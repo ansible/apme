@@ -494,6 +494,7 @@ def list_installed_collections(venv_dir: Path) -> list[tuple[str, str, str, str]
         logger.warning("Failed to parse collection list output from %s", venv_dir)
         return []
 
+    seen: set[str] = set()
     collections: list[tuple[str, str, str, str]] = []
     for install_path, entries in data.items():
         if not isinstance(entries, dict):
@@ -501,6 +502,9 @@ def list_installed_collections(venv_dir: Path) -> list[tuple[str, str, str, str]
         for fqcn, info in entries.items():
             if fqcn.startswith("ansible._"):
                 continue
+            if fqcn in seen:
+                continue
+            seen.add(fqcn)
             version = info.get("version", "") if isinstance(info, dict) else ""
             if version == "*":
                 version = ""

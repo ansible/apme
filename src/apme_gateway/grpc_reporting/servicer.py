@@ -245,7 +245,11 @@ def _add_manifest(db: AsyncSession, scan_id: str, manifest: object) -> None:
             dependency_tree=manifest.dependency_tree,  # type: ignore[attr-defined]
         )
     )
+    seen_fqcns: set[str] = set()
     for c in manifest.collections:  # type: ignore[attr-defined]
+        if c.fqcn in seen_fqcns:
+            continue
+        seen_fqcns.add(c.fqcn)
         db.add(
             ScanCollection(
                 scan_id=scan_id,

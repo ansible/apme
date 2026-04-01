@@ -952,3 +952,38 @@ class TestListInstalledCollections:
 
         fqcns = [c[0] for c in colls]
         assert fqcns == ["a.a", "m.m", "z.z"]
+
+    def test_deduplicates_across_install_paths(self, tmp_path: Path) -> None:
+        """Same FQCN under multiple install paths is returned only once.
+
+        Args:
+            tmp_path: Pytest-provided temporary directory.
+        """
+        from apme_engine.venv_manager.session import list_installed_collections
+
+        venv = tmp_path / "venv"
+        bindir = venv / "bin"
+        bindir.mkdir(parents=True)
+        (bindir / "python").write_text("#!/bin/sh\n")
+        (bindir / "python").chmod(0o755)
+
+        galaxy_output = json.dumps(
+            {
+                "/path/one/site-packages": {
+                    "community.general": {"version": "8.3.0"},
+                    "ansible.posix": {"version": "1.5.4"},
+                },
+                "/path/two/collections": {
+                    "community.general": {"version": "8.3.0"},
+                },
+            },
+        )
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = galaxy_output
+
+        with patch("apme_engine.venv_manager.session.subprocess.run", return_value=mock_result):
+            colls = list_installed_collections(venv)
+
+        fqcns = [c[0] for c in colls]
+        assert fqcns == ["ansible.posix", "community.general"]
