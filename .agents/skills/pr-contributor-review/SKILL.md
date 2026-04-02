@@ -1,5 +1,5 @@
 ---
-name: review-contributor-pr
+name: pr-contributor-review
 description: >
   Review and help prepare a contributor's pull request (upstream or fork).
   Use when the user asks to review a PR, get a contributor PR ready, update a
@@ -18,7 +18,7 @@ metadata:
 This skill defines how to review and assist with a **contributor's** pull
 request (someone else's PR, e.g. from a fork or another branch). Use it when
 you are helping make a contributor PR merge-ready, not when submitting your
-own PR (use `submit-pr` for that).
+own PR (use `pr-new` for that).
 
 ## Goals
 
@@ -75,7 +75,7 @@ and then push so CI stays green.
 ### 4. PR description quality
 
 - If the PR body is minimal or missing structure, suggest or apply the
-  **submit-pr** template: Summary, Changes, Test plan (and optionally Related
+  **pr-new** template: Summary, Changes, Test plan (and optionally Related
   Specs, Type of Change, Security Checklist from CONTRIBUTING).
 
 - You can update the PR body via GitHub (if you have permission) or draft
@@ -103,24 +103,11 @@ and then push so CI stays green.
 - After pushing, the PR will update automatically. Optionally update the PR
   description to mention the new commits.
 
-### 5a. Comment on review threads (same as pr-review)
+### 5a. Comment on review threads
 
-When you push fixes that address a review comment, **reply on that thread** so
-the resolution is visible. Use the same method as the **pr-review** skill:
-
-- Reply via the REST API (use the **top-level** comment id for the thread, not
-  a reply). Replace `PR` with the pull request number (e.g. `22`) and
-  `COMMENT_ID` with the top-level comment's `id`:
-
-  ```bash
-  gh api -X POST "repos/ansible/apme/pulls/PR/comments/COMMENT_ID/replies" \
-    -f body="Brief explanation of the fix. Fixed in COMMIT_SHA."
-  ```
-
-- To find comment IDs: `gh api repos/ansible/apme/pulls/PR/comments` — use the
-  top-level comment's `id` (the one with `in_reply_to_id: null` for that thread).
-- Each reply should state **how** the issue was resolved and include the commit
-  hash. Optionally resolve the thread via GraphQL (see pr-review skill).
+When you push fixes that address a review comment, reply on that thread so
+the resolution is visible. Follow the **`pr-review`** skill for the full
+procedure (REST reply endpoint, finding comment IDs, GraphQL thread resolution).
 
 ### 6. What not to include in the skill
 
@@ -136,16 +123,16 @@ When reviewing or preparing a contributor PR:
 - [ ] Fetched PR and know base/head and remotes.
 - [ ] Branch is up to date with upstream main (rebase if needed before push).
 - [ ] `tox -e lint` and `tox -e unit` pass.
-- [ ] PR description has Summary, Changes, and Test plan (submit-pr style).
+- [ ] PR description has Summary, Changes, and Test plan (pr-new style).
 - [ ] If pushing to their branch: rebase onto upstream main, tox green, then
       `git push <remote> <local>:<their-branch> --force-with-lease`.
-- [ ] If you addressed a review comment: reply on that thread (same as pr-review)
-      with explanation + commit SHA, using the replies endpoint (replace PR and COMMENT_ID).
+- [ ] If you addressed a review comment: follow the `pr-review` skill to reply
+      on the thread with explanation + commit SHA and resolve it.
 
 ## References
 
 - **tox skill** (`/tox`): Full tox environment reference.
-- **submit-pr** skill: PR body template and commit conventions.
+- **pr-new** skill: PR body template and commit conventions.
 - **pr-review** skill: Responding to review comments and resolving threads.
 - **CONTRIBUTING.md**: PR template, testing, security checklist.
 - **CLAUDE.md**: Quality gates (tox -e lint, tox -e unit).

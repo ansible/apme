@@ -348,21 +348,21 @@ anything else**. If a matching skill exists, read it and follow its instructions
 | Command | Purpose |
 |---------|---------|
 | `/adr-new` | Create architectural decision record |
+| `/branch-align` | Align branch name with SDLC artifacts |
 | `/dr-new` | Capture blocking question |
 | `/dr-review` | Review decision records |
 | `/lean-ci` | CI workflow helpers |
 | `/phase-new` | Create project phase |
+| `/pr-contributor-review` | Review external contributor PRs |
+| `/pr-new` | Create and submit pull requests |
 | `/pr-review` | Handle PR review feedback |
 | `/prd-import` | Import product requirements |
 | `/req-new` | Create requirement spec |
-| `/review-contributor-pr` | Review external contributor PRs |
 | `/rfe-capture` | Capture request for enhancement |
 | `/sdlc-status` | SDLC dashboard status |
 | `/security-scan` | Security scanning helpers |
-| `/submit-pr` | Create and submit pull requests |
 | `/task-new` | Create implementation task |
 | `/tox` | tox environment reference (lint, test, build, pod) |
-| `/branch-align` | Align branch name with SDLC artifacts |
 | `/workflow` | Development workflow guidance |
 
 ## Design Thinking

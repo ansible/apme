@@ -4,14 +4,13 @@ Agent skills for development workflow and spec-driven development.
 
 ## Available Skills
 
-### Development Workflow
+### Pull Requests (`pr-*`)
 
 | Skill | Purpose | Arguments |
 |-------|---------|-----------|
-| `submit-pr` | Prepare and submit a pull request | — |
-| `pr-review` | Handle PR review feedback | — |
-| `review-contributor-pr` | Review and prepare a contributor's PR (upstream/fork) | — |
-| `branch-align` | Rename branch to match artifact ID after renumbering | `[new-branch-name]` |
+| `pr-new` | Prepare and submit a pull request | `[branch-name] [--title 'PR title']` |
+| `pr-review` | Handle PR review feedback | `<PR number>` |
+| `pr-contributor-review` | Review and prepare a contributor's PR (upstream/fork) | `<PR number or URL>` |
 
 ### Spec-Driven Development (SDLC)
 
@@ -28,6 +27,15 @@ Agent skills for development workflow and spec-driven development.
 | `dr-review` | Resolve Decision Request | `[DR-NNN] [--quick]` |
 | `adr-new` | Create Architecture Decision Record | `[Title] [--from-dr X]` |
 
+### Utilities
+
+| Skill | Purpose | Arguments |
+|-------|---------|-----------|
+| `tox` | tox environment reference (lint, test, build, pod) | `[environment-name]` |
+| `lean-ci` | Guide for GitHub Actions workflows | `[workflow-name]` |
+| `security-scan` | Scan dependencies and CI for vulnerabilities | `[--update]` |
+| `branch-align` | Rename branch to match artifact ID after renumbering | `[new-branch-name]` |
+
 ## Skill Structure
 
 ```
@@ -35,30 +43,13 @@ skills/
 ├── README.md               ← You are here
 ├── resources/              # Shared resources
 │   └── status-values.md
-├── submit-pr/
+├── pr-new/                 # PR lifecycle
 │   └── SKILL.md
 ├── pr-review/
 │   └── SKILL.md
-├── review-contributor-pr/
+├── pr-contributor-review/
 │   └── SKILL.md
-├── branch-align/
-│   └── SKILL.md
-├── rfe-capture/
-│   └── SKILL.md
-├── sdlc-status/
-│   ├── SKILL.md
-│   └── references/
-├── workflow/
-│   ├── SKILL.md
-│   └── references/
-├── prd-import/
-│   └── SKILL.md
-├── phase-new/
-│   └── SKILL.md
-├── req-new/
-│   ├── SKILL.md
-│   └── references/
-├── task-new/
+├── adr-new/                # SDLC artifacts
 │   ├── SKILL.md
 │   └── references/
 ├── dr-new/
@@ -67,9 +58,32 @@ skills/
 ├── dr-review/
 │   ├── SKILL.md
 │   └── references/
-└── adr-new/
-    ├── SKILL.md
-    └── references/
+├── phase-new/
+│   └── SKILL.md
+├── prd-import/
+│   └── SKILL.md
+├── req-new/
+│   ├── SKILL.md
+│   └── references/
+├── rfe-capture/
+│   └── SKILL.md
+├── sdlc-status/
+│   ├── SKILL.md
+│   └── references/
+├── task-new/
+│   ├── SKILL.md
+│   └── references/
+├── workflow/
+│   ├── SKILL.md
+│   └── references/
+├── branch-align/           # Utilities
+│   └── SKILL.md
+├── lean-ci/
+│   └── SKILL.md
+├── security-scan/
+│   └── SKILL.md
+└── tox/
+    └── SKILL.md
 ```
 
 ## SKILL.md Format

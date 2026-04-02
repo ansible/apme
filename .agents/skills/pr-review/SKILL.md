@@ -17,24 +17,27 @@ This skill defines how to handle PR review feedback in the APME project.
 
 ## Responding to review comments
 
-Every review comment MUST receive a response and resolution. Unanswered
-comments block merge.
+Every review comment MUST receive a response. Resolve threads only after the
+feedback has been addressed and accepted; leave threads unresolved when disputing
+feedback and escalate to a human reviewer. Unanswered comments or unresolved
+disputed threads block merge.
 
 ### Rules
 
 - Address ALL review comments before requesting re-review. Do not leave
   comments unanswered.
-- Every comment requires two actions: a **closing reply** and **thread
-  resolution**. Replying alone does not resolve the thread; the thread must
-  be explicitly resolved via the GitHub UI or API.
+- Every comment requires a **closing reply**. When the feedback is addressed
+  or accepted, also **resolve the thread** via the GitHub UI or API. When
+  disputing or flagging a false positive, leave the thread unresolved for
+  human escalation.
 - Reply to each comment with a **brief explanation of how it was resolved** and
   the commit hash (e.g., "Removed the unused imports so Ruff F401 passes.
   Fixed in abc1234."). Do not reply with only the SHA; explain the fix.
 - If a comment is a false positive or you disagree, reply with a clear
-  technical explanation, then resolve the thread. Do not dismiss without
-  justification.
+  technical explanation. Do not resolve the thread. This will require human
+  intervention. Do not dismiss without justification.
 - After pushing fixes, update the PR description to reflect the expanded scope
-  (per the submit-pr skill).
+  (per the pr-new skill).
 
 ## Copilot review patterns
 
@@ -97,8 +100,9 @@ import is intentionally side-effect only.
 4. Fix all issues in a single commit (or minimal commits).
 5. Reply to each comment with a brief explanation of how it was resolved and
    the commit hash (e.g., "Removed unused imports. Fixed in abc1234.").
-6. **Resolve each review thread** after replying. Every thread must have both
-   a closing reply and an explicit resolution — replying alone is not enough.
+6. **Reply to every comment.** Resolve the thread only when the issue is
+   addressed or accepted. Leave disagreement or false-positive threads open
+   for a human reviewer to decide.
 
 ### Checking CI status
 
