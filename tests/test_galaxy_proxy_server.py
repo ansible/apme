@@ -393,7 +393,7 @@ class TestConvertTarballs:
         assert resp.status_code == 400
 
     def test_convert_rejects_path_outside_allowed_roots(self, tmp_path: Path) -> None:
-        """Paths outside allowed roots (/tmp, /sessions) are rejected with 400.
+        """Paths outside allowed roots (system tempdir, /sessions) are rejected with 400.
 
         Args:
             tmp_path: Pytest-provided temporary directory.

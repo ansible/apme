@@ -20,7 +20,7 @@ updates:
       interval: "weekly"
     cooldown:
       default-days: 30
- 
+
   - package-ecosystem: "pre-commit"
     directory: "/"
     schedule:
