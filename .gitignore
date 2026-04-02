@@ -12,6 +12,8 @@ build/
 venv/
 env/
 .env
+*.pem
+*.key
 
 # Testing
 .pytest_cache/

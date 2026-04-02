@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import tempfile
 from contextlib import asynccontextmanager
@@ -395,6 +396,14 @@ def create_app(
             except FileNotFoundError:
                 break
         tarball_path = raw_tarball_path.resolve()
+
+        allowed_roots = (Path(tempfile.gettempdir()).resolve(), Path("/sessions").resolve())
+        if not any(tarball_path == root or str(tarball_path).startswith(str(root) + os.sep) for root in allowed_roots):
+            raise HTTPException(
+                status_code=400,
+                detail="Path must be under a session or temp directory",
+            )
+
         if not tarball_path.is_dir():
             raise HTTPException(status_code=400, detail=f"Not a directory: {tarball_dir}")
 
