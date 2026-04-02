@@ -2299,12 +2299,19 @@ async def _push_rule_catalog_to_gateway() -> None:
     Must be called after ``_collect_rule_catalog`` and ``start_sinks``.
     The Primary is authoritative even without a Gateway (CLI-only /
     daemon mode), so failures here are logged but do not prevent serving.
+
+    The cached request is cleared after this call regardless of outcome;
+    the retry loop in ``emit_register_rules`` captures its own reference.
     """
-    if _cached_register_request is None:
+    global _cached_register_request  # noqa: PLW0603
+
+    request = _cached_register_request
+    _cached_register_request = None
+    if request is None:
         logger.warning("No cached rule catalog; skipping Gateway push")
         return
     try:
-        await emit_register_rules(_cached_register_request)
+        await emit_register_rules(request)
     except Exception:
         logger.warning("Gateway push failed (best-effort); local catalog is authoritative", exc_info=True)
 

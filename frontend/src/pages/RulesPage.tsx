@@ -90,16 +90,14 @@ export function RulesPage() {
 
   const openRuleDetail = useCallback((ruleId: string) => {
     const token = ++detailRequestRef.current;
+    const local = rules.find((r) => r.rule_id === ruleId) ?? null;
+    setSelectedRule(local);
     setDetailLoading(true);
     getRule(ruleId)
       .then((data) => {
         if (detailRequestRef.current === token) setSelectedRule(data);
       })
-      .catch(() => {
-        if (detailRequestRef.current !== token) return;
-        const local = rules.find((r) => r.rule_id === ruleId);
-        if (local) setSelectedRule(local);
-      })
+      .catch(() => {})
       .finally(() => {
         if (detailRequestRef.current === token) setDetailLoading(false);
       });

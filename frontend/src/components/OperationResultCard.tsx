@@ -43,7 +43,7 @@ export function OperationResultCard({
   onDismiss,
   actions,
 }: OperationResultCardProps) {
-  const wasRemediate = isRemediate || (result.remediated_count ?? 0) > 0;
+  const wasRemediate = isRemediate ?? result.remediated_count != null;
   const hasAi = (result.ai_proposed ?? 0) > 0 || (result.ai_declined ?? 0) > 0 || (result.ai_accepted ?? 0) > 0;
 
   return (
