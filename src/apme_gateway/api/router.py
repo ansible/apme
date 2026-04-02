@@ -828,7 +828,15 @@ async def project_graph_endpoint(project_id: str) -> JSONResponse:
     if graph is None:
         raise HTTPException(status_code=404, detail="No graph data available")
 
-    return JSONResponse(content=_json.loads(graph.graph_json))
+    try:
+        graph_content = _json.loads(graph.graph_json)
+    except (_json.JSONDecodeError, TypeError) as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="Stored graph data is invalid JSON",
+        ) from exc
+
+    return JSONResponse(content=graph_content)
 
 
 # ── Collections and packages (ADR-040) ──────────────────────────────

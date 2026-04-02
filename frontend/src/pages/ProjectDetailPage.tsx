@@ -129,6 +129,13 @@ export function ProjectDetailPage() {
     if (opStatus === 'complete') fetchData();
   }, [opStatus, fetchData]);
 
+  useEffect(() => {
+    if (activeTab === 4 && projectId && !graphData && !graphLoading) {
+      setGraphLoading(true);
+      getProjectGraph(projectId).then(setGraphData).catch(() => setGraphData(null)).finally(() => setGraphLoading(false));
+    }
+  }, [activeTab, projectId, graphData, graphLoading]);
+
   const handleScan = useCallback((remediate: boolean) => {
     const colls = collections.split(',').map((c) => c.trim()).filter(Boolean);
     const opts: ProjectOperationOptions = {

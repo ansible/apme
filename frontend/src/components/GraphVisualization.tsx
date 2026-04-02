@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import * as d3 from 'd3';
-import dagre from 'dagre';
+import * as dagre from 'dagre';
 import type { GraphData } from '../services/api';
 
 const NODE_COLORS: Record<string, string> = {

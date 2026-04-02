@@ -399,9 +399,12 @@ def _add_graph(db: AsyncSession, scan_id: str, content_graph_json: str) -> None:
     edge_count = 0
     try:
         parsed = json.loads(content_graph_json)
-        node_count = len(parsed.get("nodes", []))
-        edge_count = len(parsed.get("edges", []))
-    except (json.JSONDecodeError, TypeError):
+        if isinstance(parsed, dict):
+            node_count = len(parsed.get("nodes", []))
+            edge_count = len(parsed.get("edges", []))
+        else:
+            logger.warning("content_graph_json for scan %s is not a JSON object, storing raw", scan_id)
+    except (json.JSONDecodeError, TypeError, ValueError):
         logger.warning("Invalid content_graph_json for scan %s, storing raw", scan_id)
 
     db.add(
