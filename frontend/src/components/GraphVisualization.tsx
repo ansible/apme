@@ -316,12 +316,6 @@ export function GraphVisualization({ data }: Props) {
     buildGraph();
   }, [buildGraph]);
 
-  useEffect(() => {
-    if (!graphRef.current) return;
-    Object.entries(groupState).forEach(([type, visible]) => renderGroups(type, visible));
-    renderIncludes(incVisible);
-  }, [buildGraph, groupState, incVisible, renderGroups, renderIncludes]);
-
   const fitAll = useCallback(() => {
     if (!svgRef.current || !containerRef.current || !graphRef.current || !zoomBehaviorRef.current)
       return;
@@ -501,6 +495,12 @@ export function GraphVisualization({ data }: Props) {
     },
     [],
   );
+
+  useEffect(() => {
+    if (!graphRef.current) return;
+    Object.entries(groupState).forEach(([type, visible]) => renderGroups(type, visible));
+    renderIncludes(incVisible);
+  }, [buildGraph, groupState, incVisible, renderGroups, renderIncludes]);
 
   const toggleGroup = useCallback(
     (type: string) => {

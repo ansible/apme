@@ -1608,29 +1608,3 @@ async def project_graph(db: AsyncSession, project_id: str) -> ScanGraph | None:
     stmt = select(ScanGraph).where(ScanGraph.scan_id == scan_id)
     result = await db.execute(stmt)
     return cast("ScanGraph | None", result.scalar_one_or_none())
-
-
-async def store_graph(
-    db: AsyncSession,
-    scan_id: str,
-    graph_json: str,
-    node_count: int = 0,
-    edge_count: int = 0,
-) -> None:
-    """Persist a ContentGraph JSON blob for a scan.
-
-    Args:
-        db: Active async database session.
-        scan_id: Owning scan UUID.
-        graph_json: JSON-serialized ContentGraph.
-        node_count: Number of graph nodes.
-        edge_count: Number of graph edges.
-    """
-    db.add(
-        ScanGraph(
-            scan_id=scan_id,
-            graph_json=graph_json,
-            node_count=node_count,
-            edge_count=edge_count,
-        )
-    )
