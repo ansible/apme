@@ -132,24 +132,29 @@ async def _rule_registration_retry_loop(
     Args:
         request: Registration payload to retry.
     """
-    global _rule_catalog_registered  # noqa: PLW0603
+    global _rule_catalog_registered, _rule_retry_task  # noqa: PLW0603
 
+    current_task = asyncio.current_task()
     delay = _RULE_RETRY_INITIAL_DELAY_S
-    while not _rule_catalog_registered:
-        await asyncio.sleep(delay)
-        if not _sinks:
-            logger.debug("No sinks available for rule registration retry")
+    try:
+        while not _rule_catalog_registered:
+            await asyncio.sleep(delay)
+            if not _sinks:
+                logger.debug("No sinks available for rule registration retry")
+                delay = min(delay * _RULE_RETRY_BACKOFF_FACTOR, _RULE_RETRY_MAX_DELAY_S)
+                continue
+            if await _attempt_register_rules(request):
+                _rule_catalog_registered = True
+                logger.info("Rule catalog registration succeeded on retry")
+                return
+            logger.info(
+                "Rule registration retry failed, next attempt in %.0fs",
+                min(delay * _RULE_RETRY_BACKOFF_FACTOR, _RULE_RETRY_MAX_DELAY_S),
+            )
             delay = min(delay * _RULE_RETRY_BACKOFF_FACTOR, _RULE_RETRY_MAX_DELAY_S)
-            continue
-        if await _attempt_register_rules(request):
-            _rule_catalog_registered = True
-            logger.info("Rule catalog registration succeeded on retry")
-            return
-        logger.info(
-            "Rule registration retry failed, next attempt in %.0fs",
-            min(delay * _RULE_RETRY_BACKOFF_FACTOR, _RULE_RETRY_MAX_DELAY_S),
-        )
-        delay = min(delay * _RULE_RETRY_BACKOFF_FACTOR, _RULE_RETRY_MAX_DELAY_S)
+    finally:
+        if _rule_retry_task is current_task:
+            _rule_retry_task = None
 
 
 async def emit_register_rules(request: reporting_pb2.RegisterRulesRequest) -> None:
