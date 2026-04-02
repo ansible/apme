@@ -2238,22 +2238,26 @@ async def serve(listen_address: str = "0.0.0.0:50051") -> grpc.aio.Server:
         server.add_insecure_port(f"[::]:{port}")
     else:
         server.add_insecure_port(listen_address)
+    await _collect_rule_catalog()
     await server.start()
     await start_sinks()
-    await _register_rule_catalog()
+    await _push_rule_catalog_to_gateway()
     return server
 
 
-async def _register_rule_catalog() -> None:
-    """Collect built-in rules, populate ``_known_rule_ids``, and push to Gateway.
+_cached_register_request: reporting_pb2.RegisterRulesRequest | None = None
 
-    This is a **hard requirement** for Primary startup.  If catalog
-    collection fails or returns no rules, the Primary cannot perform
-    bidirectional audit (ADR-041) and must not serve scans.
 
-    Gateway push is best-effort — the Primary is authoritative even
-    without a Gateway (CLI-only / daemon mode).  But the local catalog
-    *must* succeed so ``_known_rule_ids`` is populated.
+async def _collect_rule_catalog() -> None:
+    """Collect built-in rules and populate ``_known_rule_ids``.
+
+    This is a **hard requirement** and must complete before the gRPC
+    server starts.  If catalog collection fails or returns no rules,
+    the Primary cannot perform bidirectional audit (ADR-041) and must
+    not serve scans.
+
+    The collected rules are cached for the subsequent best-effort
+    Gateway push (``_push_rule_catalog_to_gateway``).
 
     Raises:
         RuntimeError: If catalog collection fails or returns zero rules.
@@ -2261,7 +2265,7 @@ async def _register_rule_catalog() -> None:
     import os
     import platform
 
-    global _known_rule_ids  # noqa: PLW0603
+    global _known_rule_ids, _cached_register_request  # noqa: PLW0603
 
     from apme_engine.rule_catalog import collect_all_rules
 
@@ -2282,13 +2286,25 @@ async def _register_rule_catalog() -> None:
         "yes",
     )
 
-    request = reporting_pb2.RegisterRulesRequest(
+    _cached_register_request = reporting_pb2.RegisterRulesRequest(
         pod_id=pod_id,
         is_authority=is_authority,
         rules=rules,
     )
+
+
+async def _push_rule_catalog_to_gateway() -> None:
+    """Push the collected rule catalog to the Gateway (best-effort).
+
+    Must be called after ``_collect_rule_catalog`` and ``start_sinks``.
+    The Primary is authoritative even without a Gateway (CLI-only /
+    daemon mode), so failures here are logged but do not prevent serving.
+    """
+    if _cached_register_request is None:
+        logger.warning("No cached rule catalog; skipping Gateway push")
+        return
     try:
-        await emit_register_rules(request)
+        await emit_register_rules(_cached_register_request)
     except Exception:
         logger.warning("Gateway push failed (best-effort); local catalog is authoritative", exc_info=True)
 
