@@ -94,7 +94,7 @@ Setup: `uv tool install tox --with tox-uv`, then `uv tool install prek && prek i
 
 ## 5. Git Workflow and PR Process
 
-**Full details:** [CONTRIBUTING.md](CONTRIBUTING.md) | [submit-pr skill](.agents/skills/submit-pr/SKILL.md) | ADR-016
+**Full details:** [CONTRIBUTING.md](CONTRIBUTING.md) | [pr-new skill](.agents/skills/pr-new/SKILL.md) | ADR-016
 
 **Branch strategy:** `main` is the only long-lived branch. Never commit directly to it. For fork contributors (the common case):
 

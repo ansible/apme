@@ -17,8 +17,7 @@ This skill defines how to handle PR review feedback in the APME project.
 
 ## Responding to review comments
 
-Every review comment MUST receive a response and resolution. Unanswered
-comments block merge.
+Every review comment MUST receive a response. Unanswered comments block merge.
 
 ### Rules
 
@@ -31,10 +30,10 @@ comments block merge.
   the commit hash (e.g., "Removed the unused imports so Ruff F401 passes.
   Fixed in abc1234."). Do not reply with only the SHA; explain the fix.
 - If a comment is a false positive or you disagree, reply with a clear
-  technical explanation, then resolve the thread. Do not dismiss without
-  justification.
+  technical explanation, do not resolve the thread, this will require human 
+  intervention. Do not dismiss without justification.
 - After pushing fixes, update the PR description to reflect the expanded scope
-  (per the submit-pr skill).
+  (per the pr-new skill).
 
 ## Copilot review patterns
 
@@ -98,7 +97,7 @@ import is intentionally side-effect only.
 5. Reply to each comment with a brief explanation of how it was resolved and
    the commit hash (e.g., "Removed unused imports. Fixed in abc1234.").
 6. **Resolve each review thread** after replying. Every thread must have both
-   a closing reply and an explicit resolution — replying alone is not enough.
+   a closing reply and if solved have an explicit resolution.
 
 ### Checking CI status
 

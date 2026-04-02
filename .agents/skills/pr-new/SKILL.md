@@ -1,6 +1,11 @@
 ---
-name: submit-pr
-description: Prepare and submit a pull request for the APME project. Syncs with upstream, creates a feature branch, runs quality gates (tox -e lint, tox -e unit), updates documentation and ADRs as needed, commits with conventional commits, then creates the PR via gh. Use when the user asks to submit, create, or open a pull request, or says "submit PR", "open PR", "create PR".
+name: pr-new
+description: >
+  Prepare and submit a pull request for the APME project. Syncs with upstream,
+  creates a feature branch, runs quality gates (tox -e lint, tox -e unit),
+  updates documentation and ADRs as needed, commits with conventional commits,
+  then creates the PR via gh. Use when the user asks to submit, create, or open
+  a pull request, or says "submit PR", "open PR", "create PR", "new PR".
 argument-hint: "[branch-name] [--title 'PR title']"
 user-invocable: true
 metadata:
@@ -8,7 +13,7 @@ metadata:
   version: 1.0.0
 ---
 
-# Submit PR
+# PR New
 
 ## Workflow
 
@@ -162,3 +167,9 @@ EOF
 ```
 
 The Summary, Changes, and Test plan sections must stay current with all commits on the branch, not just the initial one.
+
+### Responding to review feedback
+
+After pushing the PR, reviewers (human or Copilot) may leave comments. Follow
+the **`pr-review`** skill for the full procedure: checking CI status, replying
+to comments, resolving threads, and re-checking for new Copilot reviews.

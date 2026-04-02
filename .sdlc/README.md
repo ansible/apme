@@ -64,7 +64,7 @@ The framework provides **16 interactive skills** organized by purpose:
 | **Bootstrap** | `/prd-import`, `/sdlc-status`, `/workflow` | Start projects, check status |
 | **Plan** | `/phase-new`, `/req-new`, `/task-new` | Define roadmap, create specs |
 | **Decide** | `/dr-new`, `/dr-review`, `/adr-new` | Manage decisions |
-| **Review** | `/pr-review`, `/review-contributor-pr`, `/submit-pr` | Code review and PRs |
+| **Review** | `/pr-new`, `/pr-review`, `/pr-contributor-review` | Code review and PRs |
 | **Operations** | `/lean-ci`, `/rfe-capture`, `/branch-align`, `/security-scan` | CI, RFEs, branch ops |
 
 ### Skill Reference

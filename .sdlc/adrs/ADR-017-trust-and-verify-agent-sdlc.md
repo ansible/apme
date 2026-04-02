@@ -57,7 +57,7 @@ The human remains in the loop — that is foundational and non-negotiable. What 
 
 - Removed `disable-model-invocation: true` from: adr-new, dr-new, dr-review, req-new, task-new, phase-new, prd-import
 - Moved all skills from `.claude/skills/` to `.agents/skills/`
-- Updated `submit-pr` skill to reference `.sdlc/adrs/` and SDLC skills
+- Updated `pr-new` skill (formerly `submit-pr`) to reference `.sdlc/adrs/` and SDLC skills
 - `workflow` and `sdlc-status` were already agent-invocable (read-only)
 
 ## Related Decisions

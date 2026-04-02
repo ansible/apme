@@ -134,14 +134,14 @@ Verifying PR #102... tracks new branch ✓
 Done! Branch aligned with REQ-011.
 ```
 
-## Integration with submit-pr
+## Integration with pr-new
 
-The `submit-pr` skill should:
+The `pr-new` skill should:
 1. Check if branch name matches artifact IDs being committed
 2. Warn if mismatch detected
 3. Offer to invoke `branch-align` before pushing
 
-Add to submit-pr pre-flight checks:
+Add to pr-new pre-flight checks:
 ```
 Checking branch/artifact alignment...
 - Branch: docs/req-005-aa-deprecated-reporting
