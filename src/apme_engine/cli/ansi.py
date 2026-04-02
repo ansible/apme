@@ -346,18 +346,13 @@ def rjust_ansi(text: str, width: int, fillchar: str = " ") -> str:
 # Severity badges
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Map severity levels to display label and style
+# Map severity labels to display badge and style (ADR-043).
 SEVERITY_DISPLAY: dict[str, tuple[str, str]] = {
-    "very_high": ("ERROR", Style.BG_RED + Style.WHITE + Style.BOLD),
-    "high": ("ERROR", Style.BG_RED + Style.WHITE + Style.BOLD),
-    "medium": ("WARN", Style.BG_YELLOW + Style.BOLD),
-    "low": ("WARN", Style.BG_YELLOW + Style.BOLD),
-    "very_low": ("HINT", Style.BG_CYAN + Style.WHITE),
-    "none": ("HINT", Style.BG_CYAN + Style.WHITE),
-    # Also support direct level names
+    "critical": ("CRIT", Style.BG_RED + Style.WHITE + Style.BOLD),
     "error": ("ERROR", Style.BG_RED + Style.WHITE + Style.BOLD),
-    "warning": ("WARN", Style.BG_YELLOW + Style.BOLD),
-    "hint": ("HINT", Style.BG_CYAN + Style.WHITE),
+    "high": ("HIGH", Style.BG_RED + Style.WHITE + Style.BOLD),
+    "medium": ("MED", Style.BG_YELLOW + Style.BOLD),
+    "low": ("LOW", Style.BG_CYAN + Style.WHITE),
     "info": ("INFO", Style.BG_MAGENTA + Style.WHITE),
 }
 
@@ -366,13 +361,12 @@ def severity_badge(level: str) -> str:
     """Return a colored badge for a severity level.
 
     Args:
-        level: Severity level (very_high, high, medium, low, very_low, none,
-               or error, warning, hint, info)
+        level: Severity label (critical, error, high, medium, low, info).
 
     Returns:
-        Styled badge like " ERROR " with colored background
+        Styled badge like " ERROR " with colored background.
     """
-    level_lower = level.lower() if level else "none"
+    level_lower = level.lower() if level else "info"
     label, styles = SEVERITY_DISPLAY.get(level_lower, ("?", Style.DIM))
     padded = f" {label} "
     return style(padded, styles)
@@ -382,15 +376,15 @@ def severity_indicator(level: str) -> str:
     """Return a single-char severity indicator for tree views.
 
     Args:
-        level: Severity level
+        level: Severity label.
 
     Returns:
-        Colored indicator: x (red), △ (yellow), i (cyan)
+        Colored indicator: x (red), △ (yellow), i (cyan).
     """
-    level_lower = level.lower() if level else "none"
-    if level_lower in ("very_high", "high", "error"):
+    level_lower = level.lower() if level else "info"
+    if level_lower in ("critical", "error", "high"):
         return red("x")
-    if level_lower in ("medium", "low", "warning"):
+    if level_lower == "medium":
         return yellow("△")
     return cyan("i")
 

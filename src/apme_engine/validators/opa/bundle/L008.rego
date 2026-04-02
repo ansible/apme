@@ -17,7 +17,7 @@ deprecated_local_action(tree, node) := v if {
 	count(node.line) > 0
 	v := {
 		"rule_id": "L008",
-		"level": "warning",
+		"severity": "low",
 		"message": "Do not use local_action; use delegate_to: localhost",
 		"file": node.file,
 		"line": node.line[0],

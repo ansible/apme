@@ -71,7 +71,7 @@ class TreeOnelineCallbackPluginsGraphRule(GraphRule):
     enabled: bool = True
     name: str = "TreeOnelineCallbackPlugins"
     version: str = "v0.0.2"
-    severity: str = Severity.MEDIUM
+    severity: Severity = Severity.MEDIUM
     tags: tuple[str, ...] = (Tag.CODING,)
 
     def match(self, graph: ContentGraph, node_id: str) -> bool:

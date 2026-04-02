@@ -65,7 +65,7 @@ class TestOpaValidator:
         (tmp_path / "bundle").mkdir()
         ctx = ScanContext(hierarchy_payload=cast(YAMLDict, sample_hierarchy_payload))
         v = OpaValidator(str(tmp_path / "bundle"))
-        violations = [{"rule_id": "r1", "level": "high", "message": "msg", "file": "f", "line": 1, "path": "p"}]
+        violations = [{"rule_id": "r1", "severity": "high", "message": "msg", "file": "f", "line": 1, "path": "p"}]
         with patch("apme_engine.validators.opa.run_opa", return_value=violations):
             result = v.run(ctx)
         assert result == violations

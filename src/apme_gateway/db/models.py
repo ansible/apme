@@ -9,7 +9,7 @@ Python package metadata.
 
 from __future__ import annotations
 
-from sqlalchemy import Float, ForeignKey, Integer, Text, UniqueConstraint
+from sqlalchemy import Boolean, Float, ForeignKey, Integer, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -320,6 +320,66 @@ class ScanPythonPackage(Base):
     supplier: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
     scan: Mapped[Scan] = relationship(back_populates="python_packages")
+
+
+# ── Rule catalog tables (ADR-041) ─────────────────────────────────────
+
+
+class Rule(Base):
+    """A registered rule from the engine's rule catalog (ADR-041).
+
+    Populated by ``RegisterRules`` from the authority Primary on startup.
+    Overrides are stored separately in ``rule_overrides``.
+
+    Attributes:
+        rule_id: Rule identifier (e.g. L026, SEC:*).
+        default_severity: Numeric severity from ``Severity`` proto enum.
+        category: Rule category (lint, modernize, risk, policy, secrets).
+        source: Validator name (native, opa, ansible, gitleaks).
+        description: Human-readable description.
+        scope: Numeric ``RuleScope`` proto enum value.
+        enabled: Default enabled state.
+        registered_at: ISO 8601 timestamp of last registration.
+        overrides: Associated configuration overrides for this rule.
+    """
+
+    __tablename__ = "rules"
+
+    rule_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    default_severity: Mapped[int] = mapped_column(Integer, nullable=False)
+    category: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    source: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    scope: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    registered_at: Mapped[str] = mapped_column(Text, nullable=False)
+
+    overrides: Mapped[list[RuleOverride]] = relationship(back_populates="rule", cascade="all, delete-orphan")
+
+
+class RuleOverride(Base):
+    """Admin-configured override for a registered rule (ADR-041).
+
+    Attributes:
+        id: Auto-increment primary key.
+        rule_id: FK to rules table.
+        severity_override: Overridden severity, or None for no override.
+        enabled_override: Overridden enabled state, or None for no override.
+        enforced: If True, inline ``# apme:ignore`` is bypassed.
+        updated_at: ISO 8601 timestamp of last change.
+        rule: Back-reference to owning Rule.
+    """
+
+    __tablename__ = "rule_overrides"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    rule_id: Mapped[str] = mapped_column(Text, ForeignKey("rules.rule_id"), nullable=False, unique=True)
+    severity_override: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    enabled_override: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    enforced: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    updated_at: Mapped[str] = mapped_column(Text, nullable=False)
+
+    rule: Mapped[Rule] = relationship(back_populates="overrides")
 
 
 # ── Global settings tables (ADR-045) ─────────────────────────────────

@@ -66,3 +66,51 @@ class ProposalOutcome:
 
 class ReportAck:
     def __init__(self) -> None: ...
+
+class RuleDefinition:
+    rule_id: str
+    default_severity: int
+    category: str
+    source: str
+    description: str
+    scope: int
+    enabled: bool
+    def __init__(
+        self,
+        *,
+        rule_id: str = ...,
+        default_severity: int = ...,
+        category: str = ...,
+        source: str = ...,
+        description: str = ...,
+        scope: int = ...,
+        enabled: bool = ...,
+    ) -> None: ...
+
+class RegisterRulesRequest:
+    pod_id: str
+    is_authority: bool
+    rules: list[RuleDefinition]
+    def __init__(
+        self,
+        *,
+        pod_id: str = ...,
+        is_authority: bool = ...,
+        rules: Iterable[RuleDefinition] | None = ...,
+    ) -> None: ...
+
+class RegisterRulesResponse:
+    accepted: bool
+    message: str
+    rules_added: int
+    rules_removed: int
+    rules_unchanged: int
+    def __init__(
+        self,
+        *,
+        accepted: bool = ...,
+        message: str = ...,
+        rules_added: int = ...,
+        rules_removed: int = ...,
+        rules_unchanged: int = ...,
+    ) -> None: ...

@@ -2,25 +2,21 @@
 
 from __future__ import annotations
 
+from ruamel.yaml.comments import CommentedMap
+
 from apme_engine.engine.models import ViolationDict
-from apme_engine.remediation.structured import StructuredFile
-from apme_engine.remediation.transforms._helpers import violation_line_to_int
 
 
-def fix_become_unreachable(sf: StructuredFile, violation: ViolationDict) -> bool:
+def fix_become_unreachable(task: CommentedMap, violation: ViolationDict) -> bool:
     """Add ``ignore_unreachable: true`` to tasks with become + ignore_errors.
 
     Args:
-        sf: Parsed YAML file to modify in-place.
+        task: Task CommentedMap to modify in-place.
         violation: Violation dict with line.
 
     Returns:
         True if a change was applied.
     """
-    task = sf.find_task(violation_line_to_int(violation), violation)
-    if task is None:
-        return False
-
     if "ignore_unreachable" in task:
         return False
 

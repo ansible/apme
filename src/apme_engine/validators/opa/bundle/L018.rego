@@ -25,7 +25,7 @@ partial_become_task(tree, node) := v if {
 	count(node.line) > 0
 	v := {
 		"rule_id": "L018",
-		"level": "error",
+		"severity": "high",
 		"message": "become_user should have a corresponding become",
 		"file": node.file,
 		"line": node.line[0],
@@ -42,7 +42,7 @@ partial_become_play(tree, node) := v if {
 	count(node.line) > 0
 	v := {
 		"rule_id": "L018",
-		"level": "error",
+		"severity": "high",
 		"message": "become_user should have a corresponding become",
 		"file": node.file,
 		"line": node.line[0],

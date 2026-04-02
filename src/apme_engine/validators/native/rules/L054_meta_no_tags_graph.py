@@ -28,7 +28,7 @@ class MetaNoTagsGraphRule(GraphRule):
     enabled: bool = True
     name: str = "MetaNoTags"
     version: str = "v0.0.1"
-    severity: str = Severity.VERY_LOW
+    severity: Severity = Severity.LOW
     tags: tuple[str, ...] = (Tag.DEPENDENCY,)
     precedence: int = 10
 

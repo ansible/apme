@@ -41,7 +41,7 @@ class TestOpaValidatorServicer:
         from apme_engine.daemon.opa_validator_server import OpaValidatorServicer
 
         hierarchy: YAMLDict = {"hierarchy": [{"tree_type": "playbook", "nodes": []}]}
-        violations = [{"rule_id": "L024", "level": "warning", "message": "m", "file": "f.yml", "line": 1, "path": "p"}]
+        violations = [{"rule_id": "L024", "severity": "low", "message": "m", "file": "f.yml", "line": 1, "path": "p"}]
 
         request = validate_pb2.ValidateRequest(
             request_id="test-req-1",
@@ -62,9 +62,9 @@ class TestOpaValidatorServicer:
         from apme_engine.daemon.opa_validator_server import OpaValidatorServicer
 
         violations = [
-            {"rule_id": "L024", "level": "warning", "message": "m1", "file": "a.yml", "line": 1, "path": ""},
-            {"rule_id": "L024", "level": "warning", "message": "m2", "file": "a.yml", "line": 5, "path": ""},
-            {"rule_id": "L007", "level": "warning", "message": "m3", "file": "b.yml", "line": 3, "path": ""},
+            {"rule_id": "L024", "severity": "low", "message": "m1", "file": "a.yml", "line": 1, "path": ""},
+            {"rule_id": "L024", "severity": "low", "message": "m2", "file": "a.yml", "line": 5, "path": ""},
+            {"rule_id": "L007", "severity": "low", "message": "m3", "file": "b.yml", "line": 3, "path": ""},
         ]
 
         request = validate_pb2.ValidateRequest(
@@ -148,7 +148,7 @@ class TestNativeValidatorServicer:
             violations=[
                 {
                     "rule_id": "L026",
-                    "level": "warning",
+                    "severity": "low",
                     "message": "non-fqcn",
                     "file": "f.yml",
                     "line": 5,
@@ -183,7 +183,7 @@ class TestNativeValidatorServicer:
             violations=[
                 {
                     "rule_id": "L026",
-                    "level": "warning",
+                    "severity": "low",
                     "message": "m1",
                     "file": "f.yml",
                     "line": 1,
@@ -192,7 +192,7 @@ class TestNativeValidatorServicer:
                 },
                 {
                     "rule_id": "L030",
-                    "level": "warning",
+                    "severity": "low",
                     "message": "m2",
                     "file": "f.yml",
                     "line": 3,
@@ -257,7 +257,7 @@ class TestGitleaksValidatorServicerDiagnostics:
         )
 
         mock_violations = [
-            {"rule_id": "R502", "level": "error", "message": "secret", "file": "test.yml", "line": 1, "path": ""},
+            {"rule_id": "R502", "severity": "critical", "message": "secret", "file": "test.yml", "line": 1, "path": ""},
         ]
 
         servicer = GitleaksValidatorServicer()
@@ -318,7 +318,7 @@ class TestAnsibleValidatorServicerMigration:
                 violations=[
                     {
                         "rule_id": "L057",
-                        "level": "error",
+                        "severity": "error",
                         "message": "syntax",
                         "file": "playbook.yml",
                         "line": 1,

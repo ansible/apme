@@ -9,6 +9,10 @@ import "apme/v1/primary.proto";
 // The gateway implements this service; engine pods are gRPC clients.
 service Reporting {
   rpc ReportFixCompleted(FixCompletedEvent) returns (ReportAck);
+
+  // Rule catalog registration (ADR-041).  The authority Primary pushes
+  // its full rule set on startup; the Gateway reconciles its catalog.
+  rpc RegisterRules(RegisterRulesRequest) returns (RegisterRulesResponse);
 }
 
 message FixCompletedEvent {
@@ -37,3 +41,32 @@ message ProposalOutcome {
 }
 
 message ReportAck {}
+
+// ---------------------------------------------------------------------------
+// Rule catalog registration (ADR-041)
+// ---------------------------------------------------------------------------
+
+// Metadata for a single rule, sent by Primary during registration.
+message RuleDefinition {
+  string rule_id = 1;
+  Severity default_severity = 2;
+  string category = 3;          // "lint", "modernize", "risk", "policy", "secrets"
+  string source = 4;            // validator name: "native", "opa", "ansible", "gitleaks"
+  string description = 5;
+  RuleScope scope = 6;
+  bool enabled = 7;
+}
+
+message RegisterRulesRequest {
+  string pod_id = 1;            // hostname or explicit pod identifier
+  bool is_authority = 2;        // only the authority Primary's registration is accepted
+  repeated RuleDefinition rules = 3;
+}
+
+message RegisterRulesResponse {
+  bool accepted = 1;
+  string message = 2;
+  int32 rules_added = 3;
+  int32 rules_removed = 4;
+  int32 rules_unchanged = 5;
+}

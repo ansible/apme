@@ -41,6 +41,11 @@ class ReportingStub(object):
                 request_serializer=apme_dot_v1_dot_reporting__pb2.FixCompletedEvent.SerializeToString,
                 response_deserializer=apme_dot_v1_dot_reporting__pb2.ReportAck.FromString,
                 _registered_method=True)
+        self.RegisterRules = channel.unary_unary(
+                '/apme.v1.Reporting/RegisterRules',
+                request_serializer=apme_dot_v1_dot_reporting__pb2.RegisterRulesRequest.SerializeToString,
+                response_deserializer=apme_dot_v1_dot_reporting__pb2.RegisterRulesResponse.FromString,
+                _registered_method=True)
 
 
 class ReportingServicer(object):
@@ -54,6 +59,14 @@ class ReportingServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def RegisterRules(self, request, context):
+        """Rule catalog registration (ADR-041).  The authority Primary pushes
+        its full rule set on startup; the Gateway reconciles its catalog.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_ReportingServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -61,6 +74,11 @@ def add_ReportingServicer_to_server(servicer, server):
                     servicer.ReportFixCompleted,
                     request_deserializer=apme_dot_v1_dot_reporting__pb2.FixCompletedEvent.FromString,
                     response_serializer=apme_dot_v1_dot_reporting__pb2.ReportAck.SerializeToString,
+            ),
+            'RegisterRules': grpc.unary_unary_rpc_method_handler(
+                    servicer.RegisterRules,
+                    request_deserializer=apme_dot_v1_dot_reporting__pb2.RegisterRulesRequest.FromString,
+                    response_serializer=apme_dot_v1_dot_reporting__pb2.RegisterRulesResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -92,6 +110,33 @@ class Reporting(object):
             '/apme.v1.Reporting/ReportFixCompleted',
             apme_dot_v1_dot_reporting__pb2.FixCompletedEvent.SerializeToString,
             apme_dot_v1_dot_reporting__pb2.ReportAck.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def RegisterRules(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/apme.v1.Reporting/RegisterRules',
+            apme_dot_v1_dot_reporting__pb2.RegisterRulesRequest.SerializeToString,
+            apme_dot_v1_dot_reporting__pb2.RegisterRulesResponse.FromString,
             options,
             channel_credentials,
             insecure,

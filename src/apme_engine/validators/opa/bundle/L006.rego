@@ -24,7 +24,7 @@ command_instead_of_module(tree, node) := v if {
 	count(node.line) > 0
 	v := {
 		"rule_id": "L006",
-		"level": "warning",
+		"severity": "low",
 		"message": sprintf("%s used in place of %s module", [first_token, suggested]),
 		"file": node.file,
 		"line": node.line[0],

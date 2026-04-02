@@ -19,7 +19,7 @@ deprecated_module(tree, node) := v if {
 	count(node.line) > 0
 	v := {
 		"rule_id": "L004",
-		"level": "error",
+		"severity": "high",
 		"message": sprintf("Deprecated module: %s", [short]),
 		"file": node.file,
 		"line": node.line[0],

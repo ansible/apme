@@ -9,7 +9,7 @@ test_L003_fires_when_play_has_no_name if {
 	node := tree.nodes[0]
 	v := rules.play_has_no_name(tree, node)
 	v.rule_id == "L003"
-	v.level == "low"
+	v.severity == "low"
 }
 
 test_L003_does_not_fire_when_play_has_name if {

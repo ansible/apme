@@ -45,7 +45,7 @@ class RoleVarPrefixGraphRule(GraphRule):
     enabled: bool = True
     name: str = "RoleVarPrefix"
     version: str = "v0.0.1"
-    severity: str = Severity.LOW
+    severity: Severity = Severity.LOW
     tags: tuple[str, ...] = (Tag.VARIABLE,)
     scope: str = RuleScope.ROLE
     precedence: int = 10

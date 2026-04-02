@@ -36,7 +36,7 @@ only_builtins(tree, node) := v if {
 	_is_fqcn(resolved)
 	v := {
 		"rule_id": "L005",
-		"level": "warning",
+		"severity": "low",
 		"message": sprintf("Use FQCN: %s -> %s", [om, resolved]),
 		"file": node.file,
 		"line": node.line[0],
@@ -59,7 +59,7 @@ only_builtins(tree, node) := v if {
 	not _is_fqcn(om)
 	v := {
 		"rule_id": "L005",
-		"level": "warning",
+		"severity": "low",
 		"message": sprintf("Use FQCN for: %s", [om]),
 		"file": node.file,
 		"line": node.line[0],

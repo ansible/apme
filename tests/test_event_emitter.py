@@ -69,6 +69,17 @@ class FakeSink:
         """
         self.fix_events.append(event)
 
+    async def register_rules(self, request: object) -> None:
+        """No-op rule registration.
+
+        Args:
+            request: Registration payload (unused).
+
+        Returns:
+            None.
+        """
+        return None
+
 
 class FailingSink:
     """Sink that always raises on emission."""
@@ -84,6 +95,17 @@ class FailingSink:
 
         Args:
             event: Fix event (unused, raises immediately).
+
+        Raises:
+            RuntimeError: Always raised.
+        """
+        raise RuntimeError("boom")
+
+    async def register_rules(self, request: object) -> None:
+        """Raise on rule registration.
+
+        Args:
+            request: Registration payload (unused, raises immediately).
 
         Raises:
             RuntimeError: Always raised.

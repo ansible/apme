@@ -356,10 +356,13 @@ anything else**. If a matching skill exists, read it and follow its instructions
 | `/prd-import` | Import product requirements |
 | `/req-new` | Create requirement spec |
 | `/review-contributor-pr` | Review external contributor PRs |
+| `/rfe-capture` | Capture request for enhancement |
 | `/sdlc-status` | SDLC dashboard status |
+| `/security-scan` | Security scanning helpers |
 | `/submit-pr` | Create and submit pull requests |
 | `/task-new` | Create implementation task |
 | `/tox` | tox environment reference (lint, test, build, pod) |
+| `/branch-align` | Align branch name with SDLC artifacts |
 | `/workflow` | Development workflow guidance |
 
 ## Design Thinking
@@ -421,6 +424,7 @@ All agents must:
 4. Commit with proper message format (Conventional Commits)
 5. Flag any spec ambiguities
 6. Verify no architectural invariants (above) were violated
+7. Follow operating procedures in `SOP.md` (security, git workflow, PR process, release)
 
 ### Prohibited direct invocations
 

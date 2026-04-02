@@ -5,6 +5,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import cast
 
+from ruamel.yaml.comments import CommentedMap
+
 from apme_engine.engine.models import RemediationClass, RemediationResolution, RuleScope, ViolationDict
 from apme_engine.remediation.engine import RemediationEngine
 from apme_engine.remediation.partition import (
@@ -19,7 +21,11 @@ from apme_engine.remediation.partition import (
 from apme_engine.remediation.registry import TransformRegistry, TransformResult
 from apme_engine.remediation.structured import StructuredFile
 from apme_engine.remediation.transforms import build_default_registry
-from apme_engine.remediation.transforms._helpers import find_task_by_index, violation_task_index
+from apme_engine.remediation.transforms._helpers import (
+    find_task_by_index,
+    violation_line_to_int,
+    violation_task_index,
+)
 from apme_engine.remediation.transforms.L007_shell_to_command import fix_shell_to_command
 from apme_engine.remediation.transforms.L008_local_action import fix_local_action
 from apme_engine.remediation.transforms.L009_empty_string import fix_empty_string
@@ -59,6 +65,33 @@ def _apply(
     if sf is None:
         return TransformResult(content, False)
     applied = fn(sf, violation)
+    return TransformResult(sf.serialize() if applied else content, applied)
+
+
+def _apply_node(
+    fn: Callable[[CommentedMap, ViolationDict], bool],
+    content: str,
+    violation: ViolationDict,
+) -> TransformResult:
+    """Adapter: call a node transform (task CommentedMap) via StructuredFile.find_task.
+
+    Args:
+        fn: Node transform function.
+        content: YAML file content string.
+        violation: Violation dict.
+
+    Returns:
+        TransformResult with serialized content and applied flag.
+    """
+    sf = StructuredFile.from_content("test.yml", content)
+    if sf is None:
+        return TransformResult(content, False)
+    task = sf.find_task(violation_line_to_int(violation), violation)
+    if task is None:
+        return TransformResult(content, False)
+    applied = fn(task, violation)
+    if applied:
+        sf.mark_dirty()
     return TransformResult(sf.serialize() if applied else content, applied)
 
 
@@ -395,7 +428,7 @@ class TestL021MissingMode:
             src: /tmp/foo
             dest: /tmp/bar
         """)
-        result = _apply(fix_missing_mode, content, {"rule_id": "L021", "line": 1})
+        result = _apply_node(fix_missing_mode, content, {"rule_id": "L021", "line": 1})
         assert result.applied is True
         assert "mode:" in result.content
         assert "0644" in result.content
@@ -409,7 +442,7 @@ class TestL021MissingMode:
             dest: /tmp/bar
             mode: "0755"
         """)
-        result = _apply(fix_missing_mode, content, {"rule_id": "L021", "line": 1})
+        result = _apply_node(fix_missing_mode, content, {"rule_id": "L021", "line": 1})
         assert result.applied is False
 
     def test_no_change_for_non_file_module(self) -> None:
@@ -418,7 +451,7 @@ class TestL021MissingMode:
         - name: Run command
           ansible.builtin.command: echo hello
         """)
-        result = _apply(fix_missing_mode, content, {"rule_id": "L021", "line": 1})
+        result = _apply_node(fix_missing_mode, content, {"rule_id": "L021", "line": 1})
         assert result.applied is False
 
     def test_idempotent(self) -> None:
@@ -429,14 +462,14 @@ class TestL021MissingMode:
             src: foo.j2
             dest: /etc/foo.conf
         """)
-        r1 = _apply(fix_missing_mode, content, {"rule_id": "L021", "line": 1})
+        r1 = _apply_node(fix_missing_mode, content, {"rule_id": "L021", "line": 1})
         assert r1.applied is True
-        r2 = _apply(fix_missing_mode, r1.content, {"rule_id": "L021", "line": 1})
+        r2 = _apply_node(fix_missing_mode, r1.content, {"rule_id": "L021", "line": 1})
         assert r2.applied is False
 
     def test_handles_invalid_yaml(self) -> None:
         """Verifies invalid YAML returns applied False without raising."""
-        result = _apply(fix_missing_mode, "{{{{invalid", {"rule_id": "L021", "line": 1})
+        result = _apply_node(fix_missing_mode, "{{{{invalid", {"rule_id": "L021", "line": 1})
         assert result.applied is False
 
 
@@ -454,7 +487,7 @@ class TestL007ShellToCommand:
         - name: List files
           ansible.builtin.shell: ls -la /tmp
         """)
-        result = _apply(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
+        result = _apply_node(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
         assert result.applied is True
         assert "ansible.builtin.command" in result.content
         assert "ansible.builtin.shell" not in result.content
@@ -465,7 +498,7 @@ class TestL007ShellToCommand:
         - name: Grep output
           ansible.builtin.shell: cat /tmp/log | grep error
         """)
-        result = _apply(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
+        result = _apply_node(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
         assert result.applied is False
 
     def test_no_change_when_and_present(self) -> None:
@@ -475,7 +508,7 @@ class TestL007ShellToCommand:
           ansible.builtin.shell:
             cmd: mkdir /tmp/foo && touch /tmp/foo/bar
         """)
-        result = _apply(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
+        result = _apply_node(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
         assert result.applied is False
 
     def test_no_change_when_redirect_present(self) -> None:
@@ -484,7 +517,7 @@ class TestL007ShellToCommand:
         - name: Write output
           ansible.builtin.shell: echo hello > /tmp/out
         """)
-        result = _apply(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
+        result = _apply_node(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
         assert result.applied is False
 
     def test_no_change_for_command_module(self) -> None:
@@ -493,7 +526,7 @@ class TestL007ShellToCommand:
         - name: Already command
           ansible.builtin.command: echo hello
         """)
-        result = _apply(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
+        result = _apply_node(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
         assert result.applied is False
 
     def test_idempotent(self) -> None:
@@ -502,9 +535,9 @@ class TestL007ShellToCommand:
         - name: Simple command
           ansible.builtin.shell: whoami
         """)
-        r1 = _apply(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
+        r1 = _apply_node(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
         assert r1.applied is True
-        r2 = _apply(fix_shell_to_command, r1.content, {"rule_id": "L007", "line": 1})
+        r2 = _apply_node(fix_shell_to_command, r1.content, {"rule_id": "L007", "line": 1})
         assert r2.applied is False
 
     def test_dict_form_cmd(self) -> None:
@@ -514,7 +547,7 @@ class TestL007ShellToCommand:
           ansible.builtin.shell:
             cmd: whoami
         """)
-        result = _apply(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
+        result = _apply_node(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
         assert result.applied is True
         assert "ansible.builtin.command" in result.content
 
@@ -543,7 +576,7 @@ class TestFQCNTransform:
                 "original_module": "debug",
             },
         )
-        result = _apply(fix_fqcn, content, violation)
+        result = _apply_node(fix_fqcn, content, violation)
         assert result.applied is True
         assert "ansible.builtin.debug" in result.content
         assert "\n  debug:" not in result.content
@@ -557,7 +590,7 @@ class TestFQCNTransform:
             dest: /b
         """)
         violation = cast(ViolationDict, {"rule_id": "M001", "line": 1})
-        result = _apply(fix_fqcn, content, violation)
+        result = _apply_node(fix_fqcn, content, violation)
         assert result.applied is False
 
     def test_no_change_when_already_fqcn(self) -> None:
@@ -568,7 +601,7 @@ class TestFQCNTransform:
             msg: hello
         """)
         violation = cast(ViolationDict, {"rule_id": "M001", "line": 1})
-        result = _apply(fix_fqcn, content, violation)
+        result = _apply_node(fix_fqcn, content, violation)
         assert result.applied is False
 
     def test_no_change_for_unknown_short_name(self) -> None:
@@ -579,7 +612,7 @@ class TestFQCNTransform:
             param: value
         """)
         violation = cast(ViolationDict, {"rule_id": "M001", "line": 1})
-        result = _apply(fix_fqcn, content, violation)
+        result = _apply_node(fix_fqcn, content, violation)
         assert result.applied is False
 
     def test_idempotent(self) -> None:
@@ -594,9 +627,9 @@ class TestFQCNTransform:
             ViolationDict,
             {"rule_id": "M001", "line": 1, "resolved_fqcn": "ansible.builtin.yum"},
         )
-        r1 = _apply(fix_fqcn, content, violation)
+        r1 = _apply_node(fix_fqcn, content, violation)
         assert r1.applied is True
-        r2 = _apply(fix_fqcn, r1.content, violation)
+        r2 = _apply_node(fix_fqcn, r1.content, violation)
         assert r2.applied is False
 
     def test_m003_redirect_uses_resolved_fqcn(self) -> None:
@@ -616,7 +649,7 @@ class TestFQCNTransform:
                 "redirect_chain": ["ansible.builtin.yum", "ansible.builtin.dnf"],
             },
         )
-        result = _apply(fix_fqcn, content, violation)
+        result = _apply_node(fix_fqcn, content, violation)
         assert result.applied is True
         assert "ansible.builtin.dnf" in result.content
 
@@ -653,7 +686,7 @@ class TestRemediationEngine:
             return []
 
         reg = TransformRegistry()
-        reg.register("L021", structured=fix_missing_mode)
+        reg.register("L021", node=fix_missing_mode)
         engine = RemediationEngine(reg, scan_fn, max_passes=5)
 
         report = engine.remediate([str(playbook)], apply=True)
@@ -684,7 +717,7 @@ class TestRemediationEngine:
             return []
 
         reg = TransformRegistry()
-        reg.register("L021", structured=fix_missing_mode)
+        reg.register("L021", node=fix_missing_mode)
         engine = RemediationEngine(reg, scan_fn, max_passes=5)
 
         report = engine.remediate([str(playbook)], apply=False)
@@ -765,7 +798,7 @@ class TestRemediationEngine:
             return []
 
         reg = TransformRegistry()
-        reg.register("L021", structured=fix_missing_mode)
+        reg.register("L021", node=fix_missing_mode)
         engine = RemediationEngine(reg, scan_fn, max_passes=5)
 
         report = engine.remediate([str(playbook)], apply=True)
@@ -796,7 +829,7 @@ class TestRemediationEngine:
             return []
 
         reg = TransformRegistry()
-        reg.register("L021", structured=fix_missing_mode)
+        reg.register("L021", node=fix_missing_mode)
         engine = RemediationEngine(reg, scan_fn, max_passes=5)
 
         report = engine.remediate([str(playbook)], apply=True)
@@ -838,7 +871,7 @@ class TestRemediationEngine:
             return [{"rule_id": "L021", "file": "main.yml", "line": 1}]
 
         reg = TransformRegistry()
-        reg.register("L021", structured=fix_missing_mode)
+        reg.register("L021", node=fix_missing_mode)
         engine = RemediationEngine(reg, scan_fn, max_passes=2)
 
         report = engine.remediate([str(play_a), str(play_b)], apply=False)
@@ -959,7 +992,7 @@ class TestL008LocalAction:
         - name: Run locally
           local_action: command echo hello
         """)
-        result = _apply(fix_local_action, content, {"rule_id": "L008", "line": 1})
+        result = _apply_node(fix_local_action, content, {"rule_id": "L008", "line": 1})
         assert result.applied is True
         assert "local_action" not in result.content
         assert "delegate_to: localhost" in result.content
@@ -973,7 +1006,7 @@ class TestL008LocalAction:
             module: ansible.builtin.debug
             msg: hi
         """)
-        result = _apply(fix_local_action, content, {"rule_id": "L008", "line": 1})
+        result = _apply_node(fix_local_action, content, {"rule_id": "L008", "line": 1})
         assert result.applied is True
         assert "local_action" not in result.content
         assert "delegate_to: localhost" in result.content
@@ -986,7 +1019,7 @@ class TestL008LocalAction:
           ansible.builtin.debug:
             msg: hi
         """)
-        result = _apply(fix_local_action, content, {"rule_id": "L008", "line": 1})
+        result = _apply_node(fix_local_action, content, {"rule_id": "L008", "line": 1})
         assert result.applied is False
 
     def test_idempotent(self) -> None:
@@ -995,9 +1028,9 @@ class TestL008LocalAction:
         - name: Run locally
           local_action: command whoami
         """)
-        r1 = _apply(fix_local_action, content, {"rule_id": "L008", "line": 1})
+        r1 = _apply_node(fix_local_action, content, {"rule_id": "L008", "line": 1})
         assert r1.applied is True
-        r2 = _apply(fix_local_action, r1.content, {"rule_id": "L008", "line": 1})
+        r2 = _apply_node(fix_local_action, r1.content, {"rule_id": "L008", "line": 1})
         assert r2.applied is False
 
 
@@ -1017,7 +1050,7 @@ class TestL009EmptyString:
             msg: empty
           when: myvar == ""
         """)
-        result = _apply(fix_empty_string, content, {"rule_id": "L009", "line": 1})
+        result = _apply_node(fix_empty_string, content, {"rule_id": "L009", "line": 1})
         assert result.applied is True
         assert "myvar | length == 0" in result.content
 
@@ -1029,7 +1062,7 @@ class TestL009EmptyString:
             msg: not empty
           when: myvar != ''
         """)
-        result = _apply(fix_empty_string, content, {"rule_id": "L009", "line": 1})
+        result = _apply_node(fix_empty_string, content, {"rule_id": "L009", "line": 1})
         assert result.applied is True
         assert "myvar | length > 0" in result.content
 
@@ -1041,7 +1074,7 @@ class TestL009EmptyString:
             msg: ok
           when: myvar is defined
         """)
-        result = _apply(fix_empty_string, content, {"rule_id": "L009", "line": 1})
+        result = _apply_node(fix_empty_string, content, {"rule_id": "L009", "line": 1})
         assert result.applied is False
 
     def test_idempotent(self) -> None:
@@ -1052,8 +1085,8 @@ class TestL009EmptyString:
             msg: empty
           when: myvar == ""
         """)
-        r1 = _apply(fix_empty_string, content, {"rule_id": "L009", "line": 1})
-        r2 = _apply(fix_empty_string, r1.content, {"rule_id": "L009", "line": 1})
+        r1 = _apply_node(fix_empty_string, content, {"rule_id": "L009", "line": 1})
+        r2 = _apply_node(fix_empty_string, r1.content, {"rule_id": "L009", "line": 1})
         assert r2.applied is False
 
 
@@ -1073,7 +1106,7 @@ class TestL011LiteralBool:
             msg: hi
           when: enabled == true
         """)
-        result = _apply(fix_literal_bool, content, {"rule_id": "L011", "line": 1})
+        result = _apply_node(fix_literal_bool, content, {"rule_id": "L011", "line": 1})
         assert result.applied is True
         assert "enabled" in result.content
         assert "== true" not in result.content
@@ -1086,7 +1119,7 @@ class TestL011LiteralBool:
             msg: hi
           when: enabled == false
         """)
-        result = _apply(fix_literal_bool, content, {"rule_id": "L011", "line": 1})
+        result = _apply_node(fix_literal_bool, content, {"rule_id": "L011", "line": 1})
         assert result.applied is True
         assert "not enabled" in result.content
 
@@ -1098,7 +1131,7 @@ class TestL011LiteralBool:
             msg: hi
           when: enabled is true
         """)
-        result = _apply(fix_literal_bool, content, {"rule_id": "L011", "line": 1})
+        result = _apply_node(fix_literal_bool, content, {"rule_id": "L011", "line": 1})
         assert result.applied is True
         assert "is true" not in result.content
 
@@ -1110,7 +1143,7 @@ class TestL011LiteralBool:
             msg: hi
           when: enabled == True
         """)
-        result = _apply(fix_literal_bool, content, {"rule_id": "L011", "line": 1})
+        result = _apply_node(fix_literal_bool, content, {"rule_id": "L011", "line": 1})
         assert result.applied is True
 
     def test_no_change_without_pattern(self) -> None:
@@ -1121,7 +1154,7 @@ class TestL011LiteralBool:
             msg: hi
           when: enabled
         """)
-        result = _apply(fix_literal_bool, content, {"rule_id": "L011", "line": 1})
+        result = _apply_node(fix_literal_bool, content, {"rule_id": "L011", "line": 1})
         assert result.applied is False
 
 
@@ -1141,7 +1174,7 @@ class TestL015JinjaWhen:
             msg: hi
           when: "{{ my_var }}"
         """)
-        result = _apply(fix_jinja_when, content, {"rule_id": "L015", "line": 1})
+        result = _apply_node(fix_jinja_when, content, {"rule_id": "L015", "line": 1})
         assert result.applied is True
         assert "{{" not in result.content
         assert "}}" not in result.content
@@ -1155,7 +1188,7 @@ class TestL015JinjaWhen:
             msg: hi
           when: my_var is defined
         """)
-        result = _apply(fix_jinja_when, content, {"rule_id": "L015", "line": 1})
+        result = _apply_node(fix_jinja_when, content, {"rule_id": "L015", "line": 1})
         assert result.applied is False
 
     def test_idempotent(self) -> None:
@@ -1166,8 +1199,8 @@ class TestL015JinjaWhen:
             msg: hi
           when: "{{ some_flag }}"
         """)
-        r1 = _apply(fix_jinja_when, content, {"rule_id": "L015", "line": 1})
-        r2 = _apply(fix_jinja_when, r1.content, {"rule_id": "L015", "line": 1})
+        r1 = _apply_node(fix_jinja_when, content, {"rule_id": "L015", "line": 1})
+        r2 = _apply_node(fix_jinja_when, r1.content, {"rule_id": "L015", "line": 1})
         assert r2.applied is False
 
 
@@ -1242,7 +1275,7 @@ class TestL025NameCasing:
           ansible.builtin.debug:
             msg: hi
         """)
-        result = _apply(fix_name_casing, content, {"rule_id": "L025", "line": 1})
+        result = _apply_node(fix_name_casing, content, {"rule_id": "L025", "line": 1})
         assert result.applied is True
         assert "Install packages" in result.content
 
@@ -1253,7 +1286,7 @@ class TestL025NameCasing:
           ansible.builtin.debug:
             msg: hi
         """)
-        result = _apply(fix_name_casing, content, {"rule_id": "L025", "line": 1})
+        result = _apply_node(fix_name_casing, content, {"rule_id": "L025", "line": 1})
         assert result.applied is False
 
     def test_idempotent(self) -> None:
@@ -1263,8 +1296,8 @@ class TestL025NameCasing:
           ansible.builtin.debug:
             msg: hi
         """)
-        r1 = _apply(fix_name_casing, content, {"rule_id": "L025", "line": 1})
-        r2 = _apply(fix_name_casing, r1.content, {"rule_id": "L025", "line": 1})
+        r1 = _apply_node(fix_name_casing, content, {"rule_id": "L025", "line": 1})
+        r2 = _apply_node(fix_name_casing, r1.content, {"rule_id": "L025", "line": 1})
         assert r2.applied is False
 
 
@@ -1282,7 +1315,7 @@ class TestL046FreeForm:
         - name: Run it
           ansible.builtin.command: echo hello
         """)
-        result = _apply(fix_free_form, content, {"rule_id": "L046", "line": 1})
+        result = _apply_node(fix_free_form, content, {"rule_id": "L046", "line": 1})
         assert result.applied is True
         assert "cmd:" in result.content
         assert "echo hello" in result.content
@@ -1294,7 +1327,7 @@ class TestL046FreeForm:
           ansible.builtin.command:
             cmd: echo hello
         """)
-        result = _apply(fix_free_form, content, {"rule_id": "L046", "line": 1})
+        result = _apply_node(fix_free_form, content, {"rule_id": "L046", "line": 1})
         assert result.applied is False
 
     def test_no_change_for_non_command_module(self) -> None:
@@ -1304,7 +1337,7 @@ class TestL046FreeForm:
           ansible.builtin.debug:
             msg: hi
         """)
-        result = _apply(fix_free_form, content, {"rule_id": "L046", "line": 1})
+        result = _apply_node(fix_free_form, content, {"rule_id": "L046", "line": 1})
         assert result.applied is False
 
     def test_shell_module(self) -> None:
@@ -1313,7 +1346,7 @@ class TestL046FreeForm:
         - name: Run shell
           ansible.builtin.shell: cat /etc/hosts | grep localhost
         """)
-        result = _apply(fix_free_form, content, {"rule_id": "L046", "line": 1})
+        result = _apply_node(fix_free_form, content, {"rule_id": "L046", "line": 1})
         assert result.applied is True
         assert "cmd:" in result.content
 
@@ -1334,7 +1367,7 @@ class TestL043BareVars:
             msg: "{{ item }}"
           with_items: packages
         """)
-        result = _apply(fix_bare_vars, content, {"rule_id": "L043", "line": 1})
+        result = _apply_node(fix_bare_vars, content, {"rule_id": "L043", "line": 1})
         assert result.applied is True
         assert "{{ packages }}" in result.content
 
@@ -1346,7 +1379,7 @@ class TestL043BareVars:
             msg: "{{ item }}"
           with_items: "{{ packages }}"
         """)
-        result = _apply(fix_bare_vars, content, {"rule_id": "L043", "line": 1})
+        result = _apply_node(fix_bare_vars, content, {"rule_id": "L043", "line": 1})
         assert result.applied is False
 
     def test_no_change_without_loop(self) -> None:
@@ -1356,7 +1389,7 @@ class TestL043BareVars:
           ansible.builtin.debug:
             msg: hi
         """)
-        result = _apply(fix_bare_vars, content, {"rule_id": "L043", "line": 1})
+        result = _apply_node(fix_bare_vars, content, {"rule_id": "L043", "line": 1})
         assert result.applied is False
 
 
@@ -1374,7 +1407,7 @@ class TestL013ChangedWhen:
         - name: Check version
           ansible.builtin.command: python --version
         """)
-        result = _apply(fix_changed_when, content, {"rule_id": "L013", "line": 1})
+        result = _apply_node(fix_changed_when, content, {"rule_id": "L013", "line": 1})
         assert result.applied is True
         assert "changed_when:" in result.content
 
@@ -1386,7 +1419,7 @@ class TestL013ChangedWhen:
             cmd: touch /tmp/foo
             creates: /tmp/foo
         """)
-        result = _apply(fix_changed_when, content, {"rule_id": "L013", "line": 1})
+        result = _apply_node(fix_changed_when, content, {"rule_id": "L013", "line": 1})
         assert result.applied is False
 
     def test_no_change_when_already_set(self) -> None:
@@ -1396,7 +1429,7 @@ class TestL013ChangedWhen:
           ansible.builtin.command: echo test
           changed_when: false
         """)
-        result = _apply(fix_changed_when, content, {"rule_id": "L013", "line": 1})
+        result = _apply_node(fix_changed_when, content, {"rule_id": "L013", "line": 1})
         assert result.applied is False
 
     def test_no_change_for_non_command_module(self) -> None:
@@ -1406,7 +1439,7 @@ class TestL013ChangedWhen:
           ansible.builtin.debug:
             msg: hi
         """)
-        result = _apply(fix_changed_when, content, {"rule_id": "L013", "line": 1})
+        result = _apply_node(fix_changed_when, content, {"rule_id": "L013", "line": 1})
         assert result.applied is False
 
 
@@ -1425,7 +1458,7 @@ class TestL018Become:
           ansible.builtin.command: whoami
           become_user: postgres
         """)
-        result = _apply(fix_become, content, {"rule_id": "L018", "line": 1})
+        result = _apply_node(fix_become, content, {"rule_id": "L018", "line": 1})
         assert result.applied is True
         assert "become: true" in result.content or "become: True" in result.content
 
@@ -1437,7 +1470,7 @@ class TestL018Become:
           become: true
           become_user: postgres
         """)
-        result = _apply(fix_become, content, {"rule_id": "L018", "line": 1})
+        result = _apply_node(fix_become, content, {"rule_id": "L018", "line": 1})
         assert result.applied is False
 
     def test_no_change_without_become_user(self) -> None:
@@ -1447,7 +1480,7 @@ class TestL018Become:
           ansible.builtin.debug:
             msg: hi
         """)
-        result = _apply(fix_become, content, {"rule_id": "L018", "line": 1})
+        result = _apply_node(fix_become, content, {"rule_id": "L018", "line": 1})
         assert result.applied is False
 
     def test_become_inserted_after_become_user(self) -> None:
@@ -1457,7 +1490,7 @@ class TestL018Become:
           ansible.builtin.command: whoami
           become_user: postgres
         """)
-        result = _apply(fix_become, content, {"rule_id": "L018", "line": 1})
+        result = _apply_node(fix_become, content, {"rule_id": "L018", "line": 1})
         assert result.applied is True
         lines = result.content.splitlines()
         bu_line = next(i for i, line in enumerate(lines) if "become_user" in line)
@@ -1479,7 +1512,7 @@ class TestL022Pipefail:
         - name: Grep logs
           ansible.builtin.shell: cat /var/log/syslog | grep error
         """)
-        result = _apply(fix_pipefail, content, {"rule_id": "L022", "line": 1})
+        result = _apply_node(fix_pipefail, content, {"rule_id": "L022", "line": 1})
         assert result.applied is True
         assert "set -o pipefail &&" in result.content
 
@@ -1490,7 +1523,7 @@ class TestL022Pipefail:
           ansible.builtin.shell:
             cmd: cat /var/log/syslog | grep error
         """)
-        result = _apply(fix_pipefail, content, {"rule_id": "L022", "line": 1})
+        result = _apply_node(fix_pipefail, content, {"rule_id": "L022", "line": 1})
         assert result.applied is True
         assert "set -o pipefail &&" in result.content
 
@@ -1500,7 +1533,7 @@ class TestL022Pipefail:
         - name: Simple
           ansible.builtin.shell: echo hello
         """)
-        result = _apply(fix_pipefail, content, {"rule_id": "L022", "line": 1})
+        result = _apply_node(fix_pipefail, content, {"rule_id": "L022", "line": 1})
         assert result.applied is False
 
     def test_no_change_when_already_set(self) -> None:
@@ -1509,7 +1542,7 @@ class TestL022Pipefail:
         - name: Grep logs
           ansible.builtin.shell: set -o pipefail && cat /var/log/syslog | grep error
         """)
-        result = _apply(fix_pipefail, content, {"rule_id": "L022", "line": 1})
+        result = _apply_node(fix_pipefail, content, {"rule_id": "L022", "line": 1})
         assert result.applied is False
 
     def test_idempotent(self) -> None:
@@ -1518,8 +1551,8 @@ class TestL022Pipefail:
         - name: Grep
           ansible.builtin.shell: cat log | grep err
         """)
-        r1 = _apply(fix_pipefail, content, {"rule_id": "L022", "line": 1})
-        r2 = _apply(fix_pipefail, r1.content, {"rule_id": "L022", "line": 1})
+        r1 = _apply_node(fix_pipefail, content, {"rule_id": "L022", "line": 1})
+        r2 = _apply_node(fix_pipefail, r1.content, {"rule_id": "L022", "line": 1})
         assert r2.applied is False
 
 
@@ -1539,7 +1572,7 @@ class TestL012Latest:
             name: httpd
             state: latest
         """)
-        result = _apply(fix_latest, content, {"rule_id": "L012", "line": 1})
+        result = _apply_node(fix_latest, content, {"rule_id": "L012", "line": 1})
         assert result.applied is True
         assert "state: present" in result.content
         assert "state: latest" not in result.content
@@ -1552,7 +1585,7 @@ class TestL012Latest:
             name: httpd
             state: present
         """)
-        result = _apply(fix_latest, content, {"rule_id": "L012", "line": 1})
+        result = _apply_node(fix_latest, content, {"rule_id": "L012", "line": 1})
         assert result.applied is False
 
     def test_no_change_for_absent(self) -> None:
@@ -1563,7 +1596,7 @@ class TestL012Latest:
             name: httpd
             state: absent
         """)
-        result = _apply(fix_latest, content, {"rule_id": "L012", "line": 1})
+        result = _apply_node(fix_latest, content, {"rule_id": "L012", "line": 1})
         assert result.applied is False
 
     def test_idempotent(self) -> None:
@@ -1574,8 +1607,8 @@ class TestL012Latest:
             name: nginx
             state: latest
         """)
-        r1 = _apply(fix_latest, content, {"rule_id": "L012", "line": 1})
-        r2 = _apply(fix_latest, r1.content, {"rule_id": "L012", "line": 1})
+        r1 = _apply_node(fix_latest, content, {"rule_id": "L012", "line": 1})
+        r2 = _apply_node(fix_latest, r1.content, {"rule_id": "L012", "line": 1})
         assert r2.applied is False
 
 
@@ -1595,7 +1628,7 @@ class TestM006BecomeUnreachable:
           become: true
           ignore_errors: true
         """)
-        result = _apply(fix_become_unreachable, content, {"rule_id": "M006", "line": 1})
+        result = _apply_node(fix_become_unreachable, content, {"rule_id": "M006", "line": 1})
         assert result.applied is True
         assert "ignore_unreachable: true" in result.content or "ignore_unreachable: True" in result.content
 
@@ -1608,7 +1641,7 @@ class TestM006BecomeUnreachable:
           ignore_errors: true
           ignore_unreachable: true
         """)
-        result = _apply(fix_become_unreachable, content, {"rule_id": "M006", "line": 1})
+        result = _apply_node(fix_become_unreachable, content, {"rule_id": "M006", "line": 1})
         assert result.applied is False
 
     def test_no_change_without_become(self) -> None:
@@ -1618,7 +1651,7 @@ class TestM006BecomeUnreachable:
           ansible.builtin.command: whoami
           ignore_errors: true
         """)
-        result = _apply(fix_become_unreachable, content, {"rule_id": "M006", "line": 1})
+        result = _apply_node(fix_become_unreachable, content, {"rule_id": "M006", "line": 1})
         assert result.applied is False
 
     def test_inserted_after_ignore_errors(self) -> None:
@@ -1629,7 +1662,7 @@ class TestM006BecomeUnreachable:
           become: true
           ignore_errors: true
         """)
-        result = _apply(fix_become_unreachable, content, {"rule_id": "M006", "line": 1})
+        result = _apply_node(fix_become_unreachable, content, {"rule_id": "M006", "line": 1})
         lines = result.content.splitlines()
         ie_line = next(i for i, line in enumerate(lines) if "ignore_errors" in line)
         iu_line = next(i for i, line in enumerate(lines) if "ignore_unreachable" in line)
@@ -1649,7 +1682,7 @@ class TestM008BareInclude:
         content = textwrap.dedent("""\
         - include: tasks/setup.yml
         """)
-        result = _apply(fix_bare_include, content, {"rule_id": "M008", "line": 1})
+        result = _apply_node(fix_bare_include, content, {"rule_id": "M008", "line": 1})
         assert result.applied is True
         assert "ansible.builtin.include_tasks" in result.content
         assert "\n- include:" not in result.content
@@ -1659,7 +1692,7 @@ class TestM008BareInclude:
         content = textwrap.dedent("""\
         - ansible.builtin.include_tasks: tasks/setup.yml
         """)
-        result = _apply(fix_bare_include, content, {"rule_id": "M008", "line": 1})
+        result = _apply_node(fix_bare_include, content, {"rule_id": "M008", "line": 1})
         assert result.applied is False
 
     def test_idempotent(self) -> None:
@@ -1667,8 +1700,8 @@ class TestM008BareInclude:
         content = textwrap.dedent("""\
         - include: tasks/setup.yml
         """)
-        r1 = _apply(fix_bare_include, content, {"rule_id": "M008", "line": 1})
-        r2 = _apply(fix_bare_include, r1.content, {"rule_id": "M008", "line": 1})
+        r1 = _apply_node(fix_bare_include, content, {"rule_id": "M008", "line": 1})
+        r2 = _apply_node(fix_bare_include, r1.content, {"rule_id": "M008", "line": 1})
         assert r2.applied is False
 
 
@@ -1691,7 +1724,7 @@ class TestM009WithToLoop:
             - httpd
             - nginx
         """)
-        result = _apply(fix_with_to_loop, content, {"rule_id": "M009", "line": 1, "with_key": "with_items"})
+        result = _apply_node(fix_with_to_loop, content, {"rule_id": "M009", "line": 1, "with_key": "with_items"})
         assert result.applied is True
         assert "loop:" in result.content
         assert "with_items" not in result.content
@@ -1707,7 +1740,7 @@ class TestM009WithToLoop:
             - httpd
             - nginx
         """)
-        result = _apply(fix_with_to_loop, content, {"rule_id": "M009", "line": 1, "with_key": "with_items"})
+        result = _apply_node(fix_with_to_loop, content, {"rule_id": "M009", "line": 1, "with_key": "with_items"})
         assert result.applied is False
 
     def test_with_dict_not_handled(self) -> None:
@@ -1718,7 +1751,7 @@ class TestM009WithToLoop:
             name: "{{ item.key }}"
           with_dict: "{{ users }}"
         """)
-        result = _apply(fix_with_to_loop, content, {"rule_id": "M009", "line": 1, "with_key": "with_dict"})
+        result = _apply_node(fix_with_to_loop, content, {"rule_id": "M009", "line": 1, "with_key": "with_dict"})
         assert result.applied is False
 
     def test_idempotent(self) -> None:
@@ -1730,8 +1763,8 @@ class TestM009WithToLoop:
           with_items:
             - httpd
         """)
-        r1 = _apply(fix_with_to_loop, content, {"rule_id": "M009", "line": 1, "with_key": "with_items"})
-        r2 = _apply(fix_with_to_loop, r1.content, {"rule_id": "M009", "line": 1, "with_key": "with_items"})
+        r1 = _apply_node(fix_with_to_loop, content, {"rule_id": "M009", "line": 1, "with_key": "with_items"})
+        r2 = _apply_node(fix_with_to_loop, r1.content, {"rule_id": "M009", "line": 1, "with_key": "with_items"})
         assert r2.applied is False
 
 
@@ -1866,7 +1899,7 @@ class TestRemediationProgress:
             progress_messages.append((phase, message, fraction, level))
 
         reg = TransformRegistry()
-        reg.register("L021", structured=fix_missing_mode)
+        reg.register("L021", node=fix_missing_mode)
         engine = RemediationEngine(
             reg,
             scan_fn,

@@ -20,7 +20,7 @@ avoid_end_play(tree, node) := v if {
 	count(node.line) > 0
 	v := {
 		"rule_id": "L064",
-		"level": "warning",
+		"severity": "low",
 		"message": "Avoid meta: end_play; prefer meta: end_host",
 		"file": node.file,
 		"line": node.line[0],
@@ -38,7 +38,7 @@ avoid_end_play(tree, node) := v if {
 	count(node.line) > 0
 	v := {
 		"rule_id": "L064",
-		"level": "warning",
+		"severity": "low",
 		"message": "Avoid meta: end_play; prefer meta: end_host",
 		"file": node.file,
 		"line": node.line[0],
@@ -56,7 +56,7 @@ avoid_end_play(tree, node) := v if {
 	count(node.line) > 0
 	v := {
 		"rule_id": "L064",
-		"level": "warning",
+		"severity": "low",
 		"message": "Avoid meta: end_play; prefer meta: end_host",
 		"file": node.file,
 		"line": node.line[0],

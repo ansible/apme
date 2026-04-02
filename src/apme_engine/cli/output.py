@@ -112,7 +112,7 @@ def fmt_ms(ms: float) -> str:
 
 
 def count_by_severity(violations: list[ViolationDict]) -> dict[str, int]:
-    """Count violations grouped into error, warning, info, and hint buckets.
+    """Count violations grouped into severity buckets (ADR-043).
 
     Args:
         violations: Violation dicts to count.
@@ -120,17 +120,13 @@ def count_by_severity(violations: list[ViolationDict]) -> dict[str, int]:
     Returns:
         Dict mapping severity bucket to count.
     """
-    counts = {"error": 0, "warning": 0, "info": 0, "hint": 0}
+    counts = {"critical": 0, "error": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
     for v in violations:
-        level = str(v.get("level") or "").lower()
-        if level in ("very_high", "high", "error"):
-            counts["error"] += 1
-        elif level in ("medium", "low", "warning"):
-            counts["warning"] += 1
-        elif level == "info":
-            counts["info"] += 1
+        sev = str(v.get("severity") or "").lower()
+        if sev in counts:
+            counts[sev] += 1
         else:
-            counts["hint"] += 1
+            counts["info"] += 1
     return counts
 
 
@@ -186,8 +182,8 @@ def render_check_results(
         summary: Optional remediation summary proto from the server.
     """
     counts = count_by_severity(violations)
-    has_errors = counts["error"] > 0
-    passed = not has_errors
+    has_failures = counts["critical"] > 0 or counts["error"] > 0
+    passed = not has_failures
 
     status = green(bold("PASSED")) if passed else red(bold("FAILED"))
     summary_lines = [f"Status: {status}"]
@@ -196,14 +192,18 @@ def render_check_results(
         summary_lines.append(f"Scan ID: {dim(scan_id)}")
 
     counts_line = []
+    if counts["critical"]:
+        counts_line.append(red(f"{counts['critical']} critical"))
     if counts["error"]:
         counts_line.append(red(f"{counts['error']} error(s)"))
-    if counts["warning"]:
-        counts_line.append(yellow(f"{counts['warning']} warning(s)"))
+    if counts["high"]:
+        counts_line.append(red(f"{counts['high']} high"))
+    if counts["medium"]:
+        counts_line.append(yellow(f"{counts['medium']} medium"))
+    if counts["low"]:
+        counts_line.append(cyan(f"{counts['low']} low"))
     if counts["info"]:
-        counts_line.append(magenta(f"{counts['info']} info(s)"))
-    if counts["hint"]:
-        counts_line.append(cyan(f"{counts['hint']} hint(s)"))
+        counts_line.append(magenta(f"{counts['info']} info"))
     if counts_line:
         summary_lines.append("Issues: " + ", ".join(counts_line))
     else:
@@ -225,7 +225,7 @@ def render_check_results(
     rows = []
     for v in violations:
         rule_id = str(v.get("rule_id") or "?")
-        level = str(v.get("level") or "none")
+        level = str(v.get("severity") or "info")
         rem_raw = v.get("remediation_class") or "ai-candidate"
         rem_class = rem_raw.value if hasattr(rem_raw, "value") else str(rem_raw)
         message = str(v.get("message") or "")
@@ -264,7 +264,7 @@ def render_check_results(
             is_last_v = j == len(file_violations) - 1
             indent = TREE_SPACE if is_last_file else TREE_PIPE
             v_prefix = TREE_LAST if is_last_v else TREE_MID
-            indicator = severity_indicator(str(v.get("level") or "none"))
+            indicator = severity_indicator(str(v.get("severity") or "info"))
             line = v.get("line")
             if isinstance(line, list | tuple) and len(line) >= 2:
                 line_str = f"{line[0]}-{line[1]}"

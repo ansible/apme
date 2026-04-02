@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+from ruamel.yaml.comments import CommentedMap
+
 from apme_engine.engine.models import ViolationDict
-from apme_engine.remediation.structured import StructuredFile
-from apme_engine.remediation.transforms._helpers import violation_line_to_int
 
 _WITH_SIMPLE = frozenset(
     {
@@ -15,7 +15,7 @@ _WITH_SIMPLE = frozenset(
 )
 
 
-def fix_with_to_loop(sf: StructuredFile, violation: ViolationDict) -> bool:
+def fix_with_to_loop(task: CommentedMap, violation: ViolationDict) -> bool:
     """Convert simple ``with_items`` to ``loop:``.
 
     Only handles the straightforward cases (with_items, with_list,
@@ -23,16 +23,12 @@ def fix_with_to_loop(sf: StructuredFile, violation: ViolationDict) -> bool:
     with_subelements) need manual review or AI.
 
     Args:
-        sf: Parsed YAML file to modify in-place.
+        task: Task CommentedMap to modify in-place.
         violation: Violation dict with line and optional with_key.
 
     Returns:
         True if a change was applied.
     """
-    task = sf.find_task(violation_line_to_int(violation), violation)
-    if task is None:
-        return False
-
     with_key = violation.get("with_key", "")
 
     if with_key in _WITH_SIMPLE and with_key in task:

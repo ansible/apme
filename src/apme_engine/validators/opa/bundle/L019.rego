@@ -18,7 +18,7 @@ playbook_extension(tree) := v if {
 	endswith(root_path, ".yaml") == false
 	v := {
 		"rule_id": "L019",
-		"level": "warning",
+		"severity": "low",
 		"message": "Playbook should have .yml or .yaml extension",
 		"file": root_path,
 		"line": 1,

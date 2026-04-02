@@ -19,7 +19,7 @@ run_once(tree, node) := v if {
 	count(node.line) > 0
 	v := {
 		"rule_id": "L023",
-		"level": "info",
+		"severity": "info",
 		"message": "Consider whether run_once is appropriate",
 		"file": node.file,
 		"line": node.line[0],

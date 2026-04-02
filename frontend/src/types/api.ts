@@ -265,3 +265,32 @@ export interface UpdateGalaxyServerRequest {
   token?: string;
   auth_url?: string;
 }
+
+// ── Rule catalog (ADR-041) ───────────────────────────────────────────
+
+export interface RuleDetail {
+  rule_id: string;
+  default_severity: string;
+  effective_severity: string;
+  category: string;
+  source: string;
+  description: string;
+  scope: string;
+  enabled: boolean;
+  enforced: boolean;
+  has_override: boolean;
+  registered_at: string;
+}
+
+export interface RuleOverrideRequest {
+  severity_override?: number;
+  enabled_override?: boolean;
+  enforced?: boolean;
+}
+
+export interface RuleStats {
+  total: number;
+  by_category: Record<string, number>;
+  by_source: Record<string, number>;
+  override_count: number;
+}

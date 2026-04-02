@@ -4510,35 +4510,9 @@ class ActionGroupMetadata:
         )
 
 
-# following ansible-lint severity levels
-class Severity:
-    """Severity levels for rule results (ansible-lint compatible).
-
-    Attributes:
-        VERY_HIGH: Highest severity.
-        HIGH: High severity.
-        MEDIUM: Medium severity.
-        LOW: Low severity.
-        VERY_LOW: Very low severity.
-        NONE: No severity (informational).
-    """
-
-    VERY_HIGH = "very_high"
-    HIGH = "high"
-    MEDIUM = "medium"
-    LOW = "low"
-    VERY_LOW = "very_low"
-    NONE = "none"
-
-
-_severity_level_mapping = {
-    Severity.VERY_HIGH: 5,
-    Severity.HIGH: 4,
-    Severity.MEDIUM: 3,
-    Severity.LOW: 2,
-    Severity.VERY_LOW: 1,
-    Severity.NONE: 0,
-}
+# ADR-043: Severity is now an IntEnum from severity_defaults.
+# Re-exported here so native rules can import from models.
+from apme_engine.severity_defaults import Severity as Severity  # noqa: E402
 
 
 class RuleTag:
@@ -4588,7 +4562,7 @@ class RuleMetadata:
 
     version: str = ""
     commit_id: str = ""
-    severity: str = ""
+    severity: str | Severity = Severity.MEDIUM
     tags: tuple[str, ...] = ()
     scope: str = RuleScope.TASK
 

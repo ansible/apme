@@ -52,8 +52,8 @@ All gRPC servers use **`grpc.aio`** (fully async). Blocking work (engine scan, s
 | **Ansible** | `apme-ansible` | 50053 | Ansible-runtime checks using session-scoped venvs (shared read-only via `/sessions` volume). Rules L057–L059, M001–M004 |
 | **Gitleaks** | `apme-gitleaks` | 50056 | Gitleaks binary + Python gRPC wrapper. Scans raw files for hardcoded secrets, API keys, private keys. Filters vault-encrypted content and Jinja2 expressions. Rules SEC:* (800+ patterns) |
 | **Galaxy Proxy** | `apme-galaxy-proxy` | 8765 | PEP 503 simple repository API that converts Galaxy collection tarballs to pip-installable Python wheels. Caching is the proxy's concern — the engine has zero cache management code |
-| **Gateway** | `apme-gateway` | 8080 / 50060 | Dual-protocol: FastAPI REST API (:8080) for the UI and a gRPC Reporting service (:50060) that receives `FixCompletedEvent` from Primary. Persists activity history to SQLite. Health endpoint probes all upstream services. |
-| **UI** | `apme-ui` | 8081 | React SPA served by nginx. Proxies `/api/` to the Gateway at `127.0.0.1:8080`. Displays activity history, violations, sessions, and system health. |
+| **Gateway** | `apme-gateway` | 8080 / 50060 | Dual-protocol: FastAPI REST API (:8080) for the UI and a gRPC Reporting service (:50060) that receives `FixCompletedEvent` and `RegisterRules` from Primary. Persists activity history, rule catalog, and rule overrides to SQLite. Health endpoint probes all upstream services. REST endpoints include `/api/v1/rules` for rule catalog management (ADR-041). |
+| **UI** | `apme-ui` | 8081 | React SPA served by nginx. Proxies `/api/` to the Gateway at `127.0.0.1:8080`. Displays activity history, violations, sessions, system health, and rule catalog management (ADR-041). |
 | **CLI** | `apme-cli` | — | Ephemeral. **Check** and **remediate** are user-facing actions; the engine uses **`FixSession`** internally for both (ADR-039). The CLI streams project files as chunked **`ScanChunk`** messages on that RPC (check mode omits remediate options). Run with `--pod apme-pod` and CWD mounted |
 
 ## gRPC service contracts
@@ -74,6 +74,8 @@ service Primary {
 ```
 
 **`ScanStream` was removed (ADR-039).** **Check** and **remediate** are user-facing actions; the engine uses **`FixSession`** internally for both (chunked **`ScanChunk`** uploads in `SessionCommand`). Unary **`Scan`** accepts a **`ScanRequest`** (optional **`ScanOptions`**, **`scan_id`**) and returns **`ScanResponse`** with merged violations, **`ScanDiagnostics`**, and **`ScanSummary`**. **`FixSession`** is bidirectional streaming for progress, AI proposal review, and session resume.
+
+**`ScanOptions`** carries `repeated RuleConfig rule_configs` (ADR-041) — per-rule overrides that control `enabled`, `severity`, and `enforced` flags. When `rule_configs_complete = true` (Gateway path), the Primary performs a **bidirectional audit**: it hard-fails the scan if the config references unknown rule IDs *or* omits rules the engine knows. For CLI-originated scans (`rule_configs_complete = false`), unknown IDs produce a warning only. The Primary filters disabled rules from fan-out results and overrides severity labels before returning violations.
 
 ### Validator (`validate.proto`) — unified contract
 
@@ -97,6 +99,17 @@ Every validator container implements this service. The `ValidateRequest` carries
 | `request_id` | `string` | All (correlation ID for logging/tracing) |
 
 The `ValidateResponse` echoes back `request_id` for correlation and includes a `ValidatorDiagnostics` message with timing data, violation counts, and validator-specific metadata. Each validator ignores the data fields it doesn't need. This keeps the contract uniform — adding a new validator means implementing one RPC and choosing which fields to consume.
+
+### Reporting (`reporting.proto`)
+
+```protobuf
+service Reporting {
+  rpc ReportFixCompleted(FixCompletedEvent) returns (ReportAck);
+  rpc RegisterRules(RegisterRulesRequest) returns (RegisterRulesResponse);  // ADR-041
+}
+```
+
+**`RegisterRules`** receives the full rule catalog from the authority Primary at startup. The Gateway reconciles the `rules` table (add/remove/update) and stores rule overrides separately in `rule_overrides`. The Gateway injects resolved `RuleConfig` protos (default + override) into `ScanOptions.rule_configs` for each scan it initiates.
 
 ### Common types (`common.proto`)
 

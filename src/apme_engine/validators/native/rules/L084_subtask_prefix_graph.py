@@ -37,7 +37,7 @@ class SubtaskPrefixGraphRule(GraphRule):
     enabled: bool = True
     name: str = "SubtaskPrefix"
     version: str = "v0.0.1"
-    severity: str = Severity.VERY_LOW
+    severity: Severity = Severity.LOW
     tags: tuple[str, ...] = (Tag.CODING,)
     precedence: int = 10
 

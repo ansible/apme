@@ -44,7 +44,7 @@ class ParameterizedImportRoleGraphRule(GraphRule):
     enabled: bool = True
     name: str = "ParameterizedImportRole"
     version: str = "v0.0.1"
-    severity: str = Severity.HIGH
+    severity: Severity = Severity.HIGH
     tags: tuple[str, ...] = (Tag.DEPENDENCY,)
 
     def match(self, graph: ContentGraph, node_id: str) -> bool:

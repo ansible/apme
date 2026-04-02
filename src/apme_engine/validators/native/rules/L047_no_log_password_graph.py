@@ -67,7 +67,7 @@ class NoLogPasswordGraphRule(GraphRule):
     enabled: bool = True
     name: str = "NoLogPassword"
     version: str = "v0.0.2"
-    severity: str = Severity.MEDIUM
+    severity: Severity = Severity.HIGH
     tags: tuple[str, ...] = (Tag.SYSTEM,)
 
     def match(self, graph: ContentGraph, node_id: str) -> bool:

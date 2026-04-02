@@ -45,6 +45,21 @@ message ScanOptions {
   repeated string collection_specs = 3;
   string session_id = 4;             // client-provided session identifier for venv reuse
   repeated GalaxyServerDef galaxy_servers = 5;  // Galaxy server config as scan metadata (ADR-045)
+  repeated RuleConfig rule_configs = 6;         // per-rule overrides (ADR-041)
+  bool rule_configs_complete = 7;    // true = rule_configs is the full catalog (Gateway);
+                                     // false = partial overrides only (CLI).
+                                     // When true, Primary performs bidirectional audit and
+                                     // hard-fails if any known rule is missing (ADR-041).
+}
+
+// Per-rule configuration delivered with each scan request (ADR-041).
+// The Gateway resolves defaults + admin overrides into this shape;
+// the CLI can populate it from .apme/rules.yml.
+message RuleConfig {
+  string rule_id = 1;
+  Severity severity = 2;        // resolved severity (override > default)
+  bool enabled = 3;             // false = skip this rule entirely
+  bool enforced = 4;            // true = ignore inline # apme:ignore
 }
 
 message FixOptions {

@@ -18,6 +18,9 @@ import type {
   PythonPackageDetail,
   PythonPackageSummary,
   RemediationRateEntry,
+  RuleDetail,
+  RuleOverrideRequest,
+  RuleStats,
   SessionDetail,
   SessionSummary,
   TopViolation,
@@ -236,4 +239,91 @@ export async function deleteGalaxyServer(serverId: number): Promise<void> {
 
 export function getFeedbackEnabled(): Promise<{ enabled: boolean }> {
   return request("/feedback/enabled");
+}
+
+// ── Rule catalog (ADR-041) ─────────────────────────────────────────────
+
+/** Gateway ``RuleListItem`` / ``RuleDetailOut`` JSON (resolved_* + nested override). */
+interface RuleApiRow {
+  rule_id: string;
+  category: string;
+  source: string;
+  description: string;
+  scope: number;
+  default_severity: number;
+  default_severity_label: string;
+  resolved_severity: number;
+  resolved_severity_label: string;
+  enabled: boolean;
+  resolved_enabled: boolean;
+  registered_at: string;
+  override: {
+    severity_override: number | null;
+    enabled_override: boolean | null;
+    enforced: boolean;
+    updated_at: string;
+  } | null;
+}
+
+function mapRuleApiToDetail(r: RuleApiRow): RuleDetail {
+  return {
+    rule_id: r.rule_id,
+    default_severity: r.default_severity_label,
+    effective_severity: r.resolved_severity_label,
+    category: r.category,
+    source: r.source,
+    description: r.description,
+    scope: String(r.scope),
+    enabled: r.resolved_enabled,
+    enforced: r.override?.enforced ?? false,
+    has_override: r.override != null,
+    registered_at: r.registered_at,
+  };
+}
+
+export function listRules(params?: {
+  category?: string;
+  source?: string;
+  enabled_only?: boolean;
+}): Promise<RuleDetail[]> {
+  const sp = new URLSearchParams();
+  if (params?.category) sp.set("category", params.category);
+  if (params?.source) sp.set("source", params.source);
+  if (params?.enabled_only === true) sp.set("enabled_only", "true");
+  const q = sp.toString();
+  return request<RuleApiRow[]>(`/rules${q ? `?${q}` : ""}`).then((rows) => rows.map(mapRuleApiToDetail));
+}
+
+export function getRule(ruleId: string): Promise<RuleDetail> {
+  return request<RuleApiRow>(`/rules/${encodeURIComponent(ruleId)}`).then(mapRuleApiToDetail);
+}
+
+export async function updateRuleConfig(
+  ruleId: string,
+  config: RuleOverrideRequest,
+): Promise<void> {
+  const res = await fetch(`${BASE}/rules/${encodeURIComponent(ruleId)}/config`, {
+    method: "PUT",
+    headers: { Accept: "application/json", "Content-Type": "application/json" },
+    body: JSON.stringify(config),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`${res.status}: ${text}`);
+  }
+}
+
+export async function deleteRuleConfig(ruleId: string): Promise<void> {
+  const res = await fetch(`${BASE}/rules/${encodeURIComponent(ruleId)}/config`, {
+    method: "DELETE",
+    headers: { Accept: "application/json" },
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`${res.status}: ${text}`);
+  }
+}
+
+export function getRuleStats(): Promise<RuleStats> {
+  return request("/rules/stats");
 }

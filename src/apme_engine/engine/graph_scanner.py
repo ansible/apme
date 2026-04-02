@@ -17,6 +17,7 @@ import time
 import traceback
 from dataclasses import dataclass, field
 
+from apme_engine.severity_defaults import get_severity, severity_to_label
 from apme_engine.validators.native.rules.graph_rule_base import (
     GraphRule,
     GraphRuleResult,
@@ -69,6 +70,19 @@ class GraphScanReport:
 # ---------------------------------------------------------------------------
 # Rule loader
 # ---------------------------------------------------------------------------
+
+
+def native_rules_dir() -> str:
+    """Return the absolute path to the built-in native graph-rules directory.
+
+    Useful for callers outside the native validator daemon that need
+    to load the same rule set (e.g. the Primary remediation bridge).
+
+    Returns:
+        Absolute path to ``validators/native/rules``.
+    """
+    engine_pkg = os.path.dirname(os.path.dirname(__file__))
+    return os.path.join(engine_pkg, "validators", "native", "rules")
 
 
 def load_graph_rules(
@@ -141,6 +155,53 @@ _SCANNABLE_TYPES = frozenset(
 )
 
 
+def _evaluate_node(
+    graph: ContentGraph,
+    node: ContentNode,
+    enabled_rules: list[GraphRule],
+    report: GraphScanReport,
+) -> None:
+    """Run all rules against a single node and append results to ``report``.
+
+    Args:
+        graph: ContentGraph being scanned.
+        node: Node to evaluate.
+        enabled_rules: Pre-filtered list of enabled rules.
+        report: Report to accumulate results into (mutated in place).
+    """
+    report.nodes_scanned += 1
+    node_result = GraphNodeResult(node_id=node.node_id, node=node)
+
+    for rule in enabled_rules:
+        try:
+            matched = rule.match(graph, node.node_id)
+            if not matched:
+                continue
+            result = rule.process(graph, node.node_id)
+            if result is not None:
+                result.rule = rule.get_metadata()
+                node_result.rule_results.append(result)
+        except Exception as err:
+            logger.warning(
+                "Rule %s failed on %s: %s",
+                rule.rule_id,
+                node.node_id,
+                err,
+                exc_info=True,
+            )
+            node_result.rule_results.append(
+                GraphRuleResult(
+                    rule=rule.get_metadata(),
+                    verdict=False,
+                    node_id=node.node_id,
+                    error=f"Rule execution failed: {type(err).__name__}: {err}",
+                )
+            )
+
+    if node_result.rule_results:
+        report.node_results.append(node_result)
+
+
 def scan(
     graph: ContentGraph,
     rules: list[GraphRule],
@@ -172,38 +233,49 @@ def scan(
             continue
         if owned_only and node.scope != NodeScope.OWNED:
             continue
+        _evaluate_node(graph, node, enabled_rules, report)
 
-        report.nodes_scanned += 1
-        node_result = GraphNodeResult(node_id=node.node_id, node=node)
+    report.elapsed_ms = round((time.monotonic() - start) * 1000, 3)
+    return report
 
-        for rule in enabled_rules:
-            try:
-                matched = rule.match(graph, node.node_id)
-                if not matched:
-                    continue
-                result = rule.process(graph, node.node_id)
-                if result is not None:
-                    result.rule = rule.get_metadata()
-                    node_result.rule_results.append(result)
-            except Exception as err:
-                logger.warning(
-                    "Rule %s failed on %s: %s",
-                    rule.rule_id,
-                    node.node_id,
-                    err,
-                    exc_info=True,
-                )
-                node_result.rule_results.append(
-                    GraphRuleResult(
-                        rule=rule.get_metadata(),
-                        verdict=False,
-                        node_id=node.node_id,
-                        error=f"Rule execution failed: {type(err).__name__}: {err}",
-                    )
-                )
 
-        if node_result.rule_results:
-            report.node_results.append(node_result)
+def rescan_dirty(
+    graph: ContentGraph,
+    rules: list[GraphRule],
+    dirty_node_ids: frozenset[str],
+    *,
+    owned_only: bool = True,
+) -> GraphScanReport:
+    """Re-evaluate rules against only the specified (dirty) nodes.
+
+    Used by the graph-aware convergence loop to avoid a full-graph scan
+    after each transform pass.  Only graph rules are run — external
+    validators (OPA, Ansible, Gitleaks) are skipped because Tier 1
+    transforms only address native rule violations.
+
+    Args:
+        graph: ContentGraph (may have been mutated since last scan).
+        rules: Pre-loaded GraphRule instances.
+        dirty_node_ids: Node IDs to re-evaluate.
+        owned_only: If True (default), skip ``REFERENCED`` nodes
+            (consistent with ``scan()``).
+
+    Returns:
+        GraphScanReport scoped to the dirty nodes.
+    """
+    start = time.monotonic()
+    enabled_rules = [r for r in rules if r.enabled]
+    report = GraphScanReport(rules_evaluated=len(enabled_rules))
+
+    for node_id in sorted(dirty_node_ids):
+        node = graph.get_node(node_id)
+        if node is None:
+            continue
+        if node.node_type not in _SCANNABLE_TYPES:
+            continue
+        if owned_only and node.scope != NodeScope.OWNED:
+            continue
+        _evaluate_node(graph, node, enabled_rules, report)
 
     report.elapsed_ms = round((time.monotonic() - start) * 1000, 3)
     return report
@@ -248,9 +320,10 @@ def graph_report_to_violations(report: GraphScanReport) -> list[ViolationDict]:
 
             msg = str(detail.get("message", "")) or (rule.description if rule else "")
             scope = str(detail.get("scope", "")) or (rule.scope if rule else "task")
+            rid = rule.rule_id if rule else ""
             v: ViolationDict = {
-                "rule_id": rule.rule_id if rule else "",
-                "level": rule.severity if rule else "",
+                "rule_id": rid,
+                "severity": severity_to_label(get_severity(rid)),
                 "message": msg,
                 "file": file_path,
                 "line": line,

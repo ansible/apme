@@ -107,6 +107,37 @@ class GrpcReportingSink:
             )
             self._available = False
 
+    async def register_rules(
+        self,
+        request: reporting_pb2.RegisterRulesRequest,
+    ) -> reporting_pb2.RegisterRulesResponse | None:
+        """Push rule catalog to the Reporting service (ADR-041).
+
+        Args:
+            request: Registration payload with the full rule set.
+
+        Returns:
+            Response from the service, or None if the call failed.
+        """
+        if self._stub is None:
+            return None
+        timeout = _TIMEOUT_S if self._available else _FAST_FAIL_TIMEOUT_S
+        try:
+            resp = await self._stub.RegisterRules(request, timeout=timeout)
+            if not self._available:
+                logger.info("Reporting endpoint recovered (rule registration): %s", self._endpoint)
+                self._available = True
+            return resp  # type: ignore[no-any-return]
+        except Exception:
+            logger.warning(
+                "Failed to register rules (%d rules) to %s",
+                len(request.rules),
+                self._endpoint,
+                exc_info=True,
+            )
+            self._available = False
+            return None
+
     async def _probe(self) -> None:
         """Single gRPC health probe — sets ``_available`` accordingly.
 

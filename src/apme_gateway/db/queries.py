@@ -15,6 +15,8 @@ from apme_gateway.db.models import (
     GalaxyServer,
     Project,
     Proposal,
+    Rule,
+    RuleOverride,
     Scan,
     ScanCollection,
     ScanLog,
@@ -31,7 +33,14 @@ logger = logging.getLogger(__name__)
 # Project queries (ADR-037)
 # ---------------------------------------------------------------------------
 
-_SEVERITY_WEIGHTS: dict[str, int] = {"error": 10, "warning": 3, "info": 1}
+_SEVERITY_WEIGHTS: dict[str, int] = {
+    "critical": 20,
+    "error": 10,
+    "high": 6,
+    "medium": 3,
+    "low": 1,
+    "info": 0,
+}
 
 _HEALTH_DECAY_RATE = 150
 
@@ -1389,3 +1398,189 @@ async def delete_galaxy_server(db: AsyncSession, server_id: int) -> bool:
     await db.delete(server)
     await db.commit()
     return True
+
+
+# ---------------------------------------------------------------------------
+# Rule catalog queries (ADR-041)
+# ---------------------------------------------------------------------------
+
+
+async def list_rules(
+    db: AsyncSession,
+    *,
+    category: str | None = None,
+    source: str | None = None,
+    enabled_only: bool = False,
+) -> list[Rule]:
+    """List registered rules with optional filters.
+
+    Args:
+        db: Async database session.
+        category: Filter by category (lint, modernize, risk, policy, secrets, infrastructure).
+        source: Filter by validator source (native, opa, ansible, gitleaks).
+        enabled_only: If True, only return enabled rules.
+
+    Returns:
+        List of Rule ORM objects with overrides eagerly loaded.
+    """
+    stmt = select(Rule).options(selectinload(Rule.overrides))
+    if category:
+        stmt = stmt.where(Rule.category == category)
+    if source:
+        stmt = stmt.where(Rule.source == source)
+    if enabled_only:
+        stmt = stmt.where(Rule.enabled.is_(True))
+    stmt = stmt.order_by(Rule.rule_id)
+    result = await db.execute(stmt)
+    return list(result.scalars().all())
+
+
+async def get_rule(db: AsyncSession, rule_id: str) -> Rule | None:
+    """Get a single rule by ID with its overrides.
+
+    Args:
+        db: Async database session.
+        rule_id: Rule identifier.
+
+    Returns:
+        Rule with overrides loaded, or None.
+    """
+    stmt = select(Rule).options(selectinload(Rule.overrides)).where(Rule.rule_id == rule_id)
+    result = await db.execute(stmt)
+    row: Rule | None = result.scalar_one_or_none()
+    return row
+
+
+async def get_rule_override(db: AsyncSession, rule_id: str) -> RuleOverride | None:
+    """Get the override for a specific rule.
+
+    Args:
+        db: Async database session.
+        rule_id: Rule identifier.
+
+    Returns:
+        RuleOverride or None.
+    """
+    stmt = select(RuleOverride).where(RuleOverride.rule_id == rule_id)
+    result = await db.execute(stmt)
+    row: RuleOverride | None = result.scalar_one_or_none()
+    return row
+
+
+async def upsert_rule_override(
+    db: AsyncSession,
+    rule_id: str,
+    *,
+    severity_override: int | None = None,
+    enabled_override: bool | None = None,
+    enforced: bool = False,
+) -> RuleOverride:
+    """Create or update an override for a rule.
+
+    Args:
+        db: Async database session.
+        rule_id: Rule identifier (must exist in rules table).
+        severity_override: Overridden severity, or None for no override.
+        enabled_override: Overridden enabled state, or None for no override.
+        enforced: Whether to ignore inline apme:ignore annotations.
+
+    Returns:
+        The created or updated RuleOverride.
+    """
+    now = datetime.now(tz=timezone.utc).isoformat()
+    existing = await get_rule_override(db, rule_id)
+    if existing is not None:
+        existing.severity_override = severity_override
+        existing.enabled_override = enabled_override
+        existing.enforced = enforced
+        existing.updated_at = now
+        await db.commit()
+        return existing
+
+    override = RuleOverride(
+        rule_id=rule_id,
+        severity_override=severity_override,
+        enabled_override=enabled_override,
+        enforced=enforced,
+        updated_at=now,
+    )
+    db.add(override)
+    await db.commit()
+    return override
+
+
+async def delete_rule_override(db: AsyncSession, rule_id: str) -> bool:
+    """Remove an override, reverting the rule to defaults.
+
+    Args:
+        db: Async database session.
+        rule_id: Rule identifier.
+
+    Returns:
+        True if an override was deleted, False if none existed.
+    """
+    existing = await get_rule_override(db, rule_id)
+    if existing is None:
+        return False
+    await db.delete(existing)
+    await db.commit()
+    return True
+
+
+async def list_rules_with_resolved_config(
+    db: AsyncSession,
+) -> list[dict[str, object]]:
+    """Return all rules with their resolved configuration (default + override).
+
+    Used by the Gateway when building ``rule_configs`` for scan requests.
+
+    Args:
+        db: Async database session.
+
+    Returns:
+        List of dicts with rule_id, severity, enabled, enforced.
+    """
+    rules = await list_rules(db)
+    configs: list[dict[str, object]] = []
+    for r in rules:
+        override = r.overrides[0] if r.overrides else None
+        severity = (
+            override.severity_override if (override and override.severity_override is not None) else r.default_severity
+        )
+        enabled = override.enabled_override if (override and override.enabled_override is not None) else r.enabled
+        enforced = override.enforced if override else False
+        configs.append(
+            {
+                "rule_id": r.rule_id,
+                "severity": severity,
+                "enabled": enabled,
+                "enforced": enforced,
+            }
+        )
+    return configs
+
+
+async def get_rule_stats(db: AsyncSession) -> dict[str, object]:
+    """Return summary stats about the rule catalog.
+
+    Args:
+        db: Async database session.
+
+    Returns:
+        Dict with total, by_category, by_source, override_count.
+    """
+    rules = await list_rules(db)
+    by_category: dict[str, int] = {}
+    by_source: dict[str, int] = {}
+    override_count = 0
+    for r in rules:
+        by_category[r.category] = by_category.get(r.category, 0) + 1
+        by_source[r.source] = by_source.get(r.source, 0) + 1
+        if r.overrides:
+            override_count += 1
+    return {
+        "total": len(rules),
+        "by_category": by_category,
+        "by_source": by_source,
+        "override_count": override_count,
+    }

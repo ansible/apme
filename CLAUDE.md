@@ -56,6 +56,7 @@ Full workflow: [workflow.md](/.sdlc/context/workflow.md) | Getting started: [get
 
 ## Agent Constraints
 
+- **Follow SOP** — [SOP.md](SOP.md) is the consolidated operating procedures reference; follow it for security, workflow, code quality, CI, git, and release processes
 - **tox is the only way to run things** (ADR-047) — `tox -e lint` for quality gates, `tox -e unit` for tests, `tox -e grpc` for proto codegen, `tox -e build`, `up`, `down`, and `cli` for containers. Never run `pytest`, `ruff`, `mypy`, `prek`, or shell scripts directly. See `/tox` skill.
 - **Follow ADRs** — no deviation without a new ADR
 - **Validators are read-only** — detection only, no file modification; user-facing **check** is read-only, while **remediate** is a separate write path (not validator code)
@@ -101,4 +102,5 @@ Rebuild required after modifying: `src/**/*.py`, `proto/**/*.proto`, `pyproject.
 - [deployment.md](/.sdlc/context/deployment.md) — Podman pod setup
 - [conventions.md](/.sdlc/context/conventions.md) — Coding standards
 - [SECURITY.md](/SECURITY.md) — Security policy
+- [SOP.md](/SOP.md) — Consolidated standard operating procedures
 - [CONTRIBUTING.md](/CONTRIBUTING.md) — Development workflow

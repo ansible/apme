@@ -24,7 +24,7 @@ bare_include(tree, node) := v if {
 	count(node.line) > 0
 	v := {
 		"rule_id": "M008",
-		"level": "error",
+		"severity": "high",
 		"message": "Bare include: is removed in 2.19+; use include_tasks: (dynamic) or import_tasks: (static)",
 		"file": node.file,
 		"line": node.line[0],

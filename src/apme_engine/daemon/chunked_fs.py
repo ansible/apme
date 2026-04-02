@@ -3,12 +3,12 @@
 import fnmatch
 import os
 import uuid
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from apme.v1.common_pb2 import File, GalaxyServerDef
-from apme.v1.primary_pb2 import ScanChunk, ScanOptions
+from apme.v1.primary_pb2 import RuleConfig, ScanChunk, ScanOptions
 
 # Max bytes per ScanChunk message to stay under typical gRPC max message size (e.g. 4 MiB).
 CHUNK_MAX_BYTES = 1024 * 1024  # 1 MiB
@@ -164,6 +164,7 @@ def build_scan_bundle(
     collection_specs: list[str] | None = None,
     session_id: str = "",
     galaxy_servers: list[GalaxyServerDef] | None = None,
+    rule_configs: Iterable[RuleConfig] | None = None,
 ) -> _ScanBundle:
     """Walk target_path (file or directory) and collect files for scanning.
 
@@ -177,6 +178,7 @@ def build_scan_bundle(
         collection_specs: Optional list of collection specifiers.
         session_id: Session ID for venv reuse across scans.
         galaxy_servers: Optional Galaxy server definitions (ADR-045).
+        rule_configs: Optional per-rule overrides (ADR-041), e.g. from ``.apme/rules.yml``.
 
     Returns:
         _ScanBundle with files and options populated.
@@ -229,6 +231,8 @@ def build_scan_bundle(
         options.session_id = session_id
     if galaxy_servers:
         options.galaxy_servers.extend(galaxy_servers)
+    if rule_configs:
+        options.rule_configs.extend(rule_configs)
 
     resolved_scan_id = scan_id or str(uuid.uuid4())
 
@@ -250,6 +254,7 @@ def yield_scan_chunks(
     chunk_max_bytes: int = CHUNK_MAX_BYTES,
     session_id: str = "",
     galaxy_servers: list[GalaxyServerDef] | None = None,
+    rule_configs: Iterable[RuleConfig] | None = None,
 ) -> Iterator[ScanChunk]:
     """Yield ScanChunk messages for ScanStream so the total request stays under gRPC message limits.
 
@@ -265,6 +270,7 @@ def yield_scan_chunks(
         chunk_max_bytes: Max serialized size per chunk (default 1 MiB).
         session_id: Session ID for venv reuse across scans.
         galaxy_servers: Optional Galaxy server definitions (ADR-045).
+        rule_configs: Optional per-rule overrides (ADR-041).
 
     Yields:
         ScanChunk: ScanChunk messages for streaming.
@@ -277,6 +283,7 @@ def yield_scan_chunks(
         collection_specs=collection_specs,
         session_id=session_id,
         galaxy_servers=galaxy_servers,
+        rule_configs=rule_configs,
     )
     files: list[File] = list(req.files)
     if not files:

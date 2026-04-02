@@ -19,7 +19,7 @@ name_casing(tree, node) := v if {
 	count(node.line) > 0
 	v := {
 		"rule_id": "L025",
-		"level": "info",
+		"severity": "low",
 		"message": "Task name should start with an uppercase letter",
 		"file": node.file,
 		"line": node.line[0],
@@ -36,7 +36,7 @@ name_casing(tree, node) := v if {
 	count(node.line) > 0
 	v := {
 		"rule_id": "L025",
-		"level": "info",
+		"severity": "low",
 		"message": "Play name should start with an uppercase letter",
 		"file": node.file,
 		"line": node.line[0],

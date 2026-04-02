@@ -182,18 +182,21 @@ Each requirement lives in its own directory:
 | `.sdlc/adrs/` | Architecture Decision Records |
 | `.sdlc/decisions/open/` | Open questions (DRs) |
 | `.sdlc/decisions/closed/` | Resolved questions |
+| `.sdlc/research/` | Investigation and analysis documents |
 | `.sdlc/templates/` | Reusable document templates |
 
 ### Context Files
 
+See [context/README.md](context/README.md) for the full index. Key documents:
+
 | File | Contains |
 |------|----------|
 | `architecture.md` | System design and topology |
+| `deployment.md` | Podman pod setup and configuration |
 | `conventions.md` | Coding standards |
-| `personas.md` | Target users |
-| `technical-requirements.md` | Non-functional requirements |
-| `success-metrics.md` | KPIs and tracking |
 | `workflow.md` | Process documentation |
+| `getting-started.md` | Onboarding guide |
+| `rule-catalog.md` | Snapshot of core validation rules (see [`docs/RULE_CATALOG.md`](../docs/RULE_CATALOG.md) for generated catalog) |
 
 ---
 
@@ -220,6 +223,24 @@ Each requirement lives in its own directory:
 | [specs/README.md](specs/README.md) | Requirements index |
 | [adrs/README.md](adrs/README.md) | Architecture decisions |
 | [decisions/README.md](decisions/README.md) | Open questions |
+| [research/](research/) | Investigation documents |
+
+---
+
+## Research Documents
+
+Investigation and analysis documents that inform decisions:
+
+| Document | Purpose |
+|----------|---------|
+| [integration-options-analysis.md](research/integration-options-analysis.md) | APME consumption patterns: standalone, CI/CD, AAP, Backstage |
+| [ui-capabilities-assessment.md](research/ui-capabilities-assessment.md) | Frontend capabilities and Gateway API surface |
+| [rfe-coverage-mapping.md](research/rfe-coverage-mapping.md) | Customer RFE requirements mapping |
+| [ari-to-contentgraph-migration.md](research/ari-to-contentgraph-migration.md) | ARI engine migration planning |
+| [contentgraph-migration-tracker.md](research/contentgraph-migration-tracker.md) | Migration progress tracking |
+| [ansible-core-deprecation-mining.md](research/ansible-core-deprecation-mining.md) | Deprecation rule research |
+| [cli-reporting-options.md](research/cli-reporting-options.md) | CLI output format analysis |
+| [terrible-playbook-scan-gaps.md](research/terrible-playbook-scan-gaps.md) | Test coverage gaps |
 
 ---
 

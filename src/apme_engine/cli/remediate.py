@@ -28,6 +28,7 @@ from apme.v1.primary_pb2 import (
 )
 from apme_engine.cli._galaxy_config import discover_galaxy_servers
 from apme_engine.cli._project_root import derive_session_id, discover_project_root
+from apme_engine.cli._rules_yml import load_rule_configs_from_project
 from apme_engine.cli.ansi import dim, red, yellow
 from apme_engine.cli.discovery import resolve_primary
 from apme_engine.daemon.chunked_fs import yield_scan_chunks
@@ -49,6 +50,7 @@ def run_remediate(args: argparse.Namespace) -> None:
     session_id = explicit_session or derive_session_id(project_root)
 
     galaxy_servers = discover_galaxy_servers(project_root) or None
+    rule_cfgs = load_rule_configs_from_project(project_root)
 
     try:
         base_chunks = yield_scan_chunks(
@@ -58,6 +60,7 @@ def run_remediate(args: argparse.Namespace) -> None:
             collection_specs=getattr(args, "collections", None),
             session_id=session_id,
             galaxy_servers=galaxy_servers,
+            rule_configs=rule_cfgs or None,
         )
     except FileNotFoundError as e:
         sys.stderr.write(f"{e}\n")

@@ -19,7 +19,7 @@ risky_octal(tree, node) := v if {
 	count(node.line) > 0
 	v := {
 		"rule_id": "L020",
-		"level": "error",
+		"severity": "high",
 		"message": "mode should be string with leading zero (e.g. \"0644\")",
 		"file": node.file,
 		"line": node.line[0],

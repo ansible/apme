@@ -35,6 +35,19 @@ class EventSink(Protocol):
         """
         ...
 
+    async def register_rules(
+        self, request: reporting_pb2.RegisterRulesRequest
+    ) -> reporting_pb2.RegisterRulesResponse | None:
+        """Push rule catalog to the reporting service (ADR-041).
+
+        Args:
+            request: Registration payload with the full rule set.
+
+        Returns:
+            Response from the reporting service, or None on failure.
+        """
+        ...
+
 
 _sinks: list[EventSink] = []
 
@@ -61,6 +74,32 @@ async def emit_fix_completed(event: reporting_pb2.FixCompletedEvent) -> None:
         *(_emit_fix_to_sink(sink, event) for sink in list(_sinks)),
         return_exceptions=True,
     )
+
+
+async def emit_register_rules(request: reporting_pb2.RegisterRulesRequest) -> None:
+    """Push rule catalog to the first available sink (ADR-041).
+
+    Unlike fix events (fan-out to all sinks), registration targets a single
+    Gateway.  We try each sink in order and stop on the first success.
+
+    Args:
+        request: Registration payload.
+    """
+    for sink in list(_sinks):
+        try:
+            resp = await sink.register_rules(request)
+            if resp is not None:
+                logger.info(
+                    "Rule catalog registered: added=%d removed=%d unchanged=%d",
+                    resp.rules_added,
+                    resp.rules_removed,
+                    resp.rules_unchanged,
+                )
+                return
+        except Exception:
+            logger.warning("Sink %s failed to register rules", type(sink).__name__, exc_info=True)
+    if _sinks:
+        logger.warning("No sink accepted rule registration")
 
 
 async def start_sinks() -> None:

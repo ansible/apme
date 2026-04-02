@@ -69,6 +69,10 @@ class SessionState:
         installed_packages: ``(name, version, license, supplier)`` tuples from session venv (ADR-040).
         dependency_tree: Raw ``uv pip tree`` output (ADR-040).
         requirements_files: Requirement file paths found in project (ADR-040).
+        content_graph: Persisted ``ContentGraph`` across approval gates
+            (ADR-044 Phase 3).  Typed as ``object`` to avoid coupling.
+        graph_originals: Original file text keyed by path, used by
+            ``splice_modifications`` after approval.
     """
 
     session_id: str
@@ -116,6 +120,11 @@ class SessionState:
     installed_packages: list[tuple[str, str, str, str]] = field(default_factory=list)
     dependency_tree: str = ""
     requirements_files: list[str] = field(default_factory=list)
+
+    # Graph engine state persisted across approval gates (ADR-044 Phase 3).
+    # Typed as ``object`` to avoid importing ContentGraph in this module.
+    content_graph: object | None = None
+    graph_originals: dict[str, str] = field(default_factory=dict)
 
     @property
     def ttl_seconds(self) -> int:

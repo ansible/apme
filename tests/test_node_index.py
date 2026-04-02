@@ -251,7 +251,7 @@ class TestEngineWithNodeIndex:
             return []
 
         reg = TransformRegistry()
-        reg.register("L021", structured=fix_missing_mode)
+        reg.register("L021", node=fix_missing_mode)
         engine = RemediationEngine(reg, scan_fn, max_passes=5, node_index=node_index)
 
         report = engine.remediate([str(playbook)], apply=True)
@@ -281,7 +281,7 @@ class TestEngineWithNodeIndex:
             return []
 
         reg = TransformRegistry()
-        reg.register("L021", structured=fix_missing_mode)
+        reg.register("L021", node=fix_missing_mode)
         engine = RemediationEngine(reg, scan_fn, max_passes=5)
 
         report = engine.remediate([str(playbook)], apply=True)

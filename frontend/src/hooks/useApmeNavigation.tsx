@@ -12,6 +12,7 @@ import { ProjectsPage } from '../pages/ProjectsPage';
 import { ProjectDetailPage } from '../pages/ProjectDetailPage';
 import { PythonPackagesPage } from '../pages/PythonPackagesPage';
 import { PythonPackageDetailPage } from '../pages/PythonPackageDetailPage';
+import { RulesPage } from '../pages/RulesPage';
 import { SettingsPage } from '../pages/SettingsPage';
 
 export function useApmeNavigation(): PageNavigationItem[] {
@@ -57,6 +58,7 @@ export function useApmeNavigation(): PageNavigationItem[] {
         path: '',
         children: [
           { id: 'health', path: 'health', label: 'Health', element: <HealthPage /> },
+          { id: 'rules', path: 'rules', label: 'Rules', element: <RulesPage /> },
           { id: 'settings', path: 'settings', label: 'Settings', element: <SettingsPage /> },
         ],
       },

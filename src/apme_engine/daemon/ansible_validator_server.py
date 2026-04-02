@@ -93,7 +93,7 @@ def _run_ansible_validate(
             logger.warning("Ansible: no venv_path provided, skipping (req=%s)", req_id)
             err_viol: ViolationDict = {
                 "rule_id": "INFRA-001",
-                "level": "error",
+                "severity": "error",
                 "message": "No session venv provided by Primary orchestrator",
                 "file": "",
                 "line": 1,
@@ -120,7 +120,7 @@ def _run_ansible_validate(
         logger.exception("Ansible: error in blocking executor (req=%s): %s", req_id, e)
         err_viol_exc: ViolationDict = {
             "rule_id": "INFRA-002",
-            "level": "error",
+            "severity": "error",
             "message": str(e),
             "file": "",
             "line": 1,

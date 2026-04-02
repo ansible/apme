@@ -29,7 +29,7 @@ class MetaRuntimeGraphRule(GraphRule):
     enabled: bool = True
     name: str = "MetaRuntime"
     version: str = "v0.0.1"
-    severity: str = Severity.HIGH
+    severity: Severity = Severity.HIGH
     tags: tuple[str, ...] = (Tag.QUALITY,)
 
     def match(self, graph: ContentGraph, node_id: str) -> bool:

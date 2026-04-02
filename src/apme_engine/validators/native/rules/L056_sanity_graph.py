@@ -41,7 +41,7 @@ class SanityGraphRule(GraphRule):
     enabled: bool = True
     name: str = "Sanity"
     version: str = "v0.0.1"
-    severity: str = Severity.VERY_LOW
+    severity: Severity = Severity.INFO
     tags: tuple[str, ...] = (Tag.QUALITY,)
     scope: str = RuleScope.PLAYBOOK
 

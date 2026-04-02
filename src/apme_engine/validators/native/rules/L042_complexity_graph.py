@@ -78,7 +78,7 @@ class ComplexityGraphRule(GraphRule):
     enabled: bool = True
     name: str = "Complexity"
     version: str = "v0.0.2"
-    severity: str = Severity.LOW
+    severity: Severity = Severity.INFO
     tags: tuple[str, ...] = (Tag.DEPENDENCY,)
     scope: str = RuleScope.PLAY
     task_count_threshold: int = DEFAULT_TASK_COUNT_THRESHOLD

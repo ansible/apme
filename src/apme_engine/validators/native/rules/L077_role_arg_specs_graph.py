@@ -31,7 +31,7 @@ class RoleArgSpecsGraphRule(GraphRule):
     enabled: bool = True
     name: str = "RoleArgSpecs"
     version: str = "v0.0.1"
-    severity: str = Severity.LOW
+    severity: Severity = Severity.LOW
     tags: tuple[str, ...] = (Tag.QUALITY,)
     scope: str = RuleScope.ROLE
     precedence: int = 10

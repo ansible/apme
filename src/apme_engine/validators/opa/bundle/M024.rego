@@ -26,7 +26,7 @@ include_vars_ignore_files_string(tree, node) := v if {
 	count(node.line) > 0
 	v := {
 		"rule_id": "M024",
-		"level": "warning",
+		"severity": "high",
 		"message": "include_vars ignore_files must be a list, not a string (2.24); wrap in a YAML list",
 		"file": node.file,
 		"line": node.line[0],

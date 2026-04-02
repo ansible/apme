@@ -24,7 +24,8 @@ User runs:  apme check /path/to/project
 │     - project_root (basename)                                   │
 │     - files[] = File(path=relative, content=bytes) per chunk    │
 │     - ScanOptions on first chunk (ansible_core_version,         │
-│       collection_specs, galaxy_servers — ADR-045)               │
+│       collection_specs, galaxy_servers — ADR-045,               │
+│       rule_configs — ADR-041)                                   │
 │                                                                 │
 │  gRPC: Primary.FixSession(stream SessionCommand) — ADR-039      │
 │        Each SessionCommand carries upload=ScanChunk until       │
@@ -98,11 +99,17 @@ User runs:  apme check /path/to/project
 │     │                                                     │      │
 │     └─────────────────────────────────────────────────────┘      │
 │                                                                  │
-│  8. Merge all violations                                         │
-│  9. Deduplicate by (rule_id, file, line)                         │
-│ 10. Sort by (file, line)                                         │
-│ 11. Convert to proto Violation messages                          │
-│ 12. Aggregate diagnostics:                                       │
+│  8. Validate rule_configs (ADR-041):                             │
+│     - If rule_configs_complete (Gateway): bidirectional audit    │
+│       — hard fail on unknown IDs *and* missing IDs              │
+│     - If partial (CLI): warn on unknown IDs, continue           │
+│  9. Merge all violations                                         │
+│ 10. Apply rule_configs: filter disabled rules, override severity,│
+│      mark enforced (ADR-041)                                     │
+│ 11. Deduplicate by (rule_id, file, line)                         │
+│ 12. Sort by (file, line)                                         │
+│ 13. Convert to proto Violation messages                          │
+│ 14. Aggregate diagnostics:                                       │
 │     - Engine timing (parse, annotate, tree build)                │
 │     - Each validator's ValidatorDiagnostics                      │
 │     - Fan-out wall-clock, total wall-clock                       │
@@ -285,6 +292,41 @@ UI (React SPA on :8081)
 ```
 
 Event emission uses ``await`` so delivery completes before the operation returns to the client. When the Reporting endpoint is known-down, a fast-fail timeout (1 s) prevents blocking the check/remediate path.
+
+## Rule catalog registration (Primary → Gateway, ADR-041)
+
+At startup, the authority Primary collects rule definitions from all built-in
+validators (native via `load_graph_rules()`, OPA/Ansible via `.md` frontmatter,
+Gitleaks as a `SEC:*` placeholder) and pushes the full catalog to the Gateway
+via `RegisterRules`. The Gateway reconciles the `rules` table — adding new rules,
+removing absent ones, and updating changed metadata.
+
+```
+Primary startup
+    │
+    │  collect_all_rules() → [RuleDefinition, ...]
+    │  RegisterRulesRequest(pod_id, is_authority=True, rules)
+    │    ↓
+    │  GrpcReportingSink.register_rules()
+    │    ↓
+    │  gRPC → Gateway :50060 RegisterRules
+    │
+    ▼
+Gateway (grpc_reporting/servicer.py)
+    │  Reconcile: add new, delete absent, update changed → rules table
+    │  RegisterRulesResponse(accepted, rules_added, rules_removed, ...)
+```
+
+## Rule override injection (Gateway → Engine, ADR-041)
+
+When the Gateway initiates a scan (UI or API), it loads rule overrides from the
+`rule_overrides` table, resolves effective configuration (default + override),
+and injects `RuleConfig` protos into `ScanOptions.rule_configs` on the first
+`ScanChunk`. The Primary validates rule IDs against its known set (hard fail on
+unknown) and applies the configs after validator fan-out.
+
+For CLI-initiated scans, `rule_configs` are parsed from `.apme/rules.yml` in
+the project root.
 
 ## Galaxy server injection (Gateway → Engine, ADR-045)
 

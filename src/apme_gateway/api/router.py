@@ -18,8 +18,10 @@ from typing import cast
 
 from fastapi import APIRouter, HTTPException, Query, WebSocket
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 from starlette.websockets import WebSocketDisconnect  # type: ignore[import-not-found]
 
+from apme_engine.severity_defaults import severity_from_proto, severity_to_label
 from apme_gateway.api.schemas import (
     ActivityDetail,
     ActivitySummary,
@@ -58,7 +60,7 @@ from apme_gateway.api.schemas import (
 )
 from apme_gateway.db import get_session
 from apme_gateway.db import queries as q
-from apme_gateway.db.models import GalaxyServer, Scan, ScanManifest
+from apme_gateway.db.models import GalaxyServer, Rule, RuleOverride, Scan, ScanManifest
 
 logger = logging.getLogger(__name__)
 
@@ -1265,6 +1267,363 @@ def _to_activity_summary(scan: Scan) -> ActivitySummary:
     )
 
 
+# ── Rule catalog (ADR-041) ───────────────────────────────────────────
+
+
+class RuleOverrideOut(BaseModel):  # type: ignore[misc]
+    """Serialized rule override for REST responses.
+
+    Attributes:
+        severity_override: Overridden severity enum int, or None if not overridden.
+        enabled_override: Overridden enabled flag, or None if not overridden.
+        enforced: When True, inline apme:ignore is bypassed.
+        updated_at: ISO 8601 timestamp of the last override change.
+    """
+
+    severity_override: int | None
+    enabled_override: bool | None
+    enforced: bool
+    updated_at: str
+
+
+class RuleListItem(BaseModel):  # type: ignore[misc]
+    """One rule with default and resolved severity / enabled state.
+
+    Attributes:
+        rule_id: Rule identifier.
+        category: Rule category (lint, modernize, risk, policy, secrets).
+        source: Validator source name.
+        description: Human-readable description.
+        scope: RuleScope enum value from registration.
+        default_severity: Catalog default severity (proto enum int).
+        default_severity_label: Label for default_severity.
+        resolved_severity: Effective severity after override.
+        resolved_severity_label: Label for resolved_severity.
+        enabled: Catalog default enabled flag.
+        resolved_enabled: Effective enabled state after override.
+        registered_at: ISO 8601 registration timestamp.
+        override: Active override row, if any.
+    """
+
+    rule_id: str
+    category: str
+    source: str
+    description: str
+    scope: int
+    default_severity: int
+    default_severity_label: str
+    resolved_severity: int
+    resolved_severity_label: str
+    enabled: bool
+    resolved_enabled: bool
+    registered_at: str
+    override: RuleOverrideOut | None
+
+
+class RuleDetailOut(BaseModel):  # type: ignore[misc]
+    """Single rule with full override information.
+
+    Attributes:
+        rule_id: Rule identifier.
+        category: Rule category (lint, modernize, risk, policy, secrets).
+        source: Validator source name.
+        description: Human-readable description.
+        scope: RuleScope enum value from registration.
+        default_severity: Catalog default severity (proto enum int).
+        default_severity_label: Label for default_severity.
+        resolved_severity: Effective severity after override.
+        resolved_severity_label: Label for resolved_severity.
+        enabled: Catalog default enabled flag.
+        resolved_enabled: Effective enabled state after override.
+        registered_at: ISO 8601 registration timestamp.
+        override: Active override row, if any.
+    """
+
+    rule_id: str
+    category: str
+    source: str
+    description: str
+    scope: int
+    default_severity: int
+    default_severity_label: str
+    resolved_severity: int
+    resolved_severity_label: str
+    enabled: bool
+    resolved_enabled: bool
+    registered_at: str
+    override: RuleOverrideOut | None
+
+
+class RuleStatsOut(BaseModel):  # type: ignore[misc]
+    """Aggregate statistics for the registered rule catalog.
+
+    Attributes:
+        total: Number of registered rules.
+        by_category: Counts keyed by category.
+        by_source: Counts keyed by validator source.
+        override_count: Number of rules that have at least one override row.
+    """
+
+    total: int
+    by_category: dict[str, int]
+    by_source: dict[str, int]
+    override_count: int
+
+
+class RuleConfigPutBody(BaseModel):  # type: ignore[misc]
+    """Payload for creating or partially updating a rule override.
+
+    Omitted fields are left unchanged on an existing override.
+
+    Attributes:
+        severity_override: Severity enum int (0-6), or None to clear severity override.
+        enabled_override: New enabled flag, or None to clear enabled override.
+        enforced: Whether to enforce despite inline ignores; omit to leave unchanged.
+    """
+
+    severity_override: int | None = Field(default=None, ge=0, le=6)
+    enabled_override: bool | None = None
+    enforced: bool | None = None
+
+
+def _primary_override(rule: Rule) -> RuleOverride | None:
+    """Return the single override row for a rule, if any.
+
+    Args:
+        rule: Rule ORM instance with overrides eagerly loaded.
+
+    Returns:
+        First override or None.
+    """
+    return rule.overrides[0] if rule.overrides else None
+
+
+def _severity_label_from_int(value: int) -> str:
+    """Map stored proto severity int to API label.
+
+    Args:
+        value: Proto Severity enum as int.
+
+    Returns:
+        Lowercase severity label string.
+    """
+    return severity_to_label(severity_from_proto(value))
+
+
+def _resolved_severity(rule: Rule) -> int:
+    """Effective severity (override or catalog default).
+
+    Args:
+        rule: Rule ORM instance.
+
+    Returns:
+        Resolved severity as proto enum int.
+    """
+    ov = _primary_override(rule)
+    if ov is not None and ov.severity_override is not None:
+        return cast(int, ov.severity_override)
+    return cast(int, rule.default_severity)
+
+
+def _resolved_enabled(rule: Rule) -> bool:
+    """Effective enabled flag (override or catalog default).
+
+    Args:
+        rule: Rule ORM instance.
+
+    Returns:
+        True if the rule is enabled after overrides.
+    """
+    ov = _primary_override(rule)
+    if ov is not None and ov.enabled_override is not None:
+        return cast(bool, ov.enabled_override)
+    return cast(bool, rule.enabled)
+
+
+def _override_out(ov: RuleOverride | None) -> RuleOverrideOut | None:
+    """Build API override payload from ORM row.
+
+    Args:
+        ov: Override row or None.
+
+    Returns:
+        Serialized override or None.
+    """
+    if ov is None:
+        return None
+    return RuleOverrideOut(
+        severity_override=ov.severity_override,
+        enabled_override=ov.enabled_override,
+        enforced=ov.enforced,
+        updated_at=ov.updated_at,
+    )
+
+
+def _to_rule_list_item(rule: Rule) -> RuleListItem:
+    rs = _resolved_severity(rule)
+    return RuleListItem(
+        rule_id=rule.rule_id,
+        category=rule.category,
+        source=rule.source,
+        description=rule.description,
+        scope=rule.scope,
+        default_severity=rule.default_severity,
+        default_severity_label=_severity_label_from_int(rule.default_severity),
+        resolved_severity=rs,
+        resolved_severity_label=_severity_label_from_int(rs),
+        enabled=rule.enabled,
+        resolved_enabled=_resolved_enabled(rule),
+        registered_at=rule.registered_at,
+        override=_override_out(_primary_override(rule)),
+    )
+
+
+def _to_rule_detail(rule: Rule) -> RuleDetailOut:
+    rs = _resolved_severity(rule)
+    return RuleDetailOut(
+        rule_id=rule.rule_id,
+        category=rule.category,
+        source=rule.source,
+        description=rule.description,
+        scope=rule.scope,
+        default_severity=rule.default_severity,
+        default_severity_label=_severity_label_from_int(rule.default_severity),
+        resolved_severity=rs,
+        resolved_severity_label=_severity_label_from_int(rs),
+        enabled=rule.enabled,
+        resolved_enabled=_resolved_enabled(rule),
+        registered_at=rule.registered_at,
+        override=_override_out(_primary_override(rule)),
+    )
+
+
+@router.get("/rules")  # type: ignore[untyped-decorator]
+async def list_rules_endpoint(
+    category: str | None = Query(default=None),
+    source: str | None = Query(default=None),
+    enabled_only: bool = Query(default=False),
+) -> list[RuleListItem]:
+    """List registered rules with optional filters and resolved config.
+
+    Args:
+        category: Filter by rule category.
+        source: Filter by validator source.
+        enabled_only: If true, only rules enabled by catalog default.
+
+    Returns:
+        Rules with default and effective severity labels and override metadata.
+    """
+    async with get_session() as db:
+        rules = await q.list_rules(db, category=category, source=source, enabled_only=enabled_only)
+    return [_to_rule_list_item(r) for r in rules]
+
+
+@router.get("/rules/stats")  # type: ignore[untyped-decorator]
+async def rule_stats_endpoint() -> RuleStatsOut:
+    """Return summary statistics for the rule catalog.
+
+    Returns:
+        Totals grouped by category and source, plus override count.
+    """
+    async with get_session() as db:
+        stats = await q.get_rule_stats(db)
+    return RuleStatsOut(
+        total=cast(int, stats["total"]),
+        by_category=cast(dict[str, int], stats["by_category"]),
+        by_source=cast(dict[str, int], stats["by_source"]),
+        override_count=cast(int, stats["override_count"]),
+    )
+
+
+@router.get("/rules/{rule_id}")  # type: ignore[untyped-decorator]
+async def get_rule_endpoint(rule_id: str) -> RuleDetailOut:
+    """Return one rule with override details.
+
+    Args:
+        rule_id: Rule identifier (e.g. ``L026``).
+
+    Returns:
+        Full rule detail.
+
+    Raises:
+        HTTPException: 404 if the rule is not registered.
+    """
+    async with get_session() as db:
+        rule = await q.get_rule(db, rule_id)
+    if rule is None:
+        raise HTTPException(status_code=404, detail="Rule not found")
+    return _to_rule_detail(rule)
+
+
+@router.put("/rules/{rule_id}/config")  # type: ignore[untyped-decorator]
+async def put_rule_config(rule_id: str, body: RuleConfigPutBody) -> RuleDetailOut:
+    """Create or update overrides for a rule (partial merge per field).
+
+    Args:
+        rule_id: Rule identifier.
+        body: Fields to set; omitted keys leave existing override values unchanged.
+
+    Returns:
+        Updated rule detail.
+
+    Raises:
+        HTTPException: 400 if the body is empty, 404 if the rule does not exist.
+    """
+    if not body.model_fields_set:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    async with get_session() as db:
+        rule = await q.get_rule(db, rule_id)
+        if rule is None:
+            raise HTTPException(status_code=404, detail="Rule not found")
+        existing_ov = await q.get_rule_override(db, rule_id)
+        sev = (
+            body.severity_override
+            if "severity_override" in body.model_fields_set
+            else (existing_ov.severity_override if existing_ov is not None else None)
+        )
+        en = (
+            body.enabled_override
+            if "enabled_override" in body.model_fields_set
+            else (existing_ov.enabled_override if existing_ov is not None else None)
+        )
+        if "enforced" in body.model_fields_set:
+            enf = False if body.enforced is None else body.enforced
+        else:
+            enf = existing_ov.enforced if existing_ov is not None else False
+        await q.upsert_rule_override(
+            db,
+            rule_id,
+            severity_override=sev,
+            enabled_override=en,
+            enforced=enf,
+        )
+        updated = await q.get_rule(db, rule_id)
+        if updated is not None:
+            await db.refresh(updated, attribute_names=["overrides"])
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Rule not found")
+    return _to_rule_detail(updated)
+
+
+@router.delete("/rules/{rule_id}/config", status_code=204)  # type: ignore[untyped-decorator]
+async def delete_rule_config(rule_id: str) -> None:
+    """Remove overrides for a rule (revert to catalog defaults).
+
+    Args:
+        rule_id: Rule identifier.
+
+    Raises:
+        HTTPException: 404 if the rule does not exist or has no override.
+    """
+    async with get_session() as db:
+        rule = await q.get_rule(db, rule_id)
+        if rule is None:
+            raise HTTPException(status_code=404, detail="Rule not found")
+        ok = await q.delete_rule_override(db, rule_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="No override configured for this rule")
+
+
 # ── Project WebSocket (ADR-037) ──────────────────────────────────────
 
 
@@ -1390,7 +1749,7 @@ async def project_operate_ws(
                 fixed_violations_json = [
                     {
                         "rule_id": v.rule_id,
-                        "level": v.level,
+                        "severity": severity_to_label(severity_from_proto(v.severity)),
                         "message": v.message,
                         "file": v.file,
                         "line": _extract_line(v),

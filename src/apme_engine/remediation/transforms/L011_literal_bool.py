@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import re
 
+from ruamel.yaml.comments import CommentedMap
+
 from apme_engine.engine.models import ViolationDict
-from apme_engine.remediation.structured import StructuredFile
-from apme_engine.remediation.transforms._helpers import violation_line_to_int
 
 _REPLACEMENTS = [
     # Equality — simplify to bare variable (or negation)
@@ -22,20 +22,16 @@ _REPLACEMENTS = [
 ]
 
 
-def fix_literal_bool(sf: StructuredFile, violation: ViolationDict) -> bool:
+def fix_literal_bool(task: CommentedMap, violation: ViolationDict) -> bool:
     """Remove literal true/false comparisons from when clause.
 
     Args:
-        sf: Parsed YAML file to modify in-place.
+        task: Task CommentedMap to modify in-place.
         violation: Violation dict with line.
 
     Returns:
         True if a change was applied.
     """
-    task = sf.find_task(violation_line_to_int(violation), violation)
-    if task is None:
-        return False
-
     when_val = task.get("when")
     if not isinstance(when_val, str):
         return False

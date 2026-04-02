@@ -187,11 +187,25 @@ Primary aggregates all `ValidatorDiagnostics` plus engine phase timing into `Sca
 
 ---
 
+## Rule catalog and overrides (ADR-041)
+
+Rule enable/disable, severity overrides, and enforced-mode are managed at the **Primary/Gateway level**, not inside individual validators. Validators remain read-only — they always run all their rules and return all violations. Policy enforcement is orchestration:
+
+1. **Catalog registration**: At startup, the Primary collects `RuleDefinition` metadata from all built-in validators and pushes the full catalog to the Gateway via `RegisterRules`. The Gateway reconciles a `rules` table and stores admin-configured overrides in `rule_overrides`.
+
+2. **Override delivery**: Each scan carries `repeated RuleConfig rule_configs` in `ScanOptions`. For Gateway-initiated scans, the Gateway loads resolved configs (default + override) and injects them. For CLI scans, configs are parsed from `.apme/rules.yml`.
+
+3. **Primary enforcement**: After validator fan-out, the Primary applies `rule_configs` — filtering violations for disabled rules, overriding severity labels, and attaching `enforced` metadata (bypassing `# apme:ignore`). When `rule_configs_complete` is set (Gateway/enterprise path), the Primary performs a **bidirectional audit** — hard-failing the scan if the config references unknown rule IDs *or* omits rules the engine knows. This catches catalog drift between the Gateway and engine. For CLI-originated scans (partial overrides from `.apme/rules.yml`), unknown IDs produce a warning only.
+
+The `Validator` gRPC contract (`validate.proto`) is unchanged — validators do not need to know about rule overrides or the catalog.
+
+---
+
 ## Future considerations
 
 - **Additional validators**: A yamllint adapter, a custom Go plugin validator, or an AI-assisted reviewer could be added as new containers implementing the same `Validator` service.
 - **Streaming results**: The current contract is unary (one request, one response). For very large projects, server-side streaming (`stream ValidateResponse`) could reduce memory pressure.
-- **Validator-specific configuration**: Rules can be enabled/disabled per-validator via configuration (not yet implemented at the gRPC level — currently done at the rule level within each validator).
+- **Third-party plugins (ADR-042)**: Organization-specific rules run as separate plugin containers with their own `Describe` RPC for catalog integration.
 
 ## Decision records
 

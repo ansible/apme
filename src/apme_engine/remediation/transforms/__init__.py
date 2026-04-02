@@ -32,40 +32,40 @@ def build_default_registry() -> TransformRegistry:
     """
     reg = TransformRegistry()
 
-    # Structured transforms (parse-once, modify in-place)
-    reg.register("L007", structured=fix_shell_to_command)
-    reg.register("L008", structured=fix_local_action)
-    reg.register("L009", structured=fix_empty_string)
-    reg.register("L010", structured=fix_ignore_errors)
-    reg.register("L011", structured=fix_literal_bool)
-    reg.register("L012", structured=fix_latest)
-    reg.register("L013", structured=fix_changed_when)
-    reg.register("L015", structured=fix_jinja_when)
-    reg.register("L018", structured=fix_become)
-    reg.register("L021", structured=fix_missing_mode)
-    reg.register("L022", structured=fix_pipefail)
-    reg.register("L025", structured=fix_name_casing)
-    reg.register("L043", structured=fix_bare_vars)
-    reg.register("L046", structured=fix_free_form)
+    # Node transforms (CommentedMap task, used via apply_structured find_task wrapper)
+    reg.register("L007", node=fix_shell_to_command)
+    reg.register("L008", node=fix_local_action)
+    reg.register("L009", node=fix_empty_string)
+    reg.register("L010", node=fix_ignore_errors)
+    reg.register("L011", node=fix_literal_bool)
+    reg.register("L012", node=fix_latest)
+    reg.register("L013", node=fix_changed_when)
+    reg.register("L015", node=fix_jinja_when)
+    reg.register("L018", node=fix_become)
+    reg.register("L021", node=fix_missing_mode)
+    reg.register("L022", node=fix_pipefail)
+    reg.register("L025", node=fix_name_casing)
+    reg.register("L043", node=fix_bare_vars)
+    reg.register("L046", node=fix_free_form)
 
     # L020 operates on raw lines (YAML 1.1 octal ambiguity) — legacy string path
     reg.register("L020", fix_octal_mode)
 
     # Ansible validator rules (carry resolved_fqcn from ansible-core)
     # M001-M004 all report FQCN violations, so the same fix applies
-    reg.register("M001", structured=fix_fqcn)
-    reg.register("M002", structured=fix_fqcn)
-    reg.register("M003", structured=fix_fqcn)
-    reg.register("M004", structured=fix_fqcn)
+    reg.register("M001", node=fix_fqcn)
+    reg.register("M002", node=fix_fqcn)
+    reg.register("M003", node=fix_fqcn)
+    reg.register("M004", node=fix_fqcn)
 
     # OPA L002/L005 and native L026 also detect non-FQCN; reuse the same fixer
-    reg.register("L002", structured=fix_fqcn)
-    reg.register("L005", structured=fix_fqcn)
-    reg.register("L026", structured=fix_fqcn)
+    reg.register("L002", node=fix_fqcn)
+    reg.register("L005", node=fix_fqcn)
+    reg.register("L026", node=fix_fqcn)
 
     # Migration rules
-    reg.register("M006", structured=fix_become_unreachable)
-    reg.register("M008", structured=fix_bare_include)
-    reg.register("M009", structured=fix_with_to_loop)
+    reg.register("M006", node=fix_become_unreachable)
+    reg.register("M008", node=fix_bare_include)
+    reg.register("M009", node=fix_with_to_loop)
 
     return reg

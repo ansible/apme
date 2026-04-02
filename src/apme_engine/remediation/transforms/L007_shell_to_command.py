@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
+from ruamel.yaml.comments import CommentedMap
+
 from apme_engine.engine.models import ViolationDict
-from apme_engine.remediation.structured import StructuredFile
-from apme_engine.remediation.transforms._helpers import (
-    get_module_key,
-    rename_key,
-    violation_line_to_int,
-)
+from apme_engine.remediation.transforms._helpers import get_module_key, rename_key
 
 _SHELL_CHARS = ("|", "&&", "||", ";", ">", ">>", "<", "$(", "`", "*", "?")
 
@@ -31,20 +28,16 @@ def _uses_shell_features(cmd: str) -> bool:
     return any(ch in cmd for ch in _SHELL_CHARS)
 
 
-def fix_shell_to_command(sf: StructuredFile, violation: ViolationDict) -> bool:
+def fix_shell_to_command(task: CommentedMap, violation: ViolationDict) -> bool:
     """Replace shell with command when the command string uses no shell features.
 
     Args:
-        sf: Parsed YAML file to modify in-place.
+        task: Task CommentedMap to modify in-place.
         violation: Violation dict with line.
 
     Returns:
         True if a change was applied.
     """
-    task = sf.find_task(violation_line_to_int(violation), violation)
-    if task is None:
-        return False
-
     module_key = get_module_key(task)
     if module_key is None or module_key not in _SHELL_TO_COMMAND:
         return False

@@ -37,7 +37,7 @@ import tempfile
 import uuid
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, cast
 
 import grpc
 import grpc.aio
@@ -52,10 +52,14 @@ from apme.v1.primary_pb2 import (
     ExtendRequest,
     FixOptions,
     ResumeRequest,
+    RuleConfig,
     ScanChunk,
     SessionCommand,
 )
 from apme_engine.daemon.chunked_fs import yield_scan_chunks
+from apme_engine.severity_defaults import severity_from_proto, severity_to_label
+from apme_gateway.db import get_session
+from apme_gateway.db.queries import list_rules_with_resolved_config
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +103,32 @@ def _status_name(status: int) -> str:
         Human-readable status name.
     """
     return _STATUS_NAMES.get(status, "UNKNOWN")
+
+
+async def _load_scan_rule_configs() -> list[RuleConfig]:
+    """Load resolved rule configs from the gateway DB for Primary ``ScanOptions``.
+
+    Best-effort: returns an empty list if the DB is unavailable, the query
+    fails, or no rules are registered yet.
+
+    Returns:
+        ``RuleConfig`` messages suitable for ``ScanOptions.rule_configs``.
+    """
+    try:
+        async with get_session() as db:
+            rows = await list_rules_with_resolved_config(db)
+    except Exception:
+        logger.warning("Failed to load rule_configs for scan — proceeding without overrides", exc_info=True)
+        return []
+    return [
+        RuleConfig(
+            rule_id=str(row["rule_id"]),
+            severity=cast(int, row["severity"]),
+            enabled=bool(row["enabled"]),
+            enforced=bool(row["enforced"]),
+        )
+        for row in rows
+    ]
 
 
 async def _collect_uploads(ws: WebSocket, temp_dir: Path) -> dict[str, Any]:
@@ -388,7 +418,7 @@ async def _forward_events(
                     "remaining_violations": [
                         {
                             "rule_id": v.rule_id,
-                            "level": v.level,
+                            "severity": severity_to_label(severity_from_proto(v.severity)),
                             "message": v.message,
                             "file": v.file,
                         }
@@ -462,6 +492,7 @@ async def handle_session(
             ai_model: str = options.get("ai_model", "")
 
             scan_id = str(uuid.uuid4())
+            scan_rule_configs = await _load_scan_rule_configs()
 
         command_queue: asyncio.Queue[SessionCommand | None] = asyncio.Queue()
         done = asyncio.Event()
@@ -499,6 +530,10 @@ async def handle_session(
                         galaxy_servers=galaxy_servers or [],
                     )
                     first_chunk.fix_options.CopyFrom(fix_opts)  # type: ignore[union-attr]
+                    assert first_chunk.options is not None  # noqa: S101 — set by yield_scan_chunks
+                    first_chunk.options.rule_configs.extend(scan_rule_configs)
+                    if scan_rule_configs:
+                        first_chunk.options.rule_configs_complete = True
                     yield first_chunk
                     yield from chunk_iter
 

@@ -13,8 +13,7 @@ from ruamel.yaml.comments import CommentedMap
 from ruamel.yaml.scalarstring import DoubleQuotedScalarString
 
 from apme_engine.engine.models import ViolationDict
-from apme_engine.remediation.structured import StructuredFile
-from apme_engine.remediation.transforms._helpers import get_module_key, violation_line_to_int
+from apme_engine.remediation.transforms._helpers import get_module_key
 
 _YAML_UNSAFE_RE_CHARS = frozenset(":{}[]|>&*!%#`@,")
 
@@ -98,23 +97,19 @@ def _parse_kv_string(value: str) -> CommentedMap | None:
     return result if len(result) > 0 else None
 
 
-def fix_free_form(sf: StructuredFile, violation: ViolationDict) -> bool:
+def fix_free_form(task: CommentedMap, violation: ViolationDict) -> bool:
     """Convert free-form module args to dict form.
 
     For command-family modules: ``command: echo hi`` -> ``command: {cmd: echo hi}``
     For other modules: ``stat: path=/tmp`` -> ``stat: {path: /tmp}``
 
     Args:
-        sf: Parsed YAML file to modify in-place.
+        task: Task CommentedMap to modify in-place.
         violation: Violation dict with line.
 
     Returns:
         True if a change was applied.
     """
-    task = sf.find_task(violation_line_to_int(violation), violation)
-    if task is None:
-        return False
-
     module_key = get_module_key(task)
     if module_key is None:
         return False

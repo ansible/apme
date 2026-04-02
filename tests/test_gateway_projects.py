@@ -92,7 +92,7 @@ async def _seed_project(
                         Violation(
                             scan_id="scan-" + project_id,
                             rule_id=f"L{i + 1:03d}",
-                            level="error" if i % 2 == 0 else "warning",
+                            level="error" if i % 2 == 0 else "medium",
                             message=f"violation {i + 1}",
                             file="a.yml",
                         )

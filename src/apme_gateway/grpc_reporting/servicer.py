@@ -17,9 +17,11 @@ from sqlalchemy import select as sa_select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apme.v1 import reporting_pb2, reporting_pb2_grpc
+from apme_engine.severity_defaults import severity_from_proto, severity_to_label
 from apme_gateway.db import get_session
 from apme_gateway.db.models import (
     Proposal,
+    Rule,
     Scan,
     ScanCollection,
     ScanLog,
@@ -112,6 +114,111 @@ class ReportingServicer(reporting_pb2_grpc.ReportingServicer):
             await context.abort(grpc.StatusCode.INTERNAL, "Persistence failure")
         return reporting_pb2.ReportAck()
 
+    async def RegisterRules(  # noqa: N802
+        self,
+        request: reporting_pb2.RegisterRulesRequest,
+        context: grpc.aio.ServicerContext,  # type: ignore[type-arg]
+    ) -> reporting_pb2.RegisterRulesResponse:
+        """Reconcile the rule catalog from a Primary registration (ADR-041).
+
+        Args:
+            request: Full rule set from the registering Primary.
+            context: gRPC servicer context.
+
+        Returns:
+            Response with reconciliation counts.
+        """
+        logger.info(
+            "RegisterRules pod_id=%s is_authority=%s rules=%d",
+            request.pod_id,
+            request.is_authority,
+            len(request.rules),
+        )
+        if not request.is_authority:
+            logger.info("Ignoring registration from non-authority pod %s", request.pod_id)
+            return reporting_pb2.RegisterRulesResponse(
+                accepted=False,
+                message="Registration rejected: pod is not the rule authority",
+            )
+
+        try:
+            async with get_session() as db:
+                added, removed, unchanged = await _reconcile_rules(db, request.rules)
+                await db.commit()
+            logger.info("Rule catalog reconciled: added=%d removed=%d unchanged=%d", added, removed, unchanged)
+            return reporting_pb2.RegisterRulesResponse(
+                accepted=True,
+                message="Catalog reconciled",
+                rules_added=added,
+                rules_removed=removed,
+                rules_unchanged=unchanged,
+            )
+        except Exception:
+            logger.exception("Failed to reconcile rule catalog from pod %s", request.pod_id)
+            await context.abort(grpc.StatusCode.INTERNAL, "Rule reconciliation failure")
+            return reporting_pb2.RegisterRulesResponse(accepted=False, message="Internal error")
+
+
+async def _reconcile_rules(
+    db: AsyncSession,
+    incoming: Sequence[object],
+) -> tuple[int, int, int]:
+    """Full reconciliation: add new, remove absent, update changed.
+
+    Args:
+        db: Active async database session.
+        incoming: Proto RuleDefinition messages from the registering Primary.
+
+    Returns:
+        Tuple of (added, removed, unchanged) counts.
+    """
+    now = _now_iso()
+    incoming_map: dict[str, object] = {r.rule_id: r for r in incoming}  # type: ignore[attr-defined]
+
+    result = await db.execute(sa_select(Rule))
+    existing_rules = {r.rule_id: r for r in result.scalars().all()}
+
+    incoming_ids = set(incoming_map.keys())
+    existing_ids = set(existing_rules.keys())
+
+    added = 0
+    for rule_id in incoming_ids - existing_ids:
+        rd = incoming_map[rule_id]
+        db.add(
+            Rule(
+                rule_id=rd.rule_id,  # type: ignore[attr-defined]
+                default_severity=rd.default_severity,  # type: ignore[attr-defined]
+                category=rd.category,  # type: ignore[attr-defined]
+                source=rd.source,  # type: ignore[attr-defined]
+                description=rd.description,  # type: ignore[attr-defined]
+                scope=rd.scope,  # type: ignore[attr-defined]
+                enabled=rd.enabled,  # type: ignore[attr-defined]
+                registered_at=now,
+            )
+        )
+        added += 1
+
+    removed = 0
+    for rule_id in existing_ids - incoming_ids:
+        existing = existing_rules[rule_id]
+        await db.delete(existing)
+        removed += 1
+
+    unchanged = 0
+    for rule_id in incoming_ids & existing_ids:
+        rd = incoming_map[rule_id]
+        existing = existing_rules[rule_id]
+        existing.default_severity = rd.default_severity  # type: ignore[attr-defined]
+        existing.category = rd.category  # type: ignore[attr-defined]
+        existing.source = rd.source  # type: ignore[attr-defined]
+        existing.description = rd.description  # type: ignore[attr-defined]
+        existing.scope = rd.scope  # type: ignore[attr-defined]
+        existing.enabled = rd.enabled  # type: ignore[attr-defined]
+        existing.registered_at = now
+        unchanged += 1
+
+    return added, removed, unchanged
+
 
 async def _upsert_session(db: AsyncSession, session_id: str, project_path: str) -> None:
     """Create or update the session row with the latest timestamp.
@@ -150,7 +257,7 @@ def _add_violations(db: AsyncSession, scan_id: str, violations: Sequence[object]
             Violation(
                 scan_id=scan_id,
                 rule_id=v.rule_id,  # type: ignore[attr-defined]
-                level=v.level,  # type: ignore[attr-defined]
+                level=severity_to_label(severity_from_proto(v.severity)),  # type: ignore[attr-defined]
                 message=v.message,  # type: ignore[attr-defined]
                 file=v.file,  # type: ignore[attr-defined]
                 line=line_val,

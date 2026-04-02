@@ -33,7 +33,7 @@ class MetaVideoLinksGraphRule(GraphRule):
     enabled: bool = True
     name: str = "MetaVideoLinks"
     version: str = "v0.0.1"
-    severity: str = Severity.VERY_LOW
+    severity: Severity = Severity.LOW
     tags: tuple[str, ...] = (Tag.DEPENDENCY,)
     scope: str = RuleScope.ROLE
     precedence: int = 10

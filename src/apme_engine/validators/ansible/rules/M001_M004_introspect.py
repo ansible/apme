@@ -158,7 +158,7 @@ def run(
             removal_fqcn = str(info.get("fqcn", ""))
             m004: dict[str, object] = {
                 "rule_id": "M004",
-                "level": "error",
+                "severity": "error",
                 "message": str(info.get("removal_msg", "")) or f"Module {module_name} has been removed",
                 "file": file_path,
                 "line": line_num,
@@ -178,7 +178,7 @@ def run(
             violations.append(
                 {
                     "rule_id": "M001",
-                    "level": "warning",
+                    "severity": "high",
                     "message": f"Use FQCN for module: {module_name} -> {fqcn}",
                     "file": file_path,
                     "line": line_num,
@@ -196,7 +196,7 @@ def run(
             msg = str(w_list[0]) if w_list else f"Module {module_name} is deprecated"
             m002: dict[str, object] = {
                 "rule_id": "M002",
-                "level": "warning",
+                "severity": "high",
                 "message": msg,
                 "file": file_path,
                 "line": line_num,
@@ -215,7 +215,7 @@ def run(
             violations.append(
                 {
                     "rule_id": "M003",
-                    "level": "info",
+                    "severity": "high",
                     "message": f"Module has been redirected: {chain}",
                     "file": file_path,
                     "line": line_num,

@@ -20,7 +20,7 @@ become_timeout_risk(tree, node) := v if {
 	count(node.line) > 0
 	v := {
 		"rule_id": "M006",
-		"level": "warning",
+		"severity": "high",
 		"message": "become with ignore_errors will not catch timeout in 2.19+; add ignore_unreachable: true or handle differently",
 		"file": node.file,
 		"line": node.line[0],

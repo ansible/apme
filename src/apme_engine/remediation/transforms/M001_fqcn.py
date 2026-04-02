@@ -11,13 +11,10 @@ from __future__ import annotations
 
 import re
 
+from ruamel.yaml.comments import CommentedMap
+
 from apme_engine.engine.models import ViolationDict
-from apme_engine.remediation.structured import StructuredFile
-from apme_engine.remediation.transforms._helpers import (
-    get_module_key,
-    rename_key,
-    violation_line_to_int,
-)
+from apme_engine.remediation.transforms._helpers import get_module_key, rename_key
 
 _FQCN_FROM_MSG_RE = re.compile(
     r"(?:Use FQCN|FQCN for module):\s*\S+\s*->\s*(\S+)",
@@ -77,20 +74,16 @@ def _is_valid_fqcn(candidate: str, current_key: str) -> bool:
     return "." in candidate
 
 
-def fix_fqcn(sf: StructuredFile, violation: ViolationDict) -> bool:
+def fix_fqcn(task: CommentedMap, violation: ViolationDict) -> bool:
     """Rename a short module name to its FQCN.
 
     Args:
-        sf: Parsed YAML file to modify in-place.
+        task: Task CommentedMap to modify in-place.
         violation: Violation dict with line and optional resolved_fqcn.
 
     Returns:
         True if a change was applied.
     """
-    task = sf.find_task(violation_line_to_int(violation), violation)
-    if task is None:
-        return False
-
     module_key = get_module_key(task)
     if module_key is None:
         return False

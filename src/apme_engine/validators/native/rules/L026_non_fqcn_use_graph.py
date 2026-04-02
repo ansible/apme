@@ -32,7 +32,7 @@ class NonFQCNUseGraphRule(GraphRule):
     enabled: bool = True
     name: str = "NonFQCNUse"
     version: str = "v0.0.2"
-    severity: str = Severity.VERY_LOW
+    severity: Severity = Severity.LOW
     tags: tuple[str, ...] = (Tag.DEPENDENCY,)
 
     def match(self, graph: ContentGraph, node_id: str) -> bool:

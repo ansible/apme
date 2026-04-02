@@ -18,7 +18,7 @@ risky_file_permissions(tree, node) := v if {
 	count(node.line) > 0
 	v := {
 		"rule_id": "L021",
-		"level": "warning",
+		"severity": "low",
 		"message": "Consider setting mode explicitly for file/copy/template tasks",
 		"file": node.file,
 		"line": node.line[0],

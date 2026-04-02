@@ -5,24 +5,18 @@ from __future__ import annotations
 from ruamel.yaml.comments import CommentedMap
 
 from apme_engine.engine.models import ViolationDict
-from apme_engine.remediation.structured import StructuredFile
-from apme_engine.remediation.transforms._helpers import violation_line_to_int
 
 
-def fix_local_action(sf: StructuredFile, violation: ViolationDict) -> bool:
+def fix_local_action(task: CommentedMap, violation: ViolationDict) -> bool:
     """Convert local_action to the module key + delegate_to: localhost.
 
     Args:
-        sf: Parsed YAML file to modify in-place.
+        task: Task CommentedMap to modify in-place.
         violation: Violation dict with line.
 
     Returns:
         True if a change was applied.
     """
-    task = sf.find_task(violation_line_to_int(violation), violation)
-    if task is None:
-        return False
-
     la_value = task.get("local_action")
     if la_value is None:
         return False

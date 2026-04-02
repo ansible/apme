@@ -174,7 +174,7 @@ class TestRunOpa:
             result = run_opa(sample_hierarchy_payload, str(opa_bundle_path))
         assert len(result) == 1
         assert result[0]["rule_id"] == "task-name"
-        assert result[0]["level"] == "warning"
+        assert result[0]["severity"] == "medium"
         assert result[0]["file"] == "/examples/pb.yml"
         assert result[0]["line"] == 5
 

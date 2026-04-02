@@ -19,7 +19,7 @@ no_jinja_play_name(tree, node) := v if {
 	count(node.line) > 0
 	v := {
 		"rule_id": "L065",
-		"level": "warning",
+		"severity": "low",
 		"message": "Play names should not contain Jinja expressions",
 		"file": node.file,
 		"line": node.line[0],
@@ -36,7 +36,7 @@ no_jinja_play_name(tree, node) := v if {
 	count(node.line) > 0
 	v := {
 		"rule_id": "L065",
-		"level": "warning",
+		"severity": "low",
 		"message": "Play names should not contain Jinja expressions",
 		"file": node.file,
 		"line": node.line[0],

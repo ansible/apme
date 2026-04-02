@@ -27,7 +27,7 @@ first_found_auto_split(tree, node) := v if {
 	count(node.line) > 0
 	v := {
 		"rule_id": "M028",
-		"level": "warning",
+		"severity": "high",
 		"message": "first_found auto-splitting paths on delimiters is deprecated in 2.23; use a YAML list",
 		"file": node.file,
 		"line": node.line[0],
@@ -48,7 +48,7 @@ first_found_auto_split(tree, node) := v if {
 	count(node.line) > 0
 	v := {
 		"rule_id": "M028",
-		"level": "warning",
+		"severity": "high",
 		"message": "first_found auto-splitting paths on delimiters is deprecated in 2.23; use a YAML list",
 		"file": node.file,
 		"line": node.line[0],

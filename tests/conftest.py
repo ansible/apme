@@ -89,7 +89,7 @@ def opa_eval_result_with_violations() -> YAMLDict:
                         "value": [
                             {
                                 "rule_id": "task-name",
-                                "level": "warning",
+                                "severity": "medium",
                                 "message": "Task using shell module should have a name",
                                 "file": "/examples/pb.yml",
                                 "line": 5,

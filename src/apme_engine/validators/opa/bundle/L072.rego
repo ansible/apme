@@ -20,7 +20,7 @@ missing_backup(tree, node) := v if {
 	count(node.line) > 0
 	v := {
 		"rule_id": "L072",
-		"level": "info",
+		"severity": "info",
 		"message": "Consider setting backup: true on template/copy tasks for safety",
 		"file": node.file,
 		"line": node.line[0],

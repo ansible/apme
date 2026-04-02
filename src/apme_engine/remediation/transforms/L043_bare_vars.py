@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import re
 
+from ruamel.yaml.comments import CommentedMap
+
 from apme_engine.engine.models import ViolationDict
-from apme_engine.remediation.structured import StructuredFile
-from apme_engine.remediation.transforms._helpers import violation_line_to_int
 
 _BARE_VAR = re.compile(r"^([a-zA-Z_]\w*)$")
 
@@ -21,20 +21,16 @@ _LOOP_KEYS = (
 )
 
 
-def fix_bare_vars(sf: StructuredFile, violation: ViolationDict) -> bool:
+def fix_bare_vars(task: CommentedMap, violation: ViolationDict) -> bool:
     """Wrap bare variable references in Jinja delimiters: ``foo`` -> ``{{ foo }}``.
 
     Args:
-        sf: Parsed YAML file to modify in-place.
+        task: Task CommentedMap to modify in-place.
         violation: Violation dict with line.
 
     Returns:
         True if a change was applied.
     """
-    task = sf.find_task(violation_line_to_int(violation), violation)
-    if task is None:
-        return False
-
     applied = False
     for key in _LOOP_KEYS:
         val = task.get(key)

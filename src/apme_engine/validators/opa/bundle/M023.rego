@@ -22,7 +22,7 @@ follow_redirects_string(tree, node) := v if {
 	count(node.line) > 0
 	v := {
 		"rule_id": "M023",
-		"level": "warning",
+		"severity": "high",
 		"message": sprintf("follow_redirects: '%s' (string) is deprecated in 2.22; use true/false boolean", [fr_val]),
 		"file": node.file,
 		"line": node.line[0],

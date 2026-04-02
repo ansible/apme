@@ -2,25 +2,22 @@
 
 from __future__ import annotations
 
+from ruamel.yaml.comments import CommentedMap
+
 from apme_engine.engine.models import ViolationDict
-from apme_engine.remediation.structured import StructuredFile
-from apme_engine.remediation.transforms._helpers import get_module_key, violation_line_to_int
+from apme_engine.remediation.transforms._helpers import get_module_key
 
 
-def fix_latest(sf: StructuredFile, violation: ViolationDict) -> bool:
+def fix_latest(task: CommentedMap, violation: ViolationDict) -> bool:
     """Replace ``state: latest`` with ``state: present``.
 
     Args:
-        sf: Parsed YAML file to modify in-place.
+        task: Task CommentedMap to modify in-place.
         violation: Violation dict with line.
 
     Returns:
         True if a change was applied.
     """
-    task = sf.find_task(violation_line_to_int(violation), violation)
-    if task is None:
-        return False
-
     module_key = get_module_key(task)
     if module_key is None:
         return False

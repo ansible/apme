@@ -41,7 +41,7 @@ class OutboundTransferGraphRule(GraphRule):
     enabled: bool = True
     name: str = "OutboundTransfer"
     version: str = "v0.0.1"
-    severity: str = Severity.MEDIUM
+    severity: Severity = Severity.MEDIUM
     tags: tuple[str, ...] = (Tag.NETWORK,)
 
     def match(self, graph: ContentGraph, node_id: str) -> bool:

@@ -22,7 +22,7 @@ from pathlib import Path
 import grpc
 import grpc.aio
 
-from apme.v1 import primary_pb2_grpc, validate_pb2_grpc
+from apme.v1 import primary_pb2_grpc, reporting_pb2, validate_pb2_grpc
 from apme.v1.common_pb2 import (
     CollectionRef,
     File,
@@ -64,7 +64,7 @@ from apme.v1.reporting_pb2 import (
     ProposalOutcome,
 )
 from apme.v1.validate_pb2 import ValidateRequest
-from apme_engine.daemon.event_emitter import emit_fix_completed, start_sinks
+from apme_engine.daemon.event_emitter import emit_fix_completed, emit_register_rules, start_sinks
 from apme_engine.daemon.session import ResourceExhaustedError, SessionState, SessionStore
 from apme_engine.daemon.violation_convert import violation_dict_to_proto, violation_proto_to_dict
 from apme_engine.engine.models import ViolationDict
@@ -460,6 +460,54 @@ VALIDATOR_ENV_VARS = {
 }
 
 
+def _apply_rule_configs(
+    violations: list[ViolationDict],
+    rule_configs: list[object],
+) -> list[ViolationDict]:
+    """Filter and adjust violations based on ``RuleConfig`` overrides (ADR-041).
+
+    - Violations for disabled rules are removed.
+    - Severity is overridden when ``RuleConfig.severity`` differs from the
+      violation's current value.
+    - Enforced flag is attached as ``_enforced`` metadata so downstream
+      ignore-annotation processing can respect it.
+
+    Args:
+        violations: Mutable list of violation dicts from validators.
+        rule_configs: Proto ``RuleConfig`` messages from ``ScanOptions``.
+
+    Returns:
+        Filtered list with overrides applied.
+    """
+    if not rule_configs:
+        return violations
+
+    from apme_engine.severity_defaults import severity_to_label
+
+    config_map: dict[str, object] = {}
+    for rc in rule_configs:
+        config_map[rc.rule_id] = rc  # type: ignore[attr-defined]
+
+    filtered: list[ViolationDict] = []
+    for v in violations:
+        rule_id = str(v.get("rule_id", ""))
+        rc = config_map.get(rule_id)
+        if rc is not None:
+            if not rc.enabled:  # type: ignore[attr-defined]
+                continue
+            if rc.severity:  # type: ignore[attr-defined]
+                from apme_engine.severity_defaults import severity_from_proto
+
+                v["severity"] = severity_to_label(severity_from_proto(rc.severity))  # type: ignore[attr-defined]
+            if rc.enforced:  # type: ignore[attr-defined]
+                v["_enforced"] = True
+        filtered.append(v)
+    return filtered
+
+
+_known_rule_ids: set[str] = set()
+
+
 class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
     """Primary gRPC servicer — sole API surface for all clients.
 
@@ -497,6 +545,8 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         session_id: str = "",
         progress_callback: Callable[[str, str, float, int], None] | None = None,
         galaxy_cfg_path: Path | None = None,
+        rule_configs: list[object] | None = None,
+        rule_configs_complete: bool = False,
     ) -> tuple[
         list[ViolationDict],
         ScanDiagnostics | None,
@@ -507,6 +557,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         list[str],
         set[str],
         set[str],
+        object | None,
     ]:
         """Core scan pipeline: engine → collection discovery → venv → validators.
 
@@ -536,12 +587,26 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                 for streaming per-validator progress to callers.
             galaxy_cfg_path: Session-scoped ``ansible.cfg`` for Galaxy auth
                 (ADR-045).  Reserved for proxy integration — not yet consumed.
+            rule_configs: Per-rule overrides from ``ScanOptions`` (ADR-041).
+                When provided, disabled rules are filtered and severity is
+                overridden after validator fan-out.
+            rule_configs_complete: When ``True`` the incoming ``rule_configs``
+                represents the full catalog (Gateway path).  The Primary
+                performs bidirectional audit and hard-fails on unknown **or**
+                missing rule IDs.  When ``False`` (CLI path), unknown IDs
+                produce a warning only.
+
+        Raises:
+            ValueError: If ``rule_configs_complete`` is ``True`` and either
+                direction of the bidirectional audit fails (unknown IDs the
+                Primary cannot execute, or known IDs absent from the config).
 
         Returns:
             Tuple of (violations, ScanDiagnostics or None, resolved session_id,
             merged pipeline logs, hierarchy_payload Mapping or None,
             VenvSession or None, requirements file paths found,
-            specified collection FQCNs, learned collection FQCNs).
+            specified collection FQCNs, learned collection FQCNs,
+            ContentGraph or None).
         """
         from apme_engine.validators.ansible._venv import DEFAULT_VERSION
         from apme_engine.venv_manager.session import _venv_site_packages
@@ -576,7 +641,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
 
         if not context_obj.hierarchy_payload:
             logger.warning("Scan: no hierarchy payload produced (req=%s)", scan_id)
-            return [], ScanDiagnostics(), sid, [], None, None, [], set(), set()
+            return [], ScanDiagnostics(), sid, [], None, None, [], set(), set(), None
 
         # 2. Collection discovery
         discovered, requirements_found = _discover_collection_specs(files)
@@ -626,11 +691,15 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
 
         # 4. Validator fan-out
         content_graph_data = b""
+        content_graph: object | None = None
         if context_obj.scandata and hasattr(context_obj.scandata, "content_graph"):
             cg = context_obj.scandata.content_graph
             if cg is not None:
+                content_graph = cg
                 loop = asyncio.get_event_loop()
-                content_graph_data = await loop.run_in_executor(None, lambda: json.dumps(cg.to_dict()).encode())
+                content_graph_data = await loop.run_in_executor(
+                    None, lambda: json.dumps(cg.to_dict(slim=True)).encode()
+                )
                 logger.debug(
                     "ContentGraph serialized: %d bytes (req=%s)",
                     len(content_graph_data),
@@ -729,6 +798,26 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             logger.info("Fan-out: done (%.0fms) %s Total=%d (req=%s)", fan_out_ms, parts, len(violations), scan_id)
 
         violations = _deduplicate_violations(_sort_violations(violations))
+        if rule_configs:
+            unknown, missing = _validate_rule_configs(rule_configs, complete=rule_configs_complete)
+            if rule_configs_complete:
+                errors: list[str] = []
+                if unknown:
+                    errors.append(f"unknown rule IDs: {unknown}")
+                if missing:
+                    errors.append(f"missing rule IDs (known to this engine but absent from config): {missing}")
+                if errors:
+                    raise ValueError(
+                        f"Rule catalog mismatch (bidirectional audit): {'; '.join(errors)}. "
+                        "The Gateway catalog is out of sync with this engine."
+                    )
+            elif unknown:
+                logger.warning(
+                    "rule_configs references unknown rule IDs (scan=%s): %s — ignoring",
+                    scan_id,
+                    unknown,
+                )
+            violations = _apply_rule_configs(violations, rule_configs)
         _attach_snippets(violations, files)
 
         total_ms = (time.monotonic() - scan_t0) * 1000
@@ -758,6 +847,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             requirements_found,
             specified_fqcns,
             learned_fqcns,
+            content_graph,
         )
 
     @staticmethod
@@ -1067,6 +1157,12 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             fix_session_id = scan_opts.session_id
             galaxy_servers = scan_opts.galaxy_servers
 
+        scan_rule_configs: list[object] = []
+        scan_rule_configs_complete = False
+        if scan_opts and scan_opts.rule_configs:
+            scan_rule_configs = list(scan_opts.rule_configs)
+            scan_rule_configs_complete = scan_opts.rule_configs_complete
+
         if galaxy_servers:
             session.galaxy_cfg_path = _write_session_galaxy_cfg(galaxy_servers)
             if session.galaxy_cfg_path:
@@ -1177,6 +1273,8 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
 
         manifest_captured = False
 
+        captured_graph: list[object | None] = [None]
+
         def scan_fn(file_paths: list[str]) -> list[ViolationDict]:
             nonlocal node_index_set, manifest_captured
             rel_files = []
@@ -1193,6 +1291,8 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                 session_id=fix_session_id,
                 progress_callback=_progress_callback,
                 galaxy_cfg_path=session.galaxy_cfg_path,
+                rule_configs=scan_rule_configs or None,
+                rule_configs_complete=scan_rule_configs_complete,
             )
             future = asyncio.run_coroutine_threadsafe(coro, loop)
             (
@@ -1205,7 +1305,11 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                 req_files,
                 specified_fqcns,
                 learned_fqcns,
+                graph_obj,
             ) = future.result(timeout=300)
+
+            if graph_obj is not None:
+                captured_graph[0] = graph_obj
 
             if not manifest_captured and venv_sess is not None:
                 manifest_captured = True
@@ -1229,16 +1333,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             return violations
 
         registry = build_default_registry()
-        ai_provider = self._resolve_ai_provider(fix_opts)
-        engine = RemediationEngine(
-            registry=registry,
-            scan_fn=scan_fn,
-            max_passes=max_passes,
-            verbose=True,
-            ai_provider=ai_provider,  # type: ignore[arg-type]
-            progress_callback=_progress_callback,
-        )
-        engine_ref[0] = engine
+        use_graph_engine = os.environ.get("APME_USE_GRAPH_ENGINE", "").strip() == "1"
 
         yaml_paths = [str(temp_dir / f.path) for f in formatted_files if f.path.endswith((".yml", ".yaml"))]
 
@@ -1248,12 +1343,323 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                 await asyncio.sleep(_HEARTBEAT_INTERVAL)
                 progress_queue.put_nowait(ProgressUpdate(message="Processing...", phase="heartbeat", level=1))
 
-        heartbeat_task = asyncio.create_task(_heartbeat())
-        remediate_future = loop.run_in_executor(None, engine.remediate, yaml_paths)
+        if use_graph_engine:
+
+            async def async_scan_fn(file_paths: list[str]) -> list[ViolationDict]:
+                nonlocal node_index_set, manifest_captured
+                rel_files = []
+                for fp in file_paths:
+                    p = Path(fp)
+                    rel = str(p.relative_to(temp_dir)) if p.is_absolute() else fp
+                    rel_files.append(File(path=rel, content=p.read_bytes()))
+                (
+                    violations,
+                    _,
+                    _,
+                    _,
+                    hierarchy_payload,
+                    venv_sess,
+                    req_files,
+                    specified_fqcns,
+                    learned_fqcns,
+                    graph_obj,
+                ) = await self._scan_pipeline(
+                    temp_dir,
+                    rel_files,
+                    scan_id,
+                    ansible_core_version=ansible_core_version,
+                    collection_specs=collection_specs,
+                    session_id=fix_session_id,
+                    progress_callback=_progress_callback,
+                    galaxy_cfg_path=session.galaxy_cfg_path,
+                    rule_configs=scan_rule_configs or None,
+                    rule_configs_complete=scan_rule_configs_complete,
+                )
+
+                if graph_obj is not None:
+                    captured_graph[0] = graph_obj
+
+                if not manifest_captured and venv_sess is not None:
+                    manifest_captured = True
+                    session.ansible_core_version = venv_sess.ansible_version
+                    session.installed_collections = _classify_collections(
+                        list_installed_collections(venv_sess.venv_root),
+                        specified_fqcns,
+                        learned_fqcns,
+                    )
+                    session.installed_packages = list_installed_packages(venv_sess.venv_root)
+                    session.dependency_tree = get_dependency_tree(venv_sess.venv_root)
+                    session.requirements_files = req_files
+
+                if hierarchy_payload and not node_index_set:
+                    node_index_set = True
+                    node_index = NodeIndex(hierarchy_payload)
+                    if len(node_index) > 0 and engine_ref[0] is not None:
+                        engine_ref[0].set_node_index(node_index)
+                        logger.info("NodeIndex: indexed %d hierarchy nodes for unit segmentation", len(node_index))
+
+                return violations
+
+            async for event in self._session_graph_remediate(
+                session=session,
+                scan_id=scan_id,
+                registry=registry,
+                scan_fn=async_scan_fn,
+                captured_graph=captured_graph,
+                yaml_paths=yaml_paths,
+                temp_dir=temp_dir,
+                max_passes=max_passes,
+                progress_queue=progress_queue,
+                progress_callback=_progress_callback,
+                _heartbeat=_heartbeat,
+                format_content=format_content,
+                format_diffs=format_diffs,
+            ):
+                yield event
+        else:
+            ai_provider = self._resolve_ai_provider(fix_opts)
+            engine = RemediationEngine(
+                registry=registry,
+                scan_fn=scan_fn,
+                max_passes=max_passes,
+                verbose=True,
+                ai_provider=ai_provider,  # type: ignore[arg-type]
+                progress_callback=_progress_callback,
+            )
+            engine_ref[0] = engine
+
+            heartbeat_task = asyncio.create_task(_heartbeat())
+            remediate_future = loop.run_in_executor(None, engine.remediate, yaml_paths)
+
+            try:
+                while not remediate_future.done():
+                    try:
+                        update = await asyncio.wait_for(progress_queue.get(), timeout=1.0)
+                    except asyncio.TimeoutError:
+                        continue
+                    if update is not None:
+                        session.progress_logs.append(update)
+                        yield SessionEvent(progress=update)
+
+                while not progress_queue.empty():
+                    update = progress_queue.get_nowait()
+                    if update is not None:
+                        session.progress_logs.append(update)
+                        yield SessionEvent(progress=update)
+
+                report = remediate_future.result()
+            finally:
+                heartbeat_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await heartbeat_task
+                if not remediate_future.done():
+                    remediate_future.cancel()
+
+            for patch in report.applied_patches:
+                result = format_content(patch.patched, filename=Path(patch.path).name)
+                if result.changed:
+                    patch.patched = result.formatted
+
+            for patch in report.applied_patches:
+                patch.diff = "".join(
+                    difflib.unified_diff(
+                        patch.original.splitlines(keepends=True),
+                        patch.patched.splitlines(keepends=True),
+                        fromfile=f"a/{Path(patch.path).name}",
+                        tofile=f"b/{Path(patch.path).name}",
+                    )
+                )
+
+            tier1_patches: list[FilePatch] = []
+            for patch in report.applied_patches:
+                rel_path = str(Path(patch.path).relative_to(temp_dir))
+                orig = session.original_files.get(rel_path, patch.original.encode("utf-8"))
+                proto_patch = FilePatch(
+                    path=rel_path,
+                    original=orig,
+                    patched=patch.patched.encode("utf-8"),
+                    diff=patch.diff,
+                    applied_rules=patch.rule_ids,
+                )
+                tier1_patches.append(proto_patch)
+                session.working_files[rel_path] = patch.patched.encode("utf-8")
+
+            session.tier1_patches = tier1_patches
+            session.remaining_ai = list(report.remaining_ai)
+            session.remaining_manual = list(report.remaining_manual)
+
+            remaining_violations = [violation_dict_to_proto(v) for v in report.remaining_ai + report.remaining_manual]
+            fixed_violation_protos = [violation_dict_to_proto(v) for v in report.fixed_violations]
+            session.report = FixReport(
+                passes=report.passes,
+                fixed=report.fixed,
+                remaining_ai=len(report.remaining_ai),
+                remaining_manual=len(report.remaining_manual),
+                oscillation_detected=report.oscillation_detected,
+                remaining_violations=remaining_violations,
+                fixed_violations=fixed_violation_protos,
+            )
+
+            _t1_done = ProgressUpdate(
+                message=(f"Tier 1 converged: {report.passes} pass(es), {report.fixed} fixed"),
+                phase="tier1",
+                level=2,
+            )
+            session.progress_logs.append(_t1_done)
+            yield SessionEvent(progress=_t1_done)
+
+            yield SessionEvent(
+                tier1_complete=Tier1Summary(
+                    applied_patches=tier1_patches,
+                    format_diffs=list(format_diffs),
+                    idempotency_ok=session.idempotency_ok,
+                    report=session.report,
+                ),
+            )
+
+            if report.ai_proposed:
+                session.current_tier = 2
+                proposals = self._build_proposals_from_ai(report.ai_proposed)
+                for p in proposals:
+                    with contextlib.suppress(ValueError):
+                        p.file = str(Path(p.file).relative_to(temp_dir))
+                session.proposals = {p.id: p for p in proposals}
+                session.status = 1  # AWAITING_APPROVAL
+                yield SessionEvent(
+                    proposals=ProposalsReady(
+                        proposals=proposals,
+                        tier=2,
+                        status=1,
+                    ),
+                )
+            else:
+                session.status = 3  # COMPLETE
+                async for event in self._session_build_result(session):
+                    yield event
+
+    async def _session_graph_remediate(  # type: ignore[explicit-any]  # noqa: PLR0913
+        self,
+        *,
+        session: SessionState,
+        scan_id: str,
+        registry: object,
+        scan_fn: Callable[[list[str]], Awaitable[list[ViolationDict]]],
+        captured_graph: list[object | None],
+        yaml_paths: list[str],
+        temp_dir: Path,
+        max_passes: int,
+        progress_queue: asyncio.Queue[ProgressUpdate | None],
+        progress_callback: Callable[[str, str, float, int], None],
+        _heartbeat: Callable[[], Awaitable[None]],
+        format_content: Callable[..., object],
+        format_diffs: Sequence[object],
+    ) -> AsyncIterator[SessionEvent]:
+        """Graph-engine remediation path (behind APME_USE_GRAPH_ENGINE=1).
+
+        Runs ``GraphRemediationEngine`` in-memory with async transforms,
+        splices approved results to disk, then performs a final full-pipeline
+        scan.
+
+        Args:
+            session: Active session state (mutated in place).
+            scan_id: Request identifier for logging.
+            registry: Transform registry with node transforms.
+            scan_fn: Async scan function that calls ``_scan_pipeline``.
+            captured_graph: Single-element list holding the captured
+                ``ContentGraph`` from the first ``scan_fn`` call.
+            yaml_paths: Absolute YAML file paths under ``temp_dir``.
+            temp_dir: Working directory with formatted files.
+            max_passes: Maximum convergence passes.
+            progress_queue: Queue for streaming progress events.
+            progress_callback: ``(phase, msg, frac, level)`` callback.
+            _heartbeat: Coroutine factory for periodic heartbeats.
+            format_content: Formatter function for post-remediation pass.
+            format_diffs: Accumulated format diffs from earlier step.
+
+        Yields:
+            SessionEvent: Progress, Tier1Summary, and result events.
+        """
+        from apme_engine.engine.content_graph import ContentGraph
+        from apme_engine.engine.graph_scanner import (
+            graph_report_to_violations,
+            load_graph_rules,
+            native_rules_dir,
+            rescan_dirty,
+        )
+        from apme_engine.remediation.graph_engine import (
+            GraphRemediationEngine,
+            splice_modifications,
+        )
+        from apme_engine.remediation.partition import (
+            add_classification_to_violations,
+            partition_violations,
+        )
+
+        # 1. Initial scan to get violations + graph
+        initial_violations = await scan_fn(yaml_paths)
+
+        graph = captured_graph[0]
+        if not isinstance(graph, ContentGraph):
+            logger.warning(
+                "Graph engine requested but no ContentGraph available; falling back to empty graph (scan_id=%s)",
+                scan_id,
+            )
+            graph = ContentGraph()
+
+        originals: dict[str, str] = {}
+        for yp in yaml_paths:
+            with contextlib.suppress(OSError):
+                content = Path(yp).read_text(encoding="utf-8")
+                originals[yp] = content
+                with contextlib.suppress(ValueError):
+                    originals[str(Path(yp).relative_to(temp_dir))] = content
+
+        # 2. Build async rescan bridge and run graph remediation
+        rules = load_graph_rules(rules_dir=native_rules_dir())
+        temp_dir_resolved = temp_dir.resolve()
+
+        async def _rescan_bridge(
+            g: ContentGraph,
+            dirty_ids: frozenset[str],
+        ) -> list[ViolationDict]:
+            graph_report = rescan_dirty(g, rules, dirty_ids)
+            native_violations = graph_report_to_violations(graph_report)
+
+            if dirty_ids:
+                patches = splice_modifications(g, originals, include_pending=True)
+                for patch in patches:
+                    patch_path = Path(patch.path)
+                    patch_abs = patch_path.resolve() if patch_path.is_absolute() else (temp_dir / patch_path).resolve()
+                    if patch_abs != temp_dir_resolved and temp_dir_resolved not in patch_abs.parents:
+                        logger.warning(
+                            "Skipping patch with path escaping temp_dir: %s",
+                            patch_path,
+                        )
+                        continue
+                    patch_abs.parent.mkdir(parents=True, exist_ok=True)
+                    patch_abs.write_text(patch.patched, encoding="utf-8")
+
+            pipeline_violations = await scan_fn(yaml_paths)
+
+            external = [v for v in pipeline_violations if str(v.get("source", "")) != "native"]
+            return native_violations + external
+
+        graph_engine = GraphRemediationEngine(
+            registry=registry,  # type: ignore[arg-type]
+            graph=graph,
+            rules=rules,
+            max_passes=max_passes,
+            progress_callback=progress_callback,
+            rescan_fn=_rescan_bridge,
+        )
+
+        hb_task: asyncio.Task[None] = asyncio.create_task(_heartbeat())  # type: ignore[arg-type]
+        remediate_task = asyncio.create_task(
+            graph_engine.remediate(initial_violations),
+        )
 
         try:
-            # Drain progress queue while remediation runs, yielding events
-            while not remediate_future.done():
+            while not remediate_task.done():
                 try:
                     update = await asyncio.wait_for(progress_queue.get(), timeout=1.0)
                 except asyncio.TimeoutError:
@@ -1262,28 +1668,35 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                     session.progress_logs.append(update)
                     yield SessionEvent(progress=update)
 
-            # Drain any remaining queued progress
             while not progress_queue.empty():
                 update = progress_queue.get_nowait()
                 if update is not None:
                     session.progress_logs.append(update)
                     yield SessionEvent(progress=update)
 
-            report = remediate_future.result()
+            graph_report = remediate_task.result()
         finally:
-            heartbeat_task.cancel()
+            hb_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
-                await heartbeat_task
-            if not remediate_future.done():
-                remediate_future.cancel()
+                await hb_task
+            if not remediate_task.done():
+                remediate_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await remediate_task
 
-        # Post-remediation format pass
-        for patch in report.applied_patches:
-            result = format_content(patch.patched, filename=Path(patch.path).name)
-            if result.changed:
-                patch.patched = result.formatted
+        # Persist graph + originals on session for approval gate
+        session.content_graph = graph
+        session.graph_originals = originals
 
-        for patch in report.applied_patches:
+        # 3. Splice approved modifications and write patched files
+        patches = splice_modifications(graph, originals)
+
+        for patch in patches:
+            fmt_result = format_content(patch.patched, filename=Path(patch.path).name)
+            if getattr(fmt_result, "changed", False):
+                patch.patched = getattr(fmt_result, "formatted", patch.patched)
+
+        for patch in patches:
             patch.diff = "".join(
                 difflib.unified_diff(
                     patch.original.splitlines(keepends=True),
@@ -1293,10 +1706,28 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                 )
             )
 
-        # Build Tier 1 summary
+        for patch in patches:
+            patch_abs = Path(patch.path)
+            if not patch_abs.is_absolute():
+                patch_abs = temp_dir / patch_abs
+            patch_abs.write_text(patch.patched, encoding="utf-8")
+
+        # 4. Final full-pipeline scan for the complete violation picture
+        progress_callback("graph-tier1", "Running final full-pipeline scan", 0.0, 2)
+        final_violations = await scan_fn(yaml_paths)
+
+        # 5. Partition remaining violations
+        add_classification_to_violations(final_violations, registry)  # type: ignore[arg-type]
+        _, remaining_ai, remaining_manual = partition_violations(final_violations, registry)  # type: ignore[arg-type]
+
+        # 6. Build Tier 1 summary
         tier1_patches: list[FilePatch] = []
-        for patch in report.applied_patches:
-            rel_path = str(Path(patch.path).relative_to(temp_dir))
+        for patch in patches:
+            patch_path = Path(patch.path)
+            try:
+                rel_path = str(patch_path.relative_to(temp_dir))
+            except ValueError:
+                rel_path = str(patch_path)
             orig = session.original_files.get(rel_path, patch.original.encode("utf-8"))
             proto_patch = FilePatch(
                 path=rel_path,
@@ -1309,26 +1740,26 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             session.working_files[rel_path] = patch.patched.encode("utf-8")
 
         session.tier1_patches = tier1_patches
-        session.remaining_ai = list(report.remaining_ai)
-        session.remaining_manual = list(report.remaining_manual)
+        session.remaining_ai = list(remaining_ai)
+        session.remaining_manual = list(remaining_manual)
 
-        remaining_violations = [violation_dict_to_proto(v) for v in report.remaining_ai + report.remaining_manual]
-        fixed_violation_protos = [violation_dict_to_proto(v) for v in report.fixed_violations]
+        remaining_protos = [violation_dict_to_proto(v) for v in remaining_ai + remaining_manual]
+        fixed_protos = [violation_dict_to_proto(v) for v in graph_report.fixed_violations]
         session.report = FixReport(
-            passes=report.passes,
-            fixed=report.fixed,
-            remaining_ai=len(report.remaining_ai),
-            remaining_manual=len(report.remaining_manual),
-            oscillation_detected=report.oscillation_detected,
-            remaining_violations=remaining_violations,
-            fixed_violations=fixed_violation_protos,
+            passes=graph_report.passes,
+            fixed=graph_report.fixed,
+            remaining_ai=len(remaining_ai),
+            remaining_manual=len(remaining_manual),
+            oscillation_detected=graph_report.oscillation_detected,
+            remaining_violations=remaining_protos,
+            fixed_violations=fixed_protos,
         )
 
-        _t1_done = ProgressUpdate(
-            message=(f"Tier 1 converged: {report.passes} pass(es), {report.fixed} fixed"),
-            phase="tier1",
-            level=2,
+        _t1_msg = (
+            f"Graph Tier 1 converged: {graph_report.passes} pass(es), "
+            f"{graph_report.fixed} fixed, {graph_report.nodes_modified} nodes modified"
         )
+        _t1_done = ProgressUpdate(message=_t1_msg, phase="graph-tier1", level=2)
         session.progress_logs.append(_t1_done)
         yield SessionEvent(progress=_t1_done)
 
@@ -1341,28 +1772,10 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             ),
         )
 
-        # Only present proposals when the AI engine produced real fixes
-        # with before/after text.  Stub proposals (violations without diffs)
-        # are not actionable and just confuse the user.
-        if report.ai_proposed:
-            session.current_tier = 2
-            proposals = self._build_proposals_from_ai(report.ai_proposed)
-            for p in proposals:
-                with contextlib.suppress(ValueError):
-                    p.file = str(Path(p.file).relative_to(temp_dir))
-            session.proposals = {p.id: p for p in proposals}
-            session.status = 1  # AWAITING_APPROVAL
-            yield SessionEvent(
-                proposals=ProposalsReady(
-                    proposals=proposals,
-                    tier=2,
-                    status=1,
-                ),
-            )
-        else:
-            session.status = 3  # COMPLETE
-            async for event in self._session_build_result(session):
-                yield event
+        # Graph engine does not support Tier 2 AI yet — go straight to result
+        session.status = 3  # COMPLETE
+        async for event in self._session_build_result(session):
+            yield event
 
     @staticmethod
     def _resolve_ai_provider(fix_opts: FixOptions | None) -> object | None:
@@ -1809,6 +2222,91 @@ async def serve(listen_address: str = "0.0.0.0:50051") -> grpc.aio.Server:
         server.add_insecure_port(f"[::]:{port}")
     else:
         server.add_insecure_port(listen_address)
+    await _register_rule_catalog()
     await server.start()
     await start_sinks()
     return server
+
+
+async def _register_rule_catalog() -> None:
+    """Collect built-in rules, populate ``_known_rule_ids``, and push to Gateway.
+
+    This is a **hard requirement** for Primary startup.  If catalog
+    collection fails or returns no rules, the Primary cannot perform
+    bidirectional audit (ADR-041) and must not serve scans.
+
+    Gateway push is best-effort — the Primary is authoritative even
+    without a Gateway (CLI-only / daemon mode).  But the local catalog
+    *must* succeed so ``_known_rule_ids`` is populated.
+
+    Raises:
+        RuntimeError: If catalog collection fails or returns zero rules.
+    """
+    import os
+    import platform
+
+    global _known_rule_ids  # noqa: PLW0603
+
+    from apme_engine.rule_catalog import collect_all_rules
+
+    rules = collect_all_rules()
+    if not rules:
+        raise RuntimeError(
+            "Rule catalog collection returned zero rules. "
+            "The Primary cannot start without an authoritative catalog (ADR-041)."
+        )
+
+    _known_rule_ids = {r.rule_id for r in rules}
+    logger.info("Known rule IDs populated: %d rules", len(_known_rule_ids))
+
+    pod_id = os.environ.get("APME_POD_ID", "").strip() or platform.node()
+    is_authority = os.environ.get("APME_RULE_AUTHORITY", "true").strip().lower() in (
+        "true",
+        "1",
+        "yes",
+    )
+
+    request = reporting_pb2.RegisterRulesRequest(
+        pod_id=pod_id,
+        is_authority=is_authority,
+        rules=rules,
+    )
+    try:
+        await emit_register_rules(request)
+    except Exception:
+        logger.warning("Gateway push failed (best-effort); local catalog is authoritative", exc_info=True)
+
+
+def _validate_rule_configs(
+    rule_configs: list[object],
+    *,
+    complete: bool = False,
+) -> tuple[list[str], list[str]]:
+    """Validate rule IDs in configs against this Primary's known catalog.
+
+    Performs a forward check (unknown IDs) always.  When *complete* is
+    ``True`` (Gateway path), also performs a reverse check (missing IDs)
+    to detect catalog drift.
+
+    Args:
+        rule_configs: Proto RuleConfig messages.
+        complete: If ``True``, treat *rule_configs* as the full catalog
+            and check for missing IDs (bidirectional audit).
+
+    Returns:
+        Tuple of (unknown_ids, missing_ids).  *missing_ids* is always
+        empty when *complete* is ``False``.
+    """
+    if not _known_rule_ids or not rule_configs:
+        return [], []
+    config_ids: set[str] = set()
+    unknown: list[str] = []
+    for rc in rule_configs:
+        rid: str = rc.rule_id  # type: ignore[attr-defined]
+        config_ids.add(rid)
+        if rid not in _known_rule_ids:
+            unknown.append(rid)
+    missing: list[str] = []
+    if complete:
+        missing = sorted(_known_rule_ids - config_ids)
+    return unknown, missing

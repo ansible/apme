@@ -111,7 +111,7 @@ class SchemaValidationGraphRule(GraphRule):
     enabled: bool = True
     name: str = "SchemaValidation"
     version: str = "v0.0.1"
-    severity: str = Severity.HIGH
+    severity: Severity = Severity.ERROR
     tags: tuple[str, ...] = (Tag.QUALITY,)
 
     def match(self, graph: ContentGraph, node_id: str) -> bool:

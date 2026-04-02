@@ -37,10 +37,21 @@ enum RuleScope {
   RULE_SCOPE_COLLECTION = 7;  // Cross-repo scope — manual
 }
 
+// Severity indicates the impact class of a finding (ADR-043).
+enum Severity {
+  SEVERITY_UNSPECIFIED = 0;
+  SEVERITY_INFO = 1;
+  SEVERITY_LOW = 2;
+  SEVERITY_MEDIUM = 3;
+  SEVERITY_HIGH = 4;
+  SEVERITY_ERROR = 5;
+  SEVERITY_CRITICAL = 6;
+}
+
 // Violation is the shared shape for a single lint/policy violation.
 message Violation {
   string rule_id = 1;
-  string level = 2;
+  Severity severity = 2;
   string message = 3;
   string file = 4;
   oneof line_oneof {

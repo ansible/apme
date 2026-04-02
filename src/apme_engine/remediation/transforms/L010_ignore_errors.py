@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+from ruamel.yaml.comments import CommentedMap
+
 from apme_engine.engine.models import ViolationDict
-from apme_engine.remediation.structured import StructuredFile
-from apme_engine.remediation.transforms._helpers import violation_line_to_int
 
 
-def fix_ignore_errors(sf: StructuredFile, violation: ViolationDict) -> bool:
+def fix_ignore_errors(task: CommentedMap, violation: ViolationDict) -> bool:
     """Replace ``ignore_errors: true`` with ``failed_when: false``.
 
     Note that these are not semantically identical: ``ignore_errors: true``
@@ -19,16 +19,12 @@ def fix_ignore_errors(sf: StructuredFile, violation: ViolationDict) -> bool:
     status explicitly.
 
     Args:
-        sf: Parsed YAML file to modify in-place.
+        task: Task CommentedMap to modify in-place.
         violation: Violation dict with line.
 
     Returns:
         True if a change was applied.
     """
-    task = sf.find_task(violation_line_to_int(violation), violation)
-    if task is None:
-        return False
-
     if "ignore_errors" not in task:
         return False
 

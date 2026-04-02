@@ -44,7 +44,7 @@ class ParameterizedImportTaskfileGraphRule(GraphRule):
     enabled: bool = True
     name: str = "ParameterizedImportTaskfile"
     version: str = "v0.0.1"
-    severity: str = Severity.MEDIUM
+    severity: Severity = Severity.MEDIUM
     tags: tuple[str, ...] = (Tag.DEPENDENCY,)
 
     def match(self, graph: ContentGraph, node_id: str) -> bool:

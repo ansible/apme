@@ -89,8 +89,8 @@ def partition_violations(
 
     for v in violations:
         bare_id = normalize_rule_id(str(v.get("rule_id", "")))
-        level = str(v.get("level", "")).lower()
-        if level == "none":
+        sev = str(v.get("severity") or "").lower()
+        if sev == "info":
             v["remediation_resolution"] = RemediationResolution.INFORMATIONAL
             tier3.append(v)
             continue
@@ -122,8 +122,8 @@ def classify_violation(violation: ViolationDict, registry: TransformRegistry) ->
     Returns:
         One of RemediationClass.AUTO_FIXABLE, AI_CANDIDATE, or MANUAL_REVIEW.
     """
-    level = str(violation.get("level", "")).lower()
-    if level == "none":
+    sev = str(violation.get("severity") or "").lower()
+    if sev == "info":
         return RemediationClass.MANUAL_REVIEW
     bare_id = normalize_rule_id(str(violation.get("rule_id", "")))
     if is_finding_resolvable(violation, registry):

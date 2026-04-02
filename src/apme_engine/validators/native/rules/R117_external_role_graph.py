@@ -82,7 +82,7 @@ class ExternalRoleGraphRule(GraphRule):
     enabled: bool = True
     name: str = "ExternalRole"
     version: str = "v0.0.2"
-    severity: str = Severity.VERY_LOW
+    severity: Severity = Severity.INFO
     tags: tuple[str, ...] = (Tag.DEPENDENCY,)
     scope: str = RuleScope.ROLE
 

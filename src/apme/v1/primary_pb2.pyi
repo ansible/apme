@@ -6,14 +6,36 @@ from google.protobuf.struct_pb2 import Struct
 
 from apme.v1.common_pb2 import GalaxyServerDef, ProgressUpdate, ValidatorDiagnostics, Violation
 
+class RuleConfig:
+    rule_id: str
+    severity: int
+    enabled: bool
+    enforced: bool
+    def __init__(
+        self,
+        *,
+        rule_id: str = ...,
+        severity: int = ...,
+        enabled: bool = ...,
+        enforced: bool = ...,
+    ) -> None: ...
+
 class ScanOptions:
     include_scandata: bool
     ansible_core_version: str
     collection_specs: list[str]
     session_id: str
     galaxy_servers: list[GalaxyServerDef]
+    rule_configs: list[RuleConfig]
+    rule_configs_complete: bool
     def __init__(
-        self, *, session_id: str = "", galaxy_servers: Iterable[GalaxyServerDef] | None = ..., **kwargs: object
+        self,
+        *,
+        session_id: str = "",
+        galaxy_servers: Iterable[GalaxyServerDef] | None = ...,
+        rule_configs: Iterable[RuleConfig] | None = ...,
+        rule_configs_complete: bool = ...,
+        **kwargs: object,
     ) -> None: ...
 
 class FixOptions:

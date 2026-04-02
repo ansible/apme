@@ -23,6 +23,7 @@ from apme_engine.cli._convert import violation_proto_to_dict
 from apme_engine.cli._galaxy_config import discover_galaxy_servers
 from apme_engine.cli._models import ViolationDict
 from apme_engine.cli._project_root import derive_session_id, discover_project_root
+from apme_engine.cli._rules_yml import load_rule_configs_from_project
 from apme_engine.cli.ansi import dim, red, yellow
 from apme_engine.cli.discovery import resolve_primary
 from apme_engine.cli.output import (
@@ -96,6 +97,7 @@ def run_check(args: argparse.Namespace) -> None:
     target: str = getattr(args, "target", ".")
     project_root = discover_project_root(target)
     galaxy_servers = discover_galaxy_servers(project_root) or None
+    rule_cfgs = load_rule_configs_from_project(project_root)
 
     try:
         chunks = yield_scan_chunks(
@@ -105,6 +107,7 @@ def run_check(args: argparse.Namespace) -> None:
             collection_specs=getattr(args, "collections", None),
             session_id=session_id,
             galaxy_servers=galaxy_servers,
+            rule_configs=rule_cfgs or None,
         )
     except FileNotFoundError as e:
         sys.stderr.write(f"{e}\n")

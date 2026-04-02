@@ -141,7 +141,7 @@ class VarNamingKeywordGraphRule(GraphRule):
     enabled: bool = True
     name: str = "VarNamingKeyword"
     version: str = "v0.0.1"
-    severity: str = Severity.MEDIUM
+    severity: Severity = Severity.MEDIUM
     tags: tuple[str, ...] = (Tag.VARIABLE,)
 
     def match(self, graph: ContentGraph, node_id: str) -> bool:

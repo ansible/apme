@@ -24,7 +24,7 @@ yaml_module_args(tree, node) := v if {
 	count(node.line) > 0
 	v := {
 		"rule_id": "L062",
-		"level": "warning",
+		"severity": "low",
 		"message": "Use YAML-style module arguments instead of key=value one-liners",
 		"file": node.file,
 		"line": node.line[0],

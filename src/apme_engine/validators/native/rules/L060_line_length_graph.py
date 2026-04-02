@@ -32,7 +32,7 @@ class LineLengthGraphRule(GraphRule):
     enabled: bool = True
     name: str = "LineLength"
     version: str = "v0.0.1"
-    severity: str = Severity.VERY_LOW
+    severity: Severity = Severity.INFO
     tags: tuple[str, ...] = (Tag.QUALITY,)
 
     def match(self, graph: ContentGraph, node_id: str) -> bool:

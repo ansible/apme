@@ -11,10 +11,11 @@ import asyncio
 from collections.abc import AsyncIterator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from apme.v1.common_pb2 import ProgressUpdate
 from apme.v1.primary_pb2 import (
     ApprovalRequest,
     CloseRequest,
@@ -38,6 +39,7 @@ from apme_engine.daemon.session import (
     SessionState,
     SessionStore,
 )
+from apme_engine.engine.models import ViolationDict
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -591,8 +593,8 @@ class TestSessionNodeIndexWiring:
             files: object,
             scan_id: object,
             **kwargs: object,
-        ) -> tuple[list[object], None, str, list[object], dict[str, object], None, list[str], set[str], set[str]]:
-            return [], None, "sid", [], hierarchy_payload, None, [], set(), set()
+        ) -> tuple[list[object], None, str, list[object], dict[str, object], None, list[str], set[str], set[str], None]:
+            return [], None, "sid", [], hierarchy_payload, None, [], set(), set(), None
 
         servicer._scan_pipeline = fake_scan_pipeline  # type: ignore[assignment]
 
@@ -660,8 +662,8 @@ class TestSessionProgressStreaming:
             files: object,
             scan_id: object,
             **kwargs: object,
-        ) -> tuple[list[object], None, str, list[object], None, None, list[str], set[str], set[str]]:
-            return [], None, "sid", [], None, None, [], set(), set()
+        ) -> tuple[list[object], None, str, list[object], None, None, list[str], set[str], set[str], None]:
+            return [], None, "sid", [], None, None, [], set(), set(), None
 
         servicer._scan_pipeline = fake_scan_pipeline  # type: ignore[assignment]
 
@@ -714,6 +716,563 @@ class TestSessionProgressStreaming:
         assert any("transforms applied" in m for m in progress_msgs), (
             f"Expected 'transforms applied' progress, got: {progress_msgs}"
         )
+
+
+class TestSessionGraphRemediate:
+    """Tests for _session_graph_remediate (graph engine remediation path, PR 4).
+
+    Exercises the ``APME_USE_GRAPH_ENGINE=1`` code path that runs
+    ``GraphRemediationEngine`` in-memory, splices results to disk,
+    and performs a final full-pipeline scan.
+    """
+
+    async def test_happy_path_produces_patches_and_events(self, tmp_path: Path) -> None:
+        """Graph engine fixes violations, splices files, and emits correct events.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        from unittest.mock import MagicMock
+
+        from apme_engine.daemon.primary_server import PrimaryServicer
+        from apme_engine.engine.content_graph import ContentGraph, ContentNode, NodeIdentity, NodeType
+        from apme_engine.remediation.engine import FilePatch as EngineFilePatch
+        from apme_engine.remediation.graph_engine import GraphFixReport
+
+        servicer = PrimaryServicer.__new__(PrimaryServicer)
+
+        yaml_content = "- name: Install\n  apt:\n    name: nginx\n    state: present\n"
+        patched_content = "- name: Install\n  ansible.builtin.apt:\n    name: nginx\n    state: present\n"
+        play_file = tmp_path / "play.yml"
+        play_file.write_text(yaml_content)
+
+        graph = ContentGraph()
+        graph.add_node(
+            ContentNode(
+                identity=NodeIdentity(path="play.yml/plays[0]/tasks[0]", node_type=NodeType.TASK),
+                file_path=str(play_file),
+                yaml_lines=yaml_content,
+            )
+        )
+
+        session = SessionState(session_id="test-graph-happy")
+        session.working_files = {"play.yml": yaml_content.encode()}
+        session.original_files = dict(session.working_files)
+
+        call_count = [0]
+
+        async def scan_fn(paths: list[str]) -> list[ViolationDict]:
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return [{"rule_id": "L001", "message": "Use FQCN", "file": "play.yml", "line": 2}]
+            return []
+
+        mock_report = GraphFixReport(
+            passes=1,
+            fixed=1,
+            nodes_modified=1,
+            fixed_violations=[{"rule_id": "L001", "message": "Use FQCN", "file": "play.yml", "line": 2}],
+        )
+        mock_patches = [
+            EngineFilePatch(
+                path=str(play_file),
+                original=yaml_content,
+                patched=patched_content,
+                diff="",
+                rule_ids=["L001"],
+            )
+        ]
+
+        progress_queue: asyncio.Queue[ProgressUpdate | None] = asyncio.Queue()
+
+        with (
+            patch("apme_engine.engine.graph_scanner.load_graph_rules", return_value=[]),
+            patch("apme_engine.remediation.graph_engine.GraphRemediationEngine") as MockGRE,
+            patch("apme_engine.remediation.graph_engine.splice_modifications", return_value=mock_patches),
+            patch("apme_engine.remediation.partition.add_classification_to_violations"),
+            patch("apme_engine.remediation.partition.partition_violations", return_value=([], [], [])),
+        ):
+            MockGRE.return_value.remediate = AsyncMock(return_value=mock_report)
+
+            events: list[SessionEvent] = []
+            async for event in servicer._session_graph_remediate(
+                session=session,
+                scan_id="scan-graph-1",
+                registry=MagicMock(),
+                scan_fn=scan_fn,
+                captured_graph=[graph],
+                yaml_paths=[str(play_file)],
+                temp_dir=tmp_path,
+                max_passes=5,
+                progress_queue=progress_queue,
+                progress_callback=lambda *a: None,
+                _heartbeat=_noop_heartbeat,
+                format_content=_noop_format,
+                format_diffs=[],
+            ):
+                events.append(event)
+
+        assert call_count[0] == 2, f"scan_fn should be called twice (initial + final), got {call_count[0]}"
+
+        # Verify the validator bridge (rescan_fn) was wired into the engine
+        _, gre_kwargs = MockGRE.call_args
+        assert "rescan_fn" in gre_kwargs, "rescan_fn must be passed to GraphRemediationEngine"
+        assert callable(gre_kwargs["rescan_fn"])
+
+        event_types = [e.WhichOneof("event") for e in events]
+        assert "progress" in event_types
+        assert "tier1_complete" in event_types
+        assert "result" in event_types
+
+        progress_msgs = [e.progress.message for e in events if e.HasField("progress")]
+        assert any("Graph Tier 1 converged" in m for m in progress_msgs)
+        assert any("1 pass(es)" in m for m in progress_msgs)
+        assert any("1 nodes modified" in m for m in progress_msgs)
+
+        t1 = next(e for e in events if e.HasField("tier1_complete"))
+        assert len(t1.tier1_complete.applied_patches) == 1
+        assert t1.tier1_complete.applied_patches[0].path == "play.yml"
+        assert t1.tier1_complete.applied_patches[0].applied_rules == ["L001"]
+        report = t1.tier1_complete.report
+        assert report is not None
+        assert report.passes == 1
+        assert report.fixed == 1
+
+        assert session.status == 3  # COMPLETE
+        assert len(session.tier1_patches) == 1
+        assert session.working_files["play.yml"] == patched_content.encode()
+
+        assert play_file.read_text() == patched_content
+
+    async def test_no_violations_yields_clean_report(self, tmp_path: Path) -> None:
+        """No violations → no patches, clean report with passes=1, fixed=0.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        from unittest.mock import MagicMock
+
+        from apme_engine.daemon.primary_server import PrimaryServicer
+        from apme_engine.engine.content_graph import ContentGraph
+        from apme_engine.remediation.graph_engine import GraphFixReport
+
+        servicer = PrimaryServicer.__new__(PrimaryServicer)
+
+        play_file = tmp_path / "play.yml"
+        play_file.write_text("- name: OK\n  ansible.builtin.debug:\n    msg: hi\n")
+
+        session = SessionState(session_id="test-graph-clean")
+        session.working_files = {"play.yml": play_file.read_bytes()}
+        session.original_files = dict(session.working_files)
+
+        progress_queue: asyncio.Queue[ProgressUpdate | None] = asyncio.Queue()
+
+        async def async_scan_fn(_paths: list[str]) -> list[ViolationDict]:
+            return []
+
+        with (
+            patch("apme_engine.engine.graph_scanner.load_graph_rules", return_value=[]),
+            patch("apme_engine.remediation.graph_engine.GraphRemediationEngine") as MockGRE,
+            patch("apme_engine.remediation.graph_engine.splice_modifications", return_value=[]),
+            patch("apme_engine.remediation.partition.add_classification_to_violations"),
+            patch("apme_engine.remediation.partition.partition_violations", return_value=([], [], [])),
+        ):
+            MockGRE.return_value.remediate = AsyncMock(return_value=GraphFixReport(passes=1, fixed=0))
+
+            events: list[SessionEvent] = []
+            async for event in servicer._session_graph_remediate(
+                session=session,
+                scan_id="scan-clean",
+                registry=MagicMock(),
+                scan_fn=async_scan_fn,
+                captured_graph=[ContentGraph()],
+                yaml_paths=[str(play_file)],
+                temp_dir=tmp_path,
+                max_passes=5,
+                progress_queue=progress_queue,
+                progress_callback=lambda *a: None,
+                _heartbeat=_noop_heartbeat,
+                format_content=_noop_format,
+                format_diffs=[],
+            ):
+                events.append(event)
+
+        assert session.status == 3
+        assert session.tier1_patches == []
+        assert session.report is not None
+        assert session.report.passes == 1
+        assert session.report.fixed == 0
+
+    async def test_fallback_on_missing_graph(self, tmp_path: Path) -> None:
+        """When captured_graph has None, falls back to empty ContentGraph.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        from unittest.mock import MagicMock
+
+        from apme_engine.daemon.primary_server import PrimaryServicer
+        from apme_engine.remediation.graph_engine import GraphFixReport
+
+        servicer = PrimaryServicer.__new__(PrimaryServicer)
+
+        play_file = tmp_path / "play.yml"
+        play_file.write_text("- name: Test\n  debug:\n    msg: hi\n")
+
+        session = SessionState(session_id="test-graph-none")
+        session.working_files = {"play.yml": play_file.read_bytes()}
+        session.original_files = dict(session.working_files)
+
+        progress_queue: asyncio.Queue[ProgressUpdate | None] = asyncio.Queue()
+
+        async def async_scan_fn_none(_paths: list[str]) -> list[ViolationDict]:
+            return []
+
+        with (
+            patch("apme_engine.engine.graph_scanner.load_graph_rules", return_value=[]),
+            patch("apme_engine.remediation.graph_engine.GraphRemediationEngine") as MockGRE,
+            patch("apme_engine.remediation.graph_engine.splice_modifications", return_value=[]),
+            patch("apme_engine.remediation.partition.add_classification_to_violations"),
+            patch("apme_engine.remediation.partition.partition_violations", return_value=([], [], [])),
+        ):
+            MockGRE.return_value.remediate = AsyncMock(return_value=GraphFixReport(passes=1, fixed=0))
+
+            events: list[SessionEvent] = []
+            async for event in servicer._session_graph_remediate(
+                session=session,
+                scan_id="scan-none",
+                registry=MagicMock(),
+                scan_fn=async_scan_fn_none,
+                captured_graph=[None],
+                yaml_paths=[str(play_file)],
+                temp_dir=tmp_path,
+                max_passes=5,
+                progress_queue=progress_queue,
+                progress_callback=lambda *a: None,
+                _heartbeat=_noop_heartbeat,
+                format_content=_noop_format,
+                format_diffs=[],
+            ):
+                events.append(event)
+
+        assert session.status == 3
+        MockGRE.assert_called_once()
+
+    async def test_remaining_violations_partitioned(self, tmp_path: Path) -> None:
+        """Remaining violations from final scan are split into AI and manual.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        from unittest.mock import MagicMock
+
+        from apme_engine.daemon.primary_server import PrimaryServicer
+        from apme_engine.engine.content_graph import ContentGraph
+        from apme_engine.remediation.graph_engine import GraphFixReport
+
+        servicer = PrimaryServicer.__new__(PrimaryServicer)
+
+        play_file = tmp_path / "play.yml"
+        play_file.write_text("- name: Test\n  debug:\n    msg: hi\n")
+
+        session = SessionState(session_id="test-graph-part")
+        session.working_files = {"play.yml": play_file.read_bytes()}
+        session.original_files = dict(session.working_files)
+
+        ai_violations: list[ViolationDict] = [
+            {"rule_id": "L042", "message": "Complex fix needed", "file": "play.yml", "line": 1},
+        ]
+        manual_violations: list[ViolationDict] = [
+            {"rule_id": "L099", "message": "Manual review needed", "file": "play.yml", "line": 1},
+        ]
+
+        progress_queue: asyncio.Queue[ProgressUpdate | None] = asyncio.Queue()
+
+        async def async_scan_fn_part(_paths: list[str]) -> list[ViolationDict]:
+            return ai_violations + manual_violations
+
+        with (
+            patch("apme_engine.engine.graph_scanner.load_graph_rules", return_value=[]),
+            patch("apme_engine.remediation.graph_engine.GraphRemediationEngine") as MockGRE,
+            patch("apme_engine.remediation.graph_engine.splice_modifications", return_value=[]),
+            patch("apme_engine.remediation.partition.add_classification_to_violations"),
+            patch(
+                "apme_engine.remediation.partition.partition_violations",
+                return_value=([], ai_violations, manual_violations),
+            ),
+        ):
+            MockGRE.return_value.remediate = AsyncMock(return_value=GraphFixReport(passes=1, fixed=0))
+
+            events: list[SessionEvent] = []
+            async for event in servicer._session_graph_remediate(
+                session=session,
+                scan_id="scan-part",
+                registry=MagicMock(),
+                scan_fn=async_scan_fn_part,
+                captured_graph=[ContentGraph()],
+                yaml_paths=[str(play_file)],
+                temp_dir=tmp_path,
+                max_passes=5,
+                progress_queue=progress_queue,
+                progress_callback=lambda *a: None,
+                _heartbeat=_noop_heartbeat,
+                format_content=_noop_format,
+                format_diffs=[],
+            ):
+                events.append(event)
+
+        assert session.remaining_ai == ai_violations
+        assert session.remaining_manual == manual_violations
+        assert session.report is not None
+        assert session.report.remaining_ai == 1
+        assert session.report.remaining_manual == 1
+
+    async def test_skips_tier2_ai(self, tmp_path: Path) -> None:
+        """Graph path goes directly to COMPLETE — no Tier 2 proposals.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        from unittest.mock import MagicMock
+
+        from apme_engine.daemon.primary_server import PrimaryServicer
+        from apme_engine.engine.content_graph import ContentGraph
+        from apme_engine.remediation.graph_engine import GraphFixReport
+
+        servicer = PrimaryServicer.__new__(PrimaryServicer)
+
+        play_file = tmp_path / "play.yml"
+        play_file.write_text("- name: Test\n  debug:\n    msg: hi\n")
+
+        session = SessionState(session_id="test-graph-no-t2")
+        session.working_files = {"play.yml": play_file.read_bytes()}
+        session.original_files = dict(session.working_files)
+
+        progress_queue: asyncio.Queue[ProgressUpdate | None] = asyncio.Queue()
+
+        async def async_scan_fn_no_t2(_paths: list[str]) -> list[ViolationDict]:
+            return []
+
+        with (
+            patch("apme_engine.engine.graph_scanner.load_graph_rules", return_value=[]),
+            patch("apme_engine.remediation.graph_engine.GraphRemediationEngine") as MockGRE,
+            patch("apme_engine.remediation.graph_engine.splice_modifications", return_value=[]),
+            patch("apme_engine.remediation.partition.add_classification_to_violations"),
+            patch("apme_engine.remediation.partition.partition_violations", return_value=([], [], [])),
+        ):
+            MockGRE.return_value.remediate = AsyncMock(return_value=GraphFixReport(passes=1, fixed=0))
+
+            events: list[SessionEvent] = []
+            async for event in servicer._session_graph_remediate(
+                session=session,
+                scan_id="scan-no-t2",
+                registry=MagicMock(),
+                scan_fn=async_scan_fn_no_t2,
+                captured_graph=[ContentGraph()],
+                yaml_paths=[str(play_file)],
+                temp_dir=tmp_path,
+                max_passes=5,
+                progress_queue=progress_queue,
+                progress_callback=lambda *a: None,
+                _heartbeat=_noop_heartbeat,
+                format_content=_noop_format,
+                format_diffs=[],
+            ):
+                events.append(event)
+
+        event_types = [e.WhichOneof("event") for e in events]
+        assert "proposals" not in event_types
+        assert "result" in event_types
+        assert session.status == 3  # COMPLETE
+
+
+class TestSessionRescanBridge:
+    """Tests for the validator bridge (rescan_fn) wired into _session_graph_remediate.
+
+    PR 5: Verifies that _session_graph_remediate constructs a bridge
+    closure and passes it to GraphRemediationEngine as rescan_fn.
+    """
+
+    async def test_bridge_passed_to_graph_engine_as_rescan_fn(self, tmp_path: Path) -> None:
+        """Bridge closure is constructed and passed into GraphRemediationEngine as rescan_fn.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        from unittest.mock import MagicMock
+
+        from apme_engine.daemon.primary_server import PrimaryServicer
+        from apme_engine.engine.content_graph import ContentGraph, ContentNode, NodeIdentity, NodeType
+        from apme_engine.remediation.engine import FilePatch as EngineFilePatch
+        from apme_engine.remediation.graph_engine import GraphFixReport
+
+        servicer = PrimaryServicer.__new__(PrimaryServicer)
+
+        yaml_content = "- name: Install\n  apt:\n    name: nginx\n    state: present\n"
+        patched_content = "- name: Install\n  ansible.builtin.apt:\n    name: nginx\n    state: present\n"
+        play_file = tmp_path / "play.yml"
+        play_file.write_text(yaml_content)
+
+        graph = ContentGraph()
+        graph.add_node(
+            ContentNode(
+                identity=NodeIdentity(path="play.yml/plays[0]/tasks[0]", node_type=NodeType.TASK),
+                file_path=str(play_file),
+                yaml_lines=yaml_content,
+            )
+        )
+
+        session = SessionState(session_id="test-bridge")
+        session.working_files = {"play.yml": yaml_content.encode()}
+        session.original_files = dict(session.working_files)
+
+        scan_call_count = [0]
+
+        async def scan_fn(paths: list[str]) -> list[ViolationDict]:
+            scan_call_count[0] += 1
+            if scan_call_count[0] == 1:
+                return [{"rule_id": "L001", "message": "Use FQCN", "file": "play.yml", "line": 2, "source": "native"}]
+            return []
+
+        mock_report = GraphFixReport(passes=1, fixed=1, nodes_modified=1, fixed_violations=[])
+        mock_patches = [
+            EngineFilePatch(
+                path=str(play_file),
+                original=yaml_content,
+                patched=patched_content,
+                diff="",
+                rule_ids=["L001"],
+            )
+        ]
+
+        progress_queue: asyncio.Queue[ProgressUpdate | None] = asyncio.Queue()
+
+        captured_rescan_fn: list[object] = [None]
+
+        def capture_gre_init(*args: object, **kwargs: object) -> MagicMock:
+            captured_rescan_fn[0] = kwargs.get("rescan_fn")
+            mock_engine = MagicMock()
+            mock_engine.remediate = AsyncMock(return_value=mock_report)
+            return mock_engine
+
+        with (
+            patch("apme_engine.engine.graph_scanner.load_graph_rules", return_value=[]),
+            patch(
+                "apme_engine.remediation.graph_engine.GraphRemediationEngine",
+                side_effect=capture_gre_init,
+            ),
+            patch("apme_engine.remediation.graph_engine.splice_modifications", return_value=mock_patches),
+            patch("apme_engine.remediation.partition.add_classification_to_violations"),
+            patch("apme_engine.remediation.partition.partition_violations", return_value=([], [], [])),
+        ):
+            events: list[SessionEvent] = []
+            async for event in servicer._session_graph_remediate(
+                session=session,
+                scan_id="scan-bridge-1",
+                registry=MagicMock(),
+                scan_fn=scan_fn,
+                captured_graph=[graph],
+                yaml_paths=[str(play_file)],
+                temp_dir=tmp_path,
+                max_passes=5,
+                progress_queue=progress_queue,
+                progress_callback=lambda *a: None,
+                _heartbeat=_noop_heartbeat,
+                format_content=_noop_format,
+                format_diffs=[],
+            ):
+                events.append(event)
+
+        assert captured_rescan_fn[0] is not None, "rescan_fn must be passed to engine"
+        assert callable(captured_rescan_fn[0])
+
+    async def test_bridge_uses_correct_rules_dir(self, tmp_path: Path) -> None:
+        """load_graph_rules is called with the native rules directory.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        from unittest.mock import MagicMock
+
+        from apme_engine.daemon.primary_server import PrimaryServicer
+        from apme_engine.engine.content_graph import ContentGraph
+        from apme_engine.remediation.graph_engine import GraphFixReport
+
+        servicer = PrimaryServicer.__new__(PrimaryServicer)
+
+        play_file = tmp_path / "play.yml"
+        play_file.write_text("- name: OK\n  ansible.builtin.debug:\n    msg: hi\n")
+
+        session = SessionState(session_id="test-rules-dir")
+        session.working_files = {"play.yml": play_file.read_bytes()}
+        session.original_files = dict(session.working_files)
+
+        progress_queue: asyncio.Queue[ProgressUpdate | None] = asyncio.Queue()
+
+        captured_rules_dir: list[str | None] = [None]
+
+        def mock_load_graph_rules(rules_dir: str = "", **kwargs: object) -> list[object]:
+            captured_rules_dir[0] = rules_dir
+            return []
+
+        async def async_scan_fn_rules(_paths: list[str]) -> list[ViolationDict]:
+            return []
+
+        with (
+            patch("apme_engine.engine.graph_scanner.load_graph_rules", side_effect=mock_load_graph_rules),
+            patch("apme_engine.remediation.graph_engine.GraphRemediationEngine") as MockGRE,
+            patch("apme_engine.remediation.graph_engine.splice_modifications", return_value=[]),
+            patch("apme_engine.remediation.partition.add_classification_to_violations"),
+            patch("apme_engine.remediation.partition.partition_violations", return_value=([], [], [])),
+        ):
+            MockGRE.return_value.remediate = AsyncMock(return_value=GraphFixReport())
+
+            events: list[SessionEvent] = []
+            async for event in servicer._session_graph_remediate(
+                session=session,
+                scan_id="scan-rules-dir",
+                registry=MagicMock(),
+                scan_fn=async_scan_fn_rules,
+                captured_graph=[ContentGraph()],
+                yaml_paths=[str(play_file)],
+                temp_dir=tmp_path,
+                max_passes=5,
+                progress_queue=progress_queue,
+                progress_callback=lambda *a: None,
+                _heartbeat=_noop_heartbeat,
+                format_content=_noop_format,
+                format_diffs=[],
+            ):
+                events.append(event)
+
+        rules_dir = captured_rules_dir[0]
+        assert rules_dir is not None, "load_graph_rules must be called with rules_dir"
+        assert rules_dir.endswith("native/rules"), f"Expected native rules dir, got: {captured_rules_dir[0]}"
+
+
+# ---------------------------------------------------------------------------
+# Helpers for graph remediation tests
+# ---------------------------------------------------------------------------
+
+
+async def _noop_heartbeat() -> None:
+    """Heartbeat coroutine that sleeps indefinitely (cancelled by test)."""
+    await asyncio.sleep(3600)
+
+
+def _noop_format(text: str, **kwargs: object) -> object:
+    """Format callback that reports no changes.
+
+    Args:
+        text: Content to format (ignored).
+        **kwargs: Extra keyword arguments (ignored).
+
+    Returns:
+        Object with ``changed=False``.
+    """
+    from types import SimpleNamespace
+
+    return SimpleNamespace(changed=False)
 
 
 # ---------------------------------------------------------------------------

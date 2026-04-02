@@ -20,7 +20,7 @@ no_prompting(tree, node) := v if {
 	count(node.line) > 0
 	v := {
 		"rule_id": "L016",
-		"level": "info",
+		"severity": "info",
 		"message": "pause without seconds/minutes prompts for input; avoid in CI",
 		"file": node.file,
 		"line": node.line[0],

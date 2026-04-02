@@ -103,6 +103,7 @@ Reports status of all services (Primary, Native, OPA, Ansible, Gitleaks) with la
 | `APME_ABBENAY_ADDR` | — | Abbenay AI daemon address (e.g., `127.0.0.1:50057`). Supports `host:port` and `unix://` formats. |
 | `APME_ABBENAY_TOKEN` | — | Consumer token for Abbenay authentication. Must match a token in Abbenay's `config.yaml`. |
 | `APME_AI_MODEL` | — | Default AI model ID (e.g., `anthropic/claude-sonnet-4`). Overridden by UI Settings or CLI `--model`. |
+| `APME_RULE_AUTHORITY` | `true` | Set to `true` on exactly one Primary in multi-pod deployments. Only the authority registers the rule catalog to the Gateway (ADR-041). |
 
 If a validator address is unset, that validator is skipped during fan-out. If Abbenay is unreachable, AI remediation is skipped (Tier 1 deterministic fixes still run).
 
@@ -136,7 +137,7 @@ The OPA binary runs internally on `localhost:8181`; the gRPC wrapper proxies to 
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `APME_DB_PATH` | `/data/apme.db` | Path to the SQLite database |
+| `APME_DB_PATH` | `/data/apme.db` | Path to the SQLite database (stores activity, sessions, rule catalog, and rule overrides) |
 | `APME_GATEWAY_GRPC_LISTEN` | `0.0.0.0:50060` | gRPC Reporting service listen address |
 | `APME_GATEWAY_HTTP_HOST` | `0.0.0.0` | REST API bind host |
 | `APME_GATEWAY_HTTP_PORT` | `8080` | REST API bind port |
@@ -156,7 +157,7 @@ The Abbenay daemon exposes a gRPC API on port 50057. Primary connects to it for 
 
 The UI container has no environment variables. It serves the React SPA via nginx and proxies `/api/` requests to the Gateway at `127.0.0.1:8080` (same pod network namespace).
 
-The Settings page (`/settings`) provides a model picker that queries available AI models from Abbenay via the gateway. The selected model is stored in the browser's `localStorage`.
+The Settings page (`/settings`) provides a model picker that queries available AI models from Abbenay via the gateway. The selected model is stored in the browser's `localStorage`. The Rules page (`/rules`) displays the rule catalog with enable/disable toggles, severity overrides, and category/source filters (ADR-041).
 
 ### Volumes
 

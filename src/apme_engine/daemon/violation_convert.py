@@ -5,12 +5,19 @@ from collections.abc import Mapping
 from apme.v1 import common_pb2
 from apme.v1.common_pb2 import LineRange, Violation
 from apme_engine.engine.models import RemediationClass, RemediationResolution, RuleScope, ViolationDict
+from apme_engine.severity_defaults import (
+    Severity,
+    get_severity,
+    severity_from_label,
+    severity_from_proto,
+    severity_to_label,
+    severity_to_proto,
+)
 
-# Keys that live in the common Violation proto fields (not in metadata).
 _COMMON_KEYS = frozenset(
     {
         "rule_id",
-        "level",
+        "severity",
         "message",
         "file",
         "line",
@@ -24,7 +31,6 @@ _COMMON_KEYS = frozenset(
     }
 )
 
-# Rule-specific keys that transforms need; forwarded via proto metadata map.
 _METADATA_KEYS = frozenset(
     {
         "resolved_fqcn",
@@ -36,14 +42,12 @@ _METADATA_KEYS = frozenset(
     }
 )
 
-# Map string remediation class to proto enum (str keys for mypy compat with str,Enum)
 _REMEDIATION_CLASS_TO_PROTO: dict[str, int] = {
     RemediationClass.AUTO_FIXABLE.value: common_pb2.REMEDIATION_CLASS_AUTO_FIXABLE,  # type: ignore[attr-defined]
     RemediationClass.AI_CANDIDATE.value: common_pb2.REMEDIATION_CLASS_AI_CANDIDATE,  # type: ignore[attr-defined]
     RemediationClass.MANUAL_REVIEW.value: common_pb2.REMEDIATION_CLASS_MANUAL_REVIEW,  # type: ignore[attr-defined]
 }
 
-# Map proto enum to string remediation class
 _PROTO_TO_REMEDIATION_CLASS: dict[int, str] = {
     common_pb2.REMEDIATION_CLASS_UNSPECIFIED: RemediationClass.AI_CANDIDATE.value,  # type: ignore[attr-defined]
     common_pb2.REMEDIATION_CLASS_AUTO_FIXABLE: RemediationClass.AUTO_FIXABLE.value,  # type: ignore[attr-defined]
@@ -51,7 +55,6 @@ _PROTO_TO_REMEDIATION_CLASS: dict[int, str] = {
     common_pb2.REMEDIATION_CLASS_MANUAL_REVIEW: RemediationClass.MANUAL_REVIEW.value,  # type: ignore[attr-defined]
 }
 
-# Map string remediation resolution to proto enum
 _RESOLUTION_TO_PROTO: dict[str, int] = {
     RemediationResolution.UNRESOLVED.value: common_pb2.REMEDIATION_RESOLUTION_UNRESOLVED,  # type: ignore[attr-defined]
     RemediationResolution.TRANSFORM_FAILED.value: common_pb2.REMEDIATION_RESOLUTION_TRANSFORM_FAILED,  # type: ignore[attr-defined]
@@ -65,7 +68,6 @@ _RESOLUTION_TO_PROTO: dict[str, int] = {
     RemediationResolution.INFORMATIONAL.value: common_pb2.REMEDIATION_RESOLUTION_INFORMATIONAL,  # type: ignore[attr-defined]
 }
 
-# Map proto enum to string remediation resolution
 _PROTO_TO_RESOLUTION: dict[int, str] = {
     common_pb2.REMEDIATION_RESOLUTION_UNSPECIFIED: RemediationResolution.UNRESOLVED.value,  # type: ignore[attr-defined]
     common_pb2.REMEDIATION_RESOLUTION_UNRESOLVED: RemediationResolution.UNRESOLVED.value,  # type: ignore[attr-defined]
@@ -102,12 +104,37 @@ _PROTO_TO_SCOPE: dict[int, str] = {
 }
 
 
-def violation_dict_to_proto(v: ViolationDict | Mapping[str, str | int | list[int] | bool | None]) -> Violation:
-    """Build a proto Violation from a dict with rule_id, level, message, file, line, path.
+def _resolve_severity(v: ViolationDict | Mapping[str, str | int | list[int] | bool | None]) -> int:
+    """Resolve the proto Severity enum value from a violation dict.
+
+    When the ``severity`` key is missing, falls back to the ADR-043
+    default for the rule_id (via ``get_severity``).
 
     Args:
-        v: Dict or mapping with rule_id, level, message, file, line (int or [start,end]), path,
-           and optional remediation_class / remediation_resolution.
+        v: Violation dict with "severity" key.
+
+    Returns:
+        Proto Severity enum int.
+    """
+    sev_raw = v.get("severity")
+    if sev_raw is not None:
+        if isinstance(sev_raw, Severity):
+            return severity_to_proto(sev_raw)
+        if isinstance(sev_raw, int):
+            return severity_to_proto(severity_from_proto(sev_raw))
+        return severity_to_proto(severity_from_label(str(sev_raw)))
+
+    rule_id = str(v.get("rule_id") or "")
+    return severity_to_proto(get_severity(rule_id))
+
+
+def violation_dict_to_proto(v: ViolationDict | Mapping[str, str | int | list[int] | bool | None]) -> Violation:
+    """Build a proto Violation from a dict with rule_id, severity, message, file, line, path.
+
+    Args:
+        v: Dict or mapping with rule_id, severity, message, file,
+           line (int or [start,end]), path, and optional remediation_class /
+           remediation_resolution.
 
     Returns:
         Violation proto populated from the dict.
@@ -132,9 +159,11 @@ def violation_dict_to_proto(v: ViolationDict | Mapping[str, str | int | list[int
         common_pb2.RULE_SCOPE_TASK,  # type: ignore[attr-defined]
     )
 
+    severity_proto = _resolve_severity(v)
+
     out = Violation(
         rule_id=str(v.get("rule_id") or ""),
-        level=str(v.get("level") or ""),
+        severity=severity_proto,
         message=str(v.get("message") or ""),
         file=str(v.get("file") or ""),
         path=str(v.get("path") or ""),
@@ -182,7 +211,7 @@ def violation_proto_to_dict(v: Violation) -> ViolationDict:
         v: Violation proto to convert.
 
     Returns:
-        ViolationDict with rule_id, level, message, file, line, path,
+        ViolationDict with rule_id, severity, message, file, line, path,
         remediation_class, remediation_resolution.
     """
     line: int | list[int] | None = v.line if v.HasField("line") else None
@@ -202,7 +231,7 @@ def violation_proto_to_dict(v: Violation) -> ViolationDict:
     )
     result: ViolationDict = {
         "rule_id": v.rule_id,
-        "level": v.level,
+        "severity": severity_to_label(severity_from_proto(v.severity)),
         "message": v.message,
         "file": v.file,
         "line": line,

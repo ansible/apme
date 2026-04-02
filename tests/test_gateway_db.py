@@ -140,7 +140,7 @@ async def test_top_violations() -> None:
     async with get_session() as db:
         for sid in ("s1", "s2"):
             db.add(Violation(scan_id=sid, rule_id="L001", level="error", message="x", file="a.yml"))
-        db.add(Violation(scan_id="s1", rule_id="L002", level="warning", message="y", file="b.yml"))
+        db.add(Violation(scan_id="s1", rule_id="L002", level="medium", message="y", file="b.yml"))
         await db.commit()
     async with get_session() as db:
         result = await q.top_violations(db, limit=5)
@@ -274,8 +274,8 @@ async def test_remediation_rates() -> None:
                 total_violations=1,
             )
         )
-        db.add(Violation(scan_id="fr-scan", rule_id="L001", level="warning", message="m"))
-        db.add(Violation(scan_id="fr-fix", rule_id="L001", level="warning", message="m"))
+        db.add(Violation(scan_id="fr-scan", rule_id="L001", level="medium", message="m"))
+        db.add(Violation(scan_id="fr-fix", rule_id="L001", level="medium", message="m"))
         db.add(Violation(scan_id="fr-fix", rule_id="L002", level="error", message="m"))
         await db.commit()
 

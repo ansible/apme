@@ -23,7 +23,7 @@ no_relative_paths(tree, node) := v if {
 	count(node.line) > 0
 	v := {
 		"rule_id": "L017",
-		"level": "warning",
+		"severity": "low",
 		"message": "Avoid relative path in src; use role-relative paths (files/, templates/) or absolute path",
 		"file": node.file,
 		"line": node.line[0],
