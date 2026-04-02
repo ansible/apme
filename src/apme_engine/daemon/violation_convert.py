@@ -7,6 +7,7 @@ from apme.v1.common_pb2 import LineRange, Violation
 from apme_engine.engine.models import RemediationClass, RemediationResolution, RuleScope, ViolationDict
 from apme_engine.severity_defaults import (
     Severity,
+    get_severity,
     severity_from_label,
     severity_from_proto,
     severity_to_label,
@@ -106,6 +107,9 @@ _PROTO_TO_SCOPE: dict[int, str] = {
 def _resolve_severity(v: ViolationDict | Mapping[str, str | int | list[int] | bool | None]) -> int:
     """Resolve the proto Severity enum value from a violation dict.
 
+    When the ``severity`` key is missing, falls back to the ADR-043
+    default for the rule_id (via ``get_severity``).
+
     Args:
         v: Violation dict with "severity" key.
 
@@ -120,7 +124,8 @@ def _resolve_severity(v: ViolationDict | Mapping[str, str | int | list[int] | bo
             return severity_to_proto(severity_from_proto(sev_raw))
         return severity_to_proto(severity_from_label(str(sev_raw)))
 
-    return severity_to_proto(Severity.MEDIUM)
+    rule_id = str(v.get("rule_id") or "")
+    return severity_to_proto(get_severity(rule_id))
 
 
 def violation_dict_to_proto(v: ViolationDict | Mapping[str, str | int | list[int] | bool | None]) -> Violation:
