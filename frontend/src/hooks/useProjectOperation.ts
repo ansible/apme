@@ -69,6 +69,7 @@ export function useProjectOperation(projectId: string) {
   const [proposals, setProposals] = useState<ProjectProposal[]>([]);
   const [result, setResult] = useState<ProjectOperationResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [isRemediate, setIsRemediate] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const statusRef = useRef<ProjectOperationStatus>(status);
   statusRef.current = status;
@@ -84,11 +85,13 @@ export function useProjectOperation(projectId: string) {
     setProposals([]);
     setResult(null);
     setError(null);
+    setIsRemediate(false);
   }, []);
 
   const startOperation = useCallback(
     (options: ProjectOperationOptions = {}) => {
       reset();
+      setIsRemediate(options.remediate ?? false);
       setStatus("connecting");
 
       const ws = new WebSocket(
@@ -208,6 +211,7 @@ export function useProjectOperation(projectId: string) {
     proposals,
     result,
     error,
+    isRemediate,
     startOperation,
     approve,
     cancel,

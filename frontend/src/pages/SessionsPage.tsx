@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { PageLayout, PageHeader } from '@ansible/ansible-ui-framework';
-import { Pagination } from '@patternfly/react-core';
+import { Button, Pagination } from '@patternfly/react-core';
 import { listSessions } from '../services/api';
 import type { SessionSummary } from '../types/api';
 import { timeAgo } from '../services/format';
@@ -14,16 +14,22 @@ export function SessionsPage() {
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
 
   const fetchSessions = useCallback(() => {
     setLoading(true);
+    setError(false);
     const offset = (page - 1) * PAGE_SIZE;
     listSessions(PAGE_SIZE, offset)
       .then((data) => {
         setItems(data.items);
         setTotal(data.total);
       })
-      .catch(() => {})
+      .catch(() => {
+        setItems([]);
+        setTotal(0);
+        setError(true);
+      })
       .finally(() => setLoading(false));
   }, [page]);
 
@@ -38,6 +44,11 @@ export function SessionsPage() {
 
       {loading ? (
         <div style={{ padding: 48, textAlign: 'center', opacity: 0.6 }}>Loading...</div>
+      ) : error ? (
+        <div style={{ padding: 48, textAlign: 'center' }}>
+          <p style={{ opacity: 0.6, marginBottom: 12 }}>Failed to load sessions.</p>
+          <Button variant="link" onClick={fetchSessions}>Retry</Button>
+        </div>
       ) : items.length === 0 ? (
         <div style={{ padding: 48, textAlign: 'center', opacity: 0.6 }}>
           No sessions recorded yet. Sessions are created when the CLI scans a project.

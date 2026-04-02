@@ -184,4 +184,36 @@ describe("api service", () => {
     await getPythonPackageDetail("my package");
     expect(mockFetch).toHaveBeenCalledWith("/api/v1/python-packages/my%20package", expect.anything());
   });
+
+  it("getProjectSbom requests CycloneDX JSON and returns a blob", async () => {
+    const blobContent = new Blob(['{"bomFormat":"CycloneDX"}'], { type: "application/json" });
+    mockFetch.mockReturnValueOnce(Promise.resolve({
+      ok: true,
+      status: 200,
+      headers: new Headers({ "Content-Type": "application/vnd.cyclonedx+json" }),
+      blob: () => Promise.resolve(blobContent),
+    }));
+    const { getProjectSbom } = await import("../services/api");
+    const result = await getProjectSbom("abc123");
+    expect(result).toBeInstanceOf(Blob);
+    expect(mockFetch).toHaveBeenCalledWith(
+      "/api/v1/projects/abc123/sbom",
+      expect.objectContaining({
+        headers: { Accept: "application/vnd.cyclonedx+json" },
+      }),
+    );
+  });
+
+  it("listCollectionProjects encodes FQCN in path", async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse([
+      { project_id: "p1", project_name: "demo", repo_url: "https://example.com" },
+    ]));
+    const { listCollectionProjects } = await import("../services/api");
+    const result = await listCollectionProjects("community.general");
+    expect(result).toHaveLength(1);
+    expect(mockFetch).toHaveBeenCalledWith(
+      "/api/v1/collections/community.general/projects",
+      expect.anything(),
+    );
+  });
 });

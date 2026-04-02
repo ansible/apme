@@ -408,9 +408,9 @@ async def link_scan_to_project(
         scan_type: Override the scan_type (``check`` or ``remediate``).
             The engine always reports via ``ReportFixCompleted`` which
             sets ``remediate``; the gateway knows the actual intent.
-        source: Override the source (``project``, ``playground``).
-            The engine defaults to ``cli``; the gateway knows the
-            actual origin.
+        source: Override the source (``gateway``, ``ci``).
+            The engine defaults to ``cli``; the gateway overrides
+            to ``gateway`` for UI-initiated operations.
 
     Returns:
         True if the scan row was found and updated, False otherwise.

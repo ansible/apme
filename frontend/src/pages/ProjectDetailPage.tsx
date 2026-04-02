@@ -64,6 +64,7 @@ export function ProjectDetailPage() {
     proposals: rawProposals,
     result: rawResult,
     error: opError,
+    isRemediate: opIsRemediate,
     startOperation,
     approve: opApprove,
     cancel: opCancel,
@@ -253,7 +254,7 @@ export function ProjectDetailPage() {
                   )}
 
                   {opStatus === 'complete' && opResult && (
-                    <OperationResultCard result={opResult} onDismiss={opReset} />
+                    <OperationResultCard result={opResult} isRemediate={opIsRemediate} onDismiss={opReset} />
                   )}
 
                   {opStatus === 'error' && (
@@ -593,8 +594,11 @@ function DependenciesTab({ dependencies, loading, projectId }: { dependencies: P
       a.href = url;
       const safeId = projectId.replace(/[^a-zA-Z0-9_-]/g, '_');
       a.download = `sbom-${safeId}.cdx.json`;
+      a.style.display = 'none';
+      document.body.appendChild(a);
       a.click();
-      URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      window.setTimeout(() => URL.revokeObjectURL(url), 0);
     } catch {
       alert('Failed to download SBOM. Make sure a scan has been run.');
     } finally {
