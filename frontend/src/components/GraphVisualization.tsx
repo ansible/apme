@@ -316,6 +316,12 @@ export function GraphVisualization({ data }: Props) {
     buildGraph();
   }, [buildGraph]);
 
+  useEffect(() => {
+    if (!graphRef.current) return;
+    Object.entries(groupState).forEach(([type, visible]) => renderGroups(type, visible));
+    renderIncludes(incVisible);
+  }, [buildGraph, groupState, incVisible, renderGroups, renderIncludes]);
+
   const fitAll = useCallback(() => {
     if (!svgRef.current || !containerRef.current || !graphRef.current || !zoomBehaviorRef.current)
       return;
@@ -573,11 +579,12 @@ export function GraphVisualization({ data }: Props) {
       <div className="graph-tooltip" />
 
       <div className="graph-controls">
-        <button onClick={fitAll}>Fit</button>
-        <button onClick={zoomIn}>+</button>
-        <button onClick={zoomOut}>&minus;</button>
+        <button type="button" aria-label="Fit graph to view" onClick={fitAll}>Fit</button>
+        <button type="button" aria-label="Zoom in" onClick={zoomIn}>+</button>
+        <button type="button" aria-label="Zoom out" onClick={zoomOut}>&minus;</button>
         <div className="sep" />
         <button
+          type="button"
           className={groupState.play ? 'tog-on' : ''}
           style={{ color: '#f0883e' }}
           onClick={() => toggleGroup('play')}
@@ -585,6 +592,7 @@ export function GraphVisualization({ data }: Props) {
           Plays
         </button>
         <button
+          type="button"
           className={groupState.role ? 'tog-on' : ''}
           style={{ color: '#d2a8ff' }}
           onClick={() => toggleGroup('role')}
@@ -592,6 +600,7 @@ export function GraphVisualization({ data }: Props) {
           Roles
         </button>
         <button
+          type="button"
           className={groupState.block ? 'tog-on' : ''}
           style={{ color: '#d29922' }}
           onClick={() => toggleGroup('block')}
@@ -599,6 +608,7 @@ export function GraphVisualization({ data }: Props) {
           Blocks
         </button>
         <button
+          type="button"
           className={incVisible ? 'tog-on' : ''}
           style={{ color: '#d2a8ff' }}
           onClick={toggleIncludes}
