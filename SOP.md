@@ -107,7 +107,7 @@ For direct-push contributors, replace `upstream` with `origin`.
 
 **Conventional Commits** format: `type(scope): description`. Types: `feat`, `fix`, `docs`, `refactor`, `test`, `build`, `ci`, `chore`. Scopes: `engine`, `native`, `opa`, `ansible`, `cli`, `daemon`, `remediation`, `proto`.
 
-**PR requirements:** Summary, Changes, Security Checklist, Test Plan. Test plan should reference `tox -e lint` and `tox -e unit` (not direct tool invocations). Every review comment requires a reply and explicit thread resolution. Green CI is a prerequisite for merge.
+**PR requirements:** Summary, Changes, Security Checklist, Test Plan. Test plan should reference `tox -e lint` and `tox -e unit` (not direct tool invocations). Every review comment requires a reply; resolve threads only when feedback is addressed/accepted (leave disputed threads unresolved for human escalation). Green CI is a prerequisite for merge.
 
 ---
 

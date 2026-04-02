@@ -26,9 +26,10 @@ disputed threads block merge.
 
 - Address ALL review comments before requesting re-review. Do not leave
   comments unanswered.
-- Every comment requires two actions: a **closing reply** and **thread
-  resolution**. Replying alone does not resolve the thread; the thread must
-  be explicitly resolved via the GitHub UI or API.
+- Every comment requires a **closing reply**. When the feedback is addressed
+  or accepted, also **resolve the thread** via the GitHub UI or API. When
+  disputing or flagging a false positive, leave the thread unresolved for
+  human escalation.
 - Reply to each comment with a **brief explanation of how it was resolved** and
   the commit hash (e.g., "Removed the unused imports so Ruff F401 passes.
   Fixed in abc1234."). Do not reply with only the SHA; explain the fix.
