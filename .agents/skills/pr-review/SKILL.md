@@ -171,7 +171,7 @@ gh api graphql -f query='{
       }
     }
   }
-}' --jq '.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | {id, snippet: .comments.nodes[0].body[:120]}'
+}' --jq '.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | {id, snippet: .comments.nodes[0].body[0:120]}'
 
 # Resolve one thread
 gh api graphql -f query='mutation {
