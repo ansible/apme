@@ -405,7 +405,7 @@ export function ProjectDetailPage() {
                         role="row"
                         tabIndex={0}
                         onClick={() => navigate(`/activity/${scan.scan_id}`)}
-                        onKeyDown={(e) => { if (e.key === 'Enter') navigate(`/activity/${scan.scan_id}`); }}
+                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/activity/${scan.scan_id}`); } }}
                         style={{ cursor: 'pointer' }}
                       >
                         <td role="cell">
@@ -678,7 +678,7 @@ function DependenciesTab({ dependencies, loading, projectId }: { dependencies: P
                     tabIndex={0}
                     style={{ cursor: 'pointer' }}
                     onClick={() => navigate(`/collections/${encodeURIComponent(c.fqcn)}`)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') navigate(`/collections/${encodeURIComponent(c.fqcn)}`); }}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/collections/${encodeURIComponent(c.fqcn)}`); } }}
                   >
                     <td role="cell" style={{ fontFamily: 'var(--pf-t--global--font--family--mono)', fontWeight: 600 }}>
                       {c.fqcn}
@@ -712,7 +712,7 @@ function DependenciesTab({ dependencies, loading, projectId }: { dependencies: P
                     tabIndex={0}
                     style={{ cursor: 'pointer' }}
                     onClick={() => navigate(`/python-packages/${encodeURIComponent(p.name)}`)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') navigate(`/python-packages/${encodeURIComponent(p.name)}`); }}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/python-packages/${encodeURIComponent(p.name)}`); } }}
                   >
                     <td role="cell" style={{ fontFamily: 'var(--pf-t--global--font--family--mono)', fontWeight: 600 }}>
                       {p.name}

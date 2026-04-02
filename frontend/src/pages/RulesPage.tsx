@@ -247,7 +247,7 @@ export function RulesPage() {
                 <Th>Effective severity</Th>
                 <Th>Status</Th>
                 <Th>Enforced</Th>
-                <Th />  {/* Actions */}
+                <Th>Actions</Th>
               </Tr>
             </Thead>
             <Tbody>
