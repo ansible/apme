@@ -391,3 +391,23 @@ class TestConvertTarballs:
         with TestClient(application) as client:
             resp = client.post("/convert-tarballs", params={"tarball_dir": str(tmp_path / "nope")})
         assert resp.status_code == 400
+
+    def test_convert_rejects_path_outside_allowed_roots(self, tmp_path: Path) -> None:
+        """Paths outside allowed roots (/tmp, /sessions) are rejected with 400.
+
+        Args:
+            tmp_path: Pytest-provided temporary directory.
+        """
+        cache_dir = tmp_path / "cache"
+        application = create_app(cache_dir=cache_dir)
+        disallowed = tmp_path / "evil"
+        disallowed.mkdir()
+
+        with (
+            TestClient(application) as client,
+            patch("tempfile.gettempdir", return_value=str(tmp_path / "fake-tmp")),
+        ):
+            resp = client.post("/convert-tarballs", params={"tarball_dir": str(disallowed)})
+
+        assert resp.status_code == 400
+        assert "session or temp directory" in resp.json()["detail"]
