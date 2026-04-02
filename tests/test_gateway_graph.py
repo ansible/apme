@@ -302,3 +302,20 @@ async def test_project_graph_500_invalid_stored_json(client: AsyncClient) -> Non
     resp = await client.get("/api/v1/projects/proj-corrupt/graph")
     assert resp.status_code == 500
     assert "invalid JSON" in resp.json()["detail"]
+
+
+async def test_project_graph_500_non_dict_stored_json(client: AsyncClient) -> None:
+    """GET /projects/{id}/graph returns 500 when stored JSON is a non-object value.
+
+    Args:
+        client: Async HTTP test client.
+    """
+    await _seed_project_with_graph(
+        project_id="proj-array",
+        name="Array Graph",
+        graph_json="[1, 2, 3]",
+    )
+
+    resp = await client.get("/api/v1/projects/proj-array/graph")
+    assert resp.status_code == 500
+    assert "not a JSON object" in resp.json()["detail"]

@@ -836,6 +836,12 @@ async def project_graph_endpoint(project_id: str) -> JSONResponse:
             detail="Stored graph data is invalid JSON",
         ) from exc
 
+    if not isinstance(graph_content, dict):
+        raise HTTPException(
+            status_code=500,
+            detail="Stored graph data is not a JSON object",
+        )
+
     return JSONResponse(content=graph_content)
 
 

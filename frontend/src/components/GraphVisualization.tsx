@@ -29,6 +29,7 @@ const MARKER_COLORS: Record<string, string> = {
   rescue: '#f85149',
   always: '#d29922',
   invokes: '#56d364',
+  py_imports: '#a371f7',
 };
 
 const GROUP_COLORS: Record<string, string> = {
@@ -523,7 +524,7 @@ export function GraphVisualization({ data }: Props) {
         .graph-container { position: relative; width: 100%; height: 70vh; min-height: 400px; background: #0d1117; border-radius: 8px; overflow: hidden; }
         .graph-container svg { position: absolute; inset: 0; width: 100%; height: 100%; }
 
-        .graph-edge { fill: none; stroke-width: 1.2; }
+        .graph-edge { fill: none; stroke: #484f58; stroke-width: 1.2; }
         .graph-edge.flow { stroke: #8b949e; stroke-width: 1.6; }
         .graph-edge.contains { stroke: #30363d; stroke-opacity: 0.18; stroke-width: 0.6; }
         .graph-edge.import { stroke: #58a6ff; stroke-dasharray: 6 3; }
@@ -536,6 +537,7 @@ export function GraphVisualization({ data }: Props) {
         .graph-edge.rescue { stroke: #f85149; }
         .graph-edge.always { stroke: #d29922; }
         .graph-edge.invokes { stroke: #56d364; stroke-dasharray: 5 2; }
+        .graph-edge.py_imports { stroke: #a371f7; stroke-dasharray: 3 5; }
 
         .graph-group-rect { pointer-events: none; rx: 8; ry: 8; }
         .graph-group-label { pointer-events: none; font-size: 10px; font-weight: 600; letter-spacing: 0.3px; dominant-baseline: hanging; }
