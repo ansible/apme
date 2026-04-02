@@ -60,7 +60,7 @@ export function SessionsPage() {
                   role="row"
                   tabIndex={0}
                   onClick={() => navigate(`/sessions/${s.session_id}`)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') navigate(`/sessions/${s.session_id}`); }}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/sessions/${s.session_id}`); } }}
                   style={{ cursor: 'pointer' }}
                 >
                   <td role="cell" style={{ fontFamily: 'var(--pf-t--global--font--family--mono)', fontSize: 13 }}>

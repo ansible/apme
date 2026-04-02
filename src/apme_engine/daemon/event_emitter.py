@@ -102,6 +102,13 @@ async def _attempt_register_rules(
         try:
             resp = await sink.register_rules(request)
             if resp is not None:
+                if not resp.accepted:
+                    logger.warning(
+                        "Sink %s rejected rule catalog: %s",
+                        type(sink).__name__,
+                        resp.message,
+                    )
+                    continue
                 logger.info(
                     "Rule catalog registered: added=%d removed=%d unchanged=%d",
                     resp.rules_added,
@@ -161,6 +168,9 @@ async def emit_register_rules(request: reporting_pb2.RegisterRulesRequest) -> No
 
     if _sinks and await _attempt_register_rules(request):
         _rule_catalog_registered = True
+        if _rule_retry_task is not None and not _rule_retry_task.done():
+            _rule_retry_task.cancel()
+            _rule_retry_task = None
         return
 
     if _sinks:

@@ -47,8 +47,8 @@ export function TrendChart({ data, title = 'Violation Trend', style }: TrendChar
       <CardBody>
         <h3 style={{ marginBottom: 8 }}>{title}</h3>
         <svg viewBox={`0 0 ${width} ${height}`} style={{ width: '100%', maxHeight: 220 }}>
-          {gridLines.map((g) => (
-            <g key={g.val}>
+          {gridLines.map((g, i) => (
+            <g key={i}>
               <line x1={padX} y1={g.y} x2={width - padX} y2={g.y} stroke="var(--pf-t--global--border--color--default)" strokeWidth={0.5} />
               <text x={padX - 6} y={g.y + 4} textAnchor="end" fontSize={10} fill="currentColor" opacity={0.5}>
                 {g.val}

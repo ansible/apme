@@ -137,7 +137,7 @@ export function SessionDetailPage() {
                     role="row"
                     tabIndex={0}
                     onClick={() => navigate(`/activity/${scan.scan_id}`)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') navigate(`/activity/${scan.scan_id}`); }}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/activity/${scan.scan_id}`); } }}
                     style={{ cursor: 'pointer' }}
                   >
                     <td role="cell">

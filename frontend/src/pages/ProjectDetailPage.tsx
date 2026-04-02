@@ -591,7 +591,8 @@ function DependenciesTab({ dependencies, loading, projectId }: { dependencies: P
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `sbom-${projectId}.cdx.json`;
+      const safeId = projectId.replace(/[^a-zA-Z0-9_-]/g, '_');
+      a.download = `sbom-${safeId}.cdx.json`;
       a.click();
       URL.revokeObjectURL(url);
     } catch {

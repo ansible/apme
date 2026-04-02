@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from collections.abc import Iterator
+from collections.abc import AsyncIterator
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -176,7 +176,7 @@ class FailingSink:
 
 
 @pytest.fixture(autouse=True)  # type: ignore[untyped-decorator]
-def _clear_sinks() -> Iterator[None]:
+async def _clear_sinks() -> AsyncIterator[None]:
     """Ensure sink list and retry state are reset before and after each test.
 
     Yields:
@@ -186,12 +186,16 @@ def _clear_sinks() -> Iterator[None]:
     event_emitter._rule_catalog_registered = False
     if event_emitter._rule_retry_task is not None:
         event_emitter._rule_retry_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await event_emitter._rule_retry_task
     event_emitter._rule_retry_task = None
     yield
     event_emitter._sinks.clear()
     event_emitter._rule_catalog_registered = False
     if event_emitter._rule_retry_task is not None:
         event_emitter._rule_retry_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await event_emitter._rule_retry_task
     event_emitter._rule_retry_task = None
 
 
@@ -486,6 +490,52 @@ async def test_retry_not_duplicated_on_second_emit() -> None:
     first_task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await first_task
+
+
+async def test_emit_register_rules_accepted_false_schedules_retry() -> None:
+    """A response with accepted=False is treated as failure and triggers retry."""
+
+    class RejectingSink:
+        """Sink that returns accepted=False."""
+
+        async def start(self) -> None:
+            """No-op start."""
+
+        async def stop(self) -> None:
+            """No-op stop."""
+
+        async def on_fix_completed(self, event: FixCompletedEvent) -> None:
+            """No-op.
+
+            Args:
+                event: Unused.
+            """
+
+        async def register_rules(
+            self,
+            request: RegisterRulesRequest,
+        ) -> RegisterRulesResponse:
+            """Return a rejection response.
+
+            Args:
+                request: Registration payload.
+
+            Returns:
+                Response with accepted=False.
+            """
+            return RegisterRulesResponse(accepted=False, message="not authority")
+
+    event_emitter._sinks.append(RejectingSink())
+
+    await event_emitter.emit_register_rules(_rules_request())
+
+    assert event_emitter._rule_catalog_registered is False
+    assert event_emitter._rule_retry_task is not None
+    assert not event_emitter._rule_retry_task.done()
+
+    event_emitter._rule_retry_task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await event_emitter._rule_retry_task
 
 
 # ---------------------------------------------------------------------------

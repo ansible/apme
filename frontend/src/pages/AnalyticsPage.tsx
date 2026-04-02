@@ -23,16 +23,18 @@ export function AnalyticsPage() {
       getTopViolations(20),
       getRemediationRates(20),
       getAiAcceptance(),
-      listRules().catch(() => [] as RuleDetail[]),
     ])
-      .then(([violations, rates, acceptance, ruleList]) => {
+      .then(([violations, rates, acceptance]) => {
         setTopViolations(violations);
         setRemediationRates(rates);
         setAiAcceptance(acceptance);
-        setRules(ruleList);
       })
       .catch(() => {})
       .finally(() => setLoading(false));
+
+    listRules()
+      .then(setRules)
+      .catch(() => {});
   }, []);
 
   const descriptionMap = useMemo(() => {
