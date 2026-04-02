@@ -15,8 +15,10 @@ import {
   TabTitleText,
   TextInput,
 } from '@patternfly/react-core';
-import { deleteProject, getProject, getProjectDependencies, listProjectActivity, listProjectViolations, updateProject } from '../services/api';
+import { deleteProject, getProject, getProjectDependencies, getProjectGraph, listProjectActivity, listProjectViolations, updateProject } from '../services/api';
+import type { GraphData } from '../services/api';
 import type { ActivitySummary, ProjectDependencies, ProjectDetail, ViolationDetail } from '../types/api';
+import { GraphVisualization } from '../components/GraphVisualization';
 import type { OperationStatus, OperationProgress, OperationProposal, OperationResult } from '../types/operation';
 import { StatusBadge } from '../components/StatusBadge';
 import { CheckOptionsForm } from '../components/CheckOptionsForm';
@@ -40,10 +42,12 @@ export function ProjectDetailPage() {
   const [scans, setScans] = useState<ActivitySummary[]>([]);
   const [violations, setViolations] = useState<ViolationDetail[]>([]);
   const [dependencies, setDependencies] = useState<ProjectDependencies | null>(null);
+  const [graphData, setGraphData] = useState<GraphData | null>(null);
+  const [graphLoading, setGraphLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const tabParam = searchParams.get('tab');
   const [activeTab, setActiveTab] = useState(
-    tabParam === 'settings' ? 4 : tabParam === 'dependencies' ? 3 : 0
+    tabParam === 'settings' ? 5 : tabParam === 'visualize' ? 4 : tabParam === 'dependencies' ? 3 : 0
   );
 
   const [ansibleVersion, setAnsibleVersion] = useState('');
@@ -216,7 +220,14 @@ export function ProjectDetailPage() {
       />
 
       <div style={{ padding: '0 24px 24px' }}>
-        <Tabs activeKey={activeTab} onSelect={(_e, k) => { setActiveTab(k as number); if (k === 1 || k === 2) fetchData(); }}>
+        <Tabs activeKey={activeTab} onSelect={(_e, k) => {
+          setActiveTab(k as number);
+          if (k === 1 || k === 2) fetchData();
+          if (k === 4 && projectId && !graphData && !graphLoading) {
+            setGraphLoading(true);
+            getProjectGraph(projectId).then(setGraphData).catch(() => setGraphData(null)).finally(() => setGraphLoading(false));
+          }
+        }}>
           <Tab eventKey={0} title={<TabTitleText>Overview</TabTitleText>}>
             <div style={{ marginTop: 16 }}>
               {operationActive ? (
@@ -418,7 +429,21 @@ export function ProjectDetailPage() {
             <DependenciesTab dependencies={dependencies} loading={loading} />
           </Tab>
 
-          <Tab eventKey={4} title={<TabTitleText>Settings</TabTitleText>}>
+          <Tab eventKey={4} title={<TabTitleText>Visualize</TabTitleText>}>
+            <div style={{ marginTop: 16 }}>
+              {graphLoading ? (
+                <div style={{ padding: 48, textAlign: 'center', opacity: 0.6 }}>Loading graph...</div>
+              ) : graphData ? (
+                <GraphVisualization data={graphData} />
+              ) : (
+                <div style={{ padding: 48, textAlign: 'center', opacity: 0.6 }}>
+                  No graph data available. Run a check to generate the content graph.
+                </div>
+              )}
+            </div>
+          </Tab>
+
+          <Tab eventKey={5} title={<TabTitleText>Settings</TabTitleText>}>
             <div style={{ marginTop: 16, maxWidth: 600 }}>
               <Card>
                 <CardBody>

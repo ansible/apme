@@ -93,6 +93,7 @@ class Scan(Base):
         manifest: Related manifest row (ADR-040).
         collections: Related collection rows (ADR-040).
         python_packages: Related Python package rows (ADR-040).
+        graph: Related ContentGraph visualization row.
     """
 
     __tablename__ = "scans"
@@ -126,6 +127,7 @@ class Scan(Base):
     )
     collections: Mapped[list[ScanCollection]] = relationship(back_populates="scan", cascade="all, delete-orphan")
     python_packages: Mapped[list[ScanPythonPackage]] = relationship(back_populates="scan", cascade="all, delete-orphan")
+    graph: Mapped[ScanGraph | None] = relationship(back_populates="scan", cascade="all, delete-orphan", uselist=False)
 
 
 class Violation(Base):
@@ -411,3 +413,30 @@ class GalaxyServer(Base):
     auth_url: Mapped[str] = mapped_column(Text, nullable=False, default="")
     created_at: Mapped[str] = mapped_column(Text, nullable=False)
     updated_at: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+# ── ContentGraph visualization table ──────────────────────────────────
+
+
+class ScanGraph(Base):
+    """Serialized ContentGraph JSON from a scan run.
+
+    Stored separately from ``scans`` because the JSON blob can be large
+    (100 KB -- 1 MB).  One-to-one with the owning scan.
+
+    Attributes:
+        scan_id: Owning scan UUID (PK, FK to scans).
+        graph_json: JSON-serialized ``ContentGraph.to_dict()``.
+        node_count: Number of nodes in the graph.
+        edge_count: Number of edges in the graph.
+        scan: Back-reference to owning Scan.
+    """
+
+    __tablename__ = "scan_graphs"
+
+    scan_id: Mapped[str] = mapped_column(Text, ForeignKey("scans.scan_id"), primary_key=True)
+    graph_json: Mapped[str] = mapped_column(Text, nullable=False)
+    node_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    edge_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    scan: Mapped[Scan] = relationship(back_populates="graph")

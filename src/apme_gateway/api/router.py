@@ -798,6 +798,39 @@ async def project_sbom_endpoint(
     return JSONResponse(content=bom, media_type="application/vnd.cyclonedx+json")
 
 
+# ── ContentGraph visualization ───────────────────────────────────────
+
+
+@router.get("/projects/{project_id}/graph")  # type: ignore[untyped-decorator]
+async def project_graph_endpoint(project_id: str) -> JSONResponse:
+    """Return the ContentGraph JSON for a project's latest scan.
+
+    The response is the raw ``ContentGraph.to_dict()`` output — nodes,
+    edges, and execution_edges — ready for client-side D3/dagre rendering.
+
+    Args:
+        project_id: Project UUID or name.
+
+    Returns:
+        JSON response with graph data.
+
+    Raises:
+        HTTPException: 404 if project not found or no graph data available.
+    """
+    import json as _json  # noqa: PLC0415
+
+    async with get_session() as db:
+        proj = await q.resolve_project(db, project_id)
+        if not proj:
+            raise HTTPException(status_code=404, detail="Project not found")
+        graph = await q.project_graph(db, proj.id)
+
+    if graph is None:
+        raise HTTPException(status_code=404, detail="No graph data available")
+
+    return JSONResponse(content=_json.loads(graph.graph_json))
+
+
 # ── Collections and packages (ADR-040) ──────────────────────────────
 
 

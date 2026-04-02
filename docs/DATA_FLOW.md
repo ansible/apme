@@ -283,12 +283,13 @@ Primary (check/remediate completes)
     ▼
 Gateway (grpc_reporting/servicer.py)
     │  Upsert session row
-    │  Insert activity row + violations + logs → SQLite
+    │  Insert activity row + violations + logs + ContentGraph → SQLite
     │
     ▼
 UI (React SPA on :8081)
     │  GET /api/v1/activity (nginx proxies to Gateway :8080)
-    │  Renders activity history, violations, session trends
+    │  GET /api/v1/projects/{id}/graph → ContentGraph visualization
+    │  Renders activity history, violations, session trends, graph
 ```
 
 Event emission uses ``await`` so delivery completes before the operation returns to the client. When the Reporting endpoint is known-down, a fast-fail timeout (1 s) prevents blocking the check/remediate path.

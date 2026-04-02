@@ -25,6 +25,8 @@
     "react-dom": "^18.3.1",
     "react-i18next": "^15.1.0",
     "react-router-dom": "^6.28.0",
+    "d3": "^7.9.0",
+    "dagre": "^0.8.5",
     "react-syntax-highlighter": "^16.1.1",
     "styled-components": "^6.1.13",
     "swr": "^2.2.5"
@@ -33,6 +35,8 @@
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
+    "@types/d3": "^7.4.3",
+    "@types/dagre": "^0.7.52",
     "@types/debounce": "^1.2.4",
     "@types/get-value": "^3.0.5",
     "@types/js-yaml": "^4.0.9",

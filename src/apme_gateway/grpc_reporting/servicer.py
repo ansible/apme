@@ -24,6 +24,7 @@ from apme_gateway.db.models import (
     Rule,
     Scan,
     ScanCollection,
+    ScanGraph,
     ScanLog,
     ScanManifest,
     ScanPatch,
@@ -108,6 +109,7 @@ class ReportingServicer(reporting_pb2_grpc.ReportingServicer):
                 _add_logs(db, request.scan_id, list(request.logs))
                 _add_patches(db, request.scan_id, list(request.patches))
                 _add_manifest(db, request.scan_id, request.manifest)
+                _add_graph(db, request.scan_id, request.content_graph_json)
                 await db.commit()
         except Exception:
             logger.exception("Failed to persist remediate event %s", request.scan_id)
@@ -380,3 +382,33 @@ def _add_manifest(db: AsyncSession, scan_id: str, manifest: object) -> None:
                 supplier=p.supplier,
             )
         )
+
+
+def _add_graph(db: AsyncSession, scan_id: str, content_graph_json: str) -> None:
+    """Persist ContentGraph JSON from a scan event.
+
+    Args:
+        db: Active async database session.
+        scan_id: Owning scan UUID.
+        content_graph_json: JSON string from ``ContentGraph.to_dict()``.
+    """
+    if not content_graph_json:
+        return
+
+    node_count = 0
+    edge_count = 0
+    try:
+        parsed = json.loads(content_graph_json)
+        node_count = len(parsed.get("nodes", []))
+        edge_count = len(parsed.get("edges", []))
+    except (json.JSONDecodeError, TypeError):
+        logger.warning("Invalid content_graph_json for scan %s, storing raw", scan_id)
+
+    db.add(
+        ScanGraph(
+            scan_id=scan_id,
+            graph_json=content_graph_json,
+            node_count=node_count,
+            edge_count=edge_count,
+        )
+    )

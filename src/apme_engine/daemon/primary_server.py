@@ -1500,6 +1500,11 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                 fixed_violations=fixed_violation_protos,
             )
 
+            # Persist ContentGraph on the session so FixCompletedEvent includes it for
+            # Gateway (scan_fn already captured the last graph from _scan_pipeline).
+            if captured_graph[0] is not None:
+                session.content_graph = captured_graph[0]
+
             _t1_done = ProgressUpdate(
                 message=(f"Tier 1 converged: {report.passes} pass(es), {report.fixed} fixed"),
                 phase="tier1",
@@ -2065,6 +2070,16 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
 
         manifest = _build_manifest(session)
 
+        graph_json = ""
+        if session.content_graph is not None:
+            try:
+                graph_json = json.dumps(
+                    session.content_graph.to_dict(),  # type: ignore[attr-defined]
+                    default=str,
+                )
+            except Exception:
+                logger.warning("Failed to serialize ContentGraph for event", exc_info=True)
+
         return FixCompletedEvent(
             scan_id=session.scan_id or session.session_id,
             session_id=session.session_id,
@@ -2078,6 +2093,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             logs=session.progress_logs,
             patches=patches or [],  # type: ignore[arg-type]
             manifest=manifest,
+            content_graph_json=graph_json,
         )
 
     async def _session_replay_state(

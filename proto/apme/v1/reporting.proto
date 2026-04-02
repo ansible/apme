@@ -29,6 +29,7 @@ message FixCompletedEvent {
   repeated Violation fixed_violations = 11;
   repeated FilePatch patches = 12;
   ProjectManifest manifest = 13;              // dependency manifest (ADR-040)
+  string content_graph_json = 14;             // JSON-serialized ContentGraph.to_dict()
 }
 
 message ProposalOutcome {

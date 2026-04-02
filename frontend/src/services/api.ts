@@ -183,6 +183,19 @@ export function getProjectDependencies(projectId: string): Promise<ProjectDepend
   return request(`/projects/${encodeURIComponent(projectId)}/dependencies`);
 }
 
+// ── ContentGraph visualization ─────────────────────────────────────────
+
+export interface GraphData {
+  version: number;
+  nodes: Array<{ id: string; data: Record<string, unknown> }>;
+  edges: Array<{ source: string; target: string; edge_type?: string; position?: number }>;
+  execution_edges?: Array<{ source: string; target: string }>;
+}
+
+export function getProjectGraph(projectId: string): Promise<GraphData> {
+  return request(`/projects/${encodeURIComponent(projectId)}/graph`);
+}
+
 export function listCollections(
   limit = 200,
   offset = 0,

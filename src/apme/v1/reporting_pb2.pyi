@@ -28,6 +28,7 @@ class FixCompletedEvent:
     fixed_violations: list[Violation]
     patches: list[FilePatch]
     manifest: ProjectManifest
+    content_graph_json: str
     def __init__(
         self,
         *,
@@ -44,6 +45,7 @@ class FixCompletedEvent:
         fixed_violations: Iterable[Violation] | None = ...,
         patches: Iterable[FilePatch] | None = ...,
         manifest: ProjectManifest | None = ...,
+        content_graph_json: str = ...,
     ) -> None: ...
 
 class ProposalOutcome:

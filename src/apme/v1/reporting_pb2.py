@@ -26,7 +26,7 @@ from apme.v1 import common_pb2 as apme_dot_v1_dot_common__pb2
 from apme.v1 import primary_pb2 as apme_dot_v1_dot_primary__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x17\x61pme/v1/reporting.proto\x12\x07\x61pme.v1\x1a\x14\x61pme/v1/common.proto\x1a\x15\x61pme/v1/primary.proto\"\xdd\x03\n\x11\x46ixCompletedEvent\x12\x0f\n\x07scan_id\x18\x01 \x01(\t\x12\x12\n\nsession_id\x18\x02 \x01(\t\x12\x14\n\x0cproject_path\x18\x03 \x01(\t\x12\x0e\n\x06source\x18\x04 \x01(\t\x12\x30\n\x14remaining_violations\x18\x05 \x03(\x0b\x32\x12.apme.v1.Violation\x12-\n\x0b\x64iagnostics\x18\x06 \x01(\x0b\x32\x18.apme.v1.ScanDiagnostics\x12%\n\x07summary\x18\x07 \x01(\x0b\x32\x14.apme.v1.ScanSummary\x12\"\n\x06report\x18\x08 \x01(\x0b\x32\x12.apme.v1.FixReport\x12+\n\tproposals\x18\t \x03(\x0b\x32\x18.apme.v1.ProposalOutcome\x12%\n\x04logs\x18\n \x03(\x0b\x32\x17.apme.v1.ProgressUpdate\x12,\n\x10\x66ixed_violations\x18\x0b \x03(\x0b\x32\x12.apme.v1.Violation\x12#\n\x07patches\x18\x0c \x03(\x0b\x32\x12.apme.v1.FilePatch\x12*\n\x08manifest\x18\r \x01(\x0b\x32\x18.apme.v1.ProjectManifest\"w\n\x0fProposalOutcome\x12\x13\n\x0bproposal_id\x18\x01 \x01(\t\x12\x0f\n\x07rule_id\x18\x02 \x01(\t\x12\x0c\n\x04\x66ile\x18\x03 \x01(\t\x12\x0c\n\x04tier\x18\x04 \x01(\x05\x12\x12\n\nconfidence\x18\x05 \x01(\x02\x12\x0e\n\x06status\x18\x06 \x01(\t\"\x0b\n\tReportAck\"\xb9\x01\n\x0eRuleDefinition\x12\x0f\n\x07rule_id\x18\x01 \x01(\t\x12+\n\x10\x64\x65\x66\x61ult_severity\x18\x02 \x01(\x0e\x32\x11.apme.v1.Severity\x12\x10\n\x08\x63\x61tegory\x18\x03 \x01(\t\x12\x0e\n\x06source\x18\x04 \x01(\t\x12\x13\n\x0b\x64\x65scription\x18\x05 \x01(\t\x12!\n\x05scope\x18\x06 \x01(\x0e\x32\x12.apme.v1.RuleScope\x12\x0f\n\x07\x65nabled\x18\x07 \x01(\x08\"d\n\x14RegisterRulesRequest\x12\x0e\n\x06pod_id\x18\x01 \x01(\t\x12\x14\n\x0cis_authority\x18\x02 \x01(\x08\x12&\n\x05rules\x18\x03 \x03(\x0b\x32\x17.apme.v1.RuleDefinition\"\x7f\n\x15RegisterRulesResponse\x12\x10\n\x08\x61\x63\x63\x65pted\x18\x01 \x01(\x08\x12\x0f\n\x07message\x18\x02 \x01(\t\x12\x13\n\x0brules_added\x18\x03 \x01(\x05\x12\x15\n\rrules_removed\x18\x04 \x01(\x05\x12\x17\n\x0frules_unchanged\x18\x05 \x01(\x05\x32\xa1\x01\n\tReporting\x12\x44\n\x12ReportFixCompleted\x12\x1a.apme.v1.FixCompletedEvent\x1a\x12.apme.v1.ReportAck\x12N\n\rRegisterRules\x12\x1d.apme.v1.RegisterRulesRequest\x1a\x1e.apme.v1.RegisterRulesResponseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x17\x61pme/v1/reporting.proto\x12\x07\x61pme.v1\x1a\x14\x61pme/v1/common.proto\x1a\x15\x61pme/v1/primary.proto\"\xf9\x03\n\x11\x46ixCompletedEvent\x12\x0f\n\x07scan_id\x18\x01 \x01(\t\x12\x12\n\nsession_id\x18\x02 \x01(\t\x12\x14\n\x0cproject_path\x18\x03 \x01(\t\x12\x0e\n\x06source\x18\x04 \x01(\t\x12\x30\n\x14remaining_violations\x18\x05 \x03(\x0b\x32\x12.apme.v1.Violation\x12-\n\x0b\x64iagnostics\x18\x06 \x01(\x0b\x32\x18.apme.v1.ScanDiagnostics\x12%\n\x07summary\x18\x07 \x01(\x0b\x32\x14.apme.v1.ScanSummary\x12\"\n\x06report\x18\x08 \x01(\x0b\x32\x12.apme.v1.FixReport\x12+\n\tproposals\x18\t \x03(\x0b\x32\x18.apme.v1.ProposalOutcome\x12%\n\x04logs\x18\n \x03(\x0b\x32\x17.apme.v1.ProgressUpdate\x12,\n\x10\x66ixed_violations\x18\x0b \x03(\x0b\x32\x12.apme.v1.Violation\x12#\n\x07patches\x18\x0c \x03(\x0b\x32\x12.apme.v1.FilePatch\x12*\n\x08manifest\x18\r \x01(\x0b\x32\x18.apme.v1.ProjectManifest\x12\x1a\n\x12\x63ontent_graph_json\x18\x0e \x01(\t\"w\n\x0fProposalOutcome\x12\x13\n\x0bproposal_id\x18\x01 \x01(\t\x12\x0f\n\x07rule_id\x18\x02 \x01(\t\x12\x0c\n\x04\x66ile\x18\x03 \x01(\t\x12\x0c\n\x04tier\x18\x04 \x01(\x05\x12\x12\n\nconfidence\x18\x05 \x01(\x02\x12\x0e\n\x06status\x18\x06 \x01(\t\"\x0b\n\tReportAck\"\xb9\x01\n\x0eRuleDefinition\x12\x0f\n\x07rule_id\x18\x01 \x01(\t\x12+\n\x10\x64\x65\x66\x61ult_severity\x18\x02 \x01(\x0e\x32\x11.apme.v1.Severity\x12\x10\n\x08\x63\x61tegory\x18\x03 \x01(\t\x12\x0e\n\x06source\x18\x04 \x01(\t\x12\x13\n\x0b\x64\x65scription\x18\x05 \x01(\t\x12!\n\x05scope\x18\x06 \x01(\x0e\x32\x12.apme.v1.RuleScope\x12\x0f\n\x07\x65nabled\x18\x07 \x01(\x08\"d\n\x14RegisterRulesRequest\x12\x0e\n\x06pod_id\x18\x01 \x01(\t\x12\x14\n\x0cis_authority\x18\x02 \x01(\x08\x12&\n\x05rules\x18\x03 \x03(\x0b\x32\x17.apme.v1.RuleDefinition\"\x7f\n\x15RegisterRulesResponse\x12\x10\n\x08\x61\x63\x63\x65pted\x18\x01 \x01(\x08\x12\x0f\n\x07message\x18\x02 \x01(\t\x12\x13\n\x0brules_added\x18\x03 \x01(\x05\x12\x15\n\rrules_removed\x18\x04 \x01(\x05\x12\x17\n\x0frules_unchanged\x18\x05 \x01(\x05\x32\xa1\x01\n\tReporting\x12\x44\n\x12ReportFixCompleted\x12\x1a.apme.v1.FixCompletedEvent\x1a\x12.apme.v1.ReportAck\x12N\n\rRegisterRules\x12\x1d.apme.v1.RegisterRulesRequest\x1a\x1e.apme.v1.RegisterRulesResponseb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -34,17 +34,17 @@ _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'apme.v1.reporting_pb2', _gl
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
   _globals['_FIXCOMPLETEDEVENT']._serialized_start=82
-  _globals['_FIXCOMPLETEDEVENT']._serialized_end=559
-  _globals['_PROPOSALOUTCOME']._serialized_start=561
-  _globals['_PROPOSALOUTCOME']._serialized_end=680
-  _globals['_REPORTACK']._serialized_start=682
-  _globals['_REPORTACK']._serialized_end=693
-  _globals['_RULEDEFINITION']._serialized_start=696
-  _globals['_RULEDEFINITION']._serialized_end=881
-  _globals['_REGISTERRULESREQUEST']._serialized_start=883
-  _globals['_REGISTERRULESREQUEST']._serialized_end=983
-  _globals['_REGISTERRULESRESPONSE']._serialized_start=985
-  _globals['_REGISTERRULESRESPONSE']._serialized_end=1112
-  _globals['_REPORTING']._serialized_start=1115
-  _globals['_REPORTING']._serialized_end=1276
+  _globals['_FIXCOMPLETEDEVENT']._serialized_end=587
+  _globals['_PROPOSALOUTCOME']._serialized_start=589
+  _globals['_PROPOSALOUTCOME']._serialized_end=708
+  _globals['_REPORTACK']._serialized_start=710
+  _globals['_REPORTACK']._serialized_end=721
+  _globals['_RULEDEFINITION']._serialized_start=724
+  _globals['_RULEDEFINITION']._serialized_end=909
+  _globals['_REGISTERRULESREQUEST']._serialized_start=911
+  _globals['_REGISTERRULESREQUEST']._serialized_end=1011
+  _globals['_REGISTERRULESRESPONSE']._serialized_start=1013
+  _globals['_REGISTERRULESRESPONSE']._serialized_end=1140
+  _globals['_REPORTING']._serialized_start=1143
+  _globals['_REPORTING']._serialized_end=1304
 # @@protoc_insertion_point(module_scope)
