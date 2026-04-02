@@ -15,9 +15,9 @@ import {
   TabTitleText,
   TextInput,
 } from '@patternfly/react-core';
-import { deleteProject, getProject, getProjectDependencies, getProjectGraph, listProjectActivity, listProjectViolations, updateProject } from '../services/api';
+import { deleteProject, getProject, getProjectDependencies, getProjectGraph, getProjectSbom, getProjectTrend, listProjectActivity, listProjectViolations, updateProject } from '../services/api';
 import type { GraphData } from '../services/api';
-import type { ActivitySummary, ProjectDependencies, ProjectDetail, ViolationDetail } from '../types/api';
+import type { ActivitySummary, ProjectDependencies, ProjectDetail, TrendPoint, ViolationDetail } from '../types/api';
 import { GraphVisualization } from '../components/GraphVisualization';
 import type { OperationStatus, OperationProgress, OperationProposal, OperationResult } from '../types/operation';
 import { StatusBadge } from '../components/StatusBadge';
@@ -25,6 +25,7 @@ import { CheckOptionsForm } from '../components/CheckOptionsForm';
 import { OperationProgressPanel } from '../components/OperationProgressPanel';
 import { ProposalReviewPanel } from '../components/ProposalReviewPanel';
 import { OperationResultCard } from '../components/OperationResultCard';
+import { TrendChart } from '../components/TrendChart';
 import { timeAgo } from '../services/format';
 import { useFeedbackEnabled } from '../hooks/useFeedbackEnabled';
 import { useProjectOperation, type ProjectOperationOptions } from '../hooks/useProjectOperation';
@@ -44,6 +45,7 @@ export function ProjectDetailPage() {
   const [dependencies, setDependencies] = useState<ProjectDependencies | null>(null);
   const [graphData, setGraphData] = useState<GraphData | null>(null);
   const [graphLoading, setGraphLoading] = useState(false);
+  const [trend, setTrend] = useState<TrendPoint[]>([]);
   const [loading, setLoading] = useState(true);
   const tabParam = searchParams.get('tab');
   const [activeTab, setActiveTab] = useState(
@@ -105,17 +107,20 @@ export function ProjectDetailPage() {
     setScans([]);
     setViolations([]);
     setDependencies(null);
+    setTrend([]);
     try {
       const proj = await getProject(projectId);
       setProject(proj);
-      const [scanResult, violResult, depsResult] = await Promise.allSettled([
+      const [scanResult, violResult, depsResult, trendResult] = await Promise.allSettled([
         listProjectActivity(projectId, 20, 0),
         listProjectViolations(projectId, 100, 0),
         getProjectDependencies(projectId),
+        getProjectTrend(projectId),
       ]);
       if (scanResult.status === 'fulfilled') setScans(scanResult.value.items);
       if (violResult.status === 'fulfilled') setViolations(violResult.value);
       if (depsResult.status === 'fulfilled') setDependencies(depsResult.value);
+      if (trendResult.status === 'fulfilled') setTrend(trendResult.value);
     } catch {
       setProject(null);
     } finally {
@@ -342,6 +347,8 @@ export function ProjectDetailPage() {
                       </CardBody>
                     </Card>
                   )}
+
+                  {trend.length > 1 && <TrendChart data={trend} />}
                 </>
               )}
             </div>
@@ -409,11 +416,16 @@ export function ProjectDetailPage() {
                         <td role="cell">{scan.total_violations}</td>
                         <td role="cell">
                           {isFix
-                            ? <span>{0}</span>
+                            ? <span style={{ opacity: 0.3 }}>&mdash;</span>
                             : <span className="apme-count-success">{scan.fixable}</span>
                           }
                         </td>
-                        <td role="cell"><span className="apme-count-success">{scan.remediated_count}</span></td>
+                        <td role="cell">
+                          {isFix
+                            ? <span className="apme-count-success">{scan.remediated_count}</span>
+                            : <span style={{ opacity: 0.3 }}>&mdash;</span>
+                          }
+                        </td>
                         <td role="cell">{scan.ai_proposed ?? 0}</td>
                         <td role="cell">{scan.ai_declined ?? 0}</td>
                         <td role="cell"><span className="apme-count-success">{scan.ai_accepted ?? 0}</span></td>
@@ -433,7 +445,7 @@ export function ProjectDetailPage() {
           </Tab>
 
           <Tab eventKey={3} title={<TabTitleText>Dependencies</TabTitleText>}>
-            <DependenciesTab dependencies={dependencies} loading={loading} />
+            <DependenciesTab dependencies={dependencies} loading={loading} projectId={projectId} />
           </Tab>
 
           <Tab eventKey={4} title={<TabTitleText>Visualize</TabTitleText>}>
@@ -567,8 +579,27 @@ function ViolationsTab({ violations }: { violations: ViolationDetail[] }) {
   );
 }
 
-function DependenciesTab({ dependencies, loading }: { dependencies: ProjectDependencies | null; loading: boolean }) {
+function DependenciesTab({ dependencies, loading, projectId }: { dependencies: ProjectDependencies | null; loading: boolean; projectId?: string }) {
   const navigate = useNavigate();
+  const [downloading, setDownloading] = useState(false);
+
+  const handleSbomDownload = useCallback(async () => {
+    if (!projectId) return;
+    setDownloading(true);
+    try {
+      const blob = await getProjectSbom(projectId);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `sbom-${projectId}.cdx.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      alert('Failed to download SBOM. Make sure a scan has been run.');
+    } finally {
+      setDownloading(false);
+    }
+  }, [projectId]);
 
   if (loading && !dependencies) {
     return (
@@ -600,6 +631,17 @@ function DependenciesTab({ dependencies, loading }: { dependencies: ProjectDepen
 
   return (
     <div style={{ marginTop: 16 }}>
+      <Flex justifyContent={{ default: 'justifyContentFlexEnd' }} style={{ marginBottom: 12 }}>
+        <Button
+          variant="secondary"
+          size="sm"
+          isDisabled={downloading}
+          onClick={handleSbomDownload}
+        >
+          {downloading ? 'Downloading...' : 'Download SBOM (CycloneDX)'}
+        </Button>
+      </Flex>
+
       {hasAnsibleCore && (
         <Card style={{ marginBottom: 16 }}>
           <CardBody>

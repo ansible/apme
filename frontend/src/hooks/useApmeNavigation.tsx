@@ -13,6 +13,8 @@ import { ProjectDetailPage } from '../pages/ProjectDetailPage';
 import { PythonPackagesPage } from '../pages/PythonPackagesPage';
 import { PythonPackageDetailPage } from '../pages/PythonPackageDetailPage';
 import { RulesPage } from '../pages/RulesPage';
+import { SessionsPage } from '../pages/SessionsPage';
+import { SessionDetailPage } from '../pages/SessionDetailPage';
 import { SettingsPage } from '../pages/SettingsPage';
 
 export function useApmeNavigation(): PageNavigationItem[] {
@@ -51,6 +53,8 @@ export function useApmeNavigation(): PageNavigationItem[] {
           { id: 'playground', path: 'playground', label: 'Playground', element: <PlaygroundPage /> },
           { id: 'activity', path: 'activity', label: 'Activity', element: <ActivityPage /> },
           { id: 'activity-detail', path: 'activity/:activityId', element: <ActivityDetailPage />, hidden: true },
+          { id: 'sessions', path: 'sessions', label: 'Sessions', element: <SessionsPage /> },
+          { id: 'session-detail', path: 'sessions/:sessionId', element: <SessionDetailPage />, hidden: true },
         ],
       },
       {

@@ -103,11 +103,16 @@ export function ActivityPage() {
                   <td role="cell">{item.total_violations}</td>
                   <td role="cell">
                     {isRemediate
-                      ? <span>{0}</span>
+                      ? <span style={{ opacity: 0.3 }}>&mdash;</span>
                       : <span className="apme-count-success">{item.fixable ?? ''}</span>
                     }
                   </td>
-                  <td role="cell"><span className="apme-count-success">{item.remediated_count ?? 0}</span></td>
+                  <td role="cell">
+                    {isRemediate
+                      ? <span className="apme-count-success">{item.remediated_count ?? 0}</span>
+                      : <span style={{ opacity: 0.3 }}>&mdash;</span>
+                    }
+                  </td>
                   <td role="cell">{item.ai_proposed ?? 0}</td>
                   <td role="cell">{item.ai_declined ?? 0}</td>
                   <td role="cell"><span className="apme-count-success">{item.ai_accepted ?? 0}</span></td>

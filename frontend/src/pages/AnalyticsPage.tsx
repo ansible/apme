@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { PageLayout, PageHeader } from '@ansible/ansible-ui-framework';
 import {
   Card,
@@ -7,13 +7,15 @@ import {
   Label,
   Title,
 } from '@patternfly/react-core';
-import { getTopViolations, getRemediationRates, getAiAcceptance } from '../services/api';
-import type { TopViolation, RemediationRateEntry, AiAcceptanceEntry } from '../types/api';
+import { getTopViolations, getRemediationRates, getAiAcceptance, listRules } from '../services/api';
+import type { TopViolation, RemediationRateEntry, AiAcceptanceEntry, RuleDetail } from '../types/api';
+import { getRuleDescription } from '../data/ruleDescriptions';
 
 export function AnalyticsPage() {
   const [topViolations, setTopViolations] = useState<TopViolation[]>([]);
   const [remediationRates, setRemediationRates] = useState<RemediationRateEntry[]>([]);
   const [aiAcceptance, setAiAcceptance] = useState<AiAcceptanceEntry[]>([]);
+  const [rules, setRules] = useState<RuleDetail[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -21,15 +23,28 @@ export function AnalyticsPage() {
       getTopViolations(20),
       getRemediationRates(20),
       getAiAcceptance(),
+      listRules().catch(() => [] as RuleDetail[]),
     ])
-      .then(([violations, rates, acceptance]) => {
+      .then(([violations, rates, acceptance, ruleList]) => {
         setTopViolations(violations);
         setRemediationRates(rates);
         setAiAcceptance(acceptance);
+        setRules(ruleList);
       })
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
+
+  const descriptionMap = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const r of rules) {
+      if (r.description) m.set(r.rule_id, r.description);
+    }
+    return m;
+  }, [rules]);
+
+  const descFor = (ruleId: string): string =>
+    descriptionMap.get(ruleId) || getRuleDescription(ruleId);
 
   if (loading) {
     return (
@@ -62,6 +77,7 @@ export function AnalyticsPage() {
                 <thead>
                   <tr role="row">
                     <th role="columnheader" style={{ paddingLeft: 24 }}>Rule ID</th>
+                    <th role="columnheader">Description</th>
                     <th role="columnheader" style={{ paddingRight: 24, textAlign: 'right' }}>Count</th>
                   </tr>
                 </thead>
@@ -72,6 +88,9 @@ export function AnalyticsPage() {
                         <span style={{ fontFamily: 'var(--pf-t--global--font--family--mono)' }}>
                           {v.rule_id}
                         </span>
+                      </td>
+                      <td role="cell" style={{ opacity: 0.8, maxWidth: 360, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {descFor(v.rule_id) || '—'}
                       </td>
                       <td role="cell" style={{ paddingRight: 24, textAlign: 'right' }}>
                         <Label
@@ -103,6 +122,7 @@ export function AnalyticsPage() {
                 <thead>
                   <tr role="row">
                     <th role="columnheader" style={{ paddingLeft: 24 }}>Rule ID</th>
+                    <th role="columnheader">Description</th>
                     <th role="columnheader" style={{ paddingRight: 24, textAlign: 'right' }}>Fixes</th>
                   </tr>
                 </thead>
@@ -113,6 +133,9 @@ export function AnalyticsPage() {
                         <span style={{ fontFamily: 'var(--pf-t--global--font--family--mono)' }}>
                           {r.rule_id}
                         </span>
+                      </td>
+                      <td role="cell" style={{ opacity: 0.8, maxWidth: 360, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {descFor(r.rule_id) || '—'}
                       </td>
                       <td role="cell" style={{ paddingRight: 24, textAlign: 'right' }}>
                         <Label

@@ -1902,6 +1902,7 @@ async def project_operate_ws(
                     proj.id,
                     trigger="ui",
                     scan_type=op_scan_type,
+                    source="project",
                 )
                 await q.update_ai_counts(
                     db,

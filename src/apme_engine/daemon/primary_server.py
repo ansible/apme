@@ -2238,9 +2238,9 @@ async def serve(listen_address: str = "0.0.0.0:50051") -> grpc.aio.Server:
         server.add_insecure_port(f"[::]:{port}")
     else:
         server.add_insecure_port(listen_address)
+    await start_sinks()
     await _register_rule_catalog()
     await server.start()
-    await start_sinks()
     return server
 
 

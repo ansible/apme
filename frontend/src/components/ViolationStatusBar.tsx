@@ -58,7 +58,7 @@ export function ViolationStatusBar({ detail }: ViolationStatusBarProps) {
           {!isRemediate && <Count label="Fixable" count={detail.fixable} />}
           <Count label="AI" count={detail.ai_candidate} />
           <Count label="Manual" count={detail.manual_review} />
-          <Count label="Remediated" count={detail.remediated_count} />
+          {isRemediate && <Count label="Remediated" count={detail.remediated_count} />}
           <Count label="Files" count={new Set(detail.violations.map(v => v.file)).size || undefined} />
         </Flex>
       </SplitItem>

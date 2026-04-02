@@ -2,15 +2,12 @@
 
 :root {
   --apme-green: #5ba352;
-  --apme-sev-critical: #D50000;
-  --apme-sev-error: #8E24AA;
-  --apme-sev-very-high: #E64A19;
+  --apme-sev-critical: #D32F2F;
+  --apme-sev-error: #6A1B9A;
   --apme-sev-high: #F57C00;
-  --apme-sev-medium: #F9A825;
-  --apme-sev-warning: #FDD835;
+  --apme-sev-medium: #FDD835;
   --apme-sev-low: #1976D2;
-  --apme-sev-very-low: #607D8B;
-  --apme-sev-hint: #9E9E9E;
+  --apme-sev-info: #9E9E9E;
 }
 
 /* ── Badges ─────────────────────────────────────────── */
@@ -31,7 +28,7 @@
 }
 
 .apme-badge.failed {
-  background-color: rgba(213, 0, 0, 0.2);
+  background-color: rgba(211, 47, 47, 0.2);
   color: var(--apme-sev-critical);
 }
 
@@ -73,7 +70,7 @@
 }
 
 .apme-count-warning {
-  color: var(--apme-sev-medium);
+  color: var(--apme-sev-high);
   font-weight: 600;
 }
 
@@ -98,19 +95,14 @@
 }
 
 .apme-severity.critical {
-  background-color: rgba(213, 0, 0, 0.25);
+  background-color: rgba(211, 47, 47, 0.25);
   color: var(--apme-sev-critical);
   font-weight: 700;
 }
 
 .apme-severity.error {
-  background-color: rgba(142, 36, 170, 0.22);
+  background-color: rgba(106, 27, 154, 0.22);
   color: var(--apme-sev-error);
-}
-
-.apme-severity.very-high {
-  background-color: rgba(230, 74, 25, 0.22);
-  color: var(--apme-sev-very-high);
 }
 
 .apme-severity.high {
@@ -119,13 +111,8 @@
 }
 
 .apme-severity.medium {
-  background-color: rgba(249, 168, 37, 0.22);
+  background-color: rgba(253, 216, 53, 0.22);
   color: var(--apme-sev-medium);
-}
-
-.apme-severity.warning {
-  background-color: rgba(253, 216, 53, 0.25);
-  color: var(--apme-sev-warning);
 }
 
 .apme-severity.low {
@@ -133,14 +120,9 @@
   color: var(--apme-sev-low);
 }
 
-.apme-severity.very-low {
-  background-color: rgba(96, 125, 139, 0.2);
-  color: var(--apme-sev-very-low);
-}
-
-.apme-severity.hint {
+.apme-severity.info {
   background-color: rgba(158, 158, 158, 0.18);
-  color: var(--apme-sev-hint);
+  color: var(--apme-sev-info);
 }
 
 .apme-sev-dot {
@@ -483,15 +465,10 @@
   min-height: 0;
 }
 
-/* Log-level severity badges (reuse .apme-severity) */
-.apme-severity.info {
-  background-color: rgba(25, 118, 210, 0.2);
-  color: var(--apme-sev-low);
-}
-
+/* Log-level severity badges (reuse .apme-severity for pipeline logs) */
 .apme-severity.debug {
   background-color: rgba(158, 158, 158, 0.12);
-  color: var(--apme-sev-hint);
+  color: var(--apme-sev-info);
 }
 
 /* Legacy — keep for other pages still using these */
@@ -755,7 +732,7 @@
 }
 
 .apme-diff-remove {
-  background: rgba(213, 0, 0, 0.08);
+  background: rgba(211, 47, 47, 0.08);
 }
 
 .apme-diff-add {

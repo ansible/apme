@@ -4,6 +4,7 @@ import type {
   AiAcceptanceEntry,
   AiModelInfo,
   CollectionDetail,
+  CollectionProjectRef,
   CollectionSummary,
   CreateGalaxyServerRequest,
   CreateProjectRequest,
@@ -196,6 +197,17 @@ export function getProjectGraph(projectId: string): Promise<GraphData> {
   return request(`/projects/${encodeURIComponent(projectId)}/graph`);
 }
 
+export async function getProjectSbom(projectId: string): Promise<Blob> {
+  const res = await fetch(`${BASE}/projects/${encodeURIComponent(projectId)}/sbom`, {
+    headers: { Accept: "application/vnd.cyclonedx+json" },
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`${res.status}: ${text}`);
+  }
+  return res.blob();
+}
+
 export function listCollections(
   limit = 200,
   offset = 0,
@@ -205,6 +217,10 @@ export function listCollections(
 
 export function getCollectionDetail(fqcn: string): Promise<CollectionDetail> {
   return request(`/collections/${encodeURIComponent(fqcn)}`);
+}
+
+export function listCollectionProjects(fqcn: string): Promise<CollectionProjectRef[]> {
+  return request(`/collections/${encodeURIComponent(fqcn)}/projects`);
 }
 
 export function listPythonPackages(

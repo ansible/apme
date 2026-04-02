@@ -393,6 +393,7 @@ async def link_scan_to_project(
     project_id: str,
     trigger: str = "ui",
     scan_type: str | None = None,
+    source: str | None = None,
 ) -> bool:
     """Associate a scan record with a project after completion.
 
@@ -407,6 +408,9 @@ async def link_scan_to_project(
         scan_type: Override the scan_type (``check`` or ``remediate``).
             The engine always reports via ``ReportFixCompleted`` which
             sets ``remediate``; the gateway knows the actual intent.
+        source: Override the source (``project``, ``playground``).
+            The engine defaults to ``cli``; the gateway knows the
+            actual origin.
 
     Returns:
         True if the scan row was found and updated, False otherwise.
@@ -427,6 +431,8 @@ async def link_scan_to_project(
         scan.scan_type = scan_type
         if scan_type == "check":
             scan.fixed_count = 0
+    if source is not None:
+        scan.source = source
     await db.commit()
     return True
 

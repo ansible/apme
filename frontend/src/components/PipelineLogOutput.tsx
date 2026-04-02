@@ -26,7 +26,7 @@ export interface PipelineLogEntry {
 
 function levelClass(level: number): string {
   if (level >= 40) return 'error';
-  if (level >= 30) return 'warning';
+  if (level >= 30) return 'medium';
   if (level >= 20) return 'info';
   return 'debug';
 }

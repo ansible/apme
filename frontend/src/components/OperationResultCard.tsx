@@ -43,7 +43,7 @@ export function OperationResultCard({
   onDismiss,
   actions,
 }: OperationResultCardProps) {
-  const wasRemediate = isRemediate || result.remediated_count != null;
+  const wasRemediate = isRemediate || (result.remediated_count ?? 0) > 0;
   const hasAi = (result.ai_proposed ?? 0) > 0 || (result.ai_declined ?? 0) > 0 || (result.ai_accepted ?? 0) > 0;
 
   return (
@@ -57,7 +57,9 @@ export function OperationResultCard({
           {!wasRemediate && (
             <Metric value={result.fixable} label="Fixable" color="var(--pf-t--global--color--status--success--default)" />
           )}
-          <Metric value={result.remediated_count ?? 0} label="Remediated" color="var(--pf-t--global--color--status--success--default)" />
+          {wasRemediate && (
+            <Metric value={result.remediated_count ?? 0} label="Remediated" color="var(--pf-t--global--color--status--success--default)" />
+          )}
           <Metric value={result.manual_review} label="Manual" color="var(--apme-sev-medium)" />
         </Split>
 

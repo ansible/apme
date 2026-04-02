@@ -2,78 +2,67 @@
  * Shared severity utilities — single source of truth for mapping API severity
  * levels to CSS classes, display labels, and color variables.
  *
- * All severity-related rendering should import from this module to avoid drift.
+ * ADR-043 defines exactly 6 severity levels:
+ *   Critical > Error > High > Medium > Low > Info
+ *
+ * Legacy strings (very_high, very_low, warning, warn, hint, none, fatal)
+ * are mapped to the nearest ADR-043 level for backward compatibility.
  */
 
 export const SEV_CSS_VAR: Record<string, string> = {
   critical: 'var(--apme-sev-critical)',
   error: 'var(--apme-sev-error)',
-  'very-high': 'var(--apme-sev-very-high)',
   high: 'var(--apme-sev-high)',
   medium: 'var(--apme-sev-medium)',
-  warning: 'var(--apme-sev-warning)',
   low: 'var(--apme-sev-low)',
-  'very-low': 'var(--apme-sev-very-low)',
-  hint: 'var(--apme-sev-hint)',
+  info: 'var(--apme-sev-info)',
 };
 
 export const SEVERITY_ORDER = [
-  'critical', 'error', 'very-high', 'high', 'medium', 'warning', 'low', 'very-low', 'hint',
+  'critical', 'error', 'high', 'medium', 'low', 'info',
 ] as const;
 
 export const SEVERITY_LABELS: Record<string, string> = {
   critical: 'Critical',
   error: 'Error',
-  'very-high': 'Very High',
   high: 'High',
   medium: 'Medium',
-  warning: 'Warning',
   low: 'Low',
-  'very-low': 'Very Low',
-  hint: 'Hint',
+  info: 'Info',
 };
 
 const SEVERITY_RANK: Record<string, number> = {
-  critical: 0, error: 1, 'very-high': 2, high: 3,
-  medium: 4, warning: 5, low: 6, 'very-low': 7, hint: 8,
+  critical: 0, error: 1, high: 2, medium: 3, low: 4, info: 5,
 };
 
 /**
  * Map an API-level severity string (and optional rule ID) to a CSS class slug.
  * SEC-prefixed rules always map to "critical".
+ * Legacy strings are normalized per ADR-043 backward-compatible mapping.
  */
 export function severityClass(level: string, ruleId?: string): string {
   if (ruleId?.startsWith('SEC')) return 'critical';
   const l = level.toLowerCase();
-  if (l === 'fatal') return 'critical';
+  if (l === 'fatal' || l === 'critical') return 'critical';
   if (l === 'error') return 'error';
-  if (l === 'very_high') return 'very-high';
-  if (l === 'high') return 'high';
+  if (l === 'very_high' || l === 'high') return 'high';
   if (l === 'medium') return 'medium';
-  if (['warning', 'warn'].includes(l)) return 'warning';
+  if (['warning', 'warn'].includes(l)) return 'medium';
   if (l === 'low') return 'low';
-  if (['very_low', 'info'].includes(l)) return 'very-low';
-  return 'hint';
+  if (['very_low', 'info', 'none'].includes(l)) return 'info';
+  return 'info';
 }
 
 /** Upper-case display label for the severity badge text. */
 export function severityLabel(level: string, ruleId?: string): string {
   if (ruleId?.startsWith('SEC')) return 'CRITICAL';
-  const l = level.toLowerCase();
-  if (l === 'fatal') return 'FATAL';
-  if (l === 'error') return 'ERROR';
-  if (l === 'very_high') return 'VERY HIGH';
-  if (l === 'high') return 'HIGH';
-  if (l === 'medium') return 'MEDIUM';
-  if (['warning', 'warn'].includes(l)) return 'WARN';
-  if (l === 'low') return 'LOW';
-  if (['very_low', 'info'].includes(l)) return 'VERY LOW';
-  return 'HINT';
+  const cls = severityClass(level, ruleId);
+  return SEVERITY_LABELS[cls]?.toUpperCase() ?? 'INFO';
 }
 
 /** Numeric sort weight — lower = more severe. */
 export function severityOrder(cls: string): number {
-  return SEVERITY_RANK[cls] ?? 9;
+  return SEVERITY_RANK[cls] ?? 6;
 }
 
 /**

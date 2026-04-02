@@ -12,7 +12,10 @@ import pytest
 from apme.v1.reporting_pb2 import (
     FixCompletedEvent,
     ProposalOutcome,
+    RegisterRulesRequest,
+    RegisterRulesResponse,
     ReportAck,
+    RuleDefinition,
 )
 from apme_engine.daemon import event_emitter
 from apme_engine.daemon.sinks.grpc_reporting import GrpcReportingSink
@@ -20,6 +23,19 @@ from apme_engine.daemon.sinks.grpc_reporting import GrpcReportingSink
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _rules_request() -> RegisterRulesRequest:
+    """Build a minimal RegisterRulesRequest for testing.
+
+    Returns:
+        RegisterRulesRequest with one dummy rule.
+    """
+    return RegisterRulesRequest(
+        pod_id="test-pod",
+        is_authority=True,
+        rules=[RuleDefinition(rule_id="L001", source="native", description="test rule")],
+    )
 
 
 def _fix_event(**overrides: str) -> FixCompletedEvent:
@@ -81,6 +97,52 @@ class FakeSink:
         return None
 
 
+class AcceptingSink:
+    """Sink that accepts rule registration with a configurable response."""
+
+    def __init__(self, response: RegisterRulesResponse | None = None) -> None:
+        """Initialize with optional response.
+
+        Args:
+            response: Response to return from register_rules.
+        """
+        self.response = response or RegisterRulesResponse(
+            accepted=True,
+            rules_added=5,
+            rules_removed=0,
+            rules_unchanged=0,
+        )
+        self.register_calls: list[RegisterRulesRequest] = []
+
+    async def start(self) -> None:
+        """No-op start."""
+
+    async def stop(self) -> None:
+        """No-op stop."""
+
+    async def on_fix_completed(self, event: FixCompletedEvent) -> None:
+        """No-op fix event.
+
+        Args:
+            event: Fix event (unused).
+        """
+
+    async def register_rules(
+        self,
+        request: RegisterRulesRequest,
+    ) -> RegisterRulesResponse:
+        """Accept rule registration.
+
+        Args:
+            request: Registration payload to record.
+
+        Returns:
+            Pre-configured response.
+        """
+        self.register_calls.append(request)
+        return self.response
+
+
 class FailingSink:
     """Sink that always raises on emission."""
 
@@ -115,14 +177,22 @@ class FailingSink:
 
 @pytest.fixture(autouse=True)  # type: ignore[untyped-decorator]
 def _clear_sinks() -> Iterator[None]:
-    """Ensure sink list is empty before and after each test.
+    """Ensure sink list and retry state are reset before and after each test.
 
     Yields:
         None: Test runs between setup and teardown.
     """
     event_emitter._sinks.clear()
+    event_emitter._rule_catalog_registered = False
+    if event_emitter._rule_retry_task is not None:
+        event_emitter._rule_retry_task.cancel()
+    event_emitter._rule_retry_task = None
     yield
     event_emitter._sinks.clear()
+    event_emitter._rule_catalog_registered = False
+    if event_emitter._rule_retry_task is not None:
+        event_emitter._rule_retry_task.cancel()
+    event_emitter._rule_retry_task = None
 
 
 async def test_emit_fix_completed_fans_out() -> None:
@@ -289,6 +359,133 @@ async def test_grpc_sink_start_sets_channel_message_limits() -> None:
         sink._health_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await sink._health_task
+
+
+# ---------------------------------------------------------------------------
+# Rule catalog registration & retry
+# ---------------------------------------------------------------------------
+
+
+async def test_emit_register_rules_immediate_success() -> None:
+    """Registration succeeds on first attempt and sets the registered flag."""
+    sink = AcceptingSink()
+    event_emitter._sinks.append(sink)
+
+    await event_emitter.emit_register_rules(_rules_request())
+
+    assert event_emitter._rule_catalog_registered is True
+    assert len(sink.register_calls) == 1
+    assert event_emitter._rule_retry_task is None
+
+
+async def test_emit_register_rules_no_sinks_skips() -> None:
+    """With no sinks, registration is skipped and no retry is scheduled."""
+    await event_emitter.emit_register_rules(_rules_request())
+
+    assert event_emitter._rule_catalog_registered is False
+    assert event_emitter._rule_retry_task is None
+
+
+async def test_emit_register_rules_failure_schedules_retry() -> None:
+    """When all sinks fail, a background retry task is launched."""
+    event_emitter._sinks.append(FailingSink())
+
+    await event_emitter.emit_register_rules(_rules_request())
+
+    assert event_emitter._rule_catalog_registered is False
+    assert event_emitter._rule_retry_task is not None
+    assert not event_emitter._rule_retry_task.done()
+
+    event_emitter._rule_retry_task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await event_emitter._rule_retry_task
+
+
+async def test_retry_loop_succeeds_on_second_attempt() -> None:
+    """Retry loop calls sinks again and stops when registration succeeds."""
+    call_count = 0
+
+    class EventuallySink:
+        """Sink that fails once then succeeds."""
+
+        async def start(self) -> None:
+            """No-op start."""
+
+        async def stop(self) -> None:
+            """No-op stop."""
+
+        async def on_fix_completed(self, event: FixCompletedEvent) -> None:
+            """No-op.
+
+            Args:
+                event: Unused.
+            """
+
+        async def register_rules(
+            self,
+            request: RegisterRulesRequest,
+        ) -> RegisterRulesResponse | None:
+            """Fail first, succeed second.
+
+            Args:
+                request: Registration payload.
+
+            Returns:
+                None on first call, response on second.
+            """
+            nonlocal call_count
+            call_count += 1
+            if call_count < 2:
+                return None
+            return RegisterRulesResponse(
+                accepted=True,
+                rules_added=1,
+                rules_removed=0,
+                rules_unchanged=0,
+            )
+
+    event_emitter._sinks.append(EventuallySink())
+
+    with patch.object(event_emitter, "_RULE_RETRY_INITIAL_DELAY_S", 0.01):
+        await event_emitter.emit_register_rules(_rules_request())
+
+        assert event_emitter._rule_retry_task is not None
+        await asyncio.wait_for(event_emitter._rule_retry_task, timeout=2.0)
+
+    assert event_emitter._rule_catalog_registered is True
+    assert call_count == 2
+
+
+async def test_stop_sinks_cancels_retry_task() -> None:
+    """Stopping sinks cancels the background retry task and resets state."""
+    event_emitter._sinks.append(FailingSink())
+    await event_emitter.emit_register_rules(_rules_request())
+
+    assert event_emitter._rule_retry_task is not None
+
+    await event_emitter.stop_sinks()
+
+    assert event_emitter._rule_retry_task is None
+    assert event_emitter._rule_catalog_registered is False
+    assert len(event_emitter._sinks) == 0
+
+
+async def test_retry_not_duplicated_on_second_emit() -> None:
+    """Calling emit_register_rules twice doesn't create duplicate retry tasks."""
+    event_emitter._sinks.append(FailingSink())
+
+    await event_emitter.emit_register_rules(_rules_request())
+    first_task = event_emitter._rule_retry_task
+
+    await event_emitter.emit_register_rules(_rules_request())
+    second_task = event_emitter._rule_retry_task
+
+    assert first_task is second_task
+
+    assert first_task is not None
+    first_task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await first_task
 
 
 # ---------------------------------------------------------------------------

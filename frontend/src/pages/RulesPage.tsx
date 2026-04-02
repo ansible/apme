@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { PageLayout, PageHeader } from '@ansible/ansible-ui-framework';
 import {
+  Button,
+  Card,
+  CardBody,
+  DescriptionList,
+  DescriptionListDescription,
+  DescriptionListGroup,
+  DescriptionListTerm,
   EmptyState,
   EmptyStateBody,
   Flex,
@@ -8,6 +15,10 @@ import {
   FormSelect,
   FormSelectOption,
   Label,
+  Modal,
+  ModalBody,
+  ModalFooter,
+  ModalHeader,
   SearchInput,
   Switch,
   Toolbar,
@@ -22,36 +33,19 @@ import {
   Thead,
   Tr,
 } from '@patternfly/react-table';
-import { getRuleStats, listRules, updateRuleConfig } from '../services/api';
+import { deleteRuleConfig, getRule, getRuleStats, listRules, updateRuleConfig } from '../services/api';
 import type { RuleDetail, RuleStats } from '../types/api';
+import { severityClass, severityLabel } from '../components/severity';
 
-function normalizeSeverityKey(sev: string): string {
-  return sev
-    .toLowerCase()
-    .replace(/^severity_/, '')
-    .replace(/-/g, '_');
-}
-
-/** PatternFly Label color for catalog severity strings (ADR-041 UI). */
-function severityLabelColor(
-  severity: string,
-): 'red' | 'orange' | 'yellow' | 'blue' | 'grey' {
-  const k = normalizeSeverityKey(severity);
-  if (k === 'critical' || k === 'fatal' || k === 'error') return 'red';
-  if (k === 'high' || k === 'very_high') return 'orange';
-  if (k === 'medium' || k === 'warning' || k === 'warn') return 'yellow';
-  if (k === 'low') return 'blue';
-  if (k === 'info' || k === 'very_low' || k === 'hint') return 'grey';
-  return 'grey';
+function catalogSeverityToApi(sev: string): string {
+  return sev.replace(/^SEVERITY_/i, '').toLowerCase();
 }
 
 function SeverityBadge({ severity }: { severity: string }) {
-  const label = severity.replace(/^SEVERITY_/i, '').replace(/_/g, ' ') || severity;
-  return (
-    <Label color={severityLabelColor(severity)} isCompact>
-      {label}
-    </Label>
-  );
+  const apiLevel = catalogSeverityToApi(severity);
+  const cls = severityClass(apiLevel);
+  const label = severityLabel(apiLevel);
+  return <span className={`apme-severity ${cls}`}>{label}</span>;
 }
 
 export function RulesPage() {
@@ -62,6 +56,9 @@ export function RulesPage() {
   const [categoryFilter, setCategoryFilter] = useState('');
   const [sourceFilter, setSourceFilter] = useState('');
   const [updatingId, setUpdatingId] = useState<string | null>(null);
+  const [selectedRule, setSelectedRule] = useState<RuleDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [resettingId, setResettingId] = useState<string | null>(null);
 
   const fetchRules = useCallback(() => {
     setLoading(true);
@@ -89,6 +86,33 @@ export function RulesPage() {
       .then(setStats)
       .catch(() => {});
   }, []);
+
+  const openRuleDetail = useCallback((ruleId: string) => {
+    setDetailLoading(true);
+    getRule(ruleId)
+      .then(setSelectedRule)
+      .catch(() => {
+        const local = rules.find((r) => r.rule_id === ruleId);
+        if (local) setSelectedRule(local);
+      })
+      .finally(() => setDetailLoading(false));
+  }, [rules]);
+
+  const handleResetOverride = useCallback(async (ruleId: string) => {
+    setResettingId(ruleId);
+    try {
+      await deleteRuleConfig(ruleId);
+      fetchRules();
+      refreshStats();
+      if (selectedRule?.rule_id === ruleId) {
+        openRuleDetail(ruleId);
+      }
+    } catch {
+      // 404 means no override existed
+    } finally {
+      setResettingId(null);
+    }
+  }, [selectedRule, fetchRules, refreshStats, openRuleDetail]);
 
   const categoryOptions = useMemo(() => {
     const fromStats = stats ? Object.keys(stats.by_category) : [];
@@ -216,13 +240,17 @@ export function RulesPage() {
                 <Th>Effective severity</Th>
                 <Th>Status</Th>
                 <Th>Enforced</Th>
+                <Th />  {/* Actions */}
               </Tr>
             </Thead>
             <Tbody>
               {filtered.map((rule) => (
                 <Tr key={rule.rule_id}>
                   <Td dataLabel="Rule ID">
-                    <span
+                    <Button
+                      variant="link"
+                      isInline
+                      onClick={() => openRuleDetail(rule.rule_id)}
                       style={{
                         fontFamily: 'var(--pf-t--global--font--family--mono)',
                         fontSize: 13,
@@ -230,7 +258,7 @@ export function RulesPage() {
                       }}
                     >
                       {rule.rule_id}
-                    </span>
+                    </Button>
                   </Td>
                   <Td dataLabel="Description">
                     <span
@@ -272,6 +300,19 @@ export function RulesPage() {
                       <Label color="grey" variant="outline" isCompact>No</Label>
                     )}
                   </Td>
+                  <Td dataLabel="Actions">
+                    {rule.has_override && (
+                      <Button
+                        variant="link"
+                        isInline
+                        size="sm"
+                        isDisabled={resettingId === rule.rule_id}
+                        onClick={() => handleResetOverride(rule.rule_id)}
+                      >
+                        {resettingId === rule.rule_id ? 'Resetting...' : 'Reset'}
+                      </Button>
+                    )}
+                  </Td>
                 </Tr>
               ))}
             </Tbody>
@@ -284,6 +325,108 @@ export function RulesPage() {
           </FlexItem>
         </Flex>
       </div>
+
+      {selectedRule && (
+        <Modal
+          isOpen
+          onClose={() => setSelectedRule(null)}
+          variant="medium"
+        >
+          <ModalHeader title={`Rule: ${selectedRule.rule_id}`} />
+          <ModalBody>
+            {detailLoading ? (
+              <div style={{ padding: 24, textAlign: 'center', opacity: 0.6 }}>Loading...</div>
+            ) : (
+              <Card>
+                <CardBody>
+                  <DescriptionList isHorizontal>
+                    <DescriptionListGroup>
+                      <DescriptionListTerm>Rule ID</DescriptionListTerm>
+                      <DescriptionListDescription>
+                        <span style={{ fontFamily: 'var(--pf-t--global--font--family--mono)', fontWeight: 600 }}>
+                          {selectedRule.rule_id}
+                        </span>
+                      </DescriptionListDescription>
+                    </DescriptionListGroup>
+                    <DescriptionListGroup>
+                      <DescriptionListTerm>Description</DescriptionListTerm>
+                      <DescriptionListDescription>{selectedRule.description || '—'}</DescriptionListDescription>
+                    </DescriptionListGroup>
+                    <DescriptionListGroup>
+                      <DescriptionListTerm>Category</DescriptionListTerm>
+                      <DescriptionListDescription>{selectedRule.category}</DescriptionListDescription>
+                    </DescriptionListGroup>
+                    <DescriptionListGroup>
+                      <DescriptionListTerm>Source</DescriptionListTerm>
+                      <DescriptionListDescription>{selectedRule.source}</DescriptionListDescription>
+                    </DescriptionListGroup>
+                    <DescriptionListGroup>
+                      <DescriptionListTerm>Scope</DescriptionListTerm>
+                      <DescriptionListDescription>{selectedRule.scope}</DescriptionListDescription>
+                    </DescriptionListGroup>
+                    <DescriptionListGroup>
+                      <DescriptionListTerm>Default Severity</DescriptionListTerm>
+                      <DescriptionListDescription>
+                        <SeverityBadge severity={selectedRule.default_severity} />
+                      </DescriptionListDescription>
+                    </DescriptionListGroup>
+                    <DescriptionListGroup>
+                      <DescriptionListTerm>Effective Severity</DescriptionListTerm>
+                      <DescriptionListDescription>
+                        <SeverityBadge severity={selectedRule.effective_severity} />
+                      </DescriptionListDescription>
+                    </DescriptionListGroup>
+                    <DescriptionListGroup>
+                      <DescriptionListTerm>Enabled</DescriptionListTerm>
+                      <DescriptionListDescription>
+                        <Label color={selectedRule.enabled ? 'green' : 'grey'} isCompact>
+                          {selectedRule.enabled ? 'Yes' : 'No'}
+                        </Label>
+                      </DescriptionListDescription>
+                    </DescriptionListGroup>
+                    <DescriptionListGroup>
+                      <DescriptionListTerm>Enforced</DescriptionListTerm>
+                      <DescriptionListDescription>
+                        <Label color={selectedRule.enforced ? 'green' : 'grey'} isCompact>
+                          {selectedRule.enforced ? 'Yes' : 'No'}
+                        </Label>
+                      </DescriptionListDescription>
+                    </DescriptionListGroup>
+                    <DescriptionListGroup>
+                      <DescriptionListTerm>Has Override</DescriptionListTerm>
+                      <DescriptionListDescription>
+                        {selectedRule.has_override ? (
+                          <Label color="blue" isCompact>Yes</Label>
+                        ) : (
+                          <Label color="grey" variant="outline" isCompact>No</Label>
+                        )}
+                      </DescriptionListDescription>
+                    </DescriptionListGroup>
+                    <DescriptionListGroup>
+                      <DescriptionListTerm>Registered</DescriptionListTerm>
+                      <DescriptionListDescription>
+                        {new Date(selectedRule.registered_at).toLocaleString()}
+                      </DescriptionListDescription>
+                    </DescriptionListGroup>
+                  </DescriptionList>
+                </CardBody>
+              </Card>
+            )}
+          </ModalBody>
+          <ModalFooter>
+            {selectedRule.has_override && (
+              <Button
+                variant="warning"
+                isDisabled={resettingId === selectedRule.rule_id}
+                onClick={() => handleResetOverride(selectedRule.rule_id)}
+              >
+                {resettingId === selectedRule.rule_id ? 'Resetting...' : 'Reset Override'}
+              </Button>
+            )}
+            <Button variant="link" onClick={() => setSelectedRule(null)}>Close</Button>
+          </ModalFooter>
+        </Modal>
+      )}
     </PageLayout>
   );
 }
