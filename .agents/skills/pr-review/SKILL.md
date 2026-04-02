@@ -153,21 +153,25 @@ via GraphQL below.
 
 ### Resolving review threads (GraphQL)
 
+**IMPORTANT:** Always use `resolveReviewThread` to resolve threads. Do NOT use
+`minimizeComment` — that hides the comment text but does NOT resolve the review
+thread, leaving it as an unresolved conversation on the PR.
+
 Replace `N` with the PR number and `THREAD_ID` with the `id` from
 `reviewThreads.nodes[].id` (from the list query). Filter nodes where
 `isResolved` is false if you only want to resolve open threads.
 
 ```bash
-# List threads (get id from nodes for each thread)
+# List unresolved threads (get thread id for each)
 gh api graphql -f query='{
   repository(owner: "ansible", name: "apme") {
     pullRequest(number: N) {
-      reviewThreads(first: 20) {
+      reviewThreads(first: 50) {
         nodes { id isResolved comments(first:1) { nodes { body } } }
       }
     }
   }
-}'
+}' --jq '.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | {id, snippet: .comments.nodes[0].body[:120]}'
 
 # Resolve one thread
 gh api graphql -f query='mutation {
@@ -175,6 +179,11 @@ gh api graphql -f query='mutation {
     thread { isResolved }
   }
 }'
+
+# Resolve multiple threads in a loop
+for tid in "THREAD_ID_1" "THREAD_ID_2"; do
+  gh api graphql -f query="mutation { resolveReviewThread(input: {threadId: \"${tid}\"}) { thread { isResolved } } }"
+done
 ```
 
 7. Update the PR description to include the new commit(s).
