@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { PageLayout, PageHeader } from '@ansible/ansible-ui-framework';
 import {
   Button,
@@ -59,6 +59,7 @@ export function RulesPage() {
   const [selectedRule, setSelectedRule] = useState<RuleDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [resettingId, setResettingId] = useState<string | null>(null);
+  const detailRequestRef = useRef(0);
 
   const fetchRules = useCallback(() => {
     setLoading(true);
@@ -88,14 +89,20 @@ export function RulesPage() {
   }, []);
 
   const openRuleDetail = useCallback((ruleId: string) => {
+    const token = ++detailRequestRef.current;
     setDetailLoading(true);
     getRule(ruleId)
-      .then(setSelectedRule)
+      .then((data) => {
+        if (detailRequestRef.current === token) setSelectedRule(data);
+      })
       .catch(() => {
+        if (detailRequestRef.current !== token) return;
         const local = rules.find((r) => r.rule_id === ruleId);
         if (local) setSelectedRule(local);
       })
-      .finally(() => setDetailLoading(false));
+      .finally(() => {
+        if (detailRequestRef.current === token) setDetailLoading(false);
+      });
   }, [rules]);
 
   const handleResetOverride = useCallback(async (ruleId: string) => {
@@ -329,7 +336,7 @@ export function RulesPage() {
       {selectedRule && (
         <Modal
           isOpen
-          onClose={() => setSelectedRule(null)}
+          onClose={() => { detailRequestRef.current++; setSelectedRule(null); }}
           variant="medium"
         >
           <ModalHeader title={`Rule: ${selectedRule.rule_id}`} />
@@ -423,7 +430,7 @@ export function RulesPage() {
                 {resettingId === selectedRule.rule_id ? 'Resetting...' : 'Reset Override'}
               </Button>
             )}
-            <Button variant="link" onClick={() => setSelectedRule(null)}>Close</Button>
+            <Button variant="link" onClick={() => { detailRequestRef.current++; setSelectedRule(null); }}>Close</Button>
           </ModalFooter>
         </Modal>
       )}

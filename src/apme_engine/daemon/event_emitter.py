@@ -170,6 +170,8 @@ async def emit_register_rules(request: reporting_pb2.RegisterRulesRequest) -> No
         _rule_catalog_registered = True
         if _rule_retry_task is not None and not _rule_retry_task.done():
             _rule_retry_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await _rule_retry_task
             _rule_retry_task = None
         return
 

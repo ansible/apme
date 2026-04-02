@@ -112,7 +112,7 @@
 
 .apme-severity.medium {
   background-color: rgba(253, 216, 53, 0.22);
-  color: var(--apme-sev-medium);
+  color: #9e8700;
 }
 
 .apme-severity.low {
