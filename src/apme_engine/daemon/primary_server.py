@@ -1359,6 +1359,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                 loop=loop,
                 format_content=format_content,
                 format_diffs=format_diffs,
+                fix_opts=fix_opts,
             ):
                 yield event
         else:
@@ -1499,12 +1500,14 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         loop: asyncio.AbstractEventLoop,
         format_content: Callable[..., object],
         format_diffs: Sequence[object],
+        fix_opts: FixOptions | None = None,
     ) -> AsyncIterator[SessionEvent]:
         """Graph-engine remediation path (behind APME_USE_GRAPH_ENGINE=1).
 
         Runs ``GraphRemediationEngine`` in-memory, splices results to disk,
         then performs a final full-pipeline scan for the complete violation
-        picture.  Tier 2 AI is **not** wired in this path.
+        picture.  After Tier 1 convergence, eligible violations are escalated
+        to the AI provider using graph nodes as fixable units.
 
         Args:
             session: Active session state (mutated in place).
@@ -1523,9 +1526,10 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             loop: Running event loop.
             format_content: Formatter function for post-remediation pass.
             format_diffs: Accumulated format diffs from earlier step.
+            fix_opts: Client-provided options (controls AI enablement).
 
         Yields:
-            SessionEvent: Progress, Tier1Summary, and result events.
+            SessionEvent: Progress, Tier1Summary, ProposalsReady, and result events.
         """
         from apme_engine.engine.content_graph import ContentGraph
         from apme_engine.engine.graph_scanner import (
@@ -1746,10 +1750,172 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             ),
         )
 
-        # Graph engine does not support Tier 2 AI yet — go straight to result
-        session.status = 3  # COMPLETE
-        async for event in self._session_build_result(session):
-            yield event
+        # Tier 2 AI escalation — uses graph nodes as fixable units
+        ai_provider = self._resolve_ai_provider(fix_opts)
+        if ai_provider is not None and remaining_ai:
+            progress_callback("graph-tier2", f"AI escalation: {len(remaining_ai)} violation(s)", 0.0, 2)
+            ai_proposals = await self._graph_ai_escalate(
+                graph=graph,
+                remaining_ai=remaining_ai,
+                ai_provider=ai_provider,
+                temp_dir=temp_dir,
+            )
+            _t2_done = ProgressUpdate(
+                message=f"AI escalation complete: {len(ai_proposals)} proposal(s)",
+                phase="graph-tier2",
+                level=2,
+            )
+            session.progress_logs.append(_t2_done)
+            yield SessionEvent(progress=_t2_done)
+
+            if ai_proposals:
+                session.current_tier = 2
+                proposals = self._build_proposals_from_ai(ai_proposals)
+                for p in proposals:
+                    with contextlib.suppress(ValueError):
+                        p.file = str(Path(p.file).relative_to(temp_dir))
+                session.proposals = {p.id: p for p in proposals}
+                session.status = 1  # AWAITING_APPROVAL
+                yield SessionEvent(
+                    proposals=ProposalsReady(
+                        proposals=proposals,
+                        tier=2,
+                        status=1,
+                    ),
+                )
+            else:
+                session.status = 3  # COMPLETE
+                async for event in self._session_build_result(session):
+                    yield event
+        else:
+            session.status = 3  # COMPLETE
+            async for event in self._session_build_result(session):
+                yield event
+
+    @staticmethod
+    async def _graph_ai_escalate(
+        *,
+        graph: object,
+        remaining_ai: list[ViolationDict],
+        ai_provider: object,
+        temp_dir: Path,
+    ) -> list[object]:
+        """Per-node AI escalation using ContentGraph nodes as fixable units.
+
+        Groups AI-eligible violations by their graph node ID, then calls
+        ``propose_unit_fixes`` for each node using the node's YAML snippet
+        and line range as context.  Runs up to 8 concurrent LLM calls.
+
+        Args:
+            graph: ContentGraph with node data from the scan.
+            remaining_ai: AI-eligible violations from partition.
+            ai_provider: AIProvider-compatible object.
+            temp_dir: Working directory (for relativising file paths).
+
+        Returns:
+            List of AIProposal objects (one per successfully processed node).
+        """
+        from apme_engine.engine.content_graph import ContentGraph  # noqa: PLC0415
+        from apme_engine.remediation.ai_provider import (  # noqa: PLC0415
+            AIProposal,
+        )
+        from apme_engine.remediation.ai_provider import (
+            AIProvider as _AIProvider,
+        )
+
+        _graph: ContentGraph = graph  # type: ignore[assignment]
+        provider: _AIProvider = ai_provider  # type: ignore[assignment]
+
+        by_node: dict[str, list[ViolationDict]] = {}
+        for v in remaining_ai:
+            node_id = str(v.get("path", ""))
+            if node_id:
+                by_node.setdefault(node_id, []).append(v)
+
+        if not by_node:
+            return []
+
+        _MAX_CONCURRENT_AI = 8
+        sem = asyncio.Semaphore(_MAX_CONCURRENT_AI)
+
+        async def _propose_for_node(
+            node_id: str,
+            violations: list[ViolationDict],
+        ) -> AIProposal | None:
+            node = _graph.get_node(node_id)
+            if node is None or not node.yaml_lines:
+                return None
+
+            try:
+                rel_path = str(Path(node.file_path).relative_to(temp_dir))
+            except ValueError:
+                rel_path = node.file_path
+
+            async with sem:
+                try:
+                    patches, skipped = await provider.propose_unit_fixes(
+                        violations=violations,
+                        snippet=node.yaml_lines,
+                        file_path=rel_path,
+                        line_start=node.line_start,
+                        line_end=node.line_end,
+                    )
+                except Exception:
+                    logger.warning(
+                        "AI propose_unit_fixes failed for node %s",
+                        node_id,
+                        exc_info=True,
+                    )
+                    return None
+
+            if not patches:
+                if skipped:
+                    return AIProposal(
+                        file=node.file_path,
+                        original_snippet=node.yaml_lines,
+                        fixed_snippet=node.yaml_lines,
+                        diff="",
+                        skipped=list(skipped),
+                    )
+                return None
+
+            fixed_snippet = patches[0].fixed_lines
+            diff = "".join(
+                difflib.unified_diff(
+                    node.yaml_lines.splitlines(keepends=True),
+                    fixed_snippet.splitlines(keepends=True),
+                    fromfile=f"a/{Path(rel_path).name}",
+                    tofile=f"b/{Path(rel_path).name}",
+                )
+            )
+            rule_ids = list({p.rule_id for p in patches})
+            avg_confidence = sum(p.confidence for p in patches) / len(patches)
+            explanations = [p.explanation for p in patches if p.explanation]
+
+            return AIProposal(
+                file=node.file_path,
+                original_snippet=node.yaml_lines,
+                fixed_snippet=fixed_snippet,
+                diff=diff,
+                rule_ids=rule_ids,
+                confidence=avg_confidence,
+                explanation="; ".join(explanations),
+                skipped=list(skipped),
+                patches=list(patches),
+            )
+
+        tasks = [asyncio.create_task(_propose_for_node(nid, vs)) for nid, vs in by_node.items()]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        proposals: list[AIProposal] = []
+        for result in results:
+            if isinstance(result, BaseException):
+                logger.warning("AI escalation task failed", exc_info=result)
+                continue
+            if result is not None:
+                proposals.append(result)
+
+        return proposals  # type: ignore[return-value]
 
     @staticmethod
     def _resolve_ai_provider(fix_opts: FixOptions | None) -> object | None:

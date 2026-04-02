@@ -21,6 +21,7 @@ from apme.v1.primary_pb2 import (
     CloseRequest,
     ExtendRequest,
     FilePatch,
+    FixOptions,
     FixReport,
     Proposal,
     ProposalsReady,
@@ -1246,6 +1247,508 @@ class TestSessionRescanBridge:
         rules_dir = captured_rules_dir[0]
         assert rules_dir is not None, "load_graph_rules must be called with rules_dir"
         assert rules_dir.endswith("native/rules"), f"Expected native rules dir, got: {captured_rules_dir[0]}"
+
+
+class TestGraphAIEscalate:
+    """Tests for PrimaryServicer._graph_ai_escalate (static method, PR 6).
+
+    Exercises the per-node AI escalation that groups violations by graph
+    node and calls propose_unit_fixes on each.
+    """
+
+    async def test_groups_violations_by_node_and_proposes(self, tmp_path: Path) -> None:
+        """Violations are grouped by node_id; propose_unit_fixes called per node.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        from unittest.mock import AsyncMock
+
+        from apme_engine.daemon.primary_server import PrimaryServicer
+        from apme_engine.engine.content_graph import ContentGraph, ContentNode, NodeIdentity, NodeType
+        from apme_engine.remediation.ai_provider import AIPatch, AIProposal
+
+        graph = ContentGraph()
+        node_path = "play.yml/plays[0]/tasks[0]"
+        yaml_text = "- name: Install\n  apt:\n    name: nginx\n    state: present\n"
+        fixed_text = "- name: Install\n  ansible.builtin.apt:\n    name: nginx\n    state: present\n"
+        graph.add_node(
+            ContentNode(
+                identity=NodeIdentity(path=node_path, node_type=NodeType.TASK),
+                file_path=str(tmp_path / "play.yml"),
+                line_start=1,
+                line_end=4,
+                yaml_lines=yaml_text,
+            )
+        )
+
+        mock_provider = AsyncMock()
+        mock_provider.propose_unit_fixes.return_value = (
+            [
+                AIPatch(
+                    rule_id="L001",
+                    line_start=1,
+                    line_end=4,
+                    fixed_lines=fixed_text,
+                    explanation="Use FQCN",
+                    confidence=0.95,
+                )
+            ],
+            [],
+        )
+
+        violations: list[dict[str, object]] = [
+            {"rule_id": "L001", "message": "Use FQCN", "path": node_path, "line": 2},
+        ]
+
+        proposals = await PrimaryServicer._graph_ai_escalate(
+            graph=graph,
+            remaining_ai=violations,  # type: ignore[arg-type]
+            ai_provider=mock_provider,
+            temp_dir=tmp_path,
+        )
+
+        mock_provider.propose_unit_fixes.assert_called_once()
+        call_kwargs = mock_provider.propose_unit_fixes.call_args
+        assert call_kwargs.kwargs["snippet"] == yaml_text
+        assert call_kwargs.kwargs["line_start"] == 1
+        assert call_kwargs.kwargs["line_end"] == 4
+
+        assert len(proposals) == 1
+        proposal: AIProposal = proposals[0]  # type: ignore[assignment]
+        assert proposal.fixed_snippet == fixed_text
+        assert "L001" in proposal.rule_ids
+        assert proposal.confidence == 0.95
+
+    async def test_skips_unknown_nodes(self, tmp_path: Path) -> None:
+        """Violations referencing unknown node IDs produce no proposals.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        from unittest.mock import AsyncMock
+
+        from apme_engine.daemon.primary_server import PrimaryServicer
+        from apme_engine.engine.content_graph import ContentGraph
+
+        graph = ContentGraph()
+        mock_provider = AsyncMock()
+
+        violations: list[dict[str, object]] = [
+            {"rule_id": "L001", "message": "Use FQCN", "path": "nonexistent/node", "line": 2},
+        ]
+
+        proposals = await PrimaryServicer._graph_ai_escalate(
+            graph=graph,
+            remaining_ai=violations,  # type: ignore[arg-type]
+            ai_provider=mock_provider,
+            temp_dir=tmp_path,
+        )
+
+        mock_provider.propose_unit_fixes.assert_not_called()
+        assert proposals == []
+
+    async def test_handles_provider_failure(self, tmp_path: Path) -> None:
+        """Exception from propose_unit_fixes is caught; node skipped.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        from unittest.mock import AsyncMock
+
+        from apme_engine.daemon.primary_server import PrimaryServicer
+        from apme_engine.engine.content_graph import ContentGraph, ContentNode, NodeIdentity, NodeType
+
+        graph = ContentGraph()
+        node_path = "play.yml/plays[0]/tasks[0]"
+        graph.add_node(
+            ContentNode(
+                identity=NodeIdentity(path=node_path, node_type=NodeType.TASK),
+                file_path=str(tmp_path / "play.yml"),
+                line_start=1,
+                line_end=2,
+                yaml_lines="- name: Test\n  debug:\n    msg: hi\n",
+            )
+        )
+
+        mock_provider = AsyncMock()
+        mock_provider.propose_unit_fixes.side_effect = RuntimeError("LLM unavailable")
+
+        violations: list[dict[str, object]] = [
+            {"rule_id": "L001", "message": "Fix me", "path": node_path, "line": 1},
+        ]
+
+        proposals = await PrimaryServicer._graph_ai_escalate(
+            graph=graph,
+            remaining_ai=violations,  # type: ignore[arg-type]
+            ai_provider=mock_provider,
+            temp_dir=tmp_path,
+        )
+
+        assert proposals == []
+
+    async def test_skipped_violations_returned_as_declined(self, tmp_path: Path) -> None:
+        """When AI skips violations, a proposal with empty diff and skipped list is returned.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        from unittest.mock import AsyncMock
+
+        from apme_engine.daemon.primary_server import PrimaryServicer
+        from apme_engine.engine.content_graph import ContentGraph, ContentNode, NodeIdentity, NodeType
+        from apme_engine.remediation.ai_provider import AIProposal, AISkipped
+
+        graph = ContentGraph()
+        node_path = "play.yml/plays[0]/tasks[0]"
+        yaml_text = "- name: Test\n  debug:\n    msg: hi\n"
+        graph.add_node(
+            ContentNode(
+                identity=NodeIdentity(path=node_path, node_type=NodeType.TASK),
+                file_path=str(tmp_path / "play.yml"),
+                line_start=1,
+                line_end=3,
+                yaml_lines=yaml_text,
+            )
+        )
+
+        mock_provider = AsyncMock()
+        mock_provider.propose_unit_fixes.return_value = (
+            None,
+            [AISkipped(rule_id="L099", line=1, reason="Too complex", suggestion="Manual fix")],
+        )
+
+        violations: list[dict[str, object]] = [
+            {"rule_id": "L099", "message": "Complex issue", "path": node_path, "line": 1},
+        ]
+
+        proposals = await PrimaryServicer._graph_ai_escalate(
+            graph=graph,
+            remaining_ai=violations,  # type: ignore[arg-type]
+            ai_provider=mock_provider,
+            temp_dir=tmp_path,
+        )
+
+        assert len(proposals) == 1
+        proposal: AIProposal = proposals[0]  # type: ignore[assignment]
+        assert proposal.diff == ""
+        assert proposal.fixed_snippet == yaml_text
+        assert len(proposal.skipped) == 1
+        assert proposal.skipped[0].rule_id == "L099"
+
+    async def test_multiple_nodes_concurrent(self, tmp_path: Path) -> None:
+        """Multiple nodes are proposed concurrently; all results collected.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        from unittest.mock import AsyncMock
+
+        from apme_engine.daemon.primary_server import PrimaryServicer
+        from apme_engine.engine.content_graph import ContentGraph, ContentNode, NodeIdentity, NodeType
+        from apme_engine.remediation.ai_provider import AIPatch, AIProposal
+
+        graph = ContentGraph()
+        for i in range(3):
+            node_path = f"play.yml/plays[0]/tasks[{i}]"
+            graph.add_node(
+                ContentNode(
+                    identity=NodeIdentity(path=node_path, node_type=NodeType.TASK),
+                    file_path=str(tmp_path / "play.yml"),
+                    line_start=i * 3 + 1,
+                    line_end=i * 3 + 3,
+                    yaml_lines=f"- name: Task {i}\n  debug:\n    msg: hi\n",
+                )
+            )
+
+        async def mock_propose(**kwargs: object) -> tuple[list[AIPatch], list[object]]:
+            snippet = str(kwargs.get("snippet", ""))
+            return (
+                [
+                    AIPatch(
+                        rule_id="L001",
+                        line_start=1,
+                        line_end=3,
+                        fixed_lines=snippet.replace("debug", "ansible.builtin.debug"),
+                        explanation="Use FQCN",
+                        confidence=0.9,
+                    )
+                ],
+                [],
+            )
+
+        mock_provider = AsyncMock()
+        mock_provider.propose_unit_fixes.side_effect = mock_propose
+
+        violations: list[dict[str, object]] = [
+            {"rule_id": "L001", "path": f"play.yml/plays[0]/tasks[{i}]", "line": i * 3 + 2} for i in range(3)
+        ]
+
+        proposals = await PrimaryServicer._graph_ai_escalate(
+            graph=graph,
+            remaining_ai=violations,  # type: ignore[arg-type]
+            ai_provider=mock_provider,
+            temp_dir=tmp_path,
+        )
+
+        assert len(proposals) == 3
+        assert mock_provider.propose_unit_fixes.call_count == 3
+        for p in proposals:
+            proposal: AIProposal = p  # type: ignore[assignment]
+            assert "ansible.builtin.debug" in proposal.fixed_snippet
+
+
+class TestSessionGraphAIIntegration:
+    """Integration tests for AI escalation within _session_graph_remediate (PR 6).
+
+    Verifies that _session_graph_remediate correctly wires AI escalation
+    after Tier 1 convergence when fix_opts enables AI.
+    """
+
+    async def test_ai_proposals_emitted(self, tmp_path: Path) -> None:
+        """When AI provider returns proposals, ProposalsReady event is emitted.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        from unittest.mock import MagicMock
+
+        from apme_engine.daemon.primary_server import PrimaryServicer
+        from apme_engine.engine.content_graph import ContentGraph, ContentNode, NodeIdentity, NodeType
+        from apme_engine.remediation.ai_provider import AIProposal
+        from apme_engine.remediation.graph_engine import GraphFixReport
+
+        servicer = PrimaryServicer.__new__(PrimaryServicer)
+
+        yaml_content = "- name: Test\n  debug:\n    msg: hi\n"
+        play_file = tmp_path / "play.yml"
+        play_file.write_text(yaml_content)
+
+        graph = ContentGraph()
+        node_path = "play.yml/plays[0]/tasks[0]"
+        graph.add_node(
+            ContentNode(
+                identity=NodeIdentity(path=node_path, node_type=NodeType.TASK),
+                file_path=str(play_file),
+                yaml_lines=yaml_content,
+            )
+        )
+
+        session = SessionState(session_id="test-graph-ai-1")
+        session.working_files = {"play.yml": yaml_content.encode()}
+        session.original_files = dict(session.working_files)
+
+        ai_violations: list[dict[str, object]] = [
+            {"rule_id": "L042", "message": "Complex fix", "path": node_path, "line": 2},
+        ]
+
+        mock_ai_proposal = AIProposal(
+            file=str(play_file),
+            original_snippet=yaml_content,
+            fixed_snippet="- name: Test\n  ansible.builtin.debug:\n    msg: hi\n",
+            diff="--- a/play.yml\n+++ b/play.yml\n@@ -1,3 +1,3 @@\n",
+            rule_ids=["L042"],
+            confidence=0.9,
+            explanation="Use FQCN",
+        )
+
+        loop = asyncio.get_running_loop()
+        progress_queue: asyncio.Queue[ProgressUpdate | None] = asyncio.Queue()
+
+        fix_opts = FixOptions(enable_ai=True, ai_model="test-model")
+
+        with (
+            patch("apme_engine.engine.graph_scanner.load_graph_rules", return_value=[]),
+            patch("apme_engine.remediation.graph_engine.GraphRemediationEngine") as MockGRE,
+            patch("apme_engine.remediation.graph_engine.splice_modifications", return_value=[]),
+            patch("apme_engine.remediation.partition.add_classification_to_violations"),
+            patch(
+                "apme_engine.remediation.partition.partition_violations",
+                return_value=([], ai_violations, []),
+            ),
+            patch.object(
+                PrimaryServicer,
+                "_resolve_ai_provider",
+                return_value=MagicMock(),
+            ),
+            patch.object(
+                PrimaryServicer,
+                "_graph_ai_escalate",
+                return_value=[mock_ai_proposal],
+            ),
+        ):
+            MockGRE.return_value.remediate.return_value = GraphFixReport(passes=1, fixed=0)
+
+            events: list[SessionEvent] = []
+            async for event in servicer._session_graph_remediate(
+                session=session,
+                scan_id="scan-ai-1",
+                registry=MagicMock(),
+                scan_fn=lambda _paths: ai_violations,  # type: ignore[arg-type,return-value]
+                captured_graph=[graph],
+                yaml_paths=[str(play_file)],
+                temp_dir=tmp_path,
+                max_passes=5,
+                progress_queue=progress_queue,
+                progress_callback=lambda *a: None,
+                _heartbeat=_noop_heartbeat,
+                loop=loop,
+                format_content=_noop_format,
+                format_diffs=[],
+                fix_opts=fix_opts,
+            ):
+                events.append(event)
+
+        event_types = [e.WhichOneof("event") for e in events]
+        assert "proposals" in event_types, f"Expected ProposalsReady event, got: {event_types}"
+
+        proposals_event = next(e for e in events if e.HasField("proposals"))
+        assert proposals_event.proposals.tier == 2
+        assert len(proposals_event.proposals.proposals) >= 1
+
+        assert session.status == 1  # AWAITING_APPROVAL
+        assert session.current_tier == 2
+
+    async def test_no_ai_provider_goes_to_complete(self, tmp_path: Path) -> None:
+        """Without fix_opts, no AI escalation — session completes normally.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        from unittest.mock import MagicMock
+
+        from apme_engine.daemon.primary_server import PrimaryServicer
+        from apme_engine.engine.content_graph import ContentGraph
+        from apme_engine.remediation.graph_engine import GraphFixReport
+
+        servicer = PrimaryServicer.__new__(PrimaryServicer)
+
+        play_file = tmp_path / "play.yml"
+        play_file.write_text("- name: Test\n  debug:\n    msg: hi\n")
+
+        session = SessionState(session_id="test-no-ai")
+        session.working_files = {"play.yml": play_file.read_bytes()}
+        session.original_files = dict(session.working_files)
+
+        ai_violations: list[dict[str, object]] = [
+            {"rule_id": "L042", "message": "Complex fix", "file": "play.yml", "line": 2},
+        ]
+
+        loop = asyncio.get_running_loop()
+        progress_queue: asyncio.Queue[ProgressUpdate | None] = asyncio.Queue()
+
+        with (
+            patch("apme_engine.engine.graph_scanner.load_graph_rules", return_value=[]),
+            patch("apme_engine.remediation.graph_engine.GraphRemediationEngine") as MockGRE,
+            patch("apme_engine.remediation.graph_engine.splice_modifications", return_value=[]),
+            patch("apme_engine.remediation.partition.add_classification_to_violations"),
+            patch(
+                "apme_engine.remediation.partition.partition_violations",
+                return_value=([], ai_violations, []),
+            ),
+        ):
+            MockGRE.return_value.remediate.return_value = GraphFixReport(passes=1, fixed=0)
+
+            events: list[SessionEvent] = []
+            async for event in servicer._session_graph_remediate(
+                session=session,
+                scan_id="scan-no-ai",
+                registry=MagicMock(),
+                scan_fn=lambda _paths: ai_violations,  # type: ignore[arg-type,return-value]
+                captured_graph=[ContentGraph()],
+                yaml_paths=[str(play_file)],
+                temp_dir=tmp_path,
+                max_passes=5,
+                progress_queue=progress_queue,
+                progress_callback=lambda *a: None,
+                _heartbeat=_noop_heartbeat,
+                loop=loop,
+                format_content=_noop_format,
+                format_diffs=[],
+            ):
+                events.append(event)
+
+        event_types = [e.WhichOneof("event") for e in events]
+        assert "proposals" not in event_types
+        assert "result" in event_types
+        assert session.status == 3  # COMPLETE
+
+    async def test_empty_proposals_goes_to_complete(self, tmp_path: Path) -> None:
+        """When AI returns no proposals, session completes normally.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        from unittest.mock import MagicMock
+
+        from apme_engine.daemon.primary_server import PrimaryServicer
+        from apme_engine.engine.content_graph import ContentGraph
+        from apme_engine.remediation.graph_engine import GraphFixReport
+
+        servicer = PrimaryServicer.__new__(PrimaryServicer)
+
+        play_file = tmp_path / "play.yml"
+        play_file.write_text("- name: Test\n  debug:\n    msg: hi\n")
+
+        session = SessionState(session_id="test-ai-empty")
+        session.working_files = {"play.yml": play_file.read_bytes()}
+        session.original_files = dict(session.working_files)
+
+        ai_violations: list[dict[str, object]] = [
+            {"rule_id": "L042", "message": "Complex fix", "file": "play.yml", "line": 2},
+        ]
+
+        loop = asyncio.get_running_loop()
+        progress_queue: asyncio.Queue[ProgressUpdate | None] = asyncio.Queue()
+
+        fix_opts = FixOptions(enable_ai=True, ai_model="test-model")
+
+        with (
+            patch("apme_engine.engine.graph_scanner.load_graph_rules", return_value=[]),
+            patch("apme_engine.remediation.graph_engine.GraphRemediationEngine") as MockGRE,
+            patch("apme_engine.remediation.graph_engine.splice_modifications", return_value=[]),
+            patch("apme_engine.remediation.partition.add_classification_to_violations"),
+            patch(
+                "apme_engine.remediation.partition.partition_violations",
+                return_value=([], ai_violations, []),
+            ),
+            patch.object(
+                PrimaryServicer,
+                "_resolve_ai_provider",
+                return_value=MagicMock(),
+            ),
+            patch.object(
+                PrimaryServicer,
+                "_graph_ai_escalate",
+                return_value=[],
+            ),
+        ):
+            MockGRE.return_value.remediate.return_value = GraphFixReport(passes=1, fixed=0)
+
+            events: list[SessionEvent] = []
+            async for event in servicer._session_graph_remediate(
+                session=session,
+                scan_id="scan-ai-empty",
+                registry=MagicMock(),
+                scan_fn=lambda _paths: ai_violations,  # type: ignore[arg-type,return-value]
+                captured_graph=[ContentGraph()],
+                yaml_paths=[str(play_file)],
+                temp_dir=tmp_path,
+                max_passes=5,
+                progress_queue=progress_queue,
+                progress_callback=lambda *a: None,
+                _heartbeat=_noop_heartbeat,
+                loop=loop,
+                format_content=_noop_format,
+                format_diffs=[],
+                fix_opts=fix_opts,
+            ):
+                events.append(event)
+
+        event_types = [e.WhichOneof("event") for e in events]
+        assert "proposals" not in event_types
+        assert "result" in event_types
+        assert session.status == 3  # COMPLETE
 
 
 # ---------------------------------------------------------------------------
