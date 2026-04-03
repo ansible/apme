@@ -36,6 +36,14 @@ jobs:
         if: matrix.language != 'javascript'
         uses: github/codeql-action/autobuild@5c8a8a642e79153f5d047b10ec1cba1d1cc65699 # v3.35.1
 
+      - name: Set up Node.js for frontend
+        if: matrix.language == 'javascript'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
       - name: Build frontend for CodeQL
         if: matrix.language == 'javascript'
         working-directory: frontend

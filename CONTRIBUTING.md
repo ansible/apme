@@ -15,6 +15,7 @@ For full local development setup, tooling reference, and tox environments, see [
 - [Making Changes](#making-changes)
 - [Security Guidelines](#security-guidelines)
 - [Pull Request Process](#pull-request-process)
+  - [Branch Protection Policy](#branch-protection-policy)
 - [Coding Standards](#coding-standards)
 
 ---
@@ -95,7 +96,19 @@ New SSH key** with key type "Signing".
 
 ### Verifying locally
 
+For GPG-signed commits:
+
 ```bash
+git log --show-signature -1
+```
+
+For SSH-signed commits, Git also requires an `allowedSignersFile`:
+
+```bash
+# Create an allowed signers file mapping your email to your public key
+echo "your.email@example.com $(cat ~/.ssh/id_ed25519.pub)" >> ~/.ssh/allowed_signers
+git config --global gpg.ssh.allowedSignersFile ~/.ssh/allowed_signers
+
 git log --show-signature -1
 ```
 
@@ -274,7 +287,7 @@ Brief description of changes.
 The `main` branch enforces these protections:
 
 - **Require pull request reviews** — at least 1 approving review from a CODEOWNERS member
-- **Require status checks to pass** — `prek` and `test` must be green before merge
+- **Require status checks to pass** — `prek`, `test`, `integration`, and `ui` jobs must be green before merge
 - **Require conversation resolution** — all review threads must be resolved
 - **Require linear history** — squash merges only; no merge commits
 - **No force pushes** — history is immutable once merged
