@@ -35,10 +35,11 @@ This project follows a standard code of conduct. Be respectful, inclusive, and p
 
 ## Developer Certificate of Origin (DCO)
 
-All contributions must include a `Signed-off-by` trailer in the commit message,
-certifying that you have the right to submit the work under the project's
-Apache 2.0 license. This follows the
-[Developer Certificate of Origin](https://developercertificate.org/) (DCO).
+Contributors are expected to include a `Signed-off-by` trailer in the commit
+message, certifying that they have the right to submit the work under the
+project's Apache 2.0 license. This follows the
+[Developer Certificate of Origin](https://developercertificate.org/) (DCO) and
+is reviewed during the pull request process.
 
 Add `-s` (or `--signoff`) to your commit command:
 
@@ -62,7 +63,7 @@ git commit --amend -s --no-edit
 
 ## Commit Signing
 
-We recommend (and maintainers are expected) to cryptographically sign commits.
+We recommend cryptographically signing commits (and maintainers are expected to do so).
 Signed commits show a "Verified" badge on GitHub and provide stronger authorship
 guarantees.
 
