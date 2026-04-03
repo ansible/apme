@@ -76,6 +76,15 @@ Describe the expected flow when everything works correctly.
 - **Security**: [Requirements]
 - **Compatibility**: [Requirements]
 
+## Security Considerations
+
+- [ ] **Threat model**: Are there trust boundaries this feature crosses?
+- [ ] **Data sensitivity**: Does this feature handle secrets, credentials, or PII?
+- [ ] **Attack surface**: Does this feature expose new inputs (network, file, user)?
+- [ ] **Authz/Authn**: Does this feature require access control or authentication?
+
+_If none apply, write "N/A — no security-sensitive surface" and move on._
+
 ## Open Questions
 
 - [ ] [Question 1]

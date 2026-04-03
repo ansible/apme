@@ -1,0 +1,53 @@
+# CODEOWNERS — Require review from domain experts on critical paths.
+#
+# Syntax: <pattern> <owner> [<owner>…]
+# Owners are @org/team or @username handles.
+# Last matching pattern wins.
+#
+# Reference: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# ── Default ──────────────────────────────────────────────────────────
+* @ansible/apme-maintainers
+
+# ── Core engine & scanning pipeline ─────────────────────────────────
+/src/apme_engine/engine/ @ansible/apme-maintainers
+/src/apme_engine/daemon/ @ansible/apme-maintainers
+/src/apme_engine/remediation/ @ansible/apme-maintainers
+/src/apme_engine/cli/ @ansible/apme-maintainers
+
+# ── Validators ──────────────────────────────────────────────────────
+/src/apme_engine/validators/ @ansible/apme-maintainers
+
+# ── Gateway & persistence ───────────────────────────────────────────
+/src/apme_gateway/ @ansible/apme-maintainers
+
+# ── Galaxy Proxy ────────────────────────────────────────────────────
+/src/galaxy_proxy/ @ansible/apme-maintainers
+
+# ── Proto definitions (API contract) ────────────────────────────────
+/proto/ @ansible/apme-maintainers
+
+# ── Generated stubs — auto-generated, but changes need review ──────
+/src/apme/v1/ @ansible/apme-maintainers
+
+# ── Containers & deployment ─────────────────────────────────────────
+/containers/ @ansible/apme-maintainers
+
+# ── Frontend (React SPA) ───────────────────────────────────────────
+/frontend/ @ansible/apme-maintainers
+
+# ── CI/CD workflows ────────────────────────────────────────────────
+/.github/workflows/ @ansible/apme-maintainers
+
+# ── Security-sensitive files ────────────────────────────────────────
+/SECURITY.md @ansible/apme-maintainers
+/.github/CODEOWNERS @ansible/apme-maintainers
+/.github/dependabot.yml @ansible/apme-maintainers
+/pyproject.toml @ansible/apme-maintainers
+/uv.lock @ansible/apme-maintainers
+
+# ── Architecture decisions & project governance ─────────────────────
+/.sdlc/adrs/ @ansible/apme-maintainers
+/CLAUDE.md @ansible/apme-maintainers
+/AGENTS.md @ansible/apme-maintainers
+/SOP.md @ansible/apme-maintainers
