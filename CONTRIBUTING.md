@@ -290,7 +290,8 @@ The `main` branch enforces these protections:
 - **Require review from Code Owners** — CODEOWNERS-matched paths need approval from a code owner
 - **Require status checks to pass** — `prek / prek`, `test / test`, `test / integration`, and `test / ui` must be green before merge
 - **Require conversation resolution** — all review threads must be resolved
-- **Require linear history** — squash merges only; no merge commits
+- **Require linear history** — no merge commits (enforced via GitHub setting)
+- **Allow squash merging only** — rebase and merge commits are disabled in repo settings
 - **No force pushes** — history is immutable once merged
 - **No branch deletion** — `main` cannot be deleted
 
