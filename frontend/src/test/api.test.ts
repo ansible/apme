@@ -209,10 +209,10 @@ describe("api service", () => {
       { project_id: "p1", project_name: "demo", repo_url: "https://example.com" },
     ]));
     const { listCollectionProjects } = await import("../services/api");
-    const result = await listCollectionProjects("community.general");
+    const result = await listCollectionProjects("ns/collection@2.0");
     expect(result).toHaveLength(1);
     expect(mockFetch).toHaveBeenCalledWith(
-      "/api/v1/collections/community.general/projects",
+      "/api/v1/collections/ns%2Fcollection%402.0/projects",
       expect.anything(),
     );
   });
