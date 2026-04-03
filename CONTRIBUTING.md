@@ -286,8 +286,9 @@ Brief description of changes.
 
 The `main` branch enforces these protections:
 
-- **Require pull request reviews** — at least 1 approving review from a CODEOWNERS member
-- **Require status checks to pass** — `prek`, `test`, `integration`, and `ui` jobs must be green before merge
+- **Require approvals** — at least 1 approving review
+- **Require review from Code Owners** — CODEOWNERS-matched paths need approval from a code owner
+- **Require status checks to pass** — `prek / prek`, `test / test`, `test / integration`, and `test / ui` must be green before merge
 - **Require conversation resolution** — all review threads must be resolved
 - **Require linear history** — squash merges only; no merge commits
 - **No force pushes** — history is immutable once merged
