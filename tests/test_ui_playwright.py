@@ -82,6 +82,7 @@ def test_sidebar_nav_items(dashboard: Page) -> None:
         "Projects",
         "Playground",
         "Activity",
+        "Sessions",
         "Health",
         "Settings",
     ]
@@ -97,7 +98,7 @@ def test_old_nav_items_removed(dashboard: Page) -> None:
         dashboard: Page positioned on the dashboard.
     """
     nav = dashboard.locator("[data-testid='page-navigation']")
-    for removed in ["Sessions", "New Scan", "Top Violations", "Fix Tracker", "AI Metrics"]:
+    for removed in ["New Scan", "Top Violations", "Fix Tracker", "AI Metrics"]:
         assert nav.locator(f".pf-v6-c-nav__item >> text='{removed}'").count() == 0
 
 
