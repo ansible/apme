@@ -1,0 +1,34 @@
+---
+# violations-playbook.yml
+# This playbook intentionally contains violations to test APME detection.
+# Expected violations:
+#   - L003: Play without name
+#   - L026: Non-FQCN module usage (command, shell, file)
+#   - M009: with_items should be loop
+#   - R108: become without become_user
+
+- hosts: all
+  become: true
+
+  tasks:
+    - command: echo "Hello"
+      register: hello_out
+
+    - name: Create directories
+      file:
+        path: "{{ item }}"
+        state: directory
+      with_items:
+        - /opt/app
+        - /opt/app/logs
+        - /opt/app/config
+
+    - name: Run shell command
+      shell: ls -la /tmp
+      changed_when: false
+
+    - name: Copy config file
+      copy:
+        src: app.conf
+        dest: /opt/app/config/app.conf
+        mode: 644
