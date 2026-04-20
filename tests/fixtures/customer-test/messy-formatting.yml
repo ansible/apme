@@ -1,0 +1,22 @@
+---
+# messy-formatting.yml
+# This playbook has formatting issues that `apme format` should fix.
+# Expected: Formatting changes detected (tabs, spacing, key order)
+
+- name: Messy playbook
+  hosts: all
+  tasks:
+    - name: Task with wrong key order
+      register: result
+      ansible.builtin.command: echo "wrong order"
+      when: true
+    - name: Task with inconsistent spacing
+      ansible.builtin.debug:
+        msg: "{{message}}"
+      vars:
+        message: "needs spaces around braces"
+    - name: Task with tab indentation
+      ansible.builtin.file:
+        path: /tmp/test
+        state: directory
+        mode: "0755"
