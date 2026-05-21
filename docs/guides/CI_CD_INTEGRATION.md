@@ -12,7 +12,7 @@ APME provides several features designed for CI/CD integration:
 | JSON output | `--json` | Parse results programmatically |
 | Check mode | `format --check` | Fail if formatting needed |
 | Diff output | `--diff` | Show proposed changes |
-| Quiet mode | `-q` | Reduce output noise |
+| Verbose | `-v` / `-vv` | Debug timing and details |
 
 ### Exit Codes
 
@@ -51,7 +51,7 @@ jobs:
         uses: astral-sh/setup-uv@v4
 
       - name: Install APME
-        run: uv tool install apme
+        run: uv tool install apme-engine
 
       - name: Run APME check
         run: apme check --json . > apme-results.json
@@ -104,7 +104,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v4
-      - run: uv tool install apme
+      - run: uv tool install apme-engine
       
       - name: Check YAML formatting
         run: apme format --check .
@@ -128,7 +128,7 @@ jobs:
       - uses: astral-sh/setup-uv@v4
       
       - name: Install APME
-        run: uv tool install apme
+        run: uv tool install apme-engine
 
       - name: Format check
         run: apme format --check .
@@ -163,13 +163,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v4
-      - run: uv tool install apme
+      - run: uv tool install apme-engine
 
       - name: Run APME
         id: apme
         continue-on-error: true
         run: |
-          apme check --json . > results.json 2>&1
+          apme check --json . > results.json
           echo "exit_code=$?" >> $GITHUB_OUTPUT
 
       - name: Comment on PR
@@ -225,12 +225,12 @@ jobs:
         with:
           path: |
             ~/.cache/uv
-            ~/.cache/apme
+            ~/.apme-data
           key: apme-${{ runner.os }}-${{ hashFiles('**/requirements.yml', '**/galaxy.yml') }}
           restore-keys: |
             apme-${{ runner.os }}-
 
-      - run: uv tool install apme
+      - run: uv tool install apme-engine
       - run: apme check .
 ```
 
@@ -256,7 +256,7 @@ apme-check:
   image: python:3.12-slim
   before_script:
     - pip install uv
-    - uv tool install apme
+    - uv tool install apme-engine
   script:
     - apme check .
   rules:
@@ -277,8 +277,6 @@ apme-check:
   script:
     - apme check --json . > apme-results.json
   artifacts:
-    reports:
-      dotenv: apme-results.json
     paths:
       - apme-results.json
     when: always
@@ -305,7 +303,7 @@ apme-check:
   script:
     - apme check --json . | tee apme-results.json
     - |
-      VIOLATIONS=$(jq '.violations | length' apme-results.json)
+      VIOLATIONS=$(python3 -c "import json; print(len(json.load(open('apme-results.json')).get('violations', [])))")
       echo "APME found $VIOLATIONS violations"
       if [ "$VIOLATIONS" -gt 0 ]; then
         exit 1
@@ -327,13 +325,20 @@ apme-review:
   script:
     - apme check --json . > results.json || true
     - |
-      VIOLATIONS=$(jq '.violations | length' results.json)
-      if [ "$VIOLATIONS" -gt 0 ]; then
-        echo "## APME found $VIOLATIONS violations" > apme-summary.md
-        jq -r '.violations[] | "- **\(.rule_id)**: \(.file):\(.line) - \(.message)"' results.json >> apme-summary.md
-        cat apme-summary.md
-        exit 1
-      fi
+      python3 -c "
+      import json
+      data = json.load(open('results.json'))
+      violations = data.get('violations', [])
+      count = len(violations)
+      print(f'APME found {count} violations')
+      if count > 0:
+          with open('apme-summary.md', 'w') as f:
+              f.write(f'## APME found {count} violations\n\n')
+              for v in violations:
+                  f.write(f\"- **{v['rule_id']}**: {v['file']}:{v['line']} - {v['message']}\n\")
+          exit(1)
+      "
+    - cat apme-summary.md 2>/dev/null || true
   artifacts:
     paths:
       - results.json
@@ -349,15 +354,11 @@ apme-review:
 pipeline {
     agent any
     
-    environment {
-        APME_CACHE = "${WORKSPACE}/.cache/apme"
-    }
-    
     stages {
         stage('Setup') {
             steps {
                 sh 'pip install uv'
-                sh 'uv tool install apme'
+                sh 'uv tool install apme-engine'
             }
         }
         
@@ -423,8 +424,8 @@ trigger:
     include:
       - '**/*.yml'
       - '**/*.yaml'
-      - 'roles/*'
-      - 'playbooks/*'
+      - 'roles/**'
+      - 'playbooks/**'
 
 pool:
   vmImage: 'ubuntu-latest'
@@ -436,7 +437,7 @@ steps:
 
   - script: |
       pip install uv
-      uv tool install apme
+      uv tool install apme-engine
     displayName: 'Install APME'
 
   - script: apme format --check .
@@ -490,7 +491,7 @@ APME caches collection metadata and session venvs. Cache these directories:
 
 | Path | Contents |
 |------|----------|
-| `~/.cache/apme` | Collection cache, UV cache |
+| `~/.apme-data` | Collection cache, UV cache |
 | `~/.cache/uv` | UV package cache |
 
 ### 3. Use JSON Output for Parsing
@@ -503,7 +504,7 @@ apme check --json . | jq '.violations | length'
 apme check --json . | jq '[.violations[].rule_id] | unique'
 
 # Filter by severity
-apme check --json . | jq '[.violations[] | select(.level == "error")]'
+apme check --json . | jq '[.violations[] | select(.severity == "error")]'
 ```
 
 ### 4. Selective Scanning
@@ -511,6 +512,11 @@ apme check --json . | jq '[.violations[] | select(.level == "error")]'
 For large monorepos, scan only changed paths:
 
 ```yaml
+- name: Checkout with full history
+  uses: actions/checkout@v4
+  with:
+    fetch-depth: 0  # Required for git diff against origin/main
+
 - name: Get changed files
   id: changes
   run: |
@@ -556,7 +562,7 @@ fi
 
 | Issue | Solution |
 |-------|----------|
-| Slow first run | Cache `~/.cache/apme` and `~/.cache/uv` |
+| Slow first run | Cache `~/.apme-data` and `~/.cache/uv` |
 | Permission denied | Ensure workspace is readable; use `:ro` mount |
 | Collection not found | Run `ansible-galaxy collection install` first or use `--skip-collection-scan` |
 | Exit code 2 | Check for syntax errors in input files |
