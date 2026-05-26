@@ -6,8 +6,9 @@ A comprehensive test plan for validating APME (Ansible Policy & Modernization En
 
 | Requirement | Purpose |
 |-------------|---------|
-| Python 3.10+ | CLI installation via pip |
-| Podman | Container deployment (optional) |
+| Podman (rootless) | Container deployment |
+| Git | Clone repo and manage content |
+| tox | Run build/up/cli commands |
 | Sample Ansible content | Files to scan |
 | 5-30 minutes | Depending on test depth |
 
@@ -16,25 +17,35 @@ A comprehensive test plan for validating APME (Ansible Policy & Modernization En
 Verify basic installation and operation:
 
 ```bash
-# 1. Install APME
-pip install apme-engine
+# 1. Clone the repo and build containers
+git clone https://github.com/ansible/apme.git
+cd apme
+tox -e build
 
-# 2. Check version
-apme --version
+# 2. Start the pod
+tox -e up
 
-# 3. Scan sample content
-apme check /path/to/playbook.yml
+# 3. Check version
+tox -e cli -- --version
 
-# 4. Verify exit codes
+# 4. Scan sample content
+tox -e cli -- check /path/to/playbook.yml
+
+# 5. Verify exit codes
 echo "Exit code: $?"
 # 0 = clean, 1 = violations found, 2 = error
+
+# 6. Stop the pod when done
+tox -e down
 ```
 
-If step 3 works, APME is functional. Continue with detailed testing below.
+If step 4 works, APME is functional. Continue with detailed testing below.
 
 ---
 
 ## CLI Command Reference
+
+> **Note**: When running from the repo with the Podman pod, prefix commands with `tox -e cli --`. For example: `tox -e cli -- check .` instead of `apme check .`
 
 ### Core Commands
 
@@ -215,17 +226,17 @@ Create `.gitlab-ci.yml`:
 include:
   - local: '.gitlab/apme-check.yml'
 
-# Or inline:
+# Or inline using container image:
 apme-check:
-  image: python:3.12-slim
-  before_script:
-    - pip install apme-engine
-    - curl -fsSL -o /usr/local/bin/opa https://openpolicyagent.org/downloads/latest/opa_linux_amd64_static
-    - chmod +x /usr/local/bin/opa
+  image: ghcr.io/ansible/apme-cli:latest
+  services:
+    - name: ghcr.io/ansible/apme-primary:latest
+      alias: primary
   script:
     - apme check . --json > apme-report.json
   variables:
-    OPA_USE_PODMAN: "0"
+    APME_PRIMARY_HOST: primary
+    APME_PRIMARY_PORT: "50051"
   artifacts:
     paths:
       - apme-report.json
