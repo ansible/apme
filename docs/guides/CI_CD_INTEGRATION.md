@@ -173,8 +173,9 @@ jobs:
         id: apme
         continue-on-error: true
         run: |
-          apme check --json . > results.json
-          echo "exit_code=$?" >> $GITHUB_OUTPUT
+          # Capture exit code even when apme returns non-zero (violations)
+          apme check --json . > results.json || exit_code=$?
+          echo "exit_code=${exit_code:-0}" >> $GITHUB_OUTPUT
 
       - name: Comment on PR
         uses: actions/github-script@v7
@@ -421,6 +422,9 @@ pipeline {
     post {
         failure {
             script {
+                // Requires Pipeline Utility Steps plugin for readJSON
+                // Install via: Manage Jenkins > Plugins > Pipeline Utility Steps
+                // Alternative: use groovy.json.JsonSlurper for stock Jenkins
                 def results = readJSON file: 'apme-results.json'
                 def count = results.violations?.size() ?: 0
                 echo "APME found ${count} violations"
