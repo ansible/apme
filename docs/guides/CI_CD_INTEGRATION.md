@@ -66,7 +66,9 @@ jobs:
 
 ### With Container Image
 
-For faster startup and consistent environments, use the container image:
+> **Note:** The CLI container image is designed for pod deployments where the Primary
+> service runs separately. For standalone CI usage, either use pip installation (shown
+> above) or override the container's default Primary address with `APME_PRIMARY_ADDRESS=""`:
 
 ```yaml
 name: APME Scan (Container)
@@ -82,6 +84,8 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/ansible/apme-cli:latest
+      env:
+        APME_PRIMARY_ADDRESS: ""  # Enable daemon auto-start mode
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -177,7 +181,15 @@ jobs:
         with:
           script: |
             const fs = require('fs');
-            const results = JSON.parse(fs.readFileSync('results.json', 'utf8'));
+            let results = { violations: [] };
+            try {
+              const content = fs.readFileSync('results.json', 'utf8');
+              if (content.trim()) {
+                results = JSON.parse(content);
+              }
+            } catch (e) {
+              console.log('Could not parse results.json:', e.message);
+            }
             const violations = results.violations || [];
             
             let body = '## APME Scan Results\n\n';
@@ -270,10 +282,14 @@ apme-check:
 
 ### With Container Image
 
+> **Note:** The CLI container requires `APME_PRIMARY_ADDRESS=""` for standalone CI use.
+
 ```yaml
 apme-check:
   stage: validate
   image: ghcr.io/ansible/apme-cli:latest
+  variables:
+    APME_PRIMARY_ADDRESS: ""  # Enable daemon auto-start mode
   script:
     - apme check --json . > apme-results.json
   artifacts:
@@ -292,6 +308,8 @@ stages:
 apme-format:
   stage: lint
   image: ghcr.io/ansible/apme-cli:latest
+  variables:
+    APME_PRIMARY_ADDRESS: ""
   script:
     - apme format --check .
   rules:
@@ -300,9 +318,15 @@ apme-format:
 apme-check:
   stage: validate
   image: ghcr.io/ansible/apme-cli:latest
+  variables:
+    APME_PRIMARY_ADDRESS: ""
   script:
-    - apme check --json . | tee apme-results.json
+    - apme check --json . | tee apme-results.json || true  # Capture results even on violations
     - |
+      if [ ! -s apme-results.json ]; then
+        echo "APME failed to produce output"
+        exit 2
+      fi
       VIOLATIONS=$(python3 -c "import json; print(len(json.load(open('apme-results.json')).get('violations', [])))")
       echo "APME found $VIOLATIONS violations"
       if [ "$VIOLATIONS" -gt 0 ]; then
@@ -322,12 +346,26 @@ apme-check:
 apme-review:
   stage: validate
   image: ghcr.io/ansible/apme-cli:latest
+  variables:
+    APME_PRIMARY_ADDRESS: ""
   script:
     - apme check --json . > results.json || true
     - |
       python3 -c "
       import json
-      data = json.load(open('results.json'))
+      import sys
+
+      try:
+          with open('results.json') as f:
+              content = f.read().strip()
+              if not content:
+                  print('APME produced no output')
+                  sys.exit(2)
+              data = json.loads(content)
+      except (json.JSONDecodeError, FileNotFoundError) as e:
+          print(f'Failed to parse results: {e}')
+          sys.exit(2)
+
       violations = data.get('violations', [])
       count = len(violations)
       print(f'APME found {count} violations')
@@ -336,7 +374,7 @@ apme-review:
               f.write(f'## APME found {count} violations\n\n')
               for v in violations:
                   f.write(f\"- **{v['rule_id']}**: {v['file']}:{v['line']} - {v['message']}\n\")
-          exit(1)
+          sys.exit(1)
       "
     - cat apme-summary.md 2>/dev/null || true
   artifacts:
@@ -394,12 +432,18 @@ pipeline {
 
 ### With Docker Agent
 
+> **Note:** The CLI container requires `APME_PRIMARY_ADDRESS=""` for standalone CI use.
+
 ```groovy
 pipeline {
     agent {
         docker {
             image 'ghcr.io/ansible/apme-cli:latest'
         }
+    }
+    
+    environment {
+        APME_PRIMARY_ADDRESS = ''  // Enable daemon auto-start mode
     }
     
     stages {
@@ -457,21 +501,28 @@ steps:
 
 For any CI system that supports containers:
 
+> **Note:** Set `APME_PRIMARY_ADDRESS=""` to enable daemon auto-start mode. Without
+> this, the container expects a Primary service at `primary:50051`.
+
 ```bash
 # Pull the CLI image
 docker pull ghcr.io/ansible/apme-cli:latest
 
 # Run scan (mount project as /workspace)
-docker run --rm -v "$(pwd):/workspace:ro" ghcr.io/ansible/apme-cli:latest check /workspace
+docker run --rm -e APME_PRIMARY_ADDRESS="" \
+  -v "$(pwd):/workspace:ro" ghcr.io/ansible/apme-cli:latest check /workspace
 
 # Run with JSON output
-docker run --rm -v "$(pwd):/workspace:ro" ghcr.io/ansible/apme-cli:latest check --json /workspace
+docker run --rm -e APME_PRIMARY_ADDRESS="" \
+  -v "$(pwd):/workspace:ro" ghcr.io/ansible/apme-cli:latest check --json /workspace
 
 # Format check
-docker run --rm -v "$(pwd):/workspace:ro" ghcr.io/ansible/apme-cli:latest format --check /workspace
+docker run --rm -e APME_PRIMARY_ADDRESS="" \
+  -v "$(pwd):/workspace:ro" ghcr.io/ansible/apme-cli:latest format --check /workspace
 
 # Run remediation (needs write access)
-docker run --rm -v "$(pwd):/workspace:rw" ghcr.io/ansible/apme-cli:latest remediate /workspace
+docker run --rm -e APME_PRIMARY_ADDRESS="" \
+  -v "$(pwd):/workspace:rw" ghcr.io/ansible/apme-cli:latest remediate /workspace
 ```
 
 ## Best Practices
@@ -491,7 +542,7 @@ APME caches collection metadata and session venvs. Cache these directories:
 
 | Path | Contents |
 |------|----------|
-| `~/.apme-data` | Collection cache, UV cache |
+| `~/.apme-data` | APME data directory (daemon state, collection cache, session venvs) |
 | `~/.cache/uv` | UV package cache |
 
 ### 3. Use JSON Output for Parsing
@@ -517,10 +568,15 @@ For large monorepos, scan only changed paths:
   with:
     fetch-depth: 0  # Required for git diff against origin/main
 
+- name: Fetch base branch
+  run: git fetch origin main
+
 - name: Get changed files
   id: changes
   run: |
-    FILES=$(git diff --name-only origin/main...HEAD | grep -E '\.(yml|yaml)$' | tr '\n' ' ')
+    # grep -E returns exit 1 when no matches; use || true to avoid step failure
+    FILES=$(git diff --name-only origin/main...HEAD | grep -E '\.(yml|yaml)$' || true)
+    FILES=$(echo "$FILES" | tr '\n' ' ')
     echo "files=$FILES" >> $GITHUB_OUTPUT
 
 - name: Scan changed files
@@ -579,6 +635,6 @@ apme check -vv .
 
 ## Related Documentation
 
-- [Rule Configuration](RULE_CONFIGURATION.md) — Disable rules, custom rules
+- [Rule Catalog](../rules/RULE_CATALOG.md) — Available rules and severity levels
 - [Deployment](DEPLOYMENT.md) — Container deployment details
 - [Development](DEVELOPMENT.md) — Contributing and testing
