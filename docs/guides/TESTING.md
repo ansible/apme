@@ -59,6 +59,9 @@ If step 4 works, APME is functional. Continue with detailed testing below.
 | `apme format --check .` | CI mode: fail if changes needed | 0=clean, 1=changes, 2=error |
 | `apme remediate .` | Auto-fix Tier 1 violations | 0=all fixed, 1=remaining, 2=error |
 | `apme health-check` | Check service health | 0=healthy, 1=unhealthy |
+| `apme suppress add` | Add violation suppression | 0=added, 2=error |
+| `apme suppress list` | List all suppressions | 0 |
+| `apme suppress remove` | Remove a suppression | 0=removed, 2=error |
 
 ### Common Options
 
@@ -72,6 +75,7 @@ If step 4 works, APME is functional. Continue with detailed testing below.
 | `-v` | all | Verbose output (summary + top 10 slowest rules) |
 | `-vv` | all | Very verbose (full per-rule breakdown) |
 | `--no-ansi` | all | Disable colors (CI mode) |
+| `--show-suppressed` | check, remediate | Include suppressed violations in output |
 
 ---
 
@@ -136,7 +140,30 @@ apme health-check --json
 
 **Expected**: All services show "ok" status.
 
-### 5. Verbose Diagnostics
+### 5. Violation Suppression (ADR-055)
+
+Suppress known violations using content-based fingerprints:
+
+```bash
+# Run check to get fingerprints
+apme check --json . | jq '.violations[] | {rule_id, fingerprint}'
+
+# Add a suppression (baseline a known issue)
+apme suppress add L026 --fingerprint abc123def456...
+
+# List all suppressions
+apme suppress list
+
+# Remove a suppression
+apme suppress remove L026 --fingerprint abc123def456...
+
+# Show suppressed violations in output
+apme check --show-suppressed .
+```
+
+**Expected**: Suppressed violations stored in `.apme/suppressions.yml`, excluded from default output.
+
+### 6. Verbose Diagnostics
 
 ```bash
 # Summary diagnostics
@@ -305,6 +332,20 @@ apme check tests/fixtures/customer-test/violations-playbook.yml
 # Expected: R108 violation
 ```
 
+### AAP-Specific Rules (A)
+
+```bash
+# A001: Hardcoded template IDs (should use named_url)
+# Look for tasks using controller_* modules with numeric IDs
+apme check playbooks/controller-config.yml
+# Expected: A001 if using id: 123 instead of name: "My Template"
+
+# A002: Deprecated AAP API endpoints or ansible.hub modules
+# Look for tasks using removed/deprecated Controller API paths
+apme check playbooks/aap-automation.yml
+# Expected: A002 for deprecated endpoints or hub module usage
+```
+
 ### Secret Detection (SEC)
 
 ```bash
@@ -437,3 +478,19 @@ Include the APME version (`apme --version`) and ansible-core version in reports.
 | `vault-reference.yml` | 0 (Jinja2 filtering test) |
 
 Location: `tests/fixtures/customer-test/`
+
+---
+
+## Rule Categories
+
+APME includes **156 rules** across 4 validators:
+
+| Prefix | Category | Examples |
+|--------|----------|----------|
+| **L** | Lint | L003 (play name), L026 (FQCN), L040 (tabs) |
+| **M** | Modernize | M001 (FQCN resolution), M009 (with_items→loop) |
+| **R** | Risk | R108 (privilege escalation), R118 (external download) |
+| **A** | AAP-specific | A001 (named_url), A002 (deprecated API) |
+| **SEC** | Secrets | Hardcoded credentials, API keys |
+
+Use `--ansible-version` to target specific ansible-core versions for modernization rules.
