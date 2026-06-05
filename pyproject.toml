@@ -23,6 +23,7 @@ dependencies = [
     "httpx",
     "packaging>=23",
     "fastapi>=0.100",
+    "starlette>=1.0.1",
     "uvicorn[standard]>=0.20",
     "pip-audit>=2.7",
     "ansible-core>=2.17.14",

@@ -457,7 +457,8 @@ def _validate_tarball_dir(tarball_dir: str) -> Path:
     """Validate and resolve a tarball directory path.
 
     Resolves the path first (eliminating symlinks and ``..`` components),
-    then checks the canonical result against an allowlist of safe roots.
+    then reconstructs the result relative to the matched allowlist root
+    so that the returned ``Path`` is provably rooted under a safe prefix.
 
     Args:
         tarball_dir: Untrusted path string from the request.
@@ -471,16 +472,23 @@ def _validate_tarball_dir(tarball_dir: str) -> Path:
     resolved = Path(os.path.realpath(tarball_dir))
 
     allowed_roots = (Path(tempfile.gettempdir()).resolve(), Path("/sessions").resolve())
-    if not any(resolved.is_relative_to(root) for root in allowed_roots):
+    matched_root: Path | None = None
+    for root in allowed_roots:
+        if resolved.is_relative_to(root):
+            matched_root = root
+            break
+
+    if matched_root is None:
         raise HTTPException(
             status_code=400,
             detail="Path must be under a session or temp directory",
         )
 
-    if not resolved.is_dir():
-        raise HTTPException(status_code=400, detail=f"Not a directory: {tarball_dir}")
+    safe_path = matched_root / resolved.relative_to(matched_root)
+    if not safe_path.is_dir():
+        raise HTTPException(status_code=400, detail="Not a directory")
 
-    return resolved
+    return safe_path
 
 
 def _galaxy_version_sort_key(version: str) -> tuple[int, Version | str]:
