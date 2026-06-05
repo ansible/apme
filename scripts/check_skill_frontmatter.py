@@ -121,16 +121,8 @@ def check_skill(path: Path) -> list[str]:
     if fm is None:
         return [f"{path}: missing or invalid frontmatter"]
 
-    errors = [
-        f"{path}: unknown field '{field}'"
-        for field in sorted(fm)
-        if field not in _ALLOWED_FIELDS
-    ]
-    errors.extend(
-        f"{path}: missing required field '{field}'"
-        for field in sorted(_REQUIRED_FIELDS)
-        if field not in fm
-    )
+    errors = [f"{path}: unknown field '{field}'" for field in sorted(fm) if field not in _ALLOWED_FIELDS]
+    errors.extend(f"{path}: missing required field '{field}'" for field in sorted(_REQUIRED_FIELDS) if field not in fm)
     return errors
 
 
@@ -154,9 +146,7 @@ def main() -> int:
         Exit code: 0 if all skills pass, 1 if errors found.
     """
     root = Path()
-    skill_files = sorted(
-        p for p in root.glob("**/SKILL.md") if not _is_excluded(p)
-    )
+    skill_files = sorted(p for p in root.glob("**/SKILL.md") if not _is_excluded(p))
 
     if not skill_files:
         print("No SKILL.md files found")
