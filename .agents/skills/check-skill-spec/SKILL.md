@@ -6,6 +6,7 @@ description: >-
   (scripts/check_skill_frontmatter.py) is still needed. Use when checking if
   the upstream spec has adopted the extended fields, when planning to remove
   the custom hook, or when a new spec release is announced.
+argument-hint: "[--check-releases]"
 user-invocable: true
 metadata:
   author: APME Team
