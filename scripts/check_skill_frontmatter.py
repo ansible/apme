@@ -66,13 +66,8 @@ _EXTENDED_FIELDS: frozenset[str] = frozenset(
 
 _ALLOWED_FIELDS: frozenset[str] = _SPEC_FIELDS | _EXTENDED_FIELDS
 
-_EXCLUDED_DIRS: tuple[str, ...] = (
-    ".tox",
-    ".venv",
-    "venv",
-    "node_modules",
-    "tests/fixtures",
-)
+_EXCLUDED_COMPONENTS: frozenset[str] = frozenset({".tox", ".venv", "venv", "node_modules"})
+_EXCLUDED_PREFIXES: tuple[str, ...] = ("tests/fixtures",)
 
 # Fields required by this project (beyond the spec's own requirements)
 _REQUIRED_FIELDS: frozenset[str] = frozenset(
@@ -137,7 +132,9 @@ def _is_excluded(path: Path) -> bool:
     Returns:
         Whether the path should be skipped.
     """
-    return any(path.is_relative_to(excluded) for excluded in _EXCLUDED_DIRS)
+    if _EXCLUDED_COMPONENTS & set(path.parts):
+        return True
+    return any(path.is_relative_to(prefix) for prefix in _EXCLUDED_PREFIXES)
 
 
 def main() -> int:
