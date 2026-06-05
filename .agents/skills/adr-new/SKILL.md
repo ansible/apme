@@ -181,8 +181,12 @@ Fill:
 ### 6. Update Index
 
 Edit `.sdlc/adrs/README.md`:
-- Add row: `| [ADR-NNN](ADR-NNN-slug.md) | Title | Status | YYYY-MM |`
-- Insert in numerical order
+- Add a row (insert in numerical order):
+
+```markdown
+| [ADR-NNN](ADR-NNN-slug.md) | Title | Status | YYYY-MM |
+```
+
 - Add to Changelog table
 
 ### 7. Link to DR (if applicable)

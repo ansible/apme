@@ -26,6 +26,16 @@ repos:
       - id: pydoclint
         args: [--exclude=src/apme/v1/, src/, tests/, scripts/]
         pass_filenames: false
+  - repo: https://github.com/michellepellon/skillmark
+    rev: v0.1.0
+    hooks:
+      - id: skillmark
+        language: rust
+        args: [--config, .skillmark.toml]
+      - id: skillmark-fix
+        language: rust
+        args: [--config, .skillmark.toml]
+        stages: [manual]
   - repo: local
     hooks:
       - id: adr-index
@@ -42,3 +52,11 @@ repos:
         entry: python tools/generate_rule_catalog.py
         files: ^src/apme_engine/validators/.+\.(py|rego|md)$|^src/apme_engine/remediation/transforms/
         pass_filenames: false
+      - id: check-skill-frontmatter
+        name: Validate SKILL.md frontmatter
+        language: python
+        language_version: python3.10
+        entry: python scripts/check_skill_frontmatter.py
+        additional_dependencies: [pyyaml]
+        pass_filenames: false
+        always_run: true
