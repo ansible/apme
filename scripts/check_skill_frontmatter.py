@@ -102,8 +102,10 @@ def extract_frontmatter(path: Path) -> dict[str, object] | None:
         return None
 
     try:
-        result: dict[str, object] | None = yaml.safe_load(parts[1])
+        result: object = yaml.safe_load(parts[1])
     except yaml.YAMLError:
+        return None
+    if not isinstance(result, dict):
         return None
     return result
 
@@ -135,8 +137,7 @@ def _is_excluded(path: Path) -> bool:
     Returns:
         Whether the path should be skipped.
     """
-    parts = path.parts
-    return any(excluded in parts for excluded in _EXCLUDED_DIRS)
+    return any(path.is_relative_to(excluded) for excluded in _EXCLUDED_DIRS)
 
 
 def main() -> int:
