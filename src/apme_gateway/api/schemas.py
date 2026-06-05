@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class SessionSummary(BaseModel):  # type: ignore[misc]
@@ -80,6 +80,7 @@ class ViolationDetail(BaseModel):  # type: ignore[misc]
         node_line_start: File line where the node starts.
         ai_reason: Why the AI could not fix this violation (ai_abstained only).
         ai_suggestion: Manual remediation guidance from the AI (ai_abstained only).
+        suppressed: True if this violation matches an active suppression (ADR-055).
     """
 
     id: int
@@ -99,6 +100,7 @@ class ViolationDetail(BaseModel):  # type: ignore[misc]
     node_line_start: int = 0
     ai_reason: str = ""
     ai_suggestion: str = ""
+    suppressed: bool = False
 
 
 class ProposalDetail(BaseModel):  # type: ignore[misc]
@@ -161,6 +163,7 @@ class ActivityDetail(BaseModel):  # type: ignore[misc]
     Attributes:
         scan_id: UUID of the run (``scans.scan_id`` column).
         session_id: Owning session hash.
+        project_id: Owning project UUID (None for CLI/playground runs).
         project_path: Project root path.
         source: Origin of the run.
         created_at: ISO 8601 timestamp.
@@ -183,6 +186,7 @@ class ActivityDetail(BaseModel):  # type: ignore[misc]
 
     scan_id: str
     session_id: str
+    project_id: str | None = None
     project_path: str
     source: str
     created_at: str
@@ -689,10 +693,12 @@ class DepHealthSummary(BaseModel):  # type: ignore[misc]
     Attributes:
         collection_findings: Per-collection finding counts.
         python_cves: Per-CVE finding summaries.
+        suppressed_count: Number of violations excluded by active suppressions.
     """
 
     collection_findings: list[CollectionHealthSummary] = Field(default_factory=list)
     python_cves: list[PythonCveSummary] = Field(default_factory=list)
+    suppressed_count: int = 0
 
 
 class OperationRequestOptions(BaseModel):  # type: ignore[misc]
@@ -812,6 +818,84 @@ class ProjectRanking(BaseModel):  # type: ignore[misc]
     scan_count: int
     last_scanned_at: str | None = None
     days_since_last_scan: int | None = None
+
+
+# ── Suppression schemas (ADR-055) ─────────────────────────────────────
+
+
+class SuppressionSchema(BaseModel):  # type: ignore[misc]
+    """A fingerprint-based violation suppression (ADR-055).
+
+    Attributes:
+        id: Auto-increment PK.
+        fingerprint_hash: SHA-256 hex digest.
+        fingerprint_mode: Granularity — ``full`` or ``rule_only``.
+        rule_id: Canonical rule identifier.
+        scope: ``global`` or ``project:<uuid>``.
+        reason: Human justification.
+        created_by: Author of the suppression.
+        created_at: ISO 8601 creation timestamp.
+    """
+
+    id: int
+    fingerprint_hash: str
+    fingerprint_mode: str
+    rule_id: str
+    scope: str
+    reason: str
+    created_by: str
+    created_at: str
+
+
+class CreateSuppressionRequest(BaseModel):  # type: ignore[misc]
+    """Request body for acknowledging/suppressing a violation (ADR-055).
+
+    When ``original_yaml`` is provided the server computes the canonical
+    fingerprint (normalized YAML, matching the CLI). The ``fingerprint_hash``
+    field is then ignored. When ``original_yaml`` is absent, the server
+    trusts the caller-supplied ``fingerprint_hash`` (backward compat).
+
+    Attributes:
+        fingerprint_hash: Pre-computed SHA-256 hex digest (used only when
+            ``original_yaml`` is not supplied).
+        fingerprint_mode: Granularity — ``full`` or ``rule_only``.
+        rule_id: Canonical rule identifier.
+        original_yaml: Raw YAML source for server-side fingerprint computation.
+        module_fqcn: Module FQCN (reserved for future use).
+        scope: ``global`` or ``project:<uuid>``.
+        reason: Human justification for the acknowledgment.
+    """
+
+    fingerprint_hash: str = Field(default="", max_length=64)
+    fingerprint_mode: str = "full"
+    rule_id: str = Field(max_length=200)
+    original_yaml: str | None = Field(default=None, max_length=1_048_576)
+    module_fqcn: str = Field(default="", max_length=500)
+    scope: str = "global"
+    reason: str = Field(default="", max_length=1000)
+
+    @field_validator("scope")  # type: ignore[untyped-decorator]
+    @classmethod
+    def _validate_scope(cls, v: str) -> str:
+        """Ensure scope is 'global' or 'project:<32-hex-uuid>'.
+
+        Args:
+            v: The scope value to validate.
+
+        Returns:
+            The validated scope string.
+
+        Raises:
+            ValueError: If the scope format is invalid.
+        """
+        import re  # noqa: PLC0415
+
+        if v == "global":
+            return v
+        if re.fullmatch(r"project:[a-f0-9]{32}", v):
+            return v
+        msg = "scope must be 'global' or 'project:<32-char-hex-uuid>'"
+        raise ValueError(msg)
 
 
 class NotificationSchema(BaseModel):  # type: ignore[misc]

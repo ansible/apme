@@ -6,6 +6,7 @@ import {
   AngleDoubleUpIcon,
   AngleDoubleDownIcon,
 } from '@patternfly/react-icons';
+import { ViolationDetailModal } from './ViolationDetailModal';
 import { severityClass, severityLabel, severityOrder, SEVERITY_ORDER } from './severity';
 import { RuleId } from './RuleId';
 import type { ViolationDetail } from '../types/api';
@@ -18,6 +19,11 @@ export function isDepHealthViolation(v: ViolationDetail): boolean {
 
 interface DependencyHealthOutputProps {
   violations: ViolationDetail[];
+  scanType?: string;
+  scanId?: string;
+  feedbackEnabled?: boolean;
+  onAcknowledge?: (violation: ViolationDetail) => void;
+  acknowledgedIds?: Set<number>;
 }
 
 interface DepGroup {
@@ -73,17 +79,27 @@ function sevSummaryText(items: ViolationDetail[]): string {
   return parts.join(', ');
 }
 
-export function DependencyHealthOutput({ violations }: DependencyHealthOutputProps) {
+export function DependencyHealthOutput({ violations, scanType, scanId, feedbackEnabled, onAcknowledge, acknowledgedIds }: DependencyHealthOutputProps) {
   const depViolations = useMemo(
-    () => violations.filter(isDepHealthViolation),
-    [violations],
+    () => violations.filter(
+      (v) => isDepHealthViolation(v) && !v.suppressed && !acknowledgedIds?.has(v.id),
+    ),
+    [violations, acknowledgedIds],
   );
 
-  const groups = useMemo(() => groupDepViolations(violations), [violations]);
+  const suppressedCount = useMemo(
+    () => violations.filter(
+      (v) => isDepHealthViolation(v) && (v.suppressed || acknowledgedIds?.has(v.id)),
+    ).length,
+    [violations, acknowledgedIds],
+  );
+
+  const groups = useMemo(() => groupDepViolations(depViolations), [depViolations]);
 
   const [sectionOpen, setSectionOpen] = useState(false);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [allCollapsed, setAllCollapsed] = useState(false);
+  const [selectedViolation, setSelectedViolation] = useState<ViolationDetail | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const toggleGroup = (key: string) => {
@@ -110,7 +126,7 @@ export function DependencyHealthOutput({ violations }: DependencyHealthOutputPro
 
   const isCollapsed = (key: string) => collapsed[key] === true;
 
-  if (depViolations.length === 0) return null;
+  if (depViolations.length === 0 && suppressedCount === 0) return null;
 
   const collCount = depViolations.filter(v => v.validator_source === 'collection_health').length;
   const cveCount = depViolations.filter(v => v.validator_source === 'dep_audit').length;
@@ -118,6 +134,7 @@ export function DependencyHealthOutput({ violations }: DependencyHealthOutputPro
   const summaryParts: string[] = [];
   if (collCount > 0) summaryParts.push(`${collCount} collection`);
   if (cveCount > 0) summaryParts.push(`${cveCount} CVE`);
+  if (suppressedCount > 0) summaryParts.push(`${suppressedCount} acknowledged`);
 
   return (
     <div className={`apme-output-panel ${sectionOpen ? 'apme-panel-open' : 'apme-panel-closed'}`}>
@@ -217,7 +234,15 @@ export function DependencyHealthOutput({ violations }: DependencyHealthOutputPro
                     ? v.message.match(/CVE-\d{4}-\d+/)
                     : null;
                   return (
-                    <div className="apme-output-row apme-output-row-item" key={v.id}>
+                    <div
+                      className="apme-output-row apme-output-row-item"
+                      key={v.id}
+                      role="button"
+                      tabIndex={0}
+                      aria-label={`View details for ${v.rule_id}: ${v.message}`}
+                      onClick={() => setSelectedViolation(v)}
+                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelectedViolation(v); } }}
+                    >
                       <span className="apme-output-gutter apme-output-line-num">
                         {v.line != null && v.line > 0 ? v.line : ''}
                       </span>
@@ -246,6 +271,22 @@ export function DependencyHealthOutput({ violations }: DependencyHealthOutputPro
           })}
         </div>
       </div>}
+
+      {selectedViolation && (
+        <ViolationDetailModal
+          isOpen={!!selectedViolation}
+          onClose={() => setSelectedViolation(null)}
+          violation={selectedViolation}
+          scanType={scanType}
+          scanId={scanId}
+          feedbackEnabled={feedbackEnabled}
+          onAcknowledge={onAcknowledge ? () => {
+            const v = selectedViolation;
+            setSelectedViolation(null);
+            if (v) onAcknowledge(v);
+          } : undefined}
+        />
+      )}
     </div>
   );
 }

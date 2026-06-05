@@ -162,6 +162,12 @@ def _scan_collection(
     violations = graph_report_to_violations(report)
 
     for v in violations:
+        node_id = str(v.get("path", ""))
+        node = cg.get_node(node_id) if node_id else None
+        if node and node.yaml_lines:
+            v["original_yaml"] = node.yaml_lines
+            v["node_line_start"] = node.line_start
+
         v["source"] = "collection_health"
         v["scope"] = "collection"
         v["path"] = fqcn

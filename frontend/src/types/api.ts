@@ -16,6 +16,7 @@ export interface ViolationDetail {
   node_line_start?: number;
   ai_reason?: string;
   ai_suggestion?: string;
+  suppressed?: boolean;
 }
 
 export interface LogEntry {
@@ -61,6 +62,7 @@ export interface PatchDetail {
 }
 
 export interface ActivityDetail extends ActivitySummary {
+  project_id: string | null;
   diagnostics_json: string | null;
   violations: ViolationDetail[];
   proposals: ProposalDetail[];
@@ -303,6 +305,7 @@ export interface PythonCveSummary {
 export interface DepHealthSummary {
   collection_findings: CollectionHealthSummary[];
   python_cves: PythonCveSummary[];
+  suppressed_count: number;
 }
 
 // ── Galaxy server types (ADR-045) ────────────────────────────────────
@@ -360,6 +363,29 @@ export interface RuleStats {
   by_category: Record<string, number>;
   by_source: Record<string, number>;
   override_count: number;
+}
+
+// ── Suppression types (ADR-055) ──────────────────────────────────────
+
+export interface SuppressionRecord {
+  id: number;
+  fingerprint_hash: string;
+  fingerprint_mode: string;
+  rule_id: string;
+  scope: string;
+  reason: string;
+  created_by: string;
+  created_at: string;
+}
+
+export interface CreateSuppressionRequest {
+  fingerprint_hash?: string;
+  fingerprint_mode?: string;
+  rule_id: string;
+  original_yaml?: string;
+  module_fqcn?: string;
+  scope?: string;
+  reason?: string;
 }
 
 // ── Notification types ───────────────────────────────────────────────

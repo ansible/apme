@@ -434,6 +434,36 @@ class RuleOverride(Base):
     rule: Mapped[Rule] = relationship(back_populates="overrides")
 
 
+# ── Suppression table (ADR-055) ───────────────────────────────────────
+
+
+class Suppression(Base):
+    """A fingerprint-based violation suppression (ADR-055).
+
+    Attributes:
+        id: Auto-increment primary key.
+        fingerprint_hash: SHA-256 hex digest of the content fingerprint.
+        fingerprint_mode: Granularity — ``full`` or ``rule_only``.
+        rule_id: Denormalized rule identifier for fast lookup and display.
+        scope: ``global`` or ``project:<uuid>`` for project-scoped suppressions.
+        reason: Human-provided justification.
+        created_by: User or system that created the suppression.
+        created_at: ISO 8601 creation timestamp.
+    """
+
+    __tablename__ = "suppressions"
+    __table_args__ = (UniqueConstraint("fingerprint_hash", "scope", name="uq_suppression_fingerprint_scope"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    fingerprint_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    fingerprint_mode: Mapped[str] = mapped_column(Text, nullable=False, default="full")
+    rule_id: Mapped[str] = mapped_column(Text, nullable=False)
+    scope: Mapped[str] = mapped_column(Text, nullable=False, default="global")
+    reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_by: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[str] = mapped_column(Text, nullable=False)
+
+
 # ── Global settings tables (ADR-045) ─────────────────────────────────
 
 

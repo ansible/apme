@@ -156,6 +156,22 @@ abbenay:
   apiKeys:
     openrouterApiKey: ""
     vertexAnthropicApiKey: ""
+  # -- OpenRouter model IDs to expose (when openrouterApiKey is set)
+  openrouterModels:
+    - anthropic/claude-sonnet-4
+    - anthropic/claude-opus-4.6
+  # -- Vertex AI Anthropic configuration (keyless — uses GCP ADC)
+  vertexAnthropic:
+    enabled: false
+    project: ""
+    region: us-east5
+    # -- Vertex AI model names (e.g. claude-sonnet-4@20250929)
+    models: []
+    # -- Raw service account key JSON (helm creates the secret)
+    serviceAccountKey: ""
+    # -- Name of an existing Secret with service-account-key.json key
+    # (use instead of serviceAccountKey to avoid putting the key in values)
+    existingGcpSecret: ""
   resources:
     requests:
       cpu: 250m

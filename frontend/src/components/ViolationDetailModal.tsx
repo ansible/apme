@@ -90,9 +90,10 @@ interface ViolationDetailModalProps {
   scanType?: string;
   scanId?: string;
   feedbackEnabled?: boolean;
+  onAcknowledge?: () => void;
 }
 
-export function ViolationDetailModal({ isOpen, onClose, violation, diff, scanType, scanId, feedbackEnabled }: ViolationDetailModalProps) {
+export function ViolationDetailModal({ isOpen, onClose, violation, diff, scanType, scanId, feedbackEnabled, onAcknowledge }: ViolationDetailModalProps) {
   const [activeTab, setActiveTab] = useState(0);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const ruleDesc = globalGetRuleDescription(violation.rule_id);
@@ -220,9 +221,16 @@ export function ViolationDetailModal({ isOpen, onClose, violation, diff, scanTyp
           </Tab>
         </Tabs>
       </ModalBody>
-      {feedbackEnabled && (
+      {(feedbackEnabled || onAcknowledge) && (
         <ModalFooter>
-          <Button variant="link" onClick={() => setFeedbackOpen(true)}>Report Issue</Button>
+          {onAcknowledge && (
+            <Button variant="secondary" onClick={onAcknowledge}>
+              Acknowledge
+            </Button>
+          )}
+          {feedbackEnabled && (
+            <Button variant="link" onClick={() => setFeedbackOpen(true)}>Report Issue</Button>
+          )}
         </ModalFooter>
       )}
       <FeedbackModal

@@ -10,6 +10,7 @@ import type {
   CreateProjectRequest,
   CreatePullRequestRequest,
   CreatePullRequestResponse,
+  CreateSuppressionRequest,
   DashboardSummary,
   DepHealthSummary,
   GalaxyServer,
@@ -28,6 +29,7 @@ import type {
   RuleStats,
   SessionDetail,
   SessionSummary,
+  SuppressionRecord,
   TopViolation,
   TrendPoint,
   UpdateGalaxyServerRequest,
@@ -37,14 +39,26 @@ import type {
 
 const BASE = "/api/v1";
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+class ApiError extends Error {
+  status: number;
+  constructor(status: number, body: string) {
+    super(`${status}: ${body}`);
+    this.status = status;
+  }
+}
+
+async function request<T>(
+  path: string,
+  init?: Omit<RequestInit, "headers"> & { headers?: Record<string, string> },
+): Promise<T> {
+  const { headers: extraHeaders, ...rest } = init ?? {};
   const res = await fetch(`${BASE}${path}`, {
-    headers: { Accept: "application/json" },
-    ...init,
+    ...rest,
+    headers: { Accept: "application/json", ...extraHeaders },
   });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`${res.status}: ${text}`);
+    throw new ApiError(res.status, text);
   }
   return res.json() as Promise<T>;
 }
@@ -301,6 +315,33 @@ export function updateGalaxyServer(
 export async function deleteGalaxyServer(serverId: number): Promise<void> {
   const res = await fetch(`${BASE}/settings/galaxy-servers/${serverId}`, { method: "DELETE" });
   if (!res.ok) throw new Error(`${res.status}`);
+}
+
+// ── Suppressions (ADR-055) ──────────────────────────────────────────────
+
+export function listSuppressions(
+  scope?: string,
+): Promise<SuppressionRecord[]> {
+  const params = scope ? `?scope=${encodeURIComponent(scope)}` : "";
+  return request(`/suppressions${params}`);
+}
+
+export function createSuppression(
+  body: CreateSuppressionRequest,
+): Promise<SuppressionRecord> {
+  return request("/suppressions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export async function deleteSuppression(id: number): Promise<void> {
+  const res = await fetch(`${BASE}/suppressions/${id}`, { method: "DELETE" });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new ApiError(res.status, text);
+  }
 }
 
 // ── Feedback (POC) ─────────────────────────────────────────────────────

@@ -1,0 +1,36 @@
+{{- if .Values.abbenay.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "apme.fullname" . }}-abbenay-config
+  labels:
+    {{- include "apme.labels" . | nindent 4 }}
+    app.kubernetes.io/component: abbenay
+data:
+  config.yaml: |
+    providers:
+    {{- if .Values.abbenay.apiKeys.openrouterApiKey }}
+      openrouter:
+        engine: openrouter
+        models:
+        {{- range .Values.abbenay.openrouterModels }}
+          {{ . }}: {}
+        {{- end }}
+        api_key_env: OPENROUTER_API_KEY
+    {{- end }}
+    {{- if .Values.abbenay.vertexAnthropic.enabled }}
+      vertex-anthropic:
+        engine: vertex-anthropic
+        project: {{ .Values.abbenay.vertexAnthropic.project | quote }}
+        region: {{ .Values.abbenay.vertexAnthropic.region | quote }}
+        models:
+        {{- range .Values.abbenay.vertexAnthropic.models }}
+          {{ . }}: {}
+        {{- end }}
+    {{- end }}
+    consumers:
+      apme:
+        token_env: APME_ABBENAY_TOKEN
+        capabilities:
+          inline_policy: true
+{{- end }}

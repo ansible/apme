@@ -5,9 +5,9 @@ from __future__ import annotations
 import logging
 import math
 from datetime import datetime, timezone
-from typing import cast
+from typing import Any, cast
 
-from sqlalchemy import case, func, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -27,10 +27,42 @@ from apme_gateway.db.models import (
     ScanPatch,
     ScanPythonPackage,
     Session,
+    Suppression,
     Violation,
 )
 
 logger = logging.getLogger(__name__)
+
+_SQLITE_BIND_LIMIT = 900
+
+
+def _chunked_not_in(column: Any, ids: set[int]) -> Any:
+    """Build a NOT IN exclusion filter safe for SQLite's bind-parameter limit.
+
+    For sets within a single chunk (<=900 IDs), produces a single
+    ``column NOT IN (...)`` clause with bound parameters. For larger sets,
+    inlines the integer PKs as SQL literals in a single ``NOT IN (...)``
+    clause — no bind parameters and no compound selects — to avoid both
+    SQLITE_MAX_VARIABLE_NUMBER (999) and SQLITE_LIMIT_COMPOUND_SELECT (500).
+
+    Args:
+        column: SQLAlchemy column to filter.
+        ids: Set of integer PKs to exclude.
+
+    Returns:
+        SQLAlchemy boolean expression.
+    """
+    if not ids:
+        from sqlalchemy import true  # noqa: PLC0415
+
+        return true()
+    id_list = sorted(ids)
+    if len(id_list) <= _SQLITE_BIND_LIMIT:
+        return column.not_in(id_list)
+    from sqlalchemy import literal_column  # noqa: PLC0415
+
+    return column.not_in([literal_column(str(pk)) for pk in id_list])
+
 
 # ---------------------------------------------------------------------------
 # Project queries (ADR-037)
@@ -1350,6 +1382,8 @@ async def python_package_detail(
 
 async def collection_health_counts(
     db: AsyncSession,
+    *,
+    exclude_ids: set[int] | None = None,
 ) -> list[dict[str, object]]:
     """Return violation counts per collection FQCN from latest scans.
 
@@ -1359,6 +1393,7 @@ async def collection_health_counts(
 
     Args:
         db: Active async database session.
+        exclude_ids: Violation PKs to exclude (e.g. suppressed).
 
     Returns:
         List of dicts with fqcn, finding_count, and severity breakdown.
@@ -1373,6 +1408,13 @@ async def collection_health_counts(
     )
     latest = select(latest_scans.c.scan_id).where(latest_scans.c.rn == 1).subquery()
 
+    conditions = [
+        Violation.validator_source == "collection_health",
+        Violation.scan_id.in_(select(latest.c.scan_id)),
+    ]
+    if exclude_ids:
+        conditions.append(_chunked_not_in(Violation.id, exclude_ids))
+
     stmt = (
         select(
             Violation.path.label("fqcn"),
@@ -1384,10 +1426,7 @@ async def collection_health_counts(
             func.sum(case((Violation.level == "low", 1), else_=0)).label("low"),
             func.sum(case((Violation.level.in_(["info", "none", "very_low"]), 1), else_=0)).label("info"),
         )
-        .where(
-            Violation.validator_source == "collection_health",
-            Violation.scan_id.in_(select(latest.c.scan_id)),
-        )
+        .where(*conditions)
         .group_by(Violation.path)
         .order_by(func.count().desc())
     )
@@ -1409,6 +1448,8 @@ async def collection_health_counts(
 
 async def python_cve_counts(
     db: AsyncSession,
+    *,
+    exclude_ids: set[int] | None = None,
 ) -> list[dict[str, object]]:
     """Return CVE violation counts per unique CVE finding from latest scans.
 
@@ -1417,6 +1458,7 @@ async def python_cve_counts(
 
     Args:
         db: Active async database session.
+        exclude_ids: Violation PKs to exclude (e.g. suppressed).
 
     Returns:
         List of dicts with rule_id, level, message, count.
@@ -1431,6 +1473,13 @@ async def python_cve_counts(
     )
     latest = select(latest_scans.c.scan_id).where(latest_scans.c.rn == 1).subquery()
 
+    conditions = [
+        Violation.validator_source == "dep_audit",
+        Violation.scan_id.in_(select(latest.c.scan_id)),
+    ]
+    if exclude_ids:
+        conditions.append(_chunked_not_in(Violation.id, exclude_ids))
+
     stmt = (
         select(
             Violation.rule_id,
@@ -1438,10 +1487,7 @@ async def python_cve_counts(
             Violation.message,
             func.count().label("occurrence_count"),
         )
-        .where(
-            Violation.validator_source == "dep_audit",
-            Violation.scan_id.in_(select(latest.c.scan_id)),
-        )
+        .where(*conditions)
         .group_by(Violation.rule_id, Violation.level, Violation.message)
         .order_by(func.count().desc())
     )
@@ -1460,6 +1506,8 @@ async def python_cve_counts(
 async def project_collection_health_counts(
     db: AsyncSession,
     project_id: str,
+    *,
+    exclude_ids: set[int] | None = None,
 ) -> list[dict[str, object]]:
     """Return collection health violation counts for a specific project.
 
@@ -1468,6 +1516,7 @@ async def project_collection_health_counts(
     Args:
         db: Active async database session.
         project_id: UUID of the project.
+        exclude_ids: Violation PKs to exclude (e.g. suppressed).
 
     Returns:
         List of dicts with fqcn, finding_count, and severity breakdown.
@@ -1480,6 +1529,13 @@ async def project_collection_health_counts(
         .scalar_subquery()
     )
 
+    conditions = [
+        Violation.validator_source == "collection_health",
+        Violation.scan_id == latest_scan,
+    ]
+    if exclude_ids:
+        conditions.append(_chunked_not_in(Violation.id, exclude_ids))
+
     stmt = (
         select(
             Violation.path.label("fqcn"),
@@ -1491,10 +1547,7 @@ async def project_collection_health_counts(
             func.sum(case((Violation.level == "low", 1), else_=0)).label("low"),
             func.sum(case((Violation.level.in_(["info", "none", "very_low"]), 1), else_=0)).label("info"),
         )
-        .where(
-            Violation.validator_source == "collection_health",
-            Violation.scan_id == latest_scan,
-        )
+        .where(*conditions)
         .group_by(Violation.path)
         .order_by(func.count().desc())
     )
@@ -1517,6 +1570,8 @@ async def project_collection_health_counts(
 async def project_python_cve_counts(
     db: AsyncSession,
     project_id: str,
+    *,
+    exclude_ids: set[int] | None = None,
 ) -> list[dict[str, object]]:
     """Return Python CVE counts for a specific project.
 
@@ -1525,6 +1580,7 @@ async def project_python_cve_counts(
     Args:
         db: Active async database session.
         project_id: UUID of the project.
+        exclude_ids: Violation PKs to exclude (e.g. suppressed).
 
     Returns:
         List of dicts with rule_id, level, message, count.
@@ -1537,6 +1593,13 @@ async def project_python_cve_counts(
         .scalar_subquery()
     )
 
+    conditions = [
+        Violation.validator_source == "dep_audit",
+        Violation.scan_id == latest_scan,
+    ]
+    if exclude_ids:
+        conditions.append(_chunked_not_in(Violation.id, exclude_ids))
+
     stmt = (
         select(
             Violation.rule_id,
@@ -1544,10 +1607,7 @@ async def project_python_cve_counts(
             Violation.message,
             func.count().label("occurrence_count"),
         )
-        .where(
-            Violation.validator_source == "dep_audit",
-            Violation.scan_id == latest_scan,
-        )
+        .where(*conditions)
         .group_by(Violation.rule_id, Violation.level, Violation.message)
         .order_by(func.count().desc())
     )
@@ -2095,6 +2155,348 @@ async def delete_notification(db: AsyncSession, notification_id: int) -> bool:
         True if the row was found and deleted.
     """
     stmt = select(Notification).where(Notification.id == notification_id)
+    result = await db.execute(stmt)
+    row = result.scalar_one_or_none()
+    if row is None:
+        return False
+    await db.delete(row)
+    await db.commit()
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Suppression queries (ADR-055)
+# ---------------------------------------------------------------------------
+
+
+async def create_suppression(
+    db: AsyncSession,
+    *,
+    fingerprint_hash: str,
+    fingerprint_mode: str,
+    rule_id: str,
+    scope: str = "global",
+    reason: str = "",
+    created_by: str = "",
+) -> Suppression:
+    """Create a new suppression record.
+
+    Args:
+        db: Active async database session.
+        fingerprint_hash: SHA-256 hex digest.
+        fingerprint_mode: ``full`` or ``rule_only``.
+        rule_id: Canonical rule identifier.
+        scope: ``global`` or ``project:<uuid>``.
+        reason: Human justification.
+        created_by: Author of the suppression.
+
+    Returns:
+        The created Suppression row.
+    """
+    row = Suppression(
+        fingerprint_hash=fingerprint_hash,
+        fingerprint_mode=fingerprint_mode,
+        rule_id=rule_id,
+        scope=scope,
+        reason=reason,
+        created_by=created_by,
+        created_at=datetime.now(tz=timezone.utc).isoformat(),
+    )
+    db.add(row)
+    await db.commit()
+    await db.refresh(row)
+    return row
+
+
+async def list_suppressions(
+    db: AsyncSession,
+    *,
+    scope: str | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> list[Suppression]:
+    """List suppression records, optionally filtered by scope (paginated).
+
+    Args:
+        db: Active async database session.
+        scope: Optional scope filter (``global``, ``project:<uuid>``).
+        limit: Maximum number of records to return.
+        offset: Number of records to skip.
+
+    Returns:
+        List of matching Suppression rows.
+    """
+    stmt = select(Suppression).order_by(Suppression.created_at.desc()).limit(limit).offset(offset)
+    if scope is not None:
+        stmt = stmt.where(Suppression.scope == scope)
+    result = await db.execute(stmt)
+    return list(result.scalars().all())
+
+
+async def get_suppression_hashes(
+    db: AsyncSession,
+    *,
+    project_id: str | None = None,
+    fingerprint_mode: str | None = None,
+) -> set[str]:
+    """Return the set of suppressed fingerprint hashes.
+
+    Includes both global suppressions and project-scoped ones if a
+    ``project_id`` is given. When ``project_id`` is None, only global-scope
+    suppressions are returned (prevents cross-project leakage per ADR-055).
+
+    Args:
+        db: Active async database session.
+        project_id: Optional project UUID for scoped suppression lookup.
+            When None, only ``scope='global'`` suppressions are matched.
+        fingerprint_mode: If set, only return hashes with this mode (e.g.
+            ``"full"``). Prevents ``rule_module``/``rule_only`` hashes from
+            matching when comparing against ``full`` fingerprints.
+
+    Returns:
+        Set of fingerprint hash strings that are currently suppressed.
+    """
+    conditions = [Suppression.scope == "global"]
+    if project_id:
+        conditions.append(Suppression.scope == f"project:{project_id}")
+
+    stmt = select(Suppression.fingerprint_hash).where(or_(*conditions))
+    if fingerprint_mode:
+        stmt = stmt.where(Suppression.fingerprint_mode == fingerprint_mode)
+    result = await db.execute(stmt)
+    return {row[0] for row in result.all()}
+
+
+def _latest_scan_ids_subquery(*, project_id: str | None = None) -> Any:
+    """Return a selectable of the most recent scan ID(s) for use in IN clauses.
+
+    Produces a DB-side subquery, avoiding the need to materialise scan IDs
+    into a Python list and re-bind them as parameters.
+
+    Args:
+        project_id: Optional project UUID. When set, returns only that
+            project's latest scan ID; otherwise returns one per project.
+
+    Returns:
+        SQLAlchemy Select suitable for ``.in_()``.
+    """
+    if project_id:
+        return select(Scan.scan_id).where(Scan.project_id == project_id).order_by(Scan.created_at.desc()).limit(1)
+    ranked = (
+        select(
+            Scan.scan_id,
+            func.row_number().over(partition_by=Scan.project_id, order_by=Scan.created_at.desc()).label("rn"),
+        )
+        .where(Scan.project_id.is_not(None))
+        .subquery()
+    )
+    return select(ranked.c.scan_id).where(ranked.c.rn == 1)
+
+
+async def _batch_suppression_hashes(
+    db: AsyncSession,
+    project_ids: set[str | None],
+) -> dict[tuple[str | None, str], set[str]]:
+    """Fetch suppression hashes for multiple projects in a single query.
+
+    Returns a mapping of ``(project_id, fingerprint_mode)`` to the set of
+    hashes that apply to that project (global + project-scoped combined).
+
+    Args:
+        db: Active async database session.
+        project_ids: Project UUIDs whose suppressions are needed.
+
+    Returns:
+        Dict keyed by ``(project_id, fingerprint_mode)`` → set of hashes.
+    """
+    scopes = ["global"]
+    for pid in project_ids:
+        if pid:
+            scopes.append(f"project:{pid}")
+
+    # Use a constant-bind pattern to avoid SQLITE_MAX_VARIABLE_NUMBER when
+    # project_ids is large.  Query all global + project-scoped suppressions
+    # (fixed number of bind params regardless of project count), then filter
+    # in Python.
+    stmt = select(
+        Suppression.scope,
+        Suppression.fingerprint_mode,
+        Suppression.fingerprint_hash,
+    ).where(
+        or_(
+            Suppression.scope == "global",
+            Suppression.scope.like("project:%"),
+        ),
+        Suppression.fingerprint_mode.in_(["full", "rule_only"]),
+    )
+    result = await db.execute(stmt)
+    rows = result.all()
+
+    # Filter to only the requested project scopes in Python
+    scope_set = set(scopes)
+
+    cache: dict[tuple[str | None, str], set[str]] = {}
+    global_hashes: dict[str, set[str]] = {"full": set(), "rule_only": set()}
+    project_hashes: dict[tuple[str, str], set[str]] = {}
+    for scope, mode, fp_hash in rows:
+        if scope not in scope_set:
+            continue
+        if scope == "global":
+            global_hashes[mode].add(fp_hash)
+        else:
+            project_hashes.setdefault((scope, mode), set()).add(fp_hash)
+
+    for pid in project_ids:
+        for mode in ("full", "rule_only"):
+            combined = set(global_hashes.get(mode, set()))
+            if pid:
+                combined |= project_hashes.get((f"project:{pid}", mode), set())
+            cache[(pid, mode)] = combined
+
+    return cache
+
+
+async def suppressed_violation_ids(
+    db: AsyncSession,
+    scan_ids: list[str] | None = None,
+    *,
+    project_id: str | None = None,
+) -> set[int]:
+    """Return IDs of dep-health violations that match an active suppression.
+
+    Short-circuits with an empty set when no suppressions exist for the
+    relevant scope, avoiding the expensive violation fetch and fingerprint
+    computation on every request.
+
+    When suppressions do exist, fetches ``collection_health`` / ``dep_audit``
+    violations from the latest scans, computes canonical fingerprints
+    (ADR-055), and checks against stored suppression hashes.
+
+    Uses a DB-side subquery for scan ID filtering to avoid exceeding
+    SQLite's per-statement bind-variable limit when many projects exist.
+
+    When ``project_id`` is provided (single-project view), only global and
+    that project's scoped suppressions are checked. When ``project_id`` is
+    None (cross-project aggregate), violations are grouped by their scan's
+    project and matched per-project to prevent cross-project scope leakage
+    (ADR-055).
+
+    Args:
+        db: Active async database session.
+        scan_ids: Deprecated — ignored. Kept for backward compatibility.
+        project_id: Project UUID for scoped lookup. None means per-project.
+
+    Returns:
+        Set of Violation PKs that are currently suppressed.
+    """
+    # Fast path: skip the expensive violation fetch + fingerprint pass when
+    # no suppressions exist for the relevant scope(s).
+    if project_id is not None:
+        full_h = await get_suppression_hashes(db, project_id=project_id, fingerprint_mode="full")
+        rule_only_h = await get_suppression_hashes(db, project_id=project_id, fingerprint_mode="rule_only")
+        if not full_h and not rule_only_h:
+            return set()
+    else:
+        exists_stmt = (
+            select(Suppression.id)
+            .where(
+                Suppression.fingerprint_mode.in_(["full", "rule_only"]),
+            )
+            .limit(1)
+        )
+        has_any = (await db.execute(exists_stmt)).scalar_one_or_none()
+        if has_any is None:
+            return set()
+
+    from apme_engine.fingerprint import compute_fingerprint  # noqa: PLC0415
+
+    scan_id_subquery = _latest_scan_ids_subquery(project_id=project_id)
+    stmt = (
+        select(
+            Violation.id,
+            Violation.rule_id,
+            Violation.original_yaml,
+            Scan.project_id,
+        )
+        .join(Scan, Violation.scan_id == Scan.scan_id)
+        .where(
+            Violation.scan_id.in_(scan_id_subquery),
+            Violation.validator_source.in_(["collection_health", "dep_audit"]),
+        )
+    )
+    result = await db.execute(stmt)
+    rows = result.all()
+    if not rows:
+        return set()
+
+    if project_id is not None:
+        return _match_violations(rows, full_h, rule_only_h, compute_fingerprint)
+
+    project_ids: set[str | None] = {row[3] for row in rows}
+    hash_cache = await _batch_suppression_hashes(db, project_ids)
+
+    excluded: set[int] = set()
+    for vid, rule_id, original_yaml, scan_project_id in rows:
+        full_h = hash_cache.get((scan_project_id, "full"), set())
+        rule_only_h = hash_cache.get((scan_project_id, "rule_only"), set())
+        if not full_h and not rule_only_h:
+            continue
+        if full_h:
+            fp = compute_fingerprint(rule_id or "", original_yaml or "", mode="full")
+            if fp in full_h:
+                excluded.add(vid)
+                continue
+        if rule_only_h:
+            fp_rule = compute_fingerprint(rule_id or "", "", mode="rule_only")
+            if fp_rule in rule_only_h:
+                excluded.add(vid)
+    return excluded
+
+
+def _match_violations(
+    rows: list[Any],
+    full_hashes: set[str],
+    rule_only_hashes: set[str],
+    compute_fingerprint: Any,
+) -> set[int]:
+    """Match violations against suppression hashes (single-project case).
+
+    Args:
+        rows: Violation rows (id, rule_id, original_yaml, project_id).
+        full_hashes: Full-mode suppression hashes.
+        rule_only_hashes: Rule-only suppression hashes.
+        compute_fingerprint: Fingerprint computation function.
+
+    Returns:
+        Set of suppressed violation PKs.
+    """
+    if not full_hashes and not rule_only_hashes:
+        return set()
+    excluded: set[int] = set()
+    for vid, rule_id, original_yaml, _project_id in rows:
+        if full_hashes:
+            fp = compute_fingerprint(rule_id or "", original_yaml or "", mode="full")
+            if fp in full_hashes:
+                excluded.add(vid)
+                continue
+        if rule_only_hashes:
+            fp_rule = compute_fingerprint(rule_id or "", "", mode="rule_only")
+            if fp_rule in rule_only_hashes:
+                excluded.add(vid)
+    return excluded
+
+
+async def delete_suppression(db: AsyncSession, suppression_id: int) -> bool:
+    """Delete a suppression by its ID.
+
+    Args:
+        db: Active async database session.
+        suppression_id: PK of the suppression.
+
+    Returns:
+        True if the row was found and deleted.
+    """
+    stmt = select(Suppression).where(Suppression.id == suppression_id)
     result = await db.execute(stmt)
     row = result.scalar_one_or_none()
     if row is None:

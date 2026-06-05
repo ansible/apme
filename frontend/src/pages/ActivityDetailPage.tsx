@@ -18,9 +18,9 @@ import {
   FlexItem,
 } from '@patternfly/react-core';
 import { ExternalLinkAltIcon } from '@patternfly/react-icons';
-import { createPullRequest, deleteActivity, getActivity } from '../services/api';
+import { createPullRequest, createSuppression, deleteActivity, getActivity } from '../services/api';
 import { useFeedbackEnabled } from '../hooks/useFeedbackEnabled';
-import type { ActivityDetail } from '../types/api';
+import type { ActivityDetail, ViolationDetail } from '../types/api';
 
 
 function displayType(scanType: string): string {
@@ -44,6 +44,8 @@ export function ActivityDetailPage() {
   const [resultsOpen, setResultsOpen] = useState(true);
   const [prCreating, setPrCreating] = useState(false);
   const [prError, setPrError] = useState<string | null>(null);
+  const [ackError, setAckError] = useState<string | null>(null);
+  const [acknowledgedIds, setAcknowledgedIds] = useState<Set<number>>(new Set());
 
   useEffect(() => {
     if (!activityId) return;
@@ -56,13 +58,15 @@ export function ActivityDetailPage() {
 
   const projectViolations = useMemo(() => {
     if (!detail) return [];
-    return detail.violations.filter((v) => !isDepHealthViolation(v));
+    return detail.violations.filter((v) => !isDepHealthViolation(v) && !v.suppressed);
   }, [detail]);
 
   const depHealthCount = useMemo(() => {
     if (!detail) return 0;
-    return detail.violations.filter(isDepHealthViolation).length;
-  }, [detail]);
+    return detail.violations.filter(
+      (v) => isDepHealthViolation(v) && !v.suppressed && !acknowledgedIds.has(v.id),
+    ).length;
+  }, [detail, acknowledgedIds]);
 
   const sevCounts = useMemo(() => {
     const counts = new Map<string, number>();
@@ -161,6 +165,30 @@ export function ActivityDetailPage() {
     }
   };
 
+  const handleAcknowledge = async (violation: ViolationDetail) => {
+    setAckError(null);
+    try {
+      const hasYaml = !!violation.original_yaml?.trim();
+      await createSuppression({
+        rule_id: violation.rule_id,
+        original_yaml: hasYaml ? violation.original_yaml! : '',
+        fingerprint_mode: hasYaml ? 'full' : 'rule_only',
+        scope: detail?.project_id ? `project:${detail.project_id}` : 'global',
+        reason: 'Acknowledged via activity detail',
+      });
+      setAcknowledgedIds(prev => new Set(prev).add(violation.id));
+    } catch (err: unknown) {
+      const status = err != null && typeof err === 'object' && 'status' in err
+        ? (err as { status: number }).status
+        : undefined;
+      if (status === 409) {
+        setAcknowledgedIds(prev => new Set(prev).add(violation.id));
+      } else {
+        setAckError(`Failed to acknowledge violation: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  };
+
   const isRemediate = detail.scan_type === 'fix' || detail.scan_type === 'remediate';
   const canCreatePR = isRemediate && detail.patches.length > 0 && !detail.pr_url;
 
@@ -226,11 +254,31 @@ export function ActivityDetailPage() {
         </div>
       )}
 
+      {ackError && (
+        <div style={{ padding: '16px 24px 0' }}>
+          <Alert
+            variant="warning"
+            isInline
+            title="Acknowledge failed"
+            actionClose={<AlertActionCloseButton onClose={() => setAckError(null)} />}
+          >
+            {ackError}
+          </Alert>
+        </div>
+      )}
+
       {/* Unified layout — all panels share viewport height */}
       <div className="apme-activity-layout">
         {/* Status bar + severity bar (fixed height, always visible) */}
         <ViolationStatusBar
-          detail={detail}
+          detail={{
+            ...detail,
+            violations: projectViolations,
+            total_violations: projectViolations.length + depHealthCount,
+            fixable: projectViolations.filter(v => v.remediation_class === 1).length,
+            ai_candidate: projectViolations.filter(v => v.remediation_class === 2).length,
+            manual_review: projectViolations.filter(v => v.remediation_class === 3).length,
+          }}
           depHealthCount={depHealthCount}
         />
         <SeverityStatusBar sevCounts={sevCounts} />
@@ -267,7 +315,14 @@ export function ActivityDetailPage() {
         </div>
 
         {/* Dependencies panel */}
-        <DependencyHealthOutput violations={detail.violations} />
+        <DependencyHealthOutput
+          violations={detail.violations}
+          scanType={detail.scan_type}
+          scanId={activityId}
+          feedbackEnabled={feedbackEnabled}
+          onAcknowledge={handleAcknowledge}
+          acknowledgedIds={acknowledgedIds}
+        />
 
         {/* Pipeline log panel */}
         <PipelineLogOutput logs={detail.logs} />

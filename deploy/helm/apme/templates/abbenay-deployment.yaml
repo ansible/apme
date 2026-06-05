@@ -60,6 +60,12 @@ spec:
             {{- end }}
             - name: XDG_RUNTIME_DIR
               value: /tmp/abbenay-run
+            - name: XDG_CONFIG_HOME
+              value: /etc/abbenay-config
+            {{- if and .Values.abbenay.vertexAnthropic.enabled (or .Values.abbenay.vertexAnthropic.serviceAccountKey .Values.abbenay.vertexAnthropic.existingGcpSecret) }}
+            - name: GOOGLE_APPLICATION_CREDENTIALS
+              value: /gcp-credentials/service-account-key.json
+            {{- end }}
           ports:
             - name: grpc
               containerPort: 50057
@@ -76,4 +82,22 @@ spec:
             periodSeconds: 30
           resources:
             {{- toYaml .Values.abbenay.resources | nindent 12 }}
+          volumeMounts:
+            - name: abbenay-config
+              mountPath: /etc/abbenay-config/abbenay
+              readOnly: true
+            {{- if and .Values.abbenay.vertexAnthropic.enabled (or .Values.abbenay.vertexAnthropic.serviceAccountKey .Values.abbenay.vertexAnthropic.existingGcpSecret) }}
+            - name: gcp-credentials
+              mountPath: /gcp-credentials
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: abbenay-config
+          configMap:
+            name: {{ include "apme.fullname" . }}-abbenay-config
+        {{- if and .Values.abbenay.vertexAnthropic.enabled (or .Values.abbenay.vertexAnthropic.serviceAccountKey .Values.abbenay.vertexAnthropic.existingGcpSecret) }}
+        - name: gcp-credentials
+          secret:
+            secretName: {{ if .Values.abbenay.vertexAnthropic.serviceAccountKey }}{{ include "apme.fullname" . }}-gcp-credentials{{ else }}{{ .Values.abbenay.vertexAnthropic.existingGcpSecret }}{{ end }}
+        {{- end }}
 {{- end }}

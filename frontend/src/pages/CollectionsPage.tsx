@@ -36,7 +36,7 @@ export function CollectionsPage() {
     setLoading(true);
     Promise.all([
       listCollections(500, 0),
-      getDepHealthSummary().catch(() => ({ collection_findings: [], python_cves: [] })),
+      getDepHealthSummary().catch(() => ({ collection_findings: [], python_cves: [], suppressed_count: 0 })),
     ])
       .then(([data, health]) => {
         setCollections(data);
