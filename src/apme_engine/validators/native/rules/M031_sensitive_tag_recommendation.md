@@ -1,3 +1,10 @@
+---
+rule_id: M031
+validator: native
+description: Variables with sensitive names should use Sensitive tag (ansible-core 2.19+).
+scope: task
+---
+
 # M031: Sensitive Tag Recommendation
 
 ## Summary

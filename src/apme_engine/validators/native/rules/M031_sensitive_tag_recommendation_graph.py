@@ -62,6 +62,8 @@ _SENSITIVE_WORDS = frozenset(
 
 _WORD_BOUNDARY_RE = re.compile(r"(?:^|[_.'\"\[])({})(?:[_.'\"\[\]]|$)".format("|".join(_SENSITIVE_WORDS)))
 
+_SENSITIVE_FILTER_RE = re.compile(r"\|\s*(?:ansible\.builtin\.)?sensitive\b")
+
 
 def _var_name_is_sensitive(var_name: str) -> bool:
     """Check if variable name matches sensitive patterns.
@@ -81,24 +83,43 @@ def _var_name_is_sensitive(var_name: str) -> bool:
     return bool(_WORD_BOUNDARY_RE.search(lower))
 
 
+def _value_has_sensitive_filter(value: object) -> bool:
+    """Check if a value already applies the Sensitive filter.
+
+    Detects patterns like `{{ var | sensitive }}` or `{{ var | ansible.builtin.sensitive }}`
+    to avoid flagging variables that are already properly tagged.
+
+    Args:
+        value: The variable value to check (typically a string with Jinja).
+
+    Returns:
+        True if the value contains a sensitive filter application.
+    """
+    if not isinstance(value, str):
+        return False
+    return bool(_SENSITIVE_FILTER_RE.search(value))
+
+
 def _find_sensitive_set_facts(node: ContentNode) -> list[str]:
-    """Find sensitive variable names being set via set_fact.
+    """Find sensitive variable names being set via set_fact without Sensitive tag.
 
     Examines the module_options for set_fact tasks and identifies any keys
-    (variable names being defined) that match sensitive patterns.
+    (variable names being defined) that match sensitive patterns, excluding
+    those whose values already apply the Sensitive filter.
 
     Args:
         node: Task node using set_fact module.
 
     Returns:
-        Sorted list of sensitive variable names being set.
+        Sorted list of sensitive variable names being set without Sensitive tag.
     """
     sensitive_found: set[str] = set()
     mo = node.module_options if isinstance(node.module_options, dict) else {}
 
-    for key in mo:
+    for key, value in mo.items():
         if isinstance(key, str) and _var_name_is_sensitive(key):
-            sensitive_found.add(key)
+            if not _value_has_sensitive_filter(value):
+                sensitive_found.add(key)
 
     return sorted(sensitive_found)
 
@@ -252,7 +273,7 @@ class SensitiveTagRecommendationGraphRule(GraphRule):
         vars_formatted = ", ".join(sensitive_vars)
         detail: YAMLDict = {
             "message": (
-                f"Variable(s) '{vars_formatted}' contain sensitive data; "
+                f"Variable(s) '{vars_formatted}' have sensitive-looking names; "
                 "recommend using Sensitive tag (ansible-core 2.19+) for automatic "
                 "redaction in job output. See ANSTRAT-1720 for migration guidance."
             ),

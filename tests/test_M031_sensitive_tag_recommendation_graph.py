@@ -19,6 +19,7 @@ from apme_engine.validators.native.rules.M031_sensitive_tag_recommendation_graph
     SensitiveTagRecommendationGraphRule,
     _find_sensitive_registered_vars,
     _find_sensitive_set_facts,
+    _value_has_sensitive_filter,
     _var_name_is_sensitive,
 )
 
@@ -565,3 +566,69 @@ class TestSensitiveTagRecommendationGraphRule:
         detail = result.detail or {}
         sensitive_vars = cast(list[str], detail.get("sensitive_vars", []))
         assert sensitive_vars == sorted(sensitive_vars)
+
+    def test_set_fact_with_sensitive_filter_passes(self) -> None:
+        """Rule passes when value already has | sensitive filter."""
+        graph, task_id = _make_set_fact_graph(facts={"db_password": "{{ vault_pass | sensitive }}"})
+        rule = SensitiveTagRecommendationGraphRule()
+
+        result = rule.process(graph, task_id)
+
+        assert result is not None
+        assert result.verdict is False
+
+    def test_set_fact_with_fqcn_sensitive_filter_passes(self) -> None:
+        """Rule passes when value has | ansible.builtin.sensitive filter."""
+        graph, task_id = _make_set_fact_graph(facts={"api_token": "{{ token | ansible.builtin.sensitive }}"})
+        rule = SensitiveTagRecommendationGraphRule()
+
+        result = rule.process(graph, task_id)
+
+        assert result is not None
+        assert result.verdict is False
+
+    def test_mixed_tagged_and_untagged_vars(self) -> None:
+        """Rule only flags untagged sensitive vars, not already-tagged ones."""
+        graph, task_id = _make_set_fact_graph(
+            facts={
+                "db_password": "{{ vault_pass | sensitive }}",
+                "api_secret": "plaintext_value",
+            }
+        )
+        rule = SensitiveTagRecommendationGraphRule()
+
+        result = rule.process(graph, task_id)
+
+        assert result is not None
+        assert result.verdict is True
+        detail = result.detail or {}
+        sensitive_vars = cast(list[str], detail.get("sensitive_vars", []))
+        assert "api_secret" in sensitive_vars
+        assert "db_password" not in sensitive_vars
+
+
+class TestValueHasSensitiveFilter:
+    """Tests for _value_has_sensitive_filter helper."""
+
+    def test_simple_sensitive_filter(self) -> None:
+        """Detect simple | sensitive filter."""
+        assert _value_has_sensitive_filter("{{ password | sensitive }}")
+
+    def test_fqcn_sensitive_filter(self) -> None:
+        """Detect ansible.builtin.sensitive filter."""
+        assert _value_has_sensitive_filter("{{ token | ansible.builtin.sensitive }}")
+
+    def test_sensitive_with_other_filters(self) -> None:
+        """Detect sensitive filter in filter chain."""
+        assert _value_has_sensitive_filter("{{ val | default('') | sensitive }}")
+
+    def test_no_sensitive_filter(self) -> None:
+        """Return False when no sensitive filter present."""
+        assert not _value_has_sensitive_filter("{{ password }}")
+        assert not _value_has_sensitive_filter("{{ val | default('') }}")
+
+    def test_non_string_value(self) -> None:
+        """Return False for non-string values."""
+        assert not _value_has_sensitive_filter(123)
+        assert not _value_has_sensitive_filter(None)
+        assert not _value_has_sensitive_filter(["list"])
