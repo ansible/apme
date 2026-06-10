@@ -117,9 +117,8 @@ def _find_sensitive_set_facts(node: ContentNode) -> list[str]:
     mo = node.module_options if isinstance(node.module_options, dict) else {}
 
     for key, value in mo.items():
-        if isinstance(key, str) and _var_name_is_sensitive(key):
-            if not _value_has_sensitive_filter(value):
-                sensitive_found.add(key)
+        if isinstance(key, str) and _var_name_is_sensitive(key) and not _value_has_sensitive_filter(value):
+            sensitive_found.add(key)
 
     return sorted(sensitive_found)
 
