@@ -12,6 +12,7 @@ Sample Ansible files for testing APME functionality. These are designed to trigg
 | `deprecated-modules.yml` | Deprecated/removed modules | M002/M004 violations |
 | `messy-formatting.yml` | YAML style issues | Formatting changes with `apme format` |
 | `vault-reference.yml` | Vault-encrypted vars | Should NOT trigger SEC:* (false positive check) |
+| `sensitive-vars.yml` | Sensitive variable names | M031 violations (recommends Sensitive tag) |
 
 ## Usage
 
@@ -42,3 +43,4 @@ apme check tests/fixtures/customer-test/vault-reference.yml
 | deprecated-modules.yml | 0 | 2+ | 0 | 0 |
 | messy-formatting.yml | 1+ | 0 | 0 | 0 |
 | vault-reference.yml | 0 | 0 | 0 | 0 |
+| sensitive-vars.yml | 0 | 4+ | 0 | 0 |
