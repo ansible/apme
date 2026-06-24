@@ -81,11 +81,18 @@ runs a reduced stack (engine + embedded Gateway, no UI) for zero-dependency
 local evaluation. The Helm chart deploys the same services as separate
 Kubernetes Deployments.
 
-**Portal caveat:** The Helm chart in this repo is structured for standalone
-APME deployment on OpenShift. Portal integration may require a different
-deployment model — APME services deployed as part of the Portal's existing
-Helm chart or operator, rather than as a standalone Helm release. This is
-an open question (see Section 6).
+**Portal deployment model:** APME deploys as a standalone Helm release — not
+embedded in the AAP installer or Portal operator. Portal configures its UI
+to point at the APME Gateway endpoint. This is the right approach because:
+
+- **Multiple entry points:** The same APME deployment serves Portal, GitHub
+  integrations, standalone web UI, and API consumers. Coupling to the AAP
+  installer would lock APME into a single entry point.
+- **Reduced complexity:** A standalone Helm chart is straightforward for any
+  Kubernetes shop to deploy and operate. Embedding in the AAP installer adds
+  coupling, release coordination overhead, and upgrade complexity.
+- **Independent lifecycle:** APME can version, release, and scale independently
+  of the broader AAP platform.
 
 ---
 
@@ -165,6 +172,7 @@ decision. Work includes:
 | HPA | Helm template exists (disabled) | Enable and tune with load test data |
 | Horizontal scaling | ADR-012: scale engine pods as unit | Validate with concurrent scan load |
 | Gateway DB | SQLite (single-writer) | **Decision needed:** move to PostgreSQL now, or keep SQLite for standalone and add PostgreSQL as a production option? See Section 6. |
+| DB migrations | No migration tooling exists (no Alembic, no versioned schema) | **Gap:** schema changes today silently break existing databases. Need Alembic (or equivalent) with versioned migrations before any production release. |
 
 ### 4.5 Ownership Model
 
@@ -254,25 +262,22 @@ Items not in the original list but important for productization:
    tenant, or shared instance with row-level isolation (requires
    PostgreSQL).
 
-4. **Database migrations** — No Alembic or migration tooling. Schema changes
-   will break existing databases without a migration path.
-
-5. **Operator documentation** — Admin guide, configuration reference,
+4. **Operator documentation** — Admin guide, configuration reference,
    troubleshooting guide. Current docs are developer-focused.
 
-6. **Feature flags** — No feature flag system. Portal rollout likely needs
+5. **Feature flags** — No feature flag system. Portal rollout likely needs
    staged enablement.
 
-7. **Graceful degradation** — What happens when APME engine is down? Portal
+6. **Graceful degradation** — What happens when APME engine is down? Portal
    needs a degraded UX, not a 500.
 
-8. **API versioning contract** — REST API is `/api/v1` but no formal
+7. **API versioning contract** — REST API is `/api/v1` but no formal
    stability guarantee or deprecation policy. Portal consumers need this.
 
-9. **Accessibility (a11y)** — PatternFly helps, but no a11y audit has been
+8. **Accessibility (a11y)** — PatternFly helps, but no a11y audit has been
    performed.
 
-10. **Telemetry** — No opt-in usage analytics for understanding adoption.
+9. **Telemetry** — No opt-in usage analytics for understanding adoption.
 
 ---
 
@@ -287,7 +292,7 @@ Items not in the original list but important for productization:
 | 5 | Craig's P0 feature set for Portal launch | Craig | Scope and timeline |
 | 6 | Rule governance: who proposes, reviews, approves prescriptive rules | Community of practice + BU + Ansible eng | Rule quality and relevance |
 | 7 | DevTools ownership scope: engine + gateway + deploy + CI + release | DevTools lead + current team | Codebase handoff |
-| 8 | Portal deployment model: standalone APME Helm chart, or integrated into Portal's operator/chart? | Architect + Portal team | Deployment architecture |
+| 8 | DB migration tooling: adopt Alembic, define schema versioning strategy, test upgrade path | DevTools | Any schema change post-release |
 
 ---
 
@@ -313,6 +318,7 @@ Phase 3 — Portal Integration
 ├── Ingress / Route configuration
 ├── Network policy defaults
 ├── PostgreSQL support (if multi-tenant)
+├── Alembic DB migrations (schema versioning + upgrade path)
 ├── Craig's P0 feature set
 └── API stability contract
 
