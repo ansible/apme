@@ -163,7 +163,25 @@ decision. Work includes:
 - RBAC model if multi-tenant (or defer to AAP Gateway)
 - API key management for machine consumers (ADR-038)
 
-### 4.4 Scaling & Performance
+### 4.4 API Versioning & Contract
+
+The Gateway REST API is URL-versioned (`/api/v1`) today, which is the right
+foundation. What's missing is the contract and tooling around it — all UI
+consumers (Portal, standalone web UI, CLI, third-party integrations) need a
+stable interface they can code against without tight coupling to APME's
+release cycle.
+
+| Item | Current State | Work Needed |
+|------|---------------|-------------|
+| URL versioning | All routes under `/api/v1` | Foundation exists; no changes needed |
+| OpenAPI spec | FastAPI auto-generates from code; not published as artifact | Publish versioned OpenAPI spec (JSON/YAML) as release artifact; all consumers validate against it |
+| Stability guarantee | None — any commit can change the API shape | ADR defining API stability policy: what constitutes a breaking change, deprecation timeline, v1 support window |
+| Deprecation policy | No mechanism | Add `Deprecation` / `Sunset` headers; document migration path before removing endpoints |
+| Changelog | No API-specific changelog | Track breaking vs non-breaking changes per release; include in release notes |
+| Contract testing | No consumer-driven contract tests | Pact or similar to verify consumer integrations (Portal, standalone UI, CLI) don't break on APME upgrades |
+| SDK / client library | Consumers code directly against REST | Consider a thin Python/TypeScript client generated from OpenAPI spec for Portal, CLI, and third-party use |
+
+### 4.5 Scaling & Performance
 
 | Item | Current State | Work Needed |
 |------|---------------|-------------|
@@ -174,7 +192,7 @@ decision. Work includes:
 | Gateway DB | SQLite (single-writer) | **Decision needed:** move to PostgreSQL now, or keep SQLite for standalone and add PostgreSQL as a production option? See Section 6. |
 | DB migrations | No migration tooling exists (no Alembic, no versioned schema) | **Gap:** schema changes today silently break existing databases. Need Alembic (or equivalent) with versioned migrations before any production release. |
 
-### 4.5 Ownership Model
+### 4.6 Ownership Model
 
 #### DevTools team — platform engineering
 
@@ -213,7 +231,7 @@ This is a pattern we've used before and it needs a formal governance model:
 | Rule catalog maintenance | Published catalog with rationale, references, and ownership metadata per rule |
 | Feedback loop | Portal/CLI users can flag false positives or request new rules; routed to rule owners, not DevTools backlog |
 
-### 4.6 Dependency Review
+### 4.7 Dependency Review
 
 | Category | Current Dependencies | Review Action |
 |----------|---------------------|---------------|
@@ -223,7 +241,7 @@ This is a pattern we've used before and it needs a formal governance model:
 | Frontend | React, PatternFly, Vite, Node 22 | Standard UI stack; confirm PatternFly version |
 | Container base | Debian bookworm-slim | UBI migration path for downstream |
 
-### 4.7 Repo & Process Hardening
+### 4.8 Repo & Process Hardening
 
 | Item | Current State | Work Needed |
 |------|---------------|-------------|
@@ -233,7 +251,7 @@ This is a pattern we've used before and it needs a formal governance model:
 | Vulnerability disclosure | SECURITY.md with private reporting | Confirm GitHub Security Advisories enabled |
 | Industry gap analysis | `.sdlc/research/industry-gap-analysis.md` exists | Use as checklist; close gaps systematically |
 
-### 4.8 Product Requirements from Craig
+### 4.9 Product Requirements from Craig
 
 Craig should author a formal requirement covering:
 
@@ -271,13 +289,10 @@ Items not in the original list but important for productization:
 6. **Graceful degradation** — What happens when APME engine is down? Portal
    needs a degraded UX, not a 500.
 
-7. **API versioning contract** — REST API is `/api/v1` but no formal
-   stability guarantee or deprecation policy. Portal consumers need this.
-
-8. **Accessibility (a11y)** — PatternFly helps, but no a11y audit has been
+7. **Accessibility (a11y)** — PatternFly helps, but no a11y audit has been
    performed.
 
-9. **Telemetry** — No opt-in usage analytics for understanding adoption.
+8. **Telemetry** — No opt-in usage analytics for understanding adoption.
 
 ---
 
@@ -293,6 +308,7 @@ Items not in the original list but important for productization:
 | 6 | Rule governance: who proposes, reviews, approves prescriptive rules | Community of practice + BU + Ansible eng | Rule quality and relevance |
 | 7 | DevTools ownership scope: engine + gateway + deploy + CI + release | DevTools lead + current team | Codebase handoff |
 | 8 | DB migration tooling: adopt Alembic, define schema versioning strategy, test upgrade path | DevTools | Any schema change post-release |
+| 9 | API stability contract: define v1 support window, breaking change policy, deprecation timeline for all consumers | Architect + DevTools | Portal, standalone UI, CLI, third-party integrations |
 
 ---
 
@@ -319,8 +335,9 @@ Phase 3 — Portal Integration
 ├── Network policy defaults
 ├── PostgreSQL support (if multi-tenant)
 ├── Alembic DB migrations (schema versioning + upgrade path)
+├── API stability contract + published OpenAPI spec
 ├── Craig's P0 feature set
-└── API stability contract
+└── Consumer contract testing (Portal, standalone UI, CLI)
 
 Phase 4 — Production Readiness & Handoff
 ├── Load test suite (k6/locust)
