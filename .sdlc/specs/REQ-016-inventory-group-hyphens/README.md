@@ -1,6 +1,6 @@
 # REQ-016: Inventory Group Hyphen Detection (L111)
 
-**Status:** Draft
+**Status:** Implemented
 **Created:** 2026-06-23
 **Priority:** Medium
 **Phase:** PHASE-001

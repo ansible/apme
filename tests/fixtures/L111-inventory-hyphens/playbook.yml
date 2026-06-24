@@ -1,0 +1,6 @@
+---
+- name: Test playbook for L111
+  hosts: web-servers
+  tasks:
+    - name: Ping hosts
+      ansible.builtin.ping:
