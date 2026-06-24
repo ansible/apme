@@ -177,10 +177,28 @@ gives consumers a clear deprecation window and migration path, but the
 obligation is on consumers to upgrade — not on APME to maintain old API
 versions forever.
 
-#### Deprecation lifecycle (RFC-based)
+**Why standards-based:** APME will have an unknown number of consumers —
+Portal, standalone web UI, CLI, GitHub integrations, and potentially
+third-party tooling we don't control. We cannot rely on direct
+communication channels (emails, Slack messages) to reach all of them.
+Standards-based HTTP headers are the only mechanism that reaches every
+consumer automatically, in-band, on every request. Existing HTTP client
+libraries, API gateways, and monitoring tools already understand these
+headers — consumers don't need custom parsing logic to detect deprecation.
 
-Follow the standards-based pattern using RFC 9745 (`Deprecation` header)
-and RFC 8594 (`Sunset` header):
+#### Deprecation lifecycle
+
+The approach **must** use the IETF standards:
+
+- **[RFC 9745](https://www.rfc-editor.org/rfc/rfc9745.html)** —
+  `Deprecation` response header: signals a resource is deprecated, with
+  a timestamp of when deprecation took/takes effect.
+- **[RFC 8594](https://www.rfc-editor.org/rfc/rfc8594.html)** — `Sunset`
+  response header: signals when the resource will become unresponsive
+  (the hard cutoff date).
+- **`Link` header** with `rel="successor-version"` and
+  `rel="deprecation"` — points consumers to the replacement endpoint and
+  migration documentation.
 
 ```
 HTTP/1.1 200 OK
