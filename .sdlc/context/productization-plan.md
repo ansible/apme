@@ -37,15 +37,20 @@ concerns into three tiers:
 - **UI tier:** React SPA served by nginx. Talks exclusively to the Gateway
   REST API.
 
-All inter-service communication uses gRPC (ADR-001). The only HTTP endpoints
-are Gateway REST (:8080), Galaxy Proxy PEP 503 (:8765), and the UI (:8081).
+Inter-service communication uses gRPC (ADR-001), with one exception: Galaxy
+Proxy exposes an internal PEP 503 HTTP endpoint (:8765) used by Primary for
+collection resolution. External-facing HTTP endpoints are Gateway REST
+(:8080) and the UI (:8081).
 
 ---
 
 ## 2. Deployment: Portal-First, Then Expand
 
-The same services run in every deployment target — only the orchestration
-and networking differ.
+The core engine stack (Primary + validators + Galaxy Proxy) runs in every
+deployment target. Gateway, UI, and Abbenay are included in pod and Helm
+deployments but not in the CLI daemon (which embeds a lightweight Gateway
+instead — ADR-049). Optional validators (Gitleaks, Collection Health, Dep
+Audit) start only when `include_optional=True`.
 
 | Target | Method | Status |
 |--------|--------|--------|
@@ -61,19 +66,26 @@ The Helm chart produces separate Deployments:
 | Deployment | Contents | Scaling |
 |------------|----------|---------|
 | `engine` | Primary + all validators + Galaxy Proxy (sidecars) | HPA optional (1–5 replicas) |
-| `gateway` | REST + gRPC Reporting + SQLite | Fixed replicas |
-| `ui` | nginx + React SPA | Fixed replicas |
+| `gateway` | REST + gRPC Reporting + SQLite | Configurable replicas (SQLite limits practical concurrency) |
+| `ui` | nginx + React SPA | Configurable replicas |
 | `abbenay` | AI provider | Optional, 1 replica |
 
 Templates for Ingress, OpenShift Route, NetworkPolicy, and PodDisruptionBudget
 exist but are disabled by default — enable for production.
 
-### Why one architecture serves all use cases
+### Why one architecture serves multiple use cases
 
-A Podman pod is the same services on localhost. It satisfies the standalone
-web UI and GitHub-integrated use cases without a separate product SKU or
-different code path. The CLI daemon embeds the Gateway for zero-dependency
-local evaluation.
+The Podman pod runs the full stack (engine + gateway + UI) on localhost,
+satisfying standalone web UI and GitHub-integrated use cases. The CLI daemon
+runs a reduced stack (engine + embedded Gateway, no UI) for zero-dependency
+local evaluation. The Helm chart deploys the same services as separate
+Kubernetes Deployments.
+
+**Portal caveat:** The Helm chart in this repo is structured for standalone
+APME deployment on OpenShift. Portal integration may require a different
+deployment model — APME services deployed as part of the Portal's existing
+Helm chart or operator, rather than as a standalone Helm release. This is
+an open question (see Section 6).
 
 ---
 
@@ -152,7 +164,7 @@ decision. Work includes:
 | Baseline metrics | Per-scan diagnostics (`engine_total_ms`, per-rule timing) | Establish SLA baselines (e.g., 1000-task project < 30s) |
 | HPA | Helm template exists (disabled) | Enable and tune with load test data |
 | Horizontal scaling | ADR-012: scale engine pods as unit | Validate with concurrent scan load |
-| Gateway DB | SQLite (single-writer) | PostgreSQL path (ADR-029) needed for HA / multi-replica |
+| Gateway DB | SQLite (single-writer) | **Decision needed:** move to PostgreSQL now, or keep SQLite for standalone and add PostgreSQL as a production option? See Section 6. |
 
 ### 4.5 Ownership Model
 
@@ -271,10 +283,11 @@ Items not in the original list but important for productization:
 | 1 | Auth model: AAP proxy vs self-contained vs platform JWT | Architect + Craig | Any multi-user deployment |
 | 2 | Multi-tenancy: per-tenant instance vs shared + row isolation | Architect | Portal deployment |
 | 3 | Base image: stay Debian slim or migrate to UBI | DevTools / Konflux | Downstream build |
-| 4 | PostgreSQL: required for production or SQLite sufficient? | Architect | HA / multi-replica Gateway |
+| 4 | Database: move to PostgreSQL now, or dual-mode (SQLite standalone / PostgreSQL production)? SQLite is single-writer — blocks multi-replica Gateway and concurrent Portal use. ADR-029 documents a PostgreSQL path via `APME_DATABASE_URL` but it's unvalidated. Alembic migrations don't exist yet. | Architect | HA Gateway, multi-tenancy, Portal scale |
 | 5 | Craig's P0 feature set for Portal launch | Craig | Scope and timeline |
 | 6 | Rule governance: who proposes, reviews, approves prescriptive rules | Community of practice + BU + Ansible eng | Rule quality and relevance |
 | 7 | DevTools ownership scope: engine + gateway + deploy + CI + release | DevTools lead + current team | Codebase handoff |
+| 8 | Portal deployment model: standalone APME Helm chart, or integrated into Portal's operator/chart? | Architect + Portal team | Deployment architecture |
 
 ---
 
