@@ -220,6 +220,37 @@ for SDK tooling, monitoring, and observant developers.
 | **Sunset** | 2–4 weeks | `410 Gone` returned with `Link` to migration guide |
 | **Removed** | — | Endpoint deleted, docs archived |
 
+#### Consumer obligations
+
+Any team or system integrating with the APME Gateway API accepts these
+responsibilities. These are not suggestions — they are requirements for
+supported integration:
+
+1. **Monitor deprecation headers.** Consumers must check for `Deprecation`
+   and `Sunset` headers in every response. Logging or alerting on their
+   presence should be part of the consumer's standard observability.
+2. **Test for deprecation.** Consumer CI/CD pipelines should include a test
+   that fails if responses from APME contain `Deprecation` or `Sunset`
+   headers, forcing the team to acknowledge and plan migration.
+3. **Migrate within the deprecation window.** Once `Deprecation` headers
+   appear, consumers have the advertised window (1–3 months for internal
+   consumers) to migrate to the successor version. APME will not extend
+   the window for consumers who ignored the headers.
+4. **Handle `410 Gone` gracefully.** After the `Sunset` date, deprecated
+   endpoints return `410 Gone`. Consumer applications must handle this
+   status code — displaying a meaningful error to users, not crashing.
+5. **Validate against the published OpenAPI spec.** Consumers should
+   generate or validate their client code against the published OpenAPI
+   spec for their target API version. Do not rely on undocumented response
+   fields or behaviors.
+6. **No pinning to old versions indefinitely.** APME does not guarantee
+   perpetual support for any API version. Consumers that cannot keep pace
+   with the deprecation lifecycle must raise this as a product requirement
+   — not silently ignore deprecation headers and break at sunset.
+
+These obligations will be documented in the API consumer guide and
+referenced in the OpenAPI spec description.
+
 #### Work items
 
 | Item | Current State | Work Needed |
