@@ -166,17 +166,50 @@ decision. Work includes:
 ### 4.4 API Versioning & Contract
 
 The Gateway REST API is URL-versioned (`/api/v1`) today, which is the right
-foundation. What's missing is the contract and tooling around it — all UI
+foundation. What's missing is the contract and tooling around it — all
 consumers (Portal, standalone web UI, CLI, third-party integrations) need a
 stable interface they can code against without tight coupling to APME's
 release cycle.
+
+**Principle: the engine drives the pace; consumers must stay current.** APME
+should not carry indefinite backward compatibility burden. The contract
+gives consumers a clear deprecation window and migration path, but the
+obligation is on consumers to upgrade — not on APME to maintain old API
+versions forever.
+
+#### Deprecation lifecycle (RFC-based)
+
+Follow the standards-based pattern using RFC 9745 (`Deprecation` header)
+and RFC 8594 (`Sunset` header):
+
+```
+HTTP/1.1 200 OK
+Deprecation: Sat, 01 Nov 2026 00:00:00 GMT
+Sunset: Sun, 01 May 2027 00:00:00 GMT
+Link: </api/v2/projects>; rel="successor-version",
+      </docs/migrate/v1-to-v2>; rel="deprecation"
+```
+
+Implement as FastAPI middleware — checks request path version and injects
+headers automatically. No per-endpoint logic needed. Responses continue
+to work normally during the deprecation window; the headers are metadata
+for SDK tooling, monitoring, and observant developers.
+
+| Phase | Duration | Behavior |
+|-------|----------|----------|
+| **Active** | Indefinite | Normal support, bug fixes, improvements |
+| **Deprecated** | 1–3 months (internal consumers) | `Deprecation` + `Sunset` headers on every response; migration docs published; consumers must begin migration |
+| **Sunset** | 2–4 weeks | `410 Gone` returned with `Link` to migration guide |
+| **Removed** | — | Endpoint deleted, docs archived |
+
+#### Work items
 
 | Item | Current State | Work Needed |
 |------|---------------|-------------|
 | URL versioning | All routes under `/api/v1` | Foundation exists; no changes needed |
 | OpenAPI spec | FastAPI auto-generates from code; not published as artifact | Publish versioned OpenAPI spec (JSON/YAML) as release artifact; all consumers validate against it |
 | Stability guarantee | None — any commit can change the API shape | ADR defining API stability policy: what constitutes a breaking change, deprecation timeline, v1 support window |
-| Deprecation policy | No mechanism | Add `Deprecation` / `Sunset` headers; document migration path before removing endpoints |
+| Deprecation middleware | No mechanism | FastAPI middleware: inject `Deprecation` / `Sunset` / `Link` headers for deprecated API versions |
 | Changelog | No API-specific changelog | Track breaking vs non-breaking changes per release; include in release notes |
 | Contract testing | No consumer-driven contract tests | Pact or similar to verify consumer integrations (Portal, standalone UI, CLI) don't break on APME upgrades |
 | SDK / client library | Consumers code directly against REST | Consider a thin Python/TypeScript client generated from OpenAPI spec for Portal, CLI, and third-party use |
