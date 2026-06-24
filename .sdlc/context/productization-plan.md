@@ -154,15 +154,22 @@ decision. Work includes:
 | Horizontal scaling | ADR-012: scale engine pods as unit | Validate with concurrent scan load |
 | Gateway DB | SQLite (single-writer) | PostgreSQL path (ADR-029) needed for HA / multi-replica |
 
-### 4.5 DevTools Team Onboarding
+### 4.5 DevTools Team Onboarding (Engineering Ownership)
+
+The DevTools team will own the APME engine codebase going forward. This is
+an engineering handoff, not an operational one — they own development,
+maintenance, and bug triage for the engine and validators.
 
 | Item | Work Needed |
 |------|-------------|
-| Bug triage | APME components in Jira/Bugzilla; triage process doc |
-| Support statement | Define supported configurations, response SLAs, escalation path |
-| Runbook | Health checks, log locations, restart procedures, common failures |
-| Monitoring | Prometheus `/metrics` endpoint (not yet implemented); Grafana dashboard |
-| Alerting | Define SLOs and alert thresholds |
+| Codebase walkthrough | Architecture, service boundaries, ADR index, test strategy |
+| Bug triage integration | APME components in team's Jira/Bugzilla; integrate into existing triage cadence |
+| CODEOWNERS | Assign DevTools team as owners for `src/apme_engine/`, validators, proto |
+| CI ownership | Team understands and can modify GitHub Actions workflows, tox environments |
+| Development workflow | Team comfortable with branch strategy, PR process, conventional commits |
+| Contribution ramp | First bugs/features assigned to build familiarity before full ownership |
+| Release process | Team owns version bumps, CHANGELOG, tagging, image publishing |
+| Support boundary | Define what DevTools owns (engine) vs what stays with current team (Gateway, UI, deployment) |
 
 ### 4.6 Dependency Review
 
@@ -244,7 +251,7 @@ Items not in the original list but important for productization:
 | 3 | Base image: stay Debian slim or migrate to UBI | DevTools / Konflux | Downstream build |
 | 4 | PostgreSQL: required for production or SQLite sufficient? | Architect | HA / multi-replica Gateway |
 | 5 | Craig's P0 feature set for Portal launch | Craig | Scope and timeline |
-| 6 | Support model: who triages, SLAs, escalation | DevTools lead | Team onboarding |
+| 6 | Engineering ownership split: what does DevTools own vs current team | DevTools lead + current team | Codebase handoff |
 
 ---
 
@@ -273,13 +280,13 @@ Phase 3 — Portal Integration
 ├── Craig's P0 feature set
 └── API stability contract
 
-Phase 4 — Production Readiness
+Phase 4 — Production Readiness & Handoff
 ├── Load test suite (k6/locust)
 ├── SLA baselines and HPA tuning
 ├── Prometheus metrics + Grafana
-├── Operator runbook
 ├── a11y audit
-└── DevTools team onboarding
+├── DevTools codebase walkthrough and first contributions
+└── CODEOWNERS + triage integration for DevTools ownership
 ```
 
 ---
