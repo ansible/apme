@@ -130,7 +130,7 @@ Reports status of all services (Primary, Native, OPA, Ansible, Gitleaks, Collect
 |----------|---------|-------------|
 | `APME_OPA_VALIDATOR_LISTEN` | `0.0.0.0:50054` | gRPC listen address |
 
-> The OPA binary runs internally on `localhost:8181`; the gRPC wrapper proxies to it.
+> The gRPC wrapper invokes `opa eval` via subprocess (not the REST server on :8181).
 
 #### Ansible
 
@@ -159,14 +159,23 @@ Reports status of all services (Primary, Native, OPA, Ansible, Gitleaks, Collect
 
 The OPA container uses a **multi-stage Dockerfile**:
 
-1. **Stage 1**: Copies the `opa` binary from `docker.io/openpolicyagent/opa:latest`
-2. **Stage 2**: Python slim image with `grpcio`, project code, and the Rego bundle
+1. **Stage 1**: Copies the `opa` binary from `docker.io/openpolicyagent/opa:1.17.1`
+2. **Stage 2**: Base image with project code and the Rego bundle at `/bundle`
 
 At runtime, `entrypoint.sh`:
 
-1. Starts OPA as a REST server: `opa run --server --addr :8181 /bundle`
-2. Waits for OPA to become healthy (polls `/health`)
-3. Starts the Python gRPC wrapper (`apme-opa-validator`)
+1. Starts OPA REST server in background (`opa run --server --addr :8181 /bundle &`)
+2. Waits for readiness (polls `/health` — used only for the entrypoint wait loop)
+3. Starts the Python gRPC wrapper (`apme-opa-validator`) as PID 1
+
+**Important:** The gRPC wrapper does **not** query the REST server. It invokes
+`opa eval -I -d /bundle data.apme.rules.violations --format json` as a **subprocess**
+for each evaluation (the binary is on PATH). The REST server is vestigial — it exists
+only for the entrypoint's readiness check and could be removed.
+
+In **daemon mode** (no container), OPA is invoked via `podman run --rm ... opa eval`
+(one ephemeral container per evaluation), or directly via a local `opa` binary if
+`OPA_USE_PODMAN=0` is set.
 
 The **Rego bundle is baked into the image** at build time (no volume mount needed).
 

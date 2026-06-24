@@ -2,11 +2,16 @@
 
 ## Core Dependencies
 
-### Ansible Risk Insights (ARI)
+These are declared in `pyproject.toml` under `[project.dependencies]` and are required
+for all installations (CLI daemon and Podman pod alike).
 
-**Vendored** in `src/apme_engine/engine/` (not a pip dependency — see [ADR-003](/.sdlc/adrs/ADR-003-vendor-ari-engine.md)).
+### Engine (Integrated)
 
-**Purpose**: The underlying scanning engine that parses Ansible content, builds call trees, resolves variables, annotates risks, and produces a hierarchy payload + scandata for validators.
+The scanning engine lives in `src/apme_engine/engine/` — fully integrated, not a pip
+dependency (see [ADR-003](/.sdlc/adrs/ADR-003-vendor-ari-engine.md)).
+
+**Purpose**: Parses Ansible content, builds a `ContentGraph`, resolves variables,
+annotates risks, and produces a hierarchy payload for validators.
 
 #### Usage Pattern
 
@@ -22,171 +27,83 @@ context = run_scan(
 )
 
 # context.hierarchy_payload — JSON-serializable dict for OPA/Ansible
-# context.scandata — SingleScan object for Native validator
+# context.scandata — legacy SingleScan (native validator now uses ContentGraph)
 ```
 
 #### Key Classes
 
-- `ARIScanner` — Main scanner class (`engine/scanner.py`)
-- `SingleScan` — Per-scan state container (`engine/scan_state.py`)
+- `AnsibleProjectLoader` — Main loader class (`engine/scanner.py`)
+- `ContentGraph` — Graph model for nodes/edges (`engine/content_graph.py`)
 - `ScanContext` — Result container with hierarchy_payload + scandata (`validators/base.py`)
 
 #### Collection Dependencies
 
-ARI no longer downloads collections. The `VenvSessionManager` (owned by Primary) installs collections into session-scoped venvs via the Galaxy Proxy before ARI runs. ARI receives a `dependency_dir` pointing to the venv's `site-packages` for pre-installed collection content.
+The engine never downloads collections. The `VenvSessionManager` (owned by Primary)
+installs collections into session-scoped venvs via the Galaxy Proxy before the engine
+runs. The engine receives a `dependency_dir` pointing to the venv's `site-packages`
+for pre-installed collection content.
 
 ---
 
-### LangGraph
+### gRPC Stack
 
-**Package**: `langgraph`
-**Purpose**: Agent orchestration for the rewriting workflow.
+| Package | Version | Purpose |
+|---------|---------|---------|
+| `grpcio` | `>=1.80.0` | gRPC runtime for all inter-service communication |
+| `grpcio-health-checking` | `>=1.80.0` | Standard health-check protocol |
+| `protobuf` | `>=6.31.1,<7` | Protocol buffer serialization |
 
-#### Installation
-
-```bash
-pip install langgraph
-```
-
-#### Usage Pattern
-
-```python
-from langgraph.graph import StateGraph, END
-from typing import TypedDict
-
-# Define state
-class RewriterState(TypedDict):
-    playbook_path: str
-    issues: list[dict]
-    fixes_applied: list[str]
-    current_step: str
-
-# Create graph
-workflow = StateGraph(RewriterState)
-
-# Add nodes
-workflow.add_node("load", load_playbook)
-workflow.add_node("analyze", analyze_issues)
-workflow.add_node("transform", apply_transforms)
-workflow.add_node("validate", validate_output)
-
-# Add edges
-workflow.set_entry_point("load")
-workflow.add_edge("load", "analyze")
-workflow.add_edge("analyze", "transform")
-workflow.add_edge("transform", "validate")
-workflow.add_edge("validate", END)
-
-# Compile and run
-app = workflow.compile()
-result = app.invoke({"playbook_path": "/path/to/playbook.yml"})
-```
-
-#### Key Concepts
-
-- **StateGraph**: Defines the workflow structure
-- **Nodes**: Functions that process state
-- **Edges**: Connections between nodes
-- **Conditional Edges**: Branching logic based on state
+All gRPC servers use `grpc.aio` (fully async). Proto definitions in `proto/apme/v1/`,
+generated stubs in `src/apme/v1/`.
 
 ---
 
-### Typer
+### Web / HTTP
 
-**Package**: `typer`
-**Purpose**: CLI framework with automatic help generation.
-
-#### Installation
-
-```bash
-pip install typer[all]
-```
-
-#### Usage Pattern
-
-```python
-import typer
-from pathlib import Path
-
-app = typer.Typer()
-
-@app.command()
-def check(
-    path: Path = typer.Argument(..., help="Playbook path"),
-    verbose: bool = typer.Option(False, "--verbose", "-v"),
-):
-    """Check a playbook for AAP compatibility issues."""
-    if verbose:
-        typer.echo(f"Checking {path}...")
-    # ... implementation
-
-@app.command()
-def dashboard(
-    port: int = typer.Option(8501, "--port", "-p"),
-):
-    """Start the APME dashboard."""
-    # ... implementation
-
-if __name__ == "__main__":
-    app()
-```
+| Package | Version | Purpose |
+|---------|---------|---------|
+| `fastapi` | `>=0.100` | REST API framework (Gateway + Galaxy Proxy) |
+| `starlette` | `>=1.3.1` | ASGI framework (underlying FastAPI) |
+| `uvicorn[standard]` | `>=0.20` | ASGI server for Galaxy Proxy and Gateway |
+| `httpx` | latest | HTTP client (Galaxy API calls in proxy) |
 
 ---
 
-### Streamlit
+### Data / Serialization
 
-**Package**: `streamlit`
-**Purpose**: Dashboard UI framework.
+| Package | Version | Purpose |
+|---------|---------|---------|
+| `jsonpickle` | latest | Serializes complex Python objects (scandata) for legacy paths |
+| `PyYAML` | latest | YAML parsing (read-only; writes use ruamel.yaml) |
+| `ruamel.yaml` | latest | Comment-preserving YAML for remediation transforms |
+| `networkx` | `>=3.1` | Graph algorithms for ContentGraph operations |
 
-#### Installation
+---
 
-```bash
-pip install streamlit
-```
+### Ansible / Security
 
-#### Usage Pattern
+| Package | Version | Purpose |
+|---------|---------|---------|
+| `ansible-core` | `>=2.17.14` | Required for Ansible validator (plugin loader, syntax check) |
+| `pip-audit` | `>=2.7` | Python CVE scanning (Dep Audit validator) |
 
-```python
-import streamlit as st
-import pandas as pd
+---
 
-st.title("APME Dashboard")
+### Utilities
 
-# Sidebar filters
-severity = st.sidebar.selectbox("Severity", ["All", "Error", "Warning", "Info"])
-
-# Load and display data
-@st.cache_data
-def load_check_results(path: str) -> pd.DataFrame:
-    return pd.read_json(path)
-
-df = load_check_results("check-results.json")
-
-# Filter
-if severity != "All":
-    df = df[df["severity"] == severity]
-
-# Display
-st.dataframe(df)
-
-# Charts
-st.bar_chart(df["type"].value_counts())
-```
+| Package | Version | Purpose |
+|---------|---------|---------|
+| `filelock` | latest | Venv session locking |
+| `rapidfuzz` | latest | Fuzzy string matching (module name suggestions) |
+| `joblib` | latest | Caching and parallel execution helpers |
+| `packaging` | `>=23` | Version parsing and comparison |
 
 ---
 
 ### ruamel.yaml
 
-**Package**: `ruamel.yaml`
-**Purpose**: YAML parsing that preserves comments and formatting.
-
-#### Installation
-
-```bash
-pip install ruamel.yaml
-```
-
-#### Usage Pattern
+**Purpose**: YAML parsing that preserves comments and formatting. Used by the
+remediation engine's transforms — never PyYAML for writes.
 
 ```python
 from ruamel.yaml import YAML
@@ -204,7 +121,6 @@ with open(path) as f:
 # Modify (in-place)
 for task in data[0]["tasks"]:
     if "copy" in task:
-        # Transform short module to FQCN
         task["ansible.builtin.copy"] = task.pop("copy")
 
 # Save (preserves comments!)
@@ -212,141 +128,83 @@ with open(path, "w") as f:
     yaml.dump(data, f)
 ```
 
-#### Why ruamel.yaml?
+---
 
-- Preserves comments (PyYAML discards them)
-- Maintains formatting and indentation
-- Round-trip editing without data loss
+## Optional Dependencies
+
+### AI (`[project.optional-dependencies.ai]`)
+
+| Package | Purpose |
+|---------|---------|
+| `abbenay-client` | gRPC client for the Abbenay AI provider (Tier 2 remediation) |
+
+### Gateway (`[project.optional-dependencies.gateway]`)
+
+| Package | Purpose |
+|---------|---------|
+| `sqlalchemy>=2.0` | ORM for scan history persistence |
+| `aiosqlite>=0.20` | Async SQLite driver |
+| `python-multipart>=0.0.31` | File upload handling |
 
 ---
 
-## Development Dependencies
+## Development Dependencies (`[project.optional-dependencies.dev]`)
 
-### pytest
+| Package | Purpose |
+|---------|---------|
+| `pytest` | Test framework |
+| `pytest-cov` | Coverage reporting |
+| `pytest-mock` | Mock utilities |
+| `pytest-asyncio>=0.24` | Async test support |
+| `pytest-xdist>=3.5` | Parallel test execution |
+| `pytest-playwright` | Browser/UI tests |
+| `ruff` | Linter and formatter |
+| `mypy` | Static type checker |
+| `pydoclint>=0.8.0` | Docstring linter |
+| `types-protobuf` | Type stubs for protobuf |
+| `types-PyYAML` | Type stubs for PyYAML |
+| `grpc-stubs` | Type stubs for gRPC |
+| `grpcio-tools>=1.80.0` | Proto code generation |
 
-```bash
-pip install pytest pytest-cov pytest-asyncio
-```
-
-```python
-# conftest.py
-import pytest
-from pathlib import Path
-
-@pytest.fixture
-def sample_playbook(tmp_path: Path) -> Path:
-    content = """
-    - hosts: all
-      tasks:
-        - copy:
-            src: /tmp/a
-            dest: /tmp/b
-    """
-    path = tmp_path / "playbook.yml"
-    path.write_text(content)
-    return path
-```
-
-### Ruff
-
-```bash
-pip install ruff
-```
+### Tool Configuration
 
 ```toml
 # pyproject.toml
 [tool.ruff]
-line-length = 88
-target-version = "py311"
+target-version = "py310"
+line-length = 120
 
-[tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B"]
-```
-
-### mypy
-
-```bash
-pip install mypy
-```
-
-```toml
-# pyproject.toml
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.10"
 strict = true
 ```
 
 ---
 
-## Reference: x2a-convertor
+## Frontend Dependencies
 
-**Repository**: https://github.com/ansible/x2a-convertor
+The React SPA (`frontend/`) uses:
 
-APME draws inspiration from x2a-convertor's patterns but is a fresh implementation.
-
-### Key Patterns to Adopt
-
-1. **Module Mapping Structure**
-
-```python
-# From x2a-convertor's approach
-MODULE_MAPPINGS = {
-    "copy": "ansible.builtin.copy",
-    "file": "ansible.builtin.file",
-    "template": "ansible.builtin.template",
-    # ... etc
-}
-```
-
-2. **Collection Detection**
-
-```python
-def detect_collection(module_name: str) -> str | None:
-    """Detect which collection a module belongs to."""
-    # Check ansible.builtin first
-    if module_name in BUILTIN_MODULES:
-        return "ansible.builtin"
-    # Check other collections
-    for collection, modules in COLLECTION_MODULES.items():
-        if module_name in modules:
-            return collection
-    return None
-```
-
-3. **Safe Transformation**
-
-```python
-def safe_transform(playbook_path: Path) -> tuple[bool, str]:
-    """Transform with backup and validation."""
-    # Create backup
-    backup = playbook_path.with_suffix(".yml.bak")
-    shutil.copy(playbook_path, backup)
-
-    try:
-        # Apply transforms
-        transform(playbook_path)
-        # Validate result
-        if not validate_yaml(playbook_path):
-            raise TransformError("Invalid YAML after transform")
-        return True, ""
-    except Exception as e:
-        # Restore backup
-        shutil.copy(backup, playbook_path)
-        return False, str(e)
-```
+| Package | Purpose |
+|---------|---------|
+| React 18 | UI framework |
+| Vite | Build tool |
+| PatternFly 6 | Red Hat design system (components, charts, table, icons) |
+| React Router 6 | Client-side routing |
+| SWR | Data fetching |
+| i18next | Internationalization |
 
 ---
 
 ## Version Compatibility Matrix
 
-| Dependency | Min Version | Max Version | Notes |
-|------------|-------------|-------------|-------|
-| Python | 3.11 | 3.12 | Type syntax requirements |
-| ansible-risk-insight | 0.1.0 | latest | Core scanner |
-| langgraph | 0.1.0 | latest | Agent workflows |
-| typer | 0.9.0 | latest | CLI framework |
-| streamlit | 1.28.0 | latest | Dashboard |
-| ruamel.yaml | 0.18.0 | latest | YAML handling |
-| pytest | 7.0.0 | latest | Testing |
-| ruff | 0.1.0 | latest | Linting |
-| mypy | 1.5.0 | latest | Type checking |
+| Dependency | Min Version | Notes |
+|------------|-------------|-------|
+| Python | 3.10 | `requires-python = ">=3.10"` |
+| ansible-core | 2.17.14 | Multi-version venvs (2.17/2.18/2.19/2.20) |
+| grpcio | 1.80.0 | Required for proto v6 compatibility |
+| protobuf | 6.31.1 | Major version 6 only (not 7) |
+| ruamel.yaml | 0.18.0 | YAML round-trip |
+| pytest | 7.0.0 | Testing |
+| ruff | latest | Linting (120-char, py310 target) |
+| mypy | latest | Type checking (strict) |

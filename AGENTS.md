@@ -55,10 +55,10 @@ one needs to change, write an ADR first.
    invokes `opa eval` via subprocess — there is no OPA REST server on 8181.
    Do not introduce httpx or HTTP client dependencies for OPA.
 
-10. **`FixSession` is the unified client path** (ADR-039). Both `check` and
-    `remediate` use the bidirectional `FixSession` RPC. The unary `Scan` RPC
-    exists for backward-compatible engine-aligned clients only. New features
-    target `FixSession`.
+10. **`FixSession` is the sole client path** (ADR-039). Both `check` and
+    `remediate` use the bidirectional `FixSession` RPC. The unary `Scan` and
+    `ScanStream` RPCs have been removed from `primary.proto`. All client
+    operations go through `FixSession`.
 
 11. **The engine never queries out; it only emits** (ADR-020, ADR-029). The
     engine does not fetch data from external sources, third-party APIs, or any
@@ -76,10 +76,11 @@ one needs to change, write an ADR first.
     required for both the CLI daemon and the Podman pod — their dependencies
     belong in core `dependencies` (not optional extras), and they live in
     `_DEFAULT_PORTS`. Galaxy Proxy is the sole collection installation path
-    for session venvs; the daemon cannot scan without it. Only Gitleaks is
-    truly optional (`_OPTIONAL_SERVICES`) because it requires an external
-    binary. Gateway, UI, and Abbenay are pod-level / enterprise services
-    that the CLI daemon does not start.
+    for session venvs; the daemon cannot scan without it. Gitleaks,
+    Collection Health, and Dep Audit are optional (`_OPTIONAL_SERVICES`)
+    because they require external binaries or venv-dependent scanning;
+    they start when `include_optional=True`. Gateway, UI, and Abbenay are
+    pod-level / enterprise services that the CLI daemon does not start.
 
 13. **Transforms are semantically trusted; the engine owns state and syntax**
     (ADR-044). Transforms operate on an **ephemeral copy** of the graph and

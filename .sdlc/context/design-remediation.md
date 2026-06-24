@@ -64,8 +64,8 @@ Phase 2: Idempotency Gate
   └─► assert zero diffs (if not: formatter bug, abort)
 
 Phase 3: Engine scan (validators)
-  └─► run engine (parse → annotate → hierarchy)
-  └─► fan out to all validators (Native, OPA, Ansible, Gitleaks)
+  └─► run engine (load → build_content_graph → apply_rules → hierarchy)
+  └─► fan out to all validators (Native, OPA, Ansible, Gitleaks, Coll Health, Dep Audit)
   └─► merge + deduplicate violations
 
 Phase 4: Remediate (Tier 1 — deterministic)
@@ -74,7 +74,7 @@ Phase 4: Remediate (Tier 1 — deterministic)
   └─► re-scan → repeat until converged or oscillation (max --max-passes)
 
 Phase 5: AI Escalation (Tier 2 — AI-proposable)
-  └─► route Tier 2 violations to OpenLLM (if available)
+  └─► route Tier 2 violations to Abbenay AI (if available)
   └─► generate patches with confidence scores
   └─► apply accepted patches (--auto) or present for review
 
@@ -90,9 +90,9 @@ Phase 6: Report
 |-----------|----------|-----|
 | Formatter | CLI (in-process) or Primary (`Format` RPC) | No scan needed; operates on raw files |
 | Scan | Primary service (gRPC) or CLI (in-process) | Already implemented |
-| Remediation Engine | Primary service (`Fix` RPC) | Needs access to scan results and file content; can call OpenLLM |
+| Remediation Engine | Primary service (`FixSession` RPC) | Needs access to scan results and file content; can call Abbenay |
 | Transform Registry | `src/apme_engine/remediation/transforms/` | Pure functions, no container needed |
-| AI Escalation | OpenLLM daemon (gRPC) | Separate container, optional |
+| AI Escalation | Abbenay daemon (gRPC, :50057) | Separate container, optional |
 
 ---
 
@@ -103,7 +103,7 @@ Every violation flows through a three-tier classification that determines how it
 | Tier | Label | Handler | Confidence | User Action |
 |------|-------|---------|------------|-------------|
 | **1 — Deterministic** | `fixable: true` | Transform Registry | 100% — the transform is a known-correct rewrite | None (auto-applied) |
-| **2 — AI-Proposable** | `ai_proposable: true` | OpenLLM gRPC | Variable — LLM generates a patch with a confidence score | Review proposal, accept/reject (or `--auto` in CI) |
+| **2 — AI-Proposable** | `ai_proposable: true` | Abbenay gRPC | Variable — LLM generates a patch with a confidence score | Review proposal, accept/reject (or `--auto` in CI) |
 | **3 — Manual Review** | neither | Human | N/A — requires judgment, policy, or external context | Fix by hand |
 
 ### Tier 1: Deterministic Fixes (Transform Registry)
@@ -117,9 +117,9 @@ These are mechanical rewrites where the correct output is unambiguous given the 
 | M001 | Rewrite short module names to FQCN (`debug` → `ansible.builtin.debug`) |
 | M005 | Rename deprecated parameter (`sudo:` → `become:`) |
 
-The transform function receives the file content and violation, returns the corrected content. No ambiguity, no judgment.
+The transform function receives the node's `CommentedMap` (ruamel round-trip YAML) and the violation, mutates it in-place, and returns `True`. No ambiguity, no judgment.
 
-### Tier 2: AI-Proposable Fixes (OpenLLM)
+### Tier 2: AI-Proposable Fixes (Abbenay)
 
 These violations have a clear "what needs to change" but the "how" requires understanding context that a static transform cannot capture. The AI generates a patch and attaches a confidence score. Examples:
 
@@ -166,7 +166,7 @@ def is_finding_resolvable(violation: dict, registry: TransformRegistry) -> bool:
 
 This is intentionally simple. A violation is resolvable if and only if the transform registry has a function for that rule ID. No heuristics, no guessing.
 
-Violations that fail this check proceed to AI escalation (Tier 2) if OpenLLM is available, otherwise they are reported as manual review (Tier 3).
+Violations that fail this check proceed to AI escalation (Tier 2) if Abbenay is available, otherwise they are reported as manual review (Tier 3).
 
 ### Rule Metadata
 
@@ -192,65 +192,64 @@ class RuleMetadata:
 
 ### Design
 
+Transforms operate on **graph nodes**, not raw file content. Each transform receives a `CommentedMap` (the ruamel.yaml round-trip representation of a single task/play) and a violation dict. It mutates the map in-place and returns `True` if a change was made. The engine handles serialization back to disk.
+
 ```python
-from typing import Callable, NamedTuple
+from collections.abc import Callable
+from ruamel.yaml.comments import CommentedMap
+from apme_engine.engine.models import ViolationDict
 
-class TransformResult(NamedTuple):
-    content: str        # modified file content
-    applied: bool       # True if a change was made
-
-TransformFn = Callable[[str, dict], TransformResult]
-# TransformFn(file_content: str, violation: dict) -> TransformResult
+NodeTransformFn = Callable[[CommentedMap, ViolationDict], bool]
+# NodeTransformFn(task_data: CommentedMap, violation: ViolationDict) -> applied: bool
 
 
 class TransformRegistry:
-    """Maps rule IDs to deterministic fix functions."""
+    """Maps rule IDs to node-level transform functions."""
 
-    def __init__(self):
-        self._transforms: dict[str, TransformFn] = {}
+    def __init__(self) -> None:
+        self._node: dict[str, NodeTransformFn] = {}
 
-    def register(self, rule_id: str, fn: TransformFn) -> None:
-        self._transforms[rule_id] = fn
+    def register(self, rule_id: str, *, node: NodeTransformFn | None = None) -> None:
+        if node is None:
+            raise ValueError(f"register({rule_id!r}): node transform is required")
+        self._node[rule_id] = node
+
+    def get_node_transform(self, rule_id: str) -> NodeTransformFn | None:
+        return self._node.get(rule_id)
 
     def __contains__(self, rule_id: str) -> bool:
-        return rule_id in self._transforms
-
-    def apply(self, rule_id: str, content: str, violation: dict) -> TransformResult:
-        fn = self._transforms.get(rule_id)
-        if fn is None:
-            return TransformResult(content=content, applied=False)
-        return fn(content, violation)
+        return rule_id in self._node
 ```
 
 ### Transform Implementation Rules
 
 | Rule | Description |
 |------|-------------|
-| **Operate on YAML AST** | Use `FormattedYAML` (ruamel round-trip) to preserve comments and formatting |
+| **Operate on CommentedMap** | Transforms receive a ruamel round-trip `CommentedMap` — comments and formatting are preserved automatically |
+| **Mutate in-place** | Modify the map directly and return `True`; do not rebuild or re-serialize |
 | **Single responsibility** | One transform per rule ID; a transform fixes exactly the issue its rule detects |
-| **Idempotent** | Applying a transform to already-fixed content produces no change |
+| **Idempotent** | Applying a transform to already-fixed content returns `False` (no change) |
 | **Independently testable** | Each transform has its own unit test with before/after YAML strings |
-| **No side effects** | Transforms receive content + violation, return content; they do not write files |
+| **No file I/O** | Transforms never read or write files; they operate on the in-memory node representation |
 
 ### Example Transform
 
 ```python
-def fix_missing_mode(content: str, violation: dict) -> TransformResult:
+def fix_missing_mode(task: CommentedMap, violation: ViolationDict) -> bool:
     """L021: add mode: '0644' to file/copy/template tasks missing explicit mode."""
-    yaml = FormattedYAML(typ="rt", pure=True, version=(1, 1))
-    data = yaml.load(content)
-
-    # Navigate to the task identified by the violation
-    task = _find_task_at_line(data, violation.get("line", 0))
-    if task is None:
-        return TransformResult(content=content, applied=False)
-
     module_key = _get_module_key(task)
-    if module_key and "mode" not in task[module_key]:
-        task[module_key]["mode"] = "0644"
-        return TransformResult(content=yaml.dumps(data), applied=True)
+    if module_key is None:
+        return False
 
-    return TransformResult(content=content, applied=False)
+    module_opts = task.get(module_key)
+    if not isinstance(module_opts, dict):
+        return False
+
+    if "mode" in module_opts:
+        return False
+
+    module_opts["mode"] = "0644"
+    return True
 ```
 
 ### File Organization
@@ -258,85 +257,87 @@ def fix_missing_mode(content: str, violation: dict) -> TransformResult:
 ```
 src/apme_engine/remediation/
   ├── __init__.py
-  ├── engine.py              # RemediationEngine class (convergence loop)
+  ├── graph_engine.py        # Graph-based remediation engine (convergence loop)
   ├── partition.py           # is_finding_resolvable()
   ├── registry.py            # TransformRegistry
-  ├── ai_escalation.py       # OpenLLM gRPC client
+  ├── ai_provider.py         # AIProvider protocol
+  ├── ai_context.py          # Context builder for AI requests
+  ├── abbenay_provider.py    # Abbenay gRPC client (implements AIProvider)
   └── transforms/
       ├── __init__.py        # auto-registers all transforms
-      ├── L021_missing_mode.py
+      ├── _helpers.py        # shared transform utilities
       ├── L007_shell_to_command.py
+      ├── L008_local_action.py
+      ├── L009_empty_string.py
       ├── M001_fqcn.py
-      └── ...
+      └── ... (~19 transform modules)
 ```
 
 ---
 
 ## AI Escalation Path
 
-When `is_finding_resolvable()` returns `False` and an OpenLLM service is available, the remediation engine escalates to AI.
+When `is_finding_resolvable()` returns `False` and the Abbenay AI service is available, the remediation engine escalates to AI.
 
 ### Request Packaging
 
-Each violation is packaged with context for the LLM:
+Violations are grouped by graph node and packaged with graph-derived context for the LLM:
 
 ```python
-@dataclass
-class AIRemediationRequest:
-    rule_id: str
-    level: str
-    message: str
-    file_path: str
-    line: int
-    code_window: str        # 10 lines before + after the violation
-    file_content: str       # full file (for broader context)
-    ansible_version: str    # target version (e.g., "2.20")
+@dataclass(frozen=True, slots=True)
+class AINodeContext:
+    node_id: str                     # graph node identifier
+    node_type: str                   # task, block, handler, etc.
+    yaml_lines: str                  # current YAML text for this node
+    violations: list[ViolationDict]  # all violations on this node
+    file_path: str                   # source file (display only)
+    parent_context: str              # summarized ancestor chain (play vars, become, tags)
+    sibling_snippets: list[str]      # YAML of surrounding siblings for awareness
+    feedback: str                    # validation feedback from prior failed AI attempt
 ```
 
-### Structured Prompt
+This is node-scoped, not file-scoped — the AI fixes one graph node at a time with rich structural context from the `ContentGraph`.
 
-```
-You are an Ansible modernization assistant. A static analysis rule has
-flagged an issue in the following YAML file.
+### Structured Prompt (Node-Level)
 
-Rule: {rule_id}
-Message: {message}
-File: {file_path}
-Line: {line}
+The prompt is structured as `NODE_PROMPT_TEMPLATE` and includes:
 
-Code context (lines {start}-{end}):
-```yaml
-{code_window}
-```
+1. **Violations list** — all violations on this node (rule_id, message)
+2. **Rule-specific guidance** — loaded from rule doc frontmatter `ai_prompt` field
+3. **YAML to fix** — the node's current `yaml_lines`
+4. **Parent context** — play vars, become, tags from ancestor nodes
+5. **Sibling context** — surrounding sibling node YAML for awareness
+6. **Best practices** — curated per-rule Ansible best practices
+7. **Feedback** (resubmission only) — why the prior attempt was rejected
 
-Provide a fix for this issue. Respond with ONLY valid YAML for the corrected
-section. Preserve comments and formatting. If you cannot fix it with
-confidence, respond with "SKIP".
-```
+The AI must respond with structured JSON: `fixed_snippet` (complete corrected YAML), `changes[]` (per-violation rule_id + explanation + confidence), and `skipped[]` (violations it couldn't fix). This enables per-violation tracking and confidence scoring.
 
 ### Response Schema
 
 ```python
 @dataclass
-class AIRemediationResponse:
-    suggested_code: str     # corrected YAML (or "SKIP")
-    confidence: float       # 0.0-1.0
-    reasoning: str          # why this fix is correct
-    applicable: bool        # False if LLM says "SKIP"
+class AINodeFix:
+    fixed_snippet: str          # corrected YAML text for the node
+    rule_ids: list[str]         # rule IDs addressed by this fix
+    explanation: str            # human-readable summary of changes
+    confidence: float           # 0.0-1.0 (default 0.85)
+    skipped: list[AISkipped]    # violations the AI could not fix
 ```
+
+The `AIProvider` protocol's sole entry point is `propose_node_fix(context: AINodeContext) -> AINodeFix | None`. Returns `None` when the AI cannot produce a fix.
 
 ### CLI Modes
 
 | Flag | Behavior |
 |------|----------|
-| `--no-ai` | Skip AI entirely; report non-fixable violations as "manual review" |
-| `--auto` | Apply AI patches without prompting (CI mode) |
-| (default) | Show AI-proposed patch + diff, prompt user to accept/reject |
-| `--min-confidence 0.8` | Only apply AI patches with confidence >= threshold |
+| (default) | AI disabled; only Tier 1 deterministic transforms run |
+| `--ai` | Enable Tier 2 AI-assisted remediation |
+| `--auto-approve` | Apply AI patches without prompting (CI mode) |
+| `--model MODEL` | AI model identifier (e.g. `openai/gpt-4o`; falls back to `APME_AI_MODEL` env var) |
 
 ### Graceful Degradation
 
-If `OPENLLM_GRPC_ADDRESS` is unset or the service is unreachable, the remediation engine skips AI escalation silently. Non-fixable violations are reported as "manual review required." The fix pipeline never fails due to missing AI.
+If `APME_ABBENAY_ADDR` is unset or the service is unreachable, the remediation engine skips AI escalation silently. Non-fixable violations are reported as "manual review required." The fix pipeline never fails due to missing AI.
 
 ---
 
@@ -344,175 +345,154 @@ If `OPENLLM_GRPC_ADDRESS` is unset or the service is unreachable, the remediatio
 
 ### Algorithm
 
+The convergence loop operates entirely **in memory on the `ContentGraph`** — no files are read or written during convergence. After convergence, `splice_modifications()` produces file patches.
+
 ```python
-def remediate(files, max_passes=5):
-    prev_count = float("inf")
+class GraphRemediationEngine:
+    def __init__(self, registry, graph, rules, *, max_passes=5, ai_provider=None): ...
 
-    for pass_num in range(1, max_passes + 1):
-        violations = scan(files)
-        fixable = [v for v in violations if is_finding_resolvable(v, registry)]
+    async def remediate(self, initial_violations=None) -> GraphFixReport:
+        """Unified Tier 1 + Tier 2 convergence loop."""
+        if initial_violations is None:
+            violations = scan(graph, rules)  # initial full graph scan
+        else:
+            violations = initial_violations
 
-        if not fixable:
-            break  # nothing left to fix deterministically
+        for pass_num in range(1, max_passes + 1):
+            tier1, tier2, tier3 = partition_violations(violations, registry)
 
-        for v in fixable:
-            content = read_file(v["file"])
-            result = registry.apply(v["rule_id"], content, v)
-            if result.applied:
-                write_file(v["file"], result.content)
+            # Phase A: Tier 1 — deterministic node transforms
+            if tier1:
+                for v in tier1:
+                    node = graph.get_node(v["node_id"])
+                    transform = registry.get_node_transform(v["rule_id"])
+                    if transform and transform(node.commented_map, v):
+                        graph.mark_dirty(node.id)
 
-        # Re-scan to check progress
-        new_violations = scan(files)
-        new_count = len(new_violations)
+            # Rescan only dirty nodes (incremental)
+            violations = rescan_dirty(graph, dirty_node_ids, rules)
 
-        if new_count >= prev_count:
-            # Oscillation or no progress — bail
-            break
+            if not violations or count >= prev_count:
+                break  # converged or oscillation
 
-        prev_count = new_count
+            # Phase B: Tier 2 — AI transforms (when Tier 1 exhausts)
+            if not tier1 and tier2 and ai_provider:
+                proposals = await ai_provider.propose(tier2, graph)
+                # Apply accepted proposals, rescan, loop back to Tier 1
 
-        if new_count == 0:
-            break  # fully converged
-
-    # After deterministic passes (Tier 1), partition remaining into Tier 2 + 3
-    remaining = scan(files)
-    tier2 = [v for v in remaining
-             if not is_finding_resolvable(v, registry) and v.get("ai_proposable", True)]
-    tier3 = [v for v in remaining
-             if not is_finding_resolvable(v, registry) and not v.get("ai_proposable", True)]
-
-    ai_results = escalate_to_ai(tier2)  # no-op if AI unavailable
-
-    return FixReport(
-        passes=pass_num,
-        fixed=prev_initial_count - len(remaining),
-        remaining_ai=tier2,         # Tier 2: AI-proposed patches
-        remaining_manual=tier3,     # Tier 3: manual review only
-        ai_proposed=ai_results,
-    )
+        return GraphFixReport(passes, fixed, remaining, ai_proposals, ...)
 ```
+
+Key differences from a file-based engine:
+- **No file I/O during convergence** — all mutations happen on `ContentNode.yaml_lines` in memory
+- **Incremental rescan** — only dirty (modified) nodes are re-evaluated, not the entire project
+- **Unified Tier 1 + Tier 2 loop** — AI proposals are applied to the same graph; post-AI rescanning catches cross-tier issues and Tier 1 cleanup runs automatically
+- **Transaction safety** — a transform that fails mid-execution leaves the graph unchanged
 
 ### Oscillation Detection
 
-An oscillation occurs when a fix introduces a new violation that triggers another fix that re-introduces the original. Detection is simple: if the violation count does not decrease after a pass, stop. The `max_passes` parameter (default 5) provides a hard ceiling.
+An oscillation occurs when a fix introduces a new violation that triggers another fix that re-introduces the original. Detection: if the violation count does not decrease after a pass, stop. The `max_passes` parameter (default 5) provides a hard ceiling.
 
 ### Convergence Report
 
 ```python
 @dataclass
-class FixReport:
-    passes: int                     # number of convergence passes executed
-    fixed: int                      # violations resolved by Tier 1 transforms
-    remaining_ai: list[dict]        # Tier 2: violations with AI proposals
-    remaining_manual: list[dict]    # Tier 3: violations requiring manual review
-    ai_proposed: list[dict]         # AI-suggested patches (pending review)
-    oscillation_detected: bool      # True if loop bailed due to no progress
+class GraphFixReport:
+    passes: int                                # convergence passes executed
+    fixed: int                                 # violations resolved
+    applied_patches: list[FilePatch]           # populated by splice_modifications()
+    remaining_violations: list[ViolationDict]  # open + ai_abstained
+    fixed_violations: list[ViolationDict]      # resolved during convergence
+    ai_abstained_violations: list[ViolationDict]  # AI attempted but failed
+    oscillation_detected: bool                 # True if loop bailed
+    nodes_modified: int                        # ContentNodes mutated
+    ai_proposals: list[AINodeProposal]         # pending human approval
+
+@dataclass
+class FilePatch:
+    path: str           # file that was patched
+    original: str       # original content
+    patched: str        # content after transforms
+    diff: str           # unified diff
+    rule_ids: list[str] # applied rule IDs
+
+@dataclass
+class AINodeProposal:
+    node_id: str        # graph node modified by AI
+    file_path: str      # source file (for display)
+    before_yaml: str    # YAML before AI transform
+    after_yaml: str     # YAML after AI transform
+    rule_ids: list[str] # addressed rule IDs
+    explanation: str    # human-readable summary
+    confidence: float   # AI confidence score
 ```
 
 ---
 
 ## gRPC Contract
 
-User-facing **check** and **remediate** run through **`FixSession`** (bidirectional stream, ADR-028). **`ScanStream` was removed** (ADR-039) so check and remediate share one engine path. The unary **`Fix` RPC** below remains illustrative for a one-shot shape; the implemented streaming contract is `FixSession`.
+User-facing **check** and **remediate** both run through **`FixSession`** (bidirectional stream, ADR-039). There is no separate unary Fix or Scan RPC — `FixSession` is the sole client path.
 
-### New Fix RPC on Primary
+### Primary Service (Implemented)
 
 ```protobuf
 service Primary {
-  rpc Scan(ScanRequest) returns (ScanResponse);
   rpc Format(FormatRequest) returns (FormatResponse);
-  rpc Fix(FixRequest) returns (FixResponse);            // new
+  rpc FormatStream(stream ScanChunk) returns (FormatResponse);
   rpc Health(HealthRequest) returns (HealthResponse);
-}
-
-message FixRequest {
-  string project_root = 1;
-  repeated File files = 2;
-  FixOptions options = 3;
-}
-
-message FixOptions {
-  int32 max_passes = 1;            // default 5
-  bool no_ai = 2;                  // skip AI escalation
-  bool auto_apply_ai = 3;          // apply AI patches without prompting
-  float min_confidence = 4;        // AI confidence threshold (default 0.0)
-  string ansible_core_version = 5;
-  repeated string collection_specs = 6;
-}
-
-message FixResponse {
-  int32 passes = 1;
-  repeated FileDiff applied_patches = 2;     // deterministic fixes applied
-  repeated AIProposal ai_proposals = 3;      // AI-suggested patches
-  repeated Violation remaining = 4;          // violations not resolved
-  bool oscillation_detected = 5;
-}
-
-message AIProposal {
-  Violation violation = 1;
-  string suggested_code = 2;
-  float confidence = 3;
-  string reasoning = 4;
-  string diff = 5;
+  rpc FixSession(stream SessionCommand) returns (stream SessionEvent);
+  rpc ListAIModels(ListAIModelsRequest) returns (ListAIModelsResponse);
 }
 ```
 
-### OpenLLM Service (Phase 3)
+`FixSession` uses `SessionCommand` messages (containing `ScanChunk` file uploads, `FixOptions`, approval/rejection commands) and streams back `SessionEvent` messages (progress, violations, patches, AI proposals, completion).
+
+### Abbenay AI Service
 
 ```protobuf
-service OpenLLM {
+service Abbenay {
   rpc Remediate(RemediateRequest) returns (RemediateResponse);
   rpc Health(HealthRequest) returns (HealthResponse);
 }
-
-message RemediateRequest {
-  string rule_id = 1;
-  string message = 2;
-  string file_path = 3;
-  int32 line = 4;
-  string code_window = 5;
-  string file_content = 6;
-  string ansible_version = 7;
-}
-
-message RemediateResponse {
-  string suggested_code = 1;
-  float confidence = 2;
-  string reasoning = 3;
-  bool applicable = 4;
-}
 ```
+
+The Abbenay service receives violation context (rule_id, message, node content, surrounding context) and returns suggested YAML + confidence + reasoning.
 
 ---
 
 ## Container Topology (with Remediation)
 
 ```
-┌────────────────────────────── apme-pod ──────────────────────────────────┐
-│                                                                          │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  │
-│  │ Primary  │  │  Native  │  │   OPA    │  │ Ansible  │  │ Gitleaks │  │
-│  │  :50051  │  │  :50055  │  │  :50054  │  │  :50053  │  │  :50056  │  │
-│  │          │  │          │  │          │  │          │  │          │  │
-│  │ engine + │  │ Python   │  │ OPA bin  │  │ ansible- │  │ gitleaks │  │
-│  │ orchestr │  │ rules on │  │ + gRPC   │  │ core     │  │ + gRPC   │  │
-│  │ remediat │  │ scandata │  │ wrapper  │  │ venvs    │  │ wrapper  │  │
-│  └────┬─────┘  └──────────┘  └──────────┘  └──────────┘  └──────────┘  │
-│       │                                                                  │
-│       │ gRPC (optional)                                                  │
-│       ▼                                                                  │
-│  ┌──────────┐                                                            │
-│  │ OpenLLM  │  Phase 3 — AI escalation                                   │
-│  │  :50057  │  bring-your-own-LLM provider                               │
-│  └──────────┘                                                            │
-│                                                                          │
-│  ┌──────────────────────────────────────────┐                            │
-│  │       Galaxy Proxy :8765 (PEP 503)       │                            │
-│  └──────────────────────────────────────────┘                            │
-└──────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────── apme-pod ────────────────────────────────────┐
+│                                                                              │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐      │
+│  │ Primary  │  │  Native  │  │   OPA    │  │ Ansible  │  │ Gitleaks │      │
+│  │  :50051  │  │  :50055  │  │  :50054  │  │  :50053  │  │  :50056  │      │
+│  │          │  │          │  │          │  │          │  │          │      │
+│  │ engine + │  │ GraphRule │  │ OPA bin  │  │ ansible- │  │ gitleaks │      │
+│  │ orchestr │  │ rules on │  │ + gRPC   │  │ core     │  │ + gRPC   │      │
+│  │ remediat │  │ graph    │  │ wrapper  │  │ venvs    │  │ wrapper  │      │
+│  └────┬─────┘  └──────────┘  └──────────┘  └──────────┘  └──────────┘      │
+│       │                                                                      │
+│       │         ┌──────────────┐  ┌──────────────┐                           │
+│       │         │ Coll Health  │  │  Dep Audit   │                           │
+│       │         │    :50058    │  │    :50059    │                           │
+│       │         └──────────────┘  └──────────────┘                           │
+│       │                                                                      │
+│       │ gRPC (optional)                                                      │
+│       ▼                                                                      │
+│  ┌──────────┐                                                                │
+│  │ Abbenay  │  AI escalation — LLM provider for Tier 2 remediation           │
+│  │  :50057  │                                                                │
+│  └──────────┘                                                                │
+│                                                                              │
+│  ┌──────────────────────────────────────────┐                                │
+│  │       Galaxy Proxy :8765 (PEP 503)       │                                │
+│  └──────────────────────────────────────────┘                                │
+└──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-The remediation engine lives inside **Primary**. It reuses Primary's existing scan pipeline and adds the transform → re-scan convergence loop. AI escalation is a gRPC call to the optional OpenLLM container.
+The remediation engine lives inside **Primary**. It operates on the same `ContentGraph` built by the scan pipeline and runs the transform → rescan convergence loop entirely in memory. AI escalation is a gRPC call to the optional Abbenay container.
 
 ---
 
@@ -524,13 +504,18 @@ The remediation engine lives inside **Primary**. It reuses Primary's existing sc
 apme remediate [target] [options]
 
 Options:
-  --apply              Write fixes in place (without this, show diffs only)
-  --check              Exit 1 if any fixes would be applied (CI mode)
-  --no-ai              Skip AI escalation; deterministic fixes only
-  --auto               Apply AI patches without prompting
-  --min-confidence N   AI confidence threshold (default: 0.0)
-  --max-passes N       Max convergence passes (default: 5)
-  --exclude PATTERN    Glob patterns to skip
+  --max-passes N           Max convergence passes (default: 5)
+  --ansible-version VER    ansible-core version for validation (e.g. 2.18, 2.20)
+  --collections SPEC...    Collection specs (e.g. community.general:9.0.0)
+  --ai                     Enable Tier 2 AI-assisted remediation
+  --auto-approve           Approve all AI proposals without prompting (CI mode)
+  --model MODEL            AI model identifier (e.g. 'openai/gpt-4o')
+  --session ID             Session ID for venv reuse (default: hash of project root)
+  --skip-dep-scan          Disable both dependency validators
+  --skip-collection-scan   Disable collection health scanning only
+  --skip-python-audit      Disable Python CVE audit only
+  --show-suppressed        Include suppressed violations in output (ADR-055)
+  --json                   Output structured data payloads as JSON
 ```
 
 ### Output
@@ -543,7 +528,7 @@ Phase 4: Remediating...
   Pass 1: 28 fixable (Tier 1) → applied 26, 2 failed
   Pass 2: 4 fixable (Tier 1) → applied 4
   Pass 3: 0 fixable → converged
-Phase 5: AI escalation (Tier 2)... 10 candidates → 8 proposals (skipped: --no-ai)
+Phase 5: AI escalation (Tier 2)... 10 candidates → 8 proposals
 Phase 6: Summary
   Tier 1 (deterministic):  30 fixed
   Tier 2 (AI-proposable):  10 remaining → 8 proposals generated
@@ -557,11 +542,11 @@ Phase 6: Summary
 
 1. **Transform Registry + partition** — the data structures and registry pattern
 2. **First transforms** — L021 (missing mode), L007 (shell→command), M001 (FQCN) as proof-of-concept
-3. **Convergence loop** — scan → transform → re-scan loop with oscillation detection
-4. **Fix RPC** — gRPC contract on Primary
-5. **CLI remediate integration** — wire the remediation path to the real engine (`FixSession` per ADR-028/ADR-039)
-6. **AI escalation** — OpenLLM gRPC client + prompt builder (Phase 3)
-7. **Web UI remediation queue** — accept/reject AI proposals (Phase 4)
+3. **Graph-based convergence loop** — ContentGraph → transform → rescan-dirty loop with oscillation detection
+4. **FixSession integration** — wire the remediation path through `FixSession` bidirectional stream (ADR-039)
+5. **CLI remediate integration** — `apme remediate` → daemon → `FixSession` with fix options
+6. **AI escalation** — Abbenay gRPC client + prompt builder
+7. **Web UI remediation queue** — accept/reject AI proposals via Gateway
 
 ---
 

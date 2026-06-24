@@ -2,7 +2,7 @@
 
 This document traces a **check** request from CLI to violation output, covering every transformation and serialization boundary. (The engine still **scans** files internally; the user action is **check**, not “run a scan.”)
 
-**ADR-039:** `ScanStream` was removed. The thin CLI and gateway use **`FixSession`** for both **check** and **remediate**; the sequence below shows the engine pipeline and validator fan-out once Primary has the project files (whether they arrived via unary `Scan` or chunked `FixSession` upload).
+**ADR-039:** `ScanStream` and unary `Scan` were removed. The thin CLI and gateway use **`FixSession`** for both **check** and **remediate**. The sequence below shows the engine pipeline and validator fan-out once Primary has the project files via the `FixSession` chunked upload.
 
 ## Request Lifecycle
 
@@ -11,75 +11,70 @@ User runs:  apme check /path/to/project
             │
             ▼
 ┌───────────────────────────────────────────────────────┐
-│  CLI (apme_engine/cli.py)                             │
+│  CLI (apme_engine/cli/)                               │
 │                                                       │
 │  1. Walk project directory                            │
 │  2. Filter: TEXT_EXTENSIONS, skip SKIP_DIRS,          │
 │     exclude >2 MiB and binary files                   │
-│  3. Build ScanRequest:                                │
-│     - scan_id (uuid)                                  │
-│     - project_root (basename)                         │
-│     - files[] = File(path=relative, content=bytes)    │
+│  3. Open FixSession (bidirectional gRPC stream):      │
+│     - Send SessionCommand with ScanChunk messages     │
+│     - Each chunk: File(path=relative, content=bytes)  │
 │     - options (ansible_core_version, collection_specs)│
+│     - No fix_options = check mode (dry-run)           │
 │                                                       │
-│  gRPC: Primary.Scan(ScanRequest) or FixSession (check mode) ─┐
-└───────────────────────────────────────────────────────┘       │
-                                                                ▼
+│  gRPC: Primary.FixSession(stream SessionCommand) ─────────┐
+└───────────────────────────────────────────────────────┘    │
+                                                             ▼
 ┌──────────────────────────────────────────────────────────────────┐
 │  Primary (daemon/primary_server.py)                              │
 │                                                                  │
-│  4. _write_chunked_fs(): write request.files to temp dir         │
+│  4. _write_chunked_fs(): write uploaded files to temp dir        │
 │                                                                  │
-│  5. run_scan(temp_dir, project_root):                            │
+│  5. run_scan(temp_dir, project_root) in executor:                │
 │     ┌────────────────────────────────────────────────────┐       │
-│     │  Engine (engine/scanner.py — ARIScanner.evaluate)  │       │
+│     │  Engine (engine/scanner.py — AnsibleProjectLoader) │       │
 │     │                                                    │       │
 │     │  a. load_definitions_root()                        │       │
-│     │     Parser.run() → playbooks, roles, taskfiles,    │       │
-│     │     tasks, modules, mappings                       │       │
+│     │     Parser dispatches by type (project, collection,│       │
+│     │     role, playbook, taskfile) → raw definitions:   │       │
+│     │     playbooks, roles, taskfiles, tasks, modules    │       │
 │     │                                                    │       │
-│     │  b. construct_trees()                              │       │
-│     │     TreeLoader → PlaybookCall → PlayCall →         │       │
-│     │     RoleCall → TaskFileCall → TaskCall trees       │       │
+│     │  b. build_content_graph()                          │       │
+│     │     GraphBuilder transforms definitions into a     │       │
+│     │     ContentGraph (nodes + edges + properties).     │       │
+│     │     Node types: PLAY, ROLE, TASK, HANDLER, BLOCK,  │       │
+│     │     FILE, etc. Edges encode call relationships.    │       │
 │     │                                                    │       │
-│     │  c. resolve_variables()                            │       │
-│     │     Walk trees, resolve variable references,       │       │
-│     │     track set_fact / register / include_vars       │       │
-│     │                                                    │       │
-│     │  d. annotate()                                     │       │
-│     │     RiskAnnotators (per-module: shell, command,     │       │
-│     │     get_url, file, copy, etc.) add RiskAnnotations │       │
-│     │     to each TaskCall                               │       │
-│     │                                                    │       │
-│     │  e. build_hierarchy_payload()                      │       │
-│     │     Serialize trees → JSON hierarchy:              │       │
-│     │     { scan_id, hierarchy: [{root_key, root_type,   │       │
-│     │       root_path, nodes: [{type, key, file, line,   │       │
-│     │       module, options, module_options,              │       │
-│     │       annotations}]}], metadata }                  │       │
+│     │  c. apply_rules() — internal validation/enrichment │       │
+│     │     Produces hierarchy_payload from the graph:     │       │
+│     │     { hierarchy: [{root_key, root_type, root_path, │       │
+│     │       nodes: [{type, key, file, line, module,      │       │
+│     │       options, module_options, annotations}]}],    │       │
+│     │     metadata }                                     │       │
 │     │                                                    │       │
 │     │  Returns: ScanContext                              │       │
 │     │    .hierarchy_payload = dict (JSON-serializable)   │       │
-│     │    .scandata = SingleScan (full in-memory model)   │       │
+│     │    .scandata = SingleScan (with .content_graph)    │       │
 │     └────────────────────────────────────────────────────┘       │
 │                                                                  │
-│  6. Build ValidateRequest:                                       │
+│  6. Build ValidateRequest for each validator:                    │
 │     - hierarchy_payload = json.dumps(ctx.hierarchy_payload)      │
-│     - scandata = jsonpickle.encode(ctx.scandata)                 │
-│     - files, ansible_core_version, collection_specs              │
+│     - content_graph_data = ContentGraph.to_dict(slim=True)       │
+│     - files, venv_path, session_id, request_id                   │
 │                                                                  │
 │  7. Parallel fan-out (asyncio.gather):                           │
 │     ┌─────────────────────────────────────────────────────┐      │
 │     │                                                     │      │
 │     │  ┌─► Native :50055                                  │      │
-│     │  │   - jsonpickle.decode(scandata) → SingleScan     │      │
-│     │  │   - Build ScanContext, run NativeValidator        │      │
-│     │  │   - Python rules on contexts/trees               │      │
+│     │  │   - Deserialize ContentGraph from                 │      │
+│     │  │     content_graph_data (JSON dict)                │      │
+│     │  │   - Run ~90 GraphRule subclasses on graph nodes   │      │
 │     │  │   → violations[] + ValidatorDiagnostics          │      │
 │     │  │                                                  │      │
 │     │  ├─► OPA :50054                                     │      │
 │     │  │   - json.loads(hierarchy_payload)                 │      │
-│     │  │   - POST to local OPA REST (:8181)               │      │
+│     │  │   - subprocess: opa eval -I -d /bundle           │      │
+│     │  │     (local binary; NOT the REST server)           │      │
 │     │  │   → violations[] + ValidatorDiagnostics          │      │
 │     │  │                                                  │      │
 │     │  ├─► Ansible :50053                                 │      │
@@ -89,11 +84,18 @@ User runs:  apme check /path/to/project
 │     │  │     FQCN, deprecation, redirect, removed)        │      │
 │     │  │   → violations[] + ValidatorDiagnostics          │      │
 │     │  │                                                  │      │
-│     │  └─► Gitleaks :50056                                │      │
-│     │      - Write files to temp dir                      │      │
-│     │      - Run gitleaks detect --no-git                 │      │
-│     │      - Filter vault + Jinja false positives         │      │
-│     │      → violations[] + ValidatorDiagnostics          │      │
+│     │  ├─► Gitleaks :50056                                │      │
+│     │  │   - Pipe node content to gitleaks --pipe stdin    │      │
+│     │  │   - Filter vault + Jinja false positives         │      │
+│     │  │   → violations[] + ValidatorDiagnostics          │      │
+│     │  │                                                  │      │
+│     │  ├─► Collection Health :50058 (optional)            │      │
+│     │  │   - Scan installed collections in session venv   │      │
+│     │  │   → findings[] + ValidatorDiagnostics            │      │
+│     │  │                                                  │      │
+│     │  └─► Dep Audit :50059 (optional)                    │      │
+│     │      - pip-audit against session venv packages      │      │
+│     │      → findings[] + ValidatorDiagnostics            │      │
 │     │                                                     │      │
 │     └─────────────────────────────────────────────────────┘      │
 │                                                                  │
@@ -102,11 +104,11 @@ User runs:  apme check /path/to/project
 │ 10. Sort by (file, line)                                         │
 │ 11. Convert to proto Violation messages                          │
 │ 12. Aggregate diagnostics:                                       │
-│     - Engine timing (parse, annotate, tree build)                │
+│     - Engine timing (parse, graph_construction, total)           │
 │     - Each validator's ValidatorDiagnostics                      │
 │     - Fan-out wall-clock, total wall-clock                       │
 │                                                                  │
-│  Return: ScanResponse(violations, scan_id, diagnostics)          │
+│  Stream back SessionEvent(violations, diagnostics, patches)      │
 └──────────────────────────────────────────────────────────────────┘
                          │
                          ▼
@@ -127,63 +129,38 @@ User runs:  apme check /path/to/project
 
 ## Engine Pipeline Detail
 
-The engine (`ARIScanner.evaluate()`) runs five stages in sequence. All stages operate on the same in-memory model; there is no intermediate serialization between stages.
+The engine (`AnsibleProjectLoader.load()`) runs multiple stages in sequence. All stages operate on the same in-memory model; there is no intermediate serialization between stages.
 
-### Stage 1: Load Definitions
+### Stage 1: Load Definitions (`target_load`)
 
-`Parser.run()` dispatches by load type (PROJECT, COLLECTION, ROLE, PLAYBOOK, TASKFILE). Produces:
+`Parser` dispatches by load type (PROJECT, COLLECTION, ROLE, PLAYBOOK, TASKFILE). Produces:
 
 | Output | Description |
 |--------|-------------|
 | `root_definitions` | playbooks, roles, taskfiles, tasks, modules found in the scan target |
-| `ext_definitions` | external dependencies (collections, roles from cache) |
-| `mappings` | index of module → FQCN, role → path, etc. |
+| `ext_definitions` | external dependencies (collections from `dependency_dir`) |
 
-### Stage 2: Construct Trees
+### Stage 2: Build ContentGraph (`graph_construction`)
 
-`TreeLoader` builds directed graphs of call objects:
+`GraphBuilder` transforms raw definitions into a `ContentGraph` — a directed graph where:
 
-```
-PlaybookCall → PlayCall → RoleCall → TaskFileCall → TaskCall
-                        └──────────► TaskCall (play-level tasks)
-```
+- **Nodes** represent structural elements (PLAY, ROLE, TASK, HANDLER, BLOCK, FILE, etc.)
+- **Edges** encode call relationships (play → role, role → taskfile → task)
+- **Properties** on each node: `file`, `line`, `module`, `options`, `module_options`, `annotations`
 
-Each node has:
-- **spec**: the parsed YAML structure
-- **key**: unique identifier
-- **edges**: connections to children
+The graph preserves execution order, nesting, and variable scope. Node identity is stable across rescans (ADR-044).
 
-The tree preserves execution order and nesting.
+### Stage 3: Apply Rules / Build Hierarchy (`apply_rules`)
 
-### Stage 3: Resolve Variables
+Runs internal enrichment and builds the hierarchy payload from the graph:
 
-Walks the tree and tracks variable definitions (`set_fact`, `register`, `include_vars`, role defaults/vars) and usages. Produces:
+- Resolves module FQCNs, variable provenance, and risk annotations
+- Serializes the graph into a flat JSON hierarchy for OPA/Ansible validators
+- Annotations (e.g., `cmd_exec`, `inbound_transfer`, `file_change`) are attached to task nodes and serialized into the hierarchy payload's `annotations` array
 
-- `variable_use` annotations on tasks (which variables are referenced)
-- Resolution of `{{ var }}` references where statically determinable
+### Hierarchy Payload Shape
 
-### Stage 4: Annotate
-
-Per-module `RiskAnnotator` subclasses inspect each `TaskCall` and attach `RiskAnnotation` objects:
-
-| Annotator | Risk Types |
-|-----------|------------|
-| `ShellAnnotator` | CMD_EXEC |
-| `CommandAnnotator` | CMD_EXEC |
-| `GetUrlAnnotator` | INBOUND_TRANSFER |
-| `UriAnnotator` | INBOUND_TRANSFER, OUTBOUND_TRANSFER |
-| `CopyAnnotator` | FILE_CHANGE |
-| `FileAnnotator` | FILE_CHANGE |
-| `UnarchiveAnnotator` | FILE_CHANGE, INBOUND_TRANSFER |
-| `LineinfileAnnotator` | FILE_CHANGE |
-| `GitAnnotator` | INBOUND_TRANSFER |
-| `PackageAnnotator` | PACKAGE_INSTALL |
-
-Annotations are attached to the `TaskCall` and serialized into the hierarchy payload's `annotations` array, making them available to OPA rules (e.g., R118 checks for `inbound_transfer`).
-
-### Stage 5: Build Hierarchy Payload
-
-Serializes the tree into a flat JSON structure consumable by OPA and other payload-based validators:
+Serializes into a flat JSON structure consumable by OPA and other payload-based validators:
 
 ```json
 {
@@ -223,12 +200,14 @@ Files are sent as protobuf `File` messages (`path` + `content` bytes). This is t
 
 ### Primary → Validators (gRPC)
 
-Two serialization formats in one `ValidateRequest`:
+Multiple serialization formats in one `ValidateRequest`:
 
 | Field | Format | Used By | Description |
 |-------|--------|---------|-------------|
-| `hierarchy_payload` | `json.dumps()` → bytes | OPA, Ansible | Complete hierarchy as JSON. Rego operates on JSON. |
-| `scandata` | `jsonpickle.encode()` → bytes | Native | Full `SingleScan` object including trees, contexts, specs, and annotations. `jsonpickle` preserves Python types for round-trip `decode()`. |
+| `hierarchy_payload` | `json.dumps()` → bytes | OPA, Ansible | Complete hierarchy as JSON. Rego and Ansible runtime operate on JSON. |
+| `content_graph_data` | `ContentGraph.to_dict(slim=True)` → JSON bytes | Native, Gitleaks | Serialized ContentGraph (nodes, edges, properties). Native runs GraphRules on it; Gitleaks extracts node content for pipe-mode scanning. |
+| `files` | protobuf `File` messages | Ansible | Raw file content for writing to temp dirs (syntax check). |
+| `venv_path` | string | Ansible, Collection Health, Dep Audit | Path to session-scoped venv (read-only for validators). |
 
 ### Validators → Primary (gRPC)
 
@@ -236,7 +215,7 @@ Each validator returns `ValidateResponse` containing:
 - Protobuf `Violation` messages
 - `ValidatorDiagnostics` with per-rule timing, violation counts, and validator-specific metadata
 
-Primary converts violations to dicts, merges, deduplicates, and converts back to proto. It also aggregates all `ValidatorDiagnostics` with engine phase timing into a `ScanDiagnostics` message on the `ScanResponse`.
+Primary converts violations to dicts, merges, deduplicates, and converts back to proto. It also aggregates all `ValidatorDiagnostics` with engine phase timing into a `ScanDiagnostics` message streamed via the `SessionEvent`.
 
 ---
 
@@ -245,14 +224,16 @@ Primary converts violations to dicts, merges, deduplicates, and converts back to
 ```
 Engine → EngineDiagnostics (parse_ms, annotate_ms, tree_build_ms, total_ms)
                               ↓
-Native  → ValidatorDiagnostics (per-rule timing from detect() records)
-OPA     → ValidatorDiagnostics (opa_query_ms, per-rule violation counts)
+Native  → ValidatorDiagnostics (per-rule timing from GraphRule match/process)
+OPA     → ValidatorDiagnostics (subprocess_ms, per-rule violation counts)
 Ansible → ValidatorDiagnostics (per-phase: syntax, introspect, argspec; venv_build_ms)
-Gitleaks→ ValidatorDiagnostics (subprocess_ms, files_written)
+Gitleaks→ ValidatorDiagnostics (subprocess_ms)
+Coll Health → ValidatorDiagnostics (per-collection timing, collections_scanned)
+Dep Audit → ValidatorDiagnostics (subprocess_ms, packages_audited)
                               ↓
 Primary aggregates → ScanDiagnostics
                               ↓
-ScanResponse.diagnostics → CLI (-v / -vv) or JSON consumer
+SessionEvent.diagnostics → CLI (-v / -vv) or JSON consumer
 ```
 
 ---
@@ -280,33 +261,58 @@ Every violation, regardless of source validator, has the same structure:
 
 ---
 
-## Local (In-Process) Mode
+## OPA Execution Modes
 
-When running without the daemon (`apme check /path` without `--primary-addr`), the CLI runs everything in-process:
+OPA policy evaluation always uses `opa eval` as a **subprocess** — never an HTTP query.
+The mechanism varies by deployment:
 
-1. Engine runs directly (no temp dir, no gRPC)
-2. `NativeValidator` and `OpaValidator` run in the same process
-3. OPA is invoked via Podman (`podman run ... opa eval`) or local binary
-4. Results are merged locally
+| Deployment | OPA binary location | Mechanism |
+|------------|-------------------|-----------|
+| **Podman pod** (container) | `/usr/local/bin/opa` (copied from OPA image at build time) | Direct subprocess: `opa eval -I -d /bundle <entrypoint>`. Fast — no container startup per eval. |
+| **CLI daemon** (host, default) | Inside an ephemeral Podman container | `podman run --rm ... opa eval` per evaluation. Slower — container startup overhead. |
+| **CLI daemon** (host, `OPA_USE_PODMAN=0`) | Local `opa` binary on `$PATH` | Direct subprocess. Same speed as container path. |
 
-**Note:** This mode is useful for development and testing but does not support the Ansible validator (which requires pre-built venvs in the container).
+**Note:** The OPA container's `entrypoint.sh` starts an OPA REST server on :8181,
+but the gRPC wrapper does **not** query it. The REST server exists only for the
+entrypoint's readiness-wait loop; the actual evaluation always uses `opa eval`
+subprocess. This is a known vestige.
+
+A timeout-based circuit breaker (default: 3 consecutive 60s timeouts) disables
+OPA evaluation for the remainder of the process when evaluations consistently hang.
+
+---
+
+## Daemon Mode
+
+The CLI daemon (`apme daemon start`) runs Primary + validators as localhost gRPC
+servers in a single process without containers:
+
+1. Engine + Primary run directly
+2. Native, OPA, Ansible validators run as in-process gRPC servers
+3. Galaxy Proxy runs as a local uvicorn HTTP server
+4. OPA invoked via Podman container or local binary (see table above)
+5. Results merged via the same gRPC fan-out as the pod
+
+The daemon supports all required validators (Native, OPA, Ansible, Galaxy Proxy).
+Optional validators (Gitleaks, Collection Health, Dep Audit) start when
+`include_optional=True`.
 
 ---
 
 ## Summary
 
 ```
-┌─────────────┐     ┌─────────────┐     ┌─────────────────────────────┐
-│    CLI      │────►│   Primary   │────►│        Validators           │
-│             │     │   Engine    │     │  Native | OPA | Ansible |   │
-│ ScanRequest │     │             │     │  Gitleaks                   │
-│ (files)     │     │ hierarchy   │     │                             │
-└─────────────┘     │ + scandata  │     │ ValidateRequest             │
-                    └──────┬──────┘     │ (hierarchy | scandata |     │
-                           │            │  files)                     │
-                           │            └──────────────┬──────────────┘
-                           │                           │
-                           │◄──────────────────────────┘
+┌─────────────┐     ┌─────────────┐     ┌─────────────────────────────────┐
+│    CLI      │────►│   Primary   │────►│           Validators            │
+│             │     │   Engine    │     │  Native | OPA | Ansible |       │
+│ FixSession  │     │             │     │  Gitleaks | CollHealth | Dep    │
+│ (files)     │     │ hierarchy + │     │                                 │
+└─────────────┘     │ graph +     │     │ ValidateRequest                 │
+                    │ venv_path   │     │ (hierarchy | content_graph |    │
+                    └──────┬──────┘     │  files | venv_path)             │
+                           │            └──────────────────┬──────────────┘
+                           │                               │
+                           │◄──────────────────────────────┘
                            │         violations[]
                            │         + diagnostics
                            ▼

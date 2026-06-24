@@ -86,14 +86,14 @@ except AriNotFoundError:
 ### Logging
 
 ```python
-import structlog
+import logging
 
-logger = structlog.get_logger(__name__)
+logger = logging.getLogger(__name__)
 
-# Use structured logging
-logger.info("scan_started", path=str(path), fix_mode=fix)
-logger.warning("issue_detected", issue_type="FQCN", line=42)
-logger.error("scan_failed", path=str(path), error=str(e))
+# Use standard logging with context
+logger.info("Engine: loader start (%s, type=%s)", path.name, scan_type)
+logger.warning("Validator %s returned empty result", name)
+logger.error("Scan failed for %s: %s", path, e)
 ```
 
 ## File Organization
@@ -101,42 +101,50 @@ logger.error("scan_failed", path=str(path), error=str(e))
 ### Source Structure
 
 ```
-src/apme/
-├── __init__.py          # Version, public API
-├── cli.py               # Typer CLI
-├── scanner/
-│   ├── __init__.py      # Public scanner API
-│   ├── ari_wrapper.py   # ARI integration
-│   ├── issue_types.py   # Issue enums and classes
-│   └── reporter.py      # Output formatting
-├── rewriter/
-│   ├── __init__.py
-│   ├── graph.py         # LangGraph definition
-│   ├── transforms.py    # Transformation functions
-│   └── validators.py    # Validation logic
-└── rules/
-    ├── __init__.py
-    ├── fqcn.py          # FQCN mappings
-    ├── deprecated.py    # Deprecated modules
-    └── syntax.py        # Syntax patterns
+src/
+├── apme/v1/                    # Generated proto stubs (NEVER edit by hand)
+├── apme_engine/                # Core product
+│   ├── cli/                    # argparse-based CLI (check, remediate, format, daemon, health-check)
+│   ├── daemon/                 # gRPC servers: primary, native, opa, ansible, gitleaks, etc.
+│   │   └── sinks/             # Event sinks (grpc_reporting)
+│   ├── engine/                 # Project loader: parser, models, content_graph, scanner
+│   ├── remediation/            # Convergence engine, transform registry
+│   │   └── transforms/        # Per-rule deterministic fix functions
+│   ├── validators/             # Rule implementations
+│   │   ├── native/rules/      # ~90 GraphRule subclasses
+│   │   ├── opa/bundle/        # ~50 Rego rule files
+│   │   ├── ansible/rules/     # L057–L059, M001–M004
+│   │   ├── gitleaks/          # Gitleaks binary wrapper
+│   │   ├── collection_health/ # Installed collection quality checks
+│   │   └── dep_audit/         # pip-audit CVE scanner
+│   ├── venv_manager/          # Session-scoped venvs (VenvSessionManager)
+│   └── runner.py              # run_scan() entry point
+├── apme_gateway/               # FastAPI REST + SQLAlchemy DB + Reporting gRPC server
+│   ├── api/                   # REST routers and schemas
+│   ├── db/                    # SQLAlchemy models and queries
+│   ├── grpc_reporting/        # ReportingServicer (engine event sink)
+│   └── scm/                   # SCM integrations (GitHub)
+└── galaxy_proxy/               # PEP 503 proxy (Galaxy → wheels)
+    └── proxy/                 # ASGI server, cache layer
 ```
 
 ### Test Structure
 
-Mirror source structure:
+Tests mirror the engine structure:
 
 ```
 tests/
-├── conftest.py          # Shared fixtures
-├── test_cli.py
-├── scanner/
-│   ├── test_ari_wrapper.py
-│   └── test_issue_types.py
-├── rewriter/
-│   └── test_transforms.py
+├── conftest.py              # Shared fixtures (tmp projects, mock validators)
+├── unit/                    # Unit tests (run via tox -e unit)
+│   ├── test_runner.py
+│   ├── test_formatter.py
+│   ├── test_remediation/
+│   ├── test_validators/
+│   └── test_cli/
+├── integration/             # Integration tests (marked, may need services)
 └── fixtures/
-    ├── playbooks/       # Test playbook files
-    └── expected/        # Expected outputs
+    ├── projects/            # Sample Ansible projects for scan testing
+    └── golden-collection/   # Collection fixture for validator tests
 ```
 
 ## Naming Conventions
@@ -150,10 +158,11 @@ tests/
 ### Classes
 
 ```python
-class AriWrapper:        # PascalCase
-class FQCNMapper:        # Acronyms as words
-class ScanResult:        # Nouns for data classes
-class PlaybookScanner:   # Noun for service classes
+class ScanContext:            # PascalCase, nouns for data classes
+class ContentGraph:           # PascalCase
+class OpaValidator:           # Noun for service classes
+class TransformRegistry:      # Noun for service classes
+class AnsibleProjectLoader:   # Descriptive noun phrase
 ```
 
 ### Functions
@@ -288,44 +297,51 @@ with open(path, "w") as f:
 
 ## CLI Standards
 
-### Typer Patterns
+### argparse Patterns
+
+The CLI uses standard library `argparse` with subparsers. Each subcommand
+has its own module in `src/apme_engine/cli/`.
 
 ```python
-import typer
+import argparse
 
-app = typer.Typer(help="APME - Ansible Playbook Modernization Engine")
+def build_parser() -> argparse.ArgumentParser:
+    """Build and return the CLI argument parser."""
+    parser = argparse.ArgumentParser(
+        description="APME: Ansible Policy & Modernization Engine",
+    )
+    sub = parser.add_subparsers(dest="command")
 
-@app.command()
-def check(
-    path: Path = typer.Argument(..., help="Path to playbook or directory"),
-    output: Path | None = typer.Option(None, "--output", "-o", help="Output file"),
-):
-    """Check playbooks for AAP compatibility issues (read-only assessment)."""
+    # check subcommand
+    check_p = sub.add_parser("check", help="Assess project (read-only)")
+    check_p.add_argument("target", help="Path to playbook or directory")
+    check_p.add_argument("--json", action="store_true", help="JSON output")
+    check_p.add_argument("--sarif", action="store_true", help="SARIF output")
 
-@app.command()
-def remediate(
-    path: Path = typer.Argument(..., help="Path to playbook or directory"),
-    apply: bool = typer.Option(False, "--apply", help="Write remediations in place"),
-):
-    """Apply format + Tier 1 (and optional AI) remediation via FixSession."""
+    # remediate subcommand
+    rem_p = sub.add_parser("remediate", help="Apply fixes via FixSession")
+    rem_p.add_argument("target", help="Path to playbook or directory")
+    rem_p.add_argument("--ai", action="store_true", help="Enable Tier 2 AI remediation")
+
+    return parser
 ```
 
 ### Output Formatting
 
-```python
-from rich.console import Console
-from rich.table import Table
+The CLI uses a custom ANSI module (`cli/ansi.py`) for colored output,
+respecting `--no-ansi` and `NO_COLOR` environment variable:
 
-console = Console()
+```python
+from apme_engine.cli.ansi import style, Color
 
 # Success
-console.print("[green]Check complete[/green]")
+print(style("Check complete", fg=Color.GREEN))
 
 # Warning
-console.print("[yellow]Warning:[/yellow] 3 issues found")
+print(style("Warning:", fg=Color.YELLOW), "3 issues found")
 
-# Error
-console.print("[red]Error:[/red] File not found")
+# Error  
+print(style("Error:", fg=Color.RED), "File not found")
 ```
 
 ## Visualization Selection

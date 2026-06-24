@@ -401,17 +401,17 @@ The standalone UI translates HTTP requests to gRPC calls:
 ```python
 @router.post("/api/v1/activity")
 async def create_operation(body: OperationCreate):
-    request = build_scan_request(body.project_path, body.options)
-
     async with grpc.aio.insecure_channel("127.0.0.1:50051") as channel:
         stub = primary_pb2_grpc.PrimaryStub(channel)
-        response = await stub.Scan(request, timeout=120)
+        async for event in stub.FixSession(build_session_commands(body)):
+            # process SessionEvent (progress, violations, patches)
+            ...
 
-    record = store_scan(response)
+    record = store_operation(events)
     return record
 ```
 
-The UI container **never** runs the engine directly. It always delegates to Primary via gRPC (unary `Scan` for simple flows, or **`FixSession`** for streaming check/remediate per ADR-039). This means:
+The UI/Gateway container **never** runs the engine directly. It always delegates to Primary via the **`FixSession`** bidirectional stream (ADR-039). This means:
 
 - The UI has no dependency on `apme_engine`
 - Primary's contract is the single source of truth

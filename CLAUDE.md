@@ -76,7 +76,7 @@ Full workflow: [workflow.md](/.sdlc/context/workflow.md) | Getting started: [get
 - **Use gRPC** — all inter-service communication
 - **Async servers** — grpc.aio, not synchronous
 - **Rule IDs** — L/M/R/P/SEC convention per ADR-008
-- **Engine-core services are required** — Primary, Native, OPA, Ansible, and Galaxy Proxy are all required for both the CLI daemon and pod. Their deps are core, not optional extras. Only Gitleaks is optional (external binary). Gateway, UI, and Abbenay are pod-level/enterprise services the CLI daemon does not start.
+- **Engine-core services are required** — Primary, Native, OPA, Ansible, and Galaxy Proxy are all required for both the CLI daemon and pod. Their deps are core, not optional extras. Gitleaks, Collection Health, and Dep Audit are optional (`_OPTIONAL_SERVICES`; start with `include_optional=True`). Gateway, UI, and Abbenay are pod-level/enterprise services the CLI daemon does not start.
 - Do NOT modify files outside task scope
 - Do NOT add features not in requirements
 - Ask for clarification if specs are ambiguous

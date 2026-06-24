@@ -19,19 +19,21 @@ The engine ingests Ansible content and produces a structured model. Validators c
 ```
 Ansible content (files)
     ↓
-[Engine: parse → trees → variables → annotate → hierarchy]
+[Engine: load_definitions → build_content_graph → apply_rules → hierarchy]
     ↓
-ScanContext { hierarchy_payload (JSON), scandata (SingleScan) }
+ScanContext { hierarchy_payload (JSON), scandata (SingleScan with .content_graph) }
     ↓
-┌─────────────────────────────────────────────────┐
-│              Parallel fan-out                    │
-│                                                  │
-│  ┌─► OPA        (hierarchy_payload → Rego)      │
-│  ├─► Native     (scandata → Python rules)       │
-│  ├─► Ansible    (files + hierarchy → runtime)   │
-│  └─► Gitleaks   (files → secret detection)      │
-│                                                  │
-└─────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│              Parallel fan-out                            │
+│                                                          │
+│  ┌─► OPA             (hierarchy_payload → Rego)         │
+│  ├─► Native          (content_graph → GraphRules)       │
+│  ├─► Ansible         (files + hierarchy → runtime)      │
+│  ├─► Gitleaks        (content_graph → stdin pipe)       │
+│  ├─► Collection Hlth (venv → collection scan)           │
+│  └─► Dep Audit       (venv → pip-audit subprocess)      │
+│                                                          │
+└─────────────────────────────────────────────────────────┘
     ↓
 Merged violations (deduplicated, sorted)
 ```
@@ -45,15 +47,20 @@ The engine is the **single source of truth** for "what's in this repo/playbook."
 ```python
 # src/apme_engine/validators/base.py
 
+@runtime_checkable
 class Validator(Protocol):
-    def run(self, context: ScanContext) -> list[dict[str, Any]]:
+    def run(self, context: ScanContext) -> list[ViolationDict]:
         ...
 
+@dataclass
 class ScanContext:
-    hierarchy_payload: dict      # always present (JSON-serializable)
-    scandata: Any = None         # full SingleScan (for native validator)
-    root_dir: str = ""           # filesystem path (for ansible validator)
+    hierarchy_payload: YAMLDict          # always present (JSON-serializable)
+    scandata: object = None              # legacy path (replaced by ContentGraph)
+    root_dir: str = ""                   # filesystem path
+    engine_diagnostics: EngineDiagnostics = field(default_factory=EngineDiagnostics)
 ```
+
+Note: The in-process `Validator` protocol is used by `OpaValidator` and `AnsibleValidator` internally. The production gRPC path uses `ValidatorServicer` adapters that deserialize the `ValidateRequest`, create a `ScanContext`, call the validator's `run()`, and convert the result to a `ValidateResponse`. The Native validator bypasses `ScanContext` — it receives `content_graph_data` directly via gRPC and operates on `ContentGraph`.
 
 Every validator returns the same violation shape:
 
@@ -76,9 +83,9 @@ Every validator returns the same violation shape:
 
 | Aspect | Details |
 |--------|---------|
-| **Input** | `context.hierarchy_payload` (JSON) |
-| **Execution** | Rego bundle evaluated by OPA (`data.apme.rules.violations`) |
-| **Rules** | L002–L025, R118 |
+| **Input** | `hierarchy_payload` (JSON) |
+| **Execution** | `opa eval` subprocess with Rego bundle (`data.apme.rules.violations`). In the container the binary is local; in daemon mode it runs via Podman or local binary. |
+| **Rules** | ~50 Rego files: L002–L025, L061–L072, M006–M028, R118 |
 | **Container** | OPA binary + Python gRPC wrapper (`apme-opa`) |
 
 **Why Rego**: Declarative policy language well-suited for structural checks on JSON; rules are data-driven via `bundle/data.json` (deprecated modules list, package modules, etc.)
@@ -87,12 +94,12 @@ Every validator returns the same violation shape:
 
 | Aspect | Details |
 |--------|---------|
-| **Input** | `context.scandata` (deserialized `SingleScan`) |
-| **Execution** | Python `Rule` subclasses with `match()` / `process()` methods, invoked in-process by `NativeValidator` |
-| **Rules** | L026–L056 (lint), R101–R501 (risk), P001–P004 (legacy) |
+| **Input** | `content_graph_data` (serialized `ContentGraph` JSON dict) |
+| **Execution** | `GraphRule` subclasses with `match()` / `process()` methods, invoked by `graph_scanner.scan()` |
+| **Rules** | ~90 rules: L026–L110 (lint), M005/M010/M014+ (modernize), R101–R501 (risk), A001–A002 (AAP), P001–P004 (legacy) |
 | **Container** | `apme-native` |
 
-**Why Python**: Full access to the in-memory model (trees, contexts, specs, annotations, variable tracking). Rules that need to walk call graphs, inspect variable resolution, or apply complex heuristics that would be awkward in Rego.
+**Why Python**: Full access to the ContentGraph model (nodes, edges, properties, variable tracking). Rules that need to walk call graphs, inspect variable resolution, or apply complex heuristics that would be awkward in Rego.
 
 ### Ansible (Runtime)
 
@@ -109,12 +116,34 @@ Every validator returns the same violation shape:
 
 | Aspect | Details |
 |--------|---------|
-| **Input** | `request.files` (raw file content) |
-| **Execution** | Writes files to temp dir, runs `gitleaks detect --no-git --report-format json`, parses JSON report |
+| **Input** | `content_graph_data` (node content extracted from ContentGraph) + uncovered raw files |
+| **Execution** | Pipes concatenated node content to `gitleaks detect --pipe` via stdin; maps findings back to node IDs via delimiter lines |
 | **Rules** | SEC:* (800+ patterns for credentials, API keys, private keys, tokens) |
 | **Container** | `apme-gitleaks` (gitleaks binary + Python gRPC wrapper) |
 
 **Why separate container**: Requires Go binary; wraps external tool output into the unified violation format. Adds Ansible-aware filtering: vault-encrypted files and Jinja2 expressions are automatically excluded.
+
+### Collection Health (optional)
+
+| Aspect | Details |
+|--------|---------|
+| **Input** | `venv_path` (session venv with installed collections) |
+| **Execution** | Scans installed collections in venv with a curated subset of Native GraphRules. Findings cached by `(fqcn, version)`. |
+| **Rules** | M005, M010, R101, R103–R115, R117, R401 (18 curated rules) |
+| **Container** | `apme-collection-health` |
+
+**Why separate**: Decouples collection quality from project scan; results are cached and reused across scans with same collections.
+
+### Dep Audit (optional)
+
+| Aspect | Details |
+|--------|---------|
+| **Input** | `venv_path` (session venv with Python packages) |
+| **Execution** | Runs `pip-audit -f json --strict --path <site-packages>` against OSV.dev |
+| **Rules** | R200 (Python CVE findings) |
+| **Container** | `apme-dep-audit` |
+
+**Why separate**: Isolates dependency auditing from scan logic; uses pip-audit binary.
 
 ---
 
@@ -126,16 +155,16 @@ The engine was originally derived from ARI (Ansible Risk Insights). It is now fu
 
 **Rationale**:
 
-- Full control over the hierarchy payload shape, annotator behavior, and parser logic
-- Single parse, single model — validators reuse the same `SingleScan` and `hierarchy_payload`
+- Full control over the hierarchy payload shape, ContentGraph structure, and parser logic
+- Single parse, single model — validators reuse the same `ContentGraph` and `hierarchy_payload`
 - No version drift between engine and validators
-- Annotators (risk annotations) are engine concerns that feed into both OPA rules (via hierarchy JSON) and native rules (via scandata)
+- Annotators (risk annotations) are engine concerns that feed into both OPA rules (via hierarchy JSON) and native rules (via ContentGraph)
 
 The engine exposes one public function:
 
 ```python
 # src/apme_engine/runner.py
-def run_scan(target_path, project_root, include_scandata=True) -> ScanContext:
+def run_scan(target_path, project_root, include_scandata=True, dependency_dir="") -> ScanContext:
 ```
 
 Everything downstream (validators, daemon, CLI) calls `run_scan()` and works with `ScanContext`.
@@ -144,11 +173,11 @@ Everything downstream (validators, daemon, CLI) calls `run_scan()` and works wit
 
 ## Parallel Execution
 
-Primary calls all four validators concurrently using `asyncio.gather()` with async gRPC stubs (`grpc.aio`). Each validator is a gRPC call to an independent container. The `ValidateRequest` is immutable and shared across all calls.
+Primary calls all configured validators concurrently using `asyncio.gather()` with async gRPC stubs (`grpc.aio`). Each validator is a gRPC call to an independent container. The `ValidateRequest` is immutable and shared across all calls.
 
-**Total latency = max(native, opa, ansible, gitleaks)** instead of sum.
+**Total latency = max(validators)** instead of sum.
 
-Each validator is discovered by environment variable (`NATIVE_GRPC_ADDRESS`, `OPA_GRPC_ADDRESS`, `ANSIBLE_GRPC_ADDRESS`, `GITLEAKS_GRPC_ADDRESS`). If a variable is unset, that validator is skipped — no error, just fewer results. This makes it possible to run a subset of validators during development or testing.
+Each validator is discovered by environment variable (`NATIVE_GRPC_ADDRESS`, `OPA_GRPC_ADDRESS`, `ANSIBLE_GRPC_ADDRESS`, `GITLEAKS_GRPC_ADDRESS`, `COLLECTION_HEALTH_GRPC_ADDRESS`, `DEP_AUDIT_GRPC_ADDRESS`). If a variable is unset, that validator is skipped — no error, just fewer results. This makes it possible to run a subset of validators during development or testing.
 
 ---
 
@@ -200,7 +229,7 @@ ValidatorDiagnostics(
 )
 ```
 
-Primary aggregates all `ValidatorDiagnostics` plus engine phase timing into `ScanDiagnostics` on the `ScanResponse`. `apme check` (and related clients) show diagnostics with `-v` (summary + top 10 slowest rules) or `-vv` (full per-rule breakdown).
+Primary aggregates all `ValidatorDiagnostics` plus engine phase timing into `ScanDiagnostics` on the `SessionEvent` stream. `apme check` (and related clients) show diagnostics with `-v` (summary + top 10 slowest rules) or `-vv` (full per-rule breakdown).
 
 ---
 

@@ -25,8 +25,12 @@ APME is a multi-service system. The Primary orchestrator fans out to multiple va
 **Use gRPC for all inter-service communication** (Primary ↔ Validators, CLI ↔ Primary).
 
 HTTP/REST is used only for:
-- OPA REST API internally (OPA's native interface)
-- Reserved for future presentation layers (web UI)
+- Galaxy Proxy (PEP 503 simple repository API, :8765)
+- Gateway REST API (external consumers, :8080)
+- UI (nginx-served SPA, :8081)
+
+Note: OPA uses `opa eval` subprocess — not REST. The container's vestigial REST
+server on :8181 is unused by application code.
 
 ## Rationale
 
