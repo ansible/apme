@@ -1,446 +1,771 @@
 # APME Productization Plan — Pre-Read
 
 **Prepared:** 2026-06-24  
-**Target discussion:** Friday architecture review  
+**Updated:** 2026-06-25  
 **Status:** Draft for review
 
----
+This document captures the productization strategy for APME across two deployment tracks: **Portal-integrated product** (Track A) and **upstream standalone** (Track B). It consolidates architecture, authentication, work streams, open decisions, PostgreSQL migration, and Portal integration requirements.
 
-## 1. Architecture Overview
-
-APME is a multi-service system that automates policy enforcement and
-modernization of Ansible content for AAP 2.5+. The architecture separates
-concerns into three tiers:
-
-```
-┌──────────────────────────────── apme-pod ─────────────────────────────┐
-│ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ │
-│ │ Primary  │ │ Native   │ │   OPA    │ │ Ansible  │ │ Gitleaks │ │
-│ │  :50051  │ │  :50055  │ │  :50054  │ │  :50053  │ │  :50056  │ │
-│ └────┬─────┘ └──────────┘ └──────────┘ └──────────┘ └──────────┘ │
-│      ┌────┴─────────────────────────────────────┐  ┌──────────┐     │
-│      │    Galaxy Proxy :8765 (PEP 503)          │  │ Abbenay  │     │
-│      └──────────────────────────────────────────┘  │  :50057  │     │
-│        ┌──────────────────────┐  ┌──────────┐      └──────────┘     │
-│        │ Gateway :50060/:8080 │  │ UI :8081 │                       │
-│        │  REST + gRPC + DB   │  │ (nginx)  │                       │
-│        └──────────────────────┘  └──────────┘                       │
-└──────────────────────────────────────────────────────────────────────┘
-```
-
-- **Engine tier:** Primary orchestrator + validators (Native, OPA, Ansible,
-  Gitleaks, Collection Health, Dep Audit) + Galaxy Proxy. Scales as a unit
-  (ADR-012). Stateless — no database code.
-- **Gateway tier:** FastAPI REST + gRPC Reporting server + SQLAlchemy/SQLite
-  persistence. Bridges HTTP/WebSocket clients to the engine's gRPC interface.
-  Owns all persistence and context enrichment (ADR-020, ADR-029).
-- **UI tier:** React SPA served by nginx. Talks exclusively to the Gateway
-  REST API.
-
-Inter-service communication uses gRPC (ADR-001), with one exception: Galaxy
-Proxy exposes an internal PEP 503 HTTP endpoint (:8765) used by Primary for
-collection resolution. External-facing HTTP endpoints are Gateway REST
-(:8080) and the UI (:8081).
+Companion research: [PR #352](https://github.com/ansible/apme/pull/352) (`.sdlc/research/portal-integration/00-integration-requirements.md`), [ansible-rhdh-plugins PR #676](https://github.com/ansible/ansible-rhdh-plugins/pull/676), [ANSTRAT-2222](https://issues.redhat.com/browse/ANSTRAT-2222).
 
 ---
 
-## 2. Deployment: Portal-First, Then Expand
+## Section 1 — Architecture Overview
 
-The core engine stack (Primary + validators + Galaxy Proxy) runs in every
-deployment target. Gateway, UI, and Abbenay are included in pod and Helm
-deployments but not in the CLI daemon (which embeds a lightweight Gateway
-instead — ADR-049). Optional validators (Gitleaks, Collection Health, Dep
-Audit) start only when `include_optional=True`.
+APME is a multi-service system that automates policy enforcement and modernization of Ansible content for AAP 2.5+. Services communicate via gRPC (ADR-001); the engine is stateless; persistence lives at the Gateway edge (ADR-020, ADR-029).
 
-| Target | Method | Status |
-|--------|--------|--------|
-| **Portal / OpenShift** (primary) | Helm chart (`deploy/helm/apme/`) | Structurally ready (ADR-054); needs auth, ingress/route, network policy |
-| Podman pod (dev, standalone, GitHub) | `tox -e up` | Working today |
-| bootc VM (air-gapped / edge) | Systemd quadlets (`deploy/bootc/`) | Prototype exists |
-| CLI daemon (quick eval / CI) | `apme daemon start` | Working; embedded Gateway (ADR-049) |
+### Three-Tier Topology
 
-### Helm on OpenShift (Portal path)
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                           APME Engine Tier                                    │
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐           │
+│  │ Primary  │ │ Native   │ │ OPA      │ │ Ansible  │ │ Gitleaks │ (optional)│
+│  │ :50051   │ │ :50055   │ │ :50054   │ │ :50053   │ │ :50056   │           │
+│  └────┬─────┘ └──────────┘ └──────────┘ └──────────┘ └──────────┘           │
+│       │  ┌──────────────────┐ ┌──────────────────┐ ┌──────────┐               │
+│       │  │ Collection Health│ │ Dep Audit        │ │ Abbenay  │               │
+│       │  │ :50058 (required)│ │ :50059 (required)│ │ :50057   │               │
+│       │  └──────────────────┘ └──────────────────┘ └──────────┘               │
+│  ┌────┴─────────────────────────────────────┐                                │
+│  │ Galaxy Proxy :8765 (PEP 503)             │                                │
+│  └──────────────────────────────────────────┘                                │
+└──────────────────────────────────────────────────────────────────────────────┘
+                                     │ gRPC
+                                     ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                           Gateway Tier                                        │
+│  ┌────────────────────────────────────────────────────────────────────────┐  │
+│  │ Gateway :8080 (REST) / :50060 (gRPC Reporting — Track B full mode only) │  │
+│  │ Track B: PostgreSQL persistence │ Track A proxy: no APME database      │  │
+│  └────────────────────────────────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────────────────────────┘
+                                     │ REST + WebSocket
+                                     ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                           UI Tier (Track B only)                              │
+│  ┌────────────────────────────────────────────────────────────────────────┐  │
+│  │ UI :8081 (nginx SPA) — REST + WebSocket /api/v1/ws/session             │  │
+│  └────────────────────────────────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
 
-The Helm chart produces separate Deployments:
+### Tier Summary
 
-| Deployment | Contents | Scaling |
-|------------|----------|---------|
-| `engine` | Primary + all validators + Galaxy Proxy (sidecars) | HPA optional (1–5 replicas) |
-| `gateway` | REST + gRPC Reporting + SQLite | Configurable replicas (SQLite limits practical concurrency) |
-| `ui` | nginx + React SPA | Configurable replicas |
-| `abbenay` | AI provider | Optional, 1 replica |
+| Tier | Components | Notes |
+|------|------------|-------|
+| **Engine** | Primary, Native, OPA, Ansible, Galaxy Proxy, **Collection Health**, **Dep Audit**, Abbenay; Gitleaks optional | Collection Health and Dep Audit are **required** for productized engine runtime. Gitleaks is **optional** (external binary). |
+| **Gateway** | REST API, Reporting gRPC (full mode), persistence (full mode) | **Upstream/dev (Track B):** PostgreSQL. **Portal proxy mode (Track A):** no APME-owned database — Portal owns persistence. |
+| **UI** | React SPA (PatternFly) | **Track B:** standalone UI via REST and WebSocket `/api/v1/ws/session`. **Track A:** no APME UI — Portal provides UX. |
 
-Templates for Ingress, OpenShift Route, NetworkPolicy, and PodDisruptionBudget
-exist but are disabled by default — enable for production.
+### Engine-Core vs Product Validator Scope
 
-### Why one architecture serves multiple use cases
+| Service | Product / Podman | CLI daemon today | CI publish today |
+|---------|------------------|------------------|------------------|
+| Primary, Native, OPA, Ansible, Galaxy Proxy | Required | Required | ✓ |
+| Collection Health | Required | Optional (`include_optional`) | Local build only |
+| Dep Audit | Required | Optional (`include_optional`) | Local build only |
+| Gitleaks | Optional | Optional | ✓ |
+| Abbenay | Pod-level (AI) | Not in daemon | External image |
 
-The Podman pod runs the full stack (engine + gateway + UI) on localhost,
-satisfying standalone web UI and GitHub-integrated use cases. The CLI daemon
-runs a reduced stack (engine + embedded Gateway, no UI) for zero-dependency
-local evaluation. The Helm chart deploys the same services as separate
-Kubernetes Deployments.
+### Implementation Gap
 
-**Portal deployment model:** APME deploys as a standalone Helm release — not
-embedded in the AAP installer or Portal operator. Portal configures its UI
-to point at the APME Gateway endpoint. This is the right approach because:
+`launcher.py` still lists `collection_health` and `dep_audit` in `_OPTIONAL_SERVICES` alongside `gitleaks`. They start only when `include_optional=True`. **Productization work stream 4.10** must align launcher defaults, Helm values, Podman pod spec, bootc image, and CI with the required-validator scope.
 
-- **Multiple entry points:** The same APME deployment serves Portal, GitHub
-  integrations, standalone web UI, and API consumers. Coupling to the AAP
-  installer would lock APME into a single entry point.
-- **Reduced complexity:** A standalone Helm chart is straightforward for any
-  Kubernetes shop to deploy and operate. Embedding in the AAP installer adds
-  coupling, release coordination overhead, and upgrade complexity.
-- **Independent lifecycle:** APME can version, release, and scale independently
-  of the broader AAP platform.
+```33:37:src/apme_engine/daemon/launcher.py
+_OPTIONAL_SERVICES = {
+    "gitleaks": 50056,
+    "collection_health": 50058,
+    "dep_audit": 50059,
+}
+```
 
 ---
 
-## 3. Authentication — Open Decision Required
+## Section 2 — Dual Deployment Tracks
 
-**There is no ADR that implements inbound API authentication.** This is the
-single largest productization gap.
+APME ships on two parallel tracks with different packaging, persistence, and UX surfaces.
 
-### What exists today
+### Track A — Product (Portal)
 
-| ADR | Auth relevance | Status |
-|-----|----------------|--------|
-| ADR-029 | Standalone V1: no auth. Enterprise: trust identity headers (`X-User`, `X-Org`) from AAP Gateway proxy | Implemented (no auth code) |
-| ADR-038 | Three modes: no auth, Bearer token (machine), enterprise via AAP headers | Proposed only |
-| ADR-048 | Pod-internal admin endpoints rely on network isolation | Accepted |
-| ADR-054 | K8s Secrets for SCM/AI tokens (outbound creds, not user auth) | Accepted |
+| Attribute | Value |
+|-----------|-------|
+| **Distribution** | Bundled with Portal Operator / bootc product image |
+| **Gateway mode** | Proxy mode (`APME_GATEWAY_MODE=proxy`) — stateless REST↔gRPC proxy |
+| **Database** | Portal PostgreSQL (`apme_*` tables); **no** APME Gateway DB or PVC |
+| **UI** | Portal UX only; **no** standalone APME UI container |
+| **Auth** | Portal Auth/RBAC + service token for Portal→Gateway |
+| **Content ingress** | Portal clones SCM, sends tarballs — APME never holds SCM credentials |
+| **Target users** | AAP customers consuming APME via Ansible Automation Portal |
 
-### Open question: AAP Gateway proxy vs self-contained auth
+### Track B — Upstream / Dev
 
-**Option A — AAP Gateway proxy (ADR-029 sketch):**
-APME sits behind the AAP Gateway, which handles OAuth2/OIDC/RBAC. APME
-trusts `X-User` / `X-Org` headers. Minimal APME code change; depends on
-AAP Gateway being in the request path.
+| Attribute | Value |
+|-----------|-------|
+| **Distribution** | Standalone Helm chart (`deploy/helm/apme/`), Podman pod (`tox -e up`), bootc VM, CLI daemon |
+| **Gateway mode** | Full mode (`APME_GATEWAY_MODE=full`) — owns REST, reporting, persistence |
+| **Database** | PostgreSQL for production; SQLite acceptable for local dev only |
+| **UI** | Standalone APME UI (:8081) — **not removed** for upstream |
+| **Auth** | Bearer tokens per ADR-038 (Proposed) |
+| **Target users** | Open-source consumers, integrators, developers |
 
-**Option B — OAuth2/OIDC middleware in APME Gateway:**
-APME validates JWTs directly (e.g., from platform Keycloak). Self-contained
-but duplicates auth infrastructure.
+### Open Packaging Decision Table
 
-**Option C — Platform auth token validation:**
-Portal provides a signed JWT; APME validates it against a shared JWKS
-endpoint. Middle ground — APME verifies tokens but doesn't own the IdP.
-
-**Recommendation:** Write an ADR committing to one approach before any
-multi-user deployment. Option A aligns with existing ADR-029 direction and
-avoids APME owning identity management.
+| Decision | Option A | Option B | Option C | Status |
+|----------|----------|----------|----------|--------|
+| **Image registry** | `ghcr.io` (current CI) | Red Hat catalog | Customer mirror | **Open** |
+| **Chart packaging** | OCI artifact standalone | Subchart of Portal Operator | Helm only, no Operator | **Open** |
+| **Version coupling** | Lockstep with Portal release | Independent semver | LTS branches | **Open** |
+| **CLI distribution** | PyPI + `apme-cli` container | RPM in bootc only | Bundled in Portal image | **Open** (CLI packaging gap — see 4.1) |
+| **Engine image layout** | Per-service images (current) | Single fat engine image | Hybrid | **Open** |
+| **Abbenay sourcing** | External `ghcr.io/redhat-developer/abbenay` | Vendor in product chart | Optional feature flag | **Open** |
 
 ---
 
-## 4. Productization Work Streams
+## Section 3 — Authentication
 
-### 4.1 Downstream Build & Release
+Authentication differs by deployment track. **Podman, bootc, and CLI daemon paths need token-based auth**, not AAP-header-only or auth-disabled defaults suitable only for local dev.
 
-| Item | Current State | Work Needed |
-|------|---------------|-------------|
-| Container images | 13 images on `ghcr.io`; git-SHA tags | Konflux pipelines; `registry.redhat.io` target; evaluate UBI base |
-| Versioning | `0.1.0` in pyproject; chart `0.1.0`; no unified semver | Align pyproject, Helm `appVersion`, and image tags to single semver |
-| Release SBOM | Per-project CycloneDX via Gateway API (runtime) | Release-artifact SBOM via syft/cyclonedx-bom in pipeline |
-| Image signing | Not implemented | cosign in Konflux pipeline |
-| Base image | `astral-sh/uv:python3.12-bookworm-slim` | Evaluate UBI 9 for downstream; uv still usable on UBI |
+### Track A — Portal Product
 
-### 4.2 Security & Compliance
+| Layer | Mechanism |
+|-------|-----------|
+| **User → Portal** | Portal Auth (OIDC/SSO) + Portal RBAC |
+| **Portal → Gateway** | Bearer service token (`APME_SERVICE_TOKENS`); Portal backend injects from K8s Secret |
+| **Gateway → Engine** | Pod-local gRPC; no end-user identity in engine |
+| **Galaxy credentials** | Per-request in `POST /scan` body — never persisted by APME |
 
-| Item | Current State | Work Needed |
-|------|---------------|-------------|
-| SAST | Manual bandit; no CodeQL | CodeQL or Snyk in CI; gitleaks + pip-audit in pipeline |
-| Container scanning | Manual Trivy/Grype (documented, not automated) | Konflux Clair/Trivy gate on image build |
-| Non-root containers | Documented in SECURITY.md; `USER` directive missing from Dockerfiles | Add non-root USER to all Containerfiles |
-| Dependency governance | ADR-019 checklist; Dependabot weekly | Formal dep review for legal (license audit) |
-| TLS | Insecure channels in dev; TLS noted for prod | mTLS or cert-manager for K8s |
-| Network policy | Helm template exists, disabled by default | Enable by default for production values |
+**A1 (PR #352):** Gateway auth middleware with `APME_AUTH_DISABLED` escape hatch for backward-compatible CLI daemon dev only.
 
-### 4.3 Authentication & Authorization
+### Track B — Upstream / Dev
 
-See [Section 3](#3-authentication--open-decision-required). Requires ADR
-decision. Work includes:
+| Layer | Mechanism |
+|-------|-----------|
+| **User → Gateway/UI** | Bearer token (ADR-038 — status: Proposed) |
+| **CLI → Primary** | Local daemon trust boundary today; production needs bearer or mTLS |
+| **Machine consumers** | ADR-038 pull model: `Authorization: Bearer` on `/api/v1/*` |
+| **Gateway → Engine** | Pod-local gRPC inside engine pod |
 
-- Middleware implementation in Gateway (`FastAPI Depends()`)
-- RBAC model if multi-tenant (or defer to AAP Gateway)
-- API key management for machine consumers (ADR-038)
+### Gaps
 
-### 4.4 API Versioning & Contract
+| Gap | Impact | Resolution |
+|-----|--------|------------|
+| ADR-038 not fully implemented | No stable machine-auth contract | Phase 1 auth ADR + middleware |
+| Podman/bootc Helm values lack auth secrets | Open deployments | Document required `APME_SERVICE_TOKENS` |
+| CLI daemon has no Gateway auth today | `apme sbom` etc. need Gateway (ADR-049) | Separate from Portal track — see ADR-049 |
+| Portal proxy service-token rotation | Ops burden | ADR for token lifecycle (D-01) |
 
-The Gateway REST API is URL-versioned (`/api/v1`) today, which is the right
-foundation. What's missing is the contract and tooling around it — all
-consumers (Portal, standalone web UI, CLI, third-party integrations) need a
-stable interface they can code against without tight coupling to APME's
-release cycle.
+---
 
-**Principle: the engine drives the pace; consumers must stay current.** APME
-should not carry indefinite backward compatibility burden. The contract
-gives consumers a clear deprecation window and migration path, but the
-obligation is on consumers to upgrade — not on APME to maintain old API
-versions forever.
+## Section 4 — Productization Work Streams
 
-**Why standards-based:** APME will have an unknown number of consumers —
-Portal, standalone web UI, CLI, GitHub integrations, and potentially
-third-party tooling we don't control. We cannot rely on direct
-communication channels (emails, Slack messages) to reach all of them.
-Standards-based HTTP headers are the only mechanism that reaches every
-consumer automatically, in-band, on every request. Existing HTTP client
-libraries, API gateways, and monitoring tools already understand these
-headers — consumers don't need custom parsing logic to detect deprecation.
+### 4.1 — Container Images & CI
 
-#### Deprecation lifecycle
+**Current state — CI (`container-images.yml`):** publishes **10 images** to GHCR:
 
-The approach **must** use the IETF standards:
+1. `apme-base`
+2. `apme-primary`
+3. `apme-native`
+4. `apme-opa`
+5. `apme-ansible`
+6. `apme-galaxy-proxy`
+7. `apme-gitleaks`
+8. `apme-gateway`
+9. `apme-cli`
+10. `apme-ui`
 
-- **[RFC 9745](https://www.rfc-editor.org/rfc/rfc9745.html)** —
-  `Deprecation` response header: signals a resource is deprecated, with
-  a timestamp of when deprecation took/takes effect.
-- **[RFC 8594](https://www.rfc-editor.org/rfc/rfc8594.html)** — `Sunset`
-  response header: signals when the resource will become unresponsive
-  (the hard cutoff date).
-- **`Link` header** with `rel="successor-version"` and
-  `rel="deprecation"` — points consumers to the replacement endpoint and
-  migration documentation.
+**Local Podman build (`tox -e build`):** additionally builds `apme-collection-health` and `apme-dep-audit` (11 application images + base). Abbenay is pulled from `ghcr.io/redhat-developer/abbenay`.
 
-```
-HTTP/1.1 200 OK
-Deprecation: Sat, 01 Nov 2026 00:00:00 GMT
-Sunset: Sun, 01 May 2027 00:00:00 GMT
-Link: </api/v2/projects>; rel="successor-version",
-      </docs/migrate/v1-to-v2>; rel="deprecation"
-```
+**Target state — CI:** **12 service images** in the publish matrix by adding:
 
-Implement as FastAPI middleware — checks request path version and injects
-headers automatically. No per-endpoint logic needed. Responses continue
-to work normally during the deprecation window; the headers are metadata
-for SDK tooling, monitoring, and observant developers.
+- `apme-collection-health` (`containers/collection-health/Dockerfile`)
+- `apme-dep-audit` (`containers/dep-audit/Dockerfile`)
 
-| Phase | Duration | Behavior |
-|-------|----------|----------|
-| **Active** | Indefinite | Normal support, bug fixes, improvements |
-| **Deprecated** | 1–3 months (internal consumers) | `Deprecation` + `Sunset` headers on every response; migration docs published; consumers must begin migration |
-| **Sunset** | 2–4 weeks | `410 Gone` returned with `Link` to migration guide |
-| **Removed** | — | Endpoint deleted, docs archived |
+| Image | Track A | Track B | CI today | CI target |
+|-------|---------|---------|----------|-----------|
+| primary | ✓ | ✓ | ✓ | ✓ |
+| native | ✓ | ✓ | ✓ | ✓ |
+| opa | ✓ | ✓ | ✓ | ✓ |
+| ansible | ✓ | ✓ | ✓ | ✓ |
+| galaxy-proxy | ✓ | ✓ | ✓ | ✓ |
+| collection-health | ✓ | ✓ | ✗ | ✓ |
+| dep-audit | ✓ | ✓ | ✗ | ✓ |
+| gitleaks | opt | opt | ✓ | opt |
+| gateway | proxy | full | ✓ | ✓ |
+| ui | ✗ | ✓ | ✓ | ✓ (Track B only) |
+| cli | ✓ | ✓ | ✓ | ✓ |
+| abbenay | ✓ | ✓ | external | external |
 
-#### Consumer obligations
+**CLI packaging gap:** PyPI package `apme-engine` and `apme-cli` container exist, but there is no productized RPM/bootc artifact path aligned with Portal Operator delivery. Track A needs a defined CLI artifact policy (packaging table, Section 2).
 
-Any team or system integrating with the APME Gateway API accepts these
-responsibilities. These are not suggestions — they are requirements for
-supported integration:
+### 4.2 — Security Hardening
 
-1. **Monitor deprecation headers.** Consumers must check for `Deprecation`
-   and `Sunset` headers in every response. Logging or alerting on their
-   presence should be part of the consumer's standard observability.
-2. **Test for deprecation.** Consumer CI/CD pipelines should include a test
-   that fails if responses from APME contain `Deprecation` or `Sunset`
-   headers, forcing the team to acknowledge and plan migration.
-3. **Migrate within the deprecation window.** Once `Deprecation` headers
-   appear, consumers have the advertised window (1–3 months for internal
-   consumers) to migrate to the successor version. APME will not extend
-   the window for consumers who ignored the headers.
-4. **Handle `410 Gone` gracefully.** After the `Sunset` date, deprecated
-   endpoints return `410 Gone`. Consumer applications must handle this
-   status code — displaying a meaningful error to users, not crashing.
-5. **Validate against the published OpenAPI spec.** Consumers should
-   generate or validate their client code against the published OpenAPI
-   spec for their target API version. Do not rely on undocumented response
-   fields or behaviors.
-6. **No pinning to old versions indefinitely.** APME does not guarantee
-   perpetual support for any API version. Consumers that cannot keep pace
-   with the deprecation lifecycle must raise this as a product requirement
-   — not silently ignore deprecation headers and break at sunset.
+| Item | Status | Action |
+|------|--------|--------|
+| Non-root containers (`USER` in Dockerfiles) | **Missing** — no `USER` directive in any `containers/*/Dockerfile` | A12 / Phase 2 — add non-root user to all images |
+| Secret redaction in logs | Partial | Audit all services for `[REDACTED]` compliance |
+| SBOM generation | CI | Extend to collection-health and dep-audit images |
+| Image signing | Open | Cosign/sigstore on release tags |
+| Dependency scanning | CI | `tox -e security` / lean-ci gates |
+| Network policies (K8s) | Helm | Document NetworkPolicy for Track B |
+| Rate limiting | Not implemented | A11 — `APME_RATE_LIMIT` on Gateway |
 
-These obligations will be documented in the API consumer guide and
-referenced in the OpenAPI spec description.
+### 4.3 — Authentication
 
-#### Work items
+- **Track A:** Implement A1 service-token middleware; Helm secret injection; disable auth only via explicit `APME_AUTH_DISABLED` for dev.
+- **Track B:** Implement ADR-038 bearer validation for `/api/v1/*` machine consumers.
+- **Deliverables:** ADR for Portal service-token model (D-01); ADR-038 implementation tasks.
 
-| Item | Current State | Work Needed |
-|------|---------------|-------------|
-| URL versioning | All routes under `/api/v1` | Foundation exists; no changes needed |
-| OpenAPI spec | FastAPI auto-generates from code; not published as artifact | Publish versioned OpenAPI spec (JSON/YAML) as release artifact; all consumers validate against it |
-| Stability guarantee | None — any commit can change the API shape | ADR defining API stability policy: what constitutes a breaking change, deprecation timeline, v1 support window |
-| Deprecation middleware | No mechanism | FastAPI middleware: inject `Deprecation` / `Sunset` / `Link` headers for deprecated API versions |
-| Changelog | No API-specific changelog | Track breaking vs non-breaking changes per release; include in release notes |
-| Contract testing | No consumer-driven contract tests | Pact or similar to verify consumer integrations (Portal, standalone UI, CLI) don't break on APME upgrades |
-| SDK / client library | Consumers code directly against REST | Consider a thin Python/TypeScript client generated from OpenAPI spec for Portal, CLI, and third-party use |
+### 4.4 — API Versioning
 
-### 4.5 Scaling & Performance
+- Adopt [RFC 9745](https://www.rfc-editor.org/rfc/rfc9745.html) (Deprecation header) and [RFC 8594](https://www.rfc-editor.org/rfc/rfc8594.html) (Sunset header) as FastAPI middleware on Gateway REST.
+- Version prefix: `/api/v1/` (current); sunset headers on breaking changes.
+- WebSocket session endpoint `/api/v1/ws/session` versioned with REST (Track B).
+- Portal proxy mode exposes a reduced surface (`POST /scan`, `GET /scan/{id}/events`, etc.) — versioning applies to both modes.
+- **Deliverable:** API contract document; cross-ref PR #351 / this plan §4.4.
 
-| Item | Current State | Work Needed |
-|------|---------------|-------------|
-| Load testing | No infrastructure | k6 or locust suite against Gateway REST + FixSession gRPC |
-| Baseline metrics | Per-scan diagnostics (`engine_total_ms`, per-rule timing) | Establish SLA baselines (e.g., 1000-task project < 30s) |
-| HPA | Helm template exists (disabled) | Enable and tune with load test data |
-| Horizontal scaling | ADR-012: scale engine pods as unit | Validate with concurrent scan load |
-| Gateway DB | SQLite (single-writer) | **Decision needed:** move to PostgreSQL now, or keep SQLite for standalone and add PostgreSQL as a production option? See Section 6. |
-| DB migrations | No migration tooling exists (no Alembic, no versioned schema) | **Gap:** schema changes today silently break existing databases. Need Alembic (or equivalent) with versioned migrations before any production release. |
+### 4.5 — PostgreSQL Migration
 
-### 4.6 Ownership Model
+**Decision:** Upstream Track B uses PostgreSQL for production (see Section 9). SQLite remains dev-only.
 
-#### DevTools team — platform engineering
-
-The DevTools team will own the APME platform codebase: engine, gateway,
-validators (framework and execution), deployment artifacts, CI/CD, and
-release process. They own the **how** — the machinery that loads projects,
-runs validators, serves results, and deploys.
-
-| Item | Work Needed |
+| Item | Requirement |
 |------|-------------|
-| Codebase walkthrough | Architecture, service boundaries, ADR index, test strategy |
-| Bug triage integration | APME components in team's Jira/Bugzilla; integrate into existing triage cadence |
-| CODEOWNERS | Assign DevTools as owners for `src/apme_engine/`, `src/apme_gateway/`, validators (framework), proto, `deploy/`, CI |
-| CI ownership | Team understands and can modify GitHub Actions workflows, tox environments |
-| Development workflow | Team comfortable with branch strategy, PR process, conventional commits |
-| Contribution ramp | First bugs/features assigned to build familiarity before full ownership |
-| Release process | Team owns version bumps, CHANGELOG, tagging, image publishing |
+| **Alembic** | Required — schema migrations versioned in repo |
+| **Multi-replica Gateway** | Enabled only after PostgreSQL — SQLite blocks HA |
+| **Connection pooling** | SQLAlchemy async + pool config in Helm |
+| **Portal proxy mode** | No APME database — Gateway is stateless for persistence |
+| **Current code** | `GatewayConfig.db_path` / `APME_DB_PATH` only — no `APME_DATABASE_URL` yet |
 
-#### Rules & policy — community of practice
+### 4.6 — Ownership Model
 
-The prescriptive ruleset (what APME checks and why) must be owned
-collectively by people closer to the users — the community of practice,
-the business unit, and the broader Ansible engineering team. DevTools
-maintains the validator framework and rule execution machinery, but does
-not unilaterally author policy rules.
+**Status: PROPOSED — not decided**
 
-This is a pattern we've used before and it needs a formal governance model:
+| Role | Proposed owner | Notes |
+|------|----------------|-------|
+| Engine validators | APME platform engineering | |
+| Gateway/API | APME platform engineering | |
+| Portal integration | Portal team (ansible-rhdh-plugins) | ANSTRAT-2222 |
+| UI (Track B) | APME community / platform | Retained for upstream |
+| Helm chart / Operator subchart | Integration / release engineering | |
+| Security response | Shared on-call | |
+| Custom rules (Phase 2) | Joint — Portal git policy + APME OPA merge | ADR required |
 
-| Item | Work Needed |
-|------|-------------|
-| Rule governance model | Define who can propose, review, approve, and merge new rules |
-| Rule ownership by category | Map L/M/R/P/SEC categories to responsible groups (e.g., Risk/Policy rules owned by platform team, Lint/Modernize by community) |
-| Contribution workflow | External rule contributors follow a defined process: proposal → review by domain experts → implementation by contributor or DevTools → merge |
-| Rule review board | Standing group (community of practice + BU + Ansible engineering) that reviews rule proposals, severity assignments, and deprecations |
-| Plugin boundary (ADR-042) | Third-party/org-specific rules go through the Plugin service — not into the built-in ruleset — giving teams autonomy without gating on DevTools |
-| Rule catalog maintenance | Published catalog with rationale, references, and ownership metadata per rule |
-| Feedback loop | Portal/CLI users can flag false positives or request new rules; routed to rule owners, not DevTools backlog |
+Requires governance ADR or RACI in `.sdlc/context/`.
 
-### 4.7 Dependency Review
+### 4.7 — Dependency Management
 
-| Category | Current Dependencies | Review Action |
-|----------|---------------------|---------------|
-| Python runtime | grpcio, protobuf, fastapi, uvicorn, ruamel.yaml, httpx, ansible-core | License audit; legal review |
-| External binaries | OPA 1.17.1, Gitleaks 8.30.1 | License compatibility; upstream support lifecycle |
-| AI provider | Abbenay (`ghcr.io/redhat-developer/abbenay`) | Internal dependency; version pinning strategy |
-| Frontend | React, PatternFly, Vite, Node 22 | Standard UI stack; confirm PatternFly version |
-| Container base | Debian bookworm-slim | UBI migration path for downstream |
+- Pin production dependencies in `pyproject.toml` / lockfile.
+- Vendored ARI engine (ADR-003) — no pip drift.
+- Galaxy Proxy collection versions pinned per release.
+- Document upgrade policy for Ansible-core compatibility.
+- Air-gapped mode (A5): disable PyPI fallback, optional dep-audit skip — **proposed**, requires ADR.
 
-### 4.8 Repo & Process Hardening
+### 4.8 — Repository Hardening
 
-| Item | Current State | Work Needed |
-|------|---------------|-------------|
-| CI security gates | Unit + integration + lint; no SAST/container scan | Add CodeQL, pip-audit, container scan to CI |
-| Pre-commit hooks | ruff, mypy, pydoclint, uv-lock | Add gitleaks to pre-commit (currently manual) |
-| Branch protection | Single-branch `main` (ADR-016) | Verify CODEOWNERS, required reviews, status checks |
-| Vulnerability disclosure | SECURITY.md with private reporting | Confirm GitHub Security Advisories enabled |
-| Industry gap analysis | `.sdlc/research/industry-gap-analysis.md` exists | Use as checklist; close gaps systematically |
+- Branch protection; required `tox -e lint` + `tox -e unit` on PRs.
+- Signed commits encouraged; provenance attestations on container images.
+- `.github/workflows/` review per lean-ci skill.
+- Secret scanning (Gitleaks in CI meta).
+- prek hooks: ruff, mypy, pydoclint on commit.
 
-### 4.9 Product Requirements from Craig
+### 4.9 — Craig Requirements (P0 Alignment)
 
-Craig should author a formal requirement covering:
+Portal stakeholder requirements traced to PR #352 / ANSTRAT-2222:
 
-- What "APME in Portal" means from a product owner perspective
-- User personas and workflows in Portal context
-- Which APME capabilities are P0 vs P1 for Portal launch
-- Integration points with existing Portal services
-- Success metrics and acceptance criteria
-- Use `/req-new` or `/prd-import` to formalize as SDLC artifact
+| ID | Requirement | Priority | Status |
+|----|-------------|----------|--------|
+| CR-1 | Gateway proxy mode without APME DB | P0 | Spec §8 A2 |
+| CR-2 | Tarball scan — no SCM credentials in APME | P0 | Spec §8 A3 |
+| CR-3 | Galaxy credentials per-request from Portal | P0 | Spec §8 Galaxy flow |
+| CR-4 | Git-backed collections (phase 1: Hub only) | P0 | Spec §8 |
+| CR-5 | Service-token auth on Gateway | P0 | Spec §8 A1 |
+| CR-6 | Validator scope (CH + DA required) | P0 | **Decided** §4.10 |
+| CR-7 | Non-root containers | P0 | Spec §8 A12 |
+| CR-8 | Observability `/metrics` | P1 | Spec §8 A10 |
 
----
+Full Craig P0 scope sign-off remains **open** (D-06).
 
-## 5. Additional Considerations
+### 4.10 — Validator Scope Alignment Checklist
 
-Items not in the original list but important for productization:
+Align code, deployment manifests, and docs with **Collection Health + Dep Audit required; Gitleaks optional**.
 
-1. **Observability** — No Prometheus metrics endpoint, no OpenTelemetry
-   traces, no structured log aggregation. Production needs `/metrics` on
-   Gateway and engine.
-
-2. **Rate limiting** — Gateway has no request throttling. If exposed through
-   Portal, needs abuse protection.
-
-3. **Multi-tenancy / data isolation** — SQLite is single-tenant. Portal
-   implies multiple users/orgs. Decision needed: one APME instance per
-   tenant, or shared instance with row-level isolation (requires
-   PostgreSQL).
-
-4. **Operator documentation** — Admin guide, configuration reference,
-   troubleshooting guide. Current docs are developer-focused.
-
-5. **Feature flags** — No feature flag system. Portal rollout likely needs
-   staged enablement.
-
-6. **Graceful degradation** — What happens when APME engine is down? Portal
-   needs a degraded UX, not a 500.
-
-7. **Accessibility (a11y)** — PatternFly helps, but no a11y audit has been
-   performed.
-
-8. **Telemetry** — No opt-in usage analytics for understanding adoption.
+- [ ] Remove `collection_health` and `dep_audit` from `_OPTIONAL_SERVICES` in `launcher.py` (or promote to `_DEFAULT_PORTS` / required set)
+- [ ] Update CLI daemon default: start CH + DA without `include_optional`
+- [ ] Helm chart: CH + DA enabled by default; Gitleaks behind `optional.enabled`
+- [ ] Podman `pod.yaml`: CH + DA already present — verify Primary env vars always set
+- [ ] bootc image: include CH + DA units
+- [ ] CI: add `collection-health` and `dep-audit` to `container-images.yml` matrix
+- [ ] Health-check aggregation in Primary includes CH + DA endpoints
+- [ ] `apme health-check` reports CH + DA as required services
+- [ ] Documentation: `architecture.md`, `deployment.md`, `CLAUDE.md` invariant 12
+- [ ] ADR-012 note: engine pod replicates as unit including CH + DA
 
 ---
 
-## 6. Open Decisions
+## Section 5 — Additional Considerations
 
-| # | Decision | Owner | Blocker for |
-|---|----------|-------|-------------|
-| 1 | Auth model: AAP proxy vs self-contained vs platform JWT | Architect + Craig | Any multi-user deployment |
-| 2 | Multi-tenancy: per-tenant instance vs shared + row isolation | Architect | Portal deployment |
-| 3 | Base image: stay Debian slim or migrate to UBI | DevTools / Konflux | Downstream build |
-| 4 | Database: move to PostgreSQL now, or dual-mode (SQLite standalone / PostgreSQL production)? SQLite is single-writer — blocks multi-replica Gateway and concurrent Portal use. ADR-029 documents a PostgreSQL path via `APME_DATABASE_URL` but it's unvalidated. Alembic migrations don't exist yet. | Architect | HA Gateway, multi-tenancy, Portal scale |
-| 5 | Craig's P0 feature set for Portal launch | Craig | Scope and timeline |
-| 6 | Rule governance: who proposes, reviews, approves prescriptive rules | Community of practice + BU + Ansible eng | Rule quality and relevance |
-| 7 | DevTools ownership scope: engine + gateway + deploy + CI + release | DevTools lead + current team | Codebase handoff |
-| 8 | DB migration tooling: adopt Alembic, define schema versioning strategy, test upgrade path | DevTools | Any schema change post-release |
-| 9 | API stability contract: define v1 support window, breaking change policy, deprecation timeline for all consumers | Architect + DevTools | Portal, standalone UI, CLI, third-party integrations |
+### ADR-042 — Third-Party Plugin Services
+
+Custom/organization-specific rules ship via the **Plugin service** container (ADR-042), not volume-mounted rules into built-in validators (invariant 14).
+
+- Portal Phase 2 custom rules (PR #352) may use **ephemeral Rego merge** at scan time — **proposed**; requires ADR distinct from ADR-042 plugin sidecar.
+- Built-in validator bundles remain closed; Plugin sidecar is optional enterprise path.
+- Plan Plugin image in CI when Portal custom-rules phase 2 lands.
+
+### ADR-049 — Gateway Embedded in Local Daemon
+
+ADR-049 status: **Accepted** (2026-04-01). **Implementation: not done** — `launcher.py` has no Gateway HTTP/gRPC startup; Gateway remains pod-level only.
+
+- `apme sbom` and future REST-backed CLI commands require Gateway reachability.
+- **Separate work stream from Portal Track A** — does not block proxy mode.
+- Deliverable: embed FastAPI + ReportingServicer + SQLite in daemon per ADR-049.
+
+### Feature Flags
+
+| Flag | Purpose | Values |
+|------|---------|--------|
+| `APME_GATEWAY_MODE` | Gateway operating mode | `full` (Track B default), `proxy` (Track A) |
+| `APME_DATABASE_MODE` | Persistence backend | `bundled`, `external`, `none` (proxy) |
+| `APME_DATABASE_URL` | PostgreSQL DSN | `postgresql+asyncpg://...` |
+| `APME_DB_PATH` | SQLite file path | **Deprecated** for production — dev/local only (`GatewayConfig` default `/data/apme.db`) |
+| `APME_AUTH_DISABLED` | Skip Gateway auth | `true` dev only — not for production |
+| `APME_AIR_GAPPED` | Air-gapped deployments | `true` / `false` (A5, proposed) |
+| `APME_RATE_LIMIT` | Gateway throttling | e.g. `100/minute` (A11, proposed) |
+
+Gateway reads `APME_GATEWAY_MODE` at startup to enable/disable local SQLAlchemy init, Reporting gRPC server, full REST surface, and Portal proxy routes.
 
 ---
 
-## 7. Suggested Priority Sequence
+## Section 6 — Decision Matrix
+
+### Open Decisions
+
+| ID | Topic | Options | Blocker for |
+|----|-------|---------|-------------|
+| D-01 | **Auth model (Portal)** | Service token list vs mTLS vs OAuth client credentials | Track A GA |
+| D-02 | **Packaging** | See Section 2 table | Release pipeline |
+| D-03 | **Gateway modes** | Runtime flag only vs separate proxy image build | Helm/CI complexity |
+| D-04 | **PostgreSQL topology** | Bundled subchart vs external RDS vs customer-managed | Track B HA |
+| D-05 | **SQLite migration strategy** | Big-bang Alembic init vs export/import tool vs dual-run period | Existing dev adopters |
+| D-06 | **Craig P0 scope** | Full A1–A12 vs phased MVP (A1,A3,A12,A2) | Portal milestone |
+| D-07 | **Governance / ownership** | Section 4.6 RACI | Support model |
+| D-08 | **DevTools** | In-cluster vs local-only CLI | Developer UX |
+| D-09 | **Alembic ownership** | Gateway team vs shared platform | Schema change velocity |
+| D-10 | **API contract** | OpenAPI publish location, deprecation policy, consumer SLA | Integrators |
+
+### Decided
+
+| ID | Decision | Date | Reference |
+|----|----------|------|-----------|
+| DC-01 | **Validator scope:** Collection Health + Dep Audit required; Gitleaks optional | 2026-06-24 | §4.10 |
+| DC-02 | **Upstream persistence:** PostgreSQL for production Track B | 2026-06-24 | §9, ADR-029 extension |
+| DC-03 | **Dual tracks:** Portal product (Track A) vs upstream standalone (Track B) | 2026-06-24 | §2 |
+| DC-04 | **Portal persistence:** No APME DB in proxy mode — Portal PostgreSQL | 2026-06-24 | §8 A2, PR #352 |
+
+---
+
+## Section 7 — Priority Sequence
+
+### Phase 1 — Foundation (weeks 1–4)
+
+1. Validator scope alignment (4.10) — launcher, Helm, Podman, health-check
+2. Alembic + PostgreSQL migration scaffolding (4.5, §9)
+3. Auth ADR — bearer for Track B (ADR-038); draft Portal service-token ADR (4.3, D-01)
+
+### Phase 2 — Hardening (weeks 5–8)
+
+4. Security — `USER` in all Dockerfiles (4.2, A12)
+5. CI images — collection-health + dep-audit in `container-images.yml` (4.1)
+6. Dependency and repo hardening (4.7, 4.8)
+
+### Phase 3 — Product Integration (weeks 9–12)
+
+7. Portal A1–A3 — auth middleware, tarball `POST /scan`, Galaxy per-request credentials
+8. Portal A2 — Gateway proxy mode behind `APME_GATEWAY_MODE=proxy`
+9. Packaging decisions (D-02) — Operator subchart, image pins, CLI artifact
+10. API contract + RFC 9745/8594 middleware (4.4, A9)
+
+### Phase 4 — Scale & Handoff (weeks 13+)
+
+11. HA Gateway — multi-replica after PostgreSQL (4.5)
+12. Load testing — engine pod at Portal scale (100+ repos, A4 PVC sizing)
+13. Observability — Prometheus `/metrics`, structured logging (A10)
+14. Rate limiting (A11), air-gapped mode (A5), rule catalog API (A6)
+15. Ownership/governance sign-off (4.6) and operator handoff documentation
+16. ADR-049 daemon Gateway embedding (CLI track — parallel, not Portal-blocking)
+
+---
+
+## Section 8 — Portal Integration Requirements (A1–A12)
+
+Source: [PR #352](https://github.com/ansible/apme/pull/352) — `.sdlc/research/portal-integration/00-integration-requirements.md`, [ansible-rhdh-plugins PR #676](https://github.com/ansible/ansible-rhdh-plugins/pull/676), [ANSTRAT-2222](https://issues.redhat.com/browse/ANSTRAT-2222).
+
+### Corrections (this plan vs PR #352 draft)
+
+| PR #352 statement | Correction |
+|-------------------|------------|
+| "APME standalone UI is removed" | **UI is removed only for Track A (Portal).** Track B upstream retains standalone UI (:8081). |
+| CLI daemon unchanged | **ADR-049 Gateway-in-daemon is separate work** — not implemented; not required for Portal proxy mode. |
+| Custom rules / air-gapped / rate limit | Marked **proposed** — each requires ADR before implementation. |
+
+### Core Architectural Decisions (Portal)
+
+1. **Portal owns all scan data** — stored in Portal PostgreSQL (`apme_*` tables).
+2. **APME Gateway becomes stateless in proxy mode** — no database, no PVC, thin REST↔gRPC proxy.
+3. **Portal clones repos** — tars content, sends to APME via REST; APME never holds SCM credentials.
+4. **PR creation is Portal-side** — using user's OAuth token, not APME.
+5. **Feature flag:** `APME_GATEWAY_MODE=proxy` (Portal) vs `full` (standalone upstream).
+
+### C4 Context — APME in the Portal Ecosystem
 
 ```
-Phase 1 — Security & Auth Foundation
-├── Auth ADR decision
-├── Non-root containers
-├── CI security gates (CodeQL, pip-audit, container scan)
-├── Dependency / license audit
-└── TLS for production
-
-Phase 2 — Downstream Build
-├── UBI base image evaluation
-├── Konflux pipeline setup
-├── Unified semver strategy
-├── Release SBOM + cosign
-└── Image publish to registry.redhat.io
-
-Phase 3 — Portal Integration
-├── Auth middleware implementation
-├── Ingress / Route configuration
-├── Network policy defaults
-├── PostgreSQL support (if multi-tenant)
-├── Alembic DB migrations (schema versioning + upgrade path)
-├── API stability contract + published OpenAPI spec
-├── Craig's P0 feature set
-└── Consumer contract testing (Portal, standalone UI, CLI)
-
-Phase 4 — Production Readiness & Handoff
-├── Load test suite (k6/locust)
-├── SLA baselines and HPA tuning
-├── Prometheus metrics + Grafana
-├── a11y audit
-├── DevTools codebase walkthrough and first contributions
-├── CODEOWNERS + triage integration for DevTools ownership
-└── Rule governance model: community of practice + BU + Ansible eng
+                     ┌───────────────────────┐
+                     │  Ansible Automation   │
+                     │       Portal          │
+                     │  (owns all data)      │
+                     │  (clones repos)       │
+                     └───────────┬───────────┘
+                                 │
+                    REST: POST /scan (tarball upload)
+                    REST: GET /scan/{id}/events (SSE)
+                    REST: GET /rules
+                    REST: GET /health
+                                 │
+                     ┌───────────▼───────────┐
+                     │   APME Gateway        │
+                     │   (STATELESS proxy)   │
+                     │   No DB, no PVC       │
+                     │   REST :8080          │
+                     └───────────┬───────────┘
+                                 │
+                          gRPC (internal)
+                                 │
+                     ┌───────────▼───────────┐
+                     │   APME Engine Pod     │
+                     │  Primary + Validators │
+                     │  + Galaxy Proxy       │
+                     └───────────────────────┘
 ```
+
+### Gap Table (A1–A12)
+
+| ID | Requirement | Priority | Current | Gap | Effort |
+|----|-------------|----------|---------|-----|--------|
+| **A1** | Gateway auth middleware (Bearer service token) | Critical | No auth middleware | Implement `verify_service_token`; Helm secret | Small |
+| **A2** | Gateway stateless proxy mode | High | Full Gateway with SQLite + UI | `APME_GATEWAY_MODE=proxy`; remove persistence paths | Medium (1–2 sprints) |
+| **A3** | Tarball scan endpoint `POST /scan` | High | WS upload / project CRUD model | New scan router + tarball service + FixSession proxy | Medium (1 sprint) |
+| **A4** | PVC sizing for scale | Medium | 10Gi defaults | sessions 50Gi, proxy-cache 20Gi; no gateway PVC in proxy | Small |
+| **A5** | Air-gapped mode flag | Medium | Not implemented | `APME_AIR_GAPPED=true` behavior | Small (proposed ADR) |
+| **A6** | Rule catalog API (stateless) | Medium | Partial via Primary | `GET /rules` from in-memory catalog | Small |
+| **A7** | *(reserved / Portal-side)* | — | — | Portal backend plugin owns CRUD | — |
+| **A8** | *(reserved / Portal-side)* | — | — | Portal SQL for trends, dashboard | — |
+| **A9** | API versioning (RFC 9745/8594) | High | Not implemented | Deprecation + Sunset middleware | Medium |
+| **A10** | Observability (Prometheus + structured logging) | High | Limited | `/metrics` endpoint, JSON logs | Medium |
+| **A11** | Rate limiting | Medium | Not implemented | `APME_RATE_LIMIT` | Small (proposed ADR) |
+| **A12** | Non-root containers | High | Documented only | `USER` in all Dockerfiles | Small |
+
+### A2 — Proxy Mode Details
+
+When `APME_GATEWAY_MODE=proxy`:
+
+**Remove / skip:**
+
+- SQLite database initialization, SQLAlchemy models, Alembic migrations
+- gRPC Reporting servicer (:50060) — Portal stores results directly
+- Persistence-dependent REST: projects CRUD, dashboard, activity, trends, settings, notifications, suppressions
+- UI deployment (:8081) — **Track A only**
+
+**Keep (stateless):**
+
+- `GET /health` — probes Primary + validators via gRPC
+- `GET /rules` — from Primary in-memory catalog (A6)
+- SSE: `GET /scan/{id}/events` — proxies gRPC SessionEvents
+- `POST /scan/{id}/approve`, `POST /scan/{id}/cancel`
+- Bearer auth middleware (A1)
+
+**Add:**
+
+- `POST /scan` — tarball upload (A3)
+
+**Files (from PR #352):**
+
+- `src/apme_gateway/app.py` — conditional startup
+- `src/apme_gateway/api/router.py` — proxy route registration
+- `deploy/helm/apme/values.yaml` — `gateway.mode: proxy`
+- Remove in proxy chart overlay: `gateway-pvc.yaml`, reporting service, `ui-deployment.yaml`
+
+### A3 — Tarball Scan Endpoint
+
+**Endpoint:** `POST /scan`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `content` | `UploadFile` | tar.gz of Ansible project |
+| `options` | JSON form string | `ansible_core_version`, `collection_specs`, `rule_configs` |
+| `galaxy_servers` | JSON form string | `[{name, url, token, auth_url}]` per-scan |
+| `action` | form string | `check` or `remediate` |
+
+**Flow:**
+
+1. Extract tarball to temp directory
+2. Discover Ansible files
+3. Configure Galaxy Proxy with per-request credentials
+4. Run `FixSession` via Primary gRPC
+5. Cleanup temp dir
+6. Return violations, proposals, patches, diagnostics, summary
+
+**SSE progress:** `GET /scan/{scan_id}/events`  
+**Approvals:** `POST /scan/{scan_id}/approve`
+
+**New modules (proposed):**
+
+- `src/apme_gateway/api/scan_router.py`
+- `src/apme_gateway/services/tarball_service.py`
+- `src/apme_gateway/services/scan_proxy.py`
+
+### API Surface — Before vs After (Proxy Mode)
+
+**Removed (Portal backend plugin owns):**
+
+| Endpoint | Previous purpose | New owner |
+|----------|------------------|-----------|
+| CRUD `/projects` | Project management | Portal `apme_projects` |
+| `GET /dashboard/*` | Aggregate metrics | Portal SQL |
+| `GET /activity/*` | Scan history | Portal `apme_scans` |
+| `GET /violations/top` | Top rules | Portal SQL |
+| `GET /stats/*` | Remediation rates | Portal SQL |
+| CRUD `/settings/galaxy-servers` | Galaxy config | Portal `apme_galaxy_servers` |
+| `POST /suppressions` | Rule suppressions | Portal `apme_rule_overrides` |
+| `GET /notifications/*` | Notifications | Portal notification service |
+| `GET /projects/{id}/trend` | Trends | Portal SQL |
+| `GET /projects/{id}/dependencies` | SBOM | Portal (post-scan store) |
+
+**Kept (stateless proxy):**
+
+| Endpoint | Purpose |
+|----------|---------|
+| `POST /scan` | **NEW** — tarball upload, trigger scan |
+| `GET /scan/{id}/events` | SSE — proxy SessionEvents |
+| `POST /scan/{id}/approve` | Forward proposal approvals |
+| `POST /scan/{id}/cancel` | Cancel running scan |
+| `GET /rules` | Rule catalog (A6) |
+| `GET /health` | Health check |
+
+**Track B full mode retains** `/api/v1/ws/session`, project CRUD, dashboard, and full persistence API.
+
+### A4 — PVC Sizing (Portal Scale)
+
+```yaml
+persistence:
+  sessions:
+    size: 50Gi        # up from 10Gi — 100+ repos
+  proxyCache:
+    size: 20Gi        # up from 10Gi
+  # gateway PVC REMOVED in proxy mode
+```
+
+### Galaxy / Automation Hub Credential Flow
+
+```
+Portal (owns credentials)                    APME (stateless)
+┌─────────────────────────┐                 ┌─────────────────────────┐
+│ apme_galaxy_servers     │                 │ Gateway (no DB)         │
+│ + K8s Secrets for tokens│  POST /scan     │                         │
+│                         │  galaxy_servers │  → Galaxy Proxy admin   │
+│ ansible.rhaap.baseUrl   │  ────────────►  │  temp ansible.cfg       │
+│ ansible.rhaap.token     │                 │  ephemeral per-scan     │
+└─────────────────────────┘                 └─────────────────────────┘
+```
+
+**Sources in Portal:**
+
+1. Existing Portal config: `ansible.rhaap.baseUrl` + `ansible.rhaap.token` (AAP admin token, org-scoped)
+2. Optional additional servers → `apme_galaxy_servers` table
+3. Default community Galaxy fallback (no token)
+
+**Key points:**
+
+- Tokens in K8s Secrets, not DB plaintext
+- Portal injects tokens per scan request
+- APME never persists Galaxy credentials
+- Galaxy Proxy writes temp `ansible.cfg`, downloads collections, deletes temp file
+
+### Git-Based Collection Dependencies
+
+| Phase | Scope |
+|-------|-------|
+| **Phase 1** | Collections must be on Galaxy or Automation Hub. `type: git` in `requirements.yml` **not supported** in Portal scans. Aligns with AAP 2.5+ Hub model. |
+| **Phase 2** | Portal passes admin SCM token in scan request (`GH_TOKEN` for `ansible-galaxy`), **or** Portal pre-builds git collections and includes tarball in upload. APME stays credential-free in preferred path. |
+
+### Custom Rules — Phase 2 (Proposed — Requires ADR)
+
+- Policy-as-code in git; Portal clones policy repo, passes `custom_policies: [{name, rule_id, rego_source}]` in `POST /scan`
+- Gateway writes temp Rego alongside built-in OPA bundle; OPA loads merged bundle
+- Custom rule IDs: `P100+` prefix (distinct from built-in `P001–P004`)
+- **Phase 1:** per-project `.apme/rules.yml` and `rule_configs` in `ScanOptions` already supported — no git policy merge yet
+
+### Helm Chart — Proxy Mode Overlay
+
+```yaml
+gateway:
+  mode: proxy
+  replicas: 2                      # stateless — scale freely
+  resources:
+    requests: { cpu: 250m, memory: 256Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+  auth:
+    enabled: true
+    serviceTokenSecret: apme-service-token
+
+# Remove in proxy overlay:
+# - gateway-pvc.yaml
+# - gateway-reporting-service.yaml (:50060)
+# - ui-deployment.yaml / ui-service.yaml
+```
+
+### bootc (Proxy / Product)
+
+APME container volumes:
+
+- `/sessions` — venv session storage
+- `/cache` — Galaxy Proxy wheel cache
+- **No Gateway DB volume**
+
+### Implementation Order (Portal — from PR #352)
+
+1. **A1** — Gateway auth (security prerequisite)
+2. **A3** — Tarball scan endpoint
+3. **A12** — Non-root containers
+4. **A2** — Gateway stateless refactor (`APME_GATEWAY_MODE=proxy`)
+5. **A9** — API versioning contract
+6. **A10** — Observability
+7. **A4** — PVC sizing
+8. **A5** — Air-gapped mode
+9. **A6** — Rule catalog API
+10. **A11** — Rate limiting
+
+### What Stays Unchanged
+
+- Primary gRPC / `FixSession` protocol
+- All validators (read-only)
+- Galaxy Proxy PEP 503 caching
+- Engine pod architecture (ADR-012 — scale pods, not services)
+- Remediation engine (3-tier model)
+- Rule ID conventions (ADR-008)
+- **Track B** standalone UI, full Gateway, PostgreSQL path
+
+---
+
+## Section 9 — PostgreSQL Migration Plan
+
+### Decision
+
+Upstream Track B production deployments use **PostgreSQL**. SQLite (`APME_DB_PATH`, default `/data/apme.db` in `GatewayConfig`) is **dev/local only** and deprecated for production documentation.
+
+Portal Track A proxy mode: **no APME database** — skip all items below except engine/session volumes.
+
+### Configuration Example
+
+```yaml
+# apme-gateway-config.yaml (Track B full mode)
+gateway:
+  mode: full
+
+database:
+  mode: bundled          # bundled | external | none
+  # bundled: deploy PostgreSQL subchart, auto-wire URL
+  # external: customer supplies APME_DATABASE_URL
+  # none: proxy mode only (Track A)
+  url: ""                # required when mode=external
+  pool_size: 10
+  echo: false
+```
+
+### Environment Variables
+
+| Variable | Description | Status |
+|----------|-------------|--------|
+| `APME_DATABASE_URL` | PostgreSQL DSN (`postgresql+asyncpg://user:pass@host:5432/apme`) | **New — required** (Track B prod) |
+| `APME_DATABASE_MODE` | `bundled`, `external`, or `none` | **New** |
+| `APME_GATEWAY_MODE` | `full` or `proxy` | **New** |
+| `APME_DB_PATH` | SQLite file path | **Deprecated** — maps to `GatewayConfig.db_path` today |
+
+### Portal Proxy Mode Note
+
+When `APME_GATEWAY_MODE=proxy`, set `APME_DATABASE_MODE=none`. Gateway must not create, migrate, or connect to any APME schema. Portal owns `apme_projects`, `apme_scans`, `apme_galaxy_servers`, etc.
+
+### Implementation Checklist
+
+- [ ] `src/apme_gateway/db/` — async engine factory supporting PostgreSQL via `APME_DATABASE_URL`
+- [ ] `src/apme_gateway/config.py` — add `database_url`, `database_mode`, `gateway_mode`; deprecate `db_path` for prod
+- [ ] `pyproject.toml` — add `asyncpg`, `alembic` dependencies
+- [ ] `alembic/` — initial revision from current SQLite models; forward-only migrations
+- [ ] `alembic.ini` + env.py wired to `GatewayConfig`
+- [ ] Helm — PostgreSQL subchart **or** `externalDatabase.*` values; Secret for `APME_DATABASE_URL`
+- [ ] Helm — Gate multi-replica Gateway on `database.mode != none`
+- [ ] Podman — document external PostgreSQL or optional compose sidecar for integration tests
+- [ ] bootc — external PostgreSQL connection or bundled PG unit
+- [ ] **ADR-029 amendment** — PostgreSQL production store; SQLite dev-only
+- [ ] Migration guide — SQLite export → PostgreSQL import (addresses D-05)
+- [ ] Gateway `/health` — DB ping when `database.mode != none`
+- [ ] Remove `APME_DB_PATH` from production Helm values and user-facing docs
+- [ ] CI integration test job with PostgreSQL service container
+
+---
+
+## Section 10 — Follow-Up ADRs and Tasks
+
+| Artifact | Type | Title | Trigger | Phase |
+|----------|------|-------|---------|-------|
+| ADR-055 (proposed) | ADR | Portal Gateway proxy mode (`APME_GATEWAY_MODE`) | A2 implementation | 3 |
+| ADR-056 (proposed) | ADR | Portal service-token authentication | D-01 resolution | 1 |
+| ADR-029-amend | ADR | PostgreSQL production persistence | §9 checklist | 1 |
+| ADR-057 (proposed) | ADR | Required validator set (Collection Health + Dep Audit) | 4.10 completion | 1 |
+| ADR-058 (proposed) | ADR | API versioning — RFC 9745 / RFC 8594 | 4.4 / A9 | 3 |
+| ADR-059 (proposed) | ADR | Portal ephemeral custom Rego policies (Phase 2) | Custom rules scope | 4+ |
+| ADR-049-impl | TASK | Embed Gateway in CLI daemon | ADR-049 accepted, not coded | 4 (parallel) |
+| REQ-005 (proposed) | REQ | Portal product integration (ANSTRAT-2222) | §8 | 3 |
+| TASK-005-01 | TASK | Alembic initial migration + PG engine factory | §9 | 1 |
+| TASK-005-02 | TASK | Promote CH/DA to required in launcher + Helm | 4.10 | 1 |
+| TASK-005-03 | TASK | CI publish collection-health + dep-audit images | 4.1 | 2 |
+| TASK-005-04 | TASK | Gateway auth middleware (A1) | §8 | 3 |
+| TASK-005-05 | TASK | Tarball `POST /scan` endpoint (A3) | §8 | 3 |
+| TASK-005-06 | TASK | `USER` directive all Dockerfiles (A12) | 4.2 | 2 |
+| TASK-005-07 | TASK | Prometheus `/metrics` on Gateway (A10) | §8 | 4 |
+| DR-xxx | DR | Packaging registry / Operator ownership | D-02 | 3 |
+| DR-xxx | DR | SQLite → PostgreSQL migration strategy | D-05 | 1 |
 
 ---
 
 ## References
 
-| Document | Path |
-|----------|------|
-| Architecture | `.sdlc/context/architecture.md` |
-| Deployment | `.sdlc/context/deployment.md` |
-| Helm chart | `deploy/helm/apme/` |
-| ADR index | `.sdlc/adrs/README.md` |
-| Security policy | `SECURITY.md` |
-| Operating procedures | `SOP.md` |
-| Industry gap analysis | `.sdlc/research/industry-gap-analysis.md` |
+| Reference | Location / Link |
+|-----------|-----------------|
+| Architecture | [`.sdlc/context/architecture.md`](architecture.md) |
+| Deployment | [`.sdlc/context/deployment.md`](deployment.md) |
+| ADR-001 gRPC | [`.sdlc/adrs/ADR-001-grpc-communication.md`](../adrs/ADR-001-grpc-communication.md) |
+| ADR-012 Scale pods | [`.sdlc/adrs/ADR-012-scale-pods-not-services.md`](../adrs/ADR-012-scale-pods-not-services.md) |
+| ADR-020 Stateless engine | [`.sdlc/adrs/ADR-020-stateless-engine.md`](../adrs/ADR-020-stateless-engine.md) |
+| ADR-029 Web Gateway | [`.sdlc/adrs/ADR-029-web-gateway-architecture.md`](../adrs/ADR-029-web-gateway-architecture.md) |
+| ADR-037 Project-centric UI | [`.sdlc/adrs/ADR-037-project-centric-ui-model.md`](../adrs/ADR-037-project-centric-ui-model.md) |
+| ADR-038 Public data API | [`.sdlc/adrs/ADR-038-public-data-api.md`](../adrs/ADR-038-public-data-api.md) |
+| ADR-042 Plugin services | [`.sdlc/adrs/ADR-042-third-party-plugin-services.md`](../adrs/ADR-042-third-party-plugin-services.md) |
+| ADR-049 Gateway in daemon | [`.sdlc/adrs/ADR-049-gateway-in-daemon.md`](../adrs/ADR-049-gateway-in-daemon.md) |
+| ADR-054 Production deploy | [`.sdlc/adrs/ADR-054-production-deployment.md`](../adrs/ADR-054-production-deployment.md) |
+| DR-008 Data persistence | [`.sdlc/decisions/closed/decided/DR-008-data-persistence.md`](../decisions/closed/decided/DR-008-data-persistence.md) |
+| Portal integration research | [PR #352](https://github.com/ansible/apme/pull/352) |
+| Portal plugins PR 676 | https://github.com/ansible/ansible-rhdh-plugins/pull/676 |
+| ANSTRAT-2222 | https://issues.redhat.com/browse/ANSTRAT-2222 |
+| CI container workflow | [`.github/workflows/container-images.yml`](../../.github/workflows/container-images.yml) |
+| Helm chart | [`deploy/helm/apme/`](../../deploy/helm/apme/) |
+| Launcher | [`src/apme_engine/daemon/launcher.py`](../../src/apme_engine/daemon/launcher.py) |
+| Gateway config | [`src/apme_gateway/config.py`](../../src/apme_gateway/config.py) |
+| RFC 9745 API Versioning | https://www.rfc-editor.org/rfc/rfc9745.html |
+| RFC 8594 Deprecation | https://www.rfc-editor.org/rfc/rfc8594.html |
+| Project constitution | [`CLAUDE.md`](../../CLAUDE.md) |
+| Agent invariants | [`AGENTS.md`](../../AGENTS.md) |
+| User deployment guide | [`docs/guides/DEPLOYMENT.md`](../../docs/guides/DEPLOYMENT.md) |
+
+---
+
+*End of productization plan — draft for review.*
