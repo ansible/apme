@@ -216,12 +216,32 @@ persistence:
 
 `APME_AIR_GAPPED=true` — disable PyPI fallback, skip dep-audit, only serve cached wheels.
 
-### A9: API Versioning Contract
+### A9: OpenAPI Spec + API Versioning Contract
 
 **Priority:** High
 **Effort:** Medium
 
-Implement RFC 9745 (Deprecation header) and RFC 8594 (Sunset header) as FastAPI middleware. Publish versioned OpenAPI spec as release artifact.
+APME Gateway must publish a versioned OpenAPI spec. This is the contract between APME and all consumers (Portal, standalone UI, CLI, third-party integrations).
+
+**OpenAPI spec requirements:**
+
+- FastAPI auto-generates OpenAPI from code — publish as a versioned JSON/YAML release artifact
+- Spec must cover all REST endpoints including new management APIs (admin/db/\*)
+- Spec must document the optional credential fields (`scm_token`, `galaxy_servers`) on scan/operation endpoints
+- Spec must be accessible at runtime via `GET /api/v1/openapi.json`
+- Version the spec alongside the APME release (e.g., `apme-openapi-v0.2.0.json`)
+
+**API versioning requirements:**
+
+- Implement RFC 9745 (Deprecation header) and RFC 8594 (Sunset header) as FastAPI middleware
+- Define breaking change policy and deprecation timeline
+- Consumer obligation: Portal backend plugin should validate against the published spec
+
+**Portal plugin should consume the spec:**
+
+- Portal's APME backend plugin (thin proxy) should generate or validate its client types against the published OpenAPI spec
+- This ensures Portal stays in sync with APME API changes
+- CI can fail if the spec changes in a breaking way
 
 Reference: [ansible/apme#351](https://github.com/ansible/apme/pull/351) Section 4.4.
 
