@@ -4,7 +4,7 @@
 **Updated:** 2026-06-25  
 **Status:** Draft for review
 
-This document captures the productization strategy for APME across two deployment tracks: **Portal-integrated product** (Track A) and **upstream standalone** (Track B). It consolidates architecture, authentication, work streams, open decisions, PostgreSQL migration, and Portal integration requirements.
+This document captures the productization strategy for APME across two deployment tracks: **Portal-integrated product** (Track A) and **upstream standalone** (Track B). It consolidates architecture, authentication, work streams, open decisions, PostgreSQL-only persistence (SQLite removed), and Portal integration requirements.
 
 Companion research: [PR #352](https://github.com/ansible/apme/pull/352) (`.sdlc/research/portal-integration/00-integration-requirements.md`), [ansible-rhdh-plugins PR #676](https://github.com/ansible/ansible-rhdh-plugins/pull/676), [ANSTRAT-2222](https://issues.redhat.com/browse/ANSTRAT-2222).
 
@@ -37,7 +37,7 @@ APME is a multi-service system that automates policy enforcement and modernizati
 │                           Gateway Tier                                        │
 │  ┌────────────────────────────────────────────────────────────────────────┐  │
 │  │ Gateway :8080 (REST) / :50060 (gRPC Reporting — Track B full mode only) │  │
-│  │ Track B: PostgreSQL persistence │ Track A proxy: no APME database      │  │
+│  │ PostgreSQL only (bundled/external) │ Track A proxy: no APME database │  │
 │  └────────────────────────────────────────────────────────────────────────┘  │
 └──────────────────────────────────────────────────────────────────────────────┘
                                      │ REST + WebSocket
@@ -55,7 +55,7 @@ APME is a multi-service system that automates policy enforcement and modernizati
 | Tier | Components | Notes |
 |------|------------|-------|
 | **Engine** | Primary, Native, OPA, Ansible, Galaxy Proxy, **Collection Health**, **Dep Audit**, Abbenay; Gitleaks optional | Collection Health and Dep Audit are **required** for productized engine runtime. Gitleaks is **optional** (external binary). |
-| **Gateway** | REST API, Reporting gRPC (full mode), persistence (full mode) | **Upstream/dev (Track B):** PostgreSQL. **Portal proxy mode (Track A):** no APME-owned database — Portal owns persistence. |
+| **Gateway** | REST API, Reporting gRPC (full mode), persistence (full mode) | **PostgreSQL only** (bundled or external) wherever Gateway persists data. **Portal proxy mode (Track A):** no APME database — Portal owns persistence. |
 | **UI** | React SPA (PatternFly) | **Track B:** standalone UI via REST and WebSocket `/api/v1/ws/session`. **Track A:** no APME UI — Portal provides UX. |
 
 ### Engine-Core vs Product Validator Scope
@@ -102,9 +102,9 @@ APME ships on two parallel tracks with different packaging, persistence, and UX 
 
 | Attribute | Value |
 |-----------|-------|
-| **Distribution** | Standalone Helm chart (`deploy/helm/apme/`), Podman pod (`tox -e up`), bootc VM, CLI daemon |
+| **Distribution** | Standalone Helm (`deploy/helm/apme/`), Podman pod (`tox -e up`), bootc VM, CLI daemon; same PostgreSQL requirement applies to downstream/production (Konflux, Red Hat catalog) |
 | **Gateway mode** | Full mode (`APME_GATEWAY_MODE=full`) — owns REST, reporting, persistence |
-| **Database** | PostgreSQL for production; SQLite acceptable for local dev only |
+| **Database** | **PostgreSQL only** — bundled container or external URL; SQLite removed entirely |
 | **UI** | Standalone APME UI (:8081) — **not removed** for upstream |
 | **Auth** | Bearer tokens per ADR-038 (Proposed) |
 | **Target users** | Open-source consumers, integrators, developers |
@@ -224,17 +224,18 @@ Authentication differs by deployment track. **Podman, bootc, and CLI daemon path
 - Portal proxy mode exposes a reduced surface (`POST /scan`, `GET /scan/{id}/events`, etc.) — versioning applies to both modes.
 - **Deliverable:** API contract document; cross-ref PR #351 / this plan §4.4.
 
-### 4.5 — PostgreSQL Migration
+### 4.5 — PostgreSQL (SQLite Removal)
 
-**Decision:** Upstream Track B uses PostgreSQL for production (see Section 9). SQLite remains dev-only.
+**Decision:** All deployments where the APME Gateway persists data use **PostgreSQL only** — upstream/dev (Track B), downstream/production (Konflux, customer Helm, bootc), and future CLI daemon Gateway (ADR-049). **SQLite is removed entirely** — no dev exception, no dual-mode fallback. See Section 9.
 
 | Item | Requirement |
 |------|-------------|
 | **Alembic** | Required — schema migrations versioned in repo |
-| **Multi-replica Gateway** | Enabled only after PostgreSQL — SQLite blocks HA |
+| **Multi-replica Gateway** | Enabled with PostgreSQL (remove SQLite single-replica guard) |
 | **Connection pooling** | SQLAlchemy async + pool config in Helm |
-| **Portal proxy mode** | No APME database — Gateway is stateless for persistence |
-| **Current code** | `GatewayConfig.db_path` / `APME_DB_PATH` only — no `APME_DATABASE_URL` yet |
+| **Bundled vs external PG** | Config file / Helm values: bundled PostgreSQL container **or** external `APME_DATABASE_URL` |
+| **Portal proxy mode (Track A)** | No APME database — Gateway is stateless; Portal PostgreSQL owns persistence |
+| **Current code gap** | `GatewayConfig.db_path` / `APME_DB_PATH` / `aiosqlite` must be removed — `APME_DATABASE_URL` + `asyncpg` required |
 
 ### 4.6 — Ownership Model
 
@@ -318,7 +319,7 @@ ADR-049 status: **Accepted** (2026-04-01). **Implementation: not done** — `lau
 
 - `apme sbom` and future REST-backed CLI commands require Gateway reachability.
 - **Separate work stream from Portal Track A** — does not block proxy mode.
-- Deliverable: embed FastAPI + ReportingServicer + SQLite in daemon per ADR-049.
+- Deliverable: embed FastAPI + ReportingServicer + PostgreSQL in daemon per ADR-049 (bundled or external PG — no SQLite).
 
 ### Feature Flags
 
@@ -326,8 +327,8 @@ ADR-049 status: **Accepted** (2026-04-01). **Implementation: not done** — `lau
 |------|---------|--------|
 | `APME_GATEWAY_MODE` | Gateway operating mode | `full` (Track B default), `proxy` (Track A) |
 | `APME_DATABASE_MODE` | Persistence backend | `bundled`, `external`, `none` (proxy) |
-| `APME_DATABASE_URL` | PostgreSQL DSN | `postgresql+asyncpg://...` |
-| `APME_DB_PATH` | SQLite file path | **Deprecated** for production — dev/local only (`GatewayConfig` default `/data/apme.db`) |
+| `APME_DATABASE_URL` | PostgreSQL DSN (required when Gateway persists data) | `postgresql+asyncpg://...` |
+| `APME_DB_PATH` | *(removed)* | **Dropped** — SQLite no longer supported; remove from code and docs |
 | `APME_AUTH_DISABLED` | Skip Gateway auth | `true` dev only — not for production |
 | `APME_AIR_GAPPED` | Air-gapped deployments | `true` / `false` (A5, proposed) |
 | `APME_RATE_LIMIT` | Gateway throttling | e.g. `100/minute` (A11, proposed) |
@@ -345,8 +346,8 @@ Gateway reads `APME_GATEWAY_MODE` at startup to enable/disable local SQLAlchemy 
 | D-01 | **Auth model (Portal)** | Service token list vs mTLS vs OAuth client credentials | Track A GA |
 | D-02 | **Packaging** | See Section 2 table | Release pipeline |
 | D-03 | **Gateway modes** | Runtime flag only vs separate proxy image build | Helm/CI complexity |
-| D-04 | **PostgreSQL topology** | Bundled subchart vs external RDS vs customer-managed | Track B HA |
-| D-05 | **SQLite migration strategy** | Big-bang Alembic init vs export/import tool vs dual-run period | Existing dev adopters |
+| D-04 | **PostgreSQL topology** | Bundled subchart vs external RDS vs customer-managed | All Gateway persistence deployments |
+| D-05 | **One-time SQLite data migration** | Export/import tool for early adopters with existing `apme.db` files vs fresh-install only | Pre-release adopters only |
 | D-06 | **Craig P0 scope** | Full A1–A12 vs phased MVP (A1,A3,A12,A2) | Portal milestone |
 | D-07 | **Governance / ownership** | Section 4.6 RACI | Support model |
 | D-08 | **DevTools** | In-cluster vs local-only CLI | Developer UX |
@@ -358,7 +359,7 @@ Gateway reads `APME_GATEWAY_MODE` at startup to enable/disable local SQLAlchemy 
 | ID | Decision | Date | Reference |
 |----|----------|------|-----------|
 | DC-01 | **Validator scope:** Collection Health + Dep Audit required; Gitleaks optional | 2026-06-24 | §4.10 |
-| DC-02 | **Upstream persistence:** PostgreSQL for production Track B | 2026-06-24 | §9, ADR-029 extension |
+| DC-02 | **Gateway persistence:** PostgreSQL only (upstream, downstream/production, dev); SQLite removed entirely | 2026-06-25 | §9, ADR-029 amendment |
 | DC-03 | **Dual tracks:** Portal product (Track A) vs upstream standalone (Track B) | 2026-06-24 | §2 |
 | DC-04 | **Portal persistence:** No APME DB in proxy mode — Portal PostgreSQL | 2026-06-24 | §8 A2, PR #352 |
 
@@ -369,7 +370,7 @@ Gateway reads `APME_GATEWAY_MODE` at startup to enable/disable local SQLAlchemy 
 ### Phase 1 — Foundation (weeks 1–4)
 
 1. Validator scope alignment (4.10) — launcher, Helm, Podman, health-check
-2. Alembic + PostgreSQL migration scaffolding (4.5, §9)
+2. SQLite removal + Alembic + PostgreSQL (upstream, downstream/production, dev — bundled or external PG) (4.5, §9)
 3. Auth ADR — bearer for Track B (ADR-038); draft Portal service-token ADR (4.3, D-01)
 
 ### Phase 2 — Hardening (weeks 5–8)
@@ -452,7 +453,7 @@ Source: [PR #352](https://github.com/ansible/apme/pull/352) — `.sdlc/research/
 | ID | Requirement | Priority | Current | Gap | Effort |
 |----|-------------|----------|---------|-----|--------|
 | **A1** | Gateway auth middleware (Bearer service token) | Critical | No auth middleware | Implement `verify_service_token`; Helm secret | Small |
-| **A2** | Gateway stateless proxy mode | High | Full Gateway with SQLite + UI | `APME_GATEWAY_MODE=proxy`; remove persistence paths | Medium (1–2 sprints) |
+| **A2** | Gateway stateless proxy mode | High | Full Gateway with PostgreSQL + UI | `APME_GATEWAY_MODE=proxy`; remove persistence paths | Medium (1–2 sprints) |
 | **A3** | Tarball scan endpoint `POST /scan` | High | WS upload / project CRUD model | New scan router + tarball service + FixSession proxy | Medium (1 sprint) |
 | **A4** | PVC sizing for scale | Medium | 10Gi defaults | sessions 50Gi, proxy-cache 20Gi; no gateway PVC in proxy | Small |
 | **A5** | Air-gapped mode flag | Medium | Not implemented | `APME_AIR_GAPPED=true` behavior | Small (proposed ADR) |
@@ -470,7 +471,7 @@ When `APME_GATEWAY_MODE=proxy`:
 
 **Remove / skip:**
 
-- SQLite database initialization, SQLAlchemy models, Alembic migrations
+- PostgreSQL database initialization, SQLAlchemy models, Alembic migrations (Track B full mode only)
 - gRPC Reporting servicer (:50060) — Portal stores results directly
 - Persistence-dependent REST: projects CRUD, dashboard, activity, trends, settings, notifications, suppressions
 - UI deployment (:8081) — **Track A only**
@@ -652,17 +653,23 @@ APME container volumes:
 - Engine pod architecture (ADR-012 — scale pods, not services)
 - Remediation engine (3-tier model)
 - Rule ID conventions (ADR-008)
-- **Track B** standalone UI, full Gateway, PostgreSQL path
+- **Track B** standalone UI, full Gateway, PostgreSQL-only path (upstream + downstream/production)
 
 ---
 
-## Section 9 — PostgreSQL Migration Plan
+## Section 9 — PostgreSQL Only (SQLite Removal)
 
 ### Decision
 
-Upstream Track B production deployments use **PostgreSQL**. SQLite (`APME_DB_PATH`, default `/data/apme.db` in `GatewayConfig`) is **dev/local only** and deprecated for production documentation.
+**PostgreSQL is the sole APME Gateway database** wherever the Gateway persists data:
 
-Portal Track A proxy mode: **no APME database** — skip all items below except engine/session volumes.
+- **Upstream/dev (Track B):** Helm, Podman pod, bootc, CLI daemon (ADR-049) — bundled PostgreSQL container **or** external `APME_DATABASE_URL`
+- **Downstream/production:** Konflux-built images, customer OpenShift/K8s, Red Hat catalog deployments — same PostgreSQL requirement; no SQLite fallback
+- **Local development:** bundled PostgreSQL sidecar/container (e.g. Podman compose, Helm subchart) — **not** SQLite files
+
+**SQLite is removed entirely** from APME: delete `APME_DB_PATH`, `aiosqlite`, SQLite-specific pragmas/migrations, and Gateway SQLite PVCs. Early adopters with existing `apme.db` files get a one-time export/import path (open decision D-05).
+
+**Portal Track A (proxy mode):** no APME database — skip all Gateway DB items below; Portal PostgreSQL owns persistence.
 
 ### Configuration Example
 
@@ -685,10 +692,10 @@ database:
 
 | Variable | Description | Status |
 |----------|-------------|--------|
-| `APME_DATABASE_URL` | PostgreSQL DSN (`postgresql+asyncpg://user:pass@host:5432/apme`) | **New — required** (Track B prod) |
-| `APME_DATABASE_MODE` | `bundled`, `external`, or `none` | **New** |
-| `APME_GATEWAY_MODE` | `full` or `proxy` | **New** |
-| `APME_DB_PATH` | SQLite file path | **Deprecated** — maps to `GatewayConfig.db_path` today |
+| `APME_DATABASE_URL` | PostgreSQL DSN (`postgresql+asyncpg://user:pass@host:5432/apme`) | **Required** when Gateway persists data |
+| `APME_DATABASE_MODE` | `bundled`, `external`, or `none` | **Required** — `none` only in proxy mode |
+| `APME_GATEWAY_MODE` | `full` or `proxy` | **Required** |
+| `APME_DB_PATH` | *(removed)* | **Dropped** — SQLite no longer supported |
 
 ### Portal Proxy Mode Note
 
@@ -697,18 +704,19 @@ When `APME_GATEWAY_MODE=proxy`, set `APME_DATABASE_MODE=none`. Gateway must not 
 ### Implementation Checklist
 
 - [ ] `src/apme_gateway/db/` — async engine factory supporting PostgreSQL via `APME_DATABASE_URL`
-- [ ] `src/apme_gateway/config.py` — add `database_url`, `database_mode`, `gateway_mode`; deprecate `db_path` for prod
-- [ ] `pyproject.toml` — add `asyncpg`, `alembic` dependencies
-- [ ] `alembic/` — initial revision from current SQLite models; forward-only migrations
+- [ ] `src/apme_gateway/config.py` — add `database_url`, `database_mode`, `gateway_mode`; **remove** `db_path`
+- [ ] `pyproject.toml` — add `asyncpg`, `alembic`; **remove** `aiosqlite` from gateway deps
+- [ ] `src/apme_gateway/db/` — **delete** SQLite engine factory, pragmas, ad-hoc column migrations
+- [ ] `alembic/` — initial revision from current ORM models; forward-only migrations
 - [ ] `alembic.ini` + env.py wired to `GatewayConfig`
 - [ ] Helm — PostgreSQL subchart **or** `externalDatabase.*` values; Secret for `APME_DATABASE_URL`
 - [ ] Helm — Gate multi-replica Gateway on `database.mode != none`
 - [ ] Podman — document external PostgreSQL or optional compose sidecar for integration tests
 - [ ] bootc — external PostgreSQL connection or bundled PG unit
-- [ ] **ADR-029 amendment** — PostgreSQL production store; SQLite dev-only
-- [ ] Migration guide — SQLite export → PostgreSQL import (addresses D-05)
+- [ ] **ADR-029 amendment** — PostgreSQL only; SQLite removed (supersedes SQLite-as-V1)
+- [ ] One-time migration guide — export existing `apme.db` → PostgreSQL import (addresses D-05; pre-release adopters only)
 - [ ] Gateway `/health` — DB ping when `database.mode != none`
-- [ ] Remove `APME_DB_PATH` from production Helm values and user-facing docs
+- [ ] Remove `APME_DB_PATH`, Gateway SQLite PVC, and all SQLite references from Helm, Podman, bootc, and docs
 - [ ] CI integration test job with PostgreSQL service container
 
 ---
@@ -719,7 +727,7 @@ When `APME_GATEWAY_MODE=proxy`, set `APME_DATABASE_MODE=none`. Gateway must not 
 |----------|------|-------|---------|-------|
 | ADR-055 (proposed) | ADR | Portal Gateway proxy mode (`APME_GATEWAY_MODE`) | A2 implementation | 3 |
 | ADR-056 (proposed) | ADR | Portal service-token authentication | D-01 resolution | 1 |
-| ADR-029-amend | ADR | PostgreSQL production persistence | §9 checklist | 1 |
+| ADR-029-amend | ADR | PostgreSQL only — SQLite removal | §9 checklist | 1 |
 | ADR-057 (proposed) | ADR | Required validator set (Collection Health + Dep Audit) | 4.10 completion | 1 |
 | ADR-058 (proposed) | ADR | API versioning — RFC 9745 / RFC 8594 | 4.4 / A9 | 3 |
 | ADR-059 (proposed) | ADR | Portal ephemeral custom Rego policies (Phase 2) | Custom rules scope | 4+ |
@@ -733,7 +741,7 @@ When `APME_GATEWAY_MODE=proxy`, set `APME_DATABASE_MODE=none`. Gateway must not 
 | TASK-005-06 | TASK | `USER` directive all Dockerfiles (A12) | 4.2 | 2 |
 | TASK-005-07 | TASK | Prometheus `/metrics` on Gateway (A10) | §8 | 4 |
 | DR-xxx | DR | Packaging registry / Operator ownership | D-02 | 3 |
-| DR-xxx | DR | SQLite → PostgreSQL migration strategy | D-05 | 1 |
+| DR-xxx | DR | One-time SQLite data export for pre-release adopters | D-05 | 1 |
 
 ---
 
