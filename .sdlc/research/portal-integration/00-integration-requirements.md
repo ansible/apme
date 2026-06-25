@@ -169,9 +169,31 @@ Day 2 (Operations):
 
   POST /api/v1/admin/db/vacuum
     → Cleanup old scans based on retention policy
+
+  POST /api/v1/admin/db/backup
+    → Exports apme_* tables (pg_dump --table='apme_*')
+    → Returns: { backup_id: "uuid", download_url: "/admin/db/backup/{id}" }
+
+  GET  /api/v1/admin/db/backup/{id}
+    → Download backup file (SQL dump of apme_* tables only)
+
+  POST /api/v1/admin/db/restore
+    → Accepts backup file, restores apme_* tables (pg_restore)
+    → Returns: { restored_tables: 9, rows_restored: 12450 }
+
+  GET  /api/v1/admin/db/backups
+    → List available backups: [{ id, created_at, size_mb, tables }]
 ```
 
 Protected by service token (admin-only).
+
+**Backup/restore scope:** These endpoints handle only apme\_\* tables — they do not touch Portal's backstage\_\* tables. Instance-level full backup (both Portal + APME) is handled by Portal's own backup mechanism (e.g., `portal-backup.service` on RHEL).
+
+**Why APME needs its own backup/restore:** Portal already supports backup/restore endpoints for RHEL deployments. APME's management CLI (`portal-manage apme db-backup/restore`) calls these APME endpoints so operators can selectively backup/restore APME data without affecting Portal data. This is important for:
+
+- Pre-upgrade safety (backup before migration, restore if migration fails)
+- Selective recovery (APME data corrupted but Portal fine)
+- Data migration between environments (export from staging, import to production)
 
 ### A5: PVC Sizing for Scale
 
