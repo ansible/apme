@@ -1,7 +1,7 @@
 # APME Productization Plan — Pre-Read
 
 **Prepared:** 2026-06-24  
-**Updated:** 2026-06-25  
+**Updated:** 2026-06-25 (Portal integration architecture aligned with [PR #352](https://github.com/ansible/apme/pull/352) v2)  
 **Status:** Draft for review
 
 This document captures the productization strategy for APME across two deployment tracks: **Portal-integrated product** (Track A) and **upstream standalone** (Track B). It consolidates architecture, authentication, work streams, open decisions, PostgreSQL-only persistence (SQLite removed), and Portal integration requirements.
@@ -36,8 +36,8 @@ APME is a multi-service system that automates policy enforcement and modernizati
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │                           Gateway Tier                                        │
 │  ┌────────────────────────────────────────────────────────────────────────┐  │
-│  │ Gateway :8080 (REST) / :50060 (gRPC Reporting — Track B full mode only) │  │
-│  │ PostgreSQL only (bundled/external) │ Track A proxy: no APME database │  │
+│  │ Gateway :8080 (REST) / :50060 (gRPC Reporting)                         │  │
+│  │ PostgreSQL only — bundled or external (shared instance in Track A)   │  │
 │  └────────────────────────────────────────────────────────────────────────┘  │
 └──────────────────────────────────────────────────────────────────────────────┘
                                      │ REST + WebSocket
@@ -55,7 +55,7 @@ APME is a multi-service system that automates policy enforcement and modernizati
 | Tier | Components | Notes |
 |------|------------|-------|
 | **Engine** | Primary, Native, OPA, Ansible, Galaxy Proxy, **Collection Health**, **Dep Audit**, Abbenay; Gitleaks optional | Collection Health and Dep Audit are **required** for productized engine runtime. Gitleaks is **optional** (external binary). |
-| **Gateway** | REST API, Reporting gRPC (full mode), persistence (full mode) | **PostgreSQL only** (bundled or external) wherever Gateway persists data. **Portal proxy mode (Track A):** no APME database — Portal owns persistence. |
+| **Gateway** | REST API, Reporting gRPC, PostgreSQL persistence | **Same full Gateway** on both tracks. **PostgreSQL only** (bundled or external). Track A connects to **Portal's shared PostgreSQL instance**; APME owns `apme_*` tables, Portal owns `backstage_*`. |
 | **UI** | React SPA (PatternFly) | **Track B:** standalone UI via REST and WebSocket `/api/v1/ws/session`. **Track A:** no APME UI — Portal provides UX. |
 
 ### Engine-Core vs Product Validator Scope
@@ -90,24 +90,27 @@ APME ships on two parallel tracks with different packaging, persistence, and UX 
 
 | Attribute | Value |
 |-----------|-------|
-| **Distribution** | Bundled with Portal Operator / bootc product image |
-| **Gateway mode** | Proxy mode (`APME_GATEWAY_MODE=proxy`) — stateless REST↔gRPC proxy |
-| **Database** | Portal PostgreSQL (`apme_*` tables); **no** APME Gateway DB or PVC |
-| **UI** | Portal UX only; **no** standalone APME UI container |
-| **Auth** | Portal Auth/RBAC + service token for Portal→Gateway |
-| **Content ingress** | Portal clones SCM, sends tarballs — APME never holds SCM credentials |
+| **Distribution** | APME as **Portal Helm subchart** or bundled in Portal bootc image (single install/upgrade with Portal) |
+| **Gateway** | **Full Gateway service** — same codebase and REST API as Track B; not a stateless proxy |
+| **Database** | **Shared PostgreSQL instance** with Portal — APME owns `apme_*` tables (Alembic); Portal owns `backstage_*`; Portal manages the instance, APME manages its schema |
+| **UI** | Portal UX only; APME standalone UI container **not deployed** |
+| **Portal role** | **Thin proxy client** — RBAC, optional credential injection, forward to APME API; no APME data layer in Portal |
+| **Auth** | Portal Auth/RBAC (user-facing) + Bearer service token (Portal backend → Gateway) |
+| **Credentials** | **Optional per-request** — Portal injects SCM/Galaxy tokens when available; APME falls back to its own configured settings (A3) |
 | **Target users** | AAP customers consuming APME via Ansible Automation Portal |
 
 ### Track B — Upstream / Dev
 
 | Attribute | Value |
 |-----------|-------|
-| **Distribution** | Standalone Helm (`deploy/helm/apme/`), Podman pod (`tox -e up`), bootc VM, CLI daemon; same PostgreSQL requirement applies to downstream/production (Konflux, Red Hat catalog) |
-| **Gateway mode** | Full mode (`APME_GATEWAY_MODE=full`) — owns REST, reporting, persistence |
+| **Distribution** | Standalone Helm (`deploy/helm/apme/`), Podman pod (`tox -e up`), bootc VM, CLI daemon; same PostgreSQL requirement for downstream/production (Konflux, Red Hat catalog) |
+| **Gateway** | **Full Gateway service** — REST, WebSocket, Reporting gRPC, persistence |
 | **Database** | **PostgreSQL only** — bundled container or external URL; SQLite removed entirely |
-| **UI** | Standalone APME UI (:8081) — **not removed** for upstream |
+| **UI** | Standalone APME UI (:8081) |
 | **Auth** | Bearer tokens per ADR-038 (Proposed) |
 | **Target users** | Open-source consumers, integrators, developers |
+
+**One codebase, one API:** Track A and Track B use the same Gateway — no `full` vs `proxy` mode split. Difference is packaging, DB connection target (shared Portal instance vs bundled/external), and which UI is deployed.
 
 ### Open Packaging Decision Table
 
@@ -133,7 +136,7 @@ Authentication differs by deployment track. **Podman, bootc, and CLI daemon path
 | **User → Portal** | Portal Auth (OIDC/SSO) + Portal RBAC |
 | **Portal → Gateway** | Bearer service token (`APME_SERVICE_TOKENS`); Portal backend injects from K8s Secret |
 | **Gateway → Engine** | Pod-local gRPC; no end-user identity in engine |
-| **Galaxy credentials** | Per-request in `POST /scan` body — never persisted by APME |
+| **Galaxy credentials** | Optional per-request on operations (A3); APME falls back to own Galaxy config |
 
 **A1 (PR #352):** Gateway auth middleware with `APME_AUTH_DISABLED` escape hatch for backward-compatible CLI daemon dev only.
 
@@ -191,7 +194,7 @@ Authentication differs by deployment track. **Podman, bootc, and CLI daemon path
 | collection-health | ✓ | ✓ | ✗ | ✓ |
 | dep-audit | ✓ | ✓ | ✗ | ✓ |
 | gitleaks | opt | opt | ✓ | opt |
-| gateway | proxy | full | ✓ | ✓ |
+| gateway | ✓ | ✓ | ✓ | ✓ |
 | ui | ✗ | ✓ | ✓ | ✓ (Track B only) |
 | cli | ✓ | ✓ | ✓ | ✓ |
 | abbenay | ✓ | ✓ | external | external |
@@ -221,7 +224,7 @@ Authentication differs by deployment track. **Podman, bootc, and CLI daemon path
 - Adopt [RFC 9745](https://www.rfc-editor.org/rfc/rfc9745.html) (Deprecation header) and [RFC 8594](https://www.rfc-editor.org/rfc/rfc8594.html) (Sunset header) as FastAPI middleware on Gateway REST.
 - Version prefix: `/api/v1/` (current); sunset headers on breaking changes.
 - WebSocket session endpoint `/api/v1/ws/session` versioned with REST (Track B).
-- Portal proxy mode exposes a reduced surface (`POST /scan`, `GET /scan/{id}/events`, etc.) — versioning applies to both modes.
+- Versioning applies to full Gateway REST + WebSocket surface used by Portal and Track B.
 - **Deliverable:** API contract document; cross-ref PR #351 / this plan §4.4.
 
 ### 4.5 — PostgreSQL (SQLite Removal)
@@ -234,7 +237,7 @@ Authentication differs by deployment track. **Podman, bootc, and CLI daemon path
 | **Multi-replica Gateway** | Enabled with PostgreSQL (remove SQLite single-replica guard) |
 | **Connection pooling** | SQLAlchemy async + pool config in Helm |
 | **Bundled vs external PG** | Config file / Helm values: bundled PostgreSQL container **or** external `APME_DATABASE_URL` |
-| **Portal proxy mode (Track A)** | No APME database — Gateway is stateless; Portal PostgreSQL owns persistence |
+| **Track A shared instance** | APME connects to Portal PostgreSQL; owns `apme_*` only; connection pooling required |
 | **Current code gap** | `GatewayConfig.db_path` / `APME_DB_PATH` / `aiosqlite` must be removed — `APME_DATABASE_URL` + `asyncpg` required |
 
 ### 4.6 — Ownership Model
@@ -259,7 +262,7 @@ Requires governance ADR or RACI in `.sdlc/context/`.
 - Vendored ARI engine (ADR-003) — no pip drift.
 - Galaxy Proxy collection versions pinned per release.
 - Document upgrade policy for Ansible-core compatibility.
-- Air-gapped mode (A5): disable PyPI fallback, optional dep-audit skip — **proposed**, requires ADR.
+- Air-gapped mode (A6): disable PyPI fallback, optional dep-audit skip — **proposed**, requires ADR.
 
 ### 4.8 — Repository Hardening
 
@@ -275,9 +278,9 @@ Portal stakeholder requirements traced to PR #352 / ANSTRAT-2222:
 
 | ID | Requirement | Priority | Status |
 |----|-------------|----------|--------|
-| CR-1 | Gateway proxy mode without APME DB | P0 | Spec §8 A2 |
-| CR-2 | Tarball scan — no SCM credentials in APME | P0 | Spec §8 A3 |
-| CR-3 | Galaxy credentials per-request from Portal | P0 | Spec §8 Galaxy flow |
+| CR-1 | Shared PostgreSQL instance; APME owns `apme_*` schema | P0 | Spec §8 A2 |
+| CR-2 | Optional credentials with APME settings fallback | P0 | Spec §8 A3 |
+| CR-3 | Optional Galaxy credentials per-request (A3) | P0 | Spec §8 |
 | CR-4 | Git-backed collections (phase 1: Hub only) | P0 | Spec §8 |
 | CR-5 | Service-token auth on Gateway | P0 | Spec §8 A1 |
 | CR-6 | Validator scope (CH + DA required) | P0 | **Decided** §4.10 |
@@ -318,22 +321,23 @@ Custom/organization-specific rules ship via the **Plugin service** container (AD
 ADR-049 status: **Accepted** (2026-04-01). **Implementation: not done** — `launcher.py` has no Gateway HTTP/gRPC startup; Gateway remains pod-level only.
 
 - `apme sbom` and future REST-backed CLI commands require Gateway reachability.
-- **Separate work stream from Portal Track A** — does not block proxy mode.
+- **Separate work stream from Portal Track A** — uses PostgreSQL when implemented.
 - Deliverable: embed FastAPI + ReportingServicer + PostgreSQL in daemon per ADR-049 (bundled or external PG — no SQLite).
 
-### Feature Flags
+### Configuration (Environment / Helm Values)
 
-| Flag | Purpose | Values |
-|------|---------|--------|
-| `APME_GATEWAY_MODE` | Gateway operating mode | `full` (Track B default), `proxy` (Track A) |
-| `APME_DATABASE_MODE` | Persistence backend | `bundled`, `external`, `none` (proxy) |
-| `APME_DATABASE_URL` | PostgreSQL DSN (required when Gateway persists data) | `postgresql+asyncpg://...` |
-| `APME_DB_PATH` | *(removed)* | **Dropped** — SQLite no longer supported; remove from code and docs |
+| Setting | Purpose | Values |
+|---------|---------|--------|
+| `APME_DATABASE_URL` | PostgreSQL DSN (**required**) | `postgresql+asyncpg://...` |
+| `APME_DATABASE_MODE` | DB topology | `bundled`, `external`, `shared` (Track A Portal instance) |
+| `gateway.database.poolSize` | Connection pool | e.g. `10` (important when sharing Portal PG) |
+| `APME_DB_PATH` | *(removed)* | **Dropped** — SQLite no longer supported |
 | `APME_AUTH_DISABLED` | Skip Gateway auth | `true` dev only — not for production |
-| `APME_AIR_GAPPED` | Air-gapped deployments | `true` / `false` (A5, proposed) |
+| `APME_SERVICE_TOKENS` | Portal→Gateway auth | Comma-separated bearer tokens (A1) |
+| `APME_AIR_GAPPED` | Air-gapped deployments | `true` / `false` (A6, proposed) |
 | `APME_RATE_LIMIT` | Gateway throttling | e.g. `100/minute` (A11, proposed) |
 
-Gateway reads `APME_GATEWAY_MODE` at startup to enable/disable local SQLAlchemy init, Reporting gRPC server, full REST surface, and Portal proxy routes.
+No `APME_GATEWAY_MODE` — same full Gateway on both tracks.
 
 ---
 
@@ -345,7 +349,7 @@ Gateway reads `APME_GATEWAY_MODE` at startup to enable/disable local SQLAlchemy 
 |----|-------|---------|-------------|
 | D-01 | **Auth model (Portal)** | Service token list vs mTLS vs OAuth client credentials | Track A GA |
 | D-02 | **Packaging** | See Section 2 table | Release pipeline |
-| D-03 | **Gateway modes** | Runtime flag only vs separate proxy image build | Helm/CI complexity |
+| D-03 | **Shared PG pooling** | Pool size / max connections when APME shares Portal instance | Track A stability |
 | D-04 | **PostgreSQL topology** | Bundled subchart vs external RDS vs customer-managed | All Gateway persistence deployments |
 | D-05 | **One-time SQLite data migration** | Export/import tool for early adopters with existing `apme.db` files vs fresh-install only | Pre-release adopters only |
 | D-06 | **Craig P0 scope** | Full A1–A12 vs phased MVP (A1,A3,A12,A2) | Portal milestone |
@@ -361,7 +365,7 @@ Gateway reads `APME_GATEWAY_MODE` at startup to enable/disable local SQLAlchemy 
 | DC-01 | **Validator scope:** Collection Health + Dep Audit required; Gitleaks optional | 2026-06-24 | §4.10 |
 | DC-02 | **Gateway persistence:** PostgreSQL only (upstream, downstream/production, dev); SQLite removed entirely | 2026-06-25 | §9, ADR-029 amendment |
 | DC-03 | **Dual tracks:** Portal product (Track A) vs upstream standalone (Track B) | 2026-06-24 | §2 |
-| DC-04 | **Portal persistence:** No APME DB in proxy mode — Portal PostgreSQL | 2026-06-24 | §8 A2, PR #352 |
+| DC-04 | **Portal integration:** Shared PostgreSQL instance; APME owns `apme_*`; thin Portal proxy | 2026-06-25 | §8, PR #352 v2 |
 
 ---
 
@@ -381,17 +385,16 @@ Gateway reads `APME_GATEWAY_MODE` at startup to enable/disable local SQLAlchemy 
 
 ### Phase 3 — Product Integration (weeks 9–12)
 
-7. Portal A1–A3 — auth middleware, tarball `POST /scan`, Galaxy per-request credentials
-8. Portal A2 — Gateway proxy mode behind `APME_GATEWAY_MODE=proxy`
-9. Packaging decisions (D-02) — Operator subchart, image pins, CLI artifact
-10. API contract + RFC 9745/8594 middleware (4.4, A9)
+7. Portal A1–A4 — auth, PostgreSQL+Alembic, optional credentials, admin/db APIs
+8. Portal Helm subchart packaging, upgrade hooks, image pins (D-02)
+9. API contract + RFC 9745/8594 middleware (4.4, A9)
 
 ### Phase 4 — Scale & Handoff (weeks 13+)
 
 11. HA Gateway — multi-replica after PostgreSQL (4.5)
-12. Load testing — engine pod at Portal scale (100+ repos, A4 PVC sizing)
+12. Load testing — engine pod at Portal scale (100+ repos, A5 PVC sizing)
 13. Observability — Prometheus `/metrics`, structured logging (A10)
-14. Rate limiting (A11), air-gapped mode (A5), rule catalog API (A6)
+14. Rate limiting (A11), air-gapped mode (A6)
 15. Ownership/governance sign-off (4.6) and operator handoff documentation
 16. ADR-049 daemon Gateway embedding (CLI track — parallel, not Portal-blocking)
 
@@ -399,23 +402,25 @@ Gateway reads `APME_GATEWAY_MODE` at startup to enable/disable local SQLAlchemy 
 
 ## Section 8 — Portal Integration Requirements (A1–A12)
 
-Source: [PR #352](https://github.com/ansible/apme/pull/352) — `.sdlc/research/portal-integration/00-integration-requirements.md`, [ansible-rhdh-plugins PR #676](https://github.com/ansible/ansible-rhdh-plugins/pull/676), [ANSTRAT-2222](https://issues.redhat.com/browse/ANSTRAT-2222).
+Source: [PR #352](https://github.com/ansible/apme/pull/352) (updated 2026-06-25 — shared-DB-instance architecture), [ansible-rhdh-plugins PR #676](https://github.com/ansible/ansible-rhdh-plugins/pull/676), [ANSTRAT-2222](https://issues.redhat.com/browse/ANSTRAT-2222).
 
-### Corrections (this plan vs PR #352 draft)
+### Core Architecture: Shared DB Instance, Separate Ownership
 
-| PR #352 statement | Correction |
-|-------------------|------------|
-| "APME standalone UI is removed" | **UI is removed only for Track A (Portal).** Track B upstream retains standalone UI (:8081). |
-| CLI daemon unchanged | **ADR-049 Gateway-in-daemon is separate work** — not implemented; not required for Portal proxy mode. |
-| Custom rules / air-gapped / rate limit | Marked **proposed** — each requires ADR before implementation. |
+1. **APME keeps its database** — Gateway maintains `apme_*` tables via Alembic; stores scan results, rules, projects
+2. **Shared PostgreSQL instance** — Track A: APME connects to Portal's PostgreSQL; each service manages its own tables
+3. **Portal is a thin proxy client** — RBAC + optional credential injection + forward to APME API; no APME data layer in Portal
+4. **Optional credentials per-request** — Portal injects tokens when available; APME falls back to own settings (A3)
+5. **Same API for standalone and integrated** — no Gateway mode split; ~90% of REST surface already exists
+6. **Day 0/Day 2 management APIs** — APME exposes DB migrate/status/backup/restore; Portal orchestrates (A4)
 
-### Core Architectural Decisions (Portal)
+### Why This Design Over Alternatives
 
-1. **Portal owns all scan data** — stored in Portal PostgreSQL (`apme_*` tables).
-2. **APME Gateway becomes stateless in proxy mode** — no database, no PVC, thin REST↔gRPC proxy.
-3. **Portal clones repos** — tars content, sends to APME via REST; APME never holds SCM credentials.
-4. **PR creation is Portal-side** — using user's OAuth token, not APME.
-5. **Feature flag:** `APME_GATEWAY_MODE=proxy` (Portal) vs `full` (standalone upstream).
+| Alternative | Problem | This Design |
+| --- | --- | --- |
+| **Separate APME DB** | Two databases for operators — double provisioning, backup, HA | Single PostgreSQL instance; Portal manages instance, APME manages `apme_*` tables |
+| **Portal owns data (stateless Gateway)** | Portal must understand APME schema; breaks standalone; requires gutting Gateway | APME owns schema; Portal is thin proxy; works standalone and integrated |
+
+> **Supersedes:** Earlier PR #352 draft (stateless Gateway, tarball `POST /scan`, Portal-owned `apme_*` tables). That model is **rejected**.
 
 ### C4 Context — APME in the Portal Ecosystem
 
@@ -423,28 +428,28 @@ Source: [PR #352](https://github.com/ansible/apme/pull/352) — `.sdlc/research/
                      ┌───────────────────────┐
                      │  Ansible Automation   │
                      │       Portal          │
-                     │  (owns all data)      │
-                     │  (clones repos)       │
+                     │  (thin proxy client)  │
                      └───────────┬───────────┘
                                  │
-                    REST: POST /scan (tarball upload)
-                    REST: GET /scan/{id}/events (SSE)
-                    REST: GET /rules
-                    REST: GET /health
+                    REST API (optional credentials)
                                  │
                      ┌───────────▼───────────┐
                      │   APME Gateway        │
-                     │   (STATELESS proxy)   │
-                     │   No DB, no PVC       │
+                     │   Full service        │
+                     │   Owns apme_* tables  │
                      │   REST :8080          │
                      └───────────┬───────────┘
-                                 │
-                          gRPC (internal)
-                                 │
+                                 │ gRPC
                      ┌───────────▼───────────┐
                      │   APME Engine Pod     │
                      │  Primary + Validators │
                      │  + Galaxy Proxy       │
+                     └───────────┬───────────┘
+                                 │
+                     ┌───────────▼───────────┐
+                     │  Shared PostgreSQL    │
+                     │  backstage_* (Portal) │
+                     │  apme_* (APME)        │
                      └───────────────────────┘
 ```
 
@@ -452,197 +457,145 @@ Source: [PR #352](https://github.com/ansible/apme/pull/352) — `.sdlc/research/
 
 | ID | Requirement | Priority | Current | Gap | Effort |
 |----|-------------|----------|---------|-----|--------|
-| **A1** | Gateway auth middleware (Bearer service token) | Critical | No auth middleware | Implement `verify_service_token`; Helm secret | Small |
-| **A2** | Gateway stateless proxy mode | High | Full Gateway with PostgreSQL + UI | `APME_GATEWAY_MODE=proxy`; remove persistence paths | Medium (1–2 sprints) |
-| **A3** | Tarball scan endpoint `POST /scan` | High | WS upload / project CRUD model | New scan router + tarball service + FixSession proxy | Medium (1 sprint) |
-| **A4** | PVC sizing for scale | Medium | 10Gi defaults | sessions 50Gi, proxy-cache 20Gi; no gateway PVC in proxy | Small |
-| **A5** | Air-gapped mode flag | Medium | Not implemented | `APME_AIR_GAPPED=true` behavior | Small (proposed ADR) |
-| **A6** | Rule catalog API (stateless) | Medium | Partial via Primary | `GET /rules` from in-memory catalog | Small |
-| **A7** | *(reserved / Portal-side)* | — | — | Portal backend plugin owns CRUD | — |
-| **A8** | *(reserved / Portal-side)* | — | — | Portal SQL for trends, dashboard | — |
-| **A9** | API versioning (RFC 9745/8594) | High | Not implemented | Deprecation + Sunset middleware | Medium |
-| **A10** | Observability (Prometheus + structured logging) | High | Limited | `/metrics` endpoint, JSON logs | Medium |
-| **A11** | Rate limiting | Medium | Not implemented | `APME_RATE_LIMIT` | Small (proposed ADR) |
+| **A1** | Gateway auth middleware (Bearer service token) | Critical | No auth middleware | `verify_service_token`; Helm secret | Small |
+| **A2** | PostgreSQL + Alembic | Critical | SQLite only (`APME_DB_PATH`) | `APME_DATABASE_URL`, `asyncpg`, Alembic migrations | Medium (1–2 sprints) |
+| **A3** | Optional credential acceptance | High | Partial | `scm_token`, `galaxy_servers` optional on operations; fallback to APME settings | Small–Medium |
+| **A4** | Day 0/Day 2 management APIs | High | Not implemented | `/admin/db/migrate`, status, health, vacuum, backup/restore | Medium (1 sprint) |
+| **A5** | PVC sizing for scale | Medium | 10Gi defaults | sessions 50Gi, proxy-cache 20Gi; no Gateway DB PVC (shared PG) | Small |
+| **A6** | Air-gapped mode flag | Medium | Not implemented | `APME_AIR_GAPPED=true` | Small (proposed ADR) |
+| **A7** | *(reserved / Portal-side)* | — | — | Portal backend plugin | — |
+| **A8** | *(reserved / Portal-side)* | — | — | Portal plugin UX | — |
+| **A9** | API versioning (RFC 9745/8594) | High | Not implemented | Deprecation + Sunset middleware; published OpenAPI | Medium |
+| **A10** | Observability (Prometheus + structured logging) | High | Limited | `/metrics`, JSON logs | Medium |
+| **A11** | Rate limiting | Medium | Not implemented | `APME_RATE_LIMIT` | Small |
 | **A12** | Non-root containers | High | Documented only | `USER` in all Dockerfiles | Small |
 
-### A2 — Proxy Mode Details
+### A2 — PostgreSQL + Alembic
 
-When `APME_GATEWAY_MODE=proxy`:
+APME is not yet released — clean PostgreSQL implementation, no SQLite dual-mode.
 
-**Remove / skip:**
+**Required:**
 
-- PostgreSQL database initialization, SQLAlchemy models, Alembic migrations (Track B full mode only)
-- gRPC Reporting servicer (:50060) — Portal stores results directly
-- Persistence-dependent REST: projects CRUD, dashboard, activity, trends, settings, notifications, suppressions
-- UI deployment (:8081) — **Track A only**
-
-**Keep (stateless):**
-
-- `GET /health` — probes Primary + validators via gRPC
-- `GET /rules` — from Primary in-memory catalog (A6)
-- SSE: `GET /scan/{id}/events` — proxies gRPC SessionEvents
-- `POST /scan/{id}/approve`, `POST /scan/{id}/cancel`
-- Bearer auth middleware (A1)
-
-**Add:**
-
-- `POST /scan` — tarball upload (A3)
-
-**Files (from PR #352):**
-
-- `src/apme_gateway/app.py` — conditional startup
-- `src/apme_gateway/api/router.py` — proxy route registration
-- `deploy/helm/apme/values.yaml` — `gateway.mode: proxy`
-- Remove in proxy chart overlay: `gateway-pvc.yaml`, reporting service, `ui-deployment.yaml`
-
-### A3 — Tarball Scan Endpoint
-
-**Endpoint:** `POST /scan`
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `content` | `UploadFile` | tar.gz of Ansible project |
-| `options` | JSON form string | `ansible_core_version`, `collection_specs`, `rule_configs` |
-| `galaxy_servers` | JSON form string | `[{name, url, token, auth_url}]` per-scan |
-| `action` | form string | `check` or `remediate` |
-
-**Flow:**
-
-1. Extract tarball to temp directory
-2. Discover Ansible files
-3. Configure Galaxy Proxy with per-request credentials
-4. Run `FixSession` via Primary gRPC
-5. Cleanup temp dir
-6. Return violations, proposals, patches, diagnostics, summary
-
-**SSE progress:** `GET /scan/{scan_id}/events`  
-**Approvals:** `POST /scan/{scan_id}/approve`
-
-**New modules (proposed):**
-
-- `src/apme_gateway/api/scan_router.py`
-- `src/apme_gateway/services/tarball_service.py`
-- `src/apme_gateway/services/scan_proxy.py`
-
-### API Surface — Before vs After (Proxy Mode)
-
-**Removed (Portal backend plugin owns):**
-
-| Endpoint | Previous purpose | New owner |
-|----------|------------------|-----------|
-| CRUD `/projects` | Project management | Portal `apme_projects` |
-| `GET /dashboard/*` | Aggregate metrics | Portal SQL |
-| `GET /activity/*` | Scan history | Portal `apme_scans` |
-| `GET /violations/top` | Top rules | Portal SQL |
-| `GET /stats/*` | Remediation rates | Portal SQL |
-| CRUD `/settings/galaxy-servers` | Galaxy config | Portal `apme_galaxy_servers` |
-| `POST /suppressions` | Rule suppressions | Portal `apme_rule_overrides` |
-| `GET /notifications/*` | Notifications | Portal notification service |
-| `GET /projects/{id}/trend` | Trends | Portal SQL |
-| `GET /projects/{id}/dependencies` | SBOM | Portal (post-scan store) |
-
-**Kept (stateless proxy):**
-
-| Endpoint | Purpose |
-|----------|---------|
-| `POST /scan` | **NEW** — tarball upload, trigger scan |
-| `GET /scan/{id}/events` | SSE — proxy SessionEvents |
-| `POST /scan/{id}/approve` | Forward proposal approvals |
-| `POST /scan/{id}/cancel` | Cancel running scan |
-| `GET /rules` | Rule catalog (A6) |
-| `GET /health` | Health check |
-
-**Track B full mode retains** `/api/v1/ws/session`, project CRUD, dashboard, and full persistence API.
-
-### A4 — PVC Sizing (Portal Scale)
+- `asyncpg` dependency; configure via `APME_DATABASE_URL`
+- Track A: `postgresql+asyncpg://user:pass@portal-db:5432/apme` (shared instance)
+- Track B: bundled PostgreSQL subchart or external URL
+- Alembic migrations for all `apme_*` tables
+- Connection pooling (pool size limits when sharing Portal's PostgreSQL)
 
 ```yaml
-persistence:
-  sessions:
-    size: 50Gi        # up from 10Gi — 100+ repos
-  proxyCache:
-    size: 20Gi        # up from 10Gi
-  # gateway PVC REMOVED in proxy mode
+gateway:
+  database:
+    url: ""           # PostgreSQL URI; empty = error (SQLite removed)
+    poolSize: 10
+    maxOverflow: 5
 ```
+
+### A3 — Optional Credential Acceptance
+
+All scan/operation endpoints accept optional credentials. If Portal provides them, use them; otherwise fall back to APME's configured project/Galaxy settings.
+
+```python
+class OperateRequest(BaseModel):
+    action: Literal["check", "remediate"]
+    scm_token: Optional[str] = None
+    galaxy_servers: Optional[list] = None
+    options: Optional[dict] = None
+```
+
+Works for Portal-integrated (Portal injects tokens), standalone (APME settings), and CI/CD (caller passes tokens).
+
+### A4 — Day 0 / Day 2 Management APIs
+
+Portal manages the PostgreSQL **instance** but not APME's schema. APME exposes admin endpoints (service-token protected):
+
+```
+POST /api/v1/admin/db/migrate     → Alembic migrations on apme_* tables
+GET  /api/v1/admin/db/status      → schema version, table count, needs_migration
+GET  /api/v1/admin/db/health      → connection + pool stats
+POST /api/v1/admin/db/vacuum      → retention cleanup
+POST /api/v1/admin/db/backup      → pg_dump apme_* tables only
+POST /api/v1/admin/db/restore     → restore apme_* from backup
+GET  /api/v1/admin/db/backups     → list backups
+```
+
+Portal Helm post-install/post-upgrade hook calls `POST /admin/db/migrate`. Instance-level full backup (Portal + APME) remains Portal's responsibility.
+
+### API Surface — Existing Endpoints (~90% Ready)
+
+| Endpoint Group | Portal Need | Status |
+| --- | --- | --- |
+| Projects CRUD | Manage scanned repos | Ready |
+| Operations (scan trigger) | Trigger scans with optional credentials | Needs A3 |
+| Operations (SSE progress) | Real-time progress | Ready |
+| Operations (approve) | HITL proposal approval | Ready |
+| Operations (create PR) | Open PR with fixes | Ready (optional `scm_token`) |
+| Violations / trend / dashboard | Metrics and history | Ready |
+| Rule catalog | List/configure rules | Ready |
+| Galaxy server config | Manage Galaxy credentials | Ready |
+| Health / dependencies / SBOM | Monitoring and deps | Ready |
+| **Admin/DB management** | Day 0/Day 2 ops | **Needs A4** |
+
+No new tarball `POST /scan` endpoint required — existing `operation_router` + project model cover Portal needs.
 
 ### Galaxy / Automation Hub Credential Flow
 
 ```
-Portal (owns credentials)                    APME (stateless)
-┌─────────────────────────┐                 ┌─────────────────────────┐
-│ apme_galaxy_servers     │                 │ Gateway (no DB)         │
-│ + K8s Secrets for tokens│  POST /scan     │                         │
-│                         │  galaxy_servers │  → Galaxy Proxy admin   │
-│ ansible.rhaap.baseUrl   │  ────────────►  │  temp ansible.cfg       │
-│ ansible.rhaap.token     │                 │  ephemeral per-scan     │
-└─────────────────────────┘                 └─────────────────────────┘
+Portal (optional per-request)              APME (own settings)
+┌─────────────────────────┐                ┌─────────────────────────┐
+│ ansible.rhaap.baseUrl   │                │ Gateway Galaxy config   │
+│ ansible.rhaap.token     │  operations  │ (apme_galaxy_servers)   │
+│ Injected as optional    │  ──────────► │ If request has tokens   │
+│ galaxy_servers          │              │ → use them              │
+└─────────────────────────┘              │ Else → own config     │
+                                         └─────────────────────────┘
 ```
 
-**Sources in Portal:**
-
-1. Existing Portal config: `ansible.rhaap.baseUrl` + `ansible.rhaap.token` (AAP admin token, org-scoped)
-2. Optional additional servers → `apme_galaxy_servers` table
-3. Default community Galaxy fallback (no token)
-
-**Key points:**
-
-- Tokens in K8s Secrets, not DB plaintext
-- Portal injects tokens per scan request
-- APME never persists Galaxy credentials
-- Galaxy Proxy writes temp `ansible.cfg`, downloads collections, deletes temp file
+In AAP 2.5+, Hub is behind AAP Gateway: `ansible.rhaap.baseUrl` + `ansible.rhaap.token` (AAP admin token, org-scoped).
 
 ### Git-Based Collection Dependencies
 
 | Phase | Scope |
 |-------|-------|
-| **Phase 1** | Collections must be on Galaxy or Automation Hub. `type: git` in `requirements.yml` **not supported** in Portal scans. Aligns with AAP 2.5+ Hub model. |
-| **Phase 2** | Portal passes admin SCM token in scan request (`GH_TOKEN` for `ansible-galaxy`), **or** Portal pre-builds git collections and includes tarball in upload. APME stays credential-free in preferred path. |
+| **Phase 1** | Collections on Galaxy or Automation Hub only; `type: git` in `requirements.yml` not supported in Portal scans |
+| **Phase 2** | Optional admin SCM token per-request, or Portal pre-builds git collections |
 
 ### Custom Rules — Phase 2 (Proposed — Requires ADR)
 
-- Policy-as-code in git; Portal clones policy repo, passes `custom_policies: [{name, rule_id, rego_source}]` in `POST /scan`
-- Gateway writes temp Rego alongside built-in OPA bundle; OPA loads merged bundle
-- Custom rule IDs: `P100+` prefix (distinct from built-in `P001–P004`)
-- **Phase 1:** per-project `.apme/rules.yml` and `rule_configs` in `ScanOptions` already supported — no git policy merge yet
+Policy-as-code from git; Portal passes optional `custom_policies` at scan time. Phase 1 uses existing `rule_configs` in `ScanOptions`.
 
-### Helm Chart — Proxy Mode Overlay
+### A5 — PVC Sizing (Portal Scale)
 
 ```yaml
-gateway:
-  mode: proxy
-  replicas: 2                      # stateless — scale freely
-  resources:
-    requests: { cpu: 250m, memory: 256Mi }
-    limits: { cpu: 500m, memory: 512Mi }
-  auth:
-    enabled: true
-    serviceTokenSecret: apme-service-token
-
-# Remove in proxy overlay:
-# - gateway-pvc.yaml
-# - gateway-reporting-service.yaml (:50060)
-# - ui-deployment.yaml / ui-service.yaml
+persistence:
+  sessions:
+    size: 50Gi
+  proxyCache:
+    size: 20Gi
+  # No Gateway DB PVC — shared PostgreSQL instance
 ```
 
-### bootc (Proxy / Product)
+### Upgrade Strategy (Track A)
 
-APME container volumes:
+APME ships as Portal Helm subchart. `helm upgrade` updates Portal + APME together:
 
-- `/sessions` — venv session storage
-- `/cache` — Galaxy Proxy wheel cache
-- **No Gateway DB volume**
+1. Engine pods RollingUpdate (sessions/cache PVCs preserved)
+2. Gateway pods RollingUpdate; post-upgrade hook: `POST /admin/db/migrate`
+3. Portal pods updated with new APME plugin
+4. Rollback: `helm rollback`; Alembic supports downgrade to target version
 
-### Implementation Order (Portal — from PR #352)
+**bootc:** `portal-post-upgrade.service` calls `POST /admin/db/migrate` after reboot.
 
-1. **A1** — Gateway auth (security prerequisite)
-2. **A3** — Tarball scan endpoint
-3. **A12** — Non-root containers
-4. **A2** — Gateway stateless refactor (`APME_GATEWAY_MODE=proxy`)
-5. **A9** — API versioning contract
-6. **A10** — Observability
-7. **A4** — PVC sizing
-8. **A5** — Air-gapped mode
-9. **A6** — Rule catalog API
+### Implementation Order (Portal)
+
+1. **A1** — Gateway auth
+2. **A2** — PostgreSQL + Alembic (enables shared-instance architecture)
+3. **A3** — Optional credentials
+4. **A4** — Day 0/Day 2 management APIs
+5. **A12** — Non-root containers
+6. **A9** — API versioning contract
+7. **A10** — Observability
+8. **A5** — PVC sizing
+9. **A6** — Air-gapped mode
 10. **A11** — Rate limiting
 
 ### What Stays Unchanged
@@ -650,12 +603,11 @@ APME container volumes:
 - Primary gRPC / `FixSession` protocol
 - All validators (read-only)
 - Galaxy Proxy PEP 503 caching
-- Engine pod architecture (ADR-012 — scale pods, not services)
+- Engine pod architecture (ADR-012)
 - Remediation engine (3-tier model)
 - Rule ID conventions (ADR-008)
-- **Track B** standalone UI, full Gateway, PostgreSQL-only path (upstream + downstream/production)
-
----
+- **Gateway REST API** — existing endpoints preserved; admin/db and optional credentials added
+- **Track B** standalone UI and full Gateway path
 
 ## Section 9 — PostgreSQL Only (SQLite Removal)
 
@@ -669,23 +621,22 @@ APME container volumes:
 
 **SQLite is removed entirely** from APME: delete `APME_DB_PATH`, `aiosqlite`, SQLite-specific pragmas/migrations, and Gateway SQLite PVCs. Early adopters with existing `apme.db` files get a one-time export/import path (open decision D-05).
 
-**Portal Track A (proxy mode):** no APME database — skip all Gateway DB items below; Portal PostgreSQL owns persistence.
+**Portal Track A:** connect to shared Portal PostgreSQL instance via `APME_DATABASE_URL`; APME runs Alembic on `apme_*` tables only (A4). Same implementation as Track B — different connection target.
 
 ### Configuration Example
 
 ```yaml
-# apme-gateway-config.yaml (Track B full mode)
+# apme-gateway-config.yaml
 gateway:
-  mode: full
-
-database:
-  mode: bundled          # bundled | external | none
-  # bundled: deploy PostgreSQL subchart, auto-wire URL
-  # external: customer supplies APME_DATABASE_URL
-  # none: proxy mode only (Track A)
-  url: ""                # required when mode=external
-  pool_size: 10
-  echo: false
+  database:
+    mode: bundled          # bundled | external | shared
+    # bundled: deploy PostgreSQL subchart (Track B standalone)
+    # external: customer-managed PostgreSQL
+    # shared: Portal PostgreSQL instance (Track A)
+    url: ""                # required — postgresql+asyncpg://...
+    pool_size: 10
+    max_overflow: 5
+    echo: false
 ```
 
 ### Environment Variables
@@ -693,13 +644,12 @@ database:
 | Variable | Description | Status |
 |----------|-------------|--------|
 | `APME_DATABASE_URL` | PostgreSQL DSN (`postgresql+asyncpg://user:pass@host:5432/apme`) | **Required** when Gateway persists data |
-| `APME_DATABASE_MODE` | `bundled`, `external`, or `none` | **Required** — `none` only in proxy mode |
-| `APME_GATEWAY_MODE` | `full` or `proxy` | **Required** |
+| `APME_DATABASE_MODE` | `bundled`, `external`, or `shared` | **Required** |
 | `APME_DB_PATH` | *(removed)* | **Dropped** — SQLite no longer supported |
 
-### Portal Proxy Mode Note
+### Track A Shared Instance Note
 
-When `APME_GATEWAY_MODE=proxy`, set `APME_DATABASE_MODE=none`. Gateway must not create, migrate, or connect to any APME schema. Portal owns `apme_projects`, `apme_scans`, `apme_galaxy_servers`, etc.
+When `APME_DATABASE_MODE=shared`, Gateway connects to Portal's PostgreSQL. Use conservative pool sizing. Portal post-upgrade hooks call `POST /api/v1/admin/db/migrate` (A4).
 
 ### Implementation Checklist
 
@@ -725,7 +675,7 @@ When `APME_GATEWAY_MODE=proxy`, set `APME_DATABASE_MODE=none`. Gateway must not 
 
 | Artifact | Type | Title | Trigger | Phase |
 |----------|------|-------|---------|-------|
-| ADR-055 (proposed) | ADR | Portal Gateway proxy mode (`APME_GATEWAY_MODE`) | A2 implementation | 3 |
+| ADR-055 (proposed) | ADR | Shared PostgreSQL instance integration (Track A) | §8 architecture | 3 |
 | ADR-056 (proposed) | ADR | Portal service-token authentication | D-01 resolution | 1 |
 | ADR-029-amend | ADR | PostgreSQL only — SQLite removal | §9 checklist | 1 |
 | ADR-057 (proposed) | ADR | Required validator set (Collection Health + Dep Audit) | 4.10 completion | 1 |
@@ -737,7 +687,8 @@ When `APME_GATEWAY_MODE=proxy`, set `APME_DATABASE_MODE=none`. Gateway must not 
 | TASK-005-02 | TASK | Promote CH/DA to required in launcher + Helm | 4.10 | 1 |
 | TASK-005-03 | TASK | CI publish collection-health + dep-audit images | 4.1 | 2 |
 | TASK-005-04 | TASK | Gateway auth middleware (A1) | §8 | 3 |
-| TASK-005-05 | TASK | Tarball `POST /scan` endpoint (A3) | §8 | 3 |
+| TASK-005-05 | TASK | Optional credential acceptance on operations (A3) | §8 | 3 |
+| TASK-005-08 | TASK | Day 0/Day 2 admin/db APIs (A4) | §8 | 3 |
 | TASK-005-06 | TASK | `USER` directive all Dockerfiles (A12) | 4.2 | 2 |
 | TASK-005-07 | TASK | Prometheus `/metrics` on Gateway (A10) | §8 | 4 |
 | DR-xxx | DR | Packaging registry / Operator ownership | D-02 | 3 |
