@@ -1,12 +1,12 @@
 # APME Productization Plan — Pre-Read
 
 **Prepared:** 2026-06-24  
-**Updated:** 2026-06-25 (Portal integration architecture aligned with [PR #352](https://github.com/ansible/apme/pull/352) v2)  
+**Updated:** 2026-06-25 (Portal integration architecture aligned with [PR #352](https://github.com/ansible/apme/pull/352) v2; auth decision resolved)  
 **Status:** Draft for review
 
 This document captures the productization strategy for APME across two deployment tracks: **Portal-integrated product** (Track A) and **upstream standalone** (Track B). It consolidates architecture, authentication, work streams, open decisions, PostgreSQL-only persistence (SQLite removed), and Portal integration requirements.
 
-Companion research: [PR #352](https://github.com/ansible/apme/pull/352) (`.sdlc/research/portal-integration/00-integration-requirements.md`), [ansible-rhdh-plugins PR #676](https://github.com/ansible/ansible-rhdh-plugins/pull/676), [ANSTRAT-2222](https://issues.redhat.com/browse/ANSTRAT-2222).
+Companion research: [PR #352](https://github.com/ansible/apme/pull/352) (`.sdlc/research/portal-integration/00-integration-requirements.md`), [ansible-rhdh-plugins PR #676](https://github.com/ansible/ansible-rhdh-plugins/pull/676) (9-document integration architecture design from Portal team), [ANSTRAT-2222](https://issues.redhat.com/browse/ANSTRAT-2222).
 
 ---
 
@@ -95,9 +95,26 @@ APME ships on two parallel tracks with different packaging, persistence, and UX 
 | **Database** | **Shared PostgreSQL instance** with Portal — APME owns `apme_*` tables (Alembic); Portal owns `backstage_*`; Portal manages the instance, APME manages its schema |
 | **UI** | Portal UX only; APME standalone UI container **not deployed** |
 | **Portal role** | **Thin proxy client** — RBAC, optional credential injection, forward to APME API; no APME data layer in Portal |
-| **Auth** | Portal Auth/RBAC (user-facing) + Bearer service token (Portal backend → Gateway) |
+| **Auth** | Portal Auth/RBAC (user-facing) + **service-to-service Bearer token** (Portal backend → Gateway); decided DC-05 |
 | **Credentials** | **Optional per-request** — Portal injects SCM/Galaxy tokens when available; APME falls back to its own configured settings (A3) |
 | **Target users** | AAP customers consuming APME via Ansible Automation Portal |
+
+#### Track A Downstream Differentiators
+
+Features available **only in Portal (Track A)** — not in upstream standalone (Track B). These leverage Portal's knowledge of AAP release versions and multi-repo fleet context.
+
+| Feature | Description | Engine Support |
+|---------|-------------|----------------|
+| **Version migration readiness** | Scan repos against current AAP version AND next AAP version; show delta — what breaks on upgrade, new violations, resolved violations | Engine already supports `ansible_version` per-scan; Portal orchestrates two scans and presents comparison |
+| **AAP version ↔ ansible-core mapping** | Portal maps AAP releases (2.5, 2.6, 2.7) to ansible-core versions (2.16, 2.17, 2.18); users select AAP version, not raw core version | Portal owns the mapping table; passes resolved `ansible_version` to APME |
+| **Fleet-wide migration dashboard** | "X% of repos ready for AAP 2.7" across all registered repositories | Portal aggregates per-repo scan results across both versions |
+| **Upgrade readiness gate** | Block/warn AAP upgrade if repos have critical violations on next version | Portal integrates with AAP Operator upgrade lifecycle |
+
+**Implementation notes:**
+- APME engine requires **zero changes** — `ansible_version` in `ScanOptions` already supports arbitrary versions
+- Portal backend plugin orchestrates dual scans (current + next) per repo during scheduled scan cycles
+- Portal stores both result sets; frontend renders diff/comparison view
+- AAP version → ansible-core mapping is a Portal-maintained lookup (not in APME)
 
 ### Track B — Upstream / Dev
 
@@ -134,9 +151,11 @@ Authentication differs by deployment track. **Podman, bootc, and CLI daemon path
 | Layer | Mechanism |
 |-------|-----------|
 | **User → Portal** | Portal Auth (OIDC/SSO) + Portal RBAC |
-| **Portal → Gateway** | Bearer service token (`APME_SERVICE_TOKENS`); Portal backend injects from K8s Secret |
+| **Portal → Gateway** | **Service-to-service Bearer token** (`APME_SERVICE_TOKENS`); Portal backend injects from K8s Secret — **decided** |
 | **Gateway → Engine** | Pod-local gRPC; no end-user identity in engine |
 | **Galaxy credentials** | Optional per-request on operations (A3); APME falls back to own Galaxy config |
+
+**Auth decision (resolved):** Portal → APME Gateway uses **service-to-service authentication** — Portal backend plugin includes a shared Bearer token in every request; APME Gateway validates against `APME_SERVICE_TOKENS`. No mTLS, no OAuth client credentials grant. User identity and RBAC are handled entirely Portal-side before the request reaches APME. See [ansible-rhdh-plugins PR #676 §06-security-and-rbac](https://github.com/ansible/ansible-rhdh-plugins/pull/676) for the full security design.
 
 **A1 (PR #352):** Gateway auth middleware with `APME_AUTH_DISABLED` escape hatch for backward-compatible CLI daemon dev only.
 
@@ -153,10 +172,10 @@ Authentication differs by deployment track. **Podman, bootc, and CLI daemon path
 
 | Gap | Impact | Resolution |
 |-----|--------|------------|
-| ADR-038 not fully implemented | No stable machine-auth contract | Phase 1 auth ADR + middleware |
+| ~~ADR-038 not fully implemented~~ | ~~No stable machine-auth contract~~ | **Resolved for Track A** — service-to-service token (DC-05); Track B still needs ADR-038 |
 | Podman/bootc Helm values lack auth secrets | Open deployments | Document required `APME_SERVICE_TOKENS` |
 | CLI daemon has no Gateway auth today | `apme sbom` etc. need Gateway (ADR-049) | Separate from Portal track — see ADR-049 |
-| Portal proxy service-token rotation | Ops burden | ADR for token lifecycle (D-01) |
+| ~~Portal proxy service-token rotation~~ | ~~Ops burden~~ | Standard K8s Secret rotation; no ADR needed |
 
 ---
 
@@ -215,9 +234,9 @@ Authentication differs by deployment track. **Podman, bootc, and CLI daemon path
 
 ### 4.3 — Authentication
 
-- **Track A:** Implement A1 service-token middleware; Helm secret injection; disable auth only via explicit `APME_AUTH_DISABLED` for dev.
+- **Track A (decided):** Service-to-service Bearer token — Portal backend injects token from K8s Secret; Gateway validates via `APME_SERVICE_TOKENS`. No mTLS or OAuth client credentials. User identity stays in Portal (RBAC, audit). Ref: [PR #676 §06-security-and-rbac](https://github.com/ansible/ansible-rhdh-plugins/pull/676).
 - **Track B:** Implement ADR-038 bearer validation for `/api/v1/*` machine consumers.
-- **Deliverables:** ADR for Portal service-token model (D-01); ADR-038 implementation tasks.
+- **Deliverables:** Implement A1 Gateway middleware (simple); ADR-038 implementation tasks for Track B.
 
 ### 4.4 — API Versioning
 
@@ -328,6 +347,7 @@ ADR-049 status: **Accepted** (2026-04-01). **Implementation: not done** — `lau
 
 | Setting | Purpose | Values |
 |---------|---------|--------|
+| `APME_DEPLOYMENT_MODE` | Deployment context — controls credential resolution behavior | `standalone` (default), `portal` |
 | `APME_DATABASE_URL` | PostgreSQL DSN (**required**) | `postgresql+asyncpg://...` |
 | `APME_DATABASE_MODE` | DB topology | `bundled`, `external`, `shared` (Track A Portal instance) |
 | `gateway.database.poolSize` | Connection pool | e.g. `10` (important when sharing Portal PG) |
@@ -337,7 +357,14 @@ ADR-049 status: **Accepted** (2026-04-01). **Implementation: not done** — `lau
 | `APME_AIR_GAPPED` | Air-gapped deployments | `true` / `false` (A6, proposed) |
 | `APME_RATE_LIMIT` | Gateway throttling | e.g. `100/minute` (A11, proposed) |
 
-No `APME_GATEWAY_MODE` — same full Gateway on both tracks.
+**`APME_DEPLOYMENT_MODE` behavior:**
+
+| Mode | SCM credentials | Galaxy credentials | Per-project stored tokens |
+|------|----------------|-------------------|--------------------------|
+| `portal` | **Must** come per-request from Portal; project-stored SCM tokens ignored; error if missing on SCM ops | Per-request from Portal preferred; fallback to APME Galaxy config | Project SCM token field disabled/hidden |
+| `standalone` | Per-request if provided; **fallback to project-stored token** if configured | Per-request if provided; fallback to APME Galaxy config | Fully supported (existing behavior) |
+
+Same full Gateway on both modes — no code path divergence for API logic, persistence, or engine interaction. The mode only affects credential resolution priority.
 
 ---
 
@@ -347,7 +374,6 @@ No `APME_GATEWAY_MODE` — same full Gateway on both tracks.
 
 | ID | Topic | Options | Blocker for |
 |----|-------|---------|-------------|
-| D-01 | **Auth model (Portal)** | Service token list vs mTLS vs OAuth client credentials | Track A GA |
 | D-02 | **Packaging** | See Section 2 table | Release pipeline |
 | D-03 | **Shared PG pooling** | Pool size / max connections when APME shares Portal instance | Track A stability |
 | D-04 | **PostgreSQL topology** | Bundled subchart vs external RDS vs customer-managed | All Gateway persistence deployments |
@@ -366,6 +392,7 @@ No `APME_GATEWAY_MODE` — same full Gateway on both tracks.
 | DC-02 | **Gateway persistence:** PostgreSQL only (upstream, downstream/production, dev); SQLite removed entirely | 2026-06-25 | §9, ADR-029 amendment |
 | DC-03 | **Dual tracks:** Portal product (Track A) vs upstream standalone (Track B) | 2026-06-24 | §2 |
 | DC-04 | **Portal integration:** Shared PostgreSQL instance; APME owns `apme_*`; thin Portal proxy | 2026-06-25 | §8, PR #352 v2 |
+| DC-05 | **Portal auth model:** Service-to-service Bearer token (Portal → Gateway); no mTLS/OAuth CC | 2026-06-25 | §3, [PR #676 §06](https://github.com/ansible/ansible-rhdh-plugins/pull/676) |
 
 ---
 
@@ -375,7 +402,7 @@ No `APME_GATEWAY_MODE` — same full Gateway on both tracks.
 
 1. Validator scope alignment (4.10) — launcher, Helm, Podman, health-check
 2. SQLite removal + Alembic + PostgreSQL (upstream, downstream/production, dev — bundled or external PG) (4.5, §9)
-3. Auth ADR — bearer for Track B (ADR-038); draft Portal service-token ADR (4.3, D-01)
+3. Gateway auth middleware — A1 service-to-service token validation (decided DC-05); ADR-038 bearer for Track B (4.3)
 
 ### Phase 2 — Hardening (weeks 5–8)
 
@@ -469,6 +496,7 @@ Source: [PR #352](https://github.com/ansible/apme/pull/352) (updated 2026-06-25 
 | **A10** | Observability (Prometheus + structured logging) | High | Limited | `/metrics`, JSON logs | Medium |
 | **A11** | Rate limiting | Medium | Not implemented | `APME_RATE_LIMIT` | Small |
 | **A12** | Non-root containers | High | Documented only | `USER` in all Dockerfiles | Small |
+| **A13** | GitLab SCM provider | High | GitHub only | `GitLabProvider` implementation; Portal supports both GitHub and GitLab repos | Medium |
 
 ### A2 — PostgreSQL + Alembic
 
@@ -492,17 +520,53 @@ gateway:
 
 ### A3 — Optional Credential Acceptance
 
-All scan/operation endpoints accept optional credentials. If Portal provides them, use them; otherwise fall back to APME's configured project/Galaxy settings.
+All scan/operation endpoints accept credentials for SCM and Galaxy interactions. Behavior depends on `APME_DEPLOYMENT_MODE`:
+
+**Portal mode (`APME_DEPLOYMENT_MODE=portal`):**
+- Portal is the credential owner for SCM. Portal passes `scm_token` per-request on any call that triggers SCM interaction (clone, PR, push). APME uses it directly — ephemeral, never stored.
+- Per-project stored SCM tokens are **not used** in this mode (project SCM config is ignored at runtime even if present in DB).
+- If no `scm_token` is provided and the operation requires SCM access, APME returns an error.
+
+**Standalone mode (`APME_DEPLOYMENT_MODE=standalone`, default):**
+- Per-request `scm_token` takes precedence if provided.
+- If not provided, APME falls back to the **per-project stored SCM token** (existing project configuration).
+- This preserves the existing Track B / CI / CLI experience where users configure SCM credentials per project.
+
+**Galaxy credentials** behave the same in both modes: per-request `galaxy_servers` takes precedence; fallback to APME's configured Galaxy settings.
+
+| Credential | Portal mode | Standalone mode |
+|------------|-------------|-----------------|
+| `scm_token` (per-request) | Required for SCM ops; no fallback | Preferred if provided |
+| Project-stored SCM token | Ignored | Fallback if no per-request token |
+| `galaxy_servers` (per-request) | Preferred; fallback to APME config | Preferred; fallback to APME config |
 
 ```python
 class OperateRequest(BaseModel):
     action: Literal["check", "remediate"]
-    scm_token: Optional[str] = None
-    galaxy_servers: Optional[list] = None
+    scm_token: Optional[str] = None       # Per-request SCM credential
+    galaxy_servers: Optional[list] = None  # Per-request Galaxy credentials
     options: Optional[dict] = None
 ```
 
-Works for Portal-integrated (Portal injects tokens), standalone (APME settings), and CI/CD (caller passes tokens).
+Works for Portal-integrated (Portal always provides SCM token), standalone (per-project stored tokens or caller-provided), and CI/CD (token in request).
+
+### A13 — GitLab SCM Provider
+
+**Current state:** APME's SCM abstraction (`src/apme_gateway/scm/`) defines a `ScmProvider` protocol (ADR-050) with methods for `create_branch`, `push_files`, and `create_pull_request`. Only `GitHubProvider` is implemented. `detect_provider()` already recognizes `gitlab.com` URLs but `get_provider("gitlab")` raises `ValueError`.
+
+**Required:** Portal supports both GitHub and GitLab repositories. APME must support PR creation (merge requests) on both platforms.
+
+| Item | Status |
+|------|--------|
+| `ScmProvider` protocol | Ready — provider-agnostic; token passed per-method |
+| `detect_provider("gitlab.com")` | Ready — returns `"gitlab"` |
+| `GitLabProvider` implementation | **Missing** — needs `create_branch`, `push_files`, `create_pull_request` via GitLab REST API |
+| Registry entry | **Missing** — add `"gitlab": GitLabProvider` to `_PROVIDERS` |
+| GitLab API differences | MR (not PR); project ID from URL; different branch/commit API | 
+
+**Implementation:** `src/apme_gateway/scm/gitlab.py` implementing `ScmProvider` using GitLab REST v4 API (`/api/v4/projects/:id/repository/branches`, `/api/v4/projects/:id/merge_requests`). Token passed as `PRIVATE-TOKEN` header.
+
+**Effort:** Medium (1 sprint) — protocol already exists; straightforward REST implementation.
 
 ### A4 — Day 0 / Day 2 Management APIs
 
@@ -525,10 +589,10 @@ Portal Helm post-install/post-upgrade hook calls `POST /admin/db/migrate`. Insta
 | Endpoint Group | Portal Need | Status |
 | --- | --- | --- |
 | Projects CRUD | Manage scanned repos | Ready |
-| Operations (scan trigger) | Trigger scans with optional credentials | Needs A3 |
+| Operations (scan trigger) | Trigger scans with `scm_token` + optional `galaxy_servers` | Needs A3 |
 | Operations (SSE progress) | Real-time progress | Ready |
 | Operations (approve) | HITL proposal approval | Ready |
-| Operations (create PR) | Open PR with fixes | Ready (optional `scm_token`) |
+| Operations (create PR) | Open PR with fixes — Portal provides `scm_token` (required) | Ready (wire `scm_token` through) |
 | Violations / trend / dashboard | Metrics and history | Ready |
 | Rule catalog | List/configure rules | Ready |
 | Galaxy server config | Manage Galaxy credentials | Ready |
@@ -540,15 +604,37 @@ No new tarball `POST /scan` endpoint required — existing `operation_router` + 
 ### Galaxy / Automation Hub Credential Flow
 
 ```
-Portal (optional per-request)              APME (own settings)
+Portal mode (APME_DEPLOYMENT_MODE=portal)
+─────────────────────────────────────────
+Portal (credential owner)                  APME Gateway
 ┌─────────────────────────┐                ┌─────────────────────────┐
-│ ansible.rhaap.baseUrl   │                │ Gateway Galaxy config   │
-│ ansible.rhaap.token     │  operations  │ (apme_galaxy_servers)   │
-│ Injected as optional    │  ──────────► │ If request has tokens   │
-│ galaxy_servers          │              │ → use them              │
-└─────────────────────────┘              │ Else → own config     │
+│ SCM token (admin or     │  per-request │ scm_token provided?     │
+│ user OAuth per context) │  ──────────► │ → use it (no fallback)  │
+│                         │              │ Not provided?           │
+│ galaxy_servers (from    │              │ → error if SCM needed   │
+│ ansible.rhaap.*)        │              │                         │
+│                         │              │ galaxy_servers provided? │
+└─────────────────────────┘              │ → use them              │
+                                         │ Else → own Galaxy config│
+                                         └─────────────────────────┘
+
+Standalone mode (APME_DEPLOYMENT_MODE=standalone)
+─────────────────────────────────────────────────
+Caller (CLI / CI / UI)                     APME Gateway
+┌─────────────────────────┐                ┌─────────────────────────┐
+│ scm_token (optional)    │  per-request │ scm_token provided?     │
+│ galaxy_servers (opt)    │  ──────────► │ → use it                │
+│                         │              │ Not provided?           │
+└─────────────────────────┘              │ → project stored token  │
+                                         │ Neither? → error        │
+                                         │                         │
+                                         │ galaxy_servers provided? │
+                                         │ → use them              │
+                                         │ Else → own Galaxy config│
                                          └─────────────────────────┘
 ```
+
+**Key principle:** Per-project SCM tokens remain a first-class feature in APME — they are not removed. `APME_DEPLOYMENT_MODE` controls whether the Gateway resolves credentials from stored project config (`standalone`) or requires them per-request (`portal`).
 
 In AAP 2.5+, Hub is behind AAP Gateway: `ansible.rhaap.baseUrl` + `ansible.rhaap.token` (AAP admin token, org-scoped).
 
@@ -590,13 +676,14 @@ APME ships as Portal Helm subchart. `helm upgrade` updates Portal + APME togethe
 1. **A1** — Gateway auth
 2. **A2** — PostgreSQL + Alembic (enables shared-instance architecture)
 3. **A3** — Optional credentials
-4. **A4** — Day 0/Day 2 management APIs
-5. **A12** — Non-root containers
-6. **A9** — API versioning contract
-7. **A10** — Observability
-8. **A5** — PVC sizing
-9. **A6** — Air-gapped mode
-10. **A11** — Rate limiting
+4. **A13** — GitLab SCM provider (Portal supports GitHub + GitLab)
+5. **A4** — Day 0/Day 2 management APIs
+6. **A12** — Non-root containers
+7. **A9** — API versioning contract
+8. **A10** — Observability
+9. **A5** — PVC sizing
+10. **A6** — Air-gapped mode
+11. **A11** — Rate limiting
 
 ### What Stays Unchanged
 
@@ -676,7 +763,7 @@ When `APME_DATABASE_MODE=shared`, Gateway connects to Portal's PostgreSQL. Use c
 | Artifact | Type | Title | Trigger | Phase |
 |----------|------|-------|---------|-------|
 | ADR-055 (proposed) | ADR | Shared PostgreSQL instance integration (Track A) | §8 architecture | 3 |
-| ADR-056 (proposed) | ADR | Portal service-token authentication | D-01 resolution | 1 |
+| ADR-056 (proposed) | ADR | Portal service-to-service token implementation | DC-05 (decided) | 1 |
 | ADR-029-amend | ADR | PostgreSQL only — SQLite removal | §9 checklist | 1 |
 | ADR-057 (proposed) | ADR | Required validator set (Collection Health + Dep Audit) | 4.10 completion | 1 |
 | ADR-058 (proposed) | ADR | API versioning — RFC 9745 / RFC 8594 | 4.4 / A9 | 3 |
@@ -688,6 +775,7 @@ When `APME_DATABASE_MODE=shared`, Gateway connects to Portal's PostgreSQL. Use c
 | TASK-005-03 | TASK | CI publish collection-health + dep-audit images | 4.1 | 2 |
 | TASK-005-04 | TASK | Gateway auth middleware (A1) | §8 | 3 |
 | TASK-005-05 | TASK | Optional credential acceptance on operations (A3) | §8 | 3 |
+| TASK-005-09 | TASK | GitLab SCM provider — `GitLabProvider` implementing `ScmProvider` (A13) | §8 | 3 |
 | TASK-005-08 | TASK | Day 0/Day 2 admin/db APIs (A4) | §8 | 3 |
 | TASK-005-06 | TASK | `USER` directive all Dockerfiles (A12) | 4.2 | 2 |
 | TASK-005-07 | TASK | Prometheus `/metrics` on Gateway (A10) | §8 | 4 |
