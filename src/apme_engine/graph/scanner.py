@@ -331,6 +331,11 @@ def graph_report_to_violations(report: GraphScanReport) -> list[ViolationDict]:
     Only results with ``verdict=True`` (rule fired, violation detected) are
     included.  Results with ``verdict=False`` are clean passes or errors.
 
+    When ``detail["violations"]`` is a list of dicts, each entry is expanded
+    into a separate ViolationDict with its own file/line/message. This
+    supports rules like L111 that scan sibling files and emit multiple
+    per-file violations from a single graph node.
+
     Args:
         report: Completed scan report from ``scan()``.
 
@@ -345,7 +350,35 @@ def graph_report_to_violations(report: GraphScanReport) -> list[ViolationDict]:
                 continue
             rule = rr.rule
             detail = rr.detail or {}
+            rid = rule.rule_id if rule else ""
 
+            # Check for nested violations list (e.g., L111 inventory scan)
+            nested_violations = detail.get("violations")
+            if isinstance(nested_violations, list) and nested_violations:
+                # Expand each nested violation into a separate ViolationDict
+                for nested in nested_violations:
+                    if not isinstance(nested, dict):
+                        continue
+                    nested_line = nested.get("line")
+                    line_val: int | list[int] | None = None
+                    if isinstance(nested_line, int):
+                        line_val = nested_line
+                    elif isinstance(nested_line, list):
+                        line_val = [int(x) for x in nested_line if isinstance(x, (int, float))]
+                    v: ViolationDict = {
+                        "rule_id": rid,
+                        "severity": severity_to_label(get_severity(rid)),
+                        "message": str(nested.get("message", rule.description if rule else "")),
+                        "file": str(nested.get("file", "")),
+                        "line": line_val,
+                        "path": rr.node_id,
+                        "source": "native",
+                        "scope": str(detail.get("scope", "")) or (rule.scope if rule else "task"),
+                    }
+                    violations.append(v)
+                continue
+
+            # Standard single-violation path
             file_path = ""
             line: int | list[int] | None = None
             if rr.file:
@@ -359,8 +392,7 @@ def graph_report_to_violations(report: GraphScanReport) -> list[ViolationDict]:
 
             msg = str(detail.get("message", "")) or (rule.description if rule else "")
             scope = str(detail.get("scope", "")) or (rule.scope if rule else "task")
-            rid = rule.rule_id if rule else ""
-            v: ViolationDict = {
+            v = {
                 "rule_id": rid,
                 "severity": severity_to_label(get_severity(rid)),
                 "message": msg,

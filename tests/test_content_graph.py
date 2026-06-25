@@ -852,6 +852,72 @@ class TestGraphReportToViolations:
 
         assert graph_report_to_violations(GraphScanReport()) == []
 
+    def test_nested_violations_expanded(self) -> None:
+        """Verify detail.violations list is expanded into separate ViolationDicts."""
+        from apme_engine.engine.graph_scanner import (
+            GraphNodeResult,
+            GraphScanReport,
+            graph_report_to_violations,
+        )
+        from apme_engine.engine.models import RuleMetadata
+        from apme_engine.validators.native.rules.graph_rule_base import GraphRuleResult
+
+        node = ContentNode(
+            identity=NodeIdentity(path="playbook.yml/plays[0]", node_type=NodeType.PLAYBOOK),
+            file_path="playbook.yml",
+            line_start=1,
+        )
+        # Simulates L111 output: multiple inventory violations from one graph node
+        report = GraphScanReport(
+            node_results=[
+                GraphNodeResult(
+                    node_id="playbook.yml/plays[0]",
+                    node=node,
+                    rule_results=[
+                        GraphRuleResult(
+                            rule=RuleMetadata(rule_id="L111", severity="warning", scope="inventory"),
+                            verdict=True,
+                            detail={
+                                "message": "Found 2 inventory group(s) with hyphens",
+                                "violations": [
+                                    {
+                                        "file": "inventory.ini",
+                                        "line": 1,
+                                        "group_name": "web-servers",
+                                        "message": "Group 'web-servers' contains hyphens",
+                                    },
+                                    {
+                                        "file": "inventory.ini",
+                                        "line": 5,
+                                        "group_name": "db-servers",
+                                        "message": "Group 'db-servers' contains hyphens",
+                                    },
+                                ],
+                            },
+                            node_id="playbook.yml/plays[0]",
+                            file=("playbook.yml", 1),  # Parent node location
+                        ),
+                    ],
+                ),
+            ],
+        )
+        violations = graph_report_to_violations(report)
+
+        # Should expand to 2 separate violations, not 1
+        assert len(violations) == 2
+
+        # First violation
+        assert violations[0]["rule_id"] == "L111"
+        assert violations[0]["file"] == "inventory.ini"
+        assert violations[0]["line"] == 1
+        assert "web-servers" in str(violations[0]["message"])
+
+        # Second violation
+        assert violations[1]["rule_id"] == "L111"
+        assert violations[1]["file"] == "inventory.ini"
+        assert violations[1]["line"] == 5
+        assert "db-servers" in str(violations[1]["message"])
+
 
 # ---------------------------------------------------------------------------
 # GraphBuilder block structure integration (Issue #164)

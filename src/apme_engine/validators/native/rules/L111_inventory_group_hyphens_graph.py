@@ -113,7 +113,7 @@ def _parse_yaml_groups(
         line_map: Optional mapping of dotted paths to line numbers.
 
     Yields:
-        tuple[str, int]: Tuples of (group_name, line_number).
+        (str, int): Tuples of (group_name, line_number).
     """
     if not isinstance(data, dict):
         return
@@ -252,20 +252,16 @@ class InventoryGroupHyphensGraphRule(GraphRule):
             # Detect format by extension or content
             suffix = inv_file.suffix.lower()
             if suffix in (".yml", ".yaml"):
-                try:
-                    import yaml
-
-                    data = yaml.safe_load(content)
-                    line_map = _get_yaml_line_map(content)
-                    for group_name, line in _parse_yaml_groups(data, line_map=line_map):
-                        if "-" in group_name:
-                            groups_with_hyphens.append((group_name, line))
-                except Exception:
-                    pass
+                groups_with_hyphens.extend(_parse_yaml_inventory(content))
             elif suffix == ".ini" or _looks_like_ini(content):
+                seen_ini: set[str] = set()
                 for group_name, line in _parse_ini_groups(content, str(inv_file)):
-                    if "-" in group_name:
+                    if "-" in group_name and group_name not in seen_ini:
+                        seen_ini.add(group_name)
                         groups_with_hyphens.append((group_name, line))
+            elif suffix == "" and _looks_like_yaml(content):
+                # Extensionless inventory files (e.g., "inventory", "hosts")
+                groups_with_hyphens.extend(_parse_yaml_inventory(content))
 
             for group_name, line in groups_with_hyphens:
                 violations.append(
@@ -314,3 +310,61 @@ def _looks_like_ini(content: str) -> bool:
         if stripped.startswith("[") and stripped.endswith("]"):
             return True
     return False
+
+
+def _looks_like_yaml(content: str) -> bool:
+    """Check if content looks like YAML inventory format.
+
+    Looks for YAML indicators: leading dashes, colons after keys,
+    or 'all:' / 'children:' inventory keywords.
+
+    Args:
+        content: File content to inspect.
+
+    Returns:
+        True if content appears to be YAML format.
+    """
+    yaml_indicators = ("all:", "children:", "hosts:", "vars:")
+    for line in content.splitlines()[:30]:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        # Check for YAML inventory keywords
+        if any(stripped.startswith(kw) for kw in yaml_indicators):
+            return True
+        # Check for key: value pattern (but not INI sections)
+        if ":" in stripped and not stripped.startswith("["):
+            return True
+    return False
+
+
+def _parse_yaml_inventory(content: str) -> list[tuple[str, int]]:
+    """Parse YAML inventory and return groups with hyphens.
+
+    Args:
+        content: YAML file content.
+
+    Returns:
+        List of (group_name, line_number) tuples for groups containing hyphens.
+    """
+    import logging
+
+    import yaml
+
+    logger = logging.getLogger(__name__)
+    groups_with_hyphens: list[tuple[str, int]] = []
+    seen: set[str] = set()
+
+    try:
+        data = yaml.safe_load(content)
+        line_map = _get_yaml_line_map(content)
+        for group_name, line in _parse_yaml_groups(data, line_map=line_map):
+            if "-" in group_name and group_name not in seen:
+                seen.add(group_name)
+                groups_with_hyphens.append((group_name, line))
+    except yaml.YAMLError as err:
+        logger.debug("Failed to parse YAML inventory: %s", err)
+    except Exception as err:
+        logger.debug("Unexpected error parsing YAML inventory: %s", err)
+
+    return groups_with_hyphens

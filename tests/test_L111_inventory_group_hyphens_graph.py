@@ -19,8 +19,10 @@ from apme_engine.validators.native.rules.L111_inventory_group_hyphens_graph impo
     _find_inventory_files,
     _get_yaml_line_map,
     _looks_like_ini,
+    _looks_like_yaml,
     _parse_ini_groups,
     _parse_yaml_groups,
+    _parse_yaml_inventory,
 )
 
 
@@ -379,3 +381,108 @@ class TestInventoryGroupHyphensGraphRule:
             assert result is not None
             assert result.verdict is True
             assert "web-servers" in str(result.detail)
+
+    def test_extensionless_yaml_inventory(self) -> None:
+        """Rule detects hyphens in extensionless YAML inventory files."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            playbook = Path(tmpdir) / "playbook.yml"
+            playbook.write_text("---\n- hosts: all\n")
+            # No extension, but YAML content
+            inv_file = Path(tmpdir) / "inventory"
+            inv_file.write_text("all:\n  children:\n    web-servers:\n      hosts:\n        host1:\n")
+
+            graph, pb_id = self._make_graph_with_playbook(str(playbook))
+            rule = InventoryGroupHyphensGraphRule()
+
+            result = rule.process(graph, pb_id)
+
+            assert result is not None
+            assert result.verdict is True
+            assert "web-servers" in str(result.detail)
+
+    def test_extensionless_hosts_yaml_inventory(self) -> None:
+        """Rule detects hyphens in extensionless 'hosts' file with YAML content."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            playbook = Path(tmpdir) / "playbook.yml"
+            playbook.write_text("---\n- hosts: all\n")
+            inv_file = Path(tmpdir) / "hosts"
+            inv_file.write_text("all:\n  children:\n    db-servers:\n")
+
+            graph, pb_id = self._make_graph_with_playbook(str(playbook))
+            rule = InventoryGroupHyphensGraphRule()
+
+            result = rule.process(graph, pb_id)
+
+            assert result is not None
+            assert result.verdict is True
+            assert "db-servers" in str(result.detail)
+
+
+class TestLooksLikeYaml:
+    """Tests for _looks_like_yaml helper."""
+
+    def test_yaml_with_all_key(self) -> None:
+        """Detect YAML with 'all:' key."""
+        content = "all:\n  children:\n    webservers:\n"
+        assert _looks_like_yaml(content) is True
+
+    def test_yaml_with_children_key(self) -> None:
+        """Detect YAML with 'children:' key."""
+        content = "children:\n  webservers:\n"
+        assert _looks_like_yaml(content) is True
+
+    def test_yaml_with_hosts_key(self) -> None:
+        """Detect YAML with 'hosts:' key."""
+        content = "hosts:\n  host1:\n"
+        assert _looks_like_yaml(content) is True
+
+    def test_yaml_with_colon_value(self) -> None:
+        """Detect YAML with key: value pattern."""
+        content = "server_name: web-01\n"
+        assert _looks_like_yaml(content) is True
+
+    def test_ini_not_yaml(self) -> None:
+        """INI content is not YAML."""
+        content = "[webservers]\nhost1\n"
+        assert _looks_like_yaml(content) is False
+
+    def test_empty_not_yaml(self) -> None:
+        """Empty content is not YAML."""
+        content = ""
+        assert _looks_like_yaml(content) is False
+
+    def test_comments_only_not_yaml(self) -> None:
+        """Comments only is not YAML."""
+        content = "# Just a comment\n# Another comment\n"
+        assert _looks_like_yaml(content) is False
+
+
+class TestParseYamlInventory:
+    """Tests for _parse_yaml_inventory helper."""
+
+    def test_parses_hyphens(self) -> None:
+        """Parse groups with hyphens from YAML."""
+        content = "all:\n  children:\n    web-servers:\n    db-servers:\n"
+        result = _parse_yaml_inventory(content)
+        group_names = [g[0] for g in result]
+        assert "web-servers" in group_names
+        assert "db-servers" in group_names
+
+    def test_deduplicates(self) -> None:
+        """Deduplicate groups that appear multiple times via cross-refs."""
+        content = "all:\n  children:\n    web-servers:\n      children:\n        web-servers:\n"
+        result = _parse_yaml_inventory(content)
+        group_names = [g[0] for g in result]
+        assert group_names.count("web-servers") == 1
+
+    def test_handles_invalid_yaml(self) -> None:
+        """Return empty list for invalid YAML."""
+        content = "::invalid::\nyaml: [{"
+        result = _parse_yaml_inventory(content)
+        assert result == []
+
+    def test_no_hyphens_returns_empty(self) -> None:
+        """Return empty when no hyphens in groups."""
+        content = "all:\n  children:\n    web_servers:\n"
+        result = _parse_yaml_inventory(content)
+        assert result == []
