@@ -326,6 +326,68 @@ APME Gateway's existing REST API already covers all Portal needs:
 9. **A6: Air-gapped mode** — deployment requirement
 10. **A11: Rate limiting** — abuse protection
 
+## Upgrade Strategy
+
+APME upgrades are handled differently depending on the deployment target.
+
+### OpenShift (Helm Upgrade)
+
+APME is a subchart of the Portal Helm chart. `helm upgrade` updates both Portal and APME together.
+
+```
+helm upgrade portal ./ansible-portal-chart
+    │
+    ▼
+1. APME Engine pods updated (RollingUpdate)
+   - New validator containers with updated rules
+   - Sessions/cache PVCs preserved
+    │
+    ▼
+2. APME Gateway pods updated (RollingUpdate)
+   - Post-upgrade hook: POST /admin/db/migrate
+   - Alembic applies pending migrations to apme_* tables
+   - Zero downtime — old pods serve until new pods ready
+    │
+    ▼
+3. Portal pods updated with new APME plugin versions
+    │
+    ▼
+4. Rollback: helm rollback portal
+   (Alembic supports downgrade to target version)
+```
+
+**APME's responsibility during upgrade:**
+
+- Alembic migrations must be backward-compatible (additive schema changes)
+- `/admin/db/migrate` must be idempotent (safe to call multiple times)
+- `/admin/db/status` reports `needs_migration: true` when pending migrations exist
+- Health endpoint returns degraded status during migration
+
+### RHEL (bootc Upgrade)
+
+New bootc image contains updated APME container image pre-pulled.
+
+```
+sudo bootc upgrade && sudo systemctl reboot
+    │
+    ▼
+1. New bootc image activated — new APME container image in storage
+2. systemd starts: postgres → apme → portal
+3. portal-post-upgrade.service calls POST /admin/db/migrate
+4. Alembic applies pending migrations
+5. Rollback: sudo bootc rollback && reboot
+```
+
+**What's preserved across upgrades:**
+
+| Content | Preserved? |
+| --- | --- |
+| PostgreSQL data (apme\_\* tables) | Yes — `/var/lib/portal/` persists |
+| Session venvs | Yes — may need rebuild if ansible-core version changes |
+| Galaxy Proxy wheel cache | Yes — immutable, always valid |
+| App configuration | Yes — `/etc/portal/configs/` 3-way merged |
+| Quadlet drop-ins (secrets) | Yes — `/etc/containers/systemd/*.d/` |
+
 ## What Stays Unchanged
 
 - **CLI daemon mode** (`apme daemon start`) — uses SQLite, no Gateway changes needed
