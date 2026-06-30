@@ -18,9 +18,9 @@ from apme_engine.graph.rules.L110_debug_sensitive_vars_graph import (
     DebugSensitiveVarsGraphRule,
     _extract_jinja_vars,
     _find_sensitive_vars_in_debug,
-    _var_looks_sensitive,
 )
 from apme_engine.graph.scanner import scan
+from apme_engine.graph.sensitivity import var_looks_sensitive
 
 
 def _make_debug_graph(
@@ -156,64 +156,68 @@ class TestExtractJinjaVars:
 
 
 class TestVarLooksSensitive:
-    """Tests for _var_looks_sensitive helper."""
+    """Tests for var_looks_sensitive helper."""
 
     def test_password_variants(self) -> None:
         """Password variants are sensitive."""
-        assert _var_looks_sensitive("password")
-        assert _var_looks_sensitive("db_password")
-        assert _var_looks_sensitive("PASSWORD")
-        assert _var_looks_sensitive("passwd")
-        assert _var_looks_sensitive("user_pwd")
+        assert var_looks_sensitive("password")
+        assert var_looks_sensitive("db_password")
+        assert var_looks_sensitive("PASSWORD")
+        assert var_looks_sensitive("passwd")
+        assert var_looks_sensitive("user_pwd")
+        assert var_looks_sensitive("ansible_ssh_pass")
 
     def test_secret_variants(self) -> None:
         """Secret variants are sensitive."""
-        assert _var_looks_sensitive("secret")
-        assert _var_looks_sensitive("app_secret")
-        assert _var_looks_sensitive("secrets")
+        assert var_looks_sensitive("secret")
+        assert var_looks_sensitive("app_secret")
+        assert var_looks_sensitive("secrets")
 
     def test_token_variants(self) -> None:
         """Token variants are sensitive."""
-        assert _var_looks_sensitive("token")
-        assert _var_looks_sensitive("auth_token")
-        assert _var_looks_sensitive("access_token")
-        assert _var_looks_sensitive("api_token")
+        assert var_looks_sensitive("token")
+        assert var_looks_sensitive("auth_token")
+        assert var_looks_sensitive("access_token")
+        assert var_looks_sensitive("api_token")
 
     def test_api_key_variants(self) -> None:
         """API key variants are sensitive."""
-        assert _var_looks_sensitive("api_key")
-        assert _var_looks_sensitive("apikey")
+        assert var_looks_sensitive("api_key")
+        assert var_looks_sensitive("apikey")
 
     def test_credential_variants(self) -> None:
         """Credential variants are sensitive."""
-        assert _var_looks_sensitive("credential")
-        assert _var_looks_sensitive("credentials")
-        assert _var_looks_sensitive("db_cred")
+        assert var_looks_sensitive("credential")
+        assert var_looks_sensitive("credentials")
+        assert var_looks_sensitive("db_cred")
 
     def test_key_variants(self) -> None:
         """Key variants are sensitive."""
-        assert _var_looks_sensitive("private_key")
-        assert _var_looks_sensitive("ssh_key")
+        assert var_looks_sensitive("private_key")
+        assert var_looks_sensitive("ssh_key")
 
     def test_non_sensitive(self) -> None:
         """Non-sensitive names return False."""
-        assert not _var_looks_sensitive("username")
-        assert not _var_looks_sensitive("hostname")
-        assert not _var_looks_sensitive("port")
-        assert not _var_looks_sensitive("config")
+        assert not var_looks_sensitive("username")
+        assert not var_looks_sensitive("hostname")
+        assert not var_looks_sensitive("port")
+        assert not var_looks_sensitive("config")
 
     def test_false_positive_avoidance(self) -> None:
         """Substring matches that are not word-bounded are rejected."""
-        assert not _var_looks_sensitive("secretary_name")
-        assert not _var_looks_sensitive("tokenized_value")
-        assert not _var_looks_sensitive("accreditation")
-        assert not _var_looks_sensitive("passwords_enabled")
+        assert not var_looks_sensitive("secretary_name")
+        assert not var_looks_sensitive("tokenized_value")
+        assert not var_looks_sensitive("accreditation")
+        assert not var_looks_sensitive("passwords_enabled")
+        assert not var_looks_sensitive("pass_rate")
+        assert not var_looks_sensitive("pass_count")
+        assert not var_looks_sensitive("auth_method")
 
     def test_bracket_notation_credentials(self) -> None:
         """Bracket notation like credentials['token'] is sensitive."""
-        assert _var_looks_sensitive("credentials['token']")
-        assert _var_looks_sensitive('credentials["password"]')
-        assert _var_looks_sensitive("vault['secret']")
+        assert var_looks_sensitive("credentials['token']")
+        assert var_looks_sensitive('credentials["password"]')
+        assert var_looks_sensitive("vault['secret']")
 
 
 class TestFindSensitiveVarsInDebug:
@@ -575,13 +579,13 @@ class TestDebugSensitiveVarsGraphRule:
 
     def test_access_key_sensitive(self) -> None:
         """access_key is recognized as sensitive."""
-        assert _var_looks_sensitive("access_key")
-        assert _var_looks_sensitive("aws_access_key")
+        assert var_looks_sensitive("access_key")
+        assert var_looks_sensitive("aws_access_key")
 
     def test_client_key_sensitive(self) -> None:
         """client_key is recognized as sensitive."""
-        assert _var_looks_sensitive("client_key")
-        assert _var_looks_sensitive("ssl_client_key")
+        assert var_looks_sensitive("client_key")
+        assert var_looks_sensitive("ssl_client_key")
 
     def test_nested_var_extraction(self) -> None:
         """Extract nested vars from Jinja templates."""

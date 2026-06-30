@@ -2532,7 +2532,7 @@
         "type": "object"
       },
       "ViolationDetail": {
-        "description": "Violation row.\n\nAttributes:\n    id: Auto-increment ID.\n    rule_id: Rule identifier (e.g. L001).\n    level: Severity level string.\n    message: Human-readable description.\n    file: Relative file path.\n    line: Line number or None.\n    path: YAML path within the file.\n    remediation_class: Numeric remediation tier.\n    remediation_resolution: Numeric remediation resolution status.\n    scope: Numeric rule scope.\n    validator_source: Validator that produced this (native, opa, ansible, gitleaks).\n    original_yaml: Full node YAML as originally written.\n    fixed_yaml: Node YAML after transforms (fixed violations only).\n    co_fixes: Other rule IDs whose fixes are included in this node's diff.\n    node_line_start: File line where the node starts.\n    node_type: ContentGraph NodeType value (task, block, play, \u2026).\n    ai_reason: Why the AI could not fix this violation (ai_abstained only).\n    ai_suggestion: Manual remediation guidance from the AI (ai_abstained only).\n    suppressed: True if this violation matches an active suppression (ADR-055).\n    review_status: Human/gate decision (ADR-062); null if never reviewed.",
+        "description": "Violation row.\n\nAttributes:\n    id: Auto-increment ID.\n    rule_id: Rule identifier (e.g. L001).\n    level: Severity level string.\n    message: Human-readable description.\n    file: Relative file path.\n    line: Line number or None.\n    path: YAML path within the file.\n    remediation_class: Numeric remediation tier.\n    remediation_resolution: Numeric remediation resolution status.\n    scope: Numeric rule scope.\n    validator_source: Validator that produced this (native, opa, ansible, gitleaks).\n    original_yaml: Full node YAML as originally written.\n    fixed_yaml: Node YAML after transforms (fixed violations only).\n    co_fixes: Other rule IDs whose fixes are included in this node's diff.\n    node_line_start: File line where the node starts.\n    node_type: ContentGraph NodeType value (task, block, play, \u2026).\n    ai_reason: Why the AI could not fix this violation (ai_abstained only).\n    ai_suggestion: Manual remediation guidance from the AI (ai_abstained only).\n    audit_metadata: Parsed audit rule payloads when present.\n    suppressed: True if this violation matches an active suppression (ADR-055).\n    review_status: Human/gate decision (ADR-062); null if never reviewed.",
         "properties": {
           "ai_reason": {
             "default": "",
@@ -2543,6 +2543,18 @@
             "default": "",
             "title": "Ai Suggestion",
             "type": "string"
+          },
+          "audit_metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Audit Metadata"
           },
           "co_fixes": {
             "items": {

@@ -961,6 +961,123 @@ class TestGraphReportToViolations:
         assert violations[0]["line"] == 1
 
 
+    def test_audit_json_detail_keys_serialized(self) -> None:
+        """Audit rule payloads (variables_used, variable_set) survive conversion."""
+        import json
+
+        from apme_engine.daemon.violation_convert import violation_dict_to_proto, violation_proto_to_dict
+        from apme_engine.engine.models import RuleMetadata, YAMLValue
+        from apme_engine.graph.rule_base import GraphRuleResult
+        from apme_engine.graph.scanner import (
+            GraphNodeResult,
+            GraphScanReport,
+            graph_report_to_violations,
+        )
+
+        variables_used: list[YAMLValue] = [
+            cast(YAMLValue, {"name": "nginx_port", "source": "play", "task": "site.yml/plays[0]/tasks[0]"})
+        ]
+        variable_set: list[YAMLValue] = [cast(YAMLValue, {"name": "nginx_port", "value": "8080", "source": "play"})]
+        node = ContentNode(
+            identity=NodeIdentity(path="site.yml/plays[0]", node_type=NodeType.PLAY),
+            file_path="site.yml",
+            line_start=1,
+        )
+        report = GraphScanReport(
+            node_results=[
+                GraphNodeResult(
+                    node_id="site.yml/plays[0]",
+                    node=node,
+                    rule_results=[
+                        GraphRuleResult(
+                            rule=RuleMetadata(rule_id="R402", severity="info", scope="play"),
+                            verdict=True,
+                            detail={
+                                "message": "Play references 1 variable use(s) across tasks",
+                                "variables_used": variables_used,
+                            },
+                            node_id="site.yml/plays[0]",
+                            file=("site.yml", 1),
+                        ),
+                        GraphRuleResult(
+                            rule=RuleMetadata(rule_id="R404", severity="info", scope="task"),
+                            verdict=True,
+                            detail={
+                                "message": "Task has 1 variable(s) in scope",
+                                "variable_set": variable_set,
+                            },
+                            node_id="site.yml/plays[0]/tasks[0]",
+                            file=("site.yml", 5),
+                        ),
+                    ],
+                ),
+            ],
+        )
+        violations = graph_report_to_violations(report)
+        assert len(violations) == 2
+        r402 = next(v for v in violations if v["rule_id"] == "R402")
+        r404 = next(v for v in violations if v["rule_id"] == "R404")
+        assert json.loads(str(r402["variables_used"])) == variables_used
+        assert json.loads(str(r404["variable_set"])) == variable_set
+
+        proto = violation_dict_to_proto(r402)
+        assert json.loads(proto.metadata["variables_used"]) == variables_used
+        roundtrip = violation_proto_to_dict(proto)
+        assert isinstance(roundtrip["variables_used"], list)
+        assert roundtrip["variables_used"] == variables_used
+
+    def test_audit_json_skips_non_serializable_values(self) -> None:
+        """Non-serializable audit metadata is omitted instead of aborting conversion."""
+
+        class _NotSerializable:
+            def __str__(self) -> str:
+                msg = "cannot serialize"
+                raise TypeError(msg)
+
+        from apme_engine.engine.models import RuleMetadata, YAMLDict
+        from apme_engine.graph.rule_base import GraphRuleResult
+        from apme_engine.graph.scanner import (
+            GraphNodeResult,
+            GraphScanReport,
+            graph_report_to_violations,
+        )
+
+        node = ContentNode(
+            identity=NodeIdentity(path="site.yml/plays[0]/tasks[0]", node_type=NodeType.TASK),
+            file_path="site.yml",
+            line_start=5,
+        )
+        bad_value: object = _NotSerializable()
+        report = GraphScanReport(
+            node_results=[
+                GraphNodeResult(
+                    node_id=node.node_id,
+                    node=node,
+                    rule_results=[
+                        GraphRuleResult(
+                            rule=RuleMetadata(rule_id="R404", severity="info", scope="task"),
+                            verdict=True,
+                            detail=cast(
+                                YAMLDict,
+                                {
+                                    "message": "Task has 1 variable(s) in scope",
+                                    "variable_set": [
+                                        {"name": "bad", "value": bad_value, "source": "play"},
+                                    ],
+                                },
+                            ),
+                            node_id=node.node_id,
+                            file=("site.yml", 5),
+                        ),
+                    ],
+                ),
+            ],
+        )
+        violations = graph_report_to_violations(report)
+        assert len(violations) == 1
+        assert "variable_set" not in violations[0]
+
+
 # ---------------------------------------------------------------------------
 # GraphBuilder block structure integration (Issue #164)
 # ---------------------------------------------------------------------------

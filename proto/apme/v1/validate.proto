@@ -23,6 +23,7 @@ message ValidateRequest {
   string venv_path = 9;           // resolved venv path (set by Engine; validators use read-only)
   bytes content_graph_data = 10;  // JSON-serialized ContentGraph (ADR-044)
   repeated string dirty_node_ids = 11;  // hint for native validator: rescan only these nodes
+  repeated string graph_rule_opt_in = 12;  // disabled-by-default GraphRule IDs to enable (ADR-041)
 }
 
 message ValidateResponse {

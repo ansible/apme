@@ -88,14 +88,23 @@ def _collect_native_rules() -> list[reporting_pb2.RuleDefinition]:
     """Collect rules from the Native validator via ``load_graph_rules()``.
 
     Returns:
-        List of RuleDefinition protos for all enabled native rules.
+        List of RuleDefinition protos for all native rules, including
+        disabled-by-default audit rules registered with ``enabled=False``.
     """
     try:
-        from apme_engine.graph.scanner import load_graph_rules
+        from apme_engine.graph.scanner import (
+            DISABLED_BY_DEFAULT_GRAPH_RULE_IDS,
+            load_graph_rules,
+        )
 
         rules_dir = str(_GRAPH_RULES_DIR)
-        graph_rules = load_graph_rules(rules_dir=rules_dir)
+        graph_rules, _ = load_graph_rules(
+            rules_dir=rules_dir,
+            opt_in_rule_ids=sorted(DISABLED_BY_DEFAULT_GRAPH_RULE_IDS),
+            preserve_disabled_defaults=True,
+        )
         defs = []
+        loaded_ids = {gr.rule_id for gr in graph_rules}
         for gr in graph_rules:
             defs.append(
                 reporting_pb2.RuleDefinition(
@@ -113,6 +122,22 @@ def _collect_native_rules() -> list[reporting_pb2.RuleDefinition]:
                     ansible_core_version=get_version_spec_str(gr.rule_id),
                 )
             )
+        missing_disabled = DISABLED_BY_DEFAULT_GRAPH_RULE_IDS - loaded_ids
+        if missing_disabled:
+            for fm_def in _collect_from_frontmatter(_GRAPH_RULES_DIR, "native"):
+                if fm_def.rule_id in missing_disabled:
+                    defs.append(
+                        reporting_pb2.RuleDefinition(
+                            rule_id=fm_def.rule_id,
+                            default_severity=fm_def.default_severity,
+                            category=fm_def.category,
+                            source=fm_def.source,
+                            description=fm_def.description,
+                            scope=fm_def.scope,
+                            enabled=False,
+                            ansible_core_version=fm_def.ansible_core_version,
+                        )
+                    )
         logger.info("Collected %d native rules", len(defs))
         return defs
     except Exception:

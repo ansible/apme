@@ -164,6 +164,7 @@ class Violation(Base):
         ai_reason: Why the AI could not fix this violation (ai_abstained only).
         ai_suggestion: Manual remediation guidance from the AI (ai_abstained only).
         review_status: Human/gate decision (ADR-062); null if never reviewed.
+        audit_metadata: JSON blob for audit rule payloads (variables_used, etc.).
         scan: Back-reference to owning Scan.
     """
 
@@ -189,6 +190,7 @@ class Violation(Base):
     ai_reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
     ai_suggestion: Mapped[str] = mapped_column(Text, nullable=False, default="")
     review_status: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
+    audit_metadata: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
     scan: Mapped[Scan] = relationship(back_populates="violations")
 

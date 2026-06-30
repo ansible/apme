@@ -27,6 +27,7 @@ from apme_engine.engine.models import ViolationDict
 from apme_engine.graph.content_graph import ContentGraph
 from apme_engine.graph.rule_base import GraphRule
 from apme_engine.graph.scanner import (
+    expand_dirty_node_ids,
     graph_report_to_violations,
     rescan_dirty,
     scan,
@@ -792,6 +793,7 @@ class GraphRemediationEngine:
             Fresh violations from the rescan.
         """
         dirty = graph.dirty_nodes
+        effective_dirty = expand_dirty_node_ids(graph, self._rules, dirty)
         if self._rescan_fn is not None:
             new_violations = await self._rescan_fn(graph, dirty)
         else:
@@ -803,14 +805,14 @@ class GraphRemediationEngine:
             new_violations,
             pass_number=pass_num,
             phase="scanned",
-            dirty_node_ids=dirty,
+            dirty_node_ids=effective_dirty,
         )
 
         if resolve_fixed_by is not None:
             _resolve_dirty_violations(
                 graph,
                 new_violations,
-                dirty,
+                effective_dirty,
                 fixed_by=resolve_fixed_by,
                 pass_number=pass_num,
                 status=resolve_status,
