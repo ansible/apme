@@ -598,7 +598,7 @@ async def finalize_operation_scan(
             if scan is not None:
                 if clone_commit:
                     await q.update_project_commit(db, project_id, clone_commit)
-                linked = await q.link_scan_to_project(
+                await q.link_scan_to_project(
                     db,
                     scan_id,
                     project_id,
@@ -613,10 +613,8 @@ async def finalize_operation_scan(
                     ai_declined=ai_declined_count,
                     ai_accepted=ai_accepted_count,
                 )
-                stored_patches = False
                 if captured_patches and not scan.patches:
                     await q.store_patches(db, scan_id, captured_patches)
-                    stored_patches = True
                 await q.update_project_health(db, project_id)
                 return
 
