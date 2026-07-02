@@ -203,6 +203,43 @@ async def test_lookup_project_by_repo_url_not_found(client: AsyncClient) -> None
     assert resp.json()["detail"] == "Project not found"
 
 
+async def test_lookup_project_by_repo_url_and_branch(client: AsyncClient) -> None:
+    """GET /projects/lookup can disambiguate branches for the same repo URL.
+
+    Args:
+        client: Async HTTPX test client.
+    """
+    repo = "https://github.com/acme-scm/amazon.aws.git"
+    await _seed_project(
+        project_id="proj-main",
+        name="amazon-main",
+        repo_url=repo,
+        branch="main",
+    )
+    await _seed_project(
+        project_id="proj-backup",
+        name="amazon-backup",
+        repo_url=repo,
+        branch="backup",
+    )
+
+    main_resp = await client.get(
+        "/api/v1/projects/lookup",
+        params={"repo_url": repo, "branch": "main"},
+    )
+    assert main_resp.status_code == 200
+    assert main_resp.json()["id"] == "proj-main"
+    assert main_resp.json()["branch"] == "main"
+
+    backup_resp = await client.get(
+        "/api/v1/projects/lookup",
+        params={"repo_url": repo, "branch": "backup"},
+    )
+    assert backup_resp.status_code == 200
+    assert backup_resp.json()["id"] == "proj-backup"
+    assert backup_resp.json()["branch"] == "backup"
+
+
 async def test_get_project_not_found(client: AsyncClient) -> None:
     """Missing project returns 404.
 

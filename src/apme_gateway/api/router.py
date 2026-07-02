@@ -56,6 +56,9 @@ from apme_gateway.api.schemas import (
     PythonPackageProjectRef,
     PythonPackageRefSchema,
     PythonPackageSummary,
+    RecordPullRequestRequest,
+    RemediationBundleFile,
+    RemediationBundleResponse,
     RemediationRateEntry,
     SessionDetail,
     SessionSummary,
@@ -450,6 +453,7 @@ async def create_project(body: CreateProjectRequest) -> ProjectSummary:
 @router.get("/projects/lookup")  # type: ignore[untyped-decorator]
 async def lookup_project_by_repo_url(
     repo_url: str = Query(..., min_length=1),
+    branch: str | None = Query(default=None, min_length=1),
 ) -> ProjectDetail:
     """Resolve a project by normalized SCM clone URL.
 
@@ -458,6 +462,8 @@ async def lookup_project_by_repo_url(
 
     Args:
         repo_url: HTTPS clone URL (with or without ``.git`` suffix).
+        branch: Optional branch name. When provided, both URL and branch must
+            match (required when one repo is registered per branch).
 
     Returns:
         Full project detail for the matching project.
@@ -466,10 +472,11 @@ async def lookup_project_by_repo_url(
         HTTPException: 404 when no project matches the normalized URL.
     """
     async with get_session() as db:
-        proj = await q.find_project_by_repo_url(db, repo_url)
+        proj = await q.find_project_by_repo_url(db, repo_url, branch=branch)
         if proj is None:
             raise HTTPException(status_code=404, detail="Project not found")
-    return await get_project_detail(proj.id)
+        project_id = proj.id
+    return cast(ProjectDetail, await get_project_detail(project_id))
 
 
 @router.get("/projects")  # type: ignore[untyped-decorator]
