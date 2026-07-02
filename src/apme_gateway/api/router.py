@@ -2329,7 +2329,7 @@ async def project_operate_ws(
                     remediate=True,
                     ansible_version=str(options.get("ansible_version", "")),
                     collection_specs=specs,
-                    enable_ai=bool(options.get("enable_ai", True)),
+                    enable_ai=bool(options.get("enable_ai", False)),
                     ai_model=str(options.get("ai_model", "")),
                     progress_callback=_progress_cb,
                     approval_queue=approval_queue,
