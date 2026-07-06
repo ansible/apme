@@ -146,9 +146,9 @@ Response:
 When `create_pr` is `false`, `pr_url` is `null`.
 
 Error responses:
-- `404` — operation not found, not completed, or has no patched files
-- `409` — PR already created for this operation (idempotency guard), or
-  operation is not a completed remediation
+- `404` — operation/activity not found, project not found, or no patched files
+- `409` — PR already created (idempotency guard), operation not completed,
+  operation is not a remediate scan, or no patches available
 - `422` — no SCM token configured (project or global), or SCM provider
   cannot be detected
 - `502` — SCM provider API error (upstream failure)

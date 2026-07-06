@@ -278,6 +278,12 @@ async def submit_operation(
                 detail="Activity does not belong to this project",
             )
 
+        if body.activity_id and scan.scan_type != "remediate":
+            raise HTTPException(
+                status_code=409,
+                detail="Submit requires a remediate activity",
+            )
+
         if scan.pr_url:
             if state:
                 get_operation_registry().set_pr_url(state.operation_id, scan.pr_url)
@@ -388,7 +394,7 @@ async def submit_operation(
     elif state:
         get_operation_registry().transition(
             state.operation_id,
-            OperationStatus.PR_SUBMITTED,
+            OperationStatus.COMPLETED,
         )
 
     return SubmitResponse(

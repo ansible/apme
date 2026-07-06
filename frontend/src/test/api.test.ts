@@ -217,6 +217,23 @@ describe("api service", () => {
     );
   });
 
-  // ADR-050 Pull Request API tests removed — PR creation moved to
-  // POST /projects/{id}/operation/submit via useProjectOperationActions
+  it("submitActivity posts activity_id to /operation/submit", async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse({
+      branch_name: "apme/remediate-abc12345",
+      commit_sha: "deadbeef",
+      pr_url: "https://github.com/org/repo/pull/1",
+      provider: "github",
+    }));
+    const { submitActivity } = await import("../services/api");
+    const result = await submitActivity("proj-1", "act-42");
+    expect(result.branch_name).toBe("apme/remediate-abc12345");
+    expect(result.pr_url).toBe("https://github.com/org/repo/pull/1");
+    expect(mockFetch).toHaveBeenCalledWith(
+      "/api/v1/projects/proj-1/operation/submit",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ activity_id: "act-42" }),
+      }),
+    );
+  });
 });

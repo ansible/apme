@@ -691,6 +691,58 @@ class TestSubmitEndpoint:
         assert resp.status_code == 404
         assert "No patched files" in resp.json()["detail"]
 
+    async def test_activity_id_check_scan_rejected(self, client: AsyncClient) -> None:
+        """Reject activity_id that references a check scan (not remediate).
+
+        Args:
+            client: Async test client.
+        """
+        async with get_session() as db:
+            db.add(
+                Project(
+                    id="proj-1",
+                    name="test-project",
+                    repo_url="https://github.com/org/repo.git",
+                    branch="main",
+                    created_at="2026-01-01T00:00:00Z",
+                    scm_token="ghp_test",
+                )
+            )
+            db.add(
+                Session(
+                    session_id="sess-1",
+                    project_path="/proj",
+                    first_seen="t0",
+                    last_seen="t1",
+                )
+            )
+            db.add(
+                Scan(
+                    scan_id="scan-check",
+                    session_id="sess-1",
+                    project_id="proj-1",
+                    project_path="/proj",
+                    source="gateway",
+                    created_at="2026-01-01T00:00:00Z",
+                    scan_type="check",
+                    total_violations=5,
+                    auto_fixable=3,
+                )
+            )
+            await db.commit()
+
+        with patch("apme_gateway.config.load_config") as mock_cfg:
+            mock_cfg.return_value.scm_token = ""
+            mock_cfg.return_value.github_api_url = "https://api.github.com"
+
+            resp = await client.post(
+                "/api/v1/projects/proj-1/operation/submit",
+                json={"activity_id": "scan-check"},
+            )
+
+        assert resp.status_code == 409
+        assert "remediate" in resp.json()["detail"]
+
     async def test_activity_id_pr_already_exists(self, client: AsyncClient) -> None:
         """Reject when activity already has a PR URL.
 
