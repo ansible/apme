@@ -18,7 +18,7 @@ import {
   FlexItem,
 } from '@patternfly/react-core';
 import { ExternalLinkAltIcon } from '@patternfly/react-icons';
-import { createPullRequest, createSuppression, deleteActivity, getActivity } from '../services/api';
+import { createSuppression, deleteActivity, getActivity, submitActivity } from '../services/api';
 import { useFeedbackEnabled } from '../hooks/useFeedbackEnabled';
 import type { ActivityDetail, ViolationDetail } from '../types/api';
 
@@ -152,12 +152,14 @@ export function ActivityDetailPage() {
   };
 
   const handleCreatePR = async () => {
-    if (!activityId) return;
+    if (!activityId || !detail?.project_id) return;
     setPrCreating(true);
     setPrError(null);
     try {
-      const result = await createPullRequest(activityId);
-      setDetail((prev) => prev ? { ...prev, pr_url: result.pr_url } : prev);
+      const result = await submitActivity(detail.project_id, activityId);
+      if (result.pr_url) {
+        setDetail((prev) => prev ? { ...prev, pr_url: result.pr_url } : prev);
+      }
     } catch (err) {
       setPrError(err instanceof Error ? err.message : 'Failed to create pull request');
     } finally {
@@ -190,7 +192,7 @@ export function ActivityDetailPage() {
   };
 
   const isRemediate = detail.scan_type === 'fix' || detail.scan_type === 'remediate';
-  const canCreatePR = isRemediate && detail.patches.length > 0 && !detail.pr_url;
+  const canCreatePR = isRemediate && detail.patches.length > 0 && !detail.pr_url && !!detail.project_id;
 
   return (
     <PageLayout>

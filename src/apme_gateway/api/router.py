@@ -14,7 +14,7 @@ import contextlib
 import logging
 import os
 import uuid
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator
 from typing import cast
 
 from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
@@ -37,8 +37,6 @@ from apme_gateway.api.schemas import (
     ComponentHealth,
     CreateGalaxyServerRequest,
     CreateProjectRequest,
-    CreatePullRequestRequest,
-    CreatePullRequestResponse,
     CreateSuppressionRequest,
     DashboardSummary,
     DepHealthSummary,
@@ -70,7 +68,7 @@ from apme_gateway.api.schemas import (
 )
 from apme_gateway.db import get_session
 from apme_gateway.db import queries as q
-from apme_gateway.db.models import GalaxyServer, PatchedFile, Project, Rule, RuleOverride, Scan, ScanManifest
+from apme_gateway.db.models import GalaxyServer, Project, Rule, RuleOverride, Scan, ScanManifest
 
 logger = logging.getLogger(__name__)
 
@@ -1497,162 +1495,6 @@ async def delete_activity(activity_id: str) -> None:
         deleted = await q.delete_scan(db, activity_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Activity not found")
-
-
-@router.post("/activity/{activity_id}/pull-request")  # type: ignore[untyped-decorator]
-async def create_pull_request(
-    activity_id: str,
-    body: CreatePullRequestRequest | None = None,
-) -> CreatePullRequestResponse:
-    """Create a pull request from a remediation activity's patched files (ADR-050).
-
-    Resolves the SCM token (project → global fallback), determines the
-    provider, creates a branch, pushes patched files, and opens a PR.
-
-    Args:
-        activity_id: UUID of the remediation activity (``scans.scan_id``).
-        body: Optional PR customisation (branch name, title, body).
-
-    Returns:
-        PR URL and metadata.
-
-    Raises:
-        HTTPException: 404/409/422/502 depending on the failure mode.
-    """
-    from apme_gateway.config import load_config
-    from apme_gateway.scm import detect_provider, get_provider
-
-    if body is None:
-        body = CreatePullRequestRequest()
-
-    cfg = load_config()
-
-    async with get_session() as db:
-        scan = await q.get_scan(db, activity_id)
-        if scan is None:
-            raise HTTPException(status_code=404, detail="Activity not found")
-
-        if scan.pr_url:
-            raise HTTPException(
-                status_code=409,
-                detail=f"PR already created for this activity: {scan.pr_url}",
-            )
-
-        if scan.project_id is None:
-            raise HTTPException(
-                status_code=404,
-                detail="Activity is not linked to a project",
-            )
-
-        project = await q.get_project(db, scan.project_id)
-        if project is None:
-            raise HTTPException(status_code=404, detail="Associated project not found")
-
-        patched = await q.get_patched_files(db, activity_id)
-        if not patched:
-            raise HTTPException(
-                status_code=404,
-                detail="No patched files found for this activity",
-            )
-
-    # Token priority: inline request > project config > global env
-    # Strip whitespace to prevent whitespace-only tokens overriding valid fallbacks
-    inline_token = body.scm_token.strip() if body.scm_token else None
-    token = inline_token or project.scm_token or cfg.scm_token
-    if not token:
-        raise HTTPException(
-            status_code=422,
-            detail="No SCM token configured (set project scm_token or APME_SCM_TOKEN)",
-        )
-
-    provider_type = project.scm_provider or detect_provider(project.repo_url)
-    if not provider_type:
-        raise HTTPException(
-            status_code=422,
-            detail=f"Cannot detect SCM provider from URL: {project.repo_url}",
-        )
-
-    api_base = cfg.github_api_url if provider_type == "github" else None
-    try:
-        provider = get_provider(provider_type, api_base_url=api_base)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-    short_id = activity_id[:8]
-    branch_name = body.branch_name or f"apme/remediate-{short_id}"
-    pr_title = body.title or f"fix: APME remediation — {scan.fixed_count} findings resolved"
-    pr_body = body.body or _build_pr_body(scan, patched)
-
-    try:
-        await provider.create_branch(project.repo_url, project.branch, branch_name, token)
-        files = {pf.path: pf.content for pf in patched}
-        await provider.push_files(
-            project.repo_url,
-            branch_name,
-            files,
-            pr_title,
-            token,
-        )
-        result = await provider.create_pull_request(
-            project.repo_url,
-            project.branch,
-            branch_name,
-            pr_title,
-            pr_body,
-            token,
-        )
-    except Exception as exc:
-        logger.exception("SCM provider error creating PR for activity %s", activity_id)
-        raise HTTPException(
-            status_code=502,
-            detail="SCM provider error while creating pull request",
-        ) from exc
-
-    async with get_session() as db:
-        updated = await q.set_scan_pr_url(db, activity_id, result.pr_url)
-        if not updated:
-            raise HTTPException(
-                status_code=409,
-                detail="PR was already created for this activity (concurrent request)",
-            )
-
-    return CreatePullRequestResponse(
-        pr_url=result.pr_url,
-        branch_name=result.branch_name,
-        provider=result.provider,
-    )
-
-
-def _build_pr_body(scan: Scan, patched_files: Sequence[PatchedFile]) -> str:
-    """Generate a Markdown PR body from activity data (ADR-050).
-
-    Args:
-        scan: The Scan ORM row.
-        patched_files: PatchedFile rows for this activity.
-
-    Returns:
-        Markdown string.
-    """
-    lines: list[str] = [
-        "## APME Automated Remediation",
-        "",
-        f"**Findings resolved:** {scan.fixed_count}",
-        f"**Total violations (before):** {scan.total_violations}",
-        f"**Scan type:** {scan.scan_type}",
-        "",
-        "### Files modified",
-        "",
-    ]
-    for pf in patched_files:
-        lines.append(f"- `{pf.path}`")
-    lines.extend(
-        [
-            "",
-            "---",
-            "*This PR was auto-generated by [APME](https://github.com/ansible/apme).*",
-        ]
-    )
-    return "\n".join(lines)
 
 
 @router.get("/violations/top")  # type: ignore[untyped-decorator]

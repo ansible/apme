@@ -217,41 +217,6 @@ describe("api service", () => {
     );
   });
 
-  // ADR-050 Pull Request API tests
-
-  it("createPullRequest calls POST with correct path and body", async () => {
-    mockFetch.mockReturnValueOnce(jsonResponse({
-      pr_url: "https://github.com/org/repo/pull/42",
-      branch_name: "apme/remediate-abc",
-      provider: "github",
-    }));
-    const { createPullRequest } = await import("../services/api");
-    const result = await createPullRequest("scan-123", { title: "Fix issues" });
-    expect(result.pr_url).toBe("https://github.com/org/repo/pull/42");
-    expect(result.provider).toBe("github");
-    expect(mockFetch).toHaveBeenCalledWith(
-      "/api/v1/activity/scan-123/pull-request",
-      expect.objectContaining({
-        method: "POST",
-        headers: expect.objectContaining({ "Content-Type": "application/json" }),
-      }),
-    );
-  });
-
-  it("createPullRequest sends empty body when no options provided", async () => {
-    mockFetch.mockReturnValueOnce(jsonResponse({
-      pr_url: "https://github.com/org/repo/pull/1",
-      branch_name: "apme/remediate-xyz",
-      provider: "github",
-    }));
-    const { createPullRequest } = await import("../services/api");
-    await createPullRequest("scan-456");
-    expect(mockFetch).toHaveBeenCalledWith(
-      "/api/v1/activity/scan-456/pull-request",
-      expect.objectContaining({
-        method: "POST",
-        body: "{}",
-      }),
-    );
-  });
+  // ADR-050 Pull Request API tests removed — PR creation moved to
+  // POST /projects/{id}/operation/submit via useProjectOperationActions
 });

@@ -2,11 +2,11 @@
 
 ## Status
 
-Proposed
+Accepted
 
 ## Date
 
-2026-04-07
+2026-04-07 (revised 2026-07-06)
 
 ## Context
 
@@ -93,41 +93,79 @@ SECURITY.md.
 
 ### 3. REST API
 
+A single unified endpoint handles both push-only and push-and-PR workflows:
+
 ```
-POST /api/v1/activity/{activity_id}/pull-request
+POST /api/v1/projects/{project_id}/operation/submit
 ```
 
 Request body:
 
 ```json
 {
+  "activity_id": null,
   "branch_name": "apme/remediate-2026-04-07",
+  "create_pr": true,
   "title": "fix: APME automated remediation",
-  "body": "Auto-generated PR with APME remediation results.\n\n..."
+  "body": "Auto-generated PR with APME remediation results.\n\n...",
+  "scm_token": null
 }
 ```
 
 All fields are optional — the Gateway generates sensible defaults:
+- `activity_id`: when provided, loads patched files from the database
+  (historical scan); when omitted, uses the live in-memory operation
 - `branch_name`: `apme/remediate-{short_scan_id}`
+- `create_pr`: `true` (default — creates a PR after pushing)
 - `title`: `fix: APME remediation — {fixed_count} findings resolved`
 - `body`: Markdown summary with violation counts, what was fixed, and a link
   back to the activity detail in the APME UI
+
+**Two state sources:** The endpoint supports both live operations (from the
+in-memory `OperationRegistry`) and historical activities (from the database).
+This is critical for scheduled/CI-triggered scans where no user is present at
+the operation panel — the patched files persist in the database and can be
+submitted to SCM at any later time.
+
+When `create_pr` is `false`, the endpoint creates the branch and pushes
+patched files but does **not** open a pull request. This supports workflows
+where teams use branch-based policies, CI triggers, or prefer to open PRs
+manually.
 
 Response:
 
 ```json
 {
-  "pr_url": "https://github.com/org/repo/pull/42",
   "branch_name": "apme/remediate-abc123",
+  "commit_sha": "a1b2c3d4e5f6",
+  "pr_url": "https://github.com/org/repo/pull/42",
   "provider": "github"
 }
 ```
 
+When `create_pr` is `false`, `pr_url` is `null`.
+
 Error responses:
-- `404` — activity not found or has no patched files
-- `409` — PR already created for this activity (idempotency guard)
-- `422` — no SCM token configured (project or global)
+- `404` — operation not found, not completed, or has no patched files
+- `409` — PR already created for this operation (idempotency guard), or
+  operation is not a completed remediation
+- `422` — no SCM token configured (project or global), or SCM provider
+  cannot be detected
 - `502` — SCM provider API error (upstream failure)
+
+#### Superseded endpoints
+
+The following endpoints are **removed** in favour of the unified
+`/operation/submit`:
+
+- `POST /api/v1/activity/{activity_id}/pull-request` — original per-activity
+  PR creation (ADR-050 initial design)
+- `POST /api/v1/projects/{project_id}/operation/create-pr` — duplicate
+  per-operation PR creation (ADR-052)
+
+Both lacked the `create_pr` flag and duplicated SCM logic. The unified
+endpoint consolidates them under the project operation model (ADR-052) with
+a single SCM code path.
 
 ### 4. Workflow
 
@@ -141,23 +179,24 @@ Gateway runs FixSession → SessionResult with patched files
 Gateway persists activity record (patched files stored in DB)
         │
         ▼
-User reviews results in Activity Detail page
+User reviews results in Operation panel
         │
         ▼
-User clicks "Create PR"
+User clicks "Create PR" (or "Push Branch" if create_pr=false)
         │
         ▼
 Gateway:
-  1. Resolve SCM token (project → global fallback)
+  1. Resolve SCM token (inline → project → global fallback)
   2. Determine SCM provider from repo_url
   3. Create branch from project's default branch
   4. Push patched files to the new branch
-  5. Create PR against default branch
-  6. Store PR URL in activity record
-  7. Return PR URL to UI
+  5. If create_pr=true: create PR against default branch
+  6. Store PR URL (if created) in scan record
+  7. Transition operation to PR_SUBMITTED
+  8. Return branch_name, commit_sha, pr_url to UI
         │
         ▼
-UI shows PR link — user reviews and merges in SCM
+UI shows PR link (or branch link) — user reviews in SCM
 ```
 
 ### 5. Patched File Storage
@@ -357,3 +396,4 @@ globally via `APME_GITHUB_API_URL`.
 | Date | Author | Change |
 |------|--------|--------|
 | 2026-04-07 | AI Agent | Initial proposal |
+| 2026-07-06 | AI Agent | Consolidated to unified `/operation/submit` endpoint with `create_pr` flag; removed `POST /activity/{id}/pull-request` and `POST /operation/create-pr`; status → Accepted |

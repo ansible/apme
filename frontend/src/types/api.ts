@@ -182,17 +182,21 @@ export interface UpdateProjectRequest {
   scm_provider?: string;
 }
 
-// ── PR creation types (ADR-050) ──────────────────────────────────────
+// ── SCM submit types (ADR-050) ───────────────────────────────────────
 
-export interface CreatePullRequestRequest {
+export interface SubmitRequest {
+  activity_id?: string;
   branch_name?: string;
+  create_pr?: boolean;
   title?: string;
   body?: string;
+  scm_token?: string;
 }
 
-export interface CreatePullRequestResponse {
-  pr_url: string;
+export interface SubmitResponse {
   branch_name: string;
+  commit_sha: string;
+  pr_url: string | null;
   provider: string;
 }
 

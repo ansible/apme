@@ -1,4 +1,4 @@
-"""Unit tests for the post-remediation PR creation feature (ADR-050)."""
+"""Unit tests for the SCM integration feature (ADR-050)."""
 
 from __future__ import annotations
 
@@ -13,6 +13,8 @@ from httpx import ASGITransport, AsyncClient
 from apme_gateway.app import create_app
 from apme_gateway.db import close_db, get_session, init_db
 from apme_gateway.db.models import PatchedFile, Project, Scan, Session
+from apme_gateway.operation_registry import get_operation_registry
+from apme_gateway.operation_types import OperationResult, OperationStatus
 from apme_gateway.scm.base import PullRequestResult, detect_provider
 from apme_gateway.scm.github import GitHubProvider, _custom_ca_bundle, _http_verify, _parse_owner_repo
 from apme_gateway.scm.registry import get_provider
@@ -20,7 +22,7 @@ from apme_gateway.scm.registry import get_provider
 
 @pytest.fixture(autouse=True)  # type: ignore[untyped-decorator]
 async def _db(tmp_path: Path) -> AsyncIterator[None]:
-    """Initialise a fresh DB per test.
+    """Initialise a fresh DB and clear operation registry per test.
 
     Args:
         tmp_path: Pytest-provided temporary directory.
@@ -30,6 +32,8 @@ async def _db(tmp_path: Path) -> AsyncIterator[None]:
     """
     await init_db(str(tmp_path / "test.db"))
     yield
+    registry = get_operation_registry()
+    await registry.shutdown()
     await close_db()
 
 
@@ -368,16 +372,49 @@ _MOCK_PR_RESULT = PullRequestResult(
 )
 
 
-class TestCreatePullRequestEndpoint:
-    """Tests for POST /api/v1/activity/{id}/pull-request."""
+def _setup_completed_operation(
+    *,
+    project_id: str = "proj-1",
+    scan_id: str = "scan-1",
+    scan_type: str = "remediate",
+    patches: list[dict[str, str]] | None = None,
+) -> None:
+    """Register a completed remediation operation in the registry.
 
-    async def test_success(self, client: AsyncClient) -> None:
-        """Successful PR creation returns URL and updates scan.
+    Args:
+        project_id: Project UUID.
+        scan_id: Scan UUID.
+        scan_type: Operation type.
+        patches: Patch diffs to include in the result.
+    """
+    registry = get_operation_registry()
+    state = registry.create(
+        operation_id=f"op-{scan_id}",
+        project_id=project_id,
+        scan_id=scan_id,
+        scan_type=scan_type,
+    )
+    registry.transition(state.operation_id, OperationStatus.SCANNING)
+    result = OperationResult(
+        total_violations=5,
+        fixable=3,
+        remediated_count=3,
+        patches=patches or [{"file": "playbooks/main.yml", "diff": "--- a\n+++ b"}],
+    )
+    registry.set_result(state.operation_id, result)
+
+
+class TestSubmitEndpoint:
+    """Tests for POST /api/v1/projects/{id}/operation/submit."""
+
+    async def test_success_with_pr(self, client: AsyncClient) -> None:
+        """Successful submit with create_pr=true returns PR URL.
 
         Args:
             client: Async test client.
         """
         await _seed_project_with_remediation(scm_token="ghp_test123")
+        _setup_completed_operation()
 
         with (
             patch("apme_gateway.scm.get_provider") as mock_get,
@@ -385,58 +422,94 @@ class TestCreatePullRequestEndpoint:
         ):
             mock_provider = AsyncMock()
             mock_provider.create_branch = AsyncMock()
-            mock_provider.push_files = AsyncMock(return_value="abc123")
+            mock_provider.push_files = AsyncMock(return_value="abc123def")
             mock_provider.create_pull_request = AsyncMock(return_value=_MOCK_PR_RESULT)
             mock_get.return_value = mock_provider
             mock_cfg.return_value.scm_token = ""
             mock_cfg.return_value.github_api_url = "https://api.github.com"
 
-            resp = await client.post("/api/v1/activity/scan-1/pull-request")
+            resp = await client.post("/api/v1/projects/proj-1/operation/submit")
 
         assert resp.status_code == 200
         data = resp.json()
         assert data["pr_url"] == "https://github.com/org/repo/pull/99"
+        assert data["commit_sha"] == "abc123def"
         assert data["provider"] == "github"
+        assert data["branch_name"].startswith("apme/remediate-")
 
-        detail = await client.get("/api/v1/activity/scan-1")
-        assert detail.json()["pr_url"] == "https://github.com/org/repo/pull/99"
-
-    async def test_activity_not_found(self, client: AsyncClient) -> None:
-        """Return 404 for nonexistent activity.
+    async def test_push_only_without_pr(self, client: AsyncClient) -> None:
+        """Submit with create_pr=false pushes but does not open a PR.
 
         Args:
             client: Async test client.
         """
-        resp = await client.post("/api/v1/activity/nonexistent/pull-request")
+        await _seed_project_with_remediation(scm_token="ghp_test123")
+        _setup_completed_operation()
+
+        with (
+            patch("apme_gateway.scm.get_provider") as mock_get,
+            patch("apme_gateway.config.load_config") as mock_cfg,
+        ):
+            mock_provider = AsyncMock()
+            mock_provider.create_branch = AsyncMock()
+            mock_provider.push_files = AsyncMock(return_value="deadbeef")
+            mock_get.return_value = mock_provider
+            mock_cfg.return_value.scm_token = ""
+            mock_cfg.return_value.github_api_url = "https://api.github.com"
+
+            resp = await client.post(
+                "/api/v1/projects/proj-1/operation/submit",
+                json={"create_pr": False},
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["pr_url"] is None
+        assert data["commit_sha"] == "deadbeef"
+        mock_provider.create_pull_request.assert_not_called()
+
+    async def test_no_operation(self, client: AsyncClient) -> None:
+        """Return 404 when no operation exists for the project.
+
+        Args:
+            client: Async test client.
+        """
+        await _seed_project_with_remediation(scm_token="ghp_test")
+        resp = await client.post("/api/v1/projects/proj-1/operation/submit")
         assert resp.status_code == 404
 
-    async def test_pr_already_created(self, client: AsyncClient) -> None:
-        """Return 409 if a PR was already created.
+    async def test_operation_not_completed(self, client: AsyncClient) -> None:
+        """Return 409 when operation is not in completed state.
 
         Args:
             client: Async test client.
         """
-        await _seed_project_with_remediation(
-            scm_token="ghp_test",
-            pr_url="https://github.com/org/repo/pull/1",
+        await _seed_project_with_remediation(scm_token="ghp_test")
+        registry = get_operation_registry()
+        registry.create(
+            operation_id="op-running",
+            project_id="proj-1",
+            scan_id="scan-1",
+            scan_type="remediate",
         )
-        resp = await client.post("/api/v1/activity/scan-1/pull-request")
+        registry.transition("op-running", OperationStatus.SCANNING)
+
+        resp = await client.post("/api/v1/projects/proj-1/operation/submit")
         assert resp.status_code == 409
-        assert "already created" in resp.json()["detail"]
+        assert "not 'completed'" in resp.json()["detail"]
 
-    async def test_no_patched_files(self, client: AsyncClient) -> None:
-        """Return 404 when activity has no patched files.
+    async def test_check_operation_rejected(self, client: AsyncClient) -> None:
+        """Return 409 when operation is a check, not remediate.
 
         Args:
             client: Async test client.
         """
-        await _seed_project_with_remediation(
-            scm_token="ghp_test",
-            add_patched_files=False,
-        )
-        resp = await client.post("/api/v1/activity/scan-1/pull-request")
-        assert resp.status_code == 404
-        assert "No patched files" in resp.json()["detail"]
+        await _seed_project_with_remediation(scm_token="ghp_test")
+        _setup_completed_operation(scan_type="check")
+
+        resp = await client.post("/api/v1/projects/proj-1/operation/submit")
+        assert resp.status_code == 409
+        assert "remediate" in resp.json()["detail"]
 
     async def test_no_scm_token(self, client: AsyncClient) -> None:
         """Return 422 when no SCM token is configured.
@@ -445,12 +518,13 @@ class TestCreatePullRequestEndpoint:
             client: Async test client.
         """
         await _seed_project_with_remediation()
+        _setup_completed_operation()
 
         with patch("apme_gateway.config.load_config") as mock_cfg:
             mock_cfg.return_value.scm_token = ""
             mock_cfg.return_value.github_api_url = "https://api.github.com"
 
-            resp = await client.post("/api/v1/activity/scan-1/pull-request")
+            resp = await client.post("/api/v1/projects/proj-1/operation/submit")
 
         assert resp.status_code == 422
         assert "No SCM token" in resp.json()["detail"]
@@ -462,6 +536,7 @@ class TestCreatePullRequestEndpoint:
             client: Async test client.
         """
         await _seed_project_with_remediation()
+        _setup_completed_operation()
 
         with (
             patch("apme_gateway.scm.get_provider") as mock_get,
@@ -475,7 +550,7 @@ class TestCreatePullRequestEndpoint:
             mock_cfg.return_value.scm_token = "ghp_global_token"
             mock_cfg.return_value.github_api_url = "https://api.github.com"
 
-            resp = await client.post("/api/v1/activity/scan-1/pull-request")
+            resp = await client.post("/api/v1/projects/proj-1/operation/submit")
 
         assert resp.status_code == 200
 
@@ -486,6 +561,7 @@ class TestCreatePullRequestEndpoint:
             client: Async test client.
         """
         await _seed_project_with_remediation(scm_token="ghp_test")
+        _setup_completed_operation()
 
         with (
             patch("apme_gateway.scm.get_provider") as mock_get,
@@ -506,7 +582,7 @@ class TestCreatePullRequestEndpoint:
             mock_cfg.return_value.github_api_url = "https://api.github.com"
 
             resp = await client.post(
-                "/api/v1/activity/scan-1/pull-request",
+                "/api/v1/projects/proj-1/operation/submit",
                 json={
                     "branch_name": "custom/branch",
                     "title": "Custom title",
@@ -525,6 +601,7 @@ class TestCreatePullRequestEndpoint:
             client: Async test client.
         """
         await _seed_project_with_remediation(scm_token="ghp_test")
+        _setup_completed_operation()
 
         with (
             patch("apme_gateway.scm.get_provider") as mock_get,
@@ -536,10 +613,106 @@ class TestCreatePullRequestEndpoint:
             mock_cfg.return_value.scm_token = ""
             mock_cfg.return_value.github_api_url = "https://api.github.com"
 
-            resp = await client.post("/api/v1/activity/scan-1/pull-request")
+            resp = await client.post("/api/v1/projects/proj-1/operation/submit")
 
         assert resp.status_code == 502
         assert "SCM provider error" in resp.json()["detail"]
+
+    async def test_activity_id_from_db(self, client: AsyncClient) -> None:
+        """Submit with activity_id loads patched files from DB.
+
+        Args:
+            client: Async test client.
+        """
+        await _seed_project_with_remediation(scm_token="ghp_test123")
+
+        with (
+            patch("apme_gateway.scm.get_provider") as mock_get,
+            patch("apme_gateway.config.load_config") as mock_cfg,
+        ):
+            mock_provider = AsyncMock()
+            mock_provider.create_branch = AsyncMock()
+            mock_provider.push_files = AsyncMock(return_value="db_commit_sha")
+            mock_provider.create_pull_request = AsyncMock(return_value=_MOCK_PR_RESULT)
+            mock_get.return_value = mock_provider
+            mock_cfg.return_value.scm_token = ""
+            mock_cfg.return_value.github_api_url = "https://api.github.com"
+
+            resp = await client.post(
+                "/api/v1/projects/proj-1/operation/submit",
+                json={"activity_id": "scan-1"},
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["pr_url"] == "https://github.com/org/repo/pull/99"
+        assert data["commit_sha"] == "db_commit_sha"
+
+    async def test_activity_id_wrong_project(self, client: AsyncClient) -> None:
+        """Reject activity_id that does not belong to the project.
+
+        Args:
+            client: Async test client.
+        """
+        await _seed_project_with_remediation(scm_token="ghp_test")
+
+        with patch("apme_gateway.config.load_config") as mock_cfg:
+            mock_cfg.return_value.scm_token = ""
+            mock_cfg.return_value.github_api_url = "https://api.github.com"
+
+            resp = await client.post(
+                "/api/v1/projects/wrong-project/operation/submit",
+                json={"activity_id": "scan-1"},
+            )
+
+        assert resp.status_code == 404
+        assert "does not belong" in resp.json()["detail"]
+
+    async def test_activity_id_no_patched_files(self, client: AsyncClient) -> None:
+        """Reject activity_id when no patched files exist in DB.
+
+        Args:
+            client: Async test client.
+        """
+        await _seed_project_with_remediation(
+            scm_token="ghp_test",
+            add_patched_files=False,
+        )
+
+        with patch("apme_gateway.config.load_config") as mock_cfg:
+            mock_cfg.return_value.scm_token = ""
+            mock_cfg.return_value.github_api_url = "https://api.github.com"
+
+            resp = await client.post(
+                "/api/v1/projects/proj-1/operation/submit",
+                json={"activity_id": "scan-1"},
+            )
+
+        assert resp.status_code == 404
+        assert "No patched files" in resp.json()["detail"]
+
+    async def test_activity_id_pr_already_exists(self, client: AsyncClient) -> None:
+        """Reject when activity already has a PR URL.
+
+        Args:
+            client: Async test client.
+        """
+        await _seed_project_with_remediation(
+            scm_token="ghp_test",
+            pr_url="https://github.com/org/repo/pull/1",
+        )
+
+        with patch("apme_gateway.config.load_config") as mock_cfg:
+            mock_cfg.return_value.scm_token = ""
+            mock_cfg.return_value.github_api_url = "https://api.github.com"
+
+            resp = await client.post(
+                "/api/v1/projects/proj-1/operation/submit",
+                json={"activity_id": "scan-1"},
+            )
+
+        assert resp.status_code == 409
+        assert "already created" in resp.json()["detail"]
 
 
 class TestProjectScmApi:

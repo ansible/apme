@@ -609,38 +609,49 @@ class PythonPackageDetail(BaseModel):  # type: ignore[misc]
     projects: list[PythonPackageProjectRef] = Field(default_factory=list)
 
 
-# ── PR creation schemas (ADR-050) ────────────────────────────────────
+# ── SCM submit schemas (ADR-050) ─────────────────────────────────────
 
 
-class CreatePullRequestRequest(BaseModel):  # type: ignore[misc]
-    """Request body for creating a PR from a remediation activity (ADR-050).
+class SubmitRequest(BaseModel):  # type: ignore[misc]
+    """Request body for the unified SCM submit endpoint (ADR-050).
 
+    Pushes patched files to a branch and optionally opens a PR.
     All fields are optional — the Gateway generates sensible defaults.
 
+    When ``activity_id`` is provided, patched files are loaded from the
+    database (supports historical scans).  When omitted, the endpoint
+    uses the live in-memory operation for the project.
+
     Attributes:
+        activity_id: Optional scan/activity ID to submit from DB history.
         branch_name: Name for the new branch (default auto-generated).
+        create_pr: Whether to open a PR after pushing (default ``True``).
         title: PR title (default auto-generated from remediation stats).
         body: PR body in Markdown (default auto-generated).
-        scm_token: One-time SCM token for this PR (overrides project/global token).
+        scm_token: One-time SCM token (overrides project/global token).
     """
 
+    activity_id: str | None = None
     branch_name: str | None = None
+    create_pr: bool = True
     title: str | None = None
     body: str | None = None
     scm_token: str | None = None
 
 
-class CreatePullRequestResponse(BaseModel):  # type: ignore[misc]
-    """Response after successfully creating a PR (ADR-050).
+class SubmitResponse(BaseModel):  # type: ignore[misc]
+    """Response after a successful SCM submit (ADR-050).
 
     Attributes:
-        pr_url: Web URL of the created pull request.
-        branch_name: Name of the head branch.
+        branch_name: Name of the head branch that was created.
+        commit_sha: SHA of the commit pushed to the branch.
+        pr_url: Web URL of the PR, or ``None`` if ``create_pr`` was false.
         provider: SCM provider that was used (e.g. ``github``).
     """
 
-    pr_url: str
     branch_name: str
+    commit_sha: str
+    pr_url: str | None = None
     provider: str
 
 

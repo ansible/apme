@@ -8,8 +8,6 @@ import type {
   CollectionSummary,
   CreateGalaxyServerRequest,
   CreateProjectRequest,
-  CreatePullRequestRequest,
-  CreatePullRequestResponse,
   CreateSuppressionRequest,
   DashboardSummary,
   DepHealthSummary,
@@ -29,6 +27,7 @@ import type {
   RuleStats,
   SessionDetail,
   SessionSummary,
+  SubmitResponse,
   SuppressionRecord,
   TopViolation,
   TrendPoint,
@@ -93,14 +92,14 @@ export async function deleteActivity(scanId: string): Promise<void> {
   if (!res.ok) throw new Error(`${res.status}`);
 }
 
-export function createPullRequest(
+export function submitActivity(
+  projectId: string,
   activityId: string,
-  body?: CreatePullRequestRequest,
-): Promise<CreatePullRequestResponse> {
-  return request(`/activity/${activityId}/pull-request`, {
+): Promise<SubmitResponse> {
+  return request(`/projects/${projectId}/operation/submit`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body ?? {}),
+    body: JSON.stringify({ activity_id: activityId }),
   });
 }
 

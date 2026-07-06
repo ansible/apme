@@ -62,9 +62,10 @@ export function useProjectOperationActions(projectId: string) {
     );
   }, [projectId]);
 
-  const createPR = useCallback(async () => {
-    return postJson<{ pr_url: string; branch_name: string; provider: string }>(
-      `/projects/${projectId}/operation/create-pr`,
+  const createPR = useCallback(async (options?: { create_pr?: boolean; branch_name?: string }) => {
+    return postJson<{ branch_name: string; commit_sha: string; pr_url: string | null; provider: string }>(
+      `/projects/${projectId}/operation/submit`,
+      options,
     );
   }, [projectId]);
 
