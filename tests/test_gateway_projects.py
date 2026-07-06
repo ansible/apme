@@ -170,6 +170,76 @@ async def test_get_project_detail(client: AsyncClient) -> None:
     assert body["latest_scan"]["scan_id"] == "scan-proj-1"
 
 
+async def test_lookup_project_by_repo_url(client: AsyncClient) -> None:
+    """GET /projects/lookup resolves a project by normalized clone URL.
+
+    Args:
+        client: Async HTTPX test client.
+    """
+    await _seed_project(
+        repo_url="https://github.com/acme-scm/amazon.aws.git",
+    )
+    resp = await client.get(
+        "/api/v1/projects/lookup",
+        params={"repo_url": "https://GitHub.com/acme-scm/amazon.aws"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["id"] == "proj-1"
+    assert resp.json()["repo_url"] == "https://github.com/acme-scm/amazon.aws.git"
+
+
+async def test_lookup_project_by_repo_url_not_found(client: AsyncClient) -> None:
+    """GET /projects/lookup returns 404 when no project matches.
+
+    Args:
+        client: Async HTTPX test client.
+    """
+    await _seed_project()
+    resp = await client.get(
+        "/api/v1/projects/lookup",
+        params={"repo_url": "https://github.com/other/repo"},
+    )
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "Project not found"
+
+
+async def test_lookup_project_by_repo_url_and_branch(client: AsyncClient) -> None:
+    """GET /projects/lookup can disambiguate branches for the same repo URL.
+
+    Args:
+        client: Async HTTPX test client.
+    """
+    repo = "https://github.com/acme-scm/amazon.aws.git"
+    await _seed_project(
+        project_id="proj-main",
+        name="amazon-main",
+        repo_url=repo,
+        branch="main",
+    )
+    await _seed_project(
+        project_id="proj-backup",
+        name="amazon-backup",
+        repo_url=repo,
+        branch="backup",
+    )
+
+    main_resp = await client.get(
+        "/api/v1/projects/lookup",
+        params={"repo_url": repo, "branch": "main"},
+    )
+    assert main_resp.status_code == 200
+    assert main_resp.json()["id"] == "proj-main"
+    assert main_resp.json()["branch"] == "main"
+
+    backup_resp = await client.get(
+        "/api/v1/projects/lookup",
+        params={"repo_url": repo, "branch": "backup"},
+    )
+    assert backup_resp.status_code == 200
+    assert backup_resp.json()["id"] == "proj-backup"
+    assert backup_resp.json()["branch"] == "backup"
+
+
 async def test_get_project_not_found(client: AsyncClient) -> None:
     """Missing project returns 404.
 

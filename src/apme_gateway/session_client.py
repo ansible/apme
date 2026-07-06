@@ -488,7 +488,7 @@ async def handle_session(
 
             ansible_version: str = options.get("ansible_version", "")
             collections: list[str] = options.get("collections", [])
-            enable_ai: bool = options.get("enable_ai", True)
+            enable_ai: bool = options.get("enable_ai", False)
             ai_model: str = options.get("ai_model", "")
 
             scan_id = str(uuid.uuid4())

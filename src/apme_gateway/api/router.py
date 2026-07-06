@@ -447,6 +447,35 @@ async def create_project(body: CreateProjectRequest) -> ProjectSummary:
     )
 
 
+@router.get("/projects/lookup")  # type: ignore[untyped-decorator]
+async def lookup_project_by_repo_url(
+    repo_url: str = Query(..., min_length=1),
+    branch: str | None = Query(default=None, min_length=1),
+) -> ProjectDetail:
+    """Resolve a project by normalized SCM clone URL.
+
+    Used by the Backstage portal to map catalog git-repository entities to
+    APME projects without fetching the full project list.
+
+    Args:
+        repo_url: HTTPS clone URL (with or without ``.git`` suffix).
+        branch: Optional branch name. When provided, both URL and branch must
+            match (required when one repo is registered per branch).
+
+    Returns:
+        Full project detail for the matching project.
+
+    Raises:
+        HTTPException: 404 when no project matches the normalized URL.
+    """
+    async with get_session() as db:
+        proj = await q.find_project_by_repo_url(db, repo_url, branch=branch)
+        if proj is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+        project_id = proj.id
+    return cast(ProjectDetail, await get_project_detail(project_id))
+
+
 @router.get("/projects")  # type: ignore[untyped-decorator]
 async def list_projects(
     sort_by: str = Query(default="created_at"),
@@ -2304,7 +2333,7 @@ async def project_operate_ws(
                     remediate=True,
                     ansible_version=str(options.get("ansible_version", "")),
                     collection_specs=specs,
-                    enable_ai=bool(options.get("enable_ai", True)),
+                    enable_ai=bool(options.get("enable_ai", False)),
                     ai_model=str(options.get("ai_model", "")),
                     progress_callback=_progress_cb,
                     approval_queue=approval_queue,
@@ -2359,26 +2388,19 @@ async def project_operate_ws(
 
         if completed_scan_id:
             op_scan_type = "remediate" if is_remediate else "check"
+            from apme_gateway.api.operation_router import finalize_operation_scan  # noqa: PLC0415
+
+            await finalize_operation_scan(
+                project_id=proj.id,
+                scan_id=completed_scan_id,
+                scan_type=op_scan_type,
+                clone_commit=clone_commit,
+                captured_patches=captured_patches,
+                ai_proposed_count=ai_proposed_count,
+                ai_declined_count=ai_declined_count,
+                ai_accepted_count=ai_accepted_count,
+            )
             async with get_session() as db:
-                if clone_commit:
-                    await q.update_project_commit(db, proj.id, clone_commit)
-                await q.link_scan_to_project(
-                    db,
-                    completed_scan_id,
-                    proj.id,
-                    trigger="ui",
-                    scan_type=op_scan_type,
-                    source="gateway",
-                )
-                await q.update_ai_counts(
-                    db,
-                    completed_scan_id,
-                    ai_proposed=ai_proposed_count,
-                    ai_declined=ai_declined_count,
-                    ai_accepted=ai_accepted_count,
-                )
-                if captured_patches:
-                    await q.store_patches(db, completed_scan_id, captured_patches)
                 scan_row = await q.get_scan(db, completed_scan_id)
                 proj_row = (await db.execute(select(Project).where(Project.id == proj.id))).scalar_one_or_none()
                 old_hs = proj_row.health_score if proj_row else None
@@ -2401,8 +2423,6 @@ async def project_operate_ws(
                     )
                     await db.commit()
                     broadcast_notifications(notif_payloads)
-                else:
-                    await q.update_project_health(db, proj.id)
 
         await websocket.send_json({"type": "closed"})
     except WebSocketDisconnect:

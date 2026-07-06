@@ -11,6 +11,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import time
 import uuid
 from collections.abc import Sequence
 from typing import Any
@@ -555,6 +556,74 @@ def _build_pr_body(scan: Scan, patched_files: Sequence[PatchedFile]) -> str:
 
 # ── Operation driver (replaces WebSocket tunnel logic) ────────────────
 
+_SCAN_PERSIST_WAIT_S = 60.0
+_SCAN_PERSIST_POLL_S = 0.25
+
+
+async def finalize_operation_scan(
+    *,
+    project_id: str,
+    scan_id: str,
+    scan_type: str,
+    clone_commit: str,
+    captured_patches: list[dict[str, str]],
+    ai_proposed_count: int,
+    ai_declined_count: int,
+    ai_accepted_count: int,
+) -> None:
+    """Link a completed operation to its persisted scan row and store patches.
+
+    The engine commits the scan via ``ReportFixCompleted`` asynchronously. If
+    the gateway tries to insert ``scan_patches`` before that row exists, SQLite
+    raises a foreign-key error. Poll until the scan row appears or timeout.
+
+    Args:
+        project_id: Owning project UUID.
+        scan_id: Engine scan identifier.
+        scan_type: ``check`` or ``remediate``.
+        clone_commit: Cloned repo HEAD SHA (may be empty).
+        captured_patches: Per-file diffs from the session result event.
+        ai_proposed_count: AI proposals offered during the operation.
+        ai_declined_count: AI proposals declined by the engine.
+        ai_accepted_count: AI proposals approved by the user.
+
+    Raises:
+        TimeoutError: When the reporting servicer never persisted the scan row.
+    """
+    deadline = time.monotonic() + _SCAN_PERSIST_WAIT_S
+
+    while time.monotonic() < deadline:
+        async with get_session() as db:
+            scan = await q.get_scan(db, scan_id)
+            if scan is not None:
+                if clone_commit:
+                    await q.update_project_commit(db, project_id, clone_commit)
+                await q.link_scan_to_project(
+                    db,
+                    scan_id,
+                    project_id,
+                    trigger="ui",
+                    scan_type=scan_type,
+                    source="gateway",
+                )
+                await q.update_ai_counts(
+                    db,
+                    scan_id,
+                    ai_proposed=ai_proposed_count,
+                    ai_declined=ai_declined_count,
+                    ai_accepted=ai_accepted_count,
+                )
+                if captured_patches and not scan.patches:
+                    await q.store_patches(db, scan_id, captured_patches)
+                await q.update_project_health(db, project_id)
+                return
+
+        await asyncio.sleep(_SCAN_PERSIST_POLL_S)
+
+    raise TimeoutError(
+        f"Scan {scan_id} was not persisted within {_SCAN_PERSIST_WAIT_S:.0f}s (ReportFixCompleted may have failed)"
+    )
+
 
 async def _drive_operation(
     *,
@@ -734,7 +803,7 @@ async def _drive_operation(
             remediate=remediate,
             ansible_version=str(options.get("ansible_version", "")),
             collection_specs=specs,
-            enable_ai=bool(options.get("enable_ai", True)),
+            enable_ai=bool(options.get("enable_ai", False)),
             ai_model=str(options.get("ai_model", "")),
             progress_callback=_progress_cb,
             approval_queue=approval_queue,
@@ -753,27 +822,16 @@ async def _drive_operation(
             op.clone_commit = clone_commit
 
         scan_type_str = "remediate" if remediate else "check"
-        async with get_session() as db:
-            if clone_commit:
-                await q.update_project_commit(db, project_id, clone_commit)
-            await q.link_scan_to_project(
-                db,
-                scan_id,
-                project_id,
-                trigger="ui",
-                scan_type=scan_type_str,
-                source="gateway",
-            )
-            await q.update_ai_counts(
-                db,
-                scan_id,
-                ai_proposed=ai_proposed_count,
-                ai_declined=ai_declined_count,
-                ai_accepted=ai_accepted_count,
-            )
-            if captured_patches:
-                await q.store_patches(db, scan_id, captured_patches)
-            await q.update_project_health(db, project_id)
+        await finalize_operation_scan(
+            project_id=project_id,
+            scan_id=scan_id,
+            scan_type=scan_type_str,
+            clone_commit=clone_commit,
+            captured_patches=captured_patches,
+            ai_proposed_count=ai_proposed_count,
+            ai_declined_count=ai_declined_count,
+            ai_accepted_count=ai_accepted_count,
+        )
 
         op = registry.get(operation_id)
         if op is not None and op.status not in TERMINAL_STATUSES:

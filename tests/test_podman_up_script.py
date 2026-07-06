@@ -63,6 +63,78 @@ def _render_ca_injected_pod_yaml() -> tuple[str, str]:
     return rendered, mount_path
 
 
+def _render_gcp_injected_pod_yaml() -> tuple[str, str]:
+    """Execute the embedded GCP credentials patcher against ``pod.yaml``.
+
+    Returns:
+        Tuple of rendered pod YAML and the in-container credentials mount path.
+
+    Raises:
+        AssertionError: When required markers are missing from ``up.sh``.
+    """
+    script = UP_SH.read_text(encoding="utf-8")
+    mount_match = re.search(
+        r'^  GCP_CREDENTIALS_MOUNT="([^"]+)"$',
+        script,
+        re.MULTILINE,
+    )
+    if mount_match is None:
+        raise AssertionError("GCP_CREDENTIALS_MOUNT assignment not found in up.sh")
+
+    mount_path = mount_match.group(1)
+    start = script.index("import json, sys, os", script.index("ABBENAY_GCP_CREDENTIALS is set"))
+    end = script.index("print(yaml)", start) + len("print(yaml)")
+    code = script[start:end]
+    code = code.replace("mount = '$GCP_CREDENTIALS_MOUNT'", f"mount = {mount_path!r}")
+
+    old_stdin = sys.stdin
+    old_stdout = sys.stdout
+    try:
+        sys.stdin = StringIO(POD_YAML.read_text(encoding="utf-8"))
+        sys.stdout = StringIO()
+        with patch.dict(
+            os.environ,
+            {
+                "ABBENAY_GCP_CREDENTIALS": "/tmp/gcp-creds.json",
+                "GOOGLE_VERTEX_PROJECT": "test-project",
+                "GOOGLE_VERTEX_LOCATION": "us-east5",
+            },
+            clear=True,
+        ):
+            exec(code, {"__name__": "__main__"})
+        rendered = sys.stdout.getvalue()
+    finally:
+        sys.stdin = old_stdin
+        sys.stdout = old_stdout
+
+    return rendered, mount_path
+
+
+def test_up_sh_injects_gcp_credentials_into_abbenay() -> None:
+    """Abbenay receives Vertex ADC env vars and a read-only credentials mount."""
+    rendered, mount_path = _render_gcp_injected_pod_yaml()
+    quoted_mount = json.dumps(mount_path)
+    quoted_cred_path = json.dumps("/tmp/gcp-creds.json")
+
+    abbenay_match = re.search(
+        r"    - name: abbenay\n(?P<body>.*?)(?:\n    - name: galaxy-proxy\n)",
+        rendered,
+        re.DOTALL,
+    )
+    assert abbenay_match is not None
+    abbenay_block = abbenay_match.group("body")
+
+    assert (f"        - name: GOOGLE_APPLICATION_CREDENTIALS\n          value: {quoted_mount}") in abbenay_block
+    assert '        - name: GOOGLE_VERTEX_PROJECT\n          value: "test-project"' in abbenay_block
+    assert '        - name: GOOGLE_VERTEX_LOCATION\n          value: "us-east5"' in abbenay_block
+    assert (
+        f"        - name: abbenay-gcp-credentials\n          mountPath: {quoted_mount}\n          readOnly: true"
+    ) in abbenay_block
+    assert (
+        f"    - name: abbenay-gcp-credentials\n      hostPath:\n        path: {quoted_cred_path}\n        type: File\n"
+    ) in rendered
+
+
 def test_up_sh_injects_ca_bundle_into_galaxy_proxy() -> None:
     """Galaxy Proxy receives the same CA env vars and mount as the gateway."""
     rendered, mount_path = _render_ca_injected_pod_yaml()

@@ -167,6 +167,35 @@ async def list_projects(
     return list(result.scalars().all())
 
 
+async def find_project_by_repo_url(
+    db: AsyncSession,
+    repo_url: str,
+    branch: str | None = None,
+) -> Project | None:
+    """Find a project whose clone URL matches after normalization.
+
+    Args:
+        db: Active async database session.
+        repo_url: Raw SCM clone URL from a portal entity or API client.
+        branch: Optional branch name. When set, both URL and branch must match.
+
+    Returns:
+        Matching project, or ``None`` when no normalized URL matches.
+    """
+    from apme_gateway.scm.repo_url import normalize_repo_url
+
+    target = normalize_repo_url(repo_url)
+    stmt = select(Project)
+    result = await db.execute(stmt)
+    for project in result.scalars().all():
+        if normalize_repo_url(project.repo_url) != target:
+            continue
+        if branch is not None and project.branch != branch:
+            continue
+        return cast(Project, project)
+    return None
+
+
 async def get_project(db: AsyncSession, project_id: str) -> Project | None:
     """Fetch a single project with its scans eagerly loaded.
 
