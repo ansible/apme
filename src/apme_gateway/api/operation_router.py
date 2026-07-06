@@ -621,8 +621,7 @@ async def finalize_operation_scan(
         await asyncio.sleep(_SCAN_PERSIST_POLL_S)
 
     raise TimeoutError(
-        f"Scan {scan_id} was not persisted within {_SCAN_PERSIST_WAIT_S:.0f}s "
-        "(ReportFixCompleted may have failed)"
+        f"Scan {scan_id} was not persisted within {_SCAN_PERSIST_WAIT_S:.0f}s (ReportFixCompleted may have failed)"
     )
 
 
