@@ -184,7 +184,7 @@ Rules without version sensitivity (L, R, P, SEC, A categories) get an empty `ans
 - [ADR-026](ADR-026-rule-scope-metadata.md): Rule Scope Metadata — scope is an independent per-rule dimension
 - [ADR-041](ADR-041-rule-catalog-override-architecture.md): Rule Catalog & Override Architecture — `RuleDefinition` proto being extended
 - [ADR-043](ADR-043-default-severity-assignment.md): Default Severity Assignment — establishes the central-table pattern
-- [DR-001](.sdlc/decisions/closed/decided/DR-001-version-specific-analysis.md): Version-Specific Analysis — phased version targeting
+- [DR-001](../decisions/closed/decided/DR-001-version-specific-analysis.md): Version-Specific Analysis — phased version targeting
 
 ## References
 

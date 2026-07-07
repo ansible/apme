@@ -13,15 +13,16 @@ without an entry are version-agnostic (L, R, P, SEC, A categories).
 
 from __future__ import annotations
 
+import packaging.version
 from packaging.specifiers import SpecifierSet
 from packaging.version import Version
 
 VERSION_DEFAULTS: dict[str, SpecifierSet] = {
     # ── Ansible validator (introspection-based, version-aware via venv) ──
-    "M001": SpecifierSet(">=2.9"),   # FQCN resolution
-    "M002": SpecifierSet(">=2.9"),   # deprecated module
-    "M003": SpecifierSet(">=2.9"),   # module redirect
-    "M004": SpecifierSet(">=2.9"),   # removed module
+    "M001": SpecifierSet(">=2.9"),  # FQCN resolution
+    "M002": SpecifierSet(">=2.9"),  # deprecated module
+    "M003": SpecifierSet(">=2.9"),  # module redirect
+    "M004": SpecifierSet(">=2.9"),  # removed module
     # ── ansible-core 2.18 changes ────────────────────────────────────────
     "M010": SpecifierSet(">=2.18"),  # Python 2 interpreter dropped
     # ── ansible-core 2.19 changes ────────────────────────────────────────
@@ -30,8 +31,6 @@ VERSION_DEFAULTS: dict[str, SpecifierSet] = {
     "M008": SpecifierSet(">=2.19"),  # bare include removed
     "M009": SpecifierSet(">=2.19"),  # with_* loop deprecation
     "M011": SpecifierSet(">=2.19"),  # network collection incompatibilities
-    # ── ansible-core 2.20 changes ────────────────────────────────────────
-    "M013": SpecifierSet(">=2.20"),  # DEFAULT_TRANSPORT: smart removed
     # ── Deprecation pipeline (2.21–2.24 removals) ────────────────────────
     "M018": SpecifierSet(">=2.21"),  # removal version 2.21
     "M023": SpecifierSet(">=2.22"),  # follow_redirects string deprecated
@@ -52,9 +51,7 @@ VERSION_DEFAULTS: dict[str, SpecifierSet] = {
     "M030": SpecifierSet(">=2.23"),  # broken conditional expressions
 }
 
-_STR_CACHE: dict[str, str] = {
-    rule_id: str(spec) for rule_id, spec in VERSION_DEFAULTS.items()
-}
+_STR_CACHE: dict[str, str] = {rule_id: str(spec) for rule_id, spec in VERSION_DEFAULTS.items()}
 
 
 def get_version_specifier(rule_id: str) -> SpecifierSet | None:
@@ -98,4 +95,9 @@ def is_applicable(rule_id: str, ansible_core_version: str) -> bool:
     spec = VERSION_DEFAULTS.get(rule_id)
     if spec is None:
         return True
-    return spec.contains(Version(ansible_core_version))
+    if not ansible_core_version:
+        return True
+    try:
+        return spec.contains(Version(ansible_core_version))
+    except packaging.version.InvalidVersion:
+        return True

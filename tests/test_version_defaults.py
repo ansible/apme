@@ -100,8 +100,23 @@ class TestVersionDefaults:
         """
         assert get_version_spec_str("M005") == ">=2.19"
         assert get_version_spec_str("M010") == ">=2.18"
-        assert get_version_spec_str("M013") == ">=2.20"
         assert get_version_spec_str("M023") == ">=2.22"
         assert get_version_spec_str("M022") == ">=2.23"
         assert get_version_spec_str("M024") == ">=2.24"
         assert get_version_spec_str("M001") == ">=2.9"
+
+    def test_is_applicable_empty_version(self) -> None:
+        """Empty ansible_core_version returns True (treat as unconstrained).
+
+        Returns:
+            None: Assert-only test.
+        """
+        assert is_applicable("M014", "") is True
+
+    def test_is_applicable_malformed_version(self) -> None:
+        """Malformed version string returns True (fail-open).
+
+        Returns:
+            None: Assert-only test.
+        """
+        assert is_applicable("M014", "not-a-version") is True

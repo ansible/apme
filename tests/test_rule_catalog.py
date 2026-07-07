@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
+from packaging.specifiers import SpecifierSet
 
 from apme.v1 import common_pb2, primary_pb2, reporting_pb2
 from apme_engine.daemon.primary_server import (
@@ -96,9 +97,11 @@ def test_m_rules_have_ansible_core_version() -> None:
     assert len(m_rules) > 0, "catalog should contain at least one M-rule"
     for r in m_rules:
         assert r.ansible_core_version, f"M-rule {r.rule_id!r} must have ansible_core_version set"
-        assert r.ansible_core_version.startswith(">="), (
-            f"M-rule {r.rule_id!r} version should be a PEP 440 specifier, got {r.ansible_core_version!r}"
-        )
+        try:
+            parsed = SpecifierSet(r.ansible_core_version)
+        except Exception as exc:
+            pytest.fail(f"M-rule {r.rule_id!r} has invalid PEP 440 specifier {r.ansible_core_version!r}: {exc}")
+        assert len(parsed) > 0, f"M-rule {r.rule_id!r} specifier must be non-empty, got {r.ansible_core_version!r}"
 
 
 def test_non_m_rules_have_empty_ansible_core_version() -> None:
