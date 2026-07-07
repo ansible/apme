@@ -60,6 +60,7 @@ Decisions that have been accepted but are not yet fully implemented.
 | [ADR-051](ADR-051-dependency-health-scanning.md) | Dependency Health Scanning | 2026-04-07 |
 | [ADR-053](ADR-053-github-integration-strategy.md) | GitHub Integration Strategy | 2026-04-10 |
 | [ADR-054](ADR-054-production-deployment.md) | Production Deployment — Helm Chart and bootc VM Image | 2026-04-10 |
+| [ADR-057](ADR-057-per-rule-version-applicability.md) | Per-Rule Ansible-Core Version Applicability | 2026-07-07 |
 
 ## Proposed
 
@@ -91,7 +92,7 @@ Decisions replaced by newer ADRs.
 ## Creating New ADRs
 
 1. Copy the template from `../templates/adr.md`
-2. Use the next available number (currently ADR-057)
+2. Use the next available number (currently ADR-058)
 3. Include:
    - Status (Proposed → Accepted → Implemented)
    - Date

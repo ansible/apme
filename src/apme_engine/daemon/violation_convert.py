@@ -13,6 +13,7 @@ from apme_engine.severity_defaults import (
     severity_to_label,
     severity_to_proto,
 )
+from apme_engine.version_defaults import get_version_spec_str
 
 _COMMON_KEYS = frozenset(
     {
@@ -220,6 +221,10 @@ def violation_dict_to_proto(v: ViolationDict | Mapping[str, str | int | list[int
             else:
                 out.metadata[key] = str(val)
 
+    version_spec = get_version_spec_str(out.rule_id)
+    if version_spec:
+        out.metadata["ansible_core_version"] = version_spec
+
     return out
 
 
@@ -275,5 +280,7 @@ def violation_proto_to_dict(v: Violation) -> ViolationDict:
                 result[key] = val.split(",")  # type: ignore[assignment]
             else:
                 result[key] = val
+        elif key == "ansible_core_version" and val:
+            result[key] = val
 
     return result

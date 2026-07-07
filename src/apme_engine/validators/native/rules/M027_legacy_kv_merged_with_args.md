@@ -3,6 +3,7 @@ rule_id: M027
 validator: native
 description: "Mixing inline k=v arguments with args: mapping is deprecated (2.23)"
 scope: task
+ansible_core_version: ">=2.23"
 ---
 
 ## Legacy k=v merged with args (M027)

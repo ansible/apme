@@ -77,6 +77,7 @@ class RuleDefinition:
     description: str
     scope: int
     enabled: bool
+    ansible_core_version: str
     def __init__(
         self,
         *,
@@ -87,6 +88,7 @@ class RuleDefinition:
         description: str = ...,
         scope: int = ...,
         enabled: bool = ...,
+        ansible_core_version: str = ...,
     ) -> None: ...
 
 class RegisterRulesRequest:

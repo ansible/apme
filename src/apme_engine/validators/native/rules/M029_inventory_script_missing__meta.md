@@ -8,6 +8,7 @@ status_reason: >
   Detection requires executing the inventory script at runtime to inspect its
   JSON output. Static analysis cannot determine _meta presence. Disabled by
   design until a runtime-analysis approach is approved.
+ansible_core_version: ">=2.23"
 ---
 
 ## Inventory script missing _meta (M029)

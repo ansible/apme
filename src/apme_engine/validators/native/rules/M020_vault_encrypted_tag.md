@@ -3,6 +3,7 @@ rule_id: M020
 validator: native
 description: Use !vault instead of deprecated !vault-encrypted tag (2.23)
 scope: task
+ansible_core_version: ">=2.23"
 ---
 
 ## !vault-encrypted tag (M020)

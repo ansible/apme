@@ -3,6 +3,7 @@ rule_id: M019
 validator: native
 description: "!!omap and !!pairs YAML tags are deprecated; standard YAML mappings preserve order in Python 3.7+ (2.23)"
 scope: task
+ansible_core_version: ">=2.23"
 ---
 
 ## !!omap / !!pairs YAML tags (M019)

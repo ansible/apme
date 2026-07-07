@@ -7,7 +7,7 @@
 | Metric | Count |
 |--------|-------|
 | Implemented | 147/156 |
-| Tested | 113/156 |
+| Tested | 115/156 |
 | Documented | 155/156 |
 | Deterministic fixer | 25/156 |
 
@@ -130,7 +130,7 @@
 | M009 | OPA | high | with_* loops are deprecated; use loop instead. | Yes | Yes | Yes | Yes |
 | M010 | Native | high | ansible_python_interpreter set to Python 2; dropped in 2.18+. | Yes | Yes | Yes | — |
 | M011 | OPA | high | Network module may require collection upgrade for 2.19+ compatibility. | Yes | Yes | Yes | — |
-| M014 | Native | medium | Use ansible_facts["name"] instead of injected ansible_* fact variables (removed in 2.24) | Yes | — | Yes | — |
+| M014 | Native | medium | Use ansible_facts["name"] instead of injected ansible_* fact variables (removed in 2.24) | Yes | Yes | Yes | — |
 | M015 | Native | medium | Use ansible_play_batch instead of deprecated play_hosts variable (removed in 2.23) | Yes | — | Yes | — |
 | M016 | OPA | high | Empty when: conditional is deprecated; remove it or add an explicit condition (2.23) | Yes | Yes | Yes | — |
 | M017 | OPA | high | action: with a mapping value is deprecated; use string form or module key directly (2.23) | Yes | Yes | Yes | — |
@@ -138,7 +138,7 @@
 | M019 | Native | low | !!omap and !!pairs YAML tags are deprecated; standard YAML mappings preserve order in Python 3.7+ (2.23) | Yes | — | Yes | — |
 | M020 | Native | low | Use !vault instead of deprecated !vault-encrypted tag (2.23) | Yes | — | Yes | — |
 | M021 | OPA | high | Empty args: keyword on a task is deprecated; remove it (2.23) | Yes | Yes | Yes | — |
-| M022 | Native | medium | tree and oneline callback plugins are removed in 2.23; choose an alternative | Yes | — | Yes | — |
+| M022 | Native | medium | tree and oneline callback plugins are removed in 2.23; choose an alternative | Yes | Yes | Yes | — |
 | M023 | OPA | high | follow_redirects: yes/no (string) is deprecated in url lookup; use true/false boolean (2.22) | Yes | Yes | Yes | — |
 | M024 | OPA | high | include_vars ignore_files must be a list, not a string (2.24) | Yes | Yes | Yes | — |
 | M025 | OPA | high | Third-party strategy plugins are deprecated; only ansible.builtin strategies are supported (2.23) | Yes | Yes | Yes | — |
@@ -228,7 +228,7 @@
 | M028 | high | first_found lookup auto-splitting paths on delimiters is deprecated (2.23) | Yes | Yes | Yes | — |
 | R118 | info | Task downloads from an external source (inbound transfer). | Yes | Yes | Yes | — |
 
-### Native (99 rules, 90 impl, 57 tested, 4 fixers)
+### Native (99 rules, 90 impl, 59 tested, 4 fixers)
 
 | Rule ID | Severity | Description | Impl | Tested | Doc | Fixer |
 |---------|----------|-------------|------|--------|-----|-------|
@@ -300,11 +300,11 @@
 | L110 | high | Debug tasks should not log sensitive variables without no_log. | Yes | Yes | Yes | — |
 | M005 | high | Registered variable used in Jinja template may be untrusted in 2.19+. | Yes | Yes | Yes | — |
 | M010 | high | ansible_python_interpreter set to Python 2; dropped in 2.18+. | Yes | Yes | Yes | — |
-| M014 | medium | Use ansible_facts["name"] instead of injected ansible_* fact variables (removed in 2.24) | Yes | — | Yes | — |
+| M014 | medium | Use ansible_facts["name"] instead of injected ansible_* fact variables (removed in 2.24) | Yes | Yes | Yes | — |
 | M015 | medium | Use ansible_play_batch instead of deprecated play_hosts variable (removed in 2.23) | Yes | — | Yes | — |
 | M019 | low | !!omap and !!pairs YAML tags are deprecated; standard YAML mappings preserve order in Python 3.7+ (2.23) | Yes | — | Yes | — |
 | M020 | low | Use !vault instead of deprecated !vault-encrypted tag (2.23) | Yes | — | Yes | — |
-| M022 | medium | tree and oneline callback plugins are removed in 2.23; choose an alternative | Yes | — | Yes | — |
+| M022 | medium | tree and oneline callback plugins are removed in 2.23; choose an alternative | Yes | Yes | Yes | — |
 | M026 | medium | Inventory variable names must be valid Python identifiers (enforced in 2.23) | Yes | — | Yes | — |
 | M027 | low | Mixing inline k=v arguments with args: mapping is deprecated (2.23) | Yes | — | Yes | — |
 | M029 | medium | Inventory scripts must include _meta.hostvars in JSON output (enforced in 2.23) | — | — | Yes | — |
@@ -364,7 +364,7 @@
 - **R404** (Native): Expose variable_set for the task.
 - **R501** (Native): Suggest collection/role dependency.
 
-### Implemented but untested — 36
+### Implemented but untested — 34
 
 - **L032** (Native): Variable redefinition may cause confusion.
 - **L033** (Native): Overriding vars without conditions.
@@ -387,11 +387,9 @@
 - **L101** (Native): Variable names must not collide with Ansible reserved names.
 - **L102** (Native): Do not set read-only Ansible variables.
 - **M004** (Ansible): Removed module — tombstoned module that raises AnsiblePluginRemovedError.
-- **M014** (Native): Use ansible_facts["name"] instead of injected ansible_* fact variables (removed in 2.24)
 - **M015** (Native): Use ansible_play_batch instead of deprecated play_hosts variable (removed in 2.23)
 - **M019** (Native): !!omap and !!pairs YAML tags are deprecated; standard YAML mappings preserve order in Python 3.7+ (2.23)
 - **M020** (Native): Use !vault instead of deprecated !vault-encrypted tag (2.23)
-- **M022** (Native): tree and oneline callback plugins are removed in 2.23; choose an alternative
 - **M026** (Native): Inventory variable names must be valid Python identifiers (enforced in 2.23)
 - **M027** (Native): Mixing inline k=v arguments with args: mapping is deprecated (2.23)
 - **M030** (Native): Conditional expressions that fail Jinja2 parsing will error in 2.23 instead of being silently ignored

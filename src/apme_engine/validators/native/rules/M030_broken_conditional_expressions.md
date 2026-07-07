@@ -3,6 +3,7 @@ rule_id: M030
 validator: native
 description: Conditional expressions that fail Jinja2 parsing will error in 2.23 instead of being silently ignored
 scope: task
+ansible_core_version: ">=2.23"
 ---
 
 ## Broken conditional expressions (M030)

@@ -3,6 +3,7 @@ rule_id: M014
 validator: native
 description: Use ansible_facts["name"] instead of injected ansible_* fact variables (removed in 2.24)
 scope: task
+ansible_core_version: ">=2.24"
 ---
 
 ## Top-level fact variables (M014)

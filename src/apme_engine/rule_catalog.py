@@ -21,6 +21,7 @@ from pathlib import Path
 from apme.v1 import common_pb2, reporting_pb2
 from apme_engine.engine.models import RuleScope
 from apme_engine.severity_defaults import get_severity, severity_to_proto
+from apme_engine.version_defaults import get_version_spec_str
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +111,7 @@ def _collect_native_rules() -> list[reporting_pb2.RuleDefinition]:
                     )
                     or 0,
                     enabled=gr.enabled,
+                    ansible_core_version=get_version_spec_str(gr.rule_id),
                 )
             )
         logger.info("Collected %d native rules", len(defs))
@@ -157,6 +159,7 @@ def _collect_from_frontmatter(
                 )
                 or 0,
                 enabled=True,
+                ansible_core_version=get_version_spec_str(rule_id),
             )
         )
     logger.info("Collected %d %s rules from frontmatter", len(defs), source)

@@ -3,6 +3,7 @@ rule_id: M022
 validator: native
 description: tree and oneline callback plugins are removed in 2.23; choose an alternative
 scope: task
+ansible_core_version: ">=2.23"
 ---
 
 ## tree / oneline callback plugins (M022)

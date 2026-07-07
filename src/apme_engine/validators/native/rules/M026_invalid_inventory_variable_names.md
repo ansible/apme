@@ -3,6 +3,7 @@ rule_id: M026
 validator: native
 description: Inventory variable names must be valid Python identifiers (enforced in 2.23)
 scope: task
+ansible_core_version: ">=2.23"
 ---
 
 ## Invalid inventory variable names (M026)

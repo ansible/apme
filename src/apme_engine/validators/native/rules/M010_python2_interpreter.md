@@ -3,6 +3,7 @@ rule_id: M010
 validator: native
 description: ansible_python_interpreter set to Python 2; dropped in 2.18+.
 scope: play
+ansible_core_version: ">=2.18"
 ---
 
 ## Python 2 interpreter (M010)

@@ -85,6 +85,35 @@ def test_collect_gitleaks_rules_sec_placeholder_critical() -> None:
     assert r.source == "gitleaks", "gitleaks placeholder source must be gitleaks"
 
 
+def test_m_rules_have_ansible_core_version() -> None:
+    """M-series rules in the catalog carry ``ansible_core_version`` metadata (ADR-057).
+
+    Returns:
+        None: Assert-only test.
+    """
+    rules = collect_all_rules()
+    m_rules = [r for r in rules if r.rule_id.startswith("M")]
+    assert len(m_rules) > 0, "catalog should contain at least one M-rule"
+    for r in m_rules:
+        assert r.ansible_core_version, f"M-rule {r.rule_id!r} must have ansible_core_version set"
+        assert r.ansible_core_version.startswith(">="), (
+            f"M-rule {r.rule_id!r} version should be a PEP 440 specifier, got {r.ansible_core_version!r}"
+        )
+
+
+def test_non_m_rules_have_empty_ansible_core_version() -> None:
+    """Non-M rules should have empty ``ansible_core_version`` (version-agnostic).
+
+    Returns:
+        None: Assert-only test.
+    """
+    rules = collect_all_rules()
+    non_m = [r for r in rules if not r.rule_id.startswith("M")]
+    assert len(non_m) > 0, "catalog should contain non-M rules"
+    for r in non_m:
+        assert r.ansible_core_version == "", f"non-M rule {r.rule_id!r} should have empty ansible_core_version"
+
+
 def test_apply_rule_configs_filters_disabled_rule() -> None:
     """Violations for disabled ``RuleConfig`` entries are dropped.
 

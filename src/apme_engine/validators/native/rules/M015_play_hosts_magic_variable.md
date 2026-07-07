@@ -3,6 +3,7 @@ rule_id: M015
 validator: native
 description: Use ansible_play_batch instead of deprecated play_hosts variable (removed in 2.23)
 scope: task
+ansible_core_version: ">=2.23"
 ---
 
 ## play_hosts magic variable (M015)
