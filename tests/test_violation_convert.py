@@ -481,6 +481,34 @@ class TestAnsibleCoreVersionMetadata:
             proto = violation_dict_to_proto({"rule_id": rule_id})
             assert proto.metadata.get("ansible_core_version") == expected, f"{rule_id} should have version {expected}"
 
+    def test_explicit_version_preserved_over_table(self) -> None:
+        """Explicit ansible_core_version in dict is preserved, not overwritten by table.
+
+        Returns:
+            None: Assert-only test.
+        """
+        v: ViolationDict = {
+            "rule_id": "M014",
+            "ansible_core_version": ">=2.25",
+        }
+        proto = violation_dict_to_proto(v)
+        assert proto.metadata["ansible_core_version"] == ">=2.25"
+
+    def test_plugin_rule_version_preserved(self) -> None:
+        """Plugin rules (not in VERSION_DEFAULTS) preserve their dict version.
+
+        Returns:
+            None: Assert-only test.
+        """
+        v: ViolationDict = {
+            "rule_id": "EXT-001",
+            "ansible_core_version": ">=2.20",
+        }
+        proto = violation_dict_to_proto(v)
+        assert proto.metadata["ansible_core_version"] == ">=2.20"
+        result = violation_proto_to_dict(proto)
+        assert result["ansible_core_version"] == ">=2.20"
+
 
 class TestStringLineParsing:
     """Tests for string line format parsing in violation_dict_to_proto."""

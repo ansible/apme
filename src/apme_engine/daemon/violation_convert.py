@@ -52,6 +52,7 @@ _METADATA_KEYS = frozenset(
         "dep_fix_versions",
         "ai_reason",
         "ai_suggestion",
+        "ansible_core_version",
     }
 )
 
@@ -221,9 +222,10 @@ def violation_dict_to_proto(v: ViolationDict | Mapping[str, str | int | list[int
             else:
                 out.metadata[key] = str(val)
 
-    version_spec = get_version_spec_str(out.rule_id)
-    if version_spec:
-        out.metadata["ansible_core_version"] = version_spec
+    if "ansible_core_version" not in out.metadata:
+        version_spec = get_version_spec_str(out.rule_id)
+        if version_spec:
+            out.metadata["ansible_core_version"] = version_spec
 
     return out
 
@@ -280,7 +282,5 @@ def violation_proto_to_dict(v: Violation) -> ViolationDict:
                 result[key] = val.split(",")  # type: ignore[assignment]
             else:
                 result[key] = val
-        elif key == "ansible_core_version" and val:
-            result[key] = val
 
     return result
