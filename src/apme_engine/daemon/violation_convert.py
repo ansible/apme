@@ -222,7 +222,7 @@ def violation_dict_to_proto(v: ViolationDict | Mapping[str, str | int | list[int
             else:
                 out.metadata[key] = str(val)
 
-    if "ansible_core_version" not in out.metadata:
+    if not out.metadata.get("ansible_core_version"):
         version_spec = get_version_spec_str(out.rule_id)
         if version_spec:
             out.metadata["ansible_core_version"] = version_spec

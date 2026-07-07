@@ -509,6 +509,19 @@ class TestAnsibleCoreVersionMetadata:
         result = violation_proto_to_dict(proto)
         assert result["ansible_core_version"] == ">=2.20"
 
+    def test_empty_string_version_falls_back_to_table(self) -> None:
+        """Empty-string ansible_core_version is treated as absent; table fills in.
+
+        Returns:
+            None: Assert-only test.
+        """
+        v: ViolationDict = {
+            "rule_id": "M014",
+            "ansible_core_version": "",
+        }
+        proto = violation_dict_to_proto(v)
+        assert proto.metadata["ansible_core_version"] == ">=2.24"
+
 
 class TestStringLineParsing:
     """Tests for string line format parsing in violation_dict_to_proto."""
