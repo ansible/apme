@@ -1,4 +1,0 @@
----
-terraform_destroy_project_path: ""
-
-terraform_destroy_purge_workspace: false

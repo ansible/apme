@@ -1,8 +1,0 @@
-# Copy to backend.hcl (do not commit secrets). Use after `create_state_backend = true` apply
-# with local state, then: terraform init -migrate-state -backend-config=backend.hcl
-#
-# bucket         = "apme-dev-tfstate-123456789012"
-# key            = "apme/terraform.tfstate"
-# region         = "us-east-1"
-# encrypt        = true
-# dynamodb_table = "apme-dev-terraform-locks"
