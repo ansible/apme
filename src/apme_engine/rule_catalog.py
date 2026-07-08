@@ -25,10 +25,10 @@ from apme_engine.version_defaults import get_version_spec_str
 
 logger = logging.getLogger(__name__)
 
-_VALIDATORS_ROOT = Path(__file__).resolve().parent / "validators"
-_NATIVE_RULES_DIR = _VALIDATORS_ROOT / "native" / "rules"
-_OPA_BUNDLE_DIR = _VALIDATORS_ROOT / "opa" / "bundle"
-_ANSIBLE_RULES_DIR = _VALIDATORS_ROOT / "ansible" / "rules"
+_APME_ENGINE_ROOT = Path(__file__).resolve().parent
+_GRAPH_RULES_DIR = _APME_ENGINE_ROOT / "graph" / "rules"
+_OPA_BUNDLE_DIR = _APME_ENGINE_ROOT / "validators" / "opa" / "bundle"
+_ANSIBLE_RULES_DIR = _APME_ENGINE_ROOT / "validators" / "ansible" / "rules"
 
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---", re.DOTALL)
 _KV_RE = re.compile(r"^(\w+):\s*(.+)$", re.MULTILINE)
@@ -94,7 +94,7 @@ def _collect_native_rules() -> list[reporting_pb2.RuleDefinition]:
     try:
         from apme_engine.graph.scanner import load_graph_rules
 
-        rules_dir = str(_NATIVE_RULES_DIR)
+        rules_dir = str(_GRAPH_RULES_DIR)
         graph_rules = load_graph_rules(rules_dir=rules_dir)
         defs = []
         for gr in graph_rules:
@@ -121,7 +121,7 @@ def _collect_native_rules() -> list[reporting_pb2.RuleDefinition]:
             "Failed to collect native rules via load_graph_rules; falling back to frontmatter",
             exc_info=True,
         )
-        return _collect_from_frontmatter(_NATIVE_RULES_DIR, "native")
+        return _collect_from_frontmatter(_GRAPH_RULES_DIR, "native")
 
 
 def _collect_from_frontmatter(
