@@ -58,6 +58,25 @@ Read every changed line against these questions. For each question,
 name at least one specific file and line you verified. If you cannot,
 you haven't actually reviewed the diff.
 
+**Context rule.** The diff alone is not sufficient for Q1, Q4, and Q7.
+Before evaluating those questions, **read the full function, class, or
+module** surrounding each changed hunk — not just the hunk itself:
+
+- **Q1 (statements mean what they say):** Read the function body to
+  verify that new or modified docstrings/comments accurately describe
+  what the code actually does. A docstring that says "all validators
+  receive scoped data" is wrong if one validator receives the full
+  graph.
+- **Q4 (still true after this change):** Search for all prose that
+  describes the behavior you changed — not just prose you edited.
+  If you changed how a function is called, grep for every docstring
+  and comment that references that function.
+- **Q7 (internally consistent):** Read sibling files and functions
+  before writing new code. If you add a `.pyi` field, read the other
+  `.pyi` files for conventions. If you write a test, read the sibling
+  tests for mock patterns. If you add an env var check, read how
+  existing env var checks handle the missing case.
+
 **Artifact-type sweep.** Before answering the questions below, list
 every distinct artifact type in the diff (e.g., Python, proto, Rego,
 Ansible YAML, shell script, Dockerfile, JSON config, Markdown). For
@@ -176,7 +195,10 @@ Base branch: upstream/main
 
 Run `git diff upstream/main...HEAD` to get the full diff, then read
 every changed file in full (not just the diff hunks — you need
-surrounding context to evaluate contracts and consistency).
+surrounding context to evaluate contracts and consistency).  For new
+code (functions, tests, stubs), also read sibling files to verify
+convention consistency (mock patterns, type annotation style, error
+handling patterns).
 
 Evaluate the diff against these 9 questions. For each question, either
 report a concrete finding (file, line, what's wrong, why it matters)
