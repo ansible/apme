@@ -500,6 +500,44 @@ class TestPrimaryFanOut:
         assert result.diagnostics.validator_name == "native"
         assert result.diagnostics.total_ms == 42.0
 
+    async def test_call_validator_propagates_dirty_node_ids(self) -> None:
+        """_call_validator round-trips dirty_node_ids in the ValidateRequest."""
+        from apme_engine.daemon.primary_server import _call_validator
+
+        mock_resp = MagicMock()
+        mock_resp.violations = []
+        mock_resp.diagnostics = None
+        mock_resp.logs = []
+
+        mock_stub = MagicMock()
+        mock_stub.Validate = AsyncMock(return_value=mock_resp)
+
+        mock_channel_instance = AsyncMock()
+        mock_channel_instance.__aenter__ = AsyncMock(return_value=mock_channel_instance)
+        mock_channel_instance.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("apme_engine.daemon.primary_server.grpc.aio.insecure_channel") as mock_channel:
+            mock_channel.return_value = mock_channel_instance
+            with patch("apme_engine.daemon.primary_server.validate_pb2_grpc.ValidatorStub", return_value=mock_stub):
+                request = validate_pb2.ValidateRequest(
+                    request_id="rescan-1",
+                    content_graph_data=b'{"version":1}',
+                    dirty_node_ids=["node-a", "node-b"],
+                )
+                await _call_validator("localhost:50055", request)
+
+        call_args = mock_stub.Validate.call_args
+        sent_request = call_args[0][0]
+        assert list(sent_request.dirty_node_ids) == ["node-a", "node-b"]
+
+    def test_rescan_bridge_sends_dirty_node_ids_to_native(self) -> None:
+        """_rescan_bridge constructs ValidateRequest with dirty_node_ids for native."""
+        import apme_engine.daemon.primary_server as ps
+
+        source = Path(ps.__file__).read_text()
+        assert "dirty_node_ids=sorted(dirty_ids)" in source
+        assert "NATIVE_GRPC_ADDRESS" in source
+
     def test_primary_no_longer_imports_native_validator(self) -> None:
         """Primary should not import NativeValidator directly (it's in its own container)."""
         import apme_engine.daemon.primary_server as ps

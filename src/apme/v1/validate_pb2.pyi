@@ -1,5 +1,7 @@
 """Stub for generated validate_pb2 (proto types)."""
 
+from collections.abc import Iterable
+
 from apme.v1.common_pb2 import ProgressUpdate
 
 class ValidateRequest:
@@ -20,7 +22,7 @@ class ValidateRequest:
         session_id: str = "",
         venv_path: str = "",
         content_graph_data: bytes = b"",
-        dirty_node_ids: list[str] | None = ...,
+        dirty_node_ids: Iterable[str] | None = ...,
         **kwargs: object,
     ) -> None: ...
     def HasField(self, field_name: str) -> bool: ...
