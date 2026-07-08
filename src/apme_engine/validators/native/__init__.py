@@ -2,7 +2,8 @@
 
 The legacy ``NativeValidator`` class (which used ``risk_detector.detect``
 with ``AnsibleRunContext``) has been removed.  The native validator daemon
-now runs ``GraphRule`` instances via ``graph_scanner.scan()`` exclusively.
+now runs ``GraphRule`` instances via ``apme_engine.graph.scanner.scan()``
+exclusively (ADR-059).
 """
 
 from apme_engine.graph.scanner import native_rules_dir

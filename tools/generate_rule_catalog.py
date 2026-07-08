@@ -79,7 +79,7 @@ def _parse_frontmatter(path: Path) -> dict[str, str]:
 
 
 def _get_severity(rule_id: str) -> str:
-    """Look up severity from severity_defaults.py.
+    """Look up severity from apme_engine.graph.severity.
 
     Args:
         rule_id: Rule identifier.
