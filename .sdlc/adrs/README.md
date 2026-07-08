@@ -69,6 +69,7 @@ Decisions that have been accepted but are not yet fully implemented.
 | [ADR-057](ADR-057-per-rule-version-applicability.md) | Per-Rule Ansible-Core Version Applicability | 2026-07-07 |
 | [ADR-059](ADR-059-graph-library-extraction.md) | Extract Shared Graph Analysis Library | 2026-07-08 |
 | [ADR-060](ADR-060-rest-api-versioning-contract.md) | REST API Versioning Contract | 2026-07-08 |
+| [ADR-061](ADR-061-ubi-container-bases.md) | UBI10 Container Base Images | 2026-07-08 |
 
 ## Proposed
 
@@ -95,7 +96,7 @@ Decisions replaced by newer ADRs.
 ## Creating New ADRs
 
 1. Copy the template from `../templates/adr.md`
-2. Use the next available number (currently ADR-061)
+2. Use the next available number (currently ADR-062)
 3. Include:
    - Status (Proposed → Accepted → Implemented)
    - Date
