@@ -5,7 +5,7 @@ Deploy APME as an atomic, image-based Linux VM using
 
 ## Architecture
 
-The bootc image builds on CentOS Stream 10 and includes:
+The bootc image builds on **RHEL 10 image mode** (`rhel10/rhel-bootc`, ADR-061) and includes:
 
 - **Podman** for container runtime
 - **Quadlet files** that define each APME service as a systemd-managed container
@@ -21,8 +21,23 @@ networking.
 ## Prerequisites
 
 - A host capable of building OCI images (`podman build`)
+- **`podman login registry.redhat.io`** for production bootc builds (RHEL 10
+  bootc base requires Red Hat registry authentication)
 - `bootc-image-builder` for converting to disk images (qcow2, raw, AMI)
 - Target hypervisor or cloud for deploying the disk image
+
+Contributors without RHEL registry access can build with the CentOS Stream 10
+bootc fallback:
+
+```bash
+podman build -f deploy/bootc/Containerfile \
+  --build-arg BOOTC_BASE_IMAGE=quay.io/centos-bootc/centos-bootc:stream10 \
+  -t apme-bootc:latest .
+```
+
+APME **application** container images use UBI10 (`ubi10/python-312-minimal`,
+`ubi10/nodejs-22-minimal`, `ubi10/nginx-126`). The bootc image is the **host
+OS** layer and uses `rhel-bootc`, not a UBI application base.
 
 ## Build
 
@@ -167,8 +182,7 @@ deploy/bootc/
 ├── Containerfile                     # bootc image definition
 ├── README.md                         # This file
 ├── apme-firewall.xml                 # firewalld service definition
-├── etc/apme/env/
-│   └── apme.env                      # Runtime configuration
+├── apme.env.example                  # Runtime configuration → /etc/apme/env/apme.env
 └── quadlet/
     ├── apme.pod                      # Pod definition (ports, dependencies)
     ├── apme-primary.container        # Primary orchestrator

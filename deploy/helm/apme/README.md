@@ -163,7 +163,9 @@ engine:
 
 ## OpenShift compatibility
 
-The chart works under OpenShift's `restricted-v2` SCC without modification:
+The chart works under OpenShift's `restricted-v2` SCC without modification.
+APME application container images are built on **UBI10** Application Stream
+bases (ADR-061).
 
 - `podSecurityContext` and `securityContext` default to empty (OCP injects UID/GID)
 - The UI container mounts emptyDir volumes for nginx writable paths

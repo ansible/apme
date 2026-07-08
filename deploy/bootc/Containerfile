@@ -15,10 +15,11 @@
 #
 # See deploy/bootc/README.md for full documentation.
 
-FROM quay.io/centos-bootc/centos-bootc:stream10
+ARG BOOTC_BASE_IMAGE=registry.redhat.io/rhel10/rhel-bootc:10.2
+FROM ${BOOTC_BASE_IMAGE}
 
-# Install Podman for running APME containers
-RUN dnf install -y podman podman-plugins && \
+# Install Podman for running APME containers (podman-plugins merged into podman on EL10)
+RUN dnf install -y podman && \
     dnf clean all && \
     rm -rf /var/cache/dnf
 
@@ -33,7 +34,7 @@ RUN mkdir -p /var/lib/apme/sessions \
 
 # Drop configuration directory
 RUN mkdir -p /etc/apme/env
-COPY deploy/bootc/etc/apme/env/apme.env /etc/apme/env/apme.env
+COPY deploy/bootc/apme.env.example /etc/apme/env/apme.env
 
 # Install quadlet files for systemd service management.
 # Podman quadlet (.container, .pod) files go into the system generator directory.

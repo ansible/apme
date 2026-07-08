@@ -178,7 +178,7 @@ network.
 | `apme-dep-audit` | Python 3.12 UBI10 + pip-audit | Python CVE scanner server |
 | `apme-galaxy-proxy` | Python 3.12 UBI10 | PEP 503 proxy server |
 | `apme-gateway` | Python 3.12 UBI10 | FastAPI + gRPC Reporting + SQLite |
-| `apme-ui` | nginx alpine | React SPA static files |
+| `apme-ui` | nginx UBI10 | React SPA static files |
 | `apme-abbenay` | Python 3.12 slim | AI inference gateway (external image) |
 | `apme-cli` | Python 3.12 UBI10 | CLI tools only |
 
