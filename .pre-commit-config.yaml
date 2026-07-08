@@ -50,7 +50,14 @@ repos:
         language: python
         language_version: python3.10
         entry: python tools/generate_rule_catalog.py
-        files: ^src/apme_engine/validators/.+\.(py|rego|md)$|^src/apme_engine/remediation/transforms/
+        files: ^src/apme_engine/(validators|graph/rules)/.+\.(py|rego|md)$|^src/apme_engine/remediation/transforms/
+        pass_filenames: false
+      - id: graph-boundary
+        name: graph-boundary (ADR-053)
+        language: python
+        language_version: python3.10
+        entry: python tools/check_graph_boundary.py
+        files: ^src/apme_engine/graph/.+\.py$
         pass_filenames: false
       - id: check-skill-frontmatter
         name: Validate SKILL.md frontmatter

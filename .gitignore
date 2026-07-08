@@ -60,6 +60,14 @@ graph.html
 # Local Claude/Cursor settings
 .claude/settings.local.json
 
+# Terraform
+deploy/aws/terraform/terraform.tfvars
+deploy/aws/terraform/backend.hcl
+deploy/aws/terraform/.terraform/
+deploy/aws/terraform/terraform.tfstate
+deploy/aws/terraform/terraform.tfstate.backup
+deploy/aws/terraform/.terraform.tfstate.lock.info
+
 # OS
 .DS_Store
 Thumbs.db

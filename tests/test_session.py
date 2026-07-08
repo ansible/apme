@@ -1130,7 +1130,7 @@ class TestSessionRescanBridge:
 
         rules_dir = captured_rules_dir[0]
         assert rules_dir is not None, "load_graph_rules must be called with rules_dir"
-        assert rules_dir.endswith("native/rules"), f"Expected native rules dir, got: {captured_rules_dir[0]}"
+        assert rules_dir.endswith("graph/rules"), f"Expected graph rules dir, got: {captured_rules_dir[0]}"
 
 
 # ---------------------------------------------------------------------------

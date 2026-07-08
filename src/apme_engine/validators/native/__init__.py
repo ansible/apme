@@ -5,13 +5,13 @@ with ``AnsibleRunContext``) has been removed.  The native validator daemon
 now runs ``GraphRule`` instances via ``graph_scanner.scan()`` exclusively.
 """
 
-import os
+from apme_engine.graph.scanner import native_rules_dir
 
 
 def _default_rules_dir() -> str:
     """Return default path to native rules directory.
 
     Returns:
-        Path to rules directory.
+        Path to graph/rules directory (ADR-059).
     """
-    return os.path.join(os.path.dirname(__file__), "rules")
+    return native_rules_dir()

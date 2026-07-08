@@ -61,6 +61,7 @@ Decisions that have been accepted but are not yet fully implemented.
 | [ADR-053](ADR-053-github-integration-strategy.md) | GitHub Integration Strategy | 2026-04-10 |
 | [ADR-054](ADR-054-production-deployment.md) | Production Deployment — Helm Chart and bootc VM Image | 2026-04-10 |
 | [ADR-057](ADR-057-per-rule-version-applicability.md) | Per-Rule Ansible-Core Version Applicability | 2026-07-07 |
+| [ADR-059](ADR-059-graph-library-extraction.md) | Extract Shared Graph Analysis Library | 2026-07-08 |
 
 ## Proposed
 
@@ -93,7 +94,7 @@ Decisions replaced by newer ADRs.
 ## Creating New ADRs
 
 1. Copy the template from `../templates/adr.md`
-2. Use the next available number (currently ADR-059)
+2. Use the next available number (currently ADR-060)
 3. Include:
    - Status (Proposed → Accepted → Implemented)
    - Date

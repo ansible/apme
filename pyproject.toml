@@ -212,3 +212,8 @@ constraint-dependencies = [
 
 [tool.uv.workspace]
 members = []
+
+[dependency-groups]
+dev = [
+    "ansible-dev-tools>=25.10.0",
+]

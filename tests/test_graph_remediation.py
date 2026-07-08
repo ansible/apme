@@ -866,7 +866,7 @@ class TestNativeRulesDir:
 
         path = native_rules_dir()
         assert os.path.isdir(path), f"Expected directory to exist: {path}"
-        assert path.endswith(os.path.join("validators", "native", "rules"))
+        assert path.endswith(os.path.join("graph", "rules"))
 
 
 # ---------------------------------------------------------------------------

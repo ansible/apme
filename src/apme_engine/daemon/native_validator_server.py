@@ -50,9 +50,11 @@ def _default_rules_dir() -> str:
     """Return default path to the native rules directory.
 
     Returns:
-        Absolute path to ``validators/native/rules``.
+        Absolute path to ``graph/rules`` (ADR-059).
     """
-    return os.path.join(os.path.dirname(os.path.dirname(__file__)), "validators", "native", "rules")
+    from apme_engine.graph.scanner import native_rules_dir  # noqa: PLC0415
+
+    return native_rules_dir()
 
 
 def _run_graph(raw_graph_data: bytes) -> _GraphRunResult:
