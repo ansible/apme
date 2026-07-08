@@ -252,7 +252,7 @@ Tag sessions and scans with a project name.
 
 ## Implementation Notes
 
-- Gateway container needs `apt-get install git` in Dockerfile
+- Gateway container needs `git` installed in Dockerfile (`microdnf install -y git` on UBI10)
 - No new persistent volume — clones go to temp directories
 - Health score formula: `max(0, 100 - (high * 10 + medium * 3 + low * 1))`
   from latest scan, clamped to 0–100
