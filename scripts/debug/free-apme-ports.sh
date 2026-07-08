@@ -4,7 +4,7 @@ set -euo pipefail
 PORTS_STR="8080 8081 8765 50051 50053 50054 50055 50056 50057 50058 50059 50060"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 log() {
   printf '[apme-cleanup] %s\n' "$*"

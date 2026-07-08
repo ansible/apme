@@ -5,7 +5,7 @@ Connects directly to the gateway WS endpoint, uploads files, and monitors
 the connection with precise timestamps to diagnose disconnect issues.
 
 Usage:
-    python scripts/ws-diag.py [TARGET] [--url URL] [--model MODEL] [--auto-approve]
+    python scripts/debug/ws-diag.py [TARGET] [--url URL] [--model MODEL] [--auto-approve]
 
     TARGET: file or directory to scan (default: tests/fixtures/terrible-playbook)
 """

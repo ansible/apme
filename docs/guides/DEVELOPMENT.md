@@ -566,6 +566,29 @@ python scripts/scrape_ansible_deprecations.py --skip-clone --cache-dir /path/to/
 
 The `.github/workflows/deprecation-scrape.yml` workflow runs monthly (or on manual dispatch), scrapes for new deprecations, and creates a GitHub issue if any gaps are found. Maintainers can then use the detailed rule specs in the issue to implement new rules.
 
+## Debug utilities
+
+Ad-hoc scripts for troubleshooting during development. Not invoked by tox or CI.
+
+| Script | Purpose |
+|--------|---------|
+| `scripts/debug/free-apme-ports.sh` | List or kill processes listening on APME service ports (useful after a crashed pod) |
+| `scripts/debug/ai-prompt-test.py` | Send a sample node prompt to Abbenay and print the raw response |
+| `scripts/debug/ws-diag.py` | Connect to the Gateway WebSocket endpoint with timestamps (requires `websockets`) |
+
+### Examples
+
+```bash
+# Free stuck APME ports after a failed pod teardown
+./scripts/debug/free-apme-ports.sh --kill
+
+# Debug Abbenay prompt/response for a sample task
+uv run python scripts/debug/ai-prompt-test.py
+
+# Diagnose Gateway WebSocket disconnects
+uv run python scripts/debug/ws-diag.py tests/fixtures/terrible-playbook
+```
+
 ## Rule ID conventions
 
 | Prefix | Category | Examples |

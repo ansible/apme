@@ -1,7 +1,7 @@
 # Research Review: ARI Integration Strategy (research.md)
 
 **Reviewed**: 2026-03-05
-**Source**: `research.md` (predates current architecture)
+**Source**: [`research.md`](research.md) (predates current architecture)
 **Context**: The research document was written for an x2a-convertor integration approach using ARI as a pip dependency. The project has since evolved into a standalone multi-validator platform with a vendored engine, gRPC contracts, and containerized deployment.
 
 ## Status by Section

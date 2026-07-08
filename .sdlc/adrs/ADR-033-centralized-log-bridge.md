@@ -30,7 +30,7 @@ validators in the same event loop. Stderr is dup2'd to
 `~/.apme-data/daemon.log`. All services share the same Python logging
 infrastructure.
 
-**Pod mode** (`compose.yaml`): Each service is a separate container with
+**Pod mode** (Podman pod via `tox -e up`, ADR-004): Each service is a separate container with
 its own entry point (`primary_main.py`, `native_validator_main.py`, etc.).
 Container stderr goes to container logs. Validators communicate with
 Primary via gRPC over the network.

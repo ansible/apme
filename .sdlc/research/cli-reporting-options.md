@@ -279,19 +279,13 @@ apme check . --html report.html # Rich HTML export
 
 ## Prototypes
 
-See `/prototypes/cli-reporting/` for working examples:
+The original Rich-based PoC under `prototypes/cli-reporting/` was removed after
+TASK-001 completion. ADR-014 replaced it with the zero-dependency ANSI module:
 
-| File | Purpose |
-|------|---------|
-| `output_formatter.py` | **Complete implementation reference** — formatter module with all 4 formats |
-| `rich_terminal.py` | Standalone terminal demo |
-| `rich_html_export.py` | HTML export demo |
-| `demo_report.html` | Generated HTML report example |
-
-Run the formatter demo to see all output formats:
-```bash
-uv run python prototypes/cli-reporting/output_formatter.py
-```
+| Artifact | Purpose |
+|----------|---------|
+| `src/apme_engine/ansi.py` | Terminal styling (default `--format rich`) |
+| `tests/test_ansi.py` | Unit tests for ANSI output |
 
 ---
 

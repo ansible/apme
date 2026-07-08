@@ -104,7 +104,7 @@ From REQ-004:
 
 **Deliverables**:
 - `.sdlc/research/cli-reporting-options.md` - Full evaluation of 5 options + implementation guide
-- `prototypes/cli-reporting/output_formatter.py` - Rich-based reference (superseded)
+- `prototypes/cli-reporting/output_formatter.py` - Rich-based reference (superseded; prototype removed in 2026-07)
 - `src/apme_engine/ansi.py` - **Final implementation** (zero-dependency ANSI styling)
 - `tests/test_ansi.py` - 45 unit tests for ANSI module
 
