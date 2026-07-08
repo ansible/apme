@@ -506,17 +506,14 @@ class TestPrimaryFanOut:
 
         mock_resp = MagicMock()
         mock_resp.violations = []
-        mock_resp.diagnostics = None
-        mock_resp.logs = []
+        mock_resp.HasField = MagicMock(return_value=False)
 
         mock_stub = MagicMock()
         mock_stub.Validate = AsyncMock(return_value=mock_resp)
 
-        mock_channel_instance = AsyncMock()
-        mock_channel_instance.__aenter__ = AsyncMock(return_value=mock_channel_instance)
-        mock_channel_instance.__aexit__ = AsyncMock(return_value=False)
-
         with patch("apme_engine.daemon.primary_server.grpc.aio.insecure_channel") as mock_channel:
+            mock_channel_instance = MagicMock()
+            mock_channel_instance.close = AsyncMock()
             mock_channel.return_value = mock_channel_instance
             with patch("apme_engine.daemon.primary_server.validate_pb2_grpc.ValidatorStub", return_value=mock_stub):
                 request = validate_pb2.ValidateRequest(
