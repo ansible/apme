@@ -5,16 +5,15 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-from apme_engine.engine.content_graph import (
+from apme_engine.graph.content_graph import (
     ContentGraph,
     ContentNode,
     NodeIdentity,
     NodeScope,
     NodeType,
 )
-from apme_engine.engine.graph_scanner import scan
-from apme_engine.validators.native.rules.graph_rule_base import GraphRule
-from apme_engine.validators.native.rules.L111_inventory_group_hyphens_graph import (
+from apme_engine.graph.rule_base import GraphRule
+from apme_engine.graph.rules.L111_inventory_group_hyphens_graph import (
     InventoryGroupHyphensGraphRule,
     _find_inventory_files,
     _get_yaml_line_map,
@@ -24,6 +23,7 @@ from apme_engine.validators.native.rules.L111_inventory_group_hyphens_graph impo
     _parse_yaml_groups,
     _parse_yaml_inventory,
 )
+from apme_engine.graph.scanner import scan
 
 
 class TestParseIniGroups:

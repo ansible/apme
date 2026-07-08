@@ -15,10 +15,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from apme_engine.engine.content_graph import ContentGraph, NodeType
-from apme_engine.engine.models import RuleScope, Severity, YAMLDict, YAMLValue
-from apme_engine.engine.models import RuleTag as Tag
-from apme_engine.validators.native.rules.graph_rule_base import GraphRule, GraphRuleResult
+from apme_engine.graph.content_graph import ContentGraph, NodeType
+from apme_engine.graph.rule_base import GraphRule, GraphRuleResult
+from apme_engine.graph.types import RuleScope, Severity, YAMLDict, YAMLValue
+from apme_engine.graph.types import RuleTag as Tag
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

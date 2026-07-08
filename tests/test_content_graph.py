@@ -854,13 +854,13 @@ class TestGraphReportToViolations:
 
     def test_nested_violations_expanded(self) -> None:
         """Verify detail.violations list is expanded into separate ViolationDicts."""
-        from apme_engine.engine.graph_scanner import (
+        from apme_engine.engine.models import RuleMetadata
+        from apme_engine.graph.rule_base import GraphRuleResult
+        from apme_engine.graph.scanner import (
             GraphNodeResult,
             GraphScanReport,
             graph_report_to_violations,
         )
-        from apme_engine.engine.models import RuleMetadata
-        from apme_engine.validators.native.rules.graph_rule_base import GraphRuleResult
 
         node = ContentNode(
             identity=NodeIdentity(path="playbook.yml/plays[0]", node_type=NodeType.PLAYBOOK),
