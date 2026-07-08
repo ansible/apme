@@ -23,10 +23,10 @@ from pathlib import Path
 _SRC = Path(__file__).resolve().parent.parent / "src"
 _GRAPH_PKG = _SRC / "apme_engine" / "graph"
 
-_FORBIDDEN_PREFIXES = (
-    "apme_engine.engine.",
-    "apme_engine.validators.",
-    "apme_engine.daemon.",
+_FORBIDDEN_PACKAGES = (
+    "apme_engine.engine",
+    "apme_engine.validators",
+    "apme_engine.daemon",
 )
 
 _ALLOWED_LAZY_IMPORTS: dict[str, set[str]] = {
@@ -73,7 +73,7 @@ def _check_file(path: Path) -> list[str]:
                 modules = [node.module]
 
             for mod in modules:
-                if any(mod.startswith(p) for p in _FORBIDDEN_PREFIXES):
+                if any(mod == p or mod.startswith(p + ".") for p in _FORBIDDEN_PACKAGES):
                     if mod in allowed:
                         continue
                     violations.append(f"  {rel_str}:{node.lineno}: graph/ must not import '{mod}'")
