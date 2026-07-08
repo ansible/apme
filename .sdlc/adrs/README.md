@@ -54,14 +54,18 @@ Decisions that have been accepted but are not yet fully implemented.
 |-----|-------|------|
 | [ADR-012](ADR-012-scale-pods-not-services.md) | Scale Pods, Not Services Within a Pod | 2026-02 |
 | [ADR-016](ADR-016-single-branch-main.md) | Single-branch `main` Strategy | 2026-03 |
+| [ADR-038](ADR-038-public-data-api.md) | Public Data API for Platform Consumers | 2026-03-25 |
 | [ADR-040](ADR-040-scan-metadata-enrichment.md) | Scan Metadata Enrichment | 2026-03-25 |
 | [ADR-043](ADR-043-default-severity-assignment.md) | Default Severity Assignment for Rule Catalog | 2026-03-26 |
 | [ADR-048](ADR-048-pod-internal-admin-endpoints.md) | Pod-Internal Admin Endpoints Rely on Network Isolation | 2026-04-01 |
 | [ADR-049](ADR-049-gateway-in-daemon.md) | Gateway Embedded in Local Daemon | 2026-04-01 |
 | [ADR-050](ADR-050-post-remediation-pr-creation.md) | Post-Remediation PR Creation via Gateway SCM Integration | 2026-04-07 (revised 2026-07-06) |
 | [ADR-051](ADR-051-dependency-health-scanning.md) | Dependency Health Scanning | 2026-04-07 |
+| [ADR-052](ADR-052-project-operation-sse-architecture.md) | Project Operation SSE Architecture | 2026-04-14 |
 | [ADR-053](ADR-053-github-integration-strategy.md) | GitHub Integration Strategy | 2026-04-10 |
 | [ADR-054](ADR-054-production-deployment.md) | Production Deployment — Helm Chart and bootc VM Image | 2026-04-10 |
+| [ADR-055](ADR-055-violation-fingerprint-suppression.md) | Content-Based Violation Fingerprinting and Suppression | 2026-05-21 |
+| [ADR-056](ADR-056-apme-owns-scm-commit-push.md) | APME Owns SCM Commit and Push | 2026-07-06 |
 | [ADR-057](ADR-057-per-rule-version-applicability.md) | Per-Rule Ansible-Core Version Applicability | 2026-07-07 |
 | [ADR-059](ADR-059-graph-library-extraction.md) | Extract Shared Graph Analysis Library | 2026-07-08 |
 | [ADR-060](ADR-060-rest-api-versioning-contract.md) | REST API Versioning Contract | 2026-07-08 |
@@ -75,12 +79,8 @@ Decisions under consideration — not yet accepted or implemented.
 | [ADR-027](ADR-027-agentic-project-remediation.md) | Agentic Project-Level AI Remediation | 2026-03-19 |
 | [ADR-034](ADR-034-multi-pod-health-registration.md) | Multi-Pod Health Registration | 2026-03-23 |
 | [ADR-036](ADR-036-two-pass-remediation-engine.md) | Two-Pass Remediation Engine with Project-Level Transforms | 2026-03-23 |
-| [ADR-038](ADR-038-public-data-api.md) | Public Data API for Platform Consumers | 2026-03-25 |
 | [ADR-042](ADR-042-third-party-plugin-services.md) | Third-Party Plugin Services | 2026-03-20 |
 | [ADR-046](ADR-046-ai-assisted-report-generation.md) | AI-Assisted Report Generation | 2026-03-30 |
-| [ADR-052](ADR-052-project-operation-sse-architecture.md) | Project Operation SSE Architecture | 2026-04-14 |
-| [ADR-055](ADR-055-violation-fingerprint-suppression.md) | Content-Based Violation Fingerprinting and Suppression | 2026-05-21 |
-| [ADR-056](ADR-056-apme-owns-scm-commit-push.md) | APME Owns SCM Commit and Push | 2026-07-06 |
 | [ADR-058](ADR-058-collection-dependency-suggestion.md) | Collection Dependency Suggestion for Unresolved Modules (R501) | 2026-06-23 |
 
 ## Superseded

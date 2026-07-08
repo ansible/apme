@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed
+Accepted
 
 ## Date
 
@@ -145,3 +145,12 @@ the implementation simple and avoids schema changes for transient state.
 - ADR-037 — Gateway project model
 - ADR-039 — FixSession as unified client path
 - ADR-050 — post-remediation PR creation
+
+---
+
+## Revision History
+
+| Date | Author | Change |
+|------|--------|--------|
+| 2026-04-14 | APME Team | Initial proposal |
+| 2026-07-08 | Brad Thornton | Accepted — operation registry, SSE router, state machine, and frontend hooks implemented; legacy WebSocket removal remains |

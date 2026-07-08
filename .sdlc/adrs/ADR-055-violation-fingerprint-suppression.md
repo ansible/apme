@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed
+Accepted
 
 ## Date
 
@@ -287,3 +287,4 @@ Suppressed violations are always available for audit. The default display hides 
 |------|--------|--------|
 | 2026-05-21 | Brad (cidrblock) | Initial proposal |
 | 2026-05-21 | David (djdanielsson) | Address review: YAML-aware normalization for block scalars, rule_id canonicalization, explicit delimiter in all modes |
+| 2026-07-08 | Brad Thornton | Accepted — CLI suppress, fingerprint lib, Gateway CRUD, and UI implemented; rule_module mode and export/import remain |

@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed
+Accepted
 
 ## Date
 
@@ -255,3 +255,4 @@ The CLI `--json` output currently drops the violation `metadata` map (rule-speci
 | Date | Author | Change |
 |------|--------|--------|
 | 2026-03-25 | Brad Thornton | Initial proposal from PR #102/#107 review discussion |
+| 2026-07-08 | Brad Thornton | Accepted — pull API, project lookup, and dashboard endpoints implemented; webhooks and token auth remain |

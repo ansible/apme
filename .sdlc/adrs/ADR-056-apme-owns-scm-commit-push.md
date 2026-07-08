@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed
+Accepted
 
 ## Date
 
@@ -305,3 +305,4 @@ After acceptance, this ADR introduces a new architectural invariant for
 | Date | Author | Change |
 |------|--------|--------|
 | 2026-07-06 | B. Thornton | Initial proposal |
+| 2026-07-08 | Brad Thornton | Accepted — Gateway SCM submit, GitHub provider, and diff-only responses implemented; explicit commit author and bundle export remain |
