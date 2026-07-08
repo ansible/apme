@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed
+Accepted
 
 ## Date
 
@@ -266,3 +266,4 @@ Deploying a plugin to one pod means deploying it to all pods. Removing a plugin 
 | Date | Author | Change |
 |------|--------|--------|
 | 2026-03-25 | Brad (cidrblock) | Initial proposal |
+| 2026-07-08 | Brad Thornton | Accepted — core decision fully implemented |

@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed
+Accepted
 
 ## Date
 
@@ -271,3 +271,4 @@ These changes are valuable regardless of the auth delegation decision:
 | 2026-03-28 | AI-assisted | Restructured to match ADR template (Copilot review) |
 | 2026-03-28 | Human review | Galaxy server defs are global, not per-project (cache coherence) |
 | 2026-03-28 | Human review | Implementation split into 3 PRs: proxy, CLI+proto, UI |
+| 2026-07-08 | Brad Thornton | Accepted — core decision fully implemented |

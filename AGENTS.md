@@ -130,6 +130,16 @@ one needs to change, write an ADR first.
     | **Kubernetes / OpenShift** | **Helm chart** (`deploy/helm/apme/`) |
     | Production single-node VM | bootc image |
 
+17. **REST API is a versioned public contract** (ADR-060). The Gateway
+    REST API under `/api/v1` is consumed by external teams (Backstage
+    plugin, CI/CD integrations). **No breaking changes to existing
+    endpoints without a version bump to `/api/v2`.** Adding new endpoints
+    or new optional fields is fine. Removing/renaming fields, changing
+    types, removing endpoints, or altering query parameter semantics all
+    require a new API version and an accompanying ADR. Agents must not
+    modify existing endpoint response schemas, URL paths, or query
+    parameter semantics without explicit human approval.
+
 ## Agent Roles
 
 ### 1. Spec Writer Agent
