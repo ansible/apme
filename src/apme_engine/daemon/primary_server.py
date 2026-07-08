@@ -1578,6 +1578,8 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
 
             # Native: full graph with dirty_node_ids hint (rules traverse full context)
             native_addr = os.environ.get("NATIVE_GRPC_ADDRESS")
+            if not native_addr:
+                logger.warning("NATIVE_GRPC_ADDRESS not set; skipping native rescan (scan_id=%s)", scan_id)
             if native_addr:
                 graph_data = await asyncio.get_event_loop().run_in_executor(
                     None,

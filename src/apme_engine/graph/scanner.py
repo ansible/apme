@@ -288,10 +288,10 @@ def rescan_dirty(
 ) -> GraphScanReport:
     """Re-evaluate rules against only the specified (dirty) nodes.
 
-    Used by the native validator servicer to avoid a full-graph scan
-    when ``dirty_node_ids`` are present in the ``ValidateRequest``.
-    Primary's ``_rescan_bridge`` dispatches all validators (including
-    native) over gRPC; this function is the native-side implementation.
+    Called in two contexts: (1) by the native validator servicer when
+    ``dirty_node_ids`` are present in a ``ValidateRequest`` (gRPC path),
+    and (2) by ``GraphRemediationEngine`` as a fallback when no external
+    ``rescan_fn`` bridge is configured (in-process path).
 
     Args:
         graph: ContentGraph (may have been mutated since last scan).
