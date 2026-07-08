@@ -1483,8 +1483,9 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         """Graph-engine remediation — in-memory convergence, graph-authoritative.
 
         Convergence sends dirty nodes to all validators via gRPC.
-        Each validator receives scoped data containing only dirty
-        node information (no file I/O during convergence).  The ContentGraph is
+        Native receives the full graph with a ``dirty_node_ids`` hint;
+        other validators receive node-scoped payloads.  No file I/O
+        occurs during convergence.  The ContentGraph is
         authoritative for remaining violations — no final re-scan is
         needed.  Approved changes are spliced to disk.
 
@@ -1554,9 +1555,10 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         ) -> list[ViolationDict]:
             """Rescan dirty nodes via gRPC to all configured validators.
 
-            All validators (native, OPA, Ansible, Gitleaks) receive
-            scoped data over gRPC and return violations with ``path``
-            already set to ``node_id``.
+            Native receives the full (slim) graph with ``dirty_node_ids``
+            so rules can traverse context beyond the dirty set.  OPA,
+            Ansible, and Gitleaks receive node-scoped payloads.  All
+            return violations with ``path`` set to ``node_id``.
 
             Args:
                 g: ContentGraph (may have been mutated by transforms).
