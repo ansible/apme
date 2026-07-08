@@ -62,7 +62,7 @@ sequenceDiagram
     loop Convergence loop
         Remediation->>Remediation: Apply Tier 1 transforms
         Remediation->>Primary: rescan dirty nodes
-        Primary->>Native: rescan_dirty
+        Primary->>Native: gRPC Validate(dirty_node_ids)
         Primary->>OPA: mini hierarchy
         Primary->>Ansible: task nodes
     end

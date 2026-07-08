@@ -13,12 +13,14 @@ class ValidateRequest:
     session_id: str
     venv_path: str
     content_graph_data: bytes
+    dirty_node_ids: list[str]
     def __init__(
         self,
         *,
         session_id: str = "",
         venv_path: str = "",
         content_graph_data: bytes = b"",
+        dirty_node_ids: list[str] | None = ...,
         **kwargs: object,
     ) -> None: ...
     def HasField(self, field_name: str) -> bool: ...

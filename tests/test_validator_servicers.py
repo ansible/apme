@@ -243,6 +243,104 @@ class TestNativeValidatorServicer:
         resp = await servicer.Health(common_pb2.HealthRequest(), FakeGrpcContext())  # type: ignore[arg-type]
         assert resp.status == "ok"
 
+    def test_run_graph_with_dirty_ids_calls_rescan_dirty(self) -> None:
+        """_run_graph with dirty_node_ids uses rescan_dirty instead of full scan."""
+        from apme_engine.daemon.native_validator_server import _run_graph
+        from apme_engine.graph.content_graph import ContentGraph
+
+        graph = ContentGraph()
+        graph_data = json.dumps(graph.to_dict()).encode()
+
+        with (
+            patch("apme_engine.daemon.native_validator_server.load_graph_rules", return_value=[]),
+            patch("apme_engine.daemon.native_validator_server.rescan_dirty") as mock_rescan,
+            patch("apme_engine.daemon.native_validator_server.graph_scan") as mock_scan,
+        ):
+            from apme_engine.graph.scanner import GraphScanReport
+
+            mock_rescan.return_value = GraphScanReport()
+            result = _run_graph(graph_data, frozenset({"node-x"}))
+
+        mock_rescan.assert_called_once()
+        mock_scan.assert_not_called()
+        assert result.violations == []
+
+    def test_run_graph_without_dirty_ids_calls_full_scan(self) -> None:
+        """_run_graph without dirty_node_ids uses full graph_scan."""
+        from apme_engine.daemon.native_validator_server import _run_graph
+        from apme_engine.graph.content_graph import ContentGraph
+
+        graph = ContentGraph()
+        graph_data = json.dumps(graph.to_dict()).encode()
+
+        with (
+            patch("apme_engine.daemon.native_validator_server.load_graph_rules", return_value=[]),
+            patch("apme_engine.daemon.native_validator_server.rescan_dirty") as mock_rescan,
+            patch("apme_engine.daemon.native_validator_server.graph_scan") as mock_scan,
+        ):
+            from apme_engine.graph.scanner import GraphScanReport
+
+            mock_scan.return_value = GraphScanReport()
+            result = _run_graph(graph_data)
+
+        mock_scan.assert_called_once()
+        mock_rescan.assert_not_called()
+        assert result.violations == []
+
+    async def test_validate_dirty_node_ids_triggers_rescan(self) -> None:
+        """Validate with dirty_node_ids calls rescan_dirty instead of full scan."""
+        from apme_engine.daemon.native_validator_server import NativeValidatorServicer, _GraphRunResult
+        from apme_engine.graph.content_graph import ContentGraph
+
+        graph = ContentGraph()
+        graph_data = json.dumps(graph.to_dict()).encode()
+
+        request = validate_pb2.ValidateRequest(
+            request_id="native-dirty-1",
+            content_graph_data=graph_data,
+            dirty_node_ids=["node-a", "node-b"],
+        )
+
+        mock_result = _GraphRunResult(violations=[])
+
+        servicer = NativeValidatorServicer()
+        with patch(
+            "apme_engine.daemon.native_validator_server._run_graph",
+            return_value=mock_result,
+        ) as mock_run:
+            resp = await servicer.Validate(request, FakeGrpcContext())  # type: ignore[arg-type]
+
+        mock_run.assert_called_once()
+        _data, dirty_arg = mock_run.call_args[0]
+        assert dirty_arg == frozenset({"node-a", "node-b"})
+        assert len(resp.violations) == 0  # type: ignore[attr-defined]
+
+    async def test_validate_empty_dirty_node_ids_triggers_full_scan(self) -> None:
+        """Validate with empty dirty_node_ids calls full graph scan."""
+        from apme_engine.daemon.native_validator_server import NativeValidatorServicer, _GraphRunResult
+        from apme_engine.graph.content_graph import ContentGraph
+
+        graph = ContentGraph()
+        graph_data = json.dumps(graph.to_dict()).encode()
+
+        request = validate_pb2.ValidateRequest(
+            request_id="native-full-1",
+            content_graph_data=graph_data,
+        )
+
+        mock_result = _GraphRunResult(violations=[])
+
+        servicer = NativeValidatorServicer()
+        with patch(
+            "apme_engine.daemon.native_validator_server._run_graph",
+            return_value=mock_result,
+        ) as mock_run:
+            await servicer.Validate(request, FakeGrpcContext())  # type: ignore[arg-type]
+
+        mock_run.assert_called_once()
+        _data, dirty_arg = mock_run.call_args[0]
+        assert dirty_arg is None
+
 
 class TestGitleaksValidatorServicerDiagnostics:
     """Tests for Gitleaks validator diagnostics."""

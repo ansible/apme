@@ -24,6 +24,7 @@ from apme_engine.graph.scanner import (
     GraphScanReport,
     graph_report_to_violations,
     load_graph_rules,
+    rescan_dirty,
 )
 from apme_engine.graph.scanner import scan as graph_scan
 from apme_engine.log_bridge import attach_collector
@@ -57,15 +58,23 @@ def _default_rules_dir() -> str:
     return native_rules_dir()
 
 
-def _run_graph(raw_graph_data: bytes) -> _GraphRunResult:
+def _run_graph(
+    raw_graph_data: bytes,
+    dirty_node_ids: frozenset[str] | None = None,
+) -> _GraphRunResult:
     """Blocking function: deserialize ContentGraph, load GraphRules, and scan.
 
     Deserialization happens here (not in the async handler) so that JSON
     parsing and graph construction run in the executor thread rather than
     blocking the gRPC event loop.
 
+    When *dirty_node_ids* is non-empty only those nodes are re-evaluated
+    (incremental rescan during remediation convergence).  An empty or
+    ``None`` value triggers a full graph scan.
+
     Args:
         raw_graph_data: Raw JSON bytes from ``ValidateRequest.content_graph_data``.
+        dirty_node_ids: Optional set of node IDs to rescan.
 
     Returns:
         _GraphRunResult with violations and the raw report.
@@ -74,7 +83,9 @@ def _run_graph(raw_graph_data: bytes) -> _GraphRunResult:
     content_graph = ContentGraph.from_dict(graph_dict)
     rules_dir = _default_rules_dir()
     rules = load_graph_rules(rules_dir=rules_dir)
-    report = graph_scan(content_graph, rules)
+
+    report = rescan_dirty(content_graph, rules, dirty_node_ids) if dirty_node_ids else graph_scan(content_graph, rules)
+
     violations = graph_report_to_violations(report)
     return _GraphRunResult(violations=violations, report=report)
 
@@ -106,10 +117,19 @@ class NativeValidatorServicer(validate_pb2_grpc.ValidatorServicer):
                     logger.warning("Native: no content_graph_data in request (req=%s)", req_id)
                     return ValidateResponse(violations=[], request_id=req_id, logs=sink.entries)
 
+                dirty: frozenset[str] | None = frozenset(request.dirty_node_ids) if request.dirty_node_ids else None
+                if dirty:
+                    logger.info(
+                        "Native: incremental rescan (%d dirty nodes, req=%s)",
+                        len(dirty),
+                        req_id,
+                    )
+
                 result = await asyncio.get_event_loop().run_in_executor(
                     None,
                     _run_graph,
                     request.content_graph_data,
+                    dirty,
                 )
 
                 total_ms = (time.monotonic() - t0) * 1000

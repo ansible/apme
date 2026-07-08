@@ -111,13 +111,14 @@ The rescan uses multiple strategies depending on the validator:
 
 | Validator | Rescan Method |
 |-----------|---------------|
-| Native | `rescan_dirty()` — in-process graph rules on dirty nodes |
+| Native | Full graph with `dirty_node_ids` hint via gRPC |
 | OPA | Mini hierarchy payload from `content_node_to_opa_dict()` |
 | Ansible | Scoped task nodes from dirty set |
 | Gitleaks | Slim graph data from dirty node YAML |
 
-All external validator rescans are dispatched via `_rescan_bridge()` in
-`primary_server.py`, which uses `asyncio.gather()` for parallel execution.
+All validator rescans are dispatched via `_rescan_bridge()` in
+`primary_server.py`, which uses `asyncio.gather()` for parallel execution
+over gRPC.
 
 ### Auto-Approval
 

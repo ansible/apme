@@ -1482,10 +1482,9 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
     ) -> AsyncIterator[SessionEvent]:
         """Graph-engine remediation — in-memory convergence, graph-authoritative.
 
-        Convergence sends dirty nodes to ALL validators via gRPC:
-        native graph rules run in-process, while OPA, Ansible, and
-        Gitleaks receive scoped requests containing only dirty node
-        data (no file I/O during convergence).  The ContentGraph is
+        Convergence sends dirty nodes to all validators via gRPC.
+        Each validator receives scoped data containing only dirty
+        node information (no file I/O during convergence).  The ContentGraph is
         authoritative for remaining violations — no final re-scan is
         needed.  Approved changes are spliced to disk.
 
@@ -1511,10 +1510,8 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         from apme_engine.engine.graph_opa_payload import content_node_to_opa_dict
         from apme_engine.graph.content_graph import ContentGraph, EdgeType, NodeType
         from apme_engine.graph.scanner import (
-            graph_report_to_violations,
             load_graph_rules,
             native_rules_dir,
-            rescan_dirty,
         )
         from apme_engine.remediation.graph_engine import (
             GraphRemediationEngine,
@@ -1548,18 +1545,18 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                 with contextlib.suppress(ValueError):
                     originals[str(Path(yp).relative_to(temp_dir))] = content
 
-        # 2. Convergence: native graph rules + external validators on dirty nodes
+        # 2. Convergence: all validators on dirty nodes via gRPC
         rules = load_graph_rules(rules_dir=native_rules_dir())
 
         async def _rescan_bridge(
             g: ContentGraph,
             dirty_ids: frozenset[str],
         ) -> list[ViolationDict]:
-            """Rescan dirty nodes with native rules + node-native external validators.
+            """Rescan dirty nodes via gRPC to all configured validators.
 
-            Native graph rules run in-process.  External validators
-            (OPA, Ansible, Gitleaks) receive node-serialized data and
-            return violations with ``path`` already set to ``node_id``.
+            All validators (native, OPA, Ansible, Gitleaks) receive
+            scoped data over gRPC and return violations with ``path``
+            already set to ``node_id``.
 
             Args:
                 g: ContentGraph (may have been mutated by transforms).
@@ -1568,8 +1565,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             Returns:
                 Merged violation list from all sources.
             """
-            graph_report = rescan_dirty(g, rules, dirty_ids)
-            all_violations = graph_report_to_violations(graph_report)
+            all_violations: list[ViolationDict] = []
 
             dirty_nodes = [node for nid in sorted(dirty_ids) if (node := g.get_node(nid)) is not None]
             if not dirty_nodes:
@@ -1577,6 +1573,25 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
 
             ext_coros: list[Awaitable[_ValidatorResult]] = []
             ext_names: list[str] = []
+
+            # Native: full graph with dirty_node_ids hint (rules traverse full context)
+            native_addr = os.environ.get("NATIVE_GRPC_ADDRESS")
+            if native_addr:
+                graph_data = await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    lambda: json.dumps(g.to_dict(slim=True)).encode(),
+                )
+                ext_coros.append(
+                    _call_validator(
+                        native_addr,
+                        ValidateRequest(
+                            request_id=f"{scan_id}-rescan",
+                            content_graph_data=graph_data,
+                            dirty_node_ids=sorted(dirty_ids),
+                        ),
+                    )
+                )
+                ext_names.append("native")
 
             # Gitleaks: serialize dirty nodes as content_graph_data
             gl_addr = os.environ.get("GITLEAKS_GRPC_ADDRESS")
