@@ -16,6 +16,46 @@ def _default_cache_dir() -> Path:
     return base / "ansible-collection-proxy"
 
 
+def _safe_wheel_path(base: Path, filename: str) -> Path:
+    """Resolve a wheel filename under *base*, rejecting traversal attempts.
+
+    Validates the untrusted filename as a single safe path component, then
+    reconstructs the result purely from the trusted base directory so static
+    analysis can verify the path stays within the cache root.
+
+    Args:
+        base: Base directory the file must reside under.
+        filename: Untrusted wheel filename to resolve.
+
+    Returns:
+        Resolved path confirmed to be under base.
+
+    Raises:
+        ValueError: When the filename is invalid or escapes the base directory.
+    """
+    base_resolved = base.resolve()
+    if (
+        not filename
+        or filename != os.path.basename(filename)
+        or ".." in filename
+        or os.sep in filename
+        or (os.altsep and os.altsep in filename)
+    ):
+        msg = f"Invalid wheel filename: {filename!r}"
+        raise ValueError(msg)
+
+    part = filename
+    if part == ".":
+        msg = f"Invalid wheel filename component: {filename!r}"
+        raise ValueError(msg)
+
+    safe_path = base_resolved.joinpath(part).resolve()
+    if not safe_path.is_relative_to(base_resolved):
+        msg = f"Path escapes cache directory: {filename!r}"
+        raise ValueError(msg)
+    return safe_path
+
+
 @dataclass
 class CachedMetadata:
     """Cached Galaxy version listing for a collection.
@@ -47,25 +87,6 @@ class ProxyCache:
         self.wheels_dir.mkdir(parents=True, exist_ok=True)
         self.metadata_dir.mkdir(parents=True, exist_ok=True)
 
-    def _safe_path(self, base: Path, filename: str) -> Path:
-        """Resolve a filename under base, rejecting traversal attempts.
-
-        Args:
-            base: Base directory the file must reside under.
-            filename: Untrusted filename to resolve.
-
-        Returns:
-            Resolved path confirmed to be under base.
-
-        Raises:
-            ValueError: When the resolved path escapes the base directory.
-        """
-        resolved = (base / filename).resolve()
-        if not resolved.is_relative_to(base.resolve()):
-            msg = f"Path escapes cache directory: {filename!r}"
-            raise ValueError(msg)
-        return resolved
-
     def get_wheel(self, filename: str) -> bytes | None:
         """Return cached wheel bytes, or None if not cached.
 
@@ -75,7 +96,7 @@ class ProxyCache:
         Returns:
             Cached wheel bytes, or None if the file is not present.
         """
-        path = self._safe_path(self.wheels_dir, filename)
+        path = _safe_wheel_path(self.wheels_dir, filename)
         if path.exists():
             return path.read_bytes()
         return None
@@ -93,7 +114,7 @@ class ProxyCache:
         Raises:
             OSError: When the temporary file cannot be written or renamed.
         """
-        path = self._safe_path(self.wheels_dir, filename)
+        path = _safe_wheel_path(self.wheels_dir, filename)
         fd, tmp = tempfile.mkstemp(dir=self.wheels_dir, suffix=".tmp")
         tmp_path = Path(tmp)
         try:
@@ -114,7 +135,7 @@ class ProxyCache:
         Returns:
             Path to the cached file, or None if it does not exist.
         """
-        path = self._safe_path(self.wheels_dir, filename)
+        path = _safe_wheel_path(self.wheels_dir, filename)
         return path if path.exists() else None
 
     def get_metadata(self, namespace: str, name: str) -> CachedMetadata | None:
