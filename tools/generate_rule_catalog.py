@@ -88,7 +88,7 @@ def _get_severity(rule_id: str) -> str:
         Severity label string.
     """
     try:
-        from apme_engine.severity_defaults import get_severity, severity_to_label
+        from apme_engine.graph.severity import get_severity, severity_to_label
 
         return severity_to_label(get_severity(rule_id))
     except Exception:

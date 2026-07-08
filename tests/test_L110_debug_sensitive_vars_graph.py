@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from typing import cast
 
-from apme_engine.engine.content_graph import (
+from apme_engine.engine.models import YAMLDict
+from apme_engine.graph.content_graph import (
     ContentGraph,
     ContentNode,
     EdgeType,
@@ -12,15 +13,14 @@ from apme_engine.engine.content_graph import (
     NodeScope,
     NodeType,
 )
-from apme_engine.engine.graph_scanner import scan
-from apme_engine.engine.models import YAMLDict
-from apme_engine.validators.native.rules.graph_rule_base import GraphRule
-from apme_engine.validators.native.rules.L110_debug_sensitive_vars_graph import (
+from apme_engine.graph.rule_base import GraphRule
+from apme_engine.graph.rules.L110_debug_sensitive_vars_graph import (
     DebugSensitiveVarsGraphRule,
     _extract_jinja_vars,
     _find_sensitive_vars_in_debug,
     _var_looks_sensitive,
 )
+from apme_engine.graph.scanner import scan
 
 
 def _make_debug_graph(

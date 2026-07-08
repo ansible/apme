@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from apme_engine.engine.content_graph import (
+from apme_engine.graph.content_graph import (
     ContentGraph,
     ContentNode,
     EdgeType,
@@ -16,14 +16,14 @@ from apme_engine.engine.content_graph import (
     NodeScope,
     NodeType,
 )
-from apme_engine.validators.native.rules.L033_unconditional_override_graph import (
+from apme_engine.graph.rules.L033_unconditional_override_graph import (
     UnconditionalOverrideGraphRule,
 )
-from apme_engine.validators.native.rules.L049_loop_var_prefix_graph import LoopVarPrefixGraphRule
-from apme_engine.validators.native.rules.M010_python2_interpreter_graph import (
+from apme_engine.graph.rules.L049_loop_var_prefix_graph import LoopVarPrefixGraphRule
+from apme_engine.graph.rules.M010_python2_interpreter_graph import (
     Python2InterpreterGraphRule,
 )
-from apme_engine.validators.native.rules.M030_broken_conditional_expressions_graph import (
+from apme_engine.graph.rules.M030_broken_conditional_expressions_graph import (
     HAS_JINJA,
     BrokenConditionalExpressionsGraphRule,
 )

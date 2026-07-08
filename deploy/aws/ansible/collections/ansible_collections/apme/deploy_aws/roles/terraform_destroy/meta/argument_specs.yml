@@ -1,0 +1,13 @@
+---
+argument_specs:
+  main:
+    short_description: Destroy Terraform-managed infrastructure (state absent).
+    options:
+      terraform_destroy_project_path:
+        type: str
+        required: true
+        description: Path to the Terraform root module.
+      terraform_destroy_purge_workspace:
+        type: bool
+        required: false
+        description: When true, purge the workspace after destroy (cloud.terraform).

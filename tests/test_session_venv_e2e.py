@@ -24,12 +24,12 @@ from typing import cast
 
 import pytest
 
-from apme_engine.engine.content_graph import ContentGraph
-from apme_engine.engine.graph_scanner import (
+from apme_engine.graph.content_graph import ContentGraph
+from apme_engine.graph.scanner import (
     graph_report_to_violations,
     load_graph_rules,
 )
-from apme_engine.engine.graph_scanner import scan as graph_scan
+from apme_engine.graph.scanner import scan as graph_scan
 from apme_engine.opa_client import run_opa_test
 from apme_engine.runner import run_scan
 from apme_engine.validators.opa import OpaValidator
@@ -262,7 +262,7 @@ def test_native_violations_with_session_venv(dep_dir: str) -> None:
         graph = ctx.scandata.content_graph
     assert graph is not None, "ContentGraph not built — cannot run graph rules"
 
-    import apme_engine.validators.native.rules as _rules_pkg
+    import apme_engine.graph.rules as _rules_pkg
 
     rules_dir = str(Path(_rules_pkg.__file__).parent)
     rules = load_graph_rules(rules_dir=rules_dir)

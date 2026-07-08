@@ -17,7 +17,7 @@ from sqlalchemy import select as sa_select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apme.v1 import reporting_pb2, reporting_pb2_grpc
-from apme_engine.severity_defaults import severity_from_proto, severity_to_label
+from apme_engine.graph.severity import severity_from_proto, severity_to_label
 from apme_gateway.db import get_session
 from apme_gateway.db.models import (
     PatchedFile,

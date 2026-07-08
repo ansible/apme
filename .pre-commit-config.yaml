@@ -53,7 +53,7 @@ repos:
         files: ^src/apme_engine/(validators|graph/rules)/.+\.(py|rego|md)$|^src/apme_engine/remediation/transforms/
         pass_filenames: false
       - id: graph-boundary
-        name: graph-boundary (ADR-053)
+        name: graph-boundary (ADR-059)
         language: python
         language_version: python3.10
         entry: python tools/check_graph_boundary.py

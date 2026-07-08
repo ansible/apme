@@ -52,7 +52,6 @@ def _check_file(path: Path) -> list[str]:
         return []
 
     violations: list[str] = []
-    in_type_checking = False
 
     for node in ast.walk(tree):
         if isinstance(node, ast.If):
@@ -77,10 +76,7 @@ def _check_file(path: Path) -> list[str]:
                 if any(mod.startswith(p) for p in _FORBIDDEN_PREFIXES):
                     if mod in allowed:
                         continue
-                    violations.append(
-                        f"  {rel_str}:{node.lineno}: "
-                        f"graph/ must not import '{mod}'"
-                    )
+                    violations.append(f"  {rel_str}:{node.lineno}: graph/ must not import '{mod}'")
 
     return violations
 

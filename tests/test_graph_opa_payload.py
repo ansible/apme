@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
-from apme_engine.engine.content_graph import (
+from apme_engine.engine.graph_opa_payload import (
+    build_hierarchy_from_graph,
+    content_node_to_opa_dict,
+)
+from apme_engine.graph.content_graph import (
     ContentGraph,
     ContentNode,
     EdgeType,
     NodeIdentity,
     NodeType,
-)
-from apme_engine.engine.graph_opa_payload import (
-    build_hierarchy_from_graph,
-    content_node_to_opa_dict,
 )
 
 

@@ -12,13 +12,13 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from apme_engine.graph.content_graph import ContentGraph, NodeType
-from apme_engine.graph.types import RuleTag as Tag
-from apme_engine.graph.types import Severity, YAMLDict
 from apme_engine.graph.rule_base import (
     GraphRule,
     GraphRuleResult,
     is_templated,
 )
+from apme_engine.graph.types import RuleTag as Tag
+from apme_engine.graph.types import Severity, YAMLDict
 
 if TYPE_CHECKING:
     from apme_engine.graph.content_graph import ContentNode

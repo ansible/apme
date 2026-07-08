@@ -5,7 +5,7 @@ from collections.abc import Mapping
 from apme.v1 import common_pb2
 from apme.v1.common_pb2 import LineRange, Violation
 from apme_engine.engine.models import RemediationClass, RemediationResolution, RuleScope, ViolationDict
-from apme_engine.severity_defaults import (
+from apme_engine.graph.severity import (
     Severity,
     get_severity,
     severity_from_label,

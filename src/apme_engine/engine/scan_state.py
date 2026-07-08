@@ -8,10 +8,12 @@ import os
 from dataclasses import dataclass, field
 from typing import cast
 
+from apme_engine.graph.content_graph import ContentGraph
+from apme_engine.graph.scanner import GraphScanReport
+
 from . import logger
-from .content_graph import ContentGraph, GraphBuilder
 from .findings import Findings
-from .graph_scanner import GraphScanReport
+from .graph_builder import GraphBuilder
 from .loader import (
     get_loader_version,
 )

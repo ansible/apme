@@ -1,0 +1,14 @@
+---
+# Destroy all resources in deploy/aws/terraform (default workspace).
+- name: Destroy APME AWS Phase 1 (Terraform destroy)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    apme_deploy_aws_terraform_root: "{{ playbook_dir | dirname }}/terraform"
+  tasks:
+    - name: Destroy Terraform root module (absent)
+      ansible.builtin.import_role:
+        name: apme.deploy_aws.terraform_destroy
+      vars:
+        terraform_destroy_project_path: "{{ apme_deploy_aws_terraform_root }}"

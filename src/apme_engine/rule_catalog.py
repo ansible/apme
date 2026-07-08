@@ -20,7 +20,7 @@ from pathlib import Path
 
 from apme.v1 import common_pb2, reporting_pb2
 from apme_engine.engine.models import RuleScope
-from apme_engine.severity_defaults import get_severity, severity_to_proto
+from apme_engine.graph.severity import get_severity, severity_to_proto
 from apme_engine.version_defaults import get_version_spec_str
 
 logger = logging.getLogger(__name__)
@@ -92,7 +92,7 @@ def _collect_native_rules() -> list[reporting_pb2.RuleDefinition]:
         List of RuleDefinition protos for all enabled native rules.
     """
     try:
-        from apme_engine.engine.graph_scanner import load_graph_rules
+        from apme_engine.graph.scanner import load_graph_rules
 
         rules_dir = str(_NATIVE_RULES_DIR)
         graph_rules = load_graph_rules(rules_dir=rules_dir)

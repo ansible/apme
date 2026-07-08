@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from apme_engine.engine.content_graph import ContentGraph
+    from apme_engine.graph.content_graph import ContentGraph
 
 import grpc
 import grpc.aio
@@ -538,7 +538,7 @@ def _apply_rule_configs(
     if not rule_configs:
         return violations
 
-    from apme_engine.severity_defaults import severity_to_label
+    from apme_engine.graph.severity import severity_to_label
 
     config_map: dict[str, object] = {}
     for rc in rule_configs:
@@ -552,7 +552,7 @@ def _apply_rule_configs(
             if not rc.enabled:  # type: ignore[attr-defined]
                 continue
             if rc.severity:  # type: ignore[attr-defined]
-                from apme_engine.severity_defaults import severity_from_proto
+                from apme_engine.graph.severity import severity_from_proto
 
                 v["severity"] = severity_to_label(severity_from_proto(rc.severity))  # type: ignore[attr-defined]
             if rc.enforced:  # type: ignore[attr-defined]
@@ -1508,9 +1508,9 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         Yields:
             SessionEvent: Progress, Tier1Summary, and result events.
         """
-        from apme_engine.engine.content_graph import ContentGraph, EdgeType, NodeType
         from apme_engine.engine.graph_opa_payload import content_node_to_opa_dict
-        from apme_engine.engine.graph_scanner import (
+        from apme_engine.graph.content_graph import ContentGraph, EdgeType, NodeType
+        from apme_engine.graph.scanner import (
             graph_report_to_violations,
             load_graph_rules,
             native_rules_dir,
@@ -2372,7 +2372,7 @@ def _apply_graph_approvals(
     Returns:
         Tuple of (proposals applied, rejected node IDs).
     """
-    from apme_engine.engine.content_graph import ContentGraph  # noqa: PLC0415
+    from apme_engine.graph.content_graph import ContentGraph  # noqa: PLC0415
     from apme_engine.remediation.graph_engine import (  # noqa: PLC0415
         AINodeProposal,
         splice_modifications,
@@ -2443,7 +2443,7 @@ def _reconcile_after_approval(
         graph: ContentGraph after approve/reject mutations.
         rejected_node_ids: Node IDs whose AI proposals were rejected.
     """
-    from apme_engine.engine.content_graph import ContentGraph  # noqa: PLC0415
+    from apme_engine.graph.content_graph import ContentGraph  # noqa: PLC0415
 
     if not isinstance(graph, ContentGraph):
         return

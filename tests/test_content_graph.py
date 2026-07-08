@@ -7,16 +7,16 @@ from typing import cast
 
 import pytest
 
-from apme_engine.engine.content_graph import (
+from apme_engine.engine.graph_builder import GraphBuilder
+from apme_engine.engine.models import BecomeInfo, YAMLDict
+from apme_engine.graph.content_graph import (
     ContentGraph,
     ContentNode,
     EdgeType,
-    GraphBuilder,
     NodeIdentity,
     NodeScope,
     NodeType,
 )
-from apme_engine.engine.models import BecomeInfo, YAMLDict
 
 # ---------------------------------------------------------------------------
 # NodeIdentity
@@ -775,19 +775,19 @@ class TestGraphReportToViolations:
 
     def test_verdict_true_becomes_violation(self) -> None:
         """Verify results with verdict=True are included in violations."""
-        from apme_engine.engine.graph_scanner import (
+        from apme_engine.engine.models import RuleMetadata
+        from apme_engine.graph.scanner import (
             GraphNodeResult,
             GraphScanReport,
             graph_report_to_violations,
         )
-        from apme_engine.engine.models import RuleMetadata
 
         node = ContentNode(
             identity=NodeIdentity(path="site.yml/plays[0]/tasks[0]", node_type=NodeType.TASK),
             file_path="site.yml",
             line_start=5,
         )
-        from apme_engine.validators.native.rules.graph_rule_base import GraphRuleResult
+        from apme_engine.graph.rule_base import GraphRuleResult
 
         report = GraphScanReport(
             node_results=[
@@ -816,13 +816,13 @@ class TestGraphReportToViolations:
 
     def test_verdict_false_excluded(self) -> None:
         """Verify results with verdict=False are excluded from violations."""
-        from apme_engine.engine.graph_scanner import (
+        from apme_engine.engine.models import RuleMetadata
+        from apme_engine.graph.rule_base import GraphRuleResult
+        from apme_engine.graph.scanner import (
             GraphNodeResult,
             GraphScanReport,
             graph_report_to_violations,
         )
-        from apme_engine.engine.models import RuleMetadata
-        from apme_engine.validators.native.rules.graph_rule_base import GraphRuleResult
 
         node = ContentNode(
             identity=NodeIdentity(path="t.yml/plays[0]/tasks[0]", node_type=NodeType.TASK),
@@ -848,7 +848,7 @@ class TestGraphReportToViolations:
 
     def test_empty_report(self) -> None:
         """Verify empty report produces empty violations."""
-        from apme_engine.engine.graph_scanner import GraphScanReport, graph_report_to_violations
+        from apme_engine.graph.scanner import GraphScanReport, graph_report_to_violations
 
         assert graph_report_to_violations(GraphScanReport()) == []
 
@@ -1117,7 +1117,7 @@ class TestPlayYamlLines:
 
     def test_find_play_lines_multi_play(self) -> None:
         """_find_play_lines locates correct range for each play in a multi-play file."""
-        from apme_engine.engine.content_graph import _find_play_lines
+        from apme_engine.engine.graph_builder import _find_play_lines
 
         content = (
             "---\n"

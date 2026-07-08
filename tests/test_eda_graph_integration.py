@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from apme_engine.engine.awx_utils import could_be_eda_rulebook, could_be_playbook, search_playbooks
-from apme_engine.engine.content_graph import NodeType
+from apme_engine.graph.content_graph import NodeType
 
 
 class TestEdaGraphIntegration:

@@ -11,14 +11,18 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from apme_engine.engine.content_graph import (
+from apme_engine.engine.models import ViolationDict
+from apme_engine.graph.content_graph import (
     ContentGraph,
     ContentNode,
     EdgeType,
     NodeIdentity,
     NodeType,
 )
-from apme_engine.engine.models import ViolationDict
+from apme_engine.graph.rule_base import (
+    GraphRule,
+    GraphRuleResult,
+)
 from apme_engine.remediation.ai_context import (
     AINodeContext,
     _simplify_dict,
@@ -31,10 +35,6 @@ from apme_engine.remediation.graph_engine import (
     GraphRemediationEngine,
 )
 from apme_engine.remediation.registry import TransformRegistry
-from apme_engine.validators.native.rules.graph_rule_base import (
-    GraphRule,
-    GraphRuleResult,
-)
 
 if TYPE_CHECKING:
     from ruamel.yaml.comments import CommentedMap

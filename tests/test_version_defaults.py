@@ -14,7 +14,12 @@ from apme_engine.version_defaults import (
     is_applicable,
 )
 
-_VALIDATORS_DIR = Path(__file__).resolve().parent.parent / "src" / "apme_engine" / "validators"
+_APME_ENGINE_DIR = Path(__file__).resolve().parent.parent / "src" / "apme_engine"
+_RULE_DOC_DIRS = [
+    _APME_ENGINE_DIR / "graph" / "rules",
+    _APME_ENGINE_DIR / "validators" / "opa" / "bundle",
+    _APME_ENGINE_DIR / "validators" / "ansible" / "rules",
+]
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---", re.DOTALL)
 _KV_RE = re.compile(r'^(\w+):\s*"?([^"\n]+)"?\s*$', re.MULTILINE)
 
@@ -142,16 +147,19 @@ class TestFrontmatterConsistency:
             Dict of rule_id -> version specifier string from frontmatter.
         """
         result: dict[str, str] = {}
-        for md_path in sorted(_VALIDATORS_DIR.rglob("*.md")):
-            text = md_path.read_text(encoding="utf-8")
-            fm_match = _FRONTMATTER_RE.match(text)
-            if not fm_match:
+        for rule_dir in _RULE_DOC_DIRS:
+            if not rule_dir.is_dir():
                 continue
-            kvs = dict(_KV_RE.findall(fm_match.group(1)))
-            rule_id = kvs.get("rule_id", "")
-            version = kvs.get("ansible_core_version", "")
-            if rule_id and version:
-                result[rule_id] = version
+            for md_path in sorted(rule_dir.rglob("*.md")):
+                text = md_path.read_text(encoding="utf-8")
+                fm_match = _FRONTMATTER_RE.match(text)
+                if not fm_match:
+                    continue
+                kvs = dict(_KV_RE.findall(fm_match.group(1)))
+                rule_id = kvs.get("rule_id", "")
+                version = kvs.get("ansible_core_version", "")
+                if rule_id and version:
+                    result[rule_id] = version
         return result
 
     def test_frontmatter_matches_version_defaults(self) -> None:

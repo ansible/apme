@@ -20,7 +20,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from apme_engine.severity_defaults import severity_from_proto, severity_to_label
+from apme_engine.graph.severity import severity_from_proto, severity_to_label
 from apme_gateway.api.schemas import SubmitRequest, SubmitResponse
 from apme_gateway.db import get_session
 from apme_gateway.db import queries as q

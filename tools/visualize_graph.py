@@ -440,7 +440,7 @@ function toggleIncludes() {{
 
 def main() -> None:
     """Scan an Ansible project and write an interactive graph.html."""
-    from apme_engine.engine.content_graph import GraphBuilder
+    from apme_engine.engine.graph_builder import GraphBuilder
     from apme_engine.runner import run_scan
 
     parser = argparse.ArgumentParser(

@@ -6,17 +6,17 @@ from pathlib import Path
 
 import pytest
 
-from apme_engine.engine.content_graph import ContentGraph, ContentNode, EdgeType, NodeIdentity, NodeScope, NodeType
-from apme_engine.engine.graph_scanner import scan
 from apme_engine.engine.models import YAMLDict
-from apme_engine.validators.native.rules.graph_rule_base import GraphRule
-from apme_engine.validators.native.rules.L027_role_without_metadata_graph import RoleWithoutMetadataGraphRule
-from apme_engine.validators.native.rules.L052_galaxy_version_incorrect_graph import GalaxyVersionIncorrectGraphRule
-from apme_engine.validators.native.rules.L053_meta_incorrect_graph import MetaIncorrectGraphRule
-from apme_engine.validators.native.rules.L054_meta_no_tags_graph import MetaNoTagsGraphRule
-from apme_engine.validators.native.rules.L055_meta_video_links_graph import MetaVideoLinksGraphRule
-from apme_engine.validators.native.rules.L077_role_arg_specs_graph import RoleArgSpecsGraphRule
-from apme_engine.validators.native.rules.L079_role_var_prefix_graph import RoleVarPrefixGraphRule
+from apme_engine.graph.content_graph import ContentGraph, ContentNode, EdgeType, NodeIdentity, NodeScope, NodeType
+from apme_engine.graph.rule_base import GraphRule
+from apme_engine.graph.rules.L027_role_without_metadata_graph import RoleWithoutMetadataGraphRule
+from apme_engine.graph.rules.L052_galaxy_version_incorrect_graph import GalaxyVersionIncorrectGraphRule
+from apme_engine.graph.rules.L053_meta_incorrect_graph import MetaIncorrectGraphRule
+from apme_engine.graph.rules.L054_meta_no_tags_graph import MetaNoTagsGraphRule
+from apme_engine.graph.rules.L055_meta_video_links_graph import MetaVideoLinksGraphRule
+from apme_engine.graph.rules.L077_role_arg_specs_graph import RoleArgSpecsGraphRule
+from apme_engine.graph.rules.L079_role_var_prefix_graph import RoleVarPrefixGraphRule
+from apme_engine.graph.scanner import scan
 
 
 def _make_role(

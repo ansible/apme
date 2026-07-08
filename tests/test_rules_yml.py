@@ -8,7 +8,7 @@ import pytest
 
 from apme_engine.cli._rules_yml import RULES_YML_PATH, load_rule_configs_from_project
 from apme_engine.daemon.chunked_fs import yield_scan_chunks
-from apme_engine.severity_defaults import Severity
+from apme_engine.graph.severity import Severity
 
 
 def test_missing_file_returns_empty(tmp_path: Path) -> None:

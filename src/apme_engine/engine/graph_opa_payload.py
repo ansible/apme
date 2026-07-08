@@ -17,7 +17,8 @@ import datetime
 import logging
 from typing import cast
 
-from .content_graph import ContentGraph, ContentNode, EdgeType, NodeType
+from apme_engine.graph.content_graph import ContentGraph, ContentNode, EdgeType, NodeType
+
 from .models import Annotation, Location, RiskAnnotation, YAMLDict, YAMLValue
 
 logger = logging.getLogger(__name__)

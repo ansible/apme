@@ -15,13 +15,13 @@ from dataclasses import dataclass
 from typing import cast
 
 from apme_engine.graph.content_graph import ContentGraph, NodeType
-from apme_engine.graph.types import RuleTag as Tag
-from apme_engine.graph.types import Severity, YAMLDict
-from apme_engine.graph.variable_provenance import VariableProvenanceResolver
 from apme_engine.graph.rule_base import (
     GraphRule,
     GraphRuleResult,
 )
+from apme_engine.graph.types import RuleTag as Tag
+from apme_engine.graph.types import Severity, YAMLDict
+from apme_engine.graph.variable_provenance import VariableProvenanceResolver
 
 _JINJA_VAR_RE = re.compile(r"\{\{(.*?)\}\}")
 _BARE_IDENT_RE = re.compile(r"\b([a-zA-Z_][a-zA-Z0-9_]*)\b")

@@ -10,37 +10,37 @@ from pathlib import Path
 
 import pytest
 
-from apme_engine.engine.content_graph import (
+from apme_engine.engine.graph_builder import GraphBuilder
+from apme_engine.engine.models import YAMLDict
+from apme_engine.graph.content_graph import (
     ContentGraph,
     ContentNode,
     EdgeType,
-    GraphBuilder,
     NodeIdentity,
     NodeScope,
     NodeType,
 )
-from apme_engine.engine.graph_scanner import scan
-from apme_engine.engine.models import YAMLDict
-from apme_engine.validators.native.rules.L056_sanity_graph import SanityGraphRule
-from apme_engine.validators.native.rules.L074_no_dashes_in_role_name_graph import NoDashesInRoleNameGraphRule
-from apme_engine.validators.native.rules.L080_internal_var_prefix_graph import InternalVarPrefixGraphRule
-from apme_engine.validators.native.rules.L081_numbered_names_graph import NumberedNamesGraphRule
-from apme_engine.validators.native.rules.L083_hardcoded_group_graph import HardcodedGroupGraphRule
-from apme_engine.validators.native.rules.L085_role_path_include_graph import RolePathIncludeGraphRule
-from apme_engine.validators.native.rules.L087_collection_license_graph import CollectionLicenseGraphRule
-from apme_engine.validators.native.rules.L088_collection_readme_graph import CollectionReadmeGraphRule
-from apme_engine.validators.native.rules.L089_plugin_type_hints_graph import PluginTypeHintsGraphRule
-from apme_engine.validators.native.rules.L090_plugin_file_size_graph import PluginFileSizeGraphRule
-from apme_engine.validators.native.rules.L095_schema_validation_graph import SchemaValidationGraphRule
-from apme_engine.validators.native.rules.L096_meta_runtime_graph import MetaRuntimeGraphRule
-from apme_engine.validators.native.rules.L103_galaxy_changelog_graph import GalaxyChangelogGraphRule
-from apme_engine.validators.native.rules.L104_galaxy_runtime_graph import GalaxyRuntimeGraphRule
-from apme_engine.validators.native.rules.L105_galaxy_repository_graph import GalaxyRepositoryGraphRule
-from apme_engine.validators.native.rules.M030_broken_conditional_expressions_graph import (
+from apme_engine.graph.rules.L056_sanity_graph import SanityGraphRule
+from apme_engine.graph.rules.L074_no_dashes_in_role_name_graph import NoDashesInRoleNameGraphRule
+from apme_engine.graph.rules.L080_internal_var_prefix_graph import InternalVarPrefixGraphRule
+from apme_engine.graph.rules.L081_numbered_names_graph import NumberedNamesGraphRule
+from apme_engine.graph.rules.L083_hardcoded_group_graph import HardcodedGroupGraphRule
+from apme_engine.graph.rules.L085_role_path_include_graph import RolePathIncludeGraphRule
+from apme_engine.graph.rules.L087_collection_license_graph import CollectionLicenseGraphRule
+from apme_engine.graph.rules.L088_collection_readme_graph import CollectionReadmeGraphRule
+from apme_engine.graph.rules.L089_plugin_type_hints_graph import PluginTypeHintsGraphRule
+from apme_engine.graph.rules.L090_plugin_file_size_graph import PluginFileSizeGraphRule
+from apme_engine.graph.rules.L095_schema_validation_graph import SchemaValidationGraphRule
+from apme_engine.graph.rules.L096_meta_runtime_graph import MetaRuntimeGraphRule
+from apme_engine.graph.rules.L103_galaxy_changelog_graph import GalaxyChangelogGraphRule
+from apme_engine.graph.rules.L104_galaxy_runtime_graph import GalaxyRuntimeGraphRule
+from apme_engine.graph.rules.L105_galaxy_repository_graph import GalaxyRepositoryGraphRule
+from apme_engine.graph.rules.M030_broken_conditional_expressions_graph import (
     HAS_JINJA,
     BrokenConditionalExpressionsGraphRule,
 )
-from apme_engine.validators.native.rules.R401_list_all_inbound_src_graph import ListAllInboundSrcGraphRule
+from apme_engine.graph.rules.R401_list_all_inbound_src_graph import ListAllInboundSrcGraphRule
+from apme_engine.graph.scanner import scan
 
 # ---------------------------------------------------------------------------
 # Helpers

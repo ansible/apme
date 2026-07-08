@@ -590,7 +590,7 @@ class TestSessionGraphRemediate:
         from unittest.mock import MagicMock
 
         from apme_engine.daemon.primary_server import PrimaryServicer
-        from apme_engine.engine.content_graph import ContentGraph, ContentNode, NodeIdentity, NodeType
+        from apme_engine.graph.content_graph import ContentGraph, ContentNode, NodeIdentity, NodeType
         from apme_engine.remediation.graph_engine import FilePatch as EngineFilePatch
         from apme_engine.remediation.graph_engine import GraphFixReport
 
@@ -641,7 +641,7 @@ class TestSessionGraphRemediate:
         progress_queue: asyncio.Queue[ProgressUpdate | None] = asyncio.Queue()
 
         with (
-            patch("apme_engine.engine.graph_scanner.load_graph_rules", return_value=[]),
+            patch("apme_engine.graph.scanner.load_graph_rules", return_value=[]),
             patch("apme_engine.remediation.graph_engine.GraphRemediationEngine") as MockGRE,
             patch("apme_engine.remediation.graph_engine.splice_modifications", return_value=mock_patches),
             patch("apme_engine.remediation.partition.add_classification_to_violations"),
@@ -707,7 +707,7 @@ class TestSessionGraphRemediate:
         from unittest.mock import MagicMock
 
         from apme_engine.daemon.primary_server import PrimaryServicer
-        from apme_engine.engine.content_graph import ContentGraph
+        from apme_engine.graph.content_graph import ContentGraph
         from apme_engine.remediation.graph_engine import GraphFixReport
 
         servicer = PrimaryServicer.__new__(PrimaryServicer)
@@ -725,7 +725,7 @@ class TestSessionGraphRemediate:
             return []
 
         with (
-            patch("apme_engine.engine.graph_scanner.load_graph_rules", return_value=[]),
+            patch("apme_engine.graph.scanner.load_graph_rules", return_value=[]),
             patch("apme_engine.remediation.graph_engine.GraphRemediationEngine") as MockGRE,
             patch("apme_engine.remediation.graph_engine.splice_modifications", return_value=[]),
             patch("apme_engine.remediation.partition.add_classification_to_violations"),
@@ -782,7 +782,7 @@ class TestSessionGraphRemediate:
             return []
 
         with (
-            patch("apme_engine.engine.graph_scanner.load_graph_rules", return_value=[]),
+            patch("apme_engine.graph.scanner.load_graph_rules", return_value=[]),
             patch("apme_engine.remediation.graph_engine.GraphRemediationEngine") as MockGRE,
             patch("apme_engine.remediation.graph_engine.splice_modifications", return_value=[]),
             patch("apme_engine.remediation.partition.add_classification_to_violations"),
@@ -822,7 +822,7 @@ class TestSessionGraphRemediate:
         from unittest.mock import MagicMock
 
         from apme_engine.daemon.primary_server import PrimaryServicer
-        from apme_engine.engine.content_graph import ContentGraph
+        from apme_engine.graph.content_graph import ContentGraph
         from apme_engine.remediation.graph_engine import GraphFixReport
 
         servicer = PrimaryServicer.__new__(PrimaryServicer)
@@ -851,7 +851,7 @@ class TestSessionGraphRemediate:
         )
 
         with (
-            patch("apme_engine.engine.graph_scanner.load_graph_rules", return_value=[]),
+            patch("apme_engine.graph.scanner.load_graph_rules", return_value=[]),
             patch("apme_engine.remediation.graph_engine.GraphRemediationEngine") as MockGRE,
             patch("apme_engine.remediation.graph_engine.splice_modifications", return_value=[]),
             patch("apme_engine.remediation.partition.add_classification_to_violations"),
@@ -889,8 +889,8 @@ class TestSessionGraphRemediate:
         carried in session state across the approval boundary.
         """
         from apme_engine.daemon.primary_server import _reconcile_after_approval
-        from apme_engine.engine.content_graph import ContentGraph
         from apme_engine.engine.models import RemediationClass
+        from apme_engine.graph.content_graph import ContentGraph
 
         session = SessionState(session_id="dep-health-preserve")
         session.dep_health_violations = [
@@ -922,7 +922,7 @@ class TestSessionGraphRemediate:
         from unittest.mock import MagicMock
 
         from apme_engine.daemon.primary_server import PrimaryServicer
-        from apme_engine.engine.content_graph import ContentGraph
+        from apme_engine.graph.content_graph import ContentGraph
         from apme_engine.remediation.graph_engine import GraphFixReport
 
         servicer = PrimaryServicer.__new__(PrimaryServicer)
@@ -940,7 +940,7 @@ class TestSessionGraphRemediate:
             return []
 
         with (
-            patch("apme_engine.engine.graph_scanner.load_graph_rules", return_value=[]),
+            patch("apme_engine.graph.scanner.load_graph_rules", return_value=[]),
             patch("apme_engine.remediation.graph_engine.GraphRemediationEngine") as MockGRE,
             patch("apme_engine.remediation.graph_engine.splice_modifications", return_value=[]),
             patch("apme_engine.remediation.partition.add_classification_to_violations"),
@@ -987,7 +987,7 @@ class TestSessionRescanBridge:
         from unittest.mock import MagicMock
 
         from apme_engine.daemon.primary_server import PrimaryServicer
-        from apme_engine.engine.content_graph import ContentGraph, ContentNode, NodeIdentity, NodeType
+        from apme_engine.graph.content_graph import ContentGraph, ContentNode, NodeIdentity, NodeType
         from apme_engine.remediation.graph_engine import FilePatch as EngineFilePatch
         from apme_engine.remediation.graph_engine import GraphFixReport
 
@@ -1041,7 +1041,7 @@ class TestSessionRescanBridge:
             return mock_engine
 
         with (
-            patch("apme_engine.engine.graph_scanner.load_graph_rules", return_value=[]),
+            patch("apme_engine.graph.scanner.load_graph_rules", return_value=[]),
             patch(
                 "apme_engine.remediation.graph_engine.GraphRemediationEngine",
                 side_effect=capture_gre_init,
@@ -1079,7 +1079,7 @@ class TestSessionRescanBridge:
         from unittest.mock import MagicMock
 
         from apme_engine.daemon.primary_server import PrimaryServicer
-        from apme_engine.engine.content_graph import ContentGraph
+        from apme_engine.graph.content_graph import ContentGraph
         from apme_engine.remediation.graph_engine import GraphFixReport
 
         servicer = PrimaryServicer.__new__(PrimaryServicer)
@@ -1103,7 +1103,7 @@ class TestSessionRescanBridge:
             return []
 
         with (
-            patch("apme_engine.engine.graph_scanner.load_graph_rules", side_effect=mock_load_graph_rules),
+            patch("apme_engine.graph.scanner.load_graph_rules", side_effect=mock_load_graph_rules),
             patch("apme_engine.remediation.graph_engine.GraphRemediationEngine") as MockGRE,
             patch("apme_engine.remediation.graph_engine.splice_modifications", return_value=[]),
             patch("apme_engine.remediation.partition.add_classification_to_violations"),

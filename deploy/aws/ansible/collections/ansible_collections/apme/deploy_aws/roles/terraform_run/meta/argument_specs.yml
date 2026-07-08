@@ -1,0 +1,17 @@
+---
+argument_specs:
+  main:
+    short_description: Apply Terraform in project_path (state present).
+    options:
+      terraform_run_project_path:
+        type: str
+        required: true
+        description: Absolute or playbook-relative path to the Terraform root module.
+      terraform_run_variables:
+        type: dict
+        required: false
+        description: Optional map of Terraform input variables.
+      terraform_run_complex_vars:
+        type: bool
+        required: false
+        description: Pass variables with complex types through to Terraform when true.

@@ -4,19 +4,19 @@ from __future__ import annotations
 
 import pytest
 
-from apme_engine.engine.content_graph import ContentGraph, ContentNode, EdgeType, NodeIdentity, NodeScope, NodeType
-from apme_engine.engine.graph_scanner import scan
 from apme_engine.engine.models import YAMLDict
-from apme_engine.validators.native.rules.graph_rule_base import GraphRule
-from apme_engine.validators.native.rules.L037_unresolved_module_graph import UnresolvedModuleGraphRule
-from apme_engine.validators.native.rules.L038_unresolved_role_graph import UnresolvedRoleGraphRule
-from apme_engine.validators.native.rules.L075_ansible_managed_graph import AnsibleManagedGraphRule
-from apme_engine.validators.native.rules.L080_internal_var_prefix_graph import InternalVarPrefixGraphRule
-from apme_engine.validators.native.rules.L085_role_path_include_graph import RolePathIncludeGraphRule
-from apme_engine.validators.native.rules.L100_var_naming_keyword_graph import VarNamingKeywordGraphRule
-from apme_engine.validators.native.rules.L101_var_naming_reserved_graph import VarNamingReservedGraphRule
-from apme_engine.validators.native.rules.L102_var_naming_read_only_graph import VarNamingReadOnlyGraphRule
-from apme_engine.validators.native.rules.M027_legacy_kv_merged_with_args_graph import LegacyKvMergedWithArgsGraphRule
+from apme_engine.graph.content_graph import ContentGraph, ContentNode, EdgeType, NodeIdentity, NodeScope, NodeType
+from apme_engine.graph.rule_base import GraphRule
+from apme_engine.graph.rules.L037_unresolved_module_graph import UnresolvedModuleGraphRule
+from apme_engine.graph.rules.L038_unresolved_role_graph import UnresolvedRoleGraphRule
+from apme_engine.graph.rules.L075_ansible_managed_graph import AnsibleManagedGraphRule
+from apme_engine.graph.rules.L080_internal_var_prefix_graph import InternalVarPrefixGraphRule
+from apme_engine.graph.rules.L085_role_path_include_graph import RolePathIncludeGraphRule
+from apme_engine.graph.rules.L100_var_naming_keyword_graph import VarNamingKeywordGraphRule
+from apme_engine.graph.rules.L101_var_naming_reserved_graph import VarNamingReservedGraphRule
+from apme_engine.graph.rules.L102_var_naming_read_only_graph import VarNamingReadOnlyGraphRule
+from apme_engine.graph.rules.M027_legacy_kv_merged_with_args_graph import LegacyKvMergedWithArgsGraphRule
+from apme_engine.graph.scanner import scan
 
 
 def _make_task(

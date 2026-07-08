@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 from apme_engine.engine.models import ViolationDict
 
 if TYPE_CHECKING:
-    from apme_engine.engine.content_graph import ContentGraph
+    from apme_engine.graph.content_graph import ContentGraph
 
 
 @dataclass(frozen=True, slots=True)

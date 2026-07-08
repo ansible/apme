@@ -134,7 +134,7 @@ class TestNativeValidatorServicer:
     async def test_validate_graph_path_returns_violations(self) -> None:
         """Validate deserializes ContentGraph and runs GraphRules."""
         from apme_engine.daemon.native_validator_server import NativeValidatorServicer, _GraphRunResult
-        from apme_engine.engine.content_graph import ContentGraph
+        from apme_engine.graph.content_graph import ContentGraph
 
         graph = ContentGraph()
         graph_data = json.dumps(graph.to_dict()).encode()
@@ -169,7 +169,7 @@ class TestNativeValidatorServicer:
     async def test_validate_returns_diagnostics(self) -> None:
         """Validate returns ValidatorDiagnostics with violation count."""
         from apme_engine.daemon.native_validator_server import NativeValidatorServicer, _GraphRunResult
-        from apme_engine.engine.content_graph import ContentGraph
+        from apme_engine.graph.content_graph import ContentGraph
 
         graph = ContentGraph()
         graph_data = json.dumps(graph.to_dict()).encode()

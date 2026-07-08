@@ -1,0 +1,14 @@
+---
+- name: Validate Terraform root path is set
+  ansible.builtin.assert:
+    that:
+      - terraform_destroy_project_path | length > 0
+    fail_msg: terraform_destroy_project_path must be a non-empty path to the Terraform root module.
+    quiet: true
+
+- name: Destroy Terraform root module
+  cloud.terraform.terraform:
+    project_path: "{{ terraform_destroy_project_path }}"
+    state: absent
+    purge_workspace: "{{ terraform_destroy_purge_workspace | bool }}"
+  register: terraform_destroy__result

@@ -21,7 +21,7 @@ from apme_engine.graph.content_graph import (
     _as_str_list,
     _detect_indent,
 )
-from apme_engine.graph.types import YAMLDict, YAMLValue
+from apme_engine.graph.types import YAMLDict
 
 if TYPE_CHECKING:
     from .models import (
@@ -1078,8 +1078,6 @@ class GraphBuilder:
                 if producer and producer != nid:
                     self._graph.add_edge(producer, nid, EdgeType.DATA_FLOW)
 
-
-
             if node.register:
                 registered[node.register] = nid
             for fact_name in node.set_facts:
@@ -1373,7 +1371,6 @@ def _extract_become(obj: object) -> YAMLDict | None:
     return None
 
 
-
 def _has_block_children(task: object) -> bool:
     """Check if a task object has block/rescue/always children.
 
@@ -1385,7 +1382,6 @@ def _has_block_children(task: object) -> bool:
     """
     options = _safe_dict(getattr(task, "options", {}))
     return any(isinstance(options.get(k), list) for k in ("block", "rescue", "always"))
-
 
 
 def _extract_variable_references(node: ContentNode) -> set[str]:
@@ -1416,4 +1412,3 @@ def _extract_variable_references(node: ContentNode) -> set[str]:
             refs.add(cleaned)
 
     return refs
-

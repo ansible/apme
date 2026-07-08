@@ -13,15 +13,15 @@ from typing import cast
 
 import pytest
 
-from apme_engine.engine.content_graph import (
-    ContentGraph,
-    EdgeType,
-    GraphBuilder,
-    NodeType,
-)
+from apme_engine.engine.graph_builder import GraphBuilder
 from apme_engine.engine.graph_opa_payload import build_hierarchy_from_graph
 from apme_engine.engine.scan_state import SingleScan
-from apme_engine.engine.variable_provenance import (
+from apme_engine.graph.content_graph import (
+    ContentGraph,
+    EdgeType,
+    NodeType,
+)
+from apme_engine.graph.variable_provenance import (
     VariableProvenanceResolver,
 )
 

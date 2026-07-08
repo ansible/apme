@@ -6,27 +6,27 @@ from typing import cast
 
 import pytest
 
-from apme_engine.engine.content_graph import ContentGraph, ContentNode, EdgeType, NodeIdentity, NodeScope, NodeType
-from apme_engine.engine.graph_scanner import scan
 from apme_engine.engine.models import YAMLDict
-from apme_engine.validators.native.rules.graph_rule_base import GraphRule
-from apme_engine.validators.native.rules.L040_no_tabs_graph import NoTabsGraphRule
-from apme_engine.validators.native.rules.L041_key_order_graph import KeyOrderGraphRule
-from apme_engine.validators.native.rules.L043_deprecated_bare_vars_graph import DeprecatedBareVarsGraphRule
-from apme_engine.validators.native.rules.L051_jinja_graph import JinjaGraphRule
-from apme_engine.validators.native.rules.L060_line_length_graph import LineLengthGraphRule
-from apme_engine.validators.native.rules.L073_indentation_graph import IndentationGraphRule
-from apme_engine.validators.native.rules.L076_ansible_facts_bracket_graph import AnsibleFactsBracketGraphRule
-from apme_engine.validators.native.rules.L078_dot_notation_graph import DotNotationGraphRule
-from apme_engine.validators.native.rules.L083_hardcoded_group_graph import HardcodedGroupGraphRule
-from apme_engine.validators.native.rules.L091_bool_filter_graph import BoolFilterGraphRule
-from apme_engine.validators.native.rules.L094_dynamic_template_date_graph import DynamicTemplateDateGraphRule
-from apme_engine.validators.native.rules.L098_yaml_key_duplicates_graph import YamlKeyDuplicatesGraphRule
-from apme_engine.validators.native.rules.L099_yaml_quoted_strings_graph import YamlQuotedStringsGraphRule
-from apme_engine.validators.native.rules.M014_top_level_fact_variables_graph import TopLevelFactVariablesGraphRule
-from apme_engine.validators.native.rules.M015_play_hosts_magic_variable_graph import PlayHostsMagicVariableGraphRule
-from apme_engine.validators.native.rules.M019_omap___pairs_yaml_tags_graph import OmapPairsYamlTagsGraphRule
-from apme_engine.validators.native.rules.M020_vault_encrypted_tag_graph import VaultEncryptedTagGraphRule
+from apme_engine.graph.content_graph import ContentGraph, ContentNode, EdgeType, NodeIdentity, NodeScope, NodeType
+from apme_engine.graph.rule_base import GraphRule
+from apme_engine.graph.rules.L040_no_tabs_graph import NoTabsGraphRule
+from apme_engine.graph.rules.L041_key_order_graph import KeyOrderGraphRule
+from apme_engine.graph.rules.L043_deprecated_bare_vars_graph import DeprecatedBareVarsGraphRule
+from apme_engine.graph.rules.L051_jinja_graph import JinjaGraphRule
+from apme_engine.graph.rules.L060_line_length_graph import LineLengthGraphRule
+from apme_engine.graph.rules.L073_indentation_graph import IndentationGraphRule
+from apme_engine.graph.rules.L076_ansible_facts_bracket_graph import AnsibleFactsBracketGraphRule
+from apme_engine.graph.rules.L078_dot_notation_graph import DotNotationGraphRule
+from apme_engine.graph.rules.L083_hardcoded_group_graph import HardcodedGroupGraphRule
+from apme_engine.graph.rules.L091_bool_filter_graph import BoolFilterGraphRule
+from apme_engine.graph.rules.L094_dynamic_template_date_graph import DynamicTemplateDateGraphRule
+from apme_engine.graph.rules.L098_yaml_key_duplicates_graph import YamlKeyDuplicatesGraphRule
+from apme_engine.graph.rules.L099_yaml_quoted_strings_graph import YamlQuotedStringsGraphRule
+from apme_engine.graph.rules.M014_top_level_fact_variables_graph import TopLevelFactVariablesGraphRule
+from apme_engine.graph.rules.M015_play_hosts_magic_variable_graph import PlayHostsMagicVariableGraphRule
+from apme_engine.graph.rules.M019_omap___pairs_yaml_tags_graph import OmapPairsYamlTagsGraphRule
+from apme_engine.graph.rules.M020_vault_encrypted_tag_graph import VaultEncryptedTagGraphRule
+from apme_engine.graph.scanner import scan
 
 
 def _make_task(

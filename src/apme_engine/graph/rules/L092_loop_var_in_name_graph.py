@@ -10,9 +10,9 @@ import re
 from dataclasses import dataclass
 
 from apme_engine.graph.content_graph import ContentGraph, NodeType
+from apme_engine.graph.rule_base import GraphRule, GraphRuleResult
 from apme_engine.graph.types import RuleTag as Tag
 from apme_engine.graph.types import Severity, YAMLDict
-from apme_engine.graph.rule_base import GraphRule, GraphRuleResult
 
 _LOOP_VAR_IN_NAME = re.compile(r"\{\{\s*item\b")
 _TASK_TYPES = frozenset({NodeType.TASK, NodeType.HANDLER})

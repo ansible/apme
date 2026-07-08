@@ -7,7 +7,8 @@ from __future__ import annotations
 
 import pytest
 
-from apme_engine.engine.content_graph import (
+from apme_engine.engine.models import YAMLDict
+from apme_engine.graph.content_graph import (
     ContentGraph,
     ContentNode,
     EdgeType,
@@ -15,44 +16,43 @@ from apme_engine.engine.content_graph import (
     NodeScope,
     NodeType,
 )
-from apme_engine.engine.graph_scanner import scan
-from apme_engine.engine.models import YAMLDict
-from apme_engine.validators.native.rules._module_risk_mapping import (
+from apme_engine.graph.rule_base import GraphRule
+from apme_engine.graph.rules._module_risk_mapping import (
     RiskProfile,
     get_risk_profile,
     resolve_field,
 )
-from apme_engine.validators.native.rules.graph_rule_base import GraphRule
-from apme_engine.validators.native.rules.R101_command_exec_graph import (
+from apme_engine.graph.rules.R101_command_exec_graph import (
     CommandExecGraphRule,
 )
-from apme_engine.validators.native.rules.R103_download_exec_graph import (
+from apme_engine.graph.rules.R103_download_exec_graph import (
     DownloadExecGraphRule,
 )
-from apme_engine.validators.native.rules.R104_unauthorized_download_src_graph import (
+from apme_engine.graph.rules.R104_unauthorized_download_src_graph import (
     InvalidDownloadSourceGraphRule,
 )
-from apme_engine.validators.native.rules.R105_outbound_transfer_graph import (
+from apme_engine.graph.rules.R105_outbound_transfer_graph import (
     OutboundTransferGraphRule,
 )
-from apme_engine.validators.native.rules.R106_inbound_transfer_graph import (
+from apme_engine.graph.rules.R106_inbound_transfer_graph import (
     InboundTransferGraphRule,
 )
-from apme_engine.validators.native.rules.R107_pkg_install_with_insecure_option_graph import (
+from apme_engine.graph.rules.R107_pkg_install_with_insecure_option_graph import (
     InsecurePkgInstallGraphRule,
 )
-from apme_engine.validators.native.rules.R109_key_config_change_graph import (
+from apme_engine.graph.rules.R109_key_config_change_graph import (
     ConfigChangeGraphRule,
 )
-from apme_engine.validators.native.rules.R113_parameterized_pkg_install_graph import (
+from apme_engine.graph.rules.R113_parameterized_pkg_install_graph import (
     PkgInstallGraphRule,
 )
-from apme_engine.validators.native.rules.R114_file_change_graph import (
+from apme_engine.graph.rules.R114_file_change_graph import (
     FileChangeGraphRule,
 )
-from apme_engine.validators.native.rules.R115_file_deletion_graph import (
+from apme_engine.graph.rules.R115_file_deletion_graph import (
     FileDeletionGraphRule,
 )
+from apme_engine.graph.scanner import scan
 
 # ---------------------------------------------------------------------------
 # Helpers

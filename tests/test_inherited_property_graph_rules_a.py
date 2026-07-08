@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from apme_engine.engine.content_graph import (
+from apme_engine.graph.content_graph import (
     ContentGraph,
     ContentNode,
     EdgeType,
@@ -16,15 +16,15 @@ from apme_engine.engine.content_graph import (
     NodeScope,
     NodeType,
 )
-from apme_engine.engine.graph_scanner import scan
-from apme_engine.validators.native.rules.L045_inline_env_var_graph import InlineEnvVarGraphRule
-from apme_engine.validators.native.rules.L047_no_log_password_graph import NoLogPasswordGraphRule
-from apme_engine.validators.native.rules.M022_tree___oneline_callback_plugins_graph import (
+from apme_engine.graph.rules.L045_inline_env_var_graph import InlineEnvVarGraphRule
+from apme_engine.graph.rules.L047_no_log_password_graph import NoLogPasswordGraphRule
+from apme_engine.graph.rules.M022_tree___oneline_callback_plugins_graph import (
     TreeOnelineCallbackPluginsGraphRule,
 )
-from apme_engine.validators.native.rules.M026_invalid_inventory_variable_names_graph import (
+from apme_engine.graph.rules.M026_invalid_inventory_variable_names_graph import (
     InvalidInventoryVariableNamesGraphRule,
 )
+from apme_engine.graph.scanner import scan
 
 
 def _add_playbook_play_task_chain(

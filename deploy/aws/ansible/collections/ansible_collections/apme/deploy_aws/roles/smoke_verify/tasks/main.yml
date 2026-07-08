@@ -1,0 +1,47 @@
+---
+- name: Validate Terraform root path is set
+  ansible.builtin.assert:
+    that:
+      - smoke_verify_project_path | length > 0
+    fail_msg: smoke_verify_project_path must be a non-empty path to the Terraform root module.
+    quiet: true
+
+- name: Load Terraform outputs
+  cloud.terraform.terraform_output:
+    project_path: "{{ smoke_verify_project_path }}"
+  register: smoke_verify__outputs
+
+- name: Assert required outputs are present
+  ansible.builtin.assert:
+    that:
+      - item in smoke_verify__outputs.outputs
+      - smoke_verify__outputs.outputs[item].value is defined
+      - not (smoke_verify__outputs.outputs[item].value is none)
+    fail_msg: "Missing or empty Terraform output: {{ item }}"
+    quiet: true
+  loop: "{{ smoke_verify_required_outputs }}"
+
+- name: Check ALB HTTP response
+  when: smoke_verify_alb_http | bool
+  ansible.builtin.uri:
+    url: "http://{{ smoke_verify__outputs.outputs['alb_dns_name'].value }}/"
+    follow_redirects: none
+    status_code:
+      - "{{ smoke_verify_alb_expected_status }}"
+    timeout: 30
+  register: smoke_verify__alb_http
+  until: (smoke_verify__alb_http.status | default(-1) | int) == (smoke_verify_alb_expected_status | int)
+  retries: "{{ smoke_verify_alb_retries }}"
+  delay: "{{ smoke_verify_alb_delay }}"
+  failed_when: false
+
+- name: Fail if ALB HTTP check did not return expected status
+  when: smoke_verify_alb_http | bool
+  ansible.builtin.assert:
+    that:
+      - (smoke_verify__alb_http.status | default(-1) | int) == (smoke_verify_alb_expected_status | int)
+    fail_msg: >-
+      ALB HTTP smoke check failed after retries
+      (expected {{ smoke_verify_alb_expected_status }}, got {{ smoke_verify__alb_http.status | default(-1) }}).
+      Last result: {{ smoke_verify__alb_http.msg | default(smoke_verify__alb_http) }}
+    quiet: true

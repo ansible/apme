@@ -4,16 +4,16 @@ from __future__ import annotations
 
 import pytest
 
-from apme_engine.engine.content_graph import ContentGraph, ContentNode, EdgeType, NodeIdentity, NodeScope, NodeType
-from apme_engine.engine.graph_scanner import scan
 from apme_engine.engine.models import YAMLDict
-from apme_engine.validators.native.rules.graph_rule_base import GraphRule
-from apme_engine.validators.native.rules.L035_unnecessary_set_fact_graph import UnnecessarySetFactGraphRule
-from apme_engine.validators.native.rules.L046_no_free_form_graph import NoFreeFormGraphRule
-from apme_engine.validators.native.rules.R111_parameterized_import_role_graph import ParameterizedImportRoleGraphRule
-from apme_engine.validators.native.rules.R112_parameterized_import_taskfile_graph import (
+from apme_engine.graph.content_graph import ContentGraph, ContentNode, EdgeType, NodeIdentity, NodeScope, NodeType
+from apme_engine.graph.rule_base import GraphRule
+from apme_engine.graph.rules.L035_unnecessary_set_fact_graph import UnnecessarySetFactGraphRule
+from apme_engine.graph.rules.L046_no_free_form_graph import NoFreeFormGraphRule
+from apme_engine.graph.rules.R111_parameterized_import_role_graph import ParameterizedImportRoleGraphRule
+from apme_engine.graph.rules.R112_parameterized_import_taskfile_graph import (
     ParameterizedImportTaskfileGraphRule,
 )
+from apme_engine.graph.scanner import scan
 
 
 def _make_task(

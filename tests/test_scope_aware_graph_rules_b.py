@@ -10,7 +10,8 @@ from typing import cast
 
 import pytest
 
-from apme_engine.engine.content_graph import (
+from apme_engine.engine.models import YAMLDict
+from apme_engine.graph.content_graph import (
     ContentGraph,
     ContentNode,
     EdgeType,
@@ -18,14 +19,13 @@ from apme_engine.engine.content_graph import (
     NodeScope,
     NodeType,
 )
-from apme_engine.engine.graph_scanner import scan
-from apme_engine.engine.models import YAMLDict
-from apme_engine.validators.native.rules.L032_changed_data_dependence_graph import (
+from apme_engine.graph.rules.L032_changed_data_dependence_graph import (
     ChangedDataDependenceGraphRule,
 )
-from apme_engine.validators.native.rules.L034_unused_override_graph import UnusedOverrideGraphRule
-from apme_engine.validators.native.rules.L093_set_fact_override_graph import SetFactOverrideGraphRule
-from apme_engine.validators.native.rules.M005_data_tagging_graph import DataTaggingGraphRule
+from apme_engine.graph.rules.L034_unused_override_graph import UnusedOverrideGraphRule
+from apme_engine.graph.rules.L093_set_fact_override_graph import SetFactOverrideGraphRule
+from apme_engine.graph.rules.M005_data_tagging_graph import DataTaggingGraphRule
+from apme_engine.graph.scanner import scan
 
 
 def _build_playbook_play_task(

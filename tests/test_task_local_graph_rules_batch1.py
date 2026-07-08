@@ -4,20 +4,20 @@ from __future__ import annotations
 
 import pytest
 
-from apme_engine.engine.content_graph import ContentGraph, ContentNode, EdgeType, NodeIdentity, NodeScope, NodeType
-from apme_engine.engine.graph_scanner import scan
 from apme_engine.engine.models import YAMLDict
-from apme_engine.validators.native.rules.graph_rule_base import GraphRule
-from apme_engine.validators.native.rules.L026_non_fqcn_use_graph import NonFQCNUseGraphRule
-from apme_engine.validators.native.rules.L030_non_builtin_use_graph import NonBuiltinUseGraphRule
-from apme_engine.validators.native.rules.L036_unnecessary_include_vars_graph import UnnecessaryIncludeVarsGraphRule
-from apme_engine.validators.native.rules.L044_avoid_implicit_graph import AvoidImplicitGraphRule
-from apme_engine.validators.native.rules.L048_no_same_owner_graph import NoSameOwnerGraphRule
-from apme_engine.validators.native.rules.L074_no_dashes_in_role_name_graph import NoDashesInRoleNameGraphRule
-from apme_engine.validators.native.rules.L081_numbered_names_graph import NumberedNamesGraphRule
-from apme_engine.validators.native.rules.L082_template_j2_ext_graph import TemplateJ2ExtGraphRule
-from apme_engine.validators.native.rules.L084_subtask_prefix_graph import SubtaskPrefixGraphRule
-from apme_engine.validators.native.rules.L092_loop_var_in_name_graph import LoopVarInNameGraphRule
+from apme_engine.graph.content_graph import ContentGraph, ContentNode, EdgeType, NodeIdentity, NodeScope, NodeType
+from apme_engine.graph.rule_base import GraphRule
+from apme_engine.graph.rules.L026_non_fqcn_use_graph import NonFQCNUseGraphRule
+from apme_engine.graph.rules.L030_non_builtin_use_graph import NonBuiltinUseGraphRule
+from apme_engine.graph.rules.L036_unnecessary_include_vars_graph import UnnecessaryIncludeVarsGraphRule
+from apme_engine.graph.rules.L044_avoid_implicit_graph import AvoidImplicitGraphRule
+from apme_engine.graph.rules.L048_no_same_owner_graph import NoSameOwnerGraphRule
+from apme_engine.graph.rules.L074_no_dashes_in_role_name_graph import NoDashesInRoleNameGraphRule
+from apme_engine.graph.rules.L081_numbered_names_graph import NumberedNamesGraphRule
+from apme_engine.graph.rules.L082_template_j2_ext_graph import TemplateJ2ExtGraphRule
+from apme_engine.graph.rules.L084_subtask_prefix_graph import SubtaskPrefixGraphRule
+from apme_engine.graph.rules.L092_loop_var_in_name_graph import LoopVarInNameGraphRule
+from apme_engine.graph.scanner import scan
 
 
 def _make_task(
@@ -863,19 +863,19 @@ class TestNoqaSuppression:
 
     def test_parse_noqa_empty(self) -> None:
         """No noqa comment yields empty set."""
-        from apme_engine.engine.graph_scanner import parse_noqa
+        from apme_engine.graph.scanner import parse_noqa
 
         assert parse_noqa("- name: Install\n  ansible.builtin.yum:\n") == frozenset()
 
     def test_parse_noqa_single(self) -> None:
         """Single rule noqa is parsed correctly."""
-        from apme_engine.engine.graph_scanner import parse_noqa
+        from apme_engine.graph.scanner import parse_noqa
 
         assert parse_noqa("- name: Run cmd  # noqa: R108\n") == frozenset({"R108"})
 
     def test_parse_noqa_multi(self) -> None:
         """Multiple rules in one noqa comment are all captured."""
-        from apme_engine.engine.graph_scanner import parse_noqa
+        from apme_engine.graph.scanner import parse_noqa
 
         result = parse_noqa("  become: true  # noqa: R108, R103\n")
         assert result == frozenset({"R108", "R103"})

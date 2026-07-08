@@ -6,13 +6,13 @@ from dataclasses import dataclass
 
 import pytest
 
-from apme_engine.engine.content_graph import (
+from apme_engine.graph.content_graph import (
     ContentGraph,
     ContentNode,
     NodeIdentity,
     NodeType,
 )
-from apme_engine.validators.native.rules.graph_rule_base import GraphRule, GraphRuleResult
+from apme_engine.graph.rule_base import GraphRule, GraphRuleResult
 
 
 @dataclass

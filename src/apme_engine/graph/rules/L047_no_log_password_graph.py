@@ -8,9 +8,9 @@ not only as a literal on the task block.
 from dataclasses import dataclass
 
 from apme_engine.graph.content_graph import ContentGraph, ContentNode, NodeType
+from apme_engine.graph.rule_base import GraphRule, GraphRuleResult
 from apme_engine.graph.types import RuleTag as Tag
 from apme_engine.graph.types import Severity, YAMLDict
-from apme_engine.graph.rule_base import GraphRule, GraphRuleResult
 
 _TASK_TYPES = frozenset({NodeType.TASK, NodeType.HANDLER})
 

@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import pytest
 
-from apme_engine.engine.content_graph import (
+from apme_engine.engine.models import YAMLDict
+from apme_engine.graph.content_graph import (
     ContentGraph,
     ContentNode,
     EdgeType,
@@ -16,12 +17,11 @@ from apme_engine.engine.content_graph import (
     NodeScope,
     NodeType,
 )
-from apme_engine.engine.graph_scanner import scan
-from apme_engine.engine.models import YAMLDict
-from apme_engine.validators.native.rules.L042_complexity_graph import ComplexityGraphRule
-from apme_engine.validators.native.rules.L086_play_vars_usage_graph import PlayVarsUsageGraphRule
-from apme_engine.validators.native.rules.L097_name_unique_graph import NameUniqueGraphRule
-from apme_engine.validators.native.rules.R117_external_role_graph import ExternalRoleGraphRule
+from apme_engine.graph.rules.L042_complexity_graph import ComplexityGraphRule
+from apme_engine.graph.rules.L086_play_vars_usage_graph import PlayVarsUsageGraphRule
+from apme_engine.graph.rules.L097_name_unique_graph import NameUniqueGraphRule
+from apme_engine.graph.rules.R117_external_role_graph import ExternalRoleGraphRule
+from apme_engine.graph.scanner import scan
 
 
 def _build_play_with_tasks(

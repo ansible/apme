@@ -6,12 +6,12 @@ from typing import cast
 
 import pytest
 
-from apme_engine.engine.content_graph import ContentGraph
-from apme_engine.engine.graph_scanner import (
+from apme_engine.graph.content_graph import ContentGraph
+from apme_engine.graph.scanner import (
     graph_report_to_violations,
     load_graph_rules,
 )
-from apme_engine.engine.graph_scanner import scan as graph_scan
+from apme_engine.graph.scanner import scan as graph_scan
 from apme_engine.opa_client import opa_eval_unavailable_reason, run_opa_test
 from apme_engine.validators.opa import OpaValidator
 from tests.rule_doc_harness import run_scan_playbook_yaml
@@ -55,7 +55,7 @@ def _native_rules_dir() -> Path:
     Returns:
         Path to native rules.
     """
-    import apme_engine.validators.native.rules as rules_pkg
+    import apme_engine.graph.rules as rules_pkg
 
     return Path(rules_pkg.__file__).parent
 

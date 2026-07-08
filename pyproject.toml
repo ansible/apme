@@ -56,7 +56,7 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "src/apme_engine/validators/native/rules"]
+testpaths = ["tests", "src/apme_engine/graph/rules"]
 norecursedirs = ["tests/fixtures"]
 pythonpath = ["src"]
 addopts = "-v --tb=short -m 'not integration and not ui'"
@@ -200,6 +200,7 @@ where = ["src"]
 [tool.setuptools.package-data]
 "apme_engine.engine" = ["*.txt", "*.json"]
 "apme_engine.engine.annotators" = ["ansible.builtin/*.py"]
+"apme_engine.graph.rules" = ["*.md", "*.json"]
 "apme_engine.validators.opa" = ["bundle/*.rego", "bundle/*.json", "bundle/*.md"]
 "apme_engine.data" = ["*.yml", "*.yaml"]
 "galaxy_proxy" = ["py.typed"]

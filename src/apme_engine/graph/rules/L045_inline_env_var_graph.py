@@ -10,9 +10,9 @@ from dataclasses import dataclass
 from typing import TypeGuard
 
 from apme_engine.graph.content_graph import ContentGraph, NodeType
+from apme_engine.graph.rule_base import GraphRule, GraphRuleResult
 from apme_engine.graph.types import RuleTag as Tag
 from apme_engine.graph.types import Severity, YAMLDict
-from apme_engine.graph.rule_base import GraphRule, GraphRuleResult
 
 _ENV_SCOPES = frozenset({NodeType.PLAY, NodeType.BLOCK, NodeType.TASK, NodeType.HANDLER})
 

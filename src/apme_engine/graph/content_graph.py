@@ -16,7 +16,6 @@ from __future__ import annotations
 import difflib
 import hashlib
 import inspect
-import os
 from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
@@ -1727,7 +1726,6 @@ def _node_from_dict(d: dict[str, object]) -> ContentNode:
     return node
 
 
-
 # ---------------------------------------------------------------------------
 # Shared utilities used by both ContentNode and GraphBuilder
 # ---------------------------------------------------------------------------
@@ -1749,7 +1747,6 @@ def _as_str_list(v: object) -> list[str]:
     if isinstance(v, list):
         return [str(x) for x in v]
     return []
-
 
 
 # ---------------------------------------------------------------------------
@@ -1952,4 +1949,3 @@ def _apply_parsed_fields(node: ContentNode, parsed: dict[str, object]) -> None:
             continue
         options[key] = value
     node.options = cast(YAMLDict, options)
-

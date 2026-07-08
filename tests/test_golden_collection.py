@@ -14,21 +14,22 @@ from pathlib import Path
 
 import pytest
 
-from apme_engine.engine.content_graph import ContentGraph, GraphBuilder
-from apme_engine.engine.graph_scanner import scan
-from apme_engine.validators.native.rules.graph_rule_base import GraphRule
-from apme_engine.validators.native.rules.L074_no_dashes_in_role_name_graph import NoDashesInRoleNameGraphRule
-from apme_engine.validators.native.rules.L077_role_arg_specs_graph import RoleArgSpecsGraphRule
-from apme_engine.validators.native.rules.L080_internal_var_prefix_graph import InternalVarPrefixGraphRule
-from apme_engine.validators.native.rules.L081_numbered_names_graph import NumberedNamesGraphRule
-from apme_engine.validators.native.rules.L083_hardcoded_group_graph import HardcodedGroupGraphRule
-from apme_engine.validators.native.rules.L085_role_path_include_graph import RolePathIncludeGraphRule
-from apme_engine.validators.native.rules.L087_collection_license_graph import CollectionLicenseGraphRule
-from apme_engine.validators.native.rules.L088_collection_readme_graph import CollectionReadmeGraphRule
-from apme_engine.validators.native.rules.L095_schema_validation_graph import SchemaValidationGraphRule
-from apme_engine.validators.native.rules.L096_meta_runtime_graph import MetaRuntimeGraphRule
-from apme_engine.validators.native.rules.L103_galaxy_changelog_graph import GalaxyChangelogGraphRule
-from apme_engine.validators.native.rules.L105_galaxy_repository_graph import GalaxyRepositoryGraphRule
+from apme_engine.engine.graph_builder import GraphBuilder
+from apme_engine.graph.content_graph import ContentGraph
+from apme_engine.graph.rule_base import GraphRule
+from apme_engine.graph.rules.L074_no_dashes_in_role_name_graph import NoDashesInRoleNameGraphRule
+from apme_engine.graph.rules.L077_role_arg_specs_graph import RoleArgSpecsGraphRule
+from apme_engine.graph.rules.L080_internal_var_prefix_graph import InternalVarPrefixGraphRule
+from apme_engine.graph.rules.L081_numbered_names_graph import NumberedNamesGraphRule
+from apme_engine.graph.rules.L083_hardcoded_group_graph import HardcodedGroupGraphRule
+from apme_engine.graph.rules.L085_role_path_include_graph import RolePathIncludeGraphRule
+from apme_engine.graph.rules.L087_collection_license_graph import CollectionLicenseGraphRule
+from apme_engine.graph.rules.L088_collection_readme_graph import CollectionReadmeGraphRule
+from apme_engine.graph.rules.L095_schema_validation_graph import SchemaValidationGraphRule
+from apme_engine.graph.rules.L096_meta_runtime_graph import MetaRuntimeGraphRule
+from apme_engine.graph.rules.L103_galaxy_changelog_graph import GalaxyChangelogGraphRule
+from apme_engine.graph.rules.L105_galaxy_repository_graph import GalaxyRepositoryGraphRule
+from apme_engine.graph.scanner import scan
 
 GOLDEN_COLLECTION = Path(__file__).parent / "fixtures" / "golden-collection"
 

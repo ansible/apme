@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from apme_engine.engine.content_graph import (
+from apme_engine.graph.content_graph import (
     ContentGraph,
     ContentNode,
     EdgeType,
     NodeIdentity,
     NodeType,
 )
-from apme_engine.engine.variable_provenance import (
+from apme_engine.graph.variable_provenance import (
     ProvenanceSource,
     VariableProvenanceResolver,
 )

@@ -1,0 +1,15 @@
+---
+- name: Validate Terraform root path is set
+  ansible.builtin.assert:
+    that:
+      - terraform_run_project_path | length > 0
+    fail_msg: terraform_run_project_path must be a non-empty path to the Terraform root module.
+    quiet: true
+
+- name: Apply Terraform root module
+  cloud.terraform.terraform:
+    project_path: "{{ terraform_run_project_path }}"
+    state: present
+    variables: "{{ terraform_run_variables }}"
+    complex_vars: "{{ terraform_run_complex_vars | bool }}"
+  register: terraform_run__result

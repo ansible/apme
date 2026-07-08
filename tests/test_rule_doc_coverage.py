@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-NATIVE_RULES_DIR = REPO_ROOT / "src" / "apme_engine" / "validators" / "native" / "rules"
+NATIVE_RULES_DIR = REPO_ROOT / "src" / "apme_engine" / "graph" / "rules"
 OPA_BUNDLE_DIR = REPO_ROOT / "src" / "apme_engine" / "validators" / "opa" / "bundle"
 ANSIBLE_RULES_DIR = REPO_ROOT / "src" / "apme_engine" / "validators" / "ansible" / "rules"
 

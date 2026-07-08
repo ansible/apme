@@ -22,16 +22,16 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from apme_engine.engine.content_graph import ContentGraph
-from apme_engine.engine.graph_scanner import (
+from apme_engine.engine.models import ViolationDict
+from apme_engine.graph.content_graph import ContentGraph
+from apme_engine.graph.rule_base import GraphRule
+from apme_engine.graph.scanner import (
     graph_report_to_violations,
     rescan_dirty,
     scan,
 )
-from apme_engine.engine.models import ViolationDict
 from apme_engine.remediation.partition import normalize_rule_id, partition_violations
 from apme_engine.remediation.registry import TransformRegistry
-from apme_engine.validators.native.rules.graph_rule_base import GraphRule
 
 if TYPE_CHECKING:
     from apme_engine.remediation.ai_provider import AIProvider

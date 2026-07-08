@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from apme_engine.engine.content_graph import (
+from apme_engine.engine.models import YAMLDict
+from apme_engine.graph.content_graph import (
     ContentGraph,
     ContentNode,
     EdgeType,
@@ -10,18 +11,17 @@ from apme_engine.engine.content_graph import (
     NodeScope,
     NodeType,
 )
-from apme_engine.engine.graph_scanner import GraphScanReport, scan
-from apme_engine.engine.models import YAMLDict
-from apme_engine.validators.native.rules.A001_template_id_usage_graph import (
-    TemplateIDUsageGraphRule,
-)
-from apme_engine.validators.native.rules.A002_deprecated_aap_api_graph import (
-    DeprecatedAAPAPIGraphRule,
-)
-from apme_engine.validators.native.rules.graph_rule_base import (
+from apme_engine.graph.rule_base import (
     GraphRule,
     GraphRuleResult,
 )
+from apme_engine.graph.rules.A001_template_id_usage_graph import (
+    TemplateIDUsageGraphRule,
+)
+from apme_engine.graph.rules.A002_deprecated_aap_api_graph import (
+    DeprecatedAAPAPIGraphRule,
+)
+from apme_engine.graph.scanner import GraphScanReport, scan
 
 
 def _find_violations(report: GraphScanReport, rule_id: str) -> list[GraphRuleResult]:

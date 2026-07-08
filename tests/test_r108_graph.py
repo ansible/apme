@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from apme_engine.engine.content_graph import (
+from apme_engine.graph.content_graph import (
     ContentGraph,
     ContentNode,
     EdgeType,
@@ -10,11 +10,11 @@ from apme_engine.engine.content_graph import (
     NodeScope,
     NodeType,
 )
-from apme_engine.engine.graph_scanner import scan
-from apme_engine.validators.native.rules.graph_rule_base import GraphRule
-from apme_engine.validators.native.rules.R108_privilege_escalation_graph import (
+from apme_engine.graph.rule_base import GraphRule
+from apme_engine.graph.rules.R108_privilege_escalation_graph import (
     PrivilegeEscalationGraphRule,
 )
+from apme_engine.graph.scanner import scan
 
 
 def _make_become_graph() -> ContentGraph:

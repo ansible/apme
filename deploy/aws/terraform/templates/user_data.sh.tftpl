@@ -1,0 +1,210 @@
+#!/bin/bash
+set -euo pipefail
+exec > /var/log/apme-setup.log 2>&1
+
+echo "=== APME EC2 bootstrap ==="
+
+# --- Install podman ---
+dnf install -y podman
+
+# --- Directories ---
+APME_DATA=/opt/apme
+mkdir -p "$APME_DATA"/{gateway,sessions,proxy}
+
+# --- Pull APME images from GHCR and tag to local names ---
+SERVICES=(primary native opa ansible gitleaks galaxy-proxy gateway ui cli)
+for svc in "$${SERVICES[@]}"; do
+  echo "Pulling ${ghcr_prefix}/apme-$svc:${ghcr_tag}"
+  podman pull "${ghcr_prefix}/apme-$svc:${ghcr_tag}"
+  podman tag  "${ghcr_prefix}/apme-$svc:${ghcr_tag}" "apme-$svc:latest"
+done
+
+echo "Pulling ghcr.io/redhat-developer/abbenay:2026.4.1-alpha"
+podman pull ghcr.io/redhat-developer/abbenay:2026.4.1-alpha
+
+# --- Write abbenay config ---
+mkdir -p "$APME_DATA/abbenay"
+cat > "$APME_DATA/abbenay/config.yaml" <<'ABBENAY_EOF'
+providers: {}
+ABBENAY_EOF
+
+# --- Write pod YAML ---
+cat > "$APME_DATA/pod.yaml" <<'POD_EOF'
+apiVersion: v1
+kind: Pod
+metadata:
+  name: apme-pod
+  labels:
+    app: apme
+spec:
+  hostname: apme-pod
+  containers:
+    - name: primary
+      image: apme-primary:latest
+      env:
+        - name: APME_PRIMARY_LISTEN
+          value: "0.0.0.0:50051"
+        - name: NATIVE_GRPC_ADDRESS
+          value: "127.0.0.1:50055"
+        - name: OPA_GRPC_ADDRESS
+          value: "127.0.0.1:50054"
+        - name: ANSIBLE_GRPC_ADDRESS
+          value: "127.0.0.1:50053"
+        - name: GITLEAKS_GRPC_ADDRESS
+          value: "127.0.0.1:50056"
+        - name: APME_GALAXY_PROXY_URL
+          value: "http://127.0.0.1:8765"
+        - name: APME_REPORTING_ENDPOINT
+          value: "127.0.0.1:50060"
+        - name: APME_ABBENAY_ADDR
+          value: "127.0.0.1:50057"
+        - name: APME_ABBENAY_TOKEN
+          value: "apme-dev-token"
+      ports:
+        - containerPort: 50051
+          hostPort: 50051
+      volumeMounts:
+        - name: sessions
+          mountPath: /sessions
+    - name: native
+      image: apme-native:latest
+      env:
+        - name: APME_NATIVE_VALIDATOR_LISTEN
+          value: "0.0.0.0:50055"
+      ports:
+        - containerPort: 50055
+          hostPort: 50055
+    - name: opa
+      image: apme-opa:latest
+      env:
+        - name: APME_OPA_VALIDATOR_LISTEN
+          value: "0.0.0.0:50054"
+      ports:
+        - containerPort: 50054
+          hostPort: 50054
+    - name: ansible
+      image: apme-ansible:latest
+      env:
+        - name: APME_ANSIBLE_VALIDATOR_LISTEN
+          value: "0.0.0.0:50053"
+        - name: APME_GALAXY_PROXY_URL
+          value: "http://127.0.0.1:8765"
+      ports:
+        - containerPort: 50053
+          hostPort: 50053
+      volumeMounts:
+        - name: sessions
+          mountPath: /sessions
+          readOnly: true
+    - name: gitleaks
+      image: apme-gitleaks:latest
+      env:
+        - name: APME_GITLEAKS_VALIDATOR_LISTEN
+          value: "0.0.0.0:50056"
+      ports:
+        - containerPort: 50056
+          hostPort: 50056
+    - name: gateway
+      image: apme-gateway:latest
+      env:
+        - name: APME_DB_PATH
+          value: "/data/apme.db"
+        - name: APME_GATEWAY_GRPC_LISTEN
+          value: "0.0.0.0:50060"
+        - name: APME_GATEWAY_HTTP_HOST
+          value: "0.0.0.0"
+        - name: APME_GATEWAY_HTTP_PORT
+          value: "8080"
+      ports:
+        - containerPort: 50060
+          hostPort: 50060
+        - containerPort: 8080
+          hostPort: 8080
+      volumeMounts:
+        - name: gateway-data
+          mountPath: /data
+    - name: ui
+      image: apme-ui:latest
+      ports:
+        - containerPort: 8081
+          hostPort: 8081
+    - name: abbenay
+      image: ghcr.io/redhat-developer/abbenay:2026.4.1-alpha
+      args: ["daemon", "--grpc-host", "0.0.0.0", "--grpc-port", "50057"]
+      env:
+        - name: APME_ABBENAY_TOKEN
+          value: "apme-dev-token"
+        - name: XDG_RUNTIME_DIR
+          value: "/tmp/abbenay-run"
+      ports:
+        - containerPort: 50057
+          hostPort: 50057
+      volumeMounts:
+        - name: abbenay-config
+          mountPath: /home/abbenay/.config/abbenay/config.yaml
+          readOnly: true
+    - name: galaxy-proxy
+      image: apme-galaxy-proxy:latest
+      ports:
+        - containerPort: 8765
+          hostPort: 8765
+      volumeMounts:
+        - name: proxy-cache
+          mountPath: /cache
+POD_EOF
+
+# --- Conditionally add oauth2-proxy container ---
+%{ if oauth2_enabled }
+cat >> "$APME_DATA/pod.yaml" <<'OAUTH_CONTAINER_EOF'
+    - name: oauth2-proxy
+      image: quay.io/oauth2-proxy/oauth2-proxy:v7.9.0
+      args:
+        - "--http-address=0.0.0.0:4180"
+        - "--provider=github"
+        - "--github-org=${oauth2_github_org}"
+        - "--client-id=${oauth2_client_id}"
+        - "--client-secret=${oauth2_client_secret}"
+        - "--cookie-secret=${oauth2_cookie_secret != "" ? oauth2_cookie_secret : "GENERATE_ME"}"
+        - "--upstream=http://127.0.0.1:8081"
+        - "--email-domain=*"
+        - "--cookie-secure=false"
+        - "--reverse-proxy=true"
+      ports:
+        - containerPort: 4180
+          hostPort: 4180
+OAUTH_CONTAINER_EOF
+%{ endif }
+
+# --- Append volumes ---
+cat >> "$APME_DATA/pod.yaml" <<VOLUMES_EOF
+  volumes:
+    - name: gateway-data
+      hostPath:
+        path: $APME_DATA/gateway
+        type: DirectoryOrCreate
+    - name: sessions
+      hostPath:
+        path: $APME_DATA/sessions
+        type: DirectoryOrCreate
+    - name: proxy-cache
+      hostPath:
+        path: $APME_DATA/proxy
+        type: DirectoryOrCreate
+    - name: abbenay-config
+      hostPath:
+        path: $APME_DATA/abbenay/config.yaml
+        type: File
+VOLUMES_EOF
+
+%{ if oauth2_enabled && oauth2_cookie_secret == "" }
+# Generate a random cookie secret if none was provided
+COOKIE_SECRET=$(openssl rand -base64 32 | tr -d '\n')
+sed -i "s/GENERATE_ME/$COOKIE_SECRET/" "$APME_DATA/pod.yaml"
+%{ endif }
+
+# --- Start the pod ---
+echo "Starting APME pod..."
+cd "$APME_DATA"
+podman play kube pod.yaml
+
+echo "=== APME EC2 bootstrap complete ==="

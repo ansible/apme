@@ -8,27 +8,27 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from apme_engine.engine.content_graph import (
+from apme_engine.engine.models import ViolationDict
+from apme_engine.graph.content_graph import (
     ContentGraph,
     ContentNode,
     NodeIdentity,
     NodeType,
 )
-from apme_engine.engine.graph_scanner import (
+from apme_engine.graph.rule_base import (
+    GraphRule,
+    GraphRuleResult,
+)
+from apme_engine.graph.scanner import (
     graph_report_to_violations,
     rescan_dirty,
     scan,
 )
-from apme_engine.engine.models import ViolationDict
 from apme_engine.remediation.graph_engine import (
     GraphRemediationEngine,
     splice_modifications,
 )
 from apme_engine.remediation.registry import TransformRegistry
-from apme_engine.validators.native.rules.graph_rule_base import (
-    GraphRule,
-    GraphRuleResult,
-)
 
 if TYPE_CHECKING:
     from ruamel.yaml.comments import CommentedMap
@@ -862,7 +862,7 @@ class TestNativeRulesDir:
         """native_rules_dir returns a path that actually exists on disk."""
         import os
 
-        from apme_engine.engine.graph_scanner import native_rules_dir
+        from apme_engine.graph.scanner import native_rules_dir
 
         path = native_rules_dir()
         assert os.path.isdir(path), f"Expected directory to exist: {path}"

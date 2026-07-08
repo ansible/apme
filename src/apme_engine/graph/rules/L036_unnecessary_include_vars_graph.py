@@ -6,9 +6,9 @@ Graph-aware port of ``L036_unnecessary_include_vars.py``.
 from dataclasses import dataclass
 
 from apme_engine.graph.content_graph import ContentGraph, NodeType
+from apme_engine.graph.rule_base import GraphRule, GraphRuleResult
 from apme_engine.graph.types import RuleTag as Tag
 from apme_engine.graph.types import Severity
-from apme_engine.graph.rule_base import GraphRule, GraphRuleResult
 
 _TASK_TYPES = frozenset({NodeType.TASK, NodeType.HANDLER})
 _INCLUDE_VARS_NAMES = frozenset({"include_vars", "ansible.builtin.include_vars", "ansible.legacy.include_vars"})

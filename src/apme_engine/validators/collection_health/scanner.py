@@ -121,12 +121,12 @@ def _scan_collection(
     Returns:
         List of ViolationDicts with collection metadata attached.
     """
-    from apme_engine.engine.graph_scanner import (
+    from apme_engine.graph.scanner import (
         graph_report_to_violations,
         load_graph_rules,
         native_rules_dir,
     )
-    from apme_engine.engine.graph_scanner import scan as graph_scan
+    from apme_engine.graph.scanner import scan as graph_scan
     from apme_engine.runner import run_scan
 
     t0 = time.monotonic()

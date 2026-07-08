@@ -426,11 +426,11 @@ def _load_best_practices() -> dict[str, list[str]]:
 
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---", re.DOTALL)
 
-_VALIDATORS_ROOT = Path(__file__).resolve().parent.parent / "validators"
+_APME_ENGINE_ROOT = Path(__file__).resolve().parent.parent
 _RULE_DOC_DIRS = [
-    _VALIDATORS_ROOT / "native" / "rules",
-    _VALIDATORS_ROOT / "opa" / "bundle",
-    _VALIDATORS_ROOT / "ansible" / "rules",
+    _APME_ENGINE_ROOT / "graph" / "rules",
+    _APME_ENGINE_ROOT / "validators" / "opa" / "bundle",
+    _APME_ENGINE_ROOT / "validators" / "ansible" / "rules",
 ]
 
 

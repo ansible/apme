@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from apme_engine.engine.content_graph import (
+from apme_engine.graph.content_graph import (
     ContentGraph,
     ContentNode,
     EdgeType,
@@ -12,14 +12,14 @@ from apme_engine.engine.content_graph import (
     NodeScope,
     NodeType,
 )
-from apme_engine.engine.graph_scanner import (
+from apme_engine.graph.rule_base import (
+    GraphRule,
+    GraphRuleResult,
+)
+from apme_engine.graph.scanner import (
     GraphScanReport,
     load_graph_rules,
     scan,
-)
-from apme_engine.validators.native.rules.graph_rule_base import (
-    GraphRule,
-    GraphRuleResult,
 )
 
 # ---------------------------------------------------------------------------
@@ -306,9 +306,9 @@ class TestLoadGraphRules:
         """
         from pathlib import Path
 
-        import apme_engine.validators.native.rules as rules_pkg
+        import apme_engine.graph.rules as rules_pkg
         from apme_engine.engine.utils import load_classes_in_dir
-        from apme_engine.validators.native.rules.graph_rule_base import (
+        from apme_engine.graph.rule_base import (
             GraphRule as GraphRuleBase,
         )
 

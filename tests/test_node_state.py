@@ -6,7 +6,8 @@ import json
 
 import pytest
 
-from apme_engine.engine.content_graph import (
+from apme_engine.engine.models import ViolationDict
+from apme_engine.graph.content_graph import (
     ContentGraph,
     ContentNode,
     NodeIdentity,
@@ -19,7 +20,6 @@ from apme_engine.engine.content_graph import (
     _reindent,
     _violation_key,
 )
-from apme_engine.engine.models import ViolationDict
 
 # ---------------------------------------------------------------------------
 # Helpers

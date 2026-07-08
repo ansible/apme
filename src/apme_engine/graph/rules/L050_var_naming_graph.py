@@ -5,12 +5,12 @@ from dataclasses import dataclass
 from typing import cast
 
 from apme_engine.graph.content_graph import ContentGraph, NodeType
-from apme_engine.graph.types import RuleTag as Tag
-from apme_engine.graph.types import Severity, YAMLDict
 from apme_engine.graph.rule_base import (
     GraphRule,
     GraphRuleResult,
 )
+from apme_engine.graph.types import RuleTag as Tag
+from apme_engine.graph.types import Severity, YAMLDict
 
 _VALID_VAR_NAME = re.compile(r"^[a-z_][a-z0-9_]*$")
 

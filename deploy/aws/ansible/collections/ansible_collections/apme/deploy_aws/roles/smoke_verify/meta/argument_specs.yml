@@ -1,0 +1,30 @@
+---
+argument_specs:
+  main:
+    short_description: Read Terraform outputs, assert keys, and probe the ALB endpoint.
+    options:
+      smoke_verify_project_path:
+        type: str
+        required: true
+        description: Path to the Terraform root module with local or remote state.
+      smoke_verify_required_outputs:
+        type: list
+        elements: str
+        required: false
+        description: Output names that must be present after apply.
+      smoke_verify_alb_http:
+        type: bool
+        required: false
+        description: When true, HTTP GET the alb_dns_name output and check the expected status.
+      smoke_verify_alb_expected_status:
+        type: int
+        required: false
+        description: Expected HTTP status from the ALB root URL (200 when the app is running).
+      smoke_verify_alb_retries:
+        type: int
+        required: false
+        description: Retries for the ALB HTTP check (EC2 bootstrap + container startup can take several minutes).
+      smoke_verify_alb_delay:
+        type: int
+        required: false
+        description: Seconds between ALB HTTP check retries.
