@@ -41,7 +41,9 @@ Decisions that are fully reflected in the codebase.
 | [ADR-033](ADR-033-centralized-log-bridge.md) | Centralized Log Bridge with gRPC Transport | 2026-03-22 |
 | [ADR-037](ADR-037-project-centric-ui-model.md) | Project-Centric UI Model with Session Abstraction | 2026-03-24 |
 | [ADR-039](ADR-039-unified-operation-stream.md) | Unified Operation Stream — Check and Remediate | 2026-03-24 |
+| [ADR-041](ADR-041-rule-catalog-override-architecture.md) | Rule Catalog & Override Architecture | 2026-03-25 |
 | [ADR-044](ADR-044-node-identity-progression-model.md) | Node Identity and Progression Model | 2026-03-27 |
+| [ADR-045](ADR-045-galaxy-auth-delegation.md) | Delegate Galaxy Authentication to ansible-galaxy, Galaxy Config as Scan Metadata | 2026-03-28 |
 | [ADR-047](ADR-047-tox-developer-orchestration.md) | tox as Sole Developer Orchestration Tool | 2026-03-30 |
 
 ## Accepted
@@ -53,9 +55,7 @@ Decisions that have been accepted but are not yet fully implemented.
 | [ADR-012](ADR-012-scale-pods-not-services.md) | Scale Pods, Not Services Within a Pod | 2026-02 |
 | [ADR-016](ADR-016-single-branch-main.md) | Single-branch `main` Strategy | 2026-03 |
 | [ADR-040](ADR-040-scan-metadata-enrichment.md) | Scan Metadata Enrichment | 2026-03-25 |
-| [ADR-041](ADR-041-rule-catalog-override-architecture.md) | Rule Catalog & Override Architecture | 2026-03-25 |
 | [ADR-043](ADR-043-default-severity-assignment.md) | Default Severity Assignment for Rule Catalog | 2026-03-26 |
-| [ADR-045](ADR-045-galaxy-auth-delegation.md) | Delegate Galaxy Authentication to ansible-galaxy, Galaxy Config as Scan Metadata | 2026-03-28 |
 | [ADR-048](ADR-048-pod-internal-admin-endpoints.md) | Pod-Internal Admin Endpoints Rely on Network Isolation | 2026-04-01 |
 | [ADR-049](ADR-049-gateway-in-daemon.md) | Gateway Embedded in Local Daemon | 2026-04-01 |
 | [ADR-050](ADR-050-post-remediation-pr-creation.md) | Post-Remediation PR Creation via Gateway SCM Integration | 2026-04-07 (revised 2026-07-06) |

@@ -75,8 +75,9 @@ Specifically:
    field or endpoint will be removed in a future version, the Gateway
    must signal deprecation using standard HTTP headers:
    - [`Deprecation`](https://www.rfc-editor.org/rfc/rfc9745.html)
-     (RFC 9745): set to `true` or an ISO 8601 date indicating when the
-     endpoint was deprecated.
+     (RFC 9745): set to `@<unix-timestamp>` (an SF-Integer per the
+     Structured Fields syntax) or `?1` (boolean true) indicating the
+     endpoint is deprecated.
    - [`Sunset`](https://www.rfc-editor.org/rfc/rfc8594.html)
      (RFC 8594): set to an HTTP-date indicating when the endpoint will
      be removed.
