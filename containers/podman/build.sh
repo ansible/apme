@@ -31,4 +31,7 @@ podman build "${BUILD_ARGS[@]}" -t apme-gateway:latest -f containers/gateway/Doc
 podman build "${BUILD_ARGS[@]}" -t apme-cli:latest -f containers/cli/Dockerfile .
 podman build "${BUILD_ARGS[@]}" -t apme-ui:latest -f containers/ui/Dockerfile .
 
+echo "==> Checking UBI volume write permissions (ADR-061)..."
+bash containers/podman/check-volume-permissions.sh
+
 echo "Images built. Start with: tox -e up"

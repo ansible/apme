@@ -5,8 +5,9 @@
 ARG BASE_IMAGE=localhost/apme-base:latest
 FROM $BASE_IMAGE
 
-RUN apt-get update && apt-get install -y --no-install-recommends git \
-    && rm -rf /var/lib/apt/lists/*
+USER root
+RUN microdnf install -y git && microdnf clean all
+USER 1001
 
 ENV APME_DB_PATH=/data/apme.db
 ENV APME_GATEWAY_GRPC_LISTEN=0.0.0.0:50060

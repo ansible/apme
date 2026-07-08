@@ -103,21 +103,20 @@ yaml = YAML(typ='safe')  # Prevents arbitrary code execution
 
 #### Dockerfile Best Practices
 ```dockerfile
-# Use specific versions, not :latest
-FROM python:3.12-slim-bookworm
+# Use specific versions, not :latest (ADR-061: UBI10 application bases)
+FROM registry.access.redhat.com/ubi10/python-312-minimal:10.2
 
-# Run as non-root user
-RUN useradd -r -s /bin/false apme
-USER apme
+# Run as non-root user (UBI Python images default to UID 1001)
+USER 1001
 
 # Don't store secrets in ENV
 # BAD: ENV API_KEY=secret123
 # GOOD: Use runtime secrets
 
 # Minimize attack surface
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    required-package \
-    && rm -rf /var/lib/apt/lists/*
+USER root
+RUN microdnf install -y required-package && microdnf clean all
+USER 1001
 ```
 
 #### Image Scanning

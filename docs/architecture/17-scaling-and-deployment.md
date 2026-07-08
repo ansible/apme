@@ -169,18 +169,18 @@ network.
 
 | Image | Base | Contents |
 |-------|------|----------|
-| `apme-primary` | Python 3.12 slim | Engine, Primary server, VenvSessionManager |
-| `apme-native` | Python 3.12 slim | Native validator server |
-| `apme-opa` | Python 3.12 slim + OPA binary | OPA validator server + Rego bundle |
-| `apme-ansible` | Python 3.12 slim | Ansible validator server |
-| `apme-gitleaks` | Python 3.12 slim + gitleaks binary | Gitleaks validator server |
-| `apme-collection-health` | Python 3.12 slim | Collection health validator server |
-| `apme-dep-audit` | Python 3.12 slim + pip-audit | Python CVE scanner server |
-| `apme-galaxy-proxy` | Python 3.12 slim | PEP 503 proxy server |
-| `apme-gateway` | Python 3.12 slim | FastAPI + gRPC Reporting + SQLite |
+| `apme-primary` | Python 3.12 UBI10 | Engine, Primary server, VenvSessionManager |
+| `apme-native` | Python 3.12 UBI10 | Native validator server |
+| `apme-opa` | Python 3.12 UBI10 + OPA binary | OPA validator server + Rego bundle |
+| `apme-ansible` | Python 3.12 UBI10 | Ansible validator server |
+| `apme-gitleaks` | Python 3.12 UBI10 + gitleaks binary | Gitleaks validator server |
+| `apme-collection-health` | Python 3.12 UBI10 | Collection health validator server |
+| `apme-dep-audit` | Python 3.12 UBI10 + pip-audit | Python CVE scanner server |
+| `apme-galaxy-proxy` | Python 3.12 UBI10 | PEP 503 proxy server |
+| `apme-gateway` | Python 3.12 UBI10 | FastAPI + gRPC Reporting + SQLite |
 | `apme-ui` | nginx alpine | React SPA static files |
-| `apme-abbenay` | Python 3.12 slim | AI inference gateway |
-| `apme-cli` | Python 3.12 slim | CLI tools only |
+| `apme-abbenay` | Python 3.12 slim | AI inference gateway (external image) |
+| `apme-cli` | Python 3.12 UBI10 | CLI tools only |
 
 All containers run as non-root (see `SECURITY.md`).
 

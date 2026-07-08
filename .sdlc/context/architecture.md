@@ -242,7 +242,7 @@ If neither Podman nor a local binary is available, OPA validation is skipped (gr
 
 The Gitleaks container follows a similar multi-stage pattern:
 
-1. **Gitleaks binary** is copied from the official `zricethezav/gitleaks` image into a Python 3.12 slim image
+1. **Gitleaks binary** is copied from the official `zricethezav/gitleaks` image into a Python 3.12 UBI10 base image
 2. **apme-gitleaks-validator** (Python gRPC wrapper) starts on port 50056, receives `ValidateRequest` with `content_graph_data`
 
 The validator supports two scanning strategies:
