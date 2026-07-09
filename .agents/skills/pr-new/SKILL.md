@@ -243,7 +243,8 @@ actionable.
    undisclosed I/O, inconsistency with sibling functions)
 4. Is everything still true after this change? (prose vs code drift —
    renamed symbols with old docstrings, changed behavior with old
-   descriptions, stale ADR/doc references)
+   descriptions, stale ADR/doc references; ADR "all/every" claims
+   that no longer match filtered implementation)
 5. Are dependencies and versions pinned to intent?
 6. Is there dead weight? (unused imports, unreachable branches,
    written-but-never-read variables; also repeated parse/work,

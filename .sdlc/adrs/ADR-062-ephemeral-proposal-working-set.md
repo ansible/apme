@@ -69,8 +69,12 @@ proposals in memory from violations and do not re-persist them.**
 **Approved ≠ published.** PR/commit/push updates publish metadata (`pr_url`)
 only; it does not clear or redefine `review_status`.
 
-Node-level decide → all linked violations on that proposal get the same
-`review_status`. Distinct from engine `remediation_resolution`.
+Node-level decide → stamp the same `review_status` onto **compatible**
+linked violations only (same remediation class as the proposal source:
+deterministic → auto-fixable/fixed; AI → AI-candidate). Mixed path
+buckets may leave unrelated rows (e.g. `MANUAL_REVIEW`) as `NULL` so a
+Tier 1 or AI decision does not corrupt durable state for the wrong
+class. Distinct from engine `remediation_resolution`.
 
 ### Retention / flush
 
