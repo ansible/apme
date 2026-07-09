@@ -106,13 +106,13 @@ async def project_has_draft_proposals(
     Returns:
         Whether an interactive draft working set exists.
     """
-    scan_ids = list((await db.execute(select(Scan.scan_id).where(Scan.project_id == project_id))).scalars().all())
-    for sid in extra_scan_ids:
-        if sid and sid not in scan_ids:
-            scan_ids.append(sid)
-    if not scan_ids:
-        return False
-    stmt = select(Proposal.id).where(Proposal.scan_id.in_(scan_ids), Proposal.draft == 1).limit(1)
+    linked_scans = select(Scan.scan_id).where(Scan.project_id == project_id)
+    extras = [s for s in extra_scan_ids if s]
+    if extras:
+        scope = or_(Proposal.scan_id.in_(linked_scans), Proposal.scan_id.in_(list(extras)))
+    else:
+        scope = Proposal.scan_id.in_(linked_scans)
+    stmt = select(Proposal.id).where(scope, Proposal.draft == 1).limit(1)
     return (await db.execute(stmt)).scalar_one_or_none() is not None
 
 
@@ -139,15 +139,16 @@ async def abandon_project_drafts(
     """
     from sqlalchemy import delete  # noqa: PLC0415
 
-    linked = list((await db.execute(select(Scan.scan_id).where(Scan.project_id == project_id))).scalars().all())
-    cleared = 0
-    if linked:
-        result = await db.execute(
-            update(Proposal).where(Proposal.scan_id.in_(linked), Proposal.draft == 1).values(draft=0, status="pending")
-        )
-        cleared += int(result.rowcount or 0)
+    linked_scans = select(Scan.scan_id).where(Scan.project_id == project_id)
+    result = await db.execute(
+        update(Proposal)
+        .where(Proposal.scan_id.in_(linked_scans), Proposal.draft == 1)
+        .values(draft=0, status="pending")
+    )
+    cleared = int(result.rowcount or 0)
 
-    orphan_scans = [s for s in extra_scan_ids if s and s not in linked]
+    linked_set = set((await db.execute(linked_scans)).scalars().all())
+    orphan_scans = [s for s in extra_scan_ids if s and s not in linked_set]
     for sid in orphan_scans:
         result = await db.execute(delete(Proposal).where(Proposal.scan_id == sid))
         cleared += int(result.rowcount or 0)

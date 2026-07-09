@@ -306,7 +306,9 @@ empty-but-not-falsy values, post-filter field combinations, async
 dependency never responds / asyncio.gather(return_exceptions=True)
 mix, concurrent select-then-insert, non-unique dict keys, mixed members
 of a group stamped with one decision, unbounded SQL IN vs SQLite
-limits.
+limits (prefer ``col.in_(select(...))`` over materializing large id
+lists into bound parameters; chunk at ~900 when a Python list is
+unavoidable).
 
 Do NOT discuss architecture philosophy. Rank findings
 critical/high/medium/low.
