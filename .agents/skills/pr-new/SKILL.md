@@ -308,7 +308,9 @@ mix, concurrent select-then-insert, non-unique dict keys, mixed members
 of a group stamped with one decision, unbounded SQL IN vs SQLite
 limits (prefer ``col.in_(select(...))`` over materializing large id
 lists into bound parameters; chunk at ~900 when a Python list is
-unavoidable).
+unavoidable; when checking membership of a *small* candidate set
+against a large table, query the intersection of those candidates —
+never load the full table into Python just to filter a handful of ids).
 
 Do NOT discuss architecture philosophy. Rank findings
 critical/high/medium/low.

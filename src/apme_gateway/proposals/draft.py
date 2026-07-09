@@ -147,11 +147,26 @@ async def abandon_project_drafts(
     )
     cleared = int(result.rowcount or 0)
 
-    linked_set = set((await db.execute(linked_scans)).scalars().all())
-    orphan_scans = [s for s in extra_scan_ids if s and s not in linked_set]
-    for sid in orphan_scans:
-        result = await db.execute(delete(Proposal).where(Proposal.scan_id == sid))
-        cleared += int(result.rowcount or 0)
+    # Only probe the tiny extra_scan_ids set — do not materialize all project scans.
+    candidates = [s for s in extra_scan_ids if s]
+    if candidates:
+        linked_extras = set(
+            (
+                await db.execute(
+                    select(Scan.scan_id).where(
+                        Scan.project_id == project_id,
+                        Scan.scan_id.in_(list(candidates)),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for sid in candidates:
+            if sid in linked_extras:
+                continue
+            result = await db.execute(delete(Proposal).where(Proposal.scan_id == sid))
+            cleared += int(result.rowcount or 0)
     return cleared
 
 
