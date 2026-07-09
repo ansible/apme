@@ -244,6 +244,7 @@ class SSEEventType(str, Enum):
         STATUS_CHANGED: Status transition delta.
         PROGRESS: New progress log entry.
         PROPOSALS: AI proposals delivered.
+        PROPOSAL_UPDATED: Optimistic draft status change (ADR-062 Phase 2).
         RESULT: Operation completed with results.
         APPROVAL_ACK: Approval acknowledged.
         PR_CREATED: Pull request URL available.
@@ -254,6 +255,7 @@ class SSEEventType(str, Enum):
     STATUS_CHANGED = "status_changed"
     PROGRESS = "progress"
     PROPOSALS = "proposals"
+    PROPOSAL_UPDATED = "proposal_updated"
     RESULT = "result"
     APPROVAL_ACK = "approval_ack"
     PR_CREATED = "pr_created"

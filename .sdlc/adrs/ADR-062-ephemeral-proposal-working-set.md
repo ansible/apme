@@ -209,14 +209,25 @@ match.
 ## Implementation Notes
 
 - Phase 1: schema + group-on-inject + analytics table + flush scaffolding +
-  historical rebuild + additive API (this ADR).
-- Phase 2: scan-scoped draft/commit; gate commit writes `review_status` and
-  analytics; PR/push = publish flush.
+  historical rebuild + additive API (this ADR) — **done** (#391).
+- Phase 2: scan-scoped draft/commit; gate commit writes analytics (and
+  `review_status` when violation ids are already linked — live stubs often
+  stamp at FixCompleted after the id bridge); `engine_proposal_id` bridge
+  keyed by `(file, source, rule_id, line_start)` because `primary.Proposal`
+  has no `path` field; `PATCH .../operation/proposals` + SSE
+  `proposal_updated`; `abandon_working_set` resets draft status to pending;
+  PR/push = publish flush — **done** (this change set). UI wiring of PATCH /
+  `proposal_updated` is a follow-up (types only in this change set).
 - Phase 3: Option C two-gate engine/UI; AI reporting over analytics /
-  `review_status`.
+  `review_status`. Adding `path` to `primary.Proposal` (proto) would tighten
+  the id bridge for multi-finding same-line collisions.
 - SQLite: extend `_migrate_*` pattern in `apme_gateway.db` (no Alembic).
 - Non-interactive Tier 1 auto-apply sets `review_status=deterministic_approved`
   when fixed violations are persisted.
+- Abandon safeguard keys on `proposals.draft=1` only so non-interactive
+  approved working sets still auto-flush on the next remediate. Live stubs
+  attach `project_id` early; `link_scan_to_project` excludes the linking
+  scan from flush-before-attach.
 
 ## Related Decisions
 
@@ -239,3 +250,4 @@ match.
 | Date | Author | Change |
 |------|--------|--------|
 | 2026-07-09 | Brad Thornton | Initial acceptance from #379 durability design |
+| 2026-07-09 | Brad Thornton | Phase 2: draft PATCH, gate-commit stamps, id bridge, abandon |

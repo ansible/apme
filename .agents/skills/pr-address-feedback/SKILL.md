@@ -82,16 +82,18 @@ EOF
 Every automated reviewer comment (Copilot, CodeRabbit) on an agent-authored
 PR is a defect in our own review process. These tools apply the same
 principles every time — if one found something, the agent's pre-submit
-self-review (see the `pr-new` skill, Step 3) should have found it first.
-Without tightening that loop, we will never ship a PR without comments.
+self-review (see the `pr-new` skill, Step 3 + Step 3b Rule of Five)
+should have found it first. Without tightening that loop, we will never
+ship a PR without comments.
 
 After fixing each automated finding, ask: _which principle from the
-pr-new self-review should have caught this?_ If one exists but
-didn't trigger, the principle needs to be clearer or the agent didn't
-apply it. If no principle covers it, add one — but frame it as a
-general evaluation criterion, not a specific instance. Adding "don't
-do X" only prevents X; strengthening a principle prevents the entire
-class of issues X belongs to.
+pr-new self-review (Step 3 questions or Rule of Five pass 1–5) should
+have caught this?_ If one exists but didn't trigger, the principle needs
+to be clearer or the agent didn't apply it. If no principle covers it,
+strengthen the matching Rule of Five lens (or Step 3 question) — frame
+it as a general evaluation criterion, not a specific instance. Adding
+"don't do X" only prevents X; strengthening a principle prevents the
+entire class of issues X belongs to.
 
 ## How automated reviewers evaluate code
 

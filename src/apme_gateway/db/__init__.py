@@ -123,6 +123,12 @@ def _migrate_proposals_table(conn: object) -> None:
         migrations.append("ALTER TABLE proposals ADD COLUMN suggestion TEXT NOT NULL DEFAULT ''")
     if "analytics_flushed" not in existing:
         migrations.append("ALTER TABLE proposals ADD COLUMN analytics_flushed INTEGER NOT NULL DEFAULT 0")
+    if "engine_proposal_id" not in existing:
+        migrations.append("ALTER TABLE proposals ADD COLUMN engine_proposal_id TEXT DEFAULT NULL")
+    if "draft" not in existing:
+        migrations.append("ALTER TABLE proposals ADD COLUMN draft INTEGER NOT NULL DEFAULT 0")
+    if "stamp_rule_ids_json" not in existing:
+        migrations.append("ALTER TABLE proposals ADD COLUMN stamp_rule_ids_json TEXT NOT NULL DEFAULT '[]'")
 
     for stmt in migrations:
         conn.execute(text(stmt))

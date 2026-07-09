@@ -87,7 +87,12 @@ async def upsert_analytics_increment(
     await db.execute(stmt)
 
 
-async def flush_proposals_for_project(db: AsyncSession, project_id: str) -> int:
+async def flush_proposals_for_project(
+    db: AsyncSession,
+    project_id: str,
+    *,
+    exclude_scan_id: str | None = None,
+) -> int:
     """Roll unflushed project proposals into analytics and delete them.
 
     Idempotent: proposals with ``analytics_flushed=1`` are deleted without
@@ -105,11 +110,16 @@ async def flush_proposals_for_project(db: AsyncSession, project_id: str) -> int:
     Args:
         db: Active async session.
         project_id: Project UUID.
+        exclude_scan_id: When linking a remediate that already has
+            ``project_id`` (live stubs), skip flushing that scan's own
+            proposals (flush-before-attach).
 
     Returns:
         Number of proposal rows deleted.
     """
     scan_ids_stmt = select(Scan.scan_id).where(Scan.project_id == project_id)
+    if exclude_scan_id:
+        scan_ids_stmt = scan_ids_stmt.where(Scan.scan_id != exclude_scan_id)
     return await _flush_proposals(
         db,
         project_id=project_id,
@@ -205,9 +215,14 @@ async def _flush_proposals(
             int_ids = [int(v) for v in v_ids if str(v).isdigit() or isinstance(v, int)]
             if int_ids:
                 v_stmt = select(Violation).where(Violation.id.in_(int_ids))
+                stamp_rules = set(parse_json_list(getattr(prop, "stamp_rule_ids_json", None) or "[]"))
                 for violation in (await db.execute(v_stmt)).scalars().all():
                     if violation.review_status is not None:
                         continue
+                    if stamp_rules:
+                        v_rule = str(getattr(violation, "rule_id", "") or "")
+                        if v_rule not in stamp_rules:
+                            continue
                     if not violation_accepts_review_status(prop.source, violation, decision=prop.status):
                         continue
                     violation.review_status = review
@@ -275,12 +290,50 @@ async def replace_scan_proposals(
         )
         return
 
+    prior_rows = list((await db.execute(select(Proposal).where(Proposal.scan_id == scan_id))).scalars().all())
     await db.execute(delete(Proposal).where(Proposal.scan_id == scan_id))
+    # Bridge live stubs → archival groups. Key by file+source+primary_rule+line
+    # because primary.Proposal has no path field — stubs always have path="".
+    # Normalize: coupled stubs may store "L007,L013" while groups use "L007";
+    # ai-candidate groups must match stub source "ai".
+    # Carry analytics_flushed / terminal status / stamp_rule_ids so gate-commit
+    # survives FixCompleted rebuild without double-counting analytics.
+
+    def _bridge_key(file_: str, source: str, rule_id: str, line_start: int) -> tuple[str, str, str, int]:
+        primary_rule = (rule_id or "").split(",")[0].strip()
+        src = source or ""
+        if src == "ai-candidate":
+            src = "ai"
+        return (file_ or "", src, primary_rule, int(line_start or 0))
+
+    prior: dict[tuple[str, str, str, int], tuple[str | None, int, int, str, str]] = {}
+    for r in prior_rows:
+        if not (r.engine_proposal_id or r.draft or r.analytics_flushed):
+            continue
+        key = _bridge_key(str(r.file or ""), str(r.source or ""), str(r.rule_id or ""), int(r.line_start or 0))
+        prior[key] = (
+            r.engine_proposal_id,
+            int(r.draft or 0),
+            int(r.analytics_flushed or 0),
+            str(r.status or ""),
+            str(r.stamp_rule_ids_json or "[]"),
+        )
     for prop in typed:
         # Non-interactive deterministic with fixed yaml → approved for analytics.
         status = prop.status
         if status == "pending" and prop.source == "deterministic" and prop.fixed_yaml:
             status = "approved"
+        key = _bridge_key(prop.file or "", prop.source, prop.rule_id or "", int(prop.line_start or 0))
+        bridge = prior.get(key, (None, 0, 0, "", "[]"))
+        engine_id = getattr(prop, "engine_proposal_id", None) or bridge[0]
+        draft_flag = int(getattr(prop, "draft", 0) or bridge[1] or 0)
+        flushed = int(bridge[2] or 0)
+        bridged_status = str(bridge[3] or "")
+        if bridged_status in {"approved", "declined"} and status in {"pending", "proposed", ""}:
+            status = bridged_status
+        stamp_json = serialize_rule_ids(getattr(prop, "stamp_rule_ids", ()) or ())
+        if stamp_json == "[]" and bridge[4] and bridge[4] != "[]":
+            stamp_json = bridge[4]
         db.add(
             Proposal(
                 scan_id=scan_id,
@@ -299,7 +352,10 @@ async def replace_scan_proposals(
                 diff_hunk=prop.diff_hunk,
                 explanation=prop.explanation,
                 suggestion=prop.suggestion,
-                analytics_flushed=0,
+                analytics_flushed=flushed,
+                engine_proposal_id=engine_id,
+                draft=draft_flag,
+                stamp_rule_ids_json=stamp_json,
             )
         )
 
@@ -333,6 +389,8 @@ def proposal_to_detail_dict(prop: Proposal | object) -> dict[str, object]:
             "diff_hunk": prop.diff_hunk,
             "explanation": prop.explanation,
             "suggestion": prop.suggestion,
+            "engine_proposal_id": prop.engine_proposal_id,
+            "draft": bool(prop.draft),
         }
     # GroupedProposal / duck-typed
     rule_ids = list(getattr(prop, "rule_ids", ()) or ())
@@ -354,6 +412,8 @@ def proposal_to_detail_dict(prop: Proposal | object) -> dict[str, object]:
         "diff_hunk": getattr(prop, "diff_hunk", "") or "",
         "explanation": getattr(prop, "explanation", "") or "",
         "suggestion": getattr(prop, "suggestion", "") or "",
+        "engine_proposal_id": getattr(prop, "engine_proposal_id", None),
+        "draft": bool(getattr(prop, "draft", False)),
     }
 
 

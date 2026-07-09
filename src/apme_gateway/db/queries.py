@@ -529,7 +529,9 @@ async def link_scan_to_project(
     if effective_type == "remediate":
         from apme_gateway.proposals.flush import flush_proposals_for_project  # noqa: PLC0415
 
-        await flush_proposals_for_project(db, project_id)
+        # Exclude the scan being linked so live stubs that already set
+        # project_id (ADR-062 Phase 2) are not deleted by flush-before-attach.
+        await flush_proposals_for_project(db, project_id, exclude_scan_id=scan_id)
     elif effective_type == "check":
         from apme_gateway.proposals.flush import discard_scan_proposals  # noqa: PLC0415
 

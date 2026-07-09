@@ -93,23 +93,40 @@ class ReportingServicer(reporting_pb2_grpc.ReportingServicer):
         try:
             async with get_session() as db:
                 await _upsert_session(db, request.session_id, request.project_path)
-                scan = Scan(
-                    scan_id=request.scan_id,
-                    session_id=request.session_id,
-                    project_id=None,
-                    project_path=request.project_path,
-                    source=request.source or "cli",
-                    trigger="cli",
-                    created_at=_now_iso(),
-                    scan_type="remediate",
-                    total_violations=request.summary.total if request.summary else 0,
-                    auto_fixable=request.summary.auto_fixable if request.summary else 0,
-                    ai_candidate=request.summary.ai_candidate if request.summary else 0,
-                    manual_review=request.summary.manual_review if request.summary else 0,
-                    fixed_count=request.report.fixed if request.report else 0,
-                    diagnostics_json=_diagnostics_to_json(request.diagnostics),
-                )
-                db.add(scan)
+                existing = (
+                    await db.execute(sa_select(Scan).where(Scan.scan_id == request.scan_id))
+                ).scalar_one_or_none()
+                if existing is None:
+                    scan = Scan(
+                        scan_id=request.scan_id,
+                        session_id=request.session_id,
+                        project_id=None,
+                        project_path=request.project_path,
+                        source=request.source or "cli",
+                        trigger="cli",
+                        created_at=_now_iso(),
+                        scan_type="remediate",
+                        total_violations=request.summary.total if request.summary else 0,
+                        auto_fixable=request.summary.auto_fixable if request.summary else 0,
+                        ai_candidate=request.summary.ai_candidate if request.summary else 0,
+                        manual_review=request.summary.manual_review if request.summary else 0,
+                        fixed_count=request.report.fixed if request.report else 0,
+                        diagnostics_json=_diagnostics_to_json(request.diagnostics),
+                    )
+                    db.add(scan)
+                else:
+                    # Live ProposalsReady may have created a stub scan (ADR-062 Phase 2).
+                    scan = existing
+                    scan.session_id = request.session_id
+                    scan.project_path = request.project_path
+                    if not scan.source or scan.source == "gateway":
+                        scan.source = request.source or scan.source or "cli"
+                    scan.total_violations = request.summary.total if request.summary else scan.total_violations
+                    scan.auto_fixable = request.summary.auto_fixable if request.summary else scan.auto_fixable
+                    scan.ai_candidate = request.summary.ai_candidate if request.summary else scan.ai_candidate
+                    scan.manual_review = request.summary.manual_review if request.summary else scan.manual_review
+                    scan.fixed_count = request.report.fixed if request.report else scan.fixed_count
+                    scan.diagnostics_json = _diagnostics_to_json(request.diagnostics)
                 await db.flush()
                 _add_violations(db, request.scan_id, list(request.remaining_violations))
                 _add_violations(db, request.scan_id, list(request.fixed_violations))
@@ -349,19 +366,24 @@ async def _persist_grouped_proposals(
 
     await replace_scan_proposals(db, scan_id=scan_id, proposals=list(merged))
 
-    # Stamp review_status for terminal decisions (e.g. auto-approved Tier 1).
+    # Stamp review_status from persisted rows so gate-commit decisions bridged
+    # across replace_scan_proposals (and non-interactive Tier 1 promotions
+    # written by replace) are applied once violation_ids exist.
+    from apme_gateway.db.models import Proposal  # noqa: PLC0415
+    from apme_gateway.proposals.grouping import parse_json_list  # noqa: PLC0415
+
     by_id = {v.id: v for v in violations}
-    for prop in merged:
-        status = prop.status
-        if status == "pending" and prop.source == "deterministic" and prop.fixed_yaml:
-            # Non-interactive Tier 1: engine applied a fix without a human
-            # gate — treat as accepted for analytics / durable review.
-            status = "approved"
-        review = review_status_for_proposal(prop.source, status)
-        if not review or not prop.violation_ids:
+    persisted = list((await db.execute(sa_select(Proposal).where(Proposal.scan_id == scan_id))).scalars().all())
+    for prop in persisted:
+        review = review_status_for_proposal(prop.source, prop.status)
+        if not review:
             continue
-        stamp_rules = set(prop.stamp_rule_ids or ())
-        for vid in prop.violation_ids:
+        v_ids = parse_json_list(prop.violation_ids_json)
+        int_ids = [int(v) for v in v_ids if str(v).isdigit() or isinstance(v, int)]
+        if not int_ids:
+            continue
+        stamp_rules = set(parse_json_list(prop.stamp_rule_ids_json or "[]"))
+        for vid in int_ids:
             violation = by_id.get(vid)
             if violation is None or violation.review_status is not None:
                 continue
@@ -369,7 +391,7 @@ async def _persist_grouped_proposals(
                 v_rule = str(getattr(violation, "rule_id", "") or "")
                 if v_rule not in stamp_rules:
                     continue
-            if not violation_accepts_review_status(prop.source, violation, decision=status):
+            if not violation_accepts_review_status(prop.source, violation, decision=prop.status):
                 continue
             violation.review_status = review
 

@@ -10,7 +10,7 @@ argument-hint: "[branch-name] [--title 'PR title']"
 user-invocable: true
 metadata:
   author: APME Team
-  version: 1.1.0
+  version: 1.2.0
 ---
 
 # PR New
@@ -202,89 +202,234 @@ artifact type, translate it:
 
 Only proceed to Step 3b after completing this review.
 
-### Step 3b: Cold subagent review
+### Step 3b: Rule of Five (cold multi-agent review)
 
-**This step is mandatory.** The self-review in Step 3 is necessary but
-insufficient — it suffers from confirmation bias because the reviewing
-agent wrote the code. Spin up a **read-only subagent** with no
-conversation history to review the diff cold.
+**This step is mandatory.** Step 3 is necessary but insufficient — it
+suffers from confirmation bias because the reviewing agent wrote the
+code. Spin up **independent read-only subagents** with no conversation
+history. Each pass uses a progressively broader lens (in-the-small →
+in-the-large). Findings that appear in **≥2 passes** are ship-blockers
+until fixed or explicitly demoted with a documented follow-up.
 
-The subagent sees only the diff and the review questions. It has no
-memory of the intent, iterations, or trade-offs that led to the code.
-This forces it to read every line at face value — the same way Copilot
-or a human reviewer would.
+This replaces the former single cold 9-question subagent. The nine
+questions are **folded into the five lenses** below so coverage is not
+lost.
+
+#### Scale
+
+| PR size | Passes | Which lenses |
+|---------|--------|--------------|
+| Small / chore / docs-only / single-file fix | **3** | Pass 1, 2, 5 |
+| Nontrivial feature, ADR, multi-service, persistence, API | **5** | Pass 1–5 |
+
+When unsure, use **5**.
+
+#### Model selection (capabilities, not slugs)
+
+Do **not** pin vendor model names or slugs in this skill — they rot.
+When launching each Task subagent, choose a model by **capability
+tier**, mapping to whatever the current agent runtime offers.
+
+| Tier | Attributes to prefer | Use for |
+|------|----------------------|---------|
+| **fast** | Low latency, lower cost, solid at local reasoning and grep-style consistency checks; does not need deep architectural judgment | Pass **1**, Pass **2** |
+| **strong** | Best available reasoning / long-context judgment in the current runtime; willing to challenge product framing and system design | Pass **3**, Pass **4**, Pass **5** |
+
+**Selection rules:**
+
+1. Match the tier’s **attributes**, not a remembered product name.
+2. If the runtime only exposes one model, use it for every pass
+   (correctness over cost).
+3. If several models fit a tier, pick the cheapest that still matches
+   the attributes — do not “upgrade” Pass 1–2 to strong by default.
+4. Never downgrade Pass 3–5 to fast to save money; those passes catch
+   ship-blockers that mechanical review misses.
+5. Parent aggregation stays on the parent model (no extra subagent).
+
+#### Shared preamble (every pass)
+
+Every subagent prompt must start with this block (fill in repo path,
+branch, and PR number if known):
 
 ```text
-Launch a Task subagent with:
+You are Review Pass <N> of <TOTAL> for an APME pull request.
+You have no prior context about why these changes were made — review
+every line at face value.
+
+Repository: <absolute path to repo>
+Branch: <branch-name>
+Base: upstream/main
+PR: #<number or "unopened">
+
+Run `git diff upstream/main...HEAD` for the full diff. Then:
+1. List every distinct artifact type in the diff (Python, proto, Rego,
+   Ansible YAML, shell, Dockerfile, JSON/YAML config, Markdown, TS/TSX,
+   etc.). Your findings must cover each type that appears — translate
+   the lens if needed (e.g. "caller" in proto = any RPC invoker;
+   "pin to intent" in Dockerfiles = base image / pip / COPY paths).
+2. Read each changed file in full (not just hunks). For new functions,
+   tests, or stubs, also read sibling files for convention consistency
+   (mocks, typing style, error handling).
+3. Return ONLY actionable findings. No praise. No padding.
+   Format: **[Pass N / severity] file:line — description**
+   If truly nothing for your lens: "No findings."
+```
+
+Launch all passes in **one message** (parallel Task calls). Set each
+subagent’s model according to the tier table above (fast vs strong) —
+pass the runtime’s current model id that best matches the tier’s
+attributes; omit `model` only when the runtime has a single option.
+
+```text
+Launch each Task subagent with:
   subagent_type: "generalPurpose"
   readonly: true
   run_in_background: false
+  model: <runtime id matching Pass N's tier>
 ```
 
-Use this prompt template (fill in the repository path and diff):
+#### Pass 1 — classic bugs (narrow / in-the-small)
+
+**Tier: fast.** Covers former cold-review **Q1, Q3, Q8** (bugs and edge paths).
 
 ```text
-You are reviewing a pull request diff. You have no prior context about
-why these changes were made — review every line at face value.
+<shared preamble with N=1>
 
-Repository: <absolute path to repo>
-Base branch: upstream/main
+**Lens — classic code review:** Find concrete bugs in the changed code:
+logic errors, off-by-ones, incorrect conditionals, race conditions,
+wrong types, missing null checks, broken edge cases, return values that
+violate declared types, caller-surprising behavior (nullable returns,
+hidden mutation/I/O, throws the signature denies).
 
-Run `git diff upstream/main...HEAD` to get the full diff, then read
-every changed file in full (not just the diff hunks — you need
-surrounding context to evaluate contracts and consistency).  For new
-code (functions, tests, stubs), also read sibling files to verify
-convention consistency (mock patterns, type annotation style, error
-handling patterns).
+Also construct at least one realistic failure per public entry point:
+empty-but-not-falsy values, post-filter field combinations, async
+dependency never responds / asyncio.gather(return_exceptions=True)
+mix, concurrent select-then-insert, non-unique dict keys, mixed members
+of a group stamped with one decision, unbounded SQL IN vs SQLite
+limits.
 
-Evaluate the diff against these 9 questions. For each question, either
-report a concrete finding (file, line, what's wrong, why it matters)
-or state "No findings." Do not pad with observations that aren't
-actionable.
-
-1. Does every statement mean what it says? (types, return values,
-   comments, docstrings — does the runtime honor them on every path?)
-2. Does this expose more than it should? (logs, errors, user strings,
-   capability grants, container permissions)
-3. Would a caller be surprised? (nullable returns, hidden side effects,
-   undisclosed I/O, inconsistency with sibling functions)
-4. Is everything still true after this change? (prose vs code drift —
-   renamed symbols with old docstrings, changed behavior with old
-   descriptions, stale ADR/doc references; ADR "all/every" claims
-   that no longer match filtered implementation)
-5. Are dependencies and versions pinned to intent?
-6. Is there dead weight? (unused imports, unreachable branches,
-   written-but-never-read variables; also repeated parse/work,
-   O(n) queue ops, `len(list(seq))`, and O(P×V) nested scans that
-   should be O(1) / O(P+V))
-7. Is this internally and externally consistent? (patterns, naming,
-   cross-artifact parity — e.g., proto RPCs must have matching
-   servicer methods in daemon/, rule IDs must follow ADR-008;
-   dual input shapes must normalize identically; overlay fields
-   like tier/source/gate must stay aligned)
-8. Would a constructed scenario break this? (edge-case inputs,
-   empty-but-not-falsy values, temporal failures — async dependency
-   never responds, asyncio.gather with return_exceptions=True
-   returning a mix of results and exceptions; concurrent
-   select-then-insert races; non-unique dict keys that overwrite;
-   mixed members of a group stamped with one decision; unbounded
-   SQL IN lists vs SQLite parameter limits)
-9. Do inherited contracts hold? (Protocol/base class implementations
-   honor runtime semantics — validators are read-only per ADR-009,
-   gRPC servicers use grpc.aio per ADR-007)
-
-Return ONLY findings. Format each as:
-  **[Q#] file:line — description**
-
-If there are no findings across all 9 questions, return:
-  "No findings."
+Do NOT discuss architecture philosophy. Rank findings
+critical/high/medium/low.
 ```
 
-**Act on every finding.** Fix the code, then re-run `tox -e lint` and
-`tox -e unit`. Do not dismiss findings without a clear technical
-justification documented in the self-review output.
+#### Pass 2 — consistency, drift, and waste
 
-If the subagent returns "No findings", proceed to Step 4.
+**Tier: fast.** Covers former cold-review **Q4, Q5, Q6, Q7**.
+
+```text
+<shared preamble with N=2>
+
+**Lens — consistency & drift:** Assume Pass 1 caught obvious bugs. Hunt for:
+- Docstring/ADR/comment vs code drift (especially "all"/"every" claims
+  vs filtered implementation)
+- Dual input shapes that normalize differently (ORM vs dict, dataclass
+  vs mapping, servicer vs flush path)
+- Overlay fields that drift (tier/source/gate/status→review must stay
+  aligned for all pre-group sources)
+- Schema/API mistakes (ADR-060: no breaking changes to /api/v1)
+- Cross-artifact parity (proto RPC ↔ daemon servicer; rule IDs ADR-008;
+  _DEFAULT_PORTS ↔ started services)
+- Test gaps for behaviors the code/docs claim
+- Silent no-ops, dead branches, wrong defaults
+- **Dependencies pinned to intent** — version ranges, GitHub Action
+  tags, base images, pip/uv specs (not tighter, not looser)
+- **Dead weight** — unused imports/params; paid-for-but-wasteful work:
+  double JSON parse, list.pop(0)/insert(0,…) vs deque, len(list(seq)),
+  O(P×V) nested scans that should be O(P+V)
+- Pydantic/schema mutable defaults (`=[]`) vs sibling Field(default_factory=list)
+
+Explain briefly why a Pass-1-style review would miss each finding.
+```
+
+#### Pass 3 — Right Thing / product fitness
+
+**Tier: strong.** Covers former cold-review **Q3 (product surprise), Q9 (invariants)**.
+
+```text
+<shared preamble with N=3>
+
+**Lens — are we doing the Right Thing?** Read the governing ADR(s),
+AGENTS.md architectural invariants, and the implementation. Ask:
+- Does this actually solve the stated goal, or is it a half-measure /
+  framing overclaim?
+- Are lifecycle triggers complete, or will users lose state unexpectedly?
+- Is the grain/grouping/API shape honest for the UX story?
+- Do filters or demotions contradict docs/ADR claims?
+- Any invariant violations (validators read-only ADR-009, grpc.aio
+  ADR-007, engine never queries out ADR-020/029, REST additive-only
+  ADR-060, transforms submit() ADR-044, tox-only ADR-047, etc.)?
+- Do Protocol / base-class implementations honor full runtime contracts,
+  not just compiler-required members?
+
+Return **[Right Thing / Design Risk]** with recommendation:
+fix-now vs follow-up issue. Be skeptical.
+```
+
+#### Pass 4 — system architecture (in-the-large)
+
+**Tier: strong.** Covers former cold-review **Q7–Q9** at system scale.
+
+```text
+<shared preamble with N=4>
+
+**Lens — system architecture:** Zoom out beyond this PR's files:
+- Dependency direction (gateway vs engine; no inverted imports)
+- Where state lives and failure modes (concurrency, restart,
+  multi-instance, partial flush/claim)
+- Scaling: algorithmic cost, SQLite parameter limits, fan-out under load
+- Whether schemas/analytics support the views claimed in ADR/docs
+- Frontend/API contract readiness for the stated UX
+- Migration/backfill for existing deployments
+- Interaction with surrounding RPC/event timing (e.g. FixSession /
+  ReportFixCompleted)
+
+Compare ADR/doc claims to what shipped. Label each finding
+"fix in this PR" vs "track as issue".
+```
+
+#### Pass 5 — adversarial / exposure / simplify
+
+**Tier: strong.** Covers former cold-review **Q2, Q8** plus deliberate simplification.
+
+```text
+<shared preamble with N=5>
+
+**Lens — break it / rethink it:** Be creatively adversarial:
+- Weird but realistic scenarios that corrupt durable state, double-count
+  analytics, or bypass filters
+- **Information exposure** — logs, errors, user-facing strings,
+  persisted diffs/explanations: credentials, secrets, user content,
+  internal paths? Capability grants, CORS origins, container caps —
+  minimum necessary?
+- Multi-tenant / empty project_id / confused or hostile clients against
+  additive API fields
+- Time travel: clock skew, flush-then-rebuild inconsistency, partial
+  claim failures
+- If you deleted 50% of this design, what still ships the goal?
+
+Return: (1) adversarial findings that could be real bugs,
+(2) simplify/kill recommendations,
+(3) short verdict: converged enough to merge, or what must change first?
+```
+
+#### Aggregate, act, converge
+
+After all passes return, the parent agent must:
+
+1. **Deduplicate** findings and build a table: finding → which passes →
+   severity → fix-now vs follow-up.
+2. **Ship-blockers** = any finding in **≥2 passes**, plus any single-pass
+   **critical** (data corruption, security exposure, ADR-060 break,
+   invariant violation).
+3. **Act on ship-blockers.** Fix code (or demote ADR/PR framing and open
+   a tracked follow-up). Re-run `tox -e lint` and `tox -e unit`.
+4. **Re-run Rule of Five** after substantive fixes until:
+   - no new multi-pass ship-blockers, and
+   - Pass 5's verdict is merge-ready (or framing is honestly demoted).
+5. Document dismissed findings with a clear technical justification.
+
+Do not proceed to Step 4 until convergence (or an explicit user decision
+to accept remaining follow-ups).
 
 ### Step 4: Update documentation
 

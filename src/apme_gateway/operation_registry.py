@@ -272,6 +272,18 @@ class OperationRegistry:
             },
         )
 
+    def broadcast_proposal_updated(self, operation_id: str, proposals: list[dict[str, Any]]) -> None:
+        """Broadcast optimistic draft updates (ADR-062 Phase 2).
+
+        Args:
+            operation_id: The operation to notify.
+            proposals: Updated proposal detail dicts.
+        """
+        op = self._ops.get(operation_id)
+        if op is None:
+            return
+        self._broadcast(op, SSEEventType.PROPOSAL_UPDATED, {"proposals": proposals})
+
     def set_result(self, operation_id: str, result: OperationResult) -> None:
         """Store the operation result and transition to COMPLETED.
 

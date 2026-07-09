@@ -125,6 +125,8 @@ class ProposalDetail(BaseModel):  # type: ignore[misc]
         diff_hunk: Unified diff when available (optional additive).
         explanation: AI explanation when available (optional additive).
         suggestion: Manual suggestion when available (optional additive).
+        engine_proposal_id: Live engine proposal id when bridged (optional).
+        draft: True while optimistic UI edits are not yet gate-committed.
     """
 
     id: int
@@ -143,6 +145,8 @@ class ProposalDetail(BaseModel):  # type: ignore[misc]
     diff_hunk: str = ""
     explanation: str = ""
     suggestion: str = ""
+    engine_proposal_id: str | None = None
+    draft: bool = False
 
 
 class LogEntry(BaseModel):  # type: ignore[misc]

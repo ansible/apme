@@ -216,6 +216,11 @@ class Proposal(Base):
         explanation: AI explanation while actionable (ephemeral).
         suggestion: Manual suggestion text.
         analytics_flushed: 1 after counts were rolled into analytics, else 0.
+        engine_proposal_id: Live FixSession / OperationRegistry proposal id
+            when known (ADR-062 Phase 2 id bridge); null for archival-only.
+        draft: 1 while UI has optimistic edits not yet gate-committed.
+        stamp_rule_ids_json: JSON array of rule ids allowed to receive
+            ``review_status`` stamps (empty = use full ``rule_ids_json``).
         scan: Back-reference to owning Scan.
     """
 
@@ -239,6 +244,9 @@ class Proposal(Base):
     explanation: Mapped[str] = mapped_column(Text, nullable=False, default="")
     suggestion: Mapped[str] = mapped_column(Text, nullable=False, default="")
     analytics_flushed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    engine_proposal_id: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
+    draft: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    stamp_rule_ids_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
 
     scan: Mapped[Scan] = relationship(back_populates="proposals")
 

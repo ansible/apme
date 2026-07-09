@@ -46,6 +46,10 @@ export interface ProposalDetail {
   diff_hunk?: string;
   explanation?: string;
   suggestion?: string;
+  /** Live FixSession / OperationRegistry id when bridged (ADR-062 Phase 2). */
+  engine_proposal_id?: string | null;
+  /** True while optimistic UI edits are not yet gate-committed. */
+  draft?: boolean;
 }
 
 export interface ActivitySummary {
