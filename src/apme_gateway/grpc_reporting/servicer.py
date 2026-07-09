@@ -315,7 +315,7 @@ async def _persist_grouped_proposals(
 
     result = await db.execute(sa_select(Violation).where(Violation.scan_id == scan_id))
     violations = list(result.scalars().all())
-    grouped = group_violations(violations, include_diff=False)
+    grouped = group_violations(violations, include_diff=True)
     merged = merge_outcomes(grouped, outcomes)
 
     if not merged and outcomes:
@@ -354,6 +354,8 @@ async def _persist_grouped_proposals(
     for prop in merged:
         status = prop.status
         if status == "pending" and prop.source == "deterministic" and prop.fixed_yaml:
+            # Non-interactive Tier 1: engine applied a fix without a human
+            # gate — treat as accepted for analytics / durable review.
             status = "approved"
         review = review_status_for_proposal(prop.source, status)
         if not review or not prop.violation_ids:
@@ -362,7 +364,7 @@ async def _persist_grouped_proposals(
             violation = by_id.get(vid)
             if violation is None or violation.review_status is not None:
                 continue
-            if not violation_accepts_review_status(prop.source, violation):
+            if not violation_accepts_review_status(prop.source, violation, decision=status):
                 continue
             violation.review_status = review
 

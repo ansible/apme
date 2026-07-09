@@ -17,6 +17,7 @@ from apme_gateway.db.models import (
     PatchedFile,
     Project,
     Proposal,
+    ProposalRuleAnalytics,
     Rule,
     RuleOverride,
     Scan,
@@ -519,11 +520,14 @@ async def link_scan_to_project(
             project_id,
         )
         return False
-    # ADR-062: flush prior project working-set *before* attaching this scan,
-    # so we do not delete the proposals just created for ``scan_id``.
-    from apme_gateway.proposals.flush import flush_proposals_for_project  # noqa: PLC0415
+    # ADR-062: flush prior remediate working-set *before* attaching a new
+    # remediate scan, so we do not delete the proposals just created for
+    # ``scan_id``. Check scans must not wipe an open remediate review.
+    effective_type = scan_type if scan_type is not None else scan.scan_type
+    if effective_type == "remediate":
+        from apme_gateway.proposals.flush import flush_proposals_for_project  # noqa: PLC0415
 
-    await flush_proposals_for_project(db, project_id)
+        await flush_proposals_for_project(db, project_id)
     scan.project_id = project_id
     scan.trigger = trigger
     if scan_type is not None:
@@ -948,12 +952,45 @@ async def remediation_rates(db: AsyncSession, *, limit: int = 20) -> list[tuple[
 async def ai_acceptance(db: AsyncSession) -> list[tuple[str, int, int, int, float]]:
     """Return per-rule AI proposal acceptance statistics.
 
+    Prefers durable ``proposal_rule_analytics`` (survives ADR-062 flush).
+    Falls back to live ``proposals`` rows when analytics are empty so
+    pre-flush / pre-migration DBs keep working. Response shape is unchanged
+    (ADR-060).
+
     Args:
         db: Active async database session.
 
     Returns:
         List of (rule_id, approved, rejected, pending, avg_confidence) tuples.
     """
+    analytics_stmt = (
+        select(
+            ProposalRuleAnalytics.rule_id,
+            func.sum(ProposalRuleAnalytics.accepted_count).label("approved"),
+            func.sum(ProposalRuleAnalytics.declined_count).label("rejected"),
+        )
+        .where(
+            ProposalRuleAnalytics.is_group == 0,
+            ProposalRuleAnalytics.source.in_(("ai", "ai-candidate")),
+        )
+        .group_by(ProposalRuleAnalytics.rule_id)
+        .order_by(func.sum(ProposalRuleAnalytics.accepted_count + ProposalRuleAnalytics.declined_count).desc())
+    )
+    analytics_rows = list((await db.execute(analytics_stmt)).all())
+    if analytics_rows:
+        # Pending is working-set-only; after flush it is always 0. Confidence
+        # is not stored on analytics — return 0.0 (same as empty avg).
+        return [
+            (
+                str(row[0]),
+                int(row[1] or 0),
+                int(row[2] or 0),
+                0,
+                0.0,
+            )
+            for row in analytics_rows
+        ]
+
     approved_expr = case((Proposal.status == "approved", 1), else_=0)
     # Engine historically used "rejected"; ADR-062 normalizes declines to
     # "declined" on ingest. Count both so stats stay correct across eras.
@@ -967,6 +1004,7 @@ async def ai_acceptance(db: AsyncSession) -> list[tuple[str, int, int, int, floa
             func.sum(pending_expr).label("pending"),
             func.avg(Proposal.confidence).label("avg_conf"),
         )
+        .where(Proposal.tier >= 2)
         .group_by(Proposal.rule_id)
         .order_by(func.count().desc())
     )
@@ -2031,19 +2069,23 @@ async def set_scan_pr_url(
 
     from apme_gateway.proposals.flush import flush_proposals_for_project  # noqa: PLC0415
 
-    scan_stmt = select(Scan).where(Scan.scan_id == scan_id)
-    scan = (await db.execute(scan_stmt)).scalar_one_or_none()
-    if scan is None:
-        return False
-
-    stmt = update(Scan).where(Scan.scan_id == scan_id, Scan.pr_url.is_(None)).values(pr_url=pr_url)
+    # Single compare-and-set UPDATE with RETURNING — avoids a stale ORM
+    # instance when expire_on_commit=False (select-then-update hazard).
+    stmt = (
+        update(Scan)
+        .where(Scan.scan_id == scan_id, Scan.pr_url.is_(None))
+        .values(pr_url=pr_url)
+        .returning(Scan.project_id)
+    )
     result = await db.execute(stmt)
-    if not result.rowcount:
+    row = result.first()
+    if row is None:
         await db.commit()
         return False
 
-    if scan.project_id:
-        await flush_proposals_for_project(db, scan.project_id)
+    project_id = row[0]
+    if project_id:
+        await flush_proposals_for_project(db, project_id)
     await db.commit()
     return True
 

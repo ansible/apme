@@ -16,6 +16,7 @@ from typing import Any
 # Proto RemediationClass numeric values (apme.v1.common).
 _RC_AUTO_FIXABLE = 1
 _RC_AI_CANDIDATE = 2
+_RC_MANUAL_REVIEW = 3
 
 SOURCE_DETERMINISTIC = "deterministic"
 SOURCE_AI = "ai"
@@ -294,9 +295,10 @@ def group_violations(
             # still mean a terminal decline for historical rebuild.
             status = "declined"
 
-        # Auto-fixed deterministic without explicit review_status → approved.
-        if status == "pending" and source == SOURCE_DETERMINISTIC and fixed:
-            status = "approved"
+        # Do NOT invent approved from fixed_yaml alone on rebuild: that would
+        # fabricate durable review when review_status is still NULL (e.g. after
+        # a check wiped nothing but stamps never ran). Ingest still promotes
+        # non-interactive Tier 1 via replace_scan_proposals / outcome overlay.
 
         pid = _proposal_id(gate, key)
         diff_hunk = _build_diff_hunk(file_path, original, fixed) if include_diff else ""
@@ -345,12 +347,15 @@ def merge_outcomes(
     by_file_rule: dict[tuple[str, str], deque[object]] = {}
     for raw in outcomes:
         oid = str(getattr(raw, "proposal_id", "") or "")
-        rule_id = str(getattr(raw, "rule_id", "") or "")
+        rule_id_raw = str(getattr(raw, "rule_id", "") or "")
         file_path = str(getattr(raw, "file", "") or "")
         if oid:
             by_id[oid] = raw
-        if file_path and rule_id:
-            by_file_rule.setdefault((file_path, rule_id), deque()).append(raw)
+        # Engine coupled outcomes use comma-joined rule_id (e.g. "L007,L013").
+        rule_parts = [p.strip() for p in rule_id_raw.split(",") if p.strip()]
+        if file_path and rule_parts:
+            for part in rule_parts:
+                by_file_rule.setdefault((file_path, part), deque()).append(raw)
 
     claimed_ids: set[int] = set()
     merged: list[GroupedProposal] = []
@@ -535,17 +540,27 @@ def review_status_for_proposal(source: str, status: str) -> str | None:
     return None
 
 
-def violation_accepts_review_status(source: str, violation: object) -> bool:
+def violation_accepts_review_status(
+    source: str,
+    violation: object,
+    *,
+    decision: str | None = None,
+) -> bool:
     """Return True when ``violation`` may receive a proposal's review_status.
 
     Mixed path buckets can include Tier 1 fixed rows, AI-candidate rows, and
     manual-review rows. Stamping one proposal decision onto every linked
-    violation would corrupt durable ``review_status`` for the wrong class
-    (e.g. ``ai_declined`` on a MANUAL_REVIEW finding).
+    violation would corrupt durable ``review_status`` for the wrong class.
+
+    After interactive AI sessions the engine rewrites rem_class: approved
+    fixes become AUTO_FIXABLE and remaining rows become MANUAL_REVIEW. When
+    ``decision`` is a terminal AI accept/decline, allow those post-apply
+    shapes so stamps are not silently dropped.
 
     Args:
         source: Proposal source (deterministic / ai / ai-candidate / outcome).
         violation: Violation ORM row or mapping-like object.
+        decision: Optional proposal status (approved / declined / …).
 
     Returns:
         Whether this violation is compatible with the proposal source.
@@ -553,9 +568,14 @@ def violation_accepts_review_status(source: str, violation: object) -> bool:
     fixed = str(getattr(violation, "fixed_yaml", "") or "").strip()
     rem_class = int(getattr(violation, "remediation_class", 0) or 0)
     is_ai_source = source in {SOURCE_AI, SOURCE_AI_CANDIDATE}
+    accepted, declined = decision_delta(decision or "")
     if is_ai_source:
-        # AI decisions stamp AI-candidate rows only — never MANUAL_REVIEW.
-        return rem_class == _RC_AI_CANDIDATE
+        if rem_class == _RC_AI_CANDIDATE:
+            return True
+        # Post-apply shapes after Primary rem_class rewrite.
+        if accepted and (rem_class == _RC_AUTO_FIXABLE or bool(fixed)):
+            return True
+        return bool(declined and rem_class == _RC_MANUAL_REVIEW and not fixed)
     if source in {SOURCE_DETERMINISTIC, SOURCE_OUTCOME}:
         # Deterministic / thin-outcome decisions apply to auto-fixable /
         # fixed rows only (outcome maps to deterministic_* review labels).

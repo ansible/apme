@@ -44,7 +44,7 @@ def test_group_same_path_merges_rules() -> None:
     assert set(props[0].violation_ids) == {1, 2}
     assert props[0].source == SOURCE_DETERMINISTIC
     assert props[0].gate == "tier1"
-    assert props[0].status == "approved"  # fixed_yaml present
+    assert props[0].status == "pending"  # no review_status → do not invent approved
     assert props[0].path == "tasks/main.yml::task[0]"
 
 
@@ -244,6 +244,12 @@ def test_violation_accepts_review_status_filters_mixed_bucket() -> None:
     assert violation_accepts_review_status("outcome", manual) is False
     assert violation_accepts_review_status("unknown", fixed) is False
     assert violation_accepts_review_status("unknown", ai) is False
+    # Post-apply rem_class rewrite: AI approve stamps fixed AUTO_FIXABLE;
+    # AI decline stamps remaining MANUAL_REVIEW.
+    assert violation_accepts_review_status("ai", fixed, decision="approved") is True
+    assert violation_accepts_review_status("ai", manual, decision="declined") is True
+    assert violation_accepts_review_status("ai", fixed, decision="declined") is False
+    assert violation_accepts_review_status("ai", manual, decision="approved") is False
 
 
 def test_analytics_increments_pure_and_group() -> None:
@@ -287,6 +293,60 @@ def test_review_status_mapping() -> None:
     assert review_status_for_proposal("ai", "declined") == "ai_declined"
     assert review_status_for_proposal("ai-candidate", "rejected") == "ai_declined"
     assert review_status_for_proposal("deterministic", "pending") is None
+
+
+def test_merge_outcomes_comma_joined_rule_id() -> None:
+    """Coupled engine outcomes with comma-joined rule_id match per-rule queues."""
+
+    class _Outcome:
+        proposal_id = "ai-0000"
+        rule_id = "L007,L013"
+        file = "a.yml"
+        status = "approved"
+        confidence = 0.95
+        tier = 2
+
+    props = group_violations(
+        [
+            {
+                "id": 1,
+                "rule_id": "L007",
+                "file": "a.yml",
+                "path": "a.yml::t[0]",
+                "remediation_class": 2,
+            },
+            {
+                "id": 2,
+                "rule_id": "L013",
+                "file": "a.yml",
+                "path": "a.yml::t[0]",
+                "remediation_class": 2,
+            },
+        ]
+    )
+    merged = merge_outcomes(props, [_Outcome()])
+    assert len(merged) == 1
+    assert merged[0].status == "approved"
+    assert merged[0].source == "ai"
+    assert merged[0].confidence == 0.95
+
+
+def test_group_violations_does_not_invent_approved_without_review_status() -> None:
+    """Rebuild leaves pending when fixed_yaml exists but review_status is NULL."""
+    props = group_violations(
+        [
+            {
+                "id": 1,
+                "rule_id": "L013",
+                "file": "a.yml",
+                "path": "a.yml::t[0]",
+                "remediation_class": 1,
+                "fixed_yaml": "command: x\n",
+                "original_yaml": "shell: x\n",
+            }
+        ]
+    )
+    assert props[0].status == "pending"
 
 
 def test_group_violations_mixed_declines_rebuild_as_declined() -> None:

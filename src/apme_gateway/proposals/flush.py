@@ -162,7 +162,7 @@ async def flush_proposals_for_project(db: AsyncSession, project_id: str) -> int:
                 for violation in (await db.execute(v_stmt)).scalars().all():
                     if violation.review_status is not None:
                         continue
-                    if not violation_accepts_review_status(prop.source, violation):
+                    if not violation_accepts_review_status(prop.source, violation, decision=prop.status):
                         continue
                     violation.review_status = review
 

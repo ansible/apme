@@ -21,6 +21,14 @@ violation). Today:
 - There is no durable human review end-state distinct from engine
   `remediation_resolution`, and no retention policy for proposal blobs.
 
+**Phase 1 scope (this ADR):** post-hoc archival grouping at
+`ReportFixCompleted`, durable `violations.review_status`, ephemeral
+Gateway `proposals` while a remediate working set is actionable, and
+`proposal_rule_analytics`. Live Gate 1/2 checkboxes still bind to engine
+`Proposal.id` via `OperationRegistry` / WebSocket approve (ADR-052).
+Gateway `proposal_id` (`prop-{gate}-{hash}`) is the archival / activity
+identity — Phase 2 defines the id bridge for Option C.
+
 If we keep full proposal diffs forever, SQLite grows without bound. If we
 key checkboxes on `violations.id`, we fight node-level `approve_node()`
 and coupled multi-rule fixes. If we treat PR/push as “approved,” we lose
@@ -53,8 +61,9 @@ proposals in memory from violations and do not re-persist them.**
 
 - Non-empty `Violation.path` → one proposal per `(scan_id, path)`.
 - Empty/missing `path` → one proposal per violation (singleton).
-- Gateway assigns stable `proposal_id` within a scan; UI checkboxes bind to
-  that id, not `violations.id`.
+- Gateway assigns stable archival `proposal_id` within a scan (activity /
+  rebuild). Live interactive approve still uses engine proposal ids
+  (ADR-052); Phase 2 bridges the two.
 
 ### `review_status` (human/gate decision; not publish)
 
@@ -70,18 +79,28 @@ proposals in memory from violations and do not re-persist them.**
 only; it does not clear or redefine `review_status`.
 
 Node-level decide → stamp the same `review_status` onto **compatible**
-linked violations only (same remediation class as the proposal source:
-deterministic → auto-fixable/fixed; AI → AI-candidate). Mixed path
-buckets may leave unrelated rows (e.g. `MANUAL_REVIEW`) as `NULL` so a
-Tier 1 or AI decision does not corrupt durable state for the wrong
-class. Distinct from engine `remediation_resolution`.
+linked violations only. Compatibility is source- and decision-aware:
+deterministic → auto-fixable/fixed; AI approve → AI-candidate **or**
+post-apply auto-fixable/fixed; AI decline → AI-candidate **or**
+post-apply manual-review remaining. Mixed path buckets may leave
+unrelated rows as `NULL` so a Tier 1 or AI decision does not corrupt
+durable state for the wrong class. Distinct from engine
+`remediation_resolution`.
+
+Historical rebuild must **not** invent `approved` from `fixed_yaml`
+alone when `review_status` is NULL — that fabricates review. Ingest may
+still promote non-interactive Tier 1 (pending + deterministic + fixed)
+to approved when persisting the working set, because the engine applied
+the fix without a human gate.
 
 ### Retention / flush
 
-1. **New scan for a project** → flush analytics from current proposals →
-   `DELETE` proposals for that `project_id` → insert proposals only for a new
-   actionable remediate. Implemented via `link_scan_to_project` (flush
-   *before* attaching the new scan so its proposals are not deleted).
+1. **New remediate scan for a project** → flush analytics from current
+   proposals → `DELETE` proposals for that `project_id` → insert proposals
+   only for the new actionable remediate. Implemented via
+   `link_scan_to_project` when the incoming scan is `remediate` (flush
+   *before* attaching so its proposals are not deleted). **Check scans
+   do not flush** — they must not wipe an open remediate working set.
 2. **PR / commit / push completed** → same flush + delete. Phase 1 wires
    flush into `set_scan_pr_url` when the scan has a `project_id`; push-only
    publish without a PR URL is Phase 2.
@@ -106,7 +125,10 @@ Additive optional fields on activity/proposal/violation responses only.
 Do not rename or remove existing `ProposalDetail` fields. Keep status
 spellings clients already use (`declined`, `approved`, `pending`). Engine
 `rejected` is normalized to `declined` on ingest; `/stats/ai-acceptance`
-counts both spellings so historical rows remain correct.
+prefers durable `proposal_rule_analytics` (AI sources, non-group rows)
+and falls back to live `proposals` when analytics are empty, counting
+both `rejected` and `declined` spellings so historical rows remain
+correct. Response shape is unchanged (ADR-060).
 
 ## Alternatives Considered
 
