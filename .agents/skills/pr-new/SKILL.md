@@ -131,7 +131,11 @@ artifact type, translate it:
 
 6. **Is there dead weight?** Check for unused imports, unreachable
    branches, written-but-never-read variables, parameters accepted
-   but ignored.
+   but ignored. Also flag **paid-for-but-wasteful work**: parsing
+   the same JSON twice in one loop body, or `list.pop(0)` / repeated
+   `list.insert(0, …)` when a `deque` (or reverse + `pop()`) would
+   be O(1) — reviewers treat these as dead weight even when
+   functionally correct.
 
 7. **Is this internally and externally consistent?** Within each
    module: do all code paths use the same patterns (e.g., registry
@@ -234,7 +238,8 @@ actionable.
    descriptions, stale ADR/doc references)
 5. Are dependencies and versions pinned to intent?
 6. Is there dead weight? (unused imports, unreachable branches,
-   written-but-never-read variables)
+   written-but-never-read variables; also repeated parse/work and
+   O(n) queue ops that should be O(1))
 7. Is this internally and externally consistent? (patterns, naming,
    cross-artifact parity — e.g., proto RPCs must have matching
    servicer methods in daemon/, rule IDs must follow ADR-008;

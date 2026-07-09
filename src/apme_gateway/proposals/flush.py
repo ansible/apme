@@ -129,15 +129,16 @@ async def flush_proposals_for_project(db: AsyncSession, project_id: str) -> int:
         if not claim.rowcount:
             continue
 
+        rule_ids = parse_json_list(prop.rule_ids_json)
         increments = analytics_increments(
             {
                 "status": prop.status,
                 "rule_id": prop.rule_id,
-                "rule_ids": parse_json_list(prop.rule_ids_json),
+                "rule_ids": rule_ids,
                 "source": prop.source,
                 "gate": prop.gate,
                 "tier": prop.tier,
-                "coupled": len(parse_json_list(prop.rule_ids_json)) > 1,
+                "coupled": len(rule_ids) > 1,
             }
         )
         for inc in increments:

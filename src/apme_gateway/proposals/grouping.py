@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections import deque
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -337,7 +338,7 @@ def merge_outcomes(
         New list of proposals with outcome fields applied where matched.
     """
     by_id: dict[str, object] = {}
-    by_file_rule: dict[tuple[str, str], list[object]] = {}
+    by_file_rule: dict[tuple[str, str], deque[object]] = {}
     for raw in outcomes:
         oid = str(getattr(raw, "proposal_id", "") or "")
         rule_id = str(getattr(raw, "rule_id", "") or "")
@@ -345,7 +346,7 @@ def merge_outcomes(
         if oid:
             by_id[oid] = raw
         if file_path or rule_id:
-            by_file_rule.setdefault((file_path, rule_id), []).append(raw)
+            by_file_rule.setdefault((file_path, rule_id), deque()).append(raw)
 
     claimed_ids: set[int] = set()
     merged: list[GroupedProposal] = []
@@ -356,9 +357,9 @@ def merge_outcomes(
                 queue = by_file_rule.get((prop.file, rid))
                 if not queue:
                     continue
-                # Claim the next unused outcome for this file+rule pair.
+                # Claim the next unused outcome for this file+rule pair (O(1)).
                 while queue:
-                    candidate = queue.pop(0)
+                    candidate = queue.popleft()
                     cand_id = id(candidate)
                     if cand_id in claimed_ids:
                         continue
