@@ -123,7 +123,11 @@ artifact type, translate it:
    docstrings against the code they describe. Did you rename something
    but leave the old name in prose? Did you change behavior but leave
    an old description? Check ADRs, `CLAUDE.md`, `AGENTS.md`, and
-   `docs/` for stale references.
+   `docs/` for stale references. When implementation adds an
+   intentional filter or exception (e.g. stamp only compatible
+   members of a mixed group), update any ADR/doc that still says
+   "all" / "every" — prose that overclaims is drift even if the
+   code is correct.
 
 5. **Are dependencies and versions pinned to intent?** Check every
    version range, action tag, and base image. Does each one express
