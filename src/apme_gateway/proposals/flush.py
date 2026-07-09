@@ -110,11 +110,9 @@ async def flush_proposals_for_project(db: AsyncSession, project_id: str) -> int:
         Number of proposal rows deleted.
     """
     scan_ids_stmt = select(Scan.scan_id).where(Scan.project_id == project_id)
-    scan_ids = list((await db.execute(scan_ids_stmt)).scalars().all())
-    if not scan_ids:
-        return 0
-
-    props_stmt = select(Proposal).where(Proposal.scan_id.in_(scan_ids))
+    # Subquery (not a Python IN list) so long-lived projects cannot hit
+    # SQLite's host-parameter limit (~999) when expanding scan ids.
+    props_stmt = select(Proposal).where(Proposal.scan_id.in_(scan_ids_stmt))
     proposals = list((await db.execute(props_stmt)).scalars().all())
     if not proposals:
         return 0
@@ -168,7 +166,7 @@ async def flush_proposals_for_project(db: AsyncSession, project_id: str) -> int:
                         continue
                     violation.review_status = review
 
-    deleted = await db.execute(delete(Proposal).where(Proposal.scan_id.in_(scan_ids)))
+    deleted = await db.execute(delete(Proposal).where(Proposal.scan_id.in_(scan_ids_stmt)))
     count = int(deleted.rowcount or 0)
     logger.info("Flushed %s proposals for project %s", count, project_id[:12])
     return count

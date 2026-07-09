@@ -189,6 +189,10 @@ artifact type, translate it:
      MANUAL_REVIEW on the same node path)? Filters must be
      allowlists of the intended class, not "everything except X"
      — the latter silently includes unrelated classes.
+   - **Unbounded SQL ``IN`` lists** — materializing ids into
+     ``col.in_(python_list)`` can hit SQLite's ~999 host-parameter
+     limit on long-lived projects; prefer a subquery
+     (``col.in_(select(...))``) when the set can grow without bound.
 
 9. **Do inherited contracts hold?** When implementing a Protocol
    or extending a base class, check that the subclass honors the
@@ -264,7 +268,8 @@ actionable.
    never responds, asyncio.gather with return_exceptions=True
    returning a mix of results and exceptions; concurrent
    select-then-insert races; non-unique dict keys that overwrite;
-   mixed members of a group stamped with one decision)
+   mixed members of a group stamped with one decision; unbounded
+   SQL IN lists vs SQLite parameter limits)
 9. Do inherited contracts hold? (Protocol/base class implementations
    honor runtime semantics — validators are read-only per ADR-009,
    gRPC servicers use grpc.aio per ADR-007)
