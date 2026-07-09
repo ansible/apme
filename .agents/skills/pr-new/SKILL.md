@@ -189,10 +189,9 @@ artifact type, translate it:
      MANUAL_REVIEW on the same node path)? Filters must be
      allowlists of the intended class, not "everything except X"
      — the latter silently includes unrelated classes.
-   - **Unbounded SQL ``IN`` lists** — materializing ids into
-     ``col.in_(python_list)`` can hit SQLite's ~999 host-parameter
-     limit on long-lived projects; prefer a subquery
-     (``col.in_(select(...))``) when the set can grow without bound.
+   - **Docstring vs deny-by-default** — if prose says "only when
+     compatible" / "same class", the fallback branch must not return
+     ``True`` unconditionally for unknown/sentinel sources.
 
 9. **Do inherited contracts hold?** When implementing a Protocol
    or extending a base class, check that the subclass honors the

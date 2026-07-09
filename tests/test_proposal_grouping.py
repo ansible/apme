@@ -240,6 +240,10 @@ def test_violation_accepts_review_status_filters_mixed_bucket() -> None:
     assert violation_accepts_review_status("ai", fixed) is False
     assert violation_accepts_review_status("ai", manual) is False
     assert violation_accepts_review_status("ai-candidate", manual) is False
+    assert violation_accepts_review_status("outcome", fixed) is True
+    assert violation_accepts_review_status("outcome", manual) is False
+    assert violation_accepts_review_status("unknown", fixed) is False
+    assert violation_accepts_review_status("unknown", ai) is False
 
 
 def test_analytics_increments_pure_and_group() -> None:

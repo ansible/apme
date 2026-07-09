@@ -552,11 +552,12 @@ def violation_accepts_review_status(source: str, violation: object) -> bool:
     if is_ai_source:
         # AI decisions stamp AI-candidate rows only — never MANUAL_REVIEW.
         return rem_class == _RC_AI_CANDIDATE
-    if source == SOURCE_DETERMINISTIC:
-        # Deterministic decisions apply to auto-fixable / fixed rows only.
+    if source in {SOURCE_DETERMINISTIC, SOURCE_OUTCOME}:
+        # Deterministic / thin-outcome decisions apply to auto-fixable /
+        # fixed rows only (outcome maps to deterministic_* review labels).
         return rem_class == _RC_AUTO_FIXABLE or bool(fixed)
-    # outcome / unknown: only stamp when the row looks like the same class.
-    return True
+    # Unknown source: never stamp — deny by default.
+    return False
 
 
 def serialize_rule_ids(rule_ids: Sequence[str]) -> str:
