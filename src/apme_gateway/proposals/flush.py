@@ -15,6 +15,7 @@ from apme_gateway.proposals.grouping import (
     analytics_increments,
     parse_json_list,
     review_status_for_proposal,
+    stamp_rule_allowlist,
     violation_accepts_review_status,
 )
 
@@ -237,7 +238,10 @@ async def _flush_proposals(
             v_ids = parse_json_list(prop.violation_ids_json)
             int_ids = [int(v) for v in v_ids if str(v).isdigit() or isinstance(v, int)]
             if int_ids:
-                stamp_rules = set(parse_json_list(getattr(prop, "stamp_rule_ids_json", None) or "[]"))
+                stamp_rules = stamp_rule_allowlist(
+                    stamp_rule_ids_json=getattr(prop, "stamp_rule_ids_json", None),
+                    rule_ids_json=getattr(prop, "rule_ids_json", None),
+                )
                 for violation in await fetch_violations_by_ids(db, int_ids):
                     if violation.review_status is not None:
                         continue

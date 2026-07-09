@@ -116,6 +116,31 @@ async def _seed_project_scan(*, with_draft: bool = False) -> tuple[str, str]:
 
 
 @pytest.mark.asyncio  # type: ignore[untyped-decorator]
+async def test_upsert_stores_primary_rule_id_for_coupled() -> None:
+    """Coupled engine rule_id CSV must not land in Proposal.rule_id."""
+    async with get_session() as db:
+        rows = await upsert_live_proposal_stubs(
+            db,
+            scan_id="scan-coupled-primary",
+            project_id=None,
+            proposals=[
+                {
+                    "id": "eng-c",
+                    "rule_id": "L007,L013",
+                    "file": "c.yml",
+                    "tier": 2,
+                    "status": "pending",
+                    "source": "ai",
+                    "line_start": 1,
+                }
+            ],
+        )
+        await db.commit()
+        assert rows[0].rule_id == "L007"
+        assert "L013" in rows[0].rule_ids_json
+
+
+@pytest.mark.asyncio  # type: ignore[untyped-decorator]
 async def test_upsert_live_stubs_sets_engine_proposal_id() -> None:
     """ProposalsReady stubs persist engine_proposal_id for the id bridge."""
     async with get_session() as db:

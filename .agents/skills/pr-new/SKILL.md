@@ -325,8 +325,15 @@ critical/high/medium/low.
 - Dual input shapes that normalize differently (ORM vs dict, dataclass
   vs mapping, servicer vs flush path)
 - Overlay fields that drift (tier/source/gate/status→review must stay
-  aligned for all pre-group sources)
-- Schema/API mistakes (ADR-060: no breaking changes to /api/v1)
+  aligned for all pre-group sources). When a column documents
+  "empty means fall back to X" (e.g. ``stamp_rule_ids_json`` →
+  ``rule_ids_json``), every stamp/filter path must honor that
+  fallback — skipping the filter when empty is a contract break.
+- Schema/API mistakes (ADR-060: no breaking changes to /api/v1).
+  Tightening previously-lenient validation (e.g. turning ignored
+  unknown ids into hard 400s) is a semantic break even if the
+  OpenAPI shape is unchanged — prefer log+ignore / intersection
+  unless an ADR explicitly hardens the contract.
 - Cross-artifact parity (proto RPC ↔ daemon servicer; rule IDs ADR-008;
   _DEFAULT_PORTS ↔ started services)
 - Test gaps for behaviors the code/docs claim

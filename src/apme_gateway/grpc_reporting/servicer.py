@@ -397,7 +397,10 @@ async def _persist_grouped_proposals(
     # across replace_scan_proposals (and non-interactive Tier 1 promotions
     # written by replace) are applied once violation_ids exist.
     from apme_gateway.db.models import Proposal  # noqa: PLC0415
-    from apme_gateway.proposals.grouping import parse_json_list  # noqa: PLC0415
+    from apme_gateway.proposals.grouping import (  # noqa: PLC0415
+        parse_json_list,
+        stamp_rule_allowlist,
+    )
 
     by_id = {v.id: v for v in violations}
     persisted = list((await db.execute(sa_select(Proposal).where(Proposal.scan_id == scan_id))).scalars().all())
@@ -409,7 +412,10 @@ async def _persist_grouped_proposals(
         int_ids = [int(v) for v in v_ids if str(v).isdigit() or isinstance(v, int)]
         if not int_ids:
             continue
-        stamp_rules = set(parse_json_list(prop.stamp_rule_ids_json or "[]"))
+        stamp_rules = stamp_rule_allowlist(
+            stamp_rule_ids_json=prop.stamp_rule_ids_json,
+            rule_ids_json=prop.rule_ids_json,
+        )
         for vid in int_ids:
             violation = by_id.get(vid)
             if violation is None or violation.review_status is not None:

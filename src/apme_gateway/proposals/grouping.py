@@ -663,3 +663,23 @@ def parse_json_list(raw: str) -> list[Any]:
     except json.JSONDecodeError:
         return []
     return value if isinstance(value, list) else []
+
+
+def stamp_rule_allowlist(*, stamp_rule_ids_json: str | None, rule_ids_json: str | None) -> set[str]:
+    """Rules allowed to receive ``review_status`` stamps.
+
+    Empty ``stamp_rule_ids_json`` falls back to the proposal's full
+    ``rule_ids_json`` (``Proposal.stamp_rule_ids_json`` contract). When both
+    are empty, returns an empty set (callers treat that as no rule filter).
+
+    Args:
+        stamp_rule_ids_json: Optional stamp-scope JSON array.
+        rule_ids_json: Full proposal rule-id JSON array.
+
+    Returns:
+        Set of rule id strings to allow when non-empty.
+    """
+    stamp = {str(r) for r in parse_json_list(stamp_rule_ids_json or "[]") if r}
+    if stamp:
+        return stamp
+    return {str(r) for r in parse_json_list(rule_ids_json or "[]") if r}

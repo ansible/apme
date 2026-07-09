@@ -22,6 +22,7 @@ from apme_gateway.proposals.grouping import (
     parse_json_list,
     review_status_for_proposal,
     serialize_rule_ids,
+    stamp_rule_allowlist,
     violation_accepts_review_status,
 )
 
@@ -261,8 +262,12 @@ async def upsert_live_proposal_stubs(
         gate = str(raw.get("gate") or "") or _gate_for_source(source, tier)
         status = _normalize_status(str(raw.get("status") or "pending"))
         rule_parts = tuple(p.strip() for p in rule_id.split(",") if p.strip()) or ((rule_id,) if rule_id else ())
+        # Proposal.rule_id is the primary/display rule — never the coupled CSV.
+        primary_rule = rule_parts[0] if rule_parts else ""
         stamp_rules = rule_parts
-        archival_id = _archival_proposal_id(file=file_, path=path, gate=gate, rule_id=rule_id, engine_id=engine_id)
+        archival_id = _archival_proposal_id(
+            file=file_, path=path, gate=gate, rule_id=primary_rule or rule_id, engine_id=engine_id
+        )
 
         existing = (
             await db.execute(
@@ -276,7 +281,7 @@ async def upsert_live_proposal_stubs(
             existing = Proposal(
                 scan_id=scan_id,
                 proposal_id=archival_id,
-                rule_id=rule_id or (rule_parts[0] if rule_parts else ""),
+                rule_id=primary_rule,
                 file=file_,
                 tier=tier,
                 confidence=float(raw.get("confidence") or 0.0),
@@ -299,7 +304,8 @@ async def upsert_live_proposal_stubs(
         else:
             existing.engine_proposal_id = engine_id
             existing.file = file_ or existing.file
-            existing.rule_id = rule_id or existing.rule_id
+            if primary_rule:
+                existing.rule_id = primary_rule
             existing.tier = tier or existing.tier
             existing.path = path or existing.path
             existing.source = source or existing.source
@@ -455,7 +461,10 @@ async def commit_gate_decisions(
         review = review_status_for_proposal(prop.source, prop.status)
         if not review:
             continue
-        stamp_rules = set(parse_json_list(prop.stamp_rule_ids_json))
+        stamp_rules = stamp_rule_allowlist(
+            stamp_rule_ids_json=prop.stamp_rule_ids_json,
+            rule_ids_json=prop.rule_ids_json,
+        )
         v_ids = parse_json_list(prop.violation_ids_json)
         int_ids = [int(v) for v in v_ids if str(v).isdigit() or isinstance(v, int)]
         if not int_ids:

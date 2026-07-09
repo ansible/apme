@@ -83,11 +83,12 @@ class DraftProposalUpdate(BaseModel):  # type: ignore[misc]
 
     Attributes:
         proposal_id: Gateway ``proposal_id`` or live ``engine_proposal_id``.
-        status: pending, approved, or declined.
+        status: pending, approved, or declined (``proposed``/``rejected``
+            accepted as synonyms and normalized in ``apply_draft_updates``).
     """
 
     proposal_id: str
-    status: str
+    status: str = Field(..., pattern="^(pending|approved|declined|proposed|rejected)$")
 
 
 class DraftProposalsRequest(BaseModel):  # type: ignore[misc]
@@ -263,8 +264,14 @@ async def approve_proposals(project_id: str, body: ApproveRequest) -> dict[str, 
     offered_set = set(offered)
     approved_set = {str(i) for i in body.approved_ids}
     unknown = sorted(approved_set - offered_set)
+    # ADR-060: do not harden /approve into a 400 for unknown ids — prior
+    # behavior ignored extras. Log and proceed with the offered intersection.
     if unknown:
-        raise HTTPException(status_code=400, detail=f"Unknown proposal ids: {unknown}")
+        logger.warning(
+            "Ignoring %s unknown approve id(s) for project %s (not in offered set)",
+            len(unknown),
+            project_id[:12],
+        )
     # Preserve offered order; only ids that were actually presented this round.
     approved = [pid for pid in offered if pid in approved_set]
     async with get_session() as db:
