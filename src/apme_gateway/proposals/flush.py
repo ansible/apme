@@ -6,7 +6,7 @@ import logging
 from collections.abc import Sequence
 from datetime import datetime, timezone
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import ColumnElement, delete, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -110,9 +110,55 @@ async def flush_proposals_for_project(db: AsyncSession, project_id: str) -> int:
         Number of proposal rows deleted.
     """
     scan_ids_stmt = select(Scan.scan_id).where(Scan.project_id == project_id)
-    # Subquery (not a Python IN list) so long-lived projects cannot hit
-    # SQLite's host-parameter limit (~999) when expanding scan ids.
-    props_stmt = select(Proposal).where(Proposal.scan_id.in_(scan_ids_stmt))
+    return await _flush_proposals(
+        db,
+        project_id=project_id,
+        props_filter=Proposal.scan_id.in_(scan_ids_stmt),
+        log_label=f"project {project_id[:12]}",
+    )
+
+
+async def flush_proposals_for_scan(db: AsyncSession, scan_id: str, *, project_id: str = "") -> int:
+    """Roll one scan's proposals into analytics and delete them (publish flush).
+
+    Used by PR/publish so publishing activity A cannot wipe an open remediate
+    working set on activity B for the same project.
+
+    Args:
+        db: Active async session.
+        scan_id: Scan whose proposals to flush.
+        project_id: Project UUID for analytics rows (empty when unknown).
+
+    Returns:
+        Number of proposal rows deleted.
+    """
+    return await _flush_proposals(
+        db,
+        project_id=project_id,
+        props_filter=Proposal.scan_id == scan_id,
+        log_label=f"scan {scan_id[:12]}",
+    )
+
+
+async def _flush_proposals(
+    db: AsyncSession,
+    *,
+    project_id: str,
+    props_filter: ColumnElement[bool],
+    log_label: str,
+) -> int:
+    """Shared claim → analytics → stamp → delete loop for a proposal filter.
+
+    Args:
+        db: Active async session.
+        project_id: Project UUID for analytics (may be empty).
+        props_filter: SQLAlchemy boolean clause selecting Proposal rows.
+        log_label: Short label for the info log.
+
+    Returns:
+        Number of proposal rows deleted.
+    """
+    props_stmt = select(Proposal).where(props_filter)
     proposals = list((await db.execute(props_stmt)).scalars().all())
     if not proposals:
         return 0
@@ -166,9 +212,36 @@ async def flush_proposals_for_project(db: AsyncSession, project_id: str) -> int:
                         continue
                     violation.review_status = review
 
-    deleted = await db.execute(delete(Proposal).where(Proposal.scan_id.in_(scan_ids_stmt)))
+    deleted = await db.execute(delete(Proposal).where(props_filter))
     count = int(deleted.rowcount or 0)
-    logger.info("Flushed %s proposals for project %s", count, project_id[:12])
+    logger.info("Flushed %s proposals for %s", count, log_label)
+    return count
+
+
+async def discard_scan_proposals(db: AsyncSession, scan_id: str) -> int:
+    """Delete proposals for a check scan without analytics or review stamps.
+
+    Check FixCompleted still emits fixed_yaml "would fix" rows; persisting
+    them as approved Tier 1 would invent durable review. When the gateway
+    learns the scan is a check, drop the working set and clear any
+    auto-stamped ``review_status`` on that scan's violations.
+
+    Args:
+        db: Active async session.
+        scan_id: Check scan UUID.
+
+    Returns:
+        Number of proposal rows deleted.
+    """
+    await db.execute(
+        update(Violation)
+        .where(Violation.scan_id == scan_id, Violation.review_status.is_not(None))
+        .values(review_status=None)
+    )
+    deleted = await db.execute(delete(Proposal).where(Proposal.scan_id == scan_id))
+    count = int(deleted.rowcount or 0)
+    if count:
+        logger.info("Discarded %s check-scan proposals for %s", count, scan_id[:12])
     return count
 
 
@@ -286,7 +359,9 @@ def proposal_to_detail_dict(prop: Proposal | object) -> dict[str, object]:
 
 # Re-export for tests / callers.
 __all__ = [
+    "discard_scan_proposals",
     "flush_proposals_for_project",
+    "flush_proposals_for_scan",
     "proposal_to_detail_dict",
     "replace_scan_proposals",
     "upsert_analytics_increment",

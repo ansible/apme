@@ -58,6 +58,8 @@ class GroupedProposal:
         explanation: Optional AI explanation.
         suggestion: Optional suggestion text.
         coupled: True when more than one rule id is present.
+        stamp_rule_ids: When non-empty, only these rule ids may receive
+            ``review_status`` stamps (set from matched outcome rule list).
     """
 
     proposal_id: str
@@ -78,6 +80,7 @@ class GroupedProposal:
     explanation: str = ""
     suggestion: str = ""
     coupled: bool = False
+    stamp_rule_ids: tuple[str, ...] = ()
 
 
 @dataclass
@@ -118,8 +121,25 @@ def _as_mapping(v: object) -> Mapping[str, Any]:
     }
 
 
+def _class_lane(item: Mapping[str, Any]) -> str:
+    """Return grouping lane so mixed rem_class paths do not share a proposal.
+
+    Args:
+        item: Violation-like mapping.
+
+    Returns:
+        ``tier1``, ``ai``, or ``other``.
+    """
+    rem_class = int(item.get("remediation_class") or 0)
+    if rem_class == _RC_AI_CANDIDATE:
+        return "ai"
+    if rem_class == _RC_AUTO_FIXABLE or str(item.get("fixed_yaml") or "").strip():
+        return "tier1"
+    return "other"
+
+
 def _group_key(item: Mapping[str, Any], index: int) -> str:
-    """Return bucket key: node path, or singleton identity.
+    """Return bucket key: node path + class lane, or singleton identity.
 
     Args:
         item: Violation-like mapping.
@@ -129,8 +149,9 @@ def _group_key(item: Mapping[str, Any], index: int) -> str:
         Stable bucket key string.
     """
     path = str(item.get("path") or "").strip()
+    lane = _class_lane(item)
     if path:
-        return f"path:{path}"
+        return f"path:{path}:lane:{lane}"
     rule_id = str(item.get("rule_id") or "")
     file_path = str(item.get("file") or "")
     line = item.get("line")
@@ -267,7 +288,11 @@ def group_violations(
             violation_ids = tuple(sorted(parsed))
 
         source, gate, tier = _classify(items)
-        path = str(items[0].get("path") or "").strip() if key.startswith("path:") else ""
+        # Keys are path:{path}:lane:{lane} or singleton:…
+        path = ""
+        if key.startswith("path:"):
+            rest = key[len("path:") :]
+            path = rest.rsplit(":lane:", 1)[0] if ":lane:" in rest else rest
         file_path = str(items[0].get("file") or "")
         line_start = 0
         for i in items:
@@ -393,9 +418,20 @@ def merge_outcomes(
         if tier >= 2:
             source = SOURCE_AI
             gate = GATE_AI
+        # Scope stamps to the outcome's rule list so mixed AUTO_FIXABLE lanes
+        # (Tier-1 + post-apply AI fixes) do not all receive ai_approved.
+        outcome_rule_raw = str(getattr(outcome, "rule_id", "") or "")
+        outcome_rules = tuple(p.strip() for p in outcome_rule_raw.split(",") if p.strip())
+        stamp_rules = outcome_rules if outcome_rules else prop.rule_ids
+        # Keep proposal_id gate prefix aligned with post-overlay gate.
+        proposal_id = prop.proposal_id
+        if gate and "-tier1-" in proposal_id and gate == GATE_AI:
+            proposal_id = proposal_id.replace("-tier1-", f"-{gate}-", 1)
+        elif gate and "-na-" in proposal_id and gate == GATE_AI:
+            proposal_id = proposal_id.replace("-na-", f"-{gate}-", 1)
         merged.append(
             GroupedProposal(
-                proposal_id=prop.proposal_id,
+                proposal_id=proposal_id,
                 rule_id=prop.rule_id,
                 rule_ids=prop.rule_ids,
                 violation_ids=prop.violation_ids,
@@ -413,6 +449,7 @@ def merge_outcomes(
                 explanation=prop.explanation,
                 suggestion=prop.suggestion,
                 coupled=prop.coupled,
+                stamp_rule_ids=stamp_rules,
             )
         )
     return merged
@@ -555,7 +592,9 @@ def violation_accepts_review_status(
     After interactive AI sessions the engine rewrites rem_class: approved
     fixes become AUTO_FIXABLE and remaining rows become MANUAL_REVIEW. When
     ``decision`` is a terminal AI accept/decline, allow those post-apply
-    shapes so stamps are not silently dropped.
+    shapes so stamps are not silently dropped. Callers must still scope
+    stamps to outcome rule ids (see ``stamp_rule_ids``) so Tier-1 rows in
+    a shared AUTO_FIXABLE lane are not labeled ``ai_*``.
 
     Args:
         source: Proposal source (deterministic / ai / ai-candidate / outcome).
@@ -573,7 +612,7 @@ def violation_accepts_review_status(
         if rem_class == _RC_AI_CANDIDATE:
             return True
         # Post-apply shapes after Primary rem_class rewrite.
-        if accepted and (rem_class == _RC_AUTO_FIXABLE or bool(fixed)):
+        if accepted and rem_class == _RC_AUTO_FIXABLE and fixed:
             return True
         return bool(declined and rem_class == _RC_MANUAL_REVIEW and not fixed)
     if source in {SOURCE_DETERMINISTIC, SOURCE_OUTCOME}:

@@ -249,6 +249,161 @@ async def test_link_scan_check_does_not_flush_working_set() -> None:
         assert props[0].proposal_id == "prop-keep"
 
 
+async def test_link_scan_check_discards_check_proposals_and_stamps() -> None:
+    """Check link discards that scan's invented proposals and review_status."""
+    from apme_gateway.db import queries as q
+    from apme_gateway.proposals.flush import discard_scan_proposals
+
+    await _seed_project_scan(scan_id="check-scan")
+    async with get_session() as db:
+        db.add(
+            Violation(
+                scan_id="check-scan",
+                rule_id="L013",
+                level="warning",
+                message="shell",
+                file="a.yml",
+                path="a.yml::t[0]",
+                remediation_class=1,
+                fixed_yaml="command: x\n",
+                review_status="deterministic_approved",
+            )
+        )
+        await replace_scan_proposals(
+            db,
+            scan_id="check-scan",
+            proposals=[
+                GroupedProposal(
+                    proposal_id="prop-check",
+                    rule_id="L013",
+                    rule_ids=("L013",),
+                    violation_ids=(),
+                    file="a.yml",
+                    path="a.yml::t[0]",
+                    line_start=1,
+                    tier=1,
+                    source="deterministic",
+                    gate="tier1",
+                    status="approved",
+                    confidence=1.0,
+                    coupled=False,
+                    fixed_yaml="command: x\n",
+                )
+            ],
+        )
+        await db.commit()
+
+    async with get_session() as db:
+        # Simulate gateway learning this FixCompleted was a check.
+        n = await discard_scan_proposals(db, "check-scan")
+        await db.commit()
+        assert n == 1
+        props = list((await db.execute(select(Proposal).where(Proposal.scan_id == "check-scan"))).scalars().all())
+        assert props == []
+        v = (await db.execute(select(Violation).where(Violation.scan_id == "check-scan"))).scalar_one()
+        assert v.review_status is None
+
+    async with get_session() as db:
+        # Also via link_scan_to_project(scan_type=check).
+        await replace_scan_proposals(
+            db,
+            scan_id="check-scan",
+            proposals=[
+                GroupedProposal(
+                    proposal_id="prop-check-2",
+                    rule_id="L013",
+                    rule_ids=("L013",),
+                    violation_ids=(),
+                    file="a.yml",
+                    path="",
+                    line_start=1,
+                    tier=1,
+                    source="deterministic",
+                    gate="tier1",
+                    status="approved",
+                    confidence=1.0,
+                    coupled=False,
+                )
+            ],
+        )
+        await db.commit()
+        ok = await q.link_scan_to_project(db, "check-scan", "proj-1", scan_type="check")
+        assert ok is True
+        props = list((await db.execute(select(Proposal).where(Proposal.scan_id == "check-scan"))).scalars().all())
+        assert props == []
+
+
+async def test_flush_proposals_for_scan_is_scan_scoped() -> None:
+    """Publish flush deletes only the published scan's proposals."""
+    from apme_gateway.proposals.flush import flush_proposals_for_scan
+
+    await _seed_project_scan(scan_id="pub-1")
+    async with get_session() as db:
+        db.add(
+            Scan(
+                scan_id="open-2",
+                session_id="sess-1",
+                project_id="proj-1",
+                project_path="/proj",
+                source="cli",
+                created_at="2026-01-01T00:00:00Z",
+                scan_type="remediate",
+                total_violations=0,
+            )
+        )
+        await replace_scan_proposals(
+            db,
+            scan_id="pub-1",
+            proposals=[
+                GroupedProposal(
+                    proposal_id="prop-pub",
+                    rule_id="L001",
+                    rule_ids=("L001",),
+                    violation_ids=(),
+                    file="a.yml",
+                    path="",
+                    line_start=1,
+                    tier=1,
+                    source="deterministic",
+                    gate="tier1",
+                    status="approved",
+                    confidence=1.0,
+                    coupled=False,
+                )
+            ],
+        )
+        await replace_scan_proposals(
+            db,
+            scan_id="open-2",
+            proposals=[
+                GroupedProposal(
+                    proposal_id="prop-open",
+                    rule_id="L002",
+                    rule_ids=("L002",),
+                    violation_ids=(),
+                    file="b.yml",
+                    path="",
+                    line_start=1,
+                    tier=1,
+                    source="deterministic",
+                    gate="tier1",
+                    status="pending",
+                    confidence=1.0,
+                    coupled=False,
+                )
+            ],
+        )
+        await db.commit()
+
+    async with get_session() as db:
+        deleted = await flush_proposals_for_scan(db, "pub-1", project_id="proj-1")
+        await db.commit()
+        assert deleted == 1
+        remaining = list((await db.execute(select(Proposal))).scalars().all())
+        assert len(remaining) == 1
+        assert remaining[0].proposal_id == "prop-open"
+
+
 async def test_ai_acceptance_prefers_analytics_after_flush() -> None:
     """After flush, /stats path via ai_acceptance reads proposal_rule_analytics."""
     from apme_gateway.db import queries as q

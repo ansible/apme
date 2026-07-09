@@ -360,10 +360,15 @@ async def _persist_grouped_proposals(
         review = review_status_for_proposal(prop.source, status)
         if not review or not prop.violation_ids:
             continue
+        stamp_rules = set(prop.stamp_rule_ids or ())
         for vid in prop.violation_ids:
             violation = by_id.get(vid)
             if violation is None or violation.review_status is not None:
                 continue
+            if stamp_rules:
+                v_rule = str(getattr(violation, "rule_id", "") or "")
+                if v_rule not in stamp_rules:
+                    continue
             if not violation_accepts_review_status(prop.source, violation, decision=status):
                 continue
             violation.review_status = review

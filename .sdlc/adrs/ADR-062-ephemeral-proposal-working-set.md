@@ -59,7 +59,10 @@ proposals in memory from violations and do not re-persist them.**
 
 ### Grouping
 
-- Non-empty `Violation.path` → one proposal per `(scan_id, path)`.
+- Non-empty `Violation.path` → one proposal per `(scan_id, path, class_lane)`
+  where lane is Tier‑1 (auto-fixable/fixed), AI-candidate, or other.
+  Mixed rem_class on the same path become **separate** proposals so a
+  single decision cannot stamp the wrong class.
 - Empty/missing `path` → one proposal per violation (singleton).
 - Gateway assigns stable archival `proposal_id` within a scan (activity /
   rebuild). Live interactive approve still uses engine proposal ids
@@ -100,10 +103,13 @@ the fix without a human gate.
    only for the new actionable remediate. Implemented via
    `link_scan_to_project` when the incoming scan is `remediate` (flush
    *before* attaching so its proposals are not deleted). **Check scans
-   do not flush** — they must not wipe an open remediate working set.
-2. **PR / commit / push completed** → same flush + delete. Phase 1 wires
-   flush into `set_scan_pr_url` when the scan has a `project_id`; push-only
-   publish without a PR URL is Phase 2.
+   do not flush** the project working set; they **discard** any proposals
+   and auto-stamps created for that check scan at FixCompleted (engine
+   always emits fixed_yaml “would fix” rows).
+2. **PR / commit / push completed** → flush + delete for the **published
+   scan only** (scan-scoped). Phase 1 wires this into `set_scan_pr_url`;
+   push-only publish without a PR URL is Phase 2. Project-wide flush
+   remains for remediate→remediate replacement only.
 3. **Historical activity GET** → if no working-set rows, **rebuild** proposals
    from violations in memory; do not `INSERT`. Use `original_yaml` /
    `fixed_yaml` for diffs when present.
@@ -181,8 +187,9 @@ match.
 
 ### Positive
 
-- Bounded `proposals` table size
-- Stable checkbox identity for interactive remediation
+- Bounded `proposals` table size (remediate working set only; check discards)
+- Archival node-grained proposals for activity review (Phase 2 bridges
+  live engine checkbox ids to Gateway `proposal_id`)
 - Rule-efficacy feedback (Tier1 vs AI, pure vs coupled) for later AI reporting
 - Compatible with ADR-060 additive API evolution
 

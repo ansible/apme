@@ -522,12 +522,18 @@ async def link_scan_to_project(
         return False
     # ADR-062: flush prior remediate working-set *before* attaching a new
     # remediate scan, so we do not delete the proposals just created for
-    # ``scan_id``. Check scans must not wipe an open remediate review.
+    # ``scan_id``. Check scans must not wipe an open remediate review —
+    # and must discard any proposals/stamps invented at FixCompleted
+    # (engine always emits fixed_yaml "would fix" rows).
     effective_type = scan_type if scan_type is not None else scan.scan_type
     if effective_type == "remediate":
         from apme_gateway.proposals.flush import flush_proposals_for_project  # noqa: PLC0415
 
         await flush_proposals_for_project(db, project_id)
+    elif effective_type == "check":
+        from apme_gateway.proposals.flush import discard_scan_proposals  # noqa: PLC0415
+
+        await discard_scan_proposals(db, scan_id)
     scan.project_id = project_id
     scan.trigger = trigger
     if scan_type is not None:
@@ -2053,8 +2059,9 @@ async def set_scan_pr_url(
     concurrent requests cannot both succeed — the second caller gets
     ``False`` and should return 409.
 
-    On success, flushes the project's ephemeral proposal working set
-    (ADR-062 publish flush) when the scan is linked to a project.
+    On success, flushes **this scan's** ephemeral proposal working set
+    (ADR-062 publish flush) so publishing one activity cannot wipe another
+    open remediate review for the same project.
 
     Args:
         db: Active async database session.
@@ -2067,7 +2074,7 @@ async def set_scan_pr_url(
     """
     from sqlalchemy import update
 
-    from apme_gateway.proposals.flush import flush_proposals_for_project  # noqa: PLC0415
+    from apme_gateway.proposals.flush import flush_proposals_for_scan  # noqa: PLC0415
 
     # Single compare-and-set UPDATE with RETURNING — avoids a stale ORM
     # instance when expire_on_commit=False (select-then-update hazard).
@@ -2083,9 +2090,10 @@ async def set_scan_pr_url(
         await db.commit()
         return False
 
-    project_id = row[0]
-    if project_id:
-        await flush_proposals_for_project(db, project_id)
+    project_id = row[0] or ""
+    # Publish flush is scan-scoped so PR on activity A cannot wipe an open
+    # remediate working set on activity B for the same project.
+    await flush_proposals_for_scan(db, scan_id, project_id=project_id)
     await db.commit()
     return True
 

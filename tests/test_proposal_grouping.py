@@ -154,11 +154,13 @@ def test_merge_outcomes_tier2_overrides_deterministic_source() -> None:
     )
     assert props[0].source == "deterministic"
     # Simulate a mixed-bucket / outcome overlay that raises tier.
-    props = [replace(props[0], proposal_id="p1")]
+    props = [replace(props[0], proposal_id="prop-tier1-deadbeef")]
     merged = merge_outcomes(props, [_Outcome()])
     assert merged[0].tier == 2
     assert merged[0].source == "ai"
     assert merged[0].gate == "ai"
+    assert merged[0].proposal_id == "prop-ai-deadbeef"
+    assert merged[0].stamp_rule_ids == ("L007",)
 
 
 def test_merge_outcomes_duplicate_file_rule_does_not_overwrite() -> None:
@@ -250,6 +252,9 @@ def test_violation_accepts_review_status_filters_mixed_bucket() -> None:
     assert violation_accepts_review_status("ai", manual, decision="declined") is True
     assert violation_accepts_review_status("ai", fixed, decision="declined") is False
     assert violation_accepts_review_status("ai", manual, decision="approved") is False
+    # fixed_yaml alone without AUTO_FIXABLE is not enough for AI approve.
+    bare_fixed = SimpleNamespace(fixed_yaml="x\n", remediation_class=0)
+    assert violation_accepts_review_status("ai", bare_fixed, decision="approved") is False
 
 
 def test_analytics_increments_pure_and_group() -> None:
@@ -350,7 +355,7 @@ def test_group_violations_does_not_invent_approved_without_review_status() -> No
 
 
 def test_group_violations_mixed_declines_rebuild_as_declined() -> None:
-    """Mixed decline review_status labels still rebuild as declined."""
+    """Same-path Tier-1 and AI declines become separate lane proposals."""
     props = group_violations(
         [
             {
@@ -372,5 +377,33 @@ def test_group_violations_mixed_declines_rebuild_as_declined() -> None:
             },
         ]
     )
-    assert len(props) == 1
-    assert props[0].status == "declined"
+    assert len(props) == 2
+    by_source = {p.source: p for p in props}
+    assert by_source["deterministic"].status == "declined"
+    assert by_source["ai-candidate"].status == "declined"
+
+
+def test_group_violations_splits_mixed_rem_class_path() -> None:
+    """AUTO_FIXABLE and AI_CANDIDATE on the same path are separate proposals."""
+    props = group_violations(
+        [
+            {
+                "id": 1,
+                "rule_id": "L007",
+                "file": "a.yml",
+                "path": "a.yml::t[0]",
+                "remediation_class": 1,
+                "fixed_yaml": "x\n",
+            },
+            {
+                "id": 2,
+                "rule_id": "L013",
+                "file": "a.yml",
+                "path": "a.yml::t[0]",
+                "remediation_class": 2,
+            },
+        ]
+    )
+    assert len(props) == 2
+    sources = {p.source for p in props}
+    assert sources == {"deterministic", "ai-candidate"}
