@@ -20,9 +20,32 @@ from apme_gateway.proposals.grouping import (
 
 logger = logging.getLogger(__name__)
 
+# Stay under SQLite's default SQLITE_MAX_VARIABLE_NUMBER (999).
+_SQLITE_BIND_LIMIT = 900
+
 
 def _now_iso() -> str:
     return datetime.now(tz=timezone.utc).isoformat()
+
+
+async def fetch_violations_by_ids(db: AsyncSession, int_ids: Sequence[int]) -> list[Violation]:
+    """Load violations by PK, chunking IN clauses for SQLite bind limits.
+
+    Args:
+        db: Active async session.
+        int_ids: Violation primary keys.
+
+    Returns:
+        Matching Violation rows (order not guaranteed).
+    """
+    if not int_ids:
+        return []
+    out: list[Violation] = []
+    for i in range(0, len(int_ids), _SQLITE_BIND_LIMIT):
+        chunk = list(int_ids[i : i + _SQLITE_BIND_LIMIT])
+        result = await db.execute(select(Violation).where(Violation.id.in_(chunk)))
+        out.extend(result.scalars().all())
+    return out
 
 
 async def upsert_analytics_increment(
@@ -214,9 +237,8 @@ async def _flush_proposals(
             v_ids = parse_json_list(prop.violation_ids_json)
             int_ids = [int(v) for v in v_ids if str(v).isdigit() or isinstance(v, int)]
             if int_ids:
-                v_stmt = select(Violation).where(Violation.id.in_(int_ids))
                 stamp_rules = set(parse_json_list(getattr(prop, "stamp_rule_ids_json", None) or "[]"))
-                for violation in (await db.execute(v_stmt)).scalars().all():
+                for violation in await fetch_violations_by_ids(db, int_ids):
                     if violation.review_status is not None:
                         continue
                     if stamp_rules:
@@ -429,6 +451,7 @@ def proposal_to_detail_dict(prop: Proposal | object) -> dict[str, object]:
 # Re-export for tests / callers.
 __all__ = [
     "discard_scan_proposals",
+    "fetch_violations_by_ids",
     "flush_proposals_for_project",
     "flush_proposals_for_scan",
     "proposal_to_detail_dict",

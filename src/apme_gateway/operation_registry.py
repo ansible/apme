@@ -180,6 +180,11 @@ class OperationRegistry:
         self._terminal_times.pop(operation_id, None)
         if self._by_project.get(op.project_id) == operation_id:
             del self._by_project[op.project_id]
+            # Drop idle lock so long-lived gateways do not retain one entry
+            # per historical project_id (Copilot: unbounded _project_locks).
+            lock = self._project_locks.get(op.project_id)
+            if lock is not None and not lock.locked():
+                self._project_locks.pop(op.project_id, None)
         for q in op.sse_subscribers:
             with contextlib.suppress(asyncio.QueueFull):
                 q.put_nowait({"_close": True})

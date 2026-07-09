@@ -10,8 +10,8 @@ from typing import Any
 from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apme_gateway.db.models import Proposal, Scan, Violation
-from apme_gateway.proposals.flush import upsert_analytics_increment
+from apme_gateway.db.models import Proposal, Scan
+from apme_gateway.proposals.flush import fetch_violations_by_ids, upsert_analytics_increment
 from apme_gateway.proposals.grouping import (
     GATE_AI,
     GATE_TIER1,
@@ -460,8 +460,7 @@ async def commit_gate_decisions(
         int_ids = [int(v) for v in v_ids if str(v).isdigit() or isinstance(v, int)]
         if not int_ids:
             continue
-        v_stmt = select(Violation).where(Violation.id.in_(int_ids))
-        for violation in (await db.execute(v_stmt)).scalars().all():
+        for violation in await fetch_violations_by_ids(db, int_ids):
             if violation.review_status is not None:
                 continue
             if stamp_rules:
