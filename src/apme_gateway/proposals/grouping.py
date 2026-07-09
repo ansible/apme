@@ -201,9 +201,9 @@ def _build_diff_hunk(file_path: str, before: str, after: str) -> str:
         after: Fixed YAML text.
 
     Returns:
-        Unified diff string, or empty when sides are missing/equal.
+        Unified diff string, or empty when either side is missing/equal.
     """
-    if not before and not after:
+    if not before or not after:
         return ""
     if before == after:
         return ""
@@ -349,7 +349,7 @@ def merge_outcomes(
         file_path = str(getattr(raw, "file", "") or "")
         if oid:
             by_id[oid] = raw
-        if file_path or rule_id:
+        if file_path and rule_id:
             by_file_rule.setdefault((file_path, rule_id), deque()).append(raw)
 
     claimed_ids: set[int] = set()
