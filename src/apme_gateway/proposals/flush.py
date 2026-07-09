@@ -1,0 +1,276 @@
+"""Flush ephemeral proposals into durable analytics (ADR-062)."""
+
+from __future__ import annotations
+
+import logging
+from collections.abc import Sequence
+from datetime import datetime, timezone
+
+from sqlalchemy import delete, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from apme_gateway.db.models import Proposal, ProposalRuleAnalytics, Scan, Violation
+from apme_gateway.proposals.grouping import (
+    analytics_increments,
+    parse_json_list,
+    review_status_for_proposal,
+)
+
+logger = logging.getLogger(__name__)
+
+
+def _now_iso() -> str:
+    return datetime.now(tz=timezone.utc).isoformat()
+
+
+async def upsert_analytics_increment(
+    db: AsyncSession,
+    *,
+    project_id: str,
+    rule_id: str,
+    source: str,
+    gate: str,
+    tier: int,
+    coupled: int,
+    is_group: int,
+    accepted_delta: int,
+    declined_delta: int,
+) -> None:
+    """Add deltas to a proposal_rule_analytics row, creating it if needed.
+
+    Args:
+        db: Active async session.
+        project_id: Project UUID or empty string.
+        rule_id: Rule id or group fingerprint.
+        source: deterministic or ai.
+        gate: tier1, ai, or empty.
+        tier: Numeric tier.
+        coupled: 0 or 1.
+        is_group: 0 or 1.
+        accepted_delta: Accept increment.
+        declined_delta: Decline increment.
+    """
+    stmt = select(ProposalRuleAnalytics).where(
+        ProposalRuleAnalytics.project_id == project_id,
+        ProposalRuleAnalytics.rule_id == rule_id,
+        ProposalRuleAnalytics.source == source,
+        ProposalRuleAnalytics.gate == gate,
+        ProposalRuleAnalytics.tier == tier,
+        ProposalRuleAnalytics.coupled == coupled,
+        ProposalRuleAnalytics.is_group == is_group,
+    )
+    result = await db.execute(stmt)
+    row = result.scalar_one_or_none()
+    now = _now_iso()
+    if row is None:
+        db.add(
+            ProposalRuleAnalytics(
+                project_id=project_id,
+                rule_id=rule_id,
+                source=source,
+                gate=gate,
+                tier=tier,
+                coupled=coupled,
+                is_group=is_group,
+                accepted_count=accepted_delta,
+                declined_count=declined_delta,
+                updated_at=now,
+            )
+        )
+        return
+    row.accepted_count += accepted_delta
+    row.declined_count += declined_delta
+    row.updated_at = now
+
+
+async def flush_proposals_for_project(db: AsyncSession, project_id: str) -> int:
+    """Roll unflushed project proposals into analytics and delete them.
+
+    Idempotent: proposals with ``analytics_flushed=1`` are deleted without
+    double-counting. Undecided (pending) proposals do not increment analytics.
+
+    Also applies ``review_status`` on linked violations when a terminal
+    decision is present and review_status is still null (e.g. non-interactive
+    Tier 1 auto-approve inferred from status).
+
+    Args:
+        db: Active async session.
+        project_id: Project UUID.
+
+    Returns:
+        Number of proposal rows deleted.
+    """
+    scan_ids_stmt = select(Scan.scan_id).where(Scan.project_id == project_id)
+    scan_ids = list((await db.execute(scan_ids_stmt)).scalars().all())
+    if not scan_ids:
+        return 0
+
+    props_stmt = select(Proposal).where(Proposal.scan_id.in_(scan_ids))
+    proposals = list((await db.execute(props_stmt)).scalars().all())
+    if not proposals:
+        return 0
+
+    for prop in proposals:
+        if prop.analytics_flushed:
+            continue
+        increments = analytics_increments(
+            {
+                "status": prop.status,
+                "rule_id": prop.rule_id,
+                "rule_ids": parse_json_list(prop.rule_ids_json),
+                "source": prop.source,
+                "gate": prop.gate,
+                "tier": prop.tier,
+                "coupled": len(parse_json_list(prop.rule_ids_json)) > 1,
+            }
+        )
+        for inc in increments:
+            await upsert_analytics_increment(
+                db,
+                project_id=project_id,
+                rule_id=str(inc["rule_id"]),
+                source=str(inc["source"]),
+                gate=str(inc["gate"]),
+                tier=int(inc["tier"]),
+                coupled=int(inc["coupled"]),
+                is_group=int(inc["is_group"]),
+                accepted_delta=int(inc["accepted_delta"]),
+                declined_delta=int(inc["declined_delta"]),
+            )
+        prop.analytics_flushed = 1
+
+        review = review_status_for_proposal(prop.source, prop.status)
+        if review:
+            v_ids = parse_json_list(prop.violation_ids_json)
+            int_ids = [int(v) for v in v_ids if str(v).isdigit() or isinstance(v, int)]
+            if int_ids:
+                v_stmt = select(Violation).where(Violation.id.in_(int_ids))
+                for violation in (await db.execute(v_stmt)).scalars().all():
+                    if violation.review_status is None:
+                        violation.review_status = review
+
+    deleted = await db.execute(delete(Proposal).where(Proposal.scan_id.in_(scan_ids)))
+    count = int(deleted.rowcount or 0)
+    logger.info("Flushed %s proposals for project %s", count, project_id[:12])
+    return count
+
+
+async def replace_scan_proposals(
+    db: AsyncSession,
+    *,
+    scan_id: str,
+    proposals: Sequence[object],
+) -> None:
+    """Delete existing proposals for ``scan_id`` and insert ``proposals``.
+
+    Args:
+        db: Active async session.
+        scan_id: Target scan.
+        proposals: :class:`~apme_gateway.proposals.grouping.GroupedProposal` objects.
+    """
+    from apme_gateway.proposals.grouping import (  # noqa: PLC0415
+        GroupedProposal,
+        serialize_rule_ids,
+        serialize_violation_ids,
+    )
+
+    typed = [p for p in proposals if isinstance(p, GroupedProposal)]
+    if proposals and not typed:
+        # Refuse to wipe the working set when the caller passed items that
+        # are not GroupedProposal (programming error / empty after filter).
+        logger.error(
+            "replace_scan_proposals: refusing delete for scan %s — %s items, 0 GroupedProposal",
+            scan_id,
+            len(list(proposals)),
+        )
+        return
+
+    await db.execute(delete(Proposal).where(Proposal.scan_id == scan_id))
+    for prop in typed:
+        # Non-interactive deterministic with fixed yaml → approved for analytics.
+        status = prop.status
+        if status == "pending" and prop.source == "deterministic" and prop.fixed_yaml:
+            status = "approved"
+        db.add(
+            Proposal(
+                scan_id=scan_id,
+                proposal_id=prop.proposal_id,
+                rule_id=prop.rule_id,
+                file=prop.file,
+                tier=prop.tier,
+                confidence=prop.confidence,
+                status=status,
+                path=prop.path,
+                source=prop.source,
+                gate=prop.gate,
+                rule_ids_json=serialize_rule_ids(prop.rule_ids),
+                violation_ids_json=serialize_violation_ids(prop.violation_ids),
+                line_start=prop.line_start,
+                diff_hunk=prop.diff_hunk,
+                explanation=prop.explanation,
+                suggestion=prop.suggestion,
+                analytics_flushed=0,
+            )
+        )
+
+
+def proposal_to_detail_dict(prop: Proposal | object) -> dict[str, object]:
+    """Build a dict suitable for ProposalDetail construction.
+
+    Args:
+        prop: ORM Proposal or GroupedProposal-like object.
+
+    Returns:
+        Field mapping including additive ADR-062 keys.
+    """
+    if isinstance(prop, Proposal):
+        rule_ids = parse_json_list(prop.rule_ids_json)
+        violation_ids = parse_json_list(prop.violation_ids_json)
+        return {
+            "id": prop.id,
+            "proposal_id": prop.proposal_id,
+            "rule_id": prop.rule_id,
+            "file": prop.file,
+            "tier": prop.tier,
+            "confidence": prop.confidence,
+            "status": prop.status,
+            "path": prop.path,
+            "source": prop.source,
+            "gate": prop.gate,
+            "rule_ids": [str(r) for r in rule_ids],
+            "violation_ids": [int(v) for v in violation_ids if str(v).isdigit() or isinstance(v, int)],
+            "line_start": prop.line_start,
+            "diff_hunk": prop.diff_hunk,
+            "explanation": prop.explanation,
+            "suggestion": prop.suggestion,
+        }
+    # GroupedProposal / duck-typed
+    rule_ids = list(getattr(prop, "rule_ids", ()) or ())
+    violation_ids = list(getattr(prop, "violation_ids", ()) or ())
+    return {
+        "id": 0,
+        "proposal_id": getattr(prop, "proposal_id", ""),
+        "rule_id": getattr(prop, "rule_id", ""),
+        "file": getattr(prop, "file", ""),
+        "tier": int(getattr(prop, "tier", 0) or 0),
+        "confidence": float(getattr(prop, "confidence", 0.0) or 0.0),
+        "status": getattr(prop, "status", "pending"),
+        "path": getattr(prop, "path", ""),
+        "source": getattr(prop, "source", "outcome"),
+        "gate": getattr(prop, "gate", ""),
+        "rule_ids": [str(r) for r in rule_ids],
+        "violation_ids": [int(v) for v in violation_ids],
+        "line_start": int(getattr(prop, "line_start", 0) or 0),
+        "diff_hunk": getattr(prop, "diff_hunk", "") or "",
+        "explanation": getattr(prop, "explanation", "") or "",
+        "suggestion": getattr(prop, "suggestion", "") or "",
+    }
+
+
+# Re-export for tests / callers.
+__all__ = [
+    "flush_proposals_for_project",
+    "proposal_to_detail_dict",
+    "replace_scan_proposals",
+    "upsert_analytics_increment",
+]

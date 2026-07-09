@@ -81,6 +81,7 @@ class ViolationDetail(BaseModel):  # type: ignore[misc]
         ai_reason: Why the AI could not fix this violation (ai_abstained only).
         ai_suggestion: Manual remediation guidance from the AI (ai_abstained only).
         suppressed: True if this violation matches an active suppression (ADR-055).
+        review_status: Human/gate decision (ADR-062); null if never reviewed.
     """
 
     id: int
@@ -101,19 +102,29 @@ class ViolationDetail(BaseModel):  # type: ignore[misc]
     ai_reason: str = ""
     ai_suggestion: str = ""
     suppressed: bool = False
+    review_status: str | None = None
 
 
 class ProposalDetail(BaseModel):  # type: ignore[misc]
-    """Proposal row.
+    """Proposal row (ephemeral working set or historically rebuilt; ADR-062).
 
     Attributes:
-        id: Auto-increment ID.
-        proposal_id: Engine-generated proposal UUID.
-        rule_id: Rule that triggered the proposal.
+        id: Auto-increment ID (0 when rebuilt in memory).
+        proposal_id: Gateway-stable proposal id within the scan.
+        rule_id: Primary rule that triggered the proposal.
         file: File the proposal targets.
-        tier: Proposal tier (2 or 3).
+        tier: Proposal tier (1 deterministic, 2+ AI).
         confidence: AI confidence score.
-        status: approved, rejected, or pending.
+        status: approved, rejected, declined, or pending.
+        path: Node identity path (optional additive).
+        source: deterministic, ai, ai-candidate, or outcome (optional additive).
+        gate: tier1 or ai (optional additive).
+        rule_ids: All rule ids on this approval unit (optional additive).
+        violation_ids: Linked violation PKs (optional additive).
+        line_start: First line of the node/finding (optional additive).
+        diff_hunk: Unified diff when available (optional additive).
+        explanation: AI explanation when available (optional additive).
+        suggestion: Manual suggestion when available (optional additive).
     """
 
     id: int
@@ -123,6 +134,15 @@ class ProposalDetail(BaseModel):  # type: ignore[misc]
     tier: int
     confidence: float
     status: str
+    path: str = ""
+    source: str = "outcome"
+    gate: str = ""
+    rule_ids: list[str] = []
+    violation_ids: list[int] = []
+    line_start: int = 0
+    diff_hunk: str = ""
+    explanation: str = ""
+    suggestion: str = ""
 
 
 class LogEntry(BaseModel):  # type: ignore[misc]

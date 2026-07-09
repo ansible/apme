@@ -17,6 +17,8 @@ export interface ViolationDetail {
   ai_reason?: string;
   ai_suggestion?: string;
   suppressed?: boolean;
+  /** Human/gate decision (ADR-062); null/undefined if never reviewed. */
+  review_status?: string | null;
 }
 
 export interface LogEntry {
@@ -35,6 +37,15 @@ export interface ProposalDetail {
   tier: number;
   confidence: number;
   status: string;
+  path?: string;
+  source?: string;
+  gate?: string;
+  rule_ids?: string[];
+  violation_ids?: number[];
+  line_start?: number;
+  diff_hunk?: string;
+  explanation?: string;
+  suggestion?: string;
 }
 
 export interface ActivitySummary {

@@ -519,6 +519,11 @@ async def link_scan_to_project(
             project_id,
         )
         return False
+    # ADR-062: flush prior project working-set *before* attaching this scan,
+    # so we do not delete the proposals just created for ``scan_id``.
+    from apme_gateway.proposals.flush import flush_proposals_for_project  # noqa: PLC0415
+
+    await flush_proposals_for_project(db, project_id)
     scan.project_id = project_id
     scan.trigger = trigger
     if scan_type is not None:
@@ -950,7 +955,9 @@ async def ai_acceptance(db: AsyncSession) -> list[tuple[str, int, int, int, floa
         List of (rule_id, approved, rejected, pending, avg_confidence) tuples.
     """
     approved_expr = case((Proposal.status == "approved", 1), else_=0)
-    rejected_expr = case((Proposal.status == "rejected", 1), else_=0)
+    # Engine historically used "rejected"; ADR-062 normalizes declines to
+    # "declined" on ingest. Count both so stats stay correct across eras.
+    rejected_expr = case((Proposal.status.in_(("rejected", "declined")), 1), else_=0)
     pending_expr = case((Proposal.status == "pending", 1), else_=0)
     stmt = (
         select(
@@ -2008,6 +2015,9 @@ async def set_scan_pr_url(
     concurrent requests cannot both succeed — the second caller gets
     ``False`` and should return 409.
 
+    On success, flushes the project's ephemeral proposal working set
+    (ADR-062 publish flush) when the scan is linked to a project.
+
     Args:
         db: Active async database session.
         scan_id: UUID of the scan (activity).
@@ -2019,10 +2029,23 @@ async def set_scan_pr_url(
     """
     from sqlalchemy import update
 
+    from apme_gateway.proposals.flush import flush_proposals_for_project  # noqa: PLC0415
+
+    scan_stmt = select(Scan).where(Scan.scan_id == scan_id)
+    scan = (await db.execute(scan_stmt)).scalar_one_or_none()
+    if scan is None:
+        return False
+
     stmt = update(Scan).where(Scan.scan_id == scan_id, Scan.pr_url.is_(None)).values(pr_url=pr_url)
     result = await db.execute(stmt)
+    if not result.rowcount:
+        await db.commit()
+        return False
+
+    if scan.project_id:
+        await flush_proposals_for_project(db, scan.project_id)
     await db.commit()
-    return bool(result.rowcount)
+    return True
 
 
 # ---------------------------------------------------------------------------

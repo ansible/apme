@@ -325,6 +325,16 @@ async def test_ai_acceptance() -> None:
         db.add(
             Proposal(
                 scan_id="ai-scan",
+                proposal_id="p2b",
+                rule_id="L010",
+                tier=2,
+                confidence=0.75,
+                status="declined",
+            )
+        )
+        db.add(
+            Proposal(
+                scan_id="ai-scan",
                 proposal_id="p3",
                 rule_id="L010",
                 tier=3,
@@ -341,6 +351,6 @@ async def test_ai_acceptance() -> None:
     rule_id, approved, rejected, pending, avg_conf = rows[0]
     assert rule_id == "L010"
     assert approved == 1
-    assert rejected == 1
+    assert rejected == 2  # rejected + declined
     assert pending == 1
-    assert 0.79 < avg_conf < 0.81
+    assert 0.78 < avg_conf < 0.80

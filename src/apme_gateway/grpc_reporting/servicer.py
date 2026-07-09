@@ -21,7 +21,6 @@ from apme_engine.graph.severity import severity_from_proto, severity_to_label
 from apme_gateway.db import get_session
 from apme_gateway.db.models import (
     PatchedFile,
-    Proposal,
     Rule,
     Scan,
     ScanCollection,
@@ -32,6 +31,12 @@ from apme_gateway.db.models import (
     ScanPythonPackage,
     Session,
     Violation,
+)
+from apme_gateway.proposals.flush import replace_scan_proposals
+from apme_gateway.proposals.grouping import (
+    group_violations,
+    merge_outcomes,
+    review_status_for_proposal,
 )
 
 logger = logging.getLogger(__name__)
@@ -104,9 +109,15 @@ class ReportingServicer(reporting_pb2_grpc.ReportingServicer):
                     diagnostics_json=_diagnostics_to_json(request.diagnostics),
                 )
                 db.add(scan)
+                await db.flush()
                 _add_violations(db, request.scan_id, list(request.remaining_violations))
                 _add_violations(db, request.scan_id, list(request.fixed_violations))
-                _add_proposals(db, request.scan_id, list(request.proposals))
+                await db.flush()
+                await _persist_grouped_proposals(
+                    db,
+                    scan_id=request.scan_id,
+                    outcomes=list(request.proposals),
+                )
                 _add_logs(db, request.scan_id, list(request.logs))
                 _add_patches(db, request.scan_id, list(request.patches))
                 _add_manifest(db, request.scan_id, request.manifest)
@@ -277,30 +288,77 @@ def _add_violations(db: AsyncSession, scan_id: str, violations: Sequence[object]
                 node_line_start=v.node_line_start,  # type: ignore[attr-defined]
                 ai_reason=v.metadata.get("ai_reason", ""),  # type: ignore[attr-defined]
                 ai_suggestion=v.metadata.get("ai_suggestion", ""),  # type: ignore[attr-defined]
+                review_status=None,
             )
         )
 
 
-def _add_proposals(db: AsyncSession, scan_id: str, proposals: Sequence[object]) -> None:
-    """Convert proto ProposalOutcome to ORM rows.
+async def _persist_grouped_proposals(
+    db: AsyncSession,
+    *,
+    scan_id: str,
+    outcomes: Sequence[object],
+) -> None:
+    """Build ADR-062 working-set proposals from persisted violations.
+
+    When the engine sends ProposalOutcome rows without matching violations
+    (legacy thin outcome path), fall back to outcome-only proposals so
+    historical activity still has a working set.
 
     Args:
-        db: Active async database session.
-        scan_id: Owning scan UUID.
-        proposals: Proto ProposalOutcome messages.
+        db: Active async session (violations already flushed).
+        scan_id: Owning scan id.
+        outcomes: Engine ProposalOutcome messages to overlay.
     """
-    for p in proposals:
-        db.add(
-            Proposal(
-                scan_id=scan_id,
-                proposal_id=p.proposal_id,  # type: ignore[attr-defined]
-                rule_id=p.rule_id,  # type: ignore[attr-defined]
-                file=p.file,  # type: ignore[attr-defined]
-                tier=p.tier,  # type: ignore[attr-defined]
-                confidence=p.confidence,  # type: ignore[attr-defined]
-                status=p.status,  # type: ignore[attr-defined]
+    from apme_gateway.proposals.grouping import GroupedProposal  # noqa: PLC0415
+
+    result = await db.execute(sa_select(Violation).where(Violation.scan_id == scan_id))
+    violations = list(result.scalars().all())
+    grouped = group_violations(violations, include_diff=False)
+    merged = merge_outcomes(grouped, outcomes)
+
+    if not merged and outcomes:
+        fallback: list[GroupedProposal] = []
+        for raw in outcomes:
+            status = str(getattr(raw, "status", "") or "pending")
+            if status == "rejected":
+                status = "declined"
+            tier = int(getattr(raw, "tier", 0) or 0)
+            source = "ai" if tier >= 2 else "outcome"
+            gate = "ai" if tier >= 2 else ""
+            rule_id = str(getattr(raw, "rule_id", "") or "")
+            fallback.append(
+                GroupedProposal(
+                    proposal_id=str(getattr(raw, "proposal_id", "") or ""),
+                    rule_id=rule_id,
+                    rule_ids=(rule_id,) if rule_id else (),
+                    violation_ids=(),
+                    file=str(getattr(raw, "file", "") or ""),
+                    path="",
+                    line_start=0,
+                    tier=tier,
+                    source=source,
+                    gate=gate,
+                    status=status,
+                    confidence=float(getattr(raw, "confidence", 0.0) or 0.0),
+                    coupled=False,
+                )
             )
-        )
+        merged = fallback
+
+    await replace_scan_proposals(db, scan_id=scan_id, proposals=list(merged))
+
+    # Stamp review_status for terminal decisions (e.g. auto-approved Tier 1).
+    for prop in merged:
+        status = prop.status
+        if status == "pending" and prop.source == "deterministic" and prop.fixed_yaml:
+            status = "approved"
+        review = review_status_for_proposal(prop.source, status)
+        if not review or not prop.violation_ids:
+            continue
+        for violation in violations:
+            if violation.id in prop.violation_ids and violation.review_status is None:
+                violation.review_status = review
 
 
 def _add_logs(db: AsyncSession, scan_id: str, logs: Sequence[object]) -> None:

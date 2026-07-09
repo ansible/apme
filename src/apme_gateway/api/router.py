@@ -1430,7 +1430,31 @@ def _to_violation_detail(
         ai_reason=v.ai_reason,  # type: ignore[attr-defined]
         ai_suggestion=v.ai_suggestion,  # type: ignore[attr-defined]
         suppressed=suppressed,
+        review_status=getattr(v, "review_status", None),
     )
+
+
+def _proposals_for_activity(scan: object) -> list[ProposalDetail]:
+    """Return persisted proposals or rebuild from violations (ADR-062).
+
+    Args:
+        scan: Scan ORM with ``proposals`` and ``violations`` loaded.
+
+    Returns:
+        ProposalDetail list for the activity response.
+    """
+    from apme_gateway.proposals.flush import proposal_to_detail_dict  # noqa: PLC0415
+    from apme_gateway.proposals.grouping import group_violations  # noqa: PLC0415
+
+    stored = list(getattr(scan, "proposals", []) or [])
+    if stored:
+        return [ProposalDetail(**proposal_to_detail_dict(p)) for p in stored]
+
+    violations = list(getattr(scan, "violations", []) or [])
+    if not violations:
+        return []
+    rebuilt = group_violations(violations, include_diff=True)
+    return [ProposalDetail(**proposal_to_detail_dict(p)) for p in rebuilt]
 
 
 @router.get("/activity/{activity_id}")  # type: ignore[untyped-decorator]
@@ -1484,18 +1508,7 @@ async def get_activity_detail(activity_id: str) -> ActivityDetail:
         pr_url=scan.pr_url,
         diagnostics_json=scan.diagnostics_json,
         violations=[_to_violation_detail(v, suppressed_hashes, rule_only_hashes) for v in scan.violations],
-        proposals=[
-            ProposalDetail(
-                id=p.id,
-                proposal_id=p.proposal_id,
-                rule_id=p.rule_id,
-                file=p.file,
-                tier=p.tier,
-                confidence=p.confidence,
-                status=p.status,
-            )
-            for p in scan.proposals
-        ],
+        proposals=_proposals_for_activity(scan),
         logs=[
             LogEntry(
                 id=lg.id,

@@ -162,6 +162,7 @@ class Violation(Base):
         node_line_start: File line where the node starts.
         ai_reason: Why the AI could not fix this violation (ai_abstained only).
         ai_suggestion: Manual remediation guidance from the AI (ai_abstained only).
+        review_status: Human/gate decision (ADR-062); null if never reviewed.
         scan: Back-reference to owning Scan.
     """
 
@@ -185,22 +186,36 @@ class Violation(Base):
     node_line_start: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     ai_reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
     ai_suggestion: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    review_status: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
 
     scan: Mapped[Scan] = relationship(back_populates="violations")
 
 
 class Proposal(Base):
-    """An AI proposal outcome from a fix session.
+    """Ephemeral approval working-set row for an actionable remediate (ADR-062).
+
+    Grouped from violations by node ``path`` (or singleton). Deleted on flush
+    after analytics rollup; not durable history.
 
     Attributes:
         id: Auto-increment primary key.
         scan_id: Owning scan UUID (FK to scans).
-        proposal_id: Engine-generated proposal UUID.
-        rule_id: Rule that triggered the proposal.
+        proposal_id: Gateway-stable id within the scan.
+        rule_id: Primary/display rule id.
         file: File the proposal targets.
-        tier: Proposal tier (2 or 3).
-        confidence: AI confidence score (0.0-1.0).
-        status: Outcome (approved, rejected, pending).
+        tier: Proposal tier (1 deterministic, 2+ AI).
+        confidence: Confidence score (0.0-1.0).
+        status: pending, approved, declined, rejected, or proposed.
+        path: Node identity path (empty for singletons without path).
+        source: deterministic, ai, ai-candidate, or outcome.
+        gate: tier1, ai, or empty.
+        rule_ids_json: JSON array of all rule ids on this node.
+        violation_ids_json: JSON array of linked violation PKs.
+        line_start: First line of the node/finding.
+        diff_hunk: Unified diff while actionable (ephemeral).
+        explanation: AI explanation while actionable (ephemeral).
+        suggestion: Manual suggestion text.
+        analytics_flushed: 1 after counts were rolled into analytics, else 0.
         scan: Back-reference to owning Scan.
     """
 
@@ -214,8 +229,62 @@ class Proposal(Base):
     tier: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     status: Mapped[str] = mapped_column(Text, nullable=False, default="pending")
+    path: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    source: Mapped[str] = mapped_column(Text, nullable=False, default="outcome")
+    gate: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    rule_ids_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    violation_ids_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    line_start: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    diff_hunk: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    explanation: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    suggestion: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    analytics_flushed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     scan: Mapped[Scan] = relationship(back_populates="proposals")
+
+
+class ProposalRuleAnalytics(Base):
+    """Durable per-rule approve/deny aggregates (ADR-062).
+
+    Attributes:
+        id: Auto-increment primary key.
+        project_id: Owning project UUID (empty string for non-project scans).
+        rule_id: Rule id or group fingerprint (e.g. L007+L013).
+        source: deterministic or ai.
+        gate: tier1, ai, or empty.
+        tier: Numeric tier.
+        coupled: 1 if multi-rule node/group row, else 0.
+        is_group: 1 if ``rule_id`` is a group fingerprint, else 0.
+        accepted_count: Cumulative accepts.
+        declined_count: Cumulative declines.
+        updated_at: ISO 8601 last update.
+    """
+
+    __tablename__ = "proposal_rule_analytics"
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id",
+            "rule_id",
+            "source",
+            "gate",
+            "tier",
+            "coupled",
+            "is_group",
+            name="uq_proposal_rule_analytics",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    project_id: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    rule_id: Mapped[str] = mapped_column(Text, nullable=False)
+    source: Mapped[str] = mapped_column(Text, nullable=False, default="deterministic")
+    gate: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    tier: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    coupled: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    is_group: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    accepted_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    declined_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    updated_at: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
 
 class ScanLog(Base):

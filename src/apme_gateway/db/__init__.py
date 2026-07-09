@@ -40,6 +40,7 @@ async def init_db(db_path: str) -> None:
     async with _engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await conn.run_sync(_migrate_violations_table)
+        await conn.run_sync(_migrate_proposals_table)
 
 
 def _migrate_violations_table(conn: object) -> None:
@@ -76,6 +77,52 @@ def _migrate_violations_table(conn: object) -> None:
         migrations.append("ALTER TABLE violations ADD COLUMN ai_reason TEXT NOT NULL DEFAULT ''")
     if "ai_suggestion" not in existing:
         migrations.append("ALTER TABLE violations ADD COLUMN ai_suggestion TEXT NOT NULL DEFAULT ''")
+
+    for stmt in migrations:
+        conn.execute(text(stmt))
+
+
+def _migrate_proposals_table(conn: object) -> None:
+    """Add ADR-062 columns to ``proposals`` and ``violations``.
+
+    Args:
+        conn: Synchronous SQLAlchemy connection (from ``run_sync``).
+    """
+    from sqlalchemy.engine import Connection  # noqa: PLC0415
+
+    if not isinstance(conn, Connection):
+        return
+    insp = inspect(conn)
+
+    if insp.has_table("violations"):
+        existing_v = {c["name"] for c in insp.get_columns("violations")}
+        if "review_status" not in existing_v:
+            conn.execute(text("ALTER TABLE violations ADD COLUMN review_status TEXT DEFAULT NULL"))
+
+    if not insp.has_table("proposals"):
+        return
+    existing = {c["name"] for c in insp.get_columns("proposals")}
+    migrations: list[str] = []
+    if "path" not in existing:
+        migrations.append("ALTER TABLE proposals ADD COLUMN path TEXT NOT NULL DEFAULT ''")
+    if "source" not in existing:
+        migrations.append("ALTER TABLE proposals ADD COLUMN source TEXT NOT NULL DEFAULT 'outcome'")
+    if "gate" not in existing:
+        migrations.append("ALTER TABLE proposals ADD COLUMN gate TEXT NOT NULL DEFAULT ''")
+    if "rule_ids_json" not in existing:
+        migrations.append("ALTER TABLE proposals ADD COLUMN rule_ids_json TEXT NOT NULL DEFAULT '[]'")
+    if "violation_ids_json" not in existing:
+        migrations.append("ALTER TABLE proposals ADD COLUMN violation_ids_json TEXT NOT NULL DEFAULT '[]'")
+    if "line_start" not in existing:
+        migrations.append("ALTER TABLE proposals ADD COLUMN line_start INTEGER NOT NULL DEFAULT 0")
+    if "diff_hunk" not in existing:
+        migrations.append("ALTER TABLE proposals ADD COLUMN diff_hunk TEXT NOT NULL DEFAULT ''")
+    if "explanation" not in existing:
+        migrations.append("ALTER TABLE proposals ADD COLUMN explanation TEXT NOT NULL DEFAULT ''")
+    if "suggestion" not in existing:
+        migrations.append("ALTER TABLE proposals ADD COLUMN suggestion TEXT NOT NULL DEFAULT ''")
+    if "analytics_flushed" not in existing:
+        migrations.append("ALTER TABLE proposals ADD COLUMN analytics_flushed INTEGER NOT NULL DEFAULT 0")
 
     for stmt in migrations:
         conn.execute(text(stmt))
