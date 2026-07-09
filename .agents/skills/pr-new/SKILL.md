@@ -136,13 +136,16 @@ artifact type, translate it:
 7. **Is this internally and externally consistent?** Within each
    module: do all code paths use the same patterns (e.g., registry
    lookups vs hardcoded values)? Are exports named consistently?
-   Across the repo: do proto RPCs have matching servicer methods in
-   `daemon/`? Do rule IDs follow ADR-008 conventions (L/M/R/P/SEC)?
-   Does `_DEFAULT_PORTS` match the services actually started? Are
-   `event_emitter` calls consistent with the reporting sink protocol?
-   Cross-artifact mismatches (proto declaration vs Python
-   implementation) are the easiest to miss and the most embarrassing
-   to ship.
+   When a function accepts multiple input shapes (dataclass vs
+   mapping, ORM vs dict), do both paths normalize and branch the
+   same way for the same logical fields — or can one path skip a
+   transform the other applies? Across the repo: do proto RPCs have
+   matching servicer methods in `daemon/`? Do rule IDs follow
+   ADR-008 conventions (L/M/R/P/SEC)? Does `_DEFAULT_PORTS` match
+   the services actually started? Are `event_emitter` calls
+   consistent with the reporting sink protocol? Cross-artifact
+   mismatches (proto declaration vs Python implementation) are the
+   easiest to miss and the most embarrassing to ship.
 
 8. **Would a constructed scenario break this?** For each public
    function, construct one realistic failure case: an edge-case
@@ -155,6 +158,18 @@ artifact type, translate it:
    consumer has moved on? What happens when `asyncio.gather()`
    returns a mix of results and exceptions — does every caller
    handle `return_exceptions=True` correctly?
+   For persistence and aggregation helpers, also construct:
+   - **Concurrent writers** — two sessions calling the same
+     select-then-insert / claim path before either commits (lost
+     updates, double-counts, `IntegrityError`). Prefer atomic
+     upsert or compare-and-set claims.
+   - **Non-unique lookup keys** — dicts keyed by `(file, rule_id)`
+     or similar when duplicates are realistic; last-write-wins
+     silently corrupts overlays.
+   - **Mixed members of a group** — after grouping/bucketing, does
+     a single decision stamp apply to every member, including ones
+     of a different class (e.g. Tier 1 fixed + AI-candidate on the
+     same node path)?
 
 9. **Do inherited contracts hold?** When implementing a Protocol
    or extending a base class, check that the subclass honors the
@@ -219,11 +234,14 @@ actionable.
    written-but-never-read variables)
 7. Is this internally and externally consistent? (patterns, naming,
    cross-artifact parity — e.g., proto RPCs must have matching
-   servicer methods in daemon/, rule IDs must follow ADR-008)
+   servicer methods in daemon/, rule IDs must follow ADR-008;
+   dual input shapes must normalize identically)
 8. Would a constructed scenario break this? (edge-case inputs,
    empty-but-not-falsy values, temporal failures — async dependency
    never responds, asyncio.gather with return_exceptions=True
-   returning a mix of results and exceptions)
+   returning a mix of results and exceptions; concurrent
+   select-then-insert races; non-unique dict keys that overwrite;
+   mixed members of a group stamped with one decision)
 9. Do inherited contracts hold? (Protocol/base class implementations
    honor runtime semantics — validators are read-only per ADR-009,
    gRPC servicers use grpc.aio per ADR-007)

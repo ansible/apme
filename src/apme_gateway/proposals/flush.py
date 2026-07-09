@@ -6,7 +6,8 @@ import logging
 from collections.abc import Sequence
 from datetime import datetime, timezone
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apme_gateway.db.models import Proposal, ProposalRuleAnalytics, Scan, Violation
@@ -14,6 +15,7 @@ from apme_gateway.proposals.grouping import (
     analytics_increments,
     parse_json_list,
     review_status_for_proposal,
+    violation_accepts_review_status,
 )
 
 logger = logging.getLogger(__name__)
@@ -36,7 +38,10 @@ async def upsert_analytics_increment(
     accepted_delta: int,
     declined_delta: int,
 ) -> None:
-    """Add deltas to a proposal_rule_analytics row, creating it if needed.
+    """Atomically add deltas to a proposal_rule_analytics row.
+
+    Uses SQLite ``ON CONFLICT DO UPDATE`` so concurrent flushes cannot both
+    insert the same unique key or lose increments.
 
     Args:
         db: Active async session.
@@ -50,37 +55,36 @@ async def upsert_analytics_increment(
         accepted_delta: Accept increment.
         declined_delta: Decline increment.
     """
-    stmt = select(ProposalRuleAnalytics).where(
-        ProposalRuleAnalytics.project_id == project_id,
-        ProposalRuleAnalytics.rule_id == rule_id,
-        ProposalRuleAnalytics.source == source,
-        ProposalRuleAnalytics.gate == gate,
-        ProposalRuleAnalytics.tier == tier,
-        ProposalRuleAnalytics.coupled == coupled,
-        ProposalRuleAnalytics.is_group == is_group,
-    )
-    result = await db.execute(stmt)
-    row = result.scalar_one_or_none()
     now = _now_iso()
-    if row is None:
-        db.add(
-            ProposalRuleAnalytics(
-                project_id=project_id,
-                rule_id=rule_id,
-                source=source,
-                gate=gate,
-                tier=tier,
-                coupled=coupled,
-                is_group=is_group,
-                accepted_count=accepted_delta,
-                declined_count=declined_delta,
-                updated_at=now,
-            )
-        )
-        return
-    row.accepted_count += accepted_delta
-    row.declined_count += declined_delta
-    row.updated_at = now
+    stmt = sqlite_insert(ProposalRuleAnalytics).values(
+        project_id=project_id,
+        rule_id=rule_id,
+        source=source,
+        gate=gate,
+        tier=tier,
+        coupled=coupled,
+        is_group=is_group,
+        accepted_count=accepted_delta,
+        declined_count=declined_delta,
+        updated_at=now,
+    )
+    stmt = stmt.on_conflict_do_update(
+        index_elements=[
+            "project_id",
+            "rule_id",
+            "source",
+            "gate",
+            "tier",
+            "coupled",
+            "is_group",
+        ],
+        set_={
+            "accepted_count": ProposalRuleAnalytics.accepted_count + accepted_delta,
+            "declined_count": ProposalRuleAnalytics.declined_count + declined_delta,
+            "updated_at": now,
+        },
+    )
+    await db.execute(stmt)
 
 
 async def flush_proposals_for_project(db: AsyncSession, project_id: str) -> int:
@@ -89,9 +93,14 @@ async def flush_proposals_for_project(db: AsyncSession, project_id: str) -> int:
     Idempotent: proposals with ``analytics_flushed=1`` are deleted without
     double-counting. Undecided (pending) proposals do not increment analytics.
 
+    Concurrent callers claim each proposal with a compare-and-set update so
+    the same row cannot be counted twice. Analytics writes use an atomic
+    upsert.
+
     Also applies ``review_status`` on linked violations when a terminal
     decision is present and review_status is still null (e.g. non-interactive
-    Tier 1 auto-approve inferred from status).
+    Tier 1 auto-approve inferred from status), filtered so mixed-node
+    buckets do not stamp the wrong class onto unrelated violations.
 
     Args:
         db: Active async session.
@@ -113,6 +122,13 @@ async def flush_proposals_for_project(db: AsyncSession, project_id: str) -> int:
     for prop in proposals:
         if prop.analytics_flushed:
             continue
+        # Claim this row so a concurrent flush cannot double-count it.
+        claim = await db.execute(
+            update(Proposal).where(Proposal.id == prop.id, Proposal.analytics_flushed == 0).values(analytics_flushed=1)
+        )
+        if not claim.rowcount:
+            continue
+
         increments = analytics_increments(
             {
                 "status": prop.status,
@@ -137,7 +153,6 @@ async def flush_proposals_for_project(db: AsyncSession, project_id: str) -> int:
                 accepted_delta=int(inc["accepted_delta"]),
                 declined_delta=int(inc["declined_delta"]),
             )
-        prop.analytics_flushed = 1
 
         review = review_status_for_proposal(prop.source, prop.status)
         if review:
@@ -146,8 +161,11 @@ async def flush_proposals_for_project(db: AsyncSession, project_id: str) -> int:
             if int_ids:
                 v_stmt = select(Violation).where(Violation.id.in_(int_ids))
                 for violation in (await db.execute(v_stmt)).scalars().all():
-                    if violation.review_status is None:
-                        violation.review_status = review
+                    if violation.review_status is not None:
+                        continue
+                    if not violation_accepts_review_status(prop.source, violation):
+                        continue
+                    violation.review_status = review
 
     deleted = await db.execute(delete(Proposal).where(Proposal.scan_id.in_(scan_ids)))
     count = int(deleted.rowcount or 0)

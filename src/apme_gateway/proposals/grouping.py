@@ -325,7 +325,9 @@ def merge_outcomes(
 ) -> list[GroupedProposal]:
     """Overlay engine ProposalOutcome status/confidence onto grouped proposals.
 
-    Matching prefers ``proposal_id``, then ``(file, rule_id)``.
+    Matching prefers ``proposal_id``, then a one-shot ``(file, rule_id)``
+    claim so duplicate outcomes for the same file+rule do not overwrite each
+    other or stamp every matching proposal with the last outcome.
 
     Args:
         proposals: Grouped proposals from :func:`group_violations`.
@@ -335,7 +337,7 @@ def merge_outcomes(
         New list of proposals with outcome fields applied where matched.
     """
     by_id: dict[str, object] = {}
-    by_file_rule: dict[tuple[str, str], object] = {}
+    by_file_rule: dict[tuple[str, str], list[object]] = {}
     for raw in outcomes:
         oid = str(getattr(raw, "proposal_id", "") or "")
         rule_id = str(getattr(raw, "rule_id", "") or "")
@@ -343,19 +345,32 @@ def merge_outcomes(
         if oid:
             by_id[oid] = raw
         if file_path or rule_id:
-            by_file_rule[(file_path, rule_id)] = raw
+            by_file_rule.setdefault((file_path, rule_id), []).append(raw)
 
+    claimed_ids: set[int] = set()
     merged: list[GroupedProposal] = []
     for prop in proposals:
         outcome = by_id.get(prop.proposal_id)
         if outcome is None:
             for rid in prop.rule_ids:
-                outcome = by_file_rule.get((prop.file, rid))
+                queue = by_file_rule.get((prop.file, rid))
+                if not queue:
+                    continue
+                # Claim the next unused outcome for this file+rule pair.
+                while queue:
+                    candidate = queue.pop(0)
+                    cand_id = id(candidate)
+                    if cand_id in claimed_ids:
+                        continue
+                    claimed_ids.add(cand_id)
+                    outcome = candidate
+                    break
                 if outcome is not None:
                     break
         if outcome is None:
             merged.append(prop)
             continue
+        claimed_ids.add(id(outcome))
         status = str(getattr(outcome, "status", "") or prop.status)
         if status == "rejected":
             status = "declined"
@@ -448,19 +463,20 @@ def analytics_increments(proposal: GroupedProposal | Mapping[str, Any]) -> list[
         if not rule_ids and proposal.get("rule_id"):
             rule_ids = [str(proposal["rule_id"])]
         source = str(proposal.get("source") or SOURCE_OUTCOME)
-        if source == SOURCE_AI_CANDIDATE:
-            source = SOURCE_AI
-        if source == SOURCE_OUTCOME:
-            source = SOURCE_DETERMINISTIC if int(proposal.get("tier") or 0) <= 1 else SOURCE_AI
         gate = str(proposal.get("gate") or "")
         tier = int(proposal.get("tier") or 0)
         coupled = bool(proposal.get("coupled")) or len(rule_ids) > 1
+
+    # Normalize analytics source to deterministic|ai for both input shapes.
+    if source == SOURCE_AI_CANDIDATE:
+        source = SOURCE_AI
+    if source == SOURCE_OUTCOME:
+        source = SOURCE_DETERMINISTIC if tier <= 1 else SOURCE_AI
 
     accepted, declined = decision_delta(status)
     if accepted == 0 and declined == 0:
         return []
 
-    # Normalize analytics source to deterministic|ai.
     analytics_source = SOURCE_DETERMINISTIC if source == SOURCE_DETERMINISTIC else SOURCE_AI
     rows: list[dict[str, Any]] = []
     coupled_flag = 1 if coupled else 0
@@ -510,6 +526,33 @@ def review_status_for_proposal(source: str, status: str) -> str | None:
     if declined:
         return REVIEW_AI_DECLINED if is_ai else REVIEW_DETERMINISTIC_DECLINED
     return None
+
+
+def violation_accepts_review_status(source: str, violation: object) -> bool:
+    """Return True when ``violation`` may receive a proposal's review_status.
+
+    Mixed path buckets can include Tier 1 fixed rows and remaining AI/manual
+    rows. Stamping one proposal decision onto every linked violation would
+    corrupt durable ``review_status`` for the wrong class.
+
+    Args:
+        source: Proposal source (deterministic / ai / ai-candidate / outcome).
+        violation: Violation ORM row or mapping-like object.
+
+    Returns:
+        Whether this violation is compatible with the proposal source.
+    """
+    fixed = str(getattr(violation, "fixed_yaml", "") or "").strip()
+    rem_class = int(getattr(violation, "remediation_class", 0) or 0)
+    is_ai_source = source in {SOURCE_AI, SOURCE_AI_CANDIDATE}
+    if is_ai_source:
+        # AI decisions apply to AI-candidate / non-fixed rows only.
+        return rem_class == _RC_AI_CANDIDATE or (not fixed and rem_class != _RC_AUTO_FIXABLE)
+    if source == SOURCE_DETERMINISTIC:
+        # Deterministic decisions apply to auto-fixable / fixed rows only.
+        return rem_class == _RC_AUTO_FIXABLE or bool(fixed)
+    # outcome / unknown: only stamp when the row looks like the same class.
+    return True
 
 
 def serialize_rule_ids(rule_ids: Sequence[str]) -> str:

@@ -37,6 +37,7 @@ from apme_gateway.proposals.grouping import (
     group_violations,
     merge_outcomes,
     review_status_for_proposal,
+    violation_accepts_review_status,
 )
 
 logger = logging.getLogger(__name__)
@@ -357,8 +358,11 @@ async def _persist_grouped_proposals(
         if not review or not prop.violation_ids:
             continue
         for violation in violations:
-            if violation.id in prop.violation_ids and violation.review_status is None:
-                violation.review_status = review
+            if violation.id not in prop.violation_ids or violation.review_status is not None:
+                continue
+            if not violation_accepts_review_status(prop.source, violation):
+                continue
+            violation.review_status = review
 
 
 def _add_logs(db: AsyncSession, scan_id: str, logs: Sequence[object]) -> None:

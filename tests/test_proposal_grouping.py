@@ -126,6 +126,83 @@ def test_merge_outcomes_by_file_rule() -> None:
     assert merged[0].source in {SOURCE_AI_CANDIDATE, "ai"}
 
 
+def test_merge_outcomes_duplicate_file_rule_does_not_overwrite() -> None:
+    """Two outcomes for the same file+rule claim distinct proposals."""
+
+    class _Outcome:
+        def __init__(self, status: str, confidence: float) -> None:
+            self.proposal_id = ""
+            self.rule_id = "L007"
+            self.file = "a.yml"
+            self.status = status
+            self.confidence = confidence
+            self.tier = 2
+
+    props = group_violations(
+        [
+            {
+                "id": 1,
+                "rule_id": "L007",
+                "file": "a.yml",
+                "path": "",
+                "line": 1,
+                "remediation_class": 2,
+            },
+            {
+                "id": 2,
+                "rule_id": "L007",
+                "file": "a.yml",
+                "path": "",
+                "line": 2,
+                "remediation_class": 2,
+            },
+        ]
+    )
+    merged = merge_outcomes(props, [_Outcome("approved", 0.9), _Outcome("rejected", 0.2)])
+    statuses = {p.status for p in merged}
+    assert statuses == {"approved", "declined"}
+    confidences = {p.confidence for p in merged}
+    assert confidences == {0.9, 0.2}
+
+
+def test_analytics_increments_normalize_outcome_source() -> None:
+    """GroupedProposal SOURCE_OUTCOME normalizes like Mapping input."""
+    from dataclasses import replace
+
+    props = group_violations([{"id": 1, "rule_id": "L001", "file": "a.yml", "path": "", "remediation_class": 0}])
+    outcome_prop = replace(props[0], source="outcome", tier=0, status="approved")
+    rows = analytics_increments(outcome_prop)
+    assert rows
+    assert all(r["source"] == "deterministic" for r in rows)
+
+    map_rows = analytics_increments(
+        {
+            "status": "approved",
+            "rule_id": "L001",
+            "rule_ids": ["L001"],
+            "source": "outcome",
+            "tier": 0,
+            "gate": "",
+            "coupled": False,
+        }
+    )
+    assert map_rows[0]["source"] == rows[0]["source"]
+
+
+def test_violation_accepts_review_status_filters_mixed_bucket() -> None:
+    """Deterministic review does not stamp AI-candidate rows without fixes."""
+    from types import SimpleNamespace
+
+    from apme_gateway.proposals.grouping import violation_accepts_review_status
+
+    fixed = SimpleNamespace(fixed_yaml="x\n", remediation_class=1)
+    ai = SimpleNamespace(fixed_yaml="", remediation_class=2)
+    assert violation_accepts_review_status("deterministic", fixed) is True
+    assert violation_accepts_review_status("deterministic", ai) is False
+    assert violation_accepts_review_status("ai", ai) is True
+    assert violation_accepts_review_status("ai", fixed) is False
+
+
 def test_analytics_increments_pure_and_group() -> None:
     """Coupled decline emits per-rule coupled rows plus group fingerprint."""
     props = group_violations(
