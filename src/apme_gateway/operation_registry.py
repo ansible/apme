@@ -50,6 +50,22 @@ class OperationRegistry:
         self._terminal_times: dict[str, float] = {}
         self._terminal_ttl = terminal_ttl
         self._reaper_task: asyncio.Task[None] | None = None
+        self._project_locks: dict[str, asyncio.Lock] = {}
+
+    def project_lock(self, project_id: str) -> asyncio.Lock:
+        """Return a per-project lock for operate/abandon critical sections.
+
+        Args:
+            project_id: Project UUID.
+
+        Returns:
+            Lock shared by all callers for this project.
+        """
+        lock = self._project_locks.get(project_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._project_locks[project_id] = lock
+        return lock
 
     # ── lifecycle ──────────────────────────────────────────────────────
 
@@ -74,6 +90,7 @@ class OperationRegistry:
         self._ops.clear()
         self._by_project.clear()
         self._terminal_times.clear()
+        self._project_locks.clear()
 
     # ── CRUD ──────────────────────────────────────────────────────────
 

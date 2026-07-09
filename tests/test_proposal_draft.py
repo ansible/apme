@@ -446,6 +446,101 @@ async def test_gate_commit_scopes_to_offered_engine_ids() -> None:
 
 
 @pytest.mark.asyncio  # type: ignore[untyped-decorator]
+async def test_archival_id_includes_engine_id_when_path_set() -> None:
+    """Two same-path live stubs must not collapse to one proposal_id."""
+    scan_id = "scan-path-collide"
+    async with get_session() as db:
+        rows = await upsert_live_proposal_stubs(
+            db,
+            scan_id=scan_id,
+            project_id=None,
+            proposals=[
+                {
+                    "id": "eng-1",
+                    "rule_id": "L007",
+                    "file": "a.yml",
+                    "path": "a.yml::t[0]",
+                    "tier": 2,
+                    "status": "pending",
+                    "source": "ai",
+                    "line_start": 1,
+                },
+                {
+                    "id": "eng-2",
+                    "rule_id": "L013",
+                    "file": "a.yml",
+                    "path": "a.yml::t[0]",
+                    "tier": 2,
+                    "status": "pending",
+                    "source": "ai",
+                    "line_start": 1,
+                },
+            ],
+        )
+        await db.commit()
+        assert len(rows) == 2
+        assert rows[0].proposal_id != rows[1].proposal_id
+        assert {r.engine_proposal_id for r in rows} == {"eng-1", "eng-2"}
+
+
+@pytest.mark.asyncio  # type: ignore[untyped-decorator]
+async def test_bridge_skips_ambiguous_duplicate_keys() -> None:
+    """Duplicate bridge keys must not last-wins overwrite engine ids."""
+    scan_id = "scan-ambiguous"
+    async with get_session() as db:
+        await upsert_live_proposal_stubs(
+            db,
+            scan_id=scan_id,
+            project_id=None,
+            proposals=[
+                {
+                    "id": "eng-a",
+                    "rule_id": "L001",
+                    "file": "same.yml",
+                    "tier": 2,
+                    "status": "approved",
+                    "source": "ai",
+                    "line_start": 0,
+                },
+                {
+                    "id": "eng-b",
+                    "rule_id": "L001",
+                    "file": "same.yml",
+                    "tier": 2,
+                    "status": "declined",
+                    "source": "ai",
+                    "line_start": 0,
+                },
+            ],
+        )
+        await db.commit()
+        await replace_scan_proposals(
+            db,
+            scan_id=scan_id,
+            proposals=[
+                GroupedProposal(
+                    proposal_id="prop-ai-x",
+                    rule_id="L001",
+                    rule_ids=("L001",),
+                    violation_ids=(1,),
+                    file="same.yml",
+                    path="",
+                    line_start=0,
+                    tier=2,
+                    source="ai",
+                    gate="ai",
+                    status="pending",
+                )
+            ],
+        )
+        await db.commit()
+        prop = (await db.execute(select(Proposal).where(Proposal.scan_id == scan_id))).scalar_one()
+        # Ambiguous — do not attach either stub's engine id / status.
+        assert prop.engine_proposal_id is None
+        assert prop.status == "pending"
+
+
+@pytest.mark.asyncio  # type: ignore[untyped-decorator]
 async def test_bridge_normalizes_coupled_rule_id() -> None:
     """Coupled stub rule_id 'L007,L013' bridges to grouped primary 'L007'."""
     scan_id = "scan-coupled"
@@ -497,6 +592,7 @@ async def test_bridge_normalizes_coupled_rule_id() -> None:
         assert prop.analytics_flushed == 1
 
 
+@pytest.mark.asyncio  # type: ignore[untyped-decorator]
 async def test_bridge_uses_file_rule_line_start() -> None:
     """Bridge matches stubs to archival groups by file+rule+line_start."""
     scan_id = "scan-bridge-multi"

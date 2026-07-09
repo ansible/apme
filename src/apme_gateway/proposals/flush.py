@@ -307,10 +307,19 @@ async def replace_scan_proposals(
         return (file_ or "", src, primary_rule, int(line_start or 0))
 
     prior: dict[tuple[str, str, str, int], tuple[str | None, int, int, str, str]] = {}
+    ambiguous: set[tuple[str, str, str, int]] = set()
     for r in prior_rows:
         if not (r.engine_proposal_id or r.draft or r.analytics_flushed):
             continue
         key = _bridge_key(str(r.file or ""), str(r.source or ""), str(r.rule_id or ""), int(r.line_start or 0))
+        if key in ambiguous:
+            continue
+        if key in prior:
+            # Duplicate key — refuse to guess which stub owns the archival row.
+            ambiguous.add(key)
+            prior.pop(key, None)
+            logger.warning("Ambiguous proposal bridge key for scan %s: %s", scan_id[:12], key)
+            continue
         prior[key] = (
             r.engine_proposal_id,
             int(r.draft or 0),

@@ -419,12 +419,15 @@ After all passes return, the parent agent must:
 1. **Deduplicate** findings and build a table: finding → which passes →
    severity → fix-now vs follow-up.
 2. **Ship-blockers** = any finding in **≥2 passes**, plus any single-pass
-   **critical** (data corruption, security exposure, ADR-060 break,
-   invariant violation).
+   **critical** or **major** finding (data corruption, security exposure,
+   ADR-060 break, invariant violation, or a Pass-rated major defect in
+   one lens). Single-pass **medium/low** may be follow-ups; single-pass
+   major must be fixed or explicitly demoted with human approval before
+   Step 4.
 3. **Act on ship-blockers.** Fix code (or demote ADR/PR framing and open
    a tracked follow-up). Re-run `tox -e lint` and `tox -e unit`.
 4. **Re-run Rule of Five** after substantive fixes until:
-   - no new multi-pass ship-blockers, and
+   - no new multi-pass or single-pass major/critical ship-blockers, and
    - Pass 5's verdict is merge-ready (or framing is honestly demoted).
 5. Document dismissed findings with a clear technical justification.
 

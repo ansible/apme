@@ -131,50 +131,51 @@ async def initiate_operation(project_id: str, body: OperateRequest) -> OperateRe
         raise HTTPException(status_code=404, detail="Project not found")
 
     registry = get_operation_registry()
-    # Reject an active operation before abandoning drafts — otherwise a
-    # abandon_working_set retry would wipe another tab's review then 409.
-    prior_op = registry.get_by_project(proj.id)
-    if prior_op is not None and prior_op.status not in TERMINAL_STATUSES:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Project already has an active operation {prior_op.operation_id}",
-        )
-    extra_scan_ids = [prior_op.scan_id] if prior_op is not None else []
-
-    if body.action == "remediate":
-        from apme_gateway.proposals.draft import (  # noqa: PLC0415
-            abandon_project_drafts,
-            project_has_draft_proposals,
-        )
-
-        async with get_session() as db:
-            has_draft = await project_has_draft_proposals(db, proj.id, extra_scan_ids=extra_scan_ids)
-            if has_draft and not body.abandon_working_set:
-                raise HTTPException(
-                    status_code=409,
-                    detail={
-                        "code": "working_set_in_progress",
-                        "message": "Project has an interactive draft working set; "
-                        "retry with abandon_working_set=true to discard it.",
-                    },
-                )
-            if has_draft and body.abandon_working_set:
-                await abandon_project_drafts(db, proj.id, extra_scan_ids=extra_scan_ids)
-                await db.commit()
-
     operation_id = uuid.uuid4().hex
     scan_id = uuid.uuid4().hex
     scan_type = body.action
 
-    try:
-        state = registry.create(
-            operation_id=operation_id,
-            project_id=proj.id,
-            scan_id=scan_id,
-            scan_type=scan_type,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    # Hold the per-project lock across active-check → abandon → create so a
+    # concurrent remediate cannot interleave and wipe another op's drafts.
+    async with registry.project_lock(proj.id):
+        prior_op = registry.get_by_project(proj.id)
+        if prior_op is not None and prior_op.status not in TERMINAL_STATUSES:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Project already has an active operation {prior_op.operation_id}",
+            )
+        extra_scan_ids = [prior_op.scan_id] if prior_op is not None else []
+
+        if body.action == "remediate":
+            from apme_gateway.proposals.draft import (  # noqa: PLC0415
+                abandon_project_drafts,
+                project_has_draft_proposals,
+            )
+
+            async with get_session() as db:
+                has_draft = await project_has_draft_proposals(db, proj.id, extra_scan_ids=extra_scan_ids)
+                if has_draft and not body.abandon_working_set:
+                    raise HTTPException(
+                        status_code=409,
+                        detail={
+                            "code": "working_set_in_progress",
+                            "message": "Project has an interactive draft working set; "
+                            "retry with abandon_working_set=true to discard it.",
+                        },
+                    )
+                if has_draft and body.abandon_working_set:
+                    await abandon_project_drafts(db, proj.id, extra_scan_ids=extra_scan_ids)
+                    await db.commit()
+
+        try:
+            state = registry.create(
+                operation_id=operation_id,
+                project_id=proj.id,
+                scan_id=scan_id,
+                scan_type=scan_type,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     cfg = load_config()
     galaxy_servers = await load_galaxy_server_defs()
@@ -259,17 +260,24 @@ async def approve_proposals(project_id: str, body: ApproveRequest) -> dict[str, 
     from apme_gateway.proposals.draft import commit_gate_decisions  # noqa: PLC0415
 
     offered = [p.id for p in (state.proposals or [])]
+    offered_set = set(offered)
+    approved_set = {str(i) for i in body.approved_ids}
+    unknown = sorted(approved_set - offered_set)
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"Unknown proposal ids: {unknown}")
+    # Preserve offered order; only ids that were actually presented this round.
+    approved = [pid for pid in offered if pid in approved_set]
     async with get_session() as db:
         await commit_gate_decisions(
             db,
             scan_id=state.scan_id,
             project_id=project_id,
-            approved_engine_ids=body.approved_ids,
+            approved_engine_ids=approved,
             offered_engine_ids=offered,
         )
         await db.commit()
 
-    state.approval_future.set_result(body.approved_ids)
+    state.approval_future.set_result(approved)
     return {"status": "approved"}
 
 

@@ -13,6 +13,7 @@ from collections.abc import Sequence
 from datetime import datetime, timezone
 
 import grpc
+from sqlalchemy import delete as sa_delete
 from sqlalchemy import select as sa_select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -127,6 +128,9 @@ class ReportingServicer(reporting_pb2_grpc.ReportingServicer):
                     scan.manual_review = request.summary.manual_review if request.summary else scan.manual_review
                     scan.fixed_count = request.report.fixed if request.report else scan.fixed_count
                     scan.diagnostics_json = _diagnostics_to_json(request.diagnostics)
+                    # Idempotent replay: clear append-only children before re-add.
+                    # Keep Proposal rows until replace_scan_proposals bridges them.
+                    await _clear_scan_children_for_replay(db, request.scan_id)
                 await db.flush()
                 _add_violations(db, request.scan_id, list(request.remaining_violations))
                 _add_violations(db, request.scan_id, list(request.fixed_violations))
@@ -252,6 +256,29 @@ async def _reconcile_rules(
         unchanged += 1
 
     return added, removed, unchanged
+
+
+async def _clear_scan_children_for_replay(db: AsyncSession, scan_id: str) -> None:
+    """Delete append-only scan children so ReportFixCompleted can re-insert.
+
+    Preserves ``Proposal`` rows so the live stub → archival bridge in
+    ``replace_scan_proposals`` still sees prior gate-commit state.
+
+    Args:
+        db: Active async session.
+        scan_id: Scan whose child rows to clear.
+    """
+    for model in (
+        Violation,
+        ScanLog,
+        ScanPatch,
+        PatchedFile,
+        ScanManifest,
+        ScanCollection,
+        ScanPythonPackage,
+        ScanGraph,
+    ):
+        await db.execute(sa_delete(model).where(model.scan_id == scan_id))
 
 
 async def _upsert_session(db: AsyncSession, session_id: str, project_path: str) -> None:

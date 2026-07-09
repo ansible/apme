@@ -60,7 +60,9 @@ def _archival_proposal_id(*, file: str, path: str, gate: str, rule_id: str, engi
     Returns:
         ``prop-{gate}-{digest}`` identifier.
     """
-    material = path or f"{file}:{rule_id}:{engine_id}"
+    # Always include rule_id + engine_id so two live proposals that share a
+    # node path (different rules / engine ids) do not collapse to one row.
+    material = f"{file}:{path}:{rule_id}:{engine_id}" if path else f"{file}:{rule_id}:{engine_id}"
     digest = hashlib.sha1(material.encode("utf-8")).hexdigest()[:12]  # noqa: S324
     gate_part = gate or "na"
     return f"prop-{gate_part}-{digest}"
