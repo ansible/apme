@@ -532,9 +532,10 @@ def review_status_for_proposal(source: str, status: str) -> str | None:
 def violation_accepts_review_status(source: str, violation: object) -> bool:
     """Return True when ``violation`` may receive a proposal's review_status.
 
-    Mixed path buckets can include Tier 1 fixed rows and remaining AI/manual
-    rows. Stamping one proposal decision onto every linked violation would
-    corrupt durable ``review_status`` for the wrong class.
+    Mixed path buckets can include Tier 1 fixed rows, AI-candidate rows, and
+    manual-review rows. Stamping one proposal decision onto every linked
+    violation would corrupt durable ``review_status`` for the wrong class
+    (e.g. ``ai_declined`` on a MANUAL_REVIEW finding).
 
     Args:
         source: Proposal source (deterministic / ai / ai-candidate / outcome).
@@ -547,8 +548,8 @@ def violation_accepts_review_status(source: str, violation: object) -> bool:
     rem_class = int(getattr(violation, "remediation_class", 0) or 0)
     is_ai_source = source in {SOURCE_AI, SOURCE_AI_CANDIDATE}
     if is_ai_source:
-        # AI decisions apply to AI-candidate / non-fixed rows only.
-        return rem_class == _RC_AI_CANDIDATE or (not fixed and rem_class != _RC_AUTO_FIXABLE)
+        # AI decisions stamp AI-candidate rows only — never MANUAL_REVIEW.
+        return rem_class == _RC_AI_CANDIDATE
     if source == SOURCE_DETERMINISTIC:
         # Deterministic decisions apply to auto-fixable / fixed rows only.
         return rem_class == _RC_AUTO_FIXABLE or bool(fixed)

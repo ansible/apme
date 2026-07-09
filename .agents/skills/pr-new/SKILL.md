@@ -175,8 +175,10 @@ artifact type, translate it:
      silently corrupts overlays.
    - **Mixed members of a group** — after grouping/bucketing, does
      a single decision stamp apply to every member, including ones
-     of a different class (e.g. Tier 1 fixed + AI-candidate on the
-     same node path)?
+     of a different class (e.g. Tier 1 fixed + AI-candidate +
+     MANUAL_REVIEW on the same node path)? Filters must be
+     allowlists of the intended class, not "everything except X"
+     — the latter silently includes unrelated classes.
 
 9. **Do inherited contracts hold?** When implementing a Protocol
    or extending a base class, check that the subclass honors the

@@ -190,17 +190,21 @@ def test_analytics_increments_normalize_outcome_source() -> None:
 
 
 def test_violation_accepts_review_status_filters_mixed_bucket() -> None:
-    """Deterministic review does not stamp AI-candidate rows without fixes."""
+    """Review stamps only matching remediation_class rows in mixed buckets."""
     from types import SimpleNamespace
 
     from apme_gateway.proposals.grouping import violation_accepts_review_status
 
     fixed = SimpleNamespace(fixed_yaml="x\n", remediation_class=1)
     ai = SimpleNamespace(fixed_yaml="", remediation_class=2)
+    manual = SimpleNamespace(fixed_yaml="", remediation_class=3)
     assert violation_accepts_review_status("deterministic", fixed) is True
     assert violation_accepts_review_status("deterministic", ai) is False
+    assert violation_accepts_review_status("deterministic", manual) is False
     assert violation_accepts_review_status("ai", ai) is True
     assert violation_accepts_review_status("ai", fixed) is False
+    assert violation_accepts_review_status("ai", manual) is False
+    assert violation_accepts_review_status("ai-candidate", manual) is False
 
 
 def test_analytics_increments_pure_and_group() -> None:
