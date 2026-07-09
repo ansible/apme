@@ -289,6 +289,10 @@ def group_violations(
         elif any(s in {REVIEW_DETERMINISTIC_APPROVED, REVIEW_AI_APPROVED} for s in review_statuses):
             # Mixed — prefer approved if any approved (should be rare).
             status = "approved"
+        elif review_statuses and all(s in {REVIEW_DETERMINISTIC_DECLINED, REVIEW_AI_DECLINED} for s in review_statuses):
+            # Mixed decline labels (e.g. ai_declined + deterministic_declined)
+            # still mean a terminal decline for historical rebuild.
+            status = "declined"
 
         # Auto-fixed deterministic without explicit review_status → approved.
         if status == "pending" and source == SOURCE_DETERMINISTIC and fixed:

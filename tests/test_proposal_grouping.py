@@ -287,3 +287,30 @@ def test_review_status_mapping() -> None:
     assert review_status_for_proposal("ai", "declined") == "ai_declined"
     assert review_status_for_proposal("ai-candidate", "rejected") == "ai_declined"
     assert review_status_for_proposal("deterministic", "pending") is None
+
+
+def test_group_violations_mixed_declines_rebuild_as_declined() -> None:
+    """Mixed decline review_status labels still rebuild as declined."""
+    props = group_violations(
+        [
+            {
+                "id": 1,
+                "rule_id": "L007",
+                "file": "a.yml",
+                "path": "a.yml::t[0]",
+                "remediation_class": 1,
+                "fixed_yaml": "x\n",
+                "review_status": "deterministic_declined",
+            },
+            {
+                "id": 2,
+                "rule_id": "L013",
+                "file": "a.yml",
+                "path": "a.yml::t[0]",
+                "remediation_class": 2,
+                "review_status": "ai_declined",
+            },
+        ]
+    )
+    assert len(props) == 1
+    assert props[0].status == "declined"
