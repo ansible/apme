@@ -97,7 +97,7 @@ class ViolationDetail(BaseModel):  # type: ignore[misc]
     validator_source: str = ""
     original_yaml: str = ""
     fixed_yaml: str = ""
-    co_fixes: list[str] = []
+    co_fixes: list[str] = Field(default_factory=list)
     node_line_start: int = 0
     ai_reason: str = ""
     ai_suggestion: str = ""
@@ -137,8 +137,8 @@ class ProposalDetail(BaseModel):  # type: ignore[misc]
     path: str = ""
     source: str = "outcome"
     gate: str = ""
-    rule_ids: list[str] = []
-    violation_ids: list[int] = []
+    rule_ids: list[str] = Field(default_factory=list)
+    violation_ids: list[int] = Field(default_factory=list)
     line_start: int = 0
     diff_hunk: str = ""
     explanation: str = ""

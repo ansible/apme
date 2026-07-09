@@ -139,13 +139,16 @@ artifact type, translate it:
    When a function accepts multiple input shapes (dataclass vs
    mapping, ORM vs dict), do both paths normalize and branch the
    same way for the same logical fields — or can one path skip a
-   transform the other applies? Across the repo: do proto RPCs have
-   matching servicer methods in `daemon/`? Do rule IDs follow
-   ADR-008 conventions (L/M/R/P/SEC)? Does `_DEFAULT_PORTS` match
-   the services actually started? Are `event_emitter` calls
-   consistent with the reporting sink protocol? Cross-artifact
-   mismatches (proto declaration vs Python implementation) are the
-   easiest to miss and the most embarrassing to ship.
+   transform the other applies? When adding fields to an existing
+   Pydantic/schema module, match sibling default patterns
+   (`Field(default_factory=list)` vs mutable `=[]`)? Across the
+   repo: do proto RPCs have matching servicer methods in `daemon/`?
+   Do rule IDs follow ADR-008 conventions (L/M/R/P/SEC)? Does
+   `_DEFAULT_PORTS` match the services actually started? Are
+   `event_emitter` calls consistent with the reporting sink
+   protocol? Cross-artifact mismatches (proto declaration vs Python
+   implementation) are the easiest to miss and the most embarrassing
+   to ship.
 
 8. **Would a constructed scenario break this?** For each public
    function, construct one realistic failure case: an edge-case
