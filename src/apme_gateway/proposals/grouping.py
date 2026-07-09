@@ -379,7 +379,9 @@ def merge_outcomes(
         tier = int(getattr(outcome, "tier", prop.tier) or prop.tier)
         source = prop.source
         gate = prop.gate
-        if tier >= 2 and source == SOURCE_OUTCOME:
+        # Outcome tier wins: keep source/gate aligned with tier so analytics
+        # and review_status stamping do not see tier=2 + deterministic/tier1.
+        if tier >= 2:
             source = SOURCE_AI
             gate = GATE_AI
         merged.append(

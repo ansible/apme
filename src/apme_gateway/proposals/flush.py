@@ -200,7 +200,7 @@ async def replace_scan_proposals(
         logger.error(
             "replace_scan_proposals: refusing delete for scan %s — %s items, 0 GroupedProposal",
             scan_id,
-            len(list(proposals)),
+            len(proposals),
         )
         return
 

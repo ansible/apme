@@ -350,6 +350,7 @@ async def _persist_grouped_proposals(
     await replace_scan_proposals(db, scan_id=scan_id, proposals=list(merged))
 
     # Stamp review_status for terminal decisions (e.g. auto-approved Tier 1).
+    by_id = {v.id: v for v in violations}
     for prop in merged:
         status = prop.status
         if status == "pending" and prop.source == "deterministic" and prop.fixed_yaml:
@@ -357,8 +358,9 @@ async def _persist_grouped_proposals(
         review = review_status_for_proposal(prop.source, status)
         if not review or not prop.violation_ids:
             continue
-        for violation in violations:
-            if violation.id not in prop.violation_ids or violation.review_status is not None:
+        for vid in prop.violation_ids:
+            violation = by_id.get(vid)
+            if violation is None or violation.review_status is not None:
                 continue
             if not violation_accepts_review_status(prop.source, violation):
                 continue

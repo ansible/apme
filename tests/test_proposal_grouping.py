@@ -124,6 +124,41 @@ def test_merge_outcomes_by_file_rule() -> None:
     assert merged[0].status == "declined"
     assert merged[0].confidence == 0.9
     assert merged[0].source in {SOURCE_AI_CANDIDATE, "ai"}
+    assert merged[0].gate == "ai"
+    assert merged[0].tier == 2
+
+
+def test_merge_outcomes_tier2_overrides_deterministic_source() -> None:
+    """Outcome tier>=2 realigns source/gate even when pre-grouped as Tier 1."""
+    from dataclasses import replace
+
+    class _Outcome:
+        proposal_id = "p1"
+        rule_id = "L007"
+        file = "a.yml"
+        status = "approved"
+        confidence = 0.8
+        tier = 2
+
+    props = group_violations(
+        [
+            {
+                "id": 1,
+                "rule_id": "L007",
+                "file": "a.yml",
+                "path": "a.yml::t[0]",
+                "remediation_class": 1,
+                "fixed_yaml": "x\n",
+            }
+        ]
+    )
+    assert props[0].source == "deterministic"
+    # Simulate a mixed-bucket / outcome overlay that raises tier.
+    props = [replace(props[0], proposal_id="p1")]
+    merged = merge_outcomes(props, [_Outcome()])
+    assert merged[0].tier == 2
+    assert merged[0].source == "ai"
+    assert merged[0].gate == "ai"
 
 
 def test_merge_outcomes_duplicate_file_rule_does_not_overwrite() -> None:

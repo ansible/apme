@@ -132,10 +132,11 @@ artifact type, translate it:
 6. **Is there dead weight?** Check for unused imports, unreachable
    branches, written-but-never-read variables, parameters accepted
    but ignored. Also flag **paid-for-but-wasteful work**: parsing
-   the same JSON twice in one loop body, or `list.pop(0)` / repeated
+   the same JSON twice in one loop body; `list.pop(0)` / repeated
    `list.insert(0, …)` when a `deque` (or reverse + `pop()`) would
-   be O(1) — reviewers treat these as dead weight even when
-   functionally correct.
+   be O(1); `len(list(seq))` when `len(seq)` works; nested scans
+   that are O(P×V) when an id→row map would be O(P+V) — reviewers
+   treat these as dead weight even when functionally correct.
 
 7. **Is this internally and externally consistent?** Within each
    module: do all code paths use the same patterns (e.g., registry
@@ -143,7 +144,12 @@ artifact type, translate it:
    When a function accepts multiple input shapes (dataclass vs
    mapping, ORM vs dict), do both paths normalize and branch the
    same way for the same logical fields — or can one path skip a
-   transform the other applies? When adding fields to an existing
+   transform the other applies? When overlaying fields from a
+   second source (e.g. outcome ``tier`` onto a pre-grouped
+   proposal), do dependent fields (``source``/``gate``/``tier``,
+   status→review mapping) stay aligned for *all* pre-group
+   sources — not only when the pre-group source was a sentinel
+   like ``"outcome"``? When adding fields to an existing
    Pydantic/schema module, match sibling default patterns
    (`Field(default_factory=list)` vs mutable `=[]`)? Across the
    repo: do proto RPCs have matching servicer methods in `daemon/`?
@@ -240,12 +246,14 @@ actionable.
    descriptions, stale ADR/doc references)
 5. Are dependencies and versions pinned to intent?
 6. Is there dead weight? (unused imports, unreachable branches,
-   written-but-never-read variables; also repeated parse/work and
-   O(n) queue ops that should be O(1))
+   written-but-never-read variables; also repeated parse/work,
+   O(n) queue ops, `len(list(seq))`, and O(P×V) nested scans that
+   should be O(1) / O(P+V))
 7. Is this internally and externally consistent? (patterns, naming,
    cross-artifact parity — e.g., proto RPCs must have matching
    servicer methods in daemon/, rule IDs must follow ADR-008;
-   dual input shapes must normalize identically)
+   dual input shapes must normalize identically; overlay fields
+   like tier/source/gate must stay aligned)
 8. Would a constructed scenario break this? (edge-case inputs,
    empty-but-not-falsy values, temporal failures — async dependency
    never responds, asyncio.gather with return_exceptions=True
