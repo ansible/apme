@@ -321,8 +321,8 @@ class GraphRemediationEngine:
                         len(tier2),
                     )
                 else:
-                    # Interactive Gate 1: mark as proposed until ApprovalRequest.
-                    resolve_status = "proposed" if interactive else "fixed"
+                    # Interactive Gate 1: pending_review until ApprovalRequest.
+                    resolve_status = "pending_review" if interactive else "fixed"
                     await self._rescan_and_record(
                         graph,
                         pass_num,
@@ -422,10 +422,10 @@ class GraphRemediationEngine:
             graph.approve_pending(source_filter="deterministic")
 
         remaining = graph.query_violations(status="open")
-        # Interactive Gate 1: deterministic resolutions are still "proposed".
+        # Interactive Gate 1: deterministic resolutions await approval.
         fixed_violations = graph.query_violations(status="fixed")
         if interactive:
-            fixed_violations = fixed_violations + graph.query_violations(status="proposed")
+            fixed_violations = fixed_violations + graph.query_violations(status="pending_review")
         ai_abstained = graph.query_violations(status="ai_abstained")
         step_diffs = graph.collect_step_diffs()
         tier1_proposals = collect_tier1_proposals(graph) if interactive else []
@@ -981,7 +981,7 @@ def collect_tier1_proposals(graph: ContentGraph) -> list[Tier1NodeProposal]:
         rule_ids: list[str] = []
         seen: set[str] = set()
         for record in node.violation_ledger.values():
-            if record.status != "proposed" or record.fixed_by != "deterministic":
+            if record.status != "pending_review" or record.fixed_by != "deterministic":
                 continue
             rid = str(record.violation.get("rule_id", "") or "")
             if rid and rid not in seen:

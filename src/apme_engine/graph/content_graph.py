@@ -231,6 +231,11 @@ class ViolationRecord:
 
         open ──→ fixed          (deterministic transform, auto-approved)
           │
+          ├──→ pending_review (deterministic transform, interactive Gate 1)
+          │         │
+          │         ├──→ fixed    (user approved)
+          │         └──→ declined (user rejected)
+          │
           ├──→ ai_abstained     (AI attempted but could not produce a fix)
           │
           └──→ proposed         (AI fix applied, pending human review)
@@ -242,8 +247,8 @@ class ViolationRecord:
     Attributes:
         key: ``(node_id, normalized_rule_id)`` identity.
         violation: Original violation dict from the validator.
-        status: ``"open"``, ``"fixed"``, ``"proposed"``, ``"declined"``,
-            or ``"ai_abstained"``.
+        status: ``"open"``, ``"fixed"``, ``"pending_review"``, ``"proposed"``,
+            ``"declined"``, or ``"ai_abstained"``.
         fixed_by: How the violation was resolved
             (``"deterministic"``, ``"ai"``, or ``None``).
         fixed_in_pass: Convergence pass that resolved the violation.
@@ -833,7 +838,7 @@ class ContentGraph:
                 )
             elif existing.status == "ai_abstained":
                 existing.violation = v
-            elif existing.status in ("fixed", "proposed", "declined"):
+            elif existing.status in ("fixed", "pending_review", "proposed", "declined"):
                 existing.status = "open"
                 existing.violation = v
                 existing.fixed_by = None
@@ -855,8 +860,10 @@ class ContentGraph:
         For the given node, any open ledger entry whose rule_id is
         **not** in ``remaining_rule_ids`` transitions to *status*.
 
-        Use ``status="fixed"`` for deterministic transforms (auto-approved)
-        and ``status="proposed"`` for AI transforms (pending human review).
+        Use ``status="fixed"`` for deterministic transforms (auto-approved),
+        ``status="pending_review"`` for deterministic transforms awaiting
+        Gate 1 approval (interactive), and ``status="proposed"`` for AI
+        transforms (pending human review).
 
         Args:
             node_id: Graph node whose ledger to update.
@@ -930,6 +937,50 @@ class ContentGraph:
                 count += 1
         return count
 
+    def approve_pending_review(self, node_id: str) -> int:
+        """Promote ``pending_review`` violations to ``fixed`` on a node.
+
+        Called when the user approves a deterministic Gate 1 proposal.
+
+        Args:
+            node_id: Graph node whose pending reviews to approve.
+
+        Returns:
+            Number of violations promoted.
+        """
+        node = self.get_node(node_id)
+        if node is None:
+            return 0
+        count = 0
+        for record in node.violation_ledger.values():
+            if record.status == "pending_review":
+                record.status = "fixed"
+                count += 1
+        return count
+
+    def decline_pending_review(self, node_id: str) -> int:
+        """Transition ``pending_review`` violations to ``declined`` on a node.
+
+        Called when the user rejects a deterministic Gate 1 proposal.
+
+        Args:
+            node_id: Graph node whose pending reviews to decline.
+
+        Returns:
+            Number of violations declined.
+        """
+        node = self.get_node(node_id)
+        if node is None:
+            return 0
+        count = 0
+        for record in node.violation_ledger.values():
+            if record.status == "pending_review":
+                record.status = "declined"
+                record.fixed_by = None
+                record.fixed_in_pass = None
+                count += 1
+        return count
+
     def approve_proposed(self, node_id: str) -> int:
         """Promote ``proposed`` violations to ``fixed`` on a node.
 
@@ -993,8 +1044,8 @@ class ContentGraph:
 
         Args:
             status: Filter by status: ``"open"``, ``"fixed"``,
-                ``"proposed"``, ``"declined"``, or ``"ai_abstained"``
-                (``None`` = all).
+                ``"pending_review"``, ``"proposed"``, ``"declined"``, or
+                ``"ai_abstained"`` (``None`` = all).
             fixed_by: Filter by attribution (``None`` = all).
 
         Returns:
@@ -1005,6 +1056,7 @@ class ContentGraph:
             "proposed": RemediationResolution.AI_PROPOSED,
             "declined": RemediationResolution.USER_REJECTED,
         }
+        # pending_review is deterministic Gate 1 only — do not map to AI_PROPOSED.
 
         result: list[ViolationDict] = []
         for node in self.nodes():
@@ -1015,7 +1067,7 @@ class ContentGraph:
                     continue
                 vdict = dict(record.violation)
                 mapped = _status_resolution.get(record.status)
-                if mapped is not None:
+                if mapped is not None and not (record.status == "proposed" and record.fixed_by == "deterministic"):
                     vdict["remediation_resolution"] = mapped
                 if record.ai_reason:
                     vdict["ai_reason"] = record.ai_reason
@@ -1085,7 +1137,7 @@ class ContentGraph:
         Returns:
             True if any entries were approved.
         """
-        return self.approve_pending(node_id) > 0
+        return self.approve_pending(node_id) > 0 or self.approve_pending_review(node_id) > 0
 
     def reject_node(self, node_id: str) -> bool:
         """Reject unapproved entries and cascade forward.
@@ -1114,7 +1166,9 @@ class ContentGraph:
             None,
         )
         if first_unapproved is None:
-            return False
+            return self.decline_pending_review(node_id) > 0
+
+        self.decline_pending_review(node_id)
 
         if first_unapproved == 0:
             baseline = node.progression[0]

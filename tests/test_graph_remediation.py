@@ -24,6 +24,7 @@ from apme_engine.graph.scanner import (
     rescan_dirty,
     scan,
 )
+from apme_engine.graph.types import RemediationResolution
 from apme_engine.remediation.graph_engine import (
     GraphRemediationEngine,
     splice_modifications,
@@ -352,7 +353,9 @@ class TestGraphRemediationEngine:
         assert report.tier1_proposals
         assert report.tier1_proposals[0].node_id == node.node_id
         assert collect_tier1_proposals(graph)
-        proposed = graph.query_violations(status="proposed")
+        proposed = graph.query_violations(status="pending_review")
+        assert proposed
+        assert all(v.get("remediation_resolution") != RemediationResolution.AI_PROPOSED for v in proposed)
         assert any(v["rule_id"] == "M001" for v in proposed)
 
     async def test_transform_source_deterministic(self) -> None:
