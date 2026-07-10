@@ -2794,6 +2794,13 @@ def _apply_graph_approvals(
     for patch in patches:
         rel_path = _working_files_key(session.temp_dir, patch.path)
         session.working_files[rel_path] = patch.patched.encode("utf-8")
+        # Keep temp_dir in sync when present (interactive Gate 1 deferred writes).
+        if session.temp_dir is not None:
+            patch_abs = Path(patch.path)
+            if not patch_abs.is_absolute():
+                patch_abs = session.temp_dir / patch_abs
+            with contextlib.suppress(OSError):
+                patch_abs.write_text(patch.patched, encoding="utf-8")
 
     return (applied, rejected_node_ids, patches)
 
