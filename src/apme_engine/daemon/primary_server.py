@@ -2664,13 +2664,19 @@ def _apply_graph_approvals(
             )
             session.approved_ids.add(pid)
             applied += 1
+            session.proposals.pop(pid, None)
         else:
             graph.reject_node(node_id)
             rejected_node_ids.add(node_id)
 
-        session.proposals.pop(pid, None)
+    from apme_engine.formatter import format_content
 
     patches = splice_modifications(graph, originals)
+    for patch in patches:
+        fmt_result = format_content(patch.patched, filename=Path(patch.path).name)
+        if getattr(fmt_result, "changed", False):
+            patch.patched = getattr(fmt_result, "formatted", patch.patched)
+
     for patch in patches:
         session.working_files[patch.path] = patch.patched.encode("utf-8")
         # Keep temp_dir in sync when present (interactive Gate 1 deferred writes).

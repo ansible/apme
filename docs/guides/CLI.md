@@ -101,7 +101,7 @@ The remediation pipeline:
 4. **Tier 1** — apply deterministic transforms in a convergence loop
 5. **Gate 1** (with `--interactive`) — review deterministic `t1-*` proposals before apply
 6. **Tier 2** (with `--ai`) — escalate remaining violations to AI provider
-7. **Gate 2** (with `--ai`, non-JSON, no `--auto-approve`) — review AI `ai-*` proposals
+7. **Gate 2** (with `--ai`, without `--json`, without `--auto-approve`) — review AI `ai-*` proposals
 8. **Auto-approve** (with `--auto-approve`) — accept all proposals in each approval gate
 
 ### `apme format` — normalize YAML style
