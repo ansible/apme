@@ -24,8 +24,10 @@ sequenceDiagram
         Primary-->>CLI: ApprovalAck(applied_count)
     end
 
-    Note over Primary: AI gate evaluates remaining violations
-    Primary-->>CLI: ProposalsReady(tier=2, id=ai-*)
+    alt AI enabled
+        Note over Primary: AI gate evaluates remaining violations
+        Primary-->>CLI: ProposalsReady(tier=2, id=ai-*)
+    end
 
     alt Check mode
         CLI->>Primary: ApprovalRequest(approved_ids=[])
@@ -53,7 +55,7 @@ When the graph engine produces AI proposals, the Primary converts them to
 
 ```protobuf
 message Proposal {
-  string id = 1;           // "ai-0000", "ai-0001", ...
+  string id = 1;           // "t1-0000" (Gate 1) or "ai-0000" (Gate 2)
   string file = 2;
   string rule_id = 3;
   int32 line_start = 4;
@@ -65,7 +67,7 @@ message Proposal {
   string explanation = 10;
   int32 tier = 11;          // 1 deterministic, 2 AI
   string status = 12;       // "proposed"
-  string source = 14;       // "ai"
+  string source = 14;       // "deterministic" (t1-*) or "ai" (ai-*)
   string path = 15;         // stable node identity path
 }
 ```

@@ -2069,7 +2069,8 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             SessionEvent: ApprovalAck, optional Gate 2 ProposalsReady, and SessionResult.
         """
         was_tier1_gate = session.awaiting_tier1_gate
-        applied = self._session_apply_approved(session, approved_ids, finalize=not was_tier1_gate)
+        run_ai_gate = was_tier1_gate and bool(session.fix_options and session.fix_options.enable_ai)
+        applied = self._session_apply_approved(session, approved_ids, finalize=not run_ai_gate)
         yield SessionEvent(
             approval_ack=ApprovalAck(
                 applied_count=applied,
@@ -2078,7 +2079,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             ),
         )
 
-        if was_tier1_gate and session.fix_options and session.fix_options.enable_ai:
+        if run_ai_gate:
             async for event in self._session_run_ai_gate(session):
                 yield event
             return
@@ -2120,6 +2121,12 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         session.progress_logs.append(_ai_msg)
         yield SessionEvent(progress=_ai_msg)
 
+        # Gate 2 pending proposals must contain only current AI proposals.
+        # Preserve anything already pending as telemetry-visible rejections.
+        for pid, proposal in list(session.proposals.items()):
+            _record_rejected_proposal(session, pid, proposal)
+            session.proposals.pop(pid, None)
+
         # Continue from current open violations (no re-register of pass 0).
         open_violations = [dict(v) for v in graph.query_violations(status="open")]
         graph_report = await engine.remediate(
@@ -2153,11 +2160,24 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
 
         # Splice any post-AI Tier 1 cleanup that was auto-approved.
         originals = session.graph_originals or {}
+        from apme_engine.formatter import format_content  # noqa: PLC0415
         from apme_engine.remediation.graph_engine import splice_modifications  # noqa: PLC0415
 
         patches = splice_modifications(graph, originals)
         for patch in patches:
+            fmt_result = format_content(patch.patched, filename=Path(patch.path).name)
+            if getattr(fmt_result, "changed", False):
+                patch.patched = getattr(fmt_result, "formatted", patch.patched)
+
+        for patch in patches:
             session.working_files[patch.path] = patch.patched.encode("utf-8")
+            # Keep temp_dir in sync when present (same behavior as Gate approvals).
+            if session.temp_dir is not None:
+                patch_abs = Path(patch.path)
+                if not patch_abs.is_absolute():
+                    patch_abs = session.temp_dir / patch_abs
+                with contextlib.suppress(OSError):
+                    patch_abs.write_text(patch.patched, encoding="utf-8")
 
         proposed_proposals = self._build_graph_proposals(graph_report.ai_proposals) if graph_report.ai_proposals else []
         proposed_rule_files: set[tuple[str, str]] = set()
@@ -2399,7 +2419,22 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                     status="approved",
                 )
             )
+        for meta in session.rejected_proposals.values():
+            tier_val = meta.get("tier", 0)
+            conf_val = meta.get("confidence", 0.0)
+            proposal_outcomes.append(
+                ProposalOutcome(
+                    proposal_id=str(meta.get("proposal_id", "")),
+                    rule_id=str(meta.get("rule_id", "")),
+                    file=str(meta.get("file", "")),
+                    tier=int(tier_val) if isinstance(tier_val, (int, float, str)) else 0,
+                    confidence=float(conf_val) if isinstance(conf_val, (int, float, str)) else 0.0,
+                    status="rejected",
+                )
+            )
         for pid, p in session.proposals.items():
+            if pid in session.rejected_proposals:
+                continue
             proposal_outcomes.append(
                 ProposalOutcome(
                     proposal_id=pid,
@@ -2639,7 +2674,7 @@ def _apply_graph_approvals(
 
     applied = 0
     rejected_node_ids: set[str] = set()
-    all_proposal_ids = set(session.proposals.keys())
+    all_proposal_ids = list(session.proposals.keys())
 
     for pid in all_proposal_ids:
         proposal = session.proposals.get(pid)
@@ -2668,6 +2703,8 @@ def _apply_graph_approvals(
         else:
             graph.reject_node(node_id)
             rejected_node_ids.add(node_id)
+            _record_rejected_proposal(session, pid, proposal)
+            session.proposals.pop(pid, None)
 
     from apme_engine.formatter import format_content
 
@@ -2815,7 +2852,35 @@ def _apply_text_approvals(
         session.approved_ids.add(pid)
         applied += 1
 
+    for pid, proposal in list(session.proposals.items()):
+        _record_rejected_proposal(session, pid, proposal)
+        session.proposals.pop(pid, None)
+
     return applied
+
+
+def _record_rejected_proposal(
+    session: SessionState,
+    proposal_id: str,
+    proposal: Proposal,
+) -> None:
+    """Persist rejected proposal metadata for FixCompletedEvent telemetry.
+
+    Args:
+        session: Active session storing telemetry snapshots.
+        proposal_id: Proposal identifier that was rejected.
+        proposal: Proposal proto carrying rule/file/tier metadata.
+    """
+    session.rejected_proposals.setdefault(
+        proposal_id,
+        {
+            "proposal_id": proposal_id,
+            "rule_id": proposal.rule_id,
+            "file": proposal.file,
+            "tier": proposal.tier,
+            "confidence": proposal.confidence,
+        },
+    )
 
 
 _cached_register_request: reporting_pb2.RegisterRulesRequest | None = None

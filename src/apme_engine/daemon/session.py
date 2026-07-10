@@ -68,6 +68,8 @@ class SessionState:
             final reporting.
         approved_ids: Set of proposal IDs approved by the user.
         approved_proposals: Metadata snapshots of approved proposals.
+        rejected_proposals: Metadata snapshots of rejected proposals retained
+            for FixCompletedEvent telemetry across approval gates.
         scan_id: Client-provided scan identifier for event correlation.
         project_root: Project root path from the first upload chunk.
         progress_logs: Pipeline milestone logs collected during processing.
@@ -117,6 +119,8 @@ class SessionState:
     approved_ids: set[str] = field(default_factory=set)
     # Metadata snapshots of approved proposals (rule_id, file, tier, confidence)
     approved_proposals: list[dict[str, object]] = field(default_factory=list)
+    # Metadata snapshots of rejected proposals preserved for telemetry.
+    rejected_proposals: dict[str, dict[str, object]] = field(default_factory=dict)
 
     # Identifiers captured from the first upload chunk for event emission
     scan_id: str = ""

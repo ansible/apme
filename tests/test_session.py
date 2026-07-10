@@ -12,6 +12,7 @@ import os
 from collections.abc import AsyncIterator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -22,6 +23,7 @@ from apme.v1.primary_pb2 import (
     CloseRequest,
     ExtendRequest,
     FilePatch,
+    FixOptions,
     FixReport,
     Proposal,
     ProposalsReady,
@@ -406,7 +408,7 @@ class TestSessionApplyApproved:
         assert session.proposals == {}
 
     def test_partial_approval_completes_session(self) -> None:
-        """Partial approval completes the session; unapproved proposals remain listed."""
+        """Partial approval completes and stashes unapproved proposals for telemetry."""
         from apme_engine.daemon.primary_server import PrimaryServicer
 
         session = SessionState(session_id="test")
@@ -420,7 +422,8 @@ class TestSessionApplyApproved:
         applied = PrimaryServicer._session_apply_approved(session, {"p1"})
         assert applied == 1
         assert session.status == 3  # COMPLETE after approval processing
-        assert "p2" in session.proposals
+        assert session.proposals == {}
+        assert "p2" in session.rejected_proposals
 
     def test_approval_modifies_working_files(self) -> None:
         """Approved proposal replaces before_text with after_text in working_files."""
@@ -476,6 +479,113 @@ class TestSessionBuildResult:
         diff = events[0].result.patches[0].diff
         assert "---" in diff and "+++" in diff
         assert "-line2" in diff and "+changed" in diff
+
+
+class TestSessionApprovalGates:
+    """Unit tests for multi-gate approval sequencing and proposal isolation."""
+
+    async def test_tier1_approval_without_ai_finalizes(self) -> None:
+        """Tier 1 approval finalizes immediately when AI gate is disabled."""
+        from apme_engine.daemon.primary_server import PrimaryServicer
+
+        servicer = PrimaryServicer()
+        session = SessionState(session_id="gate-no-ai")
+        session.awaiting_tier1_gate = True
+        session.fix_options = FixOptions(enable_ai=False)
+        session.status = 1
+
+        async def _fake_build_result(_self: PrimaryServicer, _session: SessionState) -> AsyncIterator[SessionEvent]:
+            yield SessionEvent(result=SessionResult())
+
+        with patch.object(PrimaryServicer, "_session_build_result", _fake_build_result):
+            events = [e async for e in servicer._session_handle_approval(session, set())]
+
+        event_types = [e.WhichOneof("event") for e in events]
+        assert event_types == ["approval_ack", "result"]
+        assert session.status == 3  # COMPLETE
+
+    async def test_ai_gate_filters_stale_t1_and_formats_splice(self, tmp_path: Path) -> None:
+        """Gate 2 drops stale t1-* pending IDs and keeps formatted temp sync.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        from apme_engine.daemon.primary_server import PrimaryServicer
+        from apme_engine.graph.content_graph import ContentGraph
+
+        class _DummyGraphEngine:
+            def __init__(self) -> None:
+                self.remediate = AsyncMock(
+                    return_value=SimpleNamespace(
+                        passes=1,
+                        fixed=0,
+                        remaining_violations=[],
+                        fixed_violations=[],
+                        oscillation_detected=False,
+                        ai_proposals=[],
+                    )
+                )
+
+        servicer = PrimaryServicer()
+        session = SessionState(session_id="gate-filter")
+        session.content_graph = ContentGraph()
+        session.graph_engine = _DummyGraphEngine()
+        session.proposals = {
+            "t1-0000": Proposal(
+                id="t1-0000",
+                file="play.yml",
+                rule_id="L001",
+                tier=1,
+                source="deterministic",
+            )
+        }
+        session.fix_options = FixOptions(enable_ai=True)
+        session.graph_originals = {"play.yml": "- name: test\n  debug:\n    msg: hi\n"}
+        session.temp_dir = tmp_path
+
+        async def _fake_build_result(_self: PrimaryServicer, _session: SessionState) -> AsyncIterator[SessionEvent]:
+            yield SessionEvent(result=SessionResult())
+
+        with (
+            patch("apme_engine.remediation.graph_engine.GraphRemediationEngine", _DummyGraphEngine),
+            patch(
+                "apme_engine.remediation.graph_engine.splice_modifications",
+                return_value=[SimpleNamespace(path="play.yml", patched="- name: test\n  debug:\n    msg: hi\n")],
+            ),
+            patch(
+                "apme_engine.formatter.format_content",
+                return_value=SimpleNamespace(changed=True, formatted="- name: test\n  debug:\n    msg: hi there\n"),
+            ),
+            patch.object(PrimaryServicer, "_session_build_result", _fake_build_result),
+        ):
+            events = [e async for e in servicer._session_run_ai_gate(session)]
+
+        event_types = [e.WhichOneof("event") for e in events]
+        assert event_types == ["progress", "result"]
+        assert session.proposals == {}
+        assert "t1-0000" in session.rejected_proposals
+        assert session.working_files["play.yml"] == b"- name: test\n  debug:\n    msg: hi there\n"
+        assert (tmp_path / "play.yml").read_text(encoding="utf-8") == "- name: test\n  debug:\n    msg: hi there\n"
+
+    def test_build_fix_event_includes_rejected_telemetry_store(self) -> None:
+        """FixCompletedEvent includes rejected outcomes from telemetry snapshots."""
+        from apme_engine.daemon.primary_server import PrimaryServicer
+
+        session = SessionState(session_id="fix-event")
+        session.rejected_proposals = {
+            "t1-0000": {
+                "proposal_id": "t1-0000",
+                "rule_id": "L001",
+                "file": "play.yml",
+                "tier": 1,
+                "confidence": 0.0,
+            }
+        }
+
+        event = PrimaryServicer._build_fix_event(session, [])
+        assert len(event.proposals) == 1
+        assert event.proposals[0].proposal_id == "t1-0000"
+        assert event.proposals[0].status == "rejected"
 
 
 class TestGalaxyProxyConfigActivation:
