@@ -148,7 +148,12 @@ artifact type, translate it:
    When a function accepts multiple input shapes (dataclass vs
    mapping, ORM vs dict), do both paths normalize and branch the
    same way for the same logical fields — or can one path skip a
-   transform the other applies? When overlaying fields from a
+   transform the other applies? When adding an alternate branch
+   (interactive vs auto-apply, graph vs legacy text), trace both
+   paths to the same output artifact (file bytes, event payload,
+   telemetry) and confirm they run the same post-processing and
+   state-accounting steps — not just reach the same endpoint.
+   When overlaying fields from a
    second source (e.g. outcome ``tier`` onto a pre-grouped
    proposal), do dependent fields (``source``/``gate``/``tier``,
    status→review mapping) stay aligned for *all* pre-group
