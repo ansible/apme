@@ -315,7 +315,10 @@ limits (prefer ``col.in_(select(...))`` over materializing large id
 lists into bound parameters; chunk at ~900 when a Python list is
 unavoidable; when checking membership of a *small* candidate set
 against a large table, query the intersection of those candidates —
-never load the full table into Python just to filter a handful of ids).
+never load the full table into Python just to filter a handful of ids),
+silent ``OSError``/I/O suppress on paths later re-read by the pipeline
+(stale content), and writes that skip the same path-safety checks as
+sibling helpers (``resolve`` + ``is_relative_to`` / reject ``..``).
 
 Do NOT discuss architecture philosophy. Rank findings
 critical/high/medium/low.

@@ -481,6 +481,50 @@ class TestSessionBuildResult:
         assert "-line2" in diff and "+changed" in diff
 
 
+class TestWritePatchesToTempDir:
+    """Path-safety and fail-loud behavior for interactive temp patch writes."""
+
+    def test_writes_relative_path_under_temp_dir(self, tmp_path: Path) -> None:
+        """Relative patch paths land under the session temp root.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        from apme_engine.daemon.primary_server import _write_patches_to_temp_dir
+        from apme_engine.remediation.graph_engine import FilePatch
+
+        patch = FilePatch(path="playbooks/main.yml", original="a\n", patched="b\n", diff="", rule_ids=[])
+        _write_patches_to_temp_dir(tmp_path, [patch])
+        assert (tmp_path / "playbooks" / "main.yml").read_text(encoding="utf-8") == "b\n"
+
+    def test_rejects_path_escape(self, tmp_path: Path) -> None:
+        """``..`` segments that escape temp_dir raise ValueError.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        from apme_engine.daemon.primary_server import _write_patches_to_temp_dir
+        from apme_engine.remediation.graph_engine import FilePatch
+
+        patch = FilePatch(path="../escape.yml", original="a\n", patched="b\n", diff="", rule_ids=[])
+        with pytest.raises(ValueError, match="Unsafe patch path|escapes temp root"):
+            _write_patches_to_temp_dir(tmp_path, [patch])
+
+    def test_absolute_under_temp_ok(self, tmp_path: Path) -> None:
+        """Absolute paths still under temp_dir are accepted.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        from apme_engine.daemon.primary_server import _write_patches_to_temp_dir
+        from apme_engine.remediation.graph_engine import FilePatch
+
+        target = tmp_path / "roles" / "x.yml"
+        patch = FilePatch(path=str(target), original="a\n", patched="fixed\n", diff="", rule_ids=[])
+        _write_patches_to_temp_dir(tmp_path, [patch])
+        assert target.read_text(encoding="utf-8") == "fixed\n"
+
+
 class TestSessionApprovalGates:
     """Unit tests for multi-gate approval sequencing and proposal isolation."""
 

@@ -2651,16 +2651,40 @@ async def serve(listen_address: str = "0.0.0.0:50051") -> grpc.aio.Server:
 def _write_patches_to_temp_dir(temp_dir: Path, patches: Sequence[SplicedFilePatch]) -> None:
     """Write spliced patch contents into ``temp_dir`` (blocking I/O).
 
+    Paths are sanitised like :func:`_write_chunked_fs`: absolute paths and
+    ``..`` segments are rejected unless the resolved target stays under
+    ``temp_dir``. Write failures raise (no silent ``OSError`` suppress) so
+    later AI-gate / validator rescans cannot read stale temp content.
+
     Args:
         temp_dir: Session temp directory root.
         patches: Splice results with ``path`` and ``patched`` attributes.
+
+    Raises:
+        ValueError: If a patch path escapes ``temp_dir``.
+        OSError: If a write fails.
     """
+    root = temp_dir.resolve()
     for patch in patches:
-        patch_abs = Path(patch.path)
-        if not patch_abs.is_absolute():
-            patch_abs = temp_dir / patch_abs
-        with contextlib.suppress(OSError):
-            patch_abs.write_text(patch.patched, encoding="utf-8")
+        rel = Path(patch.path)
+        if rel.is_absolute():
+            path = rel.resolve()
+        else:
+            if ".." in rel.parts:
+                raise ValueError(f"Unsafe patch path rejected: {patch.path!r}")
+            path = (root / rel).resolve()
+        if not path.is_relative_to(root):
+            raise ValueError(f"Patch path escapes temp root: {patch.path!r}")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            path.write_text(patch.patched, encoding="utf-8")
+        except OSError:
+            logger.exception(
+                "Failed to write patch to temp_dir path=%s temp_dir=%s",
+                path,
+                root,
+            )
+            raise
 
 
 def _apply_graph_approvals(
