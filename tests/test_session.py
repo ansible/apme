@@ -402,7 +402,7 @@ class TestSessionApplyApproved:
         session.status = 1
         session.working_files = {"t.yml": b"old content"}
 
-        applied = PrimaryServicer._session_apply_approved(session, {"t2-0000"})
+        applied, _ = PrimaryServicer._session_apply_approved(session, {"t2-0000"})
         assert applied == 1
         assert session.status == 3  # COMPLETE
         assert session.proposals == {}
@@ -419,7 +419,7 @@ class TestSessionApplyApproved:
         session.status = 1
         session.working_files = {"a.yml": b"old1", "b.yml": b"old2"}
 
-        applied = PrimaryServicer._session_apply_approved(session, {"p1"})
+        applied, _ = PrimaryServicer._session_apply_approved(session, {"p1"})
         assert applied == 1
         assert session.status == 3  # COMPLETE after approval processing
         assert session.proposals == {}

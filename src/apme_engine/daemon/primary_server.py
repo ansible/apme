@@ -75,6 +75,7 @@ from apme_engine.daemon.session import ResourceExhaustedError, SessionState, Ses
 from apme_engine.daemon.violation_convert import violation_dict_to_proto, violation_proto_to_dict
 from apme_engine.engine.models import RemediationClass, ViolationDict
 from apme_engine.log_bridge import attach_collector
+from apme_engine.remediation.graph_engine import FilePatch as SplicedFilePatch
 from apme_engine.runner import run_scan
 from apme_engine.venv_manager.session import (
     VenvSession,
@@ -2070,7 +2071,14 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         """
         was_tier1_gate = session.awaiting_tier1_gate
         run_ai_gate = was_tier1_gate and bool(session.fix_options and session.fix_options.enable_ai)
-        applied = self._session_apply_approved(session, approved_ids, finalize=not run_ai_gate)
+        applied, temp_patches = self._session_apply_approved(session, approved_ids, finalize=not run_ai_gate)
+        if session.temp_dir is not None and temp_patches:
+            await asyncio.get_event_loop().run_in_executor(
+                None,
+                _write_patches_to_temp_dir,
+                session.temp_dir,
+                temp_patches,
+            )
         yield SessionEvent(
             approval_ack=ApprovalAck(
                 applied_count=applied,
@@ -2169,15 +2177,19 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             if getattr(fmt_result, "changed", False):
                 patch.patched = getattr(fmt_result, "formatted", patch.patched)
 
+        pending_temp_patches: list[SplicedFilePatch] = []
         for patch in patches:
             session.working_files[patch.path] = patch.patched.encode("utf-8")
-            # Keep temp_dir in sync when present (same behavior as Gate approvals).
             if session.temp_dir is not None:
-                patch_abs = Path(patch.path)
-                if not patch_abs.is_absolute():
-                    patch_abs = session.temp_dir / patch_abs
-                with contextlib.suppress(OSError):
-                    patch_abs.write_text(patch.patched, encoding="utf-8")
+                pending_temp_patches.append(patch)
+
+        if session.temp_dir is not None and pending_temp_patches:
+            await asyncio.get_event_loop().run_in_executor(
+                None,
+                _write_patches_to_temp_dir,
+                session.temp_dir,
+                pending_temp_patches,
+            )
 
         proposed_proposals = self._build_graph_proposals(graph_report.ai_proposals) if graph_report.ai_proposals else []
         proposed_rule_files: set[tuple[str, str]] = set()
@@ -2216,7 +2228,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         approved_ids: set[str],
         *,
         finalize: bool = True,
-    ) -> int:
+    ) -> tuple[int, list[SplicedFilePatch] | None]:
         """Apply approved proposals to session working state.
 
         For graph-based proposals (``id`` starts with ``"ai-"`` or ``"t1-"``),
@@ -2239,15 +2251,16 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             if finalize:
                 session.status = 3  # COMPLETE
             session.awaiting_tier1_gate = False
-            return 0
+            return 0, None
 
         graph = session.content_graph
         originals = session.graph_originals
 
         has_graph_proposals = graph is not None and any(pid.startswith(("ai-", "t1-")) for pid in session.proposals)
 
+        temp_patches: list[SplicedFilePatch] | None = None
         if has_graph_proposals and graph is not None and originals is not None:
-            applied, rejected_nodes = _apply_graph_approvals(
+            applied, rejected_nodes, temp_patches = _apply_graph_approvals(
                 session,
                 graph,
                 originals,
@@ -2269,7 +2282,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             session.session_id,
             finalize,
         )
-        return applied
+        return applied, temp_patches
 
     @staticmethod
     def _build_declined_proposals(
@@ -2635,12 +2648,27 @@ async def serve(listen_address: str = "0.0.0.0:50051") -> grpc.aio.Server:
     return server
 
 
+def _write_patches_to_temp_dir(temp_dir: Path, patches: Sequence[SplicedFilePatch]) -> None:
+    """Write spliced patch contents into ``temp_dir`` (blocking I/O).
+
+    Args:
+        temp_dir: Session temp directory root.
+        patches: Splice results with ``path`` and ``patched`` attributes.
+    """
+    for patch in patches:
+        patch_abs = Path(patch.path)
+        if not patch_abs.is_absolute():
+            patch_abs = temp_dir / patch_abs
+        with contextlib.suppress(OSError):
+            patch_abs.write_text(patch.patched, encoding="utf-8")
+
+
 def _apply_graph_approvals(
     session: SessionState,
     graph: object,
     originals: dict[str, str],
     approved_ids: set[str],
-) -> tuple[int, set[str]]:
+) -> tuple[int, set[str], list[SplicedFilePatch]]:
     """Apply graph-based approvals: approve/reject nodes, re-splice files.
 
     Args:
@@ -2659,7 +2687,7 @@ def _apply_graph_approvals(
     )
 
     if not isinstance(graph, ContentGraph):
-        return (_apply_text_approvals(session, approved_ids), set())
+        return (_apply_text_approvals(session, approved_ids), set(), [])
 
     ai_proposals: list[AINodeProposal] = [p for p in session.ai_proposals if isinstance(p, AINodeProposal)]
     from apme_engine.remediation.graph_engine import Tier1NodeProposal  # noqa: PLC0415
@@ -2716,15 +2744,8 @@ def _apply_graph_approvals(
 
     for patch in patches:
         session.working_files[patch.path] = patch.patched.encode("utf-8")
-        # Keep temp_dir in sync when present (interactive Gate 1 deferred writes).
-        if session.temp_dir is not None:
-            patch_abs = Path(patch.path)
-            if not patch_abs.is_absolute():
-                patch_abs = session.temp_dir / patch_abs
-            with contextlib.suppress(OSError):
-                patch_abs.write_text(patch.patched, encoding="utf-8")
 
-    return (applied, rejected_node_ids)
+    return (applied, rejected_node_ids, patches)
 
 
 def _reconcile_after_approval(
