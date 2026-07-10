@@ -74,6 +74,9 @@ message FixOptions {
   string ai_model = 7;
   string session_id = 8;         // client-provided session for venv reuse
   repeated GalaxyServerDef galaxy_servers = 9;  // Galaxy server config as scan metadata (ADR-045)
+  // When true, Tier 1 deterministic fixes await ApprovalRequest (Option C /
+  // ADR-062 Phase 3). Default false preserves auto-apply (ADR-028).
+  bool interactive = 10;
 }
 
 message ScanDiagnostics {
@@ -194,6 +197,7 @@ message Proposal {
   string status = 12;       // "proposed" or "declined"
   string suggestion = 13;   // manual remediation guidance (declined only)
   string source = 14;       // origin: "ai", "deterministic", "plugin", etc.
+  string path = 15;         // ContentGraph node_id (ADR-044 / ADR-062 bridge)
 }
 
 message ProposalsReady {

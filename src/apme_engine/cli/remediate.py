@@ -85,6 +85,7 @@ def run_remediate(args: argparse.Namespace) -> None:
         ai_model=getattr(args, "model", None) or os.environ.get("APME_AI_MODEL", ""),
         session_id=session_id,
         galaxy_servers=galaxy_servers or [],
+        interactive=getattr(args, "interactive", False),
     )
 
     cmd_queue: queue.Queue[SessionCommand | None] = queue.Queue()

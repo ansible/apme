@@ -90,6 +90,8 @@ class Proposal:
         explanation: Human-readable rationale.
         diff_hunk: Unified diff showing the proposed change.
         status: ``proposed`` or ``declined``.
+        source: Proposal source (e.g. ``deterministic`` or ``ai``).
+        path: Stable node identity path when available.
         suggestion: Suggested replacement text.
         line_start: Starting line number in the file.
     """
@@ -102,6 +104,8 @@ class Proposal:
     explanation: str = ""
     diff_hunk: str = ""
     status: str = "proposed"
+    source: str = ""
+    path: str = ""
     suggestion: str = ""
     line_start: int = 0
 
@@ -210,6 +214,8 @@ class OperationState:
                     "explanation": p.explanation,
                     "diff_hunk": p.diff_hunk,
                     "status": p.status,
+                    "source": p.source,
+                    "path": p.path,
                     "suggestion": p.suggestion,
                     "line_start": p.line_start,
                 }

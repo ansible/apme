@@ -52,6 +52,7 @@ class FixOptions:
     ai_model: str
     session_id: str
     galaxy_servers: list[GalaxyServerDef]
+    interactive: bool
     def __init__(
         self, *, session_id: str = "", galaxy_servers: Iterable[GalaxyServerDef] | None = ..., **kwargs: object
     ) -> None: ...
@@ -183,6 +184,7 @@ class Proposal:
     status: str
     suggestion: str
     source: str
+    path: str
     def __init__(self, **kwargs: object) -> None: ...
 
 class ProposalsReady:

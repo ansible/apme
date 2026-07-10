@@ -57,6 +57,10 @@ class SessionState:
         fix_options: Fix options from the client's first upload chunk.
         scan_options: Scan options from the client's first upload chunk.
         ai_proposals: Raw engine AI proposals for downstream use.
+        tier1_proposals: Raw engine Tier 1 proposals when interactive
+            (ADR-062 Phase 3); empty when Tier 1 auto-applies.
+        awaiting_tier1_gate: True while Gate 1 (deterministic) proposals
+            are pending; cleared after Tier 1 ApprovalRequest.
         remaining_ai: Remaining AI-candidate violations.
         remaining_manual: Remaining manual-review violations.
         dep_health_violations: Dependency-health violations that do not
@@ -78,6 +82,9 @@ class SessionState:
             (ADR-044 Phase 3).  Typed as ``object`` to avoid coupling.
         graph_originals: Original file text keyed by path, used by
             ``splice_modifications`` after approval.
+        graph_engine: ``GraphRemediationEngine`` retained across Option C
+            gates so Gate 2 can continue on the same graph (typed as
+            ``object`` to avoid coupling).
     """
 
     session_id: str
@@ -96,8 +103,10 @@ class SessionState:
     fix_options: FixOptions | None = None
     scan_options: ScanOptions | None = None
 
-    # Raw engine AI proposals (not proto) for downstream use
+    # Raw engine AI / Tier 1 proposals (not proto) for downstream use
     ai_proposals: list[object] = field(default_factory=list)
+    tier1_proposals: list[object] = field(default_factory=list)
+    awaiting_tier1_gate: bool = False
 
     # Remaining violations from engine report
     remaining_ai: list[ViolationDict] = field(default_factory=list)
@@ -132,6 +141,7 @@ class SessionState:
     # Typed as ``object`` to avoid importing ContentGraph in this module.
     content_graph: object | None = None
     graph_originals: dict[str, str] = field(default_factory=dict)
+    graph_engine: object | None = None
 
     @property
     def ttl_seconds(self) -> int:

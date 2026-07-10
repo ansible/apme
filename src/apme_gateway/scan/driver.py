@@ -281,6 +281,7 @@ async def run_project_operation(
     collection_specs: list[str] | None = None,
     enable_ai: bool = True,
     ai_model: str = "",
+    interactive: bool = False,
     progress_callback: ProgressCallback | None = None,
     approval_queue: asyncio.Queue[list[str]] | None = None,
     scan_id: str | None = None,
@@ -302,6 +303,7 @@ async def run_project_operation(
         collection_specs: Collection install specs.
         enable_ai: Enable AI remediation tier (remediate mode only).
         ai_model: AI model identifier (remediate mode only).
+        interactive: When True, Tier 1 fixes await approval (ADR-062 Phase 3).
         progress_callback: Optional async callable for each ``SessionEvent``.
         approval_queue: Queue of approved proposal IDs (remediate mode, when AI proposes).
         scan_id: Optional pre-generated scan ID; one is created if omitted.
@@ -341,6 +343,7 @@ async def run_project_operation(
                 enable_ai=enable_ai,
                 ai_model=ai_model,
                 galaxy_servers=galaxy_servers or [],
+                interactive=interactive,
             )
             chunks[0].fix_options.CopyFrom(fix_opts)  # type: ignore[union-attr]
 

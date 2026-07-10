@@ -212,15 +212,18 @@ match.
   historical rebuild + additive API (this ADR) — **done** (#391).
 - Phase 2: scan-scoped draft/commit; gate commit writes analytics (and
   `review_status` when violation ids are already linked — live stubs often
-  stamp at FixCompleted after the id bridge); `engine_proposal_id` bridge
-  keyed by `(file, source, rule_id, line_start)` because `primary.Proposal`
-  has no `path` field; `PATCH .../operation/proposals` + SSE
+  stamp at FixCompleted after the id bridge); pre-Phase-3 bridge was keyed
+  by `(file, source, rule_id, line_start)` before `primary.Proposal.path` was
+  added; `PATCH .../operation/proposals` + SSE
   `proposal_updated`; `abandon_working_set` resets draft status to pending;
-  PR/push = publish flush — **done** (this change set). UI wiring of PATCH /
+  PR/push = publish flush — **done** (#392). UI wiring of PATCH /
   `proposal_updated` is a follow-up (types only in this change set).
-- Phase 3: Option C two-gate engine/UI; AI reporting over analytics /
-  `review_status`. Adding `path` to `primary.Proposal` (proto) would tighten
-  the id bridge for multi-finding same-line collisions.
+- Phase 3: Option C two-gate engine — `FixOptions.interactive` (default
+  false) + `Proposal.path`; Gate 1 emits `t1-*` deterministic proposals and
+  defers splice until `ApprovalRequest`; when `enable_ai`, Gate 2 runs AI
+  on the post-approval graph. CLI `--interactive`; Gateway
+  `options.interactive` passthrough (default false — UI unchanged).
+  Gate-1 AI-candidate triage (`source=ai-candidate`) deferred.
 - SQLite: extend `_migrate_*` pattern in `apme_gateway.db` (no Alembic).
 - Non-interactive Tier 1 auto-apply sets `review_status=deterministic_approved`
   when fixed violations are persisted.
