@@ -1137,7 +1137,11 @@ class ContentGraph:
         Returns:
             True if any entries were approved.
         """
-        return self.approve_pending(node_id) > 0 or self.approve_pending_review(node_id) > 0
+        approved = self.approve_pending(node_id) > 0
+        # Always promote pending_review ledger rows (interactive Gate 1); do not
+        # short-circuit on progression approvals or violations stay stuck.
+        promoted = self.approve_pending_review(node_id) > 0
+        return approved or promoted
 
     def reject_node(self, node_id: str) -> bool:
         """Reject unapproved entries and cascade forward.

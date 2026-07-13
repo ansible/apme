@@ -305,7 +305,10 @@ async def run_project_operation(
         ai_model: AI model identifier (remediate mode only).
         interactive: When True, Tier 1 fixes await approval (ADR-062 Phase 3).
         progress_callback: Optional async callable for each ``SessionEvent``.
-        approval_queue: Queue of approved proposal IDs (remediate mode, when AI proposes).
+        approval_queue: Queue of approved proposal IDs for remediate mode when
+            the engine emits ``ProposalsReady`` (Tier 1 ``t1-*`` when
+            ``interactive=True``, and/or Tier 2 ``ai-*`` when AI proposes).
+            If omitted, proposals are auto-declined so the stream does not hang.
         scan_id: Optional pre-generated scan ID; one is created if omitted.
         galaxy_servers: Global Galaxy server defs to inject into scan metadata (ADR-045).
         scm_token: Optional SCM token for private repository access.
@@ -479,7 +482,7 @@ async def run_project_fix(
         enable_ai: Enable AI remediation tier.
         ai_model: AI model identifier.
         progress_callback: Optional async callable for each ``SessionEvent``.
-        approval_queue: Queue of approved proposal IDs.
+        approval_queue: Queue of approved proposal IDs (Tier 1 and/or AI).
         scan_id: Optional pre-generated scan ID.
         galaxy_servers: Global Galaxy server defs to inject (ADR-045).
         scm_token: Optional SCM token for private repository access.

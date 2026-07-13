@@ -317,8 +317,11 @@ unavoidable; when checking membership of a *small* candidate set
 against a large table, query the intersection of those candidates —
 never load the full table into Python just to filter a handful of ids),
 silent ``OSError``/I/O suppress on paths later re-read by the pipeline
-(stale content), and writes that skip the same path-safety checks as
-sibling helpers (``resolve`` + ``is_relative_to`` / reject ``..``).
+(stale content), writes that skip the same path-safety checks as
+sibling helpers (``resolve`` + ``is_relative_to`` / reject ``..``),
+and short-circuiting ``a() or b()`` / ``a() and b()`` when both calls
+have required side effects (e.g. promote ledger status after approving
+progression — evaluate both unconditionally).
 
 Do NOT discuss architecture philosophy. Rank findings
 critical/high/medium/low.

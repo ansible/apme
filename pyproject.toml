@@ -18,7 +18,7 @@ dependencies = [
     "joblib",
     "grpcio>=1.80.0",
     "grpcio-health-checking>=1.80.0,<1.82",
-    "protobuf>=6.31.1,<7",
+    "protobuf>=6.33.5,<7",
     "networkx>=3.1",
     "httpx",
     "packaging>=23",
