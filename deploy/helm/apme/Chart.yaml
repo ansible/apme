@@ -3,10 +3,9 @@ name: apme
 description: Ansible Policy & Modernization Engine — policy enforcement and modernization for Ansible content
 type: application
 version: 0.1.0
-# appVersion is informational only.  CI publishes images tagged by git SHA
-# (e.g. "sha-7cb2464"), NOT by this semver string.  Always set image.tag in
-# your values override to a real published tag.
-appVersion: "0.2.10"
+# Tracks the default APME image tag (Quay / GitHub release without leading "v").
+# Override with image.tag for SHA builds (e.g. "sha-b7d1683").
+appVersion: "2026.7.3"
 home: https://github.com/ansible/apme
 sources:
   - https://github.com/ansible/apme

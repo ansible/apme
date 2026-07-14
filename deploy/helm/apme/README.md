@@ -11,18 +11,17 @@ localhost networking per ADR-005 and pod-level scaling per ADR-012).
 - Helm 3.x
 - Access to `quay.io/ansible` container registry (or mirror images locally;
   CI also publishes to `ghcr.io/ansible`)
-- A published image tag (CI tags images by git SHA, e.g. `sha-7cb2464`)
+- Default image tag is `2026.7.3` (GitHub release `v2026.7.3`). Override with
+  `--set image.tag=…` for another release or a SHA build (e.g. `sha-b7d1683`)
 
 ## Quick start
 
 ```bash
-# From the repository root
-helm install apme ./deploy/helm/apme/ \
-  --set image.tag=sha-7cb2464
+# From the repository root (uses quay.io/ansible + tag 2026.7.3 by default)
+helm install apme ./deploy/helm/apme/
 
 # With AI enabled (OpenRouter provider)
 helm install apme ./deploy/helm/apme/ \
-  --set image.tag=sha-7cb2464 \
   --set abbenay.enabled=true \
   --set abbenay.token=$APME_ABBENAY_TOKEN \
   --set-json 'abbenay.providers={"openrouter":{"engine":"openrouter","apiKey":"'$OPENROUTER_API_KEY'","models":{"anthropic/claude-sonnet-4-6":{}}}}'
@@ -56,7 +55,7 @@ helm install apme ./deploy/helm/apme/ \
 | Value | Default | Description |
 |-------|---------|-------------|
 | `image.registry` | `quay.io/ansible` | Container registry |
-| `image.tag` | `""` | Image tag (required — set explicitly) |
+| `image.tag` | `2026.7.3` | Image tag (GitHub release `v2026.7.3`; Quay omits the `v`) |
 | `engine.replicas` | `1` | Engine pod replicas |
 | `gitleaks.enabled` | `true` | Enable Gitleaks validator |
 | `collectionHealth.enabled` | `true` | Enable Collection Health validator |
@@ -126,8 +125,7 @@ layer, deploy APME without the standalone UI and expose only the Gateway:
 ui:
   enabled: false
 
-image:
-  tag: sha-7cb2464   # pulls from quay.io/ansible by default
+# image.tag defaults to 2026.7.3 on quay.io/ansible
 
 route:
   enabled: true
