@@ -19,9 +19,12 @@ verify_sha256() {
   fi
   if command -v shasum >/dev/null 2>&1; then
     local expected actual filename
-    # Helm publishes "<hash>  <filename>" (two spaces) or "<hash> <filename>".
-    read -r expected _ filename <"${sumfile}"
-    if [[ -z "${filename}" ]]; then
+    # Helm publishes "<hash>  <filename>" (two spaces) or "<hash> *<filename>".
+    # Use field splitting so consecutive whitespace does not drop the filename.
+    expected="$(awk '{print $1; exit}' "${sumfile}")"
+    filename="$(awk '{print $2; exit}' "${sumfile}")"
+    filename="${filename#\*}"
+    if [[ -z "${expected}" || -z "${filename}" ]]; then
       echo "Unable to parse checksum file: ${sumfile}" >&2
       exit 1
     fi
