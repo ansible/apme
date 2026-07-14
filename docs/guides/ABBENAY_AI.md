@@ -293,10 +293,14 @@ for different SDKs and will be ignored.
 ## Install / Upgrade
 
 ```bash
-helm upgrade --install apme deploy/helm/apme/ \
+helm repo add apme https://ansible.github.io/apme
+helm repo update
+helm upgrade --install apme apme/apme \
   -n apme --create-namespace \
   -f values.yaml
 ```
+
+From a local clone: `helm upgrade --install apme deploy/helm/apme/ …`.
 
 ## Verify
 

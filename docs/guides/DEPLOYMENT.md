@@ -9,7 +9,8 @@ APME supports multiple deployment methods depending on your environment and need
 | Production single-node VM | **bootc VM** | [bootc section](#bootc-vm) / [full guide](../../deploy/bootc/README.md) |
 | Quick evaluation / CI | **CLI daemon** | [CLI Guide](CLI.md) |
 
-> **Deploying on Kubernetes or OpenShift?** Use the Helm chart at
+> **Deploying on Kubernetes or OpenShift?** Use the published Helm chart
+> (`helm repo add apme https://ansible.github.io/apme`) or the source chart at
 > `deploy/helm/apme/`. Do not use Podman on K8s/OCP.
 
 Full deployment methods (Podman, bootc, Helm) run the complete engine stack
@@ -380,7 +381,8 @@ configuration, service management, and troubleshooting.
 
 ## Helm / Kubernetes
 
-Deploy APME on Kubernetes or OpenShift using the Helm chart at
+Deploy APME on Kubernetes or OpenShift using the published Helm chart
+repository (`https://ansible.github.io/apme`) or the source chart at
 `deploy/helm/apme/`. The chart models the engine stack as sidecar containers
 in a single pod (preserving localhost networking per ADR-005 and pod scaling
 per ADR-012).
@@ -393,10 +395,19 @@ per ADR-012).
 - Ingress/Route support (OpenShift Routes included)
 - NetworkPolicy for pod isolation
 - PVC for Gateway persistence; PVC for session venvs (single replica), emptyDir when scaling to multiple replicas
+- OpenShift Developer Catalog via `HelmChartRepository` pointing at the Pages URL
 
 ### Quick start
 
 ```bash
+# Recommended: install from the published chart repo
+helm repo add apme https://ansible.github.io/apme
+helm repo update
+helm install apme apme/apme \
+  --namespace apme --create-namespace \
+  --set route.enabled=true
+
+# From a local clone (contributors / unreleased SHA builds)
 helm install apme ./deploy/helm/apme/ \
   --set image.tag=sha-7cb2464 \
   --set abbenay.enabled=true \
@@ -404,11 +415,17 @@ helm install apme ./deploy/helm/apme/ \
   --set-json 'abbenay.providers={"openrouter":{"engine":"openrouter","apiKey":"'$OPENROUTER_API_KEY'","models":{"anthropic/claude-sonnet-4-6":{}}}}'
 ```
 
+### OpenShift UI
+
+Add chart repository URL `https://ansible.github.io/apme` (Developer → Helm),
+or apply a `HelmChartRepository` / `ProjectHelmChartRepository` CR — see
+[deploy/helm/apme/README.md](../../deploy/helm/apme/README.md).
+
 ### Key values
 
 | Value | Description |
 |-------|-------------|
-| `image.tag` | Image tag for all containers (required — no default) |
+| `image.tag` | Image tag (empty → `Chart.appVersion` CalVer; or SHA like `sha-7cb2464`) |
 | `engine.replicas` | Engine pod replicas (default: 1) |
 | `abbenay.enabled` | Enable AI provider (default: false) |
 | `abbenay.token` | Abbenay service token (required when `abbenay.enabled=true`) |

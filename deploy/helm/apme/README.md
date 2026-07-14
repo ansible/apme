@@ -5,6 +5,66 @@ as defined in [ADR-054](../../../.sdlc/adrs/ADR-054-production-deployment.md):
 the engine stack runs as sidecar containers in a single pod (preserving
 localhost networking per ADR-005 and pod-level scaling per ADR-012).
 
+## Chart repository (OpenShift / `helm repo add`)
+
+Packaged chart releases are published to a classic HTTP Helm repository on
+GitHub Pages:
+
+| | |
+|--|--|
+| **Repo URL** | `https://ansible.github.io/apme` |
+| **Index** | `https://ansible.github.io/apme/index.yaml` |
+
+> **Ops:** Enable GitHub Pages on the `ansible/apme` repository with source
+> **Deploy from a branch → `gh-pages` / root**. Chart releases are created by
+> `.github/workflows/helm-charts.yml` (chart-releaser) when
+> `deploy/helm/apme/**` changes on `main`.
+
+### CLI
+
+```bash
+helm repo add apme https://ansible.github.io/apme
+helm repo update
+helm install apme apme/apme \
+  --namespace apme --create-namespace \
+  --set route.enabled=true   # OpenShift
+```
+
+Defaults pull from `quay.io/ansible` with image tag `2026.7.3` (`Chart.appVersion`).
+For unreleased SHA builds, set `--set image.tag=sha-<commit>`.
+
+### OpenShift Developer Catalog
+
+1. **UI:** Developer perspective → **Helm** → **Create** → add chart repository
+   with URL `https://ansible.github.io/apme`, then install **apme** from the
+   catalog (enable Route / set values as needed).
+2. **Cluster-scoped CR** (admin):
+
+```yaml
+apiVersion: helm.openshift.io/v1beta1
+kind: HelmChartRepository
+metadata:
+  name: apme
+spec:
+  name: APME
+  connectionConfig:
+    url: https://ansible.github.io/apme
+```
+
+3. **Namespace-scoped CR** (project member with RBAC):
+
+```yaml
+apiVersion: helm.openshift.io/v1beta1
+kind: ProjectHelmChartRepository
+metadata:
+  name: apme
+  namespace: my-project
+spec:
+  name: APME
+  connectionConfig:
+    url: https://ansible.github.io/apme
+```
+
 ## Prerequisites
 
 - Kubernetes 1.26+ or OpenShift 4.14+
@@ -17,6 +77,16 @@ localhost networking per ADR-005 and pod-level scaling per ADR-012).
 
 ## Quick start
 
+### From the chart repository (recommended)
+
+```bash
+helm repo add apme https://ansible.github.io/apme
+helm repo update
+helm install apme apme/apme --namespace apme --create-namespace
+```
+
+### From a local clone (contributors)
+
 ```bash
 # From the repository root (uses quay.io/ansible + tag 2026.7.3 by default)
 helm install apme ./deploy/helm/apme/
@@ -27,6 +97,8 @@ helm install apme ./deploy/helm/apme/ \
   --set abbenay.token=$APME_ABBENAY_TOKEN \
   --set-json 'abbenay.providers={"openrouter":{"engine":"openrouter","apiKey":"'$OPENROUTER_API_KEY'","models":{"anthropic/claude-sonnet-4-6":{}}}}'
 ```
+
+Lint and package locally with `tox -e helm` (writes `dist/charts/*.tgz`).
 
 ## Architecture
 

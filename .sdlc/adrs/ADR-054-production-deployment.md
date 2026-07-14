@@ -92,6 +92,19 @@ Secrets. The chart currently supports native Kubernetes `Secret` resources
 and inline values rendered into those secrets. Support for
 external-secrets-operator `ExternalSecret` resources is not yet implemented.
 
+#### Chart distribution (HTTP repository)
+
+Chart **source** lives in-repo at `deploy/helm/apme/`. Packaged releases are
+published to a classic Helm HTTP repository on GitHub Pages
+(`https://ansible.github.io/apme`) via chart-releaser
+(`.github/workflows/helm-charts.yml`). That URL is what OpenShift
+`HelmChartRepository` / Developer Catalog and `helm repo add` consume.
+OCI chart refs are out of scope for the OpenShift console path.
+
+On release tags `vYYYY.M.P` (CalVer), container CI publishes matching image
+tags (without the leading `v`). `Chart.appVersion` must stay aligned with
+that tag so Catalog installs with an empty `image.tag` pull real images.
+
 ### 2. bootc VM Image (`deploy/bootc/`)
 
 A bootc Containerfile builds an OCI image that can be converted to qcow2, raw,
@@ -174,8 +187,10 @@ not the default.
 
 ### Positive
 
-- **Standard K8s deployment**: `helm install apme ./deploy/helm/apme` gives a
-  production-ready deployment with proper Services, PVCs, and Ingress.
+- **Standard K8s deployment**: `helm repo add apme https://ansible.github.io/apme`
+  then `helm install apme apme/apme` (or path install from `deploy/helm/apme`)
+  gives a production-ready deployment with proper Services, PVCs, and Ingress.
+  OpenShift can add the same URL as a Helm chart repository for Developer Catalog.
 - **Preserves architecture**: Sidecar model keeps ADR-005 (localhost) and
   ADR-012 (scale pods) intact — no service discovery changes needed.
 - **Reproducible VMs**: bootc images are atomic and reproducible. `bootc switch`

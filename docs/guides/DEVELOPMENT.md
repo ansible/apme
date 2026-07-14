@@ -53,6 +53,7 @@ tox is the single entry point for all developer tasks. Every CI check has a corr
 | `tox -e ai` | `pytest` with AI extras (abbenay) | Test |
 | `tox -e ui` | `pytest -m ui` (Playwright, requires running gateway + UI) | Test |
 | `tox -e grpc` | `scripts/gen_grpc.sh` | Code generation |
+| `tox -e helm` | `scripts/helm_chart.sh` (`helm lint` + `helm package`) | Helm chart |
 | `tox -e graph` | `tools/visualize_graph.py` (interactive HTML graph) | Developer tool |
 | `tox -e build` | `containers/podman/build.sh` | Pod lifecycle |
 | `tox -e up` | `build.sh` + `up.sh` | Pod lifecycle |

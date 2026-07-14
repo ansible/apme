@@ -91,7 +91,7 @@ Validator fan-out uses gRPC; Galaxy Proxy is HTTP (PEP 503). The engine parses c
 | **CLI** (`pip install`) | Quick evaluation, CI pipelines, single-user | [CLI Guide](docs/guides/CLI.md) |
 | **Podman pod** | Development, full feature set (UI, AI, persistence) | [Deployment Guide](docs/guides/DEPLOYMENT.md) |
 | **bootc VM** | Production single-node, atomic upgrades, systemd lifecycle | [bootc Guide](deploy/bootc/README.md) |
-| **Helm chart** | Kubernetes / OpenShift production | [Helm Guide](deploy/helm/apme/README.md) |
+| **Helm chart** | Kubernetes / OpenShift production | [Helm Guide](deploy/helm/apme/README.md) (`helm repo add apme https://ansible.github.io/apme`) |
 
 ### Try it now
 

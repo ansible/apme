@@ -2,12 +2,14 @@ apiVersion: v2
 name: apme
 description: Ansible Policy & Modernization Engine — policy enforcement and modernization for Ansible content
 type: application
-# Bump whenever chart templates, values defaults, or packaged metadata change.
-version: 0.1.1
-# Tracks the default APME image tag (release tag without leading "v").
-# Keep in sync with image.tag in values.yaml. Override image.tag for SHA builds.
+# Chart semver — bump whenever the packaged chart changes (templates, values, deps).
+version: 0.1.2
+# Must match image.tag in values.yaml (CalVer release tag without leading "v",
+# e.g. git tag v2026.7.3 → image tag 2026.7.3). Empty image.tag falls back to
+# this field via the apme.image helper.
 appVersion: "2026.7.3"
 home: https://github.com/ansible/apme
+icon: https://raw.githubusercontent.com/ansible/apme/main/docs/images/apme.png
 sources:
   - https://github.com/ansible/apme
 maintainers:
@@ -18,3 +20,8 @@ keywords:
   - modernization
   - static-analysis
   - grpc
+annotations:
+  # OpenShift / Artifact Hub friendly metadata
+  charts.openshift.io/name: APME
+  artifacthub.io/license: Apache-2.0
+  artifacthub.io/category: integration-delivery

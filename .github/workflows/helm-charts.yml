@@ -1,0 +1,71 @@
+# Publish the Helm chart to a classic HTTP chart repository (GitHub Pages).
+# OpenShift Developer Catalog / HelmChartRepository consume index.yaml from
+# https://ansible.github.io/apme (requires Pages enabled on the gh-pages branch).
+name: Helm Charts
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "deploy/helm/apme/**"
+      - ".github/workflows/helm-charts.yml"
+      - "scripts/helm_chart.sh"
+      - "tox.ini"
+  pull_request:
+    paths:
+      - "deploy/helm/apme/**"
+      - ".github/workflows/helm-charts.yml"
+      - "scripts/helm_chart.sh"
+      - "tox.ini"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: helm-charts-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FORCE_COLOR: 1
+  PY_COLORS: 1
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - uses: astral-sh/setup-uv@e06108dd0aef18192324c70427afc47652e63a82 # v7
+
+      - name: Lint and package chart
+        run: uvx --with tox-uv tox -e helm
+
+  release:
+    if: github.event_name != 'pull_request'
+    needs: lint
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    concurrency:
+      group: helm-charts-release-main
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git user.name
+        run: git config user.name "$GITHUB_ACTOR"
+
+      - name: Configure Git user.email
+        run: git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
+
+      - name: Run chart-releaser
+        uses: helm/chart-releaser-action@cae68fefc6b5f367a0275617c9f83181ba54714f # v1.7.0
+        with:
+          charts_dir: deploy/helm
+          skip_existing: "true"
+          mark_as_latest: "false"
+        env:
+          CR_TOKEN: ${{ secrets.GITHUB_TOKEN }}

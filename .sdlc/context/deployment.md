@@ -15,12 +15,13 @@
 |--------------------|-------------------|------|-------|
 | Developer laptop / workstation | Podman pod | `tox -e up` | [Below](#podman-pod) |
 | Linux server **without** Kubernetes | Podman pod or bootc VM | `tox -e up` or bootc | [Below](#podman-pod), [deploy/bootc/README.md](/deploy/bootc/README.md) |
-| **Kubernetes / OpenShift** | **Helm chart** | `helm install` | [deploy/helm/apme/README.md](/deploy/helm/apme/README.md) |
+| **Kubernetes / OpenShift** | **Helm chart** | `helm repo add` / `helm install` | [deploy/helm/apme/README.md](/deploy/helm/apme/README.md) |
 | Quick evaluation / CI | CLI daemon | `apme daemon start` | [CLI Guide](/docs/guides/CLI.md) |
 
 **Key rule:** If the target has `kubectl` / `oc` access to a cluster, **always
-use the Helm chart** at `deploy/helm/apme/`. Podman pods are for local
-development and non-Kubernetes Linux servers only.
+use the Helm chart** (`https://ansible.github.io/apme` or
+`deploy/helm/apme/`). Podman pods are for local development and
+non-Kubernetes Linux servers only.
 
 ## Podman Pod
 
