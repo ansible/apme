@@ -425,7 +425,7 @@ or apply a `HelmChartRepository` / `ProjectHelmChartRepository` CR — see
 
 | Value | Description |
 |-------|-------------|
-| `image.tag` | Image tag (empty → `Chart.appVersion` CalVer; or SHA like `sha-7cb2464`) |
+| `image.tag` | Image tag (default `2026.7.3` / `Chart.appVersion`; override with SHA like `sha-b7d1683`) |
 | `engine.replicas` | Engine pod replicas (default: 1) |
 | `abbenay.enabled` | Enable AI provider (default: false) |
 | `abbenay.token` | Abbenay service token (required when `abbenay.enabled=true`) |
