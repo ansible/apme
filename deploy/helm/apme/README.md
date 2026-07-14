@@ -9,7 +9,8 @@ localhost networking per ADR-005 and pod-level scaling per ADR-012).
 
 - Kubernetes 1.26+ or OpenShift 4.14+
 - Helm 3.x
-- Access to `ghcr.io/ansible` container registry (or mirror images locally)
+- Access to `quay.io/ansible` container registry (or mirror images locally;
+  CI also publishes to `ghcr.io/ansible`)
 - A published image tag (CI tags images by git SHA, e.g. `sha-7cb2464`)
 
 ## Quick start
@@ -54,7 +55,7 @@ helm install apme ./deploy/helm/apme/ \
 
 | Value | Default | Description |
 |-------|---------|-------------|
-| `image.registry` | `ghcr.io/ansible` | Container registry |
+| `image.registry` | `quay.io/ansible` | Container registry |
 | `image.tag` | `""` | Image tag (required — set explicitly) |
 | `engine.replicas` | `1` | Engine pod replicas |
 | `gitleaks.enabled` | `true` | Enable Gitleaks validator |
@@ -126,8 +127,7 @@ ui:
   enabled: false
 
 image:
-  registry: quay.io/your-org
-  tag: sha-7cb2464
+  tag: sha-7cb2464   # pulls from quay.io/ansible by default
 
 route:
   enabled: true

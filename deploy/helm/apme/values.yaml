@@ -4,7 +4,9 @@
 # a single pod, preserving ADR-005 localhost networking and ADR-012 pod scaling.
 
 image:
-  registry: ghcr.io/ansible
+  # Primary publish target (also mirrored to ghcr.io/ansible). Override for
+  # private mirrors / air-gapped registries.
+  registry: quay.io/ansible
   # -- Image tag for all APME containers.
   # CI publishes images with git SHA tags (e.g. "sha-7cb2464").
   # Set this explicitly; the fallback is Chart.yaml appVersion which is
