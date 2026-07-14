@@ -6,9 +6,21 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CHART_DIR="${ROOT}/deploy/helm/apme"
 OUT_DIR="${ROOT}/dist/charts"
+# Accept HELM_VERSION with or without a leading "v" (tarball names use "v…").
 HELM_VERSION="${HELM_VERSION:-v3.16.4}"
+HELM_VERSION="v${HELM_VERSION#v}"
 CACHE_DIR="${ROOT}/.tox/helm-tools"
 HELM_BIN="${CACHE_DIR}/helm"
+
+download() {
+  local url="$1" dest="$2"
+  if ! command -v curl >/dev/null 2>&1; then
+    echo "curl is required to download Helm (not found on PATH)" >&2
+    exit 1
+  fi
+  curl -fsSL --retry 3 --retry-delay 2 \
+    -o "${dest}" "${url}"
+}
 
 verify_sha256() {
   # Portable checksum check: GNU coreutils on Linux, shasum on macOS.
@@ -71,8 +83,8 @@ ensure_helm() {
   tarball="helm-${HELM_VERSION}-${os}-${arch}.tar.gz"
   sumfile="${tarball}.sha256sum"
   echo "Downloading Helm ${HELM_VERSION}..."
-  curl -fsSL "https://get.helm.sh/${tarball}" -o "${CACHE_DIR}/${tarball}"
-  curl -fsSL "https://get.helm.sh/${sumfile}" -o "${CACHE_DIR}/${sumfile}"
+  download "https://get.helm.sh/${tarball}" "${CACHE_DIR}/${tarball}"
+  download "https://get.helm.sh/${sumfile}" "${CACHE_DIR}/${sumfile}"
   (
     cd "${CACHE_DIR}"
     verify_sha256 "${sumfile}"
