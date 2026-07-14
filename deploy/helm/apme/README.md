@@ -9,10 +9,11 @@ localhost networking per ADR-005 and pod-level scaling per ADR-012).
 
 - Kubernetes 1.26+ or OpenShift 4.14+
 - Helm 3.x
-- Access to `quay.io/ansible` container registry (or mirror images locally;
-  CI also publishes to `ghcr.io/ansible`)
-- Default image tag is `2026.7.3` (GitHub release `v2026.7.3`). Override with
-  `--set image.tag=…` for another release or a SHA build (e.g. `sha-b7d1683`)
+- Access to `quay.io/ansible` (default pull registry) or a mirror. CI always
+  publishes to `ghcr.io/ansible` and publishes to Quay when credentials are set
+- Default image tag is pinned to `2026.7.3` (GitHub release `v2026.7.3`; must
+  match Chart.appVersion). Override with `--set image.tag=…` for another
+  release or a SHA build (e.g. `sha-b7d1683`)
 
 ## Quick start
 

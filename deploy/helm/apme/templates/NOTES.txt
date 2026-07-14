@@ -62,7 +62,7 @@ Access the Gateway API directly via port-forward:
 
 {{- if not .Values.image.tag }}
 
-WARNING: image.tag is not set. The chart falls back to appVersion
-({{ .Chart.AppVersion }}) which may not match a published image tag.
-Set image.tag to a valid tag (e.g. "2026.7.3" or a git SHA like "sha-b7d1683").
+NOTE: image.tag is unset; using Chart.appVersion ({{ .Chart.AppVersion }}),
+which tracks this chart's default release image tag. Override with
+--set image.tag=<tag> for SHA builds (e.g. sha-b7d1683).
 {{- end }}

@@ -4,12 +4,15 @@
 # a single pod, preserving ADR-005 localhost networking and ADR-012 pod scaling.
 
 image:
-  # Primary publish target (also mirrored to ghcr.io/ansible). Override for
-  # private mirrors / air-gapped registries.
+  # Default registry to *pull* APME images from. CI always publishes to
+  # ghcr.io/ansible and also publishes to quay.io/ansible when Quay
+  # credentials are configured (see .github/workflows/container-images.yml).
+  # Override for private mirrors / air-gapped registries.
   registry: quay.io/ansible
   # -- Image tag for all APME containers.
-  # Defaults to the Quay tag for the latest GitHub release (v2026.7.3 →
-  # 2026.7.3; CI strips the leading "v"). Override with a SHA tag
+  # Pinned default shipped with this chart (must match Chart.yaml
+  # appVersion). Corresponds to GitHub release v2026.7.3; Quay/GHCR
+  # release tags omit the leading "v". Override with a SHA tag
   # (e.g. "sha-b7d1683") for unreleased builds.
   tag: "2026.7.3"
   pullPolicy: IfNotPresent
