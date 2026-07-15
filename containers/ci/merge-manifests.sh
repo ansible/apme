@@ -85,21 +85,42 @@ assert_multiarch() {
 }
 
 # Run up to MERGE_PARALLELISM background jobs; fail if any child fails.
+# Each task arg is: label<TAB>function<TAB>arg1<TAB>arg2...
+# (no eval — function is called with a real argv list).
 run_parallel() {
   local -a pids=()
   local -a labels=()
   local fail=0
-  local pid label done_label item cmd i
+  local pid label done_label item fn i
+  local -a parts=()
+  local -a fn_args=()
 
   if [[ $# -eq 0 ]]; then
-    echo "run_parallel: no commands" >&2
+    echo "run_parallel: no tasks" >&2
     return 1
   fi
 
-  # Each arg is: "label<TAB>command string"
   for item in "$@"; do
-    label="${item%%$'\t'*}"
-    cmd="${item#*$'\t'}"
+    parts=()
+    fn_args=()
+    IFS=$'\t' read -r -a parts <<<"$item"
+    if [[ ${#parts[@]} -lt 2 ]]; then
+      echo "ERROR: malformed parallel task (need label\\tfunction[\\targs...]): ${item}" >&2
+      return 1
+    fi
+    label="${parts[0]}"
+    fn="${parts[1]}"
+    if [[ ${#parts[@]} -gt 2 ]]; then
+      fn_args=("${parts[@]:2}")
+    fi
+    case "$fn" in
+      preflight_one | merge_one_image) ;;
+      *)
+        echo "ERROR: refused unknown parallel function: ${fn}" >&2
+        return 1
+        ;;
+    esac
+
     # Throttle: wait for a slot when at capacity.
     while [[ ${#pids[@]} -ge $MERGE_PARALLELISM ]]; do
       pid="${pids[0]}"
@@ -113,7 +134,7 @@ run_parallel() {
     done
     (
       set -euo pipefail
-      eval "$cmd"
+      "$fn" "${fn_args[@]}"
     ) &
     pids+=("$!")
     labels+=("$label")
@@ -148,7 +169,7 @@ preflight_sources() {
   local -a tasks=()
   echo "==> Preflight: verifying per-arch sources exist (parallelism=${MERGE_PARALLELISM})"
   for name in "${IMAGES[@]}"; do
-    tasks+=("preflight:${name}"$'\t'"preflight_one $(printf '%q' "$name")")
+    tasks+=("preflight:${name}"$'\t'"preflight_one"$'\t'"${name}")
   done
   run_parallel "${tasks[@]}"
 }
@@ -157,7 +178,7 @@ merge_one_image() {
   local name="$1"
   shift
   local -a tags=("$@")
-  local tag src_amd src_arm dest
+  local tag src_amd src_arm dest first_tag=""
   local -a tag_args=()
 
   src_amd="${GHCR_REGISTRY}/${OWNER}/apme-${name}:${SHA}-amd64"
@@ -165,36 +186,34 @@ merge_one_image() {
   for tag in "${tags[@]}"; do
     tag="$(trim "$tag")"
     [[ -z "$tag" ]] && continue
+    [[ -z "$first_tag" ]] && first_tag="$tag"
     tag_args+=(-t "${GHCR_REGISTRY}/${OWNER}/apme-${name}:${tag}")
     if [[ -n "$QUAY_NS" ]]; then
       tag_args+=(-t "${QUAY_REGISTRY}/${QUAY_NS}/apme-${name}:${tag}")
     fi
   done
-  if [[ ${#tag_args[@]} -eq 0 ]]; then
+  if [[ ${#tag_args[@]} -eq 0 || -z "$first_tag" ]]; then
     echo "No tags left after trimming for ${name}" >&2
     return 1
   fi
   echo "==> imagetools create apme-${name} tags=${tags[*]}"
   "${ENGINE}" buildx imagetools create "${tag_args[@]}" "${src_amd}" "${src_arm}"
-  dest="${GHCR_REGISTRY}/${OWNER}/apme-${name}:$(trim "${tags[0]}")"
+  dest="${GHCR_REGISTRY}/${OWNER}/apme-${name}:${first_tag}"
   assert_multiarch "${dest}"
 }
 
 merge_tags_for_all_images() {
   local -a tags=("$@")
-  local name
+  local img tag
   local -a tasks=()
-  local tag_q name_q
+  local task
 
-  # Quote tag list once for embedding in eval'd child commands.
-  tag_q=""
-  for name in "${tags[@]}"; do
-    tag_q+=" $(printf '%q' "$name")"
-  done
-
-  for name in "${IMAGES[@]}"; do
-    name_q=$(printf '%q' "$name")
-    tasks+=("merge:${name}"$'\t'"merge_one_image ${name_q}${tag_q}")
+  for img in "${IMAGES[@]}"; do
+    task="merge:${img}"$'\t'"merge_one_image"$'\t'"${img}"
+    for tag in "${tags[@]}"; do
+      task+=$'\t'"${tag}"
+    done
+    tasks+=("$task")
   done
   run_parallel "${tasks[@]}"
 }
