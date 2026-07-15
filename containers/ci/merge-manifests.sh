@@ -11,6 +11,7 @@
 #   merge-manifests.sh --owner ansible --sha "$GITHUB_SHA" --tags "sha-abc1234,latest"
 #   merge-manifests.sh --owner ansible --sha "$GITHUB_SHA" --tags-file /tmp/tags.txt
 #   merge-manifests.sh ... --quay-ns ansible   # also push final tags to quay.io
+#   MERGE_PARALLELISM=6 merge-manifests.sh ... # concurrent imagetools (default 6)
 #
 # Locally runnable (lean CI): logic lives here, not only in workflow YAML.
 set -euo pipefail
@@ -23,12 +24,14 @@ QUAY_NS=""
 GHCR_REGISTRY="${GHCR_REGISTRY:-ghcr.io}"
 QUAY_REGISTRY="${QUAY_REGISTRY:-quay.io}"
 ENGINE="${CONTAINER_ENGINE:-docker}"
+# Cap concurrent registry ops to avoid rate limits while speeding merge.
+MERGE_PARALLELISM="${MERGE_PARALLELISM:-6}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 IMAGES_FILE="${IMAGES_FILE:-${SCRIPT_DIR}/images.txt}"
 
 usage() {
-  sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'
   exit 1
 }
 
@@ -72,56 +75,131 @@ assert_multiarch() {
   ')"
   if ! grep -qx 'amd64' <<<"$arches"; then
     echo "ERROR: ${ref} missing linux/amd64 (arches: ${arches//$'\n'/ })" >&2
-    exit 1
+    return 1
   fi
   if ! grep -qx 'arm64' <<<"$arches"; then
     echo "ERROR: ${ref} missing linux/arm64 (arches: ${arches//$'\n'/ })" >&2
-    exit 1
+    return 1
   fi
   echo "OK multi-arch: ${ref}"
 }
 
-preflight_sources() {
-  local name src_amd src_arm
-  echo "==> Preflight: verifying per-arch sources exist"
-  for name in "${IMAGES[@]}"; do
-    src_amd="${GHCR_REGISTRY}/${OWNER}/apme-${name}:${SHA}-amd64"
-    src_arm="${GHCR_REGISTRY}/${OWNER}/apme-${name}:${SHA}-arm64"
-    "${ENGINE}" buildx imagetools inspect "${src_amd}" >/dev/null
-    "${ENGINE}" buildx imagetools inspect "${src_arm}" >/dev/null
-    echo "OK sources: apme-${name}"
+# Run up to MERGE_PARALLELISM background jobs; fail if any child fails.
+run_parallel() {
+  local -a pids=()
+  local -a labels=()
+  local fail=0
+  local pid label done_label item cmd i
+
+  if [[ $# -eq 0 ]]; then
+    echo "run_parallel: no commands" >&2
+    return 1
+  fi
+
+  # Each arg is: "label<TAB>command string"
+  for item in "$@"; do
+    label="${item%%$'\t'*}"
+    cmd="${item#*$'\t'}"
+    # Throttle: wait for a slot when at capacity.
+    while [[ ${#pids[@]} -ge $MERGE_PARALLELISM ]]; do
+      pid="${pids[0]}"
+      done_label="${labels[0]}"
+      pids=("${pids[@]:1}")
+      labels=("${labels[@]:1}")
+      if ! wait "$pid"; then
+        echo "ERROR: parallel task failed: ${done_label}" >&2
+        fail=1
+      fi
+    done
+    (
+      set -euo pipefail
+      eval "$cmd"
+    ) &
+    pids+=("$!")
+    labels+=("$label")
   done
+
+  for i in "${!pids[@]}"; do
+    pid="${pids[$i]}"
+    done_label="${labels[$i]}"
+    if ! wait "$pid"; then
+      echo "ERROR: parallel task failed: ${done_label}" >&2
+      fail=1
+    fi
+  done
+
+  if [[ "$fail" -ne 0 ]]; then
+    return 1
+  fi
+}
+
+preflight_one() {
+  local name="$1"
+  local src_amd src_arm
+  src_amd="${GHCR_REGISTRY}/${OWNER}/apme-${name}:${SHA}-amd64"
+  src_arm="${GHCR_REGISTRY}/${OWNER}/apme-${name}:${SHA}-arm64"
+  "${ENGINE}" buildx imagetools inspect "${src_amd}" >/dev/null
+  "${ENGINE}" buildx imagetools inspect "${src_arm}" >/dev/null
+  echo "OK sources: apme-${name}"
+}
+
+preflight_sources() {
+  local name
+  local -a tasks=()
+  echo "==> Preflight: verifying per-arch sources exist (parallelism=${MERGE_PARALLELISM})"
+  for name in "${IMAGES[@]}"; do
+    tasks+=("preflight:${name}"$'\t'"preflight_one $(printf '%q' "$name")")
+  done
+  run_parallel "${tasks[@]}"
+}
+
+merge_one_image() {
+  local name="$1"
+  shift
+  local -a tags=("$@")
+  local tag src_amd src_arm dest
+  local -a tag_args=()
+
+  src_amd="${GHCR_REGISTRY}/${OWNER}/apme-${name}:${SHA}-amd64"
+  src_arm="${GHCR_REGISTRY}/${OWNER}/apme-${name}:${SHA}-arm64"
+  for tag in "${tags[@]}"; do
+    tag="$(trim "$tag")"
+    [[ -z "$tag" ]] && continue
+    tag_args+=(-t "${GHCR_REGISTRY}/${OWNER}/apme-${name}:${tag}")
+    if [[ -n "$QUAY_NS" ]]; then
+      tag_args+=(-t "${QUAY_REGISTRY}/${QUAY_NS}/apme-${name}:${tag}")
+    fi
+  done
+  if [[ ${#tag_args[@]} -eq 0 ]]; then
+    echo "No tags left after trimming for ${name}" >&2
+    return 1
+  fi
+  echo "==> imagetools create apme-${name} tags=${tags[*]}"
+  "${ENGINE}" buildx imagetools create "${tag_args[@]}" "${src_amd}" "${src_arm}"
+  dest="${GHCR_REGISTRY}/${OWNER}/apme-${name}:$(trim "${tags[0]}")"
+  assert_multiarch "${dest}"
 }
 
 merge_tags_for_all_images() {
   local -a tags=("$@")
-  local name tag src_amd src_arm
-  local -a tag_args
-  local dest
+  local name
+  local -a tasks=()
+  local tag_q name_q
+
+  # Quote tag list once for embedding in eval'd child commands.
+  tag_q=""
+  for name in "${tags[@]}"; do
+    tag_q+=" $(printf '%q' "$name")"
+  done
 
   for name in "${IMAGES[@]}"; do
-    src_amd="${GHCR_REGISTRY}/${OWNER}/apme-${name}:${SHA}-amd64"
-    src_arm="${GHCR_REGISTRY}/${OWNER}/apme-${name}:${SHA}-arm64"
-    tag_args=()
-    for tag in "${tags[@]}"; do
-      tag="$(trim "$tag")"
-      [[ -z "$tag" ]] && continue
-      tag_args+=(-t "${GHCR_REGISTRY}/${OWNER}/apme-${name}:${tag}")
-      if [[ -n "$QUAY_NS" ]]; then
-        tag_args+=(-t "${QUAY_REGISTRY}/${QUAY_NS}/apme-${name}:${tag}")
-      fi
-    done
-    if [[ ${#tag_args[@]} -eq 0 ]]; then
-      echo "No tags left after trimming for ${name}" >&2
-      exit 1
-    fi
-    echo "==> imagetools create apme-${name} tags=${tags[*]}"
-    "${ENGINE}" buildx imagetools create "${tag_args[@]}" "${src_amd}" "${src_arm}"
-    # Assert GHCR consumer tag (first tag in this batch).
-    dest="${GHCR_REGISTRY}/${OWNER}/apme-${name}:$(trim "${tags[0]}")"
-    assert_multiarch "${dest}"
+    name_q=$(printf '%q' "$name")
+    tasks+=("merge:${name}"$'\t'"merge_one_image ${name_q}${tag_q}")
   done
+  run_parallel "${tasks[@]}"
 }
+
+# Subshells from run_parallel inherit functions defined above (no export -f).
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -145,6 +223,10 @@ while [[ $# -gt 0 ]]; do
       QUAY_NS="${2:-}"
       shift 2
       ;;
+    --parallelism)
+      MERGE_PARALLELISM="${2:-}"
+      shift 2
+      ;;
     -h | --help)
       usage
       ;;
@@ -158,6 +240,11 @@ done
 if [[ -z "$OWNER" || -z "$SHA" ]]; then
   echo "--owner and --sha are required" >&2
   usage
+fi
+
+if ! [[ "$MERGE_PARALLELISM" =~ ^[1-9][0-9]*$ ]]; then
+  echo "MERGE_PARALLELISM must be a positive integer (got: ${MERGE_PARALLELISM})" >&2
+  exit 1
 fi
 
 TAGS=()
@@ -196,6 +283,7 @@ load_images
 echo "==> Merging multi-arch manifests for owner=${OWNER} sha=${SHA}"
 echo "==> Images (${#IMAGES[@]}): ${IMAGES[*]}"
 echo "==> Consumer tags: ${TAGS[*]}"
+echo "==> Parallelism: ${MERGE_PARALLELISM}"
 if [[ -n "$QUAY_NS" ]]; then
   echo "==> Also publishing to ${QUAY_REGISTRY}/${QUAY_NS}"
 fi

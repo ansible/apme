@@ -152,6 +152,8 @@ of multi-arch tags.
 
 - Workflow: [`.github/workflows/container-images.yml`](../../.github/workflows/container-images.yml)
 - Merge script: [`containers/ci/merge-manifests.sh`](../../containers/ci/merge-manifests.sh)
+  (per-image `imagetools` work is parallelized via `MERGE_PARALLELISM`, default
+  6; phase-1 `sha-*` still completes before phase-2 floating tags)
 - Service builds for a given arch must `FROM` that arch's `apme-base:<sha>-<arch>`
   tag (never an unfinished multi-arch `latest` mid-pipeline).
 - Prefer `docker buildx imagetools create` over raw `docker manifest create`
