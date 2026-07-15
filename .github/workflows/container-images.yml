@@ -183,6 +183,8 @@ jobs:
         env:
           GHCR_REGISTRY: ${{ env.GHCR_REGISTRY }}
           QUAY_REGISTRY: ${{ env.QUAY_REGISTRY }}
+          # Parallel imagetools create across images (merge was the wall-clock bottleneck).
+          MERGE_PARALLELISM: "6"
         run: |
           args=(
             --owner "${{ steps.owner.outputs.lc }}"
