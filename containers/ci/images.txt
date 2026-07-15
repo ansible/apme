@@ -1,0 +1,16 @@
+# APME images published by container-images.yml (ADR-063).
+# One name per line. Dockerfile path: containers/<name>/Dockerfile
+# Keep this file as the single source of truth for the merge script and
+# the workflow prepare job (do not duplicate the list in YAML).
+base
+primary
+native
+opa
+ansible
+galaxy-proxy
+gitleaks
+gateway
+cli
+ui
+collection-health
+dep-audit

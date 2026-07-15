@@ -421,6 +421,13 @@ Add chart repository URL `https://ansible.github.io/apme` (Developer → Helm),
 or apply a `HelmChartRepository` / `ProjectHelmChartRepository` CR — see
 [deploy/helm/apme/README.md](../../deploy/helm/apme/README.md).
 
+Application images published by CI after
+[ADR-063](../../.sdlc/adrs/ADR-063-multi-platform-container-images.md) are
+**multi-arch** (`linux/amd64` and `linux/arm64`) under the same registry tags.
+Older release tags remain amd64-only until rebuilt. Helm does not need
+arch-specific values; the node pulls the matching platform. Prefer a post-ADR
+SHA or release tag (and Quay only when that publish included Quay credentials).
+
 ### Key values
 
 | Value | Description |

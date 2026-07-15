@@ -160,7 +160,8 @@ implementation (ADR → Python stack → UI/bootc).
 - APME-built images are UBI10/RHEL-ecosystem compliant after full rollout.
 - Gateway uses `microdnf` consistent with UBI minimal images.
 - CI and local builds continue via existing `BASE_IMAGE` build-arg pattern.
-- Multi-arch (amd64 + arm64) supported by UBI10 App Stream manifests.
+- Multi-arch (amd64 + arm64) supported by UBI10 App Stream manifests
+  (publish contract completed by [ADR-063](ADR-063-multi-platform-container-images.md)).
 
 ### Negative
 
@@ -176,8 +177,9 @@ implementation (ADR → Python stack → UI/bootc).
 - OPA/Gitleaks final images change OS base but retain upstream binary copy
   pattern.
 - Helm chart values unchanged; same image names and tags published to GHCR/Quay.
-- Container CI workflow (`.github/workflows/container-images.yml`) needs no
-  structural change.
+- Container CI later gained a structural multi-arch publish path
+  ([ADR-063](ADR-063-multi-platform-container-images.md)); the UBI migration
+  itself did not require that reshape.
 
 ## Implementation Notes
 
@@ -241,6 +243,7 @@ FROM ${BOOTC_BASE_IMAGE}
 - [ADR-010](ADR-010-gitleaks-validator.md): Gitleaks multi-stage binary copy
 - [ADR-037](ADR-037-project-centric-ui-model.md): Gateway requires `git`
 - [ADR-054](ADR-054-production-deployment.md): Helm and bootc production paths
+- [ADR-063](ADR-063-multi-platform-container-images.md): Multi-platform image publish
 
 ## References
 

@@ -59,6 +59,11 @@ This builds eleven images:
 
 The Abbenay AI image (`ghcr.io/redhat-developer/abbenay`) is pulled from the registry.
 
+CI publishes multi-arch images (`linux/amd64` + `linux/arm64`) per
+[ADR-063](/.sdlc/adrs/ADR-063-multi-platform-container-images.md) for tags built
+after that ADR; older release tags stay amd64-only until rebuilt. Local
+`tox -e build` remains host-native.
+
 ### Start the Pod
 
 ```bash
