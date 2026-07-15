@@ -71,6 +71,7 @@ Decisions that have been accepted but are not yet fully implemented.
 | [ADR-060](ADR-060-rest-api-versioning-contract.md) | REST API Versioning Contract | 2026-07-08 |
 | [ADR-061](ADR-061-ubi-container-bases.md) | UBI10 Container Base Images | 2026-07-08 |
 | [ADR-062](ADR-062-ephemeral-proposal-working-set.md) | Ephemeral Proposal Working Set and Review Analytics | 2026-07-09 |
+| [ADR-063](ADR-063-multi-platform-container-images.md) | Multi-Platform Container Image Publish | 2026-07-15 |
 
 ## Proposed
 
@@ -97,7 +98,7 @@ Decisions replaced by newer ADRs.
 ## Creating New ADRs
 
 1. Copy the template from `../templates/adr.md`
-2. Use the next available number (currently ADR-063)
+2. Use the next available number (currently ADR-064)
 3. Include:
    - Status (Proposed → Accepted → Implemented)
    - Date

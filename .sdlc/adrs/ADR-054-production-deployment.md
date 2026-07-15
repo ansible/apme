@@ -222,3 +222,4 @@ not the default.
 - ADR-029: Web Gateway architecture (independent Gateway scaling)
 - ADR-034: Multi-pod health registration (Gateway aggregation)
 - ADR-035: Secret externalization (token management)
+- ADR-063: Multi-platform container image publish (amd64 + arm64)

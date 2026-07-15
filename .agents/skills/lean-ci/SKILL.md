@@ -69,8 +69,10 @@ CI has six workflows in `.github/workflows/`:
 - **test.yml**: Runs `tox -e unit`, `tox -e integration`, `tox -e ui`, and
   `tox -e ai` as separate jobs. Quality gate for correctness. Coverage threshold
   is enforced via `--cov-fail-under` in `tox.ini`.
-- **container-images.yml**: Builds and pushes container images to GHCR on push
-  to `main`.
+- **container-images.yml**: Builds and pushes multi-arch container images
+  (`linux/amd64` + `linux/arm64`, ADR-063) to GHCR on `main`, version tags, and
+  `workflow_dispatch`, then merges manifests via
+  `containers/ci/merge-manifests.sh` (image list: `containers/ci/images.txt`).
 - **helm-charts.yml**: Lints/packages the Helm chart (`tox -e helm`) and
   publishes to GitHub Pages via chart-releaser when `deploy/helm/apme/**`
   changes on `main`.

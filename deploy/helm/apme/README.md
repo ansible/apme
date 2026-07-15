@@ -74,6 +74,9 @@ spec:
 - Default image tag is pinned to `2026.7.3` (GitHub release `v2026.7.3`; must
   match Chart.appVersion). Override with `--set image.tag=…` for another
   release or a SHA build (e.g. `sha-b7d1683`)
+- Cluster nodes on `linux/amd64` or `linux/arm64`. Tags published by CI after
+  [ADR-063](../../../.sdlc/adrs/ADR-063-multi-platform-container-images.md) are
+  multi-arch manifest lists (older release tags remain amd64-only until rebuilt)
 
 ## Quick start
 
@@ -236,7 +239,9 @@ engine:
 
 The chart works under OpenShift's `restricted-v2` SCC without modification.
 APME application container images are built on **UBI10** Application Stream
-bases (ADR-061).
+bases (ADR-061). CI publishes **multi-arch** (`linux/amd64` + `linux/arm64`)
+manifest lists under the same tags after ADR-063 (rebuild release tags to pick
+that up).
 
 - `podSecurityContext` and `securityContext` default to empty (OCP injects UID/GID)
 - The UI container mounts emptyDir volumes for nginx writable paths

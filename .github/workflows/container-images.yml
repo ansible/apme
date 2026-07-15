@@ -1,3 +1,6 @@
+# Multi-platform publish (ADR-063): native amd64 + arm64 builds, then
+# imagetools merge into consumer tags on GHCR (and optional Quay).
+# Image inventory: containers/ci/images.txt (single source of truth).
 name: Container Images
 
 on:
@@ -16,10 +19,38 @@ env:
   QUAY_REGISTRY: quay.io
 
 jobs:
-  build-base:
-    runs-on: ubuntu-latest
+  prepare:
+    runs-on: ubuntu-24.04
     outputs:
-      base-image: ${{ steps.base-ref.outputs.image }}
+      services: ${{ steps.matrix.outputs.services }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - id: matrix
+        run: |
+          services="$(
+            grep -vE '^[[:space:]]*(#|$)' containers/ci/images.txt \
+              | grep -vx 'base' \
+              | jq -R -s -c '
+                  split("\n")
+                  | map(select(length > 0))
+                  | map({name: ., file: ("containers/" + . + "/Dockerfile")})
+                '
+          )"
+          echo "services=${services}" >> "$GITHUB_OUTPUT"
+          echo "Service matrix: ${services}"
+
+  build-base:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
@@ -34,59 +65,63 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - id: meta
-        uses: docker/metadata-action@80c7e94dd9b9319bd5eb7a0e0fe9291e23a2a2e9 # v6
-        with:
-          images: ${{ env.GHCR_REGISTRY }}/${{ steps.owner.outputs.lc }}/apme-base
-          tags: |
-            type=sha
-            type=semver,pattern={{version}},enable=${{ github.ref_type == 'tag' }}
-            type=semver,pattern={{major}}.{{minor}},enable=${{ github.ref_type == 'tag' && !contains(github.ref_name, '-') }}
-            type=semver,pattern={{major}},enable=${{ github.ref_type == 'tag' && !contains(github.ref_name, '-') }}
-            type=raw,value=latest,enable=${{ github.ref_type == 'tag' && !contains(github.ref_name, '-') }}
-
-      - id: base-ref
-        run: echo "image=${{ env.GHCR_REGISTRY }}/${{ steps.owner.outputs.lc }}/apme-base:${{ steps.meta.outputs.version }}" >> "$GITHUB_OUTPUT"
-
       - uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7
         with:
           context: .
           file: containers/base/Dockerfile
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=base
-          cache-to: type=gha,scope=base,mode=max
+          platforms: linux/${{ matrix.arch }}
+          provenance: false
+          sbom: false
+          tags: ${{ env.GHCR_REGISTRY }}/${{ steps.owner.outputs.lc }}/apme-base:${{ github.sha }}-${{ matrix.arch }}
+          cache-from: type=gha,scope=base-${{ matrix.arch }}
+          cache-to: type=gha,scope=base-${{ matrix.arch }},mode=max
 
   build-images:
-    needs: build-base
-    runs-on: ubuntu-latest
+    needs: [prepare, build-base]
     strategy:
       fail-fast: false
       matrix:
-        image:
-          - name: primary
-            file: containers/primary/Dockerfile
-          - name: native
-            file: containers/native/Dockerfile
-          - name: opa
-            file: containers/opa/Dockerfile
-          - name: ansible
-            file: containers/ansible/Dockerfile
-          - name: galaxy-proxy
-            file: containers/galaxy-proxy/Dockerfile
-          - name: gitleaks
-            file: containers/gitleaks/Dockerfile
-          - name: gateway
-            file: containers/gateway/Dockerfile
-          - name: cli
-            file: containers/cli/Dockerfile
-          - name: ui
-            file: containers/ui/Dockerfile
-          - name: collection-health
-            file: containers/collection-health/Dockerfile
-          - name: dep-audit
-            file: containers/dep-audit/Dockerfile
+        arch:
+          - name: amd64
+            runner: ubuntu-24.04
+          - name: arm64
+            runner: ubuntu-24.04-arm
+        image: ${{ fromJson(needs.prepare.outputs.services) }}
+    runs-on: ${{ matrix.arch.runner }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - id: owner
+        run: echo "lc=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4
+
+      - uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4
+        with:
+          registry: ${{ env.GHCR_REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7
+        with:
+          context: .
+          file: ${{ matrix.image.file }}
+          push: true
+          platforms: linux/${{ matrix.arch.name }}
+          provenance: false
+          sbom: false
+          tags: ${{ env.GHCR_REGISTRY }}/${{ steps.owner.outputs.lc }}/apme-${{ matrix.image.name }}:${{ github.sha }}-${{ matrix.arch.name }}
+          build-args: |
+            BASE_IMAGE=${{ env.GHCR_REGISTRY }}/${{ steps.owner.outputs.lc }}/apme-base:${{ github.sha }}-${{ matrix.arch.name }}
+          cache-from: type=gha,scope=${{ matrix.image.name }}-${{ matrix.arch.name }}
+          cache-to: type=gha,scope=${{ matrix.image.name }}-${{ matrix.arch.name }},mode=max
+
+  merge-manifests:
+    needs: build-images
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
@@ -95,7 +130,7 @@ jobs:
 
       - id: quay-check
         run: |
-          if [ -n "$QUAY_USER" ]; then
+          if [ -n "$QUAY_USER" ] && [ -n "$QUAY_PASS" ]; then
             echo "enabled=true" >> "$GITHUB_OUTPUT"
             echo "ns=${QUAY_ORG:-${{ steps.owner.outputs.lc }}}" >> "$GITHUB_OUTPUT"
           else
@@ -103,6 +138,7 @@ jobs:
           fi
         env:
           QUAY_USER: ${{ secrets.QUAY_USERNAME }}
+          QUAY_PASS: ${{ secrets.QUAY_PASSWORD }}
           QUAY_ORG: ${{ secrets.QUAY_NAMESPACE }}
 
       - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4
@@ -120,12 +156,11 @@ jobs:
           username: ${{ secrets.QUAY_USERNAME }}
           password: ${{ secrets.QUAY_PASSWORD }}
 
+      # Tag list only — image name is a placeholder; merge script applies tags per image.
       - id: meta
         uses: docker/metadata-action@80c7e94dd9b9319bd5eb7a0e0fe9291e23a2a2e9 # v6
         with:
-          images: |
-            ${{ env.GHCR_REGISTRY }}/${{ steps.owner.outputs.lc }}/apme-${{ matrix.image.name }}
-            ${{ steps.quay-check.outputs.enabled == 'true' && format('{0}/{1}/apme-{2}', env.QUAY_REGISTRY, steps.quay-check.outputs.ns, matrix.image.name) || '' }}
+          images: ${{ env.GHCR_REGISTRY }}/${{ steps.owner.outputs.lc }}/apme-gateway
           tags: |
             type=sha
             type=semver,pattern={{version}},enable=${{ github.ref_type == 'tag' }}
@@ -133,14 +168,28 @@ jobs:
             type=semver,pattern={{major}},enable=${{ github.ref_type == 'tag' && !contains(github.ref_name, '-') }}
             type=raw,value=latest,enable=${{ github.ref_type == 'tag' && !contains(github.ref_name, '-') }}
 
-      - uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7
-        with:
-          context: .
-          file: ${{ matrix.image.file }}
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          build-args: |
-            BASE_IMAGE=${{ needs.build-base.outputs.base-image }}
-          cache-from: type=gha,scope=${{ matrix.image.name }}
-          cache-to: type=gha,scope=${{ matrix.image.name }},mode=max
+      - id: tags
+        env:
+          DOCKER_METADATA_OUTPUT_JSON: ${{ steps.meta.outputs.json }}
+        run: |
+          jq -r '.tags[]' <<<"$DOCKER_METADATA_OUTPUT_JSON" \
+            | awk -F: '{print $NF}' \
+            | sort -u \
+            > /tmp/consumer-tags.txt
+          echo "Consumer tags:"
+          cat /tmp/consumer-tags.txt
+
+      - name: Merge multi-arch manifests
+        env:
+          GHCR_REGISTRY: ${{ env.GHCR_REGISTRY }}
+          QUAY_REGISTRY: ${{ env.QUAY_REGISTRY }}
+        run: |
+          args=(
+            --owner "${{ steps.owner.outputs.lc }}"
+            --sha "${{ github.sha }}"
+            --tags-file /tmp/consumer-tags.txt
+          )
+          if [ "${{ steps.quay-check.outputs.enabled }}" = "true" ]; then
+            args+=(--quay-ns "${{ steps.quay-check.outputs.ns }}")
+          fi
+          ./containers/ci/merge-manifests.sh "${args[@]}"
