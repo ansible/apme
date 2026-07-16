@@ -12,7 +12,7 @@ repos:
         args: [--strict, src/, tests/, scripts/]
         pass_filenames: false
         additional_dependencies:
-          - packaging>=23
+          - packaging>=26.2
           - types-protobuf
           - types-PyYAML
           - grpc-stubs
