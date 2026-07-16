@@ -75,7 +75,7 @@ git -C "${WORK}" commit -m "$(cat <<'EOF'
 docs(helm): publish values profiles on chart repo
 
 Ship values-portal.yaml and values-standalone.yaml next to index.yaml so
-helm install can use -f https://ansible.github.io/apme/values-….yaml.
+helm install can use -f https://ansible.github.io/apme/values-*.yaml.
 EOF
 )"
 
