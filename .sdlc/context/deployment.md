@@ -21,7 +21,9 @@
 **Key rule:** If the target has `kubectl` / `oc` access to a cluster, **always
 use the Helm chart** (`https://ansible.github.io/apme` or
 `deploy/helm/apme/`). Podman pods are for local development and
-non-Kubernetes Linux servers only.
+non-Kubernetes Linux servers only. Helm chart defaults keep the standalone UI
+on; portal / backend-only installs use `-f values-portal.yaml` (see
+[deploy/helm/apme/README.md](/deploy/helm/apme/README.md)).
 
 ## Podman Pod
 
