@@ -80,19 +80,52 @@ spec:
 
 ## Quick start
 
-### From the chart repository (recommended)
+Install flavors are **named values files** shipped with the chart (one chart;
+ADR-030 Options A and B). Chart `values.yaml` keeps the standalone UI on by
+default so a bare `helm install` is not a footgun for SPA evaluators.
+
+| Profile | File | UI | Use when |
+|---------|------|----|----------|
+| Standalone SPA | [`values-standalone.yaml`](values-standalone.yaml) | on | Bundled PatternFly UI (default) |
+| Portal / backend | [`values-portal.yaml`](values-portal.yaml) | off | Automation portal / Backstage / Gateway API only |
+
+### Standalone UI (default)
 
 ```bash
 helm repo add apme https://ansible.github.io/apme
 helm repo update
-helm install apme apme/apme --namespace apme --create-namespace
+helm install apme apme/apme \
+  --namespace apme --create-namespace \
+  -f https://raw.githubusercontent.com/ansible/apme/main/deploy/helm/apme/values-standalone.yaml \
+  --set route.enabled=true   # OpenShift
+```
+
+Omit `-f values-standalone.yaml` if you want the same UI-on default without an
+explicit profile (the file is equivalent to chart defaults).
+
+### Portal / backend-only
+
+No standalone UI Deployment — suitable for automation portal and other
+Backstage integrations that consume the Gateway API (ADR-030 Option B).
+
+```bash
+helm repo add apme https://ansible.github.io/apme
+helm repo update
+helm install apme apme/apme \
+  --namespace apme --create-namespace \
+  -f https://raw.githubusercontent.com/ansible/apme/main/deploy/helm/apme/values-portal.yaml \
+  --set route.enabled=true   # OpenShift
 ```
 
 ### From a local clone (contributors)
 
 ```bash
-# From the repository root (uses quay.io/ansible + tag 2026.7.3 by default)
+# Standalone (chart default)
 helm install apme ./deploy/helm/apme/
+
+# Portal / backend-only
+helm install apme ./deploy/helm/apme/ \
+  -f ./deploy/helm/apme/values-portal.yaml
 
 # With AI enabled (OpenRouter provider)
 helm install apme ./deploy/helm/apme/ \
@@ -121,9 +154,10 @@ Lint and package locally with `tox -e helm` (writes `dist/charts/*.tgz`).
 - **Engine Deployment**: All validators run as sidecars in one pod. HPA scales
   the entire engine stack together.
 - **Gateway Deployment**: REST API + gRPC Reporting + SQLite persistence.
-- **UI Deployment** (optional): nginx-served React SPA, proxies `/api/` to Gateway.
-  Disable with `ui.enabled: false` when an external UI (e.g. automation portal)
-  consumes the Gateway API.
+- **UI Deployment** (optional): nginx-served React SPA, proxies `/api/` to
+  Gateway. Enabled by default (`ui.enabled: true`). For portal / Backstage
+  (ADR-030 Option B), install with `-f values-portal.yaml` (or
+  `--set ui.enabled=false`) so only the Gateway API is exposed.
 - **Abbenay Deployment** (optional): AI provider for Tier 2 remediation.
 
 ## Key values
@@ -137,7 +171,7 @@ Lint and package locally with `tox -e helm` (writes `dist/charts/*.tgz`).
 | `collectionHealth.enabled` | `true` | Enable Collection Health validator |
 | `depAudit.enabled` | `true` | Enable Dependency Audit validator |
 | `gateway.replicas` | `1` | Gateway replicas |
-| `ui.enabled` | `true` | Deploy standalone UI (set `false` for portal-only) |
+| `ui.enabled` | `true` | Deploy standalone UI (`false` via `values-portal.yaml`) |
 | `ui.replicas` | `1` | UI replicas (when `ui.enabled`) |
 | `abbenay.enabled` | `false` | Enable AI provider |
 | `abbenay.token` | `""` | Abbenay service token (required when `abbenay.enabled=true`) |
@@ -195,13 +229,21 @@ When `host` is empty, OpenShift auto-assigns separate hosts per Route.
 ### Portal / external UI (backend only)
 
 When automation portal or another Backstage instance is the presentation
-layer, deploy APME without the standalone UI and expose only the Gateway:
+layer, install with the portal values profile (or the equivalent override)
+and expose only the Gateway:
+
+```bash
+helm install apme apme/apme \
+  -f https://raw.githubusercontent.com/ansible/apme/main/deploy/helm/apme/values-portal.yaml \
+  --set route.enabled=true \
+  --set route.host=apme-api.apps.ocp.example.com
+```
+
+Equivalent values fragment (already in [`values-portal.yaml`](values-portal.yaml)):
 
 ```yaml
 ui:
   enabled: false
-
-# image.tag defaults to 2026.7.3 on quay.io/ansible
 
 route:
   enabled: true
@@ -211,6 +253,23 @@ route:
 With `ui.enabled: false`, the API Route serves the Gateway at `/` (no `/api`
 path prefix). Portal plugins should reach the Gateway via in-cluster DNS,
 e.g. `http://<release>-gateway:8080`.
+
+### Standalone UI
+
+The chart default (and [`values-standalone.yaml`](values-standalone.yaml))
+deploys the bundled React SPA:
+
+```yaml
+ui:
+  enabled: true
+
+route:
+  enabled: true
+  host: apme.apps.ocp.example.com
+```
+
+With `ui.enabled: true`, OpenShift Routes expose the UI at `/` and the
+Gateway API at `/api`.
 
 ## Scaling
 

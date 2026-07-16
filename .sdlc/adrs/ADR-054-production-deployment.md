@@ -197,6 +197,9 @@ not the default.
   enables zero-downtime upgrades.
 - **Separated concerns**: Engine, Gateway, and UI scale independently in K8s.
   In the VM (single node), all services run in one pod as today.
+- **Helm install profiles**: One chart; portal vs standalone expressed as named
+  values files (`values-portal.yaml`, `values-standalone.yaml`) rather than a
+  second chart or a breaking default flip (ADR-030 Options A and B).
 
 ### Negative
 
