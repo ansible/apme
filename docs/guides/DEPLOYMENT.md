@@ -420,7 +420,7 @@ helm repo add apme https://ansible.github.io/apme
 helm repo update
 helm install apme apme/apme \
   --namespace apme --create-namespace \
-  -f https://raw.githubusercontent.com/ansible/apme/main/deploy/helm/apme/values-portal.yaml \
+  -f https://ansible.github.io/apme/values-portal.yaml \
   --set route.enabled=true
 ```
 

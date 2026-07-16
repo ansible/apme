@@ -3,7 +3,8 @@
 # Use when automation portal, RHDH/Backstage, or another external UI consumes
 # the Gateway API. Does not deploy the standalone nginx SPA.
 #
-#   helm install apme apme/apme -f values-portal.yaml
+#   helm install apme apme/apme \
+#     -f https://ansible.github.io/apme/values-portal.yaml
 #   helm install apme ./deploy/helm/apme/ -f ./deploy/helm/apme/values-portal.yaml
 #
 # Chart defaults remain standalone-friendly (ui.enabled: true in values.yaml).

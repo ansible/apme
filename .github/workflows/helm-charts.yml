@@ -10,12 +10,14 @@ on:
       - "deploy/helm/apme/**"
       - ".github/workflows/helm-charts.yml"
       - "scripts/helm_chart.sh"
+      - "scripts/publish_helm_values_profiles.sh"
       - "tox.ini"
   pull_request:
     paths:
       - "deploy/helm/apme/**"
       - ".github/workflows/helm-charts.yml"
       - "scripts/helm_chart.sh"
+      - "scripts/publish_helm_values_profiles.sh"
       - "tox.ini"
   workflow_dispatch:
 
@@ -55,6 +57,8 @@ jobs:
         with:
           fetch-depth: 0
 
+      - uses: astral-sh/setup-uv@e06108dd0aef18192324c70427afc47652e63a82 # v7
+
       - name: Configure Git user.name
         run: git config user.name "$GITHUB_ACTOR"
 
@@ -69,3 +73,12 @@ jobs:
           mark_as_latest: "false"
         env:
           CR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # chart-releaser only maintains index.yaml (+ release .tgz). Publish the
+      # named values profiles as loose files on Pages so operators can:
+      #   helm install … -f https://ansible.github.io/apme/values-portal.yaml
+      - name: Publish values profiles to GitHub Pages
+        run: uvx --with tox-uv tox -e helm-pages-profiles
+        env:
+          HELM_PAGES_PUSH: "1"
+          HELM_PAGES_REMOTE: origin

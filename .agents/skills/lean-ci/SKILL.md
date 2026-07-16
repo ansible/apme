@@ -75,7 +75,8 @@ CI has six workflows in `.github/workflows/`:
   `containers/ci/merge-manifests.sh` (image list: `containers/ci/images.txt`).
 - **helm-charts.yml**: Lints/packages the Helm chart (`tox -e helm`) and
   publishes to GitHub Pages via chart-releaser when `deploy/helm/apme/**`
-  changes on `main`.
+  changes on `main`. Also publishes values profiles
+  (`tox -e helm-pages-profiles`) to `https://ansible.github.io/apme/`.
 - **deprecation-scrape.yml**: Monthly cron scraping ansible-core for deprecation
   gaps.
 - **pr-feedback.yml**: Labels PRs with failing checks or merge conflicts.

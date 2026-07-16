@@ -4,7 +4,8 @@
 # chart default in values.yaml; use this file for an explicit, documented
 # install flavor (or as a base to layer further overrides).
 #
-#   helm install apme apme/apme -f values-standalone.yaml
+#   helm install apme apme/apme \
+#     -f https://ansible.github.io/apme/values-standalone.yaml
 #   helm install apme ./deploy/helm/apme/ -f ./deploy/helm/apme/values-standalone.yaml
 
 ui:
