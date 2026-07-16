@@ -14,6 +14,7 @@ GitHub Pages:
 |--|--|
 | **Repo URL** | `https://ansible.github.io/apme` |
 | **Index** | `https://ansible.github.io/apme/index.yaml` |
+| **Values profiles** | `https://ansible.github.io/apme/values-portal.yaml`, `https://ansible.github.io/apme/values-standalone.yaml` |
 
 > **Ops:** Enable GitHub Pages on the `ansible/apme` repository with source
 > **Deploy from a branch → `gh-pages` / root**. Chart releases are created by
@@ -96,7 +97,7 @@ helm repo add apme https://ansible.github.io/apme
 helm repo update
 helm install apme apme/apme \
   --namespace apme --create-namespace \
-  -f https://raw.githubusercontent.com/ansible/apme/main/deploy/helm/apme/values-standalone.yaml \
+  -f https://ansible.github.io/apme/values-standalone.yaml \
   --set route.enabled=true   # OpenShift
 ```
 
@@ -113,7 +114,7 @@ helm repo add apme https://ansible.github.io/apme
 helm repo update
 helm install apme apme/apme \
   --namespace apme --create-namespace \
-  -f https://raw.githubusercontent.com/ansible/apme/main/deploy/helm/apme/values-portal.yaml \
+  -f https://ansible.github.io/apme/values-portal.yaml \
   --set route.enabled=true   # OpenShift
 ```
 
@@ -234,7 +235,7 @@ and expose only the Gateway:
 
 ```bash
 helm install apme apme/apme \
-  -f https://raw.githubusercontent.com/ansible/apme/main/deploy/helm/apme/values-portal.yaml \
+  -f https://ansible.github.io/apme/values-portal.yaml \
   --set route.enabled=true \
   --set route.host=apme-api.apps.ocp.example.com
 ```
