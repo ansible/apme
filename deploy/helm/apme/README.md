@@ -14,7 +14,7 @@ GitHub Pages:
 |--|--|
 | **Repo URL** | `https://ansible.github.io/apme` |
 | **Index** | `https://ansible.github.io/apme/index.yaml` |
-| **Values profiles** | `https://ansible.github.io/apme/values-portal.yaml`, `values-standalone.yaml` |
+| **Values profiles** | `https://ansible.github.io/apme/values-portal.yaml`, `https://ansible.github.io/apme/values-standalone.yaml` |
 
 > **Ops:** Enable GitHub Pages on the `ansible/apme` repository with source
 > **Deploy from a branch → `gh-pages` / root**. Chart releases are created by
