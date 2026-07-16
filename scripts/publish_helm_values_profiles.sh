@@ -80,6 +80,30 @@ EOF
 )"
 
 git -C "${WORK}" push "${REMOTE}" "HEAD:refs/heads/${PAGES_BRANCH}"
+
+# Pages CDN can lag the git push; fail the release if URLs never become ready.
+verify_pages_url() {
+  local url="$1"
+  local attempts="${HELM_PAGES_VERIFY_ATTEMPTS:-12}"
+  local delay="${HELM_PAGES_VERIFY_DELAY_SECS:-5}"
+  local i code
+  for ((i = 1; i <= attempts; i++)); do
+    code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 "${url}" || true)"
+    if [[ "${code}" == "200" ]]; then
+      echo "OK: ${url} → 200"
+      return 0
+    fi
+    echo "waiting for ${url} (attempt ${i}/${attempts}, got ${code:-err})"
+    sleep "${delay}"
+  done
+  echo "error: ${url} did not return HTTP 200 after ${attempts} attempts" >&2
+  return 1
+}
+
+for f in "${PROFILES[@]}"; do
+  verify_pages_url "https://ansible.github.io/apme/${f}"
+done
+
 echo "OK: published values profiles to ${REMOTE}/${PAGES_BRANCH}"
 for f in "${PROFILES[@]}"; do
   echo "  https://ansible.github.io/apme/${f}"
