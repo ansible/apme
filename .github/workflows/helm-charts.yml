@@ -11,6 +11,7 @@ on:
       - ".github/workflows/helm-charts.yml"
       - "scripts/helm_chart.sh"
       - "scripts/publish_helm_values_profiles.sh"
+      - "ci/helm-publish-requirements.txt"
       - "tox.ini"
   pull_request:
     paths:
@@ -18,6 +19,7 @@ on:
       - ".github/workflows/helm-charts.yml"
       - "scripts/helm_chart.sh"
       - "scripts/publish_helm_values_profiles.sh"
+      - "ci/helm-publish-requirements.txt"
       - "tox.ini"
   workflow_dispatch:
 
