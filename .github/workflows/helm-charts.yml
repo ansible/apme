@@ -77,10 +77,12 @@ jobs:
       # chart-releaser only maintains index.yaml (+ release .tgz). Publish the
       # named values profiles as loose files on Pages so operators can:
       #   helm install … -f https://ansible.github.io/apme/values-portal.yaml
-      # Pin tox/tox-uv: uvx does not consume the repo uv.lock, and this job
-      # has contents: write — avoid resolving an unpinned toolchain from PyPI.
+      # Toolchain pins live in ci/helm-publish-requirements.txt (not YAML).
+      # uvx ignores uv.lock; this job has contents: write.
       - name: Publish values profiles to GitHub Pages
-        run: uvx --with tox-uv==1.35.2 tox==4.56.4 -e helm-pages-profiles
+        run: >-
+          uvx --with-requirements ci/helm-publish-requirements.txt
+          tox -e helm-pages-profiles
         env:
           HELM_PAGES_PUSH: "1"
           HELM_PAGES_REMOTE: origin

@@ -1,0 +1,4 @@
+# Pinned toolchain for helm-charts.yml release publish (contents: write).
+# uvx does not consume the repo uv.lock; keep pins here (not in workflow YAML).
+tox==4.56.4
+tox-uv==1.35.2
