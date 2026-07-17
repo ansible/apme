@@ -91,7 +91,7 @@ def test_compare_shared_revs_detects_drift(mod: ModuleType) -> None:
 
 
 def test_replace_revs_in_text_updates_toml(mod: ModuleType) -> None:
-    """toml rev rewriter updates only matching repos.
+    """Rewrite only matching TOML repo rev pins.
 
     Args:
         mod: Loaded ``prek_config_revs`` module.
