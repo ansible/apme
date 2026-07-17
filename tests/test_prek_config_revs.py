@@ -148,6 +148,18 @@ def test_load_yaml_revs_yaml_error_falls_back(mod: ModuleType, tmp_path: Path) -
     }
 
 
+def test_load_yaml_revs_null_repos_does_not_crash(mod: ModuleType, tmp_path: Path) -> None:
+    """Mapping root with ``repos: null`` must not raise TypeError.
+
+    Args:
+        mod: Loaded ``prek_config_revs`` module.
+        tmp_path: Temporary directory for fixture files.
+    """
+    path = tmp_path / "cfg.yaml"
+    path.write_text("repos: null\n", encoding="utf-8")
+    assert mod.load_yaml_revs(path) == {}
+
+
 def test_cmd_check_aligned(mod: ModuleType, tmp_path: Path) -> None:
     """Aligned configs exit 0.
 

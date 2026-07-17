@@ -114,8 +114,11 @@ def load_yaml_revs(path: Path) -> dict[str, str]:
             rev_re=_YAML_REV_RE,
         )
     data = loaded if isinstance(loaded, dict) else {}
+    repos = data.get("repos", [])
+    if not isinstance(repos, list):
+        repos = []
     revs: dict[str, str] = {}
-    for entry in data.get("repos", []):
+    for entry in repos:
         if not isinstance(entry, dict):
             continue
         repo = str(entry.get("repo", ""))
