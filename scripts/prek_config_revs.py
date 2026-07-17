@@ -103,7 +103,8 @@ def load_yaml_revs(path: Path) -> dict[str, str]:
     Returns:
         Mapping of normalized repo URL to rev pin.
     """
-    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+    data = loaded if isinstance(loaded, dict) else {}
     revs: dict[str, str] = {}
     for entry in data.get("repos", []):
         if not isinstance(entry, dict):
@@ -253,7 +254,18 @@ def cmd_check(toml_path: Path, yaml_path: Path) -> int:
         )
         return 1
 
-    mismatches = compare_shared_revs(load_toml_revs(toml_path), load_yaml_revs(yaml_path))
+    toml_revs = load_toml_revs(toml_path)
+    yaml_revs = load_yaml_revs(yaml_path)
+    shared = set(toml_revs) & set(yaml_revs)
+    if not shared:
+        print(
+            "error: no shared remote repos between prek.toml and "
+            ".pre-commit-config.yaml (parse failure or configs diverged)",
+            file=sys.stderr,
+        )
+        return 1
+
+    mismatches = compare_shared_revs(toml_revs, yaml_revs)
     if not mismatches:
         print("prek.toml and .pre-commit-config.yaml share matching remote revs")
         return 0
