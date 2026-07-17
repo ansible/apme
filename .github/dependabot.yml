@@ -21,10 +21,7 @@ updates:
     cooldown:
       default-days: 30
 
-  # Updates .pre-commit-config.yaml only — Dependabot cannot edit prek.toml yet
-  # (dependabot/dependabot-core#14624). CI runs prek.toml; after these PRs sync with:
-  #   python scripts/prek_config_revs.py sync --direction yaml-to-toml
-  # The prek-config-revs hook fails until shared remote revs match.
+  # Updates hook rev pins in .pre-commit-config.yaml (sole prek/CI config).
   - package-ecosystem: "pre-commit"
     directory: "/"
     schedule:
