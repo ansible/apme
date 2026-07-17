@@ -422,7 +422,8 @@ class GraphRemediationEngine:
             graph.approve_pending(source_filter="deterministic")
 
         remaining = graph.query_violations(status="open")
-        # Interactive Gate 1: deterministic resolutions await approval.
+        # Interactive Gate 1: count includes pending_review (awaiting ApprovalRequest;
+        # not yet spliced/applied). Non-interactive path uses status "fixed" only.
         fixed_violations = graph.query_violations(status="fixed")
         if interactive:
             fixed_violations = fixed_violations + graph.query_violations(status="pending_review")

@@ -16,11 +16,51 @@ from apme_gateway.scan.driver import (
     _inject_token_in_url,
     _redact_credentials,
     clone_repo,
+    coerce_option_bool,
     derive_session_id,
     fetch_remote_head,
     get_clone_head,
     run_project_scan,
 )
+
+
+@pytest.mark.parametrize(  # type: ignore[untyped-decorator]
+    ("value", "expected"),
+    [
+        (True, True),
+        (False, False),
+        (1, True),
+        (0, False),
+        ("true", True),
+        ("TRUE", True),
+        ("yes", True),
+        ("1", True),
+        ("false", False),
+        ("FALSE", False),
+        ("0", False),
+        ("no", False),
+        ("off", False),
+        ("", False),
+        ("  false  ", False),
+        (None, False),
+        ("maybe", False),
+        ([], False),
+    ],
+)
+def test_coerce_option_bool(value: object, expected: bool) -> None:
+    """Untyped option values must not treat the string 'false' as True.
+
+    Args:
+        value: Raw option value under test.
+        expected: Expected coerced boolean.
+    """
+    assert coerce_option_bool(value) is expected
+
+
+def test_coerce_option_bool_default() -> None:
+    """Unknown strings fall back to the explicit default."""
+    assert coerce_option_bool("maybe", default=True) is True
+    assert coerce_option_bool(None, default=True) is True
 
 
 def test_derive_session_id_deterministic() -> None:

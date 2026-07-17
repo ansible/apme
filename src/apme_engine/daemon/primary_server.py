@@ -2651,17 +2651,18 @@ async def serve(listen_address: str = "0.0.0.0:50051") -> grpc.aio.Server:
 def _write_patches_to_temp_dir(temp_dir: Path, patches: Sequence[SplicedFilePatch]) -> None:
     """Write spliced patch contents into ``temp_dir`` (blocking I/O).
 
-    Paths are sanitised like :func:`_write_chunked_fs`: absolute paths and
-    ``..`` segments are rejected unless the resolved target stays under
-    ``temp_dir``. Write failures raise (no silent ``OSError`` suppress) so
-    later AI-gate / validator rescans cannot read stale temp content.
+    Path rules: relative paths that contain ``..`` segments are always
+    rejected. Absolute paths are allowed only when the resolved target
+    stays under ``temp_dir``. Write failures raise (no silent ``OSError``
+    suppress) so later AI-gate / validator rescans cannot read stale temp
+    content.
 
     Args:
         temp_dir: Session temp directory root.
         patches: Splice results with ``path`` and ``patched`` attributes.
 
     Raises:
-        ValueError: If a patch path escapes ``temp_dir``.
+        ValueError: If a patch path escapes ``temp_dir`` or uses relative ``..``.
         OSError: If a write fails.
     """
     root = temp_dir.resolve()
@@ -2718,6 +2719,7 @@ def _apply_graph_approvals(
 
     tier1_proposals: list[Tier1NodeProposal] = [p for p in session.tier1_proposals if isinstance(p, Tier1NodeProposal)]
 
+    # Fallback for older in-memory proposals that predate Proposal.path.
     proposal_node_map: dict[str, str] = {}
     for idx, anp in enumerate(ai_proposals):
         proposal_node_map[f"ai-{idx:04d}"] = anp.node_id
@@ -2733,8 +2735,9 @@ def _apply_graph_approvals(
         if not proposal:
             continue
 
-        node_id = proposal_node_map.get(pid)
-        if node_id is None:
+        # Prefer Proposal.path (node_id wire field); enum maps are fallback only.
+        node_id = (getattr(proposal, "path", None) or "").strip() or proposal_node_map.get(pid)
+        if not node_id:
             continue
 
         if pid in approved_ids:

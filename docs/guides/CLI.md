@@ -98,7 +98,7 @@ The remediation pipeline:
 1. **Format** — normalize YAML style
 2. **Idempotency gate** — verify formatting is stable
 3. **Scan** — detect violations
-4. **Tier 1** — generate/detect deterministic changes and `t1-*` proposals in a convergence loop
+4. **Tier 1** — generate/detect deterministic changes in a convergence loop (`t1-*` proposals are emitted only with `--interactive`)
 5. **Gate 1** (with `--interactive`) — review deterministic `t1-*` proposals; approved proposals are then applied after `ApprovalRequest`
 6. **Tier 2** (with `--ai`) — escalate remaining violations to AI provider
 7. **Gate 2** (with `--ai`, without `--json`, without `--auto-approve`) — review AI `ai-*` proposals

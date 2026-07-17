@@ -826,7 +826,11 @@ async def _drive_operation(
         galaxy_servers: Galaxy server defs.
         scm_token: Optional SCM token for private repository access.
     """
-    from apme_gateway.scan.driver import fetch_remote_head, run_project_operation
+    from apme_gateway.scan.driver import (
+        coerce_option_bool,
+        fetch_remote_head,
+        run_project_operation,
+    )
 
     registry = get_operation_registry()
 
@@ -1017,7 +1021,7 @@ async def _drive_operation(
             collection_specs=specs,
             enable_ai=bool(options.get("enable_ai", False)),
             ai_model=str(options.get("ai_model", "")),
-            interactive=bool(options.get("interactive", False)),
+            interactive=coerce_option_bool(options.get("interactive", False)),
             progress_callback=_progress_cb,
             approval_queue=approval_queue,
             scan_id=scan_id,

@@ -60,6 +60,7 @@ from apme_engine.daemon.chunked_fs import yield_scan_chunks
 from apme_engine.graph.severity import severity_from_proto, severity_to_label
 from apme_gateway.db import get_session
 from apme_gateway.db.queries import list_rules_with_resolved_config
+from apme_gateway.scan.driver import coerce_option_bool
 
 logger = logging.getLogger(__name__)
 
@@ -494,7 +495,7 @@ async def handle_session(
             collections: list[str] = options.get("collections", [])
             enable_ai: bool = options.get("enable_ai", False)
             ai_model: str = options.get("ai_model", "")
-            interactive: bool = bool(options.get("interactive", False))
+            interactive: bool = coerce_option_bool(options.get("interactive", False))
 
             scan_id = str(uuid.uuid4())
             scan_rule_configs = await _load_scan_rule_configs()
