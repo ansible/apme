@@ -105,5 +105,15 @@ hooks = [
     additional_dependencies = ["pyyaml"],
     pass_filenames = false,
     always_run = true
+  },
+  {
+    id = "prek-config-revs",
+    name = "prek/pre-commit rev sync",
+    language = "python",
+    language_version = "python3.10",
+    entry = "python scripts/prek_config_revs.py check",
+    additional_dependencies = ["pyyaml"],
+    pass_filenames = false,
+    always_run = true
   }
 ]

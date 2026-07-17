@@ -85,6 +85,17 @@ tox -e cli -- health-check          # run health check in pod
 
 prek runs automatically on `git commit`. `tox -e lint` runs the same checks manually.
 
+Runtime config is `prek.toml` (preferred by prek). `.pre-commit-config.yaml` is kept in
+sync for Dependabot's `pre-commit` ecosystem, which cannot update `prek.toml` yet
+([dependabot-core#14624](https://github.com/dependabot/dependabot-core/issues/14624)).
+Shared remote `rev` pins must match; the `prek-config-revs` hook enforces that.
+
+After a Dependabot pre-commit PR:
+
+```bash
+python scripts/prek_config_revs.py sync --direction yaml-to-toml
+```
+
 ### What runs
 
 | Hook | What it does |
