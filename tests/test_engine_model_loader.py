@@ -15,6 +15,7 @@ from apme_engine.engine.model_loader import (
     load_playbooks,
     load_requirements,
     load_roleinplay,
+    load_roles,
     load_task,
     load_taskfile,
 )
@@ -462,6 +463,14 @@ class TestLoadFile:
         assert isinstance(f, File)
         assert "key: value" in f.body
 
+    def test_load_yaml_date_tag_is_json_serializable(self) -> None:
+        """YAML date tags must not break File.data JSON serialization."""
+        import json
+
+        f = load_file(path="vars/main.yml", body="released: 2024-01-15\n", read=False)
+        assert isinstance(f.data, str)
+        json.loads(f.data)
+
 
 class TestLoadRequirements:
     """Tests for load_requirements."""
@@ -822,3 +831,55 @@ class TestLoadPlaybooksNestedDirectories:
         assert len(playbooks) == 1
         assert "site.yml" in str(playbooks[0])
         assert not any("tasks" in str(p) for p in playbooks)
+
+
+class TestLoadRoles:
+    """Tests for load_roles directory discovery."""
+
+    def test_skips_requirements_yml_file_under_roles(self, tmp_path: Path) -> None:
+        """roles/requirements.yml as a file must not raise NotADirectoryError.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        roles_dir = tmp_path / "roles"
+        roles_dir.mkdir()
+        (roles_dir / "requirements.yml").write_text("---\ncollections: []\n")
+
+        real_role_tasks = roles_dir / "web" / "tasks"
+        real_role_tasks.mkdir(parents=True)
+        (real_role_tasks / "main.yml").write_text("---\n- name: Hello\n  ansible.builtin.debug:\n    msg: hi\n")
+
+        roles = load_roles(str(tmp_path), basedir=str(tmp_path), load_children=False)
+
+        assert len(roles) == 1
+        assert "web" in str(roles[0])
+
+    def test_skips_non_directory_under_test_sub_roles(self, tmp_path: Path) -> None:
+        """Files under tests/.../roles/ must not be treated as role dirs.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        # Anchor top-level roles/ so discovery does not latch onto tests/.../roles.
+        (tmp_path / "roles").mkdir()
+
+        # Target has roles/ but no top-level tasks/ (hits the elif branch).
+        sub_roles = tmp_path / "tests" / "integration" / "targets" / "demo" / "roles"
+        sub_roles.mkdir(parents=True)
+        (sub_roles / "requirements.yml").write_text("---\ncollections: []\n")
+
+        real_role_tasks = sub_roles / "helper" / "tasks"
+        real_role_tasks.mkdir(parents=True)
+        (real_role_tasks / "main.yml").write_text("---\n- name: Hello\n  ansible.builtin.debug:\n    msg: hi\n")
+
+        roles = load_roles(
+            str(tmp_path),
+            basedir=str(tmp_path),
+            include_test_contents=True,
+            load_children=False,
+        )
+
+        assert len(roles) == 1
+        assert "helper" in str(roles[0])
+        assert not any("requirements.yml" in str(r) for r in roles)

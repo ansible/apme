@@ -805,7 +805,8 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                 content_graph = cg
                 loop = asyncio.get_event_loop()
                 content_graph_data = await loop.run_in_executor(
-                    None, lambda: json.dumps(cg.to_dict(slim=True)).encode()
+                    None,
+                    lambda: json.dumps(cg.to_dict(slim=True), default=str).encode(),
                 )
                 logger.debug(
                     "ContentGraph serialized: %d bytes (req=%s)",
@@ -1583,7 +1584,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             if native_addr:
                 graph_data = await asyncio.get_event_loop().run_in_executor(
                     None,
-                    lambda: json.dumps(g.to_dict(slim=True)).encode(),
+                    lambda: json.dumps(g.to_dict(slim=True), default=str).encode(),
                 )
                 ext_coros.append(
                     _call_validator(
