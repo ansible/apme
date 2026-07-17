@@ -49,9 +49,9 @@ for pre-installed collection content.
 
 | Package | Version | Purpose |
 |---------|---------|---------|
-| `grpcio` | `>=1.80.0` | gRPC runtime for all inter-service communication |
-| `grpcio-health-checking` | `>=1.80.0` | Standard health-check protocol |
-| `protobuf` | `>=6.31.1,<7` | Protocol buffer serialization |
+| `grpcio` | `>=1.82.1` | gRPC runtime for all inter-service communication |
+| `grpcio-health-checking` | `>=1.82.1` | Standard health-check protocol |
+| `protobuf` | `>=7.35.1,<8` | Protocol buffer serialization |
 
 All gRPC servers use `grpc.aio` (fully async). Proto definitions in `proto/apme/v1/`,
 generated stubs in `src/apme/v1/`.
@@ -164,7 +164,7 @@ with open(path, "w") as f:
 | `types-protobuf` | Type stubs for protobuf |
 | `types-PyYAML` | Type stubs for PyYAML |
 | `grpc-stubs` | Type stubs for gRPC |
-| `grpcio-tools>=1.80.0` | Proto code generation |
+| `grpcio-tools>=1.82.1` | Proto code generation |
 
 ### Tool Configuration
 
@@ -202,8 +202,8 @@ The React SPA (`frontend/`) uses:
 |------------|-------------|-------|
 | Python | 3.10 | `requires-python = ">=3.10"` |
 | ansible-core | 2.17.14 | Multi-version venvs (2.17/2.18/2.19/2.20) |
-| grpcio | 1.80.0 | Required for proto v6 compatibility |
-| protobuf | 6.31.1 | Major version 6 only (not 7) |
+| grpcio | 1.82.1 | Aligned with grpcio-tools / health-checking; requires protobuf 7 |
+| protobuf | 7.35.1 | Major version 7 (grpcio ≥1.82 peer dep) |
 | ruamel.yaml | 0.18.0 | YAML round-trip |
 | pytest | 7.0.0 | Testing |
 | ruff | latest | Linting (120-char, py310 target) |
