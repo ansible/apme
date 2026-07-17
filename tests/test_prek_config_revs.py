@@ -125,6 +125,29 @@ def test_load_yaml_revs_non_mapping_falls_back(mod: ModuleType, tmp_path: Path) 
     }
 
 
+def test_load_yaml_revs_yaml_error_falls_back(mod: ModuleType, tmp_path: Path) -> None:
+    """Invalid YAML does not traceback; line parser recovers repo/rev lines.
+
+    Args:
+        mod: Loaded ``prek_config_revs`` module.
+        tmp_path: Temporary directory for fixture files.
+    """
+    path = tmp_path / "cfg.yaml"
+    path.write_text(
+        "<<<<<<< HEAD\n"
+        "repos:\n"
+        "  - repo: https://github.com/astral-sh/ruff-pre-commit\n"
+        "    rev: v0.15.5\n"
+        "=======\n"
+        "broken: [unclosed\n"
+        ">>>>>>> other\n",
+        encoding="utf-8",
+    )
+    assert mod.load_yaml_revs(path) == {
+        "https://github.com/astral-sh/ruff-pre-commit": "v0.15.5",
+    }
+
+
 def test_cmd_check_aligned(mod: ModuleType, tmp_path: Path) -> None:
     """Aligned configs exit 0.
 

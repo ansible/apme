@@ -95,7 +95,8 @@ def load_toml_revs(path: Path) -> dict[str, str]:
 def load_yaml_revs(path: Path) -> dict[str, str]:
     """Return ``{repo: rev}`` for remote repos in a pre-commit YAML file.
 
-    Prefer structured YAML load; fall back to line parsing if needed.
+    Prefer structured YAML load; fall back to line parsing if needed
+    (including when ``yaml.safe_load`` raises ``YAMLError``).
 
     Args:
         path: Path to ``.pre-commit-config.yaml``.
@@ -103,7 +104,15 @@ def load_yaml_revs(path: Path) -> dict[str, str]:
     Returns:
         Mapping of normalized repo URL to rev pin.
     """
-    loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+    text = path.read_text(encoding="utf-8")
+    try:
+        loaded = yaml.safe_load(text)
+    except yaml.YAMLError:
+        return _load_revs_from_lines(
+            text,
+            repo_re=_YAML_REPO_RE,
+            rev_re=_YAML_REV_RE,
+        )
     data = loaded if isinstance(loaded, dict) else {}
     revs: dict[str, str] = {}
     for entry in data.get("repos", []):
@@ -117,7 +126,7 @@ def load_yaml_revs(path: Path) -> dict[str, str]:
     if revs:
         return revs
     return _load_revs_from_lines(
-        path.read_text(encoding="utf-8"),
+        text,
         repo_re=_YAML_REPO_RE,
         rev_re=_YAML_REV_RE,
     )
