@@ -85,14 +85,25 @@ tox -e cli -- health-check          # run health check in pod
 
 prek runs automatically on `git commit`. `tox -e lint` runs the same checks manually.
 
+Hook configuration lives in `.pre-commit-config.yaml` only (ADR-014 / ADR-015 / ADR-047).
+prek reads that file; Dependabot's `pre-commit` ecosystem updates the same pins.
+
 ### What runs
+
+Full hook list: `.pre-commit-config.yaml`. Summary:
 
 | Hook | What it does |
 |------|--------------|
 | `ruff` | Lint check (rules: E, F, W, I, UP, B, SIM, D) with `--fix`; D = pydocstyle (Google convention) |
 | `ruff-format` | Code formatting |
 | `mypy` | Strict type check on `src/`, `tests/`, `scripts/` |
+| `uv-lock` | Keep `uv.lock` consistent with `pyproject.toml` |
 | `pydoclint` | Docstring consistency (Google style, Args/Returns/Raises, no type hints in docstrings) on `src/`, `tests/`, `scripts/` |
+| `skillmark` | Validate agent skill frontmatter against agentskills.io (+ project allowlist via local hook) |
+| `adr-index` | Regenerate `.sdlc/adrs/README.md` when ADRs change |
+| `rule-catalog` | Regenerate rule catalog when validator/transform docs change |
+| `graph-boundary` | Enforce ADR-059 graph package boundaries |
+| `check-skill-frontmatter` | Extended skill frontmatter allowlist (superset of skillmark E030) |
 
 Configuration: `[tool.ruff]` and `[tool.ruff.lint.pydocstyle]` (convention = google) in `pyproject.toml`; `[tool.pydoclint]` for style and options. Generated gRPC stubs (`src/apme/v1/*_pb2*.py`) are excluded from ruff.
 

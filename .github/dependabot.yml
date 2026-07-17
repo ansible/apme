@@ -21,6 +21,7 @@ updates:
     cooldown:
       default-days: 30
 
+  # Updates hook rev pins in .pre-commit-config.yaml (sole prek/CI config).
   - package-ecosystem: "pre-commit"
     directory: "/"
     schedule:

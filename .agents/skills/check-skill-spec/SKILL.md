@@ -93,7 +93,6 @@ Produce a summary with one of these verdicts:
 1. Update `.skillmark.toml`: remove `E030` from the `disable` list
 2. Remove `scripts/check_skill_frontmatter.py`
 3. Remove the `check-skill-frontmatter` hook from `.pre-commit-config.yaml`
-   and `prek.toml`
 4. Remove this skill (`.agents/skills/check-skill-spec/`)
 5. Run `tox -e lint` to verify everything passes with E030 re-enabled
 6. Commit and create a PR
