@@ -10,7 +10,7 @@ Ansible Policy & Modernization Engine — a multi-validator static analysis plat
 
 ## What APME is
 
-APME is a **static and semi-static analysis tool** for Ansible content. It reads your YAML, reasons about structure and module usage, and reports what it finds — without running tasks or executing against target hosts.
+APME is a **multi-validator static and semi-static analysis platform** for Ansible content. It parses YAML once, fans validation out across independent backends (policy, modernization, secrets, dependency health, and more), and can remediate findings — without running tasks or executing against target hosts.
 
 It answers questions like:
 
@@ -37,6 +37,16 @@ It cannot tell you whether a playbook will **achieve its desired outcome** on yo
 | Does it work with my specific inventory and vault? | Staging dry-run |
 
 APME and these tools are complementary. APME runs in seconds without infrastructure; execution-time tools validate behavior against real systems. Use both.
+
+## Can I replace ansible-lint today?
+
+**Not today.** Keep using [ansible-lint](https://github.com/ansible/ansible-lint) for day-to-day style and best-practice linting in local and CI workflows. APME is not a drop-in replacement.
+
+APME's current focus is the **hosted service** experience and getting **rules, remediation, and AI escalation** right — not becoming a substitute for ansible-lint. Deeper GitHub Actions and IDE integration may come later; treat that as aspirational, not a commitment.
+
+The first wave of APME's lint-style rules was informed by a close look at ansible-lint's rule set. APME reimplements those checks itself (it does not run ansible-lint as a subprocess). See [rule coverage vs ansible-lint](docs/rules/ANSIBLELINT_COVERAGE.md) for the matrix.
+
+If you already run ansible-lint, keep it. Evaluate APME for modernization, organizational policy, secrets, dependency health, remediation, and the service path — and revisit whether anything can consolidate later, when the product and integrations warrant it.
 
 ## Where APME fits
 
