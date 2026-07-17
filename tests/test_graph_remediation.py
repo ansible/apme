@@ -24,6 +24,7 @@ from apme_engine.graph.scanner import (
     rescan_dirty,
     scan,
 )
+from apme_engine.graph.types import RemediationResolution
 from apme_engine.remediation.graph_engine import (
     GraphRemediationEngine,
     splice_modifications,
@@ -334,6 +335,28 @@ class TestGraphRemediationEngine:
         await engine.remediate()
 
         assert all(s.approved for s in node.progression)
+
+    async def test_interactive_skips_auto_approve_and_emits_tier1_proposals(self) -> None:
+        """interactive=True leaves deterministic entries pending and builds proposals."""
+        from apme_engine.remediation.graph_engine import collect_tier1_proposals
+
+        graph = ContentGraph()
+        node = _make_node(module="apt")
+        graph.add_node(node)
+        rules: list[GraphRule] = [_FQCNRule()]
+        registry = _build_registry_with_fqcn()
+
+        engine = GraphRemediationEngine(registry, graph, rules)
+        report = await engine.remediate(interactive=True)
+
+        assert any(not s.approved and s.source == "deterministic" for s in node.progression)
+        assert report.tier1_proposals
+        assert report.tier1_proposals[0].node_id == node.node_id
+        assert collect_tier1_proposals(graph)
+        proposed = graph.query_violations(status="pending_review")
+        assert proposed
+        assert all(v.get("remediation_resolution") != RemediationResolution.AI_PROPOSED for v in proposed)
+        assert any(v["rule_id"] == "M001" for v in proposed)
 
     async def test_transform_source_deterministic(self) -> None:
         """Transformed entries have source='deterministic'."""

@@ -34,6 +34,39 @@ logger = logging.getLogger(__name__)
 
 _GRPC_MAX_MSG = 50 * 1024 * 1024  # 50 MiB — matches Primary
 
+_FALSEY_OPTION_STRINGS = frozenset({"", "0", "false", "no", "off", "n"})
+_TRUTHY_OPTION_STRINGS = frozenset({"1", "true", "yes", "on", "y"})
+
+
+def coerce_option_bool(value: object, *, default: bool = False) -> bool:
+    """Coerce untyped JSON/WebSocket option values to bool.
+
+    ``bool("false")`` is True in Python; this helper treats common falsey
+    string/number encodings as False so Gateway clients cannot accidentally
+    enable flags via stringified JSON.
+
+    Args:
+        value: Raw option value from JSON/WebSocket options.
+        default: Value used for ``None`` and unrecognized strings.
+
+    Returns:
+        Coerced boolean.
+    """
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in _FALSEY_OPTION_STRINGS:
+            return False
+        if lowered in _TRUTHY_OPTION_STRINGS:
+            return True
+        return default
+    return default
+
 
 def derive_session_id(project_id: str) -> str:
     """Deterministic session ID so the engine reuses venvs across operations.
@@ -281,6 +314,7 @@ async def run_project_operation(
     collection_specs: list[str] | None = None,
     enable_ai: bool = True,
     ai_model: str = "",
+    interactive: bool = False,
     progress_callback: ProgressCallback | None = None,
     approval_queue: asyncio.Queue[list[str]] | None = None,
     scan_id: str | None = None,
@@ -302,8 +336,12 @@ async def run_project_operation(
         collection_specs: Collection install specs.
         enable_ai: Enable AI remediation tier (remediate mode only).
         ai_model: AI model identifier (remediate mode only).
+        interactive: When True, Tier 1 fixes await approval (ADR-062 Phase 3).
         progress_callback: Optional async callable for each ``SessionEvent``.
-        approval_queue: Queue of approved proposal IDs (remediate mode, when AI proposes).
+        approval_queue: Queue of approved proposal IDs for remediate mode when
+            the engine emits ``ProposalsReady`` (Tier 1 ``t1-*`` when
+            ``interactive=True``, and/or Tier 2 ``ai-*`` when AI proposes).
+            If omitted, proposals are auto-declined so the stream does not hang.
         scan_id: Optional pre-generated scan ID; one is created if omitted.
         galaxy_servers: Global Galaxy server defs to inject into scan metadata (ADR-045).
         scm_token: Optional SCM token for private repository access.
@@ -341,6 +379,7 @@ async def run_project_operation(
                 enable_ai=enable_ai,
                 ai_model=ai_model,
                 galaxy_servers=galaxy_servers or [],
+                interactive=interactive,
             )
             chunks[0].fix_options.CopyFrom(fix_opts)  # type: ignore[union-attr]
 
@@ -455,6 +494,7 @@ async def run_project_fix(
     collection_specs: list[str] | None = None,
     enable_ai: bool = True,
     ai_model: str = "",
+    interactive: bool = False,
     progress_callback: ProgressCallback | None = None,
     approval_queue: asyncio.Queue[list[str]] | None = None,
     scan_id: str | None = None,
@@ -475,8 +515,9 @@ async def run_project_fix(
         collection_specs: Collection install specs.
         enable_ai: Enable AI remediation tier.
         ai_model: AI model identifier.
+        interactive: When True, Tier 1 fixes await approval (ADR-062).
         progress_callback: Optional async callable for each ``SessionEvent``.
-        approval_queue: Queue of approved proposal IDs.
+        approval_queue: Queue of approved proposal IDs (Tier 1 and/or AI).
         scan_id: Optional pre-generated scan ID.
         galaxy_servers: Global Galaxy server defs to inject (ADR-045).
         scm_token: Optional SCM token for private repository access.
@@ -494,6 +535,7 @@ async def run_project_fix(
         collection_specs=collection_specs,
         enable_ai=enable_ai,
         ai_model=ai_model,
+        interactive=interactive,
         progress_callback=progress_callback,
         approval_queue=approval_queue,
         scan_id=scan_id,

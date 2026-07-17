@@ -75,6 +75,7 @@ from apme_engine.daemon.session import ResourceExhaustedError, SessionState, Ses
 from apme_engine.daemon.violation_convert import violation_dict_to_proto, violation_proto_to_dict
 from apme_engine.engine.models import RemediationClass, ViolationDict
 from apme_engine.log_bridge import attach_collector
+from apme_engine.remediation.graph_engine import FilePatch as SplicedFilePatch
 from apme_engine.runner import run_scan
 from apme_engine.venv_manager.session import (
     VenvSession,
@@ -1144,17 +1145,8 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                         continue
                     session.touch()
                     approved = set(cmd.approve.approved_ids)
-                    applied = self._session_apply_approved(session, approved)
-                    yield SessionEvent(
-                        approval_ack=ApprovalAck(
-                            applied_count=applied,
-                            status=session.status,
-                            ttl_seconds=session.ttl_seconds,
-                        ),
-                    )
-                    if session.status == 3:  # COMPLETE
-                        async for event in self._session_build_result(session):
-                            yield event
+                    async for event in self._session_handle_approval(session, approved):
+                        yield event
 
                 elif oneof == "extend":
                     if session:
@@ -1705,6 +1697,9 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             return all_violations
 
         ai_provider = self._resolve_ai_provider(session.fix_options)
+        interactive = bool(session.fix_options and session.fix_options.interactive)
+        # Option C: when interactive + AI, Gate 1 is Tier 1 only; AI runs after approval.
+        skip_ai = interactive and bool(session.fix_options and session.fix_options.enable_ai)
 
         graph_engine = GraphRemediationEngine(
             registry=registry,  # type: ignore[arg-type]
@@ -1716,10 +1711,15 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             rescan_fn=_rescan_bridge,
             ai_provider=ai_provider,  # type: ignore[arg-type]
         )
+        session.graph_engine = graph_engine
 
         hb_task: asyncio.Task[None] = asyncio.create_task(_heartbeat())  # type: ignore[arg-type]
         remediate_task = asyncio.create_task(
-            graph_engine.remediate(initial_violations),
+            graph_engine.remediate(
+                initial_violations,
+                interactive=interactive,
+                skip_ai=skip_ai,
+            ),
         )
 
         try:
@@ -1752,8 +1752,12 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         session.content_graph = graph
         session.graph_originals = originals
 
-        # 3. Splice approved modifications and write patched files
-        patches = splice_modifications(graph, originals)
+        interactive = bool(session.fix_options and session.fix_options.interactive)
+        tier1_node_proposals = list(graph_report.tier1_proposals) if interactive else []
+
+        # 3. Splice approved modifications and write patched files.
+        # Interactive Gate 1: defer splice until ApprovalRequest (no disk writes yet).
+        patches = [] if interactive and tier1_node_proposals else splice_modifications(graph, originals)
 
         for patch in patches:
             fmt_result = format_content(patch.patched, filename=Path(patch.path).name)
@@ -1791,11 +1795,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         # 5. Build Tier 1 summary
         tier1_patches: list[FilePatch] = []
         for patch in patches:
-            patch_path = Path(patch.path)
-            try:
-                rel_path = str(patch_path.relative_to(temp_dir))
-            except ValueError:
-                rel_path = str(patch_path)
+            rel_path = _working_files_key(temp_dir, patch.path)
             orig = session.original_files.get(rel_path, patch.original.encode("utf-8"))
             proto_patch = FilePatch(
                 path=rel_path,
@@ -1836,6 +1836,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         session.progress_logs.append(_t1_done)
         yield SessionEvent(progress=_t1_done)
 
+        # Interactive: report-only Tier1Summary (patches deferred until approve).
         yield SessionEvent(
             tier1_complete=Tier1Summary(
                 applied_patches=tier1_patches,
@@ -1844,6 +1845,30 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                 report=session.report,
             ),
         )
+
+        # Gate 1: interactive Tier 1 proposals (Option C).
+        if interactive and tier1_node_proposals:
+            t1_proposals = self._build_tier1_proposals(tier1_node_proposals)
+            for p in t1_proposals:
+                session.proposals[p.id] = p
+            session.tier1_proposals = list(tier1_node_proposals)
+            session.awaiting_tier1_gate = True
+            session.current_tier = 1
+            session.status = 1  # AWAITING_APPROVAL
+            yield SessionEvent(
+                proposals=ProposalsReady(
+                    proposals=t1_proposals,
+                    tier=1,
+                    status=session.status,
+                ),
+            )
+            return
+
+        # Interactive + AI but no Tier 1 proposals: skip Gate 1, run AI now.
+        if interactive and session.fix_options and session.fix_options.enable_ai:
+            async for event in self._session_run_ai_gate(session):
+                yield event
+            return
 
         # Yield AI proposals for human approval, or complete immediately.
         # Build "declined" entries for AI-candidate violations the AI couldn't fix
@@ -1867,6 +1892,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             for p in proposed_proposals:
                 session.proposals[p.id] = p
             session.ai_proposals = list(graph_report.ai_proposals) if graph_report.ai_proposals else []
+            session.current_tier = 2
             session.status = 1  # AWAITING_APPROVAL
 
             yield SessionEvent(
@@ -1930,6 +1956,54 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         return provider
 
     @staticmethod
+    def _build_tier1_proposals(
+        tier1_node_proposals: Sequence[object],
+    ) -> list[Proposal]:
+        """Convert ``Tier1NodeProposal`` objects to proto ``Proposal``.
+
+        Args:
+            tier1_node_proposals: ``Tier1NodeProposal`` objects from the graph engine.
+
+        Returns:
+            List of Proposal protos with ``source="deterministic"``, ``tier=1``.
+        """
+        from apme_engine.remediation.graph_engine import Tier1NodeProposal  # noqa: PLC0415
+
+        proposals: list[Proposal] = []
+        for idx, item in enumerate(tier1_node_proposals):
+            tnp: Tier1NodeProposal = item  # type: ignore[assignment]
+            rule_id = ",".join(tnp.rule_ids) if tnp.rule_ids else "deterministic"
+
+            diff_hunk = "".join(
+                difflib.unified_diff(
+                    tnp.before_yaml.splitlines(keepends=True),
+                    tnp.after_yaml.splitlines(keepends=True),
+                    fromfile=f"a/{tnp.file_path}",
+                    tofile=f"b/{tnp.file_path} (Tier 1)",
+                )
+            )
+
+            proposals.append(
+                Proposal(
+                    id=f"t1-{idx:04d}",
+                    file=tnp.file_path,
+                    rule_id=rule_id,
+                    line_start=tnp.line_start,
+                    line_end=tnp.line_end,
+                    before_text=tnp.before_yaml,
+                    after_text=tnp.after_yaml,
+                    diff_hunk=diff_hunk,
+                    confidence=1.0,
+                    explanation=f"Deterministic fix for {rule_id}",
+                    tier=1,
+                    status="proposed",
+                    source="deterministic",
+                    path=tnp.node_id,
+                )
+            )
+        return proposals
+
+    @staticmethod
     def _build_graph_proposals(
         ai_node_proposals: Sequence[object],
     ) -> list[Proposal]:
@@ -1972,9 +2046,240 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                     tier=2,
                     status="proposed",
                     source="ai",
+                    path=anp.node_id,
                 )
             )
         return proposals
+
+    async def _session_handle_approval(
+        self,
+        session: SessionState,
+        approved_ids: set[str],
+    ) -> AsyncIterator[SessionEvent]:
+        """Apply approvals and either complete or advance to Gate 2 (AI).
+
+        Args:
+            session: Active session.
+            approved_ids: Proposal IDs the user accepted.
+
+        Yields:
+            SessionEvent: ApprovalAck, optional Gate 2 ProposalsReady, and SessionResult.
+        """
+        was_tier1_gate = session.awaiting_tier1_gate
+        run_ai_gate = was_tier1_gate and bool(session.fix_options and session.fix_options.enable_ai)
+        applied, temp_patches = self._session_apply_approved(session, approved_ids, finalize=not run_ai_gate)
+        if session.temp_dir is not None and temp_patches:
+            await asyncio.get_event_loop().run_in_executor(
+                None,
+                _write_patches_to_temp_dir,
+                session.temp_dir,
+                temp_patches,
+            )
+        yield SessionEvent(
+            approval_ack=ApprovalAck(
+                applied_count=applied,
+                status=session.status,
+                ttl_seconds=session.ttl_seconds,
+            ),
+        )
+
+        if run_ai_gate:
+            async for event in self._session_run_ai_gate(session):
+                yield event
+            return
+
+        if session.status == 3:  # COMPLETE
+            async for event in self._session_build_result(session):
+                yield event
+
+    async def _session_run_ai_gate(
+        self,
+        session: SessionState,
+    ) -> AsyncIterator[SessionEvent]:
+        """Run Tier 2 AI on the post-Gate-1 graph and emit Gate 2 proposals.
+
+        Args:
+            session: Session after Tier 1 approval (graph already spliced).
+
+        Yields:
+            SessionEvent: Progress, ProposalsReady (Gate 2), or SessionResult if no AI proposals.
+        """
+        from apme_engine.graph.content_graph import ContentGraph  # noqa: PLC0415
+        from apme_engine.remediation.graph_engine import GraphRemediationEngine  # noqa: PLC0415
+        from apme_engine.remediation.partition import (  # noqa: PLC0415
+            add_classification_to_violations,
+            count_by_remediation_class,
+        )
+
+        graph = session.content_graph
+        engine = session.graph_engine
+        if not isinstance(engine, GraphRemediationEngine) or not isinstance(graph, ContentGraph):
+            session.status = 3
+            async for event in self._session_build_result(session):
+                yield event
+            return
+
+        session.status = 2  # PROCESSING
+        session.current_tier = 2
+        _ai_msg = ProgressUpdate(message="Starting AI gate on post-approval graph", phase="graph-ai", level=2)
+        session.progress_logs.append(_ai_msg)
+        yield SessionEvent(progress=_ai_msg)
+
+        # Gate 2 pending proposals must contain only current AI proposals.
+        # Preserve anything already pending as telemetry-visible rejections.
+        for pid, proposal in list(session.proposals.items()):
+            _record_rejected_proposal(session, pid, proposal)
+            session.proposals.pop(pid, None)
+
+        # Continue from current open violations (no re-register of pass 0).
+        open_violations = [dict(v) for v in graph.query_violations(status="open")]
+        graph_report = await engine.remediate(
+            open_violations,
+            interactive=False,
+            skip_ai=False,
+        )
+
+        remaining = [dict(v) for v in graph_report.remaining_violations]
+        remaining.extend(session.dep_health_violations)
+        add_classification_to_violations(remaining)
+        rem_counts = count_by_remediation_class(remaining)
+        _enrich_violations_from_graph(remaining, graph, fixed=False)
+        remaining_protos = [violation_dict_to_proto(v) for v in remaining]
+        for fv in graph_report.fixed_violations:
+            fv["remediation_class"] = RemediationClass.AUTO_FIXABLE
+        _enrich_violations_from_graph(graph_report.fixed_violations, graph, fixed=True)
+        fixed_protos = [violation_dict_to_proto(v) for v in graph_report.fixed_violations]
+        prev_fixed = session.report.fixed if session.report else 0
+        session.report = FixReport(
+            passes=(session.report.passes if session.report else 0) + graph_report.passes,
+            fixed=prev_fixed + graph_report.fixed,
+            remaining_ai=rem_counts.get("ai-candidate", 0),
+            remaining_manual=rem_counts.get("manual-review", 0),
+            oscillation_detected=bool(session.report and session.report.oscillation_detected)
+            or graph_report.oscillation_detected,
+            remaining_violations=remaining_protos,
+            fixed_violations=list(session.report.fixed_violations if session.report else []) + fixed_protos,
+        )
+        session.remaining_ai = list(remaining)
+
+        # Splice any post-AI Tier 1 cleanup that was auto-approved.
+        originals = session.graph_originals or {}
+        from apme_engine.formatter import format_content  # noqa: PLC0415
+        from apme_engine.remediation.graph_engine import splice_modifications  # noqa: PLC0415
+
+        patches = splice_modifications(graph, originals)
+        for patch in patches:
+            fmt_result = format_content(patch.patched, filename=Path(patch.path).name)
+            if getattr(fmt_result, "changed", False):
+                patch.patched = getattr(fmt_result, "formatted", patch.patched)
+
+        pending_temp_patches: list[SplicedFilePatch] = []
+        for patch in patches:
+            rel_path = _working_files_key(session.temp_dir, patch.path)
+            session.working_files[rel_path] = patch.patched.encode("utf-8")
+            if session.temp_dir is not None:
+                pending_temp_patches.append(patch)
+
+        if session.temp_dir is not None and pending_temp_patches:
+            await asyncio.get_event_loop().run_in_executor(
+                None,
+                _write_patches_to_temp_dir,
+                session.temp_dir,
+                pending_temp_patches,
+            )
+
+        proposed_proposals = self._build_graph_proposals(graph_report.ai_proposals) if graph_report.ai_proposals else []
+        proposed_rule_files: set[tuple[str, str]] = set()
+        for p in proposed_proposals:
+            for raw_rid in p.rule_id.split(","):
+                clean_rid = raw_rid.strip()
+                if clean_rid:
+                    proposed_rule_files.add((clean_rid, p.file))
+        declined_proposals = self._build_declined_proposals(
+            remaining,
+            proposed_rule_files,
+            start_idx=len(proposed_proposals),
+        )
+        all_proposals = proposed_proposals + declined_proposals
+
+        if proposed_proposals:
+            for p in proposed_proposals:
+                session.proposals[p.id] = p
+            session.ai_proposals = list(graph_report.ai_proposals)
+            session.status = 1  # AWAITING_APPROVAL
+            yield SessionEvent(
+                proposals=ProposalsReady(
+                    proposals=all_proposals,
+                    tier=2,
+                    status=session.status,
+                ),
+            )
+        else:
+            session.status = 3
+            async for event in self._session_build_result(session):
+                yield event
+
+    @staticmethod
+    def _session_apply_approved(
+        session: SessionState,
+        approved_ids: set[str],
+        *,
+        finalize: bool = True,
+    ) -> tuple[int, list[SplicedFilePatch] | None]:
+        """Apply approved proposals to session working state.
+
+        For graph-based proposals (``id`` starts with ``"ai-"`` or ``"t1-"``),
+        the ContentGraph already holds the pending changes.  Approved nodes
+        are promoted; rejected nodes are reverted.  Post-approval,
+        ``splice_modifications`` re-generates working files.
+
+        For legacy file-based proposals, text-based find/replace is used.
+
+        Args:
+            session: Active session whose working files will be mutated.
+            approved_ids: Set of proposal IDs the user accepted.
+            finalize: When true, mark session COMPLETE. When false (Gate 1
+                with AI still pending), leave status for the AI gate.
+
+        Returns:
+            Number of proposals successfully applied.
+        """
+        if not approved_ids and not session.proposals:
+            if finalize:
+                session.status = 3  # COMPLETE
+            session.awaiting_tier1_gate = False
+            return 0, None
+
+        graph = session.content_graph
+        originals = session.graph_originals
+
+        has_graph_proposals = graph is not None and any(pid.startswith(("ai-", "t1-")) for pid in session.proposals)
+
+        temp_patches: list[SplicedFilePatch] | None = None
+        if has_graph_proposals and graph is not None and originals is not None:
+            applied, rejected_nodes, temp_patches = _apply_graph_approvals(
+                session,
+                graph,
+                originals,
+                approved_ids,
+            )
+            _reconcile_after_approval(session, graph, rejected_nodes)
+        else:
+            applied = _apply_text_approvals(session, approved_ids)
+
+        session.awaiting_tier1_gate = False
+        if finalize:
+            session.status = 3  # COMPLETE — user has finished reviewing
+        else:
+            session.status = 2  # PROCESSING — Gate 2 AI next
+        logger.info(
+            "Approval result: %d/%d proposals applied (session=%s finalize=%s)",
+            applied,
+            len(approved_ids),
+            session.session_id,
+            finalize,
+        )
+        return applied, temp_patches
 
     @staticmethod
     def _build_declined_proposals(
@@ -2033,56 +2338,6 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             )
             idx += 1
         return declined
-
-    @staticmethod
-    def _session_apply_approved(
-        session: SessionState,
-        approved_ids: set[str],
-    ) -> int:
-        """Apply approved proposals to session working state.
-
-        For graph-based proposals (``id`` starts with ``"ai-"``), the
-        ContentGraph already holds the pending changes.  Approved nodes
-        are promoted; rejected nodes are reverted.  Post-approval,
-        ``splice_modifications`` re-generates working files.
-
-        For legacy file-based proposals, text-based find/replace is used.
-
-        Args:
-            session: Active session whose working files will be mutated.
-            approved_ids: Set of proposal IDs the user accepted.
-
-        Returns:
-            Number of proposals successfully applied.
-        """
-        if not approved_ids:
-            session.status = 3  # COMPLETE
-            return 0
-
-        graph = session.content_graph
-        originals = session.graph_originals
-
-        has_graph_proposals = graph is not None and any(pid.startswith("ai-") for pid in session.proposals)
-
-        if has_graph_proposals and graph is not None and originals is not None:
-            applied, rejected_nodes = _apply_graph_approvals(
-                session,
-                graph,
-                originals,
-                approved_ids,
-            )
-            _reconcile_after_approval(session, graph, rejected_nodes)
-        else:
-            applied = _apply_text_approvals(session, approved_ids)
-
-        session.status = 3  # COMPLETE — user has finished reviewing
-        logger.info(
-            "Approval result: %d/%d proposals applied (session=%s)",
-            applied,
-            len(approved_ids),
-            session.session_id,
-        )
-        return applied
 
     async def _session_build_result(
         self,
@@ -2174,7 +2429,22 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                     status="approved",
                 )
             )
+        for meta in session.rejected_proposals.values():
+            tier_val = meta.get("tier", 0)
+            conf_val = meta.get("confidence", 0.0)
+            proposal_outcomes.append(
+                ProposalOutcome(
+                    proposal_id=str(meta.get("proposal_id", "")),
+                    rule_id=str(meta.get("rule_id", "")),
+                    file=str(meta.get("file", "")),
+                    tier=int(tier_val) if isinstance(tier_val, (int, float, str)) else 0,
+                    confidence=float(conf_val) if isinstance(conf_val, (int, float, str)) else 0.0,
+                    status="rejected",
+                )
+            )
         for pid, p in session.proposals.items():
+            if pid in session.rejected_proposals:
+                continue
             proposal_outcomes.append(
                 ProposalOutcome(
                     proposal_id=pid,
@@ -2375,12 +2645,77 @@ async def serve(listen_address: str = "0.0.0.0:50051") -> grpc.aio.Server:
     return server
 
 
+def _working_files_key(temp_dir: Path | None, path: str) -> str:
+    """Normalize a patch path to a relative ``working_files`` key.
+
+    Absolute paths under ``temp_dir`` are rewritten as relative keys so
+    splice updates do not create duplicate absolute/relative entries.
+
+    Args:
+        temp_dir: Session temp directory root, or ``None``.
+        path: Patch path from splice (relative or absolute).
+
+    Returns:
+        Relative path string when under ``temp_dir``; otherwise ``path``.
+    """
+    patch_path = Path(path)
+    if temp_dir is None:
+        return path
+    try:
+        return str(patch_path.relative_to(temp_dir))
+    except ValueError:
+        try:
+            return str(patch_path.resolve().relative_to(temp_dir.resolve()))
+        except ValueError:
+            return path
+
+
+def _write_patches_to_temp_dir(temp_dir: Path, patches: Sequence[SplicedFilePatch]) -> None:
+    """Write spliced patch contents into ``temp_dir`` (blocking I/O).
+
+    Path rules: relative paths that contain ``..`` segments are always
+    rejected. Absolute paths are allowed only when the resolved target
+    stays under ``temp_dir``. Write failures raise (no silent ``OSError``
+    suppress) so later AI-gate / validator rescans cannot read stale temp
+    content.
+
+    Args:
+        temp_dir: Session temp directory root.
+        patches: Splice results with ``path`` and ``patched`` attributes.
+
+    Raises:
+        ValueError: If a patch path escapes ``temp_dir`` or uses relative ``..``.
+        OSError: If a write fails.
+    """
+    root = temp_dir.resolve()
+    for patch in patches:
+        rel = Path(patch.path)
+        if rel.is_absolute():
+            path = rel.resolve()
+        else:
+            if ".." in rel.parts:
+                raise ValueError(f"Unsafe patch path rejected: {patch.path!r}")
+            path = (root / rel).resolve()
+        if not path.is_relative_to(root):
+            raise ValueError(f"Patch path escapes temp root: {patch.path!r}")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            path.write_text(patch.patched, encoding="utf-8")
+        except OSError:
+            logger.exception(
+                "Failed to write patch to temp_dir path=%s temp_dir=%s",
+                path,
+                root,
+            )
+            raise
+
+
 def _apply_graph_approvals(
     session: SessionState,
     graph: object,
     originals: dict[str, str],
     approved_ids: set[str],
-) -> tuple[int, set[str]]:
+) -> tuple[int, set[str], list[SplicedFilePatch]]:
     """Apply graph-based approvals: approve/reject nodes, re-splice files.
 
     Args:
@@ -2399,25 +2734,32 @@ def _apply_graph_approvals(
     )
 
     if not isinstance(graph, ContentGraph):
-        return (_apply_text_approvals(session, approved_ids), set())
+        return (_apply_text_approvals(session, approved_ids), set(), [])
 
     ai_proposals: list[AINodeProposal] = [p for p in session.ai_proposals if isinstance(p, AINodeProposal)]
+    from apme_engine.remediation.graph_engine import Tier1NodeProposal  # noqa: PLC0415
 
+    tier1_proposals: list[Tier1NodeProposal] = [p for p in session.tier1_proposals if isinstance(p, Tier1NodeProposal)]
+
+    # Fallback for older in-memory proposals that predate Proposal.path.
     proposal_node_map: dict[str, str] = {}
     for idx, anp in enumerate(ai_proposals):
         proposal_node_map[f"ai-{idx:04d}"] = anp.node_id
+    for idx, tnp in enumerate(tier1_proposals):
+        proposal_node_map[f"t1-{idx:04d}"] = tnp.node_id
 
     applied = 0
     rejected_node_ids: set[str] = set()
-    all_proposal_ids = set(session.proposals.keys())
+    all_proposal_ids = list(session.proposals.keys())
 
     for pid in all_proposal_ids:
         proposal = session.proposals.get(pid)
         if not proposal:
             continue
 
-        node_id = proposal_node_map.get(pid)
-        if node_id is None:
+        # Prefer Proposal.path (node_id wire field); enum maps are fallback only.
+        node_id = (getattr(proposal, "path", None) or "").strip() or proposal_node_map.get(pid)
+        if not node_id:
             continue
 
         if pid in approved_ids:
@@ -2434,17 +2776,26 @@ def _apply_graph_approvals(
             )
             session.approved_ids.add(pid)
             applied += 1
+            session.proposals.pop(pid, None)
         else:
             graph.reject_node(node_id)
             rejected_node_ids.add(node_id)
+            _record_rejected_proposal(session, pid, proposal)
+            session.proposals.pop(pid, None)
 
-        session.proposals.pop(pid, None)
+    from apme_engine.formatter import format_content
 
     patches = splice_modifications(graph, originals)
     for patch in patches:
-        session.working_files[patch.path] = patch.patched.encode("utf-8")
+        fmt_result = format_content(patch.patched, filename=Path(patch.path).name)
+        if getattr(fmt_result, "changed", False):
+            patch.patched = getattr(fmt_result, "formatted", patch.patched)
 
-    return (applied, rejected_node_ids)
+    for patch in patches:
+        rel_path = _working_files_key(session.temp_dir, patch.path)
+        session.working_files[rel_path] = patch.patched.encode("utf-8")
+
+    return (applied, rejected_node_ids, patches)
 
 
 def _reconcile_after_approval(
@@ -2572,7 +2923,35 @@ def _apply_text_approvals(
         session.approved_ids.add(pid)
         applied += 1
 
+    for pid, proposal in list(session.proposals.items()):
+        _record_rejected_proposal(session, pid, proposal)
+        session.proposals.pop(pid, None)
+
     return applied
+
+
+def _record_rejected_proposal(
+    session: SessionState,
+    proposal_id: str,
+    proposal: Proposal,
+) -> None:
+    """Persist rejected proposal metadata for FixCompletedEvent telemetry.
+
+    Args:
+        session: Active session storing telemetry snapshots.
+        proposal_id: Proposal identifier that was rejected.
+        proposal: Proposal proto carrying rule/file/tier metadata.
+    """
+    session.rejected_proposals.setdefault(
+        proposal_id,
+        {
+            "proposal_id": proposal_id,
+            "rule_id": proposal.rule_id,
+            "file": proposal.file,
+            "tier": proposal.tier,
+            "confidence": proposal.confidence,
+        },
+    )
 
 
 _cached_register_request: reporting_pb2.RegisterRulesRequest | None = None

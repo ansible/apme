@@ -60,6 +60,7 @@ from apme_engine.daemon.chunked_fs import yield_scan_chunks
 from apme_engine.graph.severity import severity_from_proto, severity_to_label
 from apme_gateway.db import get_session
 from apme_gateway.db.queries import list_rules_with_resolved_config
+from apme_gateway.scan.driver import coerce_option_bool
 
 logger = logging.getLogger(__name__)
 
@@ -380,6 +381,10 @@ async def _forward_events(
                             "confidence": p.confidence,
                             "explanation": p.explanation,
                             "tier": p.tier,
+                            "status": p.status,
+                            "source": p.source,
+                            "suggestion": p.suggestion,
+                            "path": p.path,
                         }
                         for p in pr.proposals
                     ],
@@ -488,8 +493,9 @@ async def handle_session(
 
             ansible_version: str = options.get("ansible_version", "")
             collections: list[str] = options.get("collections", [])
-            enable_ai: bool = options.get("enable_ai", False)
+            enable_ai: bool = coerce_option_bool(options.get("enable_ai", False))
             ai_model: str = options.get("ai_model", "")
+            interactive: bool = coerce_option_bool(options.get("interactive", False))
 
             scan_id = str(uuid.uuid4())
             scan_rule_configs = await _load_scan_rule_configs()
@@ -528,6 +534,7 @@ async def handle_session(
                         enable_ai=enable_ai,
                         ai_model=ai_model,
                         galaxy_servers=galaxy_servers or [],
+                        interactive=interactive,
                     )
                     first_chunk.fix_options.CopyFrom(fix_opts)  # type: ignore[union-attr]
                     assert first_chunk.options is not None  # noqa: S101 — set by yield_scan_chunks

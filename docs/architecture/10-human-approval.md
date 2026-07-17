@@ -4,10 +4,11 @@
 
 ## Purpose
 
-AI-generated fixes require human review before being applied. This stage
-covers how proposals are presented to the user, how approvals/rejections
-are processed, and the differences between check mode, interactive mode,
-and auto-approve mode.
+AI-generated fixes require human review before being applied. In ADR-062
+Phase 3 interactive mode, deterministic Tier 1 changes are also offered as
+Gate 1 proposals before any file writes occur. This stage covers how
+proposals are presented, how approvals/rejections are processed, and how
+check mode, interactive mode, and auto-approve mode differ.
 
 ## Sequence
 
@@ -16,8 +17,17 @@ sequenceDiagram
     participant Primary as PrimaryServicer
     participant CLI as CLI / UI
 
-    Note over Primary: AI proposals generated
-    Primary-->>CLI: ProposalsReady(proposals[])
+    alt Interactive Gate 1 enabled
+        Note over Primary: Deterministic Tier 1 proposals generated
+        Primary-->>CLI: ProposalsReady(tier=1, id=t1-*)
+        CLI->>Primary: ApprovalRequest(approved_ids=[...])
+        Primary-->>CLI: ApprovalAck(applied_count)
+    end
+
+    alt AI enabled
+        Note over Primary: AI gate evaluates remaining violations
+        Primary-->>CLI: ProposalsReady(tier=2, id=ai-*)
+    end
 
     alt Check mode
         CLI->>Primary: ApprovalRequest(approved_ids=[])
@@ -45,7 +55,7 @@ When the graph engine produces AI proposals, the Primary converts them to
 
 ```protobuf
 message Proposal {
-  string id = 1;           // "ai-0000", "ai-0001", ...
+  string id = 1;           // "t1-0000" (Gate 1) or "ai-0000" (Gate 2)
   string file = 2;
   string rule_id = 3;
   int32 line_start = 4;
@@ -55,13 +65,15 @@ message Proposal {
   string diff_hunk = 8;    // Unified diff
   float confidence = 9;
   string explanation = 10;
-  int32 tier = 11;          // 2 for AI
+  int32 tier = 11;          // 1 deterministic, 2 AI
   string status = 12;       // "proposed"
-  string source = 14;       // "ai"
+  string source = 14;       // "deterministic" (t1-*) or "ai" (ai-*)
+  string path = 15;         // stable node identity path
 }
 ```
 
-Proposal IDs follow the pattern `ai-NNNN` (zero-padded index).
+Proposal IDs follow `t1-NNNN` for deterministic Gate 1 and `ai-NNNN` for
+AI Gate 2 (zero-padded indices).
 
 ## Check Mode
 
@@ -111,9 +123,9 @@ Useful for CI pipelines where human review is not practical.
 
 `PrimaryServicer._session_apply_approved()` processes the `ApprovalRequest`:
 
-### Graph-Based Proposals (AI)
+### Graph-Based Proposals (Tier 1 + AI)
 
-For proposals with `id` starting with `"ai-"`:
+For proposals with `id` starting with `"t1-"` or `"ai-"`:
 
 1. Map proposal IDs back to graph node IDs via `proposal_node_map`
 2. For approved proposals: `graph.approve_node(node_id)` — promotes the
@@ -130,12 +142,14 @@ find/replace on `session.working_files`.
 ## Session Status Transitions
 
 ```
-PROCESSING → AWAITING_APPROVAL (when proposals emitted)
-AWAITING_APPROVAL → COMPLETE (after approval processed)
+PROCESSING → AWAITING_APPROVAL (Gate 1 t1-* proposals, interactive mode)
+AWAITING_APPROVAL → PROCESSING (Gate 2 AI after Gate 1 approval, when enabled)
+PROCESSING → AWAITING_APPROVAL (Gate 2 ai-* proposals)
+AWAITING_APPROVAL → COMPLETE (after final approval processing)
 ```
 
-If no AI proposals are generated, the session goes directly from PROCESSING
-to COMPLETE.
+If no proposals are generated in a gate, that gate is skipped and the session
+can proceed directly to the next stage or COMPLETE.
 
 ## Gateway/UI Approval
 

@@ -135,7 +135,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--auto-approve",
         action="store_true",
         default=False,
-        help="Approve all AI proposals without prompting (CI mode)",
+        help="Approve all proposals (Tier 1 and AI) without prompting (CI mode)",
+    )
+    remediate_p.add_argument(
+        "--interactive",
+        action="store_true",
+        default=False,
+        help="Require approval for Tier 1 deterministic fixes (Option C / ADR-062)",
     )
     remediate_p.add_argument(
         "--ai",

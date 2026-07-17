@@ -286,6 +286,8 @@ class OperationRegistry:
                         "explanation": p.explanation,
                         "diff_hunk": p.diff_hunk,
                         "status": p.status,
+                        "source": p.source,
+                        "path": p.path,
                         "suggestion": p.suggestion,
                         "line_start": p.line_start,
                     }

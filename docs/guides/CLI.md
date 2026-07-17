@@ -87,7 +87,9 @@ apme check --skip-python-audit .          # skip only Python CVE audit
 
 ```bash
 apme remediate /path/to/project           # Tier 1 deterministic transforms
+apme remediate --interactive .            # Gate 1 review for deterministic fixes
 apme remediate --ai .                     # include Tier 2 AI-assisted fixes
+apme remediate --interactive --ai .       # two-gate flow (Tier 1 then AI)
 apme remediate --ai --auto-approve .      # no interactive review (CI mode)
 apme remediate --max-passes 3 .           # limit convergence iterations
 ```
@@ -96,9 +98,11 @@ The remediation pipeline:
 1. **Format** — normalize YAML style
 2. **Idempotency gate** — verify formatting is stable
 3. **Scan** — detect violations
-4. **Tier 1** — apply deterministic transforms in a convergence loop
-5. **Tier 2** (with `--ai`) — escalate remaining violations to AI provider
-6. **Interactive review** — approve/reject AI proposals (or `--auto-approve`)
+4. **Tier 1** — generate/detect deterministic changes in a convergence loop (`t1-*` proposals are emitted only with `--interactive`)
+5. **Gate 1** (with `--interactive`) — review deterministic `t1-*` proposals; approved proposals are then applied after `ApprovalRequest`
+6. **Tier 2** (with `--ai`) — escalate remaining violations to AI provider
+7. **Gate 2** (with `--ai`, without `--json`, without `--auto-approve`) — review AI `ai-*` proposals
+8. **Auto-approve** (with `--auto-approve`) — accept all proposals in each approval gate
 
 ### `apme format` — normalize YAML style
 

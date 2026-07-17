@@ -12,6 +12,7 @@ import os
 from collections.abc import AsyncIterator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -22,6 +23,7 @@ from apme.v1.primary_pb2 import (
     CloseRequest,
     ExtendRequest,
     FilePatch,
+    FixOptions,
     FixReport,
     Proposal,
     ProposalsReady,
@@ -400,13 +402,13 @@ class TestSessionApplyApproved:
         session.status = 1
         session.working_files = {"t.yml": b"old content"}
 
-        applied = PrimaryServicer._session_apply_approved(session, {"t2-0000"})
+        applied, _ = PrimaryServicer._session_apply_approved(session, {"t2-0000"})
         assert applied == 1
         assert session.status == 3  # COMPLETE
         assert session.proposals == {}
 
     def test_partial_approval_completes_session(self) -> None:
-        """Partial approval completes the session; unapproved proposals remain listed."""
+        """Partial approval completes and stashes unapproved proposals for telemetry."""
         from apme_engine.daemon.primary_server import PrimaryServicer
 
         session = SessionState(session_id="test")
@@ -417,10 +419,11 @@ class TestSessionApplyApproved:
         session.status = 1
         session.working_files = {"a.yml": b"old1", "b.yml": b"old2"}
 
-        applied = PrimaryServicer._session_apply_approved(session, {"p1"})
+        applied, _ = PrimaryServicer._session_apply_approved(session, {"p1"})
         assert applied == 1
         assert session.status == 3  # COMPLETE after approval processing
-        assert "p2" in session.proposals
+        assert session.proposals == {}
+        assert "p2" in session.rejected_proposals
 
     def test_approval_modifies_working_files(self) -> None:
         """Approved proposal replaces before_text with after_text in working_files."""
@@ -476,6 +479,188 @@ class TestSessionBuildResult:
         diff = events[0].result.patches[0].diff
         assert "---" in diff and "+++" in diff
         assert "-line2" in diff and "+changed" in diff
+
+
+class TestWorkingFilesKey:
+    """Normalize absolute splice paths to relative working_files keys."""
+
+    def test_absolute_under_temp_becomes_relative(self, tmp_path: Path) -> None:
+        """Absolute paths beneath temp_dir map to relative keys.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        from apme_engine.daemon.primary_server import _working_files_key
+
+        abs_path = str(tmp_path / "playbooks" / "main.yml")
+        assert _working_files_key(tmp_path, abs_path) == "playbooks/main.yml"
+
+    def test_relative_path_unchanged(self, tmp_path: Path) -> None:
+        """Already-relative keys stay relative.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        from apme_engine.daemon.primary_server import _working_files_key
+
+        assert _working_files_key(tmp_path, "roles/x.yml") == "roles/x.yml"
+
+    def test_no_temp_dir_returns_path(self) -> None:
+        """Without a temp root the raw path is preserved."""
+        from apme_engine.daemon.primary_server import _working_files_key
+
+        assert _working_files_key(None, "/abs/file.yml") == "/abs/file.yml"
+
+
+class TestWritePatchesToTempDir:
+    """Path-safety and fail-loud behavior for interactive temp patch writes."""
+
+    def test_writes_relative_path_under_temp_dir(self, tmp_path: Path) -> None:
+        """Relative patch paths land under the session temp root.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        from apme_engine.daemon.primary_server import _write_patches_to_temp_dir
+        from apme_engine.remediation.graph_engine import FilePatch
+
+        patch = FilePatch(path="playbooks/main.yml", original="a\n", patched="b\n", diff="", rule_ids=[])
+        _write_patches_to_temp_dir(tmp_path, [patch])
+        assert (tmp_path / "playbooks" / "main.yml").read_text(encoding="utf-8") == "b\n"
+
+    def test_rejects_path_escape(self, tmp_path: Path) -> None:
+        """``..`` segments that escape temp_dir raise ValueError.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        from apme_engine.daemon.primary_server import _write_patches_to_temp_dir
+        from apme_engine.remediation.graph_engine import FilePatch
+
+        patch = FilePatch(path="../escape.yml", original="a\n", patched="b\n", diff="", rule_ids=[])
+        with pytest.raises(ValueError, match="Unsafe patch path|escapes temp root"):
+            _write_patches_to_temp_dir(tmp_path, [patch])
+
+    def test_absolute_under_temp_ok(self, tmp_path: Path) -> None:
+        """Absolute paths still under temp_dir are accepted.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        from apme_engine.daemon.primary_server import _write_patches_to_temp_dir
+        from apme_engine.remediation.graph_engine import FilePatch
+
+        target = tmp_path / "roles" / "x.yml"
+        patch = FilePatch(path=str(target), original="a\n", patched="fixed\n", diff="", rule_ids=[])
+        _write_patches_to_temp_dir(tmp_path, [patch])
+        assert target.read_text(encoding="utf-8") == "fixed\n"
+
+
+class TestSessionApprovalGates:
+    """Unit tests for multi-gate approval sequencing and proposal isolation."""
+
+    async def test_tier1_approval_without_ai_finalizes(self) -> None:
+        """Tier 1 approval finalizes immediately when AI gate is disabled."""
+        from apme_engine.daemon.primary_server import PrimaryServicer
+
+        servicer = PrimaryServicer()
+        session = SessionState(session_id="gate-no-ai")
+        session.awaiting_tier1_gate = True
+        session.fix_options = FixOptions(enable_ai=False)
+        session.status = 1
+
+        async def _fake_build_result(_self: PrimaryServicer, _session: SessionState) -> AsyncIterator[SessionEvent]:
+            yield SessionEvent(result=SessionResult())
+
+        with patch.object(PrimaryServicer, "_session_build_result", _fake_build_result):
+            events = [e async for e in servicer._session_handle_approval(session, set())]
+
+        event_types = [e.WhichOneof("event") for e in events]
+        assert event_types == ["approval_ack", "result"]
+        assert session.status == 3  # COMPLETE
+
+    async def test_ai_gate_filters_stale_t1_and_formats_splice(self, tmp_path: Path) -> None:
+        """Gate 2 drops stale t1-* pending IDs and keeps formatted temp sync.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        from apme_engine.daemon.primary_server import PrimaryServicer
+        from apme_engine.graph.content_graph import ContentGraph
+
+        class _DummyGraphEngine:
+            def __init__(self) -> None:
+                self.remediate = AsyncMock(
+                    return_value=SimpleNamespace(
+                        passes=1,
+                        fixed=0,
+                        remaining_violations=[],
+                        fixed_violations=[],
+                        oscillation_detected=False,
+                        ai_proposals=[],
+                    )
+                )
+
+        servicer = PrimaryServicer()
+        session = SessionState(session_id="gate-filter")
+        session.content_graph = ContentGraph()
+        session.graph_engine = _DummyGraphEngine()
+        session.proposals = {
+            "t1-0000": Proposal(
+                id="t1-0000",
+                file="play.yml",
+                rule_id="L001",
+                tier=1,
+                source="deterministic",
+            )
+        }
+        session.fix_options = FixOptions(enable_ai=True)
+        session.graph_originals = {"play.yml": "- name: test\n  debug:\n    msg: hi\n"}
+        session.temp_dir = tmp_path
+
+        async def _fake_build_result(_self: PrimaryServicer, _session: SessionState) -> AsyncIterator[SessionEvent]:
+            yield SessionEvent(result=SessionResult())
+
+        with (
+            patch("apme_engine.remediation.graph_engine.GraphRemediationEngine", _DummyGraphEngine),
+            patch(
+                "apme_engine.remediation.graph_engine.splice_modifications",
+                return_value=[SimpleNamespace(path="play.yml", patched="- name: test\n  debug:\n    msg: hi\n")],
+            ),
+            patch(
+                "apme_engine.formatter.format_content",
+                return_value=SimpleNamespace(changed=True, formatted="- name: test\n  debug:\n    msg: hi there\n"),
+            ),
+            patch.object(PrimaryServicer, "_session_build_result", _fake_build_result),
+        ):
+            events = [e async for e in servicer._session_run_ai_gate(session)]
+
+        event_types = [e.WhichOneof("event") for e in events]
+        assert event_types == ["progress", "result"]
+        assert session.proposals == {}
+        assert "t1-0000" in session.rejected_proposals
+        assert session.working_files["play.yml"] == b"- name: test\n  debug:\n    msg: hi there\n"
+        assert (tmp_path / "play.yml").read_text(encoding="utf-8") == "- name: test\n  debug:\n    msg: hi there\n"
+
+    def test_build_fix_event_includes_rejected_telemetry_store(self) -> None:
+        """FixCompletedEvent includes rejected outcomes from telemetry snapshots."""
+        from apme_engine.daemon.primary_server import PrimaryServicer
+
+        session = SessionState(session_id="fix-event")
+        session.rejected_proposals = {
+            "t1-0000": {
+                "proposal_id": "t1-0000",
+                "rule_id": "L001",
+                "file": "play.yml",
+                "tier": 1,
+                "confidence": 0.0,
+            }
+        }
+
+        event = PrimaryServicer._build_fix_event(session, [])
+        assert len(event.proposals) == 1
+        assert event.proposals[0].proposal_id == "t1-0000"
+        assert event.proposals[0].status == "rejected"
 
 
 class TestGalaxyProxyConfigActivation:

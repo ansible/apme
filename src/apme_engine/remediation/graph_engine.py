@@ -88,6 +88,8 @@ class GraphFixReport:
         nodes_modified: Number of ContentNodes modified.
         step_diffs: Per-progression-step content diffs.
         ai_proposals: AI-proposed node fixes pending human approval.
+        tier1_proposals: Deterministic node fixes pending approval when
+            ``interactive=True`` (empty when auto-approved).
     """
 
     passes: int = 0
@@ -100,6 +102,7 @@ class GraphFixReport:
     nodes_modified: int = 0
     step_diffs: list[dict[str, object]] = field(default_factory=list)
     ai_proposals: list[AINodeProposal] = field(default_factory=list)
+    tier1_proposals: list[Tier1NodeProposal] = field(default_factory=list)
 
 
 @dataclass
@@ -125,6 +128,31 @@ class AINodeProposal:
     rule_ids: list[str] = field(default_factory=list)
     explanation: str = ""
     confidence: float = 0.85
+    line_start: int = 0
+    line_end: int = 0
+
+
+@dataclass
+class Tier1NodeProposal:
+    """Deterministic Tier 1 fix for a single graph node, pending approval.
+
+    Used when ``FixOptions.interactive`` is true (ADR-062 Phase 3 / Option C).
+
+    Attributes:
+        node_id: Graph node with unapproved deterministic progression.
+        file_path: Source file path (for display).
+        before_yaml: Node YAML before deterministic transforms.
+        after_yaml: Node YAML after deterministic transforms.
+        rule_ids: Rule IDs addressed by this node's Tier 1 fixes.
+        line_start: Starting line in the original source file (0 if unknown).
+        line_end: Ending line in the original source file (0 if unknown).
+    """
+
+    node_id: str
+    file_path: str
+    before_yaml: str
+    after_yaml: str
+    rule_ids: list[str] = field(default_factory=list)
     line_start: int = 0
     line_end: int = 0
 
@@ -201,23 +229,33 @@ class GraphRemediationEngine:
     async def remediate(
         self,
         initial_violations: list[ViolationDict] | None = None,
+        *,
+        interactive: bool = False,
+        skip_ai: bool = False,
     ) -> GraphFixReport:
         """Run the unified Tier 1 + Tier 2 convergence loop.
 
         Tier 1 deterministic transforms run first.  When Tier 1
-        exhausts and an ``ai_provider`` is set, Tier 2 AI transforms
-        fire on remaining AI-candidate violations.  Post-AI rescanning
-        catches cross-tier interactions (e.g., an AI fix introducing a
-        new L013), and Tier 1 cleanup runs automatically.  The AI
-        resubmission loop is capped by ``max_ai_attempts``.
+        exhausts and an ``ai_provider`` is set (and ``skip_ai`` is
+        false), Tier 2 AI transforms fire on remaining AI-candidate
+        violations.  Post-AI rescanning catches cross-tier interactions
+        (e.g., an AI fix introducing a new L013), and Tier 1 cleanup
+        runs automatically.  The AI resubmission loop is capped by
+        ``max_ai_attempts``.
 
-        After convergence, deterministic transforms are auto-approved.
+        After convergence, deterministic transforms are auto-approved
+        unless ``interactive`` is true (ADR-062 Phase 3 / Option C).
         AI transforms remain pending (``approved=False``) for human
         review via the ``FixSession`` approval flow.
 
         Args:
             initial_violations: Pre-computed violations from a prior scan.
                 When ``None``, an initial full graph scan is performed.
+            interactive: When true, skip deterministic auto-approve and
+                populate ``tier1_proposals`` for Gate 1 review.
+            skip_ai: When true, do not run Tier 2 even if an AI provider
+                is configured (Option C Gate 1 — AI runs after Tier 1
+                approval on a separate ``remediate`` call).
 
         Returns:
             GraphFixReport with patches, counts, and remaining violations.
@@ -239,6 +277,7 @@ class GraphRemediationEngine:
         oscillation = False
         ai_attempts = 0
         ai_feedback_by_node: dict[str, str] = {}
+        run_ai = self._ai_provider is not None and not skip_ai
 
         for pass_num in range(1, self._max_passes + 1):
             passes = pass_num
@@ -247,13 +286,14 @@ class GraphRemediationEngine:
 
             tier1, tier2, tier3 = partition_violations(violations, registry)
             logger.debug(
-                "Graph remediation pass %d: %d violations -> tier1=%d tier2=%d tier3=%d (ai_provider=%s)",
+                "Graph remediation pass %d: %d violations -> tier1=%d tier2=%d tier3=%d (ai_provider=%s skip_ai=%s)",
                 pass_num,
                 len(violations),
                 len(tier1),
                 len(tier2),
                 len(tier3),
                 self._ai_provider is not None,
+                skip_ai,
             )
 
             # Phase A: Tier 1 deterministic transforms
@@ -281,10 +321,13 @@ class GraphRemediationEngine:
                         len(tier2),
                     )
                 else:
+                    # Interactive Gate 1: pending_review until ApprovalRequest.
+                    resolve_status = "pending_review" if interactive else "fixed"
                     await self._rescan_and_record(
                         graph,
                         pass_num,
                         resolve_fixed_by="deterministic",
+                        resolve_status=resolve_status,
                     )
                     violations = graph.collect_violations()
                     new_tier1, new_tier2, _ = partition_violations(violations, registry)
@@ -307,12 +350,7 @@ class GraphRemediationEngine:
                     tier1, tier2 = new_tier1, new_tier2
 
             # Phase B: Tier 2 AI transforms (also when tier1 stalled)
-            if (
-                (not tier1 or tier1_stalled)
-                and tier2
-                and self._ai_provider is not None
-                and ai_attempts < self._max_ai_attempts
-            ):
+            if (not tier1 or tier1_stalled) and tier2 and run_ai and ai_attempts < self._max_ai_attempts:
                 ai_attempts += 1
                 self._progress(
                     "graph-ai",
@@ -369,21 +407,29 @@ class GraphRemediationEngine:
                 logger.info("Graph remediation: fully converged at pass %d", pass_num)
                 break
 
-            if (not tier1 or tier1_stalled) and (self._ai_provider is None or ai_attempts >= self._max_ai_attempts):
+            ai_exhausted = (not run_ai) or ai_attempts >= self._max_ai_attempts
+            if (not tier1 or tier1_stalled) and ai_exhausted:
                 logger.info(
-                    "Graph remediation: Tier 1 exhausted, %d remaining AI candidates (ai_attempts=%d/%d)",
+                    "Graph remediation: Tier 1 exhausted, %d remaining AI candidates (ai_attempts=%d/%d skip_ai=%s)",
                     len(tier2),
                     ai_attempts,
                     self._max_ai_attempts,
+                    skip_ai,
                 )
                 break
 
-        graph.approve_pending(source_filter="deterministic")
+        if not interactive:
+            graph.approve_pending(source_filter="deterministic")
 
         remaining = graph.query_violations(status="open")
+        # Interactive Gate 1: count includes pending_review (awaiting ApprovalRequest;
+        # not yet spliced/applied). Non-interactive path uses status "fixed" only.
         fixed_violations = graph.query_violations(status="fixed")
+        if interactive:
+            fixed_violations = fixed_violations + graph.query_violations(status="pending_review")
         ai_abstained = graph.query_violations(status="ai_abstained")
         step_diffs = graph.collect_step_diffs()
+        tier1_proposals = collect_tier1_proposals(graph) if interactive else []
 
         return GraphFixReport(
             passes=passes,
@@ -395,6 +441,7 @@ class GraphRemediationEngine:
             nodes_modified=_count_modified_nodes(graph),
             step_diffs=step_diffs,
             ai_proposals=ai_proposals,
+            tier1_proposals=tier1_proposals,
         )
 
     async def _apply_tier1(
@@ -905,6 +952,54 @@ def _build_ai_feedback(tier2: list[ViolationDict]) -> dict[str, str]:
         feedback[node_id] = "\n".join(lines)
 
     return feedback
+
+
+def collect_tier1_proposals(graph: ContentGraph) -> list[Tier1NodeProposal]:
+    """Build per-node Tier 1 proposals from unapproved deterministic progression.
+
+    Bundles all deterministic content changes on a node into one proposal
+    (Option C Gate 1 / issue #379 per-node granularity).
+
+    Args:
+        graph: ContentGraph after interactive Tier 1 convergence.
+
+    Returns:
+        One ``Tier1NodeProposal`` per node with pending deterministic changes.
+    """
+    proposals: list[Tier1NodeProposal] = []
+    for node in graph.nodes():
+        prog = node.progression
+        if len(prog) < 2:
+            continue
+        has_pending_det = any((not entry.approved) and entry.source == "deterministic" for entry in prog)
+        if not has_pending_det:
+            continue
+        # Baseline = last approved snapshot, else first entry.
+        baseline = next((s for s in reversed(prog) if s.approved), prog[0])
+        after = prog[-1]
+        if baseline.content_hash == after.content_hash:
+            continue
+        rule_ids: list[str] = []
+        seen: set[str] = set()
+        for record in node.violation_ledger.values():
+            if record.status != "pending_review" or record.fixed_by != "deterministic":
+                continue
+            rid = str(record.violation.get("rule_id", "") or "")
+            if rid and rid not in seen:
+                seen.add(rid)
+                rule_ids.append(rid)
+        proposals.append(
+            Tier1NodeProposal(
+                node_id=node.node_id,
+                file_path=node.file_path,
+                before_yaml=baseline.yaml_lines,
+                after_yaml=after.yaml_lines,
+                rule_ids=rule_ids,
+                line_start=node.line_start,
+                line_end=node.line_end,
+            )
+        )
+    return proposals
 
 
 def _count_modified_nodes(graph: ContentGraph) -> int:

@@ -754,6 +754,35 @@ class TestApprovalOperations:
         graph.approve_pending()
         assert graph.approve_node(node.node_id) is False
 
+    def test_approve_node_promotes_pending_review_even_with_progression(self) -> None:
+        """approve_node always promotes pending_review (no short-circuit).
+
+        Interactive Gate 1 leaves both unapproved progression entries and
+        ``pending_review`` ledger rows; approving the node must clear both.
+        """
+        from apme_engine.graph.content_graph import ViolationRecord
+
+        graph, node = self._build_graph_with_progression()
+        v: ViolationDict = {
+            "rule_id": "M001",
+            "path": node.node_id,
+            "file": node.file_path,
+            "message": "use FQCN",
+        }
+        key = _violation_key(v)
+        node.violation_ledger[key] = ViolationRecord(
+            key=key,
+            violation=v,
+            status="pending_review",
+            discovered_in_pass=1,
+            fixed_by="deterministic",
+            fixed_in_pass=1,
+        )
+
+        assert graph.approve_node(node.node_id) is True
+        assert all(s.approved for s in node.progression)
+        assert node.violation_ledger[key].status == "fixed"
+
     def test_reject_node_truncates(self) -> None:
         """reject_node removes unapproved entries and restores state."""
         graph, node = self._build_graph_with_progression()

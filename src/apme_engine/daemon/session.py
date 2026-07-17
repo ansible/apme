@@ -57,6 +57,10 @@ class SessionState:
         fix_options: Fix options from the client's first upload chunk.
         scan_options: Scan options from the client's first upload chunk.
         ai_proposals: Raw engine AI proposals for downstream use.
+        tier1_proposals: Raw engine Tier 1 proposals when interactive
+            (ADR-062 Phase 3); empty when Tier 1 auto-applies.
+        awaiting_tier1_gate: True while Gate 1 (deterministic) proposals
+            are pending; cleared after Tier 1 ApprovalRequest.
         remaining_ai: Remaining AI-candidate violations.
         remaining_manual: Remaining manual-review violations.
         dep_health_violations: Dependency-health violations that do not
@@ -64,6 +68,8 @@ class SessionState:
             final reporting.
         approved_ids: Set of proposal IDs approved by the user.
         approved_proposals: Metadata snapshots of approved proposals.
+        rejected_proposals: Metadata snapshots of rejected proposals retained
+            for FixCompletedEvent telemetry across approval gates.
         scan_id: Client-provided scan identifier for event correlation.
         project_root: Project root path from the first upload chunk.
         progress_logs: Pipeline milestone logs collected during processing.
@@ -78,6 +84,9 @@ class SessionState:
             (ADR-044 Phase 3).  Typed as ``object`` to avoid coupling.
         graph_originals: Original file text keyed by path, used by
             ``splice_modifications`` after approval.
+        graph_engine: ``GraphRemediationEngine`` retained across Option C
+            gates so Gate 2 can continue on the same graph (typed as
+            ``object`` to avoid coupling).
     """
 
     session_id: str
@@ -96,8 +105,10 @@ class SessionState:
     fix_options: FixOptions | None = None
     scan_options: ScanOptions | None = None
 
-    # Raw engine AI proposals (not proto) for downstream use
+    # Raw engine AI / Tier 1 proposals (not proto) for downstream use
     ai_proposals: list[object] = field(default_factory=list)
+    tier1_proposals: list[object] = field(default_factory=list)
+    awaiting_tier1_gate: bool = False
 
     # Remaining violations from engine report
     remaining_ai: list[ViolationDict] = field(default_factory=list)
@@ -108,6 +119,8 @@ class SessionState:
     approved_ids: set[str] = field(default_factory=set)
     # Metadata snapshots of approved proposals (rule_id, file, tier, confidence)
     approved_proposals: list[dict[str, object]] = field(default_factory=list)
+    # Metadata snapshots of rejected proposals preserved for telemetry.
+    rejected_proposals: dict[str, dict[str, object]] = field(default_factory=dict)
 
     # Identifiers captured from the first upload chunk for event emission
     scan_id: str = ""
@@ -132,6 +145,7 @@ class SessionState:
     # Typed as ``object`` to avoid importing ContentGraph in this module.
     content_graph: object | None = None
     graph_originals: dict[str, str] = field(default_factory=dict)
+    graph_engine: object | None = None
 
     @property
     def ttl_seconds(self) -> int:

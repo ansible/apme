@@ -2178,7 +2178,11 @@ async def project_operate_ws(
     """
     from apme_gateway._galaxy_inject import load_galaxy_server_defs
     from apme_gateway.config import load_config
-    from apme_gateway.scan.driver import fetch_remote_head, run_project_operation
+    from apme_gateway.scan.driver import (
+        coerce_option_bool,
+        fetch_remote_head,
+        run_project_operation,
+    )
 
     await websocket.accept()
 
@@ -2346,7 +2350,7 @@ async def project_operate_ws(
                     remediate=True,
                     ansible_version=str(options.get("ansible_version", "")),
                     collection_specs=specs,
-                    enable_ai=bool(options.get("enable_ai", False)),
+                    enable_ai=coerce_option_bool(options.get("enable_ai", False)),
                     ai_model=str(options.get("ai_model", "")),
                     progress_callback=_progress_cb,
                     approval_queue=approval_queue,

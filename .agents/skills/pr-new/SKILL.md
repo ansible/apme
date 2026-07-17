@@ -148,7 +148,12 @@ artifact type, translate it:
    When a function accepts multiple input shapes (dataclass vs
    mapping, ORM vs dict), do both paths normalize and branch the
    same way for the same logical fields — or can one path skip a
-   transform the other applies? When overlaying fields from a
+   transform the other applies? When adding an alternate branch
+   (interactive vs auto-apply, graph vs legacy text), trace both
+   paths to the same output artifact (file bytes, event payload,
+   telemetry) and confirm they run the same post-processing and
+   state-accounting steps — not just reach the same endpoint.
+   When overlaying fields from a
    second source (e.g. outcome ``tier`` onto a pre-grouped
    proposal), do dependent fields (``source``/``gate``/``tier``,
    status→review mapping) stay aligned for *all* pre-group
@@ -310,7 +315,13 @@ limits (prefer ``col.in_(select(...))`` over materializing large id
 lists into bound parameters; chunk at ~900 when a Python list is
 unavoidable; when checking membership of a *small* candidate set
 against a large table, query the intersection of those candidates —
-never load the full table into Python just to filter a handful of ids).
+never load the full table into Python just to filter a handful of ids),
+silent ``OSError``/I/O suppress on paths later re-read by the pipeline
+(stale content), writes that skip the same path-safety checks as
+sibling helpers (``resolve`` + ``is_relative_to`` / reject ``..``),
+and short-circuiting ``a() or b()`` / ``a() and b()`` when both calls
+have required side effects (e.g. promote ledger status after approving
+progression — evaluate both unconditionally).
 
 Do NOT discuss architecture philosophy. Rank findings
 critical/high/medium/low.

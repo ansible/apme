@@ -826,7 +826,11 @@ async def _drive_operation(
         galaxy_servers: Galaxy server defs.
         scm_token: Optional SCM token for private repository access.
     """
-    from apme_gateway.scan.driver import fetch_remote_head, run_project_operation
+    from apme_gateway.scan.driver import (
+        coerce_option_bool,
+        fetch_remote_head,
+        run_project_operation,
+    )
 
     registry = get_operation_registry()
 
@@ -838,6 +842,7 @@ async def _drive_operation(
         ai_proposed_count = 0
         ai_declined_count = 0
         ai_accepted_count = 0
+        awaiting_ai_approval = False
         captured_patches: list[dict[str, str]] = []
 
         async def _progress_cb(event: object) -> None:
@@ -846,7 +851,7 @@ async def _drive_operation(
             Args:
                 event: gRPC SessionEvent protobuf.
             """
-            nonlocal ai_proposed_count, ai_declined_count, ai_accepted_count
+            nonlocal ai_proposed_count, ai_declined_count, ai_accepted_count, awaiting_ai_approval
 
             kind = None
             with contextlib.suppress(Exception):
@@ -877,18 +882,21 @@ async def _drive_operation(
                         explanation=p.explanation,
                         diff_hunk=p.diff_hunk,
                         status=p.status or "proposed",
+                        source=p.source,
+                        path=p.path,
                         suggestion=p.suggestion,
                         line_start=p.line_start,
                     )
                     for p in props.proposals
                 ]
-                ai_proposed_count = sum(1 for i in items if i.status != "declined")
-                ai_declined_count = sum(1 for i in items if i.status == "declined")
+                ai_items = [i for i in items if i.tier >= 2]
+                ai_proposed_count = sum(1 for i in ai_items if i.status != "declined")
+                ai_declined_count = sum(1 for i in ai_items if i.status == "declined")
+                awaiting_ai_approval = bool(ai_items)
                 registry.set_proposals(operation_id, items)
                 # ADR-062 Phase 2: upsert Gateway stubs with engine_proposal_id.
                 from apme_gateway.proposals.draft import upsert_live_proposal_stubs  # noqa: PLC0415
 
-                # primary.Proposal has no path; bridge uses file+rule+line_start.
                 stub_payloads = [
                     {
                         "id": p.id,
@@ -901,6 +909,7 @@ async def _drive_operation(
                         "status": p.status,
                         "suggestion": p.suggestion,
                         "line_start": p.line_start,
+                        "path": p.path,
                         "source": getattr(p, "source", "") or ("ai" if p.tier >= 2 else "deterministic"),
                     }
                     for p in props.proposals
@@ -922,7 +931,9 @@ async def _drive_operation(
 
             elif kind == "approval_ack":
                 ack = event.approval_ack  # type: ignore[attr-defined]
-                ai_accepted_count = getattr(ack, "applied_count", 0)
+                if awaiting_ai_approval:
+                    ai_accepted_count = getattr(ack, "applied_count", 0)
+                    awaiting_ai_approval = False
                 registry.transition(operation_id, OperationStatus.APPLYING)
 
             elif kind == "result":
@@ -1008,8 +1019,9 @@ async def _drive_operation(
             remediate=remediate,
             ansible_version=str(options.get("ansible_version", "")),
             collection_specs=specs,
-            enable_ai=bool(options.get("enable_ai", False)),
+            enable_ai=coerce_option_bool(options.get("enable_ai", False)),
             ai_model=str(options.get("ai_model", "")),
+            interactive=coerce_option_bool(options.get("interactive", False)),
             progress_callback=_progress_cb,
             approval_queue=approval_queue,
             scan_id=scan_id,
