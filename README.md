@@ -42,9 +42,9 @@ APME and these tools are complementary. APME runs in seconds without infrastruct
 
 **Not today.** Keep using [ansible-lint](https://github.com/ansible/ansible-lint) for day-to-day style and best-practice linting in local and CI workflows. APME is not a drop-in replacement.
 
-APME’s current focus is the **hosted service** experience and getting **rules, remediation, and AI escalation** right — not becoming a substitute for ansible-lint. Deeper GitHub Actions and IDE integration may come later; treat that as aspirational, not a commitment.
+APME's current focus is the **hosted service** experience and getting **rules, remediation, and AI escalation** right — not becoming a substitute for ansible-lint. Deeper GitHub Actions and IDE integration may come later; treat that as aspirational, not a commitment.
 
-The first wave of APME’s lint-style rules was informed by a close look at ansible-lint’s rule set. APME reimplements those checks itself (it does not run ansible-lint as a subprocess). See [rule coverage vs ansible-lint](docs/rules/ANSIBLELINT_COVERAGE.md) for the matrix.
+The first wave of APME's lint-style rules was informed by a close look at ansible-lint's rule set. APME reimplements those checks itself (it does not run ansible-lint as a subprocess). See [rule coverage vs ansible-lint](docs/rules/ANSIBLELINT_COVERAGE.md) for the matrix.
 
 If you already run ansible-lint, keep it. Evaluate APME for modernization, organizational policy, secrets, dependency health, remediation, and the service path — and revisit whether anything can consolidate later, when the product and integrations warrant it.
 
