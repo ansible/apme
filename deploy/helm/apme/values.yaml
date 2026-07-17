@@ -134,8 +134,10 @@ gateway:
     githubToken: ""
 
 # -- UI (nginx-served React SPA)
-# Set enabled: false when an external presentation layer (e.g. Ansible
-# automation portal / Backstage) consumes the Gateway API instead.
+# Default: standalone SPA (ADR-030 Option A). For portal / backend-only
+# installs (ADR-030 Option B), use the named profile:
+#   -f values-portal.yaml
+# or --set ui.enabled=false. See also values-standalone.yaml.
 # The stock nginx image requires writable /var/run, /var/cache/nginx, and
 # /etc/nginx/conf.d.  The chart mounts emptyDir volumes for these paths so
 # the container works under OCP restricted-v2 SCC (arbitrary non-root UID).

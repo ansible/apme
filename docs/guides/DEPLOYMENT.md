@@ -399,15 +399,40 @@ per ADR-012).
 
 ### Quick start
 
+Install flavors use named values files under `deploy/helm/apme/`
+(`values-standalone.yaml`, `values-portal.yaml`). Chart defaults keep the
+standalone UI enabled; portal installs pass `-f values-portal.yaml`.
+
+#### Standalone UI (default)
+
 ```bash
-# Recommended: install from the published chart repo
 helm repo add apme https://ansible.github.io/apme
 helm repo update
 helm install apme apme/apme \
   --namespace apme --create-namespace \
   --set route.enabled=true
+```
 
-# From a local clone (contributors / unreleased SHA builds)
+#### Portal / backend-only
+
+```bash
+helm repo add apme https://ansible.github.io/apme
+helm repo update
+helm install apme apme/apme \
+  --namespace apme --create-namespace \
+  -f https://ansible.github.io/apme/values-portal.yaml \
+  --set route.enabled=true
+```
+
+#### From a local clone (contributors / unreleased SHA builds)
+
+```bash
+# Portal profile from the clone
+helm install apme ./deploy/helm/apme/ \
+  -f ./deploy/helm/apme/values-portal.yaml \
+  --set image.tag=sha-7cb2464
+
+# Standalone + AI (OpenRouter)
 helm install apme ./deploy/helm/apme/ \
   --set image.tag=sha-7cb2464 \
   --set abbenay.enabled=true \
@@ -437,6 +462,7 @@ SHA or release tag (and Quay only when that publish included Quay credentials).
 | `abbenay.enabled` | Enable AI provider (default: false) |
 | `abbenay.token` | Abbenay service token (required when `abbenay.enabled=true`) |
 | `abbenay.providers` | LLM provider map (see [ABBENAY_AI.md](ABBENAY_AI.md)) |
+| `ui.enabled` | Deploy standalone UI (default: `true`; use `values-portal.yaml` for portal) |
 | `ingress.enabled` | Create Ingress resource (default: false) |
 | `route.enabled` | Create OpenShift Route (default: false) |
 

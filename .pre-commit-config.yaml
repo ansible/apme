@@ -1,27 +1,27 @@
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.5
+    rev: v0.15.17
     hooks:
       - id: ruff
         args: [--fix]
       - id: ruff-format
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.19.1
+    rev: v2.1.0
     hooks:
       - id: mypy
         args: [--strict, src/, tests/, scripts/]
         pass_filenames: false
         additional_dependencies:
-          - packaging>=23
+          - packaging>=26.2
           - types-protobuf
           - types-PyYAML
           - grpc-stubs
   - repo: https://github.com/astral-sh/uv-pre-commit
-    rev: 0.10.12
+    rev: 0.11.21
     hooks:
       - id: uv-lock
   - repo: https://github.com/jsh9/pydoclint
-    rev: 0.8.3
+    rev: 0.8.6
     hooks:
       - id: pydoclint
         args: [--exclude=src/apme/v1/, src/, tests/, scripts/]

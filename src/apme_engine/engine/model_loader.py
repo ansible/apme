@@ -451,7 +451,7 @@ def load_file(
 
         try:
             data = yaml.safe_load(body)
-            data_str = json.dumps(data, separators=(",", ":"))
+            data_str = json.dumps(data, separators=(",", ":"), default=str)
         except Exception:
             # ignore exception if any
             # because possibly this file is not a YAML file
@@ -1505,6 +1505,9 @@ def load_roles(
         dirs = sorted(os.listdir(roles_dir_path))
         for dir_name in dirs:
             candidate = os.path.join(roles_dir_path, dir_name)
+            # Skip non-directories (e.g. roles/requirements.yml as a file)
+            if not os.path.isdir(candidate):
+                continue
             dirs_in_cand = os.listdir(candidate)
             if is_role_dir(dirs_in_cand):
                 role_dirs.append(candidate)
@@ -1523,6 +1526,9 @@ def load_roles(
                     test_sub_role_names = os.listdir(test_sub_roles_dir)
                     for test_sub_role_name in test_sub_role_names:
                         test_sub_role_dir = os.path.join(test_sub_roles_dir, test_sub_role_name)
+                        # Skip non-directories (e.g. requirements.yml as a file)
+                        if not os.path.isdir(test_sub_role_dir):
+                            continue
                         role_dirs.append(test_sub_role_dir)
 
     # add role dirs if yaml_label_list is given
