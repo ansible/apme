@@ -1019,7 +1019,7 @@ async def _drive_operation(
             remediate=remediate,
             ansible_version=str(options.get("ansible_version", "")),
             collection_specs=specs,
-            enable_ai=bool(options.get("enable_ai", False)),
+            enable_ai=coerce_option_bool(options.get("enable_ai", False)),
             ai_model=str(options.get("ai_model", "")),
             interactive=coerce_option_bool(options.get("interactive", False)),
             progress_callback=_progress_cb,

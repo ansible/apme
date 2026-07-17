@@ -481,6 +481,37 @@ class TestSessionBuildResult:
         assert "-line2" in diff and "+changed" in diff
 
 
+class TestWorkingFilesKey:
+    """Normalize absolute splice paths to relative working_files keys."""
+
+    def test_absolute_under_temp_becomes_relative(self, tmp_path: Path) -> None:
+        """Absolute paths beneath temp_dir map to relative keys.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        from apme_engine.daemon.primary_server import _working_files_key
+
+        abs_path = str(tmp_path / "playbooks" / "main.yml")
+        assert _working_files_key(tmp_path, abs_path) == "playbooks/main.yml"
+
+    def test_relative_path_unchanged(self, tmp_path: Path) -> None:
+        """Already-relative keys stay relative.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        from apme_engine.daemon.primary_server import _working_files_key
+
+        assert _working_files_key(tmp_path, "roles/x.yml") == "roles/x.yml"
+
+    def test_no_temp_dir_returns_path(self) -> None:
+        """Without a temp root the raw path is preserved."""
+        from apme_engine.daemon.primary_server import _working_files_key
+
+        assert _working_files_key(None, "/abs/file.yml") == "/abs/file.yml"
+
+
 class TestWritePatchesToTempDir:
     """Path-safety and fail-loud behavior for interactive temp patch writes."""
 

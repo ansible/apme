@@ -1795,11 +1795,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         # 5. Build Tier 1 summary
         tier1_patches: list[FilePatch] = []
         for patch in patches:
-            patch_path = Path(patch.path)
-            try:
-                rel_path = str(patch_path.relative_to(temp_dir))
-            except ValueError:
-                rel_path = str(patch_path)
+            rel_path = _working_files_key(temp_dir, patch.path)
             orig = session.original_files.get(rel_path, patch.original.encode("utf-8"))
             proto_patch = FilePatch(
                 path=rel_path,
@@ -2179,7 +2175,8 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
 
         pending_temp_patches: list[SplicedFilePatch] = []
         for patch in patches:
-            session.working_files[patch.path] = patch.patched.encode("utf-8")
+            rel_path = _working_files_key(session.temp_dir, patch.path)
+            session.working_files[rel_path] = patch.patched.encode("utf-8")
             if session.temp_dir is not None:
                 pending_temp_patches.append(patch)
 
@@ -2648,6 +2645,31 @@ async def serve(listen_address: str = "0.0.0.0:50051") -> grpc.aio.Server:
     return server
 
 
+def _working_files_key(temp_dir: Path | None, path: str) -> str:
+    """Normalize a patch path to a relative ``working_files`` key.
+
+    Absolute paths under ``temp_dir`` are rewritten as relative keys so
+    splice updates do not create duplicate absolute/relative entries.
+
+    Args:
+        temp_dir: Session temp directory root, or ``None``.
+        path: Patch path from splice (relative or absolute).
+
+    Returns:
+        Relative path string when under ``temp_dir``; otherwise ``path``.
+    """
+    patch_path = Path(path)
+    if temp_dir is None:
+        return path
+    try:
+        return str(patch_path.relative_to(temp_dir))
+    except ValueError:
+        try:
+            return str(patch_path.resolve().relative_to(temp_dir.resolve()))
+        except ValueError:
+            return path
+
+
 def _write_patches_to_temp_dir(temp_dir: Path, patches: Sequence[SplicedFilePatch]) -> None:
     """Write spliced patch contents into ``temp_dir`` (blocking I/O).
 
@@ -2770,7 +2792,8 @@ def _apply_graph_approvals(
             patch.patched = getattr(fmt_result, "formatted", patch.patched)
 
     for patch in patches:
-        session.working_files[patch.path] = patch.patched.encode("utf-8")
+        rel_path = _working_files_key(session.temp_dir, patch.path)
+        session.working_files[rel_path] = patch.patched.encode("utf-8")
 
     return (applied, rejected_node_ids, patches)
 

@@ -493,7 +493,7 @@ async def handle_session(
 
             ansible_version: str = options.get("ansible_version", "")
             collections: list[str] = options.get("collections", [])
-            enable_ai: bool = options.get("enable_ai", False)
+            enable_ai: bool = coerce_option_bool(options.get("enable_ai", False))
             ai_model: str = options.get("ai_model", "")
             interactive: bool = coerce_option_bool(options.get("interactive", False))
 
