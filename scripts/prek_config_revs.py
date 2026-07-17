@@ -136,11 +136,7 @@ def compare_shared_revs(
         List of ``(repo, toml_rev, yaml_rev)`` triples that disagree.
     """
     shared = sorted(set(toml_revs) & set(yaml_revs))
-    return [
-        (repo, toml_revs[repo], yaml_revs[repo])
-        for repo in shared
-        if toml_revs[repo] != yaml_revs[repo]
-    ]
+    return [(repo, toml_revs[repo], yaml_revs[repo]) for repo in shared if toml_revs[repo] != yaml_revs[repo]]
 
 
 def _replace_revs_in_text(
@@ -180,11 +176,7 @@ def _replace_revs_in_text(
             new_rev = target_revs.get(pending_repo)
             if new_rev is not None and new_rev != rev_match.group("rev"):
                 newline = "\n" if line.endswith("\n") else ""
-                out.append(
-                    f"{rev_match.group('indent')}"
-                    f"{rev_formatter.format(rev=new_rev)}"
-                    f"{newline}"
-                )
+                out.append(f"{rev_match.group('indent')}{rev_formatter.format(rev=new_rev)}{newline}")
                 replacements += 1
             else:
                 out.append(line)
