@@ -205,6 +205,6 @@ The React SPA (`frontend/`) uses:
 | grpcio | 1.82.1 | Aligned with grpcio-tools / health-checking; requires protobuf 7 |
 | protobuf | 7.35.1 | Major version 7 (grpcio ≥1.82 peer dep) |
 | ruamel.yaml | 0.18.0 | YAML round-trip |
-| pytest | 7.0.0 | Testing |
+| pytest | 9.0.3 | Testing (matches `dev` extra floor) |
 | ruff | latest | Linting (120-char, py310 target) |
 | mypy | latest | Type checking (strict) |
