@@ -70,7 +70,7 @@ async def _seed_project(scm_token: str | None = None) -> str:
     return project_id
 
 
-@pytest.mark.parametrize(
+@pytest.mark.parametrize(  # type: ignore[untyped-decorator]
     ("body_token", "project_token", "global_token", "expected"),
     [
         ("inline-token", "project-token", "global-token", "inline-token"),
