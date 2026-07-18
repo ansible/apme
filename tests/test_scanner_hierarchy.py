@@ -245,12 +245,19 @@ class TestDiscoverCollectionSpecs:
         assert specs == []
         assert paths == []
 
-    def test_paths_reported_even_without_collections_key(self) -> None:
-        """File path is reported even if YAML has no collections key."""
-        files = [self._file("requirements.yml", "roles:\n  - some.role\n")]
+    def test_skips_git_url_collection_entries(self) -> None:
+        """Git/URL collection sources are skipped; FQCNs are kept."""
+        content = (
+            "collections:\n"
+            "  - name: ansible.posix\n"
+            "    version: 1.4.0\n"
+            "  - name: https://github.com/redhat-cop/network.backup\n"
+            "    type: git\n"
+        )
+        files = [self._file("collections/requirements.yml", content)]
         specs, paths = _discover_collection_specs(files)
-        assert specs == []
-        assert paths == ["requirements.yml"]
+        assert specs == ["ansible.posix:1.4.0"]
+        assert paths == ["collections/requirements.yml"]
 
 
 class TestBuildManifest:

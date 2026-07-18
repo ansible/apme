@@ -14,6 +14,7 @@ import difflib
 import json
 import logging
 import os
+import re
 import tempfile
 import time
 import uuid
@@ -364,12 +365,31 @@ async def _call_validator(
 
 _REQUIREMENTS_PATHS = {"requirements.yml", "collections/requirements.yml"}
 
+# Galaxy requirements.yml allows git/url/file sources; pip install only accepts FQCNs.
+_NON_FQCN_COLLECTION_TYPES = frozenset({"git", "url", "file", "dir", "subdirs"})
+_FQCN_COLLECTION_RE = re.compile(r"^[A-Za-z0-9_]+\.[A-Za-z0-9_]+$")
+
+
+def _is_pip_installable_collection_spec(name: str, entry_type: object | None = None) -> bool:
+    """Return True when *name* is a Galaxy FQCN suitable for pip install.
+
+    Git/URL/file sources (``type: git`` with a GitHub URL, etc.) are valid in
+    ``requirements.yml`` but cannot be converted by ``_spec_to_pip``.
+    """
+    if isinstance(entry_type, str) and entry_type.strip().lower() in _NON_FQCN_COLLECTION_TYPES:
+        return False
+    bare = name.split(":", 1)[0].strip()
+    if not bare or "://" in bare or bare.startswith(("git@", "git+", "/", ".")):
+        return False
+    return bool(_FQCN_COLLECTION_RE.match(bare))
+
 
 def _discover_collection_specs(files: Sequence[File]) -> tuple[list[str], list[str]]:
     """Extract collection specs from requirements.yml files in the uploaded file set.
 
     Looks for ``requirements.yml`` and ``collections/requirements.yml``.
     Parses the ``collections`` key and returns ``name[:version]`` strings.
+    Skips git/url/file sources that are not Galaxy FQCNs.
 
     Args:
         files: Uploaded File protos (or duck-typed objects with ``path``/``content``).
@@ -397,9 +417,21 @@ def _discover_collection_specs(files: Sequence[File]) -> tuple[list[str], list[s
             continue
         for entry in collections:
             if isinstance(entry, str):
+                if not _is_pip_installable_collection_spec(entry):
+                    logger.info("Skipping non-FQCN collection entry from %s: %s", norm, entry[:120])
+                    continue
                 specs.setdefault(entry, entry)
             elif isinstance(entry, dict) and entry.get("name"):
                 name = str(entry["name"])
+                entry_type = entry.get("type")
+                if not _is_pip_installable_collection_spec(name, entry_type):
+                    logger.info(
+                        "Skipping non-FQCN collection entry from %s: %s (type=%s)",
+                        norm,
+                        name[:120],
+                        entry_type,
+                    )
+                    continue
                 version = entry.get("version")
                 spec = (
                     f"{name}:{version}"

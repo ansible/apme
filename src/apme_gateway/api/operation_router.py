@@ -51,11 +51,14 @@ class OperateRequest(BaseModel):  # type: ignore[misc]
         options: Additional operation options.
         abandon_working_set: When True, allow a new remediate to flush an
             interactive draft working set (ADR-062 Phase 2).
+        scm_token: Optional one-time SCM token for private-repo clone
+            (overrides project/global token when present).
     """
 
     action: str = Field(..., pattern="^(check|remediate)$")
     options: dict[str, Any] = Field(default_factory=dict)
     abandon_working_set: bool = False
+    scm_token: str | None = None
 
 
 class OperateResponse(BaseModel):  # type: ignore[misc]
@@ -181,6 +184,9 @@ async def initiate_operation(project_id: str, body: OperateRequest) -> OperateRe
     cfg = load_config()
     galaxy_servers = await load_galaxy_server_defs()
 
+    inline_token = body.scm_token.strip() if body.scm_token else None
+    effective_scm_token = inline_token or proj.scm_token or cfg.scm_token
+
     task = asyncio.create_task(
         _drive_operation(
             operation_id=operation_id,
@@ -192,7 +198,7 @@ async def initiate_operation(project_id: str, body: OperateRequest) -> OperateRe
             options=body.options,
             scan_id=scan_id,
             galaxy_servers=galaxy_servers,
-            scm_token=proj.scm_token or cfg.scm_token,
+            scm_token=effective_scm_token,
         )
     )
     state.grpc_task = task
