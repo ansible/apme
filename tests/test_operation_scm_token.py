@@ -86,7 +86,15 @@ async def test_operate_scm_token_resolution(
     global_token: str,
     expected: str,
 ) -> None:
-    """Inline body scm_token overrides project and global tokens."""
+    """Inline body scm_token overrides project and global tokens.
+
+    Args:
+        client: Async HTTP test client.
+        body_token: Optional inline scm_token from request body.
+        project_token: Optional per-project scm_token.
+        global_token: Global config scm_token fallback.
+        expected: Expected token passed to ``_drive_operation``.
+    """
     project_id = await _seed_project(scm_token=project_token)
     captured: dict[str, object] = {}
 
@@ -119,7 +127,11 @@ async def test_operate_scm_token_resolution(
 
 @pytest.mark.asyncio  # type: ignore[untyped-decorator]
 async def test_operate_scm_token_strips_whitespace(client: AsyncClient) -> None:
-    """Whitespace around inline scm_token is trimmed before use."""
+    """Whitespace around inline scm_token is trimmed before use.
+
+    Args:
+        client: Async HTTP test client.
+    """
     project_id = await _seed_project()
     captured: dict[str, object] = {}
 

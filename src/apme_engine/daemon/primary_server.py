@@ -375,6 +375,13 @@ def _is_pip_installable_collection_spec(name: str, entry_type: object | None = N
 
     Git/URL/file sources (``type: git`` with a GitHub URL, etc.) are valid in
     ``requirements.yml`` but cannot be converted by ``_spec_to_pip``.
+
+    Args:
+        name: Collection name or URL from requirements.yml.
+        entry_type: Optional Galaxy source type (``git``, ``url``, etc.).
+
+    Returns:
+        True when the entry can be passed to pip install as an FQCN spec.
     """
     if isinstance(entry_type, str) and entry_type.strip().lower() in _NON_FQCN_COLLECTION_TYPES:
         return False
