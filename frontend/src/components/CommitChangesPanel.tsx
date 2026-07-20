@@ -63,6 +63,14 @@ export function CommitChangesPanel({
 
   const prUrl = existingPrUrl || result?.pr_url || null;
   const pushed = Boolean(result) || Boolean(existingPrUrl);
+  const commitHeading =
+    remediatedCount > 0
+      ? `Commit ${remediatedCount} remediated change${remediatedCount !== 1 ? 's' : ''}`
+      : 'Commit remediation changes';
+  const defaultPrTitle =
+    remediatedCount > 0
+      ? `fix: APME remediation — ${remediatedCount} finding${remediatedCount !== 1 ? 's' : ''} resolved`
+      : 'fix: APME remediation changes';
 
   const handleCommit = async () => {
     setLocalError(null);
@@ -70,7 +78,7 @@ export function CommitChangesPanel({
       const res = await onSubmit({
         branch_name: branchName.trim() || defaultBranch,
         create_pr: createPr,
-        title: `fix: APME remediation — ${remediatedCount} finding${remediatedCount !== 1 ? 's' : ''} resolved`,
+        title: defaultPrTitle,
       });
       setResult(res);
     } catch (err) {
@@ -99,10 +107,7 @@ export function CommitChangesPanel({
       <CardBody>
         <div className="apme-review-step-header" style={{ marginBottom: 16 }}>
           <div className="apme-review-step-header__text">
-            <h3 style={{ marginTop: 0 }}>
-              Commit {remediatedCount} remediated change
-              {remediatedCount !== 1 ? 's' : ''}
-            </h3>
+            <h3 style={{ marginTop: 0 }}>{commitHeading}</h3>
             <span style={{ fontSize: 13, opacity: 0.7 }}>
               Create a branch, push the fixes, and optionally open a pull request.
             </span>
