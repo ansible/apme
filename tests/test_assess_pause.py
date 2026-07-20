@@ -79,3 +79,41 @@ def test_set_findings_reuses_begin_remediate_future() -> None:
         assert terminal.findings[0]["message"] == "b"
 
     asyncio.run(_run())
+
+
+def test_begin_remediate_idempotent_after_bridge_clears_future() -> None:
+    """Retry after bridge clears the future must not raise session_expired.
+
+    Returns:
+        None.
+    """
+    import asyncio
+
+    from apme_gateway.api.operation_router import begin_remediate
+    from apme_gateway.operation_registry import get_operation_registry
+    from apme_gateway.operation_types import OperationStatus
+
+    async def _run() -> None:
+        registry = get_operation_registry()
+        await registry.shutdown()
+        project_id = "proj-begin-idempotent"
+        op_id = "op-begin-idempotent"
+        registry.create(
+            operation_id=op_id,
+            project_id=project_id,
+            scan_id="scan-1",
+            scan_type="check",
+        )
+        registry.set_findings(op_id, [{"rule_id": "L001", "message": "a"}])
+        first = await begin_remediate(project_id)
+        assert first == {"status": "begin_remediate"}
+        op = registry.get(op_id)
+        assert op is not None
+        assert op.scan_type == "remediate"
+        # Mimic _approval_bridge clearing the future while still ASSESSED.
+        op.begin_remediate_future = None
+        assert op.status == OperationStatus.ASSESSED
+        retry = await begin_remediate(project_id)
+        assert retry == {"status": "begin_remediate"}
+
+    asyncio.run(_run())

@@ -301,8 +301,9 @@ async def begin_remediate(project_id: str) -> dict[str, str]:
     Raises:
         HTTPException: 404 if no operation; 409 ``invalid_status`` when not
             ``assessed``; 409 ``session_expired`` when the begin future is
-            missing (client may start a fresh remediate). Idempotent: once
-            begun, repeated calls succeed without re-raising.
+            missing and remediation has not started (client may start a fresh
+            remediate). Idempotent: once begun (including after the bridge
+            clears the future while still ``ASSESSED``), repeated calls succeed.
     """
     registry = get_operation_registry()
     state = registry.get_by_project(project_id)
@@ -316,7 +317,11 @@ async def begin_remediate(project_id: str) -> dict[str, str]:
                 "message": f"Operation is in '{state.status.value}', not 'assessed'",
             },
         )
+    # Bridge clears begin_remediate_future after wake while status may still be
+    # ASSESSED — treat scan_type==remediate as already-begun (idempotent retry).
     if state.begin_remediate_future is None:
+        if state.scan_type == "remediate":
+            return {"status": "begin_remediate"}
         raise HTTPException(
             status_code=409,
             detail={
