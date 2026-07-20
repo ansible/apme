@@ -349,7 +349,9 @@ async def run_project_operation(
             ``interactive=True``, and/or Tier 2 ``ai-*`` when AI proposes).
             If omitted, proposals are auto-declined so the stream does not hang.
         begin_remediate_queue: Signalled to leave assess pause (ADR-064).
-            If omitted while ``assess_pause``, auto-begins then declines.
+            If omitted while ``assess_pause``, auto-begins on
+            ``FindingsReady``. Proposal approve/decline is controlled
+            separately by ``approval_queue`` (omitted → auto-decline).
         scan_id: Optional pre-generated scan ID; one is created if omitted.
         galaxy_servers: Global Galaxy server defs to inject into scan metadata (ADR-045).
         scm_token: Optional SCM token for private repository access.

@@ -44,7 +44,8 @@ def _become_line(node: ContentNode) -> int:
         node: Content node that defines become.
 
     Returns:
-        1-based file line number for the become declaration.
+        1-based file line number for the become declaration, or ``0`` when
+        the node has no known line (``line_start < 1`` / unset).
     """
     yaml_text = node.yaml_lines or ""
     if not yaml_text.strip() or node.line_start < 1:

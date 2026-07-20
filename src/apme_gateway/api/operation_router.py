@@ -299,9 +299,10 @@ async def begin_remediate(project_id: str) -> dict[str, str]:
         Confirmation message.
 
     Raises:
-        HTTPException: 404 if no operation; 409 if not assessed or already begun;
-            409 ``session_expired`` when the begin future is missing (client may
-            start a fresh remediate).
+        HTTPException: 404 if no operation; 409 ``invalid_status`` when not
+            ``assessed``; 409 ``session_expired`` when the begin future is
+            missing (client may start a fresh remediate). Idempotent: once
+            begun, repeated calls succeed without re-raising.
     """
     registry = get_operation_registry()
     state = registry.get_by_project(project_id)
