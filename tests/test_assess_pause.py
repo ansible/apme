@@ -35,3 +35,39 @@ def test_fix_options_assess_pause_default_false() -> None:
     from apme.v1 import primary_pb2
 
     assert primary_pb2.FixOptions().assess_pause is False
+
+
+def test_set_findings_reuses_begin_remediate_future() -> None:
+    """Replayed FindingsReady must not replace the bridge's awaitable future.
+
+    Returns:
+        None.
+    """
+    import asyncio
+
+    from apme_gateway.operation_registry import OperationRegistry
+
+    async def _run() -> None:
+        registry = OperationRegistry()
+        op_id = "op-assess-replay"
+        registry.create(
+            operation_id=op_id,
+            project_id="proj-1",
+            scan_id="scan-1",
+            scan_type="check",
+        )
+        registry.set_findings(op_id, [{"rule_id": "L001", "message": "a"}])
+        first = registry.get(op_id)
+        assert first is not None
+        fut = first.begin_remediate_future
+        assert fut is not None
+        assert not fut.done()
+
+        registry.set_findings(op_id, [{"rule_id": "L001", "message": "b"}])
+        second = registry.get(op_id)
+        assert second is not None
+        assert second.begin_remediate_future is fut
+        assert second.findings is not None
+        assert second.findings[0]["message"] == "b"
+
+    asyncio.run(_run())

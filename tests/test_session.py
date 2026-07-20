@@ -587,8 +587,8 @@ class TestSessionApprovalGates:
             node.record_state(0, "scanned")
             node.update_from_yaml(fixed)
             node.record_state(1, "transformed", source="deterministic")
-            # Baseline stays approved-false until approve_node; scan entry is
-            # source="" so reject keeps first snapshot when none approved.
+            # Mark the scan baseline approved so reject keeps the first snapshot
+            # when no later progression entry is approved (source="" scan row).
             node.progression[0] = replace(node.progression[0], approved=True)
             return node
 

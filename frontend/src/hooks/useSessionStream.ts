@@ -85,7 +85,7 @@ export interface SessionOptions {
   collections?: string[];
   enableAi?: boolean;
   aiModel?: string;
-  /** ADR-062 Option C: Gate 1 review when true (SPA remidiate default). */
+  /** ADR-062 Option C: Gate 1 review when true (SPA remediate default). */
   interactive?: boolean;
 }
 

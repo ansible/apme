@@ -49,7 +49,8 @@ interactive Gate 1/2 — without a full rescan while the session is alive.**
 
 - `options.assess_pause` on `POST .../operation` (works with `action: check`
   or `remediate`). When set on check, Gateway attaches `FixOptions` with
-  `assess_pause=true` (and interactive compute) so the engine can pause.
+  `assess_pause=true` (caller still controls `interactive`) so the engine
+  can pause.
 - New `POST .../operation/begin-remediate` → gRPC `BeginRemediate`.
 - New SSE status `assessed` + `findings` event (additive).
 - `interactive` remains default **false** server-side.
@@ -109,8 +110,9 @@ interactive Gate 1/2 — without a full rescan while the session is alive.**
 
 ## Implementation Notes
 
-- `assess_pause` implies Tier 1 compute without splice (treat like interactive
-  for apply deferral until begin-remediate → Gate 1).
+- `assess_pause` implies Tier 1 compute without splice (apply deferral) until
+  begin-remediate; Gate 1 vs auto-apply still follows the independent
+  `interactive` flag (do not force `interactive=true`).
 - Findings payload uses existing `Violation` messages plus optional
   would-fix fields already on violations where available.
 - Replay on `resume` should re-emit `FindingsReady` when still assessed.
@@ -137,3 +139,4 @@ interactive Gate 1/2 — without a full rescan while the session is alive.**
 |------|--------|--------|
 | 2026-07-18 | Brad Thornton | Initial acceptance — assess-pause + begin-remediate |
 | 2026-07-20 | Brad Thornton | SPA stepper/attach ownership clarified; link ADR-065 |
+| 2026-07-20 | Brad Thornton | Clarify assess_pause does not force interactive=true |

@@ -1706,13 +1706,13 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
 
         ai_provider = self._resolve_ai_provider(session.fix_options)
         assess_pause = bool(session.fix_options and session.fix_options.assess_pause)
-        # ADR-064: assess_pause implies Tier 1 compute without splice (like interactive).
-        interactive = bool(
-            session.fix_options and (session.fix_options.interactive or session.fix_options.assess_pause)
-        )
+        # interactive controls Gate 1 after BeginRemediate; assess_pause only
+        # defers Tier 1 splice / AI until then (ADR-064 — independent flags).
+        interactive = bool(session.fix_options and session.fix_options.interactive)
+        defer_tier1 = interactive or assess_pause
         # Option C: when interactive + AI, Gate 1 is Tier 1 only; AI runs after approval.
-        # Assess-pause also defers AI until after BeginRemediate → Gate 1.
-        skip_ai = interactive and bool(session.fix_options and session.fix_options.enable_ai)
+        # Assess-pause also defers AI until after BeginRemediate.
+        skip_ai = defer_tier1 and bool(session.fix_options and session.fix_options.enable_ai)
 
         graph_engine = GraphRemediationEngine(
             registry=registry,  # type: ignore[arg-type]
@@ -1730,7 +1730,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         remediate_task = asyncio.create_task(
             graph_engine.remediate(
                 initial_violations,
-                interactive=interactive,
+                interactive=defer_tier1,
                 skip_ai=skip_ai,
             ),
         )
@@ -1766,14 +1766,14 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         session.graph_originals = originals
 
         assess_pause = bool(session.fix_options and session.fix_options.assess_pause)
-        interactive = bool(
-            session.fix_options and (session.fix_options.interactive or session.fix_options.assess_pause)
-        )
-        tier1_node_proposals = list(graph_report.tier1_proposals) if interactive else []
+        interactive = bool(session.fix_options and session.fix_options.interactive)
+        defer_tier1 = interactive or assess_pause
+        tier1_node_proposals = list(graph_report.tier1_proposals) if defer_tier1 else []
 
         # 3. Splice approved modifications and write patched files.
-        # Interactive / assess-pause: defer splice until ApprovalRequest (no disk writes yet).
-        patches = [] if interactive and tier1_node_proposals else splice_modifications(graph, originals)
+        # Interactive / assess-pause: defer splice until ApprovalRequest or
+        # BeginRemediate auto-apply (no disk writes yet).
+        patches = [] if defer_tier1 and tier1_node_proposals else splice_modifications(graph, originals)
 
         for patch in patches:
             fmt_result = format_content(patch.patched, filename=Path(patch.path).name)
@@ -1844,9 +1844,9 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             fixed_violations=fixed_protos,
         )
 
-        # Interactive / assess: transforms are staged for review — not applied yet.
+        # Deferred Tier 1: transforms are staged — not applied yet.
         # Saying "fixed" / "nodes modified" here misleads after a later partial approval.
-        if interactive and tier1_node_proposals:
+        if defer_tier1 and tier1_node_proposals:
             _t1_msg = (
                 f"Graph Tier 1 ready for review: {graph_report.passes} pass(es), "
                 f"{len(tier1_node_proposals)} proposed fix(es) on "
@@ -1871,14 +1871,16 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             ),
         )
 
-        # Prepare Gate 1 proposals on the session (emitted now or after BeginRemediate).
-        if interactive and tier1_node_proposals:
+        # Stage Tier 1 proposals whenever splice was deferred (Gate 1 or
+        # assess→auto-apply). Only interactive sets awaiting_tier1_gate.
+        if defer_tier1 and tier1_node_proposals:
             t1_proposals = self._build_tier1_proposals(tier1_node_proposals)
             for p in t1_proposals:
                 session.proposals[p.id] = p
             session.tier1_proposals = list(tier1_node_proposals)
-            session.awaiting_tier1_gate = True
             session.current_tier = 1
+            if interactive:
+                session.awaiting_tier1_gate = True
 
         # ADR-064: assess pause — emit findings, wait for BeginRemediate.
         if assess_pause:
@@ -2130,6 +2132,14 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                     status=session.status,
                 ),
             )
+            return
+
+        # assess_pause + interactive=false: auto-apply deferred Tier 1, then AI/COMPLETE.
+        t1_ids = {pid for pid in session.proposals if pid.startswith("t1-")}
+        if t1_ids:
+            session.awaiting_tier1_gate = True
+            async for event in self._session_handle_approval(session, t1_ids):
+                yield event
             return
 
         if session.fix_options and session.fix_options.enable_ai:

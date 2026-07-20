@@ -17,7 +17,7 @@ describe("useProjectOperationActions start payload", () => {
     vi.unstubAllGlobals();
   });
 
-  it("includes interactive: true for remidiate by default (caller)", async () => {
+  it("includes interactive: true for remediate by default (caller)", async () => {
     const { result } = renderHook(() => useProjectOperationActions("proj-1"));
     await act(async () => {
       await result.current.start("remediate", {

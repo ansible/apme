@@ -20,7 +20,7 @@ export interface CheckOptionsFormProps {
   enableAi: boolean;
   onEnableAiChange: (checked: boolean) => void;
   /**
-   * When true, remidiate uses interactive=false (legacy auto-apply quick-fixes).
+   * When true, remediate uses interactive=false (legacy auto-apply quick-fixes).
    * Default unchecked → interactive Quick-fix review (ADR-062 Option C).
    */
   autoApplyTier1?: boolean;

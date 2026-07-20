@@ -46,7 +46,7 @@ function parseErrorBody(status: number, text: string): Error {
         if (detail.code === "session_expired") {
           return new SessionExpiredError(
             detail.message ||
-              "Assessment session expired; start a new remidiate.",
+              "Assessment session expired; start a new remediate.",
           );
         }
       }

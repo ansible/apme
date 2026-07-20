@@ -62,7 +62,8 @@ interface AlignedRow {
   rightNum?: number;
 }
 
-const MAX_DIFF_LINES = 2000;
+/** Cap LCS DP size; above this, fall back to naive line pairing. */
+const MAX_DIFF_LINES = 400;
 
 function alignSideBySide(before: string, after: string): AlignedRow[] {
   const oldLines = before.split('\n');

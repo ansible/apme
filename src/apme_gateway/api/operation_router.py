@@ -301,7 +301,7 @@ async def begin_remediate(project_id: str) -> dict[str, str]:
     Raises:
         HTTPException: 404 if no operation; 409 if not assessed or already begun;
             409 ``session_expired`` when the begin future is missing (client may
-            start a fresh remidiate).
+            start a fresh remediate).
     """
     registry = get_operation_registry()
     state = registry.get_by_project(project_id)
@@ -320,7 +320,7 @@ async def begin_remediate(project_id: str) -> dict[str, str]:
             status_code=409,
             detail={
                 "code": "session_expired",
-                "message": "Assess session is no longer waiting for begin-remediate; start a new remidiate operation.",
+                "message": "Assess session is no longer waiting for begin-remediate; start a new remediate operation.",
             },
         )
     # Idempotent: first click resolves the future; duplicates must not look like expiry.
@@ -923,11 +923,13 @@ async def _drive_operation(
                 findings_msg = event.findings  # type: ignore[attr-defined]
 
                 def _line_of(v: object) -> int | None:
+                    raw: int | None = None
                     if v.HasField("line"):  # type: ignore[attr-defined]
-                        return v.line  # type: ignore[attr-defined, no-any-return]
-                    if v.HasField("line_range"):  # type: ignore[attr-defined]
-                        return v.line_range.start  # type: ignore[attr-defined, no-any-return]
-                    return None
+                        raw = v.line  # type: ignore[attr-defined]
+                    elif v.HasField("line_range"):  # type: ignore[attr-defined]
+                        raw = v.line_range.start  # type: ignore[attr-defined]
+                    # Frontend highlight is 1-based; proto defaults of 0 are unset.
+                    return raw if raw is not None and raw > 0 else None
 
                 finding_rows = [
                     {

@@ -6,7 +6,15 @@ import { useMemo } from 'react';
 import Prism from 'prismjs';
 import 'prismjs/components/prism-yaml';
 
+const MAX_CACHE_ENTRIES = 500;
 const cache = new Map<string, string>();
+
+function cacheSet(line: string, html: string): void {
+  if (cache.size >= MAX_CACHE_ENTRIES) {
+    cache.clear();
+  }
+  cache.set(line, html);
+}
 
 /** Highlight a single YAML line; returns HTML string with Prism token spans. */
 export function highlightYamlLine(line: string): string {
@@ -15,10 +23,10 @@ export function highlightYamlLine(line: string): string {
   if (hit !== undefined) return hit;
   try {
     const html = Prism.highlight(line, Prism.languages.yaml ?? {}, 'yaml');
-    cache.set(line, html);
+    cacheSet(line, html);
     return html;
   } catch {
-    cache.set(line, '');
+    cacheSet(line, '');
     return '';
   }
 }

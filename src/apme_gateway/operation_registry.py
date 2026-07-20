@@ -269,8 +269,11 @@ class OperationRegistry:
         if op is None:
             return
         op.findings = findings
-        loop = asyncio.get_running_loop()
-        op.begin_remediate_future = loop.create_future()
+        # Resume may re-emit FindingsReady; do not replace a future the bridge
+        # is already awaiting (would leave begin-remediate resolving a dead future).
+        if op.begin_remediate_future is None:
+            loop = asyncio.get_running_loop()
+            op.begin_remediate_future = loop.create_future()
         self.transition(operation_id, OperationStatus.ASSESSED)
         self._broadcast(op, SSEEventType.FINDINGS, {"findings": findings})
 

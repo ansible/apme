@@ -5,7 +5,7 @@ import warnings
 
 from apme.v1 import reporting_pb2 as apme_dot_v1_dot_reporting__pb2
 
-GRPC_GENERATED_VERSION = '1.74.0'
+GRPC_GENERATED_VERSION = '1.82.1'
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
 
@@ -18,14 +18,14 @@ except ImportError:
 if _version_not_supported:
     raise RuntimeError(
         f'The grpc package installed is at version {GRPC_VERSION},'
-        + f' but the generated code in apme/v1/reporting_pb2_grpc.py depends on'
+        + ' but the generated code in apme/v1/reporting_pb2_grpc.py depends on'
         + f' grpcio>={GRPC_GENERATED_VERSION}.'
         + f' Please upgrade your grpc module to grpcio>={GRPC_GENERATED_VERSION}'
         + f' or downgrade your generated code using grpcio-tools<={GRPC_VERSION}.'
     )
 
 
-class ReportingStub(object):
+class ReportingStub:
     """Reporting receives fix events from engine pods (ADR-020).
     The gateway implements this service; engine pods are gRPC clients.
     """
@@ -48,7 +48,7 @@ class ReportingStub(object):
                 _registered_method=True)
 
 
-class ReportingServicer(object):
+class ReportingServicer:
     """Reporting receives fix events from engine pods (ADR-020).
     The gateway implements this service; engine pods are gRPC clients.
     """
@@ -88,7 +88,7 @@ def add_ReportingServicer_to_server(servicer, server):
 
 
  # This class is part of an EXPERIMENTAL API.
-class Reporting(object):
+class Reporting:
     """Reporting receives fix events from engine pods (ADR-020).
     The gateway implements this service; engine pods are gRPC clients.
     """

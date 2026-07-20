@@ -266,7 +266,7 @@ export function ProjectDetailPage() {
       // Other 409s (wrong status / double-click) must not abandon the working set.
       if (err instanceof SessionExpiredError) {
         const ok = window.confirm(
-          'Assessment session expired. Start a full remidiate (rescan)?',
+          'Assessment session expired. Start a full remediate (rescan)?',
         );
         if (ok) {
           const colls = collections.split(',').map((c) => c.trim()).filter(Boolean);
@@ -283,7 +283,7 @@ export function ProjectDetailPage() {
         }
         return;
       }
-      console.error('Failed to begin remidiate:', err);
+      console.error('Failed to begin remediate:', err);
     }
   }, [
     beginRemediateOp,
