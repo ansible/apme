@@ -839,6 +839,8 @@ class TestSessionApprovalGates:
         }
         session.ai_proposals = []
 
+        from apme_engine.daemon.primary_server import _write_patches_to_temp_dir
+
         applied, rejected, approved, patches = _apply_graph_approvals(
             session,
             session.content_graph,
@@ -849,8 +851,10 @@ class TestSessionApprovalGates:
         assert approved == set()
         assert "play.yml/plays[0]" in rejected
         assert session.working_files["play.yml"] == baseline
+        # Disk sync is async-path responsibility (ADR-007); mirror the handler.
+        assert patches
+        _write_patches_to_temp_dir(tmp_path, patches)
         assert (tmp_path / "play.yml").read_bytes() == baseline
-        assert patches == []
         assert PrimaryServicer is not None  # approval path uses same helpers
 
     def test_build_fix_event_includes_rejected_telemetry_store(self) -> None:

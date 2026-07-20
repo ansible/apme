@@ -310,9 +310,12 @@ async def begin_remediate(project_id: str) -> dict[str, str]:
     if state.status != OperationStatus.ASSESSED:
         raise HTTPException(
             status_code=409,
-            detail=f"Operation is in '{state.status.value}', not 'assessed'",
+            detail={
+                "code": "invalid_status",
+                "message": f"Operation is in '{state.status.value}', not 'assessed'",
+            },
         )
-    if state.begin_remediate_future is None or state.begin_remediate_future.done():
+    if state.begin_remediate_future is None:
         raise HTTPException(
             status_code=409,
             detail={
@@ -320,8 +323,12 @@ async def begin_remediate(project_id: str) -> dict[str, str]:
                 "message": "Assess session is no longer waiting for begin-remediate; start a new remidiate operation.",
             },
         )
-    state.scan_type = "remediate"
-    state.begin_remediate_future.set_result(None)
+    # Idempotent: first click resolves the future; duplicates must not look like expiry.
+    if not state.begin_remediate_future.done():
+        state.scan_type = "remediate"
+        state.begin_remediate_future.set_result(None)
+    # Stay ASSESSED until ProposalsReady → AWAITING_APPROVAL (bridge must still
+    # observe ASSESSED while awaiting the future). SPA disables Next via loading.
     return {"status": "begin_remediate"}
 
 
@@ -398,13 +405,15 @@ async def cancel_operation(project_id: str) -> dict[str, str]:
             status_code=409,
             detail=f"Operation already in terminal state '{state.status.value}'",
         )
+    # Mark cancelled first so the approval bridge will not enqueue BeginRemediate
+    # after waking on a cancelled begin future.
+    registry.transition(state.operation_id, OperationStatus.CANCELLED)
     if state.grpc_task and not state.grpc_task.done():
         state.grpc_task.cancel()
     if state.approval_future and not state.approval_future.done():
         state.approval_future.set_result([])
     if state.begin_remediate_future and not state.begin_remediate_future.done():
-        state.begin_remediate_future.set_result(None)
-    registry.transition(state.operation_id, OperationStatus.CANCELLED)
+        state.begin_remediate_future.cancel()
     return {"status": "cancelled"}
 
 
@@ -1038,7 +1047,11 @@ async def _drive_operation(
                 patches_json = [{"file": p.path, "diff": p.diff} for p in result_patches if p.diff]
                 captured_patches.extend(patches_json)
 
-                remediated = fixed if remediate else 0
+                # ADR-064 check+assess_pause starts with remediate=False; after
+                # begin-remediate the registry scan_type flips to remediate.
+                op_now = registry.get(operation_id)
+                is_remediate = remediate or (op_now is not None and op_now.scan_type == "remediate")
+                remediated = fixed if is_remediate else 0
                 remaining_count = len(remaining)
 
                 op_result = OperationResult(
@@ -1047,7 +1060,7 @@ async def _drive_operation(
                     ai_proposed=ai_proposed_count,
                     ai_declined=ai_declined_count,
                     ai_accepted=ai_accepted_count,
-                    manual_review=remaining_count if remediate else (report.remaining_manual if report else 0),
+                    manual_review=remaining_count if is_remediate else (report.remaining_manual if report else 0),
                     remediated_count=remediated,
                     fixed_violations=fixed_violations_json,
                     patches=patches_json,
@@ -1079,10 +1092,14 @@ async def _drive_operation(
                     ):
                         try:
                             await op.begin_remediate_future
-                            await begin_remediate_queue.put(None)
-                            op.begin_remediate_future = None
                         except asyncio.CancelledError:
                             break
+                        # Re-check after wake — cancel may have raced the future.
+                        op = registry.get(operation_id)
+                        if op is None or op.status in TERMINAL_STATUSES:
+                            break
+                        await begin_remediate_queue.put(None)
+                        op.begin_remediate_future = None
                     elif op.status == OperationStatus.AWAITING_APPROVAL and op.approval_future is not None:
                         try:
                             ids = await op.approval_future

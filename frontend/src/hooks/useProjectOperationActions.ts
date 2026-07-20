@@ -19,6 +19,16 @@ export class WorkingSetConflictError extends Error {
   }
 }
 
+/** Raised when assess-pause session can no longer accept begin-remediate. */
+export class SessionExpiredError extends Error {
+  readonly code = "session_expired" as const;
+
+  constructor(message: string) {
+    super(message);
+    this.name = "SessionExpiredError";
+  }
+}
+
 function parseErrorBody(status: number, text: string): Error {
   if (status === 409) {
     try {
@@ -26,15 +36,19 @@ function parseErrorBody(status: number, text: string): Error {
         detail?: { code?: string; message?: string } | string;
       };
       const detail = parsed.detail;
-      if (
-        detail &&
-        typeof detail === "object" &&
-        detail.code === "working_set_in_progress"
-      ) {
-        return new WorkingSetConflictError(
-          detail.message ||
-            "Project has an interactive draft working set.",
-        );
+      if (detail && typeof detail === "object" && detail.code) {
+        if (detail.code === "working_set_in_progress") {
+          return new WorkingSetConflictError(
+            detail.message ||
+              "Project has an interactive draft working set.",
+          );
+        }
+        if (detail.code === "session_expired") {
+          return new SessionExpiredError(
+            detail.message ||
+              "Assessment session expired; start a new remidiate.",
+          );
+        }
       }
     } catch {
       /* fall through */

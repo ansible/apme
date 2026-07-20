@@ -2263,18 +2263,18 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         rem_counts = count_by_remediation_class(remaining)
         _enrich_violations_from_graph(remaining, graph, fixed=False)
         remaining_protos = [violation_dict_to_proto(v) for v in remaining]
-        # Gate 2 interactive: do not count pending AI / pending_review as fixed.
+        # Gate 2 interactive: ledger ``fixed`` is authoritative (do not add to
+        # prev_fixed — that double-counts Gate 1 fixes already in the ledger).
         fixed_protos = [violation_dict_to_proto(dict(fv)) for fv in graph.query_violations(status="fixed")]
-        prev_fixed = session.report.fixed if session.report else 0
         session.report = FixReport(
             passes=(session.report.passes if session.report else 0) + graph_report.passes,
-            fixed=prev_fixed + len(fixed_protos),
+            fixed=len(fixed_protos),
             remaining_ai=rem_counts.get("ai-candidate", 0),
             remaining_manual=rem_counts.get("manual-review", 0),
             oscillation_detected=bool(session.report and session.report.oscillation_detected)
             or graph_report.oscillation_detected,
             remaining_violations=remaining_protos,
-            fixed_violations=list(session.report.fixed_violations if session.report else []) + fixed_protos,
+            fixed_violations=fixed_protos,
         )
         session.remaining_ai = list(remaining)
 
@@ -2319,6 +2319,13 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                 if getattr(fmt_result, "changed", False):
                     patch.patched = getattr(fmt_result, "formatted", patch.patched)
             _write_patches_to_session(session, patches)
+            if session.temp_dir is not None and patches:
+                await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    _write_patches_to_temp_dir,
+                    session.temp_dir,
+                    patches,
+                )
             session.status = 3
             async for event in self._session_build_result(session):
                 yield event
@@ -2858,7 +2865,10 @@ def _write_patches_to_session(
     session: SessionState,
     patches: list[SplicedFilePatch],
 ) -> None:
-    """Write spliced patches into ``working_files`` (and temp_dir when set).
+    """Update ``working_files`` from spliced patches (in-memory only).
+
+    Disk sync is the caller's job via ``run_in_executor(_write_patches_to_temp_dir)``
+    so the grpc.aio event loop is never blocked (ADR-007).
 
     Args:
         session: Active session.
@@ -2867,25 +2877,35 @@ def _write_patches_to_session(
     for patch in patches:
         rel_path = _working_files_key(session.temp_dir, patch.path)
         session.working_files[rel_path] = patch.patched.encode("utf-8")
-    if session.temp_dir is not None and patches:
-        _write_patches_to_temp_dir(session.temp_dir, patches)
 
 
-def _restore_pre_gate2_files(session: SessionState) -> None:
-    """Restore ``working_files`` / temp_dir from the pre-Gate-2 snapshot.
+def _restore_pre_gate2_files(session: SessionState) -> list[SplicedFilePatch]:
+    """Restore ``working_files`` from the pre-Gate-2 snapshot.
+
+    Returns FilePatch objects so the async approval handler can write temp_dir
+    via ``run_in_executor`` (ADR-007). Does not touch disk itself.
 
     Args:
         session: Session that may hold ``pre_gate2_files``.
+
+    Returns:
+        Patches representing the restored snapshot (empty when none).
     """
     if not session.pre_gate2_files:
-        return
+        return []
     session.working_files = dict(session.pre_gate2_files)
-    if session.temp_dir is None:
-        return
+    restored: list[SplicedFilePatch] = []
     for rel_path, content in session.pre_gate2_files.items():
-        target = session.temp_dir / rel_path
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(content)
+        restored.append(
+            SplicedFilePatch(
+                path=rel_path,
+                original="",
+                patched=content.decode("utf-8", errors="replace"),
+                diff="",
+                rule_ids=[],
+            )
+        )
+    return restored
 
 
 def _apply_graph_approvals(
@@ -2977,8 +2997,7 @@ def _apply_graph_approvals(
 
     # Always start from the pre-Gate-2 snapshot when present so decline-all
     # cannot leave leaked AI bytes in working_files after a no-op splice.
-    if session.pre_gate2_files:
-        _restore_pre_gate2_files(session)
+    restored_patches = _restore_pre_gate2_files(session) if session.pre_gate2_files else []
 
     from apme_engine.formatter import format_content
 
@@ -2989,6 +3008,13 @@ def _apply_graph_approvals(
             patch.patched = getattr(fmt_result, "formatted", patch.patched)
 
     _write_patches_to_session(session, patches)
+
+    # Prefer splice results over restore-only rows for the same path.
+    if restored_patches:
+        by_path = {_working_files_key(session.temp_dir, p.path): p for p in restored_patches}
+        for patch in patches:
+            by_path[_working_files_key(session.temp_dir, patch.path)] = patch
+        patches = list(by_path.values())
 
     return (applied, rejected_node_ids, approved_node_ids, patches)
 

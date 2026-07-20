@@ -38,6 +38,7 @@ import {
   useProjectOperationState,
 } from '../hooks/useProjectOperationState';
 import {
+  SessionExpiredError,
   useProjectOperationActions,
   WorkingSetConflictError,
 } from '../hooks/useProjectOperationActions';
@@ -261,8 +262,9 @@ export function ProjectDetailPage() {
       await beginRemediateOp();
       refreshOp();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (msg.includes('session_expired') || msg.includes('409')) {
+      // Only true assess-session expiry offers a destructive rescan fallback.
+      // Other 409s (wrong status / double-click) must not abandon the working set.
+      if (err instanceof SessionExpiredError) {
         const ok = window.confirm(
           'Assessment session expired. Start a full remidiate (rescan)?',
         );
