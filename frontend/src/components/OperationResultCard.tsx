@@ -57,7 +57,8 @@ export function OperationResultCard({
   const navigate = useNavigate();
   const wasRemediate = isRemediate ?? result.remediated_count != null;
   const hasAi = (result.ai_proposed ?? 0) > 0 || (result.ai_declined ?? 0) > 0 || (result.ai_accepted ?? 0) > 0;
-  const showCreatePR = (result.remediated_count ?? 0) > 0 && onCreatePR && !prUrl;
+  // Caller decides eligibility (e.g. patches or remediated_count via needsCommitStep).
+  const showCreatePR = Boolean(onCreatePR) && !prUrl;
 
   return (
     <Card style={{ marginBottom: 16, borderLeft: '4px solid var(--pf-t--global--color--status--success--default)' }}>

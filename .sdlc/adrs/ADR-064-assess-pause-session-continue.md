@@ -23,7 +23,7 @@ known.
 Constraints:
 
 - ADR-060: no breaking REST changes; additive only.
-- Portal / CLI must keep today’s check → COMPLETE and remidiate defaults.
+- Portal / CLI must keep today’s check → COMPLETE and remediate defaults.
 - Must not reintroduce `violation_ids` Tier 1 pre-filter (selective apply
   remains approve-time on engine proposal ids).
 
@@ -36,7 +36,7 @@ interactive Gate 1/2 — without a full rescan while the session is alive.**
 ### Engine (proto additive)
 
 - `FixOptions.assess_pause` (bool, default **false**). When true, Primary:
-  - Runs the graph remidiate path with Tier 1 **computed** but not spliced
+  - Runs the graph remediate path with Tier 1 **computed** but not spliced
     (same as `interactive` for apply deferral).
   - Emits `SessionEvent.findings` (`FindingsReady`) with all content
     violations (including would-fix metadata where present).
@@ -55,7 +55,7 @@ interactive Gate 1/2 — without a full rescan while the session is alive.**
 - New SSE status `assessed` + `findings` event (additive).
 - `interactive` remains default **false** server-side.
 - Session expired → `409` with `code: session_expired`; client may start a
-  fresh remidiate.
+  fresh remediate.
 
 ### SPA
 
@@ -63,7 +63,7 @@ interactive Gate 1/2 — without a full rescan while the session is alive.**
 - Assess panel: violations flat | group-by-node; path-less singletons;
   deps remain on Dependencies.
 - **Remediate** calls begin-remediate on the same operation when assessed;
-  falls back to full remidiate start if expired.
+  falls back to full remediate start if expired.
 - Workflow stepper steps (Scan → findings → Quick-fix → AI → Commit) are
   **derived** from Gateway `OperationState` in the SPA; they are not a second
   authoritative phase store. Attach / Resume policy is SPA-local — see
@@ -71,9 +71,9 @@ interactive Gate 1/2 — without a full rescan while the session is alive.**
 
 ## Alternatives Considered
 
-### Alternative 1: Two operations (check COMPLETE, then remidiate)
+### Alternative 1: Two operations (check COMPLETE, then remediate)
 
-**Description**: Keep separate FixSessions; remidiate always rescans.
+**Description**: Keep separate FixSessions; remediate always rescans.
 
 **Pros**: No proto change.
 
@@ -120,7 +120,7 @@ interactive Gate 1/2 — without a full rescan while the session is alive.**
 ## Related Decisions
 
 - [ADR-028](ADR-028-session-based-fix-workflow.md): FixSession
-- [ADR-039](ADR-039-unified-operation-stream.md): Check / remidiate via FixSession
+- [ADR-039](ADR-039-unified-operation-stream.md): Check / remediate via FixSession
 - [ADR-052](ADR-052-project-operation-sse-architecture.md): Operation SSE
 - [ADR-060](ADR-060-rest-api-versioning-contract.md): Additive REST
 - [ADR-062](ADR-062-ephemeral-proposal-working-set.md): Interactive gates / path
