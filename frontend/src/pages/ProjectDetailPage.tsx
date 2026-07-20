@@ -535,7 +535,9 @@ export function ProjectDetailPage() {
                       <th role="columnheader">AI Accepted</th>
                       <th role="columnheader">Manual</th>
                       <th role="columnheader">Time</th>
-                      <th role="columnheader" />
+                      <th role="columnheader">
+                        <span className="pf-v6-screen-reader">Actions</span>
+                      </th>
                     </tr>
                   </thead>
                   <tbody>

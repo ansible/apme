@@ -150,7 +150,9 @@ export function ActivityPage() {
                 <th role="columnheader" title="AI proposals accepted">AI Accepted</th>
                 <th role="columnheader">Manual</th>
                 <th role="columnheader">Time</th>
-                <th role="columnheader" />
+                <th role="columnheader">
+                  <span className="pf-v6-screen-reader">Actions</span>
+                </th>
               </tr>
             </thead>
             <tbody>
