@@ -256,6 +256,24 @@ class OperationRegistry:
             },
         )
 
+    def set_findings(self, operation_id: str, findings: list[dict[str, Any]]) -> None:
+        """Store assessment findings and transition to ASSESSED (ADR-064).
+
+        Creates ``begin_remediate_future`` resolved by ``POST /begin-remediate``.
+
+        Args:
+            operation_id: The operation to update.
+            findings: Serialised violation dicts from FindingsReady.
+        """
+        op = self._ops.get(operation_id)
+        if op is None:
+            return
+        op.findings = findings
+        loop = asyncio.get_running_loop()
+        op.begin_remediate_future = loop.create_future()
+        self.transition(operation_id, OperationStatus.ASSESSED)
+        self._broadcast(op, SSEEventType.FINDINGS, {"findings": findings})
+
     def set_proposals(self, operation_id: str, proposals: list[Proposal]) -> None:
         """Store proposals and transition to AWAITING_APPROVAL.
 
@@ -290,6 +308,8 @@ class OperationRegistry:
                         "path": p.path,
                         "suggestion": p.suggestion,
                         "line_start": p.line_start,
+                        "before_text": p.before_text,
+                        "after_text": p.after_text,
                     }
                     for p in proposals
                 ],

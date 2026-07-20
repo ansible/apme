@@ -204,7 +204,8 @@ match.
 - Engine violation emission unchanged
 - ADR-052 in-memory operation registry remains the live progress fan-out;
   durable truth for review is scan + violations (+ ephemeral proposals while
-  actionable)
+  actionable). SPA attach / workflow-stepper presentation state is
+  non-authoritative — see [ADR-065](ADR-065-spa-gateway-live-state-ownership.md)
 
 ## Implementation Notes
 
@@ -242,6 +243,8 @@ match.
 - [ADR-044](ADR-044-node-identity-progression-model.md): Node identity / `path`
 - [ADR-052](ADR-052-project-operation-sse-architecture.md): Operation registry
 - [ADR-060](ADR-060-rest-api-versioning-contract.md): Additive REST only
+- [ADR-065](ADR-065-spa-gateway-live-state-ownership.md): SPA vs Gateway
+  live-state ownership
 
 ## References
 
@@ -254,3 +257,4 @@ match.
 |------|--------|--------|
 | 2026-07-09 | Brad Thornton | Initial acceptance from #379 durability design |
 | 2026-07-09 | Brad Thornton | Phase 2: draft PATCH, gate-commit stamps, id bridge, abandon |
+| 2026-07-20 | Brad Thornton | Cross-link ADR-065 for SPA vs registry ownership |

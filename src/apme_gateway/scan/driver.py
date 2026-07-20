@@ -315,16 +315,19 @@ async def run_project_operation(
     enable_ai: bool = True,
     ai_model: str = "",
     interactive: bool = False,
+    assess_pause: bool = False,
     progress_callback: ProgressCallback | None = None,
     approval_queue: asyncio.Queue[list[str]] | None = None,
+    begin_remediate_queue: asyncio.Queue[None] | None = None,
     scan_id: str | None = None,
     galaxy_servers: list[GalaxyServerDef] | None = None,
     scm_token: str | None = None,
 ) -> tuple[str, primary_pb2.SessionResult | None, str]:
     """Clone a project repo and run check or remediate via Primary ``FixSession``.
 
-    Check mode (``remediate=False``) sends chunks without ``fix_options``.
-    Remediate mode attaches ``FixOptions`` on the first chunk.
+    Check mode (``remediate=False``) sends chunks without ``fix_options``
+    unless ``assess_pause`` is set (ADR-064 — attaches FixOptions so the
+    engine can pause with FindingsReady).
 
     Args:
         project_id: UUID of the project (used to derive session_id).
@@ -337,11 +340,15 @@ async def run_project_operation(
         enable_ai: Enable AI remediation tier (remediate mode only).
         ai_model: AI model identifier (remediate mode only).
         interactive: When True, Tier 1 fixes await approval (ADR-062 Phase 3).
+        assess_pause: When True, pause after FindingsReady until
+            ``begin_remediate_queue`` is signalled (ADR-064).
         progress_callback: Optional async callable for each ``SessionEvent``.
         approval_queue: Queue of approved proposal IDs for remediate mode when
             the engine emits ``ProposalsReady`` (Tier 1 ``t1-*`` when
             ``interactive=True``, and/or Tier 2 ``ai-*`` when AI proposes).
             If omitted, proposals are auto-declined so the stream does not hang.
+        begin_remediate_queue: Signalled to leave assess pause (ADR-064).
+            If omitted while ``assess_pause``, auto-begins then declines.
         scan_id: Optional pre-generated scan ID; one is created if omitted.
         galaxy_servers: Global Galaxy server defs to inject into scan metadata (ADR-045).
         scm_token: Optional SCM token for private repository access.
@@ -353,7 +360,7 @@ async def run_project_operation(
     if scan_id is None:
         scan_id = uuid.uuid4().hex
     session_id = derive_session_id(project_id)
-    prefix = "apme_project_remediate_" if remediate else "apme_project_check_"
+    prefix = "apme_project_remediate_" if remediate or assess_pause else "apme_project_check_"
     temp_dir = tempfile.mkdtemp(prefix=prefix)
 
     try:
@@ -372,14 +379,16 @@ async def run_project_operation(
             )
         )
 
-        if remediate and chunks:
+        attach_fix = remediate or assess_pause
+        if attach_fix and chunks:
             fix_opts = primary_pb2.FixOptions(
                 ansible_core_version=ansible_version,
                 collection_specs=collection_specs or [],
                 enable_ai=enable_ai,
                 ai_model=ai_model,
                 galaxy_servers=galaxy_servers or [],
-                interactive=interactive,
+                interactive=interactive or assess_pause,
+                assess_pause=assess_pause,
             )
             chunks[0].fix_options.CopyFrom(fix_opts)  # type: ignore[union-attr]
 
@@ -413,7 +422,13 @@ async def run_project_operation(
                     await progress_callback(event)
 
                 kind = event.WhichOneof("event")
-                if kind == "proposals" and approval_queue is not None:
+                if kind == "findings":
+                    if begin_remediate_queue is not None:
+                        await begin_remediate_queue.get()
+                    await command_queue.put(
+                        primary_pb2.SessionCommand(begin_remediate=primary_pb2.BeginRemediateRequest())
+                    )
+                elif kind == "proposals" and approval_queue is not None:
                     approved_ids = await approval_queue.get()
                     await command_queue.put(
                         primary_pb2.SessionCommand(approve=primary_pb2.ApprovalRequest(approved_ids=approved_ids))

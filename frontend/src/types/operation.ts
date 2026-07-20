@@ -32,9 +32,16 @@ export interface OperationProposal {
   confidence: number;
   explanation?: string;
   diff_hunk?: string;
-  status?: 'proposed' | 'declined';
+  /** Draft / review status from engine or Gateway working set. */
+  status?: "proposed" | "declined" | "pending" | "approved" | "rejected";
   suggestion?: string;
   line_start?: number;
+  /** Stable graph node path (ADR-062 / Option C Gate 1 grouping key). */
+  path?: string;
+  /** ``deterministic`` (Gate 1) or ``ai`` / ``ai-candidate`` (Gate 2). */
+  source?: string;
+  before_text?: string;
+  after_text?: string;
 }
 
 export interface OperationResult {

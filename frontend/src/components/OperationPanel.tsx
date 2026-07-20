@@ -7,17 +7,18 @@
  *   queued          → spinner + "Starting..."
  *   cloning         → progress bar + clone status
  *   scanning        → streaming progress log
+ *   assessed        → findings panel + Remediate (ADR-064)
  *   awaiting_approval → proposal review panel
  *   applying        → progress log + "Applying fixes..."
- *   completed       → results + violations + Create PR
- *   submitting_pr   → results + PR spinner
+ *   completed       → Commit step (if patches) or results
+ *   submitting_pr   → Commit step (in progress)
  *   pr_submitted    → results + PR link
  *   failed          → error banner
  *   expired         → "Session expired" banner
  *   cancelled       → null (no panel)
  */
 
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import {
   Button,
   Card,
@@ -31,17 +32,32 @@ import type {
   ProjectOperationStatus,
 } from '../hooks/useProjectOperationState';
 import type { OperationProgress, OperationResult } from '../types/operation';
+import { needsCommitStep } from '../remediation';
 import { OperationProgressPanel } from './OperationProgressPanel';
-import { ProposalReviewPanel } from './ProposalReviewPanel';
+import {
+  ProposalReviewPanel,
+  type ProposalDraftUpdate,
+} from './ProposalReviewPanel';
 import { OperationResultCard } from './OperationResultCard';
+import { AssessFindingsPanel } from './AssessFindingsPanel';
+import { OperationWorkflowStepper } from './OperationWorkflowStepper';
+import {
+  CommitChangesPanel,
+  type CommitSubmitOptions,
+  type CommitSubmitResult,
+} from './CommitChangesPanel';
 
 export interface OperationPanelProps {
   state: ProjectOperationState | null;
   onApprove: (ids: string[]) => Promise<unknown>;
+  onBeginRemediate?: () => Promise<unknown>;
+  onDraftUpdate?: (updates: ProposalDraftUpdate[]) => void;
   onCancel: () => Promise<unknown>;
-  onCreatePR: () => Promise<unknown>;
+  onCreatePR: (options?: CommitSubmitOptions) => Promise<CommitSubmitResult>;
   onDismiss: () => void;
   feedbackEnabled?: boolean;
+  /** Activity "Enable AI" — drives AI steps on the workflow tracker. */
+  enableAi?: boolean;
 }
 
 const RUNNING_STATUSES = new Set<ProjectOperationStatus>([
@@ -61,16 +77,53 @@ function mapStatus(s: ProjectOperationStatus): import('../types/operation').Oper
   return (mapping[s] ?? s) as import('../types/operation').OperationStatus;
 }
 
+function withStepper(
+  state: ProjectOperationState,
+  enableAi: boolean,
+  body: ReactNode,
+  commitFinished = false,
+): ReactNode {
+  return (
+    <div>
+      <OperationWorkflowStepper
+        state={state}
+        enableAi={enableAi}
+        commitFinished={commitFinished}
+      />
+      {body}
+    </div>
+  );
+}
+
 export function OperationPanel({
   state,
   onApprove,
+  onBeginRemediate,
+  onDraftUpdate,
   onCancel,
   onCreatePR,
   onDismiss,
   feedbackEnabled,
+  enableAi = false,
 }: OperationPanelProps) {
   const [prCreating, setPrCreating] = useState(false);
   const [prError, setPrError] = useState<string | null>(null);
+  const [beginning, setBeginning] = useState(false);
+  const [commitFinished, setCommitFinished] = useState(false);
+  const [localPrUrl, setLocalPrUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    setCommitFinished(false);
+    setPrError(null);
+    setLocalPrUrl(null);
+  }, [state?.operation_id]);
+
+  useEffect(() => {
+    if (state?.pr_url) {
+      setCommitFinished(true);
+      setLocalPrUrl(state.pr_url);
+    }
+  }, [state?.pr_url]);
 
   const handleCancel = useCallback(() => {
     onCancel().catch(() => {});
@@ -83,17 +136,39 @@ export function OperationPanel({
     [onApprove],
   );
 
-  const handleCreatePR = useCallback(async () => {
-    setPrCreating(true);
-    setPrError(null);
+  const handleBeginRemediate = useCallback(async () => {
+    if (!onBeginRemediate) return;
+    setBeginning(true);
     try {
-      await onCreatePR();
+      await onBeginRemediate();
     } catch (err) {
-      setPrError(err instanceof Error ? err.message : 'Failed to create PR');
+      console.error('begin-remediate failed:', err);
     } finally {
-      setPrCreating(false);
+      setBeginning(false);
     }
-  }, [onCreatePR]);
+  }, [onBeginRemediate]);
+
+  const handleSubmit = useCallback(
+    async (options?: CommitSubmitOptions) => {
+      setPrCreating(true);
+      setPrError(null);
+      try {
+        const result = await onCreatePR(options);
+        if (result.pr_url) {
+          setLocalPrUrl(result.pr_url);
+          setCommitFinished(true);
+        }
+        return result;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Failed to submit changes';
+        setPrError(message);
+        throw err instanceof Error ? err : new Error(message);
+      } finally {
+        setPrCreating(false);
+      }
+    },
+    [onCreatePR],
+  );
 
   if (!state || state.status === 'cancelled') {
     return null;
@@ -103,7 +178,9 @@ export function OperationPanel({
 
   if (RUNNING_STATUSES.has(status)) {
     if (status === 'queued') {
-      return (
+      return withStepper(
+        state,
+        enableAi,
         <Card style={{ marginBottom: 16 }}>
           <CardBody style={{ textAlign: 'center', padding: '32px 24px' }}>
             <Spinner size="lg" />
@@ -112,7 +189,7 @@ export function OperationPanel({
               Cancel
             </Button>
           </CardBody>
-        </Card>
+        </Card>,
       );
     }
 
@@ -124,34 +201,60 @@ export function OperationPanel({
       level: p.level ?? undefined,
     }));
 
-    return (
+    return withStepper(
+      state,
+      enableAi,
       <OperationProgressPanel
         status={mapStatus(status)}
         progress={progressEntries}
         onCancel={handleCancel}
-      />
+      />,
+    );
+  }
+
+  if (status === 'assessed') {
+    return withStepper(
+      state,
+      enableAi,
+      <AssessFindingsPanel
+        findings={state.findings ?? []}
+        onRemediate={() => {
+          handleBeginRemediate().catch(() => {});
+        }}
+        onCancel={handleCancel}
+        remediating={beginning}
+      />,
     );
   }
 
   if (status === 'awaiting_approval' && state.proposals) {
-    return (
+    const proposals = state.proposals.map((p) => ({
+      id: p.id,
+      rule_id: p.rule_id,
+      file: p.file,
+      tier: p.tier,
+      confidence: p.confidence,
+      explanation: p.explanation,
+      diff_hunk: p.diff_hunk,
+      status: p.status,
+      suggestion: p.suggestion,
+      line_start: p.line_start,
+      path: p.path,
+      source: p.source,
+      before_text: p.before_text,
+      after_text: p.after_text,
+    }));
+    return withStepper(
+      state,
+      enableAi,
       <ProposalReviewPanel
-        proposals={state.proposals.map((p) => ({
-          id: p.id,
-          rule_id: p.rule_id,
-          file: p.file,
-          tier: p.tier,
-          confidence: p.confidence,
-          explanation: p.explanation,
-          diff_hunk: p.diff_hunk,
-          status: p.status,
-          suggestion: p.suggestion,
-          line_start: p.line_start,
-        }))}
+        proposals={proposals}
         onApprove={handleApprove}
+        onDraftUpdate={onDraftUpdate}
         feedbackEnabled={feedbackEnabled ?? false}
         scanId={state.scan_id}
-      />
+        onCancel={handleCancel}
+      />,
     );
   }
 
@@ -169,8 +272,33 @@ export function OperationPanel({
         }
       : null;
 
+    const showCommit =
+      (status === 'completed' || status === 'submitting_pr') &&
+      !commitFinished &&
+      needsCommitStep(state);
+
+    if (showCommit && resultData) {
+      return withStepper(
+        state,
+        enableAi,
+        <CommitChangesPanel
+          remediatedCount={resultData.remediated_count ?? 0}
+          scanId={state.scan_id}
+          onSubmit={handleSubmit}
+          onFinish={() => setCommitFinished(true)}
+          onDismiss={onDismiss}
+          submitting={prCreating || status === 'submitting_pr'}
+          error={prError}
+          prUrl={state.pr_url || localPrUrl}
+        />,
+        false,
+      );
+    }
+
     if (!resultData) {
-      return (
+      return withStepper(
+        state,
+        enableAi,
         <Card style={{ marginBottom: 16, borderLeft: '4px solid var(--pf-t--global--color--status--success--default)' }}>
           <CardBody style={{ textAlign: 'center', padding: 32 }}>
             <div style={{ fontSize: 48, color: 'var(--pf-t--global--color--status--success--default)' }}>&#10003;</div>
@@ -179,32 +307,31 @@ export function OperationPanel({
               Dismiss
             </Button>
           </CardBody>
-        </Card>
+        </Card>,
+        true,
       );
     }
 
-    const showCreatePR =
-      status === 'completed' &&
-      state.scan_type === 'remediate' &&
-      (resultData.remediated_count ?? 0) > 0 &&
-      !state.pr_url;
-
-    return (
+    return withStepper(
+      state,
+      enableAi,
       <OperationResultCard
         result={resultData}
-        isRemediate={state.scan_type === 'remediate'}
+        isRemediate={state.scan_type === 'remediate' || (resultData.remediated_count ?? 0) > 0}
         onDismiss={onDismiss}
-        onCreatePR={showCreatePR ? handleCreatePR : undefined}
-        prCreating={prCreating || status === 'submitting_pr'}
-        prUrl={state.pr_url}
+        prCreating={false}
+        prUrl={state.pr_url || localPrUrl}
         prError={prError}
         scanId={state.scan_id}
-      />
+      />,
+      true,
     );
   }
 
   if (status === 'failed') {
-    return (
+    return withStepper(
+      state,
+      enableAi,
       <Card style={{ marginBottom: 16, borderLeft: '4px solid var(--pf-t--global--color--status--danger--default)' }}>
         <CardBody>
           <h3 style={{ color: 'var(--pf-t--global--color--status--danger--default)' }}>
@@ -217,19 +344,21 @@ export function OperationPanel({
             </FlexItem>
           </Flex>
         </CardBody>
-      </Card>
+      </Card>,
     );
   }
 
   if (status === 'expired') {
-    return (
+    return withStepper(
+      state,
+      enableAi,
       <Card style={{ marginBottom: 16, borderLeft: '4px solid var(--pf-t--global--color--status--warning--default)' }}>
         <CardBody>
           <h3>Session Expired</h3>
           <p>This operation session has expired. Please start a new one.</p>
           <Button variant="link" onClick={onDismiss}>Dismiss</Button>
         </CardBody>
-      </Card>
+      </Card>,
     );
   }
 

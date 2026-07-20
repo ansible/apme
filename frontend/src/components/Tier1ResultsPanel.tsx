@@ -30,7 +30,7 @@ export function Tier1ResultsPanel({ tier1 }: Tier1ResultsPanelProps) {
           </SplitItem>
           <SplitItem isFilled>
             <h3>
-              Tier 1 — {patchCount} fix{patchCount !== 1 ? 'es' : ''} applied
+              Quick-fix — {patchCount} fix{patchCount !== 1 ? 'es' : ''} applied
               {formatCount > 0 && `, ${formatCount} formatted`}
             </h3>
           </SplitItem>

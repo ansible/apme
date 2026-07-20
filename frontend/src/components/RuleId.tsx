@@ -1,36 +1,65 @@
-import { Tooltip } from '@patternfly/react-core';
-import { getRuleDescription } from '../data/ruleDescriptions';
 import { bareRuleId } from './severity';
 
-function SingleRuleId({ ruleId, className }: { ruleId: string; className?: string }) {
-  const desc = getRuleDescription(ruleId);
-  const bare = bareRuleId(ruleId);
-  const spanClassName = className ?? 'apme-rule-id';
+export interface RuleIdProps {
+  ruleId: string;
+  className?: string;
+  /** When set, hover/focus reports true/false (e.g. YAML line highlight). */
+  onHoverChange?: (hovering: boolean) => void;
+}
 
-  if (!desc) {
-    return <span className={spanClassName}>{bare}</span>;
-  }
+function SingleRuleId({
+  ruleId,
+  className,
+  onHoverChange,
+}: {
+  ruleId: string;
+  className?: string;
+  onHoverChange?: (hovering: boolean) => void;
+}) {
+  const bare = bareRuleId(ruleId);
+  const interactive = onHoverChange != null;
+  const spanClassName = [
+    className ?? 'apme-rule-id',
+    interactive ? 'apme-rule-id-hoverable' : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
 
   return (
-    <Tooltip content={desc}>
-      <span className={spanClassName} tabIndex={0}>
-        {bare}
-      </span>
-    </Tooltip>
+    <span
+      className={spanClassName}
+      tabIndex={interactive ? 0 : undefined}
+      onMouseEnter={interactive ? () => onHoverChange(true) : undefined}
+      onMouseLeave={interactive ? () => onHoverChange(false) : undefined}
+      onFocus={interactive ? () => onHoverChange(true) : undefined}
+      onBlur={interactive ? () => onHoverChange(false) : undefined}
+    >
+      {bare}
+    </span>
   );
 }
 
-export function RuleId({ ruleId, className }: { ruleId: string; className?: string }) {
+export function RuleId({ ruleId, className, onHoverChange }: RuleIdProps) {
   const ids = ruleId.split(',').map((s) => s.trim()).filter(Boolean);
   if (ids.length <= 1) {
-    return <SingleRuleId ruleId={ruleId} className={className} />;
+    return (
+      <SingleRuleId
+        ruleId={ruleId}
+        className={className}
+        onHoverChange={onHoverChange}
+      />
+    );
   }
   return (
     <>
       {ids.map((id, i) => (
         <span key={`${id}-${i}`}>
           {i > 0 && ','}
-          <SingleRuleId ruleId={id} className={className} />
+          <SingleRuleId
+            ruleId={id}
+            className={className}
+            onHoverChange={onHoverChange}
+          />
         </span>
       ))}
     </>

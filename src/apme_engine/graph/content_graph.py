@@ -837,8 +837,14 @@ class ContentGraph:
                     discovered_in_pass=pass_number,
                 )
             elif existing.status == "ai_abstained":
+                # Keep abstention; refresh payload only.
                 existing.violation = v
-            elif existing.status in ("fixed", "pending_review", "proposed", "declined"):
+            elif existing.status == "declined":
+                # Gate 1/2 user rejection is sticky for the session (ADR-062).
+                # Do not reopen on rescan or declined Tier 1 is auto-reapplied
+                # when the AI gate continues with interactive=False.
+                existing.violation = v
+            elif existing.status in ("fixed", "pending_review", "proposed"):
                 existing.status = "open"
                 existing.violation = v
                 existing.fixed_by = None

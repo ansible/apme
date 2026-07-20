@@ -19,6 +19,12 @@ export interface CheckOptionsFormProps {
   onCollectionsChange: (value: string) => void;
   enableAi: boolean;
   onEnableAiChange: (checked: boolean) => void;
+  /**
+   * When true, remidiate uses interactive=false (legacy auto-apply quick-fixes).
+   * Default unchecked → interactive Quick-fix review (ADR-062 Option C).
+   */
+  autoApplyTier1?: boolean;
+  onAutoApplyTier1Change?: (checked: boolean) => void;
   idPrefix?: string;
 }
 
@@ -29,6 +35,8 @@ export function CheckOptionsForm({
   onCollectionsChange,
   enableAi,
   onEnableAiChange,
+  autoApplyTier1 = false,
+  onAutoApplyTier1Change,
   idPrefix = '',
 }: CheckOptionsFormProps) {
   const prefix = idPrefix ? `${idPrefix}-` : '';
@@ -91,6 +99,17 @@ export function CheckOptionsForm({
             onChange={(_e, checked) => onEnableAiChange(checked)}
           />
         </FlexItem>
+        {onAutoApplyTier1Change && (
+          <FlexItem>
+            <Checkbox
+              id={`${prefix}auto-apply-tier1`}
+              label="Auto-apply quick-fixes (skip review)"
+              description="When unchecked (default), remediate pauses for per-node Accept / Decline."
+              isChecked={autoApplyTier1}
+              onChange={(_e, checked) => onAutoApplyTier1Change(checked)}
+            />
+          </FlexItem>
+        )}
         {enableAi && (
           <FlexItem>
             <label htmlFor={`${prefix}ai-model`} style={{ display: 'block', marginBottom: 4, fontWeight: 600 }}>

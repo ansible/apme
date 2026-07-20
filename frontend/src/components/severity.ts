@@ -75,6 +75,35 @@ export function severityLabel(level: string, ruleId?: string): string {
   return SEVERITY_LABELS[cls]?.toUpperCase() ?? 'INFO';
 }
 
+/** Title-case label for PatternFly ``Label`` chips (matches Manual review style). */
+export function severityDisplayLabel(level: string, ruleId?: string): string {
+  if (ruleId?.startsWith('SEC')) return 'Critical';
+  const cls = severityClass(level, ruleId);
+  return SEVERITY_LABELS[cls] ?? 'Info';
+}
+
+/** PatternFly Label ``color`` for a severity slug. */
+export function severityLabelColor(
+  level: string,
+  ruleId?: string,
+): 'red' | 'orange' | 'yellow' | 'blue' | 'grey' {
+  const cls = severityClass(level, ruleId);
+  switch (cls) {
+    case 'critical':
+    case 'error':
+      // Error ranks above High (ADR-043). Purple read as Info in dark theme.
+      return 'red';
+    case 'high':
+      return 'orange';
+    case 'medium':
+      return 'yellow';
+    case 'low':
+      return 'blue';
+    default:
+      return 'grey';
+  }
+}
+
 /** Numeric sort weight — lower = more severe. */
 export function severityOrder(cls: string): number {
   return SEVERITY_RANK[cls] ?? 6;

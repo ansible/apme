@@ -149,6 +149,29 @@ class TestR108ScopeDedup:
         assert result.detail is not None
         assert "affected_children" not in result.detail
 
+    def test_process_reports_become_key_line(self) -> None:
+        """Violation line points at the become key, not the node start."""
+        g = ContentGraph()
+        task = ContentNode(
+            identity=NodeIdentity("role/tasks/main.yml::tasks[1]", NodeType.TASK),
+            file_path="role/tasks/main.yml",
+            line_start=6,
+            name="Do something risky in the role",
+            module="ansible.builtin.shell",
+            become={"become": True, "enabled": True},
+            yaml_lines=(
+                "- name: Do something risky in the role\n"
+                "  shell: rm -rf /tmp/old_data/*\n"
+                "  become: true\n"
+            ),
+            scope=NodeScope.OWNED,
+        )
+        g.add_node(task)
+        rule = PrivilegeEscalationGraphRule()
+        result = rule.process(g, task.node_id)
+        assert result is not None
+        assert result.file == ("role/tasks/main.yml", 8)
+
     def test_scan_dedup(self) -> None:
         """Full scan: 2 violations (play + explicit task), not 4."""
         graph = _make_become_graph()

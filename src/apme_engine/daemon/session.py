@@ -61,6 +61,10 @@ class SessionState:
             (ADR-062 Phase 3); empty when Tier 1 auto-applies.
         awaiting_tier1_gate: True while Gate 1 (deterministic) proposals
             are pending; cleared after Tier 1 ApprovalRequest.
+        awaiting_assess: True while ADR-064 assess-pause findings are
+            pending BeginRemediate (before Gate 1 ProposalsReady).
+        assess_findings: Proto Violations last emitted in FindingsReady
+            (for resume replay).
         remaining_ai: Remaining AI-candidate violations.
         remaining_manual: Remaining manual-review violations.
         dep_health_violations: Dependency-health violations that do not
@@ -87,6 +91,10 @@ class SessionState:
         graph_engine: ``GraphRemediationEngine`` retained across Option C
             gates so Gate 2 can continue on the same graph (typed as
             ``object`` to avoid coupling).
+        pre_gate2_files: Snapshot of ``working_files`` taken before Gate 2
+            AI assessment mutates the graph. Restored when the user declines
+            AI proposals so unapproved AI / post-AI Tier 1 never leak into
+            commit/PR payloads.
     """
 
     session_id: str
@@ -109,6 +117,8 @@ class SessionState:
     ai_proposals: list[object] = field(default_factory=list)
     tier1_proposals: list[object] = field(default_factory=list)
     awaiting_tier1_gate: bool = False
+    awaiting_assess: bool = False
+    assess_findings: list[object] = field(default_factory=list)
 
     # Remaining violations from engine report
     remaining_ai: list[ViolationDict] = field(default_factory=list)
@@ -146,6 +156,8 @@ class SessionState:
     content_graph: object | None = None
     graph_originals: dict[str, str] = field(default_factory=dict)
     graph_engine: object | None = None
+    # working_files before Gate 2 AI assessment (restore on decline-all).
+    pre_gate2_files: dict[str, bytes] = field(default_factory=dict)
 
     @property
     def ttl_seconds(self) -> int:

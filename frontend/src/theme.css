@@ -3,11 +3,59 @@
 :root {
   --apme-green: #5ba352;
   --apme-sev-critical: #D32F2F;
-  --apme-sev-error: #6A1B9A;
+  --apme-sev-error: #E53935;
   --apme-sev-high: #F57C00;
   --apme-sev-medium: #FDD835;
   --apme-sev-low: #1976D2;
   --apme-sev-info: #9E9E9E;
+  /* Accept / Decline: muted hints, not status-banner colors */
+  --apme-decision-accept-fg: #3d6b45;
+  --apme-decision-accept-bg: rgba(91, 163, 82, 0.14);
+  --apme-decision-accept-border: rgba(91, 163, 82, 0.4);
+  --apme-decision-decline-fg: #8a4545;
+  --apme-decision-decline-bg: rgba(196, 84, 84, 0.12);
+  --apme-decision-decline-border: rgba(196, 84, 84, 0.38);
+}
+
+/*
+ * Dark mode: soften PF border tokens. Default dark borders read as bright
+ * hairlines on near-black surfaces and make nested cards look busy.
+ */
+:root.pf-v6-theme-dark,
+.pf-v6-theme-dark {
+  --pf-t--global--border--color--default: rgba(255, 255, 255, 0.2);
+  --pf-t--global--border--color--hover: rgba(255, 255, 255, 0.26);
+  --pf-t--global--border--color--clicked: rgba(255, 255, 255, 0.3);
+  --pf-t--global--border--color--disabled: rgba(255, 255, 255, 0.12);
+  --pf-t--global--border--color--nonstatus--default: rgba(255, 255, 255, 0.2);
+  --pf-t--global--border--color--nonstatus--subtle: rgba(255, 255, 255, 0.15);
+  --pf-t--global--border--color--nonstatus--strong: rgba(255, 255, 255, 0.26);
+  --apme-border-subtle: rgba(255, 255, 255, 0.15);
+  --apme-decision-accept-fg: #8fb896;
+  --apme-decision-accept-bg: rgba(91, 163, 82, 0.16);
+  --apme-decision-accept-border: rgba(91, 163, 82, 0.35);
+  --apme-decision-decline-fg: #c48a8a;
+  --apme-decision-decline-bg: rgba(196, 84, 84, 0.14);
+  --apme-decision-decline-border: rgba(196, 84, 84, 0.32);
+}
+
+/* Nested proposal / finding cards: even quieter edges in dark mode. */
+:root.pf-v6-theme-dark .apme-proposal-card,
+.pf-v6-theme-dark .apme-proposal-card {
+  border-color: var(--apme-border-subtle);
+}
+
+:root.pf-v6-theme-dark .apme-assess-findings-detail,
+:root.pf-v6-theme-dark .apme-assess-finding-row,
+:root.pf-v6-theme-dark .apme-proposal-diff,
+:root.pf-v6-theme-dark .apme-proposal-explanation,
+:root.pf-v6-theme-dark .apme-workflow-next,
+.pf-v6-theme-dark .apme-assess-findings-detail,
+.pf-v6-theme-dark .apme-assess-finding-row,
+.pf-v6-theme-dark .apme-proposal-diff,
+.pf-v6-theme-dark .apme-proposal-explanation,
+.pf-v6-theme-dark .apme-workflow-next {
+  border-color: var(--apme-border-subtle);
 }
 
 /* ── Badges ─────────────────────────────────────────── */
@@ -93,6 +141,17 @@
   font-size: 12px;
   font-weight: 600;
   color: var(--pf-t--global--color--brand--default);
+}
+
+.apme-rule-id-hoverable {
+  cursor: default;
+}
+
+.apme-rule-id-hoverable:hover,
+.apme-rule-id-hoverable:focus {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  outline: none;
 }
 
 .apme-count-success {
@@ -809,10 +868,32 @@
 .apme-side-by-side {
   display: grid;
   grid-template-columns: 1fr 1fr;
+  max-height: 420px;
+  overflow: auto;
+  border-top: 1px solid var(--pf-t--global--border--color--default);
+}
+
+.apme-side-by-side.apme-current-only {
+  grid-template-columns: 1fr;
 }
 
 .apme-diff-pane {
   overflow: hidden;
+  min-width: 0;
+}
+
+.apme-diff-pane .apme-diff-content {
+  margin: 0;
+  padding: 8px 0;
+  max-height: none;
+}
+
+.apme-diff-pane .apme-diff-line {
+  padding: 0 8px 0 0;
+  white-space: pre;
+  font-size: 12px;
+  line-height: 1.5;
+  font-family: var(--pf-t--global--font--family--mono);
 }
 
 .apme-diff-pane + .apme-diff-pane {
@@ -848,7 +929,207 @@
   background: rgba(91, 163, 82, 0.08);
 }
 
+/*
+ * YAML syntax highlighting — theme-aware via PatternFly tokens + .pf-v6-theme-dark.
+ * Default (light) matches the SPA; dark follows documentElement.pf-v6-theme-dark.
+ */
+.apme-side-by-side.apme-yaml-hl {
+  --apme-yaml-bg: var(--pf-t--global--background--color--secondary--default);
+  --apme-yaml-fg: var(--pf-t--global--text--color--regular);
+  --apme-yaml-muted: var(--pf-t--global--text--color--secondary);
+  --apme-yaml-border: var(--pf-t--global--border--color--default);
+  --apme-yaml-header-bg: var(--pf-t--global--background--color--secondary--default);
+  --apme-yaml-comment: #6e7781;
+  --apme-yaml-punctuation: #24292f;
+  --apme-yaml-key: #0550ae;
+  --apme-yaml-string: #0a3069;
+  --apme-yaml-boolean: #0550ae;
+  --apme-yaml-number: #0550ae;
+  --apme-yaml-keyword: #cf222e;
+  --apme-yaml-important: #953800;
+  --apme-yaml-remove-bg: rgba(211, 47, 47, 0.12);
+  --apme-yaml-add-bg: rgba(26, 127, 55, 0.12);
+  background: var(--apme-yaml-bg);
+  color: var(--apme-yaml-fg);
+}
+
+:root.pf-v6-theme-dark .apme-side-by-side.apme-yaml-hl,
+.pf-v6-theme-dark .apme-side-by-side.apme-yaml-hl {
+  --apme-yaml-bg: var(--pf-t--global--background--color--secondary--default);
+  --apme-yaml-fg: var(--pf-t--global--text--color--regular);
+  --apme-yaml-muted: var(--pf-t--global--text--color--secondary);
+  --apme-yaml-border: var(--pf-t--global--border--color--default);
+  --apme-yaml-header-bg: var(--pf-t--global--background--color--secondary--default);
+  --apme-yaml-comment: #8b949e;
+  --apme-yaml-punctuation: #c9d1d9;
+  --apme-yaml-key: #79c0ff;
+  --apme-yaml-string: #a5d6ff;
+  --apme-yaml-boolean: #79c0ff;
+  --apme-yaml-number: #79c0ff;
+  --apme-yaml-keyword: #ff7b72;
+  --apme-yaml-important: #ffa657;
+  --apme-yaml-remove-bg: rgba(248, 81, 73, 0.2);
+  --apme-yaml-add-bg: rgba(63, 185, 80, 0.18);
+}
+
+.apme-yaml-hl .apme-diff-pane-header {
+  background: var(--apme-yaml-header-bg);
+  color: var(--apme-yaml-muted);
+  border-bottom-color: var(--apme-yaml-border);
+}
+
+.apme-yaml-hl .apme-diff-content {
+  background: var(--apme-yaml-bg);
+  color: var(--apme-yaml-fg);
+}
+
+.apme-yaml-hl .apme-diff-linenum {
+  color: var(--apme-yaml-muted);
+  opacity: 1;
+}
+
+.apme-yaml-hl .apme-diff-pane + .apme-diff-pane {
+  border-left-color: var(--apme-yaml-border);
+}
+
+.apme-yaml-hl .apme-diff-remove {
+  background: var(--apme-yaml-remove-bg);
+}
+
+.apme-yaml-hl .apme-diff-add {
+  background: var(--apme-yaml-add-bg);
+}
+
+/* Hover target — must beat .apme-diff-remove / .apme-diff-add backgrounds. */
+.apme-diff-line.apme-diff-line-highlight,
+.apme-yaml-hl .apme-diff-line.apme-diff-line-highlight,
+.apme-yaml-hl .apme-diff-remove.apme-diff-line-highlight,
+.apme-yaml-hl .apme-diff-add.apme-diff-line-highlight {
+  background: rgba(25, 118, 210, 0.28);
+  box-shadow: inset 3px 0 0 var(--pf-t--global--color--brand--default);
+}
+
+.pf-v6-theme-dark .apme-diff-line.apme-diff-line-highlight,
+.pf-v6-theme-dark .apme-yaml-hl .apme-diff-line.apme-diff-line-highlight,
+.pf-v6-theme-dark .apme-yaml-hl .apme-diff-remove.apme-diff-line-highlight,
+.pf-v6-theme-dark .apme-yaml-hl .apme-diff-add.apme-diff-line-highlight {
+  background: rgba(66, 165, 245, 0.32);
+}
+
+.apme-yaml-hl .apme-yaml-code,
+.apme-yaml-hl .apme-yaml-code .token {
+  font-family: inherit;
+  color: var(--apme-yaml-fg);
+}
+
+.apme-yaml-hl .token.comment,
+.apme-yaml-hl .token.prolog,
+.apme-yaml-hl .token.doctype,
+.apme-yaml-hl .token.cdata {
+  color: var(--apme-yaml-comment);
+}
+
+.apme-yaml-hl .token.punctuation {
+  color: var(--apme-yaml-punctuation);
+}
+
+.apme-yaml-hl .token.property,
+.apme-yaml-hl .token.tag,
+.apme-yaml-hl .token.boolean,
+.apme-yaml-hl .token.number,
+.apme-yaml-hl .token.constant,
+.apme-yaml-hl .token.symbol,
+.apme-yaml-hl .token.deleted,
+.apme-yaml-hl .token.key,
+.apme-yaml-hl .token.atrule {
+  color: var(--apme-yaml-key);
+}
+
+.apme-yaml-hl .token.boolean,
+.apme-yaml-hl .token.number {
+  color: var(--apme-yaml-boolean);
+}
+
+.apme-yaml-hl .token.selector,
+.apme-yaml-hl .token.attr-name,
+.apme-yaml-hl .token.string,
+.apme-yaml-hl .token.char,
+.apme-yaml-hl .token.builtin,
+.apme-yaml-hl .token.inserted,
+.apme-yaml-hl .token.attr-value {
+  color: var(--apme-yaml-string);
+}
+
+.apme-yaml-hl .token.keyword {
+  color: var(--apme-yaml-keyword);
+}
+
+.apme-yaml-hl .token.operator,
+.apme-yaml-hl .token.entity,
+.apme-yaml-hl .token.url,
+.apme-yaml-hl .token.important,
+.apme-yaml-hl .token.regex,
+.apme-yaml-hl .token.variable {
+  color: var(--apme-yaml-important);
+}
+
+.apme-yaml-hl .token.function,
+.apme-yaml-hl .token.class-name {
+  color: var(--apme-yaml-key);
+}
+
 /* ── Proposals (NewScanPage) ────────────────────────── */
+
+/* Title left, Cancel/Next pinned top-right — never wrap actions under title. */
+.apme-review-step-header {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 12px;
+}
+
+.apme-review-step-header__text {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.apme-review-step-header__text h3 {
+  overflow-wrap: anywhere;
+}
+
+.apme-review-step-header__actions {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+.apme-workflow-next {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--pf-t--global--border--color--default);
+}
+
+.apme-workflow-next--header {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+  flex-shrink: 0;
+  max-width: 16rem;
+}
+
+.apme-workflow-next--header .apme-workflow-next-summary {
+  text-align: right;
+  max-width: 16rem;
+}
+
+.apme-workflow-next-summary {
+  margin: 0;
+  font-size: 13px;
+  opacity: 0.75;
+  max-width: 40rem;
+  line-height: 1.4;
+}
 
 .apme-proposals-list {
   display: flex;
@@ -863,8 +1144,47 @@
   transition: border-color 0.2s;
 }
 
-.apme-proposal-card.selected {
-  border-color: var(--pf-t--global--color--brand--default);
+.apme-proposal-card.apme-proposal-decision-accepted {
+  border-color: var(--apme-decision-accept-border);
+  background-color: var(--apme-decision-accept-bg);
+}
+
+.apme-proposal-card.apme-proposal-decision-declined {
+  border-color: var(--apme-decision-decline-border);
+  background-color: var(--apme-decision-decline-bg);
+}
+
+.apme-proposal-card.apme-proposal-decision-ignored {
+  border-style: dashed;
+  opacity: 0.8;
+}
+
+.apme-proposal-decision {
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+/* Accept / Decline: soft tint + muted label (PF puts pf-m-selected on the button). */
+.apme-decision-toggle .apme-decision-accept .pf-v6-c-toggle-group__button.pf-m-selected {
+  background-color: var(--apme-decision-accept-bg);
+  color: var(--apme-decision-accept-fg);
+  border-color: var(--apme-decision-accept-border);
+}
+
+.apme-decision-toggle .apme-decision-decline .pf-v6-c-toggle-group__button.pf-m-selected {
+  background-color: var(--apme-decision-decline-bg);
+  color: var(--apme-decision-decline-fg);
+  border-color: var(--apme-decision-decline-border);
+}
+
+.apme-decision-toggle .apme-decision-accept .pf-v6-c-toggle-group__button:not(.pf-m-selected) {
+  color: var(--apme-decision-accept-fg);
+  opacity: 0.7;
+}
+
+.apme-decision-toggle .apme-decision-decline .pf-v6-c-toggle-group__button:not(.pf-m-selected) {
+  color: var(--apme-decision-decline-fg);
+  opacity: 0.7;
 }
 
 .apme-proposal-header {
@@ -879,8 +1199,78 @@
   background: var(--pf-t--global--background--color--secondary--hover);
 }
 
-.apme-proposal-checkbox {
+.apme-proposal-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.25rem;
   flex-shrink: 0;
+  color: var(--pf-t--global--icon--color--regular);
+  opacity: 0.75;
+}
+
+.apme-proposal-chevron-spacer {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+}
+
+.apme-filter-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.apme-filter-pills .pf-v6-c-label {
+  cursor: pointer;
+}
+
+/* Indent expanded body under the node title (chevron + header gap). */
+.apme-proposal-detail {
+  margin: 0 16px 12px;
+  padding: 0 0 4px calc(1.25rem + 12px);
+}
+
+.apme-proposal-detail > .apme-assess-findings-detail,
+.apme-proposal-detail > .apme-proposal-diff,
+.apme-proposal-detail > .apme-proposal-explanation {
+  border-top: none;
+  padding-left: 12px;
+  padding-right: 0;
+}
+
+.apme-proposal-detail > .apme-assess-findings-detail {
+  padding-top: 0;
+}
+
+.apme-assess-findings-detail {
+  border-top: 1px solid var(--pf-t--global--border--color--default);
+  padding: 4px 16px 8px;
+}
+
+.apme-assess-finding-row {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--pf-t--global--border--color--default);
+  font-size: 13px;
+}
+
+.apme-assess-finding-row:last-child {
+  border-bottom: none;
+}
+
+.apme-assess-finding-msg {
+  flex: 1;
+  opacity: 0.85;
+}
+
+.apme-assess-finding-loc {
+  opacity: 0.55;
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 .apme-proposal-meta {
@@ -1068,5 +1458,14 @@
 
   .apme-about-modal__info {
     align-items: center;
+  }
+
+  .apme-workflow-next--header {
+    max-width: 11rem;
+  }
+
+  .apme-workflow-next--header .apme-workflow-next-summary {
+    max-width: 11rem;
+    font-size: 12px;
   }
 }

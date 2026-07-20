@@ -72,6 +72,8 @@ Decisions that have been accepted but are not yet fully implemented.
 | [ADR-061](ADR-061-ubi-container-bases.md) | UBI10 Container Base Images | 2026-07-08 |
 | [ADR-062](ADR-062-ephemeral-proposal-working-set.md) | Ephemeral Proposal Working Set and Review Analytics | 2026-07-09 |
 | [ADR-063](ADR-063-multi-platform-container-images.md) | Multi-Platform Container Image Publish | 2026-07-15 |
+| [ADR-064](ADR-064-assess-pause-session-continue.md) | Assess-Pause and Session-Continue Scan → Remediate | 2026-07-18 |
+| [ADR-065](ADR-065-spa-gateway-live-state-ownership.md) | SPA vs Gateway Live-Operation State Ownership | 2026-07-20 |
 
 ## Proposed
 
@@ -98,7 +100,7 @@ Decisions replaced by newer ADRs.
 ## Creating New ADRs
 
 1. Copy the template from `../templates/adr.md`
-2. Use the next available number (currently ADR-064)
+2. Use the next available number (currently ADR-066)
 3. Include:
    - Status (Proposed → Accepted → Implemented)
    - Date

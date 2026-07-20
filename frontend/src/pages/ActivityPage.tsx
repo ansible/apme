@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { PageLayout, PageHeader } from '@ansible/ansible-ui-framework';
-import { Pagination } from '@patternfly/react-core';
+import { Button, Pagination } from '@patternfly/react-core';
 import { listActivity } from '../services/api';
 import type { ActivitySummary } from '../types/api';
-import { StatusBadge } from '../components/StatusBadge';
 import { timeAgo } from '../services/format';
+import {
+  fetchProjectOperationState,
+  LIVE_OPERATION_STATUSES,
+} from '../hooks/useProjectOperationState';
 
 const PAGE_SIZE = 20;
 
@@ -18,6 +21,9 @@ export function ActivityPage() {
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
+  /** scan_id of the latest row when a matching live op exists. */
+  const [resumableScanId, setResumableScanId] = useState<string | null>(null);
+  const [startOverBusy, setStartOverBusy] = useState(false);
 
   useEffect(() => {
     const onVisible = () => {
@@ -47,6 +53,74 @@ export function ActivityPage() {
 
   useEffect(() => { fetchActivity(); }, [fetchActivity, refreshKey]);
 
+  useEffect(() => {
+    let cancelled = false;
+    setResumableScanId(null);
+    const latest = items[0];
+    if (page !== 1 || !latest?.project_id) return;
+
+    const projectId = latest.project_id;
+    const scanId = latest.scan_id;
+    fetchProjectOperationState(projectId).then((op) => {
+      if (cancelled || !op) return;
+      if (op.scan_id === scanId && LIVE_OPERATION_STATUSES.has(op.status)) {
+        setResumableScanId(scanId);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [items, page, refreshKey]);
+
+  const handleResume = useCallback(
+    (e: React.MouseEvent, projectId: string) => {
+      e.stopPropagation();
+      navigate(`/projects/${projectId}?resume=1`);
+    },
+    [navigate],
+  );
+
+  const handleStartOver = useCallback(
+    async (e: React.MouseEvent, item: ActivitySummary) => {
+      e.stopPropagation();
+      if (!item.project_id || startOverBusy) return;
+      const ok = window.confirm(
+        'Discard the current interactive session and start a new scan?',
+      );
+      if (!ok) return;
+
+      setStartOverBusy(true);
+      try {
+        const isRemediate = item.scan_type === 'fix' || item.scan_type === 'remediate';
+        const action = isRemediate ? 'remediate' : 'check';
+        const res = await fetch(`/api/v1/projects/${item.project_id}/operation`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+          },
+          body: JSON.stringify({
+            action,
+            abandon_working_set: true,
+            options: {
+              assess_pause: action === 'check',
+              interactive: true,
+            },
+          }),
+        });
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(`${res.status}: ${text}`);
+        }
+        navigate(`/projects/${item.project_id}?resume=1`);
+      } catch (err) {
+        console.error('Failed to start over:', err);
+        window.alert('Could not start over. Try again from the project page.');
+      } finally {
+        setStartOverBusy(false);
+      }
+    },
+    [navigate, startOverBusy],
+  );
+
   return (
     <PageLayout>
       <PageHeader title="Activity" />
@@ -72,11 +146,13 @@ export function ActivityPage() {
                 <th role="columnheader" title="AI proposals accepted">AI Accepted</th>
                 <th role="columnheader">Manual</th>
                 <th role="columnheader">Time</th>
+                <th role="columnheader" />
               </tr>
             </thead>
             <tbody>
               {items.map((item) => {
                 const isRemediate = item.scan_type === 'fix' || item.scan_type === 'remediate';
+                const isResumable = item.scan_id === resumableScanId && Boolean(item.project_id);
                 return (
                 <tr
                   key={item.scan_id}
@@ -98,7 +174,11 @@ export function ActivityPage() {
                     </span>
                   </td>
                   <td role="cell">
-                    <StatusBadge violations={item.total_violations} scanType={item.scan_type} />
+                    {isResumable ? (
+                      <span className="apme-badge passed">Available</span>
+                    ) : (
+                      <span className="apme-badge" style={{ opacity: 0.75 }}>Read-only</span>
+                    )}
                   </td>
                   <td role="cell">{item.total_violations}</td>
                   <td role="cell">
@@ -118,6 +198,27 @@ export function ActivityPage() {
                   <td role="cell"><span className="apme-count-success">{item.ai_accepted ?? 0}</span></td>
                   <td role="cell"><span className="apme-count-warning">{item.manual_review ?? ''}</span></td>
                   <td role="cell" style={{ opacity: 0.7 }}>{timeAgo(item.created_at)}</td>
+                  <td role="cell" onClick={(e) => e.stopPropagation()}>
+                    {isResumable && item.project_id ? (
+                      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                        <Button
+                          variant="primary"
+                          size="sm"
+                          onClick={(e) => handleResume(e, item.project_id!)}
+                        >
+                          Resume
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          isDisabled={startOverBusy}
+                          onClick={(e) => handleStartOver(e, item)}
+                        >
+                          Start over
+                        </Button>
+                      </div>
+                    ) : null}
+                  </td>
                 </tr>
                 );
               })}

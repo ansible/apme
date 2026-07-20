@@ -1640,6 +1640,7 @@ def _to_activity_summary(scan: Scan) -> ActivitySummary:
         scan_id=scan.scan_id,
         session_id=scan.session_id,
         project_path=display_path,
+        project_id=scan.project_id,
         source=scan.source,
         created_at=scan.created_at,
         scan_type=scan.scan_type,
