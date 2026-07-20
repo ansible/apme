@@ -9,6 +9,7 @@ import {
   fetchProjectOperationState,
   LIVE_OPERATION_STATUSES,
 } from '../hooks/useProjectOperationState';
+import { AI_MODEL_STORAGE_KEY } from './SettingsPage';
 
 const PAGE_SIZE = 20;
 
@@ -90,6 +91,8 @@ export function ActivityPage() {
       setStartOverBusy(true);
       try {
         // Always Scan (check + assess_pause); do not inherit remediate from history.
+        // Match Project Scan defaults: enable_ai on, optional stored model.
+        const aiModel = localStorage.getItem(AI_MODEL_STORAGE_KEY) ?? undefined;
         const res = await fetch(`/api/v1/projects/${item.project_id}/operation`, {
           method: 'POST',
           headers: {
@@ -102,6 +105,8 @@ export function ActivityPage() {
             options: {
               assess_pause: true,
               interactive: true,
+              enable_ai: true,
+              ...(aiModel ? { ai_model: aiModel } : {}),
             },
           }),
         });

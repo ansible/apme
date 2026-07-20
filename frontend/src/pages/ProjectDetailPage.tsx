@@ -129,7 +129,7 @@ export function ProjectDetailPage() {
   }, []);
 
   const handleHistoryStartOver = useCallback(
-    async (e: React.MouseEvent, scan: ActivitySummary) => {
+    async (e: React.MouseEvent) => {
       e.stopPropagation();
       if (!projectId || startOverBusy) return;
       const ok = window.confirm(
@@ -594,7 +594,7 @@ export function ProjectDetailPage() {
                                 variant="secondary"
                                 size="sm"
                                 isDisabled={startOverBusy}
-                                onClick={(e) => handleHistoryStartOver(e, scan)}
+                                onClick={(e) => handleHistoryStartOver(e)}
                               >
                                 Start over
                               </Button>
