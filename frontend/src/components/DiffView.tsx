@@ -14,9 +14,18 @@ export interface DiffViewProps {
   highlightLine?: number | null;
 }
 
+/** True for unified-diff metadata lines (not content that happens to start with --/++). */
+function isUnifiedDiffMeta(line: string): boolean {
+  return (
+    line.startsWith('--- ') ||
+    line.startsWith('+++ ') ||
+    line.startsWith('@@') ||
+    line.startsWith('\\ No newline')
+  );
+}
+
 function classifyLine(line: string): 'add' | 'remove' | 'header' | 'context' {
-  if (line.startsWith('+++') || line.startsWith('---')) return 'header';
-  if (line.startsWith('@@')) return 'header';
+  if (isUnifiedDiffMeta(line)) return 'header';
   if (line.startsWith('+')) return 'add';
   if (line.startsWith('-')) return 'remove';
   return 'context';
@@ -34,7 +43,7 @@ export function textsFromUnifiedDiff(diff: string): { before: string; after: str
   const before: string[] = [];
   const after: string[] = [];
   for (const raw of diff.split('\n')) {
-    if (raw.startsWith('+++') || raw.startsWith('---') || raw.startsWith('@@')) {
+    if (isUnifiedDiffMeta(raw)) {
       continue;
     }
     if (raw.startsWith('-')) {

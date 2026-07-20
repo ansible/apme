@@ -268,6 +268,9 @@ class OperationRegistry:
         op = self._ops.get(operation_id)
         if op is None:
             return
+        # Late FindingsReady must not reopen a cancelled/failed/completed op.
+        if op.status in TERMINAL_STATUSES:
+            return
         op.findings = findings
         # Resume may re-emit FindingsReady; do not replace a future the bridge
         # is already awaiting (would leave begin-remediate resolving a dead future).

@@ -211,7 +211,7 @@ export function CommitChangesPanel({
                   handleCommit().catch(() => {});
                 }}
                 isLoading={submitting}
-                isDisabled={submitting || !branchName.trim()}
+                isDisabled={submitting}
               >
                 {submitLabel}
               </Button>

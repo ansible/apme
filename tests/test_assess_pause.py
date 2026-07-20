@@ -70,4 +70,12 @@ def test_set_findings_reuses_begin_remediate_future() -> None:
         assert second.findings is not None
         assert second.findings[0]["message"] == "b"
 
+        registry.transition(op_id, OperationStatus.CANCELLED)
+        registry.set_findings(op_id, [{"rule_id": "L001", "message": "late"}])
+        terminal = registry.get(op_id)
+        assert terminal is not None
+        assert terminal.status == OperationStatus.CANCELLED
+        assert terminal.findings is not None
+        assert terminal.findings[0]["message"] == "b"
+
     asyncio.run(_run())
