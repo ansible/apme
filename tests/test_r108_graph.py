@@ -159,11 +159,7 @@ class TestR108ScopeDedup:
             name="Do something risky in the role",
             module="ansible.builtin.shell",
             become={"become": True, "enabled": True},
-            yaml_lines=(
-                "- name: Do something risky in the role\n"
-                "  shell: rm -rf /tmp/old_data/*\n"
-                "  become: true\n"
-            ),
+            yaml_lines=("- name: Do something risky in the role\n  shell: rm -rf /tmp/old_data/*\n  become: true\n"),
             scope=NodeScope.OWNED,
         )
         g.add_node(task)
