@@ -314,6 +314,10 @@ class GraphRemediationEngine:
                     pass_num,
                     len(tier1),
                 )
+                # No Tier 2 work → nothing left to do; avoid spinning to max_passes
+                # while run_ai is true but Phase B never fires (empty tier2).
+                if not tier2:
+                    break
             elif tier1:
                 self._progress("graph-tier1", f"Pass {pass_num}/{self._max_passes}")
                 applied_this_pass = await self._apply_tier1(

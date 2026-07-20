@@ -704,6 +704,31 @@ class TestUnifiedConvergence:
 
         assert len(report.ai_proposals) == 0
 
+    async def test_skip_tier1_exits_early_when_no_tier2(self) -> None:
+        """Gate 2 skip_tier1 must not spin to max_passes with empty Tier 2.
+
+        Returns:
+            None.
+        """
+        graph = ContentGraph()
+        node = _make_node(module="apt")
+        graph.add_node(node)
+        rules: list[GraphRule] = [_FQCNRule()]
+        registry = _build_registry_with_fqcn()
+        mock_ai = _MockAIProvider()
+
+        engine = GraphRemediationEngine(
+            registry,
+            graph,
+            rules,
+            ai_provider=mock_ai,
+            max_passes=5,
+        )
+        report = await engine.remediate(skip_tier1=True)
+
+        assert report.passes == 1
+        assert mock_ai.call_count == 0
+
 
 # ---------------------------------------------------------------------------
 # AINodeProposal dataclass

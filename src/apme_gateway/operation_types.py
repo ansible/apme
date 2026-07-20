@@ -91,7 +91,9 @@ class Proposal:
         confidence: 0.0–1.0 confidence score.
         explanation: Human-readable rationale.
         diff_hunk: Unified diff showing the proposed change.
-        status: ``proposed`` or ``declined``.
+        status: Working-set / analytics status — commonly ``proposed``,
+            ``pending``, ``approved``, ``declined``, or ``rejected``
+            (see draft proposal allowlist).
         source: Proposal source (e.g. ``deterministic`` or ``ai``).
         path: Stable node identity path when available.
         suggestion: Suggested replacement text.
