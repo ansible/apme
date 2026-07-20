@@ -213,6 +213,8 @@ async def test_run_project_scan_full_flow() -> None:
         assert len(scan_id) == 32
         assert result is not None
         assert commit_sha == "abc123def456" * 4
+        # ADR-064 assess-pause: deadline must match session TTL (not a shorter hard-code).
+        assert mock_stub.FixSession.call_args.kwargs["timeout"] == 1800.0
 
 
 @pytest.mark.asyncio  # type: ignore[untyped-decorator]

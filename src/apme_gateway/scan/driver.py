@@ -34,6 +34,9 @@ logger = logging.getLogger(__name__)
 
 _GRPC_MAX_MSG = 50 * 1024 * 1024  # 50 MiB — matches Primary
 
+# Match Primary session store TTL (ADR-028 / ADR-064 assess-pause holds).
+_FIX_SESSION_TIMEOUT = float(os.environ.get("APME_SESSION_TTL", "1800"))
+
 _FALSEY_OPTION_STRINGS = frozenset({"", "0", "false", "no", "off", "n"})
 _TRUTHY_OPTION_STRINGS = frozenset({"1", "true", "yes", "on", "y"})
 
@@ -417,7 +420,7 @@ async def run_project_operation(
         try:
             stub = primary_pb2_grpc.PrimaryStub(channel)  # type: ignore[no-untyped-call]
 
-            response_stream = stub.FixSession(_command_stream(), timeout=600)
+            response_stream = stub.FixSession(_command_stream(), timeout=_FIX_SESSION_TIMEOUT)
 
             result: primary_pb2.SessionResult | None = None
             async for event in response_stream:
