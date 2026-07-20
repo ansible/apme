@@ -5,7 +5,7 @@
  */
 
 import { useEffect, useMemo, useState } from 'react';
-import { Label } from '@patternfly/react-core';
+import { Alert, Label } from '@patternfly/react-core';
 import { RuleId } from './RuleId';
 import { CurrentYamlView, DiffView } from './DiffView';
 import { type NodeReviewItem } from './NodeReviewList';
@@ -42,6 +42,13 @@ export interface AssessFindingsPanelProps {
   remediating?: boolean;
   /** Override header description (defaults differ for live vs history). */
   description?: string;
+  /**
+   * When false, ai-candidate findings label/filter as manual (matches
+   * ``effectiveFixType``). Defaults true for Activity history.
+   */
+  enableAi?: boolean;
+  /** Begin-remediate / session error to show above the findings list. */
+  error?: string | null;
 }
 
 function formatReviewStatus(status: string): string {
@@ -95,8 +102,8 @@ function groupFindings(findings: AssessFinding[]): NodeGroup[] {
   return groups;
 }
 
-function findingFixType(f: AssessFinding): FixType {
-  return effectiveFixType(f.remediation_class ?? 3, true) ?? 'manual';
+function findingFixType(f: AssessFinding, enableAi: boolean): FixType {
+  return effectiveFixType(f.remediation_class ?? 3, enableAi) ?? 'manual';
 }
 
 /** Unique graph nodes (path), plus one bucket for path-less findings. */
@@ -122,13 +129,15 @@ function nodesPhrase(n: number): string {
 function FindingRow({
   f,
   snippetYaml,
+  enableAi,
   onHighlightLine,
 }: {
   f: AssessFinding;
   snippetYaml: string;
+  enableAi: boolean;
   onHighlightLine?: (line: number | null) => void;
 }) {
-  const fix = findingFixType(f);
+  const fix = findingFixType(f, enableAi);
   const sev = f.severity || 'info';
   const review = (f.review_status || '').trim();
   const canHighlight = onHighlightLine != null && !!snippetYaml.trim();
@@ -181,7 +190,13 @@ function findingCardTitle(f: AssessFinding): string {
   return f.rule_id || 'Finding';
 }
 
-function AssessNodeDetail({ findings }: { findings: AssessFinding[] }) {
+function AssessNodeDetail({
+  findings,
+  enableAi,
+}: {
+  findings: AssessFinding[];
+  enableAi: boolean;
+}) {
   const [highlightLine, setHighlightLine] = useState<number | null>(null);
   const beforeYaml =
     findings.find((f) => (f.original_yaml || '').trim())?.original_yaml ?? '';
@@ -196,6 +211,7 @@ function AssessNodeDetail({ findings }: { findings: AssessFinding[] }) {
             key={`${f.rule_id}-${i}`}
             f={f}
             snippetYaml={beforeYaml}
+            enableAi={enableAi}
             onHighlightLine={
               beforeYaml.trim() ? setHighlightLine : undefined
             }
@@ -224,7 +240,7 @@ function findingsToNodeItem(
   id: string,
   title: string,
   findings: AssessFinding[],
-  opts?: { isSingleton?: boolean },
+  opts: { isSingleton?: boolean; enableAi: boolean },
 ): NodeReviewItem {
   const ruleIds = [...new Set(findings.map((f) => f.rule_id))];
   const rulePreview = ruleIds.slice(0, 3);
@@ -232,7 +248,7 @@ function findingsToNodeItem(
     id,
     title,
     hasDetail: findings.length > 0,
-    className: opts?.isSingleton ? 'apme-proposal-declined' : undefined,
+    className: opts.isSingleton ? 'apme-proposal-declined' : undefined,
     meta: (
       <>
         <Label isCompact variant="outline">
@@ -248,7 +264,7 @@ function findingsToNodeItem(
         )}
       </>
     ),
-    detail: <AssessNodeDetail findings={findings} />,
+    detail: <AssessNodeDetail findings={findings} enableAi={opts.enableAi} />,
   };
 }
 
@@ -259,8 +275,11 @@ function presentSeverityOptions(findings: AssessFinding[]): string[] {
   return SEVERITY_ORDER.filter((s) => present.has(s));
 }
 
-function presentFixTypeOptions(findings: AssessFinding[]): FixType[] {
-  const present = new Set(findings.map(findingFixType));
+function presentFixTypeOptions(
+  findings: AssessFinding[],
+  enableAi: boolean,
+): FixType[] {
+  const present = new Set(findings.map((f) => findingFixType(f, enableAi)));
   return FIX_FILTER_ORDER.filter((t) => present.has(t));
 }
 
@@ -270,13 +289,15 @@ export function AssessFindingsPanel({
   onCancel,
   remediating,
   description: descriptionOverride,
+  enableAi = true,
+  error = null,
 }: AssessFindingsPanelProps) {
   const [view, setView] = useState<ViewMode>('grouped');
   const [sevFilters, setSevFilters] = useState<Set<string>>(
     () => new Set(presentSeverityOptions(findings)),
   );
   const [fixFilters, setFixFilters] = useState<Set<FixType>>(
-    () => new Set(presentFixTypeOptions(findings)),
+    () => new Set(presentFixTypeOptions(findings, enableAi)),
   );
 
   const presentSeverities = useMemo(
@@ -284,8 +305,8 @@ export function AssessFindingsPanel({
     [findings],
   );
   const presentFixTypes = useMemo(
-    () => presentFixTypeOptions(findings),
-    [findings],
+    () => presentFixTypeOptions(findings, enableAi),
+    [findings, enableAi],
   );
 
   const severityCounts = useMemo(() => {
@@ -300,11 +321,11 @@ export function AssessFindingsPanel({
   const fixTypeCounts = useMemo(() => {
     const counts = new Map<FixType, number>();
     for (const f of findings) {
-      const fix = findingFixType(f);
+      const fix = findingFixType(f, enableAi);
       counts.set(fix, (counts.get(fix) ?? 0) + 1);
     }
     return counts;
-  }, [findings]);
+  }, [findings, enableAi]);
 
   const presentSevKey = presentSeverities.join(',');
   const presentFixKey = presentFixTypes.join(',');
@@ -317,18 +338,18 @@ export function AssessFindingsPanel({
     return findings.filter((f) => {
       const sev = severityClass(f.severity || 'info', f.rule_id);
       if (!sevFilters.has(sev)) return false;
-      const fix = findingFixType(f);
+      const fix = findingFixType(f, enableAi);
       if (!fixFilters.has(fix)) return false;
       return true;
     });
-  }, [findings, sevFilters, fixFilters]);
+  }, [findings, sevFilters, fixFilters, enableAi]);
 
   const groups = useMemo(() => groupFindings(filteredFindings), [filteredFindings]);
 
   const inventory = useMemo(() => {
-    const auto = findings.filter((f) => findingFixType(f) === 'auto');
-    const ai = findings.filter((f) => findingFixType(f) === 'ai');
-    const manual = findings.filter((f) => findingFixType(f) === 'manual');
+    const auto = findings.filter((f) => findingFixType(f, enableAi) === 'auto');
+    const ai = findings.filter((f) => findingFixType(f, enableAi) === 'ai');
+    const manual = findings.filter((f) => findingFixType(f, enableAi) === 'manual');
     return {
       totalFindings: findings.length,
       totalNodes: uniqueNodeCount(findings),
@@ -339,7 +360,7 @@ export function AssessFindingsPanel({
       manualFindings: manual.length,
       manualNodes: uniqueNodeCount(manual),
     };
-  }, [findings]);
+  }, [findings, enableAi]);
 
   const hasNarrowedFilters =
     presentSeverities.some((s) => !sevFilters.has(s)) ||
@@ -352,16 +373,17 @@ export function AssessFindingsPanel({
           `flat-${f.rule_id}-${f.file}-${f.line ?? 0}-${i}`,
           findingCardTitle(f),
           [f],
-          { isSingleton: !(f.path || '').trim() },
+          { isSingleton: !(f.path || '').trim(), enableAi },
         ),
       );
     }
     return groups.map((g) =>
       findingsToNodeItem(g.key, g.title, g.findings, {
         isSingleton: g.isSingleton,
+        enableAi,
       }),
     );
-  }, [view, filteredFindings, groups]);
+  }, [view, filteredFindings, groups, enableAi]);
 
   const filterGroups: ReviewFilterGroup[] = useMemo(
     () => [
@@ -452,40 +474,51 @@ export function AssessFindingsPanel({
       : 'Move on to remediation — continue this session to review any available fixes (no rescan).';
 
   return (
-    <ReviewStepShell
-      title={title}
-      description={inventoryDescription}
-      onCancel={onCancel}
-      next={
-        onRemediate
-          ? {
-              label: 'Next',
-              summary: nextSummary,
-              onNext: onRemediate,
-              isLoading: remediating,
-              isDisabled: remediating,
-            }
-          : undefined
-      }
-      filterGroups={filterGroups}
-      hasNarrowedFilters={hasNarrowedFilters}
-      onSelectAllFilters={() => {
-        setSevFilters(new Set(presentSeverities));
-        setFixFilters(new Set(presentFixTypes));
-      }}
-      emptyMessage="No findings match the current filters."
-      list={
-        filteredFindings.length === 0
-          ? undefined
-          : {
-              items: nodeItems,
-              ariaLabel:
-                view === 'flat' ? 'Findings (flat)' : 'Findings by node',
-              defaultExpanded: true,
-              showExpandControls: true,
-              resetKey: `assess-${view}-${filteredFindings.length}-${groups.length}-${sevFilters.size}-${fixFilters.size}`,
-            }
-      }
-    />
+    <>
+      {error ? (
+        <Alert
+          variant="danger"
+          title="Could not continue to remediation"
+          style={{ marginBottom: 12 }}
+        >
+          {error}
+        </Alert>
+      ) : null}
+      <ReviewStepShell
+        title={title}
+        description={inventoryDescription}
+        onCancel={onCancel}
+        next={
+          onRemediate
+            ? {
+                label: 'Next',
+                summary: nextSummary,
+                onNext: onRemediate,
+                isLoading: remediating,
+                isDisabled: remediating,
+              }
+            : undefined
+        }
+        filterGroups={filterGroups}
+        hasNarrowedFilters={hasNarrowedFilters}
+        onSelectAllFilters={() => {
+          setSevFilters(new Set(presentSeverities));
+          setFixFilters(new Set(presentFixTypes));
+        }}
+        emptyMessage="No findings match the current filters."
+        list={
+          filteredFindings.length === 0
+            ? undefined
+            : {
+                items: nodeItems,
+                ariaLabel:
+                  view === 'flat' ? 'Findings (flat)' : 'Findings by node',
+                defaultExpanded: true,
+                showExpandControls: true,
+                resetKey: `assess-${view}-${filteredFindings.length}-${groups.length}-${sevFilters.size}-${fixFilters.size}`,
+              }
+        }
+      />
+    </>
   );
 }

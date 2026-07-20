@@ -109,12 +109,14 @@ export function OperationPanel({
   const [prCreating, setPrCreating] = useState(false);
   const [prError, setPrError] = useState<string | null>(null);
   const [beginning, setBeginning] = useState(false);
+  const [beginError, setBeginError] = useState<string | null>(null);
   const [commitFinished, setCommitFinished] = useState(false);
   const [localPrUrl, setLocalPrUrl] = useState<string | null>(null);
 
   useEffect(() => {
     setCommitFinished(false);
     setPrError(null);
+    setBeginError(null);
     setLocalPrUrl(null);
   }, [state?.operation_id]);
 
@@ -139,9 +141,13 @@ export function OperationPanel({
   const handleBeginRemediate = useCallback(async () => {
     if (!onBeginRemediate) return;
     setBeginning(true);
+    setBeginError(null);
     try {
       await onBeginRemediate();
     } catch (err) {
+      const message =
+        err instanceof Error ? err.message : 'Failed to begin remediation';
+      setBeginError(message);
       console.error('begin-remediate failed:', err);
     } finally {
       setBeginning(false);
@@ -218,6 +224,8 @@ export function OperationPanel({
       enableAi,
       <AssessFindingsPanel
         findings={state.findings ?? []}
+        enableAi={enableAi}
+        error={beginError}
         onRemediate={() => {
           handleBeginRemediate().catch(() => {});
         }}

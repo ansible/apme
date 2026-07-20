@@ -283,7 +283,8 @@ export function ProjectDetailPage() {
         }
         return;
       }
-      console.error('Failed to begin remediate:', err);
+      // Surface non-expiry failures in OperationPanel Assess alert.
+      throw err;
     }
   }, [
     beginRemediateOp,
