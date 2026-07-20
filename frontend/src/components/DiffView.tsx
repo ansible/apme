@@ -14,18 +14,21 @@ export interface DiffViewProps {
   highlightLine?: number | null;
 }
 
-/** True for unified-diff metadata lines (not content that happens to start with --/++). */
-function isUnifiedDiffMeta(line: string): boolean {
-  return (
-    line.startsWith('--- ') ||
-    line.startsWith('+++ ') ||
-    line.startsWith('@@') ||
-    line.startsWith('\\ No newline')
-  );
-}
-
-function classifyLine(line: string): 'add' | 'remove' | 'header' | 'context' {
-  if (isUnifiedDiffMeta(line)) return 'header';
+/**
+ * Classify a unified-diff line. File headers (`--- `/`+++ `) are only valid
+ * before the first hunk; after `@@`, those prefixes are encoded content
+ * (e.g. removed `-- foo` → `--- foo`).
+ */
+function classifyLine(
+  line: string,
+  seenHunk: boolean,
+): 'add' | 'remove' | 'header' | 'context' {
+  if (line.startsWith('@@') || line.startsWith('\\ No newline')) {
+    return 'header';
+  }
+  if (!seenHunk && (line.startsWith('--- ') || line.startsWith('+++ '))) {
+    return 'header';
+  }
   if (line.startsWith('+')) return 'add';
   if (line.startsWith('-')) return 'remove';
   return 'context';
@@ -42,8 +45,17 @@ const lineStyles: Record<string, React.CSSProperties> = {
 export function textsFromUnifiedDiff(diff: string): { before: string; after: string } {
   const before: string[] = [];
   const after: string[] = [];
+  let seenHunk = false;
   for (const raw of diff.split('\n')) {
-    if (isUnifiedDiffMeta(raw)) {
+    if (raw.startsWith('@@')) {
+      seenHunk = true;
+      continue;
+    }
+    if (raw.startsWith('\\ No newline')) {
+      continue;
+    }
+    // File headers only appear before the first hunk.
+    if (!seenHunk && (raw.startsWith('--- ') || raw.startsWith('+++ '))) {
       continue;
     }
     if (raw.startsWith('-')) {
@@ -168,13 +180,17 @@ function alignSideBySide(before: string, after: string): AlignedRow[] {
 
 function UnifiedDiff({ diff, className }: { diff: string; className?: string }) {
   const lines = diff.split('\n');
+  let seenHunk = false;
   return (
     <pre
       className={className}
       style={{ margin: 0, fontSize: '0.85em', lineHeight: 1.5, overflow: 'auto' }}
     >
       {lines.map((line, i) => {
-        const kind = classifyLine(line);
+        if (line.startsWith('@@')) {
+          seenHunk = true;
+        }
+        const kind = classifyLine(line, seenHunk);
         return (
           <span
             key={i}
