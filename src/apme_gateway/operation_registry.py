@@ -32,6 +32,16 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_TERMINAL_TTL = 600.0  # 10 minutes
 
+# FindingsReady only advances/refreshes assess-pause; never regress later gates.
+_FINDINGS_ALLOWED_STATUSES: frozenset[OperationStatus] = frozenset(
+    {
+        OperationStatus.QUEUED,
+        OperationStatus.CLONING,
+        OperationStatus.SCANNING,
+        OperationStatus.ASSESSED,
+    }
+)
+
 
 class OperationRegistry:
     """In-memory store for active project operations.
@@ -260,6 +270,9 @@ class OperationRegistry:
         """Store assessment findings and transition to ASSESSED (ADR-064).
 
         Creates ``begin_remediate_future`` resolved by ``POST /begin-remediate``.
+        Ignores FindingsReady once the operation has left the assess-pause
+        window (e.g. ``AWAITING_APPROVAL`` / ``APPLYING``) so a replay cannot
+        regress the live state machine.
 
         Args:
             operation_id: The operation to update.
@@ -268,8 +281,8 @@ class OperationRegistry:
         op = self._ops.get(operation_id)
         if op is None:
             return
-        # Late FindingsReady must not reopen a cancelled/failed/completed op.
-        if op.status in TERMINAL_STATUSES:
+        # Terminal or past assess-pause: ignore out-of-order / replayed findings.
+        if op.status not in _FINDINGS_ALLOWED_STATUSES:
             return
         op.findings = findings
         # Resume may re-emit FindingsReady; do not replace a future the bridge

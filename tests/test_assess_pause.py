@@ -81,6 +81,37 @@ def test_set_findings_reuses_begin_remediate_future() -> None:
     asyncio.run(_run())
 
 
+def test_set_findings_ignores_after_assess_pause() -> None:
+    """FindingsReady must not regress AWAITING_APPROVAL back to ASSESSED.
+
+    Returns:
+        None.
+    """
+    import asyncio
+
+    from apme_gateway.operation_registry import OperationRegistry
+
+    async def _run() -> None:
+        registry = OperationRegistry()
+        op_id = "op-findings-no-regress"
+        registry.create(
+            operation_id=op_id,
+            project_id="proj-2",
+            scan_id="scan-2",
+            scan_type="remediate",
+        )
+        registry.set_findings(op_id, [{"rule_id": "L001", "message": "assess"}])
+        registry.transition(op_id, OperationStatus.AWAITING_APPROVAL)
+        registry.set_findings(op_id, [{"rule_id": "L001", "message": "late-replay"}])
+        op = registry.get(op_id)
+        assert op is not None
+        assert op.status == OperationStatus.AWAITING_APPROVAL
+        assert op.findings is not None
+        assert op.findings[0]["message"] == "assess"
+
+    asyncio.run(_run())
+
+
 def test_begin_remediate_idempotent_after_bridge_clears_future() -> None:
     """Retry after bridge clears the future must not raise session_expired.
 
