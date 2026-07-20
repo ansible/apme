@@ -139,15 +139,15 @@ export function ProjectDetailPage() {
 
       setStartOverBusy(true);
       try {
-        const isRemediate = scan.scan_type === 'fix' || scan.scan_type === 'remediate';
+        // Always Scan (check + assess_pause); do not inherit remediate from history.
         const colls = collections.split(',').map((c) => c.trim()).filter(Boolean);
         setAttachOp(true);
-        await startOp(isRemediate ? 'remediate' : 'check', {
+        await startOp('check', {
           ansible_version: ansibleVersion || undefined,
           collection_specs: colls.length ? colls : undefined,
           enable_ai: enableAi,
           ai_model: enableAi ? (localStorage.getItem(AI_MODEL_STORAGE_KEY) ?? undefined) : undefined,
-          assess_pause: !isRemediate,
+          assess_pause: true,
           interactive: true,
           abandon_working_set: true,
         });

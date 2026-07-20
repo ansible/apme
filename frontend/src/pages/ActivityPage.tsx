@@ -89,8 +89,7 @@ export function ActivityPage() {
 
       setStartOverBusy(true);
       try {
-        const isRemediate = item.scan_type === 'fix' || item.scan_type === 'remediate';
-        const action = isRemediate ? 'remediate' : 'check';
+        // Always Scan (check + assess_pause); do not inherit remediate from history.
         const res = await fetch(`/api/v1/projects/${item.project_id}/operation`, {
           method: 'POST',
           headers: {
@@ -98,10 +97,10 @@ export function ActivityPage() {
             Accept: 'application/json',
           },
           body: JSON.stringify({
-            action,
+            action: 'check',
             abandon_working_set: true,
             options: {
-              assess_pause: action === 'check',
+              assess_pause: true,
               interactive: true,
             },
           }),

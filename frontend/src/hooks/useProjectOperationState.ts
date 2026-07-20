@@ -106,14 +106,12 @@ export function snippetHighlightLine(
   if (fileLine == null || fileLine < 1 || snippetLineCount < 1) {
     return null;
   }
-  let rel: number;
-  if (nodeLineStart != null && nodeLineStart > 0) {
-    rel = fileLine - nodeLineStart + 1;
-  } else if (fileLine <= snippetLineCount) {
-    rel = fileLine;
-  } else {
+  // Without node_line_start we cannot safely map absolute file lines into the
+  // snippet — fall through to message-based refine instead of guessing.
+  if (nodeLineStart == null || nodeLineStart < 1) {
     return null;
   }
+  const rel = fileLine - nodeLineStart + 1;
   if (rel < 1 || rel > snippetLineCount) {
     return null;
   }

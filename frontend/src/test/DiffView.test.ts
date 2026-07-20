@@ -14,8 +14,8 @@ describe('textsFromUnifiedDiff', () => {
     ].join('\n');
 
     const { before, after } = textsFromUnifiedDiff(diff);
-    expect(before.split('\n')).toEqual(['-- foo', ' hosts: all']);
-    expect(after.split('\n')).toEqual(['++ bar', ' hosts: all']);
+    expect(before.split('\n')).toEqual(['-- foo', 'hosts: all']);
+    expect(after.split('\n')).toEqual(['++ bar', 'hosts: all']);
   });
 
   it('skips file headers before the first hunk', () => {
