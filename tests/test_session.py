@@ -559,6 +559,99 @@ class TestWritePatchesToTempDir:
 class TestSessionApprovalGates:
     """Unit tests for multi-gate approval sequencing and proposal isolation."""
 
+    def test_partial_graph_tier1_approval_reverts_declined_nodes(self) -> None:
+        """Approving 1 of 2 Tier 1 proposals keeps only that node's edits.
+
+        Interactive Gate 1 stages transforms on many nodes; partial approval
+        must reject the rest so splice does not write declined fixes.
+        """
+        from dataclasses import replace
+
+        from apme.v1.primary_pb2 import Proposal
+        from apme_engine.daemon.primary_server import _apply_graph_approvals
+        from apme_engine.graph.content_graph import ContentGraph, ContentNode, NodeIdentity, NodeType
+        from apme_engine.remediation.graph_engine import Tier1NodeProposal
+
+        original = "- name: t\n  apt:\n    name: x\n"
+        fixed = "- name: t\n  ansible.builtin.apt:\n    name: x\n"
+
+        def _node(path: str, file_path: str) -> ContentNode:
+            node = ContentNode(
+                identity=NodeIdentity(path=path, node_type=NodeType.TASK),
+                file_path=file_path,
+                line_start=1,
+                line_end=3,
+                module="apt",
+                yaml_lines=original,
+            )
+            node.record_state(0, "scanned")
+            node.update_from_yaml(fixed)
+            node.record_state(1, "transformed", source="deterministic")
+            # Mark the scan baseline approved so reject keeps the first snapshot
+            # when no later progression entry is approved (source="" scan row).
+            node.progression[0] = replace(node.progression[0], approved=True)
+            return node
+
+        graph = ContentGraph()
+        n0 = _node("a.yml/tasks[0]", "a.yml")
+        n1 = _node("b.yml/tasks[0]", "b.yml")
+        graph.add_node(n0)
+        graph.add_node(n1)
+
+        session = SessionState(session_id="partial-t1")
+        session.content_graph = graph
+        session.graph_originals = {"a.yml": original, "b.yml": original}
+        session.tier1_proposals = [
+            Tier1NodeProposal(
+                node_id=n0.node_id,
+                file_path="a.yml",
+                before_yaml=original,
+                after_yaml=fixed,
+                rule_ids=["M001"],
+            ),
+            Tier1NodeProposal(
+                node_id=n1.node_id,
+                file_path="b.yml",
+                before_yaml=original,
+                after_yaml=fixed,
+                rule_ids=["M001"],
+            ),
+        ]
+        session.proposals = {
+            "t1-0000": Proposal(
+                id="t1-0000",
+                file="a.yml",
+                rule_id="M001",
+                path=n0.node_id,
+                source="deterministic",
+                tier=1,
+            ),
+            "t1-0001": Proposal(
+                id="t1-0001",
+                file="b.yml",
+                rule_id="M001",
+                path=n1.node_id,
+                source="deterministic",
+                tier=1,
+            ),
+        }
+
+        applied, rejected, _approved, patches = _apply_graph_approvals(
+            session,
+            graph,
+            session.graph_originals,
+            {"t1-0000"},
+        )
+        assert applied == 1
+        assert n1.node_id in rejected
+        assert n0.yaml_lines == fixed
+        assert n1.yaml_lines == original
+        assert len(patches) == 1
+        assert Path(patches[0].path).name == "a.yml" or patches[0].path.endswith("a.yml")
+        assert "ansible.builtin.apt" in patches[0].patched
+        assert all(s.approved for s in n0.progression)
+        assert len(n1.progression) == 1
+
     async def test_tier1_approval_without_ai_finalizes(self) -> None:
         """Tier 1 approval finalizes immediately when AI gate is disabled."""
         from apme_engine.daemon.primary_server import PrimaryServicer
@@ -576,11 +669,12 @@ class TestSessionApprovalGates:
             events = [e async for e in servicer._session_handle_approval(session, set())]
 
         event_types = [e.WhichOneof("event") for e in events]
-        assert event_types == ["approval_ack", "result"]
+        assert event_types == ["progress", "approval_ack", "result"]
+        assert "Applied 0 approved Tier 1 proposal" in (events[0].progress.message or "")
         assert session.status == 3  # COMPLETE
 
     async def test_ai_gate_filters_stale_t1_and_formats_splice(self, tmp_path: Path) -> None:
-        """Gate 2 drops stale t1-* pending IDs and keeps formatted temp sync.
+        """Gate 2 drops stale t1-* pending IDs; no-proposal path may sync files.
 
         Args:
             tmp_path: Pytest temporary directory fixture.
@@ -605,6 +699,7 @@ class TestSessionApprovalGates:
         session = SessionState(session_id="gate-filter")
         session.content_graph = ContentGraph()
         session.graph_engine = _DummyGraphEngine()
+        session.working_files = {"play.yml": b"- name: test\n  debug:\n    msg: hi\n"}
         session.proposals = {
             "t1-0000": Proposal(
                 id="t1-0000",
@@ -639,8 +734,128 @@ class TestSessionApprovalGates:
         assert event_types == ["progress", "result"]
         assert session.proposals == {}
         assert "t1-0000" in session.rejected_proposals
+        assert session.pre_gate2_files["play.yml"] == b"- name: test\n  debug:\n    msg: hi\n"
+        # No AI proposals → complete path may format-sync working_files.
         assert session.working_files["play.yml"] == b"- name: test\n  debug:\n    msg: hi there\n"
         assert (tmp_path / "play.yml").read_text(encoding="utf-8") == "- name: test\n  debug:\n    msg: hi there\n"
+        # Gate 2 must not re-run Gate 1 Tier 1; keep AI pending until approval.
+        session.graph_engine.remediate.assert_awaited()
+        await_args = session.graph_engine.remediate.await_args
+        assert await_args is not None
+        _args, kwargs = await_args
+        assert kwargs.get("skip_tier1") is True
+        assert kwargs.get("skip_ai") is False
+        assert kwargs.get("interactive") is True
+
+    async def test_ai_gate_does_not_write_working_files_while_awaiting(self, tmp_path: Path) -> None:
+        """Pending Gate 2 proposals must not mutate working_files before approve.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        from apme_engine.daemon.primary_server import PrimaryServicer
+        from apme_engine.graph.content_graph import ContentGraph
+        from apme_engine.remediation.graph_engine import AINodeProposal
+
+        ai_prop = AINodeProposal(
+            node_id="play.yml/plays[0]/tasks[0]",
+            file_path="play.yml",
+            before_yaml="- name: test\n  debug:\n    msg: hi\n",
+            after_yaml="- name: test\n  debug:\n    msg: GUTTED\n",
+            rule_ids=["L050"],
+            explanation="rename",
+            confidence=0.9,
+            line_start=1,
+            line_end=3,
+        )
+
+        class _DummyGraphEngine:
+            def __init__(self) -> None:
+                self.remediate = AsyncMock(
+                    return_value=SimpleNamespace(
+                        passes=1,
+                        fixed=0,
+                        remaining_violations=[],
+                        fixed_violations=[],
+                        oscillation_detected=False,
+                        ai_proposals=[ai_prop],
+                    )
+                )
+
+        servicer = PrimaryServicer()
+        session = SessionState(session_id="gate-no-leak")
+        session.content_graph = ContentGraph()
+        session.graph_engine = _DummyGraphEngine()
+        baseline = b"- name: test\n  debug:\n    msg: hi\n"
+        session.working_files = {"play.yml": baseline}
+        session.fix_options = FixOptions(enable_ai=True)
+        session.graph_originals = {"play.yml": baseline.decode()}
+        session.temp_dir = tmp_path
+        (tmp_path / "play.yml").write_bytes(baseline)
+
+        with (
+            patch("apme_engine.remediation.graph_engine.GraphRemediationEngine", _DummyGraphEngine),
+            patch(
+                "apme_engine.remediation.graph_engine.splice_modifications",
+                return_value=[
+                    SimpleNamespace(path="play.yml", patched="- name: test\n  debug:\n    msg: GUTTED\n"),
+                ],
+            ),
+        ):
+            events = [e async for e in servicer._session_run_ai_gate(session)]
+
+        assert [e.WhichOneof("event") for e in events] == ["progress", "proposals"]
+        assert session.status == 1  # AWAITING_APPROVAL
+        assert session.working_files["play.yml"] == baseline
+        assert (tmp_path / "play.yml").read_bytes() == baseline
+        assert session.pre_gate2_files["play.yml"] == baseline
+
+    async def test_decline_all_restores_pre_gate2_working_files(self, tmp_path: Path) -> None:
+        """Declining every Gate 2 proposal restores the pre-AI working tree.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        from apme_engine.daemon.primary_server import PrimaryServicer, _apply_graph_approvals
+        from apme_engine.graph.content_graph import ContentGraph
+
+        baseline = b"- hosts: all\n  tasks:\n    - debug: msg=keep\n"
+        leaked = b"- hosts: all\n  become: true\n  tasks: []\n"
+        session = SessionState(session_id="decline-restore")
+        session.content_graph = ContentGraph()
+        session.pre_gate2_files = {"play.yml": baseline}
+        session.working_files = {"play.yml": leaked}
+        session.temp_dir = tmp_path
+        (tmp_path / "play.yml").write_bytes(leaked)
+        session.proposals = {
+            "ai-0000": Proposal(
+                id="ai-0000",
+                file="play.yml",
+                path="play.yml/plays[0]",
+                rule_id="L050",
+                tier=2,
+                source="ai",
+            )
+        }
+        session.ai_proposals = []
+
+        from apme_engine.daemon.primary_server import _write_patches_to_temp_dir
+
+        applied, rejected, approved, patches = _apply_graph_approvals(
+            session,
+            session.content_graph,
+            {"play.yml": baseline.decode()},
+            set(),
+        )
+        assert applied == 0
+        assert approved == set()
+        assert "play.yml/plays[0]" in rejected
+        assert session.working_files["play.yml"] == baseline
+        # Disk sync is async-path responsibility (ADR-007); mirror the handler.
+        assert patches
+        _write_patches_to_temp_dir(tmp_path, patches)
+        assert (tmp_path / "play.yml").read_bytes() == baseline
+        assert PrimaryServicer is not None  # approval path uses same helpers
 
     def test_build_fix_event_includes_rejected_telemetry_store(self) -> None:
         """FixCompletedEvent includes rejected outcomes from telemetry snapshots."""

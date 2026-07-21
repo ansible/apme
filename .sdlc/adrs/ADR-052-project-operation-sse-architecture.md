@@ -111,8 +111,10 @@ the implementation simple and avoids schema changes for transient state.
 - Any client can view any running operation — multi-tab, multi-user
 - AI approval is decoupled from a specific WebSocket connection
 - PR creation is folded into the operation state machine, visible to all viewers
-- Frontend becomes a pure state renderer — no local state machine or
-  sessionStorage needed
+- Frontend does not own authoritative operation state (no `sessionStorage` as
+  source of truth). It remains a renderer of Gateway `OperationState`;
+  non-authoritative derived UI tracking (e.g. workflow latch) and explicit
+  attach policy are permitted — see [ADR-065](ADR-065-spa-gateway-live-state-ownership.md)
 
 ### Negative
 
@@ -135,6 +137,11 @@ the implementation simple and avoids schema changes for transient state.
 - **Engine invariants preserved.** The engine never queries out (ADR-020),
   validators are read-only (ADR-009), stateless engine (ADR-029).
 
+## Related Decisions
+
+- [ADR-065](ADR-065-spa-gateway-live-state-ownership.md): SPA vs Gateway
+  live-operation state ownership (amends “no local state machine” wording)
+
 ## References
 
 - Issue #94 — persist active sessions and allow resume from UI
@@ -154,3 +161,4 @@ the implementation simple and avoids schema changes for transient state.
 |------|--------|--------|
 | 2026-04-14 | APME Team | Initial proposal |
 | 2026-07-08 | Brad Thornton | Accepted — operation registry, SSE router, state machine, and frontend hooks implemented; legacy WebSocket removal remains |
+| 2026-07-20 | Brad Thornton | Clarified SPA may hold non-authoritative derived UI state; see ADR-065 |

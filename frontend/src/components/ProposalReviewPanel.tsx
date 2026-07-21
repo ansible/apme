@@ -1,260 +1,700 @@
-import { useCallback, useMemo, useState } from 'react';
-import {
-  Button,
-  Card,
-  CardBody,
-  Flex,
-  Label,
-  Split,
-  SplitItem,
-} from '@patternfly/react-core';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Button, Label } from '@patternfly/react-core';
 import { RuleId } from './RuleId';
 import type { OperationProposal } from '../types/operation';
 import { DiffView } from './DiffView';
 import { FeedbackModal, type FeedbackPayload } from './FeedbackModal';
+import {
+  NodeReviewList,
+  type NodeDecision,
+  type NodeReviewItem,
+} from './NodeReviewList';
+import {
+  toggleInFilterSet,
+  type ReviewFilterGroup,
+} from './ReviewFilterBar';
+import { ReviewStepShell } from './ReviewStepShell';
+import { type WorkflowNextConfig } from './WorkflowNextBar';
+import {
+  SEVERITY_LABELS,
+  SEVERITY_ORDER,
+  severityClass,
+  severityDisplayLabel,
+  severityLabelColor,
+  severityOrder,
+} from './severity';
+import {
+  descendantProposalIds,
+  isAiRemediationProposal,
+  proposalHasVisibleDiff,
+  proposalNodeTitle,
+  proposalsGateKey,
+} from '../remediation';
+
+type DecisionFilter = 'pending' | 'accepted' | 'declined';
+const DECISION_FILTER_ORDER: DecisionFilter[] = [
+  'pending',
+  'accepted',
+  'declined',
+];
+const DECISION_FILTER_LABELS: Record<DecisionFilter, string> = {
+  pending: 'Undecided',
+  accepted: 'Accepted',
+  declined: 'Declined',
+};
+
+/** Highest severity present on a proposal (from explanation lines or rule id). */
+function proposalSeverity(p: OperationProposal): string {
+  const found: string[] = [];
+  if (p.explanation) {
+    for (const line of p.explanation.split('\n').filter(Boolean)) {
+      const { ruleId, severity } = parseViolationLine(line);
+      found.push(severityClass(severity || 'info', ruleId || undefined));
+    }
+  }
+  if (found.length === 0) {
+    for (const rid of p.rule_id.split(',').map((s) => s.trim()).filter(Boolean)) {
+      found.push(severityClass('info', rid));
+    }
+  }
+  if (found.length === 0) return 'info';
+  return found.sort((a, b) => severityOrder(a) - severityOrder(b))[0]!;
+}
+
+function effectiveDecision(
+  id: string,
+  decisions: Map<string, NodeDecision>,
+): DecisionFilter {
+  const d = decisions.get(id);
+  if (d === 'accepted') return 'accepted';
+  if (d === 'declined' || d === 'ignored') return 'declined';
+  return 'pending';
+}
+
+/** Count bundled findings on a node proposal (comma rules, else explanation lines). */
+function proposalFindingCount(p: OperationProposal): number {
+  const rules = p.rule_id
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (rules.length > 0) return rules.length;
+  const lines = (p.explanation || '').split('\n').filter(Boolean);
+  return Math.max(lines.length, 1);
+}
+
+function findingsAcrossNodesTitle(
+  visible: OperationProposal[],
+  totalNodeCount: number,
+  narrowed: boolean,
+): string {
+  const findings = visible.reduce((n, p) => n + proposalFindingCount(p), 0);
+  const nodes = visible.length;
+  const findingsPhrase = `${findings} finding${findings !== 1 ? 's' : ''}`;
+  if (narrowed && nodes !== totalNodeCount) {
+    return `Showing ${findingsPhrase} across ${nodes} of ${totalNodeCount} nodes`;
+  }
+  return `${findingsPhrase} across ${nodes} node${nodes !== 1 ? 's' : ''}`;
+}
+
+/** Parse ``[rule|severity]: message`` (or ``[rule]: message``) explanation lines. */
+function parseViolationLine(line: string): {
+  ruleId: string;
+  severity: string;
+  message: string;
+} {
+  const m = line.match(/^\[([^\]|]+)(?:\|([^\]]+))?\]:\s*(.*)$/);
+  if (!m) {
+    return { ruleId: '', severity: '', message: line };
+  }
+  return {
+    ruleId: m[1] ?? '',
+    severity: (m[2] ?? '').trim(),
+    message: m[3] ?? '',
+  };
+}
+
+export interface ProposalDraftUpdate {
+  proposal_id: string;
+  status: 'approved' | 'declined' | 'pending';
+}
 
 export interface ProposalReviewPanelProps {
   proposals: OperationProposal[];
   onApprove: (ids: string[]) => void;
+  /** Optional optimistic draft decision sync (PATCH /operation/proposals). */
+  onDraftUpdate?: (updates: ProposalDraftUpdate[]) => void;
   feedbackEnabled?: boolean;
   scanId?: string;
+  /** Cancel the in-flight operation (not a soft dismiss). */
+  onCancel?: () => void;
+}
+
+/**
+ * Rows the user can Accept / Decline. Draft PATCH sets status to approved/declined
+ * optimistically — those must stay in the list (collapsed + green/red border).
+ * Only engine "could not fix" rows (declined/rejected with no applyable diff) leave
+ * the queue for the separate Declined-by-AI section.
+ */
+function isInReviewQueue(p: OperationProposal): boolean {
+  if (proposalHasVisibleDiff(p)) {
+    return true;
+  }
+  return p.status !== 'declined' && p.status !== 'rejected';
+}
+
+function isAiCouldNotFix(p: OperationProposal): boolean {
+  return (
+    (p.status === 'declined' || p.status === 'rejected') &&
+    !proposalHasVisibleDiff(p)
+  );
+}
+
+function decisionToDraft(d: NodeDecision): ProposalDraftUpdate['status'] {
+  if (d === 'accepted') return 'approved';
+  if (d === 'declined' || d === 'ignored') return 'declined';
+  return 'pending';
 }
 
 export function ProposalReviewPanel({
   proposals,
   onApprove,
+  onDraftUpdate,
   feedbackEnabled,
   scanId,
+  onCancel,
 }: ProposalReviewPanelProps) {
-  const proposed = useMemo(() => proposals.filter((p) => p.status !== 'declined'), [proposals]);
-  const declined = useMemo(() => proposals.filter((p) => p.status === 'declined'), [proposals]);
+  const proposed = useMemo(() => proposals.filter(isInReviewQueue), [proposals]);
+  const declined = useMemo(
+    () => proposals.filter(isAiCouldNotFix),
+    [proposals],
+  );
+  const actionable = useMemo(
+    () => proposed.filter(proposalHasVisibleDiff),
+    [proposed],
+  );
+  const explanationOnly = useMemo(
+    () => proposed.filter((p) => !proposalHasVisibleDiff(p)),
+    [proposed],
+  );
 
-  const [selected, setSelected] = useState<Set<string>>(() => new Set());
-  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  const gateKey = proposalsGateKey(proposals);
+  const isAiGate = proposed.length > 0 && isAiRemediationProposal(proposed[0]!);
+
+  const [decisions, setDecisions] = useState<Map<string, NodeDecision>>(
+    () => new Map(),
+  );
+  const [decisionFilters, setDecisionFilters] = useState<Set<DecisionFilter>>(
+    () => new Set(DECISION_FILTER_ORDER),
+  );
+  const [sevFilters, setSevFilters] = useState<Set<string>>(() => new Set());
   const [showDeclined, setShowDeclined] = useState(false);
   const [feedbackTarget, setFeedbackTarget] = useState<OperationProposal | null>(null);
+  const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const prevGateKey = useRef<string>('');
 
-  const toggleAll = useCallback(() => {
-    setSelected((prev) =>
-      prev.size === proposed.length
-        ? new Set()
-        : new Set(proposed.map((p) => p.id)),
-    );
-  }, [proposed]);
+  const presentSeverities = useMemo(() => {
+    const present = new Set(actionable.map(proposalSeverity));
+    return SEVERITY_ORDER.filter((s) => present.has(s));
+  }, [actionable]);
 
-  const toggleSelect = useCallback((id: string) => {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+  const severityCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const p of actionable) {
+      const sev = proposalSeverity(p);
+      counts.set(sev, (counts.get(sev) ?? 0) + 1);
+    }
+    return counts;
+  }, [actionable]);
+
+  const decisionCounts = useMemo(() => {
+    const counts: Record<DecisionFilter, number> = {
+      pending: 0,
+      accepted: 0,
+      declined: 0,
+    };
+    for (const p of actionable) {
+      counts[effectiveDecision(p.id, decisions)] += 1;
+    }
+    return counts;
+  }, [actionable, decisions]);
+
+  useEffect(() => {
+    if (gateKey && gateKey !== prevGateKey.current) {
+      prevGateKey.current = gateKey;
+      setDecisions(new Map());
+      setDecisionFilters(new Set(DECISION_FILTER_ORDER));
+    }
+  }, [gateKey]);
+
+  const presentSevKey = presentSeverities.join(',');
+  useEffect(() => {
+    setSevFilters(new Set(presentSeverities));
+  }, [presentSevKey, presentSeverities]);
+
+  // Mirror draft PATCH status onto toggles (e.g. after SSE / remount) without
+  // overwriting an in-progress local choice.
+  useEffect(() => {
+    setDecisions((prev) => {
+      let changed = false;
+      const next = new Map(prev);
+      for (const p of actionable) {
+        if (next.has(p.id)) continue;
+        if (p.status === 'approved') {
+          next.set(p.id, 'accepted');
+          changed = true;
+        } else if (p.status === 'declined') {
+          next.set(p.id, 'declined');
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [actionable]);
+
+  const flushDraft = useCallback(
+    (next: Map<string, NodeDecision>) => {
+      if (!onDraftUpdate) return;
+      if (draftTimer.current) clearTimeout(draftTimer.current);
+      draftTimer.current = setTimeout(() => {
+        const updates: ProposalDraftUpdate[] = actionable.map((p) => ({
+          proposal_id: p.id,
+          status: decisionToDraft(next.get(p.id) ?? 'pending'),
+        }));
+        onDraftUpdate(updates);
+      }, 300);
+    },
+    [onDraftUpdate, actionable],
+  );
+
+  useEffect(
+    () => () => {
+      if (draftTimer.current) clearTimeout(draftTimer.current);
+    },
+    [],
+  );
+
+  const setDecisionForIds = useCallback(
+    (ids: string[], decision: NodeDecision) => {
+      setDecisions((prev) => {
+        const next = new Map(prev);
+        for (const id of ids) next.set(id, decision);
+        flushDraft(next);
+        return next;
+      });
+    },
+    [flushDraft],
+  );
+
+  const handleDecisionChange = useCallback(
+    (id: string, decision: NodeDecision) => {
+      const parent = actionable.find((p) => p.id === id);
+      const kids = parent ? descendantProposalIds(parent, actionable) : [];
+      setDecisionForIds([id, ...kids], decision);
+    },
+    [actionable, setDecisionForIds],
+  );
+
+  const pendingIds = useMemo(() => {
+    const ids: string[] = [];
+    for (const p of actionable) {
+      const d = decisions.get(p.id);
+      if (d !== 'accepted' && d !== 'declined' && d !== 'ignored') {
+        ids.push(p.id);
+      }
+    }
+    return ids;
+  }, [actionable, decisions]);
+
+  const acceptRemaining = useCallback(() => {
+    setDecisionForIds(pendingIds, 'accepted');
+  }, [pendingIds, setDecisionForIds]);
+
+  const declineRemaining = useCallback(() => {
+    setDecisionForIds(pendingIds, 'declined');
+  }, [pendingIds, setDecisionForIds]);
+
+  const clearDecisions = useCallback(() => {
+    setDecisions(() => {
+      const next = new Map<string, NodeDecision>();
+      for (const p of actionable) {
+        next.set(p.id, 'pending');
+      }
+      flushDraft(next);
       return next;
     });
-  }, []);
+  }, [actionable, flushDraft]);
 
-  const toggleExpand = useCallback((id: string) => {
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }, []);
+  const acceptedIds = useMemo(() => {
+    const ids: string[] = [];
+    for (const p of actionable) {
+      if (decisions.get(p.id) === 'accepted') ids.push(p.id);
+    }
+    return ids;
+  }, [actionable, decisions]);
 
-  const allSelected = proposed.length > 0 && selected.size === proposed.length;
+  const declinedCount = useMemo(() => {
+    let n = 0;
+    for (const p of actionable) {
+      if (decisions.get(p.id) === 'declined') n += 1;
+    }
+    return n;
+  }, [actionable, decisions]);
 
-  return (
-    <Card style={{ marginBottom: 16 }}>
-      <CardBody>
-        <Split hasGutter style={{ marginBottom: 16 }}>
-          <SplitItem isFilled>
-            <Label color="yellow" isCompact>AI Review</Label>
-            <h3 style={{ marginTop: 4 }}>
-              {proposed.length} AI Proposal{proposed.length !== 1 ? 's' : ''}
-            </h3>
-            <span style={{ fontSize: 13, opacity: 0.7 }}>
-              Review each proposed change and select which to apply.
-            </span>
-          </SplitItem>
-          <SplitItem>
-            <Flex gap={{ default: 'gapSm' }}>
-              <Button variant="secondary" onClick={toggleAll} size="sm">
-                {allSelected ? 'Deselect All' : 'Select All'}
-              </Button>
-              <Button variant="link" onClick={() => onApprove([])} size="sm">Skip All</Button>
-              <Button variant="primary" onClick={() => onApprove(Array.from(selected))} size="sm">
-                Apply {selected.size} Selected
-              </Button>
-            </Flex>
-          </SplitItem>
-        </Split>
+  const pendingCount = pendingIds.length;
 
-        {/* Proposed (actionable) */}
-        <div className="apme-proposals-list" role="group" aria-label="AI fix proposals">
-          {proposed.map((p) => {
-            const isExpanded = expanded.has(p.id);
-            const hasDetail = !!(p.explanation || p.diff_hunk);
-            return (
-              <div
-                key={p.id}
-                className={`apme-proposal-card ${selected.has(p.id) ? 'selected' : ''}`}
-              >
-                <div
-                  className="apme-proposal-header"
-                  role="checkbox"
-                  aria-checked={selected.has(p.id)}
-                  tabIndex={0}
-                  onClick={() => toggleSelect(p.id)}
-                  onKeyDown={(e) => {
-                    if (e.key === ' ' || e.key === 'Enter') {
-                      e.preventDefault();
-                      toggleSelect(p.id);
-                    }
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={selected.has(p.id)}
-                    readOnly
-                    tabIndex={-1}
-                    aria-hidden="true"
-                    className="apme-proposal-checkbox"
-                  />
-                  <div className="apme-proposal-meta">
-                    <RuleId ruleId={p.rule_id} />
-                    <span className="apme-proposal-file">{p.file}</span>
-                    <Label isCompact variant="outline">Tier {p.tier}</Label>
-                  </div>
-                  <div className="apme-proposal-confidence">
-                    <div className="apme-confidence-bar">
+  const workflowNext = useMemo((): WorkflowNextConfig => {
+    // No silent default: every node must be Accept or Decline before Next.
+    if (pendingCount > 0) {
+      return {
+        label: 'Next',
+        summary: `${pendingCount} node${
+          pendingCount !== 1 ? 's' : ''
+        } still undecided. Accept or Decline each one (or Accept remaining / Decline remaining), then Next unlocks.`,
+        onNext: () => onApprove(acceptedIds),
+        isDisabled: true,
+      };
+    }
+    const declinedNote =
+      declinedCount > 0
+        ? ` (${declinedCount} declined)`
+        : '';
+    let summary: string;
+    if (isAiGate) {
+      summary =
+        acceptedIds.length > 0
+          ? `Apply ${acceptedIds.length} accepted AI fix${acceptedIds.length !== 1 ? 'es' : ''}${declinedNote}, then finish remediation.`
+          : 'Continue with no AI fixes applied, then finish remediation.';
+    } else {
+      summary =
+        acceptedIds.length > 0
+          ? `Apply ${acceptedIds.length} accepted quick-fix${acceptedIds.length !== 1 ? 'es' : ''}${declinedNote}, then continue to AI assessment if enabled.`
+          : 'Continue with no quick-fixes applied, then AI assessment if enabled (or finish if AI is off).';
+    }
+    return {
+      label: 'Next',
+      summary,
+      onNext: () => onApprove(acceptedIds),
+      isDisabled: actionable.length === 0,
+    };
+  }, [
+    acceptedIds,
+    actionable.length,
+    declinedCount,
+    isAiGate,
+    onApprove,
+    pendingCount,
+  ]);
+
+  const actionableItems: NodeReviewItem[] = useMemo(
+    () =>
+      actionable.map((p) => {
+        const hasDetail = !!(
+          p.explanation ||
+          p.diff_hunk ||
+          p.before_text ||
+          p.after_text ||
+          (feedbackEnabled && isAiGate)
+        );
+        return {
+          id: p.id,
+          title: proposalNodeTitle(p),
+          confidence: isAiGate ? p.confidence : undefined,
+          hasDetail,
+          meta: (
+            <>
+              <RuleId ruleId={p.rule_id} />
+              <Label isCompact>{isAiGate ? 'AI' : 'Quick-fix'}</Label>
+            </>
+          ),
+          detail: (
+            <>
+              {p.explanation && (
+                <div className="apme-assess-findings-detail">
+                  {p.explanation.split('\n').filter(Boolean).map((line, i) => {
+                    const { ruleId, severity, message } = parseViolationLine(line);
+                    const sev = severity || 'info';
+                    return (
                       <div
-                        className="apme-confidence-fill"
-                        style={{ width: `${Math.round(p.confidence * 100)}%` }}
-                      />
-                    </div>
-                    <span className="apme-confidence-label">
-                      {Math.round(p.confidence * 100)}%
-                    </span>
-                  </div>
-                  {hasDetail && (
-                    <Button
-                      variant="link"
-                      size="sm"
-                      onClick={(e) => { e.stopPropagation(); toggleExpand(p.id); }}
-                      style={{ flexShrink: 0 }}
-                    >
-                      {isExpanded ? 'Hide' : 'Show'}
-                    </Button>
-                  )}
-                </div>
-
-                {isExpanded && p.explanation && (
-                  <div className="apme-proposal-explanation">
-                    {p.explanation}
-                  </div>
-                )}
-
-                {isExpanded && p.diff_hunk && (
-                  <div className="apme-proposal-diff">
-                    <DiffView diff={p.diff_hunk} />
-                  </div>
-                )}
-                {isExpanded && feedbackEnabled && (
-                  <div style={{ padding: '4px 12px 8px' }}>
-                    <Button
-                      variant="link"
-                      size="sm"
-                      onClick={(e) => { e.stopPropagation(); setFeedbackTarget(p); }}
-                    >
-                      Report Issue
-                    </Button>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-
-        {/* Declined by AI */}
-        {declined.length > 0 && (
-          <div style={{ marginTop: 20 }}>
-            <div
-              style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', marginBottom: 8 }}
-              onClick={() => setShowDeclined((v) => !v)}
-            >
-              <span style={{ opacity: 0.5, fontSize: 12 }}>{showDeclined ? '\u25BC' : '\u25B6'}</span>
-              <Label color="orange" isCompact>Declined by AI</Label>
-              <span style={{ fontSize: 13, opacity: 0.7 }}>
-                {declined.length} violation{declined.length !== 1 ? 's' : ''} the AI could not fix
-              </span>
-            </div>
-            {showDeclined && (
-              <div className="apme-proposals-list">
-                {declined.map((p) => {
-                  const isExpanded = expanded.has(p.id);
-                  return (
-                    <div key={p.id} className="apme-proposal-card apme-proposal-declined">
-                      <div
-                        className="apme-proposal-header"
-                        style={{ cursor: 'pointer' }}
-                        onClick={() => toggleExpand(p.id)}
+                        key={`${p.id}-desc-${i}`}
+                        className="apme-assess-finding-row"
                       >
-                        <div className="apme-proposal-meta">
-                          <RuleId ruleId={p.rule_id} />
-                          <span className="apme-proposal-file">{p.file}</span>
-                          {p.line_start != null && p.line_start > 0 && (
-                            <span style={{ fontSize: 12, opacity: 0.6 }}>Line {p.line_start}</span>
-                          )}
-                        </div>
-                        <Button
-                          variant="link"
-                          size="sm"
-                          onClick={(e) => { e.stopPropagation(); toggleExpand(p.id); }}
-                          style={{ flexShrink: 0 }}
-                        >
-                          {isExpanded ? 'Hide' : 'Why?'}
-                        </Button>
+                        {ruleId ? <RuleId ruleId={ruleId} /> : null}
+                        {(ruleId || severity) && (
+                          <Label
+                            isCompact
+                            color={severityLabelColor(sev, ruleId)}
+                          >
+                            {severityDisplayLabel(sev, ruleId)}
+                          </Label>
+                        )}
+                        {!isAiGate && <Label isCompact>Quick-fix</Label>}
+                        <span className="apme-assess-finding-msg">{message}</span>
                       </div>
+                    );
+                  })}
+                </div>
+              )}
+              {(p.diff_hunk || p.before_text || p.after_text) && (
+                <div className="apme-proposal-diff">
+                  <DiffView
+                    mode="side-by-side"
+                    diff={p.diff_hunk}
+                    before={p.before_text}
+                    after={p.after_text}
+                  />
+                </div>
+              )}
+              {feedbackEnabled && isAiGate && (
+                <div style={{ padding: '4px 12px 8px' }}>
+                  <Button
+                    variant="link"
+                    size="sm"
+                    onClick={() => setFeedbackTarget(p)}
+                  >
+                    Report Issue
+                  </Button>
+                </div>
+              )}
+            </>
+          ),
+        };
+      }),
+    [actionable, isAiGate, feedbackEnabled],
+  );
 
-                      {isExpanded && (
-                        <div className="apme-proposal-explanation">
-                          {p.explanation && (
-                            <div style={{ marginBottom: p.suggestion ? 8 : 0 }}>
-                              <strong>Reason:</strong> {p.explanation}
-                            </div>
-                          )}
-                          {p.suggestion && (
-                            <div>
-                              <strong>Suggestion:</strong> {p.suggestion}
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
+  const hasNarrowedFilters =
+    decisionFilters.size < DECISION_FILTER_ORDER.length ||
+    (presentSeverities.length > 0 && sevFilters.size < presentSeverities.length);
+
+  const filteredActionableItems = useMemo(() => {
+    return actionableItems.filter((item) => {
+      const decision = effectiveDecision(item.id, decisions);
+      if (!decisionFilters.has(decision)) return false;
+      const proposal = actionable.find((p) => p.id === item.id);
+      if (!proposal) return false;
+      if (presentSeverities.length > 0) {
+        const sev = proposalSeverity(proposal);
+        if (!sevFilters.has(sev)) return false;
+      }
+      return true;
+    });
+  }, [
+    actionableItems,
+    actionable,
+    decisions,
+    decisionFilters,
+    sevFilters,
+    presentSeverities.length,
+  ]);
+
+  const explanationItems: NodeReviewItem[] = useMemo(
+    () =>
+      explanationOnly.map((p) => ({
+        id: p.id,
+        title: proposalNodeTitle(p),
+        hasDetail: !!p.explanation,
+        className: 'apme-proposal-declined',
+        meta: (
+          <>
+            <RuleId ruleId={p.rule_id} />
+            <Label color="grey" isCompact>
+              No visible diff
+            </Label>
+          </>
+        ),
+        detail: p.explanation ? (
+          <div className="apme-proposal-explanation">{p.explanation}</div>
+        ) : undefined,
+      })),
+    [explanationOnly],
+  );
+
+  const declinedItems: NodeReviewItem[] = useMemo(
+    () =>
+      declined.map((p) => ({
+        id: p.id,
+        title: proposalNodeTitle(p),
+        hasDetail: !!(p.explanation || p.suggestion),
+        className: 'apme-proposal-declined',
+        meta: <RuleId ruleId={p.rule_id} />,
+        detail: (
+          <div className="apme-proposal-explanation">
+            {p.explanation && (
+              <div style={{ marginBottom: p.suggestion ? 8 : 0 }}>
+                <strong>Reason:</strong> {p.explanation}
+              </div>
+            )}
+            {p.suggestion && (
+              <div>
+                <strong>Suggestion:</strong> {p.suggestion}
               </div>
             )}
           </div>
-        )}
-      </CardBody>
-      {feedbackTarget && (
-        <FeedbackModal
-          isOpen={!!feedbackTarget}
-          onClose={() => setFeedbackTarget(null)}
-          prefill={{
-            type: 'bad_ai_suggestion',
-            rule_id: feedbackTarget.rule_id,
-            file: feedbackTarget.file,
-            scan_id: scanId ?? '',
-            context: {
-              violation_message: '',
-              ai_proposal_diff: feedbackTarget.diff_hunk ?? '',
-              ai_explanation: feedbackTarget.explanation ?? '',
-              source_snippet: '',
-            },
-          } satisfies Partial<FeedbackPayload>}
-        />
+        ),
+      })),
+    [declined],
+  );
+
+  const filterGroups: ReviewFilterGroup[] = useMemo(
+    () => [
+      {
+        label: 'Decision',
+        ariaLabel: 'Filter by decision',
+        options: DECISION_FILTER_ORDER.map((d) => ({
+          id: d,
+          label: DECISION_FILTER_LABELS[d],
+          count: decisionCounts[d],
+          selected: decisionFilters.has(d),
+          onToggle: () =>
+            setDecisionFilters((prev) => toggleInFilterSet(prev, d)),
+        })),
+      },
+      {
+        label: 'Severity',
+        ariaLabel: 'Filter by severity',
+        options: presentSeverities.map((sev) => ({
+          id: sev,
+          label: SEVERITY_LABELS[sev] ?? sev,
+          count: severityCounts.get(sev) ?? 0,
+          color: severityLabelColor(sev),
+          selected: sevFilters.has(sev),
+          onToggle: () => setSevFilters((prev) => toggleInFilterSet(prev, sev)),
+        })),
+      },
+    ],
+    [
+      decisionCounts,
+      decisionFilters,
+      presentSeverities,
+      severityCounts,
+      sevFilters,
+    ],
+  );
+
+  const titleProposals = useMemo(() => {
+    const ids = new Set(filteredActionableItems.map((i) => i.id));
+    return actionable.filter((p) => ids.has(p.id));
+  }, [actionable, filteredActionableItems]);
+
+  const title = (
+    <>
+      {findingsAcrossNodesTitle(
+        titleProposals,
+        actionable.length,
+        hasNarrowedFilters,
       )}
-    </Card>
+      {explanationOnly.length > 0
+        ? ` · ${explanationOnly.length} explanation-only`
+        : ''}
+    </>
+  );
+
+  return (
+    <ReviewStepShell
+      title={title}
+      description="Every node starts undecided. Next stays disabled until you Accept or Decline each one. Decided rows collapse. Use Accept remaining / Decline remaining for whatever is still open, or Clear to reset and expand again."
+      onCancel={onCancel}
+      next={workflowNext}
+      filterGroups={filterGroups}
+      hasNarrowedFilters={hasNarrowedFilters}
+      onSelectAllFilters={() => {
+        setDecisionFilters(new Set(DECISION_FILTER_ORDER));
+        setSevFilters(new Set(presentSeverities));
+      }}
+      emptyMessage="No proposals match the current filters."
+      list={
+        filteredActionableItems.length === 0
+          ? undefined
+          : {
+              items: filteredActionableItems,
+              ariaLabel: isAiGate ? 'AI proposals' : 'Quick-fix proposals',
+              decisionMode: true,
+              decisions,
+              onDecisionChange: handleDecisionChange,
+              resetKey: gateKey,
+              defaultExpanded: true,
+              showExpandControls: true,
+              onAcceptRemaining: acceptRemaining,
+              onDeclineRemaining: declineRemaining,
+              pendingCount,
+              onClearDecisions: clearDecisions,
+            }
+      }
+      afterBody={
+        feedbackTarget ? (
+          <FeedbackModal
+            isOpen={!!feedbackTarget}
+            onClose={() => setFeedbackTarget(null)}
+            prefill={{
+              type: 'bad_ai_suggestion',
+              rule_id: feedbackTarget.rule_id,
+              file: feedbackTarget.file,
+              scan_id: scanId ?? '',
+              context: {
+                violation_message: '',
+                ai_proposal_diff: feedbackTarget.diff_hunk ?? '',
+                ai_explanation: feedbackTarget.explanation ?? '',
+                source_snippet: '',
+              },
+            } satisfies Partial<FeedbackPayload>}
+          />
+        ) : undefined
+      }
+    >
+      {explanationItems.length > 0 && (
+        <div style={{ marginTop: 16 }}>
+          <NodeReviewList
+            items={explanationItems}
+            ariaLabel="Explanation-only proposals"
+            resetKey={`${gateKey}-explain`}
+            defaultExpanded={false}
+            showExpandControls={false}
+          />
+        </div>
+      )}
+
+      {declined.length > 0 && (
+        <div style={{ marginTop: 20 }}>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              cursor: 'pointer',
+              marginBottom: 8,
+            }}
+            onClick={() => setShowDeclined((v) => !v)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                setShowDeclined((v) => !v);
+              }
+            }}
+            role="button"
+            tabIndex={0}
+          >
+            <span style={{ opacity: 0.5, fontSize: 12 }}>
+              {showDeclined ? '\u25BC' : '\u25B6'}
+            </span>
+            <Label color="orange" isCompact>
+              Declined by AI
+            </Label>
+            <span style={{ fontSize: 13, opacity: 0.7 }}>
+              {declined.length} violation{declined.length !== 1 ? 's' : ''} the AI
+              could not fix
+            </span>
+          </div>
+          {showDeclined && (
+            <NodeReviewList
+              items={declinedItems}
+              ariaLabel="Declined AI proposals"
+              resetKey={`${gateKey}-declined`}
+              defaultExpanded={false}
+              showExpandControls={false}
+            />
+          )}
+        </div>
+      )}
+    </ReviewStepShell>
   );
 }

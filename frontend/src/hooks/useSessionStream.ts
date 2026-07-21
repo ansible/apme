@@ -48,8 +48,10 @@ export interface Proposal {
   confidence: number;
   explanation: string;
   tier: number;
-  status?: 'proposed' | 'declined';
+  status?: "proposed" | "declined" | "pending" | "approved" | "rejected";
   suggestion?: string;
+  path?: string;
+  source?: string;
 }
 
 export interface RemainingViolation {
@@ -83,6 +85,8 @@ export interface SessionOptions {
   collections?: string[];
   enableAi?: boolean;
   aiModel?: string;
+  /** ADR-062 Option C: Gate 1 review when true (SPA remediate default). */
+  interactive?: boolean;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────
@@ -272,6 +276,8 @@ export function useSessionStream() {
             break;
 
           case "approval_ack":
+            // Two-gate interactive: do not treat ack as terminal; another
+            // proposals event may follow. COMPLETE is driven by result.
             if (msg.status === "COMPLETE") {
               updateStatus("applying");
             }
@@ -367,6 +373,7 @@ export function useSessionStream() {
           ansible_version: options.ansibleVersion || "",
           collections: options.collections || [],
           enable_ai: options.enableAi ?? true,
+          interactive: options.interactive ?? true,
         };
         if (options.aiModel) {
           startOptions.ai_model = options.aiModel;

@@ -13,6 +13,7 @@ export type ProjectOperationStatus =
   | "queued"
   | "cloning"
   | "scanning"
+  | "assessed"
   | "awaiting_approval"
   | "applying"
   | "completed"
@@ -28,6 +29,17 @@ const TERMINAL_STATUSES = new Set<ProjectOperationStatus>([
   "failed",
   "expired",
   "cancelled",
+]);
+
+/** Non-terminal statuses where Activity can offer Resume / Start over. */
+export const LIVE_OPERATION_STATUSES = new Set<ProjectOperationStatus>([
+  "queued",
+  "cloning",
+  "scanning",
+  "assessed",
+  "awaiting_approval",
+  "applying",
+  "submitting_pr",
 ]);
 
 export interface ProgressEntry {
@@ -46,9 +58,13 @@ export interface Proposal {
   confidence: number;
   explanation?: string;
   diff_hunk?: string;
-  status?: "proposed" | "declined";
+  status?: "proposed" | "declined" | "pending" | "approved" | "rejected";
   suggestion?: string;
   line_start?: number;
+  path?: string;
+  source?: string;
+  before_text?: string;
+  after_text?: string;
 }
 
 export interface OperationResultData {
@@ -63,6 +79,195 @@ export interface OperationResultData {
   patches: Array<{ file: string; diff: string }>;
 }
 
+export interface AssessFinding {
+  rule_id: string;
+  severity?: string;
+  message: string;
+  file: string;
+  line?: number | null;
+  path?: string;
+  remediation_class?: number;
+  source?: string;
+  original_yaml?: string;
+  fixed_yaml?: string;
+  co_fixes?: string[];
+  /** File line where the node YAML snippet starts (maps ``line`` into the snippet). */
+  node_line_start?: number | null;
+  /** Human/gate decision from durable activity (ADR-062). */
+  review_status?: string | null;
+}
+
+/** Map a file-absolute finding line into 1-based snippet line numbers. */
+export function snippetHighlightLine(
+  fileLine: number | null | undefined,
+  nodeLineStart: number | null | undefined,
+  snippetLineCount: number,
+): number | null {
+  if (fileLine == null || fileLine < 1 || snippetLineCount < 1) {
+    return null;
+  }
+  // Without node_line_start we cannot safely map absolute file lines into the
+  // snippet — fall through to message-based refine instead of guessing.
+  if (nodeLineStart == null || nodeLineStart < 1) {
+    return null;
+  }
+  const rel = fileLine - nodeLineStart + 1;
+  if (rel < 1 || rel > snippetLineCount) {
+    return null;
+  }
+  return rel;
+}
+
+const _HIGHLIGHT_STOPWORDS = new Set([
+  'the',
+  'and',
+  'for',
+  'with',
+  'from',
+  'that',
+  'this',
+  'should',
+  'have',
+  'has',
+  'are',
+  'was',
+  'use',
+  'using',
+  'into',
+  'your',
+  'when',
+  'without',
+  'avoid',
+  'consider',
+  'missing',
+  'found',
+  'play',
+  'task',
+  'role',
+  'file',
+  'name',
+  'value',
+  'true',
+  'false',
+  'null',
+  'instead',
+  'collection',
+  'module',
+  'variable',
+  'variables',
+  'deprecated',
+  'setting',
+  'output',
+]);
+
+function _escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Find a 1-based snippet line by matching distinctive tokens from the
+ * finding message (quoted strings, paths, FQCNs, YAML keys named in the
+ * message). No rule-id-specific lookups.
+ *
+ * Many rules stamp ``line`` as the node start, so the file-line mapping
+ * alone always lands on snippet line 1; this recovers a better target when
+ * the message itself names the offending content.
+ */
+export function refineHighlightFromMessage(
+  snippet: string,
+  message: string,
+): number | null {
+  if (!snippet.trim() || !message.trim()) {
+    return null;
+  }
+  const lines = snippet.replace(/\n$/, '').split('\n');
+  if (lines.length === 0) {
+    return null;
+  }
+
+  const tokens: string[] = [];
+  for (const m of message.matchAll(/`([^`]+)`|"([^"]+)"|'([^']+)'/g)) {
+    const t = m[1] || m[2] || m[3];
+    if (t && t.length >= 2) {
+      tokens.push(t);
+    }
+  }
+  for (const m of message.matchAll(/\/[\w./-]{4,}/g)) {
+    tokens.push(m[0]);
+  }
+  const afterColon = message.match(
+    /:\s*([A-Za-z_][\w]*(?:\s*,\s*[A-Za-z_][\w]*)+)/,
+  );
+  if (afterColon?.[1]) {
+    for (const part of afterColon[1].split(',')) {
+      const t = part.trim();
+      if (t.length > 1) {
+        tokens.push(t);
+      }
+    }
+  }
+  for (const m of message.matchAll(/\b[a-z_]+\.[a-z_]+\.[a-z0-9_]+\b/g)) {
+    tokens.push(m[0]);
+  }
+
+  let bestLine: number | null = null;
+  let bestLen = 0;
+  for (const token of tokens) {
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i]!.includes(token) && token.length > bestLen) {
+        bestLen = token.length;
+        bestLine = i + 1;
+      }
+    }
+  }
+  if (bestLine != null) {
+    return bestLine;
+  }
+
+  for (const key of message.matchAll(/\b([a-z_][a-z0-9_]{2,})\b/g)) {
+    const k = key[1]!;
+    if (_HIGHLIGHT_STOPWORDS.has(k)) {
+      continue;
+    }
+    const re = new RegExp(`^\\s*${_escapeRegExp(k)}\\s*:`);
+    for (let i = 0; i < lines.length; i++) {
+      if (re.test(lines[i]!)) {
+        return i + 1;
+      }
+    }
+  }
+  return null;
+}
+
+/** Resolve the best snippet line to highlight for a finding. */
+export function resolveSnippetHighlight(opts: {
+  fileLine?: number | null;
+  nodeLineStart?: number | null;
+  snippet: string;
+  message?: string;
+}): number | null {
+  const snippet = opts.snippet ?? '';
+  const count = snippet.trim()
+    ? snippet.replace(/\n$/, '').split('\n').length
+    : 0;
+  const mapped = snippetHighlightLine(
+    opts.fileLine,
+    opts.nodeLineStart,
+    count,
+  );
+  const refined = refineHighlightFromMessage(snippet, opts.message ?? '');
+
+  // Engine gave a mid-snippet line — trust it.
+  if (mapped != null && mapped > 1) {
+    return mapped;
+  }
+  // Node-start (or missing) line: prefer a message match inside the snippet.
+  if (refined != null) {
+    return refined;
+  }
+  return mapped;
+}
+
 export interface ProjectOperationState {
   operation_id: string;
   project_id: string;
@@ -72,6 +277,7 @@ export interface ProjectOperationState {
   started_at: string;
   progress: ProgressEntry[];
   proposals?: Proposal[];
+  findings?: AssessFinding[];
   result?: OperationResultData;
   pr_url?: string;
   error?: string;
@@ -84,7 +290,7 @@ const BASE = "/api/v1";
  * Poll for current operation state.  Returns the state snapshot, or null
  * if no operation exists (404).
  */
-async function fetchState(
+export async function fetchProjectOperationState(
   projectId: string,
 ): Promise<ProjectOperationState | null> {
   try {
@@ -97,7 +303,16 @@ async function fetchState(
   }
 }
 
-export function useProjectOperationState(projectId: string) {
+export interface UseProjectOperationStateOptions {
+  /** When false, skip poll/SSE and clear local state. Default true. */
+  enabled?: boolean;
+}
+
+export function useProjectOperationState(
+  projectId: string,
+  options: UseProjectOperationStateOptions = {},
+) {
+  const enabled = options.enabled ?? true;
   const [state, setState] = useState<ProjectOperationState | null>(null);
   const [connected, setConnected] = useState(false);
   const esRef = useRef<EventSource | null>(null);
@@ -181,6 +396,57 @@ export function useProjectOperationState(projectId: string) {
       }
     });
 
+    es.addEventListener("findings", (e: MessageEvent) => {
+      if (!mountedRef.current) return;
+      try {
+        const data = JSON.parse(e.data) as { findings: AssessFinding[] };
+        setState((prev) =>
+          prev
+            ? {
+                ...prev,
+                status: "assessed",
+                findings: data.findings,
+              }
+            : prev,
+        );
+      } catch {
+        /* ignore */
+      }
+    });
+
+    es.addEventListener("proposal_updated", (e: MessageEvent) => {
+      if (!mountedRef.current) return;
+      try {
+        const data = JSON.parse(e.data) as {
+          proposals?: Array<Record<string, unknown>>;
+        };
+        const updates = data.proposals ?? [];
+        if (updates.length === 0) return;
+        setState((prev) => {
+          if (!prev?.proposals) return prev;
+          const byId = new Map(prev.proposals.map((p) => [p.id, p]));
+          for (const item of updates) {
+            const eng = String(
+              item.engine_proposal_id || item.id || "",
+            );
+            if (!eng || !byId.has(eng)) continue;
+            const cur = byId.get(eng)!;
+            byId.set(eng, {
+              ...cur,
+              status: (String(item.status || cur.status) as Proposal["status"]),
+              path:
+                typeof item.path === "string" ? item.path : cur.path,
+              source:
+                typeof item.source === "string" ? item.source : cur.source,
+            });
+          }
+          return { ...prev, proposals: Array.from(byId.values()) };
+        });
+      } catch {
+        /* ignore */
+      }
+    });
+
     es.addEventListener("result", (e: MessageEvent) => {
       if (!mountedRef.current) return;
       try {
@@ -194,12 +460,13 @@ export function useProjectOperationState(projectId: string) {
     es.addEventListener("approval_ack", (e: MessageEvent) => {
       if (!mountedRef.current) return;
       try {
+        // Do not force status to "applying" — two-gate interactive flow may
+        // return to awaiting_approval; status_changed owns transitions.
         const data = JSON.parse(e.data) as { applied_count: number };
         setState((prev) =>
           prev
             ? {
                 ...prev,
-                status: "applying" as ProjectOperationStatus,
                 result: prev.result
                   ? { ...prev.result, ai_accepted: data.applied_count }
                   : prev.result,
@@ -243,7 +510,11 @@ export function useProjectOperationState(projectId: string) {
   }, [projectId, cleanup]);
 
   const poll = useCallback(async () => {
-    const s = await fetchState(projectId);
+    if (!enabled || !projectId) {
+      setState(null);
+      return;
+    }
+    const s = await fetchProjectOperationState(projectId);
     if (!mountedRef.current) return;
     if (!s) {
       setState(null);
@@ -253,20 +524,28 @@ export function useProjectOperationState(projectId: string) {
     if (!TERMINAL_STATUSES.has(s.status)) {
       connect();
     }
-  }, [projectId, connect]);
+  }, [projectId, connect, enabled]);
 
   useEffect(() => {
     mountedRef.current = true;
+    if (!enabled || !projectId) {
+      cleanup();
+      setState(null);
+      return () => {
+        mountedRef.current = false;
+        cleanup();
+      };
+    }
     poll();
     return () => {
       mountedRef.current = false;
       cleanup();
     };
-  }, [poll, cleanup]);
+  }, [poll, cleanup, enabled, projectId]);
 
   const refresh = useCallback(() => {
-    poll();
-  }, [poll]);
+    if (enabled) poll();
+  }, [poll, enabled]);
 
   const clear = useCallback(() => {
     cleanup();

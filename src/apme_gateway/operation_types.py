@@ -24,7 +24,8 @@ class OperationStatus(str, Enum):
         QUEUED: Operation is queued for execution.
         CLONING: Repository is being cloned.
         SCANNING: Engine is scanning the project.
-        AWAITING_APPROVAL: AI proposals require user review.
+        ASSESSED: Assessment pause (ADR-064); findings ready, awaiting begin-remediate.
+        AWAITING_APPROVAL: AI / Tier 1 proposals require user review.
         APPLYING: Approved fixes are being applied.
         COMPLETED: Operation finished successfully.
         SUBMITTING_PR: Pull request is being created.
@@ -37,6 +38,7 @@ class OperationStatus(str, Enum):
     QUEUED = "queued"
     CLONING = "cloning"
     SCANNING = "scanning"
+    ASSESSED = "assessed"
     AWAITING_APPROVAL = "awaiting_approval"
     APPLYING = "applying"
     COMPLETED = "completed"
@@ -89,11 +91,15 @@ class Proposal:
         confidence: 0.0–1.0 confidence score.
         explanation: Human-readable rationale.
         diff_hunk: Unified diff showing the proposed change.
-        status: ``proposed`` or ``declined``.
+        status: Working-set / analytics status — commonly ``proposed``,
+            ``pending``, ``approved``, ``declined``, or ``rejected``
+            (see draft proposal allowlist).
         source: Proposal source (e.g. ``deterministic`` or ``ai``).
         path: Stable node identity path when available.
         suggestion: Suggested replacement text.
         line_start: Starting line number in the file.
+        before_text: Node YAML before the proposed change.
+        after_text: Node YAML after the proposed change.
     """
 
     id: str
@@ -108,6 +114,8 @@ class Proposal:
     path: str = ""
     suggestion: str = ""
     line_start: int = 0
+    before_text: str = ""
+    after_text: str = ""
 
 
 @dataclass
@@ -154,12 +162,14 @@ class OperationState:
         started_at: UTC datetime when the operation was created.
         progress: Append-only progress log.
         proposals: Set when status is ``awaiting_approval``.
+        findings: Content violations at assess pause (ADR-064).
         result: Set when status is ``completed``.
         pr_url: Set when status is ``pr_submitted``.
         error: Set when status is ``failed``.
         clone_commit: HEAD SHA of the cloned repository.
         grpc_task: The background asyncio.Task driving Primary.
         approval_future: Resolved by ``POST /approve``.
+        begin_remediate_future: Resolved by ``POST /begin-remediate`` (ADR-064).
         sse_subscribers: One queue per connected SSE client.
     """
 
@@ -171,12 +181,14 @@ class OperationState:
     started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     progress: list[ProgressEntry] = field(default_factory=list)
     proposals: list[Proposal] | None = None
+    findings: list[dict[str, Any]] | None = None
     result: OperationResult | None = None
     pr_url: str | None = None
     error: str | None = None
     clone_commit: str = ""
     grpc_task: asyncio.Task[Any] | None = field(default=None, repr=False)
     approval_future: asyncio.Future[list[str]] | None = field(default=None, repr=False)
+    begin_remediate_future: asyncio.Future[None] | None = field(default=None, repr=False)
     sse_subscribers: list[asyncio.Queue[dict[str, Any]]] = field(default_factory=list, repr=False)
 
     def to_snapshot(self) -> dict[str, Any]:
@@ -218,9 +230,13 @@ class OperationState:
                     "path": p.path,
                     "suggestion": p.suggestion,
                     "line_start": p.line_start,
+                    "before_text": p.before_text,
+                    "after_text": p.after_text,
                 }
                 for p in self.proposals
             ]
+        if self.findings is not None:
+            data["findings"] = self.findings
         if self.result is not None:
             data["result"] = {
                 "total_violations": self.result.total_violations,
@@ -250,6 +266,7 @@ class SSEEventType(str, Enum):
         STATUS_CHANGED: Status transition delta.
         PROGRESS: New progress log entry.
         PROPOSALS: AI proposals delivered.
+        FINDINGS: Assessment findings (ADR-064 assess pause).
         PROPOSAL_UPDATED: Optimistic draft status change (ADR-062 Phase 2).
         RESULT: Operation completed with results.
         APPROVAL_ACK: Approval acknowledged.
@@ -261,6 +278,7 @@ class SSEEventType(str, Enum):
     STATUS_CHANGED = "status_changed"
     PROGRESS = "progress"
     PROPOSALS = "proposals"
+    FINDINGS = "findings"
     PROPOSAL_UPDATED = "proposal_updated"
     RESULT = "result"
     APPROVAL_ACK = "approval_ack"

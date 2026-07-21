@@ -56,6 +56,8 @@ export interface ActivitySummary {
   scan_id: string;
   session_id: string;
   project_path: string;
+  /** Owning project UUID when linked (null for CLI/playground). */
+  project_id?: string | null;
   source: string;
   created_at: string;
   scan_type: string;

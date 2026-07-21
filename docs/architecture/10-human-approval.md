@@ -157,6 +157,23 @@ The Gateway bridges WebSocket connections to the `FixSession` gRPC stream.
 The approval flow is the same — `ApprovalRequest` with approved IDs — but
 delivered via WebSocket message instead of CLI prompt.
 
+### Standalone SPA (ADR-062 Option C + ADR-064)
+
+The native UI **Scan** button starts `check` with `options.assess_pause: true`
+(ADR-064). The engine emits `FindingsReady`, the Gateway SSE status becomes
+`assessed`, and the SPA shows findings (flat or group-by-node). **Remediate**
+calls `POST .../begin-remediate` on the same FixSession (no full rescan while
+the session is alive), then Gate 1 Tier 1 proposals pause for per-node Accept /
+Decline. An **Auto-apply Tier 1** toggle sets `interactive: false` for the
+legacy auto-apply path after begin-remediate.
+
+Plain `check` without `assess_pause` still completes immediately (CLI/portal
+unchanged). Gateway `interactive` remains default **false**.
+
+Per-node review UX and proposal helpers live in `frontend/src/remediation/`.
+Suppress/Acknowledge on historical violations lists is a separate surface and
+is not offered on Gate 1 node cards.
+
 ## Key Source Files
 
 | File | Key types/functions |

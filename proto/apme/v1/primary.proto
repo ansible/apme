@@ -77,6 +77,10 @@ message FixOptions {
   // When true, Tier 1 deterministic fixes await ApprovalRequest (Option C /
   // ADR-062 Phase 3). Default false preserves auto-apply (ADR-028).
   bool interactive = 10;
+  // When true, pause after assessment with FindingsReady before Gate 1
+  // (ADR-064). Implies Tier 1 compute without splice until BeginRemediate.
+  // Default false — check/remediate COMPLETE behavior unchanged.
+  bool assess_pause = 11;
 }
 
 message ScanDiagnostics {
@@ -138,8 +142,11 @@ message SessionCommand {
     ExtendRequest extend = 3;
     CloseRequest close = 4;
     ResumeRequest resume = 5;
+    BeginRemediateRequest begin_remediate = 6;  // ADR-064: leave assess pause → Gate 1
   }
 }
+
+message BeginRemediateRequest {}
 
 message ApprovalRequest {
   repeated string approved_ids = 1;
@@ -165,7 +172,16 @@ message SessionEvent {
     ExpirationWarning expiring = 7;
     SessionClosed closed = 8;
     DataPayload data = 9;
+    FindingsReady findings = 10;  // ADR-064 assess pause
   }
+}
+
+// Assessment snapshot before Gate 1 (ADR-064). Content violations only;
+// dependency-health findings remain on the Dependencies API surface.
+message FindingsReady {
+  repeated Violation violations = 1;
+  SessionStatus status = 2;
+  int32 ttl_seconds = 3;
 }
 
 message SessionCreated {

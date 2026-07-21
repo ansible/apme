@@ -6,7 +6,7 @@ import warnings
 from apme.v1 import common_pb2 as apme_dot_v1_dot_common__pb2
 from apme.v1 import validate_pb2 as apme_dot_v1_dot_validate__pb2
 
-GRPC_GENERATED_VERSION = '1.80.0'
+GRPC_GENERATED_VERSION = '1.82.1'
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
 
@@ -26,7 +26,7 @@ if _version_not_supported:
     )
 
 
-class ValidatorStub(object):
+class ValidatorStub:
     """Validator is the unified gRPC contract for all validation backends
     (native, OPA, Ansible). Every validator container implements this service.
     """
@@ -49,7 +49,7 @@ class ValidatorStub(object):
                 _registered_method=True)
 
 
-class ValidatorServicer(object):
+class ValidatorServicer:
     """Validator is the unified gRPC contract for all validation backends
     (native, OPA, Ansible). Every validator container implements this service.
     """
@@ -87,7 +87,7 @@ def add_ValidatorServicer_to_server(servicer, server):
 
 
  # This class is part of an EXPERIMENTAL API.
-class Validator(object):
+class Validator:
     """Validator is the unified gRPC contract for all validation backends
     (native, OPA, Ansible). Every validator container implements this service.
     """

@@ -28,6 +28,7 @@ class ActivitySummary(BaseModel):  # type: ignore[misc]
         scan_id: UUID of the run (``scans.scan_id`` column).
         session_id: Owning session hash.
         project_path: Project root path.
+        project_id: Owning project UUID when linked (None for CLI/playground).
         source: Origin of the run (cli, ci, gateway).
         created_at: ISO 8601 timestamp.
         scan_type: Either ``check`` or ``remediate`` (stored in ``scans.scan_type``).
@@ -45,6 +46,7 @@ class ActivitySummary(BaseModel):  # type: ignore[misc]
     scan_id: str
     session_id: str
     project_path: str
+    project_id: str | None = None
     source: str
     created_at: str
     scan_type: str

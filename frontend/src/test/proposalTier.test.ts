@@ -1,0 +1,114 @@
+import { describe, it, expect } from "vitest";
+import type { OperationProposal } from "../types/operation";
+import {
+  gateLabel,
+  isAiRemediationProposal,
+  proposalHasVisibleDiff,
+  proposalNodeTitle,
+  proposalsGateKey,
+  splitRuleIds,
+} from "../remediation/proposalTier";
+import {
+  effectiveFixType,
+  fixMethodLabel,
+  normalizeRemediationClass,
+} from "../remediation/fixTypes";
+
+function prop(partial: Partial<OperationProposal> & { id: string }): OperationProposal {
+  return {
+    rule_id: "L001",
+    file: "playbook.yml",
+    tier: 1,
+    confidence: 0.9,
+    ...partial,
+  };
+}
+
+describe("splitRuleIds", () => {
+  it("splits coupled rule ids", () => {
+    expect(splitRuleIds("L026,M001")).toEqual(["L026", "M001"]);
+  });
+
+  it("trims empty segments", () => {
+    expect(splitRuleIds(" L001 , , M002 ")).toEqual(["L001", "M002"]);
+  });
+});
+
+describe("proposalNodeTitle", () => {
+  it("prefers path", () => {
+    expect(
+      proposalNodeTitle(prop({ id: "t1-0", path: "playbook.yml::task[0]" })),
+    ).toBe("playbook.yml::task[0]");
+  });
+
+  it("falls back to file:line", () => {
+    expect(
+      proposalNodeTitle(prop({ id: "t1-0", file: "a.yml", line_start: 12 })),
+    ).toBe("a.yml:12");
+  });
+});
+
+describe("isAiRemediationProposal", () => {
+  it("classifies by source", () => {
+    expect(isAiRemediationProposal(prop({ id: "t1-0", source: "deterministic" }))).toBe(
+      false,
+    );
+    expect(isAiRemediationProposal(prop({ id: "ai-0", source: "ai", tier: 2 }))).toBe(
+      true,
+    );
+  });
+
+  it("classifies by tier when source absent", () => {
+    expect(isAiRemediationProposal(prop({ id: "t1-0", tier: 1 }))).toBe(false);
+    expect(isAiRemediationProposal(prop({ id: "ai-0", tier: 2 }))).toBe(true);
+  });
+});
+
+describe("proposalHasVisibleDiff", () => {
+  it("true for diff_hunk", () => {
+    expect(
+      proposalHasVisibleDiff(prop({ id: "t1-0", diff_hunk: "@@ -1 +1 @@\n-a\n+b" })),
+    ).toBe(true);
+  });
+
+  it("true for before/after text change", () => {
+    expect(
+      proposalHasVisibleDiff(
+        prop({ id: "t1-0", before_text: "a: 1\n", after_text: "a: 2\n" }),
+      ),
+    ).toBe(true);
+  });
+
+  it("false when no change", () => {
+    expect(
+      proposalHasVisibleDiff(
+        prop({ id: "t1-0", before_text: "a: 1\n", after_text: "a: 1\n" }),
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("proposalsGateKey / gateLabel", () => {
+  it("resets key when gate proposals change", () => {
+    const t1 = [prop({ id: "t1-0001", source: "deterministic", tier: 1 })];
+    const ai = [prop({ id: "ai-0001", source: "ai", tier: 2 })];
+    expect(proposalsGateKey(t1)).toBe("t1:t1-0001");
+    expect(proposalsGateKey(ai)).toBe("ai:ai-0001");
+    expect(gateLabel(t1)).toContain("Quick-fix");
+    expect(gateLabel(ai)).toContain("AI");
+  });
+});
+
+describe("fixTypes", () => {
+  it("normalizes remediation class strings", () => {
+    expect(normalizeRemediationClass("auto-fixable")).toBe(1);
+    expect(normalizeRemediationClass("ai-candidate")).toBe(2);
+    expect(normalizeRemediationClass("manual-review")).toBe(3);
+  });
+
+  it("maps effective fix type with AI toggle", () => {
+    expect(effectiveFixType(2, true)).toBe("ai");
+    expect(effectiveFixType(2, false)).toBe("manual");
+    expect(fixMethodLabel("auto")).toBe("Quick-fix");
+  });
+});

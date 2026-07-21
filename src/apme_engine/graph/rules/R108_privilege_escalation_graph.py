@@ -8,7 +8,7 @@ inherit the privilege escalation.
 
 from dataclasses import dataclass
 
-from apme_engine.graph.content_graph import ContentGraph, NodeType
+from apme_engine.graph.content_graph import ContentGraph, ContentNode, NodeType
 from apme_engine.graph.rule_base import (
     GraphRule,
     GraphRuleResult,
@@ -17,6 +17,7 @@ from apme_engine.graph.types import RuleScope, Severity, YAMLDict
 from apme_engine.graph.types import RuleTag as Tag
 
 _BECOME_SCOPES = frozenset({NodeType.PLAY, NodeType.BLOCK, NodeType.TASK, NodeType.HANDLER})
+_BECOME_KEYS = ("become", "become_user", "become_method", "become_flags", "become_exe")
 
 
 def _become_enabled(become: YAMLDict | None) -> bool:
@@ -31,6 +32,32 @@ def _become_enabled(become: YAMLDict | None) -> bool:
     if become is None:
         return False
     return bool(become.get("enabled", become.get("become")))
+
+
+def _become_line(node: ContentNode) -> int:
+    """Return the file line of the first become* key in the node YAML.
+
+    Falls back to ``node.line_start`` when YAML is missing or the key is
+    not found as a top-level line in the snippet.
+
+    Args:
+        node: Content node that defines become.
+
+    Returns:
+        1-based file line number for the become declaration, or ``0`` when
+        the node has no known line (``line_start < 1`` / unset).
+    """
+    yaml_text = node.yaml_lines or ""
+    if not yaml_text.strip() or node.line_start < 1:
+        return node.line_start
+    for offset, raw in enumerate(yaml_text.splitlines()):
+        stripped = raw.lstrip()
+        if stripped.startswith("#"):
+            continue
+        for key in _BECOME_KEYS:
+            if stripped.startswith(f"{key}:") or stripped.startswith(f"{key} :"):
+                return node.line_start + offset
+    return node.line_start
 
 
 @dataclass
@@ -57,7 +84,7 @@ class PrivilegeEscalationGraphRule(GraphRule):
     description: str = "Privilege escalation is found"
     enabled: bool = True
     name: str = "PrivilegeEscalation"
-    version: str = "v0.0.3"
+    version: str = "v0.0.4"
     severity: Severity = Severity.HIGH
     tags: tuple[str, ...] = (Tag.SYSTEM,)
     scope: str = RuleScope.TASK
@@ -129,5 +156,5 @@ class PrivilegeEscalationGraphRule(GraphRule):
             verdict=True,
             detail=detail,
             node_id=node_id,
-            file=(node.file_path, node.line_start),
+            file=(node.file_path, _become_line(node)),
         )

@@ -53,6 +53,7 @@ class FixOptions:
     session_id: str
     galaxy_servers: list[GalaxyServerDef]
     interactive: bool
+    assess_pause: bool
     def __init__(
         self, *, session_id: str = "", galaxy_servers: Iterable[GalaxyServerDef] | None = ..., **kwargs: object
     ) -> None: ...
@@ -122,6 +123,7 @@ class SessionCommand:
     extend: ExtendRequest
     close: CloseRequest
     resume: ResumeRequest
+    begin_remediate: BeginRemediateRequest
     def __init__(self, **kwargs: object) -> None: ...
     def HasField(self, field_name: str) -> bool: ...
     def WhichOneof(self, oneof_group: str) -> str | None: ...
@@ -140,6 +142,9 @@ class ResumeRequest:
     session_id: str
     def __init__(self, **kwargs: object) -> None: ...
 
+class BeginRemediateRequest:
+    def __init__(self, **kwargs: object) -> None: ...
+
 class SessionEvent:
     created: SessionCreated
     progress: ProgressUpdate
@@ -150,9 +155,16 @@ class SessionEvent:
     expiring: ExpirationWarning
     closed: SessionClosed
     data: DataPayload
+    findings: FindingsReady
     def __init__(self, **kwargs: object) -> None: ...
     def HasField(self, field_name: str) -> bool: ...
     def WhichOneof(self, oneof_group: str) -> str | None: ...
+
+class FindingsReady:
+    violations: list[Violation]
+    status: int
+    ttl_seconds: int
+    def __init__(self, **kwargs: object) -> None: ...
 
 class SessionCreated:
     session_id: str

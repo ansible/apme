@@ -37,6 +37,7 @@ export function PlaygroundPage() {
   const [ansibleVersion, setAnsibleVersion] = useState('');
   const [collections, setCollections] = useState('');
   const [enableAi, setEnableAi] = useState(true);
+  const [autoApplyTier1, setAutoApplyTier1] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dirInputRef = useRef<HTMLInputElement>(null);
@@ -86,6 +87,10 @@ export function PlaygroundPage() {
     status: p.status,
     suggestion: p.suggestion,
     line_start: p.line_start,
+    path: p.path,
+    source: p.source,
+    before_text: p.before_text,
+    after_text: p.after_text,
   }));
 
   const handleDrop = useCallback(
@@ -239,6 +244,8 @@ export function PlaygroundPage() {
                 onCollectionsChange={setCollections}
                 enableAi={enableAi}
                 onEnableAiChange={setEnableAi}
+                autoApplyTier1={autoApplyTier1}
+                onAutoApplyTier1Change={setAutoApplyTier1}
               />
 
               <Button

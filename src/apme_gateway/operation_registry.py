@@ -32,6 +32,16 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_TERMINAL_TTL = 600.0  # 10 minutes
 
+# FindingsReady only advances/refreshes assess-pause; never regress later gates.
+_FINDINGS_ALLOWED_STATUSES: frozenset[OperationStatus] = frozenset(
+    {
+        OperationStatus.QUEUED,
+        OperationStatus.CLONING,
+        OperationStatus.SCANNING,
+        OperationStatus.ASSESSED,
+    }
+)
+
 
 class OperationRegistry:
     """In-memory store for active project operations.
@@ -256,6 +266,33 @@ class OperationRegistry:
             },
         )
 
+    def set_findings(self, operation_id: str, findings: list[dict[str, Any]]) -> None:
+        """Store assessment findings and transition to ASSESSED (ADR-064).
+
+        Creates ``begin_remediate_future`` resolved by ``POST /begin-remediate``.
+        Ignores FindingsReady once the operation has left the assess-pause
+        window (e.g. ``AWAITING_APPROVAL`` / ``APPLYING``) so a replay cannot
+        regress the live state machine.
+
+        Args:
+            operation_id: The operation to update.
+            findings: Serialised violation dicts from FindingsReady.
+        """
+        op = self._ops.get(operation_id)
+        if op is None:
+            return
+        # Terminal or past assess-pause: ignore out-of-order / replayed findings.
+        if op.status not in _FINDINGS_ALLOWED_STATUSES:
+            return
+        op.findings = findings
+        # Resume may re-emit FindingsReady; do not replace a future the bridge
+        # is already awaiting (would leave begin-remediate resolving a dead future).
+        if op.begin_remediate_future is None:
+            loop = asyncio.get_running_loop()
+            op.begin_remediate_future = loop.create_future()
+        self.transition(operation_id, OperationStatus.ASSESSED)
+        self._broadcast(op, SSEEventType.FINDINGS, {"findings": findings})
+
     def set_proposals(self, operation_id: str, proposals: list[Proposal]) -> None:
         """Store proposals and transition to AWAITING_APPROVAL.
 
@@ -290,6 +327,8 @@ class OperationRegistry:
                         "path": p.path,
                         "suggestion": p.suggestion,
                         "line_start": p.line_start,
+                        "before_text": p.before_text,
+                        "after_text": p.after_text,
                     }
                     for p in proposals
                 ],

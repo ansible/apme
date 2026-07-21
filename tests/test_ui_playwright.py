@@ -344,3 +344,43 @@ def test_settings_info_text(settings_page: Page) -> None:
         settings_page: Page positioned on /settings.
     """
     expect(settings_page.locator("p:has-text('stored in your browser')")).to_be_visible()
+
+
+# ── Interactive Gate 1 UX (ADR-062 Option C) ───────────────────────────
+
+
+def test_playground_auto_apply_tier1_toggle(dashboard: Page) -> None:
+    """Playground advanced options expose Auto-apply Tier 1 (interactive default).
+
+    Args:
+        dashboard: Page positioned on the dashboard.
+    """
+    dashboard.locator("[data-testid='playground']").click()
+    dashboard.wait_for_url(f"{_BASE}/playground", timeout=5_000)
+    advanced = dashboard.locator("button:has-text('Advanced Options')")
+    expect(advanced).to_be_visible()
+    advanced.click()
+    toggle = dashboard.locator("label:has-text('Auto-apply quick-fixes')")
+    expect(toggle).to_be_visible()
+    checkbox = dashboard.locator("#auto-apply-tier1")
+    expect(checkbox).to_be_visible()
+    expect(checkbox).not_to_be_checked()
+
+
+def test_project_activity_has_scan_button(dashboard: Page) -> None:
+    """Project Activity tab exposes unified Scan (ADR-064), not dual Check/Remediate.
+
+    Skips when no projects exist in the environment.
+
+    Args:
+        dashboard: Page positioned on the dashboard.
+    """
+    dashboard.locator("[data-testid='projects']").click()
+    dashboard.wait_for_url(f"{_BASE}/projects", timeout=5_000)
+    rows = dashboard.locator("table tbody tr a, .pf-v6-c-data-list__item a")
+    if rows.count() == 0:
+        pytest.skip("No projects available for Scan button smoke")
+    rows.first.click()
+    dashboard.wait_for_selector("text=Activity", timeout=10_000)
+    dashboard.locator("button:has-text('Activity'), .pf-v6-c-tabs__item:has-text('Activity')").first.click()
+    expect(dashboard.locator("button:has-text('Scan')").first).to_be_visible()

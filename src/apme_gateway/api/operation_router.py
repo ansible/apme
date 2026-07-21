@@ -288,6 +288,56 @@ async def approve_proposals(project_id: str, body: ApproveRequest) -> dict[str, 
     return {"status": "approved"}
 
 
+@operation_router.post("/begin-remediate")  # type: ignore[untyped-decorator]
+async def begin_remediate(project_id: str) -> dict[str, str]:
+    """Leave ADR-064 assess pause and enter Gate 1 on the held session.
+
+    Args:
+        project_id: Target project UUID.
+
+    Returns:
+        Confirmation message.
+
+    Raises:
+        HTTPException: 404 if no operation; 409 ``invalid_status`` when not
+            ``assessed``; 409 ``session_expired`` when the begin future is
+            missing and remediation has not started (client may start a fresh
+            remediate). Idempotent: once begun (including after the bridge
+            clears the future while still ``ASSESSED``), repeated calls succeed.
+    """
+    registry = get_operation_registry()
+    state = registry.get_by_project(project_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="No operation for this project")
+    if state.status != OperationStatus.ASSESSED:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "invalid_status",
+                "message": f"Operation is in '{state.status.value}', not 'assessed'",
+            },
+        )
+    # Bridge clears begin_remediate_future after wake while status may still be
+    # ASSESSED — treat scan_type==remediate as already-begun (idempotent retry).
+    if state.begin_remediate_future is None:
+        if state.scan_type == "remediate":
+            return {"status": "begin_remediate"}
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "session_expired",
+                "message": "Assess session is no longer waiting for begin-remediate; start a new remediate operation.",
+            },
+        )
+    # Idempotent: first click resolves the future; duplicates must not look like expiry.
+    if not state.begin_remediate_future.done():
+        state.scan_type = "remediate"
+        state.begin_remediate_future.set_result(None)
+    # Stay ASSESSED until ProposalsReady → AWAITING_APPROVAL (bridge must still
+    # observe ASSESSED while awaiting the future). SPA disables Next via loading.
+    return {"status": "begin_remediate"}
+
+
 @operation_router.patch("/proposals")  # type: ignore[untyped-decorator]
 async def patch_draft_proposals(project_id: str, body: DraftProposalsRequest) -> dict[str, Any]:
     """Optimistic draft checkbox updates (ADR-062 Phase 2).
@@ -361,11 +411,15 @@ async def cancel_operation(project_id: str) -> dict[str, str]:
             status_code=409,
             detail=f"Operation already in terminal state '{state.status.value}'",
         )
+    # Mark cancelled first so the approval bridge will not enqueue BeginRemediate
+    # after waking on a cancelled begin future.
+    registry.transition(state.operation_id, OperationStatus.CANCELLED)
     if state.grpc_task and not state.grpc_task.done():
         state.grpc_task.cancel()
     if state.approval_future and not state.approval_future.done():
         state.approval_future.set_result([])
-    registry.transition(state.operation_id, OperationStatus.CANCELLED)
+    if state.begin_remediate_future and not state.begin_remediate_future.done():
+        state.begin_remediate_future.cancel()
     return {"status": "cancelled"}
 
 
@@ -844,6 +898,7 @@ async def _drive_operation(
         ai_accepted_count = 0
         awaiting_ai_approval = False
         captured_patches: list[dict[str, str]] = []
+        assess_pause = coerce_option_bool(options.get("assess_pause", False))
 
         async def _progress_cb(event: object) -> None:
             """Translate gRPC SessionEvent into registry updates.
@@ -870,6 +925,37 @@ async def _drive_operation(
                     registry.transition(operation_id, OperationStatus.SCANNING)
                 registry.add_progress(operation_id, entry)
 
+            elif kind == "findings":
+                findings_msg = event.findings  # type: ignore[attr-defined]
+
+                def _line_of(v: object) -> int | None:
+                    raw: int | None = None
+                    if v.HasField("line"):  # type: ignore[attr-defined]
+                        raw = v.line  # type: ignore[attr-defined]
+                    elif v.HasField("line_range"):  # type: ignore[attr-defined]
+                        raw = v.line_range.start  # type: ignore[attr-defined]
+                    # Frontend highlight is 1-based; proto defaults of 0 are unset.
+                    return raw if raw is not None and raw > 0 else None
+
+                finding_rows = [
+                    {
+                        "rule_id": v.rule_id,
+                        "severity": severity_to_label(severity_from_proto(v.severity)),
+                        "message": v.message,
+                        "file": v.file,
+                        "line": _line_of(v),
+                        "path": v.path or getattr(v, "node_id", "") or "",
+                        "remediation_class": int(v.remediation_class) if v.remediation_class else 0,
+                        "source": v.source or "",
+                        "original_yaml": v.original_yaml or "",
+                        "fixed_yaml": v.fixed_yaml or "",
+                        "co_fixes": list(v.co_fixes) if v.co_fixes else [],
+                        "node_line_start": int(getattr(v, "node_line_start", 0) or 0) or None,
+                    }
+                    for v in findings_msg.violations
+                ]
+                registry.set_findings(operation_id, finding_rows)
+
             elif kind == "proposals":
                 props = event.proposals  # type: ignore[attr-defined]
                 items = [
@@ -886,6 +972,8 @@ async def _drive_operation(
                         path=p.path,
                         suggestion=p.suggestion,
                         line_start=p.line_start,
+                        before_text=p.before_text or "",
+                        after_text=p.after_text or "",
                     )
                     for p in props.proposals
                 ]
@@ -967,7 +1055,11 @@ async def _drive_operation(
                 patches_json = [{"file": p.path, "diff": p.diff} for p in result_patches if p.diff]
                 captured_patches.extend(patches_json)
 
-                remediated = fixed if remediate else 0
+                # ADR-064 check+assess_pause starts with remediate=False; after
+                # begin-remediate the registry scan_type flips to remediate.
+                op_now = registry.get(operation_id)
+                is_remediate = remediate or (op_now is not None and op_now.scan_type == "remediate")
+                remediated = fixed if is_remediate else 0
                 remaining_count = len(remaining)
 
                 op_result = OperationResult(
@@ -976,7 +1068,7 @@ async def _drive_operation(
                     ai_proposed=ai_proposed_count,
                     ai_declined=ai_declined_count,
                     ai_accepted=ai_accepted_count,
-                    manual_review=remaining_count if remediate else (report.remaining_manual if report else 0),
+                    manual_review=remaining_count if is_remediate else (report.remaining_manual if report else 0),
                     remediated_count=remediated,
                     fixed_violations=fixed_violations_json,
                     patches=patches_json,
@@ -987,18 +1079,36 @@ async def _drive_operation(
         specs = [str(s) for s in raw_specs] if isinstance(raw_specs, list) else []
 
         approval_queue: asyncio.Queue[list[str]] | None = None
+        begin_remediate_queue: asyncio.Queue[None] | None = None
         bridge_task: asyncio.Task[None] | None = None
 
-        if remediate:
+        if remediate or assess_pause:
             approval_queue = asyncio.Queue()
+            if assess_pause:
+                begin_remediate_queue = asyncio.Queue()
 
             async def _approval_bridge() -> None:
-                """Bridge registry approval_future to the driver's approval_queue."""
+                """Bridge registry futures to the driver's command queues."""
                 while True:
                     op = registry.get(operation_id)
                     if op is None or op.status in TERMINAL_STATUSES:
                         break
-                    if op.status == OperationStatus.AWAITING_APPROVAL and op.approval_future is not None:
+                    if (
+                        op.status == OperationStatus.ASSESSED
+                        and op.begin_remediate_future is not None
+                        and begin_remediate_queue is not None
+                    ):
+                        try:
+                            await op.begin_remediate_future
+                        except asyncio.CancelledError:
+                            break
+                        # Re-check after wake — cancel may have raced the future.
+                        op = registry.get(operation_id)
+                        if op is None or op.status in TERMINAL_STATUSES:
+                            break
+                        await begin_remediate_queue.put(None)
+                        op.begin_remediate_future = None
+                    elif op.status == OperationStatus.AWAITING_APPROVAL and op.approval_future is not None:
                         try:
                             ids = await op.approval_future
                             if approval_queue is not None:
@@ -1022,8 +1132,10 @@ async def _drive_operation(
             enable_ai=coerce_option_bool(options.get("enable_ai", False)),
             ai_model=str(options.get("ai_model", "")),
             interactive=coerce_option_bool(options.get("interactive", False)),
+            assess_pause=assess_pause,
             progress_callback=_progress_cb,
             approval_queue=approval_queue,
+            begin_remediate_queue=begin_remediate_queue,
             scan_id=scan_id,
             galaxy_servers=galaxy_servers or None,
             scm_token=scm_token,
@@ -1038,7 +1150,7 @@ async def _drive_operation(
         if op is not None:
             op.clone_commit = clone_commit
 
-        scan_type_str = "remediate" if remediate else "check"
+        scan_type_str = "remediate" if (remediate or (op is not None and op.scan_type == "remediate")) else "check"
         await finalize_operation_scan(
             project_id=project_id,
             scan_id=scan_id,

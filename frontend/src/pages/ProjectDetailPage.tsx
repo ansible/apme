@@ -27,14 +27,21 @@ import { deleteProject, getProject, getProjectDependencies, getProjectDepHealth,
 import type { GraphData } from '../services/api';
 import type { ActivitySummary, DepHealthSummary, ProjectDependencies, ProjectDetail, TrendPoint, ViolationDetail } from '../types/api';
 import { GraphVisualization } from '../components/GraphVisualization';
-import { StatusBadge } from '../components/StatusBadge';
 import { CheckOptionsForm } from '../components/CheckOptionsForm';
 import { OperationPanel } from '../components/OperationPanel';
 import { TrendChart } from '../components/TrendChart';
 import { timeAgo } from '../services/format';
 import { useFeedbackEnabled } from '../hooks/useFeedbackEnabled';
-import { useProjectOperationState } from '../hooks/useProjectOperationState';
-import { useProjectOperationActions } from '../hooks/useProjectOperationActions';
+import {
+  fetchProjectOperationState,
+  LIVE_OPERATION_STATUSES,
+  useProjectOperationState,
+} from '../hooks/useProjectOperationState';
+import {
+  SessionExpiredError,
+  useProjectOperationActions,
+  WorkingSetConflictError,
+} from '../hooks/useProjectOperationActions';
 import { AI_MODEL_STORAGE_KEY } from './SettingsPage';
 
 export function ProjectDetailPage() {
@@ -58,13 +65,111 @@ export function ProjectDetailPage() {
   const [ansibleVersion, setAnsibleVersion] = useState('');
   const [collections, setCollections] = useState('');
   const [enableAi, setEnableAi] = useState(true);
+  const [autoApplyTier1, setAutoApplyTier1] = useState(false);
 
   const feedbackEnabled = useFeedbackEnabled();
-  const { state: opState, refresh: refreshOp, clear: clearOp } = useProjectOperationState(projectId || '');
-  const { start: startOp, approve: approveOp, cancel: cancelOp, createPR: createPROp } = useProjectOperationActions(projectId || '');
+  /** Attach live op only after Activity Resume (?resume=1) or a local start — no auto-resume. */
+  const [attachOp, setAttachOp] = useState(
+    () => searchParams.get('resume') === '1',
+  );
+  useEffect(() => {
+    if (searchParams.get('resume') !== '1') return;
+    setAttachOp(true);
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.delete('resume');
+      return next;
+    }, { replace: true });
+  }, [searchParams, setSearchParams]);
 
-  const isRunning = opState != null && ['queued', 'cloning', 'scanning', 'applying'].includes(opState.status);
-  const operationActive = opState != null && opState.status !== 'cancelled';
+  const { state: opState, refresh: refreshOp, clear: clearOp } = useProjectOperationState(
+    projectId || '',
+    { enabled: Boolean(projectId) && attachOp },
+  );
+  const {
+    start: startOp,
+    approve: approveOp,
+    beginRemediate: beginRemediateOp,
+    cancel: cancelOp,
+    createPR: createPROp,
+    patchProposals,
+  } = useProjectOperationActions(projectId || '');
+
+  const isRunning = opState != null && ['queued', 'cloning', 'scanning', 'assessed', 'awaiting_approval', 'applying'].includes(opState.status);
+  const operationActive = attachOp && opState != null && opState.status !== 'cancelled';
+
+  /** Latest history row with a matching live op — Available + Resume / Start over. */
+  const [resumableScanId, setResumableScanId] = useState<string | null>(null);
+  const [startOverBusy, setStartOverBusy] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setResumableScanId(null);
+    const latest = scans[0];
+    if (!projectId || !latest) return;
+
+    if (attachOp && opState && LIVE_OPERATION_STATUSES.has(opState.status)) {
+      setResumableScanId(opState.scan_id === latest.scan_id ? latest.scan_id : null);
+      return;
+    }
+
+    fetchProjectOperationState(projectId).then((op) => {
+      if (cancelled || !op) return;
+      if (op.scan_id === latest.scan_id && LIVE_OPERATION_STATUSES.has(op.status)) {
+        setResumableScanId(latest.scan_id);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [projectId, scans, attachOp, opState]);
+
+  const handleHistoryResume = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    setAttachOp(true);
+    setActiveTab(0);
+  }, []);
+
+  const handleHistoryStartOver = useCallback(
+    async (e: React.MouseEvent) => {
+      e.stopPropagation();
+      if (!projectId || startOverBusy) return;
+      const ok = window.confirm(
+        'Discard the current interactive session and start a new scan?',
+      );
+      if (!ok) return;
+
+      setStartOverBusy(true);
+      try {
+        // Always Scan (check + assess_pause); do not inherit remediate from history.
+        const colls = collections.split(',').map((c) => c.trim()).filter(Boolean);
+        setAttachOp(true);
+        await startOp('check', {
+          ansible_version: ansibleVersion || undefined,
+          collection_specs: colls.length ? colls : undefined,
+          enable_ai: enableAi,
+          ai_model: enableAi ? (localStorage.getItem(AI_MODEL_STORAGE_KEY) ?? undefined) : undefined,
+          assess_pause: true,
+          interactive: true,
+          abandon_working_set: true,
+        });
+        refreshOp();
+        setActiveTab(0);
+      } catch (err) {
+        console.error('Failed to start over:', err);
+        window.alert('Could not start over. Try Scan again from Options.');
+      } finally {
+        setStartOverBusy(false);
+      }
+    },
+    [
+      projectId,
+      startOverBusy,
+      collections,
+      ansibleVersion,
+      enableAi,
+      startOp,
+      refreshOp,
+    ],
+  );
 
   const fetchData = useCallback(async () => {
     if (!projectId) return;
@@ -111,27 +216,90 @@ export function ProjectDetailPage() {
     }
   }, [activeTab, projectId, graphData, graphLoading]);
 
-  const handleScan = useCallback(async (remediate: boolean) => {
+  /** Unified Scan (ADR-064): check + assess_pause → findings → begin-remediate. */
+  const handleScan = useCallback(async () => {
     const colls = collections.split(',').map((c) => c.trim()).filter(Boolean);
-    const action = remediate ? 'remediate' : 'check';
     setActiveTab(0);
-    try {
-      await startOp(action as 'check' | 'remediate', {
+
+    const startOnce = (abandonWorkingSet: boolean) =>
+      startOp('check', {
         ansible_version: ansibleVersion || undefined,
         collection_specs: colls.length ? colls : undefined,
         enable_ai: enableAi,
         ai_model: enableAi ? (localStorage.getItem(AI_MODEL_STORAGE_KEY) ?? undefined) : undefined,
+        assess_pause: true,
+        interactive: !autoApplyTier1,
+        ...(abandonWorkingSet ? { abandon_working_set: true } : {}),
       });
+
+    try {
+      setAttachOp(true);
+      await startOnce(false);
       refreshOp();
     } catch (err) {
+      if (err instanceof WorkingSetConflictError) {
+        const ok = window.confirm(
+          `${err.message}\n\nDiscard the draft working set and start a new scan?`,
+        );
+        if (ok) {
+          try {
+            setAttachOp(true);
+            await startOnce(true);
+            refreshOp();
+          } catch (retryErr) {
+            console.error('Failed to start operation after abandon:', retryErr);
+          }
+        }
+        return;
+      }
       console.error('Failed to start operation:', err);
     }
-  }, [ansibleVersion, collections, enableAi, startOp, refreshOp]);
+  }, [ansibleVersion, collections, enableAi, autoApplyTier1, startOp, refreshOp]);
+
+  const handleBeginRemediate = useCallback(async () => {
+    try {
+      setAttachOp(true);
+      await beginRemediateOp();
+      refreshOp();
+    } catch (err) {
+      // Only true assess-session expiry offers a destructive rescan fallback.
+      // Other 409s (wrong status / double-click) must not abandon the working set.
+      if (err instanceof SessionExpiredError) {
+        const ok = window.confirm(
+          'Assessment session expired. Start a full remediate (rescan)?',
+        );
+        if (ok) {
+          const colls = collections.split(',').map((c) => c.trim()).filter(Boolean);
+          setAttachOp(true);
+          await startOp('remediate', {
+            ansible_version: ansibleVersion || undefined,
+            collection_specs: colls.length ? colls : undefined,
+            enable_ai: enableAi,
+            ai_model: enableAi ? (localStorage.getItem(AI_MODEL_STORAGE_KEY) ?? undefined) : undefined,
+            interactive: !autoApplyTier1,
+            abandon_working_set: true,
+          });
+          refreshOp();
+        }
+        return;
+      }
+      // Surface non-expiry failures in OperationPanel Assess alert.
+      throw err;
+    }
+  }, [
+    beginRemediateOp,
+    refreshOp,
+    startOp,
+    ansibleVersion,
+    collections,
+    enableAi,
+    autoApplyTier1,
+  ]);
 
   useEffect(() => {
     if ((searchParams.get('action') === 'check' || searchParams.get('action') === 'scan') && project && !opState) {
       setSearchParams({}, { replace: true });
-      handleScan(false);
+      handleScan();
     }
   }, [searchParams, project, opState, setSearchParams, handleScan]);
 
@@ -179,6 +347,7 @@ export function ProjectDetailPage() {
 
   const handleDismiss = useCallback(() => {
     clearOp();
+    setAttachOp(false);
   }, [clearOp]);
 
   if (loading && !project) {
@@ -226,10 +395,15 @@ export function ProjectDetailPage() {
                 <OperationPanel
                   state={opState}
                   onApprove={approveOp}
+                  onBeginRemediate={handleBeginRemediate}
+                  onDraftUpdate={(updates) => {
+                    patchProposals(updates).catch(() => {});
+                  }}
                   onCancel={cancelOp}
                   onCreatePR={createPROp}
                   onDismiss={handleDismiss}
                   feedbackEnabled={feedbackEnabled}
+                  enableAi={enableAi}
                 />
               ) : project.scan_count === 0 ? (
                 <Card style={{ marginBottom: 16 }}>
@@ -331,11 +505,14 @@ export function ProjectDetailPage() {
                     onCollectionsChange={setCollections}
                     enableAi={enableAi}
                     onEnableAiChange={setEnableAi}
+                    autoApplyTier1={autoApplyTier1}
+                    onAutoApplyTier1Change={setAutoApplyTier1}
                     idPrefix="proj"
                   />
                   <Flex gap={{ default: 'gapSm' }} style={{ marginTop: 12 }}>
-                    <Button variant="primary" isDisabled={isRunning} onClick={() => handleScan(false)}>Check</Button>
-                    <Button variant="secondary" isDisabled={isRunning} onClick={() => handleScan(true)}>Remediate</Button>
+                    <Button variant="primary" isDisabled={isRunning} onClick={() => handleScan()}>
+                      Scan
+                    </Button>
                     {isRunning && <Button variant="link" onClick={() => cancelOp()}>Cancel</Button>}
                   </Flex>
                 </CardBody>
@@ -358,11 +535,15 @@ export function ProjectDetailPage() {
                       <th role="columnheader">AI Accepted</th>
                       <th role="columnheader">Manual</th>
                       <th role="columnheader">Time</th>
+                      <th role="columnheader">
+                        <span className="pf-v6-screen-reader">Actions</span>
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
                     {scans.map((scan) => {
                       const isFix = scan.scan_type === 'fix' || scan.scan_type === 'remediate';
+                      const isResumable = scan.scan_id === resumableScanId;
                       return (
                       <tr
                         key={scan.scan_id}
@@ -377,7 +558,13 @@ export function ProjectDetailPage() {
                             {scan.scan_type === 'scan' ? 'check' : scan.scan_type === 'fix' ? 'remediate' : scan.scan_type}
                           </span>
                         </td>
-                        <td role="cell"><StatusBadge violations={scan.total_violations} scanType={scan.scan_type} /></td>
+                        <td role="cell">
+                          {isResumable ? (
+                            <span className="apme-badge passed">Available</span>
+                          ) : (
+                            <span className="apme-badge" style={{ opacity: 0.75 }}>Read-only</span>
+                          )}
+                        </td>
                         <td role="cell">{scan.total_violations}</td>
                         <td role="cell">
                           {isFix
@@ -396,6 +583,27 @@ export function ProjectDetailPage() {
                         <td role="cell"><span className="apme-count-success">{scan.ai_accepted ?? 0}</span></td>
                         <td role="cell"><span className="apme-count-warning">{scan.manual_review}</span></td>
                         <td role="cell" style={{ opacity: 0.7 }}>{timeAgo(scan.created_at)}</td>
+                        <td role="cell" onClick={(e) => e.stopPropagation()}>
+                          {isResumable ? (
+                            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                              <Button
+                                variant="primary"
+                                size="sm"
+                                onClick={handleHistoryResume}
+                              >
+                                Resume
+                              </Button>
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                isDisabled={startOverBusy}
+                                onClick={(e) => handleHistoryStartOver(e)}
+                              >
+                                Start over
+                              </Button>
+                            </div>
+                          ) : null}
+                        </td>
                       </tr>
                       );
                     })}

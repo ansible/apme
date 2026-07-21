@@ -1006,6 +1006,32 @@ class TestCollectViolations:
         graph.register_violations([v], 2)
         assert len(graph.collect_violations()) == 1
 
+    def test_declined_sticky_across_rescan(self) -> None:
+        """User-declined Gate 1/2 violations must not reopen on rescan."""
+        graph = ContentGraph()
+        node = _make_task()
+        graph.add_node(node)
+
+        v: ViolationDict = {"rule_id": "L003", "path": node.node_id, "message": "needs name"}
+        graph.register_violations([v], 0)
+        graph.resolve_violations(
+            node.node_id,
+            set(),
+            fixed_by="deterministic",
+            pass_number=1,
+            status="pending_review",
+        )
+        assert graph.decline_pending_review(node.node_id) == 1
+        assert graph.query_violations(status="declined")
+        assert graph.collect_violations() == []
+
+        # Same finding still present after reject/revert — must stay declined.
+        graph.register_violations([v], 2)
+        assert graph.collect_violations() == []
+        declined = graph.query_violations(status="declined")
+        assert len(declined) == 1
+        assert declined[0]["rule_id"] == "L003"
+
 
 # ---------------------------------------------------------------------------
 # ContentGraph.collect_step_diffs

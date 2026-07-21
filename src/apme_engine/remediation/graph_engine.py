@@ -144,6 +144,7 @@ class Tier1NodeProposal:
         before_yaml: Node YAML before deterministic transforms.
         after_yaml: Node YAML after deterministic transforms.
         rule_ids: Rule IDs addressed by this node's Tier 1 fixes.
+        violation_summaries: ``[rule_id]: message`` lines for Gate 1 review UI.
         line_start: Starting line in the original source file (0 if unknown).
         line_end: Ending line in the original source file (0 if unknown).
     """
@@ -153,6 +154,7 @@ class Tier1NodeProposal:
     before_yaml: str
     after_yaml: str
     rule_ids: list[str] = field(default_factory=list)
+    violation_summaries: list[str] = field(default_factory=list)
     line_start: int = 0
     line_end: int = 0
 
@@ -232,6 +234,7 @@ class GraphRemediationEngine:
         *,
         interactive: bool = False,
         skip_ai: bool = False,
+        skip_tier1: bool = False,
     ) -> GraphFixReport:
         """Run the unified Tier 1 + Tier 2 convergence loop.
 
@@ -256,6 +259,9 @@ class GraphRemediationEngine:
             skip_ai: When true, do not run Tier 2 even if an AI provider
                 is configured (Option C Gate 1 — AI runs after Tier 1
                 approval on a separate ``remediate`` call).
+            skip_tier1: When true, skip the initial Tier 1 phase (Gate 2
+                after Gate 1 decisions). Post-AI Tier 1 cleanup still runs
+                for newly introduced deterministic issues.
 
         Returns:
             GraphFixReport with patches, counts, and remaining violations.
@@ -282,11 +288,10 @@ class GraphRemediationEngine:
         for pass_num in range(1, self._max_passes + 1):
             passes = pass_num
             tier1_stalled = False
-            self._progress("graph-tier1", f"Pass {pass_num}/{self._max_passes}")
-
             tier1, tier2, tier3 = partition_violations(violations, registry)
             logger.debug(
-                "Graph remediation pass %d: %d violations -> tier1=%d tier2=%d tier3=%d (ai_provider=%s skip_ai=%s)",
+                "Graph remediation pass %d: %d violations -> tier1=%d tier2=%d "
+                "tier3=%d (ai_provider=%s skip_ai=%s skip_tier1=%s)",
                 pass_num,
                 len(violations),
                 len(tier1),
@@ -294,10 +299,27 @@ class GraphRemediationEngine:
                 len(tier3),
                 self._ai_provider is not None,
                 skip_ai,
+                skip_tier1,
             )
 
             # Phase A: Tier 1 deterministic transforms
-            if tier1:
+            if tier1 and skip_tier1:
+                # Gate 2: do not re-apply Gate 1 decisions. Leave remaining
+                # Tier 1 opens for final report / post-AI cleanup only — do
+                # not send them to the AI provider. Avoid graph-tier1 pass
+                # chatter so the UI does not look like another full Tier 1 run.
+                tier1_stalled = True
+                logger.debug(
+                    "Graph remediation pass %d: skip_tier1 — leaving %d Tier 1 open (not applied, not sent to AI)",
+                    pass_num,
+                    len(tier1),
+                )
+                # No Tier 2 work → nothing left to do; avoid spinning to max_passes
+                # while run_ai is true but Phase B never fires (empty tier2).
+                if not tier2:
+                    break
+            elif tier1:
+                self._progress("graph-tier1", f"Pass {pass_num}/{self._max_passes}")
                 applied_this_pass = await self._apply_tier1(
                     graph,
                     registry,
@@ -981,13 +1003,23 @@ def collect_tier1_proposals(graph: ContentGraph) -> list[Tier1NodeProposal]:
             continue
         rule_ids: list[str] = []
         seen: set[str] = set()
+        violation_summaries: list[str] = []
         for record in node.violation_ledger.values():
             if record.status != "pending_review" or record.fixed_by != "deterministic":
                 continue
             rid = str(record.violation.get("rule_id", "") or "")
+            msg = str(record.violation.get("message", "") or "").strip()
+            sev = str(record.violation.get("severity", "") or "").strip()
             if rid and rid not in seen:
                 seen.add(rid)
                 rule_ids.append(rid)
+            if msg:
+                if rid and sev:
+                    violation_summaries.append(f"[{rid}|{sev}]: {msg}")
+                elif rid:
+                    violation_summaries.append(f"[{rid}]: {msg}")
+                else:
+                    violation_summaries.append(msg)
         proposals.append(
             Tier1NodeProposal(
                 node_id=node.node_id,
@@ -995,6 +1027,7 @@ def collect_tier1_proposals(graph: ContentGraph) -> list[Tier1NodeProposal]:
                 before_yaml=baseline.yaml_lines,
                 after_yaml=after.yaml_lines,
                 rule_ids=rule_ids,
+                violation_summaries=violation_summaries,
                 line_start=node.line_start,
                 line_end=node.line_end,
             )

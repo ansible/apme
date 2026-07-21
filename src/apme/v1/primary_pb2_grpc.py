@@ -6,7 +6,7 @@ import warnings
 from apme.v1 import common_pb2 as apme_dot_v1_dot_common__pb2
 from apme.v1 import primary_pb2 as apme_dot_v1_dot_primary__pb2
 
-GRPC_GENERATED_VERSION = '1.80.0'
+GRPC_GENERATED_VERSION = '1.82.1'
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
 
@@ -26,7 +26,7 @@ if _version_not_supported:
     )
 
 
-class PrimaryStub(object):
+class PrimaryStub:
     """Primary is the orchestrator daemon and sole API surface for all clients.
     Clients send file bytes in, receive processed bytes out. The Primary
     delegates internally to validators and remediation — clients never need
@@ -66,7 +66,7 @@ class PrimaryStub(object):
                 _registered_method=True)
 
 
-class PrimaryServicer(object):
+class PrimaryServicer:
     """Primary is the orchestrator daemon and sole API surface for all clients.
     Clients send file bytes in, receive processed bytes out. The Primary
     delegates internally to validators and remediation — clients never need
@@ -143,7 +143,7 @@ def add_PrimaryServicer_to_server(servicer, server):
 
 
  # This class is part of an EXPERIMENTAL API.
-class Primary(object):
+class Primary:
     """Primary is the orchestrator daemon and sole API surface for all clients.
     Clients send file bytes in, receive processed bytes out. The Primary
     delegates internally to validators and remediation — clients never need
