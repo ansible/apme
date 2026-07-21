@@ -62,6 +62,8 @@ export interface Proposal {
   suggestion?: string;
   line_start?: number;
   path?: string;
+  /** ContentGraph NodeType (task, block, play, …); empty when not graph-backed. */
+  node_type?: string;
   source?: string;
   before_text?: string;
   after_text?: string;
@@ -86,6 +88,8 @@ export interface AssessFinding {
   file: string;
   line?: number | null;
   path?: string;
+  /** ContentGraph NodeType (task, block, play, …); empty when not graph-backed. */
+  node_type?: string;
   remediation_class?: number;
   source?: string;
   original_yaml?: string;

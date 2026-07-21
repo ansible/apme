@@ -64,3 +64,12 @@ export function fixMethodLabel(fixType: FixType | undefined): string {
   }
   return 'Manual';
 }
+
+/** PatternFly Label ``color`` for a fix-type filter/row pill. */
+export function fixTypeLabelColor(
+  fixType: FixType | undefined,
+): 'green' | 'purple' | 'grey' {
+  if (fixType === 'auto') return 'green';
+  if (fixType === 'ai') return 'purple';
+  return 'grey';
+}

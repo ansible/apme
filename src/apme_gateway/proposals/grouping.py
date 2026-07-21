@@ -60,6 +60,7 @@ class GroupedProposal:
         coupled: True when more than one rule id is present.
         stamp_rule_ids: When non-empty, only these rule ids may receive
             ``review_status`` stamps (set from matched outcome rule list).
+        node_type: ContentGraph NodeType value (task, block, play, …).
     """
 
     proposal_id: str
@@ -81,6 +82,7 @@ class GroupedProposal:
     suggestion: str = ""
     coupled: bool = False
     stamp_rule_ids: tuple[str, ...] = ()
+    node_type: str = ""
 
 
 @dataclass
@@ -117,6 +119,7 @@ def _as_mapping(v: object) -> Mapping[str, Any]:
         "remediation_class": getattr(v, "remediation_class", 0) or 0,
         "original_yaml": getattr(v, "original_yaml", "") or "",
         "fixed_yaml": getattr(v, "fixed_yaml", "") or "",
+        "node_type": getattr(v, "node_type", "") or "",
         "review_status": getattr(v, "review_status", None),
     }
 
@@ -307,6 +310,10 @@ def group_violations(
 
         original = next((str(i.get("original_yaml") or "") for i in items if i.get("original_yaml")), "")
         fixed = next((str(i.get("fixed_yaml") or "") for i in items if i.get("fixed_yaml")), "")
+        node_type = next(
+            (str(i.get("node_type") or "") for i in items if i.get("node_type")),
+            "",
+        )
         review_statuses = {i.get("review_status") for i in items if i.get("review_status")}
         status = "pending"
         if len(review_statuses) == 1:
@@ -344,6 +351,7 @@ def group_violations(
                 fixed_yaml=fixed,
                 diff_hunk=diff_hunk,
                 coupled=len(rule_ids) > 1,
+                node_type=node_type,
             )
         )
 
@@ -446,6 +454,7 @@ def merge_outcomes(
                 original_yaml=prop.original_yaml,
                 fixed_yaml=prop.fixed_yaml,
                 diff_hunk=prop.diff_hunk,
+                node_type=prop.node_type,
                 explanation=prop.explanation,
                 suggestion=prop.suggestion,
                 coupled=prop.coupled,

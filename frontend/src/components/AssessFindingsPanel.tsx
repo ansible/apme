@@ -7,9 +7,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Alert, Label } from '@patternfly/react-core';
 import { RuleId } from './RuleId';
-import { CurrentYamlView, DiffView } from './DiffView';
+import { CurrentYamlView } from './DiffView';
 import { type NodeReviewItem } from './NodeReviewList';
 import { ReviewStepShell } from './ReviewStepShell';
+import { ReviewInventoryRow } from './ReviewInventoryRow';
 import {
   toggleInFilterSet,
   type ReviewFilterGroup,
@@ -28,6 +29,12 @@ import {
 import {
   effectiveFixType,
   fixMethodLabel,
+  fixTypeLabelColor,
+  nodeTypeLabel,
+  nodeTypeLabelColor,
+  normalizeFindingNodeType,
+  orderPresentNodeTypes,
+  type FindingNodeType,
   type FixType,
 } from '../remediation';
 
@@ -94,7 +101,7 @@ function groupFindings(findings: AssessFinding[]): NodeGroup[] {
   if (singletons.length > 0) {
     groups.push({
       key: '__singleton__',
-      title: 'Not tied to a task node',
+      title: 'Not tied to a location',
       findings: singletons,
       isSingleton: true,
     });
@@ -120,10 +127,6 @@ function uniqueNodeCount(items: AssessFinding[]): number {
 
 function findingsPhrase(n: number): string {
   return `${n} finding${n !== 1 ? 's' : ''}`;
-}
-
-function nodesPhrase(n: number): string {
-  return `${n} node${n !== 1 ? 's' : ''}`;
 }
 
 function FindingRow({
@@ -198,11 +201,10 @@ function AssessNodeDetail({
   enableAi: boolean;
 }) {
   const [highlightLine, setHighlightLine] = useState<number | null>(null);
+  // Assess/history findings are read-only: current YAML only. Proposed diffs
+  // belong in ProposalReviewPanel during remediation gates (ADR-062/064).
   const beforeYaml =
     findings.find((f) => (f.original_yaml || '').trim())?.original_yaml ?? '';
-  const afterYaml =
-    findings.find((f) => (f.fixed_yaml || '').trim())?.fixed_yaml ?? '';
-  const showDiff = Boolean(beforeYaml.trim() && afterYaml.trim());
   return (
     <>
       <div className="apme-assess-findings-detail">
@@ -218,16 +220,7 @@ function AssessNodeDetail({
           />
         ))}
       </div>
-      {showDiff ? (
-        <div className="apme-proposal-diff">
-          <DiffView
-            mode="side-by-side"
-            before={beforeYaml}
-            after={afterYaml}
-            highlightLine={highlightLine}
-          />
-        </div>
-      ) : beforeYaml.trim() ? (
+      {beforeYaml.trim() ? (
         <div className="apme-proposal-diff">
           <CurrentYamlView text={beforeYaml} highlightLine={highlightLine} />
         </div>
@@ -242,8 +235,9 @@ function findingsToNodeItem(
   findings: AssessFinding[],
   opts: { isSingleton?: boolean; enableAi: boolean },
 ): NodeReviewItem {
-  const ruleIds = [...new Set(findings.map((f) => f.rule_id))];
-  const rulePreview = ruleIds.slice(0, 3);
+  const nodeType = normalizeFindingNodeType(
+    findings.find((f) => (f.node_type || '').trim())?.node_type,
+  );
   return {
     id,
     title,
@@ -254,14 +248,9 @@ function findingsToNodeItem(
         <Label isCompact variant="outline">
           {findings.length} finding{findings.length !== 1 ? 's' : ''}
         </Label>
-        {rulePreview.map((rid) => (
-          <RuleId key={rid} ruleId={rid} />
-        ))}
-        {ruleIds.length > rulePreview.length && (
-          <span style={{ fontSize: 12, opacity: 0.6 }}>
-            +{ruleIds.length - rulePreview.length}
-          </span>
-        )}
+        <Label isCompact color={nodeTypeLabelColor(nodeType)}>
+          {nodeTypeLabel(nodeType)}
+        </Label>
       </>
     ),
     detail: <AssessNodeDetail findings={findings} enableAi={opts.enableAi} />,
@@ -283,6 +272,12 @@ function presentFixTypeOptions(
   return FIX_FILTER_ORDER.filter((t) => present.has(t));
 }
 
+function presentNodeTypeOptions(findings: AssessFinding[]): FindingNodeType[] {
+  return orderPresentNodeTypes(
+    findings.map((f) => normalizeFindingNodeType(f.node_type)),
+  );
+}
+
 export function AssessFindingsPanel({
   findings,
   onRemediate,
@@ -299,6 +294,9 @@ export function AssessFindingsPanel({
   const [fixFilters, setFixFilters] = useState<Set<FixType>>(
     () => new Set(presentFixTypeOptions(findings, enableAi)),
   );
+  const [nodeTypeFilters, setNodeTypeFilters] = useState<Set<FindingNodeType>>(
+    () => new Set(presentNodeTypeOptions(findings)),
+  );
 
   const presentSeverities = useMemo(
     () => presentSeverityOptions(findings),
@@ -307,6 +305,10 @@ export function AssessFindingsPanel({
   const presentFixTypes = useMemo(
     () => presentFixTypeOptions(findings, enableAi),
     [findings, enableAi],
+  );
+  const presentNodeTypes = useMemo(
+    () => presentNodeTypeOptions(findings),
+    [findings],
   );
 
   const severityCounts = useMemo(() => {
@@ -327,12 +329,30 @@ export function AssessFindingsPanel({
     return counts;
   }, [findings, enableAi]);
 
+  const nodeTypeCounts = useMemo(() => {
+    const counts = new Map<FindingNodeType, number>();
+    for (const f of findings) {
+      const nt = normalizeFindingNodeType(f.node_type);
+      counts.set(nt, (counts.get(nt) ?? 0) + 1);
+    }
+    return counts;
+  }, [findings]);
+
   const presentSevKey = presentSeverities.join(',');
   const presentFixKey = presentFixTypes.join(',');
+  const presentNodeKey = presentNodeTypes.join(',');
   useEffect(() => {
     setSevFilters(new Set(presentSeverities));
     setFixFilters(new Set(presentFixTypes));
-  }, [presentSevKey, presentFixKey, presentSeverities, presentFixTypes]);
+    setNodeTypeFilters(new Set(presentNodeTypes));
+  }, [
+    presentSevKey,
+    presentFixKey,
+    presentNodeKey,
+    presentSeverities,
+    presentFixTypes,
+    presentNodeTypes,
+  ]);
 
   const filteredFindings = useMemo(() => {
     return findings.filter((f) => {
@@ -340,9 +360,11 @@ export function AssessFindingsPanel({
       if (!sevFilters.has(sev)) return false;
       const fix = findingFixType(f, enableAi);
       if (!fixFilters.has(fix)) return false;
+      const nt = normalizeFindingNodeType(f.node_type);
+      if (!nodeTypeFilters.has(nt)) return false;
       return true;
     });
-  }, [findings, sevFilters, fixFilters, enableAi]);
+  }, [findings, sevFilters, fixFilters, nodeTypeFilters, enableAi]);
 
   const groups = useMemo(() => groupFindings(filteredFindings), [filteredFindings]);
 
@@ -364,7 +386,8 @@ export function AssessFindingsPanel({
 
   const hasNarrowedFilters =
     presentSeverities.some((s) => !sevFilters.has(s)) ||
-    presentFixTypes.some((t) => !fixFilters.has(t));
+    presentFixTypes.some((t) => !fixFilters.has(t)) ||
+    presentNodeTypes.some((t) => !nodeTypeFilters.has(t));
 
   const nodeItems: NodeReviewItem[] = useMemo(() => {
     if (view === 'flat') {
@@ -393,7 +416,7 @@ export function AssessFindingsPanel({
         options: [
           {
             id: 'grouped',
-            label: 'Group by node',
+            label: 'Group by location',
             selected: view === 'grouped',
             onToggle: () => setView('grouped'),
           },
@@ -424,8 +447,22 @@ export function AssessFindingsPanel({
           id: fix,
           label: fixMethodLabel(fix),
           count: fixTypeCounts.get(fix) ?? 0,
+          color: fixTypeLabelColor(fix),
           selected: fixFilters.has(fix),
           onToggle: () => setFixFilters((prev) => toggleInFilterSet(prev, fix)),
+        })),
+      },
+      {
+        label: 'Kind',
+        ariaLabel: 'Filter by kind',
+        options: presentNodeTypes.map((nt) => ({
+          id: nt,
+          label: nodeTypeLabel(nt),
+          count: nodeTypeCounts.get(nt) ?? 0,
+          color: nodeTypeLabelColor(nt),
+          selected: nodeTypeFilters.has(nt),
+          onToggle: () =>
+            setNodeTypeFilters((prev) => toggleInFilterSet(prev, nt)),
         })),
       },
     ],
@@ -433,37 +470,59 @@ export function AssessFindingsPanel({
       view,
       presentSeverities,
       presentFixTypes,
+      presentNodeTypes,
       severityCounts,
       fixTypeCounts,
+      nodeTypeCounts,
       sevFilters,
       fixFilters,
+      nodeTypeFilters,
     ],
   );
 
   const title = hasNarrowedFilters
     ? `Showing ${findingsPhrase(filteredFindings.length)} of ${inventory.totalFindings}`
-    : 'Findings';
+    : undefined;
 
   const inventoryDescription = (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-      <span>
-        Total: {findingsPhrase(inventory.totalFindings)} across{' '}
-        {nodesPhrase(inventory.totalNodes)}
-      </span>
-      <span>
-        Quick-fix: {findingsPhrase(inventory.autoFindings)} across{' '}
-        {nodesPhrase(inventory.autoNodes)}
-      </span>
-      <span>
-        AI eligible: {findingsPhrase(inventory.aiFindings)} across{' '}
-        {nodesPhrase(inventory.aiNodes)}
-      </span>
-      <span>
-        Manual: {findingsPhrase(inventory.manualFindings)} across{' '}
-        {nodesPhrase(inventory.manualNodes)}
-      </span>
+    <div>
+      <ReviewInventoryRow
+        ariaLabel="Findings inventory"
+        boxes={[
+          {
+            key: 'total',
+            label: 'Total',
+            primary: inventory.totalFindings,
+            secondary: inventory.totalNodes,
+            tone: 'total',
+          },
+          {
+            key: 'auto',
+            label: 'Quick-fix',
+            primary: inventory.autoFindings,
+            secondary: inventory.autoNodes,
+            tone: 'auto',
+          },
+          {
+            key: 'ai',
+            label: 'AI eligible',
+            primary: inventory.aiFindings,
+            secondary: inventory.aiNodes,
+            tone: 'ai',
+          },
+          {
+            key: 'manual',
+            label: 'Manual',
+            primary: inventory.manualFindings,
+            secondary: inventory.manualNodes,
+            tone: 'manual',
+          },
+        ]}
+      />
       {descriptionOverride ? (
-        <span style={{ marginTop: 4 }}>{descriptionOverride}</span>
+        <div style={{ marginTop: 8, fontSize: 13, opacity: 0.7 }}>
+          {descriptionOverride}
+        </div>
       ) : null}
     </div>
   );
@@ -500,11 +559,6 @@ export function AssessFindingsPanel({
             : undefined
         }
         filterGroups={filterGroups}
-        hasNarrowedFilters={hasNarrowedFilters}
-        onSelectAllFilters={() => {
-          setSevFilters(new Set(presentSeverities));
-          setFixFilters(new Set(presentFixTypes));
-        }}
         emptyMessage="No findings match the current filters."
         list={
           filteredFindings.length === 0
@@ -512,10 +566,10 @@ export function AssessFindingsPanel({
             : {
                 items: nodeItems,
                 ariaLabel:
-                  view === 'flat' ? 'Findings (flat)' : 'Findings by node',
+                  view === 'flat' ? 'Findings (flat)' : 'Findings by location',
                 defaultExpanded: true,
                 showExpandControls: true,
-                resetKey: `assess-${view}-${filteredFindings.length}-${groups.length}-${sevFilters.size}-${fixFilters.size}`,
+                resetKey: `assess-${view}-${filteredFindings.length}-${groups.length}-${sevFilters.size}-${fixFilters.size}-${nodeTypeFilters.size}`,
               }
         }
       />

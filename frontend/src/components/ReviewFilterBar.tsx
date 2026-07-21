@@ -2,7 +2,7 @@
  * Shared filter pill row for workflow review steps (Assessment, Gate 1/2).
  */
 
-import { Button, Flex, Label } from '@patternfly/react-core';
+import { Flex, Label } from '@patternfly/react-core';
 
 export type ReviewFilterLabelColor =
   | 'red'
@@ -32,25 +32,23 @@ export interface ReviewFilterGroup {
 
 export interface ReviewFilterBarProps {
   groups: ReviewFilterGroup[];
-  /** When true, show a Select all link that restores every option. */
-  showSelectAll?: boolean;
-  onSelectAll?: () => void;
 }
 
+/** Toggle membership; refuse to clear the last selected value (avoids empty lists). */
 export function toggleInFilterSet<T>(prev: Set<T>, value: T): Set<T> {
   const next = new Set(prev);
-  if (next.has(value)) next.delete(value);
-  else next.add(value);
+  if (next.has(value)) {
+    if (next.size <= 1) return prev;
+    next.delete(value);
+  } else {
+    next.add(value);
+  }
   return next;
 }
 
-export function ReviewFilterBar({
-  groups,
-  showSelectAll,
-  onSelectAll,
-}: ReviewFilterBarProps) {
+export function ReviewFilterBar({ groups }: ReviewFilterBarProps) {
   const visible = groups.filter((g) => g.options.length > 0);
-  if (visible.length === 0 && !showSelectAll) return null;
+  if (visible.length === 0) return null;
 
   return (
     <Flex
@@ -84,11 +82,6 @@ export function ReviewFilterBar({
           </div>
         </Flex>
       ))}
-      {showSelectAll && onSelectAll && (
-        <Button variant="link" isInline onClick={onSelectAll}>
-          Select all
-        </Button>
-      )}
     </Flex>
   );
 }

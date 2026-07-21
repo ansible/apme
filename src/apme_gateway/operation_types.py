@@ -96,6 +96,7 @@ class Proposal:
             (see draft proposal allowlist).
         source: Proposal source (e.g. ``deterministic`` or ``ai``).
         path: Stable node identity path when available.
+        node_type: ContentGraph NodeType value (task, block, play, …).
         suggestion: Suggested replacement text.
         line_start: Starting line number in the file.
         before_text: Node YAML before the proposed change.
@@ -112,6 +113,7 @@ class Proposal:
     status: str = "proposed"
     source: str = ""
     path: str = ""
+    node_type: str = ""
     suggestion: str = ""
     line_start: int = 0
     before_text: str = ""
@@ -228,6 +230,7 @@ class OperationState:
                     "status": p.status,
                     "source": p.source,
                     "path": p.path,
+                    "node_type": p.node_type,
                     "suggestion": p.suggestion,
                     "line_start": p.line_start,
                     "before_text": p.before_text,

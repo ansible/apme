@@ -197,6 +197,7 @@ class Proposal:
     suggestion: str
     source: str
     path: str
+    node_type: str
     def __init__(self, **kwargs: object) -> None: ...
 
 class ProposalsReady:

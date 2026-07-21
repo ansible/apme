@@ -1,10 +1,19 @@
 export {
   effectiveFixType,
   fixMethodLabel,
+  fixTypeLabelColor,
   normalizeRemediationClass,
   remediationClassToFixType,
   type FixType,
 } from './fixTypes';
+export {
+  NODE_TYPE_ORDER,
+  nodeTypeLabel,
+  nodeTypeLabelColor,
+  normalizeFindingNodeType,
+  orderPresentNodeTypes,
+  type FindingNodeType,
+} from './nodeType';
 export {
   descendantProposalIds,
   gateLabel,

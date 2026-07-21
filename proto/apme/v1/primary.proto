@@ -214,6 +214,8 @@ message Proposal {
   string suggestion = 13;   // manual remediation guidance (declined only)
   string source = 14;       // origin: "ai", "deterministic", "plugin", etc.
   string path = 15;         // ContentGraph node_id (ADR-044 / ADR-062 bridge)
+  // ContentGraph NodeType value (task, block, play, …). Empty when not graph-backed.
+  string node_type = 16;
 }
 
 message ProposalsReady {

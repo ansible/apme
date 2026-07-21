@@ -160,11 +160,13 @@ class TestViolationDictToProto:
             "original_yaml": "- name: Install\n  apt:\n    name: foo\n",
             "fixed_yaml": "- name: Install\n  ansible.builtin.apt:\n    name: foo\n",
             "node_line_start": 5,
+            "node_type": "task",
         }
         proto = violation_dict_to_proto(v)
         assert proto.original_yaml == v["original_yaml"]
         assert proto.fixed_yaml == v["fixed_yaml"]
         assert proto.node_line_start == 5
+        assert proto.node_type == "task"
 
     def test_co_fixes(self) -> None:
         """co_fixes list maps to repeated proto field."""
@@ -182,6 +184,7 @@ class TestViolationDictToProto:
         assert proto.original_yaml == ""
         assert proto.fixed_yaml == ""
         assert proto.node_line_start == 0
+        assert proto.node_type == ""
         assert list(proto.co_fixes) == []
 
 
@@ -337,11 +340,13 @@ class TestViolationProtoToDict:
             original_yaml="- name: Install\n  apt:\n",
             fixed_yaml="- name: Install\n  ansible.builtin.apt:\n",
             node_line_start=5,
+            node_type="play",
         )
         d = violation_proto_to_dict(proto)
         assert d["original_yaml"] == "- name: Install\n  apt:\n"
         assert d["fixed_yaml"] == "- name: Install\n  ansible.builtin.apt:\n"
         assert d["node_line_start"] == 5
+        assert d["node_type"] == "play"
 
     def test_co_fixes_conversion(self) -> None:
         """Proto co_fixes repeated field converts to list."""
@@ -420,13 +425,14 @@ class TestRoundTrip:
             assert result["severity"] == label, f"Failed for {label}"
 
     def test_round_trip_original_and_fixed_yaml(self) -> None:
-        """original_yaml, fixed_yaml, co_fixes, node_line_start round-trip."""
+        """original_yaml, fixed_yaml, co_fixes, node_line_start, node_type round-trip."""
         original: ViolationDict = {
             "rule_id": "M001",
             "original_yaml": "- name: Install\n  apt:\n",
             "fixed_yaml": "- name: Install\n  ansible.builtin.apt:\n",
             "co_fixes": ["L021"],  # type: ignore[list-item]
             "node_line_start": 12,
+            "node_type": "block",
         }
         proto = violation_dict_to_proto(original)
         result = violation_proto_to_dict(proto)
@@ -434,6 +440,7 @@ class TestRoundTrip:
         assert result["fixed_yaml"] == original["fixed_yaml"]
         assert result["co_fixes"] == ["L021"]  # type: ignore[comparison-overlap]
         assert result["node_line_start"] == original["node_line_start"]
+        assert result["node_type"] == "block"
 
 
 class TestAnsibleCoreVersionMetadata:

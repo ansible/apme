@@ -119,6 +119,7 @@ class AINodeProposal:
         confidence: AI confidence score.
         line_start: Starting line in the original source file (0 if unknown).
         line_end: Ending line in the original source file (0 if unknown).
+        node_type: ContentGraph NodeType value (task, block, play, …).
     """
 
     node_id: str
@@ -130,6 +131,7 @@ class AINodeProposal:
     confidence: float = 0.85
     line_start: int = 0
     line_end: int = 0
+    node_type: str = ""
 
 
 @dataclass
@@ -147,6 +149,7 @@ class Tier1NodeProposal:
         violation_summaries: ``[rule_id]: message`` lines for Gate 1 review UI.
         line_start: Starting line in the original source file (0 if unknown).
         line_end: Ending line in the original source file (0 if unknown).
+        node_type: ContentGraph NodeType value (task, block, play, …).
     """
 
     node_id: str
@@ -157,6 +160,7 @@ class Tier1NodeProposal:
     violation_summaries: list[str] = field(default_factory=list)
     line_start: int = 0
     line_end: int = 0
+    node_type: str = ""
 
 
 class GraphRemediationEngine:
@@ -672,6 +676,7 @@ class GraphRemediationEngine:
                     confidence=fix.confidence,
                     line_start=node.line_start,
                     line_end=node.line_end,
+                    node_type=node.node_type.value,
                 ),
             )
 
@@ -1030,6 +1035,7 @@ def collect_tier1_proposals(graph: ContentGraph) -> list[Tier1NodeProposal]:
                 violation_summaries=violation_summaries,
                 line_start=node.line_start,
                 line_end=node.line_end,
+                node_type=node.node_type.value,
             )
         )
     return proposals

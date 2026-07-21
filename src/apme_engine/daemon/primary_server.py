@@ -215,10 +215,10 @@ def _enrich_violations_from_graph(
     *,
     fixed: bool,
 ) -> None:
-    """Attach node YAML from the graph progression to each violation.
+    """Attach node YAML and type from the graph to each violation.
 
-    All violations get ``original_yaml`` (the user's original node content)
-    and ``node_line_start`` (file line where the node starts).
+    Graph-backed violations get ``node_type`` from ``ContentNode.identity``.
+    When progression exists, also set ``original_yaml`` and ``node_line_start``.
 
     Fixed violations additionally get ``fixed_yaml`` (final approved state)
     and ``co_fixes`` (other rule IDs that also modified this node).
@@ -233,7 +233,11 @@ def _enrich_violations_from_graph(
         if not node_id:
             continue
         node = graph.get_node(node_id)
-        if node is None or not node.progression:
+        if node is None:
+            continue
+
+        v["node_type"] = node.node_type.value
+        if not node.progression:
             continue
 
         v["original_yaml"] = node.progression[0].yaml_lines
@@ -2049,6 +2053,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                     status="proposed",
                     source="deterministic",
                     path=tnp.node_id,
+                    node_type=getattr(tnp, "node_type", "") or "",
                 )
             )
         return proposals
@@ -2097,6 +2102,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                     status="proposed",
                     source="ai",
                     path=anp.node_id,
+                    node_type=getattr(anp, "node_type", "") or "",
                 )
             )
         return proposals
@@ -2460,6 +2466,8 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                     suggestion=str(v.get("message", "")),
                     explanation="AI could not generate a fix for this violation.",
                     source="ai",
+                    path=str(v.get("path", "") or ""),
+                    node_type=str(v.get("node_type", "") or ""),
                 )
             )
             idx += 1

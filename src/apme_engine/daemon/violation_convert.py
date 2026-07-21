@@ -32,6 +32,7 @@ _COMMON_KEYS = frozenset(
         "fixed_yaml",
         "co_fixes",
         "node_line_start",
+        "node_type",
         "affected_children",
     }
 )
@@ -190,6 +191,7 @@ def violation_dict_to_proto(v: ViolationDict | Mapping[str, str | int | list[int
         original_yaml=str(v.get("original_yaml") or ""),
         fixed_yaml=str(v.get("fixed_yaml") or ""),
         node_line_start=int(v.get("node_line_start") or 0),  # type: ignore[arg-type]
+        node_type=str(v.get("node_type") or ""),
     )
     co = v.get("co_fixes")
     if co and isinstance(co, list):
@@ -269,6 +271,7 @@ def violation_proto_to_dict(v: Violation) -> ViolationDict:
         "original_yaml": v.original_yaml,
         "fixed_yaml": v.fixed_yaml,
         "node_line_start": v.node_line_start,
+        "node_type": v.node_type,
     }
     if v.co_fixes:
         result["co_fixes"] = list(v.co_fixes)  # type: ignore[arg-type]

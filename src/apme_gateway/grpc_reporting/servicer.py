@@ -331,6 +331,7 @@ def _add_violations(db: AsyncSession, scan_id: str, violations: Sequence[object]
                 fixed_yaml=v.fixed_yaml,  # type: ignore[attr-defined]
                 co_fixes=",".join(v.co_fixes),  # type: ignore[attr-defined]
                 node_line_start=v.node_line_start,  # type: ignore[attr-defined]
+                node_type=getattr(v, "node_type", "") or "",
                 ai_reason=v.metadata.get("ai_reason", ""),  # type: ignore[attr-defined]
                 ai_suggestion=v.metadata.get("ai_suggestion", ""),  # type: ignore[attr-defined]
                 review_status=None,

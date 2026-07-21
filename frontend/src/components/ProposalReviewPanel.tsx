@@ -14,6 +14,7 @@ import {
   type ReviewFilterGroup,
 } from './ReviewFilterBar';
 import { ReviewStepShell } from './ReviewStepShell';
+import { ReviewInventoryRow } from './ReviewInventoryRow';
 import { type WorkflowNextConfig } from './WorkflowNextBar';
 import {
   SEVERITY_LABELS,
@@ -25,10 +26,16 @@ import {
 } from './severity';
 import {
   descendantProposalIds,
+  fixTypeLabelColor,
   isAiRemediationProposal,
+  nodeTypeLabel,
+  nodeTypeLabelColor,
+  normalizeFindingNodeType,
+  orderPresentNodeTypes,
   proposalHasVisibleDiff,
   proposalNodeTitle,
   proposalsGateKey,
+  type FindingNodeType,
 } from '../remediation';
 
 type DecisionFilter = 'pending' | 'accepted' | 'declined';
@@ -80,20 +87,6 @@ function proposalFindingCount(p: OperationProposal): number {
   if (rules.length > 0) return rules.length;
   const lines = (p.explanation || '').split('\n').filter(Boolean);
   return Math.max(lines.length, 1);
-}
-
-function findingsAcrossNodesTitle(
-  visible: OperationProposal[],
-  totalNodeCount: number,
-  narrowed: boolean,
-): string {
-  const findings = visible.reduce((n, p) => n + proposalFindingCount(p), 0);
-  const nodes = visible.length;
-  const findingsPhrase = `${findings} finding${findings !== 1 ? 's' : ''}`;
-  if (narrowed && nodes !== totalNodeCount) {
-    return `Showing ${findingsPhrase} across ${nodes} of ${totalNodeCount} nodes`;
-  }
-  return `${findingsPhrase} across ${nodes} node${nodes !== 1 ? 's' : ''}`;
 }
 
 /** Parse ``[rule|severity]: message`` (or ``[rule]: message``) explanation lines. */
@@ -187,6 +180,9 @@ export function ProposalReviewPanel({
     () => new Set(DECISION_FILTER_ORDER),
   );
   const [sevFilters, setSevFilters] = useState<Set<string>>(() => new Set());
+  const [nodeTypeFilters, setNodeTypeFilters] = useState<Set<FindingNodeType>>(
+    () => new Set(),
+  );
   const [showDeclined, setShowDeclined] = useState(false);
   const [feedbackTarget, setFeedbackTarget] = useState<OperationProposal | null>(null);
   const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -197,11 +193,28 @@ export function ProposalReviewPanel({
     return SEVERITY_ORDER.filter((s) => present.has(s));
   }, [actionable]);
 
+  const presentNodeTypes = useMemo(
+    () =>
+      orderPresentNodeTypes(
+        actionable.map((p) => normalizeFindingNodeType(p.node_type)),
+      ),
+    [actionable],
+  );
+
   const severityCounts = useMemo(() => {
     const counts = new Map<string, number>();
     for (const p of actionable) {
       const sev = proposalSeverity(p);
       counts.set(sev, (counts.get(sev) ?? 0) + 1);
+    }
+    return counts;
+  }, [actionable]);
+
+  const nodeTypeCounts = useMemo(() => {
+    const counts = new Map<FindingNodeType, number>();
+    for (const p of actionable) {
+      const nt = normalizeFindingNodeType(p.node_type);
+      counts.set(nt, (counts.get(nt) ?? 0) + 1);
     }
     return counts;
   }, [actionable]);
@@ -218,6 +231,30 @@ export function ProposalReviewPanel({
     return counts;
   }, [actionable, decisions]);
 
+  const inventory = useMemo(() => {
+    const byDecision: Record<
+      DecisionFilter,
+      { findings: number; locations: number }
+    > = {
+      pending: { findings: 0, locations: 0 },
+      accepted: { findings: 0, locations: 0 },
+      declined: { findings: 0, locations: 0 },
+    };
+    let totalFindings = 0;
+    for (const p of actionable) {
+      const findings = proposalFindingCount(p);
+      totalFindings += findings;
+      const d = effectiveDecision(p.id, decisions);
+      byDecision[d].findings += findings;
+      byDecision[d].locations += 1;
+    }
+    return {
+      totalFindings,
+      totalLocations: actionable.length,
+      ...byDecision,
+    };
+  }, [actionable, decisions]);
+
   useEffect(() => {
     if (gateKey && gateKey !== prevGateKey.current) {
       prevGateKey.current = gateKey;
@@ -227,9 +264,11 @@ export function ProposalReviewPanel({
   }, [gateKey]);
 
   const presentSevKey = presentSeverities.join(',');
+  const presentNodeKey = presentNodeTypes.join(',');
   useEffect(() => {
     setSevFilters(new Set(presentSeverities));
-  }, [presentSevKey, presentSeverities]);
+    setNodeTypeFilters(new Set(presentNodeTypes));
+  }, [presentSevKey, presentNodeKey, presentSeverities, presentNodeTypes]);
 
   // Mirror draft PATCH status onto toggles (e.g. after SSE / remount) without
   // overwriting an in-progress local choice.
@@ -294,25 +333,6 @@ export function ProposalReviewPanel({
     [actionable, setDecisionForIds],
   );
 
-  const pendingIds = useMemo(() => {
-    const ids: string[] = [];
-    for (const p of actionable) {
-      const d = decisions.get(p.id);
-      if (d !== 'accepted' && d !== 'declined' && d !== 'ignored') {
-        ids.push(p.id);
-      }
-    }
-    return ids;
-  }, [actionable, decisions]);
-
-  const acceptRemaining = useCallback(() => {
-    setDecisionForIds(pendingIds, 'accepted');
-  }, [pendingIds, setDecisionForIds]);
-
-  const declineRemaining = useCallback(() => {
-    setDecisionForIds(pendingIds, 'declined');
-  }, [pendingIds, setDecisionForIds]);
-
   const clearDecisions = useCallback(() => {
     setDecisions(() => {
       const next = new Map<string, NodeDecision>();
@@ -340,14 +360,26 @@ export function ProposalReviewPanel({
     return n;
   }, [actionable, decisions]);
 
+  /** All undecided locations (gates Next regardless of filters). */
+  const pendingIds = useMemo(() => {
+    const ids: string[] = [];
+    for (const p of actionable) {
+      const d = decisions.get(p.id);
+      if (d !== 'accepted' && d !== 'declined' && d !== 'ignored') {
+        ids.push(p.id);
+      }
+    }
+    return ids;
+  }, [actionable, decisions]);
+
   const pendingCount = pendingIds.length;
 
   const workflowNext = useMemo((): WorkflowNextConfig => {
-    // No silent default: every node must be Accept or Decline before Next.
+    // No silent default: every location must be Accept or Decline before Next.
     if (pendingCount > 0) {
       return {
         label: 'Next',
-        summary: `${pendingCount} node${
+        summary: `${pendingCount} location${
           pendingCount !== 1 ? 's' : ''
         } still undecided. Accept or Decline each one (or Accept remaining / Decline remaining), then Next unlocks.`,
         onNext: () => onApprove(acceptedIds),
@@ -403,7 +435,20 @@ export function ProposalReviewPanel({
           meta: (
             <>
               <RuleId ruleId={p.rule_id} />
-              <Label isCompact>{isAiGate ? 'AI' : 'Quick-fix'}</Label>
+              <Label
+                isCompact
+                color={fixTypeLabelColor(isAiGate ? 'ai' : 'auto')}
+              >
+                {isAiGate ? 'AI' : 'Quick-fix'}
+              </Label>
+              <Label
+                isCompact
+                color={nodeTypeLabelColor(
+                  normalizeFindingNodeType(p.node_type),
+                )}
+              >
+                {nodeTypeLabel(normalizeFindingNodeType(p.node_type))}
+              </Label>
             </>
           ),
           detail: (
@@ -464,7 +509,10 @@ export function ProposalReviewPanel({
 
   const hasNarrowedFilters =
     decisionFilters.size < DECISION_FILTER_ORDER.length ||
-    (presentSeverities.length > 0 && sevFilters.size < presentSeverities.length);
+    (presentSeverities.length > 0 &&
+      sevFilters.size < presentSeverities.length) ||
+    (presentNodeTypes.length > 0 &&
+      presentNodeTypes.some((t) => !nodeTypeFilters.has(t)));
 
   const filteredActionableItems = useMemo(() => {
     return actionableItems.filter((item) => {
@@ -472,9 +520,13 @@ export function ProposalReviewPanel({
       if (!decisionFilters.has(decision)) return false;
       const proposal = actionable.find((p) => p.id === item.id);
       if (!proposal) return false;
-      if (presentSeverities.length > 0) {
+      if (presentSeverities.length > 0 && sevFilters.size > 0) {
         const sev = proposalSeverity(proposal);
         if (!sevFilters.has(sev)) return false;
+      }
+      if (presentNodeTypes.length > 0 && nodeTypeFilters.size > 0) {
+        const nt = normalizeFindingNodeType(proposal.node_type);
+        if (!nodeTypeFilters.has(nt)) return false;
       }
       return true;
     });
@@ -484,8 +536,24 @@ export function ProposalReviewPanel({
     decisions,
     decisionFilters,
     sevFilters,
+    nodeTypeFilters,
     presentSeverities.length,
+    presentNodeTypes.length,
   ]);
+
+  /** Bulk Accept/Decline only the currently visible undecided rows. */
+  const visiblePendingIds = useMemo(() => {
+    const visible = new Set(filteredActionableItems.map((i) => i.id));
+    return pendingIds.filter((id) => visible.has(id));
+  }, [filteredActionableItems, pendingIds]);
+
+  const acceptRemaining = useCallback(() => {
+    setDecisionForIds(visiblePendingIds, 'accepted');
+  }, [visiblePendingIds, setDecisionForIds]);
+
+  const declineRemaining = useCallback(() => {
+    setDecisionForIds(visiblePendingIds, 'declined');
+  }, [visiblePendingIds, setDecisionForIds]);
 
   const explanationItems: NodeReviewItem[] = useMemo(
     () =>
@@ -561,13 +629,29 @@ export function ProposalReviewPanel({
           onToggle: () => setSevFilters((prev) => toggleInFilterSet(prev, sev)),
         })),
       },
+      {
+        label: 'Kind',
+        ariaLabel: 'Filter by kind',
+        options: presentNodeTypes.map((nt) => ({
+          id: nt,
+          label: nodeTypeLabel(nt),
+          count: nodeTypeCounts.get(nt) ?? 0,
+          color: nodeTypeLabelColor(nt),
+          selected: nodeTypeFilters.has(nt),
+          onToggle: () =>
+            setNodeTypeFilters((prev) => toggleInFilterSet(prev, nt)),
+        })),
+      },
     ],
     [
       decisionCounts,
       decisionFilters,
       presentSeverities,
+      presentNodeTypes,
       severityCounts,
+      nodeTypeCounts,
       sevFilters,
+      nodeTypeFilters,
     ],
   );
 
@@ -576,31 +660,73 @@ export function ProposalReviewPanel({
     return actionable.filter((p) => ids.has(p.id));
   }, [actionable, filteredActionableItems]);
 
-  const title = (
-    <>
-      {findingsAcrossNodesTitle(
-        titleProposals,
-        actionable.length,
-        hasNarrowedFilters,
-      )}
-      {explanationOnly.length > 0
-        ? ` · ${explanationOnly.length} explanation-only`
-        : ''}
-    </>
+  const visibleFindingsCount = useMemo(
+    () => titleProposals.reduce((n, p) => n + proposalFindingCount(p), 0),
+    [titleProposals],
+  );
+
+  const title = hasNarrowedFilters
+    ? `Showing ${visibleFindingsCount} finding${
+        visibleFindingsCount !== 1 ? 's' : ''
+      } of ${inventory.totalFindings}`
+    : undefined;
+
+  const inventoryDescription = (
+    <div>
+      <ReviewInventoryRow
+        ariaLabel="Proposal inventory"
+        boxes={[
+          {
+            key: 'total',
+            label: 'Total',
+            primary: inventory.totalFindings,
+            secondary: inventory.totalLocations,
+            tone: 'total',
+          },
+          {
+            key: 'pending',
+            label: 'Undecided',
+            primary: inventory.pending.findings,
+            secondary: inventory.pending.locations,
+            tone: 'pending',
+          },
+          {
+            key: 'accepted',
+            label: 'Accepted',
+            primary: inventory.accepted.findings,
+            secondary: inventory.accepted.locations,
+            tone: 'accepted',
+          },
+          {
+            key: 'declined',
+            label: 'Declined',
+            primary: inventory.declined.findings,
+            secondary: inventory.declined.locations,
+            tone: 'declined',
+          },
+        ]}
+      />
+      <div style={{ marginTop: 8, fontSize: 13, opacity: 0.7 }}>
+        Every location starts undecided. Next stays disabled until you Accept or
+        Decline each one. Decided rows collapse. Use Accept remaining / Decline
+        remaining for whatever is still open, or Clear to reset and expand
+        again.
+        {explanationOnly.length > 0
+          ? ` ${explanationOnly.length} explanation-only proposal${
+              explanationOnly.length !== 1 ? 's' : ''
+            } listed below.`
+          : ''}
+      </div>
+    </div>
   );
 
   return (
     <ReviewStepShell
       title={title}
-      description="Every node starts undecided. Next stays disabled until you Accept or Decline each one. Decided rows collapse. Use Accept remaining / Decline remaining for whatever is still open, or Clear to reset and expand again."
+      description={inventoryDescription}
       onCancel={onCancel}
       next={workflowNext}
       filterGroups={filterGroups}
-      hasNarrowedFilters={hasNarrowedFilters}
-      onSelectAllFilters={() => {
-        setDecisionFilters(new Set(DECISION_FILTER_ORDER));
-        setSevFilters(new Set(presentSeverities));
-      }}
       emptyMessage="No proposals match the current filters."
       list={
         filteredActionableItems.length === 0
@@ -616,7 +742,7 @@ export function ProposalReviewPanel({
               showExpandControls: true,
               onAcceptRemaining: acceptRemaining,
               onDeclineRemaining: declineRemaining,
-              pendingCount,
+              pendingCount: visiblePendingIds.length,
               onClearDecisions: clearDecisions,
             }
       }
