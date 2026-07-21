@@ -217,7 +217,7 @@ def _enrich_violations_from_graph(
 ) -> None:
     """Attach node YAML and type from the graph to each violation.
 
-    Graph-backed violations get ``node_type`` from ``ContentNode.identity``.
+    Graph-backed violations get ``node_type`` from ``ContentNode.node_type``.
     When progression exists, also set ``original_yaml`` and ``node_line_start``.
 
     Fixed violations additionally get ``fixed_yaml`` (final approved state)
