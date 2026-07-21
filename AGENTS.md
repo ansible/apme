@@ -448,6 +448,7 @@ All agents must:
    - `tox -e lint` — lint, format, typecheck
    - `tox -e unit` — unit tests with coverage
    - `tox -e grpc` — after proto changes
+   - `tox -e openapi` — after Gateway REST route/schema changes
 3. Update task status
 4. Commit with proper message format (Conventional Commits)
 5. Flag any spec ambiguities
@@ -466,6 +467,7 @@ All agents must:
 | `mypy ...` | `tox -e lint` |
 | `prek run ...` | `tox -e lint` |
 | `./scripts/gen_grpc.sh` | `tox -e grpc` |
+| `./scripts/export_openapi.py` | `tox -e openapi` |
 | `./containers/podman/build.sh` | `tox -e build` |
 | `./containers/podman/up.sh` | `tox -e up` |
 | `./containers/podman/down.sh` | `tox -e down` |

@@ -67,3 +67,9 @@ repos:
         additional_dependencies: [pyyaml]
         pass_filenames: false
         always_run: true
+      - id: openapi-check
+        name: openapi-check (Gateway OpenAPI v1)
+        language: system
+        entry: bash -c 'uvx --with tox-uv tox -e openapi -- --check'
+        files: ^(src/apme_gateway/(api/|app\.py$)|docs/api/openapi\.v1\.json$|scripts/export_openapi\.py$|pyproject\.toml$|uv\.lock$)
+        pass_filenames: false

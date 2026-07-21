@@ -147,6 +147,13 @@ aiosqlite for async access via SQLAlchemy's async session factory.
 `/api/v1`. All read endpoints query the SQLite database; write operations
 originate from the gRPC Reporting servicer (push model) or project CRUD.
 
+A machine-readable OpenAPI 3 baseline for `/api/v1` is checked in at
+[`docs/api/openapi.v1.json`](../api/openapi.v1.json) (see
+[`docs/api/README.md`](../api/README.md) for regenerate/check commands
+and consumer caveats). Regenerate after route or schema changes with
+`tox -e openapi`. At runtime, FastAPI still serves live `/openapi.json`
+and `/docs` from the Gateway process.
+
 ### Endpoint Categories
 
 #### Health

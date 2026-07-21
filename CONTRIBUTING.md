@@ -158,9 +158,13 @@ tox -e lint
 
 # Run unit tests
 tox -e unit
+
+# After Gateway REST route/schema changes, refresh the committed OpenAPI artifact
+tox -e openapi
 ```
 
 See [docs/guides/DEVELOPMENT.md](docs/guides/DEVELOPMENT.md) for the full tox environment reference and pod lifecycle commands.
+The public REST contract lives at [docs/api/openapi.v1.json](docs/api/openapi.v1.json) (ADR-060).
 
 ### Container Environment
 
