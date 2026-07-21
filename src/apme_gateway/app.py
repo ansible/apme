@@ -42,7 +42,11 @@ def create_app() -> FastAPI:
     """
     app = FastAPI(
         title="APME Gateway",
-        description="Reporting persistence and read-only REST API (ADR-020 / ADR-029)",
+        description=(
+            "Reporting persistence and REST API for projects, activity, "
+            "and operations (ADR-020 / ADR-029 / ADR-052). Public contract "
+            "under /api/v1 (ADR-060)."
+        ),
         version="0.1.0",
         lifespan=_lifespan,
     )

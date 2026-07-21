@@ -1,0 +1,5258 @@
+{
+  "components": {
+    "schemas": {
+      "ActiveOperationSummary": {
+        "description": "Summary of an in-flight operation for a project.\n\nAttributes:\n    operation_id: Unique operation identifier.\n    status: Current lifecycle state.\n    scan_type: ``check`` or ``remediate``.\n    started_at: ISO-8601 start time.",
+        "properties": {
+          "operation_id": {
+            "title": "Operation Id",
+            "type": "string"
+          },
+          "scan_type": {
+            "title": "Scan Type",
+            "type": "string"
+          },
+          "started_at": {
+            "title": "Started At",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation_id",
+          "status",
+          "scan_type",
+          "started_at"
+        ],
+        "title": "ActiveOperationSummary",
+        "type": "object"
+      },
+      "ActivityDetail": {
+        "description": "Full activity record with violations, proposals, logs, and patches.\n\nAttributes:\n    scan_id: UUID of the run (``scans.scan_id`` column).\n    session_id: Owning session hash.\n    project_id: Owning project UUID (None for CLI/playground runs).\n    project_path: Project root path.\n    source: Origin of the run.\n    created_at: ISO 8601 timestamp.\n    scan_type: Either ``check`` or ``remediate`` (stored in ``scans.scan_type``).\n    total_violations: Total violation count (initial, before Tier 1 fixes).\n    fixable: Tier-1 auto-fixable violation count (applied or dry-run).\n    ai_candidate: Count of tier-2 AI-candidate violations.\n    ai_proposed: AI proposals offered to the user.\n    ai_declined: Violations the AI could not fix.\n    ai_accepted: AI proposals the user approved and applied.\n    manual_review: Count of tier-3 manual violations.\n    remediated_count: Total applied (Tier 1 + AI accepted).\n    pr_url: URL of the PR created from this activity (ADR-050), if any.\n    diagnostics_json: Raw diagnostics JSON string.\n    violations: List of violation rows.\n    proposals: List of proposal rows.\n    logs: List of log entries.\n    patches: Per-file diffs.",
+        "properties": {
+          "ai_accepted": {
+            "default": 0,
+            "title": "Ai Accepted",
+            "type": "integer"
+          },
+          "ai_candidate": {
+            "title": "Ai Candidate",
+            "type": "integer"
+          },
+          "ai_declined": {
+            "default": 0,
+            "title": "Ai Declined",
+            "type": "integer"
+          },
+          "ai_proposed": {
+            "default": 0,
+            "title": "Ai Proposed",
+            "type": "integer"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "diagnostics_json": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Diagnostics Json"
+          },
+          "fixable": {
+            "title": "Fixable",
+            "type": "integer"
+          },
+          "logs": {
+            "items": {
+              "$ref": "#/components/schemas/LogEntry"
+            },
+            "title": "Logs",
+            "type": "array"
+          },
+          "manual_review": {
+            "title": "Manual Review",
+            "type": "integer"
+          },
+          "patches": {
+            "items": {
+              "$ref": "#/components/schemas/PatchDetail"
+            },
+            "title": "Patches",
+            "type": "array"
+          },
+          "pr_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pr Url"
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
+          },
+          "project_path": {
+            "title": "Project Path",
+            "type": "string"
+          },
+          "proposals": {
+            "items": {
+              "$ref": "#/components/schemas/ProposalDetail"
+            },
+            "title": "Proposals",
+            "type": "array"
+          },
+          "remediated_count": {
+            "default": 0,
+            "title": "Remediated Count",
+            "type": "integer"
+          },
+          "scan_id": {
+            "title": "Scan Id",
+            "type": "string"
+          },
+          "scan_type": {
+            "title": "Scan Type",
+            "type": "string"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "total_violations": {
+            "title": "Total Violations",
+            "type": "integer"
+          },
+          "violations": {
+            "items": {
+              "$ref": "#/components/schemas/ViolationDetail"
+            },
+            "title": "Violations",
+            "type": "array"
+          }
+        },
+        "required": [
+          "scan_id",
+          "session_id",
+          "project_path",
+          "source",
+          "created_at",
+          "scan_type",
+          "total_violations",
+          "fixable",
+          "ai_candidate",
+          "manual_review",
+          "diagnostics_json",
+          "violations",
+          "proposals",
+          "logs"
+        ],
+        "title": "ActivityDetail",
+        "type": "object"
+      },
+      "ActivitySummary": {
+        "description": "Activity list item (a persisted check or remediate run).\n\nAttributes:\n    scan_id: UUID of the run (``scans.scan_id`` column).\n    session_id: Owning session hash.\n    project_path: Project root path.\n    project_id: Owning project UUID when linked (None for CLI/playground).\n    source: Origin of the run (cli, ci, gateway).\n    created_at: ISO 8601 timestamp.\n    scan_type: Either ``check`` or ``remediate`` (stored in ``scans.scan_type``).\n    total_violations: Total violation count (initial, before Tier 1 fixes).\n    fixable: Tier-1 auto-fixable violation count (applied or dry-run).\n    ai_candidate: Count of tier-2 AI-candidate violations.\n    ai_proposed: AI proposals offered to the user.\n    ai_declined: Violations the AI could not fix.\n    ai_accepted: AI proposals the user approved and applied.\n    manual_review: Count of tier-3 manual violations.\n    remediated_count: Total applied (Tier 1 + AI accepted).\n    pr_url: URL of the PR created from this activity (ADR-050), if any.",
+        "properties": {
+          "ai_accepted": {
+            "default": 0,
+            "title": "Ai Accepted",
+            "type": "integer"
+          },
+          "ai_candidate": {
+            "title": "Ai Candidate",
+            "type": "integer"
+          },
+          "ai_declined": {
+            "default": 0,
+            "title": "Ai Declined",
+            "type": "integer"
+          },
+          "ai_proposed": {
+            "default": 0,
+            "title": "Ai Proposed",
+            "type": "integer"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "fixable": {
+            "title": "Fixable",
+            "type": "integer"
+          },
+          "manual_review": {
+            "title": "Manual Review",
+            "type": "integer"
+          },
+          "pr_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pr Url"
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
+          },
+          "project_path": {
+            "title": "Project Path",
+            "type": "string"
+          },
+          "remediated_count": {
+            "default": 0,
+            "title": "Remediated Count",
+            "type": "integer"
+          },
+          "scan_id": {
+            "title": "Scan Id",
+            "type": "string"
+          },
+          "scan_type": {
+            "title": "Scan Type",
+            "type": "string"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "total_violations": {
+            "title": "Total Violations",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "scan_id",
+          "session_id",
+          "project_path",
+          "source",
+          "created_at",
+          "scan_type",
+          "total_violations",
+          "fixable",
+          "ai_candidate",
+          "manual_review"
+        ],
+        "title": "ActivitySummary",
+        "type": "object"
+      },
+      "AiAcceptanceEntry": {
+        "description": "AI proposal acceptance statistics per rule.\n\nAttributes:\n    rule_id: Rule identifier.\n    approved: Count of approved proposals.\n    rejected: Count of rejected proposals.\n    pending: Count of pending proposals.\n    avg_confidence: Average AI confidence score.",
+        "properties": {
+          "approved": {
+            "title": "Approved",
+            "type": "integer"
+          },
+          "avg_confidence": {
+            "title": "Avg Confidence",
+            "type": "number"
+          },
+          "pending": {
+            "title": "Pending",
+            "type": "integer"
+          },
+          "rejected": {
+            "title": "Rejected",
+            "type": "integer"
+          },
+          "rule_id": {
+            "title": "Rule Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "rule_id",
+          "approved",
+          "rejected",
+          "pending",
+          "avg_confidence"
+        ],
+        "title": "AiAcceptanceEntry",
+        "type": "object"
+      },
+      "AiModelInfo": {
+        "description": "AI model available from the Abbenay daemon.\n\nAttributes:\n    id: Model identifier (e.g. ``anthropic/claude-sonnet-4``).\n    provider: LLM provider engine name.\n    name: Human-readable model name.",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "provider",
+          "name"
+        ],
+        "title": "AiModelInfo",
+        "type": "object"
+      },
+      "ApproveRequest": {
+        "description": "Body for ``POST /approve``.\n\nAttributes:\n    approved_ids: List of proposal IDs the user accepted.",
+        "properties": {
+          "approved_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Approved Ids",
+            "type": "array"
+          }
+        },
+        "title": "ApproveRequest",
+        "type": "object"
+      },
+      "CollectionDetail": {
+        "description": "Detail view for a single collection (ADR-040).\n\nAttributes:\n    fqcn: Fully-qualified collection name.\n    versions: All version strings seen across projects.\n    source: Primary origin.\n    project_count: Number of projects using this collection.\n    projects: Projects that depend on this collection.",
+        "properties": {
+          "fqcn": {
+            "title": "Fqcn",
+            "type": "string"
+          },
+          "project_count": {
+            "default": 0,
+            "title": "Project Count",
+            "type": "integer"
+          },
+          "projects": {
+            "items": {
+              "$ref": "#/components/schemas/CollectionProjectRef"
+            },
+            "title": "Projects",
+            "type": "array"
+          },
+          "source": {
+            "default": "galaxy",
+            "title": "Source",
+            "type": "string"
+          },
+          "versions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Versions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "fqcn"
+        ],
+        "title": "CollectionDetail",
+        "type": "object"
+      },
+      "CollectionHealthSummary": {
+        "description": "Collection health findings count (ADR-051).\n\nAttributes:\n    fqcn: Fully-qualified collection name.\n    finding_count: Total findings from collection health scan.\n    critical: Critical-severity count.\n    error: Error-severity count.\n    high: High-severity count.\n    medium: Medium-severity count.\n    low: Low-severity count.\n    info: Info-severity count.",
+        "properties": {
+          "critical": {
+            "default": 0,
+            "title": "Critical",
+            "type": "integer"
+          },
+          "error": {
+            "default": 0,
+            "title": "Error",
+            "type": "integer"
+          },
+          "finding_count": {
+            "title": "Finding Count",
+            "type": "integer"
+          },
+          "fqcn": {
+            "title": "Fqcn",
+            "type": "string"
+          },
+          "high": {
+            "default": 0,
+            "title": "High",
+            "type": "integer"
+          },
+          "info": {
+            "default": 0,
+            "title": "Info",
+            "type": "integer"
+          },
+          "low": {
+            "default": 0,
+            "title": "Low",
+            "type": "integer"
+          },
+          "medium": {
+            "default": 0,
+            "title": "Medium",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "fqcn",
+          "finding_count"
+        ],
+        "title": "CollectionHealthSummary",
+        "type": "object"
+      },
+      "CollectionProjectRef": {
+        "description": "A project that depends on a specific collection.\n\nAttributes:\n    id: Project UUID.\n    name: Project display label.\n    health_score: Project health score.\n    collection_version: Version of the collection in this project.\n    last_scan_id: Scan ID where this collection was last seen.",
+        "properties": {
+          "collection_version": {
+            "title": "Collection Version",
+            "type": "string"
+          },
+          "health_score": {
+            "title": "Health Score",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "last_scan_id": {
+            "default": "",
+            "title": "Last Scan Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "health_score",
+          "collection_version"
+        ],
+        "title": "CollectionProjectRef",
+        "type": "object"
+      },
+      "CollectionRefSchema": {
+        "description": "A collection discovered in a project's session venv.\n\nAttributes:\n    fqcn: Fully-qualified collection name.\n    version: Installed version string.\n    source: Origin \u2014 galaxy, local, or git.\n    license: SPDX license identifier from collection metadata.\n    supplier: Author or namespace from collection metadata.",
+        "properties": {
+          "fqcn": {
+            "title": "Fqcn",
+            "type": "string"
+          },
+          "license": {
+            "default": "",
+            "title": "License",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "supplier": {
+            "default": "",
+            "title": "Supplier",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "fqcn",
+          "version",
+          "source"
+        ],
+        "title": "CollectionRefSchema",
+        "type": "object"
+      },
+      "CollectionSummary": {
+        "description": "Collection seen across projects.\n\nAttributes:\n    fqcn: Fully-qualified collection name.\n    version: Version from the most recently scanned project.\n    source: Classification \u2014 specified, learned, or dependency.\n    project_count: Number of projects using this collection.",
+        "properties": {
+          "fqcn": {
+            "title": "Fqcn",
+            "type": "string"
+          },
+          "project_count": {
+            "title": "Project Count",
+            "type": "integer"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "fqcn",
+          "version",
+          "source",
+          "project_count"
+        ],
+        "title": "CollectionSummary",
+        "type": "object"
+      },
+      "ComponentHealth": {
+        "description": "Health status for a single service component.\n\nAttributes:\n    name: Human-readable component name.\n    status: Health status (ok, unavailable, or degraded).\n    address: Network address of the component.",
+        "properties": {
+          "address": {
+            "title": "Address",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "status",
+          "address"
+        ],
+        "title": "ComponentHealth",
+        "type": "object"
+      },
+      "CreateGalaxyServerRequest": {
+        "description": "Request body for creating a Galaxy server.\n\nAttributes:\n    name: Short label.\n    url: Base API URL.\n    token: API token (optional, empty for public Galaxy).\n    auth_url: SSO/Keycloak token endpoint (optional).",
+        "properties": {
+          "auth_url": {
+            "default": "",
+            "title": "Auth Url",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "token": {
+            "default": "",
+            "title": "Token",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "url"
+        ],
+        "title": "CreateGalaxyServerRequest",
+        "type": "object"
+      },
+      "CreateProjectRequest": {
+        "description": "Request body for creating a project.\n\nAttributes:\n    name: Display label.\n    repo_url: HTTPS clone URL.\n    branch: Branch to clone (default main).\n    scm_token: Per-project SCM token for PR creation (ADR-050).\n    scm_provider: Explicit SCM provider type (ADR-050). Auto-detected if omitted.",
+        "properties": {
+          "branch": {
+            "default": "main",
+            "title": "Branch",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "repo_url": {
+            "title": "Repo Url",
+            "type": "string"
+          },
+          "scm_provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scm Provider"
+          },
+          "scm_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scm Token"
+          }
+        },
+        "required": [
+          "name",
+          "repo_url"
+        ],
+        "title": "CreateProjectRequest",
+        "type": "object"
+      },
+      "CreateSuppressionRequest": {
+        "description": "Request body for acknowledging/suppressing a violation (ADR-055).\n\nWhen ``original_yaml`` is provided the server computes the canonical\nfingerprint (normalized YAML, matching the CLI). The ``fingerprint_hash``\nfield is then ignored. When ``original_yaml`` is absent, the server\ntrusts the caller-supplied ``fingerprint_hash`` (backward compat).\n\nAttributes:\n    fingerprint_hash: Pre-computed SHA-256 hex digest (used only when\n        ``original_yaml`` is not supplied).\n    fingerprint_mode: Granularity \u2014 ``full`` or ``rule_only``.\n    rule_id: Canonical rule identifier.\n    original_yaml: Raw YAML source for server-side fingerprint computation.\n    module_fqcn: Module FQCN (reserved for future use).\n    scope: ``global`` or ``project:<uuid>``.\n    reason: Human justification for the acknowledgment.",
+        "properties": {
+          "fingerprint_hash": {
+            "default": "",
+            "maxLength": 64,
+            "title": "Fingerprint Hash",
+            "type": "string"
+          },
+          "fingerprint_mode": {
+            "default": "full",
+            "title": "Fingerprint Mode",
+            "type": "string"
+          },
+          "module_fqcn": {
+            "default": "",
+            "maxLength": 500,
+            "title": "Module Fqcn",
+            "type": "string"
+          },
+          "original_yaml": {
+            "anyOf": [
+              {
+                "maxLength": 1048576,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Original Yaml"
+          },
+          "reason": {
+            "default": "",
+            "maxLength": 1000,
+            "title": "Reason",
+            "type": "string"
+          },
+          "rule_id": {
+            "maxLength": 200,
+            "title": "Rule Id",
+            "type": "string"
+          },
+          "scope": {
+            "default": "global",
+            "title": "Scope",
+            "type": "string"
+          }
+        },
+        "required": [
+          "rule_id"
+        ],
+        "title": "CreateSuppressionRequest",
+        "type": "object"
+      },
+      "DashboardSummary": {
+        "description": "Cross-project aggregate statistics (ADR-037).\n\nAttributes:\n    total_projects: Number of defined projects.\n    total_scans: Number of completed runs across all projects (``total_scans`` column).\n    total_violations: Cumulative violations across all runs.\n    current_violations: Violations from each project's latest run.\n    current_fixable: Auto-fixable violations from each project's latest run.\n    current_ai_candidates: AI-candidate violations from each project's latest run.\n    total_fixed: Sum of remediated violations (``total_fixed`` field name unchanged).\n    avg_health_score: Mean health score across projects.",
+        "properties": {
+          "avg_health_score": {
+            "title": "Avg Health Score",
+            "type": "integer"
+          },
+          "current_ai_candidates": {
+            "title": "Current Ai Candidates",
+            "type": "integer"
+          },
+          "current_fixable": {
+            "title": "Current Fixable",
+            "type": "integer"
+          },
+          "current_violations": {
+            "title": "Current Violations",
+            "type": "integer"
+          },
+          "total_fixed": {
+            "title": "Total Fixed",
+            "type": "integer"
+          },
+          "total_projects": {
+            "title": "Total Projects",
+            "type": "integer"
+          },
+          "total_scans": {
+            "title": "Total Scans",
+            "type": "integer"
+          },
+          "total_violations": {
+            "title": "Total Violations",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total_projects",
+          "total_scans",
+          "total_violations",
+          "current_violations",
+          "current_fixable",
+          "current_ai_candidates",
+          "total_fixed",
+          "avg_health_score"
+        ],
+        "title": "DashboardSummary",
+        "type": "object"
+      },
+      "DepHealthSummary": {
+        "description": "Aggregated dependency health findings (ADR-051).\n\nAttributes:\n    collection_findings: Per-collection finding counts.\n    python_cves: Per-CVE finding summaries.\n    suppressed_count: Number of violations excluded by active suppressions.",
+        "properties": {
+          "collection_findings": {
+            "items": {
+              "$ref": "#/components/schemas/CollectionHealthSummary"
+            },
+            "title": "Collection Findings",
+            "type": "array"
+          },
+          "python_cves": {
+            "items": {
+              "$ref": "#/components/schemas/PythonCveSummary"
+            },
+            "title": "Python Cves",
+            "type": "array"
+          },
+          "suppressed_count": {
+            "default": 0,
+            "title": "Suppressed Count",
+            "type": "integer"
+          }
+        },
+        "title": "DepHealthSummary",
+        "type": "object"
+      },
+      "DraftProposalUpdate": {
+        "description": "One optimistic checkbox update (ADR-062 Phase 2).\n\nAttributes:\n    proposal_id: Gateway ``proposal_id`` or live ``engine_proposal_id``.\n    status: pending, approved, or declined (``proposed``/``rejected``\n        accepted as synonyms and normalized in ``apply_draft_updates``).",
+        "properties": {
+          "proposal_id": {
+            "title": "Proposal Id",
+            "type": "string"
+          },
+          "status": {
+            "pattern": "^(pending|approved|declined|proposed|rejected)$",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "proposal_id",
+          "status"
+        ],
+        "title": "DraftProposalUpdate",
+        "type": "object"
+      },
+      "DraftProposalsRequest": {
+        "description": "Body for ``PATCH /proposals``.\n\nAttributes:\n    updates: Status updates for working-set proposals.",
+        "properties": {
+          "updates": {
+            "items": {
+              "$ref": "#/components/schemas/DraftProposalUpdate"
+            },
+            "title": "Updates",
+            "type": "array"
+          }
+        },
+        "title": "DraftProposalsRequest",
+        "type": "object"
+      },
+      "FeedbackContext": {
+        "description": "Optional context attached to feedback.\n\nAttributes:\n    violation_message: Message from the violation.\n    ai_proposal_diff: Diff from the AI proposal.\n    ai_explanation: Explanation from the AI proposal.\n    source_snippet: Source lines around the violation.",
+        "properties": {
+          "ai_explanation": {
+            "default": "",
+            "title": "Ai Explanation",
+            "type": "string"
+          },
+          "ai_proposal_diff": {
+            "default": "",
+            "title": "Ai Proposal Diff",
+            "type": "string"
+          },
+          "source_snippet": {
+            "default": "",
+            "title": "Source Snippet",
+            "type": "string"
+          },
+          "violation_message": {
+            "default": "",
+            "title": "Violation Message",
+            "type": "string"
+          }
+        },
+        "title": "FeedbackContext",
+        "type": "object"
+      },
+      "FeedbackRequest": {
+        "description": "Payload for the feedback endpoint.\n\nAttributes:\n    feedback_type: Category of the feedback.\n    rule_id: Rule ID that triggered the issue.\n    source: Validator that produced the violation.\n    file: File path where the violation occurred.\n    scan_id: Scan ID for traceability.\n    context: Optional structured context.\n    user_comment: Free-text user comment.",
+        "properties": {
+          "context": {
+            "$ref": "#/components/schemas/FeedbackContext"
+          },
+          "file": {
+            "default": "",
+            "title": "File",
+            "type": "string"
+          },
+          "rule_id": {
+            "default": "",
+            "title": "Rule Id",
+            "type": "string"
+          },
+          "scan_id": {
+            "default": "",
+            "title": "Scan Id",
+            "type": "string"
+          },
+          "source": {
+            "default": "",
+            "title": "Source",
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "false_positive",
+              "bad_ai_suggestion",
+              "rule_misfire"
+            ],
+            "title": "Type",
+            "type": "string"
+          },
+          "user_comment": {
+            "default": "",
+            "title": "User Comment",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "title": "FeedbackRequest",
+        "type": "object"
+      },
+      "FeedbackResponse": {
+        "description": "Response from the feedback endpoint.\n\nAttributes:\n    issue_url: URL of the created GitHub issue.\n    issue_number: Number of the created GitHub issue.",
+        "properties": {
+          "issue_number": {
+            "title": "Issue Number",
+            "type": "integer"
+          },
+          "issue_url": {
+            "title": "Issue Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "issue_url",
+          "issue_number"
+        ],
+        "title": "FeedbackResponse",
+        "type": "object"
+      },
+      "GalaxyServerSchema": {
+        "description": "A globally configured Galaxy/Automation Hub server.\n\nAttributes:\n    id: Auto-increment primary key.\n    name: Short label (e.g. ``automation_hub``).\n    url: Base URL of the Galaxy / Automation Hub API.\n    auth_url: SSO/Keycloak token endpoint (empty if not applicable).\n    has_token: Whether a token is configured (token value is never exposed).\n    created_at: ISO 8601 creation timestamp.\n    updated_at: ISO 8601 last-update timestamp.",
+        "properties": {
+          "auth_url": {
+            "default": "",
+            "title": "Auth Url",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "has_token": {
+            "default": false,
+            "title": "Has Token",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "url",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "GalaxyServerSchema",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HealthStatus": {
+        "description": "Gateway health response.\n\nAttributes:\n    status: Overall health (ok or degraded).\n    database: Database connectivity status.\n    components: Health status of each upstream service.",
+        "properties": {
+          "components": {
+            "items": {
+              "$ref": "#/components/schemas/ComponentHealth"
+            },
+            "title": "Components",
+            "type": "array"
+          },
+          "database": {
+            "title": "Database",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "database"
+        ],
+        "title": "HealthStatus",
+        "type": "object"
+      },
+      "LogEntry": {
+        "description": "Pipeline log entry.\n\nAttributes:\n    id: Auto-increment ID.\n    message: Log message text.\n    phase: Pipeline subsystem.\n    progress: Progress fraction 0.0-1.0.\n    level: Numeric log level.",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "level": {
+            "title": "Level",
+            "type": "integer"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "phase": {
+            "title": "Phase",
+            "type": "string"
+          },
+          "progress": {
+            "title": "Progress",
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "message",
+          "phase",
+          "progress",
+          "level"
+        ],
+        "title": "LogEntry",
+        "type": "object"
+      },
+      "NotificationSchema": {
+        "description": "A user-facing notification.\n\nAttributes:\n    id: Notification primary key.\n    type: Event category (scan_complete, secrets_detected, health_changed).\n    title: Short headline.\n    message: Descriptive body text.\n    variant: PatternFly alert variant (success, danger, warning, info).\n    project_id: Optional project FK.\n    scan_id: Optional scan FK.\n    link: Client-side route for click-through.\n    created_at: ISO 8601 creation timestamp.\n    read: Whether the user has marked this as read.",
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "link": {
+            "default": "",
+            "title": "Link",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
+          },
+          "read": {
+            "title": "Read",
+            "type": "boolean"
+          },
+          "scan_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scan Id"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          },
+          "variant": {
+            "title": "Variant",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "title",
+          "message",
+          "variant",
+          "created_at",
+          "read"
+        ],
+        "title": "NotificationSchema",
+        "type": "object"
+      },
+      "OperateRequest": {
+        "description": "Body for ``POST /operate``.\n\nAttributes:\n    action: ``check`` or ``remediate``.\n    options: Additional operation options.\n    abandon_working_set: When True, allow a new remediate to flush an\n        interactive draft working set (ADR-062 Phase 2).",
+        "properties": {
+          "abandon_working_set": {
+            "default": false,
+            "title": "Abandon Working Set",
+            "type": "boolean"
+          },
+          "action": {
+            "pattern": "^(check|remediate)$",
+            "title": "Action",
+            "type": "string"
+          },
+          "options": {
+            "additionalProperties": true,
+            "title": "Options",
+            "type": "object"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "title": "OperateRequest",
+        "type": "object"
+      },
+      "OperateResponse": {
+        "description": "Response for ``POST /operate``.\n\nAttributes:\n    operation_id: The new operation's unique identifier.",
+        "properties": {
+          "operation_id": {
+            "title": "Operation Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation_id"
+        ],
+        "title": "OperateResponse",
+        "type": "object"
+      },
+      "PaginatedResponse": {
+        "description": "Wrapper for paginated list responses.\n\nAttributes:\n    total: Total number of items matching the query.\n    limit: Page size.\n    offset: Current offset.\n    items: List of result items.",
+        "properties": {
+          "items": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/SessionSummary"
+                },
+                "type": "array"
+              },
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ActivitySummary"
+                },
+                "type": "array"
+              },
+              {
+                "items": {
+                  "$ref": "#/components/schemas/TopViolation"
+                },
+                "type": "array"
+              },
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ProjectSummary"
+                },
+                "type": "array"
+              },
+              {
+                "items": {
+                  "$ref": "#/components/schemas/NotificationSchema"
+                },
+                "type": "array"
+              }
+            ],
+            "title": "Items"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "limit",
+          "offset",
+          "items"
+        ],
+        "title": "PaginatedResponse",
+        "type": "object"
+      },
+      "PatchDetail": {
+        "description": "Per-file diff from a check or remediate run.\n\nAttributes:\n    id: Auto-increment ID.\n    file: Relative file path.\n    diff: Unified diff text.",
+        "properties": {
+          "diff": {
+            "title": "Diff",
+            "type": "string"
+          },
+          "file": {
+            "title": "File",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "file",
+          "diff"
+        ],
+        "title": "PatchDetail",
+        "type": "object"
+      },
+      "ProjectDependencies": {
+        "description": "Full dependency manifest for a project (ADR-040).\n\nAttributes:\n    ansible_core_version: ansible-core version from the session venv.\n    collections: Collections installed in the session venv.\n    python_packages: Python packages installed in the session venv.\n    requirements_files: Requirement file paths found in the project.\n    dependency_tree: Raw ``uv pip tree`` output showing package relationships.",
+        "properties": {
+          "ansible_core_version": {
+            "default": "",
+            "title": "Ansible Core Version",
+            "type": "string"
+          },
+          "collections": {
+            "items": {
+              "$ref": "#/components/schemas/CollectionRefSchema"
+            },
+            "title": "Collections",
+            "type": "array"
+          },
+          "dependency_tree": {
+            "default": "",
+            "title": "Dependency Tree",
+            "type": "string"
+          },
+          "python_packages": {
+            "items": {
+              "$ref": "#/components/schemas/PythonPackageRefSchema"
+            },
+            "title": "Python Packages",
+            "type": "array"
+          },
+          "requirements_files": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Requirements Files",
+            "type": "array"
+          }
+        },
+        "title": "ProjectDependencies",
+        "type": "object"
+      },
+      "ProjectDetail": {
+        "description": "Full project representation with latest activity summary.\n\nAttributes:\n    latest_scan: Summary of the most recent run, if any (``latest_scan`` field name unchanged).\n    severity_breakdown: Violation counts keyed by severity level.",
+        "properties": {
+          "active_operation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ActiveOperationSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "branch": {
+            "title": "Branch",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "has_new_commits": {
+            "default": false,
+            "title": "Has New Commits",
+            "type": "boolean"
+          },
+          "has_scm_token": {
+            "default": false,
+            "title": "Has Scm Token",
+            "type": "boolean"
+          },
+          "health_score": {
+            "title": "Health Score",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "last_scanned_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Scanned At"
+          },
+          "last_scanned_commit": {
+            "default": "",
+            "title": "Last Scanned Commit",
+            "type": "string"
+          },
+          "latest_scan": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ActivitySummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "repo_url": {
+            "title": "Repo Url",
+            "type": "string"
+          },
+          "scan_count": {
+            "default": 0,
+            "title": "Scan Count",
+            "type": "integer"
+          },
+          "scm_provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scm Provider"
+          },
+          "severity_breakdown": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Severity Breakdown",
+            "type": "object"
+          },
+          "total_violations": {
+            "default": 0,
+            "title": "Total Violations",
+            "type": "integer"
+          },
+          "violation_trend": {
+            "default": "stable",
+            "title": "Violation Trend",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "repo_url",
+          "branch",
+          "created_at",
+          "health_score"
+        ],
+        "title": "ProjectDetail",
+        "type": "object"
+      },
+      "ProjectRanking": {
+        "description": "Project ranking entry for dashboard tables (ADR-037).\n\nAttributes:\n    id: Project identifier.\n    name: Display label.\n    health_score: Computed 0-100 score.\n    total_violations: Latest run violation count.\n    scan_count: Number of completed runs (``scan_count`` column).\n    last_scanned_at: ISO timestamp of most recent run (``last_scanned_at`` column).\n    days_since_last_scan: Age in days since last run (``days_since_last_scan`` column).",
+        "properties": {
+          "days_since_last_scan": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Days Since Last Scan"
+          },
+          "health_score": {
+            "title": "Health Score",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "last_scanned_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Scanned At"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "scan_count": {
+            "title": "Scan Count",
+            "type": "integer"
+          },
+          "total_violations": {
+            "title": "Total Violations",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "health_score",
+          "total_violations",
+          "scan_count"
+        ],
+        "title": "ProjectRanking",
+        "type": "object"
+      },
+      "ProjectSummary": {
+        "description": "Summary representation of a project for list views.\n\nAttributes:\n    id: Unique identifier.\n    name: Display label.\n    repo_url: SCM clone URL.\n    branch: Target branch.\n    created_at: ISO-8601 creation timestamp.\n    health_score: Computed 0-100 score.\n    total_violations: Count from latest check (scan row).\n    violation_trend: Direction indicator.\n    scan_count: Number of completed runs (``scan_count`` / scans table).\n    last_scanned_at: ISO timestamp of most recent run (``last_scanned_at`` column).\n    scm_provider: Explicit SCM provider type (ADR-050), or None for auto-detect.\n    has_scm_token: Whether a project-level SCM token is configured (ADR-050).\n    last_scanned_commit: Git SHA of the commit used in the most recent scan.\n    has_new_commits: True when the remote branch HEAD is ahead of last_scanned_commit.\n    active_operation: Summary of any in-flight operation (ADR-052), or null.",
+        "properties": {
+          "active_operation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ActiveOperationSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "branch": {
+            "title": "Branch",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "has_new_commits": {
+            "default": false,
+            "title": "Has New Commits",
+            "type": "boolean"
+          },
+          "has_scm_token": {
+            "default": false,
+            "title": "Has Scm Token",
+            "type": "boolean"
+          },
+          "health_score": {
+            "title": "Health Score",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "last_scanned_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Scanned At"
+          },
+          "last_scanned_commit": {
+            "default": "",
+            "title": "Last Scanned Commit",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "repo_url": {
+            "title": "Repo Url",
+            "type": "string"
+          },
+          "scan_count": {
+            "default": 0,
+            "title": "Scan Count",
+            "type": "integer"
+          },
+          "scm_provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scm Provider"
+          },
+          "total_violations": {
+            "default": 0,
+            "title": "Total Violations",
+            "type": "integer"
+          },
+          "violation_trend": {
+            "default": "stable",
+            "title": "Violation Trend",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "repo_url",
+          "branch",
+          "created_at",
+          "health_score"
+        ],
+        "title": "ProjectSummary",
+        "type": "object"
+      },
+      "ProposalDetail": {
+        "description": "Proposal row (ephemeral working set or historically rebuilt; ADR-062).\n\nAttributes:\n    id: Auto-increment ID (0 when rebuilt in memory).\n    proposal_id: Gateway-stable proposal id within the scan.\n    rule_id: Primary rule that triggered the proposal.\n    file: File the proposal targets.\n    tier: Proposal tier (1 deterministic, 2+ AI).\n    confidence: AI confidence score.\n    status: approved, rejected, declined, or pending.\n    path: Node identity path (optional additive).\n    source: deterministic, ai, ai-candidate, or outcome (optional additive).\n    gate: tier1 or ai (optional additive).\n    rule_ids: All rule ids on this approval unit (optional additive).\n    violation_ids: Linked violation PKs (optional additive).\n    line_start: First line of the node/finding (optional additive).\n    diff_hunk: Unified diff when available (optional additive).\n    explanation: AI explanation when available (optional additive).\n    suggestion: Manual suggestion when available (optional additive).\n    engine_proposal_id: Live engine proposal id when bridged (optional).\n    draft: True while optimistic UI edits are not yet gate-committed.",
+        "properties": {
+          "confidence": {
+            "title": "Confidence",
+            "type": "number"
+          },
+          "diff_hunk": {
+            "default": "",
+            "title": "Diff Hunk",
+            "type": "string"
+          },
+          "draft": {
+            "default": false,
+            "title": "Draft",
+            "type": "boolean"
+          },
+          "engine_proposal_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Engine Proposal Id"
+          },
+          "explanation": {
+            "default": "",
+            "title": "Explanation",
+            "type": "string"
+          },
+          "file": {
+            "title": "File",
+            "type": "string"
+          },
+          "gate": {
+            "default": "",
+            "title": "Gate",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "line_start": {
+            "default": 0,
+            "title": "Line Start",
+            "type": "integer"
+          },
+          "path": {
+            "default": "",
+            "title": "Path",
+            "type": "string"
+          },
+          "proposal_id": {
+            "title": "Proposal Id",
+            "type": "string"
+          },
+          "rule_id": {
+            "title": "Rule Id",
+            "type": "string"
+          },
+          "rule_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Rule Ids",
+            "type": "array"
+          },
+          "source": {
+            "default": "outcome",
+            "title": "Source",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "suggestion": {
+            "default": "",
+            "title": "Suggestion",
+            "type": "string"
+          },
+          "tier": {
+            "title": "Tier",
+            "type": "integer"
+          },
+          "violation_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Violation Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "proposal_id",
+          "rule_id",
+          "file",
+          "tier",
+          "confidence",
+          "status"
+        ],
+        "title": "ProposalDetail",
+        "type": "object"
+      },
+      "PythonCveSummary": {
+        "description": "Python CVE finding summary (ADR-051).\n\nAttributes:\n    rule_id: Rule identifier (e.g. R200).\n    level: Severity level string.\n    message: Human-readable CVE description.\n    occurrence_count: Number of projects affected.",
+        "properties": {
+          "level": {
+            "title": "Level",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "occurrence_count": {
+            "title": "Occurrence Count",
+            "type": "integer"
+          },
+          "rule_id": {
+            "title": "Rule Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "rule_id",
+          "level",
+          "message",
+          "occurrence_count"
+        ],
+        "title": "PythonCveSummary",
+        "type": "object"
+      },
+      "PythonPackageDetail": {
+        "description": "Detail view for a single Python package (ADR-040).\n\nAttributes:\n    name: PyPI package name.\n    versions: All version strings seen across projects.\n    project_count: Number of projects using this package.\n    projects: Projects that depend on this package.",
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "project_count": {
+            "default": 0,
+            "title": "Project Count",
+            "type": "integer"
+          },
+          "projects": {
+            "items": {
+              "$ref": "#/components/schemas/PythonPackageProjectRef"
+            },
+            "title": "Projects",
+            "type": "array"
+          },
+          "versions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Versions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "PythonPackageDetail",
+        "type": "object"
+      },
+      "PythonPackageProjectRef": {
+        "description": "A project that depends on a specific Python package.\n\nAttributes:\n    id: Project UUID.\n    name: Project display label.\n    health_score: Project health score.\n    package_version: Version of the package in this project.\n    last_scan_id: Scan ID where this package was last seen.",
+        "properties": {
+          "health_score": {
+            "default": 0,
+            "title": "Health Score",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "last_scan_id": {
+            "default": "",
+            "title": "Last Scan Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "package_version": {
+            "default": "",
+            "title": "Package Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "PythonPackageProjectRef",
+        "type": "object"
+      },
+      "PythonPackageRefSchema": {
+        "description": "A Python package discovered in a project's session venv.\n\nAttributes:\n    name: PyPI package name.\n    version: Installed version string.\n    license: License identifier from package metadata.\n    supplier: Author from package metadata.",
+        "properties": {
+          "license": {
+            "default": "",
+            "title": "License",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "supplier": {
+            "default": "",
+            "title": "Supplier",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "version"
+        ],
+        "title": "PythonPackageRefSchema",
+        "type": "object"
+      },
+      "PythonPackageSummary": {
+        "description": "Python package seen across projects.\n\nAttributes:\n    name: PyPI package name.\n    version: Version from the most recently scanned project.\n    project_count: Number of projects using this package.",
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "project_count": {
+            "title": "Project Count",
+            "type": "integer"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "version",
+          "project_count"
+        ],
+        "title": "PythonPackageSummary",
+        "type": "object"
+      },
+      "RemediationRateEntry": {
+        "description": "Remediation frequency for a specific rule.\n\nAttributes:\n    rule_id: Rule identifier.\n    fix_count: Number of times this rule appeared in remediate runs.",
+        "properties": {
+          "fix_count": {
+            "title": "Fix Count",
+            "type": "integer"
+          },
+          "rule_id": {
+            "title": "Rule Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "rule_id",
+          "fix_count"
+        ],
+        "title": "RemediationRateEntry",
+        "type": "object"
+      },
+      "RuleConfigPutBody": {
+        "description": "Payload for creating or partially updating a rule override.\n\nOmitted fields are left unchanged on an existing override.\n\nAttributes:\n    severity_override: Severity enum int (0-6), or None to clear severity override.\n    enabled_override: New enabled flag, or None to clear enabled override.\n    enforced: Whether to enforce despite inline ignores; omit to leave unchanged.",
+        "properties": {
+          "enabled_override": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabled Override"
+          },
+          "enforced": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enforced"
+          },
+          "severity_override": {
+            "anyOf": [
+              {
+                "maximum": 6.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Severity Override"
+          }
+        },
+        "title": "RuleConfigPutBody",
+        "type": "object"
+      },
+      "RuleDetailOut": {
+        "description": "Single rule with full override information.\n\nAttributes:\n    rule_id: Rule identifier.\n    category: Rule category (lint, modernize, risk, policy, secrets).\n    source: Validator source name.\n    description: Human-readable description.\n    scope: RuleScope enum value from registration.\n    default_severity: Catalog default severity (proto enum int).\n    default_severity_label: Label for default_severity.\n    resolved_severity: Effective severity after override.\n    resolved_severity_label: Label for resolved_severity.\n    enabled: Catalog default enabled flag.\n    resolved_enabled: Effective enabled state after override.\n    registered_at: ISO 8601 registration timestamp.\n    override: Active override row, if any.",
+        "properties": {
+          "category": {
+            "title": "Category",
+            "type": "string"
+          },
+          "default_severity": {
+            "title": "Default Severity",
+            "type": "integer"
+          },
+          "default_severity_label": {
+            "title": "Default Severity Label",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "override": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RuleOverrideOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "registered_at": {
+            "title": "Registered At",
+            "type": "string"
+          },
+          "resolved_enabled": {
+            "title": "Resolved Enabled",
+            "type": "boolean"
+          },
+          "resolved_severity": {
+            "title": "Resolved Severity",
+            "type": "integer"
+          },
+          "resolved_severity_label": {
+            "title": "Resolved Severity Label",
+            "type": "string"
+          },
+          "rule_id": {
+            "title": "Rule Id",
+            "type": "string"
+          },
+          "scope": {
+            "title": "Scope",
+            "type": "integer"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "rule_id",
+          "category",
+          "source",
+          "description",
+          "scope",
+          "default_severity",
+          "default_severity_label",
+          "resolved_severity",
+          "resolved_severity_label",
+          "enabled",
+          "resolved_enabled",
+          "registered_at",
+          "override"
+        ],
+        "title": "RuleDetailOut",
+        "type": "object"
+      },
+      "RuleListItem": {
+        "description": "One rule with default and resolved severity / enabled state.\n\nAttributes:\n    rule_id: Rule identifier.\n    category: Rule category (lint, modernize, risk, policy, secrets).\n    source: Validator source name.\n    description: Human-readable description.\n    scope: RuleScope enum value from registration.\n    default_severity: Catalog default severity (proto enum int).\n    default_severity_label: Label for default_severity.\n    resolved_severity: Effective severity after override.\n    resolved_severity_label: Label for resolved_severity.\n    enabled: Catalog default enabled flag.\n    resolved_enabled: Effective enabled state after override.\n    registered_at: ISO 8601 registration timestamp.\n    override: Active override row, if any.",
+        "properties": {
+          "category": {
+            "title": "Category",
+            "type": "string"
+          },
+          "default_severity": {
+            "title": "Default Severity",
+            "type": "integer"
+          },
+          "default_severity_label": {
+            "title": "Default Severity Label",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "override": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RuleOverrideOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "registered_at": {
+            "title": "Registered At",
+            "type": "string"
+          },
+          "resolved_enabled": {
+            "title": "Resolved Enabled",
+            "type": "boolean"
+          },
+          "resolved_severity": {
+            "title": "Resolved Severity",
+            "type": "integer"
+          },
+          "resolved_severity_label": {
+            "title": "Resolved Severity Label",
+            "type": "string"
+          },
+          "rule_id": {
+            "title": "Rule Id",
+            "type": "string"
+          },
+          "scope": {
+            "title": "Scope",
+            "type": "integer"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "rule_id",
+          "category",
+          "source",
+          "description",
+          "scope",
+          "default_severity",
+          "default_severity_label",
+          "resolved_severity",
+          "resolved_severity_label",
+          "enabled",
+          "resolved_enabled",
+          "registered_at",
+          "override"
+        ],
+        "title": "RuleListItem",
+        "type": "object"
+      },
+      "RuleOverrideOut": {
+        "description": "Serialized rule override for REST responses.\n\nAttributes:\n    severity_override: Overridden severity enum int, or None if not overridden.\n    enabled_override: Overridden enabled flag, or None if not overridden.\n    enforced: When True, inline apme:ignore is bypassed.\n    updated_at: ISO 8601 timestamp of the last override change.",
+        "properties": {
+          "enabled_override": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabled Override"
+          },
+          "enforced": {
+            "title": "Enforced",
+            "type": "boolean"
+          },
+          "severity_override": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Severity Override"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "severity_override",
+          "enabled_override",
+          "enforced",
+          "updated_at"
+        ],
+        "title": "RuleOverrideOut",
+        "type": "object"
+      },
+      "RuleStatsOut": {
+        "description": "Aggregate statistics for the registered rule catalog.\n\nAttributes:\n    total: Number of registered rules.\n    by_category: Counts keyed by category.\n    by_source: Counts keyed by validator source.\n    override_count: Number of rules that have at least one override row.",
+        "properties": {
+          "by_category": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "By Category",
+            "type": "object"
+          },
+          "by_source": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "By Source",
+            "type": "object"
+          },
+          "override_count": {
+            "title": "Override Count",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "by_category",
+          "by_source",
+          "override_count"
+        ],
+        "title": "RuleStatsOut",
+        "type": "object"
+      },
+      "SessionDetail": {
+        "description": "Session with its activity history.\n\nAttributes:\n    session_id: Deterministic project hash.\n    project_path: Filesystem path.\n    first_seen: First event timestamp.\n    last_seen: Most recent event timestamp.\n    scans: List of activity rows for this session (``scans`` table).",
+        "properties": {
+          "first_seen": {
+            "title": "First Seen",
+            "type": "string"
+          },
+          "last_seen": {
+            "title": "Last Seen",
+            "type": "string"
+          },
+          "project_path": {
+            "title": "Project Path",
+            "type": "string"
+          },
+          "scans": {
+            "items": {
+              "$ref": "#/components/schemas/ActivitySummary"
+            },
+            "title": "Scans",
+            "type": "array"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "project_path",
+          "first_seen",
+          "last_seen",
+          "scans"
+        ],
+        "title": "SessionDetail",
+        "type": "object"
+      },
+      "SessionSummary": {
+        "description": "Session list item.\n\nAttributes:\n    session_id: Deterministic project hash.\n    project_path: Filesystem path of the project.\n    first_seen: ISO 8601 timestamp of first event.\n    last_seen: ISO 8601 timestamp of most recent event.",
+        "properties": {
+          "first_seen": {
+            "title": "First Seen",
+            "type": "string"
+          },
+          "last_seen": {
+            "title": "Last Seen",
+            "type": "string"
+          },
+          "project_path": {
+            "title": "Project Path",
+            "type": "string"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "project_path",
+          "first_seen",
+          "last_seen"
+        ],
+        "title": "SessionSummary",
+        "type": "object"
+      },
+      "SubmitRequest": {
+        "description": "Request body for the unified SCM submit endpoint (ADR-050).\n\nPushes patched files to a branch and optionally opens a PR.\nAll fields are optional \u2014 the Gateway generates sensible defaults.\n\nWhen ``activity_id`` is provided, patched files are loaded from the\ndatabase (supports historical scans).  When omitted, the endpoint\nuses the live in-memory operation for the project.\n\nAttributes:\n    activity_id: Optional scan/activity ID to submit from DB history.\n    branch_name: Name for the new branch (default auto-generated).\n    create_pr: Whether to open a PR after pushing (default ``True``).\n    title: PR title (default auto-generated from remediation stats).\n    body: PR body in Markdown (default auto-generated).\n    scm_token: One-time SCM token (overrides project/global token).",
+        "properties": {
+          "activity_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Activity Id"
+          },
+          "body": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Body"
+          },
+          "branch_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch Name"
+          },
+          "create_pr": {
+            "default": true,
+            "title": "Create Pr",
+            "type": "boolean"
+          },
+          "scm_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scm Token"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "title": "SubmitRequest",
+        "type": "object"
+      },
+      "SubmitResponse": {
+        "description": "Response after a successful SCM submit (ADR-050).\n\nAttributes:\n    branch_name: Name of the head branch that was created.\n    commit_sha: SHA of the commit pushed to the branch.\n    pr_url: Web URL of the PR, or ``None`` if ``create_pr`` was false.\n    provider: SCM provider that was used (e.g. ``github``).",
+        "properties": {
+          "branch_name": {
+            "title": "Branch Name",
+            "type": "string"
+          },
+          "commit_sha": {
+            "title": "Commit Sha",
+            "type": "string"
+          },
+          "pr_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pr Url"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          }
+        },
+        "required": [
+          "branch_name",
+          "commit_sha",
+          "provider"
+        ],
+        "title": "SubmitResponse",
+        "type": "object"
+      },
+      "SuppressionSchema": {
+        "description": "A fingerprint-based violation suppression (ADR-055).\n\nAttributes:\n    id: Auto-increment PK.\n    fingerprint_hash: SHA-256 hex digest.\n    fingerprint_mode: Granularity \u2014 ``full`` or ``rule_only``.\n    rule_id: Canonical rule identifier.\n    scope: ``global`` or ``project:<uuid>``.\n    reason: Human justification.\n    created_by: Author of the suppression.\n    created_at: ISO 8601 creation timestamp.",
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "title": "Created By",
+            "type": "string"
+          },
+          "fingerprint_hash": {
+            "title": "Fingerprint Hash",
+            "type": "string"
+          },
+          "fingerprint_mode": {
+            "title": "Fingerprint Mode",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "rule_id": {
+            "title": "Rule Id",
+            "type": "string"
+          },
+          "scope": {
+            "title": "Scope",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "fingerprint_hash",
+          "fingerprint_mode",
+          "rule_id",
+          "scope",
+          "reason",
+          "created_by",
+          "created_at"
+        ],
+        "title": "SuppressionSchema",
+        "type": "object"
+      },
+      "TopViolation": {
+        "description": "Top-violated rule.\n\nAttributes:\n    rule_id: Rule identifier.\n    count: Number of times the rule was violated.",
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "rule_id": {
+            "title": "Rule Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "rule_id",
+          "count"
+        ],
+        "title": "TopViolation",
+        "type": "object"
+      },
+      "TrendPoint": {
+        "description": "Violation trend data point for a session.\n\nAttributes:\n    scan_id: UUID of the run (``scans.scan_id`` column).\n    created_at: ISO 8601 timestamp.\n    total_violations: Total violation count.\n    fixable: Tier-1 auto-fixable violation count.\n    scan_type: Either ``check`` or ``remediate`` (stored in ``scans.scan_type``).",
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "fixable": {
+            "title": "Fixable",
+            "type": "integer"
+          },
+          "scan_id": {
+            "title": "Scan Id",
+            "type": "string"
+          },
+          "scan_type": {
+            "title": "Scan Type",
+            "type": "string"
+          },
+          "total_violations": {
+            "title": "Total Violations",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "scan_id",
+          "created_at",
+          "total_violations",
+          "fixable",
+          "scan_type"
+        ],
+        "title": "TrendPoint",
+        "type": "object"
+      },
+      "UpdateGalaxyServerRequest": {
+        "description": "Partial update for Galaxy server fields.\n\nAttributes:\n    name: New display label.\n    url: New base API URL.\n    token: New API token (omit or None to leave unchanged).\n    auth_url: New SSO endpoint.",
+        "properties": {
+          "auth_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auth Url"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Token"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          }
+        },
+        "title": "UpdateGalaxyServerRequest",
+        "type": "object"
+      },
+      "UpdateProjectRequest": {
+        "description": "Partial update for project fields.\n\nAttributes:\n    name: New display label.\n    repo_url: New clone URL.\n    branch: New branch.\n    scm_token: New SCM token (ADR-050). Set to empty string to clear.\n    scm_provider: Explicit provider type (ADR-050). Set to empty string to clear.",
+        "properties": {
+          "branch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "repo_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repo Url"
+          },
+          "scm_provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scm Provider"
+          },
+          "scm_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scm Token"
+          }
+        },
+        "title": "UpdateProjectRequest",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      },
+      "ViolationDetail": {
+        "description": "Violation row.\n\nAttributes:\n    id: Auto-increment ID.\n    rule_id: Rule identifier (e.g. L001).\n    level: Severity level string.\n    message: Human-readable description.\n    file: Relative file path.\n    line: Line number or None.\n    path: YAML path within the file.\n    remediation_class: Numeric remediation tier.\n    remediation_resolution: Numeric remediation resolution status.\n    scope: Numeric rule scope.\n    validator_source: Validator that produced this (native, opa, ansible, gitleaks).\n    original_yaml: Full node YAML as originally written.\n    fixed_yaml: Node YAML after transforms (fixed violations only).\n    co_fixes: Other rule IDs whose fixes are included in this node's diff.\n    node_line_start: File line where the node starts.\n    ai_reason: Why the AI could not fix this violation (ai_abstained only).\n    ai_suggestion: Manual remediation guidance from the AI (ai_abstained only).\n    suppressed: True if this violation matches an active suppression (ADR-055).\n    review_status: Human/gate decision (ADR-062); null if never reviewed.",
+        "properties": {
+          "ai_reason": {
+            "default": "",
+            "title": "Ai Reason",
+            "type": "string"
+          },
+          "ai_suggestion": {
+            "default": "",
+            "title": "Ai Suggestion",
+            "type": "string"
+          },
+          "co_fixes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Co Fixes",
+            "type": "array"
+          },
+          "file": {
+            "title": "File",
+            "type": "string"
+          },
+          "fixed_yaml": {
+            "default": "",
+            "title": "Fixed Yaml",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "level": {
+            "title": "Level",
+            "type": "string"
+          },
+          "line": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Line"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "node_line_start": {
+            "default": 0,
+            "title": "Node Line Start",
+            "type": "integer"
+          },
+          "original_yaml": {
+            "default": "",
+            "title": "Original Yaml",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "remediation_class": {
+            "title": "Remediation Class",
+            "type": "integer"
+          },
+          "remediation_resolution": {
+            "default": 0,
+            "title": "Remediation Resolution",
+            "type": "integer"
+          },
+          "review_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Status"
+          },
+          "rule_id": {
+            "title": "Rule Id",
+            "type": "string"
+          },
+          "scope": {
+            "title": "Scope",
+            "type": "integer"
+          },
+          "suppressed": {
+            "default": false,
+            "title": "Suppressed",
+            "type": "boolean"
+          },
+          "validator_source": {
+            "default": "",
+            "title": "Validator Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "rule_id",
+          "level",
+          "message",
+          "file",
+          "line",
+          "path",
+          "remediation_class",
+          "scope"
+        ],
+        "title": "ViolationDetail",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "description": "Reporting persistence and REST API for projects, activity, and operations (ADR-020 / ADR-029 / ADR-052). Public contract under /api/v1 (ADR-060).",
+    "title": "APME Gateway",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/v1/activity": {
+      "get": {
+        "description": "List activity, optionally filtered by session.\n\nArgs:\n    session_id: Optional session filter.\n    limit: Page size.\n    offset: Row offset.\n\nReturns:\n    Paginated list of activity summaries.",
+        "operationId": "list_activity_api_v1_activity_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "session_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaginatedResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Activity"
+      }
+    },
+    "/api/v1/activity/{activity_id}": {
+      "delete": {
+        "description": "Delete an activity row and its related data.\n\nArgs:\n    activity_id: UUID of the run to delete (``scans.scan_id``).\n\nRaises:\n    HTTPException: 404 if not found.",
+        "operationId": "delete_activity_api_v1_activity__activity_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "activity_id",
+            "required": true,
+            "schema": {
+              "title": "Activity Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Activity"
+      },
+      "get": {
+        "description": "Fetch one activity run with violations, proposals, and logs.\n\nViolations matched by an active suppression (ADR-055) are annotated\nwith ``suppressed=True``.  Fingerprints are computed using the canonical\nnormalized-YAML algorithm from ``apme_engine.fingerprint``.\n\nArgs:\n    activity_id: UUID of the run (``scans.scan_id``).\n\nReturns:\n    Full activity detail.\n\nRaises:\n    HTTPException: 404 if not found.",
+        "operationId": "get_activity_detail_api_v1_activity__activity_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "activity_id",
+            "required": true,
+            "schema": {
+              "title": "Activity Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActivityDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Activity Detail"
+      }
+    },
+    "/api/v1/ai/models": {
+      "get": {
+        "description": "Return AI models available from the Abbenay daemon via Primary.\n\nCalls the Primary's ``ListAIModels`` gRPC method and translates the\nresponse to JSON.  Returns an empty list when Primary or Abbenay is\nunreachable (graceful degradation).\n\nReturns:\n    List of available AI models.",
+        "operationId": "list_ai_models_api_v1_ai_models_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AiModelInfo"
+                  },
+                  "title": "Response List Ai Models Api V1 Ai Models Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Ai Models"
+      }
+    },
+    "/api/v1/collections": {
+      "get": {
+        "description": "Return all collections seen across projects with usage counts.\n\nArgs:\n    limit: Maximum rows.\n    offset: Rows to skip.\n\nReturns:\n    List of collection summaries.",
+        "operationId": "list_collections_api_v1_collections_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 200,
+              "maximum": 1000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/CollectionSummary"
+                  },
+                  "title": "Response List Collections Api V1 Collections Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Collections"
+      }
+    },
+    "/api/v1/collections/{fqcn}": {
+      "get": {
+        "description": "Return detail for a specific collection.\n\nArgs:\n    fqcn: Fully-qualified collection name (e.g. ``community.general``).\n\nReturns:\n    Collection detail with version list and dependent projects.\n\nRaises:\n    HTTPException: 404 if collection not found.",
+        "operationId": "get_collection_detail_api_v1_collections__fqcn__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "fqcn",
+            "required": true,
+            "schema": {
+              "title": "Fqcn",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CollectionDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Collection Detail"
+      }
+    },
+    "/api/v1/collections/{fqcn}/projects": {
+      "get": {
+        "description": "Return projects that depend on a specific collection.\n\nArgs:\n    fqcn: Fully-qualified collection name.\n\nReturns:\n    List of project references with the collection version.",
+        "operationId": "list_collection_projects_api_v1_collections__fqcn__projects_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "fqcn",
+            "required": true,
+            "schema": {
+              "title": "Fqcn",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/CollectionProjectRef"
+                  },
+                  "title": "Response List Collection Projects Api V1 Collections  Fqcn  Projects Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Collection Projects"
+      }
+    },
+    "/api/v1/dashboard/rankings": {
+      "get": {
+        "description": "Return ranked projects for dashboard tables.\n\nArgs:\n    sort_by: Ranking criterion.\n    order: Sort direction.\n    limit: Max results.\n\nReturns:\n    Ranked list of projects.",
+        "operationId": "dashboard_rankings_api_v1_dashboard_rankings_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "sort_by",
+            "required": false,
+            "schema": {
+              "default": "health_score",
+              "title": "Sort By",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "order",
+            "required": false,
+            "schema": {
+              "default": "desc",
+              "title": "Order",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 10,
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ProjectRanking"
+                  },
+                  "title": "Response Dashboard Rankings Api V1 Dashboard Rankings Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Dashboard Rankings"
+      }
+    },
+    "/api/v1/dashboard/summary": {
+      "get": {
+        "description": "Return cross-project aggregate statistics.\n\nReturns:\n    Dashboard summary with totals and averages.",
+        "operationId": "dashboard_summary_endpoint_api_v1_dashboard_summary_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DashboardSummary"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Dashboard Summary Endpoint"
+      }
+    },
+    "/api/v1/dep-health": {
+      "get": {
+        "description": "Return aggregated dependency health findings from latest scans.\n\nSuppressed violations (ADR-055) are excluded from counts.\n\nReturns:\n    Summary of collection health findings and Python CVEs.",
+        "operationId": "dep_health_summary_api_v1_dep_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DepHealthSummary"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Dep Health Summary"
+      }
+    },
+    "/api/v1/feedback": {
+      "post": {
+        "description": "Create a GitHub issue from user feedback.\n\nArgs:\n    req: The feedback request payload.\n\nReturns:\n    FeedbackResponse with issue URL and number.\n\nRaises:\n    HTTPException: If feedback is disabled or GitHub API fails.",
+        "operationId": "submit_feedback_api_v1_feedback_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeedbackRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeedbackResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Submit Feedback",
+        "tags": [
+          "feedback"
+        ]
+      }
+    },
+    "/api/v1/feedback/enabled": {
+      "get": {
+        "description": "Check whether the feedback feature is enabled.\n\nReturns:\n    Dict with ``enabled`` boolean.",
+        "operationId": "feedback_enabled_api_v1_feedback_enabled_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "boolean"
+                  },
+                  "title": "Response Feedback Enabled Api V1 Feedback Enabled Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Feedback Enabled",
+        "tags": [
+          "feedback"
+        ]
+      }
+    },
+    "/api/v1/health": {
+      "get": {
+        "description": "Check gateway health including database and upstream services.\n\nReturns:\n    HealthStatus with overall, database, and per-component statuses.",
+        "operationId": "health_api_v1_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Health"
+      }
+    },
+    "/api/v1/notifications": {
+      "get": {
+        "description": "Return notifications ordered newest-first.\n\nArgs:\n    limit: Page size.\n    offset: Row offset.\n    unread_only: When True, return only unread notifications.\n\nReturns:\n    Paginated list of notifications.",
+        "operationId": "list_notifications_endpoint_api_v1_notifications_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "unread_only",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Unread Only",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaginatedResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Notifications Endpoint"
+      }
+    },
+    "/api/v1/notifications/read-all": {
+      "post": {
+        "description": "Mark all unread notifications as read.\n\nReturns:\n    JSON with the count of updated rows.",
+        "operationId": "mark_all_notifications_read_endpoint_api_v1_notifications_read_all_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Mark All Notifications Read Endpoint"
+      }
+    },
+    "/api/v1/notifications/stream": {
+      "get": {
+        "description": "SSE stream for real-time notification delivery.\n\nClients connect with ``EventSource`` and receive JSON notification\npayloads as ``data:`` lines.  The connection stays open until the\nclient disconnects.  A keep-alive comment is sent every 15 seconds\nto prevent proxy/CDN idle-timeout disconnects.\n\nReturns:\n    Streaming SSE response.",
+        "operationId": "notification_stream_api_v1_notifications_stream_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Notification Stream"
+      }
+    },
+    "/api/v1/notifications/{notification_id}": {
+      "delete": {
+        "description": "Delete a single notification.\n\nArgs:\n    notification_id: Notification PK.\n\nRaises:\n    HTTPException: 404 if notification not found.",
+        "operationId": "delete_notification_endpoint_api_v1_notifications__notification_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "notification_id",
+            "required": true,
+            "schema": {
+              "title": "Notification Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Notification Endpoint"
+      }
+    },
+    "/api/v1/notifications/{notification_id}/read": {
+      "patch": {
+        "description": "Mark a single notification as read.\n\nArgs:\n    notification_id: Notification PK.\n\nReturns:\n    JSON acknowledgement.\n\nRaises:\n    HTTPException: 404 if notification not found.",
+        "operationId": "mark_notification_read_endpoint_api_v1_notifications__notification_id__read_patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "notification_id",
+            "required": true,
+            "schema": {
+              "title": "Notification Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Mark Notification Read Endpoint"
+      }
+    },
+    "/api/v1/operations/active": {
+      "get": {
+        "description": "Return all currently active (non-terminal) operations.\n\nReturns:\n    List of active operation summaries with project metadata.",
+        "operationId": "list_active_operations_api_v1_operations_active_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response List Active Operations Api V1 Operations Active Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Active Operations"
+      }
+    },
+    "/api/v1/projects": {
+      "get": {
+        "description": "List all projects with summary data.\n\nArgs:\n    sort_by: Column to sort by.\n    order: Sort direction (asc or desc).\n    limit: Page size.\n    offset: Page offset.\n\nReturns:\n    Paginated list of project summaries.",
+        "operationId": "list_projects_api_v1_projects_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "sort_by",
+            "required": false,
+            "schema": {
+              "default": "created_at",
+              "title": "Sort By",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "order",
+            "required": false,
+            "schema": {
+              "default": "desc",
+              "title": "Order",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaginatedResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Projects"
+      },
+      "post": {
+        "description": "Create a new project.\n\nArgs:\n    body: Project creation payload.\n\nReturns:\n    Newly created project summary.\n\nRaises:\n    HTTPException: 409 if a project with the same name already exists.",
+        "operationId": "create_project_api_v1_projects_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateProjectRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectSummary"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Project"
+      }
+    },
+    "/api/v1/projects/lookup": {
+      "get": {
+        "description": "Resolve a project by normalized SCM clone URL.\n\nUsed by the Backstage portal to map catalog git-repository entities to\nAPME projects without fetching the full project list.\n\nArgs:\n    repo_url: HTTPS clone URL (with or without ``.git`` suffix).\n    branch: Optional branch name. When provided, both URL and branch must\n        match (required when one repo is registered per branch).\n\nReturns:\n    Full project detail for the matching project.\n\nRaises:\n    HTTPException: 404 when no project matches the normalized URL.",
+        "operationId": "lookup_project_by_repo_url_api_v1_projects_lookup_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "repo_url",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "title": "Repo Url",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "branch",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Branch"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Lookup Project By Repo Url"
+      }
+    },
+    "/api/v1/projects/{project_id}": {
+      "delete": {
+        "description": "Delete a project and cascade to its scan rows.\n\nArgs:\n    project_id: Project UUID.\n\nRaises:\n    HTTPException: 404 if not found.",
+        "operationId": "delete_project_endpoint_api_v1_projects__project_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Project Endpoint"
+      },
+      "get": {
+        "description": "Fetch a project with latest activity info.\n\nPerforms a lightweight ``git ls-remote`` to detect whether the remote\nbranch has new commits since the last scan.\n\nArgs:\n    project_id: Project UUID.\n\nReturns:\n    Full project detail.\n\nRaises:\n    HTTPException: 404 if project not found.",
+        "operationId": "get_project_detail_api_v1_projects__project_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Project Detail"
+      },
+      "patch": {
+        "description": "Update project metadata.\n\nArgs:\n    project_id: Project UUID.\n    body: Fields to update.\n\nReturns:\n    Updated project summary.\n\nRaises:\n    HTTPException: 400 if no fields provided, 404 if not found.",
+        "operationId": "update_project_api_v1_projects__project_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateProjectRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectSummary"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Project"
+      }
+    },
+    "/api/v1/projects/{project_id}/activity": {
+      "get": {
+        "description": "Return activity (check/remediate runs) for a project.\n\nArgs:\n    project_id: Project UUID.\n    limit: Page size.\n    offset: Page offset.\n\nReturns:\n    Paginated activity summaries.\n\nRaises:\n    HTTPException: 404 if project not found.",
+        "operationId": "list_project_activity_api_v1_projects__project_id__activity_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaginatedResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Project Activity"
+      }
+    },
+    "/api/v1/projects/{project_id}/dep-health": {
+      "get": {
+        "description": "Return dependency health findings for a specific project.\n\nArgs:\n    project_id: UUID of the project.\n\nReturns:\n    Summary of collection health findings and Python CVEs for this project.\n\nRaises:\n    HTTPException: 404 if project not found.",
+        "operationId": "project_dep_health_summary_api_v1_projects__project_id__dep_health_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DepHealthSummary"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Project Dep Health Summary"
+      }
+    },
+    "/api/v1/projects/{project_id}/dependencies": {
+      "get": {
+        "description": "Return the dependency manifest for a project's latest scan.\n\nArgs:\n    project_id: Project UUID.\n\nReturns:\n    Collections, Python packages, and ansible-core version.\n\nRaises:\n    HTTPException: 404 if project not found.",
+        "operationId": "project_dependencies_endpoint_api_v1_projects__project_id__dependencies_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectDependencies"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Project Dependencies Endpoint"
+      }
+    },
+    "/api/v1/projects/{project_id}/graph": {
+      "get": {
+        "description": "Return the ContentGraph JSON for a project's latest scan.\n\nThe response is the raw ``ContentGraph.to_dict()`` output \u2014 nodes,\nedges, and execution_edges \u2014 ready for client-side D3/dagre rendering.\n\nArgs:\n    project_id: Project UUID or name.\n\nReturns:\n    JSON response with graph data.\n\nRaises:\n    HTTPException: 404 if project not found or no graph data available.",
+        "operationId": "project_graph_endpoint_api_v1_projects__project_id__graph_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Project Graph Endpoint"
+      }
+    },
+    "/api/v1/projects/{project_id}/operation": {
+      "get": {
+        "description": "Return the current operation state snapshot for a project.\n\nArgs:\n    project_id: Target project UUID.\n\nReturns:\n    Full serialised ``OperationState``.\n\nRaises:\n    HTTPException: 404 if no operation exists for this project.",
+        "operationId": "get_operation_state_api_v1_projects__project_id__operation_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Operation State Api V1 Projects  Project Id  Operation Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Operation State"
+      },
+      "post": {
+        "description": "Initiate a new check or remediate operation for a project.\n\nRejects with 409 if the project already has an active operation, or if\na remediate would wipe an interactive draft working set without\n``abandon_working_set=true`` (ADR-062 Phase 2).\n\nArgs:\n    project_id: Target project UUID.\n    body: Action and options payload.\n\nReturns:\n    The new operation identifier.\n\nRaises:\n    HTTPException: 404 if project not found; 409 if operation active or\n        ``working_set_in_progress`` without abandon opt-in.",
+        "operationId": "initiate_operation_api_v1_projects__project_id__operation_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OperateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Initiate Operation"
+      }
+    },
+    "/api/v1/projects/{project_id}/operation/approve": {
+      "post": {
+        "description": "Submit approval decisions for live proposals (engine ids).\n\nGate-commits Gateway working-set rows (omit = decline) and rolls\nanalytics when claimable, then resolves the operation's\n``approval_future`` so the background gRPC task can send the approval\nto Primary. ``review_status`` is stamped when violation ids are already\nlinked; otherwise FixCompleted stamps after the id bridge. Request /\nresponse shape is unchanged (ADR-060).\n\nArgs:\n    project_id: Target project UUID.\n    body: Approved **engine** proposal IDs.\n\nReturns:\n    Confirmation message.\n\nRaises:\n    HTTPException: 404 if no operation, 409 if not in awaiting_approval.",
+        "operationId": "approve_proposals_api_v1_projects__project_id__operation_approve_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApproveRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Approve Proposals Api V1 Projects  Project Id  Operation Approve Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Approve Proposals"
+      }
+    },
+    "/api/v1/projects/{project_id}/operation/begin-remediate": {
+      "post": {
+        "description": "Leave ADR-064 assess pause and enter Gate 1 on the held session.\n\nArgs:\n    project_id: Target project UUID.\n\nReturns:\n    Confirmation message.\n\nRaises:\n    HTTPException: 404 if no operation; 409 ``invalid_status`` when not\n        ``assessed``; 409 ``session_expired`` when the begin future is\n        missing and remediation has not started (client may start a fresh\n        remediate). Idempotent: once begun (including after the bridge\n        clears the future while still ``ASSESSED``), repeated calls succeed.",
+        "operationId": "begin_remediate_api_v1_projects__project_id__operation_begin_remediate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Begin Remediate Api V1 Projects  Project Id  Operation Begin Remediate Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Begin Remediate"
+      }
+    },
+    "/api/v1/projects/{project_id}/operation/cancel": {
+      "post": {
+        "description": "Cancel an in-flight operation.\n\nArgs:\n    project_id: Target project UUID.\n\nReturns:\n    Confirmation message.\n\nRaises:\n    HTTPException: 404 if no operation, 409 if already terminal.",
+        "operationId": "cancel_operation_api_v1_projects__project_id__operation_cancel_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Cancel Operation Api V1 Projects  Project Id  Operation Cancel Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Cancel Operation"
+      }
+    },
+    "/api/v1/projects/{project_id}/operation/events": {
+      "get": {
+        "description": "Server-Sent Events stream for real-time operation state.\n\nOn connect, sends a ``snapshot`` event with the full current state.\nThen streams delta events (``status_changed``, ``progress``,\n``proposals``, ``result``, ``pr_created``) until the operation\nreaches a terminal state or the client disconnects.\n\nArgs:\n    project_id: Target project UUID.\n    request: The incoming HTTP request (for disconnect detection).\n\nReturns:\n    SSE streaming response.\n\nRaises:\n    HTTPException: 404 if no operation exists for this project.",
+        "operationId": "operation_events_api_v1_projects__project_id__operation_events_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Operation Events"
+      }
+    },
+    "/api/v1/projects/{project_id}/operation/proposals": {
+      "patch": {
+        "description": "Optimistic draft checkbox updates (ADR-062 Phase 2).\n\nUpdates Gateway ``proposals.status`` and sets ``draft=1``. Does not\nstamp ``review_status``, write analytics, or resolve ``approval_future``.\n\nArgs:\n    project_id: Target project UUID.\n    body: Draft status updates (gateway or engine proposal ids).\n\nReturns:\n    Updated proposal summaries.\n\nRaises:\n    HTTPException: 404/409 on missing operation or bad state; 400 on bad ids.",
+        "operationId": "patch_draft_proposals_api_v1_projects__project_id__operation_proposals_patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DraftProposalsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Patch Draft Proposals Api V1 Projects  Project Id  Operation Proposals Patch",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Patch Draft Proposals"
+      }
+    },
+    "/api/v1/projects/{project_id}/operation/submit": {
+      "post": {
+        "description": "Push patched files to a branch and optionally open a PR (ADR-050).\n\nThis is the unified SCM submit endpoint that replaces the former\n``/activity/{id}/pull-request`` and ``/operation/create-pr`` endpoints.\n\nTwo modes:\n\n- **Live operation** (no ``activity_id``): uses the in-memory\n  ``OperationRegistry`` for the project \u2014 requires a completed\n  remediation operation.\n- **Historical activity** (``activity_id`` provided): loads patched\n  files from the database \u2014 works for any past remediation that still\n  has stored patches.\n\nArgs:\n    project_id: Target project UUID.\n    body: Optional submit options (branch name, create_pr flag, etc.).\n\nReturns:\n    Branch, commit SHA, optional PR URL, and provider.\n\nRaises:\n    HTTPException: 404/409/422/502 depending on state.",
+        "operationId": "submit_operation_api_v1_projects__project_id__operation_submit_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/SubmitRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubmitResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Submit Operation"
+      }
+    },
+    "/api/v1/projects/{project_id}/sbom": {
+      "get": {
+        "description": "Return an SBOM for a project's latest scan.\n\nArgs:\n    project_id: Project UUID or name.\n    format: SBOM output format (currently only ``cyclonedx``).\n\nReturns:\n    CycloneDX 1.5 JSON response.\n\nRaises:\n    HTTPException: 400 for unsupported format, 404 if project or scan data not found.",
+        "operationId": "project_sbom_endpoint_api_v1_projects__project_id__sbom_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "format",
+            "required": false,
+            "schema": {
+              "default": "cyclonedx",
+              "title": "Format",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Project Sbom Endpoint"
+      }
+    },
+    "/api/v1/projects/{project_id}/trend": {
+      "get": {
+        "description": "Return violation trend for a project over time.\n\nArgs:\n    project_id: Project UUID.\n    limit: Max number of data points.\n\nReturns:\n    List of trend points ordered newest-first.\n\nRaises:\n    HTTPException: 404 if project not found.",
+        "operationId": "project_trend_endpoint_api_v1_projects__project_id__trend_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TrendPoint"
+                  },
+                  "title": "Response Project Trend Endpoint Api V1 Projects  Project Id  Trend Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Project Trend Endpoint"
+      }
+    },
+    "/api/v1/projects/{project_id}/violations": {
+      "get": {
+        "description": "Return violations from the latest check run of a project.\n\nArgs:\n    project_id: Project UUID.\n    severity: Optional severity filter.\n    rule_id: Optional rule_id filter.\n    limit: Maximum rows.\n    offset: Rows to skip.\n\nReturns:\n    List of violation details.\n\nRaises:\n    HTTPException: 404 if project not found.",
+        "operationId": "list_project_violations_api_v1_projects__project_id__violations_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "severity",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Severity"
+            }
+          },
+          {
+            "in": "query",
+            "name": "rule_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Rule Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ViolationDetail"
+                  },
+                  "title": "Response List Project Violations Api V1 Projects  Project Id  Violations Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Project Violations"
+      }
+    },
+    "/api/v1/python-packages": {
+      "get": {
+        "description": "Return all Python packages seen across projects with usage counts.\n\nArgs:\n    limit: Maximum rows.\n    offset: Rows to skip.\n\nReturns:\n    List of package summaries.",
+        "operationId": "list_python_packages_api_v1_python_packages_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 200,
+              "maximum": 1000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PythonPackageSummary"
+                  },
+                  "title": "Response List Python Packages Api V1 Python Packages Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Python Packages"
+      }
+    },
+    "/api/v1/python-packages/{name}": {
+      "get": {
+        "description": "Return detail for a specific Python package.\n\nArgs:\n    name: PyPI package name.\n\nReturns:\n    Package detail with version list and dependent projects.\n\nRaises:\n    HTTPException: 404 if package not found.",
+        "operationId": "get_python_package_detail_api_v1_python_packages__name__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PythonPackageDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Python Package Detail"
+      }
+    },
+    "/api/v1/rules": {
+      "get": {
+        "description": "List registered rules with optional filters and resolved config.\n\nArgs:\n    category: Filter by rule category.\n    source: Filter by validator source.\n    enabled_only: If true, only rules enabled by catalog default.\n\nReturns:\n    Rules with default and effective severity labels and override metadata.",
+        "operationId": "list_rules_endpoint_api_v1_rules_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "category",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Category"
+            }
+          },
+          {
+            "in": "query",
+            "name": "source",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Source"
+            }
+          },
+          {
+            "in": "query",
+            "name": "enabled_only",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Enabled Only",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/RuleListItem"
+                  },
+                  "title": "Response List Rules Endpoint Api V1 Rules Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Rules Endpoint"
+      }
+    },
+    "/api/v1/rules/stats": {
+      "get": {
+        "description": "Return summary statistics for the rule catalog.\n\nReturns:\n    Totals grouped by category and source, plus override count.",
+        "operationId": "rule_stats_endpoint_api_v1_rules_stats_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuleStatsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Rule Stats Endpoint"
+      }
+    },
+    "/api/v1/rules/{rule_id}": {
+      "get": {
+        "description": "Return one rule with override details.\n\nArgs:\n    rule_id: Rule identifier (e.g. ``L026``).\n\nReturns:\n    Full rule detail.\n\nRaises:\n    HTTPException: 404 if the rule is not registered.",
+        "operationId": "get_rule_endpoint_api_v1_rules__rule_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "rule_id",
+            "required": true,
+            "schema": {
+              "title": "Rule Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuleDetailOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Rule Endpoint"
+      }
+    },
+    "/api/v1/rules/{rule_id}/config": {
+      "delete": {
+        "description": "Remove overrides for a rule (revert to catalog defaults).\n\nArgs:\n    rule_id: Rule identifier.\n\nRaises:\n    HTTPException: 404 if the rule does not exist or has no override.",
+        "operationId": "delete_rule_config_api_v1_rules__rule_id__config_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "rule_id",
+            "required": true,
+            "schema": {
+              "title": "Rule Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Rule Config"
+      },
+      "put": {
+        "description": "Create or update overrides for a rule (partial merge per field).\n\nArgs:\n    rule_id: Rule identifier.\n    body: Fields to set; omitted keys leave existing override values unchanged.\n\nReturns:\n    Updated rule detail.\n\nRaises:\n    HTTPException: 400 if the body is empty, 404 if the rule does not exist.",
+        "operationId": "put_rule_config_api_v1_rules__rule_id__config_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "rule_id",
+            "required": true,
+            "schema": {
+              "title": "Rule Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RuleConfigPutBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuleDetailOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Rule Config"
+      }
+    },
+    "/api/v1/sessions": {
+      "get": {
+        "description": "List sessions ordered by most recently seen.\n\nArgs:\n    limit: Page size.\n    offset: Row offset.\n\nReturns:\n    Paginated list of sessions.",
+        "operationId": "list_sessions_api_v1_sessions_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaginatedResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Sessions"
+      }
+    },
+    "/api/v1/sessions/{session_id}": {
+      "get": {
+        "description": "Fetch a session and its activity rows.\n\nArgs:\n    session_id: Deterministic session hash.\n\nReturns:\n    Session with embedded activity list.\n\nRaises:\n    HTTPException: 404 if session not found.",
+        "operationId": "get_session_detail_api_v1_sessions__session_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Session Detail"
+      }
+    },
+    "/api/v1/sessions/{session_id}/trend": {
+      "get": {
+        "description": "Return violation trend for a session over time.\n\nArgs:\n    session_id: Deterministic session hash.\n\nReturns:\n    List of trend data points.\n\nRaises:\n    HTTPException: 404 if session not found.",
+        "operationId": "session_trend_endpoint_api_v1_sessions__session_id__trend_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TrendPoint"
+                  },
+                  "title": "Response Session Trend Endpoint Api V1 Sessions  Session Id  Trend Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Session Trend Endpoint"
+      }
+    },
+    "/api/v1/settings/galaxy-servers": {
+      "get": {
+        "description": "Return all globally configured Galaxy servers.\n\nReturns:\n    List of Galaxy server definitions (tokens masked).",
+        "operationId": "list_galaxy_servers_api_v1_settings_galaxy_servers_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/GalaxyServerSchema"
+                  },
+                  "title": "Response List Galaxy Servers Api V1 Settings Galaxy Servers Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Galaxy Servers"
+      },
+      "post": {
+        "description": "Create a new global Galaxy server definition.\n\nArgs:\n    body: Galaxy server creation payload.\n\nReturns:\n    Newly created Galaxy server (token masked).\n\nRaises:\n    HTTPException: 409 if a server with the same name already exists.",
+        "operationId": "create_galaxy_server_api_v1_settings_galaxy_servers_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateGalaxyServerRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GalaxyServerSchema"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Galaxy Server"
+      }
+    },
+    "/api/v1/settings/galaxy-servers/{server_id}": {
+      "delete": {
+        "description": "Delete a Galaxy server definition.\n\nArgs:\n    server_id: Primary key.\n\nRaises:\n    HTTPException: 404 if not found.",
+        "operationId": "delete_galaxy_server_api_v1_settings_galaxy_servers__server_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "server_id",
+            "required": true,
+            "schema": {
+              "title": "Server Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Galaxy Server"
+      },
+      "get": {
+        "description": "Fetch a single Galaxy server by ID.\n\nArgs:\n    server_id: Primary key.\n\nReturns:\n    Galaxy server definition (token masked).\n\nRaises:\n    HTTPException: 404 if not found.",
+        "operationId": "get_galaxy_server_api_v1_settings_galaxy_servers__server_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "server_id",
+            "required": true,
+            "schema": {
+              "title": "Server Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GalaxyServerSchema"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Galaxy Server"
+      },
+      "patch": {
+        "description": "Update a Galaxy server definition.\n\nArgs:\n    server_id: Primary key.\n    body: Fields to update.\n\nReturns:\n    Updated Galaxy server (token masked).\n\nRaises:\n    HTTPException: 400 if no fields provided, 404 if not found,\n        409 if the new name conflicts with an existing server.",
+        "operationId": "update_galaxy_server_api_v1_settings_galaxy_servers__server_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "server_id",
+            "required": true,
+            "schema": {
+              "title": "Server Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateGalaxyServerRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GalaxyServerSchema"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Galaxy Server"
+      }
+    },
+    "/api/v1/stats/ai-acceptance": {
+      "get": {
+        "description": "Return per-rule AI proposal acceptance statistics.\n\nReturns:\n    List of rules with approval/rejection counts and confidence.",
+        "operationId": "ai_acceptance_endpoint_api_v1_stats_ai_acceptance_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AiAcceptanceEntry"
+                  },
+                  "title": "Response Ai Acceptance Endpoint Api V1 Stats Ai Acceptance Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Ai Acceptance Endpoint"
+      }
+    },
+    "/api/v1/stats/remediation-rates": {
+      "get": {
+        "description": "Return most frequently violated rules in remediate runs.\n\nArgs:\n    limit: Maximum number of rules to return.\n\nReturns:\n    List of rules sorted by remediation count descending.",
+        "operationId": "remediation_rates_endpoint_api_v1_stats_remediation_rates_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/RemediationRateEntry"
+                  },
+                  "title": "Response Remediation Rates Endpoint Api V1 Stats Remediation Rates Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Remediation Rates Endpoint"
+      }
+    },
+    "/api/v1/suppressions": {
+      "get": {
+        "description": "List suppressions, optionally filtered by scope (paginated).\n\nArgs:\n    scope: Optional scope filter (``global``, ``project:<uuid>``).\n    limit: Maximum number of records to return (1\u20131000, default 100).\n    offset: Number of records to skip for pagination.\n\nReturns:\n    List of suppression records.",
+        "operationId": "list_suppressions_endpoint_api_v1_suppressions_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "scope",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Scope"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 1000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SuppressionSchema"
+                  },
+                  "title": "Response List Suppressions Endpoint Api V1 Suppressions Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Suppressions Endpoint"
+      },
+      "post": {
+        "description": "Create a suppression (acknowledge a violation).\n\nWhen ``original_yaml`` is provided in the request body, the server\ncomputes the canonical fingerprint (using normalized YAML, matching\nthe CLI algorithm). Otherwise it falls back to the caller-supplied\n``fingerprint_hash``.\n\nArgs:\n    body: Suppression creation payload with fingerprint and reason.\n\nReturns:\n    The created suppression record.\n\nRaises:\n    HTTPException: 409 if the suppression already exists for this fingerprint+scope.",
+        "operationId": "create_suppression_endpoint_api_v1_suppressions_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSuppressionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuppressionSchema"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Suppression Endpoint"
+      }
+    },
+    "/api/v1/suppressions/{suppression_id}": {
+      "delete": {
+        "description": "Delete a suppression (un-acknowledge a violation).\n\nArgs:\n    suppression_id: PK of the suppression to remove.\n\nRaises:\n    HTTPException: If the suppression is not found (404).",
+        "operationId": "delete_suppression_endpoint_api_v1_suppressions__suppression_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "suppression_id",
+            "required": true,
+            "schema": {
+              "title": "Suppression Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Suppression Endpoint"
+      }
+    },
+    "/api/v1/violations/top": {
+      "get": {
+        "description": "Return the most frequently violated rules across all activity.\n\nArgs:\n    limit: Maximum number of rules to return.\n\nReturns:\n    List of rules sorted by violation count descending.",
+        "operationId": "top_violations_api_v1_violations_top_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TopViolation"
+                  },
+                  "title": "Response Top Violations Api V1 Violations Top Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Top Violations"
+      }
+    }
+  }
+}

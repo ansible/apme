@@ -63,6 +63,8 @@ directly. Every task maps to a `tox -e <env>` command.
 
 | Environment | What it runs | When to use |
 |-------------|-------------|-------------|
+| `tox -e openapi` | Export `docs/api/openapi.v1.json` from FastAPI | After Gateway REST route/schema changes. |
+| `tox -e openapi -- --check` | Fail if the committed OpenAPI artifact is stale | CI / prek freshness check. |
 | `tox -e grpc` | `scripts/gen_grpc.sh` | After modifying any `.proto` file. |
 
 ### Helm

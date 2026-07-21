@@ -159,9 +159,18 @@ incrementally.
   reads a deprecation registry (endpoint → deprecation date, sunset
   date, migration link) and injects `Deprecation`, `Sunset`, and
   `Link` headers into responses for registered endpoints
-- Future work: OpenAPI schema diffing in CI for automated enforcement
-- The Backstage plugin team should be given a link to the existing
-  endpoint documentation and this ADR as the stability guarantee
+- **OpenAPI baseline (implemented):** FastAPI-generated schema is
+  checked in at [`docs/api/openapi.v1.json`](../../docs/api/openapi.v1.json).
+  Regenerate with `tox -e openapi`. CI/prek enforce **freshness**
+  (committed file == current `create_app().openapi()`), not semantic
+  breaking-change detection — additive `/api/v1` discipline remains a
+  human/ADR-060 review gate. See [`docs/api/README.md`](../../docs/api/README.md)
+  for consumer caveats (WebSockets omitted; some streaming responses
+  under-specified by FastAPI export).
+- **Future work:** OpenAPI breaking-change diff policy in CI (beyond
+  byte-equality freshness).
+- The Backstage plugin team should consume the committed OpenAPI
+  artifact together with this ADR as the stability guarantee
 
 ## Related Decisions
 
@@ -194,3 +203,4 @@ incrementally.
 | Date | Author | Change |
 |------|--------|--------|
 | 2026-07-08 | Brad Thornton | Initial proposal, accepted |
+| 2026-07-21 | Brad Thornton | OpenAPI baseline + freshness check; break-diff still future work |
