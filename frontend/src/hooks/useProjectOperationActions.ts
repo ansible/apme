@@ -36,7 +36,10 @@ function parseErrorBody(status: number, text: string): Error {
         detail?: { code?: string; message?: string } | string;
       };
       const detail = parsed.detail;
-      if (detail && typeof detail === "object" && detail.code) {
+      if (typeof detail === "string" && detail.trim()) {
+        return new Error(detail);
+      }
+      if (detail && typeof detail === "object") {
         if (detail.code === "working_set_in_progress") {
           return new WorkingSetConflictError(
             detail.message ||
@@ -48,6 +51,9 @@ function parseErrorBody(status: number, text: string): Error {
             detail.message ||
               "Assessment session expired; start a new remediate.",
           );
+        }
+        if (detail.message) {
+          return new Error(detail.message);
         }
       }
     } catch {

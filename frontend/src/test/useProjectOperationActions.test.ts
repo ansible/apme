@@ -56,4 +56,25 @@ describe("useProjectOperationActions start payload", () => {
       }),
     );
   });
+
+  it("surfaces structured 409 detail.message instead of raw JSON", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 409,
+        text: async () =>
+          JSON.stringify({
+            detail: {
+              code: "invalid_status",
+              message: "Operation is in 'scanning', not 'assessed'",
+            },
+          }),
+      }),
+    );
+    const { result } = renderHook(() => useProjectOperationActions("proj-1"));
+    await expect(result.current.beginRemediate()).rejects.toThrow(
+      "Operation is in 'scanning', not 'assessed'",
+    );
+  });
 });
