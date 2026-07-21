@@ -179,9 +179,17 @@ export function ProposalReviewPanel({
   const [decisionFilters, setDecisionFilters] = useState<Set<DecisionFilter>>(
     () => new Set(DECISION_FILTER_ORDER),
   );
-  const [sevFilters, setSevFilters] = useState<Set<string>>(() => new Set());
+  const [sevFilters, setSevFilters] = useState<Set<string>>(() => {
+    const present = new Set(actionable.map(proposalSeverity));
+    return new Set(SEVERITY_ORDER.filter((s) => present.has(s)));
+  });
   const [nodeTypeFilters, setNodeTypeFilters] = useState<Set<FindingNodeType>>(
-    () => new Set(),
+    () =>
+      new Set(
+        orderPresentNodeTypes(
+          actionable.map((p) => normalizeFindingNodeType(p.node_type)),
+        ),
+      ),
   );
   const [showDeclined, setShowDeclined] = useState(false);
   const [feedbackTarget, setFeedbackTarget] = useState<OperationProposal | null>(null);
@@ -381,7 +389,7 @@ export function ProposalReviewPanel({
         label: 'Next',
         summary: `${pendingCount} location${
           pendingCount !== 1 ? 's' : ''
-        } still undecided. Accept or Decline each one (or Accept remaining / Decline remaining), then Next unlocks.`,
+        } still undecided. Accept or Decline each one, then Next unlocks. Accept remaining / Decline remaining only decide currently visible rows — widen filters to reach the rest.`,
         onNext: () => onApprove(acceptedIds),
         isDisabled: true,
       };
@@ -515,10 +523,11 @@ export function ProposalReviewPanel({
       presentNodeTypes.some((t) => !nodeTypeFilters.has(t)));
 
   const filteredActionableItems = useMemo(() => {
+    const byId = new Map(actionable.map((p) => [p.id, p]));
     return actionableItems.filter((item) => {
       const decision = effectiveDecision(item.id, decisions);
       if (!decisionFilters.has(decision)) return false;
-      const proposal = actionable.find((p) => p.id === item.id);
+      const proposal = byId.get(item.id);
       if (!proposal) return false;
       if (presentSeverities.length > 0 && sevFilters.size > 0) {
         const sev = proposalSeverity(proposal);
@@ -708,9 +717,9 @@ export function ProposalReviewPanel({
       />
       <div style={{ marginTop: 8, fontSize: 13, opacity: 0.7 }}>
         Every location starts undecided. Next stays disabled until you Accept or
-        Decline each one. Decided rows collapse. Use Accept remaining / Decline
-        remaining for whatever is still open, or Clear to reset and expand
-        again.
+        Decline each one. Decided rows collapse. Accept remaining / Decline
+        remaining only apply to currently visible rows — widen filters to decide
+        the rest, or Clear to reset and expand again.
         {explanationOnly.length > 0
           ? ` ${explanationOnly.length} explanation-only proposal${
               explanationOnly.length !== 1 ? 's' : ''

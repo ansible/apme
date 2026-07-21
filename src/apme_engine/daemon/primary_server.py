@@ -2281,7 +2281,9 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         remaining_protos = [violation_dict_to_proto(v) for v in remaining]
         # Gate 2 interactive: ledger ``fixed`` is authoritative (do not add to
         # prev_fixed — that double-counts Gate 1 fixes already in the ledger).
-        fixed_protos = [violation_dict_to_proto(dict(fv)) for fv in graph.query_violations(status="fixed")]
+        fixed = [dict(fv) for fv in graph.query_violations(status="fixed")]
+        _enrich_violations_from_graph(fixed, graph, fixed=True)
+        fixed_protos = [violation_dict_to_proto(v) for v in fixed]
         session.report = FixReport(
             passes=(session.report.passes if session.report else 0) + graph_report.passes,
             fixed=len(fixed_protos),
