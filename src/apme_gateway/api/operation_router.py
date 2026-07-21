@@ -945,6 +945,7 @@ async def _drive_operation(
                         "file": v.file,
                         "line": _line_of(v),
                         "path": v.path or getattr(v, "node_id", "") or "",
+                        "node_type": getattr(v, "node_type", "") or "",
                         "remediation_class": int(v.remediation_class) if v.remediation_class else 0,
                         "source": v.source or "",
                         "original_yaml": v.original_yaml or "",
@@ -970,6 +971,7 @@ async def _drive_operation(
                         status=p.status or "proposed",
                         source=p.source,
                         path=p.path,
+                        node_type=getattr(p, "node_type", "") or "",
                         suggestion=p.suggestion,
                         line_start=p.line_start,
                         before_text=p.before_text or "",
@@ -998,6 +1000,7 @@ async def _drive_operation(
                         "suggestion": p.suggestion,
                         "line_start": p.line_start,
                         "path": p.path,
+                        "node_type": getattr(p, "node_type", "") or "",
                         "source": getattr(p, "source", "") or ("ai" if p.tier >= 2 else "deterministic"),
                     }
                     for p in props.proposals

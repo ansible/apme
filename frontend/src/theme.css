@@ -1099,6 +1099,90 @@
   overflow-wrap: anywhere;
 }
 
+.apme-review-step-header__description {
+  margin-top: 8px;
+}
+
+.apme-review-step-header__text > .apme-review-step-header__description:first-child {
+  margin-top: 0;
+}
+
+.apme-review-inventory {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: stretch;
+}
+
+.apme-review-inventory-box {
+  flex: 0 1 auto;
+  width: 7rem;
+  padding: 6px 8px;
+  border: 1px solid var(--pf-t--global--border--color--default);
+  border-radius: 6px;
+  border-left-width: 3px;
+  background: var(--pf-t--global--background--color--secondary--default, transparent);
+}
+
+.apme-review-inventory-box__label {
+  font-size: 11px;
+  font-weight: 600;
+  opacity: 0.8;
+  margin-bottom: 2px;
+}
+
+.apme-review-inventory-box__nums {
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.apme-review-inventory-box__primary,
+.apme-review-inventory-box__secondary {
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.apme-review-inventory-box__secondary {
+  opacity: 0.85;
+}
+
+.apme-review-inventory-box__captions {
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
+  gap: 6px;
+  margin-top: 1px;
+  font-size: 10px;
+  opacity: 0.65;
+}
+
+.apme-review-inventory-box--total,
+.apme-review-inventory-box--manual {
+  border-left-color: var(--pf-t--global--border--color--default);
+}
+
+.apme-review-inventory-box--auto,
+.apme-review-inventory-box--accepted {
+  border-left-color: var(--pf-t--global--color--status--success--default);
+}
+
+.apme-review-inventory-box--ai {
+  border-left-color: var(--pf-t--global--color--palette--purple--50, #a18fff);
+}
+
+.apme-review-inventory-box--pending {
+  border-left-color: var(--pf-t--global--color--status--warning--default);
+}
+
+.apme-review-inventory-box--declined {
+  border-left-color: var(--pf-t--global--color--status--danger--default);
+}
+
 .apme-review-step-header__actions {
   flex: 0 0 auto;
   margin-left: auto;

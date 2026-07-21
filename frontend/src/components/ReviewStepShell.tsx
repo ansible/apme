@@ -17,14 +17,13 @@ import {
 import { WorkflowNextBar, type WorkflowNextConfig } from './WorkflowNextBar';
 
 export interface ReviewStepShellProps {
-  title: ReactNode;
+  /** Optional; omit when the workflow tracker already names the step. */
+  title?: ReactNode;
   description?: ReactNode;
   /** Omit for read-only history (no Next CTA). */
   next?: WorkflowNextConfig;
   onCancel?: () => void;
   filterGroups?: ReviewFilterGroup[];
-  hasNarrowedFilters?: boolean;
-  onSelectAllFilters?: () => void;
   /** Main review list; omit or pass empty items with emptyMessage for empty state. */
   list?: NodeReviewListProps;
   /** Shown when ``list`` is omitted or ``list.items`` is empty. */
@@ -41,8 +40,6 @@ export function ReviewStepShell({
   next,
   onCancel,
   filterGroups = [],
-  hasNarrowedFilters = false,
-  onSelectAllFilters,
   list,
   emptyMessage = 'Nothing to show.',
   children,
@@ -56,9 +53,13 @@ export function ReviewStepShell({
       <CardBody>
         <div className="apme-review-step-header">
           <div className="apme-review-step-header__text">
-            <h3 style={{ marginTop: 0 }}>{title}</h3>
+            {title != null && title !== '' ? (
+              <h3 style={{ marginTop: 0 }}>{title}</h3>
+            ) : null}
             {description != null && description !== '' && (
-              <span style={{ fontSize: 13, opacity: 0.7 }}>{description}</span>
+              <div className="apme-review-step-header__description">
+                {description}
+              </div>
             )}
           </div>
           {showHeaderActions && next != null && (
@@ -91,11 +92,7 @@ export function ReviewStepShell({
           )}
         </div>
 
-        <ReviewFilterBar
-          groups={filterGroups}
-          showSelectAll={hasNarrowedFilters}
-          onSelectAll={onSelectAllFilters}
-        />
+        <ReviewFilterBar groups={filterGroups} />
 
         {!hasItems ? (
           <div style={{ padding: 24, textAlign: 'center', opacity: 0.65 }}>

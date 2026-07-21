@@ -51,6 +51,8 @@ export interface Proposal {
   status?: "proposed" | "declined" | "pending" | "approved" | "rejected";
   suggestion?: string;
   path?: string;
+  /** ContentGraph NodeType (task, block, play, …); empty when not graph-backed. */
+  node_type?: string;
   source?: string;
 }
 

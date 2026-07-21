@@ -6,6 +6,8 @@ export interface ViolationDetail {
   file: string;
   line: number | null;
   path: string;
+  /** ContentGraph NodeType (task, block, play, …); empty when not graph-backed. */
+  node_type?: string;
   remediation_class: number;
   remediation_resolution: number;
   scope: number;
@@ -38,6 +40,8 @@ export interface ProposalDetail {
   confidence: number;
   status: string;
   path?: string;
+  /** ContentGraph NodeType (task, block, play, …); empty when not graph-backed. */
+  node_type?: string;
   source?: string;
   gate?: string;
   rule_ids?: string[];

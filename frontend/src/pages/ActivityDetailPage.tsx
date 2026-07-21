@@ -35,6 +35,7 @@ function violationToFinding(v: ViolationDetail): AssessFinding {
     file: v.file,
     line: v.line,
     path: v.path,
+    node_type: v.node_type,
     remediation_class: v.remediation_class,
     source: v.validator_source,
     original_yaml: v.original_yaml,

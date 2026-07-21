@@ -38,6 +38,8 @@ export interface OperationProposal {
   line_start?: number;
   /** Stable graph node path (ADR-062 / Option C Gate 1 grouping key). */
   path?: string;
+  /** ContentGraph NodeType (task, block, play, …); empty when not graph-backed. */
+  node_type?: string;
   /** ``deterministic`` (Gate 1) or ``ai`` / ``ai-candidate`` (Gate 2). */
   source?: string;
   before_text?: string;

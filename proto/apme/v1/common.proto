@@ -74,6 +74,8 @@ message Violation {
   string fixed_yaml = 17;      // Node YAML after transforms (fixed violations only)
   repeated string co_fixes = 18; // Other rule IDs whose fixes are included in this node's diff
   int32 node_line_start = 19;  // File line where the node starts (for Source tab line numbering)
+  // ContentGraph NodeType value (task, block, play, …). Empty when not graph-backed.
+  string node_type = 20;
 }
 
 message LineRange {

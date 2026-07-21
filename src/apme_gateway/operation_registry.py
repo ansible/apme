@@ -325,6 +325,7 @@ class OperationRegistry:
                         "status": p.status,
                         "source": p.source,
                         "path": p.path,
+                        "node_type": p.node_type,
                         "suggestion": p.suggestion,
                         "line_start": p.line_start,
                         "before_text": p.before_text,

@@ -88,6 +88,7 @@ export function PlaygroundPage() {
     suggestion: p.suggestion,
     line_start: p.line_start,
     path: p.path,
+    node_type: p.node_type,
     source: p.source,
     before_text: p.before_text,
     after_text: p.after_text,
