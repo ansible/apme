@@ -1,9 +1,10 @@
 /**
  * ContentGraph node kinds on findings (wire ``node_type``).
  *
- * Wire values match engine ``NodeType`` (``task``, ``block``, ``play``, …).
- * Empty / missing on the wire stays ``""``; the SPA maps that to the
- * presentation sentinel ``other`` for Kind filters and pills only.
+ * Wire/API values match engine ``NodeType`` (``task``, ``block``, ``play``, …);
+ * empty/missing remains ``""`` on the wire. For Kind filters and pills, call
+ * ``normalizeFindingNodeType``, which maps empty/missing to the presentation
+ * sentinel ``other`` (not an engine enum member).
  */
 
 /** Wire or presentation kind string (not a closed enum). */
