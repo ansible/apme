@@ -158,13 +158,9 @@ def test_filter_violations_by_escalate_targets() -> None:
     ]
     assert _filter_violations_by_escalate_targets(viols, None) == viols
     assert _filter_violations_by_escalate_targets(viols, []) == []
-    whole_a = _filter_violations_by_escalate_targets(
-        viols, [("a::0", frozenset())]
-    )
+    whole_a = _filter_violations_by_escalate_targets(viols, [("a::0", frozenset())])
     assert {v["rule_id"] for v in whole_a} == {"L001", "L002"}
-    one_rule = _filter_violations_by_escalate_targets(
-        viols, [("a::0", frozenset({"L002"}))]
-    )
+    one_rule = _filter_violations_by_escalate_targets(viols, [("a::0", frozenset({"L002"}))])
     assert [v["rule_id"] for v in one_rule] == ["L002"]
 
 
@@ -256,12 +252,8 @@ def test_escalate_ai_endpoint_resolves_future() -> None:
                 scan_id="scan-esc",
                 scan_type="remediate",
             )
-            registry.set_ai_triage(
-                op_id, [{"rule_id": "L001", "path": "x::0", "message": "m"}]
-            )
-            body = EscalateAiRequest.model_validate(
-                {"targets": [{"path": "x::0", "rule_ids": []}]}
-            )
+            registry.set_ai_triage(op_id, [{"rule_id": "L001", "path": "x::0", "message": "m"}])
+            body = EscalateAiRequest.model_validate({"targets": [{"path": "x::0", "rule_ids": []}]})
             result = await escalate_ai(project_id, body)
             assert result == {"status": "escalate_ai"}
             op = registry.get(op_id)
@@ -269,9 +261,7 @@ def test_escalate_ai_endpoint_resolves_future() -> None:
             assert op.status == OperationStatus.APPLYING
             assert op.escalate_ai_future is not None
             assert op.escalate_ai_future.done()
-            assert op.escalate_ai_future.result() == [
-                {"path": "x::0", "rule_ids": []}
-            ]
+            assert op.escalate_ai_future.result() == [{"path": "x::0", "rule_ids": []}]
         finally:
             await registry.shutdown()
 
