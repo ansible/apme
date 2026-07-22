@@ -20,7 +20,7 @@ Protocol (gateway -> browser, JSON over WS)::
     {"type": "session_created", "session_id": "...", "ttl_seconds": N}
     {"type": "progress",        "phase": "...", "message": "...", "level": N}
     {"type": "tier1_complete",   ...}
-    {"type": "ai_triage",        "candidates": [...]}
+    {"type": "ai_triage",        "candidates": [...], "status": "...", "ttl_seconds": N}
     {"type": "proposals",        "proposals": [...], "tier": N}
     {"type": "approval_ack",     "applied_count": N, "status": "..."}
     {"type": "result",           ...}

@@ -319,14 +319,13 @@ class OperationRegistry:
             return
         if op.status not in _AI_TRIAGE_ALLOWED_STATUSES:
             return
-        # After escalate-ai the bridge clears the future while status is APPLYING;
-        # do not regress back into triage on a late/replayed AiTriageReady.
-        if (
-            op.status == OperationStatus.APPLYING
-            and op.ai_triage_candidates is not None
-            and op.escalate_ai_future is None
-        ):
-            return
+        # After escalate-ai, status is APPLYING while the bridge may still hold
+        # a done future (cleared only after drain). Ignore late/replayed
+        # AiTriageReady in that window so we do not regress to triage.
+        if op.status == OperationStatus.APPLYING and op.ai_triage_candidates is not None:
+            fut = op.escalate_ai_future
+            if fut is None or fut.done():
+                return
         op.ai_triage_candidates = candidates
         if op.escalate_ai_future is None:
             loop = asyncio.get_running_loop()

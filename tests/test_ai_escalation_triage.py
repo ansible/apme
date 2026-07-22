@@ -202,6 +202,8 @@ def test_set_ai_triage_creates_future_and_status() -> None:
 def test_set_ai_triage_ignores_after_escalate() -> None:
     """Replayed AiTriageReady must not regress APPLYING after escalate-ai.
 
+    Covers both bridge-cleared future (None) and done-but-not-yet-cleared.
+
     Returns:
         None.
     """
@@ -219,9 +221,21 @@ def test_set_ai_triage_ignores_after_escalate() -> None:
         registry.set_ai_triage(op_id, [{"rule_id": "L001", "message": "first"}])
         op = registry.get(op_id)
         assert op is not None
-        op.escalate_ai_future = None
+        # Window after POST /escalate-ai: future done, status APPLYING, bridge
+        # has not cleared escalate_ai_future yet.
+        assert op.escalate_ai_future is not None
+        op.escalate_ai_future.set_result([{"path": "p::0", "rule_ids": []}])
         registry.transition(op_id, OperationStatus.APPLYING)
-        registry.set_ai_triage(op_id, [{"rule_id": "L002", "message": "late"}])
+        registry.set_ai_triage(op_id, [{"rule_id": "L002", "message": "late-done"}])
+        mid = registry.get(op_id)
+        assert mid is not None
+        assert mid.status == OperationStatus.APPLYING
+        assert mid.ai_triage_candidates is not None
+        assert mid.ai_triage_candidates[0]["rule_id"] == "L001"
+
+        # After bridge clears the future.
+        mid.escalate_ai_future = None
+        registry.set_ai_triage(op_id, [{"rule_id": "L003", "message": "late-none"}])
         again = registry.get(op_id)
         assert again is not None
         assert again.status == OperationStatus.APPLYING
