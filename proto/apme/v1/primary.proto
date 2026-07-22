@@ -292,4 +292,7 @@ enum SessionStatus {
   AWAITING_APPROVAL = 1;
   PROCESSING = 2;
   COMPLETE = 3;
+  // Pause before Gate 2 AI (ADR-062 escalation triage). Distinct from
+  // AWAITING_APPROVAL so WS/CLI clients are not ambiguous with Gate 1/2.
+  AWAITING_AI_TRIAGE = 4;
 }

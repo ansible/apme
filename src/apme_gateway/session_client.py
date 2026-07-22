@@ -73,6 +73,7 @@ _STATUS_NAMES: dict[int, str] = {
     1: "AWAITING_APPROVAL",
     2: "PROCESSING",
     3: "COMPLETE",
+    4: "AWAITING_AI_TRIAGE",
 }
 
 

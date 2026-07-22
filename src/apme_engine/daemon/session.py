@@ -53,7 +53,8 @@ class SessionState:
         created_at: Session creation timestamp.
         last_activity_at: Last client interaction timestamp.
         idempotency_ok: Whether formatter was idempotent.
-        status: Session status (1=AWAITING_APPROVAL, 2=PROCESSING, 3=COMPLETE).
+        status: Session status (1=AWAITING_APPROVAL, 2=PROCESSING,
+            3=COMPLETE, 4=AWAITING_AI_TRIAGE).
         fix_options: Fix options from the client's first upload chunk.
         scan_options: Scan options from the client's first upload chunk.
         ai_proposals: Raw engine AI proposals for downstream use.

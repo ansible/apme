@@ -2364,7 +2364,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         session.ai_triage_candidates = list(protos)
         session.awaiting_ai_triage = True
         session.ai_escalate_targets = None
-        session.status = 1  # AWAITING_APPROVAL (Gateway maps to awaiting_ai_triage)
+        session.status = 4  # AWAITING_AI_TRIAGE
         session.touch()
         yield SessionEvent(
             ai_triage=AiTriageReady(
@@ -2883,7 +2883,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             yield SessionEvent(
                 ai_triage=AiTriageReady(
                     candidates=cands,
-                    status=1,
+                    status=4,  # AWAITING_AI_TRIAGE
                     ttl_seconds=session.ttl_seconds,
                 ),
             )

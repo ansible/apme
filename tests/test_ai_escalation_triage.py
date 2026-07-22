@@ -28,6 +28,18 @@ def test_ai_triage_sse_event_type() -> None:
     assert SSEEventType.AI_TRIAGE.value == "ai_triage"
 
 
+def test_session_status_name_maps_awaiting_ai_triage() -> None:
+    """WS clients must see AWAITING_AI_TRIAGE, not AWAITING_APPROVAL.
+
+    Returns:
+        None.
+    """
+    from apme_gateway.session_client import _status_name
+
+    assert _status_name(4) == "AWAITING_AI_TRIAGE"
+    assert _status_name(1) == "AWAITING_APPROVAL"
+
+
 def test_ai_triage_candidates_use_current_yaml_not_scan_baseline() -> None:
     """AI escalation snippets must reflect post–Quick-fix node YAML.
 
