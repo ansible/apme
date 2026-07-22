@@ -11,6 +11,7 @@ Protocol (browser -> gateway, JSON over WS)::
     {"type": "file",       "path": "...", "content": "<base64>"}
     {"type": "files_done"}
     {"type": "approve",    "approved_ids": ["id1", ...]}
+    {"type": "escalate_ai", "targets": [{"path": "...", "rule_ids": []}]}
     {"type": "extend"}
     {"type": "close"}
 
@@ -19,6 +20,7 @@ Protocol (gateway -> browser, JSON over WS)::
     {"type": "session_created", "session_id": "...", "ttl_seconds": N}
     {"type": "progress",        "phase": "...", "message": "...", "level": N}
     {"type": "tier1_complete",   ...}
+    {"type": "ai_triage",        "candidates": [...]}
     {"type": "proposals",        "proposals": [...], "tier": N}
     {"type": "approval_ack",     "applied_count": N, "status": "..."}
     {"type": "result",           ...}
@@ -47,6 +49,8 @@ from google.protobuf.json_format import MessageToDict
 from apme.v1 import primary_pb2_grpc
 from apme.v1.common_pb2 import GalaxyServerDef
 from apme.v1.primary_pb2 import (
+    AiEscalateRequest,
+    AiEscalateTarget,
     ApprovalRequest,
     CloseRequest,
     ExtendRequest,
@@ -221,6 +225,24 @@ async def _ws_command_reader(
                     continue
                 logger.info("Received approval for %d proposal(s): %s", len(ids), ids)
                 await queue.put(SessionCommand(approve=ApprovalRequest(approved_ids=ids)))
+            elif msg_type == "escalate_ai":
+                raw_targets = msg.get("targets", [])
+                if not isinstance(raw_targets, list):
+                    logger.warning("Invalid escalate_ai targets: expected list, got %r", type(raw_targets).__name__)
+                    continue
+                targets: list[AiEscalateTarget] = []
+                for t in raw_targets:
+                    if not isinstance(t, dict):
+                        continue
+                    path = str(t.get("path") or "")
+                    if not path:
+                        continue
+                    raw_rules = t.get("rule_ids") or []
+                    rule_ids = [str(r) for r in raw_rules] if isinstance(raw_rules, list) else []
+                    targets.append(AiEscalateTarget(path=path, rule_ids=rule_ids))
+                await queue.put(
+                    SessionCommand(ai_escalate=AiEscalateRequest(targets=targets)),
+                )
             elif msg_type == "extend":
                 await queue.put(SessionCommand(extend=ExtendRequest()))
             elif msg_type == "close":
@@ -387,6 +409,29 @@ async def _forward_events(
                             "path": p.path,
                         }
                         for p in pr.proposals
+                    ],
+                },
+            )
+
+        elif oneof == "ai_triage":
+            triage = event.ai_triage
+            await _safe_send(
+                ws,
+                {
+                    "type": "ai_triage",
+                    "status": _status_name(triage.status),
+                    "ttl_seconds": triage.ttl_seconds,
+                    "candidates": [
+                        {
+                            "rule_id": v.rule_id,
+                            "severity": severity_to_label(severity_from_proto(v.severity)),
+                            "message": v.message,
+                            "file": v.file,
+                            "path": v.path or "",
+                            "node_type": getattr(v, "node_type", "") or "",
+                            "source": v.source or "",
+                        }
+                        for v in triage.candidates
                     ],
                 },
             )

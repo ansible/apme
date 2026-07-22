@@ -816,7 +816,7 @@
         "type": "object"
       },
       "EscalateAiRequest": {
-        "description": "Body for ``POST /escalate-ai``.\n\nAttributes:\n    targets: Locations (and optional rules) to send to AI. Empty list\n        skips AI escalation and continues the session.",
+        "description": "Body for ``POST /escalate-ai``.\n\nAttributes:\n    targets: Locations (and optional rules) to send to AI. Empty list\n        skips AI (session completes without Gate 2 proposals).",
         "properties": {
           "targets": {
             "items": {

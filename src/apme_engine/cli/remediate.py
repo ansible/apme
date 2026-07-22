@@ -19,6 +19,8 @@ import grpc
 
 from apme.v1 import common_pb2, primary_pb2_grpc
 from apme.v1.primary_pb2 import (
+    AiEscalateRequest,
+    AiEscalateTarget,
     ApprovalRequest,
     CloseRequest,
     ExtendRequest,
@@ -174,6 +176,19 @@ def run_remediate(args: argparse.Namespace) -> None:
                     SessionCommand(
                         approve=ApprovalRequest(approved_ids=approved),
                     )
+                )
+
+            elif oneof == "ai_triage":
+                # CLI has no Include/Skip UI (SPA owns that). Escalate every
+                # candidate path so --ai --interactive matches pre-triage behavior.
+                paths = sorted({c.path for c in event.ai_triage.candidates if c.path})
+                if not use_json:
+                    sys.stderr.write(
+                        f"  AI escalation: including {len(paths)} location(s)\n",
+                    )
+                targets = [AiEscalateTarget(path=p, rule_ids=[]) for p in paths]
+                cmd_queue.put(
+                    SessionCommand(ai_escalate=AiEscalateRequest(targets=targets)),
                 )
 
             elif oneof == "approval_ack":

@@ -106,8 +106,9 @@ interactive Gate 1/2 — without a full rescan while the session is alive.**
 
 ### Neutral
 
-- AI escalation triage (Include/Skip before Gate 2) is interactive when
-  `enable_ai` — see ADR-062 implementation notes.
+- AI escalation triage (Include/Skip before Gate 2) is interactive in the
+  SPA when `enable_ai`; CLI/`run_project_operation` without
+  `escalate_ai_queue` auto-includes all candidate paths — see ADR-062.
 
 ## Implementation Notes
 

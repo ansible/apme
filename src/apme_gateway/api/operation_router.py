@@ -118,7 +118,7 @@ class EscalateAiRequest(BaseModel):  # type: ignore[misc]
 
     Attributes:
         targets: Locations (and optional rules) to send to AI. Empty list
-            skips AI escalation and continues the session.
+            skips AI (session completes without Gate 2 proposals).
     """
 
     targets: list[AiEscalateTargetBody] = Field(default_factory=list)
