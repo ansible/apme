@@ -140,6 +140,16 @@ export function useProjectOperationActions(projectId: string) {
     );
   }, [projectId]);
 
+  const escalateAi = useCallback(
+    async (targets: Array<{ path: string; rule_ids?: string[] }>) => {
+      return postJson<{ status: string }>(
+        `/projects/${projectId}/operation/escalate-ai`,
+        { targets },
+      );
+    },
+    [projectId],
+  );
+
   const patchProposals = useCallback(
     async (
       updates: Array<{ proposal_id: string; status: string }>,
@@ -175,5 +185,13 @@ export function useProjectOperationActions(projectId: string) {
     [projectId],
   );
 
-  return { start, approve, beginRemediate, cancel, createPR, patchProposals };
+  return {
+    start,
+    approve,
+    beginRemediate,
+    escalateAi,
+    cancel,
+    createPR,
+    patchProposals,
+  };
 }

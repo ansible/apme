@@ -1,8 +1,8 @@
 """REST + SSE endpoints for project operations (ADR-052).
 
-Provides ``POST``, ``GET``, ``POST /approve``, ``POST /cancel``,
-``POST /submit``, and ``GET /events`` under
-``/api/v1/projects/{project_id}/operation``.
+Provides ``POST``, ``GET``, ``POST /approve``, ``POST /begin-remediate``,
+``POST /escalate-ai``, ``POST /cancel``, ``POST /submit``, and
+``GET /events`` under ``/api/v1/projects/{project_id}/operation``.
 """
 
 from __future__ import annotations
@@ -99,6 +99,29 @@ class DraftProposalsRequest(BaseModel):  # type: ignore[misc]
     """
 
     updates: list[DraftProposalUpdate] = Field(default_factory=list)
+
+
+class AiEscalateTargetBody(BaseModel):  # type: ignore[misc]
+    """One AI escalation target (path + optional rule_ids).
+
+    Attributes:
+        path: Content-graph location path (empty rule_ids = entire path).
+        rule_ids: Optional rule filter; omit or empty for the whole path.
+    """
+
+    path: str
+    rule_ids: list[str] = Field(default_factory=list)
+
+
+class EscalateAiRequest(BaseModel):  # type: ignore[misc]
+    """Body for ``POST /escalate-ai``.
+
+    Attributes:
+        targets: Locations (and optional rules) to send to AI. Empty list
+            skips AI escalation and continues the session.
+    """
+
+    targets: list[AiEscalateTargetBody] = Field(default_factory=list)
 
 
 # ── REST endpoints ────────────────────────────────────────────────────
@@ -338,6 +361,52 @@ async def begin_remediate(project_id: str) -> dict[str, str]:
     return {"status": "begin_remediate"}
 
 
+@operation_router.post("/escalate-ai")  # type: ignore[untyped-decorator]
+async def escalate_ai(project_id: str, body: EscalateAiRequest) -> dict[str, str]:
+    """Leave AI escalation triage and run AI on the selected targets.
+
+    Args:
+        project_id: Target project UUID.
+        body: Paths (and optional rule_ids) to escalate; empty skips AI.
+
+    Returns:
+        Confirmation message.
+
+    Raises:
+        HTTPException: 404 if no operation; 409 ``invalid_status`` when not
+            ``awaiting_ai_triage``; 409 ``session_expired`` when the escalate
+            future is missing.
+    """
+    registry = get_operation_registry()
+    state = registry.get_by_project(project_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="No operation for this project")
+    if state.status != OperationStatus.AWAITING_AI_TRIAGE:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "invalid_status",
+                "message": (f"Operation is in '{state.status.value}', not 'awaiting_ai_triage'"),
+            },
+        )
+    if state.escalate_ai_future is None:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "session_expired",
+                "message": ("AI triage session is no longer waiting for escalate-ai; start a new remediate operation."),
+            },
+        )
+    if not state.escalate_ai_future.done():
+        targets = [{"path": t.path, "rule_ids": list(t.rule_ids)} for t in body.targets]
+        state.escalate_ai_future.set_result(targets)
+    # Leave triage immediately so the SPA shows applying/progress while AI runs
+    # (same pattern as approval_ack → APPLYING). Empty targets still APPLYING
+    # briefly until SessionResult arrives.
+    registry.transition(state.operation_id, OperationStatus.APPLYING)
+    return {"status": "escalate_ai"}
+
+
 @operation_router.patch("/proposals")  # type: ignore[untyped-decorator]
 async def patch_draft_proposals(project_id: str, body: DraftProposalsRequest) -> dict[str, Any]:
     """Optimistic draft checkbox updates (ADR-062 Phase 2).
@@ -420,6 +489,8 @@ async def cancel_operation(project_id: str) -> dict[str, str]:
         state.approval_future.set_result([])
     if state.begin_remediate_future and not state.begin_remediate_future.done():
         state.begin_remediate_future.cancel()
+    if state.escalate_ai_future and not state.escalate_ai_future.done():
+        state.escalate_ai_future.cancel()
     return {"status": "cancelled"}
 
 
@@ -957,6 +1028,37 @@ async def _drive_operation(
                 ]
                 registry.set_findings(operation_id, finding_rows)
 
+            elif kind == "ai_triage":
+                triage_msg = event.ai_triage  # type: ignore[attr-defined]
+
+                def _triage_line_of(v: object) -> int | None:
+                    raw: int | None = None
+                    if v.HasField("line"):  # type: ignore[attr-defined]
+                        raw = v.line  # type: ignore[attr-defined]
+                    elif v.HasField("line_range"):  # type: ignore[attr-defined]
+                        raw = v.line_range.start  # type: ignore[attr-defined]
+                    return raw if raw is not None and raw > 0 else None
+
+                candidate_rows = [
+                    {
+                        "rule_id": v.rule_id,
+                        "severity": severity_to_label(severity_from_proto(v.severity)),
+                        "message": v.message,
+                        "file": v.file,
+                        "line": _triage_line_of(v),
+                        "path": v.path or getattr(v, "node_id", "") or "",
+                        "node_type": getattr(v, "node_type", "") or "",
+                        "remediation_class": (int(v.remediation_class) if v.remediation_class else 0),
+                        "source": v.source or "",
+                        "original_yaml": v.original_yaml or "",
+                        "fixed_yaml": v.fixed_yaml or "",
+                        "co_fixes": list(v.co_fixes) if v.co_fixes else [],
+                        "node_line_start": (int(getattr(v, "node_line_start", 0) or 0) or None),
+                    }
+                    for v in triage_msg.candidates
+                ]
+                registry.set_ai_triage(operation_id, candidate_rows)
+
             elif kind == "proposals":
                 props = event.proposals  # type: ignore[attr-defined]
                 items = [
@@ -1083,12 +1185,16 @@ async def _drive_operation(
 
         approval_queue: asyncio.Queue[list[str]] | None = None
         begin_remediate_queue: asyncio.Queue[None] | None = None
+        escalate_ai_queue: asyncio.Queue[list[dict[str, object]]] | None = None
         bridge_task: asyncio.Task[None] | None = None
+        enable_ai = coerce_option_bool(options.get("enable_ai", False))
 
         if remediate or assess_pause:
             approval_queue = asyncio.Queue()
             if assess_pause:
                 begin_remediate_queue = asyncio.Queue()
+            if enable_ai:
+                escalate_ai_queue = asyncio.Queue()
 
             async def _approval_bridge() -> None:
                 """Bridge registry futures to the driver's command queues."""
@@ -1111,6 +1217,24 @@ async def _drive_operation(
                             break
                         await begin_remediate_queue.put(None)
                         op.begin_remediate_future = None
+                    elif op.escalate_ai_future is not None and escalate_ai_queue is not None:
+                        # Drain even if POST already moved status to APPLYING
+                        # (race with the sleep branch below).
+                        fut = op.escalate_ai_future
+                        try:
+                            if fut.done():
+                                if fut.cancelled():
+                                    break
+                                targets = fut.result()
+                            elif op.status == OperationStatus.AWAITING_AI_TRIAGE:
+                                targets = await fut
+                            else:
+                                await asyncio.sleep(0.1)
+                                continue
+                            await escalate_ai_queue.put(targets)
+                            op.escalate_ai_future = None
+                        except asyncio.CancelledError:
+                            break
                     elif op.status == OperationStatus.AWAITING_APPROVAL and op.approval_future is not None:
                         try:
                             ids = await op.approval_future
@@ -1132,13 +1256,14 @@ async def _drive_operation(
             remediate=remediate,
             ansible_version=str(options.get("ansible_version", "")),
             collection_specs=specs,
-            enable_ai=coerce_option_bool(options.get("enable_ai", False)),
+            enable_ai=enable_ai,
             ai_model=str(options.get("ai_model", "")),
             interactive=coerce_option_bool(options.get("interactive", False)),
             assess_pause=assess_pause,
             progress_callback=_progress_cb,
             approval_queue=approval_queue,
             begin_remediate_queue=begin_remediate_queue,
+            escalate_ai_queue=escalate_ai_queue,
             scan_id=scan_id,
             galaxy_servers=galaxy_servers or None,
             scm_token=scm_token,

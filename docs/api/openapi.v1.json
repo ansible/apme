@@ -309,6 +309,27 @@
         "title": "AiAcceptanceEntry",
         "type": "object"
       },
+      "AiEscalateTargetBody": {
+        "description": "One AI escalation target (path + optional rule_ids).\n\nAttributes:\n    path: Content-graph location path (empty rule_ids = entire path).\n    rule_ids: Optional rule filter; omit or empty for the whole path.",
+        "properties": {
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "rule_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Rule Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "title": "AiEscalateTargetBody",
+        "type": "object"
+      },
       "AiModelInfo": {
         "description": "AI model available from the Abbenay daemon.\n\nAttributes:\n    id: Model identifier (e.g. ``anthropic/claude-sonnet-4``).\n    provider: LLM provider engine name.\n    name: Human-readable model name.",
         "properties": {
@@ -792,6 +813,20 @@
           }
         },
         "title": "DraftProposalsRequest",
+        "type": "object"
+      },
+      "EscalateAiRequest": {
+        "description": "Body for ``POST /escalate-ai``.\n\nAttributes:\n    targets: Locations (and optional rules) to send to AI. Empty list\n        skips AI escalation and continues the session.",
+        "properties": {
+          "targets": {
+            "items": {
+              "$ref": "#/components/schemas/AiEscalateTargetBody"
+            },
+            "title": "Targets",
+            "type": "array"
+          }
+        },
+        "title": "EscalateAiRequest",
         "type": "object"
       },
       "FeedbackContext": {
@@ -4019,6 +4054,60 @@
           }
         },
         "summary": "Cancel Operation"
+      }
+    },
+    "/api/v1/projects/{project_id}/operation/escalate-ai": {
+      "post": {
+        "description": "Leave AI escalation triage and run AI on the selected targets.\n\nArgs:\n    project_id: Target project UUID.\n    body: Paths (and optional rule_ids) to escalate; empty skips AI.\n\nReturns:\n    Confirmation message.\n\nRaises:\n    HTTPException: 404 if no operation; 409 ``invalid_status`` when not\n        ``awaiting_ai_triage``; 409 ``session_expired`` when the escalate\n        future is missing.",
+        "operationId": "escalate_ai_api_v1_projects__project_id__operation_escalate_ai_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EscalateAiRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Escalate Ai Api V1 Projects  Project Id  Operation Escalate Ai Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Escalate Ai"
       }
     },
     "/api/v1/projects/{project_id}/operation/events": {

@@ -42,6 +42,18 @@ _FINDINGS_ALLOWED_STATUSES: frozenset[OperationStatus] = frozenset(
     }
 )
 
+# AiTriageReady before / during AI escalation pause (not after Gate 2).
+_AI_TRIAGE_ALLOWED_STATUSES: frozenset[OperationStatus] = frozenset(
+    {
+        OperationStatus.QUEUED,
+        OperationStatus.CLONING,
+        OperationStatus.SCANNING,
+        OperationStatus.ASSESSED,
+        OperationStatus.APPLYING,
+        OperationStatus.AWAITING_AI_TRIAGE,
+    }
+)
+
 
 class OperationRegistry:
     """In-memory store for active project operations.
@@ -292,6 +304,39 @@ class OperationRegistry:
             op.begin_remediate_future = loop.create_future()
         self.transition(operation_id, OperationStatus.ASSESSED)
         self._broadcast(op, SSEEventType.FINDINGS, {"findings": findings})
+
+    def set_ai_triage(self, operation_id: str, candidates: list[dict[str, Any]]) -> None:
+        """Store AI escalation candidates and transition to AWAITING_AI_TRIAGE.
+
+        Creates ``escalate_ai_future`` resolved by ``POST /escalate-ai``.
+
+        Args:
+            operation_id: The operation to update.
+            candidates: Serialised AI-candidate violation dicts.
+        """
+        op = self._ops.get(operation_id)
+        if op is None:
+            return
+        if op.status not in _AI_TRIAGE_ALLOWED_STATUSES:
+            return
+        # After escalate-ai the bridge clears the future while status is APPLYING;
+        # do not regress back into triage on a late/replayed AiTriageReady.
+        if (
+            op.status == OperationStatus.APPLYING
+            and op.ai_triage_candidates is not None
+            and op.escalate_ai_future is None
+        ):
+            return
+        op.ai_triage_candidates = candidates
+        if op.escalate_ai_future is None:
+            loop = asyncio.get_running_loop()
+            op.escalate_ai_future = loop.create_future()
+        self.transition(operation_id, OperationStatus.AWAITING_AI_TRIAGE)
+        self._broadcast(
+            op,
+            SSEEventType.AI_TRIAGE,
+            {"candidates": candidates},
+        )
 
     def set_proposals(self, operation_id: str, proposals: list[Proposal]) -> None:
         """Store proposals and transition to AWAITING_APPROVAL.

@@ -106,7 +106,8 @@ interactive Gate 1/2 — without a full rescan while the session is alive.**
 
 ### Neutral
 
-- AI-candidate escalate-to-Gate-2 triage remains deferred (ADR-062).
+- AI escalation triage (Include/Skip before Gate 2) is interactive when
+  `enable_ai` — see ADR-062 implementation notes.
 
 ## Implementation Notes
 
@@ -140,3 +141,4 @@ interactive Gate 1/2 — without a full rescan while the session is alive.**
 | 2026-07-18 | Brad Thornton | Initial acceptance — assess-pause + begin-remediate |
 | 2026-07-20 | Brad Thornton | SPA stepper/attach ownership clarified; link ADR-065 |
 | 2026-07-20 | Brad Thornton | Clarify assess_pause does not force interactive=true |
+| 2026-07-21 | Brad Thornton | Note AI escalation triage is no longer deferred |
