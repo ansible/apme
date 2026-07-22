@@ -44,17 +44,6 @@ export const LIVE_OPERATION_STATUSES = new Set<ProjectOperationStatus>([
   "submitting_pr",
 ]);
 
-/** Non-terminal statuses where Activity can offer Resume / Start over. */
-export const LIVE_OPERATION_STATUSES = new Set<ProjectOperationStatus>([
-  "queued",
-  "cloning",
-  "scanning",
-  "assessed",
-  "awaiting_approval",
-  "applying",
-  "submitting_pr",
-]);
-
 export interface ProgressEntry {
   phase: string;
   message: string;

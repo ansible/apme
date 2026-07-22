@@ -61,6 +61,14 @@ export interface NodeReviewListProps {
    * Shown after Accept remaining / Decline remaining when any row is decided.
    */
   onClearDecisions?: () => void;
+  /** Override Accept toggle label (e.g. Include for AI escalation). */
+  acceptLabel?: string;
+  /** Override Decline toggle label (e.g. Skip for AI escalation). */
+  declineLabel?: string;
+  /** Override bulk-accept control label. */
+  acceptRemainingLabel?: string;
+  /** Override bulk-decline control label. */
+  declineRemainingLabel?: string;
 }
 
 function decisionClass(decision: NodeDecision | undefined): string {
@@ -94,6 +102,10 @@ export function NodeReviewList({
   onDeclineRemaining,
   pendingCount,
   onClearDecisions,
+  acceptLabel = 'Accept',
+  declineLabel = 'Decline',
+  acceptRemainingLabel = 'Accept remaining',
+  declineRemainingLabel = 'Decline remaining',
 }: NodeReviewListProps) {
   const expandables = useMemo(() => expandableIds(items), [items]);
   const itemKey = useMemo(() => items.map((i) => i.id).join('\0'), [items]);
@@ -243,7 +255,7 @@ export function NodeReviewList({
                   isDisabled={remainingDisabled}
                   onClick={onAcceptRemaining}
                 >
-                  Accept remaining{remainingLabel}
+                  {acceptRemainingLabel}{remainingLabel}
                 </Button>
               )}
               {onAcceptRemaining && onDeclineRemaining && (
@@ -256,7 +268,7 @@ export function NodeReviewList({
                   isDisabled={remainingDisabled}
                   onClick={onDeclineRemaining}
                 >
-                  Decline remaining{remainingLabel}
+                  {declineRemainingLabel}{remainingLabel}
                 </Button>
               )}
               {onClearDecisions &&
@@ -361,13 +373,13 @@ export function NodeReviewList({
                       aria-label={`Decision for ${item.title}`}
                     >
                       <ToggleGroupItem
-                        text="Accept"
+                        text={acceptLabel}
                         className="apme-decision-accept"
                         isSelected={decision === 'accepted'}
                         onChange={() => onDecisionChange?.(item.id, 'accepted')}
                       />
                       <ToggleGroupItem
-                        text="Decline"
+                        text={declineLabel}
                         className="apme-decision-decline"
                         isSelected={decision === 'declined'}
                         onChange={() => onDecisionChange?.(item.id, 'declined')}
