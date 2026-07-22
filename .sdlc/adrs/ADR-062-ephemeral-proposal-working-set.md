@@ -225,9 +225,9 @@ match.
   on the post-approval graph. CLI `--interactive`; Gateway
   `options.interactive` passthrough (default false — UI unchanged).
 - AI escalation triage (post–Gate 1, before Gate 2): engine emits
-  `AiTriageReady` / `SessionCommand.ai_escalate` with
-  `AiEscalateTarget { path, rule_ids }` (empty `rule_ids` = whole path).
-  Gateway status `awaiting_ai_triage`, SSE `ai_triage`,
+  `AiTriageReady`; client responds with `SessionCommand.ai_escalate`
+  carrying `AiEscalateTarget { path, rule_ids }` (empty `rule_ids` =
+  whole path). Gateway status `awaiting_ai_triage`, SSE `ai_triage`,
   `POST .../operation/escalate-ai`. SPA step label **AI escalation**.
   Per-location Include/Skip in v1; empty allow-list skips AI.
 - SQLite: extend `_migrate_*` pattern in `apme_gateway.db` (no Alembic).

@@ -96,7 +96,8 @@ export function ProjectDetailPage() {
     patchProposals,
   } = useProjectOperationActions(projectId || '');
 
-  const isRunning = opState != null && ['queued', 'cloning', 'scanning', 'assessed', 'awaiting_ai_triage', 'awaiting_approval', 'applying'].includes(opState.status);
+  const isRunning =
+    opState != null && LIVE_OPERATION_STATUSES.has(opState.status);
   const operationActive = attachOp && opState != null && opState.status !== 'cancelled';
 
   /** Latest history row with a matching live op — Available + Resume / Start over. */
