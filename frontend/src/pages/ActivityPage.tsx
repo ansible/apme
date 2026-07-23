@@ -63,12 +63,16 @@ export function ActivityPage() {
 
     const projectId = latest.project_id;
     const scanId = latest.scan_id;
-    fetchProjectOperationState(projectId).then((op) => {
-      if (cancelled || !op) return;
-      if (op.scan_id === scanId && LIVE_OPERATION_STATUSES.has(op.status)) {
-        setResumableScanId(scanId);
-      }
-    });
+    fetchProjectOperationState(projectId)
+      .then((op) => {
+        if (cancelled || !op) return;
+        if (op.scan_id === scanId && LIVE_OPERATION_STATUSES.has(op.status)) {
+          setResumableScanId(scanId);
+        }
+      })
+      .catch(() => {
+        /* probe failed — leave Resume hidden */
+      });
     return () => { cancelled = true; };
   }, [items, page, refreshKey]);
 

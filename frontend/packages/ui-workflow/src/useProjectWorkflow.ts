@@ -82,16 +82,22 @@ export function useProjectWorkflow(
       enabled: Boolean(projectId) && attachOp,
     });
 
-  // Resume (?resume=1 / initiallyAttached): if Gateway has no live op, detach
-  // so hosts do not keep a permanent "Starting scan…" Session tab.
+  // Resume (?resume=1 / initiallyAttached): if Gateway has no live op (404),
+  // detach so hosts do not keep a permanent "Starting scan…" Session tab.
+  // Probe failures must not detach — a transient Gateway error can hide a
+  // real in-flight operation (Dismiss remains available on the loading panel).
   useEffect(() => {
     if (!initiallyAttached || !projectId) return;
     let cancelled = false;
-    fetchProjectOperationState(projectId).then((op) => {
-      if (cancelled || op) return;
-      setAttachOp(false);
-      onDismissSession?.();
-    });
+    fetchProjectOperationState(projectId)
+      .then((op) => {
+        if (cancelled || op) return;
+        setAttachOp(false);
+        onDismissSession?.();
+      })
+      .catch(() => {
+        /* keep attached on probe failure */
+      });
     return () => {
       cancelled = true;
     };
@@ -293,13 +299,17 @@ export function useProjectWorkflow(
       if (attachOp && opState && LIVE_OPERATION_STATUSES.has(opState.status)) {
         return opState.scan_id === latestScanId ? latestScanId : null;
       }
-      const op = await fetchProjectOperationState(projectId);
-      if (
-        op &&
-        op.scan_id === latestScanId &&
-        LIVE_OPERATION_STATUSES.has(op.status)
-      ) {
-        return latestScanId;
+      try {
+        const op = await fetchProjectOperationState(projectId);
+        if (
+          op &&
+          op.scan_id === latestScanId &&
+          LIVE_OPERATION_STATUSES.has(op.status)
+        ) {
+          return latestScanId;
+        }
+      } catch {
+        /* probe failed — cannot confirm resumable */
       }
       return null;
     },

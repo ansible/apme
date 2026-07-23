@@ -298,21 +298,22 @@ export interface ProjectOperationState {
 }
 
 /**
- * Poll for current operation state.  Returns the state snapshot, or null
- * if no operation exists (404).
+ * Poll for current operation state. Returns the state snapshot, or null
+ * if no operation exists (404). Non-OK responses and network failures
+ * reject so callers can distinguish "absent" from "probe failed".
  */
 export async function fetchProjectOperationState(
   projectId: string,
 ): Promise<ProjectOperationState | null> {
-  try {
-    const { fetch: doFetch } = getApmeApiAdapter();
-    const res = await doFetch(apmeApiUrl(`/projects/${projectId}/operation`));
-    if (res.status === 404) return null;
-    if (!res.ok) return null;
-    return (await res.json()) as ProjectOperationState;
-  } catch {
-    return null;
+  const { fetch: doFetch } = getApmeApiAdapter();
+  const res = await doFetch(apmeApiUrl(`/projects/${projectId}/operation`));
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    throw new Error(
+      `Failed to fetch project operation (${res.status} ${res.statusText})`,
+    );
   }
+  return (await res.json()) as ProjectOperationState;
 }
 
 export interface UseProjectOperationStateOptions {
@@ -548,15 +549,20 @@ export function useProjectOperationState(
       setState(null);
       return;
     }
-    const s = await fetchProjectOperationState(projectId);
-    if (!mountedRef.current) return;
-    if (!s) {
-      setState(null);
-      return;
-    }
-    setState(s);
-    if (!TERMINAL_STATUSES.has(s.status)) {
-      connect();
+    try {
+      const s = await fetchProjectOperationState(projectId);
+      if (!mountedRef.current) return;
+      if (!s) {
+        setState(null);
+        return;
+      }
+      setState(s);
+      if (!TERMINAL_STATUSES.has(s.status)) {
+        connect();
+      }
+    } catch {
+      // Transient Gateway/network error — keep prior state; SSE reconnect
+      // or a later refresh can recover.
     }
   }, [projectId, connect, enabled]);
 
