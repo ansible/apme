@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from 'react';
 import {
   Alert,
   AlertActionCloseButton,
+  Button,
   Card,
   CardBody,
   Spinner,
@@ -56,6 +57,13 @@ export function ProjectWorkflowPanel({
         <CardBody style={{ textAlign: 'center', padding: '48px 24px' }}>
           <Spinner size="lg" />
           <div style={{ marginTop: 12, fontSize: 16 }}>Starting scan…</div>
+          <Button
+            variant="link"
+            onClick={dismiss}
+            style={{ marginTop: 16 }}
+          >
+            Dismiss
+          </Button>
         </CardBody>
       </Card>
     );
