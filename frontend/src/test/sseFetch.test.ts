@@ -49,6 +49,27 @@ describe('readSseStream', () => {
     await readSseStream(stream, (ev) => seen.push(ev));
     expect(seen.map((e) => e.event)).toEqual(['snapshot', 'progress']);
   });
+
+  it('does not flush a partial frame after abort', async () => {
+    const ac = new AbortController();
+    // Incomplete frame (no trailing blank line) — would flush on clean end.
+    const partial = new TextEncoder().encode(
+      'event: snapshot\ndata: {"status":"cloning"}',
+    );
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(partial);
+        // Leave open until abort cancels the reader.
+      },
+    });
+    const seen: Array<{ event: string; data: string }> = [];
+    const reading = readSseStream(stream, (ev) => seen.push(ev), ac.signal);
+    // Let the first chunk land in the internal buffer, then abort.
+    await new Promise((r) => setTimeout(r, 0));
+    ac.abort();
+    await reading;
+    expect(seen).toEqual([]);
+  });
 });
 
 describe('applyOperationSseEvent', () => {

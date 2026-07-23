@@ -77,7 +77,8 @@ export async function readSseStream(
       }
     }
     // Flush any final frame that ended without a trailing blank line.
-    if (buffer.trim()) {
+    // Skip on abort — cleanup/unmount must not emit post-cancel events.
+    if (!signal?.aborted && buffer.trim()) {
       const { events } = parseSseChunk(`${buffer}\n\n`);
       for (const ev of events) {
         onEvent(ev);
