@@ -3,7 +3,7 @@
  * Host supplies chrome (tabs, Overview); this renders OperationPanel or starting spinner.
  */
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Alert,
   AlertActionCloseButton,
@@ -40,6 +40,15 @@ export function ProjectWorkflowPanel({
     dismiss,
   } = workflow;
   const [draftError, setDraftError] = useState<string | null>(null);
+  /** Ignore late patchProposals rejections after the operation changes. */
+  const draftGenRef = useRef(0);
+  const operationId = opState?.operation_id;
+  const opStatus = opState?.status;
+
+  useEffect(() => {
+    draftGenRef.current += 1;
+    setDraftError(null);
+  }, [operationId, opStatus]);
 
   if (!operationActive || !opState) {
     return (
@@ -73,8 +82,10 @@ export function ProjectWorkflowPanel({
         onBeginRemediate={beginRemediate}
         onEscalateAi={escalateAi}
         onDraftUpdate={(updates) => {
+          const gen = draftGenRef.current;
           setDraftError(null);
           patchProposals(updates).catch((err: unknown) => {
+            if (gen !== draftGenRef.current) return;
             console.error('Failed to patch proposals:', err);
             setDraftError(
               err instanceof Error ? err.message : 'Draft update failed.',
