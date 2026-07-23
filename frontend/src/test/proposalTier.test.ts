@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import type { OperationProposal } from "../types/operation";
+import type { OperationProposal } from '@apme/ui-workflow';
 import {
   gateLabel,
   isAiRemediationProposal,
@@ -7,12 +7,12 @@ import {
   proposalNodeTitle,
   proposalsGateKey,
   splitRuleIds,
-} from "../remediation/proposalTier";
+} from '../../packages/ui-workflow/src/remediation/proposalTier';
 import {
   effectiveFixType,
   fixMethodLabel,
   normalizeRemediationClass,
-} from "../remediation/fixTypes";
+} from '../../packages/ui-workflow/src/remediation/fixTypes';
 
 function prop(partial: Partial<OperationProposal> & { id: string }): OperationProposal {
   return {

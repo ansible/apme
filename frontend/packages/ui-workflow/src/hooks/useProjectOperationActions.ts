@@ -6,8 +6,7 @@
  */
 
 import { useCallback } from "react";
-
-const BASE = "/api/v1";
+import { apmeApiUrl, getApmeApiAdapter } from "../api/apmeApiAdapter";
 
 /** Raised when remediate would discard an interactive draft working set. */
 export class WorkingSetConflictError extends Error {
@@ -64,7 +63,8 @@ function parseErrorBody(status: number, text: string): Error {
 }
 
 async function postJson<T>(path: string, body?: unknown): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
+  const { fetch: doFetch } = getApmeApiAdapter();
+  const res = await doFetch(apmeApiUrl(path), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -80,7 +80,8 @@ async function postJson<T>(path: string, body?: unknown): Promise<T> {
 }
 
 async function patchJson<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
+  const { fetch: doFetch } = getApmeApiAdapter();
+  const res = await doFetch(apmeApiUrl(path), {
     method: "PATCH",
     headers: {
       "Content-Type": "application/json",
@@ -140,16 +141,6 @@ export function useProjectOperationActions(projectId: string) {
     );
   }, [projectId]);
 
-  const escalateAi = useCallback(
-    async (targets: Array<{ path: string; rule_ids?: string[] }>) => {
-      return postJson<{ status: string }>(
-        `/projects/${projectId}/operation/escalate-ai`,
-        { targets },
-      );
-    },
-    [projectId],
-  );
-
   const patchProposals = useCallback(
     async (
       updates: Array<{ proposal_id: string; status: string }>,
@@ -167,6 +158,17 @@ export function useProjectOperationActions(projectId: string) {
       `/projects/${projectId}/operation/cancel`,
     );
   }, [projectId]);
+
+  /** ADR-062: leave awaiting_ai_triage — empty targets skips AI. */
+  const escalateAi = useCallback(
+    async (targets: Array<{ path: string; rule_ids?: string[] }> = []) => {
+      return postJson<{ status?: string }>(
+        `/projects/${projectId}/operation/escalate-ai`,
+        { targets },
+      );
+    },
+    [projectId],
+  );
 
   const createPR = useCallback(
     async (options?: {
@@ -189,9 +191,9 @@ export function useProjectOperationActions(projectId: string) {
     start,
     approve,
     beginRemediate,
-    escalateAi,
     cancel,
     createPR,
     patchProposals,
+    escalateAi,
   };
 }

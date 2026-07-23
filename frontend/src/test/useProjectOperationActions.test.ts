@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
-import { useProjectOperationActions } from "../hooks/useProjectOperationActions";
+import { useProjectOperationActions } from '@apme/ui-workflow';
 
 describe("useProjectOperationActions start payload", () => {
   beforeEach(() => {

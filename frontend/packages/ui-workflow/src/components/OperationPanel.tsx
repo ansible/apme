@@ -65,6 +65,8 @@ export interface OperationPanelProps {
   feedbackEnabled?: boolean;
   /** Activity "Enable AI" — drives AI steps on the workflow tracker. */
   enableAi?: boolean;
+  /** Host navigation for "View details" (no react-router in workflow). */
+  onViewDetails?: (scanId: string) => void;
 }
 
 const RUNNING_STATUSES = new Set<ProjectOperationStatus>([
@@ -113,6 +115,7 @@ export function OperationPanel({
   onDismiss,
   feedbackEnabled,
   enableAi = false,
+  onViewDetails,
 }: OperationPanelProps) {
   const [prCreating, setPrCreating] = useState(false);
   const [prError, setPrError] = useState<string | null>(null);
@@ -298,7 +301,23 @@ export function OperationPanel({
     );
   }
 
-  if (status === 'awaiting_approval' && state.proposals) {
+  if (status === 'awaiting_approval') {
+    // status_changed can arrive before the proposals payload.
+    if (!state.proposals) {
+      return withStepper(
+        state,
+        enableAi,
+        <Card style={{ marginBottom: 16 }}>
+          <CardBody style={{ textAlign: 'center', padding: '32px 24px' }}>
+            <Spinner size="lg" />
+            <div style={{ marginTop: 12, fontSize: 16 }}>Loading proposals...</div>
+            <Button variant="link" onClick={handleCancel} style={{ marginTop: 8 }}>
+              Cancel
+            </Button>
+          </CardBody>
+        </Card>,
+      );
+    }
     const proposals = state.proposals.map((p) => ({
       id: p.id,
       rule_id: p.rule_id,
@@ -405,6 +424,7 @@ export function OperationPanel({
         prUrl={state.pr_url || localPrUrl}
         prError={prError}
         scanId={state.scan_id}
+        onViewDetails={onViewDetails}
       />,
       true,
     );
@@ -444,5 +464,25 @@ export function OperationPanel({
     );
   }
 
-  return null;
+  // Unknown / future statuses must not blank the Session tab.
+  return withStepper(
+    state,
+    enableAi,
+    <Card style={{ marginBottom: 16 }}>
+      <CardBody>
+        <h3 style={{ marginTop: 0 }}>Session in progress</h3>
+        <p style={{ opacity: 0.8 }}>
+          Status: <code>{status}</code>
+        </p>
+        <Flex gap={{ default: 'gapSm' }} style={{ marginTop: 8 }}>
+          <FlexItem>
+            <Button variant="link" onClick={handleCancel}>Cancel</Button>
+          </FlexItem>
+          <FlexItem>
+            <Button variant="link" onClick={onDismiss}>Dismiss</Button>
+          </FlexItem>
+        </Flex>
+      </CardBody>
+    </Card>,
+  );
 }

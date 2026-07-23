@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { PageLayout, PageHeader } from '@ansible/ansible-ui-framework';
-import { AssessFindingsPanel } from '../components/AssessFindingsPanel';
+import { AssessFindingsPanel } from '@apme/ui-workflow';
 import { PipelineLogOutput } from '../components/PipelineLogOutput';
 import {
   DependencyHealthOutput,
@@ -18,7 +18,7 @@ import {
 import { ExternalLinkAltIcon } from '@patternfly/react-icons';
 import { createSuppression, deleteActivity, getActivity, submitActivity } from '../services/api';
 import { useFeedbackEnabled } from '../hooks/useFeedbackEnabled';
-import type { AssessFinding } from '../hooks/useProjectOperationState';
+import type { AssessFinding } from '@apme/ui-workflow';
 import type { ActivityDetail, ViolationDetail } from '../types/api';
 
 function displayType(scanType: string): string {

@@ -12,6 +12,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { apmeWsUrl } from "../api/apmeApiAdapter";
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -104,11 +105,6 @@ function fileToBase64(file: File): Promise<string> {
     reader.onerror = reject;
     reader.readAsDataURL(file);
   });
-}
-
-function wsUrl(path: string): string {
-  const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-  return `${proto}//${window.location.host}${path}`;
 }
 
 /** Phases where a dropped WS can be recovered via session resume. */
@@ -365,7 +361,7 @@ export function useSessionStream() {
       reset();
       updateStatus("connecting");
 
-      const ws = new WebSocket(wsUrl("/api/v1/ws/session"));
+      const ws = new WebSocket(apmeWsUrl("/api/v1/ws/session"));
       wsRef.current = ws;
 
       ws.onopen = async () => {
@@ -412,7 +408,7 @@ export function useSessionStream() {
       if (originalScanId) {
         url += `&scan_id=${encodeURIComponent(originalScanId)}`;
       }
-      const ws = new WebSocket(wsUrl(url));
+      const ws = new WebSocket(apmeWsUrl(url));
       wsRef.current = ws;
 
       ws.onopen = () => {

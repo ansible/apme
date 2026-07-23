@@ -29,7 +29,9 @@
     "react-router-dom": "^6.30.4",
     "react-syntax-highlighter": "^16.1.1",
     "styled-components": "^6.1.13",
-    "swr": "^2.2.5"
+    "swr": "^2.2.5",
+    "undici": "7.28.0",
+    "@apme/ui-workflow": "*"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.9.1",
@@ -61,7 +63,10 @@
     "zustand": "^5.0.12"
   },
   "overrides": {
-    "undici": ">=7.28.0",
+    "undici": "7.28.0",
     "@babel/core": ">=7.29.6"
-  }
+  },
+  "workspaces": [
+    "packages/*"
+  ]
 }

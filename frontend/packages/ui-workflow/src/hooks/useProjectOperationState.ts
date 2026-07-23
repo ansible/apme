@@ -8,6 +8,11 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  apmeApiUrl,
+  apmeSseUrl,
+  getApmeApiAdapter,
+} from "../api/apmeApiAdapter";
 
 export type ProjectOperationStatus =
   | "queued"
@@ -284,15 +289,13 @@ export interface ProjectOperationState {
   progress: ProgressEntry[];
   proposals?: Proposal[];
   findings?: AssessFinding[];
-  /** AI-candidate findings for escalation triage (awaiting_ai_triage). */
+  /** ADR-062: class-2 findings eligible for AI escalation triage. */
   ai_triage_candidates?: AssessFinding[];
   result?: OperationResultData;
   pr_url?: string;
   error?: string;
   clone_commit?: string;
 }
-
-const BASE = "/api/v1";
 
 /**
  * Poll for current operation state.  Returns the state snapshot, or null
@@ -302,7 +305,8 @@ export async function fetchProjectOperationState(
   projectId: string,
 ): Promise<ProjectOperationState | null> {
   try {
-    const res = await fetch(`${BASE}/projects/${projectId}/operation`);
+    const { fetch: doFetch } = getApmeApiAdapter();
+    const res = await doFetch(apmeApiUrl(`/projects/${projectId}/operation`));
     if (res.status === 404) return null;
     if (!res.ok) return null;
     return (await res.json()) as ProjectOperationState;
@@ -343,7 +347,7 @@ export function useProjectOperationState(
     cleanup();
 
     const es = new EventSource(
-      `${BASE}/projects/${projectId}/operation/events`,
+      apmeSseUrl(`/projects/${projectId}/operation/events`),
     );
     esRef.current = es;
 
@@ -385,7 +389,9 @@ export function useProjectOperationState(
       try {
         const entry = JSON.parse(e.data) as ProgressEntry;
         setState((prev) =>
-          prev ? { ...prev, progress: [...prev.progress, entry] } : prev,
+          prev
+            ? { ...prev, progress: [...(prev.progress ?? []), entry] }
+            : prev,
         );
       } catch {
         /* ignore */
@@ -422,16 +428,18 @@ export function useProjectOperationState(
       }
     });
 
+    // Gateway broadcasts status_changed(awaiting_ai_triage) then ai_triage
+    // with {candidates}. Without this handler the Session triage UI stays empty.
     es.addEventListener("ai_triage", (e: MessageEvent) => {
       if (!mountedRef.current) return;
       try {
-        const data = JSON.parse(e.data) as { candidates: AssessFinding[] };
+        const data = JSON.parse(e.data) as { candidates?: AssessFinding[] };
         setState((prev) =>
           prev
             ? {
                 ...prev,
                 status: "awaiting_ai_triage",
-                ai_triage_candidates: data.candidates,
+                ai_triage_candidates: data.candidates ?? [],
               }
             : prev,
         );
