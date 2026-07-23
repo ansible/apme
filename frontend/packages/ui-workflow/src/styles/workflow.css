@@ -177,6 +177,7 @@
   --apme-yaml-important: #953800;
   --apme-yaml-remove-bg: rgba(211, 47, 47, 0.12);
   --apme-yaml-add-bg: rgba(26, 127, 55, 0.12);
+
   background: var(--apme-yaml-bg);
   color: var(--apme-yaml-fg);
 }

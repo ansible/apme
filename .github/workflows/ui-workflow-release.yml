@@ -19,12 +19,15 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          # Privileged job + npm ci — do not leave GITHUB_TOKEN in .git/config.
+          persist-credentials: false
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
+          # No Actions cache: tag-triggered release has contents:write; avoid
+          # restoring a lockfile-keyed cache that a less-trusted job could poison.
           node-version: "22"
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
 
       - name: Install frontend deps
         working-directory: frontend
@@ -45,7 +48,7 @@ jobs:
           echo "version=${PKG_VER}" >> "${GITHUB_OUTPUT}"
           echo "tarball=apme-ui-workflow-${PKG_VER}.tgz" >> "${GITHUB_OUTPUT}"
 
-      - name: npm pack
+      - name: npm pack (runs package prepack → tsc + CSS copy)
         working-directory: frontend
         run: npm pack ./packages/ui-workflow
 
@@ -56,6 +59,8 @@ jobs:
           TARBALL: ${{ steps.ver.outputs.tarball }}
         run: |
           set -euo pipefail
+          # Escape backticks for Markdown fences; do not escape quotes (heredoc
+          # would otherwise emit literal backslash-quote in the release body).
           gh release create "${GITHUB_REF_NAME}" \
             "frontend/${TARBALL}" \
             --title "@apme/ui-workflow v${VERSION}" \
@@ -65,7 +70,7 @@ jobs:
           Install (Yarn / npm):
 
           \`\`\`json
-          \"@apme/ui-workflow\": \"https://github.com/ansible/apme/releases/download/${GITHUB_REF_NAME}/${TARBALL}\"
+          "@apme/ui-workflow": "https://github.com/ansible/apme/releases/download/${GITHUB_REF_NAME}/${TARBALL}"
           \`\`\`
 
           See [ADR-066](https://github.com/ansible/apme/blob/main/.sdlc/adrs/ADR-066-ui-workflow-github-release-artifacts.md).

@@ -78,7 +78,7 @@ monorepo.
 
 ### Positive
 
-- Portal installs a single immutable tarball URL; no vendor tree.
+- Portal installs from a pinned Release download URL; no vendor tree.
 - UI can ship between product releases via `ui-workflow-v*` tags.
 - Native SPA unchanged (`workspace:*`).
 
@@ -87,6 +87,10 @@ monorepo.
 - Portal version bumps require editing the dependency URL (no `^` range).
 - Package ships compiled ESM `dist/` (+ CSS); consumers must bump the Release
   URL (no semver range) until a registry exists.
+- A Release download URL is only byte-stable if the repository enables
+  immutable releases / protected tags. Without that, maintainers can still
+  replace an asset (delete + re-upload); consumers relying on lockfile
+  checksums should treat unexpected hash changes as a supply-chain signal.
 
 ### Neutral
 
@@ -96,8 +100,8 @@ monorepo.
 
 ## Implementation Notes
 
-- Package: not `private`; `files` includes `src/` and README; CSS exported and
-  imported from the package entry.
+- Package: not `private`; `prepack` runs `tsc` + copies CSS into `dist/`;
+  `files` includes `dist/` and README.
 - CI: `.github/workflows/ui-workflow-release.yml` on tag `ui-workflow-v*`:
   assert version matches tag → `npm pack` → `gh release create` with `.tgz`.
 - Portal: depend on
