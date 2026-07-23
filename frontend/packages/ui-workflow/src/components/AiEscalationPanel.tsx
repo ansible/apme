@@ -462,7 +462,7 @@ export function AiEscalationPanel({
                 decisionMode: true,
                 decisions,
                 onDecisionChange: handleDecisionChange,
-                defaultExpanded: false,
+                defaultExpanded: true,
                 showExpandControls: true,
                 resetKey: `ai-esc-${pathKey}-${filteredFindings.length}-${sevFilters.size}-${nodeTypeFilters.size}-${decisionFilters.size}`,
                 onAcceptRemaining: includeRemaining,
