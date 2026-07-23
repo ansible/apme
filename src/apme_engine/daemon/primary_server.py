@@ -308,10 +308,14 @@ def _filter_violations_by_escalate_targets(
         violations: Open violation dicts.
         targets: ``(path, rule_ids)``; empty ``rule_ids`` means entire path.
             ``None`` = no filter (allow all). Empty list = skip AI.
+            Rule IDs are compared after ``normalize_rule_id`` (legacy
+            ``native:`` prefix).
 
     Returns:
         Filtered list (or all / none per ``targets``).
     """
+    from apme_engine.remediation.partition import normalize_rule_id  # noqa: PLC0415
+
     if targets is None:
         return violations
     if not targets:
@@ -319,11 +323,15 @@ def _filter_violations_by_escalate_targets(
     allowed: list[ViolationDict] = []
     for v in violations:
         path = str(v.get("path") or "")
-        rule = str(v.get("rule_id") or "")
+        rule = normalize_rule_id(str(v.get("rule_id") or ""))
         for t_path, rule_ids in targets:
             if path != t_path:
                 continue
-            if not rule_ids or rule in rule_ids:
+            if not rule_ids:
+                allowed.append(v)
+                break
+            normalized_ids = frozenset(normalize_rule_id(r) for r in rule_ids)
+            if rule in normalized_ids:
                 allowed.append(v)
                 break
     return allowed
@@ -342,7 +350,10 @@ def _decline_skipped_ai_escalation(session: SessionState) -> int:
         Number of ledger rows declined.
     """
     from apme_engine.graph.content_graph import ContentGraph  # noqa: PLC0415
-    from apme_engine.remediation.partition import add_classification_to_violations  # noqa: PLC0415
+    from apme_engine.remediation.partition import (  # noqa: PLC0415
+        add_classification_to_violations,
+        normalize_rule_id,
+    )
 
     targets = session.ai_escalate_targets
     if targets is None:
@@ -354,7 +365,8 @@ def _decline_skipped_ai_escalation(session: SessionState) -> int:
     open_violations = [dict(v) for v in graph.query_violations(status="open")]
     add_classification_to_violations(open_violations)
     allowed = _filter_violations_by_escalate_targets(open_violations, targets)
-    allowed_keys = {(str(v.get("path") or ""), str(v.get("rule_id") or "")) for v in allowed}
+    # Match ContentGraph ledger keys (path + normalized rule_id).
+    allowed_keys = {(str(v.get("path") or ""), normalize_rule_id(str(v.get("rule_id") or ""))) for v in allowed}
 
     skipped: list[ViolationDict] = []
     for v in open_violations:
@@ -362,7 +374,7 @@ def _decline_skipped_ai_escalation(session: SessionState) -> int:
         rc_val = rc.value if isinstance(rc, RemediationClass) else str(rc or "")
         if rc_val != RemediationClass.AI_CANDIDATE.value:
             continue
-        key = (str(v.get("path") or ""), str(v.get("rule_id") or ""))
+        key = (str(v.get("path") or ""), normalize_rule_id(str(v.get("rule_id") or "")))
         if key not in allowed_keys:
             skipped.append(v)
 

@@ -174,6 +174,60 @@ def test_filter_violations_by_escalate_targets() -> None:
     assert {v["rule_id"] for v in whole_a} == {"L001", "L002"}
     one_rule = _filter_violations_by_escalate_targets(viols, [("a::0", frozenset({"L002"}))])
     assert [v["rule_id"] for v in one_rule] == ["L002"]
+    # Legacy native: prefix on either side must still match bare rule_ids.
+    prefixed = [{"path": "a::0", "rule_id": "native:L002"}]
+    assert (
+        _filter_violations_by_escalate_targets(
+            prefixed,  # type: ignore[arg-type]
+            [("a::0", frozenset({"L002"}))],
+        )
+        == prefixed
+    )
+    assert _filter_violations_by_escalate_targets(
+        [{"path": "a::0", "rule_id": "L002"}],
+        [("a::0", frozenset({"native:L002"}))],
+    ) == [{"path": "a::0", "rule_id": "L002"}]
+
+
+def test_decline_skipped_ai_escalation_normalizes_native_prefix() -> None:
+    """Allowed findings with native: rule_id must not be sticky-declined.
+
+    Returns:
+        None.
+    """
+    from apme_engine.daemon.primary_server import _decline_skipped_ai_escalation
+    from apme_engine.daemon.session import SessionState
+    from apme_engine.engine.models import RemediationClass, ViolationDict
+    from apme_engine.graph.content_graph import ContentGraph, ContentNode, NodeIdentity, NodeType
+
+    graph = ContentGraph()
+    graph.add_node(
+        ContentNode(
+            identity=NodeIdentity(path="a::0", node_type=NodeType.TASK),
+            file_path="play.yml",
+            line_start=1,
+            line_end=2,
+            yaml_lines="- debug: msg=hi\n",
+        )
+    )
+    viols: list[ViolationDict] = [
+        {
+            "path": "a::0",
+            "rule_id": "native:L050",
+            "message": "ai",
+            "file": "play.yml",
+            "remediation_class": RemediationClass.AI_CANDIDATE,
+        },
+    ]
+    graph.register_violations(viols, 0)
+
+    session = SessionState(session_id="esc-native")
+    session.content_graph = graph
+    session.ai_escalate_targets = [("a::0", frozenset({"L050"}))]
+
+    assert _decline_skipped_ai_escalation(session) == 0
+    open_paths = {str(v.get("path")) for v in graph.query_violations(status="open")}
+    assert open_paths == {"a::0"}
 
 
 def test_set_ai_triage_creates_future_and_status() -> None:
