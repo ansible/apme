@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { textsFromUnifiedDiff } from '../components/DiffView';
+import { textsFromUnifiedDiff } from '../../packages/ui-workflow/src/components/DiffView';
 
 describe('textsFromUnifiedDiff', () => {
   it('keeps encoded content that looks like file headers after a hunk', () => {

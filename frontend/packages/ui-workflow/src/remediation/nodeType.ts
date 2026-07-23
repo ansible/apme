@@ -21,6 +21,9 @@ export const NODE_TYPE_ORDER: string[] = [
   'role',
   'vars_file',
   'collection',
+  'module',
+  'rulebook',
+  'ruleset',
   'other',
 ];
 

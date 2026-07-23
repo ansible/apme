@@ -32,7 +32,8 @@ import {
 } from '../services/api';
 import type { AiModelInfo, GalaxyServer } from '../types/api';
 
-export const AI_MODEL_STORAGE_KEY = 'apme-ai-model';
+import { AI_MODEL_STORAGE_KEY } from '@apme/ui-workflow';
+export { AI_MODEL_STORAGE_KEY };
 
 // ── Galaxy Server Form Modal ────────────────────────────────────────
 

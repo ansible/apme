@@ -4,7 +4,7 @@ import {
   nodeTypeLabel,
   nodeTypeLabelColor,
   orderPresentNodeTypes,
-} from '../remediation/nodeType';
+} from '../../packages/ui-workflow/src/remediation/nodeType';
 
 describe('normalizeFindingNodeType', () => {
   it('keeps wire values', () => {

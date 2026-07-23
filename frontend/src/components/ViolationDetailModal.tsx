@@ -12,7 +12,7 @@ import {
 import { PageDetails, PageDetail } from '@ansible/ansible-ui-framework';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import { DiffView } from './DiffView';
+import { DiffView } from '@apme/ui-workflow';
 import { FeedbackModal, type FeedbackPayload } from './FeedbackModal';
 import { severityClass, severityLabel, ruleSource, scopeLabel } from './severity';
 import { RuleId } from './RuleId';

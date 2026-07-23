@@ -6,7 +6,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { Alert, Label } from '@patternfly/react-core';
-import { RuleId } from './RuleId';
+import { RuleId } from '../shared/RuleId';
 import { CurrentYamlView } from './DiffView';
 import { type NodeReviewItem } from './NodeReviewList';
 import { ReviewStepShell } from './ReviewStepShell';
@@ -21,7 +21,7 @@ import {
   severityClass,
   severityDisplayLabel,
   severityLabelColor,
-} from './severity';
+} from '../shared/severity';
 import {
   resolveSnippetHighlight,
   type AssessFinding,

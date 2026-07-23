@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { ProjectOperationState } from '../hooks/useProjectOperationState';
+import type { ProjectOperationState } from '@apme/ui-workflow';
 import {
   emptyWorkflowLatch,
   needsCommitStep,
@@ -8,7 +8,7 @@ import {
   stepVisualState,
   updateWorkflowLatch,
   workflowStepDefs,
-} from '../remediation/workflowSteps';
+} from '../../packages/ui-workflow/src/remediation/workflowSteps';
 
 function baseState(
   overrides: Partial<ProjectOperationState> = {},

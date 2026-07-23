@@ -8,6 +8,11 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  apmeApiUrl,
+  apmeSseUrl,
+  getApmeApiAdapter,
+} from "../api/apmeApiAdapter";
 
 export type ProjectOperationStatus =
   | "queued"
@@ -284,7 +289,7 @@ export interface ProjectOperationState {
   progress: ProgressEntry[];
   proposals?: Proposal[];
   findings?: AssessFinding[];
-  /** AI-candidate findings for escalation triage (awaiting_ai_triage). */
+  /** ADR-062: class-2 findings eligible for AI escalation triage. */
   ai_triage_candidates?: AssessFinding[];
   result?: OperationResultData;
   pr_url?: string;
@@ -292,23 +297,23 @@ export interface ProjectOperationState {
   clone_commit?: string;
 }
 
-const BASE = "/api/v1";
-
 /**
- * Poll for current operation state.  Returns the state snapshot, or null
- * if no operation exists (404).
+ * Poll for current operation state. Returns the state snapshot, or null
+ * if no operation exists (404). Non-OK responses and network failures
+ * reject so callers can distinguish "absent" from "probe failed".
  */
 export async function fetchProjectOperationState(
   projectId: string,
 ): Promise<ProjectOperationState | null> {
-  try {
-    const res = await fetch(`${BASE}/projects/${projectId}/operation`);
-    if (res.status === 404) return null;
-    if (!res.ok) return null;
-    return (await res.json()) as ProjectOperationState;
-  } catch {
-    return null;
+  const { fetch: doFetch } = getApmeApiAdapter();
+  const res = await doFetch(apmeApiUrl(`/projects/${projectId}/operation`));
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    throw new Error(
+      `Failed to fetch project operation (${res.status} ${res.statusText})`,
+    );
   }
+  return (await res.json()) as ProjectOperationState;
 }
 
 export interface UseProjectOperationStateOptions {
@@ -343,7 +348,7 @@ export function useProjectOperationState(
     cleanup();
 
     const es = new EventSource(
-      `${BASE}/projects/${projectId}/operation/events`,
+      apmeSseUrl(`/projects/${projectId}/operation/events`),
     );
     esRef.current = es;
 
@@ -385,7 +390,9 @@ export function useProjectOperationState(
       try {
         const entry = JSON.parse(e.data) as ProgressEntry;
         setState((prev) =>
-          prev ? { ...prev, progress: [...prev.progress, entry] } : prev,
+          prev
+            ? { ...prev, progress: [...(prev.progress ?? []), entry] }
+            : prev,
         );
       } catch {
         /* ignore */
@@ -422,16 +429,18 @@ export function useProjectOperationState(
       }
     });
 
+    // Gateway broadcasts status_changed(awaiting_ai_triage) then ai_triage
+    // with {candidates}. Without this handler the Session triage UI stays empty.
     es.addEventListener("ai_triage", (e: MessageEvent) => {
       if (!mountedRef.current) return;
       try {
-        const data = JSON.parse(e.data) as { candidates: AssessFinding[] };
+        const data = JSON.parse(e.data) as { candidates?: AssessFinding[] };
         setState((prev) =>
           prev
             ? {
                 ...prev,
                 status: "awaiting_ai_triage",
-                ai_triage_candidates: data.candidates,
+                ai_triage_candidates: data.candidates ?? [],
               }
             : prev,
         );
@@ -540,15 +549,20 @@ export function useProjectOperationState(
       setState(null);
       return;
     }
-    const s = await fetchProjectOperationState(projectId);
-    if (!mountedRef.current) return;
-    if (!s) {
-      setState(null);
-      return;
-    }
-    setState(s);
-    if (!TERMINAL_STATUSES.has(s.status)) {
-      connect();
+    try {
+      const s = await fetchProjectOperationState(projectId);
+      if (!mountedRef.current) return;
+      if (!s) {
+        setState(null);
+        return;
+      }
+      setState(s);
+      if (!TERMINAL_STATUSES.has(s.status)) {
+        connect();
+      }
+    } catch {
+      // Transient Gateway/network error — keep prior state; SSE reconnect
+      // or a later refresh can recover.
     }
   }, [projectId, connect, enabled]);
 

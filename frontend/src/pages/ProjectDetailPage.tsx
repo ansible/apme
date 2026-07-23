@@ -27,22 +27,34 @@ import { deleteProject, getProject, getProjectDependencies, getProjectDepHealth,
 import type { GraphData } from '../services/api';
 import type { ActivitySummary, DepHealthSummary, ProjectDependencies, ProjectDetail, TrendPoint, ViolationDetail } from '../types/api';
 import { GraphVisualization } from '../components/GraphVisualization';
-import { CheckOptionsForm } from '../components/CheckOptionsForm';
-import { OperationPanel } from '../components/OperationPanel';
 import { TrendChart } from '../components/TrendChart';
 import { timeAgo } from '../services/format';
 import { useFeedbackEnabled } from '../hooks/useFeedbackEnabled';
 import {
-  fetchProjectOperationState,
-  LIVE_OPERATION_STATUSES,
-  useProjectOperationState,
-} from '../hooks/useProjectOperationState';
-import {
-  SessionExpiredError,
-  useProjectOperationActions,
-  WorkingSetConflictError,
-} from '../hooks/useProjectOperationActions';
-import { AI_MODEL_STORAGE_KEY } from './SettingsPage';
+  CheckOptionsForm,
+  ProjectWorkflowPanel,
+  useProjectWorkflow,
+} from '@apme/ui-workflow';
+import { AI_MODEL_STORAGE_KEY } from '@apme/ui-workflow';
+
+type ProjectTabKey =
+  | 'overview'
+  | 'session'
+  | 'activity'
+  | 'violations'
+  | 'dependencies'
+  | 'visualize'
+  | 'settings';
+
+function tabFromSearchParam(tabParam: string | null): ProjectTabKey {
+  if (tabParam === 'settings') return 'settings';
+  if (tabParam === 'visualize') return 'visualize';
+  if (tabParam === 'dependencies') return 'dependencies';
+  if (tabParam === 'activity') return 'activity';
+  if (tabParam === 'session') return 'session';
+  if (tabParam === 'violations') return 'violations';
+  return 'overview';
+}
 
 export function ProjectDetailPage() {
   const { projectId } = useParams<{ projectId: string }>();
@@ -57,9 +69,8 @@ export function ProjectDetailPage() {
   const [graphLoading, setGraphLoading] = useState(false);
   const [trend, setTrend] = useState<TrendPoint[]>([]);
   const [loading, setLoading] = useState(true);
-  const tabParam = searchParams.get('tab');
-  const [activeTab, setActiveTab] = useState(
-    tabParam === 'settings' ? 5 : tabParam === 'visualize' ? 4 : tabParam === 'dependencies' ? 3 : 0
+  const [activeTab, setActiveTab] = useState<ProjectTabKey>(() =>
+    tabFromSearchParam(searchParams.get('tab')),
   );
 
   const [ansibleVersion, setAnsibleVersion] = useState('');
@@ -68,13 +79,13 @@ export function ProjectDetailPage() {
   const [autoApplyTier1, setAutoApplyTier1] = useState(false);
 
   const feedbackEnabled = useFeedbackEnabled();
+
   /** Attach live op only after Activity Resume (?resume=1) or a local start — no auto-resume. */
-  const [attachOp, setAttachOp] = useState(
+  const [attachFromResume] = useState(
     () => searchParams.get('resume') === '1',
   );
   useEffect(() => {
     if (searchParams.get('resume') !== '1') return;
-    setAttachOp(true);
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev);
       next.delete('resume');
@@ -82,23 +93,42 @@ export function ProjectDetailPage() {
     }, { replace: true });
   }, [searchParams, setSearchParams]);
 
-  const { state: opState, refresh: refreshOp, clear: clearOp } = useProjectOperationState(
-    projectId || '',
-    { enabled: Boolean(projectId) && attachOp },
-  );
-  const {
-    start: startOp,
-    approve: approveOp,
-    beginRemediate: beginRemediateOp,
-    escalateAi: escalateAiOp,
-    cancel: cancelOp,
-    createPR: createPROp,
-    patchProposals,
-  } = useProjectOperationActions(projectId || '');
+  const openSessionTab = useCallback(() => {
+    setActiveTab('session');
+  }, []);
 
-  const isRunning =
-    opState != null && LIVE_OPERATION_STATUSES.has(opState.status);
-  const operationActive = attachOp && opState != null && opState.status !== 'cancelled';
+  const workflow = useProjectWorkflow(projectId || '', {
+    checkOptions: {
+      ansibleVersion,
+      collections,
+      enableAi,
+      autoApplyTier1,
+    },
+    getAiModel: () => localStorage.getItem(AI_MODEL_STORAGE_KEY) ?? undefined,
+    initiallyAttached: attachFromResume,
+    onOpenSession: openSessionTab,
+    onDismissSession: () => setActiveTab('overview'),
+  });
+
+  const {
+    attachOp,
+    opState,
+    isRunning,
+    operationActive,
+    sessionTabVisible,
+    startScan: handleScan,
+    cancel: cancelOp,
+    resumeSession,
+    startOver,
+    findResumableScanId,
+  } = workflow;
+
+  // Session tab is ephemeral — only leave it once the user has detached.
+  useEffect(() => {
+    if (!attachOp && activeTab === 'session') {
+      setActiveTab('overview');
+    }
+  }, [attachOp, activeTab]);
 
   /** Latest history row with a matching live op — Available + Resume / Start over. */
   const [resumableScanId, setResumableScanId] = useState<string | null>(null);
@@ -109,68 +139,29 @@ export function ProjectDetailPage() {
     setResumableScanId(null);
     const latest = scans[0];
     if (!projectId || !latest) return;
-
-    if (attachOp && opState && LIVE_OPERATION_STATUSES.has(opState.status)) {
-      setResumableScanId(opState.scan_id === latest.scan_id ? latest.scan_id : null);
-      return;
-    }
-
-    fetchProjectOperationState(projectId).then((op) => {
-      if (cancelled || !op) return;
-      if (op.scan_id === latest.scan_id && LIVE_OPERATION_STATUSES.has(op.status)) {
-        setResumableScanId(latest.scan_id);
-      }
+    findResumableScanId(latest.scan_id).then((id) => {
+      if (!cancelled) setResumableScanId(id);
     });
     return () => { cancelled = true; };
-  }, [projectId, scans, attachOp, opState]);
+  }, [projectId, scans, findResumableScanId, attachOp, opState]);
 
   const handleHistoryResume = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
-    setAttachOp(true);
-    setActiveTab(0);
-  }, []);
+    resumeSession();
+  }, [resumeSession]);
 
   const handleHistoryStartOver = useCallback(
     async (e: React.MouseEvent) => {
       e.stopPropagation();
       if (!projectId || startOverBusy) return;
-      const ok = window.confirm(
-        'Discard the current interactive session and start a new scan?',
-      );
-      if (!ok) return;
-
       setStartOverBusy(true);
       try {
-        // Always Scan (check + assess_pause); do not inherit remediate from history.
-        const colls = collections.split(',').map((c) => c.trim()).filter(Boolean);
-        setAttachOp(true);
-        await startOp('check', {
-          ansible_version: ansibleVersion || undefined,
-          collection_specs: colls.length ? colls : undefined,
-          enable_ai: enableAi,
-          ai_model: enableAi ? (localStorage.getItem(AI_MODEL_STORAGE_KEY) ?? undefined) : undefined,
-          assess_pause: true,
-          interactive: true,
-          abandon_working_set: true,
-        });
-        refreshOp();
-        setActiveTab(0);
-      } catch (err) {
-        console.error('Failed to start over:', err);
-        window.alert('Could not start over. Try Scan again from Options.');
+        await startOver();
       } finally {
         setStartOverBusy(false);
       }
     },
-    [
-      projectId,
-      startOverBusy,
-      collections,
-      ansibleVersion,
-      enableAi,
-      startOp,
-      refreshOp,
-    ],
+    [projectId, startOverBusy, startOver],
   );
 
   const fetchData = useCallback(async () => {
@@ -212,100 +203,11 @@ export function ProjectDetailPage() {
   }, [opState?.status, fetchData]);
 
   useEffect(() => {
-    if (activeTab === 4 && projectId && !graphData && !graphLoading) {
+    if (activeTab === 'visualize' && projectId && !graphData && !graphLoading) {
       setGraphLoading(true);
       getProjectGraph(projectId).then(setGraphData).catch(() => setGraphData(null)).finally(() => setGraphLoading(false));
     }
   }, [activeTab, projectId, graphData, graphLoading]);
-
-  /** Unified Scan (ADR-064): check + assess_pause → findings → begin-remediate. */
-  const handleScan = useCallback(async () => {
-    const colls = collections.split(',').map((c) => c.trim()).filter(Boolean);
-    setActiveTab(0);
-
-    const startOnce = (abandonWorkingSet: boolean) =>
-      startOp('check', {
-        ansible_version: ansibleVersion || undefined,
-        collection_specs: colls.length ? colls : undefined,
-        enable_ai: enableAi,
-        ai_model: enableAi ? (localStorage.getItem(AI_MODEL_STORAGE_KEY) ?? undefined) : undefined,
-        assess_pause: true,
-        interactive: !autoApplyTier1,
-        ...(abandonWorkingSet ? { abandon_working_set: true } : {}),
-      });
-
-    try {
-      setAttachOp(true);
-      await startOnce(false);
-      refreshOp();
-    } catch (err) {
-      if (err instanceof WorkingSetConflictError) {
-        const ok = window.confirm(
-          `${err.message}\n\nDiscard the draft working set and start a new scan?`,
-        );
-        if (ok) {
-          try {
-            setAttachOp(true);
-            await startOnce(true);
-            refreshOp();
-          } catch (retryErr) {
-            console.error('Failed to start operation after abandon:', retryErr);
-          }
-        }
-        return;
-      }
-      console.error('Failed to start operation:', err);
-    }
-  }, [ansibleVersion, collections, enableAi, autoApplyTier1, startOp, refreshOp]);
-
-  const handleBeginRemediate = useCallback(async () => {
-    try {
-      setAttachOp(true);
-      await beginRemediateOp();
-      refreshOp();
-    } catch (err) {
-      // Only true assess-session expiry offers a destructive rescan fallback.
-      // Other 409s (wrong status / double-click) must not abandon the working set.
-      if (err instanceof SessionExpiredError) {
-        const ok = window.confirm(
-          'Assessment session expired. Start a full remediate (rescan)?',
-        );
-        if (ok) {
-          const colls = collections.split(',').map((c) => c.trim()).filter(Boolean);
-          setAttachOp(true);
-          await startOp('remediate', {
-            ansible_version: ansibleVersion || undefined,
-            collection_specs: colls.length ? colls : undefined,
-            enable_ai: enableAi,
-            ai_model: enableAi ? (localStorage.getItem(AI_MODEL_STORAGE_KEY) ?? undefined) : undefined,
-            interactive: !autoApplyTier1,
-            abandon_working_set: true,
-          });
-          refreshOp();
-        }
-        return;
-      }
-      // Surface non-expiry failures in OperationPanel Assess alert.
-      throw err;
-    }
-  }, [
-    beginRemediateOp,
-    refreshOp,
-    startOp,
-    ansibleVersion,
-    collections,
-    enableAi,
-    autoApplyTier1,
-  ]);
-
-  const handleEscalateAi = useCallback(
-    async (targets: Array<{ path: string; rule_ids?: string[] }>) => {
-      setAttachOp(true);
-      await escalateAiOp(targets);
-      refreshOp();
-    },
-    [escalateAiOp, refreshOp],
-  );
 
   useEffect(() => {
     if ((searchParams.get('action') === 'check' || searchParams.get('action') === 'scan') && project && !opState) {
@@ -356,11 +258,6 @@ export function ProjectDetailPage() {
     }
   }, [projectId, project, editName, editUrl, editBranch, editScmToken, scmTokenDirty, fetchData]);
 
-  const handleDismiss = useCallback(() => {
-    clearOp();
-    setAttachOp(false);
-  }, [clearOp]);
-
   if (loading && !project) {
     return (
       <PageLayout>
@@ -393,36 +290,38 @@ export function ProjectDetailPage() {
 
       <div style={{ padding: '0 24px 24px' }}>
         <Tabs activeKey={activeTab} onSelect={(_e, k) => {
-          setActiveTab(k as number);
-          if (k === 1 || k === 2) fetchData();
-          if (k === 4 && projectId && !graphData && !graphLoading) {
-            setGraphLoading(true);
-            getProjectGraph(projectId).then(setGraphData).catch(() => setGraphData(null)).finally(() => setGraphLoading(false));
-          }
+          const key = k as ProjectTabKey;
+          setActiveTab(key);
+          if (key === 'activity' || key === 'violations') fetchData();
+          // Visualize graph load is centralized in the activeTab effect below.
         }}>
-          <Tab eventKey={0} title={<TabTitleText>Overview</TabTitleText>}>
+          <Tab eventKey="overview" title={<TabTitleText>Overview</TabTitleText>}>
             <div style={{ marginTop: 16 }}>
-              {operationActive ? (
-                <OperationPanel
-                  state={opState}
-                  onApprove={approveOp}
-                  onBeginRemediate={handleBeginRemediate}
-                  onEscalateAi={handleEscalateAi}
-                  onDraftUpdate={(updates) => {
-                    patchProposals(updates).catch(() => {});
-                  }}
-                  onCancel={cancelOp}
-                  onCreatePR={createPROp}
-                  onDismiss={handleDismiss}
-                  feedbackEnabled={feedbackEnabled}
-                  enableAi={enableAi}
-                />
-              ) : project.scan_count === 0 ? (
+              {sessionTabVisible && (
+                <Card style={{ marginBottom: 16 }}>
+                  <CardBody>
+                    <Flex alignItems={{ default: 'alignItemsCenter' }} justifyContent={{ default: 'justifyContentSpaceBetween' }}>
+                      <FlexItem>
+                        {operationActive ? 'Live session in progress' : 'Starting session…'}
+                        {opState?.status ? (
+                          <span style={{ opacity: 0.7, marginLeft: 8 }}>({opState.status})</span>
+                        ) : null}
+                      </FlexItem>
+                      <FlexItem>
+                        <Button variant="primary" onClick={() => setActiveTab('session')}>
+                          Open Session
+                        </Button>
+                      </FlexItem>
+                    </Flex>
+                  </CardBody>
+                </Card>
+              )}
+              {project.scan_count === 0 ? (
                 <Card style={{ marginBottom: 16 }}>
                   <CardBody style={{ textAlign: 'center', padding: '48px 24px' }}>
                     <div style={{ fontSize: 18, fontWeight: 600, marginBottom: 8 }}>No checks yet</div>
                     <div style={{ opacity: 0.7 }}>
-                      Go to the <Button variant="link" isInline onClick={() => setActiveTab(1)}>Activity</Button> tab to run the first check.
+                      Go to the <Button variant="link" isInline onClick={() => setActiveTab('activity')}>Activity</Button> tab to run the first check.
                     </div>
                   </CardBody>
                 </Card>
@@ -505,7 +404,30 @@ export function ProjectDetailPage() {
             </div>
           </Tab>
 
-          <Tab eventKey={1} title={<TabTitleText>Activity</TabTitleText>}>
+          {sessionTabVisible && (
+            <Tab
+              eventKey="session"
+              title={
+                <TabTitleText>
+                  Session
+                  {opState?.status
+                    ? ` · ${opState.status.replace(/_/g, ' ')}`
+                    : ' · starting'}
+                </TabTitleText>
+              }
+            >
+              <div style={{ marginTop: 16 }}>
+                <ProjectWorkflowPanel
+                  workflow={workflow}
+                  enableAi={enableAi}
+                  feedbackEnabled={feedbackEnabled}
+                  onViewDetails={(scanId) => navigate(`/activity/${scanId}`)}
+                />
+              </div>
+            </Tab>
+          )}
+
+          <Tab eventKey="activity" title={<TabTitleText>Activity</TabTitleText>}>
             <div style={{ marginTop: 16 }}>
               <Card style={{ marginBottom: 16 }}>
                 <CardBody>
@@ -625,15 +547,15 @@ export function ProjectDetailPage() {
             </div>
           </Tab>
 
-          <Tab eventKey={2} title={<TabTitleText>Violations</TabTitleText>}>
+          <Tab eventKey="violations" title={<TabTitleText>Violations</TabTitleText>}>
             <ViolationsTab violations={violations} />
           </Tab>
 
-          <Tab eventKey={3} title={<TabTitleText>Dependencies</TabTitleText>}>
+          <Tab eventKey="dependencies" title={<TabTitleText>Dependencies</TabTitleText>}>
             <DependenciesTab dependencies={dependencies} depHealth={depHealth} loading={loading} projectId={projectId} />
           </Tab>
 
-          <Tab eventKey={4} title={<TabTitleText>Visualize</TabTitleText>}>
+          <Tab eventKey="visualize" title={<TabTitleText>Visualize</TabTitleText>}>
             <div style={{ marginTop: 16 }}>
               {graphLoading ? (
                 <div style={{ padding: 48, textAlign: 'center', opacity: 0.6 }}>Loading graph...</div>
@@ -647,7 +569,7 @@ export function ProjectDetailPage() {
             </div>
           </Tab>
 
-          <Tab eventKey={5} title={<TabTitleText>Settings</TabTitleText>}>
+          <Tab eventKey="settings" title={<TabTitleText>Settings</TabTitleText>}>
             <div style={{ marginTop: 16, maxWidth: 600 }}>
               <Card>
                 <CardBody>

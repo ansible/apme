@@ -1,7 +1,6 @@
 {
   "compilerOptions": {
     "target": "ES2020",
-    "useDefineForClassFields": true,
     "lib": ["ES2020", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "skipLibCheck": true,
@@ -16,13 +15,7 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
     "noUncheckedIndexedAccess": true,
-    "forceConsistentCasingInFileNames": true,
-    "types": ["vitest/globals"],
-    "baseUrl": ".",
-    "paths": {
-      "@apme/ui-workflow": ["./packages/ui-workflow/src/index.ts"]
-    }
+    "forceConsistentCasingInFileNames": true
   },
-  "include": ["src", "packages/ui-workflow/src"],
-  "exclude": ["vendor"]
+  "include": ["src"]
 }

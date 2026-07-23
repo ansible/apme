@@ -14,6 +14,7 @@ import { usePageNotifications } from '@ansible/ansible-ui-framework';
 import { usePageAlertToaster } from '@ansible/ansible-ui-framework/PageAlertToaster';
 import type { IPageNotification } from '@ansible/ansible-ui-framework/PageNotifications/PageNotification';
 import type { IPageNotificationGroup } from '@ansible/ansible-ui-framework/PageNotifications/PageNotificationGroup';
+import { apmeSseUrl } from '../api/apmeApiAdapter';
 import { listNotifications, markNotificationRead } from '../services/api';
 import type { NotificationItem } from '../types/api';
 
@@ -84,9 +85,7 @@ export function useNotificationStream(): void {
       const buffer: NotificationItem[] = [];
       let restLoaded = false;
 
-      const proto = window.location.protocol === 'https:' ? 'https:' : 'http:';
-      const sseUrl = `${proto}//${window.location.host}/api/v1/notifications/stream`;
-      es = new EventSource(sseUrl);
+      es = new EventSource(apmeSseUrl('/notifications/stream'));
 
       const handleSseItem = (item: NotificationItem) => {
         setNotificationGroups((prev) => mergeNotification(prev, item));

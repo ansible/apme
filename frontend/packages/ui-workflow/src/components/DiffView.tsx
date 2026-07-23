@@ -157,23 +157,44 @@ function alignSideBySide(before: string, after: string): AlignedRow[] {
     rows.push(stack.pop()!);
   }
 
-  // Pair adjacent remove-only + add-only into a single change row.
+  // Pair full runs of adjacent remove-only + add-only into change rows.
   const merged: AlignedRow[] = [];
-  for (let k = 0; k < rows.length; k++) {
-    const cur = rows[k]!;
-    const next = rows[k + 1];
-    if (cur.kind === 'remove-only' && next?.kind === 'add-only') {
+  let k = 0;
+  while (k < rows.length) {
+    if (rows[k]!.kind !== 'remove-only') {
+      merged.push(rows[k]!);
+      k++;
+      continue;
+    }
+    let removeEnd = k;
+    while (removeEnd < rows.length && rows[removeEnd]!.kind === 'remove-only') {
+      removeEnd++;
+    }
+    let addEnd = removeEnd;
+    while (addEnd < rows.length && rows[addEnd]!.kind === 'add-only') {
+      addEnd++;
+    }
+    const removeCount = removeEnd - k;
+    const addCount = addEnd - removeEnd;
+    const pairCount = Math.min(removeCount, addCount);
+    for (let p = 0; p < pairCount; p++) {
+      const r = rows[k + p]!;
+      const a = rows[removeEnd + p]!;
       merged.push({
         kind: 'change',
-        left: cur.left,
-        right: next.right,
-        leftNum: cur.leftNum,
-        rightNum: next.rightNum,
+        left: r.left,
+        right: a.right,
+        leftNum: r.leftNum,
+        rightNum: a.rightNum,
       });
-      k++;
-    } else {
-      merged.push(cur);
     }
+    for (let p = pairCount; p < removeCount; p++) {
+      merged.push(rows[k + p]!);
+    }
+    for (let p = pairCount; p < addCount; p++) {
+      merged.push(rows[removeEnd + p]!);
+    }
+    k = addEnd;
   }
   return merged;
 }

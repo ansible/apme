@@ -9,6 +9,12 @@ const __dirname = dirname(__filename);
 const pkg = JSON.parse(readFileSync(resolve(__dirname, "package.json"), "utf-8"));
 
 export default defineConfig({
+  resolve: {
+    dedupe: ['react', 'react-dom'],
+    alias: {
+      '@apme/ui-workflow': resolve(__dirname, 'packages/ui-workflow/src/index.ts'),
+    },
+  },
   plugins: [react()],
   define: {
     __APME_VERSION__: JSON.stringify(pkg.version as string),

@@ -29,7 +29,7 @@ import {
   SEVERITY_ORDER,
   severityClass,
   severityLabelColor,
-} from './severity';
+} from '../shared/severity';
 
 export interface AiEscalateTarget {
   path: string;

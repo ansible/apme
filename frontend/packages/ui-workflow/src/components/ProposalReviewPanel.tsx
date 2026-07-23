@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Label } from '@patternfly/react-core';
-import { RuleId } from './RuleId';
+import { RuleId } from '../shared/RuleId';
 import type { OperationProposal } from '../types/operation';
 import { DiffView } from './DiffView';
-import { FeedbackModal, type FeedbackPayload } from './FeedbackModal';
+import { FeedbackModal, type FeedbackPayload } from '../shared/FeedbackModal';
 import {
   NodeReviewList,
   type NodeDecision,
@@ -23,7 +23,7 @@ import {
   severityDisplayLabel,
   severityLabelColor,
   severityOrder,
-} from './severity';
+} from '../shared/severity';
 import {
   descendantProposalIds,
   fixTypeLabelColor,

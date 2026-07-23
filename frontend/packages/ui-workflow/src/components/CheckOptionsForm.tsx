@@ -8,9 +8,8 @@ import {
   FormSelectOption,
   TextInput,
 } from '@patternfly/react-core';
-import { listAiModels } from '../services/api';
-import type { AiModelInfo } from '../types/api';
-import { AI_MODEL_STORAGE_KEY } from '../pages/SettingsPage';
+import { listAiModels, type AiModelInfo } from '../api/listAiModels';
+import { AI_MODEL_STORAGE_KEY } from '../shared/constants';
 
 export interface CheckOptionsFormProps {
   ansibleVersion: string;

@@ -1,8 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { AiEscalationPanel } from "../components/AiEscalationPanel";
-import type { AssessFinding } from "../hooks/useProjectOperationState";
+import { AiEscalationPanel } from '@apme/ui-workflow';
+import type { AssessFinding } from '@apme/ui-workflow';
 
 const candidates: AssessFinding[] = [
   {
