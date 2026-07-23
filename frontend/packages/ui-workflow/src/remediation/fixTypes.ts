@@ -19,11 +19,9 @@ const REMEDIATION_CLASS_STRING_TO_NUMBER: Record<string, number> = {
 
 /** Normalizes gateway remediation class (proto int or engine string) to 1/2/3. */
 export function normalizeRemediationClass(value: unknown): number {
-  if (typeof value === 'number' && !Number.isNaN(value)) {
-    if (value >= 1 && value <= 3) {
-      return value;
-    }
-    return 3;
+  // Exact integers only — reject fractions like 1.5.
+  if (typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 3) {
+    return value;
   }
   if (typeof value === 'string') {
     const trimmed = value.trim().toLowerCase();
@@ -31,9 +29,9 @@ export function normalizeRemediationClass(value: unknown): number {
     if (mapped !== undefined) {
       return mapped;
     }
-    const parsed = Number.parseInt(trimmed, 10);
-    if (!Number.isNaN(parsed) && parsed >= 1 && parsed <= 3) {
-      return parsed;
+    // Exact digit strings only — reject parseInt prefixes like "2foo" / "2.9".
+    if (trimmed === '1' || trimmed === '2' || trimmed === '3') {
+      return Number(trimmed);
     }
   }
   return 3;

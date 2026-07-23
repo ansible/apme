@@ -56,4 +56,26 @@ describe('apmeApiAdapter', () => {
     expect(apmeApiUrl('/health')).toBe('https://gw.example/api/v1/health');
     expect(getApmeApiAdapter().apiBase).toBe('https://gw.example/api/v1');
   });
+
+  it('trims a trailing slash on apiBase', () => {
+    setApmeApiAdapter(
+      createDefaultApmeApiAdapter({ apiBase: 'https://gw.example/api/v1/' }),
+    );
+    expect(apmeApiUrl('/health')).toBe('https://gw.example/api/v1/health');
+    expect(apmeSseUrl('/notifications/stream')).toBe(
+      'https://gw.example/api/v1/notifications/stream',
+    );
+  });
+
+  it('builds ws URLs from an absolute apiBase', () => {
+    setApmeApiAdapter(
+      createDefaultApmeApiAdapter({
+        apiBase: 'https://gw.example/api/v1',
+        origin: window.location.origin,
+      }),
+    );
+    expect(apmeWsUrl('/ws/session')).toBe(
+      'wss://gw.example/api/v1/ws/session',
+    );
+  });
 });

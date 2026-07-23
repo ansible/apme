@@ -293,10 +293,7 @@ export function ProjectDetailPage() {
           const key = k as ProjectTabKey;
           setActiveTab(key);
           if (key === 'activity' || key === 'violations') fetchData();
-          if (key === 'visualize' && projectId && !graphData && !graphLoading) {
-            setGraphLoading(true);
-            getProjectGraph(projectId).then(setGraphData).catch(() => setGraphData(null)).finally(() => setGraphLoading(false));
-          }
+          // Visualize graph load is centralized in the activeTab effect below.
         }}>
           <Tab eventKey="overview" title={<TabTitleText>Overview</TabTitleText>}>
             <div style={{ marginTop: 16 }}>

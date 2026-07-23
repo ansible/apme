@@ -56,9 +56,16 @@ export function setApmeApiAdapter(adapter: ApmeApiAdapter): void {
   currentAdapter = adapter;
 }
 
+/** Strip a single trailing slash so hosts can pass `…/api/v1/` safely. */
+function normalizeApiBase(apiBase: string): string {
+  return apiBase.length > 1 && apiBase.endsWith('/')
+    ? apiBase.slice(0, -1)
+    : apiBase;
+}
+
 /** Build a REST URL from a path like `/health` or `health`. */
 export function apmeApiUrl(path: string): string {
-  const { apiBase } = getApmeApiAdapter();
+  const apiBase = normalizeApiBase(getApmeApiAdapter().apiBase);
   const p = path.startsWith('/') ? path : `/${path}`;
   if (p.startsWith('/api/')) {
     return p;
@@ -67,7 +74,7 @@ export function apmeApiUrl(path: string): string {
 }
 
 function resolveFullPath(path: string): string {
-  const { apiBase } = getApmeApiAdapter();
+  const apiBase = normalizeApiBase(getApmeApiAdapter().apiBase);
   const p = path.startsWith('/') ? path : `/${path}`;
   if (p.startsWith('/api/')) {
     return p;
@@ -85,6 +92,12 @@ function isSameOrigin(origin: string): boolean {
 export function apmeWsUrl(path: string): string {
   const { origin } = getApmeApiAdapter();
   const fullPath = resolveFullPath(path);
+  // Absolute apiBase (e.g. https://gw.example/api/v1) already produced a full URL.
+  if (/^https?:\/\//i.test(fullPath)) {
+    const url = new URL(fullPath);
+    url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+    return url.toString();
+  }
   // Standalone / Vite proxy: build from the page host (pre-adapter behavior).
   if (isSameOrigin(origin)) {
     const proto =

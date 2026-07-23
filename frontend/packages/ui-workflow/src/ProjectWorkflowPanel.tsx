@@ -3,7 +3,14 @@
  * Host supplies chrome (tabs, Overview); this renders OperationPanel or starting spinner.
  */
 
-import { Card, CardBody, Spinner } from '@patternfly/react-core';
+import { useState } from 'react';
+import {
+  Alert,
+  AlertActionCloseButton,
+  Card,
+  CardBody,
+  Spinner,
+} from '@patternfly/react-core';
 import { OperationPanel } from './components/OperationPanel';
 import type { ProjectWorkflowController } from './useProjectWorkflow';
 
@@ -32,6 +39,7 @@ export function ProjectWorkflowPanel({
     createPR,
     dismiss,
   } = workflow;
+  const [draftError, setDraftError] = useState<string | null>(null);
 
   if (!operationActive || !opState) {
     return (
@@ -45,20 +53,41 @@ export function ProjectWorkflowPanel({
   }
 
   return (
-    <OperationPanel
-      state={opState}
-      onApprove={approve}
-      onBeginRemediate={beginRemediate}
-      onEscalateAi={escalateAi}
-      onDraftUpdate={(updates) => {
-        patchProposals(updates).catch(() => {});
-      }}
-      onCancel={cancel}
-      onCreatePR={createPR}
-      onDismiss={dismiss}
-      feedbackEnabled={feedbackEnabled}
-      enableAi={enableAi}
-      onViewDetails={onViewDetails}
-    />
+    <>
+      {draftError ? (
+        <Alert
+          variant="danger"
+          title="Could not save draft proposals"
+          isInline
+          style={{ marginBottom: 12 }}
+          actionClose={
+            <AlertActionCloseButton onClose={() => setDraftError(null)} />
+          }
+        >
+          {draftError}
+        </Alert>
+      ) : null}
+      <OperationPanel
+        state={opState}
+        onApprove={approve}
+        onBeginRemediate={beginRemediate}
+        onEscalateAi={escalateAi}
+        onDraftUpdate={(updates) => {
+          setDraftError(null);
+          patchProposals(updates).catch((err: unknown) => {
+            console.error('Failed to patch proposals:', err);
+            setDraftError(
+              err instanceof Error ? err.message : 'Draft update failed.',
+            );
+          });
+        }}
+        onCancel={cancel}
+        onCreatePR={createPR}
+        onDismiss={dismiss}
+        feedbackEnabled={feedbackEnabled}
+        enableAi={enableAi}
+        onViewDetails={onViewDetails}
+      />
+    </>
   );
 }

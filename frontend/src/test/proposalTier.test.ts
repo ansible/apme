@@ -106,6 +106,13 @@ describe("fixTypes", () => {
     expect(normalizeRemediationClass("manual-review")).toBe(3);
   });
 
+  it("rejects fractional and prefix-parsed remediation classes", () => {
+    expect(normalizeRemediationClass(1.5)).toBe(3);
+    expect(normalizeRemediationClass("2.9")).toBe(3);
+    expect(normalizeRemediationClass("2foo")).toBe(3);
+    expect(normalizeRemediationClass("2")).toBe(2);
+  });
+
   it("maps effective fix type with AI toggle", () => {
     expect(effectiveFixType(2, true)).toBe("ai");
     expect(effectiveFixType(2, false)).toBe("manual");
