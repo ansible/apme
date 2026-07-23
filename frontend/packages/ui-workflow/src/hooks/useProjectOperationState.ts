@@ -3,8 +3,9 @@
  *
  * Connects to GET …/projects/{id}/operation/events via **fetch + stream**
  * (adapter.fetch) so authenticated hosts (Portal Bearer) work. On connect
- * receives a full snapshot, then applies delta events. Automatically
- * reconnects on disconnect. Returns null when no operation is active.
+ * receives a full snapshot, then applies delta events. Reconnects on
+ * disconnect while the operation is non-terminal (Gateway closes the
+ * stream after terminal statuses). Returns null when no operation is active.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -469,6 +470,21 @@ export function useProjectOperationState(
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
   const connectGenRef = useRef(0);
+  /** Latest operation status for reconnect gating (SSE ends on terminal). */
+  const statusRef = useRef<ProjectOperationStatus | null>(null);
+  const errorBackoffRef = useRef(0);
+  const connectRef = useRef<() => void>(() => {});
+
+  const setStateTracked = useCallback(
+    (next: SetStateAction<ProjectOperationState | null>) => {
+      setState((prev) => {
+        const resolved = typeof next === "function" ? next(prev) : next;
+        statusRef.current = resolved?.status ?? null;
+        return resolved;
+      });
+    },
+    [],
+  );
 
   const cleanup = useCallback(() => {
     connectGenRef.current += 1;
@@ -481,6 +497,31 @@ export function useProjectOperationState(
       reconnectTimer.current = null;
     }
     setConnected(false);
+  }, []);
+
+  const scheduleReconnect = useCallback((gen: number, kind: "end" | "error") => {
+    if (!mountedRef.current || gen !== connectGenRef.current) return;
+    setConnected(false);
+    // Gateway closes the SSE after a terminal snapshot/status — do not loop.
+    const status = statusRef.current;
+    if (status && TERMINAL_STATUSES.has(status)) {
+      errorBackoffRef.current = 0;
+      return;
+    }
+    const delayMs =
+      kind === "error"
+        ? Math.min(30_000, 1_000 * 2 ** Math.min(errorBackoffRef.current, 4))
+        : 3_000;
+    if (kind === "error") {
+      errorBackoffRef.current += 1;
+    } else {
+      errorBackoffRef.current = 0;
+    }
+    reconnectTimer.current = setTimeout(() => {
+      if (mountedRef.current && gen === connectGenRef.current) {
+        connectRef.current();
+      }
+    }, delayMs);
   }, []);
 
   const connect = useCallback(() => {
@@ -510,51 +551,43 @@ export function useProjectOperationState(
         if (!res.body) {
           throw new Error("SSE connect failed: empty response body");
         }
+        errorBackoffRef.current = 0;
         await readSseStream(
           res.body,
           (ev) => {
             if (!mountedRef.current || gen !== connectGenRef.current) return;
-            applyOperationSseEvent(setState, setConnected, ev);
+            applyOperationSseEvent(setStateTracked, setConnected, ev);
           },
           ac.signal,
         );
-        // Stream ended — reconnect unless torn down.
-        if (!mountedRef.current || gen !== connectGenRef.current) return;
-        setConnected(false);
-        reconnectTimer.current = setTimeout(() => {
-          if (mountedRef.current && gen === connectGenRef.current) {
-            connect();
-          }
-        }, 3000);
-      } catch (err) {
+        scheduleReconnect(gen, "end");
+      } catch {
         if (ac.signal.aborted) return;
-        if (!mountedRef.current || gen !== connectGenRef.current) return;
-        setConnected(false);
-        reconnectTimer.current = setTimeout(() => {
-          if (mountedRef.current && gen === connectGenRef.current) {
-            connect();
-          }
-        }, 3000);
-        void err;
+        scheduleReconnect(gen, "error");
       }
     })();
-  }, [projectId, cleanup]);
+  }, [projectId, cleanup, scheduleReconnect, setStateTracked]);
+
+  connectRef.current = connect;
 
   const poll = useCallback(
     async (opts?: { force?: boolean }) => {
       const force = opts?.force === true;
       if ((!enabled && !force) || !projectId) {
-        if (!force) setState(null);
+        if (!force) {
+          setStateTracked(null);
+        }
         return;
       }
       try {
         const s = await fetchProjectOperationState(projectId);
-        if (!mountedRef.current && !force) return;
+        // Never update React state after unmount — force only bypasses enabled.
+        if (!mountedRef.current) return;
         if (!s) {
-          setState(null);
+          setStateTracked(null);
           return;
         }
-        setState(s);
+        setStateTracked(s);
         if (!TERMINAL_STATUSES.has(s.status)) {
           connect();
         }
@@ -563,14 +596,14 @@ export function useProjectOperationState(
         // or a later refresh can recover.
       }
     },
-    [projectId, connect, enabled],
+    [projectId, connect, enabled, setStateTracked],
   );
 
   useEffect(() => {
     mountedRef.current = true;
     if (!enabled || !projectId) {
       cleanup();
-      setState(null);
+      setStateTracked(null);
       return () => {
         mountedRef.current = false;
         cleanup();
@@ -581,7 +614,7 @@ export function useProjectOperationState(
       mountedRef.current = false;
       cleanup();
     };
-  }, [poll, cleanup, enabled, projectId]);
+  }, [poll, cleanup, enabled, projectId, setStateTracked]);
 
   // Explicit refresh must not depend on ``enabled``: startScan calls
   // refreshOp from a closure where attachOp was still false (no-op).
@@ -591,8 +624,8 @@ export function useProjectOperationState(
 
   const clear = useCallback(() => {
     cleanup();
-    setState(null);
-  }, [cleanup]);
+    setStateTracked(null);
+  }, [cleanup, setStateTracked]);
 
   return { state, connected, refresh, clear };
 }
