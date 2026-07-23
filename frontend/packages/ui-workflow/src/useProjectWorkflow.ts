@@ -82,6 +82,21 @@ export function useProjectWorkflow(
       enabled: Boolean(projectId) && attachOp,
     });
 
+  // Resume (?resume=1 / initiallyAttached): if Gateway has no live op, detach
+  // so hosts do not keep a permanent "Starting scan…" Session tab.
+  useEffect(() => {
+    if (!initiallyAttached || !projectId) return;
+    let cancelled = false;
+    fetchProjectOperationState(projectId).then((op) => {
+      if (cancelled || op) return;
+      setAttachOp(false);
+      onDismissSession?.();
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [initiallyAttached, projectId, onDismissSession]);
+
   const {
     start: startOp,
     approve,
