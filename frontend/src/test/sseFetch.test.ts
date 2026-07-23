@@ -50,6 +50,23 @@ describe('readSseStream', () => {
     expect(seen.map((e) => e.event)).toEqual(['snapshot', 'progress']);
   });
 
+  it('flushes TextDecoder at end-of-stream', async () => {
+    // Leading byte of "é" (C3 A9) held by stream:true; without decoder.decode()
+    // at EOS the pending byte is dropped (data would be "caf", not "caf�").
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode('event: message\ndata: caf'),
+        );
+        controller.enqueue(new Uint8Array([0xc3]));
+        controller.close();
+      },
+    });
+    const seen: Array<{ event: string; data: string }> = [];
+    await readSseStream(stream, (ev) => seen.push(ev));
+    expect(seen).toEqual([{ event: 'message', data: 'caf\uFFFD' }]);
+  });
+
   it('does not flush a partial frame after abort', async () => {
     const ac = new AbortController();
     // Incomplete frame (no trailing blank line) — would flush on clean end.

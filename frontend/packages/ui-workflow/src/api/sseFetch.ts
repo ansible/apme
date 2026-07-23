@@ -76,9 +76,21 @@ export async function readSseStream(
         onEvent(ev);
       }
     }
+    // Skip remaining decode/flush on abort — cleanup/unmount must not emit.
+    if (signal?.aborted) return;
+
+    // Flush TextDecoder so a multi-byte UTF-8 sequence split across the
+    // last chunk boundary is not dropped (stream:true holds it until EOS).
+    buffer += decoder.decode();
+    {
+      const { events, rest } = parseSseChunk(buffer);
+      buffer = rest;
+      for (const ev of events) {
+        onEvent(ev);
+      }
+    }
     // Flush any final frame that ended without a trailing blank line.
-    // Skip on abort — cleanup/unmount must not emit post-cancel events.
-    if (!signal?.aborted && buffer.trim()) {
+    if (buffer.trim()) {
       const { events } = parseSseChunk(`${buffer}\n\n`);
       for (const ev of events) {
         onEvent(ev);
