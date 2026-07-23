@@ -4,7 +4,8 @@
  * No react-router dependency; hosts supply navigation callbacks.
  */
 
-/* Inventory cards, review shell, proposals, diffs — required by Portal host. */
+/* Inventory cards, review shell, proposals, diffs — required by Portal host.
+ * Copied to dist/styles on pack so this relative import resolves for consumers. */
 import './styles/workflow.css';
 
 export {

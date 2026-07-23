@@ -85,7 +85,8 @@ monorepo.
 ### Negative
 
 - Portal version bumps require editing the dependency URL (no `^` range).
-- Package ships TypeScript source (hosts transpile); no bundled `dist` yet.
+- Package ships compiled ESM `dist/` (+ CSS); consumers must bump the Release
+  URL (no semver range) until a registry exists.
 
 ### Neutral
 
