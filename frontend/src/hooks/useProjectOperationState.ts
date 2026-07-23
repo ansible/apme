@@ -14,6 +14,7 @@ export type ProjectOperationStatus =
   | "cloning"
   | "scanning"
   | "assessed"
+  | "awaiting_ai_triage"
   | "awaiting_approval"
   | "applying"
   | "completed"
@@ -37,6 +38,7 @@ export const LIVE_OPERATION_STATUSES = new Set<ProjectOperationStatus>([
   "cloning",
   "scanning",
   "assessed",
+  "awaiting_ai_triage",
   "awaiting_approval",
   "applying",
   "submitting_pr",
@@ -282,6 +284,8 @@ export interface ProjectOperationState {
   progress: ProgressEntry[];
   proposals?: Proposal[];
   findings?: AssessFinding[];
+  /** AI-candidate findings for escalation triage (awaiting_ai_triage). */
+  ai_triage_candidates?: AssessFinding[];
   result?: OperationResultData;
   pr_url?: string;
   error?: string;
@@ -410,6 +414,24 @@ export function useProjectOperationState(
                 ...prev,
                 status: "assessed",
                 findings: data.findings,
+              }
+            : prev,
+        );
+      } catch {
+        /* ignore */
+      }
+    });
+
+    es.addEventListener("ai_triage", (e: MessageEvent) => {
+      if (!mountedRef.current) return;
+      try {
+        const data = JSON.parse(e.data) as { candidates: AssessFinding[] };
+        setState((prev) =>
+          prev
+            ? {
+                ...prev,
+                status: "awaiting_ai_triage",
+                ai_triage_candidates: data.candidates,
               }
             : prev,
         );

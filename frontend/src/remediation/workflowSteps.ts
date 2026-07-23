@@ -3,7 +3,7 @@
  *
  * Steps (AI pair omitted when AI is off):
  *   Scan → Review findings → Quick-fix proposals → Quick-fix applied
- *     → AI assessment → AI proposals → AI applied → Commit → Complete
+ *     → AI escalation → AI proposals → AI applied → Commit → Complete
  */
 
 import type { ProjectOperationState } from '../hooks/useProjectOperationState';
@@ -14,7 +14,7 @@ export type WorkflowStepId =
   | 'findings'
   | 'tier1_proposals'
   | 'tier1_applied'
-  | 'ai_assessment'
+  | 'ai_escalation'
   | 'ai_proposals'
   | 'ai_applied'
   | 'commit'
@@ -30,7 +30,7 @@ export interface WorkflowLatch {
   pastFindings: boolean;
   pastTier1Review: boolean;
   pastTier1Applied: boolean;
-  pastAiAssessment: boolean;
+  pastAiEscalation: boolean;
   pastAiReview: boolean;
   pastAiApplied: boolean;
 }
@@ -40,7 +40,7 @@ export function emptyWorkflowLatch(): WorkflowLatch {
     pastFindings: false,
     pastTier1Review: false,
     pastTier1Applied: false,
-    pastAiAssessment: false,
+    pastAiEscalation: false,
     pastAiReview: false,
     pastAiApplied: false,
   };
@@ -55,7 +55,7 @@ export function workflowStepDefs(includeAi: boolean): WorkflowStepDef[] {
   ];
   if (includeAi) {
     steps.push(
-      { id: 'ai_assessment', label: 'AI assessment' },
+      { id: 'ai_escalation', label: 'AI escalation' },
       { id: 'ai_proposals', label: 'AI proposals' },
       { id: 'ai_applied', label: 'AI applied' },
     );
@@ -73,6 +73,7 @@ export function shouldIncludeAiSteps(
   if (!state) return false;
   if ((state.result?.ai_proposed ?? 0) > 0) return true;
   if ((state.result?.ai_accepted ?? 0) > 0) return true;
+  if ((state.ai_triage_candidates?.length ?? 0) > 0) return true;
   const proposals = state.proposals ?? [];
   return proposals.length > 0 && isAiRemediationProposal(proposals[0]!);
 }
@@ -108,12 +109,19 @@ export function updateWorkflowLatch(
     next.pastFindings = true;
   }
 
+  if (status === 'awaiting_ai_triage') {
+    next.pastFindings = true;
+    next.pastTier1Review = true;
+    next.pastTier1Applied = true;
+    next.pastAiEscalation = true;
+  }
+
   if (status === 'awaiting_approval') {
     next.pastFindings = true;
     if (aiGate) {
       next.pastTier1Review = true;
       next.pastTier1Applied = true;
-      next.pastAiAssessment = true;
+      next.pastAiEscalation = true;
       next.pastAiReview = true;
     } else {
       next.pastTier1Review = true;
@@ -125,18 +133,15 @@ export function updateWorkflowLatch(
     if (next.pastAiReview) {
       // Applying after Gate 2 approve.
       next.pastAiApplied = true;
+    } else if (next.pastAiEscalation) {
+      // AI running after escalate-ai — stay on AI escalation.
     } else if (next.pastTier1Review || next.pastTier1Applied) {
       next.pastTier1Applied = true;
-      if (includeAi) {
-        next.pastAiAssessment = true;
-      }
+      // Do not mark pastAiEscalation — wait for awaiting_ai_triage.
     } else {
       // Auto-apply / empty Gate 1: skipped proposal review.
       next.pastTier1Review = true;
       next.pastTier1Applied = true;
-      if (includeAi) {
-        next.pastAiAssessment = true;
-      }
     }
   }
 
@@ -145,7 +150,7 @@ export function updateWorkflowLatch(
     next.pastTier1Review = true;
     next.pastTier1Applied = true;
     if (includeAi) {
-      next.pastAiAssessment = true;
+      next.pastAiEscalation = true;
       next.pastAiReview = true;
       next.pastAiApplied = true;
     }
@@ -165,7 +170,7 @@ export function updateWorkflowLatch(
 function stepFromLatch(latch: WorkflowLatch, includeAi: boolean): WorkflowStepId {
   if (includeAi && latch.pastAiApplied) return 'ai_applied';
   if (includeAi && latch.pastAiReview) return 'ai_proposals';
-  if (includeAi && latch.pastAiAssessment) return 'ai_assessment';
+  if (includeAi && latch.pastAiEscalation) return 'ai_escalation';
   if (latch.pastTier1Applied) return 'tier1_applied';
   if (latch.pastTier1Review) return 'tier1_proposals';
   if (latch.pastFindings) return 'findings';
@@ -213,6 +218,10 @@ export function resolveCurrentWorkflowStep(
     return 'findings';
   }
 
+  if (status === 'awaiting_ai_triage') {
+    return 'ai_escalation';
+  }
+
   if (status === 'awaiting_approval') {
     return isAiGate(state) ? 'ai_proposals' : 'tier1_proposals';
   }
@@ -221,16 +230,19 @@ export function resolveCurrentWorkflowStep(
     if (latch.pastAiReview) {
       return includeAi ? 'ai_applied' : 'tier1_applied';
     }
-    if (includeAi && latch.pastTier1Applied) {
-      return 'ai_assessment';
+    if (includeAi && latch.pastAiEscalation) {
+      return 'ai_escalation';
     }
     return 'tier1_applied';
   }
 
   // queued | cloning | scanning
   if (latch.pastFindings) {
-    if (includeAi && latch.pastTier1Applied) {
-      return 'ai_assessment';
+    if (includeAi && latch.pastAiEscalation) {
+      return 'ai_escalation';
+    }
+    if (latch.pastTier1Applied) {
+      return 'tier1_applied';
     }
     if (latch.pastTier1Review) {
       return 'tier1_applied';

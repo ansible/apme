@@ -322,6 +322,7 @@ async def run_project_operation(
     progress_callback: ProgressCallback | None = None,
     approval_queue: asyncio.Queue[list[str]] | None = None,
     begin_remediate_queue: asyncio.Queue[None] | None = None,
+    escalate_ai_queue: asyncio.Queue[list[dict[str, object]]] | None = None,
     scan_id: str | None = None,
     galaxy_servers: list[GalaxyServerDef] | None = None,
     scm_token: str | None = None,
@@ -355,6 +356,9 @@ async def run_project_operation(
             If omitted while ``assess_pause``, auto-begins on
             ``FindingsReady``. Proposal approve/decline is controlled
             separately by ``approval_queue`` (omitted → auto-decline).
+        escalate_ai_queue: Queue of ``{path, rule_ids}`` target dicts to leave
+            AI escalation triage. If omitted when ``AiTriageReady`` arrives,
+            all candidate paths are escalated (allow-all).
         scan_id: Optional pre-generated scan ID; one is created if omitted.
         galaxy_servers: Global Galaxy server defs to inject into scan metadata (ADR-045).
         scm_token: Optional SCM token for private repository access.
@@ -433,6 +437,25 @@ async def run_project_operation(
                         await begin_remediate_queue.get()
                     await command_queue.put(
                         primary_pb2.SessionCommand(begin_remediate=primary_pb2.BeginRemediateRequest())
+                    )
+                elif kind == "ai_triage":
+                    target_dicts: list[dict[str, object]]
+                    if escalate_ai_queue is not None:
+                        target_dicts = await escalate_ai_queue.get()
+                    else:
+                        # No queue — escalate every candidate path (allow-all).
+                        paths = sorted({c.path for c in event.ai_triage.candidates if c.path})
+                        target_dicts = [{"path": p, "rule_ids": []} for p in paths]
+                    targets: list[primary_pb2.AiEscalateTarget] = []
+                    for t in target_dicts:
+                        path = str(t.get("path") or "")
+                        if not path:
+                            continue
+                        raw_rules = t.get("rule_ids") or []
+                        rule_ids = [str(r) for r in raw_rules] if isinstance(raw_rules, list) else []
+                        targets.append(primary_pb2.AiEscalateTarget(path=path, rule_ids=rule_ids))
+                    await command_queue.put(
+                        primary_pb2.SessionCommand(ai_escalate=primary_pb2.AiEscalateRequest(targets=targets))
                     )
                 elif kind == "proposals" and approval_queue is not None:
                     approved_ids = await approval_queue.get()

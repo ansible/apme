@@ -143,6 +143,7 @@ message SessionCommand {
     CloseRequest close = 4;
     ResumeRequest resume = 5;
     BeginRemediateRequest begin_remediate = 6;  // ADR-064: leave assess pause → Gate 1
+    AiEscalateRequest ai_escalate = 7;         // leave AI escalation triage → Gate 2
   }
 }
 
@@ -150,6 +151,17 @@ message BeginRemediateRequest {}
 
 message ApprovalRequest {
   repeated string approved_ids = 1;
+}
+
+// One location (and optional rule subset) allowed into Abbenay for Gate 2.
+// Empty rule_ids = all AI-candidate findings on path. Non-empty = filter by rule.
+message AiEscalateTarget {
+  string path = 1;               // ContentGraph node_id
+  repeated string rule_ids = 2;  // optional; empty = entire location
+}
+
+message AiEscalateRequest {
+  repeated AiEscalateTarget targets = 1;  // empty = skip AI entirely
 }
 
 message ExtendRequest {}
@@ -173,6 +185,7 @@ message SessionEvent {
     SessionClosed closed = 8;
     DataPayload data = 9;
     FindingsReady findings = 10;  // ADR-064 assess pause
+    AiTriageReady ai_triage = 11; // pause before Gate 2 AI
   }
 }
 
@@ -180,6 +193,14 @@ message SessionEvent {
 // dependency-health findings remain on the Dependencies API surface.
 message FindingsReady {
   repeated Violation violations = 1;
+  SessionStatus status = 2;
+  int32 ttl_seconds = 3;
+}
+
+// AI-candidate findings after Quick-fix apply; client selects AiEscalateTarget
+// paths (optional rule_ids) before Abbenay runs.
+message AiTriageReady {
+  repeated Violation candidates = 1;
   SessionStatus status = 2;
   int32 ttl_seconds = 3;
 }
@@ -271,4 +292,7 @@ enum SessionStatus {
   AWAITING_APPROVAL = 1;
   PROCESSING = 2;
   COMPLETE = 3;
+  // Pause before Gate 2 AI (ADR-062 escalation triage). Distinct from
+  // AWAITING_APPROVAL so WS/CLI clients are not ambiguous with Gate 1/2.
+  AWAITING_AI_TRIAGE = 4;
 }

@@ -8,6 +8,7 @@
  *   cloning         → progress bar + clone status
  *   scanning        → streaming progress log
  *   assessed        → findings panel + Remediate (ADR-064)
+ *   awaiting_ai_triage → AI escalation Include/Skip panel
  *   awaiting_approval → proposal review panel
  *   applying        → progress log + "Applying fixes..."
  *   completed       → Commit step (if patches) or results
@@ -40,6 +41,10 @@ import {
 } from './ProposalReviewPanel';
 import { OperationResultCard } from './OperationResultCard';
 import { AssessFindingsPanel } from './AssessFindingsPanel';
+import {
+  AiEscalationPanel,
+  type AiEscalateTarget,
+} from './AiEscalationPanel';
 import { OperationWorkflowStepper } from './OperationWorkflowStepper';
 import {
   CommitChangesPanel,
@@ -51,6 +56,8 @@ export interface OperationPanelProps {
   state: ProjectOperationState | null;
   onApprove: (ids: string[]) => Promise<unknown>;
   onBeginRemediate?: () => Promise<unknown>;
+  /** ADR-062: leave awaiting_ai_triage (empty targets skips AI). */
+  onEscalateAi?: (targets: AiEscalateTarget[]) => Promise<unknown>;
   onDraftUpdate?: (updates: ProposalDraftUpdate[]) => void;
   onCancel: () => Promise<unknown>;
   onCreatePR: (options?: CommitSubmitOptions) => Promise<CommitSubmitResult>;
@@ -99,6 +106,7 @@ export function OperationPanel({
   state,
   onApprove,
   onBeginRemediate,
+  onEscalateAi,
   onDraftUpdate,
   onCancel,
   onCreatePR,
@@ -110,6 +118,8 @@ export function OperationPanel({
   const [prError, setPrError] = useState<string | null>(null);
   const [beginning, setBeginning] = useState(false);
   const [beginError, setBeginError] = useState<string | null>(null);
+  const [escalating, setEscalating] = useState(false);
+  const [escalateError, setEscalateError] = useState<string | null>(null);
   const [commitFinished, setCommitFinished] = useState(false);
   const [localPrUrl, setLocalPrUrl] = useState<string | null>(null);
 
@@ -117,6 +127,7 @@ export function OperationPanel({
     setCommitFinished(false);
     setPrError(null);
     setBeginError(null);
+    setEscalateError(null);
     setLocalPrUrl(null);
   }, [state?.operation_id]);
 
@@ -153,6 +164,25 @@ export function OperationPanel({
       setBeginning(false);
     }
   }, [onBeginRemediate]);
+
+  const handleEscalateAi = useCallback(
+    async (targets: AiEscalateTarget[]) => {
+      if (!onEscalateAi) return;
+      setEscalating(true);
+      setEscalateError(null);
+      try {
+        await onEscalateAi(targets);
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : 'Failed to escalate to AI';
+        setEscalateError(message);
+        console.error('escalate-ai failed:', err);
+      } finally {
+        setEscalating(false);
+      }
+    },
+    [onEscalateAi],
+  );
 
   const handleSubmit = useCallback(
     async (options?: CommitSubmitOptions) => {
@@ -232,6 +262,39 @@ export function OperationPanel({
         onCancel={handleCancel}
         remediating={beginning}
       />,
+    );
+  }
+
+  if (status === 'awaiting_ai_triage') {
+    const candidatesRaw = state.ai_triage_candidates;
+    const candidatesLoading = candidatesRaw === undefined;
+    const candidates = candidatesRaw ?? [];
+    return withStepper(
+      state,
+      enableAi,
+      candidatesLoading ? (
+        <Card style={{ marginBottom: 16 }}>
+          <CardBody style={{ textAlign: 'center', padding: '32px 24px' }}>
+            <Spinner size="lg" />
+            <div style={{ marginTop: 12, fontSize: 16 }}>
+              Loading AI-eligible findings…
+            </div>
+            <Button variant="link" onClick={handleCancel} style={{ marginTop: 8 }}>
+              Cancel
+            </Button>
+          </CardBody>
+        </Card>
+      ) : (
+        <AiEscalationPanel
+          candidates={candidates}
+          onEscalate={(targets) => {
+            handleEscalateAi(targets).catch(() => {});
+          }}
+          onCancel={handleCancel}
+          escalating={escalating}
+          error={escalateError}
+        />
+      ),
     );
   }
 

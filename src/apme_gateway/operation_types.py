@@ -25,6 +25,7 @@ class OperationStatus(str, Enum):
         CLONING: Repository is being cloned.
         SCANNING: Engine is scanning the project.
         ASSESSED: Assessment pause (ADR-064); findings ready, awaiting begin-remediate.
+        AWAITING_AI_TRIAGE: AI escalation triage; candidates ready, awaiting escalate-ai.
         AWAITING_APPROVAL: AI / Tier 1 proposals require user review.
         APPLYING: Approved fixes are being applied.
         COMPLETED: Operation finished successfully.
@@ -39,6 +40,7 @@ class OperationStatus(str, Enum):
     CLONING = "cloning"
     SCANNING = "scanning"
     ASSESSED = "assessed"
+    AWAITING_AI_TRIAGE = "awaiting_ai_triage"
     AWAITING_APPROVAL = "awaiting_approval"
     APPLYING = "applying"
     COMPLETED = "completed"
@@ -165,6 +167,7 @@ class OperationState:
         progress: Append-only progress log.
         proposals: Set when status is ``awaiting_approval``.
         findings: Content violations at assess pause (ADR-064).
+        ai_triage_candidates: AI-candidate findings for escalation triage.
         result: Set when status is ``completed``.
         pr_url: Set when status is ``pr_submitted``.
         error: Set when status is ``failed``.
@@ -172,6 +175,7 @@ class OperationState:
         grpc_task: The background asyncio.Task driving Primary.
         approval_future: Resolved by ``POST /approve``.
         begin_remediate_future: Resolved by ``POST /begin-remediate`` (ADR-064).
+        escalate_ai_future: Resolved by ``POST /escalate-ai`` with target dicts.
         sse_subscribers: One queue per connected SSE client.
     """
 
@@ -184,6 +188,7 @@ class OperationState:
     progress: list[ProgressEntry] = field(default_factory=list)
     proposals: list[Proposal] | None = None
     findings: list[dict[str, Any]] | None = None
+    ai_triage_candidates: list[dict[str, Any]] | None = None
     result: OperationResult | None = None
     pr_url: str | None = None
     error: str | None = None
@@ -191,6 +196,7 @@ class OperationState:
     grpc_task: asyncio.Task[Any] | None = field(default=None, repr=False)
     approval_future: asyncio.Future[list[str]] | None = field(default=None, repr=False)
     begin_remediate_future: asyncio.Future[None] | None = field(default=None, repr=False)
+    escalate_ai_future: asyncio.Future[list[dict[str, Any]]] | None = field(default=None, repr=False)
     sse_subscribers: list[asyncio.Queue[dict[str, Any]]] = field(default_factory=list, repr=False)
 
     def to_snapshot(self) -> dict[str, Any]:
@@ -240,6 +246,8 @@ class OperationState:
             ]
         if self.findings is not None:
             data["findings"] = self.findings
+        if self.ai_triage_candidates is not None:
+            data["ai_triage_candidates"] = self.ai_triage_candidates
         if self.result is not None:
             data["result"] = {
                 "total_violations": self.result.total_violations,
@@ -270,6 +278,7 @@ class SSEEventType(str, Enum):
         PROGRESS: New progress log entry.
         PROPOSALS: AI proposals delivered.
         FINDINGS: Assessment findings (ADR-064 assess pause).
+        AI_TRIAGE: AI escalation candidates (pause before Gate 2).
         PROPOSAL_UPDATED: Optimistic draft status change (ADR-062 Phase 2).
         RESULT: Operation completed with results.
         APPROVAL_ACK: Approval acknowledged.
@@ -282,6 +291,7 @@ class SSEEventType(str, Enum):
     PROGRESS = "progress"
     PROPOSALS = "proposals"
     FINDINGS = "findings"
+    AI_TRIAGE = "ai_triage"
     PROPOSAL_UPDATED = "proposal_updated"
     RESULT = "result"
     APPROVAL_ACK = "approval_ack"

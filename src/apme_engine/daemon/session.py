@@ -53,7 +53,8 @@ class SessionState:
         created_at: Session creation timestamp.
         last_activity_at: Last client interaction timestamp.
         idempotency_ok: Whether formatter was idempotent.
-        status: Session status (1=AWAITING_APPROVAL, 2=PROCESSING, 3=COMPLETE).
+        status: Session status (1=AWAITING_APPROVAL, 2=PROCESSING,
+            3=COMPLETE, 4=AWAITING_AI_TRIAGE).
         fix_options: Fix options from the client's first upload chunk.
         scan_options: Scan options from the client's first upload chunk.
         ai_proposals: Raw engine AI proposals for downstream use.
@@ -65,6 +66,13 @@ class SessionState:
             pending BeginRemediate (before Gate 1 ProposalsReady).
         assess_findings: Proto Violations last emitted in FindingsReady
             (for resume replay).
+        awaiting_ai_triage: True while AI escalation triage is pending
+            AiEscalateRequest (before Gate 2 AI runs).
+        ai_triage_candidates: Proto Violations last emitted in
+            AiTriageReady (for resume replay).
+        ai_escalate_targets: ``(path, frozenset[rule_id])`` allow-list from
+            AiEscalateRequest; empty frozenset of rules means entire path.
+            ``None`` means no triage filter (allow all); ``[]`` means skip AI.
         remaining_ai: Remaining AI-candidate violations.
         remaining_manual: Remaining manual-review violations.
         dep_health_violations: Dependency-health violations that do not
@@ -119,6 +127,10 @@ class SessionState:
     awaiting_tier1_gate: bool = False
     awaiting_assess: bool = False
     assess_findings: list[object] = field(default_factory=list)
+    awaiting_ai_triage: bool = False
+    ai_triage_candidates: list[object] = field(default_factory=list)
+    # (path, rule_ids) — empty rule_ids means all AI-candidates on path
+    ai_escalate_targets: list[tuple[str, frozenset[str]]] | None = None
 
     # Remaining violations from engine report
     remaining_ai: list[ViolationDict] = field(default_factory=list)

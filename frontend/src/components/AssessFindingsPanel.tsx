@@ -193,7 +193,7 @@ function findingCardTitle(f: AssessFinding): string {
   return f.rule_id || 'Finding';
 }
 
-function AssessNodeDetail({
+export function AssessNodeDetail({
   findings,
   enableAi,
 }: {

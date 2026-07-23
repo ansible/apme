@@ -90,12 +90,14 @@ export function ProjectDetailPage() {
     start: startOp,
     approve: approveOp,
     beginRemediate: beginRemediateOp,
+    escalateAi: escalateAiOp,
     cancel: cancelOp,
     createPR: createPROp,
     patchProposals,
   } = useProjectOperationActions(projectId || '');
 
-  const isRunning = opState != null && ['queued', 'cloning', 'scanning', 'assessed', 'awaiting_approval', 'applying'].includes(opState.status);
+  const isRunning =
+    opState != null && LIVE_OPERATION_STATUSES.has(opState.status);
   const operationActive = attachOp && opState != null && opState.status !== 'cancelled';
 
   /** Latest history row with a matching live op — Available + Resume / Start over. */
@@ -296,6 +298,15 @@ export function ProjectDetailPage() {
     autoApplyTier1,
   ]);
 
+  const handleEscalateAi = useCallback(
+    async (targets: Array<{ path: string; rule_ids?: string[] }>) => {
+      setAttachOp(true);
+      await escalateAiOp(targets);
+      refreshOp();
+    },
+    [escalateAiOp, refreshOp],
+  );
+
   useEffect(() => {
     if ((searchParams.get('action') === 'check' || searchParams.get('action') === 'scan') && project && !opState) {
       setSearchParams({}, { replace: true });
@@ -396,6 +407,7 @@ export function ProjectDetailPage() {
                   state={opState}
                   onApprove={approveOp}
                   onBeginRemediate={handleBeginRemediate}
+                  onEscalateAi={handleEscalateAi}
                   onDraftUpdate={(updates) => {
                     patchProposals(updates).catch(() => {});
                   }}
