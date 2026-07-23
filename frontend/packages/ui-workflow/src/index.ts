@@ -4,6 +4,9 @@
  * No react-router dependency; hosts supply navigation callbacks.
  */
 
+/* Inventory cards, review shell, proposals, diffs — required by Portal host. */
+import './styles/workflow.css';
+
 export {
   ApmeApiProvider,
   apmeApiUrl,

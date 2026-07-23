@@ -1,0 +1,73 @@
+# Pack @apme/ui-workflow and attach the tarball to a GitHub Release (ADR-066).
+# Tag format: ui-workflow-vX.Y.Z (must match package.json version).
+name: UI workflow package release
+
+on:
+  push:
+    tags:
+      - "ui-workflow-v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ui-workflow-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend deps
+        working-directory: frontend
+        run: npm ci
+
+      - name: Assert tag matches package version
+        id: ver
+        working-directory: frontend
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          EXPECTED="${TAG#ui-workflow-v}"
+          PKG_VER="$(node -p "require('./packages/ui-workflow/package.json').version")"
+          if [[ "${PKG_VER}" != "${EXPECTED}" ]]; then
+            echo "::error::Tag ${TAG} expects version ${EXPECTED}, package.json has ${PKG_VER}"
+            exit 1
+          fi
+          echo "version=${PKG_VER}" >> "${GITHUB_OUTPUT}"
+          echo "tarball=apme-ui-workflow-${PKG_VER}.tgz" >> "${GITHUB_OUTPUT}"
+
+      - name: npm pack
+        working-directory: frontend
+        run: npm pack ./packages/ui-workflow
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.ver.outputs.version }}
+          TARBALL: ${{ steps.ver.outputs.tarball }}
+        run: |
+          set -euo pipefail
+          gh release create "${GITHUB_REF_NAME}" \
+            "frontend/${TARBALL}" \
+            --title "@apme/ui-workflow v${VERSION}" \
+            --notes "$(cat <<EOF
+          ## \`@apme/ui-workflow\` v${VERSION}
+
+          Install (Yarn / npm):
+
+          \`\`\`json
+          \"@apme/ui-workflow\": \"https://github.com/ansible/apme/releases/download/${GITHUB_REF_NAME}/${TARBALL}\"
+          \`\`\`
+
+          See [ADR-066](https://github.com/ansible/apme/blob/main/.sdlc/adrs/ADR-066-ui-workflow-github-release-artifacts.md).
+          EOF
+          )"
