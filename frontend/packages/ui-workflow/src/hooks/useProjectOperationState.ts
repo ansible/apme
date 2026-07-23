@@ -1,18 +1,17 @@
 /**
  * SSE hook for real-time project operation state (ADR-052).
  *
- * Connects to GET /api/v1/projects/{id}/operation/events and returns
- * the current OperationState.  On initial connect receives a full
- * snapshot, then applies delta events.  Automatically reconnects on
- * disconnect.  Returns null when no operation is active.
+ * Connects to GET …/projects/{id}/operation/events via **fetch + stream**
+ * (adapter.fetch) so authenticated hosts (Portal Bearer) work. On connect
+ * receives a full snapshot, then applies delta events. Reconnects on
+ * disconnect while the operation is non-terminal (Gateway closes the
+ * stream after terminal statuses). Returns null when no operation is active.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  apmeApiUrl,
-  apmeSseUrl,
-  getApmeApiAdapter,
-} from "../api/apmeApiAdapter";
+import type { Dispatch, SetStateAction } from "react";
+import { apmeApiUrl, getApmeApiAdapter } from "../api/apmeApiAdapter";
+import { readSseStream, type SseEvent } from "../api/sseFetch";
 
 export type ProjectOperationStatus =
   | "queued"
@@ -321,52 +320,22 @@ export interface UseProjectOperationStateOptions {
   enabled?: boolean;
 }
 
-export function useProjectOperationState(
-  projectId: string,
-  options: UseProjectOperationStateOptions = {},
-) {
-  const enabled = options.enabled ?? true;
-  const [state, setState] = useState<ProjectOperationState | null>(null);
-  const [connected, setConnected] = useState(false);
-  const esRef = useRef<EventSource | null>(null);
-  const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const mountedRef = useRef(true);
-
-  const cleanup = useCallback(() => {
-    if (esRef.current) {
-      esRef.current.close();
-      esRef.current = null;
-    }
-    if (reconnectTimer.current) {
-      clearTimeout(reconnectTimer.current);
-      reconnectTimer.current = null;
-    }
-    setConnected(false);
-  }, []);
-
-  const connect = useCallback(() => {
-    cleanup();
-
-    const es = new EventSource(
-      apmeSseUrl(`/projects/${projectId}/operation/events`),
-    );
-    esRef.current = es;
-
-    es.addEventListener("snapshot", (e: MessageEvent) => {
-      if (!mountedRef.current) return;
-      try {
-        const data = JSON.parse(e.data) as ProjectOperationState;
+/** Apply one Gateway operation SSE event to React state (exported for tests). */
+export function applyOperationSseEvent(
+  setState: Dispatch<SetStateAction<ProjectOperationState | null>>,
+  setConnected: Dispatch<SetStateAction<boolean>>,
+  ev: SseEvent,
+): void {
+  try {
+    switch (ev.event) {
+      case "snapshot": {
+        const data = JSON.parse(ev.data) as ProjectOperationState;
         setState(data);
         setConnected(true);
-      } catch {
-        /* ignore parse errors */
+        break;
       }
-    });
-
-    es.addEventListener("status_changed", (e: MessageEvent) => {
-      if (!mountedRef.current) return;
-      try {
-        const data = JSON.parse(e.data) as {
+      case "status_changed": {
+        const data = JSON.parse(ev.data) as {
           status: string;
           previous: string;
           error?: string;
@@ -380,41 +349,26 @@ export function useProjectOperationState(
               }
             : prev,
         );
-      } catch {
-        /* ignore */
+        break;
       }
-    });
-
-    es.addEventListener("progress", (e: MessageEvent) => {
-      if (!mountedRef.current) return;
-      try {
-        const entry = JSON.parse(e.data) as ProgressEntry;
+      case "progress": {
+        const entry = JSON.parse(ev.data) as ProgressEntry;
         setState((prev) =>
           prev
             ? { ...prev, progress: [...(prev.progress ?? []), entry] }
             : prev,
         );
-      } catch {
-        /* ignore */
+        break;
       }
-    });
-
-    es.addEventListener("proposals", (e: MessageEvent) => {
-      if (!mountedRef.current) return;
-      try {
-        const data = JSON.parse(e.data) as { proposals: Proposal[] };
+      case "proposals": {
+        const data = JSON.parse(ev.data) as { proposals: Proposal[] };
         setState((prev) =>
           prev ? { ...prev, proposals: data.proposals } : prev,
         );
-      } catch {
-        /* ignore */
+        break;
       }
-    });
-
-    es.addEventListener("findings", (e: MessageEvent) => {
-      if (!mountedRef.current) return;
-      try {
-        const data = JSON.parse(e.data) as { findings: AssessFinding[] };
+      case "findings": {
+        const data = JSON.parse(ev.data) as { findings: AssessFinding[] };
         setState((prev) =>
           prev
             ? {
@@ -424,17 +378,12 @@ export function useProjectOperationState(
               }
             : prev,
         );
-      } catch {
-        /* ignore */
+        break;
       }
-    });
-
-    // Gateway broadcasts status_changed(awaiting_ai_triage) then ai_triage
-    // with {candidates}. Without this handler the Session triage UI stays empty.
-    es.addEventListener("ai_triage", (e: MessageEvent) => {
-      if (!mountedRef.current) return;
-      try {
-        const data = JSON.parse(e.data) as { candidates?: AssessFinding[] };
+      // Gateway broadcasts status_changed(awaiting_ai_triage) then ai_triage
+      // with {candidates}. Without this handler the Session triage UI stays empty.
+      case "ai_triage": {
+        const data = JSON.parse(ev.data) as { candidates?: AssessFinding[] };
         setState((prev) =>
           prev
             ? {
@@ -444,15 +393,10 @@ export function useProjectOperationState(
               }
             : prev,
         );
-      } catch {
-        /* ignore */
+        break;
       }
-    });
-
-    es.addEventListener("proposal_updated", (e: MessageEvent) => {
-      if (!mountedRef.current) return;
-      try {
-        const data = JSON.parse(e.data) as {
+      case "proposal_updated": {
+        const data = JSON.parse(ev.data) as {
           proposals?: Array<Record<string, unknown>>;
         };
         const updates = data.proposals ?? [];
@@ -461,43 +405,30 @@ export function useProjectOperationState(
           if (!prev?.proposals) return prev;
           const byId = new Map(prev.proposals.map((p) => [p.id, p]));
           for (const item of updates) {
-            const eng = String(
-              item.engine_proposal_id || item.id || "",
-            );
+            const eng = String(item.engine_proposal_id || item.id || "");
             if (!eng || !byId.has(eng)) continue;
             const cur = byId.get(eng)!;
             byId.set(eng, {
               ...cur,
-              status: (String(item.status || cur.status) as Proposal["status"]),
-              path:
-                typeof item.path === "string" ? item.path : cur.path,
+              status: String(item.status || cur.status) as Proposal["status"],
+              path: typeof item.path === "string" ? item.path : cur.path,
               source:
                 typeof item.source === "string" ? item.source : cur.source,
             });
           }
           return { ...prev, proposals: Array.from(byId.values()) };
         });
-      } catch {
-        /* ignore */
+        break;
       }
-    });
-
-    es.addEventListener("result", (e: MessageEvent) => {
-      if (!mountedRef.current) return;
-      try {
-        const result = JSON.parse(e.data) as OperationResultData;
+      case "result": {
+        const result = JSON.parse(ev.data) as OperationResultData;
         setState((prev) => (prev ? { ...prev, result } : prev));
-      } catch {
-        /* ignore */
+        break;
       }
-    });
-
-    es.addEventListener("approval_ack", (e: MessageEvent) => {
-      if (!mountedRef.current) return;
-      try {
+      case "approval_ack": {
         // Do not force status to "applying" — two-gate interactive flow may
         // return to awaiting_approval; status_changed owns transitions.
-        const data = JSON.parse(e.data) as { applied_count: number };
+        const data = JSON.parse(ev.data) as { applied_count: number };
         setState((prev) =>
           prev
             ? {
@@ -508,89 +439,193 @@ export function useProjectOperationState(
               }
             : prev,
         );
-      } catch {
-        /* ignore */
+        break;
       }
-    });
-
-    es.addEventListener("pr_created", (e: MessageEvent) => {
-      if (!mountedRef.current) return;
-      try {
-        const data = JSON.parse(e.data) as { pr_url: string };
+      case "pr_created": {
+        const data = JSON.parse(ev.data) as { pr_url: string };
         setState((prev) => (prev ? { ...prev, pr_url: data.pr_url } : prev));
-      } catch {
-        /* ignore */
+        break;
       }
-    });
-
-    es.addEventListener("error_event", (e: MessageEvent) => {
-      if (!mountedRef.current) return;
-      try {
-        const data = JSON.parse(e.data) as { error: string };
+      case "error_event": {
+        const data = JSON.parse(ev.data) as { error: string };
         setState((prev) => (prev ? { ...prev, error: data.error } : prev));
-      } catch {
-        /* ignore */
+        break;
       }
-    });
+      default:
+        break;
+    }
+  } catch {
+    /* ignore parse errors */
+  }
+}
 
-    es.onerror = () => {
-      if (!mountedRef.current) return;
-      es.close();
-      esRef.current = null;
-      setConnected(false);
-      reconnectTimer.current = setTimeout(() => {
-        if (mountedRef.current) connect();
-      }, 3000);
-    };
-  }, [projectId, cleanup]);
+export function useProjectOperationState(
+  projectId: string,
+  options: UseProjectOperationStateOptions = {},
+) {
+  const enabled = options.enabled ?? true;
+  const [state, setState] = useState<ProjectOperationState | null>(null);
+  const [connected, setConnected] = useState(false);
+  const abortRef = useRef<AbortController | null>(null);
+  const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mountedRef = useRef(true);
+  const connectGenRef = useRef(0);
+  /** Latest operation status for reconnect gating (SSE ends on terminal). */
+  const statusRef = useRef<ProjectOperationStatus | null>(null);
+  const errorBackoffRef = useRef(0);
+  const connectRef = useRef<() => void>(() => {});
 
-  const poll = useCallback(async () => {
-    if (!enabled || !projectId) {
-      setState(null);
+  const setStateTracked = useCallback(
+    (next: SetStateAction<ProjectOperationState | null>) => {
+      setState((prev) => {
+        const resolved = typeof next === "function" ? next(prev) : next;
+        statusRef.current = resolved?.status ?? null;
+        return resolved;
+      });
+    },
+    [],
+  );
+
+  const cleanup = useCallback(() => {
+    connectGenRef.current += 1;
+    if (abortRef.current) {
+      abortRef.current.abort();
+      abortRef.current = null;
+    }
+    if (reconnectTimer.current) {
+      clearTimeout(reconnectTimer.current);
+      reconnectTimer.current = null;
+    }
+    setConnected(false);
+  }, []);
+
+  const scheduleReconnect = useCallback((gen: number, kind: "end" | "error") => {
+    if (!mountedRef.current || gen !== connectGenRef.current) return;
+    setConnected(false);
+    // Gateway closes the SSE after a terminal snapshot/status — do not loop.
+    const status = statusRef.current;
+    if (status && TERMINAL_STATUSES.has(status)) {
+      errorBackoffRef.current = 0;
       return;
     }
-    try {
-      const s = await fetchProjectOperationState(projectId);
-      if (!mountedRef.current) return;
-      if (!s) {
-        setState(null);
+    const delayMs =
+      kind === "error"
+        ? Math.min(30_000, 1_000 * 2 ** Math.min(errorBackoffRef.current, 4))
+        : 3_000;
+    if (kind === "error") {
+      errorBackoffRef.current += 1;
+    } else {
+      errorBackoffRef.current = 0;
+    }
+    reconnectTimer.current = setTimeout(() => {
+      if (mountedRef.current && gen === connectGenRef.current) {
+        connectRef.current();
+      }
+    }, delayMs);
+  }, []);
+
+  const connect = useCallback(() => {
+    cleanup();
+    const gen = connectGenRef.current;
+    const ac = new AbortController();
+    abortRef.current = ac;
+
+    const { fetch: doFetch } = getApmeApiAdapter();
+    // Use apmeApiUrl (not EventSource-only helper) so absolute discovery
+    // bases and adapter.fetch auth both apply.
+    const url = apmeApiUrl(`/projects/${projectId}/operation/events`);
+
+    void (async () => {
+      try {
+        const res = await doFetch(url, {
+          method: "GET",
+          headers: { Accept: "text/event-stream" },
+          signal: ac.signal,
+        });
+        if (!mountedRef.current || gen !== connectGenRef.current) return;
+        if (!res.ok) {
+          throw new Error(
+            `SSE connect failed (${res.status} ${res.statusText})`,
+          );
+        }
+        if (!res.body) {
+          throw new Error("SSE connect failed: empty response body");
+        }
+        errorBackoffRef.current = 0;
+        await readSseStream(
+          res.body,
+          (ev) => {
+            if (!mountedRef.current || gen !== connectGenRef.current) return;
+            applyOperationSseEvent(setStateTracked, setConnected, ev);
+          },
+          ac.signal,
+        );
+        scheduleReconnect(gen, "end");
+      } catch {
+        if (ac.signal.aborted) return;
+        scheduleReconnect(gen, "error");
+      }
+    })();
+  }, [projectId, cleanup, scheduleReconnect, setStateTracked]);
+
+  connectRef.current = connect;
+
+  const poll = useCallback(
+    async (opts?: { force?: boolean }) => {
+      const force = opts?.force === true;
+      if ((!enabled && !force) || !projectId) {
+        if (!force) {
+          setStateTracked(null);
+        }
         return;
       }
-      setState(s);
-      if (!TERMINAL_STATUSES.has(s.status)) {
-        connect();
+      try {
+        const s = await fetchProjectOperationState(projectId);
+        // Never update React state after unmount — force only bypasses enabled.
+        if (!mountedRef.current) return;
+        if (!s) {
+          setStateTracked(null);
+          return;
+        }
+        setStateTracked(s);
+        if (!TERMINAL_STATUSES.has(s.status)) {
+          connect();
+        }
+      } catch {
+        // Transient Gateway/network error — keep prior state; SSE reconnect
+        // or a later refresh can recover.
       }
-    } catch {
-      // Transient Gateway/network error — keep prior state; SSE reconnect
-      // or a later refresh can recover.
-    }
-  }, [projectId, connect, enabled]);
+    },
+    [projectId, connect, enabled, setStateTracked],
+  );
 
   useEffect(() => {
     mountedRef.current = true;
     if (!enabled || !projectId) {
       cleanup();
-      setState(null);
+      setStateTracked(null);
       return () => {
         mountedRef.current = false;
         cleanup();
       };
     }
-    poll();
+    void poll();
     return () => {
       mountedRef.current = false;
       cleanup();
     };
-  }, [poll, cleanup, enabled, projectId]);
+  }, [poll, cleanup, enabled, projectId, setStateTracked]);
 
+  // Explicit refresh must not depend on ``enabled``: startScan calls
+  // refreshOp from a closure where attachOp was still false (no-op).
   const refresh = useCallback(() => {
-    if (enabled) poll();
-  }, [poll, enabled]);
+    void poll({ force: true });
+  }, [poll]);
 
   const clear = useCallback(() => {
     cleanup();
-    setState(null);
-  }, [cleanup]);
+    setStateTracked(null);
+  }, [cleanup, setStateTracked]);
 
   return { state, connected, refresh, clear };
 }

@@ -17,6 +17,12 @@ export {
 } from './api/apmeApiAdapter';
 
 export {
+  parseSseChunk,
+  readSseStream,
+  type SseEvent,
+} from './api/sseFetch';
+
+export {
   useProjectWorkflow,
   type ProjectWorkflowCheckOptions,
   type ProjectWorkflowController,
