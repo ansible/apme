@@ -20,7 +20,7 @@ jobs:
   test:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v6
       - uses: astral-sh/setup-uv@e06108dd0aef18192324c70427afc47652e63a82 # v7
       - run: uvx --with tox-uv tox -e unit
       - name: Fail if git reports dirty
@@ -34,7 +34,7 @@ jobs:
   integration:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v6
       - uses: astral-sh/setup-uv@e06108dd0aef18192324c70427afc47652e63a82 # v7
       - name: Install OPA binary
         run: |
@@ -54,7 +54,7 @@ jobs:
   ui:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v6
       - uses: astral-sh/setup-uv@e06108dd0aef18192324c70427afc47652e63a82 # v7
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
@@ -87,6 +87,6 @@ jobs:
   test-ai-extra:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v6
       - uses: astral-sh/setup-uv@e06108dd0aef18192324c70427afc47652e63a82 # v7
       - run: uvx --with tox-uv tox -e ai
