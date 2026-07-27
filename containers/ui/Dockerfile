@@ -10,7 +10,12 @@ FROM ${UBI_NODEJS_IMAGE} AS build
 
 USER root
 WORKDIR /app
+# npm workspaces + file: deps must exist before ``npm ci`` (``workspace:*`` is
+# not a registry URL; without packages/*/package.json npm fails with
+# EUNSUPPORTEDPROTOCOL).
 COPY frontend/package.json frontend/package-lock.json* ./
+COPY frontend/packages/ui-workflow/package.json ./packages/ui-workflow/
+COPY frontend/vendor ./vendor
 RUN npm ci
 COPY frontend/ .
 RUN npm run build

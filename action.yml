@@ -73,7 +73,7 @@ runs:
   steps:
     # ── Install CLI ───────────────────────────────────────────────────
     - name: Set up uv
-      uses: astral-sh/setup-uv@6b9c6063abd6010835644d4c2e1bef4cf5cd0fca # v6
+      uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8
 
     - name: Install APME CLI
       shell: bash
@@ -193,7 +193,7 @@ runs:
     # ── Upload results ────────────────────────────────────────────────
     - name: Upload SARIF to Code Scanning
       if: inputs.sarif == 'true' && steps.scan.outputs.sarif-path != ''
-      uses: github/codeql-action/upload-sarif@ce28f5bb42b7a9f2c824e633a3f6ee835bab6858 # v3
+      uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4
       with:
         sarif_file: ${{ steps.scan.outputs.sarif-path }}
         category: apme
@@ -201,7 +201,7 @@ runs:
 
     - name: Upload JSON artifact
       if: inputs.upload-artifact == 'true' && hashFiles('apme-results.json') != ''
-      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
         name: apme-results
         path: apme-results.json
