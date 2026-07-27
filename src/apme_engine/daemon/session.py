@@ -14,7 +14,7 @@ import os
 import shutil
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from apme.v1.common_pb2 import ProgressUpdate
@@ -114,8 +114,8 @@ class SessionState:
     current_tier: int = 1
     report: FixReport | None = None
     temp_dir: Path | None = None
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    last_activity_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    last_activity_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     idempotency_ok: bool = True
     status: int = 2  # PROCESSING
     fix_options: FixOptions | None = None
@@ -174,13 +174,13 @@ class SessionState:
     @property
     def ttl_seconds(self) -> int:
         """Remaining idle TTL in seconds."""
-        elapsed = (datetime.now(timezone.utc) - self.last_activity_at).total_seconds()
+        elapsed = (datetime.now(UTC) - self.last_activity_at).total_seconds()
         return max(0, _DEFAULT_TTL - int(elapsed))
 
     @property
     def lifetime_seconds(self) -> int:
         """Total session age in seconds."""
-        return int((datetime.now(timezone.utc) - self.created_at).total_seconds())
+        return int((datetime.now(UTC) - self.created_at).total_seconds())
 
     @property
     def expired(self) -> bool:
@@ -194,7 +194,7 @@ class SessionState:
 
     def touch(self) -> None:
         """Reset idle timer to now."""
-        self.last_activity_at = datetime.now(timezone.utc)
+        self.last_activity_at = datetime.now(UTC)
 
     def cleanup(self) -> None:
         """Remove temp directory and session-scoped Galaxy config if present."""

@@ -118,7 +118,7 @@ git log --show-signature -1
 
 ### Prerequisites
 
-- Python 3.10+
+- Python 3.12+
 - Podman (for container development)
 - [uv](https://docs.astral.sh/uv/) (package manager)
 - Git

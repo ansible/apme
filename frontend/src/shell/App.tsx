@@ -1,5 +1,5 @@
 import { Suspense, type ReactNode } from 'react';
-import { BrowserRouter } from 'react-router-dom';
+import { BrowserRouter } from 'react-router';
 import { PageApp, PageFramework } from '@ansible/ansible-ui-framework';
 import { ApmeApiProvider, type ApmeApiAdapter } from '../api/apmeApiAdapter';
 import { ApmeMasthead } from './ApmeMasthead';

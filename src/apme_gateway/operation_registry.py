@@ -15,7 +15,7 @@ import asyncio
 import contextlib
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from apme_gateway.operation_types import (
@@ -522,4 +522,4 @@ def _now_iso() -> str:
     Returns:
         ISO-formatted UTC timestamp.
     """
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()

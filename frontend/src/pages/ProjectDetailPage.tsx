@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { PageLayout, PageHeader } from '@ansible/ansible-ui-framework';
 import { severityClass, severityLabel, severityOrder, SEVERITY_LABELS, healthColor } from '../components/severity';
 import { RuleId } from '../components/RuleId';

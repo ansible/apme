@@ -84,7 +84,7 @@ generated stubs in `src/apme/v1/`.
 
 | Package | Version | Purpose |
 |---------|---------|---------|
-| `ansible-core` | `>=2.17.14` | Required for Ansible validator (plugin loader, syntax check) |
+| `ansible-core` | `>=2.20.7` | Required for Ansible validator (plugin loader, syntax check) |
 | `pip-audit` | `>=2.7` | Python CVE scanning (Dep Audit validator) |
 
 ---
@@ -171,11 +171,11 @@ with open(path, "w") as f:
 ```toml
 # pyproject.toml
 [tool.ruff]
-target-version = "py310"
+target-version = "py312"
 line-length = 120
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.12"
 strict = true
 ```
 
@@ -183,14 +183,14 @@ strict = true
 
 ## Frontend Dependencies
 
-The React SPA (`frontend/`) uses:
+The React SPA (`frontend/`) uses Node.js 24+ for build/CI and depends on:
 
 | Package | Purpose |
 |---------|---------|
-| React 18 | UI framework |
+| React 19 | UI framework |
 | Vite | Build tool |
 | PatternFly 6 | Red Hat design system (components, charts, table, icons) |
-| React Router 6 | Client-side routing |
+| React Router 8 | Client-side routing |
 | SWR | Data fetching |
 | i18next | Internationalization |
 
@@ -200,11 +200,12 @@ The React SPA (`frontend/`) uses:
 
 | Dependency | Min Version | Notes |
 |------------|-------------|-------|
-| Python | 3.10 | `requires-python = ">=3.10"` |
-| ansible-core | 2.17.14 | Multi-version venvs (2.17/2.18/2.19/2.20) |
+| Python | 3.12 | `requires-python = ">=3.12"` |
+| Node.js | 24 | `engines.node = ">=24.0.0"` (UI build + CI) |
+| ansible-core | 2.20.7+ | Patched release for Python 3.12+ (UBI10 runtime) |
 | grpcio | 1.82.1 | Aligned with grpcio-tools / health-checking; requires protobuf 7 |
 | protobuf | 7.35.1 | Major version 7 (grpcio ≥1.82 peer dep) |
 | ruamel.yaml | 0.18.0 | YAML round-trip |
 | pytest | 9.0.3 | Testing (matches `dev` extra floor) |
-| ruff | latest | Linting (120-char, py310 target) |
+| ruff | latest | Linting (120-char, py312 target) |
 | mypy | latest | Type checking (strict) |

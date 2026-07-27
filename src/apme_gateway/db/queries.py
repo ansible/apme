@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import math
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, cast
 
 from sqlalchemy import case, func, or_, select
@@ -123,7 +123,7 @@ async def create_project(
     Returns:
         The newly created Project.
     """
-    now = datetime.now(tz=timezone.utc).isoformat()
+    now = datetime.now(tz=UTC).isoformat()
     project = Project(
         id=project_id,
         name=name,
@@ -691,7 +691,7 @@ async def project_rankings(
     projects = await list_projects(db, sort_by="created_at", order="asc", limit=500, offset=0)
 
     rankings: list[dict[str, object]] = []
-    now = datetime.now(tz=timezone.utc)
+    now = datetime.now(tz=UTC)
     for proj in projects:
         scans = await project_scans(db, proj.id, limit=1, offset=0)
         sc = await project_scan_count(db, proj.id)
@@ -1757,7 +1757,7 @@ async def create_galaxy_server(
     Returns:
         The newly created GalaxyServer row.
     """
-    now = datetime.now(tz=timezone.utc).isoformat()
+    now = datetime.now(tz=UTC).isoformat()
     server = GalaxyServer(
         name=name,
         url=url,
@@ -1794,7 +1794,7 @@ async def update_galaxy_server(
     for key, value in fields.items():
         if key in allowed:
             setattr(server, key, value)
-    server.updated_at = datetime.now(tz=timezone.utc).isoformat()
+    server.updated_at = datetime.now(tz=UTC).isoformat()
     await db.commit()
     await db.refresh(server)
     return server
@@ -1905,7 +1905,7 @@ async def upsert_rule_override(
     Returns:
         The created or updated RuleOverride.
     """
-    now = datetime.now(tz=timezone.utc).isoformat()
+    now = datetime.now(tz=UTC).isoformat()
     existing = await get_rule_override(db, rule_id)
     if existing is not None:
         existing.severity_override = severity_override
@@ -2154,7 +2154,7 @@ async def insert_notification(
     Returns:
         The newly created Notification row.
     """
-    now = datetime.now(tz=timezone.utc).isoformat()
+    now = datetime.now(tz=UTC).isoformat()
     notif = Notification(
         type=type,
         title=title,
@@ -2304,7 +2304,7 @@ async def create_suppression(
         scope=scope,
         reason=reason,
         created_by=created_by,
-        created_at=datetime.now(tz=timezone.utc).isoformat(),
+        created_at=datetime.now(tz=UTC).isoformat(),
     )
     db.add(row)
     await db.commit()

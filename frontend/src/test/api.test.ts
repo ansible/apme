@@ -1,15 +1,38 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import {
+  createDefaultApmeApiAdapter,
+  setApmeApiAdapter,
+} from "../api/apmeApiAdapter";
+import {
+  deleteActivity,
+  getActivity,
+  getCollectionDetail,
+  getHealth,
+  getProjectDependencies,
+  getProjectSbom,
+  getPythonPackageDetail,
+  getSession,
+  getSessionTrend,
+  listActivity,
+  listAiModels,
+  listCollectionProjects,
+  listCollections,
+  listPythonPackages,
+  submitActivity,
+} from "../services/api";
 
 const mockFetch = vi.fn();
-vi.stubGlobal("fetch", mockFetch);
 
 describe("api service", () => {
   beforeEach(() => {
     mockFetch.mockReset();
+    setApmeApiAdapter(
+      createDefaultApmeApiAdapter({ fetch: mockFetch as typeof fetch }),
+    );
   });
 
   afterEach(() => {
-    vi.restoreAllMocks();
+    setApmeApiAdapter(createDefaultApmeApiAdapter());
   });
 
   function jsonResponse(data: unknown, status = 200) {
@@ -23,7 +46,6 @@ describe("api service", () => {
 
   it("getHealth calls /api/v1/health", async () => {
     mockFetch.mockReturnValueOnce(jsonResponse({ status: "ok", database: "ok", components: [] }));
-    const { getHealth } = await import("../services/api");
     const result = await getHealth();
     expect(result.status).toBe("ok");
     expect(mockFetch).toHaveBeenCalledWith("/api/v1/health", expect.objectContaining({ headers: { Accept: "application/json" } }));
@@ -31,41 +53,35 @@ describe("api service", () => {
 
   it("listActivity calls /api/v1/activity with pagination", async () => {
     mockFetch.mockReturnValueOnce(jsonResponse({ total: 0, limit: 10, offset: 0, items: [] }));
-    const { listActivity } = await import("../services/api");
     await listActivity(10, 5);
     expect(mockFetch).toHaveBeenCalledWith("/api/v1/activity?limit=10&offset=5", expect.anything());
   });
 
   it("listActivity appends session_id filter", async () => {
     mockFetch.mockReturnValueOnce(jsonResponse({ total: 0, limit: 10, offset: 0, items: [] }));
-    const { listActivity } = await import("../services/api");
     await listActivity(10, 0, "abc123");
     expect(mockFetch).toHaveBeenCalledWith("/api/v1/activity?limit=10&offset=0&session_id=abc123", expect.anything());
   });
 
   it("getActivity calls correct path", async () => {
     mockFetch.mockReturnValueOnce(jsonResponse({ scan_id: "s1" }));
-    const { getActivity } = await import("../services/api");
     await getActivity("s1");
     expect(mockFetch).toHaveBeenCalledWith("/api/v1/activity/s1", expect.anything());
   });
 
   it("deleteActivity calls DELETE", async () => {
     mockFetch.mockReturnValueOnce(Promise.resolve({ ok: true, status: 204 }));
-    const { deleteActivity } = await import("../services/api");
     await deleteActivity("s1");
     expect(mockFetch).toHaveBeenCalledWith("/api/v1/activity/s1", { method: "DELETE" });
   });
 
   it("deleteActivity throws on failure", async () => {
     mockFetch.mockReturnValueOnce(Promise.resolve({ ok: false, status: 404 }));
-    const { deleteActivity } = await import("../services/api");
     await expect(deleteActivity("s1")).rejects.toThrow("404");
   });
 
   it("getSession calls correct path", async () => {
     mockFetch.mockReturnValueOnce(jsonResponse({ session_id: "sess1", scans: [] }));
-    const { getSession } = await import("../services/api");
     const result = await getSession("sess1");
     expect(result.session_id).toBe("sess1");
     expect(mockFetch).toHaveBeenCalledWith("/api/v1/sessions/sess1", expect.anything());
@@ -73,7 +89,6 @@ describe("api service", () => {
 
   it("getSessionTrend calls correct path", async () => {
     mockFetch.mockReturnValueOnce(jsonResponse([{ scan_id: "s1", total_violations: 10 }]));
-    const { getSessionTrend } = await import("../services/api");
     const result = await getSessionTrend("sess1");
     expect(result).toHaveLength(1);
     expect(mockFetch).toHaveBeenCalledWith("/api/v1/sessions/sess1/trend", expect.anything());
@@ -81,7 +96,6 @@ describe("api service", () => {
 
   it("request throws on non-ok response", async () => {
     mockFetch.mockReturnValueOnce(jsonResponse("Not Found", 404));
-    const { getHealth } = await import("../services/api");
     await expect(getHealth()).rejects.toThrow("404");
   });
 
@@ -91,7 +105,6 @@ describe("api service", () => {
       { id: "anthropic/claude-sonnet-4", provider: "anthropic", name: "claude-sonnet-4" },
     ];
     mockFetch.mockReturnValueOnce(jsonResponse(models));
-    const { listAiModels } = await import("../services/api");
     const result = await listAiModels();
     expect(result).toHaveLength(2);
     expect(result[0]!.id).toBe("openai/gpt-4o");
@@ -101,7 +114,6 @@ describe("api service", () => {
 
   it("listAiModels returns empty array on empty response", async () => {
     mockFetch.mockReturnValueOnce(jsonResponse([]));
-    const { listAiModels } = await import("../services/api");
     const result = await listAiModels();
     expect(result).toHaveLength(0);
   });
@@ -116,7 +128,6 @@ describe("api service", () => {
       requirements_files: [],
       dependency_tree: "",
     }));
-    const { getProjectDependencies } = await import("../services/api");
     const result = await getProjectDependencies("proj-123");
     expect(result.ansible_core_version).toBe("2.16.0");
     expect(mockFetch).toHaveBeenCalledWith("/api/v1/projects/proj-123/dependencies", expect.anything());
@@ -130,7 +141,6 @@ describe("api service", () => {
       requirements_files: [],
       dependency_tree: "",
     }));
-    const { getProjectDependencies } = await import("../services/api");
     await getProjectDependencies("My Project/01");
     expect(mockFetch).toHaveBeenCalledWith(
       "/api/v1/projects/My%20Project%2F01/dependencies",
@@ -142,7 +152,6 @@ describe("api service", () => {
     mockFetch.mockReturnValueOnce(jsonResponse([
       { fqcn: "community.general", version: "8.0.0", source: "galaxy", project_count: 5 },
     ]));
-    const { listCollections } = await import("../services/api");
     const result = await listCollections(100, 10);
     expect(result).toHaveLength(1);
     expect(result[0]!.fqcn).toBe("community.general");
@@ -157,7 +166,6 @@ describe("api service", () => {
       project_count: 3,
       projects: [],
     }));
-    const { getCollectionDetail } = await import("../services/api");
     await getCollectionDetail("community/general");
     expect(mockFetch).toHaveBeenCalledWith("/api/v1/collections/community%2Fgeneral", expect.anything());
   });
@@ -166,7 +174,6 @@ describe("api service", () => {
     mockFetch.mockReturnValueOnce(jsonResponse([
       { name: "jmespath", version: "1.0.1", project_count: 2 },
     ]));
-    const { listPythonPackages } = await import("../services/api");
     const result = await listPythonPackages(50, 0);
     expect(result).toHaveLength(1);
     expect(result[0]!.name).toBe("jmespath");
@@ -180,7 +187,6 @@ describe("api service", () => {
       project_count: 5,
       projects: [],
     }));
-    const { getPythonPackageDetail } = await import("../services/api");
     await getPythonPackageDetail("my package");
     expect(mockFetch).toHaveBeenCalledWith("/api/v1/python-packages/my%20package", expect.anything());
   });
@@ -193,7 +199,6 @@ describe("api service", () => {
       headers: new Headers({ "Content-Type": "application/vnd.cyclonedx+json" }),
       blob: () => Promise.resolve(blobContent),
     }));
-    const { getProjectSbom } = await import("../services/api");
     const result = await getProjectSbom("abc123");
     expect(result).toBeInstanceOf(Blob);
     expect(mockFetch).toHaveBeenCalledWith(
@@ -208,7 +213,6 @@ describe("api service", () => {
     mockFetch.mockReturnValueOnce(jsonResponse([
       { project_id: "p1", project_name: "demo", repo_url: "https://example.com" },
     ]));
-    const { listCollectionProjects } = await import("../services/api");
     const result = await listCollectionProjects("ns/collection@2.0");
     expect(result).toHaveLength(1);
     expect(mockFetch).toHaveBeenCalledWith(
@@ -224,7 +228,6 @@ describe("api service", () => {
       pr_url: "https://github.com/org/repo/pull/1",
       provider: "github",
     }));
-    const { submitActivity } = await import("../services/api");
     const result = await submitActivity("proj-1", "act-42");
     expect(result.branch_name).toBe("apme/remediate-abc12345");
     expect(result.pr_url).toBe("https://github.com/org/repo/pull/1");

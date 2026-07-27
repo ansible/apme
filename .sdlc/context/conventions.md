@@ -4,7 +4,7 @@
 
 ### Version
 
-- Python 3.10+ required (`requires-python = ">=3.10"`)
+- Python 3.12+ required (`requires-python = ">=3.12"`)
 - Use modern syntax (match statements, type unions with `|`)
 
 ### Style

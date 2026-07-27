@@ -54,7 +54,7 @@ def galaxy_to_metadata(galaxy: dict[str, Any]) -> str:
     if homepage := galaxy.get("homepage") or galaxy.get("repository"):
         lines.append(f"Home-page: {homepage}")
 
-    lines.append("Requires-Python: >=3.10")
+    lines.append("Requires-Python: >=3.12")
 
     if requires_ansible := galaxy.get("requires_ansible"):
         lines.append(f"Requires-Dist: ansible-core{requires_ansible}")

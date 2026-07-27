@@ -41,28 +41,28 @@ repos:
       - id: adr-index
         name: adr-index
         language: python
-        language_version: python3.10
+        language_version: python3.12
         entry: python scripts/generate_adr_index.py
         files: ^\.sdlc/adrs/ADR-.*\.md$
         pass_filenames: false
       - id: rule-catalog
         name: rule-catalog
         language: python
-        language_version: python3.10
+        language_version: python3.12
         entry: python tools/generate_rule_catalog.py
         files: ^src/apme_engine/(validators|graph/rules)/.+\.(py|rego|md)$|^src/apme_engine/remediation/transforms/
         pass_filenames: false
       - id: graph-boundary
         name: graph-boundary (ADR-059)
         language: python
-        language_version: python3.10
+        language_version: python3.12
         entry: python tools/check_graph_boundary.py
         files: ^src/apme_engine/graph/.+\.py$
         pass_filenames: false
       - id: check-skill-frontmatter
         name: Validate SKILL.md frontmatter
         language: python
-        language_version: python3.10
+        language_version: python3.12
         entry: python scripts/check_skill_frontmatter.py
         additional_dependencies: [pyyaml]
         pass_filenames: false

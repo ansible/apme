@@ -19,9 +19,9 @@ def _default_cache_dir() -> Path:
 def _safe_wheel_path(base: Path, filename: str) -> Path:
     """Resolve a wheel filename under *base*, rejecting traversal attempts.
 
-    Validates the untrusted filename as a single safe path component, then
-    reconstructs the result purely from the trusted base directory so static
-    analysis can verify the path stays within the cache root.
+    Resolves the path first (eliminating symlinks and ``..`` components), then
+    validates each component of the relative suffix and reconstructs the result
+    purely from the trusted cache root so static analysis can verify containment.
 
     Args:
         base: Base directory the file must reside under.
@@ -34,26 +34,22 @@ def _safe_wheel_path(base: Path, filename: str) -> Path:
         ValueError: When the filename is invalid or escapes the base directory.
     """
     base_resolved = base.resolve()
-    if (
-        not filename
-        or filename != os.path.basename(filename)
-        or ".." in filename
-        or os.sep in filename
-        or (os.altsep and os.altsep in filename)
-    ):
+    resolved = Path(os.path.realpath(base_resolved / filename))
+    if not resolved.is_relative_to(base_resolved):
+        msg = f"Path escapes cache directory: {filename!r}"
+        raise ValueError(msg)
+
+    relative_parts = resolved.relative_to(base_resolved).parts
+    for part in relative_parts:
+        if part in (".", "..") or os.sep in part or (os.altsep and os.altsep in part):
+            msg = f"Invalid wheel filename: {filename!r}"
+            raise ValueError(msg)
+
+    if len(relative_parts) != 1:
         msg = f"Invalid wheel filename: {filename!r}"
         raise ValueError(msg)
 
-    part = filename
-    if part == ".":
-        msg = f"Invalid wheel filename component: {filename!r}"
-        raise ValueError(msg)
-
-    safe_path = base_resolved.joinpath(part).resolve()
-    if not safe_path.is_relative_to(base_resolved):
-        msg = f"Path escapes cache directory: {filename!r}"
-        raise ValueError(msg)
-    return safe_path
+    return base_resolved.joinpath(relative_parts[0])
 
 
 @dataclass

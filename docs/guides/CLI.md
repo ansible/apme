@@ -27,7 +27,7 @@ Replace the tag with any [release version](https://github.com/ansible/apme/relea
 
 ### Requirements
 
-- Python 3.10+
+- Python 3.12+
 - Podman **or** `opa` binary on `$PATH` (optional — OPA uses Podman by default; falls back to local `opa`; skipped if neither is available)
 
 ## How it works

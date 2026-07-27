@@ -314,7 +314,7 @@ def build_hierarchy_from_graph(
         Dict with scan_id, hierarchy, collection_set, and metadata.
     """
     if not scan_id:
-        scan_id = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d%H%M%S")
+        scan_id = datetime.datetime.now(datetime.UTC).strftime("%Y%m%d%H%M%S")
 
     trees_data = _build_trees(graph)
 

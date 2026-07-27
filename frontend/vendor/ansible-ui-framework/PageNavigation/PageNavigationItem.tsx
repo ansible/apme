@@ -1,3 +1,4 @@
+import type { ReactElement } from 'react';
 import { LabelColor } from '../components/pfcolors';
 
 interface PageNavigationGroup {
@@ -15,7 +16,7 @@ interface PageNavigationComponent {
   label?: string;
   subtitle?: string;
   path: string;
-  element: JSX.Element;
+  element: ReactElement;
   hidden?: boolean;
   badge?: string;
   badgeColor?: LabelColor;
