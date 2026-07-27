@@ -14,7 +14,7 @@
   "dependencies": {
     "@ansible/ansible-ui-framework": "file:./vendor/ansible-ui-framework",
     "@patternfly/patternfly": "6.3.1",
-    "@patternfly/react-charts": "8.3.1",
+    "@patternfly/react-charts": "8.5.1",
     "@patternfly/react-core": "6.3.1",
     "@patternfly/react-icons": "6.3.1",
     "@patternfly/react-table": "6.3.1",
