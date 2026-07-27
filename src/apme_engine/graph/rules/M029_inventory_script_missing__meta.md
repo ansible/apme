@@ -2,12 +2,8 @@
 rule_id: M029
 validator: native
 description: Inventory scripts must include _meta.hostvars in JSON output (enforced in 2.23)
-scope: task
-status: stub
-status_reason: >
-  Detection requires executing the inventory script at runtime to inspect its
-  JSON output. Static analysis cannot determine _meta presence. Disabled by
-  design until a runtime-analysis approach is approved.
+scope: playbook
+status: active
 ansible_core_version: ">=2.23"
 ---
 
@@ -19,18 +15,29 @@ Inventory scripts must include `_meta.hostvars` in JSON output (enforced in 2.23
 **Fix tier**: 3
 **Audience**: content
 
-### Status
-
-**Stub** — no `_graph.py` implementation. This rule is intentionally disabled
-(`enabled=False`) because detection requires *executing* the inventory script
-and inspecting its JSON output at runtime. Static analysis of the script source
-cannot determine whether `_meta` is present in the output. A runtime-analysis
-approach would need its own ADR.
-
 ### Detection
 
-Analyze inventory script output for missing `_meta` key.
+Scans for Python files in `inventory/` and `inventories/` directories adjacent
+to playbooks. Files that appear to be dynamic inventory scripts (contain
+`--list`, `--host`, or `argparse` patterns) but do not reference `_meta` in
+their source are flagged.
+
+**Limitations**: This is a heuristic static analysis — it checks source-level
+`_meta` references rather than actual JSON output. Scripts that construct the
+key dynamically may produce false positives.
 
 ### Remediation
 
-Informational only — requires modifying external scripts.
+Add `_meta` with `hostvars` to the inventory script's JSON output:
+
+```python
+result = {
+    "group1": {"hosts": ["host1", "host2"]},
+    "_meta": {
+        "hostvars": {
+            "host1": {"ansible_host": "10.0.0.1"},
+            "host2": {"ansible_host": "10.0.0.2"},
+        }
+    },
+}
+```

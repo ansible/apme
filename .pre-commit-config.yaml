@@ -50,6 +50,7 @@ repos:
         language: python
         language_version: python3.12
         entry: python tools/generate_rule_catalog.py
+        additional_dependencies: [pyyaml]
         files: ^src/apme_engine/(validators|graph/rules)/.+\.(py|rego|md)$|^src/apme_engine/remediation/transforms/
         pass_filenames: false
       - id: graph-boundary

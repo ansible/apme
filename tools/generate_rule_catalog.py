@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Generate docs/rules/RULE_CATALOG.md — a single-file reference of every rule.
+"""Generate docs/rules/RULE_CATALOG.md and REMEDIATION_TIER_REPORT.md.
 
 Discovers rules from OPA (.rego), Native (GraphRule subclasses), Ansible
 (explicit imports), and Gitleaks.  For each rule, reports:
 
-  - validator, description, severity
+  - validator, description, severity (ADR-043), scope, remediation tier
   - whether a deterministic fixer (transform) exists
   - whether the implementation exists (code, not just a doc stub)
   - whether tests exist (Rego _test.rego or pytest files referencing the ID)
@@ -12,7 +12,9 @@ Discovers rules from OPA (.rego), Native (GraphRule subclasses), Ansible
 Run from repo root:  python tools/generate_rule_catalog.py
 Or via prek hook:    triggered on rule source changes.
 
-The output is written to docs/rules/RULE_CATALOG.md.
+Outputs:
+  - docs/rules/RULE_CATALOG.md
+  - docs/rules/REMEDIATION_TIER_REPORT.md
 """
 
 from __future__ import annotations
@@ -33,6 +35,13 @@ TESTS_DIR = REPO_ROOT / "tests"
 INTEGRATION_TEST = TESTS_DIR / "rule_doc_integration_test.py"
 TRANSFORMS_INIT = REPO_ROOT / "src" / "apme_engine" / "remediation" / "transforms" / "__init__.py"
 OUTPUT = REPO_ROOT / "docs" / "rules" / "RULE_CATALOG.md"
+REMEDIATION_OUTPUT = REPO_ROOT / "docs" / "rules" / "REMEDIATION_TIER_REPORT.md"
+
+sys.path.insert(0, str(REPO_ROOT / "tools"))
+from rule_analysis import (  # noqa: E402
+    RuleMetadata,
+    enrich_rule,
+)
 
 _FRONTMATTER = re.compile(r"^---\s*\n(.*?)\n---", re.DOTALL)
 _KV = re.compile(r"^(\w+):\s*(.+)$", re.MULTILINE)
@@ -431,11 +440,11 @@ def _status_icon(ok: bool) -> str:
     return "Yes" if ok else "—"
 
 
-def generate() -> str:
-    """Collect all rules and return RULE_CATALOG.md content.
+def _collect_all_rules() -> list[Rule]:
+    """Discover and sort all rules from every validator.
 
     Returns:
-        Full markdown content for docs/rules/RULE_CATALOG.md.
+        Sorted list of Rule objects.
     """
     all_rules: list[Rule] = []
     all_rules.extend(_collect_opa_rules())
@@ -443,11 +452,92 @@ def generate() -> str:
     all_rules.extend(_collect_ansible_rules())
     all_rules.extend(_collect_gitleaks_rules())
     all_rules.sort(key=_sort_key)
-
     fixable = _get_fixable_ids()
     for r in all_rules:
         r.has_fixer = r.rule_id in fixable
         r.severity = _get_severity(r.rule_id)
+    return all_rules
+
+
+def _enrich_all(rules: list[Rule]) -> list[RuleMetadata]:
+    """Attach scope, tier, and severity-source metadata to discovered rules."""
+    return [enrich_rule(r.rule_id, r.validator, r.description, r.has_fixer) for r in rules]
+
+
+def _prefix_section() -> list[str]:
+    """Return markdown lines for rule ID prefix conventions."""
+    lines = [
+        "## Rule ID Conventions",
+        "",
+        "Rule IDs identify the **type of check**, not the validator that runs it.",
+        "The prefix is orthogonal to severity — see [ADR-043](../../.sdlc/adrs/ADR-043-default-severity-assignment.md).",
+        "",
+        "| Prefix | Category | ID ranges |",
+        "|--------|----------|-----------|",
+        "| **L** | Lint (style, correctness, best practice) | L001–L199 |",
+        "| **M** | Modernize (ansible-core migration) | M001–M099 |",
+        "| **R** | Risk / security (annotation-based) | R001–R499 |",
+        "| **P** | Policy (legacy runtime validation) | P001–P099 |",
+        "| **A** | AAP-specific (platform compatibility) | A001–A099 |",
+        "| **SEC:** | Secrets (Gitleaks) | SEC:* |",
+        "",
+        "For ansible-lint name cross-references and historical renumbering, see",
+        "[LINT_RULE_MAPPING.md](LINT_RULE_MAPPING.md).",
+        "",
+    ]
+    return lines
+
+
+def _severity_section() -> list[str]:
+    """Return markdown lines for ADR-043 severity scale."""
+    return [
+        "## Severity Scale (ADR-043)",
+        "",
+        "Default severity is assigned from `src/apme_engine/severity_defaults.py` using this decision tree:",
+        "",
+        "1. Security vulnerability? → **critical**",
+        "2. Runtime breakage today? → **error**",
+        "3. Imminent breakage or risky behavior? → **high**",
+        "4. Probably a bug or anti-pattern? → **medium**",
+        "5. Best practice / convention? → **low**",
+        "6. Informational / style? → **info**",
+        "",
+        "Category prefix does **not** determine severity. For example, L057 (syntax) is **error**",
+        "while L060 (line length) is **info** — both are L-rules.",
+        "",
+    ]
+
+
+def _remediation_section(meta: list[RuleMetadata]) -> list[str]:
+    """Return markdown lines summarizing remediation tiers."""
+    auto = sum(1 for m in meta if m.remediation_tier == "auto")
+    ai = sum(1 for m in meta if m.remediation_tier == "ai")
+    manual = sum(1 for m in meta if m.remediation_tier == "manual")
+    return [
+        "## Remediation Tiers",
+        "",
+        "Routing follows `src/apme_engine/remediation/partition.py` (ADR-026 scope metadata):",
+        "",
+        "| Tier | Label | Count | Routing |",
+        "|------|-------|-------|---------|",
+        f"| 1 | auto | {auto} | Deterministic transform in registry — applied by `apme remediate` |",
+        f"| 2 | ai | {ai} | Task/block scope, no fixer — AI proposes patch (Abbenay) |",
+        f"| 3 | manual | {manual} | Play/role/collection scope, cross-file, or info severity |",
+        "",
+        "Full analysis and promotion candidates: [REMEDIATION_TIER_REPORT.md](REMEDIATION_TIER_REPORT.md).",
+        "",
+    ]
+
+
+def generate() -> str:
+    """Collect all rules and return RULE_CATALOG.md content.
+
+    Returns:
+        Full markdown content for docs/rules/RULE_CATALOG.md.
+    """
+    all_rules = _collect_all_rules()
+    meta = _enrich_all(all_rules)
+    meta_by_id = {m.rule_id: m for m in meta}
 
     total = len(all_rules)
     impl_count = sum(1 for r in all_rules if r.has_impl)
@@ -455,30 +545,44 @@ def generate() -> str:
     doc_count = sum(1 for r in all_rules if r.has_doc)
     fixer_count = sum(1 for r in all_rules if r.has_fixer)
     validators = len({r.validator for r in all_rules})
+    severity_resolved = sum(1 for m in meta if m.severity_source != "fallback")
+    severity_fallback = sum(1 for m in meta if m.severity_source == "fallback")
 
     lines = [
         "# Rule Catalog",
         "",
         "<!-- AUTO-GENERATED by tools/generate_rule_catalog.py — do not edit by hand -->",
         "",
-        f"**{total} rules** across {validators} validators",
+        f"**{total} rules** across {validators} validators — the single reference for every rule.",
         "",
         "| Metric | Count |",
         "|--------|-------|",
         f"| Implemented | {impl_count}/{total} |",
         f"| Tested | {test_count}/{total} |",
         f"| Documented | {doc_count}/{total} |",
-        f"| Deterministic fixer | {fixer_count}/{total} |",
+        f"| Deterministic fixer (Tier 1) | {fixer_count}/{total} |",
+        f"| Severity resolved (ADR-043 table or SEC: prefix) | {severity_resolved}/{total} |",
+        f"| Severity fallback (medium default) | {severity_fallback}/{total} |",
         "",
-        "## All Rules",
-        "",
-        "| Rule ID | Validator | Severity | Description | Impl | Tested | Doc | Fixer |",
-        "|---------|-----------|----------|-------------|------|--------|-----|-------|",
     ]
+    lines.extend(_prefix_section())
+    lines.extend(_severity_section())
+    lines.extend(_remediation_section(meta))
+    lines.extend(
+        [
+            "## All Rules",
+            "",
+            "| Rule ID | Cat | Validator | Severity | Scope | Tier | Description | Impl | Test | Doc | Fix |",
+            "|---------|-----|-----------|----------|-------|------|-------------|------|------|-----|-----|",
+        ]
+    )
 
     for r in all_rules:
+        m = meta_by_id[r.rule_id]
+        cat = r.rule_id.rstrip("0123456789:*").replace("SEC:", "SEC")
         lines.append(
-            f"| {r.rule_id} | {r.validator} | {r.severity} | {_escape_md_cell(r.description)} "
+            f"| {r.rule_id} | {cat} | {r.validator} | {r.severity} | {m.scope} | {m.remediation_tier} "
+            f"| {_escape_md_cell(r.description)} "
             f"| {_status_icon(r.has_impl)} | {_status_icon(r.has_test)} "
             f"| {_status_icon(r.has_doc)} | {_status_icon(r.has_fixer)} |"
         )
@@ -500,11 +604,13 @@ def generate() -> str:
         v_fix = sum(1 for r in vrules if r.has_fixer)
         lines.append(f"### {vname} ({len(vrules)} rules, {v_impl} impl, {v_test} tested, {v_fix} fixers)")
         lines.append("")
-        lines.append("| Rule ID | Severity | Description | Impl | Tested | Doc | Fixer |")
-        lines.append("|---------|----------|-------------|------|--------|-----|-------|")
+        lines.append("| Rule ID | Severity | Scope | Tier | Description | Impl | Test | Doc | Fix |")
+        lines.append("|---------|----------|-------|------|-------------|------|------|-----|-----|")
         for r in vrules:
+            m = meta_by_id[r.rule_id]
             lines.append(
-                f"| {r.rule_id} | {r.severity} | {_escape_md_cell(r.description)} "
+                f"| {r.rule_id} | {r.severity} | {m.scope} | {m.remediation_tier} "
+                f"| {_escape_md_cell(r.description)} "
                 f"| {_status_icon(r.has_impl)} | {_status_icon(r.has_test)} "
                 f"| {_status_icon(r.has_doc)} | {_status_icon(r.has_fixer)} |"
             )
@@ -516,6 +622,8 @@ def generate() -> str:
     no_impl = [r for r in all_rules if not r.has_impl]
     no_test = [r for r in all_rules if not r.has_test and r.has_impl]
     no_doc = [r for r in all_rules if not r.has_doc and r.has_impl]
+    no_severity = [m for m in meta if m.severity_source == "fallback"]
+    adr_mismatch = [m for m in meta if m.adr043_mismatch]
 
     if no_impl:
         lines.append(f"### Doc-only rules (no implementation) — {len(no_impl)}")
@@ -538,31 +646,156 @@ def generate() -> str:
             lines.append(f"- **{r.rule_id}** ({r.validator}): {r.description}")
         lines.append("")
 
-    if not no_impl and not no_test and not no_doc:
-        lines.append("All rules are implemented, tested, and documented.")
+    if no_severity:
+        lines.append(f"### Missing from severity_defaults.py (fallback to medium) — {len(no_severity)}")
+        lines.append("")
+        for m in no_severity:
+            lines.append(f"- **{m.rule_id}** ({m.validator}): add to `SEVERITY_DEFAULTS` per ADR-043")
         lines.append("")
 
-    lines.append("## Fixer Summary")
+    if adr_mismatch:
+        lines.append(f"### ADR-043 representative examples differ from assignment — {len(adr_mismatch)}")
+        lines.append("")
+        for m in adr_mismatch:
+            lines.append(f"- **{m.rule_id}**: {m.adr043_mismatch}")
+        lines.append("")
+
+    if not no_impl and not no_test and not no_doc and not no_severity and not adr_mismatch:
+        lines.append("All rules are implemented, tested, documented, and severity-assigned.")
+        lines.append("")
+
+    lines.append("## Fixer Summary (Tier 1)")
     lines.append("")
-    lines.append("Deterministic fixers (Tier 1) are auto-applied by `apme remediate`.")
-    lines.append("Rules without fixers fall to Tier 2 (AI-proposable) or Tier 3 (manual review).")
+    lines.append("Deterministic fixers are auto-applied by `apme remediate`.")
     lines.append("")
-    lines.append("| Rule ID | Severity | Description |")
-    lines.append("|---------|----------|-------------|")
+    lines.append("| Rule ID | Severity | Scope | Description |")
+    lines.append("|---------|----------|-------|-------------|")
 
     for r in all_rules:
         if r.has_fixer:
-            lines.append(f"| {r.rule_id} | {r.severity} | {_escape_md_cell(r.description)} |")
+            m = meta_by_id[r.rule_id]
+            lines.append(f"| {r.rule_id} | {r.severity} | {m.scope} | {_escape_md_cell(r.description)} |")
+
+    lines.append("")
+    return "\n".join(lines)
+
+
+def generate_remediation_report() -> str:
+    """Return REMEDIATION_TIER_REPORT.md content.
+
+    Returns:
+        Full markdown for the remediation tier analysis report.
+    """
+    all_rules = _collect_all_rules()
+    meta = _enrich_all(all_rules)
+
+    auto = [m for m in meta if m.remediation_tier == "auto"]
+    ai = [m for m in meta if m.remediation_tier == "ai"]
+    manual = [m for m in meta if m.remediation_tier == "manual"]
+    auto_candidates = [m for m in meta if m.auto_candidate and not m.has_fixer]
+    ai_promote = [m for m in auto_candidates if m.remediation_tier == "ai"]
+    manual_promote = [m for m in auto_candidates if m.remediation_tier == "manual"]
+
+    lines = [
+        "# Remediation Tier Report",
+        "",
+        "<!-- AUTO-GENERATED by tools/generate_rule_catalog.py — do not edit by hand -->",
+        "",
+        "Analysis of default remediation routing for all rules. Regenerate with:",
+        "`python tools/generate_rule_catalog.py`",
+        "",
+        "## Summary",
+        "",
+        f"| Tier | Count | % of {len(meta)} |",
+        "|------|-------|--------|",
+        f"| Tier 1 — auto (has transform) | {len(auto)} | {len(auto) * 100 // len(meta)}% |",
+        f"| Tier 2 — AI (task/block, no fixer) | {len(ai)} | {len(ai) * 100 // len(meta)}% |",
+        f"| Tier 3 — manual | {len(manual)} | {len(manual) * 100 // len(meta)}% |",
+        "",
+        "### Promotion potential",
+        "",
+        f"- **{len(ai_promote)}** Tier 2 rules could likely move to Tier 1 (mechanical transforms)",
+        f"- **{len(manual_promote)}** Tier 3 rules have mechanical fixes blocked by scope",
+        f"- **{len(ai)} - {len(ai_promote)} = {len(ai) - len(ai_promote)}** Tier 2 rules should stay AI (judgment/security)",
+        "",
+        "### Tier 3 breakdown",
+        "",
+        "| Reason | Count |",
+        "|--------|-------|",
+        f"| info severity | {sum(1 for m in manual if m.severity == 'info')} |",
+        f"| playbook scope | {sum(1 for m in manual if m.scope == 'playbook')} |",
+        f"| collection scope | {sum(1 for m in manual if m.scope == 'collection')} |",
+        f"| role scope | {sum(1 for m in manual if m.scope == 'role')} |",
+        f"| play scope | {sum(1 for m in manual if m.scope == 'play')} |",
+        f"| inventory scope | {sum(1 for m in manual if m.scope == 'inventory')} |",
+        f"| cross-file (R111/R112) | {sum(1 for m in manual if m.rule_id in {'R111', 'R112'})} |",
+        "",
+        f"## Tier 1 — Auto ({len(auto)} rules)",
+        "",
+        "| Rule ID | Validator | Severity | Scope | Description |",
+        "|---------|-----------|----------|-------|-------------|",
+    ]
+    rule_by_id = {r.rule_id: r for r in all_rules}
+    for m in sorted(auto, key=lambda x: x.rule_id):
+        r = rule_by_id[m.rule_id]
+        lines.append(f"| {m.rule_id} | {r.validator} | {m.severity} | {m.scope} | {_escape_md_cell(m.description)} |")
+
+    lines.extend(
+        [
+            "",
+            f"## Tier 2 — AI ({len(ai)} rules)",
+            "",
+            "### Could move to Tier 1 auto",
+            "",
+            "| Rule ID | Severity | Scope | Proposed transform |",
+            "|---------|----------|-------|-------------------|",
+        ]
+    )
+    for m in sorted(ai_promote, key=lambda x: x.rule_id):
+        lines.append(f"| {m.rule_id} | {m.severity} | {m.scope} | {m.auto_candidate} |")
+
+    lines.extend(
+        [
+            "",
+            "### Should stay AI",
+            "",
+            "| Rule ID | Severity | Scope | Reason |",
+            "|---------|----------|-------|--------|",
+        ]
+    )
+    for m in sorted([x for x in ai if not x.auto_candidate], key=lambda x: x.rule_id):
+        lines.append(f"| {m.rule_id} | {m.severity} | {m.scope} | {_escape_md_cell(m.remediation_reason)} |")
+
+    lines.extend(
+        [
+            "",
+            f"## Tier 3 — Manual ({len(manual)} rules)",
+            "",
+            "| Rule ID | Validator | Severity | Scope | Auto candidate? | Reason |",
+            "|---------|-----------|----------|-------|-----------------|--------|",
+        ]
+    )
+    for m in sorted(manual, key=lambda x: x.rule_id):
+        r = rule_by_id[m.rule_id]
+        cand = m.auto_candidate or "—"
+        lines.append(
+            f"| {m.rule_id} | {r.validator} | {m.severity} | {m.scope} | {cand} "
+            f"| {_escape_md_cell(m.remediation_reason)} |"
+        )
 
     lines.append("")
     return "\n".join(lines)
 
 
 def main() -> None:
-    """Write RULE_CATALOG.md to docs/rules/."""
-    content = generate()
-    OUTPUT.write_text(content, encoding="utf-8")
-    print(f"Wrote {OUTPUT} ({content.count(chr(10))} lines)")
+    """Write RULE_CATALOG.md and REMEDIATION_TIER_REPORT.md to docs/rules/."""
+    catalog = generate()
+    OUTPUT.write_text(catalog, encoding="utf-8")
+    print(f"Wrote {OUTPUT} ({catalog.count(chr(10))} lines)")
+
+    report = generate_remediation_report()
+    REMEDIATION_OUTPUT.write_text(report, encoding="utf-8")
+    print(f"Wrote {REMEDIATION_OUTPUT} ({report.count(chr(10))} lines)")
 
 
 if __name__ == "__main__":

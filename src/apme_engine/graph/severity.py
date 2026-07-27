@@ -44,7 +44,6 @@ class Severity(IntEnum):
 SEVERITY_DEFAULTS: dict[str, Severity] = {
     # ── Native rules ────────────────────────────────────────────────────
     # Low: FQCN / naming / best-practice
-    "L039": Severity.LOW,
     "L050": Severity.LOW,
     "L026": Severity.LOW,
     "L030": Severity.LOW,
@@ -102,11 +101,14 @@ SEVERITY_DEFAULTS: dict[str, Severity] = {
     "L099": Severity.INFO,
     "R117": Severity.INFO,
     "R401": Severity.INFO,
+    "R402": Severity.INFO,
+    "R404": Severity.INFO,
+    "R501": Severity.INFO,
     # Medium: correctness smell / probable bug
     "L037": Severity.MEDIUM,
     "L038": Severity.MEDIUM,
-    "L047": Severity.HIGH,
-    "L110": Severity.HIGH,
+    "L039": Severity.MEDIUM,
+    "L106": Severity.MEDIUM,
     "L100": Severity.MEDIUM,
     "L101": Severity.MEDIUM,
     "L102": Severity.MEDIUM,
@@ -114,6 +116,7 @@ SEVERITY_DEFAULTS: dict[str, Severity] = {
     "M015": Severity.MEDIUM,
     "M022": Severity.MEDIUM,
     "M026": Severity.MEDIUM,
+    "M029": Severity.MEDIUM,
     "M030": Severity.MEDIUM,
     "R101": Severity.MEDIUM,
     "R103": Severity.MEDIUM,
@@ -129,6 +132,9 @@ SEVERITY_DEFAULTS: dict[str, Severity] = {
     "R114": Severity.MEDIUM,
     "R115": Severity.MEDIUM,
     # High: deprecated / imminent breakage / insecure
+    "L031": Severity.HIGH,
+    "L047": Severity.HIGH,
+    "L110": Severity.HIGH,
     "L095": Severity.ERROR,
     "L096": Severity.HIGH,
     "L098": Severity.ERROR,
