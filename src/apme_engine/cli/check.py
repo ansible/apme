@@ -13,6 +13,7 @@ import grpc
 
 from apme.v1 import primary_pb2_grpc
 from apme.v1.primary_pb2 import (
+    AiEscalateRequest,
     ApprovalRequest,
     CloseRequest,
     ExtendRequest,
@@ -209,6 +210,13 @@ def run_check(args: argparse.Namespace) -> None:
 
             if oneof == "proposals":
                 cmd_queue.put(SessionCommand(approve=ApprovalRequest(approved_ids=[])))
+                continue
+
+            if oneof == "ai_triage":
+                # Check never remediates via AI; skip escalation (empty allow-list).
+                cmd_queue.put(
+                    SessionCommand(ai_escalate=AiEscalateRequest(targets=[])),
+                )
                 continue
 
             if oneof == "result":

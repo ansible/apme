@@ -1,8 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { ProposalReviewPanel } from "../components/ProposalReviewPanel";
-import type { OperationProposal } from "../types/operation";
+import { ProposalReviewPanel } from '@apme/ui-workflow';
+import type { OperationProposal } from '@apme/ui-workflow';
 
 const nodeProposals: OperationProposal[] = [
   {

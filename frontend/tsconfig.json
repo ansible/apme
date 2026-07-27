@@ -17,8 +17,12 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedIndexedAccess": true,
     "forceConsistentCasingInFileNames": true,
-    "types": ["vitest/globals"]
+    "types": ["vitest/globals"],
+    "baseUrl": ".",
+    "paths": {
+      "@apme/ui-workflow": ["./packages/ui-workflow/src/index.ts"]
+    }
   },
-  "include": ["src"],
+  "include": ["src", "packages/ui-workflow/src"],
   "exclude": ["vendor"]
 }

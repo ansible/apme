@@ -133,6 +133,8 @@ Each new rule requires: implementation, colocated markdown docs with YAML exampl
 
 Bump `pyproject.toml` version, update `CHANGELOG.md`, update container image tags. Verify: `tox -e unit`, `tox -e lint`, security audit (`gitleaks`, `bandit`, `pip-audit`). Tag `vX.Y.Z`, build and push container images.
 
+**`@apme/ui-workflow` (ADR-066):** bump `frontend/packages/ui-workflow/package.json` version, merge to `main`, tag `ui-workflow-vX.Y.Z`, push the tag. CI packs the package and attaches `apme-ui-workflow-X.Y.Z.tgz` to a GitHub Release. Portal pins that download URL (not npmjs yet).
+
 ---
 
 ## 9. Industry Alignment

@@ -1,0 +1,40 @@
+{
+  "name": "@apme/ui-workflow",
+  "version": "0.1.1",
+  "type": "module",
+  "description": "Shared APME scan → pause → choose → remediate workflow UI (native SPA + Portal host).",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ansible/apme.git",
+    "directory": "frontend/packages/ui-workflow"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./styles/workflow.css": "./dist/styles/workflow.css"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && mkdir -p dist/styles && cp src/styles/workflow.css dist/styles/workflow.css",
+    "prepack": "npm run build"
+  },
+  "peerDependencies": {
+    "@patternfly/react-core": "^6.3.1",
+    "@patternfly/react-icons": "^6.3.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "typescript": "^5.7.2"
+  }
+}

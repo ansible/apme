@@ -303,6 +303,7 @@ async def upsert_live_proposal_stubs(
                 confidence=float(raw.get("confidence") or 0.0),
                 status=status,
                 path=path,
+                node_type=str(raw.get("node_type") or ""),
                 source=source,
                 gate=gate,
                 rule_ids_json=serialize_rule_ids(rule_parts),
@@ -324,6 +325,9 @@ async def upsert_live_proposal_stubs(
                 existing.rule_id = primary_rule
             existing.tier = tier or existing.tier
             existing.path = path or existing.path
+            nt = str(raw.get("node_type") or "")
+            if nt:
+                existing.node_type = nt
             existing.source = source or existing.source
             existing.gate = gate or existing.gate
             existing.diff_hunk = str(raw.get("diff_hunk") or existing.diff_hunk)

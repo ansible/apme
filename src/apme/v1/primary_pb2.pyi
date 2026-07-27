@@ -124,6 +124,7 @@ class SessionCommand:
     close: CloseRequest
     resume: ResumeRequest
     begin_remediate: BeginRemediateRequest
+    ai_escalate: AiEscalateRequest
     def __init__(self, **kwargs: object) -> None: ...
     def HasField(self, field_name: str) -> bool: ...
     def WhichOneof(self, oneof_group: str) -> str | None: ...
@@ -145,6 +146,15 @@ class ResumeRequest:
 class BeginRemediateRequest:
     def __init__(self, **kwargs: object) -> None: ...
 
+class AiEscalateTarget:
+    path: str
+    rule_ids: list[str]
+    def __init__(self, **kwargs: object) -> None: ...
+
+class AiEscalateRequest:
+    targets: list[AiEscalateTarget]
+    def __init__(self, **kwargs: object) -> None: ...
+
 class SessionEvent:
     created: SessionCreated
     progress: ProgressUpdate
@@ -156,12 +166,19 @@ class SessionEvent:
     closed: SessionClosed
     data: DataPayload
     findings: FindingsReady
+    ai_triage: AiTriageReady
     def __init__(self, **kwargs: object) -> None: ...
     def HasField(self, field_name: str) -> bool: ...
     def WhichOneof(self, oneof_group: str) -> str | None: ...
 
 class FindingsReady:
     violations: list[Violation]
+    status: int
+    ttl_seconds: int
+    def __init__(self, **kwargs: object) -> None: ...
+
+class AiTriageReady:
+    candidates: list[Violation]
     status: int
     ttl_seconds: int
     def __init__(self, **kwargs: object) -> None: ...
@@ -197,6 +214,7 @@ class Proposal:
     suggestion: str
     source: str
     path: str
+    node_type: str
     def __init__(self, **kwargs: object) -> None: ...
 
 class ProposalsReady:
@@ -250,3 +268,4 @@ SESSION_STATUS_UNSPECIFIED: int
 AWAITING_APPROVAL: int
 PROCESSING: int
 COMPLETE: int
+AWAITING_AI_TRIAGE: int

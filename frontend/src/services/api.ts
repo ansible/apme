@@ -35,8 +35,7 @@ import type {
   UpdateProjectRequest,
   ViolationDetail,
 } from "../types/api";
-
-const BASE = "/api/v1";
+import { apmeApiUrl, getApmeApiAdapter } from "../api/apmeApiAdapter";
 
 class ApiError extends Error {
   status: number;
@@ -46,12 +45,20 @@ class ApiError extends Error {
   }
 }
 
+async function apiFetch(
+  path: string,
+  init?: Omit<RequestInit, "headers"> & { headers?: Record<string, string> },
+): Promise<Response> {
+  const { fetch: doFetch } = getApmeApiAdapter();
+  return doFetch(apmeApiUrl(path), init);
+}
+
 async function request<T>(
   path: string,
   init?: Omit<RequestInit, "headers"> & { headers?: Record<string, string> },
 ): Promise<T> {
   const { headers: extraHeaders, ...rest } = init ?? {};
-  const res = await fetch(`${BASE}${path}`, {
+  const res = await apiFetch(path, {
     ...rest,
     headers: { Accept: "application/json", ...extraHeaders },
   });
@@ -88,7 +95,7 @@ export function getActivity(scanId: string): Promise<ActivityDetail> {
 }
 
 export async function deleteActivity(scanId: string): Promise<void> {
-  const res = await fetch(`${BASE}/activity/${scanId}`, { method: "DELETE" });
+  const res = await apiFetch(`/activity/${scanId}`, { method: "DELETE" });
   if (!res.ok) throw new Error(`${res.status}`);
 }
 
@@ -162,7 +169,9 @@ export function updateProject(
 }
 
 export async function deleteProject(projectId: string): Promise<void> {
-  const res = await fetch(`${BASE}/projects/${encodeURIComponent(projectId)}`, { method: "DELETE" });
+  const res = await apiFetch(`/projects/${encodeURIComponent(projectId)}`, {
+    method: "DELETE",
+  });
   if (!res.ok) throw new Error(`${res.status}`);
 }
 
@@ -240,7 +249,7 @@ export function getProjectGraph(projectId: string): Promise<GraphData> {
 }
 
 export async function getProjectSbom(projectId: string): Promise<Blob> {
-  const res = await fetch(`${BASE}/projects/${encodeURIComponent(projectId)}/sbom`, {
+  const res = await apiFetch(`/projects/${encodeURIComponent(projectId)}/sbom`, {
     headers: { Accept: "application/vnd.cyclonedx+json" },
   });
   if (!res.ok) {
@@ -312,7 +321,9 @@ export function updateGalaxyServer(
 }
 
 export async function deleteGalaxyServer(serverId: number): Promise<void> {
-  const res = await fetch(`${BASE}/settings/galaxy-servers/${serverId}`, { method: "DELETE" });
+  const res = await apiFetch(`/settings/galaxy-servers/${serverId}`, {
+    method: "DELETE",
+  });
   if (!res.ok) throw new Error(`${res.status}`);
 }
 
@@ -336,7 +347,7 @@ export function createSuppression(
 }
 
 export async function deleteSuppression(id: number): Promise<void> {
-  const res = await fetch(`${BASE}/suppressions/${id}`, { method: "DELETE" });
+  const res = await apiFetch(`/suppressions/${id}`, { method: "DELETE" });
   if (!res.ok) {
     const text = await res.text();
     throw new ApiError(res.status, text);
@@ -412,7 +423,7 @@ export async function updateRuleConfig(
   ruleId: string,
   config: RuleOverrideRequest,
 ): Promise<void> {
-  const res = await fetch(`${BASE}/rules/${encodeURIComponent(ruleId)}/config`, {
+  const res = await apiFetch(`/rules/${encodeURIComponent(ruleId)}/config`, {
     method: "PUT",
     headers: { Accept: "application/json", "Content-Type": "application/json" },
     body: JSON.stringify(config),
@@ -424,7 +435,7 @@ export async function updateRuleConfig(
 }
 
 export async function deleteRuleConfig(ruleId: string): Promise<void> {
-  const res = await fetch(`${BASE}/rules/${encodeURIComponent(ruleId)}/config`, {
+  const res = await apiFetch(`/rules/${encodeURIComponent(ruleId)}/config`, {
     method: "DELETE",
     headers: { Accept: "application/json" },
   });
@@ -451,16 +462,16 @@ export function listNotifications(
 }
 
 export async function markNotificationRead(id: number): Promise<void> {
-  const res = await fetch(`${BASE}/notifications/${id}/read`, { method: "PATCH" });
+  const res = await apiFetch(`/notifications/${id}/read`, { method: "PATCH" });
   if (!res.ok) throw new Error(`${res.status}`);
 }
 
 export async function markAllNotificationsRead(): Promise<void> {
-  const res = await fetch(`${BASE}/notifications/read-all`, { method: "POST" });
+  const res = await apiFetch(`/notifications/read-all`, { method: "POST" });
   if (!res.ok) throw new Error(`${res.status}`);
 }
 
 export async function deleteNotification(id: number): Promise<void> {
-  const res = await fetch(`${BASE}/notifications/${id}`, { method: "DELETE" });
+  const res = await apiFetch(`/notifications/${id}`, { method: "DELETE" });
   if (!res.ok) throw new Error(`${res.status}`);
 }

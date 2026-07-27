@@ -12,12 +12,21 @@ providers:
     models:
       anthropic/claude-sonnet-4: {}
       anthropic/claude-opus-4.6: {}
+      x-ai/grok-4.5: {}
     api_key_env: OPENROUTER_API_KEY
 
-  # Example: Vertex AI Anthropic proxy (self-hosted Claude endpoints).
+  # Direct Vertex AI Claude (GCP ADC — no API key).
+  # Set ABBENAY_GCP_CREDENTIALS + GOOGLE_VERTEX_PROJECT in .env (see .env.example).
+  vertex-claude:
+    engine: vertex-anthropic
+    models:
+      claude-sonnet-4-6: {}
+      claude-opus-4-6: {}
+
+  # Example: corporate Vertex Anthropic proxy (Bearer token).
   # Uncomment and set VERTEX_ANTHROPIC_API_KEY in .env.
   # If the endpoint uses an internal CA, set ABBENAY_CA_BUNDLE in .env.
-  # vertex-anthropic:
+  # vertex-anthropic-proxy:
   #   engine: vertex-anthropic
   #   base_url: "https://your-proxy.example.com:443/models"
   #   api_key_env: "VERTEX_ANTHROPIC_API_KEY"

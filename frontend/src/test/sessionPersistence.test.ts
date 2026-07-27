@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import {
   getPersistedSession,
   type PersistedSession,
-} from "../hooks/useSessionStream";
+} from '@apme/ui-workflow';
 
 const STORAGE_KEY = "apme_active_session";
 
