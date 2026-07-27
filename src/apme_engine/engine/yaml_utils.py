@@ -44,7 +44,7 @@ def _nested_items_path(
         parent_path: Accumulated path of keys/indices from the root.
 
     Yields:
-        (object, object, list[str | int]): Tuples of (key_or_index, value, parent_path).
+        tuple[object, object, list[str | int]]: Tuples of (key_or_index, value, parent_path).
     """
     if data_collection is None:
         return

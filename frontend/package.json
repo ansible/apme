@@ -13,11 +13,12 @@
   },
   "dependencies": {
     "@ansible/ansible-ui-framework": "file:./vendor/ansible-ui-framework",
+    "@apme/ui-workflow": "workspace:*",
     "@patternfly/patternfly": "6.3.1",
-    "@patternfly/react-charts": "8.3.1",
+    "@patternfly/react-charts": "8.5.1",
     "@patternfly/react-core": "6.3.1",
-    "@patternfly/react-icons": "6.3.1",
-    "@patternfly/react-table": "6.3.1",
+    "@patternfly/react-icons": "6.5.1",
+    "@patternfly/react-table": "6.5.1",
     "@react-hook/resize-observer": "^2.0.2",
     "d3": "^7.9.0",
     "dagre": "^0.8.5",
@@ -26,12 +27,11 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-i18next": "^15.1.0",
-    "react-router-dom": "^6.30.4",
+    "react-router-dom": "^7.18.0",
     "react-syntax-highlighter": "^16.1.1",
     "styled-components": "^6.1.13",
     "swr": "^2.2.5",
-    "undici": "7.28.0",
-    "@apme/ui-workflow": "workspace:*"
+    "undici": "7.28.0"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.9.1",
