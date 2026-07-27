@@ -313,7 +313,7 @@ async def download_collections(
         )
         return DownloadResult(tarball_paths=tarballs, stderr=stderr_text)
 
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.error(
             "ansible-galaxy collection download timed out after %.0fs",
             timeout,

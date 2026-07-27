@@ -106,7 +106,7 @@ async def run(
             while True:
                 try:
                     raw = await asyncio.wait_for(ws.recv(), timeout=300)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     _log(f"[{_ts()}] [{_elapsed(t0)}] TIMEOUT: no message for 300s")
                     break
 

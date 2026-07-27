@@ -15,7 +15,7 @@ import socket
 import sys
 import time
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from importlib.metadata import version as pkg_version
 from pathlib import Path
 
@@ -302,7 +302,7 @@ def start_daemon(
         os.dup2(log_fd.fileno(), sys.stdout.fileno())
         os.dup2(log_fd.fileno(), sys.stderr.fileno())
 
-        sys.stderr.write(f"\n--- daemon start {datetime.now(timezone.utc).isoformat()} ---\n")
+        sys.stderr.write(f"\n--- daemon start {datetime.now(UTC).isoformat()} ---\n")
         sys.stderr.flush()
 
         try:
@@ -323,7 +323,7 @@ def start_daemon(
         pid=pid,
         primary=services["primary"],
         version=_current_version(),
-        started_at=datetime.now(timezone.utc).isoformat(),
+        started_at=datetime.now(UTC).isoformat(),
         services=services,
     )
     state.save()

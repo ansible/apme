@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from collections.abc import Mapping, Sequence
+from datetime import UTC
 from typing import Any
 
 from sqlalchemy import or_, select, update
@@ -191,7 +192,7 @@ async def ensure_scan_row(
     Returns:
         Existing or newly created Scan.
     """
-    from datetime import datetime, timezone  # noqa: PLC0415
+    from datetime import datetime  # noqa: PLC0415
 
     from apme_gateway.db.models import Session  # noqa: PLC0415
 
@@ -204,7 +205,7 @@ async def ensure_scan_row(
             await db.flush()
         return existing  # type: ignore[no-any-return]
 
-    now = datetime.now(tz=timezone.utc).isoformat()
+    now = datetime.now(tz=UTC).isoformat()
     # Full scan_id — truncated prefixes can collide across distinct UUIDs.
     placeholder_session = f"op-{scan_id}"
     sess = (await db.execute(select(Session).where(Session.session_id == placeholder_session))).scalar_one_or_none()

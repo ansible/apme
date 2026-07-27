@@ -537,7 +537,7 @@ class AnsibleProjectLoader:
             record_name: Name of the timing record.
         """
         rec: dict[str, object] = {}
-        rec["begin"] = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")
+        rec["begin"] = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%S.%f")
         time_records[record_name] = rec
 
     def record_end(self, time_records: dict[str, object], record_name: str) -> None:
@@ -547,7 +547,7 @@ class AnsibleProjectLoader:
             time_records: Dict containing the record from record_begin.
             record_name: Name of the timing record.
         """
-        end = datetime.datetime.now(datetime.timezone.utc)
+        end = datetime.datetime.now(datetime.UTC)
         end = end.replace(tzinfo=None)
         rec = time_records.get(record_name)
         if not isinstance(rec, dict):
@@ -557,7 +557,7 @@ class AnsibleProjectLoader:
         begin = (
             datetime.datetime.fromisoformat(str(begin_val))
             if isinstance(begin_val, str)
-            else datetime.datetime.now(datetime.timezone.utc)
+            else datetime.datetime.now(datetime.UTC)
         )
         elapsed = (end - begin).total_seconds()
         rec["elapsed"] = elapsed

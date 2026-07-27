@@ -18,7 +18,7 @@ import hashlib
 import inspect
 from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from typing import TYPE_CHECKING, ClassVar, cast
 
@@ -524,7 +524,7 @@ class ContentNode:
             phase=phase,
             yaml_lines=self.yaml_lines,
             content_hash=_content_hash(self.yaml_lines),
-            timestamp=datetime.now(timezone.utc).isoformat(),
+            timestamp=datetime.now(UTC).isoformat(),
             source=source,
         )
         if len(self.progression) >= self.MAX_PROGRESSION:

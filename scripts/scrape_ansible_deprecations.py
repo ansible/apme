@@ -27,7 +27,7 @@ import subprocess
 import sys
 import textwrap
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -650,7 +650,7 @@ def build_gap_report(
     deduped_gaps = _deduplicate_gaps(gaps)
 
     return {
-        "scraped_at": datetime.now(tz=timezone.utc).isoformat(),
+        "scraped_at": datetime.now(tz=UTC).isoformat(),
         "commit": commit,
         "ansible_core_version": ansible_version,
         "total_deprecations": len(deprecations),

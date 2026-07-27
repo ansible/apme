@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import ColumnElement, delete, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
@@ -26,7 +26,7 @@ _SQLITE_BIND_LIMIT = 900
 
 
 def _now_iso() -> str:
-    return datetime.now(tz=timezone.utc).isoformat()
+    return datetime.now(tz=UTC).isoformat()
 
 
 async def fetch_violations_by_ids(db: AsyncSession, int_ids: Sequence[int]) -> list[Violation]:

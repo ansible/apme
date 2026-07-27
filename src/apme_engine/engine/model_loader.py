@@ -2610,7 +2610,7 @@ def load_object(loadObj: Load) -> None:
     elif target_type == LoadType.TASKFILE and loadObj.taskfile_only and isinstance(obj, TaskFile):
         loadObj.taskfiles = [obj.defined_in]
 
-    loadObj.timestamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")
+    loadObj.timestamp = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%S.%f")
 
 
 def find_playbook_role_module(

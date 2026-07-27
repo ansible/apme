@@ -14,7 +14,7 @@ import re
 import uuid
 from collections import Counter
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
@@ -184,7 +184,7 @@ class BomMetadata:
         tools_version: Version of the generating tool.
     """
 
-    timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    timestamp: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     tools_name: str = "apme"
     tools_version: str = "0.1.0"
 

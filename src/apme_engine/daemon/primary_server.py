@@ -1881,7 +1881,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             while not remediate_task.done():
                 try:
                     update = await asyncio.wait_for(progress_queue.get(), timeout=1.0)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     continue
                 if update is not None:
                     session.progress_logs.append(update)

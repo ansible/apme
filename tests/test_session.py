@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import os
 from collections.abc import AsyncIterator
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -192,7 +192,7 @@ class TestSessionState:
     def test_expired_after_idle_timeout(self) -> None:
         """Session expires after idle TTL elapses."""
         state = SessionState(session_id="abc")
-        state.last_activity_at = datetime.now(timezone.utc) - timedelta(
+        state.last_activity_at = datetime.now(UTC) - timedelta(
             seconds=_DEFAULT_TTL + 1,
         )
         assert state.expired is True
@@ -200,7 +200,7 @@ class TestSessionState:
     def test_expired_after_max_lifetime(self) -> None:
         """Session expires after max lifetime is exceeded."""
         state = SessionState(session_id="abc")
-        state.created_at = datetime.now(timezone.utc) - timedelta(
+        state.created_at = datetime.now(UTC) - timedelta(
             seconds=_MAX_LIFETIME + 1,
         )
         assert state.expired is True
@@ -208,7 +208,7 @@ class TestSessionState:
     def test_expiring_soon_within_warning_window(self) -> None:
         """Low remaining TTL marks session as expiring soon."""
         state = SessionState(session_id="abc")
-        state.last_activity_at = datetime.now(timezone.utc) - timedelta(
+        state.last_activity_at = datetime.now(UTC) - timedelta(
             seconds=_DEFAULT_TTL - 200,
         )
         assert state.expiring_soon is True
@@ -216,7 +216,7 @@ class TestSessionState:
     def test_touch_resets_idle_timer(self) -> None:
         """touch() refreshes idle activity and increases remaining TTL."""
         state = SessionState(session_id="abc")
-        state.last_activity_at = datetime.now(timezone.utc) - timedelta(seconds=600)
+        state.last_activity_at = datetime.now(UTC) - timedelta(seconds=600)
         old_ttl = state.ttl_seconds
         state.touch()
         assert state.ttl_seconds > old_ttl
@@ -280,7 +280,7 @@ class TestSessionStore:
         """get() drops expired sessions and returns None."""
         store = SessionStore()
         s = store.create()
-        s.last_activity_at = datetime.now(timezone.utc) - timedelta(
+        s.last_activity_at = datetime.now(UTC) - timedelta(
             seconds=_DEFAULT_TTL + 1,
         )
         assert store.get(s.session_id) is None
@@ -290,7 +290,7 @@ class TestSessionStore:
         """touch() updates last activity so TTL recovers."""
         store = SessionStore()
         s = store.create()
-        s.last_activity_at = datetime.now(timezone.utc) - timedelta(seconds=100)
+        s.last_activity_at = datetime.now(UTC) - timedelta(seconds=100)
         store.touch(s.session_id)
         assert s.ttl_seconds > _DEFAULT_TTL - 5
 
@@ -344,7 +344,7 @@ class TestSessionStoreReaper:
         """Manual sweep removes expired sessions from the store."""
         store = SessionStore()
         s = store.create()
-        s.last_activity_at = datetime.now(timezone.utc) - timedelta(
+        s.last_activity_at = datetime.now(UTC) - timedelta(
             seconds=_DEFAULT_TTL + 10,
         )
 

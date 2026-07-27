@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
@@ -184,7 +184,7 @@ class OperationState:
     scan_id: str
     status: OperationStatus
     scan_type: str
-    started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    started_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     progress: list[ProgressEntry] = field(default_factory=list)
     proposals: list[Proposal] | None = None
     findings: list[dict[str, Any]] | None = None
