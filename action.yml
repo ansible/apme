@@ -73,7 +73,7 @@ runs:
   steps:
     # ── Install CLI ───────────────────────────────────────────────────
     - name: Set up uv
-      uses: astral-sh/setup-uv@6b9c6063abd6010835644d4c2e1bef4cf5cd0fca # v6
+      uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v6
 
     - name: Install APME CLI
       shell: bash
