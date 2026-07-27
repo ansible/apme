@@ -1033,6 +1033,33 @@ class ContentGraph:
                 count += 1
         return count
 
+    def decline_open_violations(self, violations: list[ViolationDict]) -> int:
+        """Transition matching ``open`` ledger entries to sticky ``declined``.
+
+        Used by AI escalation triage (Skip / not Included) so a Gate 2
+        rescan cannot reopen skipped AI-candidates (ADR-062).
+
+        Args:
+            violations: Violation dicts identifying ledger rows (``path`` + rule).
+
+        Returns:
+            Number of violations declined.
+        """
+        count = 0
+        for v in violations:
+            node_id = str(v.get("path", ""))
+            node = self.get_node(node_id)
+            if node is None:
+                continue
+            key = _violation_key(v)
+            record = node.violation_ledger.get(key)
+            if record is not None and record.status == "open":
+                record.status = "declined"
+                record.fixed_by = None
+                record.fixed_in_pass = None
+                count += 1
+        return count
+
     def query_violations(
         self,
         *,

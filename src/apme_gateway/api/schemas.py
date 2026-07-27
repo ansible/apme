@@ -80,6 +80,7 @@ class ViolationDetail(BaseModel):  # type: ignore[misc]
         fixed_yaml: Node YAML after transforms (fixed violations only).
         co_fixes: Other rule IDs whose fixes are included in this node's diff.
         node_line_start: File line where the node starts.
+        node_type: ContentGraph NodeType value (task, block, play, …).
         ai_reason: Why the AI could not fix this violation (ai_abstained only).
         ai_suggestion: Manual remediation guidance from the AI (ai_abstained only).
         suppressed: True if this violation matches an active suppression (ADR-055).
@@ -101,6 +102,7 @@ class ViolationDetail(BaseModel):  # type: ignore[misc]
     fixed_yaml: str = ""
     co_fixes: list[str] = Field(default_factory=list)
     node_line_start: int = 0
+    node_type: str = ""
     ai_reason: str = ""
     ai_suggestion: str = ""
     suppressed: bool = False
@@ -119,6 +121,7 @@ class ProposalDetail(BaseModel):  # type: ignore[misc]
         confidence: AI confidence score.
         status: approved, rejected, declined, or pending.
         path: Node identity path (optional additive).
+        node_type: ContentGraph NodeType value (task, block, play, …).
         source: deterministic, ai, ai-candidate, or outcome (optional additive).
         gate: tier1 or ai (optional additive).
         rule_ids: All rule ids on this approval unit (optional additive).
@@ -139,6 +142,7 @@ class ProposalDetail(BaseModel):  # type: ignore[misc]
     confidence: float
     status: str
     path: str = ""
+    node_type: str = ""
     source: str = "outcome"
     gate: str = ""
     rule_ids: list[str] = Field(default_factory=list)

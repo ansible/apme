@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import type { OperationProposal } from "../types/operation";
+import type { OperationProposal } from '@apme/ui-workflow';
 import {
   gateLabel,
   isAiRemediationProposal,
@@ -7,12 +7,12 @@ import {
   proposalNodeTitle,
   proposalsGateKey,
   splitRuleIds,
-} from "../remediation/proposalTier";
+} from '../../packages/ui-workflow/src/remediation/proposalTier';
 import {
   effectiveFixType,
   fixMethodLabel,
   normalizeRemediationClass,
-} from "../remediation/fixTypes";
+} from '../../packages/ui-workflow/src/remediation/fixTypes';
 
 function prop(partial: Partial<OperationProposal> & { id: string }): OperationProposal {
   return {
@@ -104,6 +104,13 @@ describe("fixTypes", () => {
     expect(normalizeRemediationClass("auto-fixable")).toBe(1);
     expect(normalizeRemediationClass("ai-candidate")).toBe(2);
     expect(normalizeRemediationClass("manual-review")).toBe(3);
+  });
+
+  it("rejects fractional and prefix-parsed remediation classes", () => {
+    expect(normalizeRemediationClass(1.5)).toBe(3);
+    expect(normalizeRemediationClass("2.9")).toBe(3);
+    expect(normalizeRemediationClass("2foo")).toBe(3);
+    expect(normalizeRemediationClass("2")).toBe(2);
   });
 
   it("maps effective fix type with AI toggle", () => {

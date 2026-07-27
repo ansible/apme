@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { ProjectOperationState } from '../hooks/useProjectOperationState';
+import type { ProjectOperationState } from '@apme/ui-workflow';
 import {
   emptyWorkflowLatch,
   needsCommitStep,
@@ -8,7 +8,7 @@ import {
   stepVisualState,
   updateWorkflowLatch,
   workflowStepDefs,
-} from '../remediation/workflowSteps';
+} from '../../packages/ui-workflow/src/remediation/workflowSteps';
 
 function baseState(
   overrides: Partial<ProjectOperationState> = {},
@@ -43,12 +43,15 @@ describe('workflowStepDefs', () => {
       'findings',
       'tier1_proposals',
       'tier1_applied',
-      'ai_assessment',
+      'ai_escalation',
       'ai_proposals',
       'ai_applied',
       'commit',
       'complete',
     ]);
+    expect(workflowStepDefs(true).find((s) => s.id === 'ai_escalation')?.label).toBe(
+      'AI escalation',
+    );
   });
 });
 
@@ -90,6 +93,38 @@ describe('resolveCurrentWorkflowStep', () => {
     const latch = updateWorkflowLatch(emptyWorkflowLatch(), state, false);
     expect(resolveCurrentWorkflowStep(state, false, latch)).toBe(
       'tier1_proposals',
+    );
+  });
+
+  it('uses AI escalation for awaiting_ai_triage', () => {
+    const state = baseState({
+      status: 'awaiting_ai_triage',
+      ai_triage_candidates: [
+        {
+          rule_id: 'L001',
+          message: 'needs AI',
+          file: 'a.yml',
+          path: 'playbooks/a.yml::0',
+        },
+      ],
+    });
+    const latch = updateWorkflowLatch(emptyWorkflowLatch(), state, true);
+    expect(resolveCurrentWorkflowStep(state, true, latch)).toBe('ai_escalation');
+    expect(latch.pastTier1Applied).toBe(true);
+    expect(latch.pastAiEscalation).toBe(true);
+  });
+
+  it('keeps AI escalation while applying after escalate-ai', () => {
+    let latch = emptyWorkflowLatch();
+    latch = updateWorkflowLatch(
+      latch,
+      baseState({ status: 'awaiting_ai_triage', ai_triage_candidates: [] }),
+      true,
+    );
+    const applying = baseState({ status: 'applying', scan_type: 'remediate' });
+    latch = updateWorkflowLatch(latch, applying, true);
+    expect(resolveCurrentWorkflowStep(applying, true, latch)).toBe(
+      'ai_escalation',
     );
   });
 

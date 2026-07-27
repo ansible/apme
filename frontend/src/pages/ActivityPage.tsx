@@ -2,14 +2,15 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { PageLayout, PageHeader } from '@ansible/ansible-ui-framework';
 import { Button, Pagination } from '@patternfly/react-core';
+import { apmeApiUrl, getApmeApiAdapter } from '../api/apmeApiAdapter';
 import { listActivity } from '../services/api';
 import type { ActivitySummary } from '../types/api';
 import { timeAgo } from '../services/format';
 import {
   fetchProjectOperationState,
   LIVE_OPERATION_STATUSES,
-} from '../hooks/useProjectOperationState';
-import { AI_MODEL_STORAGE_KEY } from './SettingsPage';
+} from '@apme/ui-workflow';
+import { AI_MODEL_STORAGE_KEY } from '@apme/ui-workflow';
 
 const PAGE_SIZE = 20;
 
@@ -62,12 +63,16 @@ export function ActivityPage() {
 
     const projectId = latest.project_id;
     const scanId = latest.scan_id;
-    fetchProjectOperationState(projectId).then((op) => {
-      if (cancelled || !op) return;
-      if (op.scan_id === scanId && LIVE_OPERATION_STATUSES.has(op.status)) {
-        setResumableScanId(scanId);
-      }
-    });
+    fetchProjectOperationState(projectId)
+      .then((op) => {
+        if (cancelled || !op) return;
+        if (op.scan_id === scanId && LIVE_OPERATION_STATUSES.has(op.status)) {
+          setResumableScanId(scanId);
+        }
+      })
+      .catch(() => {
+        /* probe failed — leave Resume hidden */
+      });
     return () => { cancelled = true; };
   }, [items, page, refreshKey]);
 
@@ -93,23 +98,27 @@ export function ActivityPage() {
         // Always Scan (check + assess_pause); do not inherit remediate from history.
         // Match Project Scan defaults: enable_ai on, optional stored model.
         const aiModel = localStorage.getItem(AI_MODEL_STORAGE_KEY) ?? undefined;
-        const res = await fetch(`/api/v1/projects/${item.project_id}/operation`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Accept: 'application/json',
-          },
-          body: JSON.stringify({
-            action: 'check',
-            abandon_working_set: true,
-            options: {
-              assess_pause: true,
-              interactive: true,
-              enable_ai: true,
-              ...(aiModel ? { ai_model: aiModel } : {}),
+        const { fetch: doFetch } = getApmeApiAdapter();
+        const res = await doFetch(
+          apmeApiUrl(`/projects/${item.project_id}/operation`),
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Accept: 'application/json',
             },
-          }),
-        });
+            body: JSON.stringify({
+              action: 'check',
+              abandon_working_set: true,
+              options: {
+                assess_pause: true,
+                interactive: true,
+                enable_ai: true,
+                ...(aiModel ? { ai_model: aiModel } : {}),
+              },
+            }),
+          },
+        );
         if (!res.ok) {
           const text = await res.text();
           throw new Error(`${res.status}: ${text}`);

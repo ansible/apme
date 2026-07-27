@@ -224,7 +224,14 @@ match.
   defers splice until `ApprovalRequest`; when `enable_ai`, Gate 2 runs AI
   on the post-approval graph. CLI `--interactive`; Gateway
   `options.interactive` passthrough (default false — UI unchanged).
-  Gate-1 AI-candidate triage (`source=ai-candidate`) deferred.
+- AI escalation triage (post–Gate 1, before Gate 2): engine emits
+  `AiTriageReady` with `SessionStatus.AWAITING_AI_TRIAGE` (distinct from
+  Gate 1/2 `AWAITING_APPROVAL`); client responds with
+  `SessionCommand.ai_escalate` carrying
+  `AiEscalateTarget { path, rule_ids }` (empty `rule_ids` = whole path).
+  Gateway status `awaiting_ai_triage`, SSE `ai_triage`,
+  `POST .../operation/escalate-ai`. SPA step label **AI escalation**.
+  Per-location Include/Skip in v1; empty allow-list skips AI.
 - SQLite: extend `_migrate_*` pattern in `apme_gateway.db` (no Alembic).
 - Non-interactive Tier 1 auto-apply sets `review_status=deterministic_approved`
   when fixed violations are persisted.
@@ -258,3 +265,4 @@ match.
 | 2026-07-09 | Brad Thornton | Initial acceptance from #379 durability design |
 | 2026-07-09 | Brad Thornton | Phase 2: draft PATCH, gate-commit stamps, id bridge, abandon |
 | 2026-07-20 | Brad Thornton | Cross-link ADR-065 for SPA vs registry ownership |
+| 2026-07-21 | Brad Thornton | AI escalation triage before Gate 2 (lift deferred) |

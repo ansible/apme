@@ -1427,6 +1427,7 @@ def _to_violation_detail(
         fixed_yaml=v.fixed_yaml,  # type: ignore[attr-defined]
         co_fixes=[r for r in v.co_fixes.split(",") if r],  # type: ignore[attr-defined]
         node_line_start=v.node_line_start,  # type: ignore[attr-defined]
+        node_type=getattr(v, "node_type", "") or "",
         ai_reason=v.ai_reason,  # type: ignore[attr-defined]
         ai_suggestion=v.ai_suggestion,  # type: ignore[attr-defined]
         suppressed=suppressed,

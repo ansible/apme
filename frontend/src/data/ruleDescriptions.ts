@@ -1,3 +1,8 @@
+import { apmeApiUrl, getApmeApiAdapter } from "../api/apmeApiAdapter";
+
+/** Live descriptions populated from the Gateway /rules API. */
+const _descriptions: Record<string, string> = {};
+
 /**
  * Strip validator prefix (e.g. "native:L042" → "L042") for description lookup.
  */
@@ -14,15 +19,13 @@ export function getRuleDescription(ruleId: string): string {
   return _descriptions[ruleId] ?? _descriptions[bareRuleId(ruleId)] ?? "";
 }
 
-/** Live descriptions populated from the Gateway /rules API. */
-const _descriptions: Record<string, string> = {};
-
 let _fetchStarted = false;
 
 function _loadFromApi(): void {
   if (_fetchStarted) return;
   _fetchStarted = true;
-  fetch("/api/v1/rules")
+  const { fetch: doFetch } = getApmeApiAdapter();
+  doFetch(apmeApiUrl("/rules"))
     .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
     .then((rows: { rule_id: string; description: string }[]) => {
       if (!Array.isArray(rows)) return;

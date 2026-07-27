@@ -177,8 +177,9 @@ runs and review analytics (ADR-062).
 ### Neutral
 
 - Pure workflow helpers under `frontend/src/remediation/` remain SPA-local;
-  extraction to a shared client package is future work, not required by this
-  ADR.
+  extraction to a shared UI package is delivered as `@apme/ui-workflow`
+  (ADR-066 GitHub Release tarballs); this ADR still owns Gateway vs SPA
+  state, not the npm publish path.
 - Does not change engine FixSession semantics (ADR-039 / ADR-064).
 
 ## Implementation Notes

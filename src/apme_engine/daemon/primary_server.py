@@ -44,6 +44,7 @@ from apme.v1.common_pb2 import (
 )
 from apme.v1.primary_pb2 import (
     AIModelInfo,
+    AiTriageReady,
     ApprovalAck,
     FileDiff,
     FilePatch,
@@ -215,10 +216,10 @@ def _enrich_violations_from_graph(
     *,
     fixed: bool,
 ) -> None:
-    """Attach node YAML from the graph progression to each violation.
+    """Attach node YAML and type from the graph to each violation.
 
-    All violations get ``original_yaml`` (the user's original node content)
-    and ``node_line_start`` (file line where the node starts).
+    Graph-backed violations get ``node_type`` from ``ContentNode.node_type``.
+    When progression exists, also set ``original_yaml`` and ``node_line_start``.
 
     Fixed violations additionally get ``fixed_yaml`` (final approved state)
     and ``co_fixes`` (other rule IDs that also modified this node).
@@ -233,7 +234,11 @@ def _enrich_violations_from_graph(
         if not node_id:
             continue
         node = graph.get_node(node_id)
-        if node is None or not node.progression:
+        if node is None:
+            continue
+
+        v["node_type"] = node.node_type.value
+        if not node.progression:
             continue
 
         v["original_yaml"] = node.progression[0].yaml_lines
@@ -254,6 +259,135 @@ def _enrich_violations_from_graph(
         )
         if co_fixes:
             v["co_fixes"] = co_fixes  # type: ignore[assignment]
+
+
+def _collect_ai_triage_candidates(session: SessionState) -> list[ViolationDict]:
+    """Return open AI-candidate findings on the session graph for escalation triage.
+
+    Snippets use the **current** node YAML (post–Gate 1 / Quick-fix apply),
+    not ``progression[0]`` scan baseline — that is what Abbenay will see next.
+
+    Args:
+        session: Session with a post–Tier-1 ContentGraph.
+
+    Returns:
+        Violation dicts classified as AI-candidate (enriched with node_type).
+    """
+    from apme_engine.graph.content_graph import ContentGraph  # noqa: PLC0415
+    from apme_engine.remediation.partition import add_classification_to_violations  # noqa: PLC0415
+
+    graph = session.content_graph
+    if not isinstance(graph, ContentGraph):
+        return []
+    open_violations = [dict(v) for v in graph.query_violations(status="open")]
+    add_classification_to_violations(open_violations)
+    _enrich_violations_from_graph(open_violations, graph, fixed=False)
+    out: list[ViolationDict] = []
+    for v in open_violations:
+        rc = v.get("remediation_class")
+        rc_val = rc.value if isinstance(rc, RemediationClass) else str(rc or "")
+        path = str(v.get("path") or "").strip()
+        if rc_val != RemediationClass.AI_CANDIDATE.value or not path:
+            continue
+        # Overwrite scan-baseline snippet with live post–Quick-fix YAML.
+        node = graph.get_node(path)
+        if node is not None and node.yaml_lines:
+            v["original_yaml"] = node.yaml_lines
+            v["node_line_start"] = node.line_start
+        out.append(v)
+    return out
+
+
+def _filter_violations_by_escalate_targets(
+    violations: list[ViolationDict],
+    targets: list[tuple[str, frozenset[str]]] | None,
+) -> list[ViolationDict]:
+    """Keep violations matching AI escalate allow-list.
+
+    Args:
+        violations: Open violation dicts.
+        targets: ``(path, rule_ids)``; empty ``rule_ids`` means entire path.
+            ``None`` = no filter (allow all). Empty list = skip AI.
+            Rule IDs are compared after ``normalize_rule_id`` (legacy
+            ``native:`` prefix).
+
+    Returns:
+        Filtered list (or all / none per ``targets``).
+    """
+    from apme_engine.remediation.partition import normalize_rule_id  # noqa: PLC0415
+
+    if targets is None:
+        return violations
+    if not targets:
+        return []
+    allowed: list[ViolationDict] = []
+    for v in violations:
+        path = str(v.get("path") or "")
+        rule = normalize_rule_id(str(v.get("rule_id") or ""))
+        for t_path, rule_ids in targets:
+            if path != t_path:
+                continue
+            if not rule_ids:
+                allowed.append(v)
+                break
+            normalized_ids = frozenset(normalize_rule_id(r) for r in rule_ids)
+            if rule in normalized_ids:
+                allowed.append(v)
+                break
+    return allowed
+
+
+def _decline_skipped_ai_escalation(session: SessionState) -> int:
+    """Sticky-decline open AI-candidates not on the escalate allow-list.
+
+    Gate 2 ``remediate`` rescans the full graph after each AI attempt; without
+    this, skipped locations reopen as ``open`` and Abbenay runs on them too.
+
+    Args:
+        session: Session with ``ai_escalate_targets`` set (not ``None``).
+
+    Returns:
+        Number of ledger rows declined.
+    """
+    from apme_engine.graph.content_graph import ContentGraph  # noqa: PLC0415
+    from apme_engine.remediation.partition import (  # noqa: PLC0415
+        add_classification_to_violations,
+        normalize_rule_id,
+    )
+
+    targets = session.ai_escalate_targets
+    if targets is None:
+        return 0
+    graph = session.content_graph
+    if not isinstance(graph, ContentGraph):
+        return 0
+
+    open_violations = [dict(v) for v in graph.query_violations(status="open")]
+    add_classification_to_violations(open_violations)
+    allowed = _filter_violations_by_escalate_targets(open_violations, targets)
+    # Match ContentGraph ledger keys (path + normalized rule_id).
+    allowed_keys = {(str(v.get("path") or ""), normalize_rule_id(str(v.get("rule_id") or ""))) for v in allowed}
+
+    skipped: list[ViolationDict] = []
+    for v in open_violations:
+        rc = v.get("remediation_class")
+        rc_val = rc.value if isinstance(rc, RemediationClass) else str(rc or "")
+        if rc_val != RemediationClass.AI_CANDIDATE.value:
+            continue
+        key = (str(v.get("path") or ""), normalize_rule_id(str(v.get("rule_id") or "")))
+        if key not in allowed_keys:
+            skipped.append(v)
+
+    if not skipped:
+        return 0
+    n = graph.decline_open_violations(skipped)
+    if n:
+        logger.info(
+            "AI escalation: declined %d skipped AI-candidate(s) on session %s",
+            n,
+            session.session_id,
+        )
+    return n
 
 
 def _attach_snippets(violations: list[ViolationDict], files: list[File]) -> None:
@@ -1156,6 +1290,14 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                     async for event in self._session_begin_remediate(session):
                         yield event
 
+                elif oneof == "ai_escalate":
+                    if session is None:
+                        continue
+                    session.touch()
+                    targets = [(t.path, frozenset(r for r in t.rule_ids if r)) for t in cmd.ai_escalate.targets]
+                    async for event in self._session_handle_ai_escalate(session, targets):
+                        yield event
+
                 elif oneof == "extend":
                     if session:
                         session.touch()
@@ -1912,9 +2054,9 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             )
             return
 
-        # Interactive + AI but no Tier 1 proposals: skip Gate 1, run AI now.
+        # Interactive + AI but no Tier 1 proposals: skip Gate 1, triage then AI.
         if interactive and session.fix_options and session.fix_options.enable_ai:
-            async for event in self._session_run_ai_gate(session):
+            async for event in self._session_enter_ai_phase(session):
                 yield event
             return
 
@@ -2049,6 +2191,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                     status="proposed",
                     source="deterministic",
                     path=tnp.node_id,
+                    node_type=getattr(tnp, "node_type", "") or "",
                 )
             )
         return proposals
@@ -2097,6 +2240,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                     status="proposed",
                     source="ai",
                     path=anp.node_id,
+                    node_type=getattr(anp, "node_type", "") or "",
                 )
             )
         return proposals
@@ -2143,7 +2287,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             return
 
         if session.fix_options and session.fix_options.enable_ai:
-            async for event in self._session_run_ai_gate(session):
+            async for event in self._session_enter_ai_phase(session):
                 yield event
             return
 
@@ -2198,13 +2342,86 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         )
 
         if run_ai_gate:
-            async for event in self._session_run_ai_gate(session):
+            async for event in self._session_enter_ai_phase(session):
                 yield event
             return
 
         if session.status == 3:  # COMPLETE
             async for event in self._session_build_result(session):
                 yield event
+
+    async def _session_enter_ai_phase(
+        self,
+        session: SessionState,
+    ) -> AsyncIterator[SessionEvent]:
+        """Pause for AI escalation triage, or skip when no candidates remain.
+
+        Emits ``AiTriageReady`` and returns when there are AI-candidate findings.
+        Empty candidate set skips triage and AI (COMPLETE).
+
+        Args:
+            session: Session after Tier 1 apply (graph spliced).
+
+        Yields:
+            SessionEvent: AiTriageReady, or SessionResult when nothing to escalate.
+        """
+        candidates = _collect_ai_triage_candidates(session)
+        if not candidates:
+            session.status = 3  # COMPLETE
+            async for event in self._session_build_result(session):
+                yield event
+            return
+
+        protos = [violation_dict_to_proto(v) for v in candidates]
+        session.ai_triage_candidates = list(protos)
+        session.awaiting_ai_triage = True
+        session.ai_escalate_targets = None
+        session.status = 4  # AWAITING_AI_TRIAGE
+        session.touch()
+        yield SessionEvent(
+            ai_triage=AiTriageReady(
+                candidates=protos,
+                status=session.status,
+                ttl_seconds=session.ttl_seconds,
+            ),
+        )
+
+    async def _session_handle_ai_escalate(
+        self,
+        session: SessionState,
+        targets: list[tuple[str, frozenset[str]]],
+    ) -> AsyncIterator[SessionEvent]:
+        """Leave AI escalation triage and run Gate 2 on the allow-list.
+
+        Args:
+            session: Session in ``awaiting_ai_triage``.
+            targets: ``(path, rule_ids)`` allow-list; empty list skips AI.
+
+        Yields:
+            SessionEvent: Gate 2 ProposalsReady or SessionResult.
+        """
+        if not session.awaiting_ai_triage:
+            logger.warning(
+                "AiEscalate ignored — session %s not in AI triage",
+                session.session_id,
+            )
+            return
+
+        session.awaiting_ai_triage = False
+        session.ai_escalate_targets = list(targets)
+        session.touch()
+        # Sticky-decline Skipped locations before Gate 2 so post-AI rescans
+        # cannot reopen them and send them to Abbenay.
+        _decline_skipped_ai_escalation(session)
+
+        if not targets:
+            session.status = 3  # COMPLETE — user skipped all AI escalation
+            async for event in self._session_build_result(session):
+                yield event
+            return
+
+        async for event in self._session_run_ai_gate(session):
+            yield event
 
     async def _session_run_ai_gate(
         self,
@@ -2214,6 +2431,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
 
         Args:
             session: Session after Tier 1 approval (graph already spliced).
+                ``ai_escalate_targets`` filters which open findings Abbenay sees.
 
         Yields:
             SessionEvent: Progress, ProposalsReady (Gate 2), or SessionResult if no AI proposals.
@@ -2240,7 +2458,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         # when hashes match originals while working_files still hold leaked AI.
         session.pre_gate2_files = dict(session.working_files)
         _ai_msg = ProgressUpdate(
-            message="Starting AI assessment (Tier 1 decisions already applied)",
+            message="Starting AI escalation (Tier 1 decisions already applied)",
             phase="graph-ai",
             level=2,
         )
@@ -2260,6 +2478,18 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         # ApprovalRequest — never auto-approve deterministic cleanup on top of
         # pending AI YAML (that leaked into PRs when users accepted nothing).
         open_violations = [dict(v) for v in graph.query_violations(status="open")]
+        open_violations = _filter_violations_by_escalate_targets(
+            open_violations,
+            session.ai_escalate_targets,
+        )
+        # Empty allow-list after triage means skip AI (COMPLETE). Unfiltered
+        # empty open set still calls remediate (legacy / mock test path).
+        if session.ai_escalate_targets is not None and not open_violations:
+            session.status = 3
+            async for event in self._session_build_result(session):
+                yield event
+            return
+
         graph_report = await engine.remediate(
             open_violations,
             interactive=True,
@@ -2275,7 +2505,9 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         remaining_protos = [violation_dict_to_proto(v) for v in remaining]
         # Gate 2 interactive: ledger ``fixed`` is authoritative (do not add to
         # prev_fixed — that double-counts Gate 1 fixes already in the ledger).
-        fixed_protos = [violation_dict_to_proto(dict(fv)) for fv in graph.query_violations(status="fixed")]
+        fixed = [dict(fv) for fv in graph.query_violations(status="fixed")]
+        _enrich_violations_from_graph(fixed, graph, fixed=True)
+        fixed_protos = [violation_dict_to_proto(v) for v in fixed]
         session.report = FixReport(
             passes=(session.report.passes if session.report else 0) + graph_report.passes,
             fixed=len(fixed_protos),
@@ -2460,6 +2692,8 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                     suggestion=str(v.get("message", "")),
                     explanation="AI could not generate a fix for this violation.",
                     source="ai",
+                    path=str(v.get("path", "") or ""),
+                    node_type=str(v.get("node_type", "") or ""),
                 )
             )
             idx += 1
@@ -2654,7 +2888,20 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                     ttl_seconds=session.ttl_seconds,
                 ),
             )
-        elif session.proposals and session.status == 1 and not session.awaiting_assess:
+        elif session.awaiting_ai_triage and session.ai_triage_candidates:
+            from apme.v1.common_pb2 import Violation as ViolationProto  # noqa: PLC0415
+
+            cands = [v for v in session.ai_triage_candidates if isinstance(v, ViolationProto)]
+            yield SessionEvent(
+                ai_triage=AiTriageReady(
+                    candidates=cands,
+                    status=4,  # AWAITING_AI_TRIAGE
+                    ttl_seconds=session.ttl_seconds,
+                ),
+            )
+        elif (
+            session.proposals and session.status == 1 and not session.awaiting_assess and not session.awaiting_ai_triage
+        ):
             yield SessionEvent(
                 proposals=ProposalsReady(
                     proposals=list(session.proposals.values()),

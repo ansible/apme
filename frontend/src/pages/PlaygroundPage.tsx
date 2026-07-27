@@ -9,22 +9,25 @@ import {
   ExpandableSection,
 } from '@patternfly/react-core';
 import JSZip from 'jszip';
-import { AI_MODEL_STORAGE_KEY } from './SettingsPage';
+import { AI_MODEL_STORAGE_KEY } from '@apme/ui-workflow';
 import {
+  CheckOptionsForm,
   getPersistedSession,
+  OperationProgressPanel,
+  OperationResultCard,
+  ProposalReviewPanel,
+  Tier1ResultsPanel,
   useSessionStream,
+  type OperationProgress,
+  type OperationProposal,
+  type OperationResult,
+  type OperationStatus,
   type Patch,
   type SessionResult,
   type Tier1Result,
-} from '../hooks/useSessionStream';
-import { CheckOptionsForm } from '../components/CheckOptionsForm';
-import { OperationProgressPanel } from '../components/OperationProgressPanel';
-import { ProposalReviewPanel } from '../components/ProposalReviewPanel';
-import { Tier1ResultsPanel } from '../components/Tier1ResultsPanel';
-import { OperationResultCard } from '../components/OperationResultCard';
+} from '@apme/ui-workflow';
 import { RuleId } from '../components/RuleId';
 import { useFeedbackEnabled } from '../hooks/useFeedbackEnabled';
-import type { OperationStatus, OperationProgress, OperationProposal, OperationResult } from '../types/operation';
 
 function mapSessionStatus(s: string): OperationStatus {
   if (s === 'uploading') return 'preparing';
@@ -88,6 +91,7 @@ export function PlaygroundPage() {
     suggestion: p.suggestion,
     line_start: p.line_start,
     path: p.path,
+    node_type: p.node_type,
     source: p.source,
     before_text: p.before_text,
     after_text: p.after_text,

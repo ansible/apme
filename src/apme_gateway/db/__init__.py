@@ -71,6 +71,8 @@ def _migrate_violations_table(conn: object) -> None:
         migrations.append("ALTER TABLE violations ADD COLUMN co_fixes TEXT NOT NULL DEFAULT ''")
     if "node_line_start" not in existing:
         migrations.append("ALTER TABLE violations ADD COLUMN node_line_start INTEGER NOT NULL DEFAULT 0")
+    if "node_type" not in existing:
+        migrations.append("ALTER TABLE violations ADD COLUMN node_type TEXT NOT NULL DEFAULT ''")
     if "remediation_resolution" not in existing:
         migrations.append("ALTER TABLE violations ADD COLUMN remediation_resolution INTEGER NOT NULL DEFAULT 0")
     if "ai_reason" not in existing:
@@ -105,6 +107,8 @@ def _migrate_proposals_table(conn: object) -> None:
     migrations: list[str] = []
     if "path" not in existing:
         migrations.append("ALTER TABLE proposals ADD COLUMN path TEXT NOT NULL DEFAULT ''")
+    if "node_type" not in existing:
+        migrations.append("ALTER TABLE proposals ADD COLUMN node_type TEXT NOT NULL DEFAULT ''")
     if "source" not in existing:
         migrations.append("ALTER TABLE proposals ADD COLUMN source TEXT NOT NULL DEFAULT 'outcome'")
     if "gate" not in existing:
