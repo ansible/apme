@@ -95,14 +95,24 @@ function parseViolationLine(line: string): {
   severity: string;
   message: string;
 } {
-  const m = line.match(/^\[([^\]|]+)(?:\|([^\]]+))?\]:\s*(.*)$/);
-  if (!m) {
+  const closeMarker = ']:';
+  if (!line.startsWith('[')) {
     return { ruleId: '', severity: '', message: line };
   }
+  const closeIdx = line.indexOf(closeMarker);
+  if (closeIdx === -1) {
+    return { ruleId: '', severity: '', message: line };
+  }
+  const header = line.slice(1, closeIdx);
+  const message = line.slice(closeIdx + closeMarker.length).trimStart();
+  const pipeIdx = header.indexOf('|');
+  if (pipeIdx === -1) {
+    return { ruleId: header, severity: '', message };
+  }
   return {
-    ruleId: m[1] ?? '',
-    severity: (m[2] ?? '').trim(),
-    message: m[3] ?? '',
+    ruleId: header.slice(0, pipeIdx),
+    severity: header.slice(pipeIdx + 1).trim(),
+    message,
   };
 }
 
