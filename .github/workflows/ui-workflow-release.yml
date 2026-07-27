@@ -27,7 +27,7 @@ jobs:
         with:
           # No Actions cache: tag-triggered release has contents:write; avoid
           # restoring a lockfile-keyed cache that a less-trusted job could poison.
-          node-version: "22"
+          node-version: "24"
 
       - name: Install frontend deps
         working-directory: frontend

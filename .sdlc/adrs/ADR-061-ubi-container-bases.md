@@ -66,7 +66,7 @@ sequential pull requests.**
 | Image role | Target base |
 |------------|-------------|
 | Python runtime (`apme-base` + 10 services) | `registry.access.redhat.com/ubi10/python-312-minimal:<pin>` |
-| UI build stage | `registry.access.redhat.com/ubi10/nodejs-22-minimal:<pin>` |
+| UI build stage | `registry.access.redhat.com/ubi10/nodejs-24-minimal:<pin>` |
 | UI serve stage | `registry.access.redhat.com/ubi10/nginx-126:<pin>` |
 
 - Install **uv** by copying the static binary from a pinned
@@ -208,7 +208,7 @@ RUN microdnf install -y git && microdnf clean all
 
 ### UI
 
-- Build: `ubi10/nodejs-22-minimal` — `npm ci && npm run build`
+- Build: `ubi10/nodejs-24-minimal` — `npm ci && npm run build`
 - Serve: `ubi10/nginx-126` — install `gettext` for `envsubst` via `dnf` (full App Stream image, not minimal); retain existing
   nginx config template and entrypoint.
 - Do not remove Helm emptyDir/initContainer nginx workarounds until OCP

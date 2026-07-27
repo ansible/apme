@@ -36,7 +36,7 @@ podman build -f deploy/bootc/Containerfile \
 ```
 
 APME **application** container images use UBI10 (`ubi10/python-312-minimal`,
-`ubi10/nodejs-22-minimal`, `ubi10/nginx-126`). The bootc image is the **host
+`ubi10/nodejs-24-minimal`, `ubi10/nginx-126`). The bootc image is the **host
 OS** layer and uses `rhel-bootc`, not a UBI application base.
 
 ## Build

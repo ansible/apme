@@ -3,6 +3,9 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "engines": {
+    "node": ">=24.0.0"
+  },
   "scripts": {
     "dev": "vite",
     "build": "npm run typecheck && vite build",
@@ -24,8 +27,8 @@
     "dagre": "^0.8.5",
     "i18next": "^23.16.0",
     "jszip": "^3.10.1",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
     "react-i18next": "^15.1.0",
     "react-router-dom": "^7.18.1",
     "react-syntax-highlighter": "^16.1.1",
@@ -44,8 +47,8 @@
     "@types/js-yaml": "^4.0.9",
     "@types/luxon": "^3.7.1",
     "@types/node": "^25.5.0",
-    "@types/react": "^18.3.12",
-    "@types/react-dom": "^18.3.1",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
     "@types/react-syntax-highlighter": "^15.5.13",
     "@vitejs/plugin-react": "^4.3.4",
     "debounce": "^3.0.0",
