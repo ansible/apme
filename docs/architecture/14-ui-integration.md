@@ -2,13 +2,21 @@
 
 > Previous: [13 — Gateway and Persistence](13-gateway-and-persistence.md) | Next: [15 — Concurrency Model](15-concurrency-model.md)
 
+> **Shared workflow package / Portal host / operation API sequence:** see
+> [18 — Shared UI Workflow and Host Integration](18-shared-ui-workflow-and-hosts.md).
+> This document focuses on the native SPA shell, page map, and legacy
+> WebSocket notes. Interactive Quality ops in `@apme/ui-workflow` use REST +
+> SSE (ADR-052 / ADR-065).
+
 ## Purpose
 
 The APME UI is a React single-page application served by nginx on port
 8081. It consumes the Gateway's REST API for dashboards and activity
-history, and connects via WebSocket for real-time check/remediate
-operations. This document covers the frontend architecture, the WebSocket
-protocol, and how UI interactions map to the engine pipeline.
+history. Interactive check/remediate for the shared Quality workflow uses
+**REST + fetch-stream SSE** via `@apme/ui-workflow` (see [18](18-shared-ui-workflow-and-hosts.md);
+ADR-052 / ADR-065). Older WebSocket hooks for project operations are
+documented later in this file for historical context. This document covers
+the SPA frontend architecture, page map, and that legacy WebSocket protocol.
 
 ## Stack
 
