@@ -106,7 +106,7 @@ Paths below are **relative to `apiBase`**. On the native SPA that is
 `/api/v1`; on Portal that is `/api/catalog/apme` (which forwards to Gateway
 `/api/v1`).
 
-Typical interactive path: **assess pause** + **interactive** Tier-1 review
+Typical interactive path: **assess-pause** + **interactive** Tier-1 review
 (ADR-062 / ADR-064), optional AI escalation, then Gateway submit (ADR-056).
 
 ```mermaid
@@ -119,7 +119,7 @@ sequenceDiagram
   Host->>UI: Mount ProjectWorkflowPanel / CheckOptionsForm
   Note over Host,API: Portal may GET /projects lookup or register first
   UI->>API: GET /projects/{id}/operation
-  API->>GW: (Portal) or local (SPA)
+  API->>GW: Portal backend or SPA nginx to Gateway
   UI->>API: POST /projects/{id}/operation action=check assess_pause interactive
   UI->>API: GET /projects/{id}/operation/events (fetch SSE)
   Note over UI,GW: Scan runs; pause after findings
@@ -129,7 +129,8 @@ sequenceDiagram
   UI->>API: POST /projects/{id}/operation/approve
   opt AI escalation
     UI->>API: POST /projects/{id}/operation/escalate-ai
-    UI->>API: PATCH/approve AI proposals as needed
+    UI->>API: PATCH /projects/{id}/operation/proposals
+    UI->>API: POST /projects/{id}/operation/approve
   end
   UI->>API: POST /projects/{id}/operation/submit
   Note over GW: SCM commit / PR (Gateway owns push)
@@ -143,7 +144,7 @@ sequenceDiagram
 | Read live op | `GET /projects/{id}/operation` | Attach / refresh |
 | Subscribe | `GET /projects/{id}/operation/events` | Fetch + ReadableStream SSE (not `EventSource` — auth headers) |
 | Start scan | `POST /projects/{id}/operation` body `{ action: "check", options: { assess_pause, interactive, enable_ai, … } }` | User clicks Scan |
-| Continue after assess | `POST /projects/{id}/operation/begin-remediate` | User continues past findings |
+| Continue after assess-pause | `POST /projects/{id}/operation/begin-remediate` | User continues past findings |
 | Draft decisions | `PATCH /projects/{id}/operation/proposals` | Accept/Decline while reviewing |
 | Gate approve | `POST /projects/{id}/operation/approve` `{ approved_ids }` | Apply selected proposals |
 | AI (optional) | `POST /projects/{id}/operation/escalate-ai` `{ targets }` | Leave triage / run AI |
@@ -174,13 +175,13 @@ Portal-only helpers used by the shell (not required by the package core):
 | Path | Role |
 |------|------|
 | `frontend/packages/ui-workflow/` | Shared package |
-| `frontend/packages/ui-workflow/src/api/apmeApiAdapter.ts` | Adapter types / defaults |
+| `frontend/packages/ui-workflow/src/api/apmeApiAdapter.tsx` | Adapter types / defaults |
 | `frontend/packages/ui-workflow/src/useProjectWorkflow.ts` | Host-facing workflow hook |
 | `frontend/packages/ui-workflow/src/hooks/useProjectOperationActions.ts` | REST actions |
 | `frontend/packages/ui-workflow/src/hooks/useProjectOperationState.ts` | Op state + SSE |
 | `frontend/src/api/apmeApiAdapter.tsx` | SPA re-export / default provider |
-| Portal: `plugins/backstage-apme/src/api/createApmeUiWorkflowAdapter.ts` | Catalog + `fetchApi` adapter |
-| Portal: `plugins/catalog-backend-module-apme/` | `/api/catalog/apme` → Gateway |
+| `ansible-backstage-plugins`: `plugins/backstage-apme/src/api/createApmeUiWorkflowAdapter.ts` | Portal catalog + `fetchApi` adapter (external repo) |
+| `ansible-backstage-plugins`: `plugins/catalog-backend-module-apme/` | Portal `/api/catalog/apme` → Gateway (external repo) |
 
 ---
 
