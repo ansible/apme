@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router';
 import { PageLayout, PageHeader } from '@ansible/ansible-ui-framework';
 import { AssessFindingsPanel } from '@apme/ui-workflow';
 import { PipelineLogOutput } from '../components/PipelineLogOutput';

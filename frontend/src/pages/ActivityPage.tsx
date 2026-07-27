@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router';
 import { PageLayout, PageHeader } from '@ansible/ansible-ui-framework';
 import { Button, Pagination } from '@patternfly/react-core';
 import { apmeApiUrl, getApmeApiAdapter } from '../api/apmeApiAdapter';

@@ -9,7 +9,7 @@ import {
   useEffect,
 } from 'react';
 import { PageNavigationItem } from '../PageNavigation/PageNavigationItem';
-import { useLocation } from 'react-router-dom';
+import { useLocation } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { findNavigationItemByPath, getNavigationTitle } from './findNavigationItemByPath';
 

@@ -28,7 +28,7 @@ class TestSafeWheelPath:
         Args:
             tmp_path: Pytest-provided temporary directory.
         """
-        with pytest.raises(ValueError, match="escapes cache directory|Invalid wheel filename"):
+        with pytest.raises(ValueError, match=r"escapes cache directory|Invalid wheel filename"):
             _safe_wheel_path(tmp_path, "../outside.whl")
 
     def test_rejects_nested_path(self, tmp_path: Path) -> None:
@@ -37,7 +37,7 @@ class TestSafeWheelPath:
         Args:
             tmp_path: Pytest-provided temporary directory.
         """
-        with pytest.raises(ValueError, match="Invalid wheel filename"):
+        with pytest.raises(ValueError, match=r"Invalid wheel filename"):
             _safe_wheel_path(tmp_path, "nested/outside.whl")
 
     def test_rejects_symlink_escape(self, tmp_path: Path) -> None:
@@ -56,7 +56,7 @@ class TestSafeWheelPath:
         link_name = wheels_dir / "escape.whl"
         link_name.symlink_to(outside_wheel)
 
-        with pytest.raises(ValueError, match="escapes cache directory|Invalid wheel filename"):
+        with pytest.raises(ValueError, match=r"escapes cache directory|Invalid wheel filename"):
             _safe_wheel_path(wheels_dir, "escape.whl")
 
 
@@ -85,5 +85,5 @@ class TestProxyCacheWheelAccess:
         secret.write_text("secret", encoding="utf-8")
 
         traversal = f"..{os.sep}secret.txt"
-        with pytest.raises(ValueError, match="escapes cache directory|Invalid wheel filename"):
+        with pytest.raises(ValueError, match=r"escapes cache directory|Invalid wheel filename"):
             cache.get_wheel(traversal)

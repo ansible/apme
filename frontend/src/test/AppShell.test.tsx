@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter } from 'react-router';
 import { PageFramework } from '@ansible/ansible-ui-framework';
 import { ApmeApiProvider } from '../api/apmeApiAdapter';
 import { ApmeAppBody } from '../shell/App';
