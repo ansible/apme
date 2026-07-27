@@ -2,6 +2,12 @@
 
 > Previous: [13 — Gateway and Persistence](13-gateway-and-persistence.md) | Next: [15 — Concurrency Model](15-concurrency-model.md)
 
+> **Shared workflow package / Portal host / operation API sequence:** see
+> [18 — Shared UI Workflow and Host Integration](18-shared-ui-workflow-and-hosts.md).
+> This document focuses on the native SPA shell, page map, and legacy
+> WebSocket notes. Interactive Quality ops in `@apme/ui-workflow` use REST +
+> SSE (ADR-052 / ADR-065).
+
 ## Purpose
 
 The APME UI is a React single-page application served by nginx on port

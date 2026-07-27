@@ -10,7 +10,7 @@ final output.
 > built the way it was — alternatives considered, trade-offs, and rationale.
 
 The former monolithic `ARCHITECTURE.md` and `DATA_FLOW.md` have been
-[archived](../archive/); their content is now covered by docs 00–17
+[archived](../archive/); their content is now covered by docs 00–18
 below.
 
 ## Pipeline Overview
@@ -92,6 +92,7 @@ flowchart TD
 | 15 | [15-concurrency-model.md](15-concurrency-model.md) | Concurrency model and executor discipline |
 | 16 | [16-diagnostics.md](16-diagnostics.md) | Diagnostics instrumentation and timing |
 | 17 | [17-scaling-and-deployment.md](17-scaling-and-deployment.md) | Scaling strategy and deployment topology |
+| 18 | [18-shared-ui-workflow-and-hosts.md](18-shared-ui-workflow-and-hosts.md) | Shared `@apme/ui-workflow`, hosts, operation API sequence |
 
 ## Cross-References
 

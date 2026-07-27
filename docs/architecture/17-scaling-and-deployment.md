@@ -1,6 +1,6 @@
 # 17 — Scaling and Deployment Topology
 
-> Previous: [16 — Diagnostics Instrumentation](16-diagnostics.md) | Next: (end)
+> Previous: [16 — Diagnostics Instrumentation](16-diagnostics.md) | Next: [18 — Shared UI Workflow and Host Integration](18-shared-ui-workflow-and-hosts.md)
 
 ## Purpose
 
@@ -216,4 +216,4 @@ changes.
 
 ---
 
-> Previous: [16 — Diagnostics Instrumentation](16-diagnostics.md) | (end of series)
+> Previous: [16 — Diagnostics Instrumentation](16-diagnostics.md) | Next: [18 — Shared UI Workflow and Host Integration](18-shared-ui-workflow-and-hosts.md)
