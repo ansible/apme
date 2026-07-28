@@ -120,6 +120,12 @@ def main(argv: list[str] | None = None) -> None:
         ansible_galaxy_bin=args.ansible_galaxy_bin,
     )
 
+    from apme_engine.observability import setup_otel, shutdown_otel
+    from apme_engine.observability.http_middleware import HttpMetricsMiddleware
+
+    setup_otel(service_name=os.environ.get("OTEL_SERVICE_NAME", "apme-galaxy-proxy"))
+    app.add_middleware(HttpMetricsMiddleware, service="galaxy-proxy")
+
     host, port = args.host, args.port
     sys.stderr.write(f"Starting Galaxy Proxy on {host}:{port}\n")
     if parsed_servers:
@@ -134,7 +140,10 @@ def main(argv: list[str] | None = None) -> None:
     sys.stderr.write(f"Cache: {args.cache_dir or '~/.cache/ansible-collection-proxy'}\n")
     sys.stderr.flush()
 
-    uvicorn.run(app, host=host, port=port, log_level="info" if args.verbose else "warning")
+    try:
+        uvicorn.run(app, host=host, port=port, log_level="info" if args.verbose else "warning")
+    finally:
+        shutdown_otel()
 
 
 if __name__ == "__main__":

@@ -814,6 +814,10 @@ class VenvSessionManager:
 
         Returns:
             A ``VenvSession`` with a ready-to-use venv.
+
+        Raises:
+            Exception: Re-raises unexpected acquire failures after recording
+                error metrics.
         """
         session_id = _sanitize_session_id(session_id)
         specs = collection_specs or []
@@ -828,93 +832,152 @@ class VenvSessionManager:
 
         logger.info("Venv: acquiring session=%s core=%s", session_id, pip_version)
         t0 = time.monotonic()
+        outcome = "create"
+        try:
+            with open(lock_path, "w") as lock_fd:
+                fcntl.flock(lock_fd, fcntl.LOCK_EX)
+                try:
+                    self._touch_session(session_dir)
 
-        with open(lock_path, "w") as lock_fd:
-            fcntl.flock(lock_fd, fcntl.LOCK_EX)
-            try:
-                self._touch_session(session_dir)
+                    existing = self._read_version_meta(meta_path)
+                    if existing is not None and venv_dir.is_dir():
+                        installed = set(existing.installed_collections)
+                        missing = set(specs) - installed
 
-                existing = self._read_version_meta(meta_path)
-                if existing is not None and venv_dir.is_dir():
-                    installed = set(existing.installed_collections)
-                    missing = set(specs) - installed
+                        if not missing:
+                            existing.last_used_at = time.time()
+                            self._write_version_meta(meta_path, existing)
+                            dur = (time.monotonic() - t0) * 1000
+                            logger.info(
+                                "Venv: ready (%.0fms, warm hit, %d collections)",
+                                dur,
+                                len(existing.installed_collections),
+                            )
+                            outcome = "warm"
+                            self._record_acquire_metrics(
+                                t0,
+                                outcome=outcome,
+                                ansible_version=pip_version,
+                                collections_requested=len(specs),
+                            )
+                            return existing
 
-                    if not missing:
+                        logger.debug("Venv: installing %d missing collections", len(missing))
+                        failed = install_collections_incremental(venv_dir, sorted(missing))
+                        succeeded = set(specs) - set(failed)
+                        existing.installed_collections = sorted(installed | succeeded)
+                        existing.failed_collections = sorted(failed)
                         existing.last_used_at = time.time()
                         self._write_version_meta(meta_path, existing)
                         dur = (time.monotonic() - t0) * 1000
-                        logger.info(
-                            "Venv: ready (%.0fms, warm hit, %d collections)",
-                            dur,
-                            len(existing.installed_collections),
+                        if failed:
+                            logger.warning(
+                                "Venv: ready with warnings (%.0fms, %d collections installed, %d failed: %s)",
+                                dur,
+                                len(existing.installed_collections),
+                                len(failed),
+                                ", ".join(failed),
+                            )
+                        else:
+                            logger.info(
+                                "Venv: ready (%.0fms, incremental, %d collections)",
+                                dur,
+                                len(existing.installed_collections),
+                            )
+                        outcome = "incremental"
+                        self._record_acquire_metrics(
+                            t0,
+                            outcome=outcome,
+                            ansible_version=pip_version,
+                            collections_requested=len(specs),
                         )
                         return existing
 
-                    logger.debug("Venv: installing %d missing collections", len(missing))
-                    failed = install_collections_incremental(venv_dir, sorted(missing))
-                    succeeded = set(specs) - set(failed)
-                    existing.installed_collections = sorted(installed | succeeded)
-                    existing.failed_collections = sorted(failed)
-                    existing.last_used_at = time.time()
-                    self._write_version_meta(meta_path, existing)
+                    version_dir.mkdir(parents=True, exist_ok=True)
+                    if venv_dir.is_dir():
+                        shutil.rmtree(venv_dir)
+
+                    logger.info("Venv: cold start — creating venv core=%s", pip_version)
+                    create_base_venv(venv_dir, pip_version)
+                    failed = []
+                    if specs:
+                        logger.debug("Venv: installing %d collections", len(specs))
+                        failed = install_collections_incremental(venv_dir, specs)
+
+                    succeeded_specs = sorted(set(specs) - set(failed))
+                    now = time.time()
+                    session = VenvSession(
+                        session_id=session_id,
+                        venv_root=venv_dir,
+                        ansible_version=pip_version,
+                        installed_collections=succeeded_specs,
+                        failed_collections=sorted(failed),
+                        created_at=now,
+                        last_used_at=now,
+                    )
+                    self._write_version_meta(meta_path, session)
                     dur = (time.monotonic() - t0) * 1000
                     if failed:
                         logger.warning(
-                            "Venv: ready with warnings (%.0fms, %d collections installed, %d failed: %s)",
+                            "Venv: ready with warnings (%.0fms, cold start, %d collections installed, %d failed: %s)",
                             dur,
-                            len(existing.installed_collections),
+                            len(succeeded_specs),
                             len(failed),
                             ", ".join(failed),
                         )
                     else:
                         logger.info(
-                            "Venv: ready (%.0fms, incremental, %d collections)",
+                            "Venv: ready (%.0fms, cold start, %d collections)",
                             dur,
-                            len(existing.installed_collections),
+                            len(succeeded_specs),
                         )
-                    return existing
-
-                version_dir.mkdir(parents=True, exist_ok=True)
-                if venv_dir.is_dir():
-                    shutil.rmtree(venv_dir)
-
-                logger.info("Venv: cold start — creating venv core=%s", pip_version)
-                create_base_venv(venv_dir, pip_version)
-                failed = []
-                if specs:
-                    logger.debug("Venv: installing %d collections", len(specs))
-                    failed = install_collections_incremental(venv_dir, specs)
-
-                succeeded_specs = sorted(set(specs) - set(failed))
-                now = time.time()
-                session = VenvSession(
-                    session_id=session_id,
-                    venv_root=venv_dir,
-                    ansible_version=pip_version,
-                    installed_collections=succeeded_specs,
-                    failed_collections=sorted(failed),
-                    created_at=now,
-                    last_used_at=now,
-                )
-                self._write_version_meta(meta_path, session)
-                dur = (time.monotonic() - t0) * 1000
-                if failed:
-                    logger.warning(
-                        "Venv: ready with warnings (%.0fms, cold start, %d collections installed, %d failed: %s)",
-                        dur,
-                        len(succeeded_specs),
-                        len(failed),
-                        ", ".join(failed),
+                    outcome = "create"
+                    self._record_acquire_metrics(
+                        t0,
+                        outcome=outcome,
+                        ansible_version=pip_version,
+                        collections_requested=len(specs),
                     )
-                else:
-                    logger.info(
-                        "Venv: ready (%.0fms, cold start, %d collections)",
-                        dur,
-                        len(succeeded_specs),
-                    )
-                return session
-            finally:
-                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                    return session
+                finally:
+                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        except Exception:
+            self._record_acquire_metrics(
+                t0,
+                outcome=outcome,
+                ansible_version=pip_version,
+                collections_requested=len(specs),
+                status="error",
+            )
+            raise
+
+    @staticmethod
+    def _record_acquire_metrics(
+        t0: float,
+        *,
+        outcome: str,
+        ansible_version: str,
+        collections_requested: int,
+        status: str = "ok",
+    ) -> None:
+        """Emit OTel metrics for a completed (or failed) acquire.
+
+        Args:
+            t0: Monotonic start time from ``time.monotonic()``.
+            outcome: ``warm``, ``incremental``, or ``create``.
+            ansible_version: Normalised ansible-core version.
+            collections_requested: Number of collection specs requested.
+            status: ``ok`` or ``error``.
+        """
+        from apme_engine.observability import record_venv_acquire
+
+        record_venv_acquire(
+            time.monotonic() - t0,
+            outcome=outcome,
+            status=status,
+            ansible_core_version=ansible_version,
+            collections_requested=collections_requested,
+        )
 
     def touch(self, session_id: str) -> bool:
         """Update ``last_used_at`` on all venvs in the session to prevent expiry.

@@ -1,0 +1,81 @@
+# Companion observability stack: Prometheus + Grafana outside apme-pod.
+#
+# Prerequisites: apme-pod running with otel-collector hostPort 8889.
+# Start: ./containers/observability/up.sh
+# Stop:  ./containers/observability/down.sh
+#
+# Grafana: http://localhost:3002 (admin/admin)
+# Prometheus: http://localhost:9091
+# TSDB persists on the host under APME_PROM_DATA (see up.sh).
+apiVersion: v1
+kind: Pod
+metadata:
+  name: apme-observability
+  labels:
+    app: apme-observability
+spec:
+  hostname: apme-observability
+  containers:
+    - name: prometheus
+      image: docker.io/prom/prometheus:v3.2.1
+      args:
+        - --config.file=/etc/prometheus/prometheus.yml
+        - --storage.tsdb.path=/prometheus
+        - --storage.tsdb.retention.time=15d
+        - --web.enable-lifecycle
+      ports:
+        - containerPort: 9090
+          hostPort: 9091
+      volumeMounts:
+        - name: prometheus-config
+          mountPath: /etc/prometheus/prometheus.yml
+          readOnly: true
+        - name: prometheus-data
+          mountPath: /prometheus
+    - name: grafana
+      image: docker.io/grafana/grafana:11.5.2
+      env:
+        - name: GF_SECURITY_ADMIN_USER
+          value: admin
+        - name: GF_SECURITY_ADMIN_PASSWORD
+          value: admin
+        - name: GF_USERS_DEFAULT_THEME
+          value: dark
+        - name: GF_AUTH_ANONYMOUS_ENABLED
+          value: "true"
+        - name: GF_AUTH_ANONYMOUS_ORG_ROLE
+          value: Viewer
+      ports:
+        - containerPort: 3000
+          hostPort: 3002
+      volumeMounts:
+        - name: grafana-datasources
+          mountPath: /etc/grafana/provisioning/datasources
+          readOnly: true
+        - name: grafana-dashboards-prov
+          mountPath: /etc/grafana/provisioning/dashboards
+          readOnly: true
+        - name: grafana-dashboards
+          mountPath: /var/lib/grafana/dashboards
+          readOnly: true
+  volumes:
+    - name: prometheus-config
+      hostPath:
+        path: ${APME_ROOT}/containers/observability/prometheus.yml
+        type: File
+    - name: prometheus-data
+      hostPath:
+        path: ${APME_PROM_DATA}
+        type: DirectoryOrCreate
+    - name: grafana-datasources
+      hostPath:
+        path: ${APME_ROOT}/containers/observability/grafana/provisioning/datasources
+        type: Directory
+    - name: grafana-dashboards-prov
+      hostPath:
+        path: ${APME_ROOT}/containers/observability/grafana/provisioning/dashboards
+        type: Directory
+    - name: grafana-dashboards
+      hostPath:
+        path: ${APME_ROOT}/containers/observability/grafana/dashboards
+        type: Directory

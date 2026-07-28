@@ -1,0 +1,423 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "title": "Scan duration p50 / p95 / p99",
+      "description": "Needs recent samples in the rate window; blank between scans is expected",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 10, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "drawStyle": "line", "fillOpacity": 10, "spanNulls": true }
+        }
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(apme_scan_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(apme_scan_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p95",
+          "refId": "B"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(apme_scan_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p99",
+          "refId": "C"
+        }
+      ]
+    },
+    {
+      "title": "Scan duration mean (lifetime)",
+      "description": "Instant _sum/_count — stays populated between scans (cumulative mean since app process start)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 10, "x": 10, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "drawStyle": "line", "fillOpacity": 10, "spanNulls": true }
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(apme_scan_duration_seconds_sum) / clamp_min(sum(apme_scan_duration_seconds_count), 1)",
+          "legendFormat": "mean",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Scans total",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(apme_scan_completed_total) or vector(0)",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Scan errors total",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(apme_scan_completed_total{status=\"error\"}) or vector(0)",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Phase duration p95",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "s", "custom": { "spanNulls": true } }
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(apme_scan_phase_duration_seconds_bucket[5m])) by (le, phase))",
+          "legendFormat": "{{phase}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Phase duration mean (lifetime)",
+      "description": "Instant _sum/_count by phase — populated even with no recent scans",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "s", "custom": { "spanNulls": true } }
+      },
+      "targets": [
+        {
+          "expr": "sum by (phase) (apme_scan_phase_duration_seconds_sum) / clamp_min(sum by (phase) (apme_scan_phase_duration_seconds_count), 1)",
+          "legendFormat": "{{phase}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Validator duration p95",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "s", "custom": { "spanNulls": true } }
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(apme_validator_duration_seconds_bucket[5m])) by (le, validator))",
+          "legendFormat": "{{validator}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Validator duration mean (lifetime)",
+      "description": "Instant _sum/_count by validator — use this between scans; not bucket-estimated",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "s", "custom": { "spanNulls": true } }
+      },
+      "targets": [
+        {
+          "expr": "sum by (validator) (apme_validator_duration_seconds_sum) / clamp_min(sum by (validator) (apme_validator_duration_seconds_count), 1)",
+          "legendFormat": "{{validator}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Gateway HTTP duration p95",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "s", "custom": { "spanNulls": true } }
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(apme_http_server_duration_seconds_bucket{service=\"gateway\"}[5m])) by (le, http_request_method))",
+          "legendFormat": "{{http_request_method}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Gateway HTTP duration mean (lifetime)",
+      "description": "Instant _sum/_count by method",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "s", "custom": { "spanNulls": true } }
+      },
+      "targets": [
+        {
+          "expr": "sum by (http_request_method) (apme_http_server_duration_seconds_sum{service=\"gateway\"}) / clamp_min(sum by (http_request_method) (apme_http_server_duration_seconds_count{service=\"gateway\"}), 1)",
+          "legendFormat": "{{http_request_method}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Galaxy Proxy HTTP duration p95",
+      "description": "PEP 503 / collection wheel traffic — split from Gateway for proxy internals",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 32 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "s", "custom": { "spanNulls": true } }
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(apme_http_server_duration_seconds_bucket{service=\"galaxy-proxy\"}[5m])) by (le, http_request_method))",
+          "legendFormat": "{{http_request_method}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Galaxy Proxy HTTP duration mean (lifetime)",
+      "description": "Instant _sum/_count by method — populated between scans",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 32 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "s", "custom": { "spanNulls": true } }
+      },
+      "targets": [
+        {
+          "expr": "sum by (http_request_method) (apme_http_server_duration_seconds_sum{service=\"galaxy-proxy\"}) / clamp_min(sum by (http_request_method) (apme_http_server_duration_seconds_count{service=\"galaxy-proxy\"}), 1)",
+          "legendFormat": "{{http_request_method}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Galaxy Proxy request count (lifetime)",
+      "description": "Cumulative request counts by method/status — not rate-based",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 40 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "custom": { "spanNulls": true } }
+      },
+      "targets": [
+        {
+          "expr": "sum by (http_request_method, http_response_status_code) (apme_http_server_duration_seconds_count{service=\"galaxy-proxy\"})",
+          "legendFormat": "{{http_request_method}} {{http_response_status_code}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Venv acquire duration mean (lifetime)",
+      "description": "Session venv warm / incremental / create — exact _sum/_count",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 48 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "s", "custom": { "spanNulls": true } }
+      },
+      "targets": [
+        {
+          "expr": "sum by (outcome) (apme_venv_acquire_duration_seconds_sum) / clamp_min(sum by (outcome) (apme_venv_acquire_duration_seconds_count), 1)",
+          "legendFormat": "{{outcome}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Venv acquire p95",
+      "description": "Needs recent acquires in the rate window",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 48 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "s", "custom": { "spanNulls": true } }
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(apme_venv_acquire_duration_seconds_bucket[5m])) by (le, outcome))",
+          "legendFormat": "{{outcome}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Venv acquires total",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 56 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (outcome) (apme_venv_acquire_completed_total) or vector(0)",
+          "legendFormat": "{{outcome}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Venv acquire errors total",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 8, "x": 8, "y": 56 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(apme_venv_acquire_completed_total{status=\"error\"}) or vector(0)",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Galaxy fetch duration mean (lifetime)",
+      "description": "Outbound Ansible Galaxy: ansible-galaxy download vs API version lookup",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 60 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "s", "custom": { "spanNulls": true } }
+      },
+      "targets": [
+        {
+          "expr": "sum by (operation) (apme_galaxy_fetch_duration_seconds_sum) / clamp_min(sum by (operation) (apme_galaxy_fetch_duration_seconds_count), 1)",
+          "legendFormat": "{{operation}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Galaxy fetch p95",
+      "description": "Needs recent Galaxy fetches in the rate window",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 60 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "s", "custom": { "spanNulls": true } }
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(apme_galaxy_fetch_duration_seconds_bucket[5m])) by (le, operation))",
+          "legendFormat": "{{operation}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Galaxy fetches total",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 68 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (operation, status) (apme_galaxy_fetch_completed_total) or vector(0)",
+          "legendFormat": "{{operation}} {{status}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Galaxy fetch errors/timeouts",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 8, "x": 8, "y": 68 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(apme_galaxy_fetch_completed_total{status=~\"error|timeout\"}) or vector(0)",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Galaxy wheel serve mean (lifetime)",
+      "description": "GET /wheels cache hit vs miss (miss includes ansible-galaxy download)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 72 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "s", "custom": { "spanNulls": true } }
+      },
+      "targets": [
+        {
+          "expr": "sum by (outcome) (apme_galaxy_wheel_serve_duration_seconds_sum) / clamp_min(sum by (outcome) (apme_galaxy_wheel_serve_duration_seconds_count), 1)",
+          "legendFormat": "{{outcome}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Galaxy wheel serve p95",
+      "description": "Needs recent wheel serves in the rate window",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 72 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "s", "custom": { "spanNulls": true } }
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(apme_galaxy_wheel_serve_duration_seconds_bucket[5m])) by (le, outcome))",
+          "legendFormat": "{{outcome}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Galaxy wheel serves total",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 80 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (outcome, status) (apme_galaxy_wheel_serve_completed_total) or vector(0)",
+          "legendFormat": "{{outcome}} {{status}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Galaxy wheel cache hit ratio",
+      "description": "hits / (hits + misses) from completed counters",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 8, "x": 8, "y": 80 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "percentunit", "min": 0, "max": 1 }
+      },
+      "targets": [
+        {
+          "expr": "sum(apme_galaxy_wheel_serve_completed_total{outcome=\"hit\"}) / clamp_min(sum(apme_galaxy_wheel_serve_completed_total), 1)",
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["apme", "otel"],
+  "templating": { "list": [] },
+  "time": { "from": "now-30m", "to": "now" },
+  "timezone": "browser",
+  "title": "APME Scan Times",
+  "uid": "apme-scan-times",
+  "version": 7
+}

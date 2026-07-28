@@ -270,6 +270,7 @@ print(yaml)
 fi
 
 _relabel_host_path_for_podman "$ROOT/containers/abbenay/config.yaml"
+_relabel_host_path_for_podman "$ROOT/containers/otel-collector/config.yaml"
 if [[ -n "$ABBENAY_CA_BUNDLE" ]]; then
   _relabel_host_path_for_podman "$ABBENAY_CA_BUNDLE"
 fi
@@ -278,6 +279,7 @@ podman kube play containers/podman/pvc.yaml
 echo "$POD_YAML" | podman play kube -
 
 echo "Pod apme-pod started (volumes: apme-sessions, apme-gateway-data, apme-proxy-cache). Run a scan: containers/podman/run-cli.sh"
+echo "OTel Prometheus metrics: http://localhost:8889/metrics (companion stack: containers/observability/up.sh)"
 
 if [[ -n "$APME_FEEDBACK_GITHUB_REPO" && -n "$APME_FEEDBACK_GITHUB_TOKEN" ]]; then
   echo "Issue reporting enabled (repo: $APME_FEEDBACK_GITHUB_REPO)"

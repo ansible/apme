@@ -1,0 +1,37 @@
+# OpenTelemetry Collector — receives OTLP from APME sidecars, exposes Prometheus.
+#
+# Apps push metrics to http://127.0.0.1:4318 (OTLP/HTTP).
+# Prometheus scrapes http://127.0.0.1:8889/metrics (hostPort when using podman).
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    timeout: 5s
+  resource:
+    attributes:
+      - key: service.namespace
+        value: apme
+        action: upsert
+
+exporters:
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    namespace: ""
+    resource_to_telemetry_conversion:
+      enabled: true
+  debug:
+    verbosity: basic
+
+service:
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      processors: [batch, resource]
+      exporters: [prometheus, debug]

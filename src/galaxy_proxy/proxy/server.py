@@ -13,9 +13,11 @@ import logging
 import os
 import re
 import tempfile
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -339,9 +341,24 @@ def create_app(
         if not filename.endswith(".whl") or "/" in filename or "\\" in filename or ".." in filename:
             raise HTTPException(status_code=404, detail=f"Invalid wheel filename: {filename}")
 
+        started = time.perf_counter()
+
+        def _record_serve(outcome: str, status: str = "ok") -> None:
+            try:
+                from apme_engine.observability import record_galaxy_wheel_serve
+
+                record_galaxy_wheel_serve(
+                    time.perf_counter() - started,
+                    outcome=outcome,
+                    status=status,
+                )
+            except Exception:  # noqa: BLE001 — never fail serves for metrics
+                logger.debug("Failed to record Galaxy wheel serve metrics", exc_info=True)
+
         cached = cache.get_wheel(filename)
         if cached:
             logger.info("Cache hit: %s", filename)
+            _record_serve("hit")
             return Response(
                 content=cached,
                 media_type="application/octet-stream",
@@ -371,6 +388,7 @@ def create_app(
             cached = cache.get_wheel(filename)
             if cached:
                 logger.info("Cache hit after lock: %s", filename)
+                _record_serve("hit")
                 return Response(
                     content=cached,
                     media_type="application/octet-stream",
@@ -397,6 +415,7 @@ def create_app(
                 )
             except Exception as exc:
                 logger.exception("Failed to download/convert %s.%s %s", ns, coll_name, version)
+                _record_serve("miss", status="error")
                 raise HTTPException(
                     status_code=502,
                     detail=(
@@ -408,6 +427,7 @@ def create_app(
             cache.put_wheel(whl_name, whl_data)
             logger.info("Converted and cached: %s (%d bytes)", whl_name, len(whl_data))
 
+        _record_serve("miss")
         return Response(
             content=whl_data,
             media_type="application/octet-stream",
@@ -656,6 +676,9 @@ async def _fetch_versions_from(
     headers: dict[str, str] = {}
     if token:
         headers["Authorization"] = f"Token {token}"
+    server_host = urlsplit(normalized).netloc or base_url
+    started = time.perf_counter()
+    status = "error"
     try:
         async with httpx.AsyncClient(
             timeout=15.0,
@@ -671,6 +694,8 @@ async def _fetch_versions_from(
                 if not payload.get("links", {}).get("next"):
                     break
                 params["offset"] = int(params["offset"]) + int(params["limit"])
+        status = "ok"
+        return versions
     except (httpx.HTTPError, KeyError, ValueError) as exc:
         logger.debug(
             "Version fetch from %s failed for %s.%s: %s",
@@ -680,7 +705,18 @@ async def _fetch_versions_from(
             exc,
         )
         return None
-    return versions
+    finally:
+        try:
+            from apme_engine.observability import record_galaxy_fetch
+
+            record_galaxy_fetch(
+                time.perf_counter() - started,
+                operation="version_lookup",
+                status=status,
+                server=server_host,
+            )
+        except Exception:  # noqa: BLE001 — never fail lookups for metrics
+            logger.debug("Failed to record Galaxy version-lookup metrics", exc_info=True)
 
 
 def _list_cached_wheels(cache: ProxyCache, namespace: str, name: str) -> list[str]:

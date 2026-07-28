@@ -15,6 +15,7 @@ import re
 import shutil
 import sys
 import tempfile
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -256,6 +257,8 @@ async def download_collections(
     env = dict(os.environ)
     process: asyncio.subprocess.Process | None = None
     temp_cfg_dir: Path | None = None
+    started = time.perf_counter()
+    status = "error"
 
     try:
         if servers:
@@ -311,9 +314,11 @@ async def download_collections(
             len(tarballs),
             len(collection_specs),
         )
+        status = "ok"
         return DownloadResult(tarball_paths=tarballs, stderr=stderr_text)
 
     except TimeoutError:
+        status = "timeout"
         logger.error(
             "ansible-galaxy collection download timed out after %.0fs",
             timeout,
@@ -337,6 +342,17 @@ async def download_collections(
     finally:
         if temp_cfg_dir is not None:
             shutil.rmtree(temp_cfg_dir, ignore_errors=True)
+        try:
+            from apme_engine.observability import record_galaxy_fetch
+
+            record_galaxy_fetch(
+                time.perf_counter() - started,
+                operation="download",
+                status=status,
+                collections_requested=len(collection_specs),
+            )
+        except Exception:  # noqa: BLE001 — never fail downloads for metrics
+            logger.debug("Failed to record Galaxy download metrics", exc_info=True)
 
 
 def download_collections_sync(

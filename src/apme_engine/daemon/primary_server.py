@@ -1084,6 +1084,9 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         learned_fqcns = {str(c) for c in hierarchy_collections if isinstance(c, str)}
 
         logger.info("Scan: pipeline done (%.0fms, %d violations, req=%s)", total_ms, len(violations), scan_id)
+        from apme_engine.observability import record_scan_diagnostics
+
+        record_scan_diagnostics(diag, status="ok")
         return (
             violations,
             diag,
