@@ -51,9 +51,11 @@ def _ensure_instruments() -> bool:
         return _scan_duration is not None
 
     meter = get_meter()
-    _instruments_ready = True
     if meter is None:
+        # Do not latch ready: setup_otel() may run later in this process.
         return False
+
+    _instruments_ready = True
 
     _scan_duration = meter.create_histogram(
         name="apme.scan.duration",
@@ -120,6 +122,45 @@ def _ensure_instruments() -> bool:
     return True
 
 
+def reset_instruments() -> None:
+    """Clear cached instruments so a later ``setup_otel`` can recreate them."""
+    global _scan_duration, _phase_duration, _validator_duration, _scan_completed
+    global _http_duration, _venv_duration, _venv_completed
+    global _galaxy_fetch_duration, _galaxy_fetch_completed
+    global _galaxy_wheel_duration, _galaxy_wheel_completed, _instruments_ready
+    _scan_duration = None
+    _phase_duration = None
+    _validator_duration = None
+    _scan_completed = None
+    _http_duration = None
+    _venv_duration = None
+    _venv_completed = None
+    _galaxy_fetch_duration = None
+    _galaxy_fetch_completed = None
+    _galaxy_wheel_duration = None
+    _galaxy_wheel_completed = None
+    _instruments_ready = False
+
+
+def _collections_requested_bucket(count: int) -> str:
+    """Coarse bucket for collection counts to avoid Prometheus cardinality blow-ups.
+
+    Args:
+        count: Number of collection specs requested.
+
+    Returns:
+        One of ``0``, ``1-5``, ``6-20``, or ``21+``.
+    """
+    n = max(count, 0)
+    if n == 0:
+        return "0"
+    if n <= 5:
+        return "1-5"
+    if n <= 20:
+        return "6-20"
+    return "21+"
+
+
 def record_scan_diagnostics(diag: ScanDiagnostics, *, status: str = "ok") -> None:
     """Record histograms/counters from a completed ``ScanDiagnostics``.
 
@@ -179,7 +220,7 @@ def record_venv_acquire(
         attrs: dict[str, str] = {
             "outcome": outcome or "unknown",
             "status": status,
-            "collections_requested": str(max(collections_requested, 0)),
+            "collections_requested": _collections_requested_bucket(collections_requested),
         }
         ver = (ansible_core_version or "").strip()
         if ver:
@@ -244,7 +285,7 @@ def record_galaxy_fetch(
             "status": status,
         }
         if operation == "download":
-            attrs["collections_requested"] = str(max(collections_requested, 0))
+            attrs["collections_requested"] = _collections_requested_bucket(collections_requested)
         host = (server or "").strip()
         if host:
             attrs["server"] = host

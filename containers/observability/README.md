@@ -16,8 +16,10 @@ Scrapes the in-pod OpenTelemetry Collector Prometheus exporter
 
 | UI | URL |
 |----|-----|
-| Grafana | http://localhost:3002 (admin/admin, anonymous Viewer) |
-| Prometheus | http://localhost:9091 |
+| Grafana | http://127.0.0.1:3002 (`admin` / `$APME_GRAFANA_ADMIN_PASSWORD`, default `apme-local`) |
+| Prometheus | http://127.0.0.1:9091 |
+
+Ports bind to loopback only. Anonymous Grafana access is disabled.
 
 Prometheus TSDB persists under
 `${XDG_CACHE_HOME:-$HOME/.cache}/apme/prometheus-tsdb` (override with
@@ -44,7 +46,7 @@ samples arrive.
 | `apme.validator.duration` | `apme_validator_duration_seconds` | Primary (from ADR-013) |
 | `apme.scan.completed` | `apme_scan_completed_total` | Primary |
 | `apme.http.server.duration` | `apme_http_server_duration_seconds` | Gateway, Galaxy Proxy |
-| `apme.venv.acquire.duration` | `apme_venv_acquire_duration_seconds` | Primary (`outcome=warm|incremental|create`) |
+| `apme.venv.acquire.duration` | `apme_venv_acquire_duration_seconds` | Primary (`outcome=warm`, `incremental`, or `create`) |
 | `apme.venv.acquire.completed` | `apme_venv_acquire_completed_total` | Primary |
 | `apme.galaxy.fetch.duration` | `apme_galaxy_fetch_duration_seconds` | Galaxy Proxy (`operation=download` or `version_lookup`) |
 | `apme.galaxy.fetch.completed` | `apme_galaxy_fetch_completed_total` | Galaxy Proxy |

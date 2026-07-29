@@ -25,6 +25,52 @@ def test_setup_otel_noop_without_endpoint(monkeypatch: pytest.MonkeyPatch) -> No
     assert otel_setup.get_meter() is None
 
 
+def test_ensure_instruments_does_not_latch_before_setup(monkeypatch: pytest.MonkeyPatch) -> None:
+    """record_* before setup_otel must not permanently disable instruments.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+    monkeypatch.setattr(otel_setup, "_meter", None)
+    monkeypatch.setattr(metrics_mod, "_instruments_ready", False)
+    monkeypatch.setattr(metrics_mod, "_scan_duration", None)
+    metrics_mod.record_scan_diagnostics(ScanDiagnostics(total_ms=1.0))
+    assert metrics_mod._instruments_ready is False
+
+
+def test_setup_otel_invalid_export_interval_is_noop_safe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Malformed OTEL_METRIC_EXPORT_INTERVAL must not raise from setup_otel.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:4318")
+    monkeypatch.setenv("OTEL_METRIC_EXPORT_INTERVAL", "not-an-int")
+    monkeypatch.delenv("OTEL_SDK_DISABLED", raising=False)
+    otel_setup._initialized = False
+    otel_setup._meter = None
+    otel_setup._provider = None
+    otel_setup.setup_otel("test-service")  # must not raise
+    assert otel_setup._export_interval_ms() == 10000
+
+
+def test_shutdown_otel_allows_reinit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """shutdown_otel clears the initialized latch for a later setup_otel.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+    monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT", raising=False)
+    otel_setup._initialized = True
+    otel_setup._meter = object()
+    otel_setup._provider = None
+    otel_setup.shutdown_otel()
+    assert otel_setup._initialized is False
+    assert otel_setup.get_meter() is None
+    otel_setup.setup_otel("again")
+    assert otel_setup._initialized is True
+
+
 def test_setup_otel_respects_sdk_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
     """OTEL_SDK_DISABLED=true disables export even when an endpoint is set.
 

@@ -4,8 +4,9 @@
 # Start: ./containers/observability/up.sh
 # Stop:  ./containers/observability/down.sh
 #
-# Grafana: http://localhost:3002 (admin/admin)
-# Prometheus: http://localhost:9091
+# Ports bind to 127.0.0.1 only (see hostIP on hostPort entries).
+# Grafana: http://127.0.0.1:3002 (admin / $APME_GRAFANA_ADMIN_PASSWORD)
+# Prometheus: http://127.0.0.1:9091
 # TSDB persists on the host under APME_PROM_DATA (see up.sh).
 apiVersion: v1
 kind: Pod
@@ -18,6 +19,9 @@ spec:
   containers:
     - name: prometheus
       image: docker.io/prom/prometheus:v3.2.1
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
       args:
         - --config.file=/etc/prometheus/prometheus.yml
         - --storage.tsdb.path=/prometheus
@@ -26,6 +30,7 @@ spec:
       ports:
         - containerPort: 9090
           hostPort: 9091
+          hostIP: 127.0.0.1
       volumeMounts:
         - name: prometheus-config
           mountPath: /etc/prometheus/prometheus.yml
@@ -34,20 +39,22 @@ spec:
           mountPath: /prometheus
     - name: grafana
       image: docker.io/grafana/grafana:11.5.2
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
       env:
         - name: GF_SECURITY_ADMIN_USER
           value: admin
         - name: GF_SECURITY_ADMIN_PASSWORD
-          value: admin
+          value: ${APME_GRAFANA_ADMIN_PASSWORD}
         - name: GF_USERS_DEFAULT_THEME
           value: dark
         - name: GF_AUTH_ANONYMOUS_ENABLED
-          value: "true"
-        - name: GF_AUTH_ANONYMOUS_ORG_ROLE
-          value: Viewer
+          value: "false"
       ports:
         - containerPort: 3000
           hostPort: 3002
+          hostIP: 127.0.0.1
       volumeMounts:
         - name: grafana-datasources
           mountPath: /etc/grafana/provisioning/datasources
