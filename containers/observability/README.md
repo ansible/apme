@@ -3,6 +3,9 @@
 Scrapes the in-pod OpenTelemetry Collector Prometheus exporter
 (`localhost:8889`) and ships a pre-provisioned **APME Scan Times** dashboard.
 
+Architecture: [ADR-067](../../.sdlc/adrs/ADR-067-otel-metrics-in-pod-collector.md)
+(OTel as the metrics standard; in-pod collector aggregates localhost OTLP).
+
 ## Prerequisites
 
 1. APME pod running (`tox -e up`) with the `otel-collector` container.

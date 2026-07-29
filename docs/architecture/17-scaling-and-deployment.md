@@ -68,7 +68,7 @@ convention — there is no service discovery, no message queue.
 | 8080 | Gateway | HTTP | REST API for UI and external consumers |
 | 8081 | UI | HTTP | nginx-served React SPA (proxies `/api/` to Gateway) |
 | 8765 | Galaxy Proxy | HTTP | PEP 503 simple repository API for collection wheels |
-| 8889 | OTel Collector | HTTP | Prometheus metrics scrape (`/metrics`) |
+| 8889 | OTel Collector | HTTP | Prometheus metrics scrape (`/metrics`) — ADR-067 |
 
 ## Volume Mounts
 

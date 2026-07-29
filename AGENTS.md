@@ -20,8 +20,11 @@ one needs to change, write an ADR first.
 
 2. **gRPC everywhere between backend services** (ADR-001). No REST, no message
    queues, no direct function calls between services. The only HTTP endpoints
-   are Galaxy Proxy (PEP 503), Gateway REST (:8080 for external consumers),
-   and the UI (:8081, nginx-served SPA).
+   for product traffic are Galaxy Proxy (PEP 503), Gateway REST (:8080 for
+   external consumers), and the UI (:8081, nginx-served SPA). Observability
+   may add an in-pod OpenTelemetry Collector (OTLP/HTTP :4318, Prometheus
+   scrape :8889) per ADR-067 — apps emit OTLP to localhost; business traffic
+   between APME services remains gRPC.
 
 3. **Async servers with executor discipline** (ADR-007). All gRPC servers use
    `grpc.aio`. Blocking work (engine scan, subprocess calls, venv builds) goes

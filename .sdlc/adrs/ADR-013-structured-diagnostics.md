@@ -129,3 +129,5 @@ apme check -vv playbook.yml
 
 - ADR-001: gRPC communication (diagnostics in response)
 - ADR-007: Async gRPC servers (timing collection)
+- ADR-067: OpenTelemetry operational metrics with in-pod collector
+  (complementary continuous series; does not replace this ADR)
