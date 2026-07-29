@@ -143,18 +143,11 @@ async def serve(listen: str = "0.0.0.0:50054") -> grpc.aio.Server:
     Returns:
         Started gRPC server (caller must wait_for_termination).
     """
-    server = grpc.aio.server(
-        maximum_concurrent_rpcs=_MAX_CONCURRENT_RPCS,
-        options=[
-            ("grpc.max_receive_message_length", 50 * 1024 * 1024),
-            ("grpc.max_send_message_length", 50 * 1024 * 1024),
-        ],
+    from apme_engine.daemon.validator_grpc import start_validator_server
+
+    return await start_validator_server(
+        OpaValidatorServicer(),
+        listen,
+        service="opa",
+        max_concurrent_rpcs=_MAX_CONCURRENT_RPCS,
     )
-    validate_pb2_grpc.add_ValidatorServicer_to_server(OpaValidatorServicer(), server)  # type: ignore[no-untyped-call]
-    if ":" in listen:
-        _, _, port = listen.rpartition(":")
-        server.add_insecure_port(f"[::]:{port}")
-    else:
-        server.add_insecure_port(listen)
-    await server.start()
-    return server

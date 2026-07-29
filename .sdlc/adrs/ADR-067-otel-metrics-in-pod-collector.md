@@ -158,7 +158,10 @@ strictly simpler and safer than fan-out from every container.
   `OTEL_EXPORTER_OTLP_ENDPOINT` is set; never raises to callers.
 - Instruments: `apme_engine.observability.metrics` (`apme.scan.*`,
   `apme.venv.acquire.*`, `apme.galaxy.fetch.*`, `apme.galaxy.wheel.serve.*`,
-  `apme.http.server.*`).
+  `apme.http.server.*`, `apme.grpc.server.*`).
+- Validator RPC middleware: `GrpcMetricsInterceptor` via
+  `apme_engine.daemon.validator_grpc.start_validator_server` (all six
+  validators). Distinct from Primary's `apme.validator.duration` (ADR-013).
 - Pod: `otel-collector` in `containers/podman/pod.yaml`; config under
   `containers/observability/` / collector config in-tree.
 - Local dashboards: `containers/observability/up.sh` (Prometheus + Grafana
@@ -228,3 +231,4 @@ curl -sf http://127.0.0.1:8889/metrics | head
 |------|--------|
 | 2026-07-29 | Initial — OTel metrics standard + in-pod collector aggregation |
 | 2026-07-29 | Add acceptance criteria, phase assignment, tox verification |
+| 2026-07-29 | Note validator gRPC server middleware (`apme.grpc.server.*`) |

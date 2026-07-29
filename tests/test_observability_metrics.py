@@ -413,3 +413,90 @@ def test_record_galaxy_wheel_serve_with_inmemory_reader(monkeypatch: pytest.Monk
                         outcomes.add(point.attributes["outcome"])
     assert outcomes == {"hit", "miss"}
     provider.shutdown()
+
+
+def test_record_grpc_request_with_inmemory_reader(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Validator gRPC server metrics cover Validate/Health by service.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+    from opentelemetry.sdk.metrics import MeterProvider
+    from opentelemetry.sdk.metrics.export import InMemoryMetricReader
+    from opentelemetry.sdk.metrics.view import ExplicitBucketHistogramAggregation, View
+    from opentelemetry.sdk.resources import Resource
+
+    from apme_engine.observability.buckets import VALIDATOR_DURATION_BUCKETS_S
+
+    reader = InMemoryMetricReader()
+    provider = MeterProvider(
+        resource=Resource.create({"service.name": "test"}),
+        metric_readers=[reader],
+        views=[
+            View(
+                instrument_name="apme.grpc.server.duration",
+                aggregation=ExplicitBucketHistogramAggregation(boundaries=list(VALIDATOR_DURATION_BUCKETS_S)),
+            ),
+        ],
+    )
+    meter = provider.get_meter("apme", "0.1.0")
+    monkeypatch.setattr(otel_setup, "_meter", meter)
+    monkeypatch.setattr(metrics_mod, "_instruments_ready", False)
+    metrics_mod.reset_instruments()
+
+    metrics_mod.record_grpc_request(0.12, method="Validate", status_code="OK", service="opa")
+    metrics_mod.record_grpc_request(0.01, method="Health", status_code="OK", service="opa")
+    metrics_mod.record_grpc_request(2.5, method="Validate", status_code="INTERNAL", service="native")
+
+    data = reader.get_metrics_data()
+    names = {metric.name for rm in data.resource_metrics for sm in rm.scope_metrics for metric in sm.metrics}
+    assert "apme.grpc.server.duration" in names
+    assert "apme.grpc.server.completed" in names
+
+    methods: set[str] = set()
+    for rm in data.resource_metrics:
+        for sm in rm.scope_metrics:
+            for metric in sm.metrics:
+                if metric.name == "apme.grpc.server.duration":
+                    for point in metric.data.data_points:
+                        assert list(point.explicit_bounds) == list(VALIDATOR_DURATION_BUCKETS_S)
+                        methods.add(point.attributes["rpc.method"])
+    assert methods == {"Validate", "Health"}
+    provider.shutdown()
+
+
+def test_grpc_method_label_and_interceptor_wraps_unary() -> None:
+    """Interceptor extracts method names and wraps unary-unary handlers."""
+    import asyncio
+    from types import SimpleNamespace
+
+    import grpc
+
+    from apme_engine.observability.grpc_middleware import GrpcMetricsInterceptor, _method_label
+
+    assert _method_label("/apme.v1.Validator/Validate") == "Validate"
+    assert _method_label("") == "unknown"
+
+    async def _run() -> None:
+        called = {"n": 0}
+
+        async def original(request: object, context: object) -> str:
+            called["n"] += 1
+            return "ok"
+
+        handler = grpc.unary_unary_rpc_method_handler(original)
+        interceptor = GrpcMetricsInterceptor(service="opa")
+
+        async def continuation(_details: object) -> object:
+            return handler
+
+        details = SimpleNamespace(method="/apme.v1.Validator/Validate")
+        wrapped = await interceptor.intercept_service(continuation, details)  # type: ignore[arg-type]
+        assert wrapped is not None
+        assert wrapped.unary_unary is not None
+        context = SimpleNamespace(code=lambda: None)
+        result = await wrapped.unary_unary({"x": 1}, context)
+        assert result == "ok"
+        assert called["n"] == 1
+
+    asyncio.run(_run())

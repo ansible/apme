@@ -141,6 +141,10 @@ def setup_otel(service_name: str | None = None) -> None:
                 instrument_name="apme.galaxy.wheel.serve.duration",
                 aggregation=ExplicitBucketHistogramAggregation(boundaries=list(GALAXY_FETCH_DURATION_BUCKETS_S)),
             ),
+            View(
+                instrument_name="apme.grpc.server.duration",
+                aggregation=ExplicitBucketHistogramAggregation(boundaries=list(VALIDATOR_DURATION_BUCKETS_S)),
+            ),
         ]
         _provider = MeterProvider(
             resource=Resource.create(resource_attrs),

@@ -18,8 +18,10 @@ async def _run(listen: str) -> None:
 def main() -> None:
     """Run the Native validator gRPC server (entry point)."""
     from apme_engine.log_bridge import install_handler
+    from apme_engine.observability import setup_otel, shutdown_otel
 
     install_handler()
+    setup_otel(service_name=os.environ.get("OTEL_SERVICE_NAME", "apme-native"))
 
     listen = os.environ.get("APME_NATIVE_VALIDATOR_LISTEN", "0.0.0.0:50055")
     try:
@@ -29,6 +31,8 @@ def main() -> None:
         traceback.print_exc(file=sys.stderr)
         sys.stderr.flush()
         sys.exit(1)
+    finally:
+        shutdown_otel()
 
 
 if __name__ == "__main__":
