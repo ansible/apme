@@ -168,6 +168,44 @@ strictly simpler and safer than fan-out from every container.
   stack (ADR-054); do not require Gateway/UI Deployments to emit unless
   they gain independent metrics needs.
 
+## Acceptance Criteria
+
+- [x] Instrumented services (Primary, Gateway, Galaxy Proxy) emit OTLP/HTTP
+      only when `OTEL_EXPORTER_OTLP_ENDPOINT` is set; otherwise metrics are
+      no-op and startup never fails on OTel misconfiguration.
+- [x] Reference pod includes an `otel-collector` sidecar; apps target
+      `http://127.0.0.1:4318`; Prometheus scrape is available on `:8889`.
+- [x] Metric attributes avoid high-cardinality and secret leakage (coarse
+      buckets; hostname-only server labels — no URL userinfo).
+- [x] ADR-013 structured diagnostics remain on the gRPC path; this ADR does
+      not replace them.
+- [x] Local companion stack (`containers/observability/`) is documented as
+      optional and binds to loopback only.
+- [ ] Optional OTLP forward-out from the collector to a platform/BYO
+      endpoint (https://github.com/ansible/apme/issues/457).
+
+## Phase Assignment
+
+Not assigned to PHASE-001–004. Operational metrics are a **cross-cutting
+platform** concern (engine pod + Gateway), not a feature slice of the CLI
+scanner, rewrite engine, dashboard, or AI remediation phases in
+`.sdlc/phases/README.md`. Delivery tracks with PR #456 / follow-up #457.
+
+## Verification
+
+```bash
+# Lint / ADR index / typecheck (tox only)
+tox -e lint
+
+# Unit coverage for OTel setup, instruments, and Galaxy metric labels
+tox -e unit -- tests/test_observability_metrics.py tests/test_galaxy_proxy_server.py --no-cov
+
+# Optional live stack (requires built images)
+tox -e up
+curl -sf http://127.0.0.1:8889/metrics | head
+./containers/observability/up.sh
+```
+
 ## Related Decisions
 
 - ADR-004: Podman pod as deployment unit (collector is a sibling container)
@@ -189,3 +227,4 @@ strictly simpler and safer than fan-out from every container.
 | Date | Change |
 |------|--------|
 | 2026-07-29 | Initial — OTel metrics standard + in-pod collector aggregation |
+| 2026-07-29 | Add acceptance criteria, phase assignment, tox verification |
