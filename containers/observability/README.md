@@ -16,10 +16,13 @@ Scrapes the in-pod OpenTelemetry Collector Prometheus exporter
 
 | UI | URL |
 |----|-----|
-| Grafana | http://127.0.0.1:3002 (`admin` / `$APME_GRAFANA_ADMIN_PASSWORD`, default `apme-local`) |
+| Grafana | http://127.0.0.1:3002 (`admin` / `$APME_GRAFANA_ADMIN_PASSWORD`) |
 | Prometheus | http://127.0.0.1:9091 |
 
 Ports bind to loopback only. Anonymous Grafana access is disabled.
+If `APME_GRAFANA_ADMIN_PASSWORD` is unset, `up.sh` generates a high-entropy
+password and stores it at
+`${XDG_CACHE_HOME:-$HOME/.cache}/apme/grafana-admin.password` (mode `0600`).
 
 Prometheus TSDB persists under
 `${XDG_CACHE_HOME:-$HOME/.cache}/apme/prometheus-tsdb` (override with

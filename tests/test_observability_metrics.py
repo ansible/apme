@@ -50,8 +50,11 @@ def test_setup_otel_invalid_export_interval_is_noop_safe(monkeypatch: pytest.Mon
     otel_setup._initialized = False
     otel_setup._meter = None
     otel_setup._provider = None
-    otel_setup.setup_otel("test-service")  # must not raise
-    assert otel_setup._export_interval_ms() == 10000
+    try:
+        otel_setup.setup_otel("test-service")  # must not raise
+        assert otel_setup._export_interval_ms() == 10000
+    finally:
+        otel_setup.shutdown_otel()
 
 
 def test_shutdown_otel_allows_reinit(monkeypatch: pytest.MonkeyPatch) -> None:

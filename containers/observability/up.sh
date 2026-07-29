@@ -38,8 +38,20 @@ _relabel "$ROOT/containers/observability/grafana/provisioning/dashboards"
 _relabel "$ROOT/containers/observability/grafana/dashboards"
 _relabel "$PROM_DATA"
 
-# Local-dev Grafana password (loopback-only UI). Override via env.
-export APME_GRAFANA_ADMIN_PASSWORD="${APME_GRAFANA_ADMIN_PASSWORD:-apme-local}"
+# Grafana admin password: require explicit env, or generate+persist a
+# high-entropy secret (never a known default like admin/admin).
+PASS_FILE="${XDG_CACHE_HOME:-$HOME/.cache}/apme/grafana-admin.password"
+if [[ -z "${APME_GRAFANA_ADMIN_PASSWORD:-}" ]]; then
+  if [[ -f "$PASS_FILE" ]]; then
+    APME_GRAFANA_ADMIN_PASSWORD="$(tr -d '\n' <"$PASS_FILE")"
+  else
+    mkdir -p "$(dirname "$PASS_FILE")"
+    APME_GRAFANA_ADMIN_PASSWORD="$(openssl rand -base64 32 | tr -d '/+=\n' | head -c 32)"
+    (umask 077; printf '%s\n' "$APME_GRAFANA_ADMIN_PASSWORD" >"$PASS_FILE")
+    echo "Generated Grafana admin password → $PASS_FILE"
+  fi
+fi
+export APME_GRAFANA_ADMIN_PASSWORD
 export APME_ROOT="$ROOT"
 export APME_PROM_DATA="$PROM_DATA"
 POD_YAML=$(envsubst '$APME_ROOT $APME_PROM_DATA $APME_GRAFANA_ADMIN_PASSWORD' < containers/observability/pod.yaml)
@@ -47,7 +59,8 @@ echo "$POD_YAML" | podman play kube -
 
 echo "Observability stack started (ports bound to 127.0.0.1)."
 echo "  Prometheus: http://127.0.0.1:9091"
-echo "  Grafana:    http://127.0.0.1:3002  (admin / \$APME_GRAFANA_ADMIN_PASSWORD)"
+echo "  Grafana:    http://127.0.0.1:3002  (user: admin)"
+echo "  Password:   \$APME_GRAFANA_ADMIN_PASSWORD (or $PASS_FILE)"
 echo "  Dashboard:  APME Scan Times"
 echo "  Scrape target: host.containers.internal:8889 (otel-collector hostPort)"
 echo "  TSDB data:  $PROM_DATA  (15d retention; survives down/up)"
