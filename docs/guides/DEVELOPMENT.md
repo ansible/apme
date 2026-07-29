@@ -441,6 +441,17 @@ tox -e pm                            # build, start, wait, open browser
 
 The underlying scripts in `containers/podman/` remain directly callable for debugging and low-level troubleshooting, but tox is the expected interface for routine work. See `containers/podman/README.md` for troubleshooting details.
 
+### Observability (OTel → Prometheus → Grafana)
+
+The pod includes an `otel-collector` that scrapes as **http://localhost:8889/metrics**. Primary exports scan/phase/validator duration histograms; Gateway and Galaxy Proxy export HTTP request durations.
+
+```bash
+./containers/observability/up.sh     # Prometheus :9091, Grafana :3002
+./containers/observability/down.sh
+```
+
+See [`containers/observability/README.md`](../../containers/observability/README.md).
+
 ## YAML formatter
 
 The `format` subcommand normalizes YAML files to a consistent style before semantic analysis. This is Phase 1 of the remediation pipeline.

@@ -27,6 +27,9 @@ dependencies = [
     "uvicorn[standard]>=0.20",
     "pip-audit>=2.7",
     "ansible-core>=2.20.7",
+    "opentelemetry-api>=1.44.0",
+    "opentelemetry-sdk>=1.44.0",
+    "opentelemetry-exporter-otlp-proto-http>=1.44.0",
 ]
 
 [project.optional-dependencies]
@@ -162,8 +165,17 @@ module = [
     "pydantic.*",
     "playwright",
     "playwright.*",
+    "opentelemetry",
+    "opentelemetry.*",
+    "starlette",
+    "starlette.*",
 ]
 ignore_missing_imports = true
+
+# OTel instrument handles are SDK objects without usable public stubs.
+[[tool.mypy.overrides]]
+module = ["apme_engine.observability", "apme_engine.observability.*"]
+disallow_any_explicit = false
 
 # Deprecation scraper uses untyped JSON dicts extensively.
 [[tool.mypy.overrides]]

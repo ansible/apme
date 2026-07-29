@@ -75,6 +75,7 @@ Decisions that have been accepted but are not yet fully implemented.
 | [ADR-064](ADR-064-assess-pause-session-continue.md) | Assess-Pause and Session-Continue Scan → Remediate | 2026-07-18 |
 | [ADR-065](ADR-065-spa-gateway-live-state-ownership.md) | SPA vs Gateway Live-Operation State Ownership | 2026-07-20 |
 | [ADR-066](ADR-066-ui-workflow-github-release-artifacts.md) | Publish `@apme/ui-workflow` via GitHub Release Artifacts | 2026-07-23 |
+| [ADR-067](ADR-067-otel-metrics-in-pod-collector.md) | OpenTelemetry Metrics with In-Pod Collector | 2026-07-29 |
 
 ## Proposed
 
@@ -101,7 +102,7 @@ Decisions replaced by newer ADRs.
 ## Creating New ADRs
 
 1. Copy the template from `../templates/adr.md`
-2. Use the next available number (currently ADR-067)
+2. Use the next available number (currently ADR-068)
 3. Include:
    - Status (Proposed → Accepted → Implemented)
    - Date

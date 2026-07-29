@@ -1,0 +1,11 @@
+# Scrape the in-pod OTel Collector Prometheus exporter (hostPort 8889).
+global:
+  scrape_interval: 10s
+  evaluation_interval: 10s
+
+scrape_configs:
+  - job_name: apme-otel-collector
+    static_configs:
+      - targets: ["host.containers.internal:8889"]
+        labels:
+          stack: apme

@@ -127,7 +127,13 @@ def main() -> None:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         stream=sys.stderr,
     )
-    asyncio.run(_run())
+    from apme_engine.observability import setup_otel, shutdown_otel
+
+    setup_otel(service_name=os.environ.get("OTEL_SERVICE_NAME", "apme-gateway"))
+    try:
+        asyncio.run(_run())
+    finally:
+        shutdown_otel()
 
 
 if __name__ == "__main__":

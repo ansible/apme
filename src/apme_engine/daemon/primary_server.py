@@ -839,9 +839,9 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                 request-scoped control over optional validators (ADR-051).
 
         Raises:
-            ValueError: If ``rule_configs_complete`` is ``True`` and either
-                direction of the bidirectional audit fails (unknown IDs the
-                Primary cannot execute, or known IDs absent from the config).
+            Exception: Pipeline failures (including ``ValueError`` from
+                bidirectional rule-catalog audit when complete). Failures are
+                recorded as ``status=error`` metrics before re-raise.
 
         Returns:
             Tuple of (violations, ScanDiagnostics or None, resolved session_id,
@@ -849,6 +849,96 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             VenvSession or None, requirements file paths found,
             specified collection FQCNs, learned collection FQCNs,
             ContentGraph or None).
+        """
+        scan_t0 = time.monotonic()
+        try:
+            return await self._execute_scan_pipeline(
+                temp_dir,
+                files,
+                scan_id,
+                ansible_core_version=ansible_core_version,
+                collection_specs=collection_specs,
+                include_scandata=include_scandata,
+                session_id=session_id,
+                progress_callback=progress_callback,
+                galaxy_cfg_path=galaxy_cfg_path,
+                rule_configs=rule_configs,
+                rule_configs_complete=rule_configs_complete,
+                skip_validators=skip_validators,
+            )
+        except Exception:
+            try:
+                from apme_engine.observability import record_scan_diagnostics
+
+                record_scan_diagnostics(
+                    ScanDiagnostics(total_ms=(time.monotonic() - scan_t0) * 1000.0),
+                    status="error",
+                )
+            except Exception:  # noqa: BLE001 — metrics must never mask scan failures
+                logger.debug("Failed to record scan error metrics", exc_info=True)
+            raise
+
+    async def _execute_scan_pipeline(
+        self,
+        temp_dir: Path,
+        files: list[File],
+        scan_id: str,
+        *,
+        ansible_core_version: str = "",
+        collection_specs: list[str] | None = None,
+        include_scandata: bool = True,
+        session_id: str = "",
+        progress_callback: Callable[[str, str, float, int], None] | None = None,
+        galaxy_cfg_path: Path | None = None,
+        rule_configs: list[object] | None = None,
+        rule_configs_complete: bool = False,
+        skip_validators: frozenset[str] = frozenset(),
+    ) -> tuple[
+        list[ViolationDict],
+        ScanDiagnostics | None,
+        str,
+        list[list[ProgressUpdate]],
+        Mapping[str, object] | None,
+        VenvSession | None,
+        list[str],
+        set[str],
+        set[str],
+        object | None,
+    ]:
+        """Run the scan pipeline body (see ``_scan_pipeline``).
+
+        Args:
+            temp_dir: Directory containing the materialized files.
+            files: Original File protos (for ValidateRequest).
+            scan_id: Request ID for correlation.
+            ansible_core_version: Ansible core version constraint.
+            collection_specs: Collection specifiers (may be extended by discovery).
+            include_scandata: Whether to include scandata in engine call.
+            session_id: Client-provided session ID for venv reuse.
+            progress_callback: Optional callback ``(phase, message, fraction)``
+                for streaming per-validator progress to callers.
+            galaxy_cfg_path: Session-scoped ``ansible.cfg`` for Galaxy auth
+                (ADR-045). In daemon mode this is temporarily exposed to the
+                in-process Galaxy Proxy during venv acquisition.
+            rule_configs: Per-rule overrides from ``ScanOptions`` (ADR-041).
+                When provided, disabled rules are filtered and severity is
+                overridden after validator fan-out.
+            rule_configs_complete: When ``True`` the incoming ``rule_configs``
+                represents the full catalog (Gateway path).  The Primary
+                performs bidirectional audit and hard-fails on unknown **or**
+                missing rule IDs.  When ``False`` (CLI path), unknown IDs
+                produce a warning only.
+            skip_validators: Validator names to exclude from fan-out
+                (e.g. ``{"collection_health", "dep_audit"}``).  Allows
+                request-scoped control over optional validators (ADR-051).
+
+        Raises:
+            ValueError: If ``rule_configs_complete`` is ``True`` and either
+                direction of the bidirectional audit fails (unknown IDs the
+                Primary cannot execute, or known IDs absent from the config).
+
+        Returns:
+            Same tuple as ``_scan_pipeline``.
         """
         from apme_engine.validators.ansible._venv import DEFAULT_VERSION
         from apme_engine.venv_manager.session import _venv_site_packages
@@ -1084,6 +1174,12 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         learned_fqcns = {str(c) for c in hierarchy_collections if isinstance(c, str)}
 
         logger.info("Scan: pipeline done (%.0fms, %d violations, req=%s)", total_ms, len(violations), scan_id)
+        try:
+            from apme_engine.observability import record_scan_diagnostics
+
+            record_scan_diagnostics(diag, status="ok")
+        except Exception:  # noqa: BLE001 — metrics must never break the scan pipeline
+            logger.debug("Failed to record scan metrics", exc_info=True)
         return (
             violations,
             diag,

@@ -1,6 +1,8 @@
-# Podman pod (6 app containers + 1 infra; CLI on-the-fly)
+# Podman pod (app containers + infra + OTel collector; CLI on-the-fly)
 
-Backend services run in a single **pod** so they share a network (localhost). Podman creates one extra **infra** container per pod to hold the pod's shared network namespace, so `podman pod list` shows **7** containers (primary, native, ansible, opa, gitleaks, galaxy-proxy, plus the infra container). That's expected. The **CLI is not part of the pod** and is run on-the-fly with your current directory mounted so you can scan any project without baking a path into the pod.
+Backend services run in a single **pod** so they share a network (localhost). Podman creates one extra **infra** container per pod to hold the pod's shared network namespace. The **CLI is not part of the pod** and is run on-the-fly with your current directory mounted so you can scan any project without baking a path into the pod.
+
+The pod includes an **otel-collector** sidecar that receives OTLP metrics from Primary, Gateway, and Galaxy Proxy and exposes Prometheus scrape on **http://localhost:8889/metrics**. Optional Grafana/Prometheus companion: [`containers/observability/README.md`](../observability/README.md).
 
 ## Prerequisites
 

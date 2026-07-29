@@ -1,9 +1,11 @@
 # Podman pod: Primary, Native, OPA, Ansible, Gitleaks, Collection Health,
-# Dep Audit, Galaxy Proxy.
+# Dep Audit, Galaxy Proxy, Gateway, UI, Abbenay, OTel Collector.
 # All validators implement the unified Validator gRPC service (validate.proto).
 # Galaxy Proxy serves collections as Python wheels via PEP 503 (ADR-031).
 # Session venvs are built by Primary (read-write) and shared with validators
 # (read-only) via the sessions volume.
+# OTel Collector receives OTLP from sibling containers and exposes Prometheus
+# metrics on :8889 for an external Prometheus scrape.
 # CLI is run on-the-fly with: ./run-cli.sh [args]
 # Start from repo root: podman play kube pod.yaml
 # Requires: images built first (./build.sh). PVCs are created from pvc.yaml on start.
@@ -43,6 +45,14 @@ spec:
           value: "apme-dev-token"
         - name: APME_AI_MODEL
           value: "${APME_AI_MODEL}"
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: "http://127.0.0.1:4318"
+        - name: OTEL_SERVICE_NAME
+          value: "apme-primary"
+        - name: OTEL_RESOURCE_ATTRIBUTES
+          value: "service.namespace=apme,service.instance.id=apme-pod"
+        - name: OTEL_METRIC_EXPORT_INTERVAL
+          value: "10000"
       ports:
         - containerPort: 50051
           hostPort: 50051
@@ -132,6 +142,14 @@ spec:
           value: "${APME_FEEDBACK_GITHUB_REPO}"
         - name: APME_FEEDBACK_GITHUB_TOKEN
           value: "${APME_FEEDBACK_GITHUB_TOKEN}"
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: "http://127.0.0.1:4318"
+        - name: OTEL_SERVICE_NAME
+          value: "apme-gateway"
+        - name: OTEL_RESOURCE_ATTRIBUTES
+          value: "service.namespace=apme,service.instance.id=apme-pod"
+        - name: OTEL_METRIC_EXPORT_INTERVAL
+          value: "10000"
       ports:
         - containerPort: 50060
           hostPort: 50060
@@ -166,12 +184,33 @@ spec:
           readOnly: true
     - name: galaxy-proxy
       image: apme-galaxy-proxy:latest
+      env:
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: "http://127.0.0.1:4318"
+        - name: OTEL_SERVICE_NAME
+          value: "apme-galaxy-proxy"
+        - name: OTEL_RESOURCE_ATTRIBUTES
+          value: "service.namespace=apme,service.instance.id=apme-pod"
+        - name: OTEL_METRIC_EXPORT_INTERVAL
+          value: "10000"
       ports:
         - containerPort: 8765
           hostPort: 8765
       volumeMounts:
         - name: proxy-cache
           mountPath: /cache
+    - name: otel-collector
+      image: docker.io/otel/opentelemetry-collector-contrib:0.120.0
+      args: ["--config=/etc/otelcol/config.yaml"]
+      ports:
+        - containerPort: 4317
+        - containerPort: 4318
+        - containerPort: 8889
+          hostPort: 8889
+      volumeMounts:
+        - name: otel-config
+          mountPath: /etc/otelcol/config.yaml
+          readOnly: true
   volumes:
     - name: gateway-data
       persistentVolumeClaim:
@@ -185,4 +224,8 @@ spec:
     - name: abbenay-config
       hostPath:
         path: ${APME_ROOT}/containers/abbenay/config.yaml
+        type: File
+    - name: otel-config
+      hostPath:
+        path: ${APME_ROOT}/containers/otel-collector/config.yaml
         type: File

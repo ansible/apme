@@ -53,4 +53,7 @@ def create_app() -> FastAPI:
     app.include_router(router)
     app.include_router(feedback_router)
     app.include_router(operation_router)
+    from apme_engine.observability.http_middleware import HttpMetricsMiddleware
+
+    app.add_middleware(HttpMetricsMiddleware, service="gateway")
     return app
