@@ -676,7 +676,7 @@ async def _fetch_versions_from(
     headers: dict[str, str] = {}
     if token:
         headers["Authorization"] = f"Token {token}"
-    server_host = urlsplit(normalized).netloc or base_url
+    server_host = urlsplit(normalized).hostname or ""
     started = time.perf_counter()
     status = "error"
     try:
