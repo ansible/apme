@@ -969,15 +969,18 @@ class VenvSessionManager:
             collections_requested: Number of collection specs requested.
             status: ``ok`` or ``error``.
         """
-        from apme_engine.observability import record_venv_acquire
+        try:
+            from apme_engine.observability import record_venv_acquire
 
-        record_venv_acquire(
-            time.monotonic() - t0,
-            outcome=outcome,
-            status=status,
-            ansible_core_version=ansible_version,
-            collections_requested=collections_requested,
-        )
+            record_venv_acquire(
+                time.monotonic() - t0,
+                outcome=outcome,
+                status=status,
+                ansible_core_version=ansible_version,
+                collections_requested=collections_requested,
+            )
+        except Exception:  # noqa: BLE001 — metrics must never break venv acquire
+            logger.debug("Failed to record venv acquire metrics", exc_info=True)
 
     def touch(self, session_id: str) -> bool:
         """Update ``last_used_at`` on all venvs in the session to prevent expiry.

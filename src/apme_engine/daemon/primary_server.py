@@ -867,12 +867,15 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                 skip_validators=skip_validators,
             )
         except Exception:
-            from apme_engine.observability import record_scan_diagnostics
+            try:
+                from apme_engine.observability import record_scan_diagnostics
 
-            record_scan_diagnostics(
-                ScanDiagnostics(total_ms=(time.monotonic() - scan_t0) * 1000.0),
-                status="error",
-            )
+                record_scan_diagnostics(
+                    ScanDiagnostics(total_ms=(time.monotonic() - scan_t0) * 1000.0),
+                    status="error",
+                )
+            except Exception:  # noqa: BLE001 — metrics must never mask scan failures
+                logger.debug("Failed to record scan error metrics", exc_info=True)
             raise
 
     async def _execute_scan_pipeline(
@@ -1171,9 +1174,12 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         learned_fqcns = {str(c) for c in hierarchy_collections if isinstance(c, str)}
 
         logger.info("Scan: pipeline done (%.0fms, %d violations, req=%s)", total_ms, len(violations), scan_id)
-        from apme_engine.observability import record_scan_diagnostics
+        try:
+            from apme_engine.observability import record_scan_diagnostics
 
-        record_scan_diagnostics(diag, status="ok")
+            record_scan_diagnostics(diag, status="ok")
+        except Exception:  # noqa: BLE001 — metrics must never break the scan pipeline
+            logger.debug("Failed to record scan metrics", exc_info=True)
         return (
             violations,
             diag,

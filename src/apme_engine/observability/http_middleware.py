@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from starlette.types import ASGIApp, Receive, Scope, Send
+
+logger = logging.getLogger("apme.observability.http")
 
 
 class HttpMetricsMiddleware:
@@ -47,11 +50,14 @@ class HttpMetricsMiddleware:
         try:
             await self.app(scope, receive, send_wrapper)
         finally:
-            from apme_engine.observability.metrics import record_http_request
+            try:
+                from apme_engine.observability.metrics import record_http_request
 
-            record_http_request(
-                time.perf_counter() - started,
-                method=str(method),
-                status_code=status_code,
-                service=self.service,
-            )
+                record_http_request(
+                    time.perf_counter() - started,
+                    method=str(method),
+                    status_code=status_code,
+                    service=self.service,
+                )
+            except Exception:  # noqa: BLE001 — metrics must never break HTTP responses
+                logger.debug("Failed to record HTTP metrics", exc_info=True)
