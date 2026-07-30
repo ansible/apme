@@ -25,7 +25,7 @@
     "@react-hook/resize-observer": "^2.0.2",
     "d3": "^7.9.0",
     "dagre": "^0.8.5",
-    "i18next": "^23.16.0",
+    "i18next": "^26.3.3",
     "jszip": "^3.10.1",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
