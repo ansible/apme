@@ -53,15 +53,15 @@ AI proposals are grouped by graph node and fetched concurrently
 (`APME_AI_CONCURRENCY`, default 4). Abbenay per-call reliability timeout is
 **60s**. With `max_ai_attempts=2`:
 
-```
+```text
 estimated_ai_seconds ≈ ceil(nodes / concurrency) × per_call_timeout × attempts
-                     ≈ ceil(645 / 4) × 60 × 2 ≈ 19,350s  (worst case)
+                     ≈ ceil(645 / 4) × 60 × 2 ≈ 19,440s  (worst case)
 ```
 
 Even at a realistic **15s** average latency and one attempt:
 
-```
-≈ ceil(645 / 4) × 15 ≈ 2,418s  (~40 min)  → exceeds 30 min deadline
+```text
+≈ ceil(645 / 4) × 15 ≈ 2,430s  (~40.5 min)  → exceeds 30 min deadline
 ```
 
 ### Forces in tension
@@ -97,7 +97,7 @@ flowchart TB
 
     subgraph runtime ["2. Runtime enforcement"]
         F --> D["Operation deadline (clamped)"]
-        P["Progress + heartbeat events"] --> S["Stall clock reset"]
+        P["Task progress events"] --> S["Stall clock reset"]
         S --> ST{"No progress for stall_window?"}
         ST -->|yes| FAIL["Fail: stalled"]
         D --> DL{"Past deadline?"}
@@ -115,7 +115,7 @@ flowchart TB
 When the engine knows how much AI work remains (after Tier 1 exhaustion or at
 `AiEscalate` / Gate 2), Primary computes an **operation budget** in seconds:
 
-```
+```text
 scan_base     = fixed overhead for format + initial scan + Tier 1 (default 300s)
 ai_budget     = ceil(ai_node_count / concurrency) × per_call_timeout × max_ai_attempts
 margin        = 10% of (scan_base + ai_budget), minimum 60s
@@ -127,7 +127,8 @@ Defaults (overridable via env for operators, not required for normal use):
 
 | Constant | Default | Role |
 |----------|---------|------|
-| `min_budget` | **600s (10 min)** | Floor for tiny jobs; also used as default **stall window** |
+| `min_budget` | **600s (10 min)** | Floor for tiny jobs |
+| `default_stall_seconds` | **600s (10 min)** | Stall window cap (see §2) |
 | `max_budget` | `APME_SESSION_MAX_LIFETIME` (7200s) | Absolute operation ceiling |
 | `per_call_timeout` | 60s | Matches Abbenay `reliability.timeout` |
 | `concurrency` | `APME_AI_CONCURRENCY` (4) | Matches graph engine |
@@ -139,19 +140,29 @@ scales with violation count (lightweight estimate).
 
 The budget is attached to `SessionState` and emitted to clients:
 
-- `SessionCreated.ttl_seconds` → renamed semantically in docs to **remaining
-  operation budget** for the current phase (proto field unchanged for ADR-060).
-- New `ProgressUpdate` field (additive proto): `budget_seconds` and
-  `ai_completed` / `ai_total` counters during `graph-ai` phase.
+- `SessionCreated.ttl_seconds` **unchanged** — remains session idle TTL per
+  ADR-028 (not repurposed).
+- New additive `SessionCreated.operation_budget_seconds` — operation deadline
+  for the current phase. Emitted as soon as the budget is known (at session
+  start for check/non-AI; at the AI gate for remediate with Tier 2).
+- New `ProgressUpdate` fields (additive proto): `budget_seconds` (remaining
+  budget), `ai_completed`, and `ai_total` during `graph-ai` phase.
+
+Clients that establish a gRPC deadline must read `operation_budget_seconds` from
+the first `SessionCreated` that includes it. An active gRPC deadline cannot be
+extended mid-stream; when the budget is unknown until the AI gate, Gateway and
+CLI omit a client-side deadline and rely on server-side enforcement (stall +
+budget cancel) instead.
 
 ### 2. Stall detection (fail fast)
 
-Independent of `operation_budget`, Primary tracks **time since last progress
-event** (including the existing 15s heartbeat, but only while a long-running
-task is active).
+Independent of `operation_budget`, Primary tracks **time since last task-linked
+progress event** — not heartbeats. The existing 15s heartbeat keeps the
+`FixSession` stream alive and refreshes idle TTL via `session.touch()`, but does
+**not** reset the stall clock.
 
-```
-stall_window = min(600s, operation_budget / 4)   # default 10 min, scales down for short budgets
+```text
+stall_window = min(default_stall_seconds, operation_budget)   # 600s cap; scales down for short budgets
 ```
 
 If `now - last_progress_at > stall_window`:
@@ -161,16 +172,17 @@ If `now - last_progress_at > stall_window`:
 - Gateway maps to `OperationStatus.failed` with a user-visible message.
 
 This ensures a 5-candidate job with a stuck Abbenay socket fails in ~10
-minutes even if `operation_budget` would allow 30+ minutes.
+minutes (`stall_window = min(600, operation_budget)` → 600s when
+`operation_budget ≥ 600`) even if `operation_budget` would allow 30+ minutes.
 
 ### 3. Server-side session renewal
 
 During `_session_process`, `_session_graph_remediate`, and Gate 2 AI phases:
 
 - Call `session.touch()` on every yielded `ProgressUpdate` (including
-  heartbeats while `remediate_task` is running).
-- Refresh `session.operation_deadline` only at phase boundaries (not on every
-  heartbeat).
+  heartbeats while `remediate_task` is running) to refresh idle TTL.
+- Update `last_progress_at` only for **task-linked** progress (phase advances,
+  per-node AI completion, scan milestones) — not heartbeat-only events.
 
 Idle TTL (`APME_SESSION_TTL`) returns to its ADR-028 meaning: **time allowed
 between client interactions** (approval, triage, resume), not total compute
@@ -180,9 +192,9 @@ time. Default remains 1800s.
 
 | Client | Today | After |
 |--------|-------|-------|
-| Gateway `scan/driver.py` | `timeout=APME_SESSION_TTL` | `timeout=operation_budget + 60s` from first `SessionCreated`, or unbounded server-side with stall/deadline enforcement |
-| Gateway `session_client.py` (Playground WS) | No gRPC deadline | Same budget from `SessionCreated`; rely on server stall/deadline |
-| CLI `remediate` | Hardcoded 1800s | Adaptive budget from `SessionCreated.ttl_seconds`; optional `--timeout` as **override cap** |
+| Gateway `scan/driver.py` | `timeout=APME_SESSION_TTL` | Omit client deadline when budget unknown at call start; otherwise `timeout=operation_budget_seconds + 60s` from `SessionCreated` |
+| Gateway `session_client.py` (Playground WS) | No gRPC deadline | Same; rely on server stall/deadline when budget arrives mid-stream |
+| CLI `remediate` | Hardcoded 1800s | `operation_budget_seconds` from `SessionCreated` when set; optional `--timeout` as **override cap**; omit client deadline when budget unknown until AI gate |
 | CLI `check` | `--timeout` default 300s | Unchanged for check; stall detection still applies |
 
 Gateway `_drive_operation` must not cancel the gRPC task at a fixed 1800s when
@@ -193,7 +205,7 @@ the engine reports a larger budget.
 `GraphRemediationEngine._apply_ai_transforms` emits progress after **each**
 completed proposal (success, abstain, or error):
 
-```
+```text
 phase=graph-ai, message="AI 142/645: node play-3/task-7", progress=142/645
 ```
 
@@ -299,10 +311,11 @@ reliable; `extend` remains for **idle** approval waits (ADR-028).
 | File | Change |
 |------|--------|
 | `src/apme_engine/daemon/session.py` | Add `operation_budget_s`, `operation_started_at`, `last_progress_at` to `SessionState`; `touch()` on server progress helper |
-| `src/apme_engine/daemon/deadline.py` (new) | `estimate_operation_budget(ai_nodes, *, concurrency, per_call_timeout, max_attempts, scan_base) -> int` and `stall_window(budget) -> int` |
+| `src/apme_engine/daemon/deadline.py` (new) | `estimate_operation_budget(...) -> int`, `stall_window(budget) -> int` (`min(default_stall, budget)`), `is_task_linked_progress(update) -> bool` |
 | `src/apme_engine/daemon/primary_server.py` | Compute budget before AI phase; enforce deadline + stall in `_session_graph_remediate` drain loop; `session.touch()` on progress yield; cancel `remediate_task` on stall/timeout |
 | `src/apme_engine/remediation/graph_engine.py` | Per-node `_progress("graph-ai", f"AI {i}/{n}: …", i/n)` in `_apply_ai_transforms` |
 | `proto/apme/v1/common.proto` | Add optional `int32 budget_seconds`, `int32 ai_completed`, `int32 ai_total` to `ProgressUpdate` (additive) |
+| `proto/apme/v1/primary.proto` | Add optional `int32 operation_budget_seconds` to `SessionCreated` (additive); `ttl_seconds` unchanged |
 
 ### Phase 2 — Gateway
 
@@ -318,7 +331,7 @@ reliable; `extend` remains for **idle** approval waits (ADR-028).
 | File | Change |
 |------|--------|
 | `src/apme_engine/cli/parser.py` | Add `--timeout` to `remediate` (optional cap overriding adaptive budget) |
-| `src/apme_engine/cli/remediate.py` | Read `SessionCreated.ttl_seconds` as budget; `stub.FixSession(..., timeout=budget + 60)` |
+| `src/apme_engine/cli/remediate.py` | Read `SessionCreated.operation_budget_seconds` when set; `stub.FixSession(..., timeout=budget + 60)` or omit deadline when unset |
 
 ### Phase 4 — Tests
 
@@ -343,11 +356,16 @@ while not remediate_task.done():
         remediate_task.cancel()
         yield error_event("operation_stalled")
         return
-    update = await wait_for(progress_queue.get(), timeout=1.0)
-    if update:
-        session.touch()
+    try:
+        update = await wait_for(progress_queue.get(), timeout=1.0)
+    except TimeoutError:
+        continue  # no event this tick; re-check budget/stall
+    if update is None:
+        continue
+    session.touch()  # idle TTL refresh (heartbeats included)
+    if is_task_linked_progress(update):
         session.last_progress_at = monotonic()
-        yield SessionEvent(progress=update)
+    yield SessionEvent(progress=update)
 ```
 
 ### Optional follow-up (not required for initial acceptance)
@@ -397,3 +415,4 @@ response schemas beyond additive error codes.
 | Date | Author | Change |
 |------|--------|--------|
 | 2026-07-30 | APME Team | Initial proposal |
+| 2026-07-30 | APME Team | Renumber to ADR-068; address review (math, stall formula, budget transport, heartbeat stall semantics) |
