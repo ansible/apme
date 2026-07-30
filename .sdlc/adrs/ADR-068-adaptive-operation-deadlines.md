@@ -1,4 +1,4 @@
-# ADR-067: Adaptive Operation Deadlines for Long AI Remediation
+# ADR-068: Adaptive Operation Deadlines for Long AI Remediation
 
 ## Status
 
