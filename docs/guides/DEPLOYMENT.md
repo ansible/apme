@@ -136,6 +136,9 @@ Reports status of all services (Primary, Native, OPA, Ansible, Gitleaks, Collect
 | `APME_REPORTING_ENDPOINT` | — | Gateway gRPC Reporting address (e.g., `127.0.0.1:50060`). Events are pushed after each check or remediate run. |
 | `APME_ABBENAY_ADDR` | — | Abbenay AI daemon address (e.g., `127.0.0.1:50057`). Supports `host:port` and `unix://` formats. |
 | `APME_ABBENAY_TOKEN` | — | Consumer token for Abbenay authentication. Must match a token in Abbenay's `config.yaml`. |
+| `APME_ABBENAY_TLS` | — | Set to `true` when the Abbenay daemon uses `--grpc-tls` (required for non-loopback TCP after Abbenay C2). |
+| `APME_ABBENAY_CA_CERT` | — | Path to the Abbenay CA PEM inside the Primary container (e.g. `/tmp/abbenay-run/abbenay/tls/ca.crt` in Podman). |
+| `APME_ABBENAY_SSL_TARGET_NAME` | `abbenay-grpc` | TLS server name override for Abbenay auto-generated certs. |
 | `APME_AI_MODEL` | — | Default AI model ID (e.g., `anthropic/claude-sonnet-4`). Overridden by UI Settings or CLI `--model`. |
 | `APME_RULE_AUTHORITY` | `true` | Set to `true` on exactly one Primary in multi-pod deployments. Only the authority registers the rule catalog to the Gateway (ADR-041). |
 

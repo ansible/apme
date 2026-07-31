@@ -213,7 +213,9 @@ spec:
           hostPort: 8081
     - name: abbenay
       image: ghcr.io/redhat-developer/abbenay:2026.4.1-alpha
-      args: ["daemon", "--grpc-host", "0.0.0.0", "--grpc-port", "50057"]
+      # Loopback bind keeps plaintext gRPC valid under Abbenay C2 policy (issue #400).
+      # Primary reaches Abbenay at 127.0.0.1:50057 in the shared pod network namespace.
+      args: ["daemon", "--grpc-host", "127.0.0.1", "--grpc-port", "50057"]
       env:
         - name: OPENROUTER_API_KEY
           value: "${OPENROUTER_API_KEY}"

@@ -82,6 +82,14 @@ spec:
             - name: APME_AI_MODEL
               value: {{ .Values.abbenay.aiModel | quote }}
             {{- end }}
+            {{- if .Values.abbenay.grpc.tls }}
+            - name: APME_ABBENAY_TLS
+              value: "true"
+            {{- with .Values.abbenay.grpc.caCertPath }}
+            - name: APME_ABBENAY_CA_CERT
+              value: {{ . | quote }}
+            {{- end }}
+            {{- end }}
             {{- end }}
           ports:
             - name: grpc

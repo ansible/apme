@@ -165,6 +165,18 @@ ui:
 abbenay:
   enabled: false
   image: ghcr.io/redhat-developer/abbenay:2026.4.1-alpha
+  grpc:
+    # -- gRPC bind host for the Abbenay daemon container.
+    host: "0.0.0.0"
+    port: 50057
+    # -- Allow plaintext on non-loopback binds (required for engine→abbenay Service
+    # DNS until TLS CA is shared across pods). Abbenay C2 policy: use --insecure
+    # or --grpc-tls when binding 0.0.0.0 (issue #400).
+    insecure: true
+    # -- Enable TLS with auto-generated certs in the Abbenay container runtime dir.
+    tls: false
+    # -- CA cert path inside the engine primary container when tls=true (mount from Secret).
+    caCertPath: ""
   # -- Token APME uses to authenticate with Abbenay (required when enabled)
   token: ""
   # -- Override the default model APME selects (e.g. "vertex-claude/claude-sonnet-4-6")

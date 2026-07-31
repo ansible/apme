@@ -653,24 +653,19 @@ class AbbenayProvider:
             ImportError: If abbenay_grpc is not installed.
         """
         try:
-            from abbenay_grpc import AbbenayClient  # noqa: PLC0415
+            from apme_engine.remediation.abbenay_client_factory import (  # noqa: PLC0415
+                build_abbenay_client,
+            )
         except ImportError:
             raise ImportError(
                 "AI escalation requires the 'ai' extra.\nInstall with: pip install apme-engine[ai]"
             ) from None
 
-        if addr.startswith("unix://"):
-            socket_path = addr.removeprefix("unix://")
-            self._client: object = AbbenayClient(socket_path=socket_path)
-        elif ":" in addr:
-            host, _, port_str = addr.rpartition(":")
-            self._client = AbbenayClient(host=host, port=int(port_str))
-        else:
-            self._client = AbbenayClient(host=addr)
+        self._client: object = build_abbenay_client(addr)
         self._addr = addr
         self._token = token
         self._model = model
-        self._AbbenayClient = AbbenayClient
+        self._build_client = build_abbenay_client
 
     def _make_client(self) -> object:
         """Create a fresh AbbenayClient instance for the current event loop.
@@ -678,13 +673,7 @@ class AbbenayProvider:
         Returns:
             New AbbenayClient bound to the current asyncio loop.
         """
-        addr = self._addr
-        if addr.startswith("unix://"):
-            return self._AbbenayClient(socket_path=addr.removeprefix("unix://"))
-        if ":" in addr:
-            host, _, port_str = addr.rpartition(":")
-            return self._AbbenayClient(host=host, port=int(port_str))
-        return self._AbbenayClient(host=addr)
+        return self._build_client(self._addr)
 
     async def preflight(self) -> bool:
         """Connect to the daemon and run a health check.

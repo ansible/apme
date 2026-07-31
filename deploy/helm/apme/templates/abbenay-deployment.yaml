@@ -49,7 +49,17 @@ spec:
           securityContext:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-          args: ["daemon", "--grpc-host", "0.0.0.0", "--grpc-port", "50057"]
+          args:
+            - daemon
+            - --grpc-host
+            - {{ .Values.abbenay.grpc.host | quote }}
+            - --grpc-port
+            - {{ .Values.abbenay.grpc.port | quote }}
+            {{- if .Values.abbenay.grpc.tls }}
+            - --grpc-tls
+            {{- else if .Values.abbenay.grpc.insecure }}
+            - --insecure
+            {{- end }}
           env:
             - name: APME_ABBENAY_TOKEN
               valueFrom:

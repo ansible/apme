@@ -3411,7 +3411,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             ListAIModelsResponse with available models.
         """
         try:
-            from abbenay_grpc import AbbenayClient  # noqa: PLC0415
+            from apme_engine.remediation.abbenay_client_factory import build_abbenay_client  # noqa: PLC0415
         except ImportError:
             logger.debug("abbenay_grpc not installed — returning empty model list")
             return ListAIModelsResponse(models=[])
@@ -3421,19 +3421,12 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             return ListAIModelsResponse(models=[])
 
         try:
-            if addr.startswith("unix://"):
-                client = AbbenayClient(addr)
-            else:
-                host, sep, port_str = addr.rpartition(":")
-                if sep:
-                    client = AbbenayClient(host=host or "localhost", port=int(port_str))
-                else:
-                    client = AbbenayClient(host=addr)
-            await client.connect()
+            client = build_abbenay_client(addr)
+            await client.connect()  # type: ignore[attr-defined]
             try:
-                raw_models = await client.list_models()
+                raw_models = await client.list_models()  # type: ignore[attr-defined]
             finally:
-                await client.disconnect()
+                await client.disconnect()  # type: ignore[attr-defined]
 
             models = [AIModelInfo(id=m.id, provider=m.provider, name=m.name) for m in raw_models]
             return ListAIModelsResponse(models=models)
