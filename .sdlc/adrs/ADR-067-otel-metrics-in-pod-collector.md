@@ -173,9 +173,10 @@ strictly simpler and safer than fan-out from every container.
 
 ## Acceptance Criteria
 
-- [x] Instrumented services (Primary, Gateway, Galaxy Proxy) emit OTLP/HTTP
-      only when `OTEL_EXPORTER_OTLP_ENDPOINT` is set; otherwise metrics are
-      no-op and startup never fails on OTel misconfiguration.
+- [x] Instrumented services (Primary, Gateway, Galaxy Proxy, and the six
+      validators via `apme.grpc.server.*`) emit OTLP/HTTP only when
+      `OTEL_EXPORTER_OTLP_ENDPOINT` is set; otherwise metrics are no-op and
+      startup never fails on OTel misconfiguration.
 - [x] Reference pod includes an `otel-collector` sidecar; apps target
       `http://127.0.0.1:4318`; Prometheus scrape is available on `:8889`.
 - [x] Metric attributes avoid high-cardinality and secret leakage (coarse

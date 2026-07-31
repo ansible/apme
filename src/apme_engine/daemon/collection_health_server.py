@@ -155,6 +155,6 @@ async def serve(listen: str = "0.0.0.0:50058") -> grpc.aio.Server:
     return await start_validator_server(
         CollectionHealthValidatorServicer(),
         listen,
-        service="collection-health",
+        service="collection_health",
         max_concurrent_rpcs=_MAX_CONCURRENT_RPCS,
     )

@@ -466,9 +466,10 @@ def test_record_grpc_request_with_inmemory_reader(monkeypatch: pytest.MonkeyPatc
 
 
 def test_grpc_method_label_and_interceptor_wraps_unary() -> None:
-    """Interceptor extracts method names and wraps unary-unary handlers."""
+    """Interceptor extracts method names, wraps unary handlers, and records metrics."""
     import asyncio
     from types import SimpleNamespace
+    from unittest.mock import patch
 
     import grpc
 
@@ -479,24 +480,63 @@ def test_grpc_method_label_and_interceptor_wraps_unary() -> None:
 
     async def _run() -> None:
         called = {"n": 0}
+        recorded: list[dict[str, object]] = []
 
         async def original(request: object, context: object) -> str:
             called["n"] += 1
             return "ok"
 
-        handler = grpc.unary_unary_rpc_method_handler(original)
-        interceptor = GrpcMetricsInterceptor(service="opa")
+        async def failing(request: object, context: object) -> str:
+            raise RuntimeError("boom")
 
-        async def continuation(_details: object) -> object:
-            return handler
+        def _record(
+            duration_s: float,
+            *,
+            method: str,
+            status_code: str,
+            service: str,
+        ) -> None:
+            recorded.append(
+                {
+                    "duration_s": duration_s,
+                    "method": method,
+                    "status_code": status_code,
+                    "service": service,
+                }
+            )
+
+        interceptor = GrpcMetricsInterceptor(service="collection_health")
+
+        async def continuation_ok(_details: object) -> object:
+            return grpc.unary_unary_rpc_method_handler(original)
+
+        async def continuation_fail(_details: object) -> object:
+            return grpc.unary_unary_rpc_method_handler(failing)
 
         details = SimpleNamespace(method="/apme.v1.Validator/Validate")
-        wrapped = await interceptor.intercept_service(continuation, details)  # type: ignore[arg-type]
-        assert wrapped is not None
-        assert wrapped.unary_unary is not None
-        context = SimpleNamespace(code=lambda: None)
-        result = await wrapped.unary_unary({"x": 1}, context)
-        assert result == "ok"
-        assert called["n"] == 1
+        with patch(
+            "apme_engine.observability.metrics.record_grpc_request",
+            side_effect=_record,
+        ):
+            wrapped = await interceptor.intercept_service(continuation_ok, details)  # type: ignore[arg-type]
+            assert wrapped is not None
+            assert wrapped.unary_unary is not None
+            context = SimpleNamespace(code=lambda: None)
+            result = await wrapped.unary_unary({"x": 1}, context)
+            assert result == "ok"
+            assert called["n"] == 1
+            assert len(recorded) == 1
+            assert recorded[0]["method"] == "Validate"
+            assert recorded[0]["status_code"] == "OK"
+            assert recorded[0]["service"] == "collection_health"
+            assert isinstance(recorded[0]["duration_s"], float)
+
+            wrapped_fail = await interceptor.intercept_service(continuation_fail, details)  # type: ignore[arg-type]
+            assert wrapped_fail is not None
+            assert wrapped_fail.unary_unary is not None
+            with pytest.raises(RuntimeError, match="boom"):
+                await wrapped_fail.unary_unary({"x": 1}, context)
+            assert len(recorded) == 2
+            assert recorded[1]["status_code"] == "UNKNOWN"
 
     asyncio.run(_run())

@@ -156,6 +156,6 @@ async def serve(listen: str = "0.0.0.0:50059") -> grpc.aio.Server:
     return await start_validator_server(
         DepAuditValidatorServicer(),
         listen,
-        service="dep-audit",
+        service="dep_audit",
         max_concurrent_rpcs=_MAX_CONCURRENT_RPCS,
     )
