@@ -24,8 +24,9 @@ Components deployed:
 SECURITY WARNING: Abbenay gRPC is using plaintext (abbenay.grpc.insecure=true).
 The auth token and AI chat traffic are visible on the cluster network.
 This default is transitional until TLS CA distribution across pods lands (issue #400).
-For production: set abbenay.grpc.tls=true, abbenay.grpc.insecure=false, and
-mount the Abbenay CA via abbenay.grpc.caCertPath on the engine Primary container.
+For production: set abbenay.grpc.tls=true, abbenay.grpc.insecure=false,
+provide abbenay.grpc.caCertSecret (existing Secret name/key), and set
+abbenay.grpc.caCertPath to the mounted PEM path (default /etc/abbenay-tls/ca.crt).
 {{- end }}
 
 {{- if .Values.route.enabled }}

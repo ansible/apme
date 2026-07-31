@@ -181,8 +181,12 @@ abbenay:
     insecure: true
     # -- Enable TLS with auto-generated certs in the Abbenay container runtime dir.
     tls: false
-    # -- CA cert path inside the engine primary container when tls=true (mount from Secret).
-    caCertPath: ""
+    # -- CA cert path inside the engine primary container when tls=true.
+    caCertPath: "/etc/abbenay-tls/ca.crt"
+    # -- Existing Secret containing the Abbenay CA PEM (required when tls=true).
+    caCertSecret:
+      name: ""
+      key: "ca.crt"
   # -- Token APME uses to authenticate with Abbenay (required when enabled)
   token: ""
   # -- Override the default model APME selects (e.g. "vertex-claude/claude-sonnet-4-6")

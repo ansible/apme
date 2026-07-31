@@ -11,6 +11,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from apme_engine.remediation.abbenay_client_factory import (
+    _LEGACY_RUNTIME_DIR,
+    _TLS_CA_RELATIVE,
     _discover_default_ca_cert,
     _TlsAbbenayClient,
     build_abbenay_client,
@@ -53,7 +55,8 @@ class TestResolveAbbenayTlsConfig:
         """
         monkeypatch.delenv("APME_ABBENAY_TLS", raising=False)
         monkeypatch.delenv("APME_ABBENAY_CA_CERT", raising=False)
-        ca_path = "/tmp/abbenay-run/abbenay/tls/ca.crt"
+        monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
+        ca_path = os.path.join(_LEGACY_RUNTIME_DIR, _TLS_CA_RELATIVE)
         trusted = os.stat_result((stat.S_IFREG | 0o644, 0, 0, 0, os.getuid(), 0, 0, 0, 0, 0))
         with (
             patch("apme_engine.remediation.abbenay_client_factory.os.path.isfile", return_value=True),

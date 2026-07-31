@@ -85,10 +85,8 @@ spec:
             {{- if .Values.abbenay.grpc.tls }}
             - name: APME_ABBENAY_TLS
               value: "true"
-            {{- with .Values.abbenay.grpc.caCertPath }}
             - name: APME_ABBENAY_CA_CERT
-              value: {{ . | quote }}
-            {{- end }}
+              value: {{ .Values.abbenay.grpc.caCertPath | quote }}
             {{- end }}
             {{- end }}
           ports:
@@ -108,6 +106,11 @@ spec:
           volumeMounts:
             - name: sessions
               mountPath: /sessions
+            {{- if and .Values.abbenay.enabled .Values.abbenay.grpc.tls .Values.abbenay.grpc.caCertSecret.name }}
+            - name: abbenay-ca
+              mountPath: /etc/abbenay-tls
+              readOnly: true
+            {{- end }}
           resources:
             {{- toYaml .Values.engine.resources.primary | nindent 12 }}
 
@@ -314,6 +317,14 @@ spec:
           persistentVolumeClaim:
             claimName: {{ include "apme.fullname" . }}-proxy-cache
           {{- end }}
+        {{- if and .Values.abbenay.enabled .Values.abbenay.grpc.tls .Values.abbenay.grpc.caCertSecret.name }}
+        - name: abbenay-ca
+          secret:
+            secretName: {{ .Values.abbenay.grpc.caCertSecret.name }}
+            items:
+              - key: {{ .Values.abbenay.grpc.caCertSecret.key }}
+                path: ca.crt
+        {{- end }}
       {{- with .Values.engine.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
