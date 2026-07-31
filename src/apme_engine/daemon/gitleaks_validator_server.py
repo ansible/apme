@@ -18,6 +18,7 @@ import grpc.aio
 from apme.v1 import common_pb2, validate_pb2_grpc
 from apme.v1.common_pb2 import File, HealthResponse, RuleTiming, ValidatorDiagnostics
 from apme.v1.validate_pb2 import ValidateRequest, ValidateResponse
+from apme_engine.daemon.validator_errors import infra_error_response
 from apme_engine.daemon.violation_convert import violation_dict_to_proto
 from apme_engine.engine.models import ViolationDict
 from apme_engine.log_bridge import attach_collector
@@ -109,21 +110,6 @@ def _run_scan(
     return run_gitleaks_nodes(nodes), len(nodes)
 
 
-def _get_gitleaks_version() -> str:
-    """Attempt to get gitleaks version string (best-effort).
-
-    Returns:
-        Version string from gitleaks --version, or "unknown" on failure.
-    """
-    import subprocess as _sp
-
-    try:
-        r = _sp.run([GITLEAKS_BIN, "version"], capture_output=True, text=True, timeout=5)
-        return r.stdout.strip() if r.returncode == 0 else "unknown"
-    except Exception:
-        return "unknown"
-
-
 class GitleaksValidatorServicer(validate_pb2_grpc.ValidatorServicer):
     """Async gRPC adapter: runs gitleaks in executor thread."""
 
@@ -192,7 +178,7 @@ class GitleaksValidatorServicer(validate_pb2_grpc.ValidatorServicer):
                 )
             except Exception as e:
                 logger.exception("Gitleaks: unhandled error (req=%s): %s", req_id, e)
-                return ValidateResponse(violations=[], request_id=req_id, logs=sink.entries)
+                return infra_error_response(req_id, str(e), sink.entries)
 
     async def Health(
         self,

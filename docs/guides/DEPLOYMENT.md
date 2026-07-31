@@ -153,7 +153,10 @@ If a validator address is unset, that validator is skipped during fan-out. If Ab
 |----------|---------|-------------|
 | `APME_OPA_VALIDATOR_LISTEN` | `0.0.0.0:50054` | gRPC listen address |
 
-The OPA binary runs internally on `localhost:8181`; the gRPC wrapper proxies to it.
+The OPA validator evaluates Rego policies by invoking ``opa eval`` via subprocess
+(see ``opa_validator_server.py``). A local OPA REST server on ``:8181`` may still
+start in the container image for readiness probes, but application code does not
+proxy gRPC requests to it.
 
 #### Ansible
 
@@ -220,22 +223,28 @@ The Settings page (`/settings`) provides a model picker that queries available A
 
 | Name | Host Path | Container Mount | Services | Access |
 |------|-----------|-----------------|----------|--------|
-| `sessions` | `apme-sessions/` | `/sessions` | Primary, Ansible | rw (primary), ro (ansible) |
+| `sessions` | `apme-sessions/` | `/sessions` | Primary (rw), Ansible, Collection Health, Dep Audit (ro) | rw / ro |
+| `proxy-cache` | `<cache>/proxy/` | `/cache` | Galaxy Proxy | rw |
 | `gateway-data` | `<cache>/gateway/` | `/data` | Gateway | rw |
 | `workspace` | CWD (CLI only) | `/workspace` | CLI | rw |
+
+#### Observability (Podman pod only)
+
+The reference Podman pod also runs an **OpenTelemetry Collector** (ADR-067) that
+receives OTLP on `:4318` and exposes Prometheus metrics on `:8889`. This is not
+included in the Helm chart deployment.
 
 ## OPA container details
 
 The OPA container uses a multi-stage Dockerfile:
 
-1. **Stage 1**: Copies the `opa` binary from `docker.io/openpolicyagent/opa:latest`
+1. **Stage 1**: Copies the `opa` binary from `docker.io/openpolicyagent/opa:1.17.1`
 2. **Stage 2**: Python 3.12 UBI10 base image with `grpcio`, project code, and the Rego bundle
 
-At runtime, `entrypoint.sh`:
-
-1. Starts OPA as a REST server: `opa run --server --addr :8181 /bundle`
-2. Waits for OPA to become healthy (polls `/health`)
-3. Starts the Python gRPC wrapper (`apme-opa-validator`)
+At runtime, `entrypoint.sh` may start OPA as a REST server for readiness
+(`opa run --server --addr :8181 /bundle`), then starts the Python gRPC validator
+(`apme-opa-validator`), which evaluates policies via ``opa eval`` subprocess —
+not via the REST API.
 
 The Rego bundle is baked into the image at build time (no volume mount needed).
 

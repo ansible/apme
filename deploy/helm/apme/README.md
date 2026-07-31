@@ -34,6 +34,10 @@ helm install apme apme/apme \
 Defaults pull from `quay.io/ansible` with image tag `2026.7.3` (`Chart.appVersion`).
 For unreleased SHA builds, set `--set image.tag=sha-<commit>`.
 
+> **Observability:** The reference Podman pod includes an OpenTelemetry Collector
+> (ADR-067) on ports `:4318` (OTLP) and `:8889` (Prometheus). The Helm chart does
+> not deploy this collector — configure OTLP export separately for Kubernetes if needed.
+
 ### OpenShift Developer Catalog
 
 1. **UI:** Developer perspective → **Helm** → **Create** → add chart repository

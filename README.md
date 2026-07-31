@@ -106,7 +106,7 @@ Validator fan-out uses gRPC; Galaxy Proxy is HTTP (PEP 503). The engine parses c
 ### Try it now
 
 ```bash
-pip install apme-engine@git+https://github.com/ansible/apme.git@v2026.4.1
+pip install apme-engine@git+https://github.com/ansible/apme.git@v2026.8.2
 apme check /path/to/your/project
 ```
 

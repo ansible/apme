@@ -14,10 +14,10 @@ available).
 
 ```bash
 # Install a specific release (recommended)
-pip install apme-engine@git+https://github.com/ansible/apme.git@v2026.4.1
+pip install apme-engine@git+https://github.com/ansible/apme.git@v2026.8.2
 
 # Install with AI escalation support (requires Abbenay daemon)
-pip install "apme-engine[ai] @ git+https://github.com/ansible/apme.git@v2026.4.1"
+pip install "apme-engine[ai] @ git+https://github.com/ansible/apme.git@v2026.8.2"
 
 # Install the latest development version (main branch)
 pip install apme-engine@git+https://github.com/ansible/apme.git@main
@@ -186,7 +186,7 @@ repos:
 
 ```yaml
 - name: Install APME
-  run: pip install apme-engine@git+https://github.com/ansible/apme.git@v2026.4.1
+  run: pip install apme-engine@git+https://github.com/ansible/apme.git@v2026.8.2
 
 - name: Run APME check
   run: apme check --sarif . > results.sarif

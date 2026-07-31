@@ -22,12 +22,13 @@ the SPA frontend architecture, page map, and that legacy WebSocket protocol.
 
 | Layer | Technology |
 |-------|------------|
-| Framework | React 18+ with hooks |
+| Framework | React 19 with hooks |
 | UI library | PatternFly 6 (`@patternfly/react-core`) |
 | Layout | `@ansible/ansible-ui-framework` (`PageLayout`, `PageHeader`) |
-| Routing | React Router v6 |
+| Routing | React Router 8 (`react-router`) |
+| Workflow UI | `@apme/ui-workflow` (REST + SSE for project operations) |
 | HTTP client | Native `fetch` API (no axios) |
-| WebSocket | Native `WebSocket` API via custom hooks |
+| Real-time | SSE via `useProjectWorkflow`; WebSocket for Playground (`useSessionStream`) |
 | Build | Vite |
 | Deployment | nginx static file server in the pod |
 
@@ -84,12 +85,12 @@ Galaxy Servers  → listGalaxyServers(), createGalaxyServer(), updateGalaxyServe
 AI Models       → listAiModels()
 ```
 
-## WebSocket Integration
+## Project Operations (REST + SSE)
 
-### Project Operations
-
-`useProjectOperation` (`frontend/src/hooks/useProjectOperation.ts`) is the
-primary React hook for check/remediate operations via WebSocket:
+`useProjectWorkflow` from `@apme/ui-workflow` (via `frontend/src/hooks/useProjectWorkflow.ts`)
+is the primary React hook for check/remediate operations via Gateway REST + SSE
+(ADR-052). The Playground uses WebSocket via `useSessionStream` for file-upload
+sandbox sessions.
 
 ```mermaid
 sequenceDiagram
@@ -234,7 +235,7 @@ session.
 
 ```mermaid
 flowchart TD
-    A[User clicks Check] --> B[useProjectOperation.startOperation]
+    A[User clicks Check] --> B[useProjectWorkflow.startOperation]
     B --> C[WebSocket connect to /projects/{id}/ws/operate]
     C --> D[Send start message with options]
     D --> E[Gateway clones repo]
@@ -279,7 +280,7 @@ Nginx handles:
 | File | Purpose |
 |------|---------|
 | `frontend/src/services/api.ts` | Typed REST API client |
-| `frontend/src/hooks/useProjectOperation.ts` | WebSocket hook for project operations |
+| `frontend/packages/ui-workflow/src/hooks/useProjectWorkflow.ts` | SSE hook for project operations |
 | `frontend/src/pages/ProjectDetailPage.tsx` | Main project interaction page |
 | `frontend/src/pages/DashboardPage.tsx` | Cross-project dashboard |
 | `frontend/src/pages/PlaygroundPage.tsx` | File-upload sandbox |

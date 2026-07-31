@@ -357,15 +357,16 @@ Understanding where code lives prevents accidental duplication or misplacement.
 src/
 ├── apme/v1/                     # Generated proto stubs — NEVER edit by hand
 ├── apme_engine/                  # Core product
-│   ├── cli/                      # apme: check, remediate, format, health-check
-│   ├── daemon/                   # gRPC servers: primary, native, opa, ansible, gitleaks
+│   ├── cli/                      # apme: check, remediate, format, health-check, daemon, sbom, suppress
+│   ├── daemon/                   # gRPC servers: primary, native, opa, ansible, gitleaks, collection_health, dep_audit
 │   │   └── sinks/                # Event sinks (grpc_reporting)
 │   ├── engine/                   # Project loader: parser, models, annotators, graph
 │   ├── remediation/              # Convergence engine, transforms, AI provider
-│   ├── validators/               # Rule implementations (native/, opa/, ansible/, gitleaks/)
+│   ├── validators/               # Rule implementations (native/, opa/, ansible/, gitleaks/, collection_health/, dep_audit/)
 │   └── venv_manager/             # Session-scoped venvs
 ├── apme_gateway/                 # FastAPI REST + SQLAlchemy DB + Reporting gRPC server
 └── galaxy_proxy/                 # PEP 503 proxy (Galaxy → wheels)
+frontend/                          # React SPA (Vite + TypeScript + PatternFly)
 tools/
 └── visualize_graph.py            # ContentGraph HTML visualizer (tox -e graph)
 ```

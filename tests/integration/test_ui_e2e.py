@@ -165,7 +165,7 @@ def test_scan_detail_shows_violations(
         page: Playwright page fixture.
     """
     scan_id = str(e2e_scan.get("scan_id", ""))
-    page.goto(f"{_BASE}/scans/{scan_id}", wait_until="networkidle")
+    page.goto(f"{_BASE}/activity/{scan_id}", wait_until="networkidle")
     page.wait_for_selector("[data-testid='page-navigation']", timeout=10_000)
 
     violations = cast(list[ViolationDict], e2e_scan.get("violations", []))
@@ -198,17 +198,17 @@ def test_scan_detail_shows_violations(
 
 @pytest.mark.integration()  # type: ignore[untyped-decorator]
 @pytest.mark.ui()  # type: ignore[untyped-decorator]
-def test_scans_list_contains_scan(
+def test_activity_list_contains_scan(
     e2e_scan: YAMLDict,
     page: Page,
 ) -> None:
-    """The scans page shows the scan from the CLI run.
+    """The activity page shows the scan from the CLI run.
 
     Args:
         e2e_scan: Scan result (ensures scan has been persisted).
         page: Playwright page fixture.
     """
-    page.goto(f"{_BASE}/scans", wait_until="networkidle")
+    page.goto(f"{_BASE}/activity", wait_until="networkidle")
     page.wait_for_selector("[data-testid='page-navigation']", timeout=10_000)
 
     table = page.locator(".pf-v6-c-table")
@@ -220,17 +220,17 @@ def test_scans_list_contains_scan(
 
 @pytest.mark.integration()  # type: ignore[untyped-decorator]
 @pytest.mark.ui()  # type: ignore[untyped-decorator]
-def test_top_violations_populated(
+def test_analytics_top_violations_populated(
     e2e_scan: YAMLDict,
     page: Page,
 ) -> None:
-    """Top violations page shows data after a scan.
+    """Analytics page shows top violation data after a scan.
 
     Args:
         e2e_scan: Scan result (ensures scan has been persisted).
         page: Playwright page fixture.
     """
-    page.goto(f"{_BASE}/violations", wait_until="networkidle")
+    page.goto(f"{_BASE}/analytics", wait_until="networkidle")
     page.wait_for_selector("[data-testid='page-navigation']", timeout=10_000)
 
     page.wait_for_selector(".apme-rule-id, div:has-text('No violation data')", timeout=10_000)

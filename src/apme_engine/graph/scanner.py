@@ -1,6 +1,5 @@
 """ContentGraphScanner — drives GraphRule evaluation over a ContentGraph.
 
-Replaces ``risk_detector.detect()`` for the ContentGraph pipeline.
 Iterates over all owned nodes in the graph, applying each GraphRule's
 ``match`` / ``process`` contract.  Results are collected as
 ``GraphRuleResult`` objects and aggregated into a ``GraphScanReport``.

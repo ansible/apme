@@ -375,7 +375,7 @@ async def run_project_operation(
 
     try:
         await clone_repo(repo_url, branch, temp_dir, scm_token=scm_token)
-        clone_sha = get_clone_head(temp_dir) or ""
+        clone_sha = await asyncio.get_running_loop().run_in_executor(None, get_clone_head, temp_dir) or ""
 
         chunks = list(
             yield_scan_chunks(
@@ -522,66 +522,6 @@ async def run_project_scan(
         ansible_version=ansible_version,
         collection_specs=collection_specs,
         progress_callback=progress_callback,
-        scan_id=scan_id,
-        galaxy_servers=galaxy_servers,
-        scm_token=scm_token,
-    )
-
-
-async def run_project_fix(
-    *,
-    project_id: str,
-    repo_url: str,
-    branch: str,
-    primary_address: str,
-    ansible_version: str = "",
-    collection_specs: list[str] | None = None,
-    enable_ai: bool = True,
-    ai_model: str = "",
-    interactive: bool = False,
-    progress_callback: ProgressCallback | None = None,
-    approval_queue: asyncio.Queue[list[str]] | None = None,
-    scan_id: str | None = None,
-    galaxy_servers: list[GalaxyServerDef] | None = None,
-    scm_token: str | None = None,
-) -> tuple[str, primary_pb2.SessionResult | None, str]:
-    """Backward-compatible alias for remediate mode.
-
-    Delegates to :func:`run_project_operation` with ``remediate=True``.
-    See that function for full parameter documentation.
-
-    Args:
-        project_id: UUID of the project.
-        repo_url: SCM clone URL.
-        branch: Branch to clone.
-        primary_address: ``host:port`` for the Primary gRPC service.
-        ansible_version: Target ansible-core version.
-        collection_specs: Collection install specs.
-        enable_ai: Enable AI remediation tier.
-        ai_model: AI model identifier.
-        interactive: When True, Tier 1 fixes await approval (ADR-062).
-        progress_callback: Optional async callable for each ``SessionEvent``.
-        approval_queue: Queue of approved proposal IDs (Tier 1 and/or AI).
-        scan_id: Optional pre-generated scan ID.
-        galaxy_servers: Global Galaxy server defs to inject (ADR-045).
-        scm_token: Optional SCM token for private repository access.
-
-    Returns:
-        Tuple of (scan_id, SessionResult or None, clone_commit_sha).
-    """
-    return await run_project_operation(
-        project_id=project_id,
-        repo_url=repo_url,
-        branch=branch,
-        primary_address=primary_address,
-        remediate=True,
-        ansible_version=ansible_version,
-        collection_specs=collection_specs,
-        enable_ai=enable_ai,
-        ai_model=ai_model,
-        interactive=interactive,
-        progress_callback=progress_callback,
-        approval_queue=approval_queue,
         scan_id=scan_id,
         galaxy_servers=galaxy_servers,
         scm_token=scm_token,

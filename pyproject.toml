@@ -15,7 +15,6 @@ dependencies = [
     "ruamel.yaml",
     "filelock",
     "rapidfuzz",
-    "joblib",
     "grpcio>=1.82.1",
     "grpcio-health-checking>=1.82.1",
     "protobuf>=7.35.1,<8",
@@ -36,7 +35,6 @@ dependencies = [
 ai = [
     "abbenay-client @ https://github.com/redhat-developer/abbenay/releases/download/v2026.4.1-alpha/abbenay_client-2026.4.1a0-py3-none-any.whl#sha256=8a473016b6b2d06c0620abb3d03f583b2b2c958654e293e8e66da70516e5dd33",
 ]
-proxy = []  # Deprecated: fastapi/uvicorn are now core deps. Kept for backwards compat.
 gateway = [
     "sqlalchemy>=2.0",
     "aiosqlite>=0.20",
@@ -144,7 +142,6 @@ module = [
     "jsonpickle",
     "filelock",
     "rapidfuzz.*",
-    "joblib",
     "httpx",
     "yaml",
     "grpc",
@@ -186,8 +183,6 @@ disallow_any_explicit = false
 
 [[tool.mypy.overrides]]
 module = [
-    "apme.v1.ansible_pb2",
-    "apme.v1.ansible_pb2_grpc",
     "apme.v1.common_pb2_grpc",
     "apme.v1.primary_pb2_grpc",
     "apme.v1.validate_pb2_grpc",

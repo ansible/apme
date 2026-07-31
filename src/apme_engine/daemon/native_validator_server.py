@@ -17,6 +17,7 @@ import grpc.aio
 from apme.v1 import common_pb2, validate_pb2, validate_pb2_grpc
 from apme.v1.common_pb2 import HealthResponse, ValidatorDiagnostics
 from apme.v1.validate_pb2 import ValidateResponse
+from apme_engine.daemon.validator_errors import infra_error_response
 from apme_engine.daemon.violation_convert import violation_dict_to_proto
 from apme_engine.engine.models import ViolationDict
 from apme_engine.graph.content_graph import ContentGraph
@@ -156,7 +157,7 @@ class NativeValidatorServicer(validate_pb2_grpc.ValidatorServicer):
                 )
             except Exception as e:
                 logger.exception("Native: unhandled error (req=%s): %s", req_id, e)
-                return ValidateResponse(violations=[], request_id=req_id, logs=sink.entries)
+                return infra_error_response(req_id, str(e), sink.entries)
 
     async def Health(
         self,

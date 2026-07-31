@@ -103,8 +103,8 @@ class TestOpaValidatorServicer:
         assert resp.HasField("diagnostics")  # type: ignore[attr-defined]
         assert resp.diagnostics.violations_found == 0  # type: ignore[attr-defined]
 
-    async def test_validate_opa_error_returns_empty(self) -> None:
-        """Validate returns empty violations when OPA evaluation fails."""
+    async def test_validate_opa_error_returns_infra_violation(self) -> None:
+        """Validate returns INFRA-002 when OPA evaluation fails."""
         from apme_engine.daemon.opa_validator_server import OpaValidatorServicer
 
         request = validate_pb2.ValidateRequest(
@@ -117,7 +117,8 @@ class TestOpaValidatorServicer:
             "apme_engine.daemon.opa_validator_server._run_opa", side_effect=RuntimeError("opa binary not found")
         ):
             resp = await servicer.Validate(request, FakeGrpcContext())  # type: ignore[arg-type]
-        assert len(resp.violations) == 0  # type: ignore[attr-defined]
+        assert len(resp.violations) == 1  # type: ignore[attr-defined]
+        assert resp.violations[0].rule_id == "INFRA-002"  # type: ignore[attr-defined]
 
     async def test_health_returns_ok(self) -> None:
         """Health always returns ok (no external dependency)."""
@@ -223,8 +224,8 @@ class TestNativeValidatorServicer:
         resp = await servicer.Validate(request, FakeGrpcContext())  # type: ignore[arg-type]
         assert len(resp.violations) == 0  # type: ignore[attr-defined]
 
-    async def test_validate_bad_graph_data_returns_empty(self) -> None:
-        """Validate with invalid content_graph_data returns empty violations."""
+    async def test_validate_bad_graph_data_returns_infra_violation(self) -> None:
+        """Validate with invalid content_graph_data returns INFRA-002."""
         from apme_engine.daemon.native_validator_server import NativeValidatorServicer
 
         request = validate_pb2.ValidateRequest(
@@ -233,7 +234,8 @@ class TestNativeValidatorServicer:
         )
         servicer = NativeValidatorServicer()
         resp = await servicer.Validate(request, FakeGrpcContext())  # type: ignore[arg-type]
-        assert len(resp.violations) == 0  # type: ignore[attr-defined]
+        assert len(resp.violations) == 1  # type: ignore[attr-defined]
+        assert resp.violations[0].rule_id == "INFRA-002"  # type: ignore[attr-defined]
 
     async def test_health_returns_ok(self) -> None:
         """Health returns ok for Native validator."""
