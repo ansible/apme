@@ -616,6 +616,7 @@ export function AssessFindingsPanel({
         filterGroups={filterGroups}
         filterAccessory={
           <RuleFilterInput
+            id="assess-rule-filter"
             options={presentRules}
             selected={ruleFilters}
             onChange={setRuleFilters}

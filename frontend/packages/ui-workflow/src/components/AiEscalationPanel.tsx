@@ -19,7 +19,7 @@ import {
 import {
   filterByRuleKeepingNodeContext,
   presentRuleIds,
-} from '../remediation/ruleFilter';
+} from '../remediation';
 import { AssessNodeDetail } from './AssessFindingsPanel';
 import {
   toggleInFilterSet,
@@ -257,15 +257,22 @@ export function AiEscalationPanel({
   }, [allGroups, decisions]);
 
   const filteredFindings = useMemo(() => {
-    return filterByRuleKeepingNodeContext(candidates, ruleFilterSet, (f) => {
-      const sev = severityClass(f.severity || 'info', f.rule_id);
-      if (!sevFilters.has(sev)) return false;
-      const nt = normalizeFindingNodeType(f.node_type);
-      if (!nodeTypeFilters.has(nt)) return false;
-      const path = locationPath(f);
-      if (!decisionFilters.has(effectiveDecision(path, decisions))) return false;
-      return true;
-    });
+    // Rule filter is node-scoped. Decision stays location-level after that
+    // (one decision per path — drop whole location if its decision is hidden).
+    const afterRules = filterByRuleKeepingNodeContext(
+      candidates,
+      ruleFilterSet,
+      (f) => {
+        const sev = severityClass(f.severity || 'info', f.rule_id);
+        if (!sevFilters.has(sev)) return false;
+        const nt = normalizeFindingNodeType(f.node_type);
+        if (!nodeTypeFilters.has(nt)) return false;
+        return true;
+      },
+    );
+    return afterRules.filter((f) =>
+      decisionFilters.has(effectiveDecision(locationPath(f), decisions)),
+    );
   }, [
     candidates,
     sevFilters,
@@ -493,6 +500,7 @@ export function AiEscalationPanel({
         filterGroups={filterGroups}
         filterAccessory={
           <RuleFilterInput
+            id="ai-escalation-rule-filter"
             options={presentRules}
             selected={ruleFilters}
             onChange={setRuleFilters}

@@ -89,4 +89,24 @@ describe("filterByRuleKeepingNodeContext", () => {
     );
     expect(result.some((f) => f.rule_id === "R099")).toBe(false);
   });
+
+  it("supports row-level post-filter after node inclusion (decision pattern)", () => {
+    // Panels apply decision after node-inclusion so Accepted siblings do not
+    // reappear when filtering Pending + a rule.
+    const proposals = [
+      { rule_id: "L050", path: "a", decision: "pending" },
+      { rule_id: "M001", path: "a", decision: "accepted" },
+      { rule_id: "L050", path: "b", decision: "pending" },
+    ];
+    const afterRules = filterByRuleKeepingNodeContext(
+      proposals,
+      new Set(["L050"]),
+    );
+    expect(afterRules).toHaveLength(3); // siblings on path a kept
+    const pendingOnly = afterRules.filter((p) => p.decision === "pending");
+    expect(pendingOnly.map((p) => `${p.path}:${p.rule_id}`)).toEqual([
+      "a:L050",
+      "b:L050",
+    ]);
+  });
 });

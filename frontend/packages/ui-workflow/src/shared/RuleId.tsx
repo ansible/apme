@@ -39,7 +39,7 @@ function SingleRuleId({
     <span
       className={spanClassName}
       tabIndex={interactive ? 0 : undefined}
-      title={clickable ? `Filter by ${bare}` : undefined}
+      title={clickable ? `Toggle filter: ${bare}` : undefined}
       role={clickable ? 'button' : undefined}
       onMouseEnter={hoverable ? () => onHoverChange(true) : undefined}
       onMouseLeave={hoverable ? () => onHoverChange(false) : undefined}

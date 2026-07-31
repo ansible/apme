@@ -563,12 +563,12 @@ export function ProposalReviewPanel({
       presentNodeTypes.some((t) => !nodeTypeFilters.has(t)));
 
   const filteredActionableItems = useMemo(() => {
-    const visibleProposals = filterByRuleKeepingNodeContext(
+    // Rule filter is node-scoped (siblings stay). Decision stays row-level so
+    // Accepted/Declined chips do not re-surface via a sibling on the same path.
+    const afterRules = filterByRuleKeepingNodeContext(
       actionable,
       ruleFilterSet,
       (proposal) => {
-        const decision = effectiveDecision(proposal.id, decisions);
-        if (!decisionFilters.has(decision)) return false;
         if (presentSeverities.length > 0 && sevFilters.size > 0) {
           if (!sevFilters.has(proposalSeverity(proposal))) return false;
         }
@@ -579,7 +579,13 @@ export function ProposalReviewPanel({
         return true;
       },
     );
-    const visible = new Set(visibleProposals.map((p) => p.id));
+    const visible = new Set(
+      afterRules
+        .filter((p) =>
+          decisionFilters.has(effectiveDecision(p.id, decisions)),
+        )
+        .map((p) => p.id),
+    );
     return actionableItems.filter((item) => visible.has(item.id));
   }, [
     actionableItems,
@@ -781,6 +787,7 @@ export function ProposalReviewPanel({
       filterGroups={filterGroups}
       filterAccessory={
         <RuleFilterInput
+          id="proposal-rule-filter"
           options={presentRules}
           selected={ruleFilters}
           onChange={setRuleFilters}
