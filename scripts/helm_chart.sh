@@ -100,6 +100,37 @@ ensure_helm
 echo "==> helm lint ${CHART_DIR}"
 "${HELM_BIN}" lint "${CHART_DIR}"
 
+echo "==> helm template abbenay TLS validation (engine deployment)"
+TLS_VALUES="${ROOT}/tests/fixtures/helm_abbenay_tls_base.yaml"
+if "${HELM_BIN}" template test-release "${CHART_DIR}" \
+  --show-only templates/engine-deployment.yaml \
+  -f "${TLS_VALUES}" \
+  --set abbenay.grpc.tls=true \
+  --set abbenay.grpc.caCertSecret.name="" >/dev/null 2>&1; then
+  echo "Expected helm template to fail when abbenay.grpc.tls=true without caCertSecret.name" >&2
+  exit 1
+fi
+
+ENGINE_YAML="$("${HELM_BIN}" template test-release "${CHART_DIR}" \
+  --show-only templates/engine-deployment.yaml \
+  -f "${TLS_VALUES}" \
+  --set abbenay.grpc.tls=true \
+  --set abbenay.grpc.caCertSecret.name=my-abbenay-ca \
+  --set abbenay.grpc.caCertPath=/custom/tls/ca.pem)"
+
+if ! grep -Fq 'mountPath: /custom/tls' <<<"${ENGINE_YAML}"; then
+  echo "Expected CA volume mountPath derived from abbenay.grpc.caCertPath parent dir" >&2
+  exit 1
+fi
+if ! grep -Fq 'value: "/custom/tls/ca.pem"' <<<"${ENGINE_YAML}"; then
+  echo "Expected APME_ABBENAY_CA_CERT to match abbenay.grpc.caCertPath" >&2
+  exit 1
+fi
+if ! grep -Fq 'path: ca.pem' <<<"${ENGINE_YAML}"; then
+  echo "Expected Secret volume item path derived from abbenay.grpc.caCertPath basename" >&2
+  exit 1
+fi
+
 mkdir -p "${OUT_DIR}"
 echo "==> helm package ${CHART_DIR} -> ${OUT_DIR}"
 "${HELM_BIN}" package "${CHART_DIR}" -d "${OUT_DIR}"

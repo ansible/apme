@@ -240,3 +240,34 @@ URLs resolve to an invalid endpoint.
   {{- end }}
 {{- end }}
 {{- end -}}
+
+{{/*
+Require CA Secret when engine→Abbenay TLS is enabled so Primary receives a mounted PEM.
+*/}}
+{{- define "apme.abbenay.validateGrpcTls" -}}
+{{- if and .Values.abbenay.enabled .Values.abbenay.grpc.tls }}
+  {{- if not .Values.abbenay.grpc.caCertSecret.name }}
+  {{- fail `
+
+abbenay.grpc.caCertSecret.name is required when abbenay.grpc.tls=true.
+
+Mount an existing Secret containing the Abbenay CA PEM into the engine Primary
+container and set caCertPath to the mounted file path (default /etc/abbenay-tls/ca.crt):
+
+  abbenay:
+    grpc:
+      tls: true
+      insecure: false
+      caCertPath: "/etc/abbenay-tls/ca.crt"
+      caCertSecret:
+        name: "my-abbenay-ca"
+        key: "ca.crt"
+
+See deploy/helm/apme/templates/NOTES.txt for production TLS guidance.
+` }}
+  {{- end }}
+  {{- if not .Values.abbenay.grpc.caCertSecret.key }}
+  {{- fail "abbenay.grpc.caCertSecret.key is required when abbenay.grpc.tls=true (the key within the Secret)" }}
+  {{- end }}
+{{- end }}
+{{- end -}}

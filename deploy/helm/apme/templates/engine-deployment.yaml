@@ -1,3 +1,4 @@
+{{- include "apme.abbenay.validateGrpcTls" . -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -106,9 +107,9 @@ spec:
           volumeMounts:
             - name: sessions
               mountPath: /sessions
-            {{- if and .Values.abbenay.enabled .Values.abbenay.grpc.tls .Values.abbenay.grpc.caCertSecret.name }}
+            {{- if and .Values.abbenay.enabled .Values.abbenay.grpc.tls }}
             - name: abbenay-ca
-              mountPath: /etc/abbenay-tls
+              mountPath: {{ dir .Values.abbenay.grpc.caCertPath }}
               readOnly: true
             {{- end }}
           resources:
@@ -317,13 +318,13 @@ spec:
           persistentVolumeClaim:
             claimName: {{ include "apme.fullname" . }}-proxy-cache
           {{- end }}
-        {{- if and .Values.abbenay.enabled .Values.abbenay.grpc.tls .Values.abbenay.grpc.caCertSecret.name }}
+        {{- if and .Values.abbenay.enabled .Values.abbenay.grpc.tls }}
         - name: abbenay-ca
           secret:
             secretName: {{ .Values.abbenay.grpc.caCertSecret.name }}
             items:
               - key: {{ .Values.abbenay.grpc.caCertSecret.key }}
-                path: ca.crt
+                path: {{ base .Values.abbenay.grpc.caCertPath }}
         {{- end }}
       {{- with .Values.engine.nodeSelector }}
       nodeSelector:

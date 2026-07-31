@@ -181,7 +181,8 @@ abbenay:
     insecure: true
     # -- Enable TLS with auto-generated certs in the Abbenay container runtime dir.
     tls: false
-    # -- CA cert path inside the engine primary container when tls=true.
+    # -- CA cert file path inside the engine primary container when tls=true.
+    # Chart mounts caCertSecret at the parent directory (dir(caCertPath)).
     caCertPath: "/etc/abbenay-tls/ca.crt"
     # -- Existing Secret containing the Abbenay CA PEM (required when tls=true).
     caCertSecret:

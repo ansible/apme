@@ -5,6 +5,7 @@
 {{- include "apme.abbenay.validateApiKeySecrets" . -}}
 {{- include "apme.abbenay.validateProviderAuth" . -}}
 {{- include "apme.abbenay.validateVertexADC" . -}}
+{{- include "apme.abbenay.validateGrpcTls" . -}}
 {{- $fullname := include "apme.fullname" . -}}
 {{- $hasGcpCreds := or .Values.abbenay.gcp.serviceAccountKey .Values.abbenay.gcp.existingSecret -}}
 {{- $hasVertexADC := false -}}

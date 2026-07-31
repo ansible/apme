@@ -1,0 +1,9 @@
+# Minimal Abbenay values for Helm template TLS render tests (scripts/helm_chart.sh).
+abbenay:
+  enabled: true
+  token: "helm-render-test-token"
+  providers:
+    mock:
+      engine: mock
+      models:
+        test: {}
