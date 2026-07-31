@@ -124,12 +124,12 @@ sequenceDiagram
     GW-->>UI: event: result
 ```
 
-#### Operation statuses (Gateway)
+### Operation statuses (Gateway)
 
 Backend `OperationStatus` values (ADR-052). The UI may map these to display
 labels (e.g. `scanning` → “checking”).
 
-```
+```text
 queued → cloning → scanning → completed
                       ↓
                    assessed → awaiting_approval → applying → completed
@@ -150,7 +150,7 @@ queued → cloning → scanning → completed
 | `submitting_pr` / `pr_submitted` | PR creation in progress / done |
 | `failed` / `expired` / `cancelled` | Terminal failure or cancel |
 
-#### Control Plane (Browser → Gateway REST)
+### Control Plane (Browser → Gateway REST)
 
 | Request | Purpose |
 |---------|---------|
@@ -163,7 +163,7 @@ queued → cloning → scanning → completed
 | `POST .../operation/cancel` | Cancel the in-flight operation |
 | `GET .../operation/events` | SSE stream for the project's active operation |
 
-#### Event Plane (Gateway → Browser SSE)
+### Event Plane (Gateway → Browser SSE)
 
 Events actually broadcast by `OperationRegistry` (plus `snapshot` on connect):
 
@@ -184,9 +184,9 @@ Approvals and failures are reflected via `status_changed` (and updated
 
 ### Playground Sessions
 
-The `PlaygroundPage` uses a separate WebSocket endpoint (`/ws/session`)
-via `session_client.py` on the Gateway side. The protocol differs
-slightly:
+The `PlaygroundPage` uses a separate WebSocket endpoint
+(`/api/v1/ws/session`; router-relative `/ws/session`) via `session_client.py`
+on the Gateway side. The protocol differs slightly:
 
 1. Client sends `{"type": "start", "options": {...}}` with scan options
 2. Client uploads files as `{"type": "file", "path": "...", "content": "<base64>"}`
