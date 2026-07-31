@@ -15,7 +15,9 @@ concurrency:
 
 jobs:
   attach-tarball:
-    if: startsWith(github.event.release.tag_name, 'v')
+    if: >-
+      startsWith(github.event.release.tag_name, 'v')
+      && github.event.release.prerelease == false
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v6
@@ -60,4 +62,4 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.event.release.tag_name }}
           TARBALL: ${{ steps.ver.outputs.tarball }}
-        run: gh release upload "${TAG}" "frontend/${TARBALL}"
+        run: gh release upload --clobber "${TAG}" "frontend/${TARBALL}"
