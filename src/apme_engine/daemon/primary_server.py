@@ -1653,7 +1653,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                 violations,
                 _,
                 _,
-                _,
+                validator_logs,
                 _hierarchy_payload,
                 venv_sess,
                 req_files,
@@ -1673,6 +1673,9 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                 rule_configs_complete=scan_rule_configs_complete,
                 skip_validators=frozenset(skip_validators),
             )
+
+            for batch in validator_logs:
+                session.progress_logs.extend(batch)
 
             if graph_obj is not None:
                 captured_graph[0] = graph_obj

@@ -104,8 +104,9 @@ class TestOpaValidatorServicer:
         assert resp.diagnostics.violations_found == 0  # type: ignore[attr-defined]
 
     async def test_validate_opa_error_returns_infra_violation(self) -> None:
-        """Validate returns INFRA-002 when OPA evaluation fails."""
+        """Validate returns R902 when OPA evaluation fails."""
         from apme_engine.daemon.opa_validator_server import OpaValidatorServicer
+        from apme_engine.daemon.validator_errors import PUBLIC_VALIDATOR_ERROR, RULE_VALIDATOR_FAILURE
 
         request = validate_pb2.ValidateRequest(
             request_id="test-req-3",
@@ -118,7 +119,8 @@ class TestOpaValidatorServicer:
         ):
             resp = await servicer.Validate(request, FakeGrpcContext())  # type: ignore[arg-type]
         assert len(resp.violations) == 1  # type: ignore[attr-defined]
-        assert resp.violations[0].rule_id == "INFRA-002"  # type: ignore[attr-defined]
+        assert resp.violations[0].rule_id == RULE_VALIDATOR_FAILURE  # type: ignore[attr-defined]
+        assert resp.violations[0].message == PUBLIC_VALIDATOR_ERROR  # type: ignore[attr-defined]
 
     async def test_health_returns_ok(self) -> None:
         """Health always returns ok (no external dependency)."""
@@ -225,8 +227,9 @@ class TestNativeValidatorServicer:
         assert len(resp.violations) == 0  # type: ignore[attr-defined]
 
     async def test_validate_bad_graph_data_returns_infra_violation(self) -> None:
-        """Validate with invalid content_graph_data returns INFRA-002."""
+        """Validate with invalid content_graph_data returns R902."""
         from apme_engine.daemon.native_validator_server import NativeValidatorServicer
+        from apme_engine.daemon.validator_errors import PUBLIC_VALIDATOR_ERROR, RULE_VALIDATOR_FAILURE
 
         request = validate_pb2.ValidateRequest(
             request_id="native-3",
@@ -235,7 +238,8 @@ class TestNativeValidatorServicer:
         servicer = NativeValidatorServicer()
         resp = await servicer.Validate(request, FakeGrpcContext())  # type: ignore[arg-type]
         assert len(resp.violations) == 1  # type: ignore[attr-defined]
-        assert resp.violations[0].rule_id == "INFRA-002"  # type: ignore[attr-defined]
+        assert resp.violations[0].rule_id == RULE_VALIDATOR_FAILURE  # type: ignore[attr-defined]
+        assert resp.violations[0].message == PUBLIC_VALIDATOR_ERROR  # type: ignore[attr-defined]
 
     async def test_health_returns_ok(self) -> None:
         """Health returns ok for Native validator."""

@@ -5,6 +5,7 @@ All native rule evaluation runs via ``ContentGraph`` + ``GraphRule``.
 """
 
 import asyncio
+import contextvars
 import json
 import logging
 import os
@@ -126,8 +127,10 @@ class NativeValidatorServicer(validate_pb2_grpc.ValidatorServicer):
                         req_id,
                     )
 
+                ctx = contextvars.copy_context()
                 result = await asyncio.get_event_loop().run_in_executor(
                     None,
+                    ctx.run,
                     _run_graph,
                     request.content_graph_data,
                     dirty,
@@ -157,7 +160,7 @@ class NativeValidatorServicer(validate_pb2_grpc.ValidatorServicer):
                 )
             except Exception as e:
                 logger.exception("Native: unhandled error (req=%s): %s", req_id, e)
-                return infra_error_response(req_id, str(e), sink.entries)
+                return infra_error_response(req_id, sink.entries)
 
     async def Health(
         self,

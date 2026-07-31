@@ -7,13 +7,22 @@ from apme.v1.validate_pb2 import ValidateResponse
 from apme_engine.daemon.violation_convert import violation_dict_to_proto
 from apme_engine.engine.models import ViolationDict
 
+# ADR-008 Risk range reserved for validator infrastructure failures:
+# R901 = missing session precondition (e.g. no venv)
+# R902 = validator runtime / infrastructure failure
+RULE_MISSING_VENV = "R901"
+RULE_VALIDATOR_FAILURE = "R902"
 
-def infra_violation(message: str, *, rule_id: str = "INFRA-002") -> ViolationDict:
+# Client-facing message — never include exception text (may leak paths/secrets).
+PUBLIC_VALIDATOR_ERROR = "Validator infrastructure error; see server logs for details"
+
+
+def infra_violation(message: str, *, rule_id: str = RULE_VALIDATOR_FAILURE) -> ViolationDict:
     """Build a validator infrastructure failure violation dict.
 
     Args:
-        message: Human-readable error description.
-        rule_id: Infrastructure rule id (``INFRA-001`` or ``INFRA-002``).
+        message: Human-readable error description (safe for clients).
+        rule_id: Infrastructure rule id (``R901`` or ``R902``).
 
     Returns:
         Violation dict suitable for ``violation_dict_to_proto``.
@@ -30,17 +39,17 @@ def infra_violation(message: str, *, rule_id: str = "INFRA-002") -> ViolationDic
 
 def infra_error_response(
     req_id: str,
-    message: str,
     logs: list[ProgressUpdate],
     *,
-    rule_id: str = "INFRA-002",
+    message: str = PUBLIC_VALIDATOR_ERROR,
+    rule_id: str = RULE_VALIDATOR_FAILURE,
 ) -> ValidateResponse:
     """Return a ValidateResponse signalling validator infrastructure failure.
 
     Args:
         req_id: Request id from the incoming Validate RPC.
-        message: Error description for operators.
         logs: Collected log entries from the request sink.
+        message: Client-safe error description (defaults to public constant).
         rule_id: Infrastructure rule id.
 
     Returns:

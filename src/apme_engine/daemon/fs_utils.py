@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -12,7 +13,8 @@ def write_chunked_fs(files: list[File], *, prefix: str = "apme_") -> Path:
     """Write request files into a temp directory; return path to that directory.
 
     File paths are sanitised: absolute paths and ``..`` segments are rejected
-    to prevent writes outside the temp directory.
+    to prevent writes outside the temp directory. On any failure the temp
+    directory is removed before re-raising.
 
     Args:
         files: List of File protos with path and content.
@@ -25,13 +27,19 @@ def write_chunked_fs(files: list[File], *, prefix: str = "apme_") -> Path:
         ValueError: If a file path is absolute or escapes the temp root.
     """
     tmp = Path(tempfile.mkdtemp(prefix=prefix)).resolve()
-    for f in files:
-        rel = Path(f.path)
-        if rel.is_absolute() or ".." in rel.parts:
-            raise ValueError(f"Unsafe file path rejected: {f.path!r}")
-        path = (tmp / rel).resolve()
-        if not path.is_relative_to(tmp):
-            raise ValueError(f"Path escapes temp root: {f.path!r}")
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(f.content)
-    return tmp
+    success = False
+    try:
+        for f in files:
+            rel = Path(f.path)
+            if rel.is_absolute() or ".." in rel.parts:
+                raise ValueError(f"Unsafe file path rejected: {f.path!r}")
+            path = (tmp / rel).resolve()
+            if not path.is_relative_to(tmp):
+                raise ValueError(f"Path escapes temp root: {f.path!r}")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(f.content)
+        success = True
+        return tmp
+    finally:
+        if not success:
+            shutil.rmtree(tmp, ignore_errors=True)

@@ -6,6 +6,7 @@ files are written.
 """
 
 import asyncio
+import contextvars
 import json
 import logging
 import os
@@ -141,9 +142,11 @@ class GitleaksValidatorServicer(validate_pb2_grpc.ValidatorServicer):
                     req_id,
                 )
 
+                ctx = contextvars.copy_context()
                 violations, node_count = await asyncio.get_event_loop().run_in_executor(
                     None,
-                    _run_scan,  # type: ignore[arg-type]
+                    ctx.run,  # type: ignore[arg-type]
+                    _run_scan,
                     bytes(request.content_graph_data),
                     list(request.files),
                 )
@@ -178,7 +181,7 @@ class GitleaksValidatorServicer(validate_pb2_grpc.ValidatorServicer):
                 )
             except Exception as e:
                 logger.exception("Gitleaks: unhandled error (req=%s): %s", req_id, e)
-                return infra_error_response(req_id, str(e), sink.entries)
+                return infra_error_response(req_id, sink.entries)
 
     async def Health(
         self,

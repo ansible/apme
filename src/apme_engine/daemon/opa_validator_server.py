@@ -5,6 +5,7 @@ No OPA REST server required — the OPA binary is invoked via subprocess.
 """
 
 import asyncio
+import contextvars
 import json
 import logging
 import os
@@ -78,8 +79,10 @@ class OpaValidatorServicer(validate_pb2_grpc.ValidatorServicer):
                         logger.warning("OPA: failed to decode hierarchy_payload (req=%s)", req_id)
                         return ValidateResponse(violations=[], request_id=req_id, logs=sink.entries)
 
+                ctx = contextvars.copy_context()
                 violations = await asyncio.get_event_loop().run_in_executor(
                     None,
+                    ctx.run,
                     _run_opa,
                     hierarchy_payload,
                 )
@@ -87,7 +90,7 @@ class OpaValidatorServicer(validate_pb2_grpc.ValidatorServicer):
                 logger.info("OPA: validate done (%.0fms, %d violations, req=%s)", total_ms, len(violations), req_id)
             except Exception as e:
                 logger.exception("OPA: unhandled error (req=%s): %s", req_id, e)
-                return infra_error_response(req_id, str(e), sink.entries)
+                return infra_error_response(req_id, sink.entries)
 
             total_ms = (time.monotonic() - t0) * 1000
 

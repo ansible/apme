@@ -98,22 +98,25 @@ sequenceDiagram
     participant GW as Gateway :8080
     participant Primary as Primary :50051
 
-    UI->>GW: WS /api/v1/projects/{id}/ws/operate
-    UI->>GW: {"action": "check", "options": {...}}
+    UI->>GW: POST /api/v1/projects/{id}/operation
+    Note right of UI: {"action": "check", "options": {...}}
+    GW-->>UI: {"operation_id": "..."}
+
+    UI->>GW: GET /api/v1/projects/{id}/operation/events
+    Note right of UI: fetch-stream SSE (Accept: text/event-stream)
 
     GW->>GW: Clone repo from project.repo_url
-    GW-->>UI: {"type": "cloning"}
+    GW-->>UI: event: status_changed / progress
     GW->>Primary: FixSession gRPC stream
-    GW-->>UI: {"type": "started", "scan_id": "..."}
+    GW-->>UI: event: snapshot / status_changed
 
     loop Progress events
         Primary-->>GW: SessionEvent(progress)
-        GW-->>UI: {"type": "progress", "phase": "...", "message": "..."}
+        GW-->>UI: event: progress
     end
 
     Primary-->>GW: SessionEvent(result)
-    GW-->>UI: {"type": "result", ...}
-    GW-->>UI: {"type": "closed"}
+    GW-->>UI: event: result
 ```
 
 #### Hook State Machine
@@ -129,7 +132,7 @@ idle → connecting → cloning → checking → complete
 | State | Meaning |
 |-------|---------|
 | `idle` | No operation in progress |
-| `connecting` | WebSocket connecting |
+| `connecting` | REST start accepted; SSE stream connecting |
 | `cloning` | Gateway cloning the project repo |
 | `checking` | Scan/fix pipeline running |
 | `awaiting_approval` | AI proposals ready for review |
@@ -137,26 +140,27 @@ idle → connecting → cloning → checking → complete
 | `complete` | Operation finished |
 | `error` | Operation failed |
 
-#### Message Protocol (Browser → Gateway)
+#### Control Plane (Browser → Gateway REST)
 
-| Message | Purpose |
+| Request | Purpose |
 |---------|---------|
-| `{"type": "start", "remediate": bool, "options": {...}}` | Start check/remediate |
-| `{"type": "approve", "approved_ids": [...]}` | Approve AI proposals |
-| `{"type": "cancel"}` | Cancel operation |
+| `POST /operation` `{"action": "check"\|"remediate", "options": {...}}` | Start check/remediate |
+| `POST /operation/approve` `{"approved_ids": [...]}` | Approve AI proposals |
+| `POST /operation/begin-remediate` | Continue after assess pause |
+| `POST /operation/cancel` | Cancel operation |
 
-#### Message Protocol (Gateway → Browser)
+#### Event Plane (Gateway → Browser SSE)
 
-| Message | Purpose |
-|---------|---------|
-| `{"type": "cloning"}` | Repo clone in progress |
-| `{"type": "started", "scan_id": "..."}` | Pipeline started |
-| `{"type": "progress", "phase": "...", "message": "...", "level": N}` | Pipeline progress |
-| `{"type": "proposals", "proposals": [...]}` | AI proposals ready |
-| `{"type": "approval_ack", "applied_count": N}` | Approvals applied |
-| `{"type": "result", "total_violations": N, ...}` | Final results |
-| `{"type": "error", "message": "..."}` | Error occurred |
-| `{"type": "closed"}` | Session finished |
+| SSE event | Purpose |
+|-----------|---------|
+| `snapshot` | Full operation state on connect |
+| `status_changed` | Lifecycle status transition |
+| `progress` | Pipeline progress entry |
+| `proposals` | AI proposals ready |
+| `findings` | Assessment findings (ADR-064) |
+| `approval_ack` | Approvals applied |
+| `result` | Final results |
+| `error_event` | Operation failed |
 
 ### Playground Sessions
 
@@ -211,13 +215,13 @@ It uses tabs to organize functionality:
 
 ### OperationProgressPanel
 Renders real-time progress entries during check/remediate. Shows phase
-badges and messages streaming in as `progress` WebSocket events arrive.
+badges and messages streaming in as SSE `progress` events arrive.
 Includes a cancel button.
 
 ### ProposalReviewPanel
 Displays AI proposals with diff hunks, rule IDs, confidence scores, and
 explanations. Users can approve/reject individual proposals or
-accept/skip all. Sends `approve` message via WebSocket.
+accept/skip all. Sends approve via `POST /operation/approve`.
 
 ### OperationResultCard
 Shows the final operation summary: total violations, fixed count, AI
@@ -235,17 +239,17 @@ session.
 
 ```mermaid
 flowchart TD
-    A[User clicks Check] --> B[useProjectWorkflow.startOperation]
-    B --> C[WebSocket connect to /projects/{id}/ws/operate]
-    C --> D[Send start message with options]
+    A[User clicks Check] --> B[useProjectWorkflow.startScan]
+    B --> C[POST /projects/{id}/operation]
+    C --> D[GET /projects/{id}/operation/events SSE]
     D --> E[Gateway clones repo]
     E --> F[Gateway opens FixSession to Primary]
-    F --> G[Progress events stream to UI]
+    F --> G[Progress events stream to UI via SSE]
     G --> H{AI proposals?}
     H -->|Yes| I[ProposalReviewPanel shown]
     I --> J[User approves/rejects]
-    J --> K[approve message sent via WS]
-    H -->|No| L[Result received]
+    J --> K[POST /operation/approve]
+    H -->|No| L[result SSE event]
     K --> L
     L --> M[OperationResultCard displayed]
     M --> N[fetchData refreshes project state]
@@ -271,8 +275,9 @@ Container: apme-ui (:8081)
 
 Nginx handles:
 - Static file serving for the SPA
-- Reverse proxying `/api/*` requests to the Gateway
-- WebSocket upgrade for `/api/v1/ws/*` and `/api/v1/projects/*/ws/*`
+- Reverse proxying `/api/*` requests to the Gateway (including SSE for
+  `/api/v1/projects/*/operation/events`)
+- WebSocket upgrade for Playground sessions (`/api/v1/ws/*`)
 - SPA fallback (all non-asset routes serve `index.html`)
 
 ## Key Source Files

@@ -24,6 +24,8 @@ pip install apme-engine@git+https://github.com/ansible/apme.git@main
 ```
 
 Replace the tag with any [release version](https://github.com/ansible/apme/releases).
+CLI git tags and Helm chart `appVersion` are independent channels — a newer
+CLI release does not imply the Helm repo has published matching images yet.
 
 ### Requirements
 

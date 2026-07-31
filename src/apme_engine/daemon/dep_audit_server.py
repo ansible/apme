@@ -6,6 +6,7 @@ Follows the Gitleaks optional-validator pattern.
 """
 
 import asyncio
+import contextvars
 import logging
 import os
 import time
@@ -79,8 +80,10 @@ class DepAuditValidatorServicer(validate_pb2_grpc.ValidatorServicer):
 
                 logger.info("Dep audit: validate start (venv=%s, req=%s)", venv_path, req_id)
 
+                ctx = contextvars.copy_context()
                 violations = await asyncio.get_running_loop().run_in_executor(
                     None,
+                    ctx.run,
                     _run_audit,
                     venv_path,
                 )
@@ -120,7 +123,7 @@ class DepAuditValidatorServicer(validate_pb2_grpc.ValidatorServicer):
                 )
             except Exception as e:
                 logger.exception("Dep audit: unhandled error (req=%s): %s", req_id, e)
-                return infra_error_response(req_id, str(e), sink.entries)
+                return infra_error_response(req_id, sink.entries)
 
     async def Health(
         self,

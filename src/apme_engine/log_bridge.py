@@ -8,7 +8,12 @@ This module provides a custom handler that:
    ``CollectorSink`` (validators, Primary ``Format`` RPC, etc.)
 
 The active sink is tracked via ``contextvars`` so concurrent requests each
-get their own log collection without interference.
+get their own log collection without interference. Blocking validator work
+handed to ``run_in_executor`` must capture the context on the event-loop
+thread first::
+
+    ctx = contextvars.copy_context()
+    await loop.run_in_executor(None, ctx.run, blocking_fn, *args)
 """
 
 from __future__ import annotations

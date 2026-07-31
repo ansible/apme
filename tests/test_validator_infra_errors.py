@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-import pytest
-
 from apme.v1 import validate_pb2
+from apme_engine.daemon.validator_errors import PUBLIC_VALIDATOR_ERROR, RULE_VALIDATOR_FAILURE
 
 
 class FakeGrpcContext:
@@ -28,7 +27,7 @@ class FakeGrpcContext:
 
 
 async def test_native_validator_returns_infra_violation_on_error() -> None:
-    """Unhandled native validator errors surface as INFRA-002 violations."""
+    """Unhandled native validator errors surface as R902 with a fixed message."""
     from apme_engine.daemon.native_validator_server import NativeValidatorServicer
 
     request = validate_pb2.ValidateRequest(
@@ -44,8 +43,9 @@ async def test_native_validator_returns_infra_violation_on_error() -> None:
         resp = await servicer.Validate(request, FakeGrpcContext())  # type: ignore[arg-type]
 
     assert len(resp.violations) == 1  # type: ignore[attr-defined]
-    assert resp.violations[0].rule_id == "INFRA-002"  # type: ignore[attr-defined]
-    assert "graph exploded" in resp.violations[0].message  # type: ignore[attr-defined]
+    assert resp.violations[0].rule_id == RULE_VALIDATOR_FAILURE  # type: ignore[attr-defined]
+    assert resp.violations[0].message == PUBLIC_VALIDATOR_ERROR  # type: ignore[attr-defined]
+    assert "graph exploded" not in resp.violations[0].message  # type: ignore[attr-defined]
 
 
 def test_sse_format_serializes_event() -> None:

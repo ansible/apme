@@ -6,6 +6,7 @@ subset of APME's native rules.  Findings are scoped to
 """
 
 import asyncio
+import contextvars
 import logging
 import os
 import time
@@ -81,8 +82,10 @@ class CollectionHealthValidatorServicer(validate_pb2_grpc.ValidatorServicer):
                     req_id,
                 )
 
+                ctx = contextvars.copy_context()
                 violations = await asyncio.get_running_loop().run_in_executor(
                     None,
+                    ctx.run,
                     _run_scan,
                     venv_path,
                     False,
@@ -123,7 +126,7 @@ class CollectionHealthValidatorServicer(validate_pb2_grpc.ValidatorServicer):
                 )
             except Exception as e:
                 logger.exception("Collection health: unhandled error (req=%s): %s", req_id, e)
-                return infra_error_response(req_id, str(e), sink.entries)
+                return infra_error_response(req_id, sink.entries)
 
     async def Health(
         self,
