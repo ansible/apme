@@ -5,13 +5,15 @@ reaping).  This validator receives a ready-to-use ``venv_path`` in every
 ``ValidateRequest`` and runs Ansible rules against it read-only.
 """
 
+from __future__ import annotations
+
 import asyncio
 import contextlib
+import contextvars
 import json
 import logging
 import os
 import shutil
-import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,6 +24,13 @@ import grpc.aio
 from apme.v1 import common_pb2, validate_pb2, validate_pb2_grpc
 from apme.v1.common_pb2 import File, HealthResponse, RuleTiming, ValidatorDiagnostics
 from apme.v1.validate_pb2 import ValidateRequest, ValidateResponse
+from apme_engine.daemon.fs_utils import write_chunked_fs
+from apme_engine.daemon.validator_errors import (
+    PUBLIC_VALIDATOR_ERROR,
+    RULE_MISSING_VENV,
+    infra_error_response,
+    infra_violation,
+)
 from apme_engine.daemon.violation_convert import violation_dict_to_proto
 from apme_engine.engine.models import ViolationDict, YAMLDict
 from apme_engine.log_bridge import attach_collector
@@ -45,23 +54,6 @@ class _AnsibleResult:
 
     run_result: AnsibleRunResult
     ansible_core_version: str = ""
-
-
-def _write_chunked_fs(files: list[File]) -> Path:
-    """Write request.files into a temp directory; return path to that directory.
-
-    Args:
-        files: List of File protos with path and content.
-
-    Returns:
-        Path to the created temp directory.
-    """
-    tmp = Path(tempfile.mkdtemp(prefix="apme_ansible_val_"))
-    for f in files:
-        path = tmp / f.path
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(f.content)
-    return tmp
 
 
 def _run_ansible_validate(
@@ -89,18 +81,14 @@ def _run_ansible_validate(
     venv_root = Path(venv_path) if venv_path else None
 
     try:
-        temp_dir = _write_chunked_fs(files)
+        temp_dir = write_chunked_fs(list(files), prefix="apme_ansible_val_")
 
         if venv_root is None:
             logger.warning("Ansible: no venv_path provided, skipping (req=%s)", req_id)
-            err_viol: ViolationDict = {
-                "rule_id": "INFRA-001",
-                "severity": "error",
-                "message": "No session venv provided by Primary orchestrator",
-                "file": "",
-                "line": 1,
-                "path": "",
-            }
+            err_viol = infra_violation(
+                "No session venv provided by Primary orchestrator",
+                rule_id=RULE_MISSING_VENV,
+            )
             return _AnsibleResult(
                 run_result=AnsibleRunResult(violations=[err_viol]),  # type: ignore[list-item]
                 ansible_core_version=raw_version,
@@ -120,14 +108,7 @@ def _run_ansible_validate(
         )
     except Exception as e:
         logger.exception("Ansible: error in blocking executor (req=%s): %s", req_id, e)
-        err_viol_exc: ViolationDict = {
-            "rule_id": "INFRA-002",
-            "severity": "error",
-            "message": str(e),
-            "file": "",
-            "line": 1,
-            "path": "",
-        }
+        err_viol_exc = infra_violation(PUBLIC_VALIDATOR_ERROR)
         return _AnsibleResult(
             run_result=AnsibleRunResult(violations=[err_viol_exc]),  # type: ignore[list-item]
             ansible_core_version=raw_version,
@@ -174,9 +155,11 @@ class AnsibleValidatorServicer(validate_pb2_grpc.ValidatorServicer):
                     req_id,
                 )
 
+                ctx = contextvars.copy_context()
                 result = await asyncio.get_event_loop().run_in_executor(
                     None,
-                    _run_ansible_validate,  # type: ignore[arg-type]
+                    ctx.run,  # type: ignore[arg-type]
+                    _run_ansible_validate,
                     list(request.files),
                     raw_version,
                     hierarchy_payload,
@@ -227,7 +210,7 @@ class AnsibleValidatorServicer(validate_pb2_grpc.ValidatorServicer):
                 )
             except Exception as e:
                 logger.exception("Ansible: unhandled error (req=%s): %s", req_id, e)
-                return ValidateResponse(violations=[], request_id=req_id, logs=sink.entries)
+                return infra_error_response(req_id, sink.entries)
 
     async def Health(
         self,

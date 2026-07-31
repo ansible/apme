@@ -6,6 +6,7 @@ files are written.
 """
 
 import asyncio
+import contextvars
 import json
 import logging
 import os
@@ -18,6 +19,7 @@ import grpc.aio
 from apme.v1 import common_pb2, validate_pb2_grpc
 from apme.v1.common_pb2 import File, HealthResponse, RuleTiming, ValidatorDiagnostics
 from apme.v1.validate_pb2 import ValidateRequest, ValidateResponse
+from apme_engine.daemon.validator_errors import infra_error_response
 from apme_engine.daemon.violation_convert import violation_dict_to_proto
 from apme_engine.engine.models import ViolationDict
 from apme_engine.log_bridge import attach_collector
@@ -109,21 +111,6 @@ def _run_scan(
     return run_gitleaks_nodes(nodes), len(nodes)
 
 
-def _get_gitleaks_version() -> str:
-    """Attempt to get gitleaks version string (best-effort).
-
-    Returns:
-        Version string from gitleaks --version, or "unknown" on failure.
-    """
-    import subprocess as _sp
-
-    try:
-        r = _sp.run([GITLEAKS_BIN, "version"], capture_output=True, text=True, timeout=5)
-        return r.stdout.strip() if r.returncode == 0 else "unknown"
-    except Exception:
-        return "unknown"
-
-
 class GitleaksValidatorServicer(validate_pb2_grpc.ValidatorServicer):
     """Async gRPC adapter: runs gitleaks in executor thread."""
 
@@ -155,9 +142,11 @@ class GitleaksValidatorServicer(validate_pb2_grpc.ValidatorServicer):
                     req_id,
                 )
 
+                ctx = contextvars.copy_context()
                 violations, node_count = await asyncio.get_event_loop().run_in_executor(
                     None,
-                    _run_scan,  # type: ignore[arg-type]
+                    ctx.run,  # type: ignore[arg-type]
+                    _run_scan,
                     bytes(request.content_graph_data),
                     list(request.files),
                 )
@@ -190,9 +179,9 @@ class GitleaksValidatorServicer(validate_pb2_grpc.ValidatorServicer):
                     diagnostics=diag,
                     logs=sink.entries,
                 )
-            except Exception as e:
-                logger.exception("Gitleaks: unhandled error (req=%s): %s", req_id, e)
-                return ValidateResponse(violations=[], request_id=req_id, logs=sink.entries)
+            except Exception:
+                logger.error("Gitleaks: unhandled error (req=%s): [REDACTED]", req_id)
+                return infra_error_response(req_id, sink.entries)
 
     async def Health(
         self,

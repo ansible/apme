@@ -73,6 +73,7 @@ from apme.v1.reporting_pb2 import (
 )
 from apme.v1.validate_pb2 import ValidateRequest
 from apme_engine.daemon.event_emitter import emit_fix_completed, emit_register_rules, start_sinks
+from apme_engine.daemon.fs_utils import write_chunked_fs as _write_chunked_fs
 from apme_engine.daemon.session import ResourceExhaustedError, SessionState, SessionStore
 from apme_engine.daemon.violation_convert import violation_dict_to_proto, violation_proto_to_dict
 from apme_engine.engine.models import RemediationClass, ViolationDict
@@ -430,34 +431,6 @@ def _attach_snippets(violations: list[ViolationDict], files: list[File]) -> None
         v["snippet"] = "\n".join(numbered)
 
 
-def _write_chunked_fs(files: list[File]) -> Path:
-    """Write request.files into a temp directory; return path to that directory.
-
-    File paths are sanitised: absolute paths and ``..`` segments are rejected
-    to prevent writes outside the temp directory.
-
-    Args:
-        files: List of File protos with path and content.
-
-    Returns:
-        Path to the created temp directory.
-
-    Raises:
-        ValueError: If a file path is absolute or escapes the temp root.
-    """
-    tmp = Path(tempfile.mkdtemp(prefix="apme_primary_")).resolve()
-    for f in files:
-        rel = Path(f.path)
-        if rel.is_absolute() or ".." in rel.parts:
-            raise ValueError(f"Unsafe file path rejected: {f.path!r}")
-        path = (tmp / rel).resolve()
-        if not path.is_relative_to(tmp):
-            raise ValueError(f"Path escapes temp root: {f.path!r}")
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(f.content)
-    return tmp
-
-
 async def _call_validator(
     address: str,
     request: ValidateRequest,
@@ -608,6 +581,41 @@ def _classify_collections(
             source = "dependency"
         result.append((fqcn, version, source, lic, supplier))
     return result
+
+
+def _file_proto_from_path(fp: str, temp_dir: Path) -> File:
+    """Read a file from disk and return a relative-path File proto.
+
+    Args:
+        fp: Absolute or relative path to read.
+        temp_dir: Session temp root for relative path computation.
+
+    Returns:
+        File proto with path relative to ``temp_dir`` when possible.
+    """
+    p = Path(fp)
+    rel = str(p.relative_to(temp_dir)) if p.is_absolute() else fp
+    return File(path=rel, content=p.read_bytes())
+
+
+def _load_yaml_originals(yaml_paths: list[str], temp_dir: Path) -> dict[str, str]:
+    """Load YAML file contents keyed by absolute and relative paths.
+
+    Args:
+        yaml_paths: Paths to YAML files on disk.
+        temp_dir: Session temp root for relative keys.
+
+    Returns:
+        Mapping of path strings to file text.
+    """
+    originals: dict[str, str] = {}
+    for yp in yaml_paths:
+        with contextlib.suppress(OSError):
+            content = Path(yp).read_text(encoding="utf-8")
+            originals[yp] = content
+            with contextlib.suppress(ValueError):
+                originals[str(Path(yp).relative_to(temp_dir))] = content
+    return originals
 
 
 def _build_manifest(session: SessionState) -> ProjectManifest:
@@ -1635,16 +1643,17 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
 
         async def async_scan_fn(file_paths: list[str]) -> list[ViolationDict]:
             nonlocal manifest_captured
-            rel_files = []
-            for fp in file_paths:
-                p = Path(fp)
-                rel = str(p.relative_to(temp_dir)) if p.is_absolute() else fp
-                rel_files.append(File(path=rel, content=p.read_bytes()))
+            loop = asyncio.get_running_loop()
+            rel_files = list(
+                await asyncio.gather(
+                    *[loop.run_in_executor(None, _file_proto_from_path, fp, temp_dir) for fp in file_paths]
+                )
+            )
             (
                 violations,
                 _,
                 _,
-                _,
+                validator_logs,
                 _hierarchy_payload,
                 venv_sess,
                 req_files,
@@ -1665,6 +1674,9 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                 skip_validators=frozenset(skip_validators),
             )
 
+            for batch in validator_logs:
+                session.progress_logs.extend(batch)
+
             if graph_obj is not None:
                 captured_graph[0] = graph_obj
 
@@ -1673,15 +1685,25 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
 
             if not manifest_captured and venv_sess is not None:
                 manifest_captured = True
-                session.ansible_core_version = venv_sess.ansible_version
-                session.installed_collections = _classify_collections(
-                    list_installed_collections(venv_sess.venv_root),
-                    specified_fqcns,
-                    learned_fqcns,
+                av, cols, pkgs, tree, reqs = await loop.run_in_executor(
+                    None,
+                    lambda: (
+                        venv_sess.ansible_version,
+                        _classify_collections(
+                            list_installed_collections(venv_sess.venv_root),
+                            specified_fqcns,
+                            learned_fqcns,
+                        ),
+                        list_installed_packages(venv_sess.venv_root),
+                        get_dependency_tree(venv_sess.venv_root),
+                        req_files,
+                    ),
                 )
-                session.installed_packages = list_installed_packages(venv_sess.venv_root)
-                session.dependency_tree = get_dependency_tree(venv_sess.venv_root)
-                session.requirements_files = req_files
+                session.ansible_core_version = av
+                session.installed_collections = cols
+                session.installed_packages = pkgs
+                session.dependency_tree = tree
+                session.requirements_files = reqs
 
             return violations
 
@@ -1777,13 +1799,8 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             )
             graph = ContentGraph()
 
-        originals: dict[str, str] = {}
-        for yp in yaml_paths:
-            with contextlib.suppress(OSError):
-                content = Path(yp).read_text(encoding="utf-8")
-                originals[yp] = content
-                with contextlib.suppress(ValueError):
-                    originals[str(Path(yp).relative_to(temp_dir))] = content
+        loop = asyncio.get_running_loop()
+        originals = await loop.run_in_executor(None, _load_yaml_originals, yaml_paths, temp_dir)
 
         # 2. Convergence: all validators on dirty nodes via gRPC
         rules = load_graph_rules(rules_dir=native_rules_dir())

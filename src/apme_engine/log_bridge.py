@@ -4,22 +4,24 @@ All subsystems use standard ``logging.getLogger("apme.<subsystem>")``.
 This module provides a custom handler that:
 
 1. Always writes to stderr (daemon.log in daemon mode, container log in pod mode)
-2. Conditionally collects ``ProgressUpdate`` protos into a per-request sink
-   (``CollectorSink`` for unary RPCs, ``StreamSink`` for FixSession streaming)
+2. Conditionally collects ``ProgressUpdate`` protos into a per-request
+   ``CollectorSink`` (validators, Primary ``Format`` RPC, etc.)
 
 The active sink is tracked via ``contextvars`` so concurrent requests each
-get their own log collection without interference.
+get their own log collection without interference. Blocking validator work
+handed to ``run_in_executor`` must capture the context on the event-loop
+thread first::
+
+    ctx = contextvars.copy_context()
+    await loop.run_in_executor(None, ctx.run, blocking_fn, *args)
 """
 
 from __future__ import annotations
 
-import asyncio
-import contextlib
 import contextvars
 import logging
 import sys
 import threading
-from collections.abc import Sequence
 
 from apme.v1.common_pb2 import ProgressUpdate
 
@@ -55,7 +57,7 @@ class CollectorSink(LogSink):
     """Thread-safe sink that appends entries to a list.
 
     Used by validators (per ``Validate()`` call) and by Primary for
-    unary RPCs (``Scan``, ``Format``).
+    unary RPCs such as ``Format``.
     """
 
     def __init__(self) -> None:
@@ -83,37 +85,6 @@ class CollectorSink(LogSink):
             return list(self._entries)
 
 
-class StreamSink(LogSink):
-    """Async-safe sink backed by an ``asyncio.Queue``.
-
-    Designed for ``FixSession`` streaming — once wired, the RPC handler
-    would drain the queue and yield ``SessionEvent(progress=...)`` messages.
-
-    .. note::
-
-        Not yet wired into FixSession.  Currently FixSession manually
-        constructs ``ProgressUpdate`` events.  This sink is forward-looking
-        infrastructure for when FixSession adopts the log bridge.
-    """
-
-    def __init__(self, queue: asyncio.Queue[ProgressUpdate]) -> None:
-        """Initialize with an asyncio queue for log entry delivery.
-
-        Args:
-            queue: Async queue that the RPC handler drains.
-        """
-        self._queue = queue
-
-    def emit(self, entry: ProgressUpdate) -> None:
-        """Enqueue a log entry for streaming delivery (drops on full queue).
-
-        Args:
-            entry: ProgressUpdate proto to enqueue.
-        """
-        with contextlib.suppress(asyncio.QueueFull):
-            self._queue.put_nowait(entry)
-
-
 _current_sink: contextvars.ContextVar[LogSink | None] = contextvars.ContextVar("apme_log_sink", default=None)
 
 
@@ -133,27 +104,6 @@ class _AttachCollector:
             _current_sink.reset(self._token)
 
 
-class _AttachStream:
-    """Context manager that sets a ``StreamSink`` for the current context."""
-
-    def __init__(self, queue: asyncio.Queue[ProgressUpdate]) -> None:
-        """Initialize with an asyncio queue for stream sink delivery.
-
-        Args:
-            queue: Async queue passed to the underlying ``StreamSink``.
-        """
-        self.sink = StreamSink(queue)
-        self._token: contextvars.Token[LogSink | None] | None = None
-
-    def __enter__(self) -> StreamSink:
-        self._token = _current_sink.set(self.sink)
-        return self.sink
-
-    def __exit__(self, *exc: object) -> None:
-        if self._token is not None:
-            _current_sink.reset(self._token)
-
-
 def attach_collector() -> _AttachCollector:
     """Return a context manager that installs a ``CollectorSink``.
 
@@ -161,18 +111,6 @@ def attach_collector() -> _AttachCollector:
         Context manager yielding the ``CollectorSink``.
     """
     return _AttachCollector()
-
-
-def attach_stream_sink(queue: asyncio.Queue[ProgressUpdate]) -> _AttachStream:
-    """Return a context manager that installs a ``StreamSink``.
-
-    Args:
-        queue: Async queue for log entry delivery.
-
-    Returns:
-        Context manager yielding the ``StreamSink``.
-    """
-    return _AttachStream(queue)
 
 
 def _derive_phase(logger_name: str) -> str:
@@ -259,25 +197,3 @@ def install_handler() -> None:
         root.removeHandler(h)
 
     root.addHandler(RequestLogHandler())
-
-
-def merge_logs(
-    primary_logs: list[ProgressUpdate],
-    validator_logs: Sequence[list[ProgressUpdate]],
-) -> list[ProgressUpdate]:
-    """Merge Primary's own logs with logs returned by each validator.
-
-    Preserves insertion order: Primary logs come first, followed by each
-    validator's logs in the order validators were called.
-
-    Args:
-        primary_logs: Logs collected in the Primary's own sink.
-        validator_logs: One list per validator, from ``ValidateResponse.logs``.
-
-    Returns:
-        Combined list suitable for ``ScanResponse.logs``.
-    """
-    merged = list(primary_logs)
-    for vl in validator_logs:
-        merged.extend(vl)
-    return merged

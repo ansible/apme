@@ -1,4 +1,4 @@
-# OPA validator: gRPC wrapper over OPA REST API.
+# OPA validator: gRPC service; evaluates Rego via ``opa eval`` subprocess.
 # Multi-stage: copies the OPA binary from the official image.
 ARG BASE_IMAGE=localhost/apme-base:latest
 FROM docker.io/openpolicyagent/opa:1.17.1 AS opa-bin

@@ -200,9 +200,9 @@ SEVERITY_DEFAULTS: dict[str, Severity] = {
     "P004": Severity.ERROR,
     # ── Gitleaks (all secrets are critical) ─────────────────────────────
     # SEC:* rules get CRITICAL; handled via prefix match in get_severity()
-    # ── Infrastructure / meta rules ─────────────────────────────────────
-    "INFRA-001": Severity.ERROR,
-    "INFRA-002": Severity.ERROR,
+    # ── Validator infrastructure (ADR-008 Risk range R9xx) ───────────────
+    "R901": Severity.ERROR,  # Missing session venv precondition
+    "R902": Severity.ERROR,  # Validator runtime / infrastructure failure
     # ── AAP-specific rules ──────────────────────────────────────────────
     "A001": Severity.MEDIUM,  # Hardcoded template IDs — portability issue
     "A002": Severity.HIGH,  # Deprecated APIs — imminent breakage in AAP 2.7

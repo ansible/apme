@@ -106,9 +106,15 @@ Validator fan-out uses gRPC; Galaxy Proxy is HTTP (PEP 503). The engine parses c
 ### Try it now
 
 ```bash
-pip install apme-engine@git+https://github.com/ansible/apme.git@v2026.4.1
+pip install apme-engine@git+https://github.com/ansible/apme.git@v2026.8.2
 apme check /path/to/your/project
 ```
+
+CLI package tags (PyPI / git tags such as `v2026.8.2`) and Helm chart
+`appVersion` / image tags are **independent release channels** — the latest
+CLI tag may be newer than the chart published at
+`https://ansible.github.io/apme`. Pin each channel explicitly for your
+environment; see the [Helm Guide](deploy/helm/apme/README.md) for chart versions.
 
 The CLI automatically starts a local daemon with core validators (Native, OPA, Ansible) and Galaxy Proxy — no full pod required. OPA uses a Podman container by default; set `OPA_USE_PODMAN=0` to use a local `opa` binary, or it is skipped if neither is available. Optional validators (Gitleaks, Collection Health, Dep Audit) are not started by the daemon. See the [CLI Guide](docs/guides/CLI.md) for full usage, CI integration, and limitations compared to deployment methods.
 

@@ -14,16 +14,18 @@ available).
 
 ```bash
 # Install a specific release (recommended)
-pip install apme-engine@git+https://github.com/ansible/apme.git@v2026.4.1
+pip install apme-engine@git+https://github.com/ansible/apme.git@v2026.8.2
 
 # Install with AI escalation support (requires Abbenay daemon)
-pip install "apme-engine[ai] @ git+https://github.com/ansible/apme.git@v2026.4.1"
+pip install "apme-engine[ai] @ git+https://github.com/ansible/apme.git@v2026.8.2"
 
 # Install the latest development version (main branch)
 pip install apme-engine@git+https://github.com/ansible/apme.git@main
 ```
 
 Replace the tag with any [release version](https://github.com/ansible/apme/releases).
+CLI git tags and Helm chart `appVersion` are independent channels — a newer
+CLI release does not imply the Helm repo has published matching images yet.
 
 ### Requirements
 
@@ -186,7 +188,7 @@ repos:
 
 ```yaml
 - name: Install APME
-  run: pip install apme-engine@git+https://github.com/ansible/apme.git@v2026.4.1
+  run: pip install apme-engine@git+https://github.com/ansible/apme.git@v2026.8.2
 
 - name: Run APME check
   run: apme check --sarif . > results.sarif

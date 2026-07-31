@@ -266,7 +266,7 @@ def yield_scan_chunks(
     skip_collection_health: bool = False,
     skip_dep_audit: bool = False,
 ) -> Iterator[ScanChunk]:
-    """Yield ScanChunk messages for ScanStream so the total request stays under gRPC message limits.
+    """Yield ScanChunk messages for FixSession/FormatStream so the total request stays under gRPC message limits.
 
     First chunk includes scan_id, project_root, options; subsequent chunks carry only files.
     Last chunk has last=True.

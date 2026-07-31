@@ -28,7 +28,7 @@ Only run the health-check once the pod is **Running**. Use `wait-for-pod.sh` to 
 The pod creates:
 
 - **Sessions directory** — session-scoped venvs are stored under `/sessions` in the pod. The Primary writes here (rw); the Ansible validator reads it (ro).
-- OPA bundle is mounted from **src/apme_engine/validators/opa/bundle**.
+- OPA Rego bundle is **copied into the image** at build time from `src/apme_engine/validators/opa/bundle` (no runtime volume mount).
 
 ## Run CLI commands (on-the-fly container)
 

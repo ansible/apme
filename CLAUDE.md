@@ -23,10 +23,12 @@ APME is a multi-service system that automates policy enforcement and modernizati
 │  │ Gateway :50060/:8080 │  │ UI :8081 │                              │
 │  │ REST + gRPC + DB     │  │ (nginx)  │                              │
 │  └──────────────────────┘  └──────────┘                              │
+│  Optional: Collection Health :50058, Dep Audit :50059, OTel :4318/:8889 │
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
-Full details: [architecture.md](/.sdlc/context/architecture.md) | [deployment.md](/.sdlc/context/deployment.md)
+Full pod inventory (including optional validators and observability): see
+[architecture.md](/.sdlc/context/architecture.md) and `containers/podman/pod.yaml`.
 
 ## Deployment Methods
 

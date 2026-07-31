@@ -593,12 +593,10 @@ def get_module_specs_by_ansible_doc(
     if not fqcn_list:
         return {}
     fqcn_list_str = " ".join(fqcn_list)
-    cmd_args = [f"ansible-doc {fqcn_list_str} --json"]
     _env = os.environ.copy()
     _env["ANSIBLE_COLLECTIONS_PATH"] = search_path
     proc = subprocess.run(
-        args=cmd_args,
-        shell=True,
+        ["ansible-doc", *fqcn_list, "--json"],
         stdin=subprocess.PIPE,
         capture_output=True,
         text=True,

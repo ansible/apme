@@ -50,7 +50,6 @@ _PREFIX_TO_CATEGORY: dict[str, str] = {
     "R": "risk",
     "P": "policy",
     "SEC": "secrets",
-    "INFRA": "infrastructure",
 }
 
 

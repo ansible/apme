@@ -22,12 +22,13 @@ the SPA frontend architecture, page map, and that legacy WebSocket protocol.
 
 | Layer | Technology |
 |-------|------------|
-| Framework | React 18+ with hooks |
+| Framework | React 19 with hooks |
 | UI library | PatternFly 6 (`@patternfly/react-core`) |
 | Layout | `@ansible/ansible-ui-framework` (`PageLayout`, `PageHeader`) |
-| Routing | React Router v6 |
+| Routing | React Router 8 (`react-router`) |
+| Workflow UI | `@apme/ui-workflow` (REST + SSE for project operations) |
 | HTTP client | Native `fetch` API (no axios) |
-| WebSocket | Native `WebSocket` API via custom hooks |
+| Real-time | SSE via `useProjectWorkflow`; WebSocket for Playground (`useSessionStream`) |
 | Build | Vite |
 | Deployment | nginx static file server in the pod |
 
@@ -84,12 +85,17 @@ Galaxy Servers  → listGalaxyServers(), createGalaxyServer(), updateGalaxyServe
 AI Models       → listAiModels()
 ```
 
-## WebSocket Integration
+## Project Operations (REST + SSE)
 
-### Project Operations
+`useProjectWorkflow` from `@apme/ui-workflow`
+(`frontend/packages/ui-workflow/src/useProjectWorkflow.ts`) is the primary
+React hook for check/remediate via Gateway REST + SSE (ADR-052). The
+Playground uses WebSocket via `useSessionStream` for file-upload sandbox
+sessions.
 
-`useProjectOperation` (`frontend/src/hooks/useProjectOperation.ts`) is the
-primary React hook for check/remediate operations via WebSocket:
+All routes below are under `/api/v1/projects/{project_id}/operation`. The
+Gateway resolves the active operation by `project_id` (not by embedding
+`operation_id` in the event URL).
 
 ```mermaid
 sequenceDiagram
@@ -97,71 +103,90 @@ sequenceDiagram
     participant GW as Gateway :8080
     participant Primary as Primary :50051
 
-    UI->>GW: WS /api/v1/projects/{id}/ws/operate
-    UI->>GW: {"action": "check", "options": {...}}
+    UI->>GW: POST /api/v1/projects/{project_id}/operation
+    Note right of UI: {"action": "check", "options": {...}}
+    GW-->>UI: {"operation_id": "..."}
+
+    UI->>GW: GET /api/v1/projects/{project_id}/operation/events
+    Note right of UI: fetch-stream SSE (Accept: text/event-stream)
 
     GW->>GW: Clone repo from project.repo_url
-    GW-->>UI: {"type": "cloning"}
+    GW-->>UI: event: status_changed / progress
     GW->>Primary: FixSession gRPC stream
-    GW-->>UI: {"type": "started", "scan_id": "..."}
+    GW-->>UI: event: snapshot / status_changed
 
     loop Progress events
         Primary-->>GW: SessionEvent(progress)
-        GW-->>UI: {"type": "progress", "phase": "...", "message": "..."}
+        GW-->>UI: event: progress
     end
 
     Primary-->>GW: SessionEvent(result)
-    GW-->>UI: {"type": "result", ...}
-    GW-->>UI: {"type": "closed"}
+    GW-->>UI: event: result
 ```
 
-#### Hook State Machine
+### Operation statuses (Gateway)
 
-```
-idle → connecting → cloning → checking → complete
-                                  ↓
-                         awaiting_approval → applying → complete
-                                  ↓
-                                error
+Backend `OperationStatus` values (ADR-052). The UI may map these to display
+labels (e.g. `scanning` → “checking”).
+
+```text
+queued → cloning → scanning → completed
+                      ↓
+                   assessed → awaiting_approval → applying → completed
+                      ↓              ↓
+              awaiting_ai_triage   failed / cancelled / expired
 ```
 
-| State | Meaning |
-|-------|---------|
-| `idle` | No operation in progress |
-| `connecting` | WebSocket connecting |
+| Status | Meaning |
+|--------|---------|
+| `queued` | Operation accepted, not yet running |
 | `cloning` | Gateway cloning the project repo |
-| `checking` | Scan/fix pipeline running |
-| `awaiting_approval` | AI proposals ready for review |
+| `scanning` | Engine scan / fix pipeline running |
+| `assessed` | Assessment pause; awaiting begin-remediate |
+| `awaiting_ai_triage` | AI escalation candidates ready |
+| `awaiting_approval` | Proposals ready for review |
 | `applying` | Approved proposals being applied |
-| `complete` | Operation finished |
-| `error` | Operation failed |
+| `completed` | Operation finished successfully |
+| `submitting_pr` / `pr_submitted` | PR creation in progress / done |
+| `failed` / `expired` / `cancelled` | Terminal failure or cancel |
 
-#### Message Protocol (Browser → Gateway)
+### Control Plane (Browser → Gateway REST)
 
-| Message | Purpose |
+| Request | Purpose |
 |---------|---------|
-| `{"type": "start", "remediate": bool, "options": {...}}` | Start check/remediate |
-| `{"type": "approve", "approved_ids": [...]}` | Approve AI proposals |
-| `{"type": "cancel"}` | Cancel operation |
+| `POST /api/v1/projects/{project_id}/operation` | Start check/remediate (`action` + `options`) |
+| `POST /api/v1/projects/{project_id}/operation/approve` | Submit proposal decisions (`approved_ids`) |
+| `POST /api/v1/projects/{project_id}/operation/begin-remediate` | Continue after assess pause |
+| `POST /api/v1/projects/{project_id}/operation/escalate-ai` | Continue after AI triage with selected targets |
+| `PATCH /api/v1/projects/{project_id}/operation/proposals` | Optimistic draft proposal status updates |
+| `POST /api/v1/projects/{project_id}/operation/submit` | Create commit / open PR from working set |
+| `POST /api/v1/projects/{project_id}/operation/cancel` | Cancel the in-flight operation |
+| `GET /api/v1/projects/{project_id}/operation/events` | SSE stream for the project's active operation |
 
-#### Message Protocol (Gateway → Browser)
+### Event Plane (Gateway → Browser SSE)
 
-| Message | Purpose |
-|---------|---------|
-| `{"type": "cloning"}` | Repo clone in progress |
-| `{"type": "started", "scan_id": "..."}` | Pipeline started |
-| `{"type": "progress", "phase": "...", "message": "...", "level": N}` | Pipeline progress |
-| `{"type": "proposals", "proposals": [...]}` | AI proposals ready |
-| `{"type": "approval_ack", "applied_count": N}` | Approvals applied |
-| `{"type": "result", "total_violations": N, ...}` | Final results |
-| `{"type": "error", "message": "..."}` | Error occurred |
-| `{"type": "closed"}` | Session finished |
+Events actually broadcast by `OperationRegistry` (plus `snapshot` on connect):
+
+| SSE event | Purpose |
+|-----------|---------|
+| `snapshot` | Full operation state on connect |
+| `status_changed` | Lifecycle status transition (including failures) |
+| `progress` | Pipeline progress entry |
+| `findings` | Assessment findings (ADR-064) |
+| `ai_triage` | AI escalation candidates |
+| `proposals` | AI / Tier 1 proposals ready |
+| `proposal_updated` | Draft proposal status change (ADR-062) |
+| `result` | Final results |
+| `pr_created` | Pull request URL available |
+
+Approvals and failures are reflected via `status_changed` (and updated
+`snapshot` fields), not separate `approval_ack` / `error_event` broadcasts.
 
 ### Playground Sessions
 
-The `PlaygroundPage` uses a separate WebSocket endpoint (`/ws/session`)
-via `session_client.py` on the Gateway side. The protocol differs
-slightly:
+The `PlaygroundPage` uses a separate WebSocket endpoint
+(`/api/v1/ws/session`; router-relative `/ws/session`) via `session_client.py`
+on the Gateway side. The protocol differs slightly:
 
 1. Client sends `{"type": "start", "options": {...}}` with scan options
 2. Client uploads files as `{"type": "file", "path": "...", "content": "<base64>"}`
@@ -210,13 +235,14 @@ It uses tabs to organize functionality:
 
 ### OperationProgressPanel
 Renders real-time progress entries during check/remediate. Shows phase
-badges and messages streaming in as `progress` WebSocket events arrive.
+badges and messages streaming in as SSE `progress` events arrive.
 Includes a cancel button.
 
 ### ProposalReviewPanel
 Displays AI proposals with diff hunks, rule IDs, confidence scores, and
 explanations. Users can approve/reject individual proposals or
-accept/skip all. Sends `approve` message via WebSocket.
+accept/skip all. Sends approve via
+`POST /api/v1/projects/{project_id}/operation/approve`.
 
 ### OperationResultCard
 Shows the final operation summary: total violations, fixed count, AI
@@ -234,17 +260,17 @@ session.
 
 ```mermaid
 flowchart TD
-    A[User clicks Check] --> B[useProjectOperation.startOperation]
-    B --> C[WebSocket connect to /projects/{id}/ws/operate]
-    C --> D[Send start message with options]
+    A[User clicks Check] --> B[useProjectWorkflow.startScan]
+    B --> C[POST /api/v1/projects/{project_id}/operation]
+    C --> D[GET /api/v1/projects/{project_id}/operation/events SSE]
     D --> E[Gateway clones repo]
     E --> F[Gateway opens FixSession to Primary]
-    F --> G[Progress events stream to UI]
+    F --> G[Progress events stream to UI via SSE]
     G --> H{AI proposals?}
     H -->|Yes| I[ProposalReviewPanel shown]
     I --> J[User approves/rejects]
-    J --> K[approve message sent via WS]
-    H -->|No| L[Result received]
+    J --> K[POST /api/v1/projects/{project_id}/operation/approve]
+    H -->|No| L[result SSE event]
     K --> L
     L --> M[OperationResultCard displayed]
     M --> N[fetchData refreshes project state]
@@ -270,8 +296,9 @@ Container: apme-ui (:8081)
 
 Nginx handles:
 - Static file serving for the SPA
-- Reverse proxying `/api/*` requests to the Gateway
-- WebSocket upgrade for `/api/v1/ws/*` and `/api/v1/projects/*/ws/*`
+- Reverse proxying `/api/*` requests to the Gateway (including SSE for
+  `/api/v1/projects/*/operation/events`)
+- WebSocket upgrade for Playground sessions (`/api/v1/ws/session`)
 - SPA fallback (all non-asset routes serve `index.html`)
 
 ## Key Source Files
@@ -279,7 +306,7 @@ Nginx handles:
 | File | Purpose |
 |------|---------|
 | `frontend/src/services/api.ts` | Typed REST API client |
-| `frontend/src/hooks/useProjectOperation.ts` | WebSocket hook for project operations |
+| `frontend/packages/ui-workflow/src/useProjectWorkflow.ts` | SSE hook for project operations |
 | `frontend/src/pages/ProjectDetailPage.tsx` | Main project interaction page |
 | `frontend/src/pages/DashboardPage.tsx` | Cross-project dashboard |
 | `frontend/src/pages/PlaygroundPage.tsx` | File-upload sandbox |

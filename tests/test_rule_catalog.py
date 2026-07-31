@@ -34,7 +34,7 @@ from apme_gateway.grpc_reporting.servicer import ReportingServicer
         ("R101", "risk"),
         ("P001", "policy"),
         ("SEC:generic-api-key", "secrets"),
-        ("INFRA-001", "infrastructure"),
+        ("R901", "risk"),
         ("X999-unknown", "unknown"),
     ],
 )
