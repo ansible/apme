@@ -656,12 +656,12 @@ class AbbenayProvider:
             from apme_engine.remediation.abbenay_client_factory import (  # noqa: PLC0415
                 build_abbenay_client,
             )
+
+            self._client: object = build_abbenay_client(addr)
         except ImportError:
             raise ImportError(
                 "AI escalation requires the 'ai' extra.\nInstall with: pip install apme-engine[ai]"
             ) from None
-
-        self._client: object = build_abbenay_client(addr)
         self._addr = addr
         self._token = token
         self._model = model

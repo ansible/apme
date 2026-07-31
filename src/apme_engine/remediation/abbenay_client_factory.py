@@ -16,7 +16,8 @@ import grpc
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_CA_CERT = "/tmp/abbenay-run/abbenay/tls/ca.crt"
+_TLS_CA_RELATIVE = os.path.join("abbenay", "tls", "ca.crt")
+_LEGACY_RUNTIME_DIR = "/tmp/abbenay-run"
 _DEFAULT_SSL_TARGET_NAME = "abbenay-grpc"
 
 
@@ -52,9 +53,11 @@ def resolve_abbenay_tls_config(addr: str) -> AbbenayTlsConfig:
     ca_cert = os.environ.get("APME_ABBENAY_CA_CERT", "").strip() or None
     ssl_target_name = os.environ.get("APME_ABBENAY_SSL_TARGET_NAME", _DEFAULT_SSL_TARGET_NAME).strip()
 
-    if not explicit_tls and ca_cert is None and _is_tcp_addr(addr) and os.path.isfile(_DEFAULT_CA_CERT):
-        ca_cert = _DEFAULT_CA_CERT
-        explicit_tls = True
+    if not explicit_tls and ca_cert is None and _is_tcp_addr(addr):
+        discovered = _discover_default_ca_cert()
+        if discovered is not None:
+            ca_cert = discovered
+            explicit_tls = True
 
     enabled = explicit_tls or ca_cert is not None
     return AbbenayTlsConfig(enabled=enabled, ca_cert=ca_cert, ssl_target_name=ssl_target_name)
@@ -102,6 +105,47 @@ def build_abbenay_client(addr: str) -> object:
 
 def _is_tcp_addr(addr: str) -> bool:
     return not addr.startswith("unix://") and bool(addr)
+
+
+def _default_ca_cert_candidates() -> list[str]:
+    candidates: list[str] = []
+    xdg = os.environ.get("XDG_RUNTIME_DIR", "").strip()
+    if xdg:
+        candidates.append(os.path.join(xdg, _TLS_CA_RELATIVE))
+    legacy = os.path.join(_LEGACY_RUNTIME_DIR, _TLS_CA_RELATIVE)
+    if legacy not in candidates:
+        candidates.append(legacy)
+    return candidates
+
+
+def _is_trusted_ca_cert(path: str) -> bool:
+    """Return True when ``path`` is a CA file owned by us and not group/world-writable.
+
+    Args:
+        path: Candidate CA PEM path.
+
+    Returns:
+        Whether the file is safe to trust as a TLS CA.
+    """
+    try:
+        file_stat = os.stat(path)
+    except OSError:
+        return False
+    if file_stat.st_uid not in {os.getuid(), 0}:
+        return False
+    return (file_stat.st_mode & 0o022) == 0
+
+
+def _discover_default_ca_cert() -> str | None:
+    """Return the first trusted auto-generated Abbenay CA path, if any.
+
+    Returns:
+        Trusted CA path, or None when no candidate is safe.
+    """
+    for candidate in _default_ca_cert_candidates():
+        if os.path.isfile(candidate) and _is_trusted_ca_cert(candidate):
+            return candidate
+    return None
 
 
 def _parse_addr_kwargs(addr: str) -> dict[str, str | int]:
@@ -218,4 +262,5 @@ class _TlsAbbenayClient:
         await self._delegate.disconnect()
 
     async def reconnect(self) -> None:
-        await self._delegate.reconnect()
+        # Delegate reconnect() uses insecure_channel; route through TLS connect().
+        await self.connect()

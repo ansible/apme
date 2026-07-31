@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import os
+import stat
 import sys
-from unittest.mock import patch
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from apme_engine.remediation.abbenay_client_factory import (
+    _discover_default_ca_cert,
+    _TlsAbbenayClient,
     build_abbenay_client,
     resolve_abbenay_tls_config,
 )
@@ -48,10 +53,47 @@ class TestResolveAbbenayTlsConfig:
         """
         monkeypatch.delenv("APME_ABBENAY_TLS", raising=False)
         monkeypatch.delenv("APME_ABBENAY_CA_CERT", raising=False)
-        with patch("apme_engine.remediation.abbenay_client_factory.os.path.isfile", return_value=True):
+        ca_path = "/tmp/abbenay-run/abbenay/tls/ca.crt"
+        trusted = os.stat_result((stat.S_IFREG | 0o644, 0, 0, 0, os.getuid(), 0, 0, 0, 0, 0))
+        with (
+            patch("apme_engine.remediation.abbenay_client_factory.os.path.isfile", return_value=True),
+            patch("apme_engine.remediation.abbenay_client_factory.os.stat", return_value=trusted),
+        ):
             cfg = resolve_abbenay_tls_config("127.0.0.1:50057")
         assert cfg.enabled is True
-        assert cfg.ca_cert == "/tmp/abbenay-run/abbenay/tls/ca.crt"
+        assert cfg.ca_cert == ca_path
+
+    def test_ignores_untrusted_default_ca(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """World-writable CA files under /tmp are not auto-trusted.
+
+        Args:
+            monkeypatch: Pytest monkeypatch fixture.
+        """
+        monkeypatch.delenv("APME_ABBENAY_TLS", raising=False)
+        monkeypatch.delenv("APME_ABBENAY_CA_CERT", raising=False)
+        untrusted = os.stat_result((stat.S_IFREG | 0o666, 0, 0, 0, os.getuid(), 0, 0, 0, 0, 0))
+        with (
+            patch("apme_engine.remediation.abbenay_client_factory.os.path.isfile", return_value=True),
+            patch("apme_engine.remediation.abbenay_client_factory.os.stat", return_value=untrusted),
+        ):
+            cfg = resolve_abbenay_tls_config("127.0.0.1:50057")
+        assert cfg.enabled is False
+
+    def test_prefers_xdg_runtime_dir_ca(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """XDG_RUNTIME_DIR CA path is preferred over the legacy /tmp fallback.
+
+        Args:
+            monkeypatch: Pytest monkeypatch fixture.
+            tmp_path: Pytest temporary directory fixture.
+        """
+        runtime = tmp_path / "runtime"
+        runtime.mkdir()
+        ca_path = runtime / "abbenay" / "tls" / "ca.crt"
+        ca_path.parent.mkdir(parents=True)
+        ca_path.write_text("pem", encoding="utf-8")
+        monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime))
+        discovered = _discover_default_ca_cert()
+        assert discovered == str(ca_path)
 
 
 class TestBuildAbbenayClient:
@@ -137,3 +179,24 @@ class TestBuildAbbenayClient:
                 "ssl_target_name": "abbenay-grpc",
             }
         ]
+
+
+class TestTlsAbbenayClientReconnect:
+    """TLS shim reconnect must preserve secure_channel configuration."""
+
+    @pytest.mark.asyncio  # type: ignore[untyped-decorator]
+    async def test_reconnect_uses_tls_connect(self) -> None:
+        """reconnect() must not delegate to AbbenayClient.reconnect (insecure)."""
+        fake_module = type(sys)("abbenay_grpc")
+        fake_module.AbbenayClient = MagicMock(return_value=MagicMock(_target="127.0.0.1:50057"))  # type: ignore[attr-defined]
+
+        with patch.dict(sys.modules, {"abbenay_grpc": fake_module}):
+            client = _TlsAbbenayClient(host="127.0.0.1", port=50057, ca_cert="/etc/ca.crt")
+            connect_mock = AsyncMock()
+            client.connect = connect_mock  # type: ignore[method-assign]
+            client._delegate.reconnect = AsyncMock()  # noqa: SLF001
+
+            await client.reconnect()
+
+        connect_mock.assert_awaited_once()
+        client._delegate.reconnect.assert_not_awaited()  # noqa: SLF001

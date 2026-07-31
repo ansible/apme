@@ -172,6 +172,12 @@ abbenay:
     # -- Allow plaintext on non-loopback binds (required for engine→abbenay Service
     # DNS until TLS CA is shared across pods). Abbenay C2 policy: use --insecure
     # or --grpc-tls when binding 0.0.0.0 (issue #400).
+    #
+    # SECURITY WARNING (transitional default): insecure=true with host 0.0.0.0
+    # sends APME_ABBENAY_TOKEN and AI prompts over plaintext gRPC on the cluster
+    # network. Helm install NOTES.txt repeats this warning. For production, set
+    # tls=true, mount a CA via caCertPath, and set insecure=false once CA
+    # distribution across pods is available (issue #400).
     insecure: true
     # -- Enable TLS with auto-generated certs in the Abbenay container runtime dir.
     tls: false

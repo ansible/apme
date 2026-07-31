@@ -19,6 +19,15 @@ Components deployed:
   - Abbenay AI provider
 {{- end }}
 
+{{- if and .Values.abbenay.enabled .Values.abbenay.grpc.insecure (not .Values.abbenay.grpc.tls) }}
+
+SECURITY WARNING: Abbenay gRPC is using plaintext (abbenay.grpc.insecure=true).
+The auth token and AI chat traffic are visible on the cluster network.
+This default is transitional until TLS CA distribution across pods lands (issue #400).
+For production: set abbenay.grpc.tls=true, abbenay.grpc.insecure=false, and
+mount the Abbenay CA via abbenay.grpc.caCertPath on the engine Primary container.
+{{- end }}
+
 {{- if .Values.route.enabled }}
 
 OpenShift Routes:
