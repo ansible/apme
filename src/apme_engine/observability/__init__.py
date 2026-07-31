@@ -7,6 +7,7 @@ This package exports fleet/ops metrics via OTLP when configured.
 from apme_engine.observability.metrics import (
     record_galaxy_fetch,
     record_galaxy_wheel_serve,
+    record_grpc_request,
     record_scan_diagnostics,
     record_venv_acquire,
 )
@@ -16,6 +17,7 @@ __all__ = [
     "get_meter",
     "record_galaxy_fetch",
     "record_galaxy_wheel_serve",
+    "record_grpc_request",
     "record_scan_diagnostics",
     "record_venv_acquire",
     "setup_otel",

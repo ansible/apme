@@ -34,6 +34,8 @@ _galaxy_fetch_duration: Any = None
 _galaxy_fetch_completed: Any = None
 _galaxy_wheel_duration: Any = None
 _galaxy_wheel_completed: Any = None
+_grpc_duration: Any = None
+_grpc_completed: Any = None
 _instruments_ready = False
 
 
@@ -46,7 +48,8 @@ def _ensure_instruments() -> bool:
     global _scan_duration, _phase_duration, _validator_duration, _scan_completed
     global _http_duration, _venv_duration, _venv_completed
     global _galaxy_fetch_duration, _galaxy_fetch_completed
-    global _galaxy_wheel_duration, _galaxy_wheel_completed, _instruments_ready
+    global _galaxy_wheel_duration, _galaxy_wheel_completed
+    global _grpc_duration, _grpc_completed, _instruments_ready
     if _instruments_ready:
         return _scan_duration is not None
 
@@ -119,6 +122,17 @@ def _ensure_instruments() -> bool:
         unit="{scan}",
         description="Completed APME scans by status",
     )
+    _grpc_duration = meter.create_histogram(
+        name="apme.grpc.server.duration",
+        unit="s",
+        description="gRPC server RPC duration (Validator Validate/Health)",
+        explicit_bucket_boundaries_advisory=list(VALIDATOR_DURATION_BUCKETS_S),
+    )
+    _grpc_completed = meter.create_counter(
+        name="apme.grpc.server.completed",
+        unit="{rpc}",
+        description="Completed gRPC server RPCs by method and status",
+    )
     return True
 
 
@@ -127,7 +141,8 @@ def reset_instruments() -> None:
     global _scan_duration, _phase_duration, _validator_duration, _scan_completed
     global _http_duration, _venv_duration, _venv_completed
     global _galaxy_fetch_duration, _galaxy_fetch_completed
-    global _galaxy_wheel_duration, _galaxy_wheel_completed, _instruments_ready
+    global _galaxy_wheel_duration, _galaxy_wheel_completed
+    global _grpc_duration, _grpc_completed, _instruments_ready
     _scan_duration = None
     _phase_duration = None
     _validator_duration = None
@@ -139,6 +154,8 @@ def reset_instruments() -> None:
     _galaxy_fetch_completed = None
     _galaxy_wheel_duration = None
     _galaxy_wheel_completed = None
+    _grpc_duration = None
+    _grpc_completed = None
     _instruments_ready = False
 
 
@@ -255,6 +272,40 @@ def record_http_request(duration_s: float, *, method: str, status_code: int, ser
         )
     except Exception:  # noqa: BLE001
         logger.debug("Failed to record HTTP metrics", exc_info=True)
+
+
+def record_grpc_request(
+    duration_s: float,
+    *,
+    method: str,
+    status_code: str,
+    service: str,
+) -> None:
+    """Record a gRPC server RPC duration (validator ``Validate`` / ``Health``).
+
+    Distinct from ``apme.validator.duration``, which Primary records from
+    ADR-013 scan diagnostics after fan-out completes.
+
+    Args:
+        duration_s: RPC wall time in seconds.
+        method: Bare RPC method name (``Validate``, ``Health``).
+        status_code: gRPC status code name (``OK``, ``INTERNAL``, …).
+        service: Logical service label (``native``, ``opa``, …).
+    """
+    if not _ensure_instruments():
+        return
+    if _grpc_duration is None or _grpc_completed is None:
+        return
+    try:
+        attrs = {
+            "rpc.method": method or "unknown",
+            "rpc.grpc.status_code": status_code or "UNKNOWN",
+            "service": service or "unknown",
+        }
+        _grpc_duration.record(max(duration_s, 0.0), attrs)
+        _grpc_completed.add(1, attrs)
+    except Exception:  # noqa: BLE001
+        logger.debug("Failed to record gRPC metrics", exc_info=True)
 
 
 def record_galaxy_fetch(

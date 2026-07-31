@@ -443,7 +443,7 @@ The underlying scripts in `containers/podman/` remain directly callable for debu
 
 ### Observability (OTel → Prometheus → Grafana)
 
-The pod includes an `otel-collector` that scrapes as **http://localhost:8889/metrics**. Primary exports scan/phase/validator duration histograms; Gateway and Galaxy Proxy export HTTP request durations.
+The pod includes an `otel-collector` that scrapes as **http://localhost:8889/metrics**. Primary exports scan/phase/validator duration histograms; each validator exports `apme.grpc.server.*` for `Validate`/`Health` RPCs; Gateway and Galaxy Proxy export HTTP request durations. See ADR-067.
 
 ```bash
 ./containers/observability/up.sh     # Prometheus :9091, Grafana :3002

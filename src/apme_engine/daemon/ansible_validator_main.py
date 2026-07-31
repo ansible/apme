@@ -26,8 +26,10 @@ def main() -> None:
     Uses APME_ANSIBLE_VALIDATOR_LISTEN for bind address. Exits with code 1 on failure.
     """
     from apme_engine.log_bridge import install_handler
+    from apme_engine.observability import setup_otel, shutdown_otel
 
     install_handler()
+    setup_otel(service_name=os.environ.get("OTEL_SERVICE_NAME", "apme-ansible"))
 
     listen = os.environ.get("APME_ANSIBLE_VALIDATOR_LISTEN", "0.0.0.0:50053")
     try:
@@ -37,6 +39,8 @@ def main() -> None:
         traceback.print_exc(file=sys.stderr)
         sys.stderr.flush()
         sys.exit(1)
+    finally:
+        shutdown_otel()
 
 
 if __name__ == "__main__":

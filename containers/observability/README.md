@@ -43,7 +43,7 @@ samples arrive.
 ./containers/observability/down.sh --wipe   # also delete TSDB
 ```
 
-## Metrics (P0)
+## Metrics
 
 | OTel name | Prometheus (typical) | Source |
 |-----------|----------------------|--------|
@@ -51,6 +51,8 @@ samples arrive.
 | `apme.scan.phase.duration` | `apme_scan_phase_duration_seconds` | Primary |
 | `apme.validator.duration` | `apme_validator_duration_seconds` | Primary (from ADR-013) |
 | `apme.scan.completed` | `apme_scan_completed_total` | Primary |
+| `apme.grpc.server.duration` | `apme_grpc_server_duration_seconds` | Validators (`Validate` / `Health`) |
+| `apme.grpc.server.completed` | `apme_grpc_server_completed_total` | Validators |
 | `apme.http.server.duration` | `apme_http_server_duration_seconds` | Gateway, Galaxy Proxy |
 | `apme.venv.acquire.duration` | `apme_venv_acquire_duration_seconds` | Primary (`outcome=warm`, `incremental`, or `create`) |
 | `apme.venv.acquire.completed` | `apme_venv_acquire_completed_total` | Primary |
