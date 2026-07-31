@@ -49,7 +49,6 @@ Decisions that are fully reflected in the codebase.
 | [ADR-062](ADR-062-ephemeral-proposal-working-set.md) | Ephemeral Proposal Working Set and Review Analytics | 2026-07-09 |
 | [ADR-063](ADR-063-multi-platform-container-images.md) | Multi-Platform Container Image Publish | 2026-07-15 |
 | [ADR-064](ADR-064-assess-pause-session-continue.md) | Assess-Pause and Session-Continue Scan → Remediate | 2026-07-18 |
-| [ADR-066](ADR-066-ui-workflow-github-release-artifacts.md) | Publish `@apme/ui-workflow` via GitHub Release Artifacts | 2026-07-23 |
 | [ADR-067](ADR-067-otel-metrics-in-pod-collector.md) | OpenTelemetry Metrics with In-Pod Collector | 2026-07-29 |
 | [ADR-068](ADR-068-adaptive-operation-deadlines.md) | Adaptive Operation Deadlines for Long AI Remediation | 2026-07-30 |
 
@@ -77,6 +76,7 @@ Decisions that have been accepted but are not yet fully implemented.
 | [ADR-059](ADR-059-graph-library-extraction.md) | Extract Shared Graph Analysis Library | 2026-07-08 |
 | [ADR-060](ADR-060-rest-api-versioning-contract.md) | REST API Versioning Contract | 2026-07-08 |
 | [ADR-065](ADR-065-spa-gateway-live-state-ownership.md) | SPA vs Gateway Live-Operation State Ownership | 2026-07-20 |
+| [ADR-066](ADR-066-ui-workflow-github-release-artifacts.md) | Publish `@apme/ui-workflow` via GitHub Release Artifacts (Accepted (revised 2026-07-31: consolidated into main release)) | 2026-07-23 (revised 2026-07-31) |
 
 ## Proposed
 

@@ -1,78 +1,65 @@
-# Pack @apme/ui-workflow and attach the tarball to a GitHub Release (ADR-066).
-# Tag format: ui-workflow-vX.Y.Z (must match package.json version).
-name: UI workflow package release
+# Attach @apme/ui-workflow tarball to the main APME release (ADR-066).
+# Runs after a GitHub Release is published; derives version from the tag.
+name: UI workflow package artifact
 
 on:
-  push:
-    tags:
-      - "ui-workflow-v*"
+  release:
+    types: [published]
 
 permissions:
   contents: write
 
 concurrency:
-  group: ui-workflow-release-${{ github.ref }}
+  group: ui-workflow-release-${{ github.event.release.tag_name }}
   cancel-in-progress: false
 
 jobs:
-  release:
+  attach-tarball:
+    if: >-
+      startsWith(github.event.release.tag_name, 'v')
+      && github.event.release.prerelease == false
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v6
         with:
-          # Privileged job + npm ci — do not leave GITHUB_TOKEN in .git/config.
+          ref: ${{ github.event.release.tag_name }}
           persist-credentials: false
 
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          # No Actions cache: tag-triggered release has contents:write; avoid
-          # restoring a lockfile-keyed cache that a less-trusted job could poison.
           node-version: "24"
+
+      - name: Derive version from tag
+        id: ver
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_EVENT_RELEASE_TAG#v}"
+          if [[ ! "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Release tag must use vX.Y.Z format: ${GITHUB_EVENT_RELEASE_TAG}"
+            exit 1
+          fi
+          printf 'version=%s\n' "${VERSION}" >> "${GITHUB_OUTPUT}"
+          printf 'tarball=apme-ui-workflow-%s.tgz\n' "${VERSION}" >> "${GITHUB_OUTPUT}"
+        env:
+          GITHUB_EVENT_RELEASE_TAG: ${{ github.event.release.tag_name }}
 
       - name: Install frontend deps
         working-directory: frontend
         run: npm ci
 
-      - name: Assert tag matches package version
-        id: ver
-        working-directory: frontend
-        run: |
-          set -euo pipefail
-          TAG="${GITHUB_REF_NAME}"
-          EXPECTED="${TAG#ui-workflow-v}"
-          PKG_VER="$(node -p "require('./packages/ui-workflow/package.json').version")"
-          if [[ "${PKG_VER}" != "${EXPECTED}" ]]; then
-            echo "::error::Tag ${TAG} expects version ${EXPECTED}, package.json has ${PKG_VER}"
-            exit 1
-          fi
-          echo "version=${PKG_VER}" >> "${GITHUB_OUTPUT}"
-          echo "tarball=apme-ui-workflow-${PKG_VER}.tgz" >> "${GITHUB_OUTPUT}"
+      - name: Stamp version into package.json
+        working-directory: frontend/packages/ui-workflow
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: npm version "${VERSION}" --no-git-tag-version
 
-      - name: npm pack (runs package prepack → tsc + CSS copy)
+      - name: npm pack (runs prepack → tsc + CSS copy)
         working-directory: frontend
         run: npm pack ./packages/ui-workflow
 
-      - name: Create GitHub Release
+      - name: Upload tarball to release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ steps.ver.outputs.version }}
+          TAG: ${{ github.event.release.tag_name }}
           TARBALL: ${{ steps.ver.outputs.tarball }}
-        run: |
-          set -euo pipefail
-          # Escape backticks for Markdown fences; do not escape quotes (heredoc
-          # would otherwise emit literal backslash-quote in the release body).
-          gh release create "${GITHUB_REF_NAME}" \
-            "frontend/${TARBALL}" \
-            --title "@apme/ui-workflow v${VERSION}" \
-            --notes "$(cat <<EOF
-          ## \`@apme/ui-workflow\` v${VERSION}
-
-          Install (Yarn / npm):
-
-          \`\`\`json
-          "@apme/ui-workflow": "https://github.com/ansible/apme/releases/download/${GITHUB_REF_NAME}/${TARBALL}"
-          \`\`\`
-
-          See [ADR-066](https://github.com/ansible/apme/blob/main/.sdlc/adrs/ADR-066-ui-workflow-github-release-artifacts.md).
-          EOF
-          )"
+        run: gh release upload --clobber "${TAG}" "frontend/${TARBALL}"
