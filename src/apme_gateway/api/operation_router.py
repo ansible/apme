@@ -997,7 +997,7 @@ async def _drive_operation(
                     progress=prog.progress if prog.progress is not None else None,
                     level=prog.level if prog.level is not None else None,
                     budget_seconds=prog.budget_seconds if prog.budget_seconds else None,
-                    ai_completed=prog.ai_completed if prog.ai_completed else None,
+                    ai_completed=prog.ai_completed if prog.ai_total else None,
                     ai_total=prog.ai_total if prog.ai_total else None,
                 )
                 if registry.get(operation_id) and registry.get(operation_id).status == OperationStatus.CLONING:  # type: ignore[union-attr]

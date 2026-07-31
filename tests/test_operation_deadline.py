@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from datetime import timedelta
 
 import pytest
 
@@ -165,7 +166,7 @@ def test_check_operation_deadline_budget_exceeded() -> None:
 
 
 def test_check_operation_deadline_lifetime_cap() -> None:
-    """Session lifetime cap returns operation_budget_exceeded."""
+    """Session lifetime cap returns session_lifetime_exceeded."""
     now = 8000.0
     err = check_operation_deadline(
         operation_budget_s=3600,
@@ -175,7 +176,7 @@ def test_check_operation_deadline_lifetime_cap() -> None:
         max_lifetime_deadline_mono=now - 1,
     )
     assert err is not None
-    assert err.code == "operation_budget_exceeded"
+    assert err.code == "session_lifetime_exceeded"
     assert "lifetime" in str(err).lower()
 
 
@@ -215,10 +216,18 @@ def test_session_begin_operation_phase_increments_generation() -> None:
     assert session.operation_generation == 2
 
 
+def test_clamp_budget_rejects_inverted_bounds() -> None:
+    """Inverted min/max budget bounds raise BudgetConfigError."""
+    with pytest.raises(BudgetConfigError, match="min_budget"):
+        estimate_non_ai_budget(min_budget=9000, max_budget=600)
+
+
 def test_session_reanchor_lifetime_deadline() -> None:
-    """Resume re-anchors lifetime cap from remaining wall time."""
+    """Resume re-anchors lifetime cap from remaining wall time without extending it."""
     session = SessionState(session_id="test")
     session.init_lifetime_deadline()
     first_cap = session.max_lifetime_deadline_mono
+    session.created_at -= timedelta(seconds=100)
     session.reanchor_lifetime_deadline()
-    assert session.max_lifetime_deadline_mono >= first_cap - 5
+    assert session.max_lifetime_deadline_mono <= first_cap + 1
+    assert session.max_lifetime_deadline_mono >= first_cap - 105

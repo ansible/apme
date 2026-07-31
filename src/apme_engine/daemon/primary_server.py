@@ -1938,49 +1938,6 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             raise
         session.begin_operation_phase(budget)
 
-    @staticmethod
-    def _begin_operation_budget(
-        session: SessionState,
-        *,
-        violations: list[ViolationDict],
-        registry: object,
-        ai_provider: object | None,
-        skip_ai: bool,
-        max_ai_attempts: int = 2,
-        concurrency: int | None = None,
-    ) -> None:
-        """Compute and start adaptive operation budget (ADR-068).
-
-        Deprecated: use :meth:`_begin_non_ai_operation_budget` or
-        :meth:`_begin_ai_operation_budget` for phase-aware anchors.
-
-        Args:
-            session: Session receiving the budget.
-            violations: Violations used to estimate AI node count.
-            registry: Transform registry for tier partitioning.
-            ai_provider: Resolved AI provider, if any.
-            skip_ai: When true, budget excludes AI fan-out time.
-            max_ai_attempts: AI resubmission cap from graph engine.
-            concurrency: Parallel AI calls (default env).
-        """
-        from apme_engine.remediation.partition import partition_violations  # noqa: PLC0415
-
-        _, tier2, _ = partition_violations(violations, registry)  # type: ignore[arg-type]
-        ai_nodes = count_ai_nodes(tier2) if ai_provider and not skip_ai else 0
-        if ai_nodes > 0 and ai_provider and not skip_ai:
-            PrimaryServicer._begin_ai_operation_budget(
-                session,
-                violations=violations,
-                registry=registry,
-                max_ai_attempts=max_ai_attempts,
-                concurrency=concurrency,
-            )
-        else:
-            PrimaryServicer._begin_non_ai_operation_budget(
-                session,
-                violation_count=len(violations),
-            )
-
     async def _cancel_remediate_task(
         self,
         remediate_task: asyncio.Task[object],

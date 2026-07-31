@@ -134,6 +134,9 @@ def _clamp_budget(
 ) -> int:
     floor = min_budget if min_budget is not None else _DEFAULT_MIN_BUDGET
     ceiling = max_budget if max_budget is not None else _DEFAULT_MAX_BUDGET
+    if floor > ceiling:
+        msg = f"min_budget ({floor}) must be <= max_budget ({ceiling})"
+        raise BudgetConfigError(msg)
     return max(floor, min(ceiling, raw))
 
 
@@ -343,7 +346,7 @@ def check_operation_deadline(
     if now > deadline:
         if max_lifetime_deadline_mono > 0 and now >= max_lifetime_deadline_mono:
             return OperationDeadlineError(
-                code="operation_budget_exceeded",
+                code="session_lifetime_exceeded",
                 message="Session maximum lifetime exceeded",
             )
         elapsed = now - operation_started_at
