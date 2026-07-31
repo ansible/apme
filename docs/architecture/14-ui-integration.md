@@ -155,13 +155,13 @@ queued → cloning → scanning → completed
 | Request | Purpose |
 |---------|---------|
 | `POST /api/v1/projects/{project_id}/operation` | Start check/remediate (`action` + `options`) |
-| `POST .../operation/approve` | Submit proposal decisions (`approved_ids`) |
-| `POST .../operation/begin-remediate` | Continue after assess pause |
-| `POST .../operation/escalate-ai` | Continue after AI triage with selected targets |
-| `PATCH .../operation/proposals` | Optimistic draft proposal status updates |
-| `POST .../operation/submit` | Create commit / open PR from working set |
-| `POST .../operation/cancel` | Cancel the in-flight operation |
-| `GET .../operation/events` | SSE stream for the project's active operation |
+| `POST /api/v1/projects/{project_id}/operation/approve` | Submit proposal decisions (`approved_ids`) |
+| `POST /api/v1/projects/{project_id}/operation/begin-remediate` | Continue after assess pause |
+| `POST /api/v1/projects/{project_id}/operation/escalate-ai` | Continue after AI triage with selected targets |
+| `PATCH /api/v1/projects/{project_id}/operation/proposals` | Optimistic draft proposal status updates |
+| `POST /api/v1/projects/{project_id}/operation/submit` | Create commit / open PR from working set |
+| `POST /api/v1/projects/{project_id}/operation/cancel` | Cancel the in-flight operation |
+| `GET /api/v1/projects/{project_id}/operation/events` | SSE stream for the project's active operation |
 
 ### Event Plane (Gateway → Browser SSE)
 
@@ -241,7 +241,8 @@ Includes a cancel button.
 ### ProposalReviewPanel
 Displays AI proposals with diff hunks, rule IDs, confidence scores, and
 explanations. Users can approve/reject individual proposals or
-accept/skip all. Sends approve via `POST .../operation/approve`.
+accept/skip all. Sends approve via
+`POST /api/v1/projects/{project_id}/operation/approve`.
 
 ### OperationResultCard
 Shows the final operation summary: total violations, fixed count, AI
@@ -261,14 +262,14 @@ session.
 flowchart TD
     A[User clicks Check] --> B[useProjectWorkflow.startScan]
     B --> C[POST /api/v1/projects/{project_id}/operation]
-    C --> D[GET .../operation/events SSE]
+    C --> D[GET /api/v1/projects/{project_id}/operation/events SSE]
     D --> E[Gateway clones repo]
     E --> F[Gateway opens FixSession to Primary]
     F --> G[Progress events stream to UI via SSE]
     G --> H{AI proposals?}
     H -->|Yes| I[ProposalReviewPanel shown]
     I --> J[User approves/rejects]
-    J --> K[POST .../operation/approve]
+    J --> K[POST /api/v1/projects/{project_id}/operation/approve]
     H -->|No| L[result SSE event]
     K --> L
     L --> M[OperationResultCard displayed]
@@ -305,7 +306,7 @@ Nginx handles:
 | File | Purpose |
 |------|---------|
 | `frontend/src/services/api.ts` | Typed REST API client |
-| `frontend/packages/ui-workflow/src/hooks/useProjectWorkflow.ts` | SSE hook for project operations |
+| `frontend/packages/ui-workflow/src/useProjectWorkflow.ts` | SSE hook for project operations |
 | `frontend/src/pages/ProjectDetailPage.tsx` | Main project interaction page |
 | `frontend/src/pages/DashboardPage.tsx` | Cross-project dashboard |
 | `frontend/src/pages/PlaygroundPage.tsx` | File-upload sandbox |

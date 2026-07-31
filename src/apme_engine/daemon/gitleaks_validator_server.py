@@ -179,8 +179,8 @@ class GitleaksValidatorServicer(validate_pb2_grpc.ValidatorServicer):
                     diagnostics=diag,
                     logs=sink.entries,
                 )
-            except Exception as e:
-                logger.exception("Gitleaks: unhandled error (req=%s): %s", req_id, e)
+            except Exception:
+                logger.error("Gitleaks: unhandled error (req=%s): [REDACTED]", req_id)
                 return infra_error_response(req_id, sink.entries)
 
     async def Health(
