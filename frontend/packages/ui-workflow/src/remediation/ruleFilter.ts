@@ -40,6 +40,19 @@ export function presentRuleIds(items: RuleIdCarrier[]): string[] {
   return [...ids].sort((a, b) => a.localeCompare(b));
 }
 
+/**
+ * Normalize host-provided ``initialRuleFilters`` to bare IDs present in the
+ * scan (fleet ``?rule=`` seed). Unknown / absent rules are dropped.
+ */
+export function normalizeInitialRuleFilters(
+  initial: readonly string[] | undefined,
+  presentRules: readonly string[],
+): string[] {
+  if (!initial?.length || presentRules.length === 0) return [];
+  const present = new Set(presentRules);
+  return initial.map((r) => bareRuleId(r)).filter((r) => present.has(r));
+}
+
 /** True when no rules selected, or the item carries at least one selected bare ID. */
 export function matchesRuleFilters(
   item: RuleIdCarrier,

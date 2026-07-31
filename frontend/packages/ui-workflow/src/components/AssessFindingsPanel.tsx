@@ -35,6 +35,7 @@ import {
   nodeTypeLabel,
   nodeTypeLabelColor,
   normalizeFindingNodeType,
+  normalizeInitialRuleFilters,
   orderPresentNodeTypes,
   presentRuleIds,
   type FindingNodeType,
@@ -59,6 +60,11 @@ export interface AssessFindingsPanelProps {
   enableAi?: boolean;
   /** Begin-remediate / session error to show above the findings list. */
   error?: string | null;
+  /**
+   * Bare rule IDs to pre-select in the Rule filter (e.g. fleet drill-down).
+   * Prefixed IDs like ``native:L022`` are normalized to bare form.
+   */
+  initialRuleFilters?: string[];
 }
 
 function formatReviewStatus(status: string): string {
@@ -305,6 +311,7 @@ export function AssessFindingsPanel({
   description: descriptionOverride,
   enableAi = true,
   error = null,
+  initialRuleFilters,
 }: AssessFindingsPanelProps) {
   const [view, setView] = useState<ViewMode>('grouped');
   const [sevFilters, setSevFilters] = useState<Set<string>>(
@@ -318,6 +325,7 @@ export function AssessFindingsPanel({
   );
   /** Selected bare rule IDs (OR). Empty = no rule filter. */
   const [ruleFilters, setRuleFilters] = useState<string[]>([]);
+  const [appliedInitialRulesKey, setAppliedInitialRulesKey] = useState('');
 
   const presentSeverities = useMemo(
     () => presentSeverityOptions(findings),
@@ -333,6 +341,21 @@ export function AssessFindingsPanel({
   );
   const presentRules = useMemo(() => presentRuleIds(findings), [findings]);
   const presentRulesKey = presentRules.join(',');
+  const initialRulesKey = (initialRuleFilters ?? []).join(',');
+
+  // Apply host-provided rule filters once findings are available (fleet drill-down).
+  useEffect(() => {
+    if (!initialRulesKey || initialRulesKey === appliedInitialRulesKey) return;
+    const next = normalizeInitialRuleFilters(initialRuleFilters, presentRules);
+    if (next.length === 0) return;
+    setRuleFilters(next);
+    setAppliedInitialRulesKey(initialRulesKey);
+  }, [
+    initialRulesKey,
+    initialRuleFilters,
+    presentRules,
+    appliedInitialRulesKey,
+  ]);
 
   // Drop selected rules that disappeared from the scan payload.
   useEffect(() => {
