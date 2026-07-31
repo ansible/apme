@@ -25,7 +25,7 @@ async def start_validator_server(
 
     Args:
         servicer: Concrete ``ValidatorServicer`` implementation.
-        listen: Host:port (or bare port) to bind.
+        listen: Address passed to ``add_insecure_port`` (e.g. ``0.0.0.0:50059``).
         service: Short service label for OTel attributes (``native``, ``opa``, …).
         max_concurrent_rpcs: gRPC concurrent RPC limit for this process.
 
@@ -38,10 +38,8 @@ async def start_validator_server(
         options=list(_DEFAULT_OPTIONS),
     )
     validate_pb2_grpc.add_ValidatorServicer_to_server(servicer, server)  # type: ignore[no-untyped-call]
-    if ":" in listen:
-        _, _, port = listen.rpartition(":")
-        server.add_insecure_port(f"[::]:{port}")
-    else:
-        server.add_insecure_port(listen)
+    # Honor the configured address (e.g. 0.0.0.0:50059 or 127.0.0.1:50059).
+    # Do not rewrite host:port to [::]:port — that would expand loopback to a wildcard.
+    server.add_insecure_port(listen)
     await server.start()
     return server
