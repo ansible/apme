@@ -235,8 +235,9 @@ class GraphRemediationEngine:
         ai_total: int = 0,
     ) -> None:
         if self._progress_cb is not None:
+            wants_ai_meta = bool(ai_completed or ai_total)
             try:
-                if ai_completed or ai_total:
+                if wants_ai_meta:
                     self._progress_cb(
                         phase,
                         message,
@@ -248,7 +249,16 @@ class GraphRemediationEngine:
                 else:
                     self._progress_cb(phase, message, fraction, level)
             except TypeError:
-                self._progress_cb(phase, message, fraction, level)
+                if not wants_ai_meta:
+                    logger.warning(
+                        "Progress callback raised TypeError; ignoring",
+                        exc_info=True,
+                    )
+                    return
+                try:
+                    self._progress_cb(phase, message, fraction, level)
+                except Exception:
+                    logger.warning("Progress callback raised; ignoring", exc_info=True)
             except Exception:
                 logger.warning("Progress callback raised; ignoring", exc_info=True)
 

@@ -483,12 +483,12 @@ async def run_project_operation(
             return scan_id, result, clone_sha
         except asyncio.CancelledError:
             with contextlib.suppress(Exception):
-                await command_queue.put(primary_pb2.SessionCommand(close=primary_pb2.CloseRequest()))
-                await command_queue.put(None)
+                command_queue.put_nowait(primary_pb2.SessionCommand(close=primary_pb2.CloseRequest()))
+                command_queue.put_nowait(None)
             raise
         finally:
             with contextlib.suppress(Exception):
-                await command_queue.put(None)
+                command_queue.put_nowait(None)
             await channel.close(grace=None)
 
     finally:

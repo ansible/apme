@@ -27,12 +27,13 @@ from apme.v1.primary_pb2 import (
     Proposal,
     ScanOptions,
 )
+from apme_engine.daemon.deadline import _parse_int_env, operation_deadline_mono
 from apme_engine.engine.models import ViolationDict
 
 logger = logging.getLogger(__name__)
 
 _DEFAULT_TTL = int(os.environ.get("APME_SESSION_TTL", "1800"))  # 30 min
-_MAX_LIFETIME = int(os.environ.get("APME_SESSION_MAX_LIFETIME", "7200"))  # 2 hr
+_MAX_LIFETIME = _parse_int_env("APME_SESSION_MAX_LIFETIME", 7200)  # 2 hr
 _MAX_SESSIONS = int(os.environ.get("APME_SESSION_MAX", "10"))
 _REAP_INTERVAL = 60  # seconds
 
@@ -261,8 +262,12 @@ class SessionState:
         """
         if self.operation_budget_s <= 0 or self.operation_started_at <= 0:
             return 0
-        elapsed = time.monotonic() - self.operation_started_at
-        return max(0, int(self.operation_budget_s - elapsed))
+        deadline = operation_deadline_mono(
+            operation_started_at=self.operation_started_at,
+            operation_budget_s=self.operation_budget_s,
+            max_lifetime_deadline_mono=self.max_lifetime_deadline_mono,
+        )
+        return max(0, int(deadline - time.monotonic()))
 
     def cleanup(self) -> None:
         """Remove temp directory and session-scoped Galaxy config if present."""
