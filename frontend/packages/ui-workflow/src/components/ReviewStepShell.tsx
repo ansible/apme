@@ -24,6 +24,8 @@ export interface ReviewStepShellProps {
   next?: WorkflowNextConfig;
   onCancel?: () => void;
   filterGroups?: ReviewFilterGroup[];
+  /** Extra filter controls under the pill row (e.g. rule ID typeahead). */
+  filterAccessory?: ReactNode;
   /** Main review list; omit or pass empty items with emptyMessage for empty state. */
   list?: NodeReviewListProps;
   /** Shown when ``list`` is omitted or ``list.items`` is empty. */
@@ -40,6 +42,7 @@ export function ReviewStepShell({
   next,
   onCancel,
   filterGroups = [],
+  filterAccessory,
   list,
   emptyMessage = 'Nothing to show.',
   children,
@@ -93,6 +96,9 @@ export function ReviewStepShell({
         </div>
 
         <ReviewFilterBar groups={filterGroups} />
+        {filterAccessory != null ? (
+          <div className="apme-review-filter-accessory">{filterAccessory}</div>
+        ) : null}
 
         {!hasItems ? (
           <div style={{ padding: 24, textAlign: 'center', opacity: 0.65 }}>
