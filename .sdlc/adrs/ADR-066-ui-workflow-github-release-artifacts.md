@@ -2,7 +2,7 @@
 
 ## Status
 
-Superseded (consolidated into main release)
+Accepted (revised 2026-07-31: consolidated into main release)
 
 ## Date
 

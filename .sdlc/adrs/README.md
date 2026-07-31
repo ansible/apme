@@ -76,6 +76,7 @@ Decisions that have been accepted but are not yet fully implemented.
 | [ADR-059](ADR-059-graph-library-extraction.md) | Extract Shared Graph Analysis Library | 2026-07-08 |
 | [ADR-060](ADR-060-rest-api-versioning-contract.md) | REST API Versioning Contract | 2026-07-08 |
 | [ADR-065](ADR-065-spa-gateway-live-state-ownership.md) | SPA vs Gateway Live-Operation State Ownership | 2026-07-20 |
+| [ADR-066](ADR-066-ui-workflow-github-release-artifacts.md) | Publish `@apme/ui-workflow` via GitHub Release Artifacts (Accepted (revised 2026-07-31: consolidated into main release)) | 2026-07-23 (revised 2026-07-31) |
 
 ## Proposed
 
@@ -98,7 +99,6 @@ Decisions replaced by newer ADRs.
 |-----|-------|------|
 | [ADR-006](ADR-006-ephemeral-venvs.md) | Ephemeral Per-Request venvs for Ansible Validator (Superseded by [ADR-022](ADR-022-session-scoped-venvs.md) and [ADR-031](ADR-031-unified-collection-cache.md)) | 2026-03 |
 | [ADR-035](ADR-035-secret-externalization.md) | Secret Externalization for Ansible Content (Proposed — implementation approach superseded by ADR-036) | 2026-03-23 |
-| [ADR-066](ADR-066-ui-workflow-github-release-artifacts.md) | Publish `@apme/ui-workflow` via GitHub Release Artifacts (Superseded (consolidated into main release)) | 2026-07-23 (revised 2026-07-31) |
 
 ## Creating New ADRs
 
