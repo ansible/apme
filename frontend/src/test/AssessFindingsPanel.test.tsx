@@ -87,4 +87,18 @@ describe("AssessFindingsPanel rule filter", () => {
       screen.getByLabelText("Selected rule filters"),
     ).toHaveTextContent("L050");
   });
+
+  it("initialRuleFilters seeds the Rule filter from the host", () => {
+    render(
+      <AssessFindingsPanel
+        findings={findings}
+        initialRuleFilters={["native:L050"]}
+      />,
+    );
+
+    expect(screen.getByText(/Showing 2 findings of 3/i)).toBeInTheDocument();
+    expect(
+      screen.getByLabelText("Selected rule filters"),
+    ).toHaveTextContent("L050");
+  });
 });

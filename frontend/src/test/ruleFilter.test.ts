@@ -3,6 +3,7 @@ import { describe, it, expect } from "vitest";
 import {
   filterByRuleKeepingNodeContext,
   matchesRuleFilters,
+  normalizeInitialRuleFilters,
   presentRuleIds,
   reviewNodeKey,
 } from "../../packages/ui-workflow/src/remediation/ruleFilter";
@@ -88,6 +89,17 @@ describe("filterByRuleKeepingNodeContext", () => {
       new Set(["L050"]),
     );
     expect(result.some((f) => f.rule_id === "R099")).toBe(false);
+  });
+
+  it("normalizeInitialRuleFilters strips prefixes and drops unknown", () => {
+    expect(
+      normalizeInitialRuleFilters(
+        ["native:L050", "MISSING", "M001"],
+        ["L050", "M001"],
+      ),
+    ).toEqual(["L050", "M001"]);
+    expect(normalizeInitialRuleFilters(["L050"], [])).toEqual([]);
+    expect(normalizeInitialRuleFilters(undefined, ["L050"])).toEqual([]);
   });
 
   it("supports row-level post-filter after node inclusion (decision pattern)", () => {

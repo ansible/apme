@@ -40,7 +40,10 @@ export {
 
 export { OperationPanel, type OperationPanelProps } from './components/OperationPanel';
 export { CheckOptionsForm } from './components/CheckOptionsForm';
-export { AssessFindingsPanel } from './components/AssessFindingsPanel';
+export {
+  AssessFindingsPanel,
+  type AssessFindingsPanelProps,
+} from './components/AssessFindingsPanel';
 export { AiEscalationPanel } from './components/AiEscalationPanel';
 export { ProposalReviewPanel } from './components/ProposalReviewPanel';
 export { OperationProgressPanel } from './components/OperationProgressPanel';

@@ -26,6 +26,7 @@ export {
 export {
   filterByRuleKeepingNodeContext,
   matchesRuleFilters,
+  normalizeInitialRuleFilters,
   presentRuleIds,
   reviewNodeKey,
   type NodeKeyed,
