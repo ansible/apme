@@ -92,7 +92,7 @@ flowchart TB
         C["concurrency C"]
         T["per-call timeout T"]
         A["max attempts A"]
-        N --> F["budget = scan_base + ceil(N/C)×T×A + margin"]
+        N --> F["budget = ceil(N/C)×T×A + margin"]
     end
 
     subgraph runtime ["2. Runtime enforcement"]
@@ -112,14 +112,27 @@ flowchart TB
 
 ### 1. Adaptive operation budget
 
-When the engine knows how much AI work remains (after Tier 1 exhaustion or at
-`AiEscalate` / Gate 2), Primary computes an **operation budget** in seconds:
+When the engine knows how much work remains, Primary computes an **operation
+budget** in seconds. Formulas differ by phase because `operation_started_at`
+anchors at phase entry (see below):
+
+**Non-AI operations** (check, remediate without `--ai`):
 
 ```text
 scan_base     = fixed overhead for format + initial scan + Tier 1 (default 300s)
+tier1_margin  = scales with violation count (lightweight estimate)
+margin        = 10% of (scan_base + tier1_margin), minimum 60s
+raw_budget    = scan_base + tier1_margin + margin
+operation_budget = clamp(raw_budget, min_budget, max_budget)
+```
+
+**AI remediate (Tier 2, at AI gate):** preamble (format, scan, Tier 1) runs
+before the AI clock starts. The AI-phase budget excludes `scan_base`:
+
+```text
 ai_budget     = ceil(ai_node_count / concurrency) × per_call_timeout × max_ai_attempts
-margin        = 10% of (scan_base + ai_budget), minimum 60s
-raw_budget    = scan_base + ai_budget + margin
+margin        = 10% of ai_budget, minimum 60s
+raw_budget    = ai_budget + margin
 operation_budget = clamp(raw_budget, min_budget, max_budget)
 ```
 
@@ -136,13 +149,38 @@ The enforcement check `monotonic() - operation_started_at > operation_budget`
 therefore measures only the current phase. Scan and Tier 1 preamble time does
 not consume the AI budget.
 
+At every phase anchor, Primary sets **both** `operation_started_at` and
+`last_progress_at` to the same monotonic instant. This prevents inherited
+progress timestamps from an earlier phase (e.g. a long Tier 1 pass) from
+triggering a false stall when AI work begins.
+
 **Session lifetime cap.** `max_budget` bounds a single operation's duration, not
-the session's absolute age. The effective operation deadline is:
+the session's absolute age. All enforcement comparisons use **monotonic time
+only**. At session creation, Primary records:
+
+```text
+max_lifetime_deadline_mono = monotonic() + APME_SESSION_MAX_LIFETIME
+```
+
+`SessionState.created_at` remains UTC wall-clock for idle-TTL and display, but
+is **not** compared directly to monotonic deadlines. If sessions are persisted
+and resumed (ADR-028), re-anchor on load:
+
+```text
+remaining_lifetime = max(0, created_at + max_lifetime - utcnow())
+max_lifetime_deadline_mono = monotonic() + remaining_lifetime
+```
+
+The reference `SessionStore` is in-memory and does not survive process restart;
+implementations that add persistence must apply this re-anchoring so the
+absolute session cap stays consistent across resume.
+
+The effective operation deadline is:
 
 ```text
 operation_deadline = min(
     operation_started_at + operation_budget,
-    session_created_at + APME_SESSION_MAX_LIFETIME,
+    max_lifetime_deadline_mono,
 )
 ```
 
@@ -161,10 +199,6 @@ Defaults (overridable via env for operators, not required for normal use):
 | `concurrency` | `APME_AI_CONCURRENCY` (4) | Matches graph engine |
 | `scan_base` | 300s | Non-AI pipeline overhead |
 
-**Non-AI operations** (check, remediate without `--ai`): `operation_budget =
-clamp(scan_base + tier1_margin, min_budget, max_budget)` where `tier1_margin`
-scales with violation count (lightweight estimate).
-
 The budget is attached to `SessionState` and emitted to clients:
 
 - `SessionCreated.ttl_seconds` **unchanged** — remains session idle TTL per
@@ -175,11 +209,14 @@ The budget is attached to `SessionState` and emitted to clients:
 - New `ProgressUpdate` fields (additive proto): `budget_seconds` (remaining
   budget), `ai_completed`, and `ai_total` during `graph-ai` phase.
 
-Clients that establish a gRPC deadline must read `operation_budget_seconds` from
-the first `SessionCreated` that includes it. An active gRPC deadline cannot be
-extended mid-stream; when the budget is unknown until the AI gate, Gateway and
-CLI omit a client-side deadline and rely on server-side enforcement (stall +
-budget cancel) instead.
+**gRPC client deadline constraint.** The client opens `FixSession` **before**
+any `SessionCreated` arrives on the stream. An active gRPC deadline therefore
+cannot be derived from `operation_budget_seconds` on the same RPC — the budget
+is learned in-stream, and non-AI budgets depend on violation counts not known
+at call start. Gateway and CLI **omit the client-side gRPC deadline** for
+`FixSession` remediate (and rely on server-side budget + stall enforcement).
+`operation_budget_seconds` is informational for UI progress and optional
+`--timeout` override caps; it does not configure the transport deadline.
 
 ### 2. Stall detection (fail fast)
 
@@ -194,7 +231,7 @@ stall_window = min(default_stall_seconds, operation_budget)   # 600s cap; scales
 
 If `now - last_progress_at > stall_window`:
 
-- Cancel the in-flight remediate task.
+- Cancel and await the in-flight remediate task (see enforcement pseudocode).
 - Emit `SessionEvent` error with code `operation_stalled`.
 - Gateway maps to `OperationStatus.failed` with a user-visible message.
 
@@ -219,13 +256,13 @@ time. Default remains 1800s.
 
 | Client | Today | After |
 |--------|-------|-------|
-| Gateway `scan/driver.py` | `timeout=APME_SESSION_TTL` | Omit client deadline when budget unknown at call start; otherwise `timeout=operation_budget_seconds + 60s` from `SessionCreated` |
-| Gateway `session_client.py` (Playground WS) | No gRPC deadline | Same; rely on server stall/deadline when budget arrives mid-stream |
-| CLI `remediate` | Hardcoded 1800s | `operation_budget_seconds` from `SessionCreated` when set; optional `--timeout` as **override cap**; omit client deadline when budget unknown until AI gate |
-| CLI `check` | `--timeout` default 300s | Unchanged for check; stall detection still applies |
+| Gateway `scan/driver.py` | `timeout=APME_SESSION_TTL` | Omit client gRPC deadline; rely on server budget + stall enforcement |
+| Gateway `session_client.py` (Playground WS) | No gRPC deadline | Same; forward `operation_budget_seconds` for UI only |
+| CLI `remediate` | Hardcoded 1800s | Omit client gRPC deadline; optional `--timeout` as **override cap** enforced client-side |
+| CLI `check` | `--timeout` default 300s | Unchanged for check; stall detection still applies server-side |
 
 Gateway `_drive_operation` must not cancel the gRPC task at a fixed 1800s when
-the engine reports a larger budget.
+the engine is still emitting progress within budget.
 
 ### 5. Per-node AI progress
 
@@ -353,8 +390,8 @@ reliable; `extend` remains for **idle** approval waits (ADR-028).
 
 | File | Change |
 |------|--------|
-| `src/apme_engine/daemon/session.py` | Add `operation_budget_s`, `operation_started_at`, `last_progress_at` to `SessionState`; `touch()` on server progress helper |
-| `src/apme_engine/daemon/deadline.py` (new) | `estimate_operation_budget(...) -> int`, `stall_window(budget) -> int` (`min(default_stall, budget)`), `is_task_linked_progress(update) -> bool` |
+| `src/apme_engine/daemon/session.py` | Add `operation_budget_s`, `operation_started_at`, `last_progress_at`, `max_lifetime_deadline_mono` to `SessionState`; set both progress anchors at phase start; `touch()` on server progress helper |
+| `src/apme_engine/daemon/deadline.py` (new) | `estimate_operation_budget(...) -> int` (separate non-AI and AI formulas), `stall_window(budget) -> int`, `is_task_linked_progress(update) -> bool` |
 | `src/apme_engine/daemon/primary_server.py` | Compute budget before AI phase; enforce deadline + stall in `_session_graph_remediate` drain loop; `session.touch()` on progress yield; cancel `remediate_task` on stall/timeout |
 | `src/apme_engine/remediation/graph_engine.py` | Per-node `_progress("graph-ai", f"AI {i}/{n}: …", i/n)` in `_apply_ai_transforms` |
 | `proto/apme/v1/common.proto` | Add optional `int32 budget_seconds`, `int32 ai_completed`, `int32 ai_total` to `ProgressUpdate` (additive) |
@@ -364,7 +401,7 @@ reliable; `extend` remains for **idle** approval waits (ADR-028).
 
 | File | Change |
 |------|--------|
-| `src/apme_gateway/scan/driver.py` | Remove `_FIX_SESSION_TIMEOUT = APME_SESSION_TTL`; use budget from `SessionCreated` + slack, or omit client deadline and rely on server enforcement |
+| `src/apme_gateway/scan/driver.py` | Remove `_FIX_SESSION_TIMEOUT = APME_SESSION_TTL`; omit client gRPC deadline; rely on server enforcement |
 | `src/apme_gateway/session_client.py` | Same; forward `budget_seconds` / AI counters over WS |
 | `src/apme_gateway/api/operation_router.py` | Map `operation_stalled` / budget exceeded to `failed` with distinct error codes |
 | `containers/ui/nginx.conf.template` | Ensure SSE/WS paths forward heartbeats within `proxy_read_timeout`; raise timeout for idle approval waits or use `proxy_read_timeout 0` for dedicated SSE/WS locations |
@@ -374,7 +411,7 @@ reliable; `extend` remains for **idle** approval waits (ADR-028).
 | File | Change |
 |------|--------|
 | `src/apme_engine/cli/parser.py` | Add `--timeout` to `remediate` (optional cap overriding adaptive budget) |
-| `src/apme_engine/cli/remediate.py` | Read `SessionCreated.operation_budget_seconds` when set; `stub.FixSession(..., timeout=budget + 60)` or omit deadline when unset |
+| `src/apme_engine/cli/remediate.py` | Omit client gRPC deadline; optional `--timeout` override cap |
 
 ### Phase 4 — Tests
 
@@ -392,17 +429,25 @@ budget = session.operation_budget_s
 stall_limit = stall_window(budget)
 operation_deadline = min(
     session.operation_started_at + budget,
-    session.created_at + APME_SESSION_MAX_LIFETIME,
+    session.max_lifetime_deadline_mono,
 )
+
+async def _fail_remediate(code: str):
+    """Cancel, await cleanup, then emit terminal error."""
+    remediate_task.cancel()
+    with suppress(CancelledError):
+        await remediate_task
+    yield error_event(code)
+
 while not remediate_task.done():
     now = monotonic()
     if now > operation_deadline:
-        remediate_task.cancel()
-        yield error_event("operation_budget_exceeded")
+        async for evt in _fail_remediate("operation_budget_exceeded"):
+            yield evt
         return
     if now - session.last_progress_at > stall_limit:
-        remediate_task.cancel()
-        yield error_event("operation_stalled")
+        async for evt in _fail_remediate("operation_stalled"):
+            yield evt
         return
     try:
         update = await wait_for(progress_queue.get(), timeout=1.0)
@@ -414,6 +459,13 @@ while not remediate_task.done():
     if is_task_linked_progress(update):
         session.last_progress_at = monotonic()
     yield SessionEvent(progress=update)
+
+# Phase anchor (called at session processing start and AI gate entry):
+def begin_operation_phase(session: SessionState, budget_s: int) -> None:
+    now = monotonic()
+    session.operation_budget_s = budget_s
+    session.operation_started_at = now
+    session.last_progress_at = now  # same instant — prevents false stall
 ```
 
 ### Optional follow-up (not required for initial acceptance)
@@ -465,3 +517,4 @@ response schemas beyond additive error codes.
 | 2026-07-30 | APME Team | Initial proposal |
 | 2026-07-30 | APME Team | Renumber to ADR-068; address review (math, stall formula, budget transport, heartbeat stall semantics) |
 | 2026-07-31 | APME Team | Clarify operation_started_at anchor, session lifetime cap, nginx inactivity timeout, consequence estimate |
+| 2026-07-31 | APME Team | Split AI/non-AI budgets, monotonic lifetime cap, omit response-derived gRPC deadlines, phase progress init, cancel+await pseudocode |
