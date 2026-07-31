@@ -123,6 +123,33 @@ raw_budget    = scan_base + ai_budget + margin
 operation_budget = clamp(raw_budget, min_budget, max_budget)
 ```
 
+**Operation deadline anchor.** `operation_started_at` is the monotonic clock
+instant when the current phase's budget begins — not session creation and not
+merely when `operation_budget_seconds` is emitted on the wire:
+
+| Phase | `operation_started_at` | Budget emission |
+|-------|------------------------|-----------------|
+| Check / non-AI remediate | Session processing start (format + scan + Tier 1) | `SessionCreated` at session start |
+| AI remediate (Tier 2) | AI gate entry (Tier 1 exhausted or `AiEscalate` accepted) | `SessionCreated` or progress event at AI gate |
+
+The enforcement check `monotonic() - operation_started_at > operation_budget`
+therefore measures only the current phase. Scan and Tier 1 preamble time does
+not consume the AI budget.
+
+**Session lifetime cap.** `max_budget` bounds a single operation's duration, not
+the session's absolute age. The effective operation deadline is:
+
+```text
+operation_deadline = min(
+    operation_started_at + operation_budget,
+    session_created_at + APME_SESSION_MAX_LIFETIME,
+)
+```
+
+Primary enforces this absolute deadline explicitly so a session that spends time
+in scan, approval, or triage cannot receive a full `max_budget` operation that
+runs past the session maximum.
+
 Defaults (overridable via env for operators, not required for normal use):
 
 | Constant | Default | Role |
@@ -214,9 +241,22 @@ This feeds stall detection, UI progress bars, and budget re-estimation if
 
 ### 6. nginx / proxy alignment
 
-`proxy_read_timeout` on `/api/` must be **≥ max_budget + margin** (default
-≥ 7260s) or disabled for SSE/WS upgrade paths. SSE keepalive (30s) alone is
-insufficient when `proxy_read_timeout` is 600s.
+`proxy_read_timeout` limits the **inactivity interval between upstream reads**,
+not total response lifetime. With Primary heartbeats every 15s (and Gateway SSE
+keepalive every 30s) forwarded and flushed through nginx, an active long-running
+stream resets the read timer on each chunk — the connection stays open for the
+full operation without requiring `proxy_read_timeout` to exceed `max_budget`.
+
+Requirements:
+
+- SSE and WebSocket upgrade paths must **forward and flush** engine heartbeats
+  (or equivalent keepalive chunks) within the configured `proxy_read_timeout`.
+- Set `proxy_read_timeout` high enough for genuinely idle connections (e.g.
+  approval waits with no server progress) — default **≥ 600s** on `/api/`, or
+  `proxy_read_timeout 0` for dedicated SSE/WS locations.
+- Do **not** assume raising `proxy_read_timeout` to `max_budget` is required
+  for active streams; heartbeat forwarding is the primary long-operation
+  mechanism.
 
 ## Alternatives Considered
 
@@ -283,8 +323,11 @@ reliable; `extend` remains for **idle** approval waits (ADR-028).
 
 ### Positive
 
-- 645-candidate runs get a budget of ~40–80 minutes (depending on concurrency)
-  without operator configuration
+- 645-candidate runs receive a budget capped at **120 minutes** (`max_budget` /
+  `APME_SESSION_MAX_LIFETIME`); the two-attempt worst-case formula exceeds that
+  ceiling and is clamped. A typical one-attempt run at ~15s average latency is
+  ~40.5 minutes — both complete under adaptive budgeting without operator
+  configuration
 - Stuck operations fail in ~10 minutes regardless of budget
 - Session idle TTL recovers its intended semantics (pause between user actions)
 - Gateway SSE and Playground WS survive long AI phases with accurate progress
@@ -324,7 +367,7 @@ reliable; `extend` remains for **idle** approval waits (ADR-028).
 | `src/apme_gateway/scan/driver.py` | Remove `_FIX_SESSION_TIMEOUT = APME_SESSION_TTL`; use budget from `SessionCreated` + slack, or omit client deadline and rely on server enforcement |
 | `src/apme_gateway/session_client.py` | Same; forward `budget_seconds` / AI counters over WS |
 | `src/apme_gateway/api/operation_router.py` | Map `operation_stalled` / budget exceeded to `failed` with distinct error codes |
-| `containers/ui/nginx.conf.template` | `proxy_read_timeout` ≥ 7200s for `/api/` or `proxy_read_timeout 0` for SSE/WS locations |
+| `containers/ui/nginx.conf.template` | Ensure SSE/WS paths forward heartbeats within `proxy_read_timeout`; raise timeout for idle approval waits or use `proxy_read_timeout 0` for dedicated SSE/WS locations |
 
 ### Phase 3 — CLI
 
@@ -347,12 +390,17 @@ reliable; `extend` remains for **idle** approval waits (ADR-028).
 # Inside _session_graph_remediate drain loop (primary_server.py)
 budget = session.operation_budget_s
 stall_limit = stall_window(budget)
+operation_deadline = min(
+    session.operation_started_at + budget,
+    session.created_at + APME_SESSION_MAX_LIFETIME,
+)
 while not remediate_task.done():
-    if monotonic() - session.operation_started_at > budget:
+    now = monotonic()
+    if now > operation_deadline:
         remediate_task.cancel()
         yield error_event("operation_budget_exceeded")
         return
-    if monotonic() - session.last_progress_at > stall_limit:
+    if now - session.last_progress_at > stall_limit:
         remediate_task.cancel()
         yield error_event("operation_stalled")
         return
@@ -416,3 +464,4 @@ response schemas beyond additive error codes.
 |------|--------|--------|
 | 2026-07-30 | APME Team | Initial proposal |
 | 2026-07-30 | APME Team | Renumber to ADR-068; address review (math, stall formula, budget transport, heartbeat stall semantics) |
+| 2026-07-31 | APME Team | Clarify operation_started_at anchor, session lifetime cap, nginx inactivity timeout, consequence estimate |
