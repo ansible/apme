@@ -2,11 +2,11 @@
 
 ## Status
 
-Implemented
+Superseded (consolidated into main release)
 
 ## Date
 
-2026-07-23
+2026-07-23 (revised 2026-07-31)
 
 ## Context
 
@@ -21,14 +21,20 @@ Constraints and drivers:
 - Portal (Yarn Berry / Backstage) must install a consumable package without
   cloning the APME monorepo as a workspace.
 - No npmjs org/process is required for the interim EAP path.
-- UI packages iterate faster than full APME product releases (`vX.Y.Z`).
+- ~~UI packages iterate faster than full APME product releases (`vX.Y.Z`).~~
+  In practice, ui-workflow releases track product releases anyway.
 - Native SPA must keep using the in-repo npm workspace (`workspace:*`).
 
 ## Decision
 
-**We will publish `@apme/ui-workflow` as an `npm pack` `.tgz` attached to
-dedicated GitHub Releases tagged `ui-workflow-vX.Y.Z`.** Portal (and other
-hosts) pin the HTTPS release asset URL. npmjs and GitHub Packages are deferred.
+~~**We will publish `@apme/ui-workflow` as an `npm pack` `.tgz` attached to
+dedicated GitHub Releases tagged `ui-workflow-vX.Y.Z`.**~~
+
+**Revised:** The `@apme/ui-workflow` tarball is attached as an asset to the
+main APME product release (`vX.Y.Z`). There is no separate versioning or tag
+convention — the package version is derived from the release tag at build time.
+Portal (and other hosts) pin the HTTPS release asset URL on the product release.
+npmjs and GitHub Packages remain deferred.
 
 ## Alternatives Considered
 
@@ -74,12 +80,29 @@ monorepo.
 
 **Why not chosen**: Vendoring failed as a durable dual-shell strategy.
 
+### Alternative 4: Separate `ui-workflow-vX.Y.Z` tag convention (original ADR-066)
+
+**Description**: Publish via dedicated GitHub Releases tagged
+`ui-workflow-vX.Y.Z` with independent semver.
+
+**Pros**:
+- UI can ship between product releases
+
+**Cons**:
+- Extra tag lifecycle and version bookkeeping
+- In practice, releases always tracked product cadence anyway
+- Consumers must track two release streams
+
+**Why not chosen**: Complexity not justified — product releases are frequent
+enough and the UI package tracks them naturally.
+
 ## Consequences
 
 ### Positive
 
 - Portal installs from a pinned Release download URL; no vendor tree.
-- UI can ship between product releases via `ui-workflow-v*` tags.
+- Single release cadence — no separate tag lifecycle to manage.
+- Package version always matches the product version (no drift).
 - Native SPA unchanged (`workspace:*`).
 
 ### Negative
@@ -91,24 +114,29 @@ monorepo.
   immutable releases / protected tags. Without that, maintainers can still
   replace an asset (delete + re-upload); consumers relying on lockfile
   checksums should treat unexpected hash changes as a supply-chain signal.
+- UI-only fixes must wait for the next product release (no out-of-band ship).
 
 ### Neutral
 
-- Product `vX.Y.Z` releases may optionally attach the same asset later.
 - Migration to GitHub Packages or npmjs remains a follow-up without changing
-  the package’s public API.
+  the package's public API.
 
 ## Implementation Notes
 
 - Package: not `private`; `prepack` runs `tsc` + copies CSS into `dist/`;
-  `files` includes `dist/` and README.
-- CI: `.github/workflows/ui-workflow-release.yml` on tag `ui-workflow-v*`:
-  assert version matches tag → `npm pack` → `gh release create` with `.tgz`.
+  `files` includes `dist/` and README. `package.json` version is `0.0.0-dev`
+  (placeholder); the real version is injected from the release tag at build
+  time via `npm version --no-git-tag-version`.
+- CI: `.github/workflows/ui-workflow-release.yml` triggers on
+  `release: published` (main `vX.Y.Z` releases). Derives version from the
+  tag, stamps package.json, runs `npm pack`, and uploads the `.tgz` to the
+  existing release.
 - Portal: depend on
-  `https://github.com/ansible/apme/releases/download/ui-workflow-vX.Y.Z/apme-ui-workflow-X.Y.Z.tgz`
+  `https://github.com/ansible/apme/releases/download/vX.Y.Z/apme-ui-workflow-X.Y.Z.tgz`
   and `--embed-package @apme/ui-workflow` for dynamic plugin export.
-- Release steps: bump `frontend/packages/ui-workflow/package.json` version,
-  merge, tag `ui-workflow-vX.Y.Z`, push tag.
+- Release steps: create the main APME release as usual — the workflow
+  automatically attaches the tarball. No manual version bump needed for the
+  UI package.
 
 ## Related Decisions
 
@@ -122,3 +150,4 @@ monorepo.
 | Date | Change |
 |------|--------|
 | 2026-07-23 | Initial — GitHub Release tarball publish for `@apme/ui-workflow` |
+| 2026-07-31 | Consolidated into main APME release; removed separate `ui-workflow-v*` tag convention |

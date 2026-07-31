@@ -9,19 +9,17 @@ Hosts:
 
 ## Install (Portal / external)
 
-Published as an **`npm pack` tarball** on GitHub Releases (ADR-066) — not npmjs yet.
+Published as an **`npm pack` tarball** attached to the main APME GitHub Release
+(ADR-066) — not npmjs yet.
 
-```bash
-# After bumping version in package.json and merging to main:
-git tag ui-workflow-v0.1.1
-git push upstream ui-workflow-v0.1.1
-```
+The tarball is automatically built and attached when a `vX.Y.Z` release is
+published. No separate tagging or version bump is needed — the package version
+is derived from the release tag at build time.
 
-CI runs `npm pack` (builds `dist/` via `prepack`) and attaches
-`apme-ui-workflow-<version>.tgz` to the release. Consumers pin:
+Consumers pin the release download URL:
 
 ```json
-"@apme/ui-workflow": "https://github.com/ansible/apme/releases/download/ui-workflow-v0.1.1/apme-ui-workflow-0.1.1.tgz"
+"@apme/ui-workflow": "https://github.com/ansible/apme/releases/download/vX.Y.Z/apme-ui-workflow-X.Y.Z.tgz"
 ```
 
 ## Package contents
