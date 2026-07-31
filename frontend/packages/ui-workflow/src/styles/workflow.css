@@ -539,6 +539,41 @@
   cursor: pointer;
 }
 
+.apme-review-filter-accessory {
+  margin-bottom: 12px;
+}
+
+.apme-rule-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 36rem;
+}
+
+.apme-rule-filter__label {
+  font-size: 12px;
+  opacity: 0.7;
+  flex-shrink: 0;
+}
+
+.apme-rule-filter .apme-rule-filter-toggle,
+.apme-rule-filter .pf-v6-c-menu-toggle {
+  flex: 1;
+  min-width: 0;
+}
+
+.apme-rule-id-clickable {
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+}
+
+.apme-rule-id-clickable:hover,
+.apme-rule-id-clickable:focus {
+  text-decoration-style: solid;
+}
+
 /* Indent expanded body under the node title (chevron + header gap). */
 .apme-proposal-detail {
   margin: 0 16px 12px;

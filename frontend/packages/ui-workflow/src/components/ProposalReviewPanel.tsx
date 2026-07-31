@@ -26,17 +26,20 @@ import {
 } from '../shared/severity';
 import {
   descendantProposalIds,
+  filterByRuleKeepingNodeContext,
   fixTypeLabelColor,
   isAiRemediationProposal,
   nodeTypeLabel,
   nodeTypeLabelColor,
   normalizeFindingNodeType,
   orderPresentNodeTypes,
+  presentRuleIds,
   proposalHasVisibleDiff,
   proposalNodeTitle,
   proposalsGateKey,
   type FindingNodeType,
 } from '../remediation';
+import { RuleFilterInput } from './RuleFilterInput';
 
 type DecisionFilter = 'pending' | 'accepted' | 'declined';
 const DECISION_FILTER_ORDER: DecisionFilter[] = [
@@ -201,6 +204,7 @@ export function ProposalReviewPanel({
         ),
       ),
   );
+  const [ruleFilters, setRuleFilters] = useState<string[]>([]);
   const [showDeclined, setShowDeclined] = useState(false);
   const [feedbackTarget, setFeedbackTarget] = useState<OperationProposal | null>(null);
   const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -218,6 +222,26 @@ export function ProposalReviewPanel({
       ),
     [actionable],
   );
+
+  const presentRules = useMemo(() => presentRuleIds(actionable), [actionable]);
+  const presentRulesKey = presentRules.join(',');
+  const ruleFilterSet = useMemo(() => new Set(ruleFilters), [ruleFilters]);
+
+  useEffect(() => {
+    const present = new Set(presentRules);
+    setRuleFilters((prev) => {
+      const next = prev.filter((r) => present.has(r));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [presentRulesKey, presentRules]);
+
+  const toggleRuleFilter = useCallback((bareId: string) => {
+    setRuleFilters((prev) =>
+      prev.includes(bareId)
+        ? prev.filter((r) => r !== bareId)
+        : [...prev, bareId],
+    );
+  }, []);
 
   const severityCounts = useMemo(() => {
     const counts = new Map<string, number>();
@@ -452,7 +476,7 @@ export function ProposalReviewPanel({
           hasDetail,
           meta: (
             <>
-              <RuleId ruleId={p.rule_id} />
+              <RuleId ruleId={p.rule_id} onRuleClick={toggleRuleFilter} />
               <Label
                 isCompact
                 color={fixTypeLabelColor(isAiGate ? 'ai' : 'auto')}
@@ -481,7 +505,12 @@ export function ProposalReviewPanel({
                         key={`${p.id}-desc-${i}`}
                         className="apme-assess-finding-row"
                       >
-                        {ruleId ? <RuleId ruleId={ruleId} /> : null}
+                        {ruleId ? (
+                          <RuleId
+                            ruleId={ruleId}
+                            onRuleClick={toggleRuleFilter}
+                          />
+                        ) : null}
                         {(ruleId || severity) && (
                           <Label
                             isCompact
@@ -522,10 +551,11 @@ export function ProposalReviewPanel({
           ),
         };
       }),
-    [actionable, isAiGate, feedbackEnabled],
+    [actionable, isAiGate, feedbackEnabled, toggleRuleFilter],
   );
 
   const hasNarrowedFilters =
+    ruleFilters.length > 0 ||
     decisionFilters.size < DECISION_FILTER_ORDER.length ||
     (presentSeverities.length > 0 &&
       sevFilters.size < presentSeverities.length) ||
@@ -533,22 +563,30 @@ export function ProposalReviewPanel({
       presentNodeTypes.some((t) => !nodeTypeFilters.has(t)));
 
   const filteredActionableItems = useMemo(() => {
-    const byId = new Map(actionable.map((p) => [p.id, p]));
-    return actionableItems.filter((item) => {
-      const decision = effectiveDecision(item.id, decisions);
-      if (!decisionFilters.has(decision)) return false;
-      const proposal = byId.get(item.id);
-      if (!proposal) return false;
-      if (presentSeverities.length > 0 && sevFilters.size > 0) {
-        const sev = proposalSeverity(proposal);
-        if (!sevFilters.has(sev)) return false;
-      }
-      if (presentNodeTypes.length > 0 && nodeTypeFilters.size > 0) {
-        const nt = normalizeFindingNodeType(proposal.node_type);
-        if (!nodeTypeFilters.has(nt)) return false;
-      }
-      return true;
-    });
+    // Rule filter is node-scoped (siblings stay). Decision stays row-level so
+    // Accepted/Declined chips do not re-surface via a sibling on the same path.
+    const afterRules = filterByRuleKeepingNodeContext(
+      actionable,
+      ruleFilterSet,
+      (proposal) => {
+        if (presentSeverities.length > 0 && sevFilters.size > 0) {
+          if (!sevFilters.has(proposalSeverity(proposal))) return false;
+        }
+        if (presentNodeTypes.length > 0 && nodeTypeFilters.size > 0) {
+          const nt = normalizeFindingNodeType(proposal.node_type);
+          if (!nodeTypeFilters.has(nt)) return false;
+        }
+        return true;
+      },
+    );
+    const visible = new Set(
+      afterRules
+        .filter((p) =>
+          decisionFilters.has(effectiveDecision(p.id, decisions)),
+        )
+        .map((p) => p.id),
+    );
+    return actionableItems.filter((item) => visible.has(item.id));
   }, [
     actionableItems,
     actionable,
@@ -556,6 +594,7 @@ export function ProposalReviewPanel({
     decisionFilters,
     sevFilters,
     nodeTypeFilters,
+    ruleFilterSet,
     presentSeverities.length,
     presentNodeTypes.length,
   ]);
@@ -746,6 +785,14 @@ export function ProposalReviewPanel({
       onCancel={onCancel}
       next={workflowNext}
       filterGroups={filterGroups}
+      filterAccessory={
+        <RuleFilterInput
+          id="proposal-rule-filter"
+          options={presentRules}
+          selected={ruleFilters}
+          onChange={setRuleFilters}
+        />
+      }
       emptyMessage="No proposals match the current filters."
       list={
         filteredActionableItems.length === 0
@@ -756,7 +803,7 @@ export function ProposalReviewPanel({
               decisionMode: true,
               decisions,
               onDecisionChange: handleDecisionChange,
-              resetKey: gateKey,
+              resetKey: `${gateKey}|${ruleFilters.join(',')}`,
               defaultExpanded: true,
               showExpandControls: true,
               onAcceptRemaining: acceptRemaining,

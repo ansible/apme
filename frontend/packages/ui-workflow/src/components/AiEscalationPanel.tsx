@@ -16,6 +16,10 @@ import {
   orderPresentNodeTypes,
   type FindingNodeType,
 } from '../remediation/nodeType';
+import {
+  filterByRuleKeepingNodeContext,
+  presentRuleIds,
+} from '../remediation';
 import { AssessNodeDetail } from './AssessFindingsPanel';
 import {
   toggleInFilterSet,
@@ -23,6 +27,7 @@ import {
 } from './ReviewFilterBar';
 import { ReviewInventoryRow } from './ReviewInventoryRow';
 import { ReviewStepShell } from './ReviewStepShell';
+import { RuleFilterInput } from './RuleFilterInput';
 import type { NodeDecision, NodeReviewItem } from './NodeReviewList';
 import {
   SEVERITY_LABELS,
@@ -136,6 +141,7 @@ export function AiEscalationPanel({
   const [nodeTypeFilters, setNodeTypeFilters] = useState<Set<FindingNodeType>>(
     () => new Set(presentNodeTypeOptions(candidates)),
   );
+  const [ruleFilters, setRuleFilters] = useState<string[]>([]);
 
   useEffect(() => {
     const paths = pathKey ? pathKey.split('\0') : [];
@@ -152,6 +158,25 @@ export function AiEscalationPanel({
     () => presentNodeTypeOptions(candidates),
     [candidates],
   );
+  const presentRules = useMemo(() => presentRuleIds(candidates), [candidates]);
+  const presentRulesKey = presentRules.join(',');
+  const ruleFilterSet = useMemo(() => new Set(ruleFilters), [ruleFilters]);
+
+  useEffect(() => {
+    const present = new Set(presentRules);
+    setRuleFilters((prev) => {
+      const next = prev.filter((r) => present.has(r));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [presentRulesKey, presentRules]);
+
+  const toggleRuleFilter = useCallback((bareId: string) => {
+    setRuleFilters((prev) =>
+      prev.includes(bareId)
+        ? prev.filter((r) => r !== bareId)
+        : [...prev, bareId],
+    );
+  }, []);
 
   const severityCounts = useMemo(() => {
     const counts = new Map<string, number>();
@@ -232,16 +257,30 @@ export function AiEscalationPanel({
   }, [allGroups, decisions]);
 
   const filteredFindings = useMemo(() => {
-    return candidates.filter((f) => {
-      const sev = severityClass(f.severity || 'info', f.rule_id);
-      if (!sevFilters.has(sev)) return false;
-      const nt = normalizeFindingNodeType(f.node_type);
-      if (!nodeTypeFilters.has(nt)) return false;
-      const path = locationPath(f);
-      if (!decisionFilters.has(effectiveDecision(path, decisions))) return false;
-      return true;
-    });
-  }, [candidates, sevFilters, nodeTypeFilters, decisionFilters, decisions]);
+    // Rule filter is node-scoped. Decision stays location-level after that
+    // (one decision per path — drop whole location if its decision is hidden).
+    const afterRules = filterByRuleKeepingNodeContext(
+      candidates,
+      ruleFilterSet,
+      (f) => {
+        const sev = severityClass(f.severity || 'info', f.rule_id);
+        if (!sevFilters.has(sev)) return false;
+        const nt = normalizeFindingNodeType(f.node_type);
+        if (!nodeTypeFilters.has(nt)) return false;
+        return true;
+      },
+    );
+    return afterRules.filter((f) =>
+      decisionFilters.has(effectiveDecision(locationPath(f), decisions)),
+    );
+  }, [
+    candidates,
+    sevFilters,
+    nodeTypeFilters,
+    decisionFilters,
+    decisions,
+    ruleFilterSet,
+  ]);
 
   const filteredGroups = useMemo(
     () => groupByLocation(filteredFindings),
@@ -249,6 +288,7 @@ export function AiEscalationPanel({
   );
 
   const hasNarrowedFilters =
+    ruleFilters.length > 0 ||
     decisionFilters.size < DECISION_FILTER_ORDER.length ||
     presentSeverities.some((s) => !sevFilters.has(s)) ||
     presentNodeTypes.some((t) => !nodeTypeFilters.has(t));
@@ -274,10 +314,16 @@ export function AiEscalationPanel({
             </>
           ),
           hasDetail: g.findings.length > 0,
-          detail: <AssessNodeDetail findings={g.findings} enableAi />,
+          detail: (
+            <AssessNodeDetail
+              findings={g.findings}
+              enableAi
+              onRuleClick={toggleRuleFilter}
+            />
+          ),
         };
       }),
-    [filteredGroups],
+    [filteredGroups, toggleRuleFilter],
   );
 
   /** Bulk Include/Skip only currently visible undecided locations. */
@@ -452,6 +498,14 @@ export function AiEscalationPanel({
           isDisabled: escalating || pendingCount > 0,
         }}
         filterGroups={filterGroups}
+        filterAccessory={
+          <RuleFilterInput
+            id="ai-escalation-rule-filter"
+            options={presentRules}
+            selected={ruleFilters}
+            onChange={setRuleFilters}
+          />
+        }
         emptyMessage="No locations match the current filters."
         list={
           listItems.length === 0
@@ -464,7 +518,7 @@ export function AiEscalationPanel({
                 onDecisionChange: handleDecisionChange,
                 defaultExpanded: true,
                 showExpandControls: true,
-                resetKey: `ai-esc-${pathKey}-${filteredFindings.length}-${sevFilters.size}-${nodeTypeFilters.size}-${decisionFilters.size}`,
+                resetKey: `ai-esc-${pathKey}-${filteredFindings.length}-${sevFilters.size}-${nodeTypeFilters.size}-${decisionFilters.size}-${ruleFilters.join(',')}`,
                 onAcceptRemaining: includeRemaining,
                 onDeclineRemaining: skipRemaining,
                 pendingCount: visiblePendingPaths.length,
