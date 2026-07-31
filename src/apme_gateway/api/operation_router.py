@@ -983,7 +983,12 @@ async def _drive_operation(
             with contextlib.suppress(Exception):
                 kind = event.WhichOneof("event")  # type: ignore[attr-defined]
 
-            if kind == "progress":
+            if kind == "created":
+                created = event.created  # type: ignore[attr-defined]
+                if created.operation_budget_seconds:
+                    registry.set_operation_budget(operation_id, created.operation_budget_seconds)
+
+            elif kind == "progress":
                 prog = event.progress  # type: ignore[attr-defined]
                 entry = ProgressEntry(
                     phase=prog.phase or "processing",
@@ -991,6 +996,9 @@ async def _drive_operation(
                     timestamp=_now_iso(),
                     progress=prog.progress if prog.progress is not None else None,
                     level=prog.level if prog.level is not None else None,
+                    budget_seconds=prog.budget_seconds if prog.budget_seconds else None,
+                    ai_completed=prog.ai_completed if prog.ai_total else None,
+                    ai_total=prog.ai_total if prog.ai_total else None,
                 )
                 if registry.get(operation_id) and registry.get(operation_id).status == OperationStatus.CLONING:  # type: ignore[union-attr]
                     registry.transition(operation_id, OperationStatus.SCANNING)
@@ -1128,6 +1136,15 @@ async def _drive_operation(
                     ai_accepted_count = getattr(ack, "applied_count", 0)
                     awaiting_ai_approval = False
                 registry.transition(operation_id, OperationStatus.APPLYING)
+
+            elif kind == "error":
+                err = event.error  # type: ignore[attr-defined]
+                registry.transition(
+                    operation_id,
+                    OperationStatus.FAILED,
+                    error=f"{err.code}: {err.message}",
+                    error_code=err.code,
+                )
 
             elif kind == "result":
                 res = event.result  # type: ignore[attr-defined]
@@ -1278,21 +1295,31 @@ async def _drive_operation(
         if op is not None:
             op.clone_commit = clone_commit
 
-        scan_type_str = "remediate" if (remediate or (op is not None and op.scan_type == "remediate")) else "check"
-        await finalize_operation_scan(
-            project_id=project_id,
-            scan_id=scan_id,
-            scan_type=scan_type_str,
-            clone_commit=clone_commit,
-            captured_patches=captured_patches,
-            ai_proposed_count=ai_proposed_count,
-            ai_declined_count=ai_declined_count,
-            ai_accepted_count=ai_accepted_count,
-        )
+        if result is not None:
+            scan_type_str = "remediate" if (remediate or (op is not None and op.scan_type == "remediate")) else "check"
+            await finalize_operation_scan(
+                project_id=project_id,
+                scan_id=scan_id,
+                scan_type=scan_type_str,
+                clone_commit=clone_commit,
+                captured_patches=captured_patches,
+                ai_proposed_count=ai_proposed_count,
+                ai_declined_count=ai_declined_count,
+                ai_accepted_count=ai_accepted_count,
+            )
 
-        op = registry.get(operation_id)
-        if op is not None and op.status not in TERMINAL_STATUSES:
-            registry.transition(operation_id, OperationStatus.COMPLETED)
+            op = registry.get(operation_id)
+            if op is not None and op.status not in TERMINAL_STATUSES:
+                registry.transition(operation_id, OperationStatus.COMPLETED)
+        else:
+            op = registry.get(operation_id)
+            if op is not None and op.status not in TERMINAL_STATUSES:
+                registry.transition(
+                    operation_id,
+                    OperationStatus.FAILED,
+                    error="Session ended without a result",
+                    error_code="no_result",
+                )
 
     except asyncio.CancelledError:
         registry.transition(operation_id, OperationStatus.CANCELLED)

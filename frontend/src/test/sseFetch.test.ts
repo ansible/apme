@@ -1,6 +1,10 @@
+import type { Dispatch, SetStateAction } from 'react';
 import { describe, it, expect, vi } from 'vitest';
 import { parseSseChunk, readSseStream } from '@apme/ui-workflow';
-import { applyOperationSseEvent } from '../../packages/ui-workflow/src/hooks/useProjectOperationState';
+import {
+  applyOperationSseEvent,
+  type ProjectOperationState,
+} from '../../packages/ui-workflow/src/hooks/useProjectOperationState';
 
 describe('parseSseChunk', () => {
   it('parses event and data frames', () => {
@@ -109,5 +113,69 @@ describe('applyOperationSseEvent', () => {
     expect(setState).toHaveBeenCalledWith(
       expect.objectContaining({ status: 'cloning', operation_id: 'op-1' }),
     );
+  });
+
+  it('merges operation_budget_seconds on status_changed', () => {
+    let state: ProjectOperationState = {
+      operation_id: 'op-1',
+      project_id: 'p-1',
+      scan_id: 's-1',
+      status: 'scanning',
+      scan_type: 'remediate',
+      started_at: '2026-01-01T00:00:00Z',
+      progress: [],
+    };
+    const setState = vi.fn(
+      (updater: SetStateAction<ProjectOperationState | null>) => {
+        state =
+          typeof updater === 'function'
+            ? (updater(state) ?? state)
+            : (updater ?? state);
+      },
+    ) as Dispatch<SetStateAction<ProjectOperationState | null>>;
+    const setConnected = vi.fn();
+    applyOperationSseEvent(setState, setConnected, {
+      event: 'status_changed',
+      data: JSON.stringify({
+        status: 'scanning',
+        previous: 'scanning',
+        operation_budget_seconds: 600,
+      }),
+    });
+    expect(state.operation_budget_seconds).toBe(600);
+    expect(state.status).toBe('scanning');
+  });
+
+  it('merges error_code on status_changed', () => {
+    let state: ProjectOperationState = {
+      operation_id: 'op-1',
+      project_id: 'p-1',
+      scan_id: 's-1',
+      status: 'scanning',
+      scan_type: 'remediate',
+      started_at: '2026-01-01T00:00:00Z',
+      progress: [],
+    };
+    const setState = vi.fn(
+      (updater: SetStateAction<ProjectOperationState | null>) => {
+        state =
+          typeof updater === 'function'
+            ? (updater(state) ?? state)
+            : (updater ?? state);
+      },
+    ) as Dispatch<SetStateAction<ProjectOperationState | null>>;
+    const setConnected = vi.fn();
+    applyOperationSseEvent(setState, setConnected, {
+      event: 'status_changed',
+      data: JSON.stringify({
+        status: 'failed',
+        previous: 'scanning',
+        error: 'Operation stalled without progress',
+        error_code: 'operation_stalled',
+      }),
+    });
+    expect(state.status).toBe('failed');
+    expect(state.error).toBe('Operation stalled without progress');
+    expect(state.error_code).toBe('operation_stalled');
   });
 });

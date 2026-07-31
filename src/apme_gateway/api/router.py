@@ -2216,6 +2216,7 @@ async def project_operate_ws(
 
         op_scan_id = uuid.uuid4().hex
         started_sent = False
+        operation_budget_seconds: int | None = None
         completed_scan_id: str | None = None
         captured_patches: list[dict[str, str]] = []
         ai_proposed_count = 0
@@ -2228,7 +2229,7 @@ async def project_operate_ws(
             Args:
                 event: gRPC SessionEvent protobuf.
             """
-            nonlocal started_sent, ai_proposed_count, ai_declined_count, ai_accepted_count
+            nonlocal started_sent, operation_budget_seconds, ai_proposed_count, ai_declined_count, ai_accepted_count
 
             kind = None
             with contextlib.suppress(Exception):
@@ -2238,20 +2239,34 @@ async def project_operate_ws(
                 nonlocal started_sent
                 if not started_sent:
                     started_sent = True
-                    await websocket.send_json({"type": "started", "scan_id": op_scan_id})
+                    started_payload: dict[str, object] = {
+                        "type": "started",
+                        "scan_id": op_scan_id,
+                    }
+                    if operation_budget_seconds:
+                        started_payload["operation_budget_seconds"] = operation_budget_seconds
+                    await websocket.send_json(started_payload)
 
-            if kind == "progress":
+            if kind == "created":
+                created = event.created  # type: ignore[attr-defined]
+                if created.operation_budget_seconds:
+                    operation_budget_seconds = created.operation_budget_seconds
+            elif kind == "progress":
                 await _ensure_started()
                 prog = event.progress  # type: ignore[attr-defined]
-                await websocket.send_json(
-                    {
-                        "type": "progress",
-                        "phase": prog.phase or "processing",
-                        "message": prog.message or "",
-                        "progress": prog.progress,
-                        "level": prog.level,
-                    }
-                )
+                progress_payload: dict[str, object] = {
+                    "type": "progress",
+                    "phase": prog.phase or "processing",
+                    "message": prog.message or "",
+                    "progress": prog.progress,
+                    "level": prog.level,
+                }
+                if prog.budget_seconds:
+                    progress_payload["budget_seconds"] = prog.budget_seconds
+                if prog.ai_total:
+                    progress_payload["ai_completed"] = prog.ai_completed
+                    progress_payload["ai_total"] = prog.ai_total
+                await websocket.send_json(progress_payload)
             elif kind == "proposals":
                 await _ensure_started()
                 props = event.proposals  # type: ignore[attr-defined]
@@ -2280,6 +2295,15 @@ async def project_operate_ws(
                     {
                         "type": "approval_ack",
                         "applied_count": ai_accepted_count,
+                    }
+                )
+            elif kind == "error":
+                err = event.error  # type: ignore[attr-defined]
+                await websocket.send_json(
+                    {
+                        "type": "error",
+                        "code": err.code,
+                        "message": err.message,
                     }
                 )
             elif kind == "result":
@@ -2386,11 +2410,11 @@ async def project_operate_ws(
                 with contextlib.suppress(asyncio.CancelledError):
                     op_result = await op_task
 
-            if op_result is not None:
+            if op_result is not None and op_result[1] is not None:
                 completed_scan_id = op_result[0]
                 clone_commit = op_result[2]
         else:
-            scan_id, _result, clone_commit = await run_project_operation(
+            scan_id, result, clone_commit = await run_project_operation(
                 project_id=proj.id,
                 repo_url=proj.repo_url,
                 branch=proj.branch,
@@ -2403,7 +2427,8 @@ async def project_operate_ws(
                 galaxy_servers=galaxy_servers or None,
                 scm_token=scm_token,
             )
-            completed_scan_id = scan_id
+            if result is not None:
+                completed_scan_id = scan_id
 
         if completed_scan_id:
             op_scan_type = "remediate" if is_remediate else "check"

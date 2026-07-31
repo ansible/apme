@@ -10,6 +10,7 @@ them on the first chunk).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import logging
 import os
@@ -34,8 +35,7 @@ logger = logging.getLogger(__name__)
 
 _GRPC_MAX_MSG = 50 * 1024 * 1024  # 50 MiB — matches Primary
 
-# Match Primary session store TTL (ADR-028 / ADR-064 assess-pause holds).
-_FIX_SESSION_TIMEOUT = float(os.environ.get("APME_SESSION_TTL", "1800"))
+# ADR-068: server enforces adaptive deadlines; no fixed client gRPC timeout.
 
 _FALSEY_OPTION_STRINGS = frozenset({"", "0", "false", "no", "off", "n"})
 _TRUTHY_OPTION_STRINGS = frozenset({"1", "true", "yes", "on", "y"})
@@ -366,6 +366,10 @@ async def run_project_operation(
     Returns:
         Tuple of (scan_id, SessionResult or None, clone_commit_sha).
         The commit SHA is the HEAD of the cloned repo (empty string on failure).
+
+    Raises:
+        asyncio.CancelledError: When the driving task is cancelled; closes the
+            FixSession command stream before propagating.
     """
     if scan_id is None:
         scan_id = uuid.uuid4().hex
@@ -424,7 +428,7 @@ async def run_project_operation(
         try:
             stub = primary_pb2_grpc.PrimaryStub(channel)  # type: ignore[no-untyped-call]
 
-            response_stream = stub.FixSession(_command_stream(), timeout=_FIX_SESSION_TIMEOUT)
+            response_stream = stub.FixSession(_command_stream())
 
             result: primary_pb2.SessionResult | None = None
             async for event in response_stream:
@@ -471,9 +475,20 @@ async def run_project_operation(
                     result = event.result
                     await command_queue.put(primary_pb2.SessionCommand(close=primary_pb2.CloseRequest()))
                     await command_queue.put(None)
+                elif kind == "error":
+                    await command_queue.put(primary_pb2.SessionCommand(close=primary_pb2.CloseRequest()))
+                    await command_queue.put(None)
+                    break
 
             return scan_id, result, clone_sha
+        except asyncio.CancelledError:
+            with contextlib.suppress(Exception):
+                command_queue.put_nowait(primary_pb2.SessionCommand(close=primary_pb2.CloseRequest()))
+                command_queue.put_nowait(None)
+            raise
         finally:
+            with contextlib.suppress(Exception):
+                command_queue.put_nowait(None)
             await channel.close(grace=None)
 
     finally:

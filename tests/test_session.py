@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -225,6 +226,16 @@ class TestSessionState:
         """lifetime_seconds is near zero immediately after creation."""
         state = SessionState(session_id="abc")
         assert state.lifetime_seconds < 5
+
+    def test_operation_budget_remaining_respects_lifetime_cap(self) -> None:
+        """Remaining budget is capped by the session lifetime deadline (ADR-068)."""
+        state = SessionState(session_id="abc")
+        now = time.monotonic()
+        state.operation_budget_s = 600
+        state.operation_started_at = now
+        state.max_lifetime_deadline_mono = now + 120
+        remaining = state.operation_budget_remaining()
+        assert 115 <= remaining <= 120
 
     def test_cleanup_removes_temp_dir(self, tmp_path: Path) -> None:
         """cleanup() deletes temp_dir contents and clears the field.
@@ -684,6 +695,11 @@ class TestSessionApprovalGates:
 
         class _DummyGraphEngine:
             def __init__(self) -> None:
+                from apme_engine.remediation.transforms import build_default_registry
+
+                self._registry = build_default_registry()
+                self._ai_provider = None
+                self._max_ai_attempts = 2
                 self.remediate = AsyncMock(
                     return_value=SimpleNamespace(
                         passes=1,
@@ -771,6 +787,11 @@ class TestSessionApprovalGates:
 
         class _DummyGraphEngine:
             def __init__(self) -> None:
+                from apme_engine.remediation.transforms import build_default_registry
+
+                self._registry = build_default_registry()
+                self._ai_provider = None
+                self._max_ai_attempts = 2
                 self.remediate = AsyncMock(
                     return_value=SimpleNamespace(
                         passes=1,

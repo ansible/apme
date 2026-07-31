@@ -72,6 +72,9 @@ class ProgressEntry:
         timestamp: UTC ISO-8601 timestamp.
         progress: Optional 0–100 percent.
         level: Optional severity/verbosity level.
+        budget_seconds: Remaining operation budget seconds (ADR-068).
+        ai_completed: AI proposals completed in current phase (ADR-068).
+        ai_total: Total AI proposals in current phase (ADR-068).
     """
 
     phase: str
@@ -79,6 +82,9 @@ class ProgressEntry:
     timestamp: str
     progress: float | None = None
     level: int | None = None
+    budget_seconds: int | None = None
+    ai_completed: int | None = None
+    ai_total: int | None = None
 
 
 @dataclass
@@ -171,6 +177,8 @@ class OperationState:
         result: Set when status is ``completed``.
         pr_url: Set when status is ``pr_submitted``.
         error: Set when status is ``failed``.
+        error_code: Machine-readable failure code when status is ``failed`` (ADR-068).
+        operation_budget_seconds: Creation-time operation budget from ``SessionCreated`` (ADR-068).
         clone_commit: HEAD SHA of the cloned repository.
         grpc_task: The background asyncio.Task driving Primary.
         approval_future: Resolved by ``POST /approve``.
@@ -192,6 +200,8 @@ class OperationState:
     result: OperationResult | None = None
     pr_url: str | None = None
     error: str | None = None
+    error_code: str | None = None
+    operation_budget_seconds: int | None = None
     clone_commit: str = ""
     grpc_task: asyncio.Task[Any] | None = field(default=None, repr=False)
     approval_future: asyncio.Future[list[str]] | None = field(default=None, repr=False)
@@ -219,6 +229,9 @@ class OperationState:
                     "timestamp": p.timestamp,
                     "progress": p.progress,
                     "level": p.level,
+                    "budget_seconds": p.budget_seconds,
+                    "ai_completed": p.ai_completed,
+                    "ai_total": p.ai_total,
                 }
                 for p in self.progress
             ],
@@ -264,6 +277,10 @@ class OperationState:
             data["pr_url"] = self.pr_url
         if self.error is not None:
             data["error"] = self.error
+        if self.error_code is not None:
+            data["error_code"] = self.error_code
+        if self.operation_budget_seconds is not None:
+            data["operation_budget_seconds"] = self.operation_budget_seconds
         if self.clone_commit:
             data["clone_commit"] = self.clone_commit
         return data

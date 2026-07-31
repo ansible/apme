@@ -135,13 +135,19 @@ def run_remediate(args: argparse.Namespace) -> None:
     got_result = False
 
     try:
-        responses = stub.FixSession(command_iter(), timeout=1800)
+        stream_timeout = getattr(args, "timeout", None)
+        responses = stub.FixSession(command_iter(), timeout=stream_timeout)
 
         for event in responses:
             oneof = event.WhichOneof("event")
 
             if oneof == "created":
                 pass  # session established
+
+            elif oneof == "error":
+                err = event.error
+                sys.stderr.write(f"  Operation failed [{err.code}]: {err.message}\n")
+                sys.exit(EXIT_ERROR)
 
             elif oneof == "progress":
                 p = event.progress

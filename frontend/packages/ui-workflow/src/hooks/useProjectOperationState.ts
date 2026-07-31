@@ -54,6 +54,9 @@ export interface ProgressEntry {
   timestamp: string;
   progress?: number | null;
   level?: number | null;
+  budget_seconds?: number | null;
+  ai_completed?: number | null;
+  ai_total?: number | null;
 }
 
 export interface Proposal {
@@ -293,6 +296,10 @@ export interface ProjectOperationState {
   result?: OperationResultData;
   pr_url?: string;
   error?: string;
+  /** ADR-068: machine-readable failure code when status is failed. */
+  error_code?: string;
+  /** ADR-068: creation-time operation budget from SessionCreated. */
+  operation_budget_seconds?: number;
   clone_commit?: string;
 }
 
@@ -339,6 +346,8 @@ export function applyOperationSseEvent(
           status: string;
           previous: string;
           error?: string;
+          error_code?: string;
+          operation_budget_seconds?: number;
         };
         setState((prev) =>
           prev
@@ -346,6 +355,10 @@ export function applyOperationSseEvent(
                 ...prev,
                 status: data.status as ProjectOperationStatus,
                 ...(data.error ? { error: data.error } : {}),
+                ...(data.error_code ? { error_code: data.error_code } : {}),
+                ...(data.operation_budget_seconds
+                  ? { operation_budget_seconds: data.operation_budget_seconds }
+                  : {}),
               }
             : prev,
         );

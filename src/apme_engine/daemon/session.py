@@ -12,6 +12,7 @@ import contextlib
 import logging
 import os
 import shutil
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -26,12 +27,13 @@ from apme.v1.primary_pb2 import (
     Proposal,
     ScanOptions,
 )
+from apme_engine.daemon.deadline import _parse_int_env, operation_deadline_mono
 from apme_engine.engine.models import ViolationDict
 
 logger = logging.getLogger(__name__)
 
 _DEFAULT_TTL = int(os.environ.get("APME_SESSION_TTL", "1800"))  # 30 min
-_MAX_LIFETIME = int(os.environ.get("APME_SESSION_MAX_LIFETIME", "7200"))  # 2 hr
+_MAX_LIFETIME = _parse_int_env("APME_SESSION_MAX_LIFETIME", 7200)  # 2 hr
 _MAX_SESSIONS = int(os.environ.get("APME_SESSION_MAX", "10"))
 _REAP_INTERVAL = 60  # seconds
 
@@ -103,6 +105,13 @@ class SessionState:
             AI assessment mutates the graph. Restored when the user declines
             AI proposals so unapproved AI / post-AI Tier 1 never leak into
             commit/PR payloads.
+        operation_budget_s: Adaptive wall-clock budget for current compute
+            phase (ADR-068); 0 when unset.
+        operation_started_at: ``time.monotonic()`` when budget tracking began.
+        last_progress_at: ``time.monotonic()`` at last server progress event.
+        operation_generation: Monotonic counter incremented at each phase
+            anchor; progress events carry this for stall filtering (ADR-068).
+        max_lifetime_deadline_mono: Absolute session cap in monotonic time.
     """
 
     session_id: str
@@ -171,6 +180,13 @@ class SessionState:
     # working_files before Gate 2 AI assessment (restore on decline-all).
     pre_gate2_files: dict[str, bytes] = field(default_factory=dict)
 
+    # ADR-068: adaptive operation deadline (decoupled from idle TTL).
+    operation_budget_s: int = 0
+    operation_started_at: float = 0.0
+    last_progress_at: float = 0.0
+    operation_generation: int = 0
+    max_lifetime_deadline_mono: float = 0.0
+
     @property
     def ttl_seconds(self) -> int:
         """Remaining idle TTL in seconds."""
@@ -195,6 +211,63 @@ class SessionState:
     def touch(self) -> None:
         """Reset idle timer to now."""
         self.last_activity_at = datetime.now(UTC)
+
+    def init_lifetime_deadline(self) -> None:
+        """Record absolute session lifetime cap in monotonic time (ADR-068)."""
+        self.max_lifetime_deadline_mono = time.monotonic() + _MAX_LIFETIME
+
+    def reanchor_lifetime_deadline(self) -> None:
+        """Re-anchor lifetime cap after resume (ADR-068)."""
+        remaining = max(0, _MAX_LIFETIME - self.lifetime_seconds)
+        self.max_lifetime_deadline_mono = time.monotonic() + remaining
+
+    def begin_operation_phase(self, budget_s: int) -> None:
+        """Begin a new operation phase with fresh budget and progress anchors.
+
+        Args:
+            budget_s: Total allowed seconds for the current compute phase.
+        """
+        now = time.monotonic()
+        self.operation_budget_s = max(0, budget_s)
+        self.operation_started_at = now
+        self.last_progress_at = now
+        self.operation_generation += 1
+        self.touch()
+
+    def start_operation(self, budget_s: int) -> None:
+        """Begin tracking wall-clock operation budget (ADR-068).
+
+        Deprecated alias for :meth:`begin_operation_phase`.
+
+        Args:
+            budget_s: Total allowed seconds for the current compute phase.
+        """
+        self.begin_operation_phase(budget_s)
+
+    def record_progress(self, *, task_linked: bool = True) -> None:
+        """Refresh idle TTL; optionally reset stall clock for task-linked work.
+
+        Args:
+            task_linked: When true, reset ``last_progress_at`` (ADR-068).
+        """
+        if task_linked:
+            self.last_progress_at = time.monotonic()
+        self.touch()
+
+    def operation_budget_remaining(self) -> int:
+        """Seconds remaining on the operation budget (0 when unset or expired).
+
+        Returns:
+            Remaining budget seconds.
+        """
+        if self.operation_budget_s <= 0 or self.operation_started_at <= 0:
+            return 0
+        deadline = operation_deadline_mono(
+            operation_started_at=self.operation_started_at,
+            operation_budget_s=self.operation_budget_s,
+            max_lifetime_deadline_mono=self.max_lifetime_deadline_mono,
+        )
+        return max(0, int(deadline - time.monotonic()))
 
     def cleanup(self) -> None:
         """Remove temp directory and session-scoped Galaxy config if present."""
@@ -238,6 +311,7 @@ class SessionStore:
             raise ResourceExhaustedError(msg)
         session_id = uuid.uuid4().hex[:12]
         state = SessionState(session_id=session_id)
+        state.init_lifetime_deadline()
         self._sessions[session_id] = state
         logger.info("Session %s created (active: %d)", session_id, len(self._sessions))
         return state

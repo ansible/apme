@@ -402,6 +402,7 @@ def _setup_completed_operation(
         patches=patches or [{"file": "playbooks/main.yml", "diff": "--- a\n+++ b"}],
     )
     registry.set_result(state.operation_id, result)
+    registry.transition(state.operation_id, OperationStatus.COMPLETED)
 
 
 class TestSubmitEndpoint:

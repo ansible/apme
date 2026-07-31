@@ -116,6 +116,10 @@ class ProgressUpdate:
     phase: str
     progress: float
     level: int
+    budget_seconds: int
+    ai_completed: int
+    ai_total: int
+    operation_generation: int
     def __init__(self, **kwargs: object) -> None: ...
 
 class CollectionRef:

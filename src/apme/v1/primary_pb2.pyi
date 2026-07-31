@@ -167,9 +167,15 @@ class SessionEvent:
     data: DataPayload
     findings: FindingsReady
     ai_triage: AiTriageReady
+    error: SessionError
     def __init__(self, **kwargs: object) -> None: ...
     def HasField(self, field_name: str) -> bool: ...
     def WhichOneof(self, oneof_group: str) -> str | None: ...
+
+class SessionError:
+    code: str
+    message: str
+    def __init__(self, **kwargs: object) -> None: ...
 
 class FindingsReady:
     violations: list[Violation]
@@ -186,6 +192,7 @@ class AiTriageReady:
 class SessionCreated:
     session_id: str
     ttl_seconds: int
+    operation_budget_seconds: int
     def __init__(self, **kwargs: object) -> None: ...
 
 # ProgressUpdate is defined in common_pb2 (ADR-033) and re-exported here
