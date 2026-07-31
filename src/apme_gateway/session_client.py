@@ -340,27 +340,43 @@ async def _forward_events(
         oneof = event.WhichOneof("event")
 
         if oneof == "created":
-            await _safe_send(
-                ws,
-                {
-                    "type": "session_created",
-                    "session_id": event.created.session_id,
-                    "scan_id": scan_id,
-                    "ttl_seconds": event.created.ttl_seconds,
-                },
-            )
+            payload: dict[str, object] = {
+                "type": "session_created",
+                "session_id": event.created.session_id,
+                "scan_id": scan_id,
+                "ttl_seconds": event.created.ttl_seconds,
+            }
+            if event.created.operation_budget_seconds:
+                payload["operation_budget_seconds"] = event.created.operation_budget_seconds
+            await _safe_send(ws, payload)
 
         elif oneof == "progress":
             p = event.progress
+            progress_payload: dict[str, object] = {
+                "type": "progress",
+                "phase": p.phase,
+                "message": p.message,
+                "level": p.level,
+            }
+            if p.budget_seconds:
+                progress_payload["budget_seconds"] = p.budget_seconds
+            if p.ai_total:
+                progress_payload["ai_completed"] = p.ai_completed
+                progress_payload["ai_total"] = p.ai_total
+            await _safe_send(ws, progress_payload)
+
+        elif oneof == "error":
+            err = event.error
             await _safe_send(
                 ws,
                 {
-                    "type": "progress",
-                    "phase": p.phase,
-                    "message": p.message,
-                    "level": p.level,
+                    "type": "error",
+                    "code": err.code,
+                    "message": err.message,
                 },
             )
+            done.set()
+            return
 
         elif oneof == "tier1_complete":
             t1 = event.tier1_complete

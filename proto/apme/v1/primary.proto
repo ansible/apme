@@ -186,7 +186,14 @@ message SessionEvent {
     DataPayload data = 9;
     FindingsReady findings = 10;  // ADR-064 assess pause
     AiTriageReady ai_triage = 11; // pause before Gate 2 AI
+    SessionError error = 12;      // ADR-068 adaptive deadlines
   }
+}
+
+// Terminal error when operation budget or stall limit is exceeded (ADR-068).
+message SessionError {
+  string code = 1;
+  string message = 2;
 }
 
 // Assessment snapshot before Gate 1 (ADR-064). Content violations only;
@@ -207,7 +214,8 @@ message AiTriageReady {
 
 message SessionCreated {
   string session_id = 1;
-  int32 ttl_seconds = 2;
+  int32 ttl_seconds = 2;                 // idle session TTL (ADR-028)
+  int32 operation_budget_seconds = 3;    // ADR-068; 0 until budget is computed
 }
 
 // LogLevel and ProgressUpdate are defined in common.proto (ADR-033).

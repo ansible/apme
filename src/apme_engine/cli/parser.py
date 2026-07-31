@@ -132,6 +132,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Collection specs to make available (e.g. community.general:9.0.0)",
     )
     remediate_p.add_argument(
+        "--timeout",
+        type=int,
+        default=None,
+        help="Optional gRPC timeout cap in seconds (default: server adaptive budget)",
+    )
+    remediate_p.add_argument(
         "--auto-approve",
         action="store_true",
         default=False,

@@ -20,7 +20,7 @@ import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeVar
 
 if TYPE_CHECKING:
     from apme_engine.graph.content_graph import ContentGraph
@@ -63,6 +63,7 @@ from apme.v1.primary_pb2 import (
     SessionClosed,
     SessionCommand,
     SessionCreated,
+    SessionError,
     SessionEvent,
     SessionResult,
     Tier1Summary,
@@ -72,6 +73,16 @@ from apme.v1.reporting_pb2 import (
     ProposalOutcome,
 )
 from apme.v1.validate_pb2 import ValidateRequest
+from apme_engine.daemon.deadline import (
+    FALLBACK_NON_AI_OPERATION_BUDGET,
+    BudgetConfigError,
+    check_operation_deadline,
+    count_ai_nodes,
+    estimate_ai_budget,
+    estimate_non_ai_budget,
+    is_task_linked_progress,
+    parse_ai_concurrency,
+)
 from apme_engine.daemon.event_emitter import emit_fix_completed, emit_register_rules, start_sinks
 from apme_engine.daemon.fs_utils import write_chunked_fs as _write_chunked_fs
 from apme_engine.daemon.session import ResourceExhaustedError, SessionState, SessionStore
@@ -89,6 +100,8 @@ from apme_engine.venv_manager.session import (
 )
 
 logger = logging.getLogger("apme.primary")
+
+_ExecutorResult = TypeVar("_ExecutorResult")
 
 _MAX_CONCURRENT_RPCS = int(os.environ.get("APME_PRIMARY_MAX_RPCS", "16"))
 _GRPC_MAX_MSG = 50 * 1024 * 1024  # 50 MiB — hierarchy+scandata can exceed the 4 MiB default
@@ -1362,6 +1375,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                             created=SessionCreated(
                                 session_id=session.session_id,
                                 ttl_seconds=session.ttl_seconds,
+                                operation_budget_seconds=session.operation_budget_s,
                             ),
                         )
 
@@ -1409,6 +1423,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                             created=SessionCreated(
                                 session_id=session.session_id,
                                 ttl_seconds=session.ttl_seconds,
+                                operation_budget_seconds=session.operation_budget_s,
                             ),
                         )
 
@@ -1423,10 +1438,12 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                         return
                     session.touch()
                     scan_id = session.session_id
+                    session.reanchor_lifetime_deadline()
                     yield SessionEvent(
                         created=SessionCreated(
                             session_id=session.session_id,
                             ttl_seconds=session.ttl_seconds,
+                            operation_budget_seconds=session.operation_budget_s,
                         ),
                     )
                     async for event in self._session_replay_state(session):
@@ -1546,29 +1563,48 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             )
             return
 
+        self._begin_non_ai_operation_budget(session, violation_count=0)
+        yield SessionEvent(
+            created=SessionCreated(
+                session_id=session.session_id,
+                ttl_seconds=session.ttl_seconds,
+                operation_budget_seconds=session.operation_budget_s,
+            ),
+        )
+
         # Phase 1: Format
         _fmt_start = ProgressUpdate(
             message=f"Formatting {len(all_files)} file(s)...",
             phase="format",
             level=2,  # INFO
         )
+        session.record_progress(task_linked=is_task_linked_progress(_fmt_start.phase))
+        self._stamp_progress_update(_fmt_start, session)
         session.progress_logs.append(_fmt_start)
         yield SessionEvent(progress=_fmt_start)
-        format_diffs = await asyncio.get_event_loop().run_in_executor(
-            None,
+        format_result = await self._supervise_executor(
+            session,
             self._format_files,
             list(all_files),
         )
+        if isinstance(format_result, SessionEvent):
+            yield format_result
+            return
+        format_diffs = format_result
         session.format_diffs = list(format_diffs)
 
         formatted_files: list[File] = list(all_files)
         format_map: dict[str, bytes] = {d.path: d.formatted for d in format_diffs}
 
-        temp_dir = await asyncio.get_event_loop().run_in_executor(
-            None,
+        temp_dir_result = await self._supervise_executor(
+            session,
             _write_chunked_fs,
             list(all_files),
         )
+        if isinstance(temp_dir_result, SessionEvent):
+            yield temp_dir_result
+            return
+        temp_dir = temp_dir_result
         session.temp_dir = temp_dir
 
         if format_map:
@@ -1588,15 +1624,25 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                 phase="format",
                 level=2,
             )
+            session.record_progress(task_linked=is_task_linked_progress(_fmt_done.phase))
+            self._stamp_progress_update(_fmt_done, session)
             session.progress_logs.append(_fmt_done)
             yield SessionEvent(progress=_fmt_done)
 
+        if (deadline_event := self._check_deadline_event(session)) is not None:
+            yield deadline_event
+            return
+
         # Phase 2: Idempotency check
-        idem_diffs = await asyncio.get_event_loop().run_in_executor(
-            None,
+        idem_result = await self._supervise_executor(
+            session,
             self._format_files,
             formatted_files,
         )
+        if isinstance(idem_result, SessionEvent):
+            yield idem_result
+            return
+        idem_diffs = idem_result
         session.idempotency_ok = len(idem_diffs) == 0
         if not session.idempotency_ok:
             _idem_warn = ProgressUpdate(
@@ -1604,8 +1650,14 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                 phase="format",
                 level=3,  # WARNING
             )
+            session.record_progress(task_linked=is_task_linked_progress(_idem_warn.phase))
+            self._stamp_progress_update(_idem_warn, session)
             session.progress_logs.append(_idem_warn)
             yield SessionEvent(progress=_idem_warn)
+
+        if (deadline_event := self._check_deadline_event(session)) is not None:
+            yield deadline_event
+            return
 
         # Phase 3+4: Scan + Remediate via convergence loop
         _t1_start = ProgressUpdate(
@@ -1613,6 +1665,8 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             phase="tier1",
             level=2,
         )
+        session.record_progress(task_linked=is_task_linked_progress(_t1_start.phase))
+        self._stamp_progress_update(_t1_start, session)
         session.progress_logs.append(_t1_start)
         yield SessionEvent(progress=_t1_start)
 
@@ -1621,11 +1675,25 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         _HEARTBEAT_INTERVAL = 15
         progress_queue: asyncio.Queue[ProgressUpdate | None] = asyncio.Queue()
 
-        def _progress_callback(phase: str, message: str, fraction: float = 0.0, level: int = 2) -> None:
-            loop.call_soon_threadsafe(
-                progress_queue.put_nowait,
-                ProgressUpdate(message=message, phase=phase, progress=fraction, level=level),
+        def _progress_callback(
+            phase: str,
+            message: str,
+            fraction: float = 0.0,
+            level: int = 2,
+            *,
+            ai_completed: int = 0,
+            ai_total: int = 0,
+        ) -> None:
+            update = ProgressUpdate(
+                message=message,
+                phase=phase,
+                progress=fraction,
+                level=level,
+                ai_completed=ai_completed,
+                ai_total=ai_total,
             )
+            PrimaryServicer._stamp_progress_update(update, session)
+            loop.call_soon_threadsafe(progress_queue.put_nowait, update)
 
         manifest_captured = False
 
@@ -1723,6 +1791,269 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             format_diffs=format_diffs,
         ):
             yield event
+
+    @staticmethod
+    def _stamp_progress_update(update: ProgressUpdate, session: SessionState) -> None:
+        """Attach session-scoped deadline metadata to a progress event.
+
+        Args:
+            update: Progress event to stamp in place.
+            session: Active session supplying generation and budget.
+        """
+        update.operation_generation = session.operation_generation
+        if session.operation_budget_s > 0:
+            update.budget_seconds = session.operation_budget_remaining()
+
+    @staticmethod
+    def _progress_matches_phase(update: ProgressUpdate, session: SessionState) -> bool:
+        """Return whether a queued progress event belongs to the active phase.
+
+        Args:
+            update: Queued progress event.
+            session: Active session with current operation_generation.
+
+        Returns:
+            True when the event should be applied to the active phase.
+        """
+        gen = update.operation_generation
+        return gen == 0 or gen == session.operation_generation
+
+    def _check_deadline_event(self, session: SessionState) -> SessionEvent | None:
+        """Return a terminal error event when deadline enforcement fires.
+
+        Args:
+            session: Active session with operation budget set.
+
+        Returns:
+            SessionEvent with SessionError when exceeded, else None.
+        """
+        err = check_operation_deadline(
+            operation_budget_s=session.operation_budget_s,
+            operation_started_at=session.operation_started_at,
+            last_progress_at=session.last_progress_at,
+            now=time.monotonic(),
+            max_lifetime_deadline_mono=session.max_lifetime_deadline_mono,
+        )
+        if err is None:
+            return None
+        return SessionEvent(error=SessionError(code=err.code, message=str(err)))
+
+    async def _supervise_executor(  # type: ignore[explicit-any]
+        self,
+        session: SessionState,
+        func: Callable[..., _ExecutorResult],
+        *args: object,
+    ) -> _ExecutorResult | SessionEvent:
+        """Run blocking work in an executor with deadline/stall supervision (ADR-068).
+
+        ``run_in_executor`` futures cannot be cancelled once the worker thread
+        has started. On deadline fire this method returns immediately and
+        abandons the in-flight thread so enforcement is not blocked until the
+        worker finishes.
+
+        Args:
+            session: Active session with operation budget set.
+            func: Sync callable to run in the default executor.
+            *args: Positional arguments for ``func``.
+
+        Returns:
+            ``func``'s return value, or a terminal ``SessionEvent`` on deadline fire.
+        """
+        loop = asyncio.get_event_loop()
+        exec_future = loop.run_in_executor(None, func, *args)
+        while not exec_future.done():
+            if (err_event := self._check_deadline_event(session)) is not None:
+                # run_in_executor futures are not cancellable once running;
+                # abandon the future so enforcement is not blocked.
+                exec_future.cancel()
+                exec_future.add_done_callback(
+                    lambda fut: fut.exception() if not fut.cancelled() else None,
+                )
+                return err_event
+            try:
+                await asyncio.wait_for(asyncio.shield(exec_future), timeout=1.0)
+            except TimeoutError:
+                continue
+        return exec_future.result()
+
+    @staticmethod
+    def _begin_non_ai_operation_budget(
+        session: SessionState,
+        *,
+        violation_count: int = 0,
+    ) -> None:
+        """Start non-AI phase budget at session processing entry (ADR-068).
+
+        Args:
+            session: Session receiving the budget.
+            violation_count: Violation count for tier1 margin estimate.
+        """
+        try:
+            budget = estimate_non_ai_budget(violation_count=violation_count)
+        except BudgetConfigError as exc:
+            logger.error("Invalid operation budget configuration: %s", exc)
+            budget = FALLBACK_NON_AI_OPERATION_BUDGET
+        session.begin_operation_phase(budget)
+
+    @staticmethod
+    def _begin_ai_operation_budget(
+        session: SessionState,
+        *,
+        violations: list[ViolationDict] | None = None,
+        registry: object | None = None,
+        ai_violations: list[ViolationDict] | None = None,
+        max_ai_attempts: int = 2,
+        concurrency: int | None = None,
+    ) -> None:
+        """Re-anchor budget at the AI gate with AI-only estimate (ADR-068).
+
+        Args:
+            session: Session receiving the budget.
+            violations: Full violation list for tier-2 partitioning.
+            registry: Transform registry for tier partitioning.
+            ai_violations: Pre-partitioned tier-2 violations (skips partition).
+            max_ai_attempts: AI resubmission cap from graph engine.
+            concurrency: Parallel AI calls (default env).
+
+        Raises:
+            BudgetConfigError: When AI budget inputs are invalid.
+        """
+        if ai_violations is not None:
+            ai_nodes = count_ai_nodes(ai_violations)
+        elif violations is not None and registry is not None:
+            from apme_engine.remediation.partition import partition_violations  # noqa: PLC0415
+
+            _, tier2, _ = partition_violations(violations, registry)  # type: ignore[arg-type]
+            ai_nodes = count_ai_nodes(tier2)
+        else:
+            ai_nodes = 0
+        try:
+            budget = estimate_ai_budget(
+                ai_node_count=ai_nodes,
+                max_ai_attempts=max_ai_attempts,
+                concurrency=concurrency,
+            )
+        except BudgetConfigError as exc:
+            logger.error("Invalid AI budget configuration: %s", exc)
+            raise
+        session.begin_operation_phase(budget)
+
+    @staticmethod
+    def _begin_operation_budget(
+        session: SessionState,
+        *,
+        violations: list[ViolationDict],
+        registry: object,
+        ai_provider: object | None,
+        skip_ai: bool,
+        max_ai_attempts: int = 2,
+        concurrency: int | None = None,
+    ) -> None:
+        """Compute and start adaptive operation budget (ADR-068).
+
+        Deprecated: use :meth:`_begin_non_ai_operation_budget` or
+        :meth:`_begin_ai_operation_budget` for phase-aware anchors.
+
+        Args:
+            session: Session receiving the budget.
+            violations: Violations used to estimate AI node count.
+            registry: Transform registry for tier partitioning.
+            ai_provider: Resolved AI provider, if any.
+            skip_ai: When true, budget excludes AI fan-out time.
+            max_ai_attempts: AI resubmission cap from graph engine.
+            concurrency: Parallel AI calls (default env).
+        """
+        from apme_engine.remediation.partition import partition_violations  # noqa: PLC0415
+
+        _, tier2, _ = partition_violations(violations, registry)  # type: ignore[arg-type]
+        ai_nodes = count_ai_nodes(tier2) if ai_provider and not skip_ai else 0
+        if ai_nodes > 0 and ai_provider and not skip_ai:
+            PrimaryServicer._begin_ai_operation_budget(
+                session,
+                violations=violations,
+                registry=registry,
+                max_ai_attempts=max_ai_attempts,
+                concurrency=concurrency,
+            )
+        else:
+            PrimaryServicer._begin_non_ai_operation_budget(
+                session,
+                violation_count=len(violations),
+            )
+
+    async def _cancel_remediate_task(
+        self,
+        remediate_task: asyncio.Task[object],
+    ) -> None:
+        """Cancel remediate work and await cleanup (ADR-068).
+
+        Args:
+            remediate_task: Running graph remediation task.
+        """
+        remediate_task.cancel()
+        try:
+            await remediate_task
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            logger.exception("remediate_task cleanup failed after deadline enforcement")
+
+    async def _drain_remediate_task(
+        self,
+        session: SessionState,
+        remediate_task: asyncio.Task[object],
+        progress_queue: asyncio.Queue[ProgressUpdate | None],
+    ) -> AsyncIterator[SessionEvent]:
+        """Yield progress until remediate completes or deadline/stall fires.
+
+        Args:
+            session: Active session with operation budget set.
+            remediate_task: Running ``GraphRemediationEngine.remediate`` task.
+            progress_queue: Progress updates from engine and heartbeat.
+
+        Yields:
+            SessionEvent: Progress and terminal error events.
+        """
+        deadline_failed = False
+        while not remediate_task.done():
+            err_event = self._check_deadline_event(session)
+            if err_event is not None:
+                deadline_failed = True
+                yield err_event
+                break
+            try:
+                update = await asyncio.wait_for(progress_queue.get(), timeout=1.0)
+            except TimeoutError:
+                continue
+            if update is not None:
+                if not self._progress_matches_phase(update, session):
+                    continue
+                session.record_progress(task_linked=is_task_linked_progress(update.phase))
+                self._stamp_progress_update(update, session)
+                session.progress_logs.append(update)
+                yield SessionEvent(progress=update)
+
+        if deadline_failed:
+            await self._cancel_remediate_task(remediate_task)
+            return
+
+        if remediate_task.cancelled():
+            return
+
+        if remediate_task.done() and (task_exc := remediate_task.exception()) is not None:
+            code = "invalid_budget_config" if isinstance(task_exc, BudgetConfigError) else "remediation_failed"
+            yield SessionEvent(error=SessionError(code=code, message=str(task_exc)))
+            return
+
+        while not progress_queue.empty():
+            update = progress_queue.get_nowait()
+            if update is not None:
+                if not self._progress_matches_phase(update, session):
+                    continue
+                session.record_progress(task_linked=is_task_linked_progress(update.phase))
+                self._stamp_progress_update(update, session)
+                session.progress_logs.append(update)
+                yield SessionEvent(progress=update)
 
     async def _session_graph_remediate(  # type: ignore[explicit-any]  # noqa: PLR0913
         self,
@@ -1969,16 +2300,35 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         # Assess-pause also defers AI until after BeginRemediate.
         skip_ai = defer_tier1 and bool(session.fix_options and session.fix_options.enable_ai)
 
+        ai_concurrency = parse_ai_concurrency()
+
         graph_engine = GraphRemediationEngine(
             registry=registry,  # type: ignore[arg-type]
             graph=graph,
             rules=rules,
             max_passes=max_passes,
-            max_ai_concurrency=max(1, int(os.environ.get("APME_AI_CONCURRENCY", "4"))),
+            max_ai_concurrency=ai_concurrency,
             progress_callback=progress_callback,
             rescan_fn=_rescan_bridge,
             ai_provider=ai_provider,  # type: ignore[arg-type]
+            ai_phase_start_cb=None,
         )
+        if ai_provider and not skip_ai:
+
+            def _on_ai_phase_start(tier2_violations: list[ViolationDict]) -> None:
+                """Re-anchor budget at AI gate with AI-only estimate (ADR-068).
+
+                Args:
+                    tier2_violations: Tier-2 violations entering the AI phase.
+                """
+                self._begin_ai_operation_budget(
+                    session,
+                    ai_violations=tier2_violations,
+                    max_ai_attempts=graph_engine._max_ai_attempts,  # noqa: SLF001
+                    concurrency=ai_concurrency,
+                )
+
+            graph_engine._ai_phase_start_cb = _on_ai_phase_start  # noqa: SLF001
         session.graph_engine = graph_engine
 
         hb_task: asyncio.Task[None] = asyncio.create_task(_heartbeat())  # type: ignore[arg-type]
@@ -1991,21 +2341,13 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         )
 
         try:
-            while not remediate_task.done():
-                try:
-                    update = await asyncio.wait_for(progress_queue.get(), timeout=1.0)
-                except TimeoutError:
-                    continue
-                if update is not None:
-                    session.progress_logs.append(update)
-                    yield SessionEvent(progress=update)
+            async for event in self._drain_remediate_task(session, remediate_task, progress_queue):
+                yield event
+                if event.WhichOneof("event") == "error":
+                    return
 
-            while not progress_queue.empty():
-                update = progress_queue.get_nowait()
-                if update is not None:
-                    session.progress_logs.append(update)
-                    yield SessionEvent(progress=update)
-
+            if remediate_task.cancelled():
+                return
             graph_report = remediate_task.result()
         finally:
             hb_task.cancel()
@@ -2603,12 +2945,78 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                 yield event
             return
 
-        graph_report = await engine.remediate(
-            open_violations,
-            interactive=True,
-            skip_ai=False,
-            skip_tier1=True,
+        progress_queue: asyncio.Queue[ProgressUpdate | None] = asyncio.Queue()
+        loop = asyncio.get_event_loop()
+
+        def _gate2_progress(
+            phase: str,
+            message: str,
+            fraction: float = 0.0,
+            level: int = 2,
+            *,
+            ai_completed: int = 0,
+            ai_total: int = 0,
+        ) -> None:
+            update = ProgressUpdate(
+                message=message,
+                phase=phase,
+                progress=fraction,
+                level=level,
+                ai_completed=ai_completed,
+                ai_total=ai_total,
+            )
+            PrimaryServicer._stamp_progress_update(update, session)
+            loop.call_soon_threadsafe(progress_queue.put_nowait, update)
+
+        engine._progress_cb = _gate2_progress  # noqa: SLF001
+
+        async def _gate2_heartbeat() -> None:
+            while True:
+                await asyncio.sleep(15)
+                progress_queue.put_nowait(
+                    ProgressUpdate(message="Processing...", phase="heartbeat", level=1),
+                )
+
+        ai_concurrency = parse_ai_concurrency()
+        try:
+            self._begin_ai_operation_budget(
+                session,
+                violations=open_violations,
+                registry=engine._registry,  # noqa: SLF001
+                max_ai_attempts=engine._max_ai_attempts,  # noqa: SLF001
+                concurrency=ai_concurrency,
+            )
+        except BudgetConfigError as exc:
+            yield SessionEvent(error=SessionError(code="invalid_budget_config", message=str(exc)))
+            return
+
+        hb_task: asyncio.Task[None] = asyncio.create_task(_gate2_heartbeat())
+        remediate_task = asyncio.create_task(
+            engine.remediate(
+                open_violations,
+                interactive=True,
+                skip_ai=False,
+                skip_tier1=True,
+            ),
         )
+
+        try:
+            async for event in self._drain_remediate_task(session, remediate_task, progress_queue):
+                yield event
+                if event.WhichOneof("event") == "error":
+                    return
+
+            if remediate_task.cancelled():
+                return
+            graph_report = remediate_task.result()
+        finally:
+            hb_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await hb_task
+            if not remediate_task.done():
+                remediate_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await remediate_task
 
         remaining = [dict(v) for v in graph_report.remaining_violations]
         remaining.extend(session.dep_health_violations)

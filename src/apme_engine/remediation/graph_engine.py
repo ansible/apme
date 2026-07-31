@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import difflib
+import inspect
 import logging
 from collections import defaultdict
 from collections.abc import Awaitable, Callable
@@ -40,6 +41,7 @@ logger = logging.getLogger("apme.remediation.graph")
 
 ProgressCallback = Callable[[str, str, float, int], None]
 RescanFn = Callable[[ContentGraph, frozenset[str]], Awaitable[list["ViolationDict"]]]
+AiPhaseStartCallback = Callable[[list[ViolationDict]], Awaitable[None] | None]
 
 
 @dataclass
@@ -187,6 +189,7 @@ class GraphRemediationEngine:
         progress_callback: ProgressCallback | None = None,
         rescan_fn: RescanFn | None = None,
         ai_provider: AIProvider | None = None,
+        ai_phase_start_cb: AiPhaseStartCallback | None = None,
     ) -> None:
         """Initialize the graph remediation engine.
 
@@ -208,6 +211,7 @@ class GraphRemediationEngine:
                 caller can fan out to real gRPC validators instead of
                 only in-memory graph rules.
             ai_provider: Optional AI provider for Tier 2 transforms.
+            ai_phase_start_cb: Optional callback when Tier 2 begins (ADR-068).
         """
         self._registry = registry
         self._graph = graph
@@ -218,6 +222,7 @@ class GraphRemediationEngine:
         self._progress_cb = progress_callback
         self._rescan_fn = rescan_fn
         self._ai_provider = ai_provider
+        self._ai_phase_start_cb = ai_phase_start_cb
 
     def _progress(
         self,
@@ -225,9 +230,24 @@ class GraphRemediationEngine:
         message: str,
         fraction: float = 0.0,
         level: int = 2,
+        *,
+        ai_completed: int = 0,
+        ai_total: int = 0,
     ) -> None:
         if self._progress_cb is not None:
             try:
+                if ai_completed or ai_total:
+                    self._progress_cb(
+                        phase,
+                        message,
+                        fraction,
+                        level,
+                        ai_completed=ai_completed,
+                        ai_total=ai_total,
+                    )  # type: ignore[call-arg]
+                else:
+                    self._progress_cb(phase, message, fraction, level)
+            except TypeError:
                 self._progress_cb(phase, message, fraction, level)
             except Exception:
                 logger.warning("Progress callback raised; ignoring", exc_info=True)
@@ -377,6 +397,10 @@ class GraphRemediationEngine:
 
             # Phase B: Tier 2 AI transforms (also when tier1 stalled)
             if (not tier1 or tier1_stalled) and tier2 and run_ai and ai_attempts < self._max_ai_attempts:
+                if ai_attempts == 0 and self._ai_phase_start_cb is not None:
+                    cb_result = self._ai_phase_start_cb(tier2)
+                    if inspect.isawaitable(cb_result):
+                        await cb_result
                 ai_attempts += 1
                 self._progress(
                     "graph-ai",
@@ -628,10 +652,35 @@ class GraphRemediationEngine:
 
                 return (node_id, fix, before_yaml)
 
-        # Fan out proposals concurrently
+        # Fan out proposals concurrently; emit per-node progress (ADR-068).
+        total_nodes = len(by_node)
+        progress_lock = asyncio.Lock()
+        completed_count = 0
+
+        async def _propose_one_tracked(
+            node_id: str,
+            node_violations: list[ViolationDict],
+        ) -> tuple[str, AINodeFix, str] | BaseException | None:
+            nonlocal completed_count
+            try:
+                return await _propose_one(node_id, node_violations)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 — reported per-node, not raised
+                return exc
+            finally:
+                async with progress_lock:
+                    completed_count += 1
+                    self._progress(
+                        "graph-ai",
+                        f"AI {completed_count}/{total_nodes}: {node_id}",
+                        completed_count / total_nodes if total_nodes else 0.0,
+                        ai_completed=completed_count,
+                        ai_total=total_nodes,
+                    )
+
         results = await asyncio.gather(
-            *[_propose_one(nid, nvs) for nid, nvs in by_node.items()],
-            return_exceptions=True,
+            *[_propose_one_tracked(nid, nvs) for nid, nvs in by_node.items()],
         )
 
         from apme_engine.remediation.partition import normalize_rule_id  # noqa: PLC0415

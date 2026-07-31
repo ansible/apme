@@ -199,6 +199,8 @@ class OperationRegistry:
         op = self._ops.pop(operation_id, None)
         if op is None:
             return
+        if op.grpc_task and not op.grpc_task.done():
+            op.grpc_task.cancel()
         self._terminal_times.pop(operation_id, None)
         if self._by_project.get(op.project_id) == operation_id:
             del self._by_project[op.project_id]
@@ -255,6 +257,27 @@ class OperationRegistry:
             payload.update(extra)
         self._broadcast(op, SSEEventType.STATUS_CHANGED, payload)
 
+    def set_operation_budget(self, operation_id: str, budget_seconds: int) -> None:
+        """Store creation-time operation budget and broadcast to SSE clients (ADR-068).
+
+        Args:
+            operation_id: The operation to update.
+            budget_seconds: Total operation budget from ``SessionCreated``.
+        """
+        op = self._ops.get(operation_id)
+        if op is None or budget_seconds <= 0:
+            return
+        op.operation_budget_seconds = budget_seconds
+        self._broadcast(
+            op,
+            SSEEventType.STATUS_CHANGED,
+            {
+                "status": op.status.value,
+                "previous": op.status.value,
+                "operation_budget_seconds": budget_seconds,
+            },
+        )
+
     def add_progress(self, operation_id: str, entry: ProgressEntry) -> None:
         """Append a progress entry and broadcast it.
 
@@ -275,6 +298,9 @@ class OperationRegistry:
                 "timestamp": entry.timestamp,
                 "progress": entry.progress,
                 "level": entry.level,
+                "budget_seconds": entry.budget_seconds,
+                "ai_completed": entry.ai_completed,
+                "ai_total": entry.ai_total,
             },
         )
 
@@ -393,7 +419,9 @@ class OperationRegistry:
         self._broadcast(op, SSEEventType.PROPOSAL_UPDATED, {"proposals": proposals})
 
     def set_result(self, operation_id: str, result: OperationResult) -> None:
-        """Store the operation result and transition to COMPLETED.
+        """Store the operation result and broadcast it to SSE subscribers.
+
+        Does not transition to ``COMPLETED``; callers finalize persistence first.
 
         Args:
             operation_id: The operation to update.
@@ -418,7 +446,6 @@ class OperationRegistry:
                 "patches": result.patches,
             },
         )
-        self.transition(operation_id, OperationStatus.COMPLETED)
 
     def set_pr_url(self, operation_id: str, pr_url: str) -> None:
         """Store the PR URL and transition to PR_SUBMITTED.

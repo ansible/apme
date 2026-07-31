@@ -11,7 +11,6 @@ import pytest
 
 from apme.v1 import primary_pb2
 from apme_gateway.scan.driver import (
-    _FIX_SESSION_TIMEOUT,
     _REMOTE_HEAD_CACHE,
     _git_subprocess_env,
     _inject_token_in_url,
@@ -214,8 +213,8 @@ async def test_run_project_scan_full_flow() -> None:
         assert len(scan_id) == 32
         assert result is not None
         assert commit_sha == "abc123def456" * 4
-        # ADR-064 assess-pause: deadline must match session TTL (not a shorter hard-code).
-        assert mock_stub.FixSession.call_args.kwargs["timeout"] == _FIX_SESSION_TIMEOUT
+        # ADR-068: server enforces adaptive deadlines; no fixed client timeout.
+        assert mock_stub.FixSession.call_args.kwargs.get("timeout") is None
 
 
 @pytest.mark.asyncio  # type: ignore[untyped-decorator]
@@ -255,6 +254,8 @@ def test_get_clone_head_returns_sha() -> None:
                 "user.email=test@test",
                 "-c",
                 "commit.gpgsign=false",
+                "-c",
+                "core.hooksPath=/dev/null",
                 "commit",
                 "--allow-empty",
                 "-m",

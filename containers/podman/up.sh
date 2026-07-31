@@ -8,14 +8,129 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
+# Return SELinux mode: disabled, Permissive, Enforcing, or unknown (fail closed).
+_selinux_mode() {
+  if [[ ! -d /sys/fs/selinux ]]; then
+    echo "disabled"
+    return 0
+  fi
+  local mode
+  if ! mode=$(getenforce 2>/dev/null) || [[ -z "$mode" ]]; then
+    echo "unknown"
+    return 1
+  fi
+  echo "$mode"
+  return 0
+}
+
 # Relabel a host file so rootless Podman containers can read it under SELinux.
+# Use -l s0 to clear MCS categories; a stale category set blocks pod containers
+# even when the file mode is world-readable (EACCES on open).
 _relabel_host_path_for_podman() {
   local host_path="$1"
-  if command -v chcon >/dev/null 2>&1 && [[ "$(getenforce 2>/dev/null)" == "Enforcing" ]]; then
-    if ! chcon -t container_file_t "$host_path" 2>/dev/null; then
-      echo "WARNING: could not relabel $host_path for SELinux; the container may not read this mount" >&2
-    fi
+  local mode
+  mode=$(_selinux_mode) || {
+    echo "ERROR: SELinux is active but state could not be determined; refusing to start without relabel verification" >&2
+    return 1
+  }
+  if [[ "$mode" != "Enforcing" ]]; then
+    return 0
   fi
+  if ! command -v chcon >/dev/null 2>&1; then
+    echo "ERROR: SELinux is Enforcing but chcon is not available; cannot relabel $host_path" >&2
+    return 1
+  fi
+  if ! chcon -l s0 -t container_file_t "$host_path" 2>/dev/null; then
+    echo "ERROR: could not relabel $host_path for SELinux" >&2
+    return 1
+  fi
+}
+
+# Return 0 when the path already has container_file_t:s0 (no MCS categories).
+_selinux_mountpoint_ok() {
+  local path="$1"
+  local ctx
+  ctx=$(stat -c '%C' "$path" 2>/dev/null) || return 1
+  [[ "$ctx" =~ :container_file_t:s0$ ]]
+}
+
+_SELINUX_REPAIR_MARKER=".apme-selinux-repair-v1"
+
+_selinux_repair_marker_path() {
+  echo "$1/${_SELINUX_REPAIR_MARKER}"
+}
+
+_selinux_marker_exists() {
+  [[ -f "$(_selinux_repair_marker_path "$1")" ]]
+}
+
+_write_selinux_marker() {
+  local mountpoint="$1"
+  local marker
+  marker=$(_selinux_repair_marker_path "$mountpoint")
+  if ! touch "$marker" 2>/dev/null; then
+    return 1
+  fi
+  chcon -l s0 -t container_file_t "$marker" 2>/dev/null || true
+}
+
+# Relabel named Podman volume mountpoints so pod containers can read/write under SELinux.
+# Standalone `podman run -v vol:path:Z` probes can stamp MCS categories the pod
+# cannot access, breaking gateway DB writes (project creation, scans, etc.).
+# Only relabel when the mountpoint context is wrong; avoid recursive walks on every
+# startup (large apme-sessions trees). Set APME_SELINUX_FULL_RELABEL=1 for a one-time
+# recursive repair of an existing volume.
+_relabel_podman_volumes() {
+  local vol mountpoint
+  for vol in apme-sessions apme-gateway-data apme-proxy-cache; do
+    if ! podman volume exists "$vol" 2>/dev/null; then
+      continue
+    fi
+    mountpoint=$(podman volume inspect "$vol" --format '{{.Mountpoint}}')
+    if [[ -z "$mountpoint" || ! -d "$mountpoint" ]]; then
+      continue
+    fi
+    local mode
+    mode=$(_selinux_mode) || {
+      echo "ERROR: SELinux is active but state could not be determined; refusing to start without relabel verification" >&2
+      return 1
+    }
+    if [[ "$mode" != "Enforcing" ]]; then
+      continue
+    fi
+    if ! command -v chcon >/dev/null 2>&1; then
+      echo "ERROR: SELinux is Enforcing but chcon is not available; cannot relabel volume $vol" >&2
+      return 1
+    fi
+    if [[ "${APME_SELINUX_FULL_RELABEL:-}" == "1" ]]; then
+      if ! chcon -R -l s0 -t container_file_t "$mountpoint" 2>/dev/null; then
+        echo "ERROR: could not recursively relabel volume $vol ($mountpoint) for SELinux" >&2
+        return 1
+      fi
+      if ! _write_selinux_marker "$mountpoint"; then
+        echo "ERROR: could not write SELinux repair marker for volume $vol ($mountpoint)" >&2
+        return 1
+      fi
+      continue
+    fi
+    if _selinux_mountpoint_ok "$mountpoint" && _selinux_marker_exists "$mountpoint"; then
+      continue
+    fi
+    if ! _selinux_mountpoint_ok "$mountpoint"; then
+      if ! chcon -l s0 -t container_file_t "$mountpoint" 2>/dev/null; then
+        echo "ERROR: could not relabel volume $vol ($mountpoint) for SELinux" >&2
+        return 1
+      fi
+    fi
+    if ! chcon -R -l s0 -t container_file_t "$mountpoint" 2>/dev/null; then
+      echo "ERROR: could not recursively relabel volume $vol ($mountpoint) for SELinux" >&2
+      return 1
+    fi
+    if ! _write_selinux_marker "$mountpoint"; then
+      echo "ERROR: could not write SELinux repair marker for volume $vol ($mountpoint)" >&2
+      return 1
+    fi
+  done
 }
 
 # Default: XDG cache dir (persists across reboots); override with APME_CACHE_HOST_PATH
@@ -276,6 +391,7 @@ if [[ -n "$ABBENAY_CA_BUNDLE" ]]; then
 fi
 
 podman kube play containers/podman/pvc.yaml
+_relabel_podman_volumes
 echo "$POD_YAML" | podman play kube -
 
 echo "Pod apme-pod started (volumes: apme-sessions, apme-gateway-data, apme-proxy-cache). Run a scan: containers/podman/run-cli.sh"

@@ -183,4 +183,9 @@ message ProgressUpdate {
   string phase = 2;       // subsystem: "primary", "native", "opa", "engine", "venv", etc.
   float progress = 3;     // 0.0-1.0, optional progress fraction
   LogLevel level = 4;
+  // ADR-068: optional operation budget and AI counters during graph-ai phase.
+  int32 budget_seconds = 5;
+  int32 ai_completed = 6;
+  int32 ai_total = 7;
+  int32 operation_generation = 8;  // ADR-068 phase anchor for stall filtering
 }

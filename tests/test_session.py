@@ -684,6 +684,11 @@ class TestSessionApprovalGates:
 
         class _DummyGraphEngine:
             def __init__(self) -> None:
+                from apme_engine.remediation.transforms import build_default_registry
+
+                self._registry = build_default_registry()
+                self._ai_provider = None
+                self._max_ai_attempts = 2
                 self.remediate = AsyncMock(
                     return_value=SimpleNamespace(
                         passes=1,
@@ -771,6 +776,11 @@ class TestSessionApprovalGates:
 
         class _DummyGraphEngine:
             def __init__(self) -> None:
+                from apme_engine.remediation.transforms import build_default_registry
+
+                self._registry = build_default_registry()
+                self._ai_provider = None
+                self._max_ai_attempts = 2
                 self.remediate = AsyncMock(
                     return_value=SimpleNamespace(
                         passes=1,
