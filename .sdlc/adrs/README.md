@@ -49,7 +49,6 @@ Decisions that are fully reflected in the codebase.
 | [ADR-062](ADR-062-ephemeral-proposal-working-set.md) | Ephemeral Proposal Working Set and Review Analytics | 2026-07-09 |
 | [ADR-063](ADR-063-multi-platform-container-images.md) | Multi-Platform Container Image Publish | 2026-07-15 |
 | [ADR-064](ADR-064-assess-pause-session-continue.md) | Assess-Pause and Session-Continue Scan → Remediate | 2026-07-18 |
-| [ADR-066](ADR-066-ui-workflow-github-release-artifacts.md) | Publish `@apme/ui-workflow` via GitHub Release Artifacts | 2026-07-23 |
 | [ADR-067](ADR-067-otel-metrics-in-pod-collector.md) | OpenTelemetry Metrics with In-Pod Collector | 2026-07-29 |
 | [ADR-068](ADR-068-adaptive-operation-deadlines.md) | Adaptive Operation Deadlines for Long AI Remediation | 2026-07-30 |
 
@@ -99,6 +98,7 @@ Decisions replaced by newer ADRs.
 |-----|-------|------|
 | [ADR-006](ADR-006-ephemeral-venvs.md) | Ephemeral Per-Request venvs for Ansible Validator (Superseded by [ADR-022](ADR-022-session-scoped-venvs.md) and [ADR-031](ADR-031-unified-collection-cache.md)) | 2026-03 |
 | [ADR-035](ADR-035-secret-externalization.md) | Secret Externalization for Ansible Content (Proposed — implementation approach superseded by ADR-036) | 2026-03-23 |
+| [ADR-066](ADR-066-ui-workflow-github-release-artifacts.md) | Publish `@apme/ui-workflow` via GitHub Release Artifacts (Superseded (consolidated into main release)) | 2026-07-23 (revised 2026-07-31) |
 
 ## Creating New ADRs
 

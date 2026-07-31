@@ -32,8 +32,12 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="${GITHUB_EVENT_RELEASE_TAG#v}"
-          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
-          echo "tarball=apme-ui-workflow-${VERSION}.tgz" >> "${GITHUB_OUTPUT}"
+          if [[ ! "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Release tag must use vX.Y.Z format: ${GITHUB_EVENT_RELEASE_TAG}"
+            exit 1
+          fi
+          printf 'version=%s\n' "${VERSION}" >> "${GITHUB_OUTPUT}"
+          printf 'tarball=apme-ui-workflow-%s.tgz\n' "${VERSION}" >> "${GITHUB_OUTPUT}"
         env:
           GITHUB_EVENT_RELEASE_TAG: ${{ github.event.release.tag_name }}
 
@@ -43,7 +47,9 @@ jobs:
 
       - name: Stamp version into package.json
         working-directory: frontend/packages/ui-workflow
-        run: npm version "${{ steps.ver.outputs.version }}" --no-git-tag-version
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: npm version "${VERSION}" --no-git-tag-version
 
       - name: npm pack (runs prepack → tsc + CSS copy)
         working-directory: frontend
