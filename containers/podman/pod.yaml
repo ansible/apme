@@ -64,6 +64,14 @@ spec:
       env:
         - name: APME_NATIVE_VALIDATOR_LISTEN
           value: "0.0.0.0:50055"
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: "http://127.0.0.1:4318"
+        - name: OTEL_SERVICE_NAME
+          value: "apme-native"
+        - name: OTEL_RESOURCE_ATTRIBUTES
+          value: "service.namespace=apme,service.instance.id=apme-pod"
+        - name: OTEL_METRIC_EXPORT_INTERVAL
+          value: "10000"
       ports:
         - containerPort: 50055
           hostPort: 50055
@@ -72,6 +80,14 @@ spec:
       env:
         - name: APME_OPA_VALIDATOR_LISTEN
           value: "0.0.0.0:50054"
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: "http://127.0.0.1:4318"
+        - name: OTEL_SERVICE_NAME
+          value: "apme-opa"
+        - name: OTEL_RESOURCE_ATTRIBUTES
+          value: "service.namespace=apme,service.instance.id=apme-pod"
+        - name: OTEL_METRIC_EXPORT_INTERVAL
+          value: "10000"
       ports:
         - containerPort: 50054
           hostPort: 50054
@@ -82,6 +98,14 @@ spec:
           value: "0.0.0.0:50053"
         - name: APME_GALAXY_PROXY_URL
           value: "http://127.0.0.1:8765"
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: "http://127.0.0.1:4318"
+        - name: OTEL_SERVICE_NAME
+          value: "apme-ansible"
+        - name: OTEL_RESOURCE_ATTRIBUTES
+          value: "service.namespace=apme,service.instance.id=apme-pod"
+        - name: OTEL_METRIC_EXPORT_INTERVAL
+          value: "10000"
       ports:
         - containerPort: 50053
           hostPort: 50053
@@ -94,6 +118,14 @@ spec:
       env:
         - name: APME_GITLEAKS_VALIDATOR_LISTEN
           value: "0.0.0.0:50056"
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: "http://127.0.0.1:4318"
+        - name: OTEL_SERVICE_NAME
+          value: "apme-gitleaks"
+        - name: OTEL_RESOURCE_ATTRIBUTES
+          value: "service.namespace=apme,service.instance.id=apme-pod"
+        - name: OTEL_METRIC_EXPORT_INTERVAL
+          value: "10000"
       ports:
         - containerPort: 50056
           hostPort: 50056
@@ -102,6 +134,14 @@ spec:
       env:
         - name: APME_COLLECTION_HEALTH_VALIDATOR_LISTEN
           value: "0.0.0.0:50058"
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: "http://127.0.0.1:4318"
+        - name: OTEL_SERVICE_NAME
+          value: "apme-collection-health"
+        - name: OTEL_RESOURCE_ATTRIBUTES
+          value: "service.namespace=apme,service.instance.id=apme-pod"
+        - name: OTEL_METRIC_EXPORT_INTERVAL
+          value: "10000"
       ports:
         - containerPort: 50058
           hostPort: 50058
@@ -114,6 +154,14 @@ spec:
       env:
         - name: APME_DEP_AUDIT_VALIDATOR_LISTEN
           value: "0.0.0.0:50059"
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: "http://127.0.0.1:4318"
+        - name: OTEL_SERVICE_NAME
+          value: "apme-dep-audit"
+        - name: OTEL_RESOURCE_ATTRIBUTES
+          value: "service.namespace=apme,service.instance.id=apme-pod"
+        - name: OTEL_METRIC_EXPORT_INTERVAL
+          value: "10000"
       ports:
         - containerPort: 50059
           hostPort: 50059
