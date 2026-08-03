@@ -2658,7 +2658,7 @@
     }
   },
   "info": {
-    "description": "Reporting persistence and REST API for projects, activity, and operations (ADR-020 / ADR-029 / ADR-052). Public contract under /api/v1 (ADR-060).",
+    "description": "Reporting persistence and REST API for projects, activity, and operations (ADR-020 / ADR-029 / ADR-052). Public contract under /api/v1 (ADR-060). Abbenay admin HTTP proxy (ADR-070).",
     "title": "APME Gateway",
     "version": "0.1.0"
   },
