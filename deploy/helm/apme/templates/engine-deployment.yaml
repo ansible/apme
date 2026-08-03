@@ -1,3 +1,4 @@
+{{- include "apme.abbenay.validateGrpcBind" . -}}
 {{- include "apme.abbenay.validateGrpcTls" . -}}
 apiVersion: apps/v1
 kind: Deployment

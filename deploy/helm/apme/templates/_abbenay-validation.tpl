@@ -242,6 +242,37 @@ URLs resolve to an invalid endpoint.
 {{- end -}}
 
 {{/*
+Reject non-loopback gRPC binds without TLS or explicit --insecure (Abbenay C2 policy).
+*/}}
+{{- define "apme.abbenay.validateGrpcBind" -}}
+{{- if .Values.abbenay.enabled }}
+  {{- $host := .Values.abbenay.grpc.host | trim -}}
+  {{- $loopback := list "127.0.0.1" "localhost" "::1" -}}
+  {{- $isLoopback := false -}}
+  {{- range $lb := $loopback }}
+    {{- if eq $host $lb }}
+      {{- $isLoopback = true }}
+    {{- end }}
+  {{- end }}
+  {{- if and (not $isLoopback) (not .Values.abbenay.grpc.tls) (not .Values.abbenay.grpc.insecure) }}
+  {{- fail `
+
+abbenay.grpc.host is a non-loopback address but neither abbenay.grpc.tls nor
+abbenay.grpc.insecure is enabled. Abbenay rejects daemon binds that are not
+loopback unless --grpc-tls or --insecure is set (issue #400).
+
+Use one of:
+  - abbenay.grpc.tls: true (with caCertSecret for engine→Abbenay TLS), or
+  - abbenay.grpc.insecure: true (plaintext; transitional only), or
+  - abbenay.grpc.host: "127.0.0.1" for loopback-only binds.
+
+See deploy/helm/apme/templates/NOTES.txt for production TLS guidance.
+` }}
+  {{- end }}
+{{- end }}
+{{- end -}}
+
+{{/*
 Require CA Secret when engine→Abbenay TLS is enabled so Primary receives a mounted PEM.
 */}}
 {{- define "apme.abbenay.validateGrpcTls" -}}

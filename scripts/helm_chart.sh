@@ -131,6 +131,31 @@ if ! grep -Fq 'path: ca.pem' <<<"${ENGINE_YAML}"; then
   exit 1
 fi
 
+echo "==> helm template abbenay bind validation (non-loopback without tls/insecure)"
+if "${HELM_BIN}" template test-release "${CHART_DIR}" \
+  --show-only templates/abbenay-deployment.yaml \
+  -f "${TLS_VALUES}" \
+  --set abbenay.grpc.host=0.0.0.0 \
+  --set abbenay.grpc.tls=false \
+  --set abbenay.grpc.insecure=false >/dev/null 2>&1; then
+  echo "Expected helm template to fail for non-loopback bind without tls or insecure" >&2
+  exit 1
+fi
+
+echo "==> helm template abbenay deployment uses configurable grpc port"
+ABBENAY_YAML="$("${HELM_BIN}" template test-release "${CHART_DIR}" \
+  --show-only templates/abbenay-deployment.yaml \
+  -f "${TLS_VALUES}" \
+  --set abbenay.grpc.port=50123)"
+if ! grep -Fq 'containerPort: 50123' <<<"${ABBENAY_YAML}"; then
+  echo "Expected abbenay containerPort to match abbenay.grpc.port" >&2
+  exit 1
+fi
+if ! grep -Fq 'port: grpc' <<<"${ABBENAY_YAML}"; then
+  echo "Expected abbenay probes to reference the named grpc port" >&2
+  exit 1
+fi
+
 mkdir -p "${OUT_DIR}"
 echo "==> helm package ${CHART_DIR} -> ${OUT_DIR}"
 "${HELM_BIN}" package "${CHART_DIR}" -d "${OUT_DIR}"

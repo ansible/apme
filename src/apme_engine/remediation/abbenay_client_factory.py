@@ -10,6 +10,7 @@ from __future__ import annotations
 import inspect
 import logging
 import os
+import stat
 from dataclasses import dataclass
 
 import grpc
@@ -27,12 +28,14 @@ class AbbenayTlsConfig:
 
     Attributes:
         enabled: Whether to use TLS for TCP connections.
-        ca_cert: Path to CA PEM, if any.
+        ca_cert: Path to CA PEM from ``APME_ABBENAY_CA_CERT``, if any.
+        ca_cert_pem: Pre-validated PEM bytes from auto-discovery, if any.
         ssl_target_name: TLS server name override for auto-generated certs.
     """
 
     enabled: bool
     ca_cert: str | None
+    ca_cert_pem: bytes | None
     ssl_target_name: str
 
 
@@ -51,16 +54,22 @@ def resolve_abbenay_tls_config(addr: str) -> AbbenayTlsConfig:
         "yes",
     }
     ca_cert = os.environ.get("APME_ABBENAY_CA_CERT", "").strip() or None
+    ca_cert_pem: bytes | None = None
     ssl_target_name = os.environ.get("APME_ABBENAY_SSL_TARGET_NAME", _DEFAULT_SSL_TARGET_NAME).strip()
 
     if not explicit_tls and ca_cert is None and _is_tcp_addr(addr):
         discovered = _discover_default_ca_cert()
         if discovered is not None:
-            ca_cert = discovered
+            ca_cert_pem = discovered
             explicit_tls = True
 
-    enabled = explicit_tls or ca_cert is not None
-    return AbbenayTlsConfig(enabled=enabled, ca_cert=ca_cert, ssl_target_name=ssl_target_name)
+    enabled = explicit_tls or ca_cert is not None or ca_cert_pem is not None
+    return AbbenayTlsConfig(
+        enabled=enabled,
+        ca_cert=ca_cert,
+        ca_cert_pem=ca_cert_pem,
+        ssl_target_name=ssl_target_name,
+    )
 
 
 def build_abbenay_client(addr: str) -> object:
@@ -93,12 +102,14 @@ def build_abbenay_client(addr: str) -> object:
         return _TlsAbbenayClient(
             socket_path=str(kwargs["socket_path"]),
             ca_cert=tls.ca_cert,
+            ca_cert_pem=tls.ca_cert_pem,
             ssl_target_name=tls.ssl_target_name,
         )
     return _TlsAbbenayClient(
         host=str(kwargs.get("host", "localhost")),
         port=int(kwargs.get("port", 50051)),
         ca_cert=tls.ca_cert,
+        ca_cert_pem=tls.ca_cert_pem,
         ssl_target_name=tls.ssl_target_name,
     )
 
@@ -118,33 +129,59 @@ def _default_ca_cert_candidates() -> list[str]:
     return candidates
 
 
-def _is_trusted_ca_cert(path: str) -> bool:
-    """Return True when ``path`` is a CA file owned by us and not group/world-writable.
+def _is_trusted_ca_stat(file_stat: os.stat_result) -> bool:
+    """Return True when ``file_stat`` describes a CA file we can trust.
 
     Args:
-        path: Candidate CA PEM path.
+        file_stat: ``os.fstat`` result for an open CA descriptor.
 
     Returns:
         Whether the file is safe to trust as a TLS CA.
     """
-    try:
-        file_stat = os.stat(path)
-    except OSError:
+    if not stat.S_ISREG(file_stat.st_mode):
         return False
     if file_stat.st_uid not in {os.getuid(), 0}:
         return False
     return (file_stat.st_mode & 0o022) == 0
 
 
-def _discover_default_ca_cert() -> str | None:
-    """Return the first trusted auto-generated Abbenay CA path, if any.
+def _read_trusted_ca_pem(path: str) -> bytes | None:
+    """Open, validate, and read a candidate CA PEM without following symlinks.
+
+    Args:
+        path: Candidate CA PEM path.
 
     Returns:
-        Trusted CA path, or None when no candidate is safe.
+        PEM bytes when the file is trusted, otherwise None.
+    """
+    open_flags = os.O_RDONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        open_flags |= os.O_NOFOLLOW
+    try:
+        fd = os.open(path, open_flags)
+    except OSError:
+        return None
+    try:
+        file_stat = os.fstat(fd)
+        if not _is_trusted_ca_stat(file_stat):
+            return None
+        return os.read(fd, file_stat.st_size + 1)
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+
+
+def _discover_default_ca_cert() -> bytes | None:
+    """Return trusted auto-generated Abbenay CA PEM bytes, if any.
+
+    Returns:
+        Trusted CA PEM, or None when no candidate is safe.
     """
     for candidate in _default_ca_cert_candidates():
-        if os.path.isfile(candidate) and _is_trusted_ca_cert(candidate):
-            return candidate
+        pem = _read_trusted_ca_pem(candidate)
+        if pem is not None:
+            return pem
     return None
 
 
@@ -167,6 +204,7 @@ class _TlsAbbenayClient:
         host: str | None = None,
         port: int = 50051,
         ca_cert: str | None = None,
+        ca_cert_pem: bytes | None = None,
         ssl_target_name: str = _DEFAULT_SSL_TARGET_NAME,
     ) -> None:
         """Initialize the TLS shim around a delegate AbbenayClient.
@@ -176,6 +214,7 @@ class _TlsAbbenayClient:
             host: TCP host, if used.
             port: TCP port.
             ca_cert: Path to CA PEM matching the daemon certificate.
+            ca_cert_pem: Pre-validated CA PEM from auto-discovery.
             ssl_target_name: TLS server name override.
         """
         from abbenay_grpc import AbbenayClient  # noqa: PLC0415
@@ -187,6 +226,7 @@ class _TlsAbbenayClient:
         )
         self._target = self._delegate._target  # noqa: SLF001
         self._ca_cert = ca_cert
+        self._ca_cert_pem = ca_cert_pem
         self._ssl_target_name = ssl_target_name
         self._channel: grpc.aio.Channel | None = None
         self._stub: object | None = None
@@ -231,7 +271,9 @@ class _TlsAbbenayClient:
 
         try:
             root_certs = None
-            if self._ca_cert:
+            if self._ca_cert_pem is not None:
+                root_certs = self._ca_cert_pem
+            elif self._ca_cert:
                 with open(self._ca_cert, "rb") as cert_file:
                     root_certs = cert_file.read()
             credentials = grpc.ssl_channel_credentials(root_certificates=root_certs)
@@ -252,7 +294,7 @@ class _TlsAbbenayClient:
             self._delegate._channel = self._channel  # noqa: SLF001
             self._delegate._stub = stub  # noqa: SLF001
             self._delegate._client_id = self._client_id  # noqa: SLF001
-        except grpc.aio.AioRpcError as exc:
+        except (grpc.aio.AioRpcError, OSError, ValueError) as exc:
             self._channel = None
             self._stub = None
             self._client_id = None
