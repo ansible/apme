@@ -143,10 +143,9 @@ assert_template_contains "gateway sidecar" "${RENDER}" $'- name: gateway\n'
 assert_template_contains "ui sidecar" "${RENDER}" $'- name: ui\n'
 assert_template_contains "abbenay sidecar" "${RENDER}" $'- name: abbenay\n'
 assert_template_contains "Abbenay loopback" "${RENDER}" "--grpc-host"
-assert_template_contains "Abbenay loopback host" "${RENDER}" "127.0.0.1"
 assert_template_contains "Abbenay HTTP web (ADR-070)" "${RENDER}" '"web"'
-assert_template_contains "Abbenay HTTP port (ADR-070)" "${RENDER}" '"8787"'
-assert_template_contains "Abbenay HTTP host loopback (ADR-070)" "${RENDER}" $'--host"\n            - "127.0.0.1"'
+assert_template_contains "Abbenay HTTP args ordered (ADR-070)" "${RENDER}" \
+  $'- "--host"\n            - "127.0.0.1"\n            - "--port"\n            - "8787"'
 assert_template_contains "Gateway Abbenay HTTP URL (ADR-070)" "${RENDER}" 'value: "http://127.0.0.1:8787"'
 assert_template_lacks "no Abbenay HTTP Service port" "${RENDER}" "name: abbenay-http"
 assert_template_lacks "no Abbenay HTTP hostPort" "${RENDER}" $'containerPort: 8787\n          hostPort:'

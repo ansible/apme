@@ -53,7 +53,7 @@ This builds a shared base image, eleven service images, and pulls one official i
 | `apme-gateway:latest` | `containers/gateway/Dockerfile` | REST API + gRPC Reporting service (SQLite) |
 | `apme-ui:latest` | `containers/ui/Dockerfile` | React SPA served by nginx (proxies API to Gateway) |
 | `apme-cli:latest` | `containers/cli/Dockerfile` | CLI client |
-| `ghcr.io/redhat-developer/abbenay:2026.4.1-alpha` | [Official image](https://github.com/redhat-developer/abbenay/pkgs/container/abbenay) (pulled) | Abbenay AI daemon (LLM gateway for Tier 2 remediation) |
+| `ghcr.io/redhat-developer/abbenay:v2026.8.0` | [Official image](https://github.com/redhat-developer/abbenay/pkgs/container/abbenay) (pulled) | Abbenay AI daemon (LLM gateway for Tier 2 remediation) |
 
 ### Configure Abbenay AI (optional)
 
@@ -327,7 +327,7 @@ See [PODMAN_OPA_ISSUES.md](PODMAN_OPA_ISSUES.md) for common Podman rootless issu
 | 50054 | OPA | `APME_OPA_VALIDATOR_LISTEN` |
 | 50055 | Native | `APME_NATIVE_VALIDATOR_LISTEN` |
 | 50056 | Gitleaks | `APME_GITLEAKS_VALIDATOR_LISTEN` |
-| 50057 | Abbenay AI | `--grpc-port` (Abbenay daemon flag) |
+| 50057 | Abbenay AI (pod-local) | `--grpc-host 127.0.0.1 --grpc-port` (no hostPort) |
 | 50058 | Collection Health | `APME_COLLECTION_HEALTH_VALIDATOR_LISTEN` |
 | 50059 | Dep Audit | `APME_DEP_AUDIT_VALIDATOR_LISTEN` |
 | 50060 | Gateway (gRPC) | `APME_GATEWAY_GRPC_LISTEN` |

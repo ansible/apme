@@ -583,7 +583,7 @@ podman pull ghcr.io/redhat-developer/abbenay:latest
 |-----|---------|
 | `:main` | Latest merged code |
 | `:sha-<short>` | Specific commit |
-| `:2026.4.1-alpha` | Release (no `v` prefix) |
+| `:v2026.8.0` | Release (`v` prefix; APME pin) |
 | `:latest` | Latest stable release |
 
 ```

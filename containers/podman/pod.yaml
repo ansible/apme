@@ -216,8 +216,9 @@ spec:
         - containerPort: 8081
           hostPort: 8081
     - name: abbenay
-      image: ghcr.io/redhat-developer/abbenay:2026.4.1-alpha
-      # ADR-070: gRPC for Primary + HTTP admin on loopback (no hostPort 8787)
+      image: ghcr.io/redhat-developer/abbenay:v2026.8.0
+      # ADR-070: HTTP + gRPC on loopback (pod-shared netns). No hostPort for
+      # Abbenay — matches Helm Simple and avoids plaintext host exposure.
       args:
         - "web"
         - "--host"
@@ -225,7 +226,7 @@ spec:
         - "--port"
         - "8787"
         - "--grpc-host"
-        - "0.0.0.0"
+        - "127.0.0.1"
         - "--grpc-port"
         - "50057"
       env:
@@ -241,7 +242,7 @@ spec:
           value: "/tmp/abbenay-run"
       ports:
         - containerPort: 50057
-          hostPort: 50057
+          # no hostPort
       volumeMounts:
         - name: abbenay-config
           mountPath: /home/abbenay/.config/abbenay/config.yaml
