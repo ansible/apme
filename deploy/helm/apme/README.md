@@ -175,7 +175,7 @@ Gateway DB and Abbenay down together.
 - **Abbenay** (optional): AI provider gRPC on `127.0.0.1:50057` plus HTTP
   admin on `127.0.0.1:8787` (no Service / hostPort). Gateway reverse-proxies
   **allowlisted** admin paths under `/api/v1/ai/` → Abbenay `/api/` (config,
-  providers, provider configure/delete; not chat/sessions/OpenAI-compat) —
+  engines, providers, provider configure/delete; not chat/sessions/OpenAI-compat) —
   see [ADR-070](../../../.sdlc/adrs/ADR-070-gateway-abbenay-admin-proxy.md).
   `GET /api/v1/ai/models` remains Primary `ListAIModels`.
 

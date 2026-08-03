@@ -101,6 +101,33 @@ async def test_proxy_post_provider_configure(app_client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio  # type: ignore[untyped-decorator]
+async def test_proxy_get_engines_rewrites_path_and_injects_bearer(
+    app_client: AsyncClient,
+) -> None:
+    """GET /api/v1/ai/engines proxies to Abbenay /api/engines with Bearer token.
+
+    Args:
+        app_client: Async HTTP test client.
+    """
+    engines_body = b'{"engines":[{"id":"openrouter","requiresKey":true,"defaultEnvVar":"OPENROUTER_API_KEY"}]}'
+    client = _mock_upstream(content=engines_body)
+    with patch("apme_gateway.api.abbenay_proxy.httpx.AsyncClient", return_value=client):
+        resp = await app_client.get(
+            "/api/v1/ai/engines",
+            headers={"Authorization": "Bearer portal-caller-token"},
+        )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "engines" in data
+    assert client.request.await_args is not None
+    assert client.request.await_args.args[0] == "GET"
+    assert client.request.await_args.args[1] == "http://127.0.0.1:8787/api/engines"
+    assert client.request.await_args.kwargs["headers"]["Authorization"] == "Bearer admin-http-token"
+    assert "Cookie" not in client.request.await_args.kwargs["headers"]
+
+
+@pytest.mark.asyncio  # type: ignore[untyped-decorator]
 async def test_proxy_upstream_unreachable_returns_502(app_client: AsyncClient) -> None:
     """Proxy returns 502 when Abbenay HTTP cannot be reached.
 

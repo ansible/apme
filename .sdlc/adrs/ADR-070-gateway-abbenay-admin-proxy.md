@@ -65,7 +65,7 @@ clients. Do **not** proxy chat, sessions, OpenAI-compat `/v1`, or arbitrary
 Abbenay surfaces (ADR-046 inference stays Primary). Reject path traversal
 (`..` / encoded forms). Abbenay remains the source of truth for config.
 
-Allowlist (initial): `GET/POST /config`, `GET /providers`,
+Allowlist: `GET/POST /config`, `GET /engines`, `GET /providers`,
 `POST /provider/{id}/configure`, `DELETE /provider/{id}`.
 
 **3. Enable Abbenay HTTP on loopback when Abbenay is enabled.**  
@@ -224,3 +224,4 @@ runtime admin API.
 | Date | Author | Change |
 |------|--------|--------|
 | 2026-08-03 | cidrblock | Accepted — Simple in-pod Abbenay; Gateway HTTP admin proxy |
+| 2026-08-03 | bthornto | Amended allowlist: added `GET /engines` for read-only engine discovery |

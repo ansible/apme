@@ -13,6 +13,7 @@ In the Simple in-pod topology (ADR-069), Abbenay listens for HTTP admin on
 | Gateway | Abbenay |
 |---------|---------|
 | `GET/POST /api/v1/ai/config` | `/api/config` |
+| `GET /api/v1/ai/engines` | `/api/engines` |
 | `GET /api/v1/ai/providers` | `/api/providers` |
 | `POST /api/v1/ai/provider/{id}/configure` | `/api/provider/{id}/configure` |
 | `DELETE /api/v1/ai/provider/{id}` | `/api/provider/{id}` |

@@ -4,6 +4,8 @@ Maps a **small allowlist** of Gateway ``/api/v1/ai/...`` routes to Abbenay
 ``/api/...`` on localhost. Injects Abbenay's HTTP Bearer token; does not pass
 through caller ``Authorization``. Inference (``GET /api/v1/ai/models`` and
 Abbenay chat) is **not** proxied — chat stays Primary → Abbenay gRPC.
+``GET /api/v1/ai/engines`` proxies Abbenay's engine registry (read-only
+discovery path, ADR-070 amendment 2026-08-03).
 """
 
 from __future__ import annotations
@@ -61,8 +63,8 @@ _RESPONSE_DROP: Final = frozenset(
 )
 
 # Admin-only path allowlist (decoded, no leading slash). Matches ADR-070 /
-# ABBENAY_AI.md — no chat/sessions/secrets/engines/templates.
-_GET_PATHS: Final = frozenset({"config", "providers"})
+# ABBENAY_AI.md — no chat/sessions/secrets/templates.
+_GET_PATHS: Final = frozenset({"config", "engines", "providers"})
 _GET_PROVIDER_RE: Final = re.compile(r"^provider/[^/]+$")
 _POST_PATHS: Final = frozenset({"config"})
 _POST_CONFIGURE_RE: Final = re.compile(r"^provider/[^/]+/configure$")
@@ -202,8 +204,9 @@ def _filter_response_headers(upstream: httpx.Response) -> dict[str, str]:
 async def proxy_abbenay_admin(path: str, request: Request) -> Response:
     """Reverse-proxy allowlisted Abbenay HTTP admin under ``/api/v1/ai/*``.
 
-    Allowed (examples): ``GET/POST /ai/config``, ``GET /ai/providers``,
-    ``POST /ai/provider/{id}/configure``, ``DELETE /ai/provider/{id}``.
+    Allowed (examples): ``GET/POST /ai/config``, ``GET /ai/engines``,
+    ``GET /ai/providers``, ``POST /ai/provider/{id}/configure``,
+    ``DELETE /ai/provider/{id}``.
     ``GET /api/v1/ai/models`` remains on the main router (Primary). Chat and
     other Abbenay surfaces are not proxied.
 
