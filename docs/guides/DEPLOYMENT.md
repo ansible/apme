@@ -396,14 +396,13 @@ repository (`https://ansible.github.io/apme`) or the source chart at
 in a single pod (preserving localhost networking per ADR-005 and pod scaling
 per ADR-012).
 
-**Highlights:**
+**Highlights (ADR-069 Simple / EAP / upstream):**
 
-- Engine pod: Primary + Native + OPA + Ansible + Gitleaks + Collection Health + Dep Audit + Galaxy Proxy as sidecars
-- Separate deployments for Gateway, UI, and Abbenay (AI)
-- HPA for engine scaling, PDB for disruption budget
+- One Deployment: Primary + validators + Galaxy Proxy + Gateway + UI + optional Abbenay (localhost)
+- `replicas: 1` (HPA unsupported while Gateway SQLite shares the pod)
 - Ingress/Route support (OpenShift Routes included)
-- NetworkPolicy for pod isolation
-- PVC for Gateway persistence; PVC for session venvs (single replica), emptyDir when scaling to multiple replicas
+- NetworkPolicy for Ingress → Gateway/UI ports
+- PVCs for sessions, Gateway DB, and Galaxy Proxy cache
 - OpenShift Developer Catalog via `HelmChartRepository` pointing at the Pages URL
 
 ### Quick start

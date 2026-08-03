@@ -1,36 +1,3 @@
 {{- if .Values.autoscaling.enabled }}
-{{- if not (or .Values.autoscaling.targetCPUUtilizationPercentage .Values.autoscaling.targetMemoryUtilizationPercentage) }}
-{{- fail "autoscaling.enabled is true but neither targetCPUUtilizationPercentage nor targetMemoryUtilizationPercentage is set" }}
-{{- end }}
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
-metadata:
-  name: {{ include "apme.fullname" . }}-engine
-  labels:
-    {{- include "apme.labels" . | nindent 4 }}
-    app.kubernetes.io/component: engine
-spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: {{ include "apme.fullname" . }}-engine
-  minReplicas: {{ .Values.autoscaling.minReplicas }}
-  maxReplicas: {{ .Values.autoscaling.maxReplicas }}
-  metrics:
-    {{- if .Values.autoscaling.targetCPUUtilizationPercentage }}
-    - type: Resource
-      resource:
-        name: cpu
-        target:
-          type: Utilization
-          averageUtilization: {{ .Values.autoscaling.targetCPUUtilizationPercentage }}
-    {{- end }}
-    {{- if .Values.autoscaling.targetMemoryUtilizationPercentage }}
-    - type: Resource
-      resource:
-        name: memory
-        target:
-          type: Utilization
-          averageUtilization: {{ .Values.autoscaling.targetMemoryUtilizationPercentage }}
-    {{- end }}
+{{- fail "ADR-069 Simple topology: autoscaling.enabled must be false (HPA is not supported while Gateway/Abbenay share the pod)." }}
 {{- end }}

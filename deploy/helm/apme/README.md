@@ -1,9 +1,10 @@
 # APME Helm Chart
 
-Deploy APME on Kubernetes or OpenShift. The chart models the architecture
-as defined in [ADR-054](../../../.sdlc/adrs/ADR-054-production-deployment.md):
-the engine stack runs as sidecar containers in a single pod (preserving
-localhost networking per ADR-005 and pod-level scaling per ADR-012).
+Deploy APME on Kubernetes or OpenShift for **EAP / upstream** installs.
+[ADR-069](../../../.sdlc/adrs/ADR-069-helm-simple-all-in-one.md) defines a
+**Simple all-in-one** Deployment: engine + Gateway + UI + optional Abbenay in
+one pod on localhost ([ADR-005](../../../.sdlc/adrs/ADR-005-no-service-discovery.md)).
+`replicas` must be `1`.
 
 ## Chart repository (OpenShift / `helm repo add`)
 
@@ -144,26 +145,19 @@ Lint and package locally with `tox -e helm` (writes `dist/charts/*.tgz`).
 ## Architecture
 
 ```
-┌─────────── Engine Pod (scaled as unit) ──────────┐
-│  Primary  Native  OPA  Ansible  Gitleaks         │
-│  Collection-Health  Dep-Audit  Galaxy-Proxy      │
-│  (validators via localhost gRPC; Galaxy Proxy via HTTP) │
-└──────────────────────────────────────────────────┘
-
-┌──────────┐   ┌──────────┐   ┌──────────┐
-│ Gateway  │   │    UI    │   │ Abbenay  │
-│ (deploy) │   │ (deploy) │   │ (deploy) │
-└──────────┘   └──────────┘   └──────────┘
+┌──────────── Simple pod (replicas: 1) — ADR-069 ────────────┐
+│  Primary  Native  OPA  Ansible  Gitleaks*                  │
+│  Collection-Health*  Dep-Audit*  Galaxy-Proxy              │
+│  Gateway  UI*  Abbenay*                                    │
+│  (all via 127.0.0.1; Abbenay binds loopback, no TLS)       │
+└────────────────────────────────────────────────────────────┘
 ```
 
-- **Engine Deployment**: All validators run as sidecars in one pod. HPA scales
-  the entire engine stack together.
-- **Gateway Deployment**: REST API + gRPC Reporting + SQLite persistence.
-- **UI Deployment** (optional): nginx-served React SPA, proxies `/api/` to
-  Gateway. Enabled by default (`ui.enabled: true`). For portal / Backstage
-  (ADR-030 Option B), install with `-f values-portal.yaml` (or
-  `--set ui.enabled=false`) so only the Gateway API is exposed.
-- **Abbenay Deployment** (optional): AI provider for Tier 2 remediation.
+- **Simple Deployment**: Full stack as sidecars. ClusterIP Services
+  (`-engine`, `-gateway`, `-ui`) select this pod for Ingress/port-forward.
+- **UI** (optional): nginx SPA; `ui.enabled: false` via `values-portal.yaml`
+  for portal / Backstage (ADR-030 Option B).
+- **Abbenay** (optional): AI provider on `127.0.0.1:50057`.
 
 ## Key values
 
@@ -171,22 +165,21 @@ Lint and package locally with `tox -e helm` (writes `dist/charts/*.tgz`).
 |-------|---------|-------------|
 | `image.registry` | `quay.io/ansible` | Container registry |
 | `image.tag` | `2026.7.3` | Image tag (GitHub release `v2026.7.3`; Quay omits the `v`) |
-| `engine.replicas` | `1` | Engine pod replicas |
+| `engine.replicas` | `1` | Must be `1` (ADR-069) |
 | `gitleaks.enabled` | `true` | Enable Gitleaks validator |
 | `collectionHealth.enabled` | `true` | Enable Collection Health validator |
 | `depAudit.enabled` | `true` | Enable Dependency Audit validator |
-| `gateway.replicas` | `1` | Gateway replicas |
-| `ui.enabled` | `true` | Deploy standalone UI (`false` via `values-portal.yaml`) |
-| `ui.replicas` | `1` | UI replicas (when `ui.enabled`) |
-| `abbenay.enabled` | `false` | Enable AI provider |
+| `gateway.replicas` | `1` | Must be `1` (Gateway sidecar) |
+| `ui.enabled` | `true` | Include UI sidecar (`false` via `values-portal.yaml`) |
+| `ui.replicas` | `1` | Must be `1` when UI enabled |
+| `abbenay.enabled` | `false` | Enable AI provider sidecar |
 | `abbenay.token` | `""` | Abbenay service token (required when `abbenay.enabled=true`) |
 | `abbenay.image` | `ghcr.io/redhat-developer/abbenay:2026.4.1-alpha` | Abbenay image |
 | `abbenay.providers` | `{}` | LLM provider map (see [ABBENAY_AI.md](../../../docs/guides/ABBENAY_AI.md)) |
 | `abbenay.aiModel` | `""` | Default AI model ID |
 | `ingress.enabled` | `false` | Create Kubernetes Ingress |
 | `route.enabled` | `false` | Create OpenShift Route |
-| `autoscaling.enabled` | `false` | Enable HPA for engine |
-| `autoscaling.maxReplicas` | `5` | Max engine replicas under HPA |
+| `autoscaling.enabled` | `false` | Must stay `false` (ADR-069) |
 | `networkPolicy.enabled` | `false` | Enable NetworkPolicy |
 | `podDisruptionBudget.enabled` | `false` | Enable PDB |
 | `persistence.sessions.size` | `10Gi` | Session venv PVC size |
@@ -278,26 +271,10 @@ Gateway API at `/api`.
 
 ## Scaling
 
-Enable the HPA to auto-scale the engine based on CPU/memory:
-
-```yaml
-autoscaling:
-  enabled: true
-  minReplicas: 2
-  maxReplicas: 10
-  targetCPUUtilizationPercentage: 70
-```
-
-Each engine replica is a complete stack — scale pods, not individual
-services within a pod (ADR-012).
-
-For multi-replica deployments, override the engine strategy:
-
-```yaml
-engine:
-  strategy:
-    type: RollingUpdate
-```
+The chart is **Simple / single-replica** (ADR-069). Setting
+`engine.replicas > 1` or `autoscaling.enabled: true` fails Helm render.
+Multi-replica engine farms need a future topology ADR (Gateway SQLite and
+Abbenay cannot share a scaled pod without redesign).
 
 ## OpenShift compatibility
 

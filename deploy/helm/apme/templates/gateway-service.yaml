@@ -18,4 +18,5 @@ spec:
       protocol: TCP
   selector:
     {{- include "apme.selectorLabels" . | nindent 4 }}
-    app.kubernetes.io/component: gateway
+    # ADR-069: Gateway is a sidecar on the Simple (engine) pod
+    app.kubernetes.io/component: engine
