@@ -1,7 +1,6 @@
-# APME Helm Chart — default values
-# See ADR-054 for architecture rationale.
-# The engine stack (Primary + validators + Galaxy Proxy) runs as sidecars in
-# a single pod, preserving ADR-005 localhost networking and ADR-012 pod scaling.
+# APME Helm Chart — default values (EAP / upstream Simple install)
+# See ADR-054 + ADR-069. One Deployment co-locates engine + Gateway + UI +
+# optional Abbenay on localhost (ADR-005). replicas must remain 1; HPA is off.
 
 image:
   # Default registry to *pull* APME images from. CI always publishes to
@@ -21,12 +20,11 @@ imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""
 
-# -- Engine stack (Primary + all validators + Galaxy Proxy)
+# -- Simple pod: Primary + validators + Galaxy Proxy (+ Gateway/UI/Abbenay sidecars)
 engine:
+  # ADR-069: must be 1. Chart fails render if set higher.
   replicas: 1
   # Recreate avoids RWO PVC conflicts during single-replica rolling updates.
-  # Multi-replica deployments use emptyDir (no PVC conflict) and can safely
-  # override this to RollingUpdate for zero-downtime upgrades.
   strategy:
     type: Recreate
   resources:
@@ -89,15 +87,8 @@ engine:
   nodeSelector: {}
   tolerations: []
   affinity: {}
-  # -- Spread engine pods across nodes when replicas > 1 (or HPA is active).
-  # Example:
-  #   topologySpreadConstraints:
-  #     - maxSkew: 1
-  #       topologyKey: kubernetes.io/hostname
-  #       whenUnsatisfiable: ScheduleAnyway
-  #       labelSelector:
-  #         matchLabels:
-  #           app.kubernetes.io/component: engine
+  # Placement for the Simple pod (ADR-069). Multi-replica / HPA unsupported.
+  # gateway.*/ui.* nodeSelector|tolerations|affinity are unused — set engine.* only.
   topologySpreadConstraints: []
 
 # -- Gitleaks is optional (requires external binary in the image)
@@ -112,12 +103,10 @@ collectionHealth:
 depAudit:
   enabled: true
 
-# -- Gateway (REST + gRPC reporting + SQLite persistence)
+# -- Gateway sidecar (REST + gRPC reporting + SQLite) — ADR-069 Simple pod
 gateway:
+  # Retained for compatibility; must be 1 (Gateway is not a separate Deployment).
   replicas: 1
-  # Recreate avoids RWO PVC conflicts during rolling updates
-  strategy:
-    type: Recreate
   resources:
     requests:
       cpu: 250m
@@ -144,6 +133,7 @@ gateway:
 # For a proper long-term fix, rebuild the image on nginxinc/nginx-unprivileged.
 ui:
   enabled: true
+  # Retained for compatibility; must be 1 (UI is a sidecar, not a Deployment).
   replicas: 1
   securityContext: {}
   resources:
@@ -157,7 +147,7 @@ ui:
   tolerations: []
   affinity: {}
 
-# -- Abbenay AI provider (optional)
+# -- Abbenay AI provider (optional sidecar; binds 127.0.0.1 — no TLS)
 # Abbenay is a unified AI daemon supporting 19+ LLM engines via the Vercel
 # AI SDK.  Configure one or more providers below — the chart generates
 # Abbenay's config.yaml and wires up secrets/volumes automatically.
@@ -297,7 +287,7 @@ route:
     termination: edge
     insecureEdgeTerminationPolicy: Redirect
 
-# -- Horizontal Pod Autoscaler for the engine Deployment
+# -- HPA (unsupported under ADR-069 Simple topology — must stay false)
 autoscaling:
   enabled: false
   minReplicas: 1

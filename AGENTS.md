@@ -82,8 +82,10 @@ one needs to change, write an ADR first.
     for session venvs; the daemon cannot scan without it. Gitleaks,
     Collection Health, and Dep Audit are optional (`_OPTIONAL_SERVICES`)
     because they require external binaries or venv-dependent scanning;
-    they start when `include_optional=True`. Gateway, UI, and Abbenay are
-    pod-level / enterprise services that the CLI daemon does not start.
+    they start when `include_optional=True`. UI and Abbenay are pod-level /
+    enterprise services the CLI daemon does not start. The Gateway is
+    co-located in the local daemon (ADR-049) and in Helm Simple / Podman
+    (ADR-069 / ADR-004).
 
 13. **Transforms are semantically trusted; the engine owns state and syntax**
     (ADR-044). Transforms operate on an **ephemeral copy** of the graph and
@@ -130,8 +132,12 @@ one needs to change, write an ADR first.
     | Target | Method |
     |--------|--------|
     | Developer laptop / Linux server (no K8s) | Podman pod (`tox -e up`) |
-    | **Kubernetes / OpenShift** | **Helm chart** (`deploy/helm/apme/`) |
+    | **Kubernetes / OpenShift** | **Helm chart** Simple all-in-one (`deploy/helm/apme/`, ADR-069) |
     | Production single-node VM | bootc image |
+
+    Helm EAP/upstream topology co-locates engine + Gateway + UI + optional
+    Abbenay in one pod on localhost (`replicas: 1`). Do not introduce split
+    Gateway/Abbenay Deployments without a new ADR.
 
 17. **REST API is a versioned public contract** (ADR-060). The Gateway
     REST API under `/api/v1` is consumed by external teams (Backstage

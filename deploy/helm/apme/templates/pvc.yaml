@@ -1,4 +1,3 @@
-{{- if le (int .Values.engine.replicas) 1 }}
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -14,7 +13,6 @@ spec:
   resources:
     requests:
       storage: {{ .Values.persistence.sessions.size }}
-{{- end }}
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -31,7 +29,6 @@ spec:
   resources:
     requests:
       storage: {{ .Values.persistence.gateway.size }}
-{{- if le (int .Values.engine.replicas) 1 }}
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -48,4 +45,3 @@ spec:
   resources:
     requests:
       storage: {{ .Values.persistence.proxyCache.size }}
-{{- end }}

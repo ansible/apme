@@ -1,12 +1,43 @@
+{{- /* ADR-069: Simple all-in-one — single Deployment, replicas must be 1 */ -}}
+{{- if ne (int .Values.engine.replicas) 1 }}
+{{- fail "ADR-069 Simple topology: engine.replicas must be 1 (Gateway SQLite and Abbenay share this pod). Multi-replica requires a future topology ADR." }}
+{{- end }}
+{{- if ne (int .Values.gateway.replicas) 1 }}
+{{- fail "ADR-069 Simple topology: gateway.replicas must be 1 (Gateway is a sidecar; SQLite is not multi-replica)." }}
+{{- end }}
+{{- if and .Values.ui.enabled (ne (int .Values.ui.replicas) 1) }}
+{{- fail "ADR-069 Simple topology: ui.replicas must be 1 (UI is a sidecar in the Simple pod)." }}
+{{- end }}
+{{- if .Values.autoscaling.enabled }}
+{{- fail "ADR-069 Simple topology: autoscaling.enabled must be false (HPA is not supported while Gateway/Abbenay share the pod)." }}
+{{- end }}
+{{- if .Values.abbenay.enabled }}
+{{- include "apme.abbenay.validateLegacyKeys" . -}}
+{{- include "apme.abbenay.validateProviderSchema" . -}}
+{{- include "apme.abbenay.validateProviderNames" . -}}
+{{- include "apme.abbenay.validateApiKeySecrets" . -}}
+{{- include "apme.abbenay.validateProviderAuth" . -}}
+{{- include "apme.abbenay.validateVertexADC" . -}}
+{{- end }}
+{{- $fullname := include "apme.fullname" . -}}
+{{- $hasGcpCreds := or .Values.abbenay.gcp.serviceAccountKey .Values.abbenay.gcp.existingSecret -}}
+{{- $hasVertexADC := false -}}
+{{- if .Values.abbenay.enabled }}
+{{- range $name, $provider := .Values.abbenay.providers }}
+  {{- if and (eq $provider.engine "vertex-anthropic") (not $provider.baseUrl) (not $provider.apiKey) (not $provider.apiKeySecret) }}
+    {{- $hasVertexADC = true -}}
+  {{- end }}
+{{- end }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "apme.fullname" . }}-engine
+  name: {{ $fullname }}-engine
   labels:
     {{- include "apme.labels" . | nindent 4 }}
     app.kubernetes.io/component: engine
 spec:
-  replicas: {{ .Values.engine.replicas }}
+  replicas: 1
   {{- with .Values.engine.strategy }}
   strategy:
     {{- toYaml . | nindent 4 }}
@@ -33,6 +64,20 @@ spec:
       {{- with .Values.podSecurityContext }}
       securityContext:
         {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.ui.enabled }}
+      initContainers:
+        - name: init-nginx-conf
+          image: {{ include "apme.image" (dict "registry" .Values.image.registry "name" "ui" "tag" .Values.image.tag "fallbackTag" .Chart.AppVersion) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          command: ["sh", "-c", "cp -a /etc/nginx/conf.d/. /mnt/conf.d/"]
+          volumeMounts:
+            - name: nginx-conf
+              mountPath: /mnt/conf.d
       {{- end }}
       containers:
         # -- Primary orchestrator
@@ -69,14 +114,14 @@ spec:
             - name: APME_GALAXY_PROXY_URL
               value: "http://127.0.0.1:8765"
             - name: APME_REPORTING_ENDPOINT
-              value: "{{ include "apme.fullname" . }}-gateway:50060"
+              value: "127.0.0.1:50060"
             {{- if .Values.abbenay.enabled }}
             - name: APME_ABBENAY_ADDR
-              value: "{{ include "apme.fullname" . }}-abbenay:50057"
+              value: "127.0.0.1:50057"
             - name: APME_ABBENAY_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "apme.fullname" . }}-secrets
+                  name: {{ $fullname }}-secrets
                   key: abbenay-token
             {{- if .Values.abbenay.aiModel }}
             - name: APME_AI_MODEL
@@ -291,21 +336,230 @@ spec:
           resources:
             {{- toYaml .Values.engine.resources.galaxyProxy | nindent 12 }}
 
+        # -- Gateway (REST + gRPC reporting + SQLite)
+        - name: gateway
+          image: {{ include "apme.image" (dict "registry" .Values.image.registry "name" "gateway" "tag" .Values.image.tag "fallbackTag" .Chart.AppVersion) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          env:
+            - name: APME_PRIMARY_ADDRESS
+              value: "127.0.0.1:50051"
+            - name: APME_DB_PATH
+              value: /data/apme.db
+            - name: APME_GATEWAY_GRPC_LISTEN
+              value: "0.0.0.0:50060"
+            - name: APME_GATEWAY_HTTP_HOST
+              value: "0.0.0.0"
+            - name: APME_GATEWAY_HTTP_PORT
+              value: "8080"
+            {{- if .Values.collectionHealth.enabled }}
+            - name: COLLECTION_HEALTH_GRPC_ADDRESS
+              value: "127.0.0.1:50058"
+            {{- end }}
+            {{- if .Values.depAudit.enabled }}
+            - name: DEP_AUDIT_GRPC_ADDRESS
+              value: "127.0.0.1:50059"
+            {{- end }}
+            {{- if .Values.gateway.feedback.enabled }}
+            - name: APME_FEEDBACK_ENABLED
+              value: "true"
+            - name: APME_FEEDBACK_GITHUB_REPO
+              value: {{ required "gateway.feedback.githubRepo is required when gateway.feedback.enabled is true" .Values.gateway.feedback.githubRepo | quote }}
+            - name: APME_FEEDBACK_GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $fullname }}-secrets
+                  key: feedback-github-token
+            {{- end }}
+          ports:
+            - name: gateway-grpc
+              containerPort: 50060
+              protocol: TCP
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /api/v1/dashboard/summary
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /api/v1/dashboard/summary
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          volumeMounts:
+            - name: gateway-data
+              mountPath: /data
+          resources:
+            {{- toYaml .Values.gateway.resources | nindent 12 }}
+
+        {{- if .Values.ui.enabled }}
+        # -- UI (nginx SPA)
+        - name: ui
+          image: {{ include "apme.image" (dict "registry" .Values.image.registry "name" "ui" "tag" .Values.image.tag "fallbackTag" .Chart.AppVersion) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- if .Values.ui.securityContext }}
+          securityContext:
+            {{- toYaml .Values.ui.securityContext | nindent 12 }}
+          {{- end }}
+          env:
+            - name: APME_API_BACKEND
+              value: "http://127.0.0.1:8080"
+          ports:
+            - name: ui-http
+              containerPort: 8081
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /
+              port: ui-http
+            initialDelaySeconds: 5
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /
+              port: ui-http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          volumeMounts:
+            - name: nginx-cache
+              mountPath: /var/cache/nginx
+            - name: nginx-run
+              mountPath: /var/run
+            - name: nginx-conf
+              mountPath: /etc/nginx/conf.d
+          resources:
+            {{- toYaml .Values.ui.resources | nindent 12 }}
+        {{- end }}
+
+        {{- if .Values.abbenay.enabled }}
+        # -- Abbenay AI provider (loopback only; ADR-069)
+        - name: abbenay
+          image: {{ .Values.abbenay.image }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          args: ["daemon", "--grpc-host", "127.0.0.1", "--grpc-port", "50057"]
+          env:
+            - name: APME_ABBENAY_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $fullname }}-secrets
+                  key: abbenay-token
+            {{- if .Values.abbenay.aiModel }}
+            - name: APME_AI_MODEL
+              value: {{ .Values.abbenay.aiModel | quote }}
+            {{- end }}
+            - name: XDG_RUNTIME_DIR
+              value: /tmp/abbenay-run
+            - name: XDG_CONFIG_HOME
+              value: /etc/abbenay-config
+            {{- if $hasVertexADC }}
+            {{- if $hasGcpCreds }}
+            - name: GOOGLE_APPLICATION_CREDENTIALS
+              value: /var/run/secrets/gcp/service-account-key.json
+            {{- end }}
+            {{- with .Values.abbenay.gcp }}
+            {{- if .project }}
+            - name: GOOGLE_VERTEX_PROJECT
+              value: {{ .project | quote }}
+            {{- end }}
+            {{- if .location }}
+            - name: GOOGLE_VERTEX_LOCATION
+              value: {{ .location | quote }}
+            {{- end }}
+            {{- end }}
+            {{- end }}
+            {{- range $name, $provider := .Values.abbenay.providers }}
+            {{- $envName := printf "ABBENAY_PROVIDER_%s" (upper (replace "-" "_" $name)) }}
+            {{- if $provider.apiKey }}
+            - name: {{ $envName }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $fullname }}-secrets
+                  key: provider-{{ $name }}-api-key
+            {{- else if $provider.apiKeySecret }}
+            - name: {{ $envName }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $provider.apiKeySecret.name }}
+                  key: {{ $provider.apiKeySecret.key }}
+            {{- end }}
+            {{- with $provider.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+            {{- end }}
+          ports:
+            - name: abbenay-grpc
+              containerPort: 50057
+              protocol: TCP
+          # Bind is 127.0.0.1 — kubelet tcpSocket to the pod IP cannot reach it.
+          # Probe localhost inside the container instead (Abbenay image includes node).
+          readinessProbe:
+            exec:
+              command:
+                - node
+                - -e
+                - "require('net').createConnection(50057,'127.0.0.1').on('connect',function(c){c.end();process.exit(0)}).on('error',function(){process.exit(1)})"
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command:
+                - node
+                - -e
+                - "require('net').createConnection(50057,'127.0.0.1').on('connect',function(c){c.end();process.exit(0)}).on('error',function(){process.exit(1)})"
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.abbenay.resources | nindent 12 }}
+          volumeMounts:
+            - name: abbenay-config
+              mountPath: /etc/abbenay-config/abbenay
+              readOnly: true
+            {{- if and $hasVertexADC $hasGcpCreds }}
+            - name: gcp-credentials
+              mountPath: /var/run/secrets/gcp
+              readOnly: true
+            {{- end }}
+        {{- end }}
+
       volumes:
         - name: sessions
-          {{- if gt (int .Values.engine.replicas) 1 }}
-          emptyDir: {}
-          {{- else }}
           persistentVolumeClaim:
-            claimName: {{ include "apme.fullname" . }}-sessions
-          {{- end }}
+            claimName: {{ $fullname }}-sessions
         - name: proxy-cache
-          {{- if gt (int .Values.engine.replicas) 1 }}
-          emptyDir: {}
-          {{- else }}
           persistentVolumeClaim:
-            claimName: {{ include "apme.fullname" . }}-proxy-cache
-          {{- end }}
+            claimName: {{ $fullname }}-proxy-cache
+        - name: gateway-data
+          persistentVolumeClaim:
+            claimName: {{ $fullname }}-gateway-data
+        {{- if .Values.ui.enabled }}
+        - name: nginx-cache
+          emptyDir: {}
+        - name: nginx-run
+          emptyDir: {}
+        - name: nginx-conf
+          emptyDir: {}
+        {{- end }}
+        {{- if .Values.abbenay.enabled }}
+        - name: abbenay-config
+          configMap:
+            name: {{ $fullname }}-abbenay-config
+        {{- if and $hasVertexADC $hasGcpCreds }}
+        - name: gcp-credentials
+          secret:
+            secretName: {{ if .Values.abbenay.gcp.serviceAccountKey }}{{ $fullname }}-gcp-credentials{{ else }}{{ .Values.abbenay.gcp.existingSecret }}{{ end }}
+        {{- end }}
+        {{- end }}
       {{- with .Values.engine.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

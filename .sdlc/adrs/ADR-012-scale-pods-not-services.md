@@ -68,19 +68,14 @@ To increase throughput, run more pods behind a load balancer.
 
 ### Scaling on Kubernetes / OpenShift (Helm chart)
 
-The Helm chart at `deploy/helm/apme/` models the engine stack as sidecar
-containers in a single Kubernetes pod. Scaling is done via the Helm values:
+The **conceptual** scaling unit remains the engine stack (this ADR). The
+shipping Helm chart for EAP / upstream is **Simple all-in-one**
+([ADR-069](ADR-069-helm-simple-all-in-one.md)): one pod with engine + Gateway +
+UI + optional Abbenay, `replicas: 1`, HPA disabled. Multi-replica engine HPA
+requires a future topology ADR (Gateway SQLite cannot share a scaled pod).
 
-```bash
-# Scale engine to 3 replicas via Helm
-helm upgrade apme ./deploy/helm/apme/ --set engine.replicas=3
-
-# Or use HPA (configured in chart values)
-```
-
-The chart creates a Kubernetes Service for load balancing across engine replicas.
-Gateway and UI scale independently as separate Deployments. See
-[ADR-054](ADR-054-production-deployment.md) for full details.
+See [ADR-054](ADR-054-production-deployment.md) (amended by ADR-069) for the
+chart shape.
 
 ### Scaling with Podman (local dev / single-node)
 
@@ -108,3 +103,13 @@ If a shared wheel cache is needed:
 - ADR-005: No service discovery
 - ADR-048: Pod-internal admin endpoints rely on network isolation — if Galaxy Proxy is extracted (see "Galaxy Proxy Exception" above), auth must be added per ADR-048
 - **ADR-054: Production Deployment — Helm chart for Kubernetes/OpenShift**
+- **ADR-069: Helm Simple all-in-one (EAP/upstream chart topology)**
+
+---
+
+## Revision History
+
+| Date | Author | Change |
+|------|--------|--------|
+| 2026-02 | APME Team | Initial acceptance |
+| 2026-08-03 | APME Team | Helm notes amended for ADR-069 Simple (no multi-replica chart path) |

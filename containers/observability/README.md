@@ -71,8 +71,8 @@ Apps export OTLP only when `OTEL_EXPORTER_OTLP_ENDPOINT` is set (pod.yaml sets
 
 ## Helm note
 
-The Podman pod co-locates Gateway with the engine. Helm splits Gateway / Abbenay /
-UI into separate Deployments, so an in-pod collector on the **engine** Deployment
-only sees Primary + validators + galaxy-proxy. Gateway/UI need their own
-collector sidecar (or a cluster Collector) when that topology is used.
+Helm Simple (ADR-069) co-locates Gateway / UI / Abbenay with the engine in one
+pod — the same shape as Podman. An in-pod collector on that Deployment can
+scrape the full stack on localhost (when the chart ships a collector sidecar;
+today OTLP export is configured separately for Kubernetes).
 

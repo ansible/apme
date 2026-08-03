@@ -23,7 +23,9 @@ APME is a multi-container gRPC microservice system. The Primary service runs the
 
 ## Container Topology (Podman — local dev)
 
-This diagram shows the **Podman pod** (local development). All services share one pod and communicate via localhost. On Kubernetes/OpenShift, the system splits into separate Deployments — see the [Scaling](#scaling) section.
+This diagram shows the **Podman pod** (local development). All services share one
+pod and communicate via localhost. Helm Simple (ADR-069) uses the same
+co-located shape on Kubernetes/OpenShift — see the [Scaling](#scaling) section.
 
 ```
 ┌──────────────────────────────────── apme-pod ──────────────────────────────────┐
@@ -288,56 +290,42 @@ The wrapper adds **Ansible-aware filtering**:
 
 ## Scaling
 
-**Scale pods, not services within a pod.** Each engine pod is a self-contained stack (Primary + Native + OPA + Ansible + Gitleaks + Collection Health + Dep Audit + Galaxy Proxy) that can process a scan request end-to-end.
+**Scale pods, not services within a pod** (ADR-012) defines the conceptual
+engine unit. The **Helm chart** (EAP / upstream) ships a **Simple all-in-one**
+pod (ADR-069): engine + Gateway + UI + optional Abbenay on localhost — same
+shape as Podman. Multi-replica engine HPA is out of chart scope while Gateway
+SQLite shares that pod.
 
-```
-                    ┌─────────────┐
-  FixSession  ────► │ Load        │
-                    │ Balancer    │
-                    │ (K8s Svc)   │
-                    └──┬──┬──┬────┘
-                       │  │  │
-              ┌────────┘  │  └────────┐
-              ▼           ▼           ▼
-         ┌─────────┐ ┌─────────┐ ┌─────────┐
-         │ Engine  │ │ Engine  │ │ Engine  │
-         │ Pod 1   │ │ Pod 2   │ │ Pod 3   │
-         │ (full   │ │ (full   │ │ (full   │
-         │  stack) │ │  stack) │ │  stack) │
-         └─────────┘ └─────────┘ └─────────┘
-              ▲           ▲           ▲
-              └───────────┼───────────┘
-                          │ gRPC (reporting)
-                    ┌─────┴─────┐
-                    │  Gateway  │  (separate Deployment)
-                    │  Abbenay  │  (separate Deployment, optional)
-                    │    UI     │  (separate Deployment)
-                    └───────────┘
+```text
+  Ingress / Service :8080
+            │
+            ▼
+  ┌──────────────── apme Simple pod (replicas: 1) ────────────────┐
+  │  Primary + validators + Galaxy Proxy + Gateway + UI + Abbenay*  │
+  │              all via 127.0.0.1:<port> (ADR-005)                  │
+  └─────────────────────────────────────────────────────────────────┘
 ```
 
-### Kubernetes Topology
+### Kubernetes Topology (Helm — ADR-069)
 
-On Kubernetes/OpenShift (via the Helm chart), the system is deployed as **separate Deployments**:
+On Kubernetes/OpenShift the chart deploys **one** Deployment (Simple / all-in-one):
 
 | Deployment | Containers (sidecars) | Scaling |
 |-----------|----------------------|---------|
-| **engine** | Primary, Native, OPA, Ansible, Gitleaks*, Coll Health*, Dep Audit*, Galaxy Proxy | HPA (CPU/memory) or fixed replicas |
-| **gateway** | Gateway (REST + gRPC + DB) | Fixed replicas |
-| **ui** | nginx (PatternFly SPA) | Fixed replicas |
-| **abbenay** | Abbenay (AI provider) | Fixed (1 replica) |
+| **Simple (all-in-one)** | Primary, Native, OPA, Ansible, Gitleaks*, Coll Health*, Dep Audit*, Galaxy Proxy, Gateway, UI*, Abbenay*, OTel* | **replicas: 1** (HPA off) |
 
-*\* = conditionally included via `.Values.gitleaks.enabled`, `.Values.collectionHealth.enabled`, `.Values.depAudit.enabled`*
+*\* = conditionally included via chart values / profiles*
 
-Key K8s scaling behavior:
-- **HPA**: Optional `HorizontalPodAutoscaler` targets the engine Deployment (default: disabled, maxReplicas=5, CPU target 70%, memory target 80%)
-- **Multi-replica sessions**: When `engine.replicas > 1`, sessions and proxy-cache switch from PVC to `emptyDir` — each replica builds its own session venvs (no shared state)
-- **PodDisruptionBudget**: Protects engine, gateway, and UI during node drains
-- **Abbenay is NOT in the engine pod**: Primary reaches Abbenay via K8s Service DNS (`<release>-abbenay:50057`), not localhost
-- **NetworkPolicy**: Optional default-deny with explicit allow rules for inter-service gRPC/HTTP traffic
+Key K8s behavior:
+- **Single replica**: Chart validation rejects `replicas > 1` / HPA for this topology
+- **Localhost**: Primary → Abbenay `127.0.0.1:50057`; reporting → `127.0.0.1:50060` (no Abbenay TLS for the chart path)
+- **PodDisruptionBudget**: Protects the Simple Deployment during node drains
+- **NetworkPolicy**: Optional default-deny with allow rules for Ingress → Gateway/UI
 
 ### Podman Pod (local dev)
 
-In the local Podman pod, ALL services (including Gateway, UI, and Abbenay) share a single pod and communicate over localhost. This is a development convenience — the scaling invariant still applies (the unit of replication is the full engine stack).
+Same co-located shape as Helm Simple: Gateway, UI, and Abbenay share the pod and
+communicate over localhost (`tox -e up`).
 
 ### Scaling Constraints
 
