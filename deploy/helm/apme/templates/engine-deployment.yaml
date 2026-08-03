@@ -355,6 +355,16 @@ spec:
               value: "0.0.0.0"
             - name: APME_GATEWAY_HTTP_PORT
               value: "8080"
+            {{- if .Values.abbenay.enabled }}
+            # ADR-070: reverse-proxy Abbenay HTTP admin on loopback
+            - name: APME_ABBENAY_HTTP_URL
+              value: "http://127.0.0.1:8787"
+            - name: APME_ABBENAY_HTTP_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $fullname }}-secrets
+                  key: abbenay-token
+            {{- end }}
             {{- if .Values.collectionHealth.enabled }}
             - name: COLLECTION_HEALTH_GRPC_ADDRESS
               value: "127.0.0.1:50058"
@@ -447,9 +457,24 @@ spec:
           securityContext:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-          args: ["daemon", "--grpc-host", "127.0.0.1", "--grpc-port", "50057"]
+          # ADR-070: gRPC for Primary + HTTP admin on loopback (no Service/hostPort 8787)
+          args:
+            - "web"
+            - "--host"
+            - "127.0.0.1"
+            - "--port"
+            - "8787"
+            - "--grpc-host"
+            - "127.0.0.1"
+            - "--grpc-port"
+            - "50057"
           env:
             - name: APME_ABBENAY_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $fullname }}-secrets
+                  key: abbenay-token
+            - name: ABBENAY_API_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: {{ $fullname }}-secrets

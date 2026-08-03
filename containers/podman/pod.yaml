@@ -180,6 +180,10 @@ spec:
           value: "0.0.0.0"
         - name: APME_GATEWAY_HTTP_PORT
           value: "8080"
+        - name: APME_ABBENAY_HTTP_URL
+          value: "http://127.0.0.1:8787"
+        - name: APME_ABBENAY_HTTP_TOKEN
+          value: "apme-dev-token"
         - name: COLLECTION_HEALTH_GRPC_ADDRESS
           value: "127.0.0.1:50058"
         - name: DEP_AUDIT_GRPC_ADDRESS
@@ -213,13 +217,25 @@ spec:
           hostPort: 8081
     - name: abbenay
       image: ghcr.io/redhat-developer/abbenay:2026.4.1-alpha
-      args: ["daemon", "--grpc-host", "0.0.0.0", "--grpc-port", "50057"]
+      # ADR-070: gRPC for Primary + HTTP admin on loopback (no hostPort 8787)
+      args:
+        - "web"
+        - "--host"
+        - "127.0.0.1"
+        - "--port"
+        - "8787"
+        - "--grpc-host"
+        - "0.0.0.0"
+        - "--grpc-port"
+        - "50057"
       env:
         - name: OPENROUTER_API_KEY
           value: "${OPENROUTER_API_KEY}"
         - name: VERTEX_ANTHROPIC_API_KEY
           value: "${VERTEX_ANTHROPIC_API_KEY}"
         - name: APME_ABBENAY_TOKEN
+          value: "apme-dev-token"
+        - name: ABBENAY_API_TOKEN
           value: "apme-dev-token"
         - name: XDG_RUNTIME_DIR
           value: "/tmp/abbenay-run"

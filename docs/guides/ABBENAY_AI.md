@@ -4,6 +4,27 @@ This guide covers configuring APME's Abbenay AI service for Tier 2
 (AI-assisted) remediation. Abbenay supports multiple LLM backends via the
 Vercel AI SDK.
 
+## Gateway admin proxy (ADR-070)
+
+In the Simple in-pod topology (ADR-069), Abbenay listens for HTTP admin on
+`127.0.0.1:8787` (no cluster Service). The Gateway reverse-proxies an
+**allowlisted** admin surface:
+
+| Gateway | Abbenay |
+|---------|---------|
+| `GET/POST /api/v1/ai/config` | `/api/config` |
+| `GET /api/v1/ai/providers` | `/api/providers` |
+| `POST /api/v1/ai/provider/{id}/configure` | `/api/provider/{id}/configure` |
+| `DELETE /api/v1/ai/provider/{id}` | `/api/provider/{id}` |
+
+`GET /api/v1/ai/models` remains Primary → Abbenay gRPC (`ListAIModels`). Chat
+is **not** proxied. Set `APME_ABBENAY_HTTP_URL` (default
+`http://127.0.0.1:8787`) and `APME_ABBENAY_HTTP_TOKEN` on the Gateway (same
+secret as `ABBENAY_API_TOKEN` / `abbenay.token` in Helm).
+
+Runtime admin writes need a writable Abbenay config directory; durable volume
+seeding is tracked in [#498](https://github.com/ansible/apme/issues/498).
+
 ---
 
 ## Supported Engines

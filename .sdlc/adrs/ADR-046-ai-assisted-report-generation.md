@@ -218,6 +218,12 @@ The component set is extensible — adding a new visualization means adding a Re
 
 **Why not chosen**: The proxy adds negligible latency (pod-local gRPC) and keeps AI infrastructure management in one place.
 
+> **Amendment (ADR-070):** This alternative rejects Gateway → Abbenay for
+> **LLM inference** (`chat` / report planning). It does **not** forbid the
+> Gateway from **HTTP reverse-proxying** Abbenay’s admin/config API on
+> localhost in the Simple in-pod topology. See
+> [ADR-070](ADR-070-gateway-abbenay-admin-proxy.md).
+
 ### Alternative 3: LLM generates rendering code (HTML/JSX)
 
 **Description**: The LLM returns HTML, JSX, or web component markup that the frontend renders via `dangerouslySetInnerHTML` or a sandboxed iframe.

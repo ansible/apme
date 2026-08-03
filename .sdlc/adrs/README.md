@@ -78,6 +78,7 @@ Decisions that have been accepted but are not yet fully implemented.
 | [ADR-065](ADR-065-spa-gateway-live-state-ownership.md) | SPA vs Gateway Live-Operation State Ownership | 2026-07-20 |
 | [ADR-066](ADR-066-ui-workflow-github-release-artifacts.md) | Publish `@apme/ui-workflow` via GitHub Release Artifacts (Accepted (revised 2026-07-31: consolidated into main release)) | 2026-07-23 (revised 2026-07-31) |
 | [ADR-069](ADR-069-helm-simple-all-in-one.md) | Helm Chart Simple All-in-One Topology (EAP / Upstream) | 2026-08-03 |
+| [ADR-070](ADR-070-gateway-abbenay-admin-proxy.md) | Gateway HTTP Proxy to In-Pod Abbenay Admin (Simple Model) | 2026-08-03 |
 
 ## Proposed
 
@@ -104,7 +105,7 @@ Decisions replaced by newer ADRs.
 ## Creating New ADRs
 
 1. Copy the template from `../templates/adr.md`
-2. Use the next available number (currently ADR-070)
+2. Use the next available number (currently ADR-071)
 3. Include:
    - Status (Proposed → Accepted → Implemented)
    - Date
