@@ -6,9 +6,11 @@ Vercel AI SDK.
 
 ## Gateway admin proxy (ADR-070)
 
-In the Simple in-pod topology (ADR-069), Abbenay listens for HTTP admin on
-`127.0.0.1:8787` (no cluster Service). The Gateway reverse-proxies an
-**allowlisted** admin surface:
+In the Simple in-pod topology (ADR-069), Abbenay serves HTTP admin on port
+`8787` (no cluster Service / hostPort). The Gateway reaches it at
+`http://127.0.0.1:8787`. Abbenay binds HTTP with `--host 127.0.0.1`
+(image ≥ v2026.8.0; no cluster Service / hostPort). The Gateway reverse-proxies
+an **allowlisted** admin surface:
 
 | Gateway | Abbenay |
 |---------|---------|

@@ -457,7 +457,7 @@ spec:
           securityContext:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-          # ADR-070: gRPC for Primary + HTTP admin on loopback (no Service/hostPort 8787)
+          # ADR-070: HTTP admin + gRPC on loopback (no Service/hostPort 8787).
           args:
             - "web"
             - "--host"
