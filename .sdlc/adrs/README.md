@@ -69,7 +69,7 @@ Decisions that have been accepted but are not yet fully implemented.
 | [ADR-051](ADR-051-dependency-health-scanning.md) | Dependency Health Scanning | 2026-04-07 |
 | [ADR-052](ADR-052-project-operation-sse-architecture.md) | Project Operation SSE Architecture | 2026-04-14 |
 | [ADR-053](ADR-053-github-integration-strategy.md) | GitHub Integration Strategy | 2026-04-10 |
-| [ADR-054](ADR-054-production-deployment.md) | Production Deployment — Helm Chart and bootc VM Image | 2026-04-10 |
+| [ADR-054](ADR-054-production-deployment.md) | Production Deployment — Helm Chart and bootc VM Image (Accepted (Helm workload topology amended by [ADR-069](ADR-069-helm-simple-all-in-one.md))) | 2026-04-10 |
 | [ADR-055](ADR-055-violation-fingerprint-suppression.md) | Content-Based Violation Fingerprinting and Suppression | 2026-05-21 |
 | [ADR-056](ADR-056-apme-owns-scm-commit-push.md) | APME Owns SCM Commit and Push | 2026-07-06 |
 | [ADR-057](ADR-057-per-rule-version-applicability.md) | Per-Rule Ansible-Core Version Applicability | 2026-07-07 |
@@ -77,6 +77,7 @@ Decisions that have been accepted but are not yet fully implemented.
 | [ADR-060](ADR-060-rest-api-versioning-contract.md) | REST API Versioning Contract | 2026-07-08 |
 | [ADR-065](ADR-065-spa-gateway-live-state-ownership.md) | SPA vs Gateway Live-Operation State Ownership | 2026-07-20 |
 | [ADR-066](ADR-066-ui-workflow-github-release-artifacts.md) | Publish `@apme/ui-workflow` via GitHub Release Artifacts (Accepted (revised 2026-07-31: consolidated into main release)) | 2026-07-23 (revised 2026-07-31) |
+| [ADR-069](ADR-069-helm-simple-all-in-one.md) | Helm Chart Simple All-in-One Topology (EAP / Upstream) | 2026-08-03 |
 
 ## Proposed
 
@@ -103,7 +104,7 @@ Decisions replaced by newer ADRs.
 ## Creating New ADRs
 
 1. Copy the template from `../templates/adr.md`
-2. Use the next available number (currently ADR-069)
+2. Use the next available number (currently ADR-070)
 3. Include:
    - Status (Proposed → Accepted → Implemented)
    - Date

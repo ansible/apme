@@ -52,6 +52,7 @@ Full pod inventory (including optional validators and observability): see
 | [ADR-008](/.sdlc/adrs/ADR-008-rule-id-conventions.md) | Rule IDs: L=Lint, M=Modernize, R=Risk, P=Policy, SEC=Secrets |
 | [ADR-009](/.sdlc/adrs/ADR-009-remediation-engine.md) | Validators are read-only; remediation is separate |
 | [ADR-054](/.sdlc/adrs/ADR-054-production-deployment.md) | **Helm chart for K8s/OCP**, bootc for VM |
+| [ADR-069](/.sdlc/adrs/ADR-069-helm-simple-all-in-one.md) | Helm **Simple** all-in-one pod (EAP/upstream; localhost; replicas=1) |
 | [ADR-060](/.sdlc/adrs/ADR-060-rest-api-versioning-contract.md) | REST API is a versioned public contract — no breaking changes without version bump |
 | [ADR-063](/.sdlc/adrs/ADR-063-multi-platform-container-images.md) | Published images are multi-arch (`linux/amd64` + `linux/arm64`) |
 

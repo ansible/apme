@@ -130,8 +130,12 @@ one needs to change, write an ADR first.
     | Target | Method |
     |--------|--------|
     | Developer laptop / Linux server (no K8s) | Podman pod (`tox -e up`) |
-    | **Kubernetes / OpenShift** | **Helm chart** (`deploy/helm/apme/`) |
+    | **Kubernetes / OpenShift** | **Helm chart** Simple all-in-one (`deploy/helm/apme/`, ADR-069) |
     | Production single-node VM | bootc image |
+
+    Helm EAP/upstream topology co-locates engine + Gateway + UI + optional
+    Abbenay in one pod on localhost (`replicas: 1`). Do not introduce split
+    Gateway/Abbenay Deployments without a new ADR.
 
 17. **REST API is a versioned public contract** (ADR-060). The Gateway
     REST API under `/api/v1` is consumed by external teams (Backstage
