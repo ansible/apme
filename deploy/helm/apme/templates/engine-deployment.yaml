@@ -70,6 +70,10 @@ spec:
         - name: init-nginx-conf
           image: {{ include "apme.image" (dict "registry" .Values.image.registry "name" "ui" "tag" .Values.image.tag "fallbackTag" .Chart.AppVersion) }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           command: ["sh", "-c", "cp -a /etc/nginx/conf.d/. /mnt/conf.d/"]
           volumeMounts:
             - name: nginx-conf
@@ -497,14 +501,22 @@ spec:
             - name: abbenay-grpc
               containerPort: 50057
               protocol: TCP
+          # Bind is 127.0.0.1 — kubelet tcpSocket to the pod IP cannot reach it.
+          # Probe localhost inside the container instead (Abbenay image includes node).
           readinessProbe:
-            tcpSocket:
-              port: 50057
+            exec:
+              command:
+                - node
+                - -e
+                - "require('net').createConnection(50057,'127.0.0.1').on('connect',function(c){c.end();process.exit(0)}).on('error',function(){process.exit(1)})"
             initialDelaySeconds: 5
             periodSeconds: 10
           livenessProbe:
-            tcpSocket:
-              port: 50057
+            exec:
+              command:
+                - node
+                - -e
+                - "require('net').createConnection(50057,'127.0.0.1').on('connect',function(c){c.end();process.exit(0)}).on('error',function(){process.exit(1)})"
             initialDelaySeconds: 15
             periodSeconds: 30
           resources:

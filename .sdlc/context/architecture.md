@@ -296,7 +296,7 @@ pod (ADR-069): engine + Gateway + UI + optional Abbenay on localhost — same
 shape as Podman. Multi-replica engine HPA is out of chart scope while Gateway
 SQLite shares that pod.
 
-```
+```text
   Ingress / Service :8080
             │
             ▼

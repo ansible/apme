@@ -171,6 +171,7 @@ assert_fail_message "HPA rejected" "${HPA_ERR}" "autoscaling.enabled must be fal
 
 # Confirm Service selectors + no Abbenay Service / extra Deployments
 RENDER_FILE="$(mktemp)"
+trap 'rm -f "${RENDER_FILE}"' EXIT
 printf '%s' "${RENDER}" >"${RENDER_FILE}"
 python3 - "${RENDER_FILE}" <<'PY'
 import sys
@@ -204,9 +205,14 @@ for d in services:
 
 if "--grpc-host" not in text or "127.0.0.1" not in text:
     raise SystemExit("FAIL: Abbenay must bind 127.0.0.1")
+# Gateway gRPC stays pod-local (Primary → 127.0.0.1:50060); Service exposes HTTP only.
+for d in services:
+    if "port: 50060" in d:
+        raise SystemExit(
+            "FAIL: Gateway Service must not expose gRPC 50060 (ADR-069 localhost)"
+        )
 print("OK: Simple topology template checks passed")
 PY
-rm -f "${RENDER_FILE}"
 mkdir -p "${OUT_DIR}"
 echo "==> helm package ${CHART_DIR} -> ${OUT_DIR}"
 "${HELM_BIN}" package "${CHART_DIR}" -d "${OUT_DIR}"
