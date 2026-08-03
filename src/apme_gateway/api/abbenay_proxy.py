@@ -60,16 +60,9 @@ _RESPONSE_DROP: Final = frozenset(
     }
 )
 
-# Admin-only path allowlist (decoded, no leading slash). No chat/sessions.
-_GET_PATHS: Final = frozenset(
-    {
-        "config",
-        "providers",
-        "engines",
-        "templates",
-        "secrets",
-    }
-)
+# Admin-only path allowlist (decoded, no leading slash). Matches ADR-070 /
+# ABBENAY_AI.md — no chat/sessions/secrets/engines/templates.
+_GET_PATHS: Final = frozenset({"config", "providers"})
 _GET_PROVIDER_RE: Final = re.compile(r"^provider/[^/]+$")
 _POST_PATHS: Final = frozenset({"config"})
 _POST_CONFIGURE_RE: Final = re.compile(r"^provider/[^/]+/configure$")
@@ -113,6 +106,9 @@ def _decode_admin_path(path: str) -> str | None:
     decoded = unquote(path).strip().strip("/")
     if not decoded:
         return None
+    # Reject encoded query/fragment delimiters smuggled into the path param.
+    if "?" in decoded or "#" in decoded:
+        return None
     parts = decoded.split("/")
     if any(part == ".." or part == "." for part in parts):
         return None
@@ -131,7 +127,7 @@ def _method_allows_path(method: str, admin_path: str) -> bool:
     Returns:
         True when the method/path pair is an allowed Abbenay admin route.
     """
-    if method == "GET" or method == "HEAD":
+    if method == "GET":
         return admin_path in _GET_PATHS or bool(_GET_PROVIDER_RE.fullmatch(admin_path))
     if method == "POST":
         return admin_path in _POST_PATHS or bool(_POST_CONFIGURE_RE.fullmatch(admin_path))
@@ -193,17 +189,14 @@ def _filter_response_headers(upstream: httpx.Response) -> dict[str, str]:
     Returns:
         Headers safe to return to the Gateway client.
     """
-    return {
-        key: value
-        for key, value in upstream.headers.items()
-        if key.lower() not in _RESPONSE_DROP
-    }
+    return {key: value for key, value in upstream.headers.items() if key.lower() not in _RESPONSE_DROP}
 
 
 @router.api_route(  # type: ignore[untyped-decorator]
     "/ai/{path:path}",
-    methods=["GET", "POST", "DELETE", "HEAD"],
+    methods=["GET", "POST", "DELETE"],
     # Transparent proxy — Abbenay owns the admin schema (ADR-070).
+    # Omit HEAD: Starlette derives it from GET without a response body.
     include_in_schema=False,
 )
 async def proxy_abbenay_admin(path: str, request: Request) -> Response:

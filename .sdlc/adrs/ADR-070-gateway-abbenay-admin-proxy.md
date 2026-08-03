@@ -65,9 +65,8 @@ clients. Do **not** proxy chat, sessions, OpenAI-compat `/v1`, or arbitrary
 Abbenay surfaces (ADR-046 inference stays Primary). Reject path traversal
 (`..` / encoded forms). Abbenay remains the source of truth for config.
 
-Allowlist (initial): `GET/POST /config`, `GET /providers` (and related read
-helpers: engines/templates/secrets), `POST /provider/{id}/configure`,
-`DELETE /provider/{id}`.
+Allowlist (initial): `GET/POST /config`, `GET /providers`,
+`POST /provider/{id}/configure`, `DELETE /provider/{id}`.
 
 **3. Enable Abbenay HTTP on loopback when Abbenay is enabled.**  
 In addition to gRPC `:50057` (Primary), start Abbenay’s HTTP admin surface on

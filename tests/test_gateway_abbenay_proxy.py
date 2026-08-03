@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import AsyncIterator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -13,7 +13,7 @@ from apme_gateway.app import create_app
 
 
 @pytest.fixture  # type: ignore[untyped-decorator]
-def app_client(monkeypatch: pytest.MonkeyPatch) -> Iterator[AsyncClient]:
+async def app_client(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[AsyncClient]:
     """ASGI client with Abbenay HTTP env set for proxy tests.
 
     Args:
@@ -25,8 +25,8 @@ def app_client(monkeypatch: pytest.MonkeyPatch) -> Iterator[AsyncClient]:
     monkeypatch.setenv("APME_ABBENAY_HTTP_URL", "http://127.0.0.1:8787")
     monkeypatch.setenv("APME_ABBENAY_HTTP_TOKEN", "admin-http-token")
     transport = ASGITransport(app=create_app())
-    client = AsyncClient(transport=transport, base_url="http://test")
-    yield client
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        yield client
 
 
 def _mock_upstream(
@@ -78,9 +78,7 @@ async def test_proxy_get_config_rewrites_path_and_injects_bearer(
     assert client.request.await_args is not None
     assert client.request.await_args.args[0] == "GET"
     assert client.request.await_args.args[1] == "http://127.0.0.1:8787/api/config"
-    assert client.request.await_args.kwargs["headers"]["Authorization"] == (
-        "Bearer admin-http-token"
-    )
+    assert client.request.await_args.kwargs["headers"]["Authorization"] == ("Bearer admin-http-token")
     assert "Cookie" not in client.request.await_args.kwargs["headers"]
 
 
@@ -98,9 +96,7 @@ async def test_proxy_post_provider_configure(app_client: AsyncClient) -> None:
 
     assert resp.status_code == 200
     assert client.request.await_args is not None
-    assert client.request.await_args.args[1] == (
-        "http://127.0.0.1:8787/api/provider/openrouter/configure"
-    )
+    assert client.request.await_args.args[1] == ("http://127.0.0.1:8787/api/provider/openrouter/configure")
     assert b"sk-test" in (client.request.await_args.kwargs.get("content") or b"")
 
 
@@ -174,6 +170,21 @@ async def test_chat_path_not_proxied(app_client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio  # type: ignore[untyped-decorator]
+async def test_secrets_path_not_proxied(app_client: AsyncClient) -> None:
+    """GET /api/v1/ai/secrets is outside the documented admin allowlist.
+
+    Args:
+        app_client: Async HTTP test client.
+    """
+    client = _mock_upstream()
+    with patch("apme_gateway.api.abbenay_proxy.httpx.AsyncClient", return_value=client):
+        resp = await app_client.get("/api/v1/ai/secrets")
+
+    assert resp.status_code == 404
+    client.request.assert_not_awaited()
+
+
+@pytest.mark.asyncio  # type: ignore[untyped-decorator]
 async def test_encoded_path_traversal_rejected(app_client: AsyncClient) -> None:
     """Encoded .. segments must not escape Abbenay /api/.
 
@@ -185,6 +196,23 @@ async def test_encoded_path_traversal_rejected(app_client: AsyncClient) -> None:
         resp = await app_client.get("/api/v1/ai/%2e%2e/secret")
 
     assert resp.status_code == 404
+    client.request.assert_not_awaited()
+
+
+@pytest.mark.asyncio  # type: ignore[untyped-decorator]
+async def test_encoded_query_delimiter_in_path_rejected(app_client: AsyncClient) -> None:
+    """Encoded ? / # in the path param must not alter upstream URL shape.
+
+    Args:
+        app_client: Async HTTP test client.
+    """
+    client = _mock_upstream()
+    with patch("apme_gateway.api.abbenay_proxy.httpx.AsyncClient", return_value=client):
+        resp_q = await app_client.get("/api/v1/ai/config%3Fevil=1")
+        resp_h = await app_client.get("/api/v1/ai/config%23frag")
+
+    assert resp_q.status_code == 404
+    assert resp_h.status_code == 404
     client.request.assert_not_awaited()
 
 
