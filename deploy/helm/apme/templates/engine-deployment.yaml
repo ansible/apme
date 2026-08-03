@@ -1,11 +1,11 @@
 {{- /* ADR-069: Simple all-in-one — single Deployment, replicas must be 1 */ -}}
-{{- if gt (int .Values.engine.replicas) 1 }}
+{{- if ne (int .Values.engine.replicas) 1 }}
 {{- fail "ADR-069 Simple topology: engine.replicas must be 1 (Gateway SQLite and Abbenay share this pod). Multi-replica requires a future topology ADR." }}
 {{- end }}
-{{- if gt (int .Values.gateway.replicas) 1 }}
+{{- if ne (int .Values.gateway.replicas) 1 }}
 {{- fail "ADR-069 Simple topology: gateway.replicas must be 1 (Gateway is a sidecar; SQLite is not multi-replica)." }}
 {{- end }}
-{{- if and .Values.ui.enabled (gt (int .Values.ui.replicas) 1) }}
+{{- if and .Values.ui.enabled (ne (int .Values.ui.replicas) 1) }}
 {{- fail "ADR-069 Simple topology: ui.replicas must be 1 (UI is a sidecar in the Simple pod)." }}
 {{- end }}
 {{- if .Values.autoscaling.enabled }}

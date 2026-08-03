@@ -87,15 +87,8 @@ engine:
   nodeSelector: {}
   tolerations: []
   affinity: {}
-  # -- Spread engine pods across nodes when replicas > 1 (or HPA is active).
-  # Example:
-  #   topologySpreadConstraints:
-  #     - maxSkew: 1
-  #       topologyKey: kubernetes.io/hostname
-  #       whenUnsatisfiable: ScheduleAnyway
-  #       labelSelector:
-  #         matchLabels:
-  #           app.kubernetes.io/component: engine
+  # Placement for the Simple pod (ADR-069). Multi-replica / HPA unsupported.
+  # gateway.*/ui.* nodeSelector|tolerations|affinity are unused — set engine.* only.
   topologySpreadConstraints: []
 
 # -- Gitleaks is optional (requires external binary in the image)

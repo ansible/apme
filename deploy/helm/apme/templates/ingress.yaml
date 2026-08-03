@@ -29,7 +29,17 @@ spec:
       http:
         paths:
           {{- range .paths }}
-          {{- if or (ne .service "ui") $.Values.ui.enabled }}
+          {{- if and (eq .service "ui") (not $.Values.ui.enabled) }}
+          {{- else if and (eq .service "gateway") (not $.Values.ui.enabled) }}
+          {{/* Portal / backend-only: Gateway at / (match OpenShift Route) */}}
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "apme.fullname" $ }}-gateway
+                port:
+                  number: 8080
+          {{- else if or (ne .service "ui") $.Values.ui.enabled }}
           - path: {{ .path }}
             pathType: {{ .pathType }}
             backend:

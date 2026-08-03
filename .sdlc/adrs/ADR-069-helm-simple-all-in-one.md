@@ -173,7 +173,7 @@ EAP AI remediation.
 - Set Abbenay `--grpc-host 127.0.0.1`; Primary `APME_ABBENAY_ADDR=127.0.0.1:50057`
   (or configured port). Drop Helm `abbenay.grpc.tls` / CA Secret requirements
   for the default path.
-- Wire `APME_REPORTING_ADDRESS=127.0.0.1:50060` (same as daemon / Podman).
+- Wire `APME_REPORTING_ENDPOINT=127.0.0.1:50060` (same as daemon / Podman).
 - Fail Helm render if `replicas > 1` or HPA enabled for the Simple Deployment.
 - Update `docs/guides/DEPLOYMENT.md`, chart README/NOTES, and
   `.sdlc/context/architecture.md` Scaling section.

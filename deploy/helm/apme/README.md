@@ -142,6 +142,21 @@ helm install apme ./deploy/helm/apme/ \
 
 Lint and package locally with `tox -e helm` (writes `dist/charts/*.tgz`).
 
+## Breaking change (pre-ADR-069 → Simple)
+
+If you installed an older chart with **separate** Gateway / UI / Abbenay
+Deployments:
+
+| Before | After (this chart) |
+|--------|--------------------|
+| 4 Deployments | 1 Deployment (`*-engine`) |
+| Abbenay Service DNS | Abbenay on `127.0.0.1` only (Service removed) |
+| Optional engine HPA | HPA / `replicas > 1` fail render |
+| Gateway/UI Services | Same names; selectors target the Simple pod |
+
+PVC names are stable. Plan a maintenance window: the engine pod restart takes
+Gateway DB and Abbenay down together.
+
 ## Architecture
 
 ```

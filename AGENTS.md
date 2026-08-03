@@ -82,8 +82,10 @@ one needs to change, write an ADR first.
     for session venvs; the daemon cannot scan without it. Gitleaks,
     Collection Health, and Dep Audit are optional (`_OPTIONAL_SERVICES`)
     because they require external binaries or venv-dependent scanning;
-    they start when `include_optional=True`. Gateway, UI, and Abbenay are
-    pod-level / enterprise services that the CLI daemon does not start.
+    they start when `include_optional=True`. UI and Abbenay are pod-level /
+    enterprise services the CLI daemon does not start. The Gateway is
+    co-located in the local daemon (ADR-049) and in Helm Simple / Podman
+    (ADR-069 / ADR-004).
 
 13. **Transforms are semantically trusted; the engine owns state and syntax**
     (ADR-044). Transforms operate on an **ephemeral copy** of the graph and

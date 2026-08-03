@@ -146,7 +146,7 @@ assert_template_contains "Abbenay loopback" "${RENDER}" "--grpc-host"
 assert_template_contains "Abbenay loopback host" "${RENDER}" "127.0.0.1"
 assert_template_contains "reporting localhost" "${RENDER}" 'value: "127.0.0.1:50060"'
 assert_template_contains "abbenay addr localhost" "${RENDER}" 'value: "127.0.0.1:50057"'
-assert_template_contains "primary localhost" "${RENDER}" 'value: "127.0.0.1:50051"'
+assert_template_contains "gateway primary addr localhost" "${RENDER}" 'value: "127.0.0.1:50051"'
 assert_template_contains "gateway Service" "${RENDER}" "name: test-release-apme-gateway"
 assert_template_contains "engine Deployment" "${RENDER}" "name: test-release-apme-engine"
 

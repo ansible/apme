@@ -1,7 +1,6 @@
 {{- if .Values.networkPolicy.enabled }}
-# ADR-069: one Simple pod — allow Ingress/cluster traffic to Gateway HTTP and UI.
-# Intra-pod traffic (Primary↔validators↔Abbenay↔reporting) uses localhost and
-# is not subject to NetworkPolicy.
+# ADR-069: one Simple pod. Intra-pod traffic uses localhost (not subject to NP).
+# Allow only external-facing HTTP ports for Ingress/Route / in-cluster API clients.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -19,10 +18,6 @@ spec:
   ingress:
     - ports:
         - port: 8080
-          protocol: TCP
-        - port: 50060
-          protocol: TCP
-        - port: 50051
           protocol: TCP
     {{- if .Values.ui.enabled }}
     - ports:
