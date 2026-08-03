@@ -43,6 +43,26 @@ spec:
       securityContext:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- if .Values.abbenay.grpc.tls }}
+      initContainers:
+        - name: seed-abbenay-tls
+          image: busybox:1.36
+          command:
+            - sh
+            - -ec
+            - |
+              mkdir -p /tmp/abbenay-run/abbenay/tls
+              cp "/secret/{{ .Values.abbenay.grpc.caCertSecret.serverCertKey }}" /tmp/abbenay-run/abbenay/tls/server.crt
+              cp "/secret/{{ .Values.abbenay.grpc.caCertSecret.serverKeyKey }}" /tmp/abbenay-run/abbenay/tls/server.key
+              cp "/secret/{{ .Values.abbenay.grpc.caCertSecret.key }}" /tmp/abbenay-run/abbenay/tls/ca.crt
+              chmod 600 /tmp/abbenay-run/abbenay/tls/server.key
+          volumeMounts:
+            - name: abbenay-tls-secret
+              mountPath: /secret
+              readOnly: true
+            - name: abbenay-tls-runtime
+              mountPath: /tmp/abbenay-run
+      {{- end }}
       containers:
         - name: abbenay
           image: {{ .Values.abbenay.image }}
@@ -133,6 +153,10 @@ spec:
             - name: abbenay-config
               mountPath: /etc/abbenay-config/abbenay
               readOnly: true
+            {{- if .Values.abbenay.grpc.tls }}
+            - name: abbenay-tls-runtime
+              mountPath: /tmp/abbenay-run
+            {{- end }}
             {{- if and $hasVertexADC $hasGcpCreds }}
             - name: gcp-credentials
               mountPath: /var/run/secrets/gcp
@@ -142,6 +166,13 @@ spec:
         - name: abbenay-config
           configMap:
             name: {{ $fullname }}-abbenay-config
+        {{- if .Values.abbenay.grpc.tls }}
+        - name: abbenay-tls-runtime
+          emptyDir: {}
+        - name: abbenay-tls-secret
+          secret:
+            secretName: {{ .Values.abbenay.grpc.caCertSecret.name }}
+        {{- end }}
         {{- if and $hasVertexADC $hasGcpCreds }}
         - name: gcp-credentials
           secret:

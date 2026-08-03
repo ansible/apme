@@ -7,6 +7,7 @@ When TLS is required, a thin subclass overrides ``connect()`` to use
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import logging
 import os
@@ -231,6 +232,7 @@ class _TlsAbbenayClient:
         self._channel: grpc.aio.Channel | None = None
         self._stub: object | None = None
         self._client_id: str | None = None
+        self._connect_lock = asyncio.Lock()
 
     def __getattr__(self, name: str) -> object:
         return getattr(self._delegate, name)
@@ -245,60 +247,61 @@ class _TlsAbbenayClient:
             ConnectionError as AbbenayConnectionError,
         )
 
-        if grpc_service is None or proto is None:
-            raise AbbenayError("gRPC stubs failed to import")
+        async with self._connect_lock:
+            if grpc_service is None or proto is None:
+                raise AbbenayError("gRPC stubs failed to import")
 
-        if self._channel is not None:
-            usable = False
-            try:
-                state = self._channel.get_state(try_to_connect=False)
-                usable = state in (
-                    grpc.ChannelConnectivity.IDLE,
-                    grpc.ChannelConnectivity.READY,
-                    grpc.ChannelConnectivity.CONNECTING,
-                )
-            except Exception:
-                logger.debug("Abbenay TLS channel state check failed", exc_info=True)
-            if usable and self._stub is not None and self._client_id is not None:
-                return
-            try:
-                await self._channel.close(grace=None)
-            except Exception:
-                logger.debug("Abbenay TLS channel close failed", exc_info=True)
-            self._channel = None
-            self._stub = None
-            self._client_id = None
+            if self._channel is not None:
+                usable = False
+                try:
+                    state = self._channel.get_state(try_to_connect=False)
+                    usable = state in (
+                        grpc.ChannelConnectivity.IDLE,
+                        grpc.ChannelConnectivity.READY,
+                        grpc.ChannelConnectivity.CONNECTING,
+                    )
+                except Exception:
+                    logger.debug("Abbenay TLS channel state check failed", exc_info=True)
+                if usable and self._stub is not None and self._client_id is not None:
+                    return
+                try:
+                    await self._channel.close(grace=None)
+                except Exception:
+                    logger.debug("Abbenay TLS channel close failed", exc_info=True)
+                self._channel = None
+                self._stub = None
+                self._client_id = None
 
-        try:
-            root_certs = None
-            if self._ca_cert_pem is not None:
-                root_certs = self._ca_cert_pem
-            elif self._ca_cert:
-                with open(self._ca_cert, "rb") as cert_file:
-                    root_certs = cert_file.read()
-            credentials = grpc.ssl_channel_credentials(root_certificates=root_certs)
-            options = [
-                ("grpc.ssl_target_name_override", self._ssl_target_name),
-                ("grpc.default_authority", self._ssl_target_name),
-            ]
-            self._channel = grpc.aio.secure_channel(self._target, credentials, options=options)
-            stub = grpc_service.AbbenayStub(self._channel)
-            response = await stub.Register(
-                proto.RegisterRequest(
-                    client=proto.ClientInfo(client_type=proto.CLIENT_TYPE_PYTHON),
-                    is_spawner=False,
+            try:
+                root_certs = None
+                if self._ca_cert_pem is not None:
+                    root_certs = self._ca_cert_pem
+                elif self._ca_cert:
+                    with open(self._ca_cert, "rb") as cert_file:
+                        root_certs = cert_file.read()
+                credentials = grpc.ssl_channel_credentials(root_certificates=root_certs)
+                options = [
+                    ("grpc.ssl_target_name_override", self._ssl_target_name),
+                    ("grpc.default_authority", self._ssl_target_name),
+                ]
+                self._channel = grpc.aio.secure_channel(self._target, credentials, options=options)
+                stub = grpc_service.AbbenayStub(self._channel)
+                response = await stub.Register(
+                    proto.RegisterRequest(
+                        client=proto.ClientInfo(client_type=proto.CLIENT_TYPE_PYTHON),
+                        is_spawner=False,
+                    )
                 )
-            )
-            self._stub = stub
-            self._client_id = response.client_id
-            self._delegate._channel = self._channel  # noqa: SLF001
-            self._delegate._stub = stub  # noqa: SLF001
-            self._delegate._client_id = self._client_id  # noqa: SLF001
-        except (grpc.aio.AioRpcError, OSError, ValueError) as exc:
-            self._channel = None
-            self._stub = None
-            self._client_id = None
-            raise AbbenayConnectionError(f"Failed to connect to daemon: {exc}") from exc
+                self._stub = stub
+                self._client_id = response.client_id
+                self._delegate._channel = self._channel  # noqa: SLF001
+                self._delegate._stub = stub  # noqa: SLF001
+                self._delegate._client_id = self._client_id  # noqa: SLF001
+            except (grpc.aio.AioRpcError, OSError, ValueError) as exc:
+                self._channel = None
+                self._stub = None
+                self._client_id = None
+                raise AbbenayConnectionError(f"Failed to connect to daemon: {exc}") from exc
 
     async def disconnect(self) -> None:
         await self._delegate.disconnect()

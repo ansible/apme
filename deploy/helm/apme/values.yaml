@@ -179,7 +179,9 @@ abbenay:
     # tls=true, mount a CA via caCertPath, and set insecure=false once CA
     # distribution across pods is available (issue #400).
     insecure: true
-    # -- Enable TLS with auto-generated certs in the Abbenay container runtime dir.
+    # -- Enable TLS with operator-provided PEMs shared across Abbenay and Engine.
+    # Requires Abbenay cert reuse (redhat-developer/abbenay#65) so seeded
+    # server.crt/server.key are honored instead of regenerated on every start.
     tls: false
     # -- CA cert file path inside the engine primary container when tls=true.
     # Chart mounts caCertSecret at the parent directory (dir(caCertPath)).
@@ -188,6 +190,9 @@ abbenay:
     caCertSecret:
       name: ""
       key: "ca.crt"
+      # Server TLS material seeded into the Abbenay runtime dir before daemon start.
+      serverCertKey: "server.crt"
+      serverKeyKey: "server.key"
   # -- Token APME uses to authenticate with Abbenay (required when enabled)
   token: ""
   # -- Override the default model APME selects (e.g. "vertex-claude/claude-sonnet-4-6")

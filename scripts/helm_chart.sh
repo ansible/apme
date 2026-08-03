@@ -131,6 +131,26 @@ if ! grep -Fq 'path: ca.pem' <<<"${ENGINE_YAML}"; then
   exit 1
 fi
 
+echo "==> helm template abbenay TLS secret seeding (abbenay deployment)"
+ABBENAY_TLS_YAML="$("${HELM_BIN}" template test-release "${CHART_DIR}" \
+  --show-only templates/abbenay-deployment.yaml \
+  -f "${TLS_VALUES}" \
+  --set abbenay.grpc.tls=true \
+  --set abbenay.grpc.insecure=false \
+  --set abbenay.grpc.caCertSecret.name=my-abbenay-tls)"
+if ! grep -Fq 'name: seed-abbenay-tls' <<<"${ABBENAY_TLS_YAML}"; then
+  echo "Expected abbenay TLS init container to seed shared runtime material" >&2
+  exit 1
+fi
+if ! grep -Fq 'name: abbenay-tls-runtime' <<<"${ABBENAY_TLS_YAML}"; then
+  echo "Expected abbenay TLS runtime emptyDir volume when tls=true" >&2
+  exit 1
+fi
+if ! grep -Fq 'cp "/secret/server.crt" /tmp/abbenay-run/abbenay/tls/server.crt' <<<"${ABBENAY_TLS_YAML}"; then
+  echo "Expected abbenay TLS init container to copy server certificate from Secret" >&2
+  exit 1
+fi
+
 echo "==> helm template abbenay bind validation (non-loopback without tls/insecure)"
 if "${HELM_BIN}" template test-release "${CHART_DIR}" \
   --show-only templates/abbenay-deployment.yaml \

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import grpc
 import pytest
 
 from apme_engine.remediation.abbenay_client_factory import (
@@ -112,6 +114,7 @@ class TestBuildAbbenayClient:
             monkeypatch: Pytest monkeypatch fixture.
         """
         monkeypatch.delenv("APME_ABBENAY_TLS", raising=False)
+        monkeypatch.delenv("APME_ABBENAY_CA_CERT", raising=False)
         calls: list[dict[str, object]] = []
 
         class FakeAbbenayClient:
@@ -129,7 +132,7 @@ class TestBuildAbbenayClient:
 
         with (
             patch.dict(sys.modules, {"abbenay_grpc": fake_module}),
-            patch("apme_engine.remediation.abbenay_client_factory.os.path.isfile", return_value=False),
+            patch("apme_engine.remediation.abbenay_client_factory._discover_default_ca_cert", return_value=None),
         ):
             client = build_abbenay_client("127.0.0.1:50057")
 
@@ -227,3 +230,60 @@ class TestTlsAbbenayClientConnect:
             client = _TlsAbbenayClient(host="127.0.0.1", port=50057, ca_cert="/missing/ca.crt")
             with pytest.raises(fake_client_module.ConnectionError, match="Failed to connect to daemon"):
                 await client.connect()
+
+    @pytest.mark.asyncio  # type: ignore[untyped-decorator]
+    async def test_connect_serializes_concurrent_calls(self) -> None:
+        """Concurrent connect/reconnect calls share one channel registration."""
+        fake_client_module = type(sys)("abbenay_grpc.client")
+        fake_client_module.AbbenayError = Exception  # type: ignore[attr-defined]
+        fake_client_module.ConnectionError = type("AbbenayConnectionError", (Exception,), {})  # type: ignore[attr-defined]
+        fake_client_module.grpc_service = MagicMock()  # type: ignore[attr-defined]
+        fake_client_module.proto = MagicMock()  # type: ignore[attr-defined]
+        fake_client_module.proto.RegisterRequest = MagicMock(return_value="register-request")
+        fake_client_module.proto.ClientInfo = MagicMock(return_value="client-info")
+        fake_client_module.proto.CLIENT_TYPE_PYTHON = 1
+
+        register_calls = 0
+        connect_started = asyncio.Event()
+        release_connect = asyncio.Event()
+
+        async def slow_register(*_args: object, **_kwargs: object) -> MagicMock:
+            nonlocal register_calls
+            register_calls += 1
+            connect_started.set()
+            await release_connect.wait()
+            response = MagicMock()
+            response.client_id = "client-1"
+            return response
+
+        fake_stub = MagicMock()
+        fake_stub.Register = slow_register
+
+        fake_client_module.grpc_service.AbbenayStub = MagicMock(return_value=fake_stub)
+
+        fake_channel = MagicMock()
+        fake_channel.get_state = MagicMock(return_value=grpc.ChannelConnectivity.READY)
+        fake_channel.close = AsyncMock()
+
+        fake_module = type(sys)("abbenay_grpc")
+        fake_module.AbbenayClient = MagicMock(return_value=MagicMock(_target="127.0.0.1:50057"))  # type: ignore[attr-defined]
+
+        with (
+            patch.dict(sys.modules, {"abbenay_grpc": fake_module, "abbenay_grpc.client": fake_client_module}),
+            patch(
+                "apme_engine.remediation.abbenay_client_factory.grpc.aio.secure_channel",
+                return_value=fake_channel,
+            ),
+        ):
+            client = _TlsAbbenayClient(
+                host="127.0.0.1",
+                port=50057,
+                ca_cert_pem=b"pem-bytes",
+            )
+            first = asyncio.create_task(client.connect())
+            await connect_started.wait()
+            second = asyncio.create_task(client.reconnect())
+            release_connect.set()
+            await asyncio.gather(first, second)
+
+        assert register_calls == 1

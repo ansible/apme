@@ -282,8 +282,10 @@ Require CA Secret when engine→Abbenay TLS is enabled so Primary receives a mou
 
 abbenay.grpc.caCertSecret.name is required when abbenay.grpc.tls=true.
 
-Mount an existing Secret containing the Abbenay CA PEM into the engine Primary
-container and set caCertPath to the mounted file path (default /etc/abbenay-tls/ca.crt):
+Provide an existing Secret with matching server and CA PEMs for both the
+Abbenay daemon and engine Primary (server.crt, server.key, ca.crt by default).
+The chart seeds those files into Abbenay's runtime TLS directory before start
+and mounts the CA into Primary for client trust:
 
   abbenay:
     grpc:
@@ -291,14 +293,22 @@ container and set caCertPath to the mounted file path (default /etc/abbenay-tls/
       insecure: false
       caCertPath: "/etc/abbenay-tls/ca.crt"
       caCertSecret:
-        name: "my-abbenay-ca"
+        name: "my-abbenay-tls"
         key: "ca.crt"
+        serverCertKey: "server.crt"
+        serverKeyKey: "server.key"
 
 See deploy/helm/apme/templates/NOTES.txt for production TLS guidance.
 ` }}
   {{- end }}
   {{- if not .Values.abbenay.grpc.caCertSecret.key }}
   {{- fail "abbenay.grpc.caCertSecret.key is required when abbenay.grpc.tls=true (the key within the Secret)" }}
+  {{- end }}
+  {{- if not .Values.abbenay.grpc.caCertSecret.serverCertKey }}
+  {{- fail "abbenay.grpc.caCertSecret.serverCertKey is required when abbenay.grpc.tls=true (server certificate PEM in the Secret)" }}
+  {{- end }}
+  {{- if not .Values.abbenay.grpc.caCertSecret.serverKeyKey }}
+  {{- fail "abbenay.grpc.caCertSecret.serverKeyKey is required when abbenay.grpc.tls=true (server private key PEM in the Secret)" }}
   {{- end }}
 {{- end }}
 {{- end -}}
