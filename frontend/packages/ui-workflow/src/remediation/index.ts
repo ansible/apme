@@ -28,7 +28,9 @@ export {
   matchesRuleFilters,
   normalizeInitialRuleFilters,
   presentRuleIds,
+  resolveInitialRuleFilterApply,
   reviewNodeKey,
+  type InitialRuleFilterApply,
   type NodeKeyed,
   type RuleIdCarrier,
 } from './ruleFilter';
