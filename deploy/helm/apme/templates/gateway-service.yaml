@@ -8,14 +8,13 @@ metadata:
 spec:
   type: ClusterIP
   ports:
+    # HTTP for Ingress / in-cluster REST. Gateway gRPC (50060) is pod-local only
+    # (Primary → 127.0.0.1:50060 per ADR-069); do not publish it on the Service.
     - name: http
       port: 8080
       targetPort: 8080
       protocol: TCP
-    - name: grpc
-      port: 50060
-      targetPort: 50060
-      protocol: TCP
   selector:
     {{- include "apme.selectorLabels" . | nindent 4 }}
-    app.kubernetes.io/component: gateway
+    # ADR-069: Gateway is a sidecar on the Simple (engine) pod
+    app.kubernetes.io/component: engine

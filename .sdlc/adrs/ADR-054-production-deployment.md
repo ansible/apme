@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted (Helm workload topology amended by [ADR-069](ADR-069-helm-simple-all-in-one.md))
 
 ## Date
 
@@ -30,14 +30,15 @@ and single-node evaluation but does not address production deployment:
 - ADR-005 (no service discovery) uses `127.0.0.1:<port>` for intra-pod
   communication. This works identically in Kubernetes pods (containers in the
   same pod share localhost).
-- ADR-029 (Gateway architecture) positions Gateway as an independent service
-  that can scale separately from the engine.
-- The 11 containers in the pod naturally divide into three groups:
+- The Helm chart’s shipping audience is **EAP and upstream** Simple installs
+  (see ADR-069), not a multi-replica engine farm with an independently scaled
+  Gateway.
+- The 11 containers in the pod naturally co-locate for Simple installs:
   - **Engine stack** (8 containers): Primary, Native, OPA, Ansible, Gitleaks,
-    Collection Health, Dep Audit, Galaxy Proxy — always co-located
-  - **Gateway** (1 container): Scales independently, owns persistence
-  - **Frontend** (1 container): UI nginx, stateless, scales independently
-  - **Abbenay** (1 container): Optional AI provider, separate concerns
+    Collection Health, Dep Audit, Galaxy Proxy
+  - **Gateway** (1 container): REST + Reporting + SQLite
+  - **Frontend** (1 container): UI nginx (optional via portal profile)
+  - **Abbenay** (1 container): Optional AI provider
 
 ## Decision
 
@@ -46,44 +47,45 @@ definitions with systemd quadlet files for VM deployment.**
 
 ### 1. Helm Chart (`deploy/helm/apme/`)
 
-The chart uses the sidecar model for the engine stack, preserving ADR-005's
-localhost networking. Gateway, UI, and Abbenay are separate Deployments.
+> **Topology (ADR-069):** The chart uses a **Simple all-in-one** Deployment —
+> engine sidecars + Gateway + UI + optional Abbenay in one pod, localhost
+> networking (ADR-005), `replicas: 1`. Split Gateway/UI/Abbenay Deployments from
+> the original ADR-054 text are **superseded for Helm** by ADR-069.
+
+The chart preserves ADR-005's localhost networking for the full stack (same
+shape as the Podman pod).
 
 #### Workload topology
 
 | K8s Resource | Containers | Scaling |
 |-------------|------------|---------|
-| Deployment `engine` | primary, native, opa, ansible, gitleaks, collection-health, dep-audit, galaxy-proxy | Replicas (HPA optional) |
-| Deployment `gateway` | gateway | Independent replicas |
-| Deployment `ui` | ui (nginx) | Independent replicas |
-| Deployment `abbenay` | abbenay | Optional, independent |
+| Deployment (Simple / all-in-one) | primary, native, opa, ansible, gitleaks*, collection-health*, dep-audit*, galaxy-proxy, gateway, ui*, abbenay*, otel-collector* | **replicas: 1** (HPA off; see ADR-069) |
+
+\* optional via chart values / profiles
 
 #### Networking
 
-Inside the engine pod, all containers communicate via `127.0.0.1:<port>` —
-identical to the Podman pod (ADR-005). Cross-Deployment communication uses
-Kubernetes Service DNS names:
+All in-stack containers communicate via `127.0.0.1:<port>` — identical to the
+Podman pod (ADR-005). External access uses Service + Ingress:
 
 | From | To | Address |
 |------|-----|---------|
-| Engine containers (intra-pod) | Each other | `127.0.0.1:<port>` |
-| Gateway | Primary | `{{ release }}-engine:50051` |
-| Gateway | Collection Health | `{{ release }}-engine:50058` |
-| UI (browser) | Gateway REST | Ingress → `{{ release }}-gateway:8080` |
-| Engine | Gateway Reporting | `{{ release }}-gateway:50060` |
+| Containers (intra-pod) | Each other | `127.0.0.1:<port>` |
+| UI (browser) / external API | Gateway REST | Ingress → Service `:8080` |
+| Primary | Gateway Reporting | `127.0.0.1:50060` |
+| Primary | Abbenay | `127.0.0.1:50057` (loopback; no TLS) |
 
 #### Storage
 
 | PVC | Access Mode | Used By | Purpose |
 |-----|-------------|---------|---------|
-| `sessions` | ReadWriteOnce | Engine pod | Session venvs (Primary rw, validators ro) |
-| `gateway-data` | ReadWriteOnce | Gateway | SQLite database |
-| `proxy-cache` | ReadWriteOnce | Engine pod | Galaxy Proxy wheel cache |
+| `sessions` | ReadWriteOnce | Simple pod | Session venvs (Primary rw, validators ro) |
+| `gateway-data` | ReadWriteOnce | Simple pod (Gateway) | SQLite database |
+| `proxy-cache` | ReadWriteOnce | Simple pod | Galaxy Proxy wheel cache |
 
-ReadWriteOnce is sufficient because each engine replica has its own sessions
-and proxy cache. If a shared Galaxy Proxy cache is needed across replicas,
-extract it as a separate Deployment with ReadWriteMany (per ADR-012's Galaxy
-Proxy Exception).
+ReadWriteOnce is sufficient for the Simple single-replica topology (ADR-069).
+If a future multi-replica topology returns, shared Galaxy Proxy cache may need
+ReadWriteMany (per ADR-012's Galaxy Proxy Exception).
 
 #### Secrets
 
@@ -189,14 +191,15 @@ not the default.
 
 - **Standard K8s deployment**: `helm repo add apme https://ansible.github.io/apme`
   then `helm install apme apme/apme` (or path install from `deploy/helm/apme`)
-  gives a production-ready deployment with proper Services, PVCs, and Ingress.
+  gives an EAP/upstream-ready deployment with proper Services, PVCs, and Ingress.
   OpenShift can add the same URL as a Helm chart repository for Developer Catalog.
-- **Preserves architecture**: Sidecar model keeps ADR-005 (localhost) and
-  ADR-012 (scale pods) intact — no service discovery changes needed.
+- **Preserves architecture**: Simple all-in-one pod keeps ADR-005 (localhost);
+  ADR-012’s engine unit remains the conceptual scale boundary (multi-replica
+  not offered by the chart — ADR-069).
 - **Reproducible VMs**: bootc images are atomic and reproducible. `bootc switch`
   enables zero-downtime upgrades.
-- **Separated concerns**: Engine, Gateway, and UI scale independently in K8s.
-  In the VM (single node), all services run in one pod as today.
+- **Aligned topologies**: Helm Simple, Podman pod, and bootc/quadlet all
+  co-locate the stack on localhost for single-site installs.
 - **Helm install profiles**: One chart; portal vs standalone expressed as named
   values files (`values-portal.yaml`, `values-standalone.yaml`) rather than a
   second chart or a breaking default flip (ADR-030 Options A and B).
@@ -222,7 +225,17 @@ not the default.
 - ADR-004: Podman pod deployment (reference deployment, K8s-shaped YAML)
 - ADR-005: No service discovery (localhost within pod)
 - ADR-012: Scale pods, not services (engine stack is the scaling unit)
-- ADR-029: Web Gateway architecture (independent Gateway scaling)
+- ADR-029: Web Gateway architecture (Gateway role; chart co-locates per ADR-069)
 - ADR-034: Multi-pod health registration (Gateway aggregation)
 - ADR-035: Secret externalization (token management)
 - ADR-063: Multi-platform container image publish (amd64 + arm64)
+- ADR-069: Helm Simple all-in-one topology (amends this ADR’s Helm shape)
+
+---
+
+## Revision History
+
+| Date | Author | Change |
+|------|--------|--------|
+| 2026-04-10 | APME Team | Initial acceptance (Helm + bootc) |
+| 2026-08-03 | APME Team | Helm topology amended by ADR-069 (Simple all-in-one) |

@@ -392,19 +392,33 @@ configuration, service management, and troubleshooting.
 
 Deploy APME on Kubernetes or OpenShift using the published Helm chart
 repository (`https://ansible.github.io/apme`) or the source chart at
-`deploy/helm/apme/`. The chart models the engine stack as sidecar containers
-in a single pod (preserving localhost networking per ADR-005 and pod scaling
-per ADR-012).
+`deploy/helm/apme/`. The chart is a **Simple all-in-one** install (ADR-069):
+one pod co-locates the engine stack with Gateway, UI, and optional Abbenay on
+localhost (ADR-005). Multi-replica engine HPA is not offered by this chart.
 
-**Highlights:**
+**Highlights (ADR-069 Simple / EAP / upstream):**
 
-- Engine pod: Primary + Native + OPA + Ansible + Gitleaks + Collection Health + Dep Audit + Galaxy Proxy as sidecars
-- Separate deployments for Gateway, UI, and Abbenay (AI)
-- HPA for engine scaling, PDB for disruption budget
+- One Deployment: Primary + validators + Galaxy Proxy + Gateway + UI + optional Abbenay (localhost)
+- `replicas: 1` (HPA unsupported while Gateway SQLite shares the pod)
 - Ingress/Route support (OpenShift Routes included)
-- NetworkPolicy for pod isolation
-- PVC for Gateway persistence; PVC for session venvs (single replica), emptyDir when scaling to multiple replicas
+- NetworkPolicy for Ingress → Gateway/UI HTTP ports only
+- PVCs for sessions, Gateway DB, and Galaxy Proxy cache
 - OpenShift Developer Catalog via `HelmChartRepository` pointing at the Pages URL
+
+### Breaking change from pre-ADR-069 split chart
+
+Earlier chart versions deployed separate Gateway / UI / Abbenay Deployments and
+allowed engine HPA. Upgrading to this chart:
+
+- Collapses those workloads into the `*-engine` Deployment (old Deployments are
+  removed on upgrade)
+- Binds Abbenay to `127.0.0.1` and **removes** the `*-abbenay` Service — in-cluster
+  clients must not use `<release>-abbenay:50057`
+- Rejects `engine.replicas > 1` and `autoscaling.enabled=true`
+- Keeps ClusterIP Service names `*-gateway` and `*-ui` (they now select the
+  Simple pod)
+
+PVC names (`*-sessions`, `*-gateway-data`, `*-proxy-cache`) are unchanged.
 
 ### Quick start
 
