@@ -114,12 +114,14 @@ async def test_proxy_get_engines_rewrites_path_and_injects_bearer(
     with patch("apme_gateway.api.abbenay_proxy.httpx.AsyncClient", return_value=client):
         resp = await app_client.get(
             "/api/v1/ai/engines",
-            headers={"Authorization": "Bearer portal-caller-token"},
+            headers={
+                "Authorization": "Bearer portal-caller-token",
+                "Cookie": "session=caller-cookie",
+            },
         )
 
     assert resp.status_code == 200
-    data = resp.json()
-    assert "engines" in data
+    assert resp.content == engines_body
     assert client.request.await_args is not None
     assert client.request.await_args.args[0] == "GET"
     assert client.request.await_args.args[1] == "http://127.0.0.1:8787/api/engines"

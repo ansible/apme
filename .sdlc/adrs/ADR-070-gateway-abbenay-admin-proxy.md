@@ -185,16 +185,16 @@ runtime admin API.
 - **Env**: e.g. `APME_ABBENAY_HTTP_URL` default `http://127.0.0.1:8787`;  
   `APME_ABBENAY_HTTP_TOKEN` (or shared secret with Abbenay `server.api_token_env`).
 - **Deploy**: Helm Simple sidecar + Podman — `abbenay web --host 127.0.0.1
-  --port 8787` plus gRPC flags (image ≥ v2026.8.0); no Service port 8787;
-  chart README notes ADR-070. Podman uses `--grpc-host 0.0.0.0` with
-  `--insecure` for plaintext hostPort; Helm binds gRPC to loopback.
+  --port 8787 --grpc-host 127.0.0.1 --grpc-port 50057` (image ≥ v2026.8.0);
+  no Service/hostPort for HTTP or gRPC; chart README notes ADR-070. Both
+  topologies bind Abbenay to loopback (pod-shared netns).
 - **Conflict**: `GET /api/v1/ai/models` remains Primary-backed; proxy excludes
   `models` for all methods. Register main router before the proxy mount.
 - **OpenAPI**: proxy routes `include_in_schema=False` (Abbenay owns schemas);
   Gateway `info.description` references ADR-070.
-- **Tests**: path rewrite, Bearer inject, 502, models/chat not proxied,
-  traversal rejected, missing token 503, Set-Cookie stripped; helm asserts
-  `web` / `8787` / Gateway HTTP URL.
+- **Tests**: path rewrite, Bearer inject, Cookie strip, 502, models/chat not
+  proxied, traversal rejected, missing token 503, Set-Cookie stripped; helm
+  asserts ordered `--host`/`127.0.0.1`/`--port`/`8787` and Gateway HTTP URL.
 - **Portal UI**: out of scope for the first implementation PR; catalog proxy +
   Quality settings follow in a later change.
 - **Follow-up**: writable Abbenay config volume (seed ConfigMap → emptyDir/PVC)

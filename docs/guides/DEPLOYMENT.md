@@ -327,7 +327,7 @@ See [PODMAN_OPA_ISSUES.md](PODMAN_OPA_ISSUES.md) for common Podman rootless issu
 | 50054 | OPA | `APME_OPA_VALIDATOR_LISTEN` |
 | 50055 | Native | `APME_NATIVE_VALIDATOR_LISTEN` |
 | 50056 | Gitleaks | `APME_GITLEAKS_VALIDATOR_LISTEN` |
-| 50057 | Abbenay AI | `--grpc-port` (Abbenay daemon flag) |
+| 50057 | Abbenay AI (pod-local) | `--grpc-host 127.0.0.1 --grpc-port` (no hostPort) |
 | 50058 | Collection Health | `APME_COLLECTION_HEALTH_VALIDATOR_LISTEN` |
 | 50059 | Dep Audit | `APME_DEP_AUDIT_VALIDATOR_LISTEN` |
 | 50060 | Gateway (gRPC) | `APME_GATEWAY_GRPC_LISTEN` |

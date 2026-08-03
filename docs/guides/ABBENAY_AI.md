@@ -6,11 +6,12 @@ Vercel AI SDK.
 
 ## Gateway admin proxy (ADR-070)
 
-In the Simple in-pod topology (ADR-069), Abbenay serves HTTP admin on port
-`8787` (no cluster Service / hostPort). The Gateway reaches it at
-`http://127.0.0.1:8787`. Abbenay binds HTTP with `--host 127.0.0.1`
-(image ≥ v2026.8.0; no cluster Service / hostPort). The Gateway reverse-proxies
-an **allowlisted** admin surface:
+In the Simple in-pod topology (ADR-069 / ADR-070), Abbenay serves HTTP admin
+and gRPC on loopback (`--host 127.0.0.1 --port 8787` and
+`--grpc-host 127.0.0.1 --grpc-port 50057`; image ≥ v2026.8.0). No cluster
+Service or hostPort — Helm Simple and Podman share a netns, so Primary/
+Gateway reach Abbenay at `127.0.0.1`. The Gateway reverse-proxies an
+**allowlisted** admin surface:
 
 | Gateway | Abbenay |
 |---------|---------|
