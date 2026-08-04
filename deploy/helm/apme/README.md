@@ -29,8 +29,13 @@ helm repo add apme https://ansible.github.io/apme
 helm repo update
 helm install apme apme/apme \
   --namespace apme --create-namespace \
-  --set route.enabled=true   # OpenShift
+  --set route.enabled=true \
+  --set route.host=apme.apps.ocp.example.com
 ```
+
+Replace `route.host` with a hostname under your cluster's OpenShift
+ingress domain (for example `apme.apps.<cluster-domain>`) before installing —
+`example.com` will not resolve.
 
 Defaults pull from `quay.io/ansible` with image tag `2026.7.3` (`Chart.appVersion`).
 For unreleased SHA builds, set `--set image.tag=sha-<commit>`.
@@ -103,11 +108,14 @@ helm repo update
 helm install apme apme/apme \
   --namespace apme --create-namespace \
   -f https://ansible.github.io/apme/values-standalone.yaml \
-  --set route.enabled=true   # OpenShift
+  --set route.enabled=true \
+  --set route.host=apme.apps.ocp.example.com
 ```
 
 Omit `-f values-standalone.yaml` if you want the same UI-on default without an
-explicit profile (the file is equivalent to chart defaults).
+explicit profile (the file is equivalent to chart defaults). Replace
+`route.host` with a hostname under your cluster ingress domain — required
+whenever Routes are enabled with the standalone UI.
 
 ### Portal / backend-only
 
@@ -199,6 +207,7 @@ Gateway DB and Abbenay down together.
 | `abbenay.aiModel` | `""` | Default AI model ID |
 | `ingress.enabled` | `false` | Create Kubernetes Ingress |
 | `route.enabled` | `false` | Create OpenShift Route |
+| `route.host` | `""` | Shared Route hostname; **required** when `route.enabled` and `ui.enabled` |
 | `autoscaling.enabled` | `false` | Must stay `false` (ADR-069) |
 | `networkPolicy.enabled` | `false` | Enable NetworkPolicy |
 | `podDisruptionBudget.enabled` | `false` | Enable PDB |
@@ -244,7 +253,10 @@ route:
     insecureEdgeTerminationPolicy: Redirect
 ```
 
-When `host` is empty, OpenShift auto-assigns separate hosts per Route.
+When `ui.enabled=true`, `route.host` is **required** so the UI (`/`) and
+Gateway (`/api`) Routes share one hostname. When `ui.enabled=false`
+(portal), leave `host` empty to let OpenShift auto-assign the API Route
+hostname.
 
 ### Portal / external UI (backend only)
 

@@ -448,8 +448,12 @@ helm repo add apme https://ansible.github.io/apme
 helm repo update
 helm install apme apme/apme \
   --namespace apme --create-namespace \
-  --set route.enabled=true
+  --set route.enabled=true \
+  --set route.host=apme.apps.ocp.example.com
 ```
+
+Replace `route.host` with a hostname under your cluster OpenShift ingress
+domain. It is required whenever Routes are enabled with the standalone UI.
 
 #### Portal / backend-only
 
@@ -503,6 +507,7 @@ SHA or release tag (and Quay only when that publish included Quay credentials).
 | `ui.enabled` | Deploy standalone UI (default: `true`; use `values-portal.yaml` for portal) |
 | `ingress.enabled` | Create Ingress resource (default: false) |
 | `route.enabled` | Create OpenShift Route (default: false) |
+| `route.host` | Shared Route hostname; required when `route.enabled` and `ui.enabled` |
 
 See [deploy/helm/apme/README.md](../../deploy/helm/apme/README.md) for the
 full values reference and architecture details.
