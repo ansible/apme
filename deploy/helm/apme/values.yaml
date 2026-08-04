@@ -253,6 +253,14 @@ persistence:
     size: 10Gi
     storageClass: ""
     accessMode: ReadWriteOnce
+  # -- Writable config volume for Abbenay runtime admin (ADR-070 / #498).
+  # emptyDir by default (pod lifetime only — config resets on pod restart).
+  # Enable persistence for a PVC that survives restarts.
+  abbenay:
+    enabled: false
+    size: 100Mi
+    storageClass: ""
+    accessMode: ReadWriteOnce
 
 # -- Ingress for Gateway REST API and UI
 ingress:

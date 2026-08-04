@@ -352,8 +352,7 @@ project_yaml = json.dumps(gcp_project)
 location_yaml = json.dumps(gcp_location)
 abbenay_env_marker = '        - name: XDG_RUNTIME_DIR'
 abbenay_config_mount_marker = (
-    '          mountPath: /home/abbenay/.config/abbenay/config.yaml\n'
-    '          readOnly: true'
+    '          mountPath: /home/abbenay/.config/abbenay'
 )
 if abbenay_env_marker not in yaml or abbenay_config_mount_marker not in yaml:
     print('ERROR: pod.yaml markers not found; GCP credentials injection failed', file=sys.stderr)
@@ -384,7 +383,28 @@ print(yaml)
   echo "Vertex AI project: $GOOGLE_VERTEX_PROJECT (location: $GOOGLE_VERTEX_LOCATION)"
 fi
 
-_relabel_host_path_for_podman "$ROOT/containers/abbenay/config.yaml"
+# Set up writable Abbenay config directory (seed from legacy config.yaml if present).
+# The hostPath Directory mount replaces the old read-only File mount so that
+# runtime admin writes (POST /api/v1/ai/provider/.../configure) survive restarts.
+# Rootless Podman maps host-owned files to root inside the container; Abbenay
+# runs as UID 1001, so the seed dir/file must be world-writable (a+rwX) or
+# configure returns EACCES.
+ABBENAY_CONFIG_DIR="$ROOT/containers/abbenay/config"
+mkdir -p "$ABBENAY_CONFIG_DIR"
+if [[ ! -f "$ABBENAY_CONFIG_DIR/config.yaml" ]]; then
+  if [[ -f "$ROOT/containers/abbenay/config.yaml" ]]; then
+    cp "$ROOT/containers/abbenay/config.yaml" "$ABBENAY_CONFIG_DIR/config.yaml"
+    echo "Seeded Abbenay config from containers/abbenay/config.yaml (legacy location)"
+  elif [[ -f "$ROOT/containers/abbenay/config.yaml.example" ]]; then
+    cp "$ROOT/containers/abbenay/config.yaml.example" "$ABBENAY_CONFIG_DIR/config.yaml"
+    echo "Seeded Abbenay config from containers/abbenay/config.yaml.example"
+  fi
+fi
+chmod a+rwX "$ABBENAY_CONFIG_DIR"
+if [[ -f "$ABBENAY_CONFIG_DIR/config.yaml" ]]; then
+  chmod a+rw "$ABBENAY_CONFIG_DIR/config.yaml"
+fi
+_relabel_host_path_for_podman "$ABBENAY_CONFIG_DIR"
 _relabel_host_path_for_podman "$ROOT/containers/otel-collector/config.yaml"
 if [[ -n "$ABBENAY_CA_BUNDLE" ]]; then
   _relabel_host_path_for_podman "$ABBENAY_CA_BUNDLE"

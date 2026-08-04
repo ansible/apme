@@ -15,6 +15,8 @@ env/
 *.pem
 *.key
 containers/abbenay/config.yaml
+# Runtime-writable Abbenay config dir (seeded by up.sh; SoT after configure)
+containers/abbenay/config/
 
 # Testing
 .pytest_cache/
