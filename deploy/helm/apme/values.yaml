@@ -154,7 +154,7 @@ ui:
 # See docs/guides/ABBENAY_AI.md for GCP-specific setup.
 abbenay:
   enabled: false
-  image: ghcr.io/redhat-developer/abbenay:v2026.8.0
+  image: ghcr.io/redhat-developer/abbenay:v2026.8.1
   # -- Token APME uses to authenticate with Abbenay (required when enabled)
   token: ""
   # -- Override the default model APME selects (e.g. "vertex-claude/claude-sonnet-4-6")
