@@ -64,16 +64,16 @@ cp containers/abbenay/.env.example containers/abbenay/.env
 # Edit .env and set your LLM provider API key (e.g., OPENROUTER_API_KEY)
 ```
 
-The `.env` file is gitignored. Abbenay config lives in the **writable** host
-directory `containers/abbenay/config/` (mounted RW at
-`/home/abbenay/.config/abbenay`). On first `tox -e up`, `up.sh` seeds
-`config.yaml` from `containers/abbenay/config.yaml` or
-`config.yaml.example` if the directory is empty, then runs
-`podman unshare chown -R 1001:1001` so the container UID 1001 can write under
-rootless Podman. Edit
-`containers/abbenay/config/config.yaml` (or use the Gateway admin proxy) to
-change providers/models — runtime configure writes persist across container
-restarts.
+The `.env` file is gitignored. Abbenay config is **seeded** from
+`containers/abbenay/config/` (or legacy `config.yaml` /
+`config.yaml.example`) into
+`${XDG_CACHE_HOME:-$HOME/.cache}/apme/abbenay/config/` (override with
+`APME_CACHE_HOST_PATH`). That cache directory is the RW hostPath mount
+(`0700` / `0600`). Rootful Podman chowns the cache copy to UID 1001; rootless
+keeps host ownership and grants UID 1001 a POSIX ACL so you can still edit the
+file. The git checkout is never chowned. Edit the cache `config.yaml` (or use
+the Gateway admin proxy) to change providers/models — runtime configure writes
+persist across container restarts.
 
 If `.env` is missing or the key is empty, the Abbenay container starts but model queries return empty results. AI remediation gracefully degrades — Tier 1 deterministic fixes still work.
 
@@ -218,12 +218,14 @@ proxy gRPC requests to it.
 | `CURL_CA_BUNDLE` | — | Shared CA bundle for curl/libcurl consumers in the gateway and Galaxy Proxy |
 | `GIT_SSL_CAINFO` | — | Shared CA bundle for `git ls-remote`, `git clone`, and `ansible-galaxy` git fetches |
 
-Abbenay uses `containers/abbenay/config/` as a **writable** hostPath mount
-(`abbenay-config` → `/home/abbenay/.config/abbenay`). The config defines LLM
-providers and models. API keys are injected from environment variables —
-never committed to the config file. To add providers or models, edit
-`containers/abbenay/config/config.yaml` or POST via the Gateway admin proxy
-(`/api/v1/ai/provider/{id}/configure`); writes survive Abbenay restarts.
+Abbenay uses `${XDG_CACHE_HOME:-$HOME/.cache}/apme/abbenay/config/` as a
+**writable** hostPath mount (`abbenay-config` → `/home/abbenay/.config/abbenay`).
+`up.sh` seeds that cache dir from `containers/abbenay/config/` (or legacy
+files) and never chowns the git checkout. The config defines LLM providers and
+models. API keys are injected from environment variables — never committed to
+the config file. To add providers or models, edit the cache `config.yaml` or
+POST via the Gateway admin proxy (`/api/v1/ai/provider/{id}/configure`);
+writes survive Abbenay restarts.
 
 The Abbenay daemon exposes a gRPC API on port 50057. Primary connects to it for AI model listing (`ListAIModels`) and batch remediation requests.
 
@@ -240,7 +242,7 @@ The Settings page (`/settings`) provides a model picker that queries available A
 | `sessions` | `apme-sessions/` | `/sessions` | Primary (rw), Ansible, Collection Health, Dep Audit (ro) | rw / ro |
 | `proxy-cache` | `<cache>/proxy/` | `/cache` | Galaxy Proxy | rw |
 | `gateway-data` | `<cache>/gateway/` | `/data` | Gateway | rw |
-| `abbenay-config` | `containers/abbenay/config/` | `/home/abbenay/.config/abbenay` | Abbenay | rw |
+| `abbenay-config` | `<cache>/abbenay/config/` | `/home/abbenay/.config/abbenay` | Abbenay | rw |
 | `workspace` | CWD (CLI only) | `/workspace` | CLI | rw |
 
 #### Observability (Podman pod only)

@@ -120,10 +120,12 @@ USER 1001
 ```
 
 #### Image Scanning
+
+Container image vulnerability scanning runs in the `container-images` GitHub
+Actions workflow on each release. For local Python supply-chain artifacts, use:
+
 ```bash
-# Scan images for vulnerabilities
-trivy image apme-primary:latest
-grype apme-primary:latest
+tox -e release-supply-chain
 ```
 
 ### Dependency Security
@@ -200,8 +202,7 @@ bandit -r src/
 # Dependency vulnerabilities
 pip-audit
 
-# Container scanning
-trivy image apme-primary:latest
+# Container image scanning — see container-images GitHub Actions workflow
 ```
 
 ---

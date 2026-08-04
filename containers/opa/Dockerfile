@@ -10,7 +10,8 @@ COPY --from=opa-bin /opa /usr/local/bin/opa
 
 RUN cp -r /app/src/apme_engine/validators/opa/bundle /bundle \
     && cp /app/containers/opa/entrypoint.sh /entrypoint.sh \
-    && chmod +x /entrypoint.sh
+    && chmod -R a+rX /bundle \
+    && chmod a+rx /entrypoint.sh
 
 USER 1001
 

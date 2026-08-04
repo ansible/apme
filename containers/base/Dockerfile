@@ -23,9 +23,12 @@ RUN --mount=type=cache,target=/tmp/uv-cache \
             --extra ai --extra gateway
 
 # Full source; install the project itself (deps already cached).
+# Normalize modes after COPY: some hosts/filesystems (e.g. virtiofs) present
+# git-tracked 0644 files as 0600, which breaks non-root UID 1001 at runtime.
 COPY . /app
 RUN --mount=type=cache,target=/tmp/uv-cache \
-    uv sync --frozen --no-dev --extra ai --extra gateway
+    chmod -R a+rX /app \
+    && uv sync --frozen --no-dev --extra ai --extra gateway
 
 ENV PATH="/app/.venv/bin:$PATH"
 
