@@ -53,6 +53,33 @@ export function normalizeInitialRuleFilters(
   return initial.map((r) => bareRuleId(r)).filter((r) => present.has(r));
 }
 
+export type InitialRuleFilterApply =
+  | { action: 'noop' }
+  | { action: 'defer' }
+  | { action: 'apply'; next: string[] };
+
+/**
+ * Decide how to apply a host ``initialRuleFilters`` seed.
+ *
+ * - ``noop`` when the key was already applied
+ * - ``defer`` when a non-empty seed arrived before findings (presentRules empty)
+ * - ``apply`` otherwise — including empty ``next`` so stale chips clear when
+ *   the host clears ``?rule=`` or seeds only unknown IDs
+ */
+export function resolveInitialRuleFilterApply(
+  initialRulesKey: string,
+  appliedKey: string,
+  presentRules: readonly string[],
+  initialRuleFilters: readonly string[] | undefined,
+): InitialRuleFilterApply {
+  if (initialRulesKey === appliedKey) return { action: 'noop' };
+  if (initialRulesKey && presentRules.length === 0) return { action: 'defer' };
+  return {
+    action: 'apply',
+    next: normalizeInitialRuleFilters(initialRuleFilters, presentRules),
+  };
+}
+
 /** True when no rules selected, or the item carries at least one selected bare ID. */
 export function matchesRuleFilters(
   item: RuleIdCarrier,

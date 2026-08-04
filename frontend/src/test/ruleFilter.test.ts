@@ -5,6 +5,7 @@ import {
   matchesRuleFilters,
   normalizeInitialRuleFilters,
   presentRuleIds,
+  resolveInitialRuleFilterApply,
   reviewNodeKey,
 } from "../../packages/ui-workflow/src/remediation/ruleFilter";
 
@@ -100,6 +101,26 @@ describe("filterByRuleKeepingNodeContext", () => {
     ).toEqual(["L050", "M001"]);
     expect(normalizeInitialRuleFilters(["L050"], [])).toEqual([]);
     expect(normalizeInitialRuleFilters(undefined, ["L050"])).toEqual([]);
+  });
+
+  it("resolveInitialRuleFilterApply clears stale seeds and defers until findings load", () => {
+    expect(
+      resolveInitialRuleFilterApply("L050", "L050", ["L050"], ["L050"]),
+    ).toEqual({ action: "noop" });
+    expect(
+      resolveInitialRuleFilterApply("L050", "", [], ["L050"]),
+    ).toEqual({ action: "defer" });
+    expect(
+      resolveInitialRuleFilterApply("L050", "", ["L050"], ["native:L050"]),
+    ).toEqual({ action: "apply", next: ["L050"] });
+    // Host cleared ?rule= — apply empty next so chips clear.
+    expect(
+      resolveInitialRuleFilterApply("", "L050", ["L050"], []),
+    ).toEqual({ action: "apply", next: [] });
+    // Unknown seed with findings loaded — clear, do not keep previous.
+    expect(
+      resolveInitialRuleFilterApply("MISSING", "L050", ["L050"], ["MISSING"]),
+    ).toEqual({ action: "apply", next: [] });
   });
 
   it("supports row-level post-filter after node inclusion (decision pattern)", () => {

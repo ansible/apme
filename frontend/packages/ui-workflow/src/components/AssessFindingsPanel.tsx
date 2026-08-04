@@ -35,9 +35,9 @@ import {
   nodeTypeLabel,
   nodeTypeLabelColor,
   normalizeFindingNodeType,
-  normalizeInitialRuleFilters,
   orderPresentNodeTypes,
   presentRuleIds,
+  resolveInitialRuleFilterApply,
   type FindingNodeType,
   type FixType,
 } from '../remediation';
@@ -344,11 +344,16 @@ export function AssessFindingsPanel({
   const initialRulesKey = (initialRuleFilters ?? []).join(',');
 
   // Apply host-provided rule filters once findings are available (fleet drill-down).
+  // Empty / unmatched seeds clear stale chips once presentRules is known.
   useEffect(() => {
-    if (!initialRulesKey || initialRulesKey === appliedInitialRulesKey) return;
-    const next = normalizeInitialRuleFilters(initialRuleFilters, presentRules);
-    if (next.length === 0) return;
-    setRuleFilters(next);
+    const resolved = resolveInitialRuleFilterApply(
+      initialRulesKey,
+      appliedInitialRulesKey,
+      presentRules,
+      initialRuleFilters,
+    );
+    if (resolved.action !== 'apply') return;
+    setRuleFilters(resolved.next);
     setAppliedInitialRulesKey(initialRulesKey);
   }, [
     initialRulesKey,
