@@ -240,13 +240,14 @@ spec:
           value: "apme-dev-token"
         - name: XDG_RUNTIME_DIR
           value: "/tmp/abbenay-run"
+        - name: XDG_CONFIG_HOME
+          value: "/home/abbenay/.config"
       ports:
         - containerPort: 50057
           # no hostPort
       volumeMounts:
         - name: abbenay-config
-          mountPath: /home/abbenay/.config/abbenay/config.yaml
-          readOnly: true
+          mountPath: /home/abbenay/.config/abbenay
     - name: galaxy-proxy
       image: apme-galaxy-proxy:latest
       env:
@@ -288,8 +289,8 @@ spec:
         claimName: apme-proxy-cache
     - name: abbenay-config
       hostPath:
-        path: ${APME_ROOT}/containers/abbenay/config.yaml
-        type: File
+        path: ${APME_ROOT}/containers/abbenay/config
+        type: Directory
     - name: otel-config
       hostPath:
         path: ${APME_ROOT}/containers/otel-collector/config.yaml

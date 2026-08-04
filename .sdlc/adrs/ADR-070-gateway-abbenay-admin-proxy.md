@@ -90,11 +90,23 @@ EAP; operators must not expose Gateway `:8080` without an outer auth layer.
 `ai_model` continue via Primary → Abbenay gRPC. The proxy does not replace that
 path and rejects other methods on `models`.
 
-**6. Config durability (acknowledged gap).**  
-Helm ConfigMap / Podman hostPath seed deploy-time providers (often read-only).
-Runtime HTTP admin writes need a writable Abbenay config directory. **Durable
-writable persistence (emptyDir seed + PVC) is a follow-up** — tracked as a
-GitHub issue — not a blocker for the allowlisted proxy plumbing.
+**6. Config durability (implemented — [#498](https://github.com/ansible/apme/issues/498)).**  
+Deploy-time providers seed a writable Abbenay config directory; runtime HTTP
+admin writes persist there as the source of truth after first configure:
+
+- **Helm**: ConfigMap (`*-abbenay-config`) is mounted read-only as a seed.
+  Init container `init-abbenay-config` copies `config.yaml` into the writable
+  volume **once** (only if the file is absent). Default volume is `emptyDir`
+  (pod lifetime). Optional PVC via `persistence.abbenay.enabled=true` survives
+  restarts. Abbenay mounts the writable dir at `/etc/abbenay-config`.
+- **Podman**: `containers/abbenay/config/` is a hostPath RW mount at
+  `/home/abbenay/.config/abbenay`. `up.sh` seeds `config.yaml` from the legacy
+  `containers/abbenay/config.yaml` (or `.example`) when the dir is empty, then
+  `podman unshare chown -R 1001:1001` so UID 1001 can write under rootless
+  Podman host-UID mapping.
+
+After the first successful configure, the writable file is SoT — Helm value /
+ConfigMap changes do not overwrite an existing runtime config.
 
 **We will use an allowlisted HTTP reverse-proxy on the Gateway for in-pod
 Abbenay admin, not a catch-all façade and not Gateway→Abbenay gRPC for chat.**
@@ -197,9 +209,10 @@ runtime admin API.
   asserts ordered `--host`/`127.0.0.1`/`--port`/`8787` and Gateway HTTP URL.
 - **Portal UI**: out of scope for the first implementation PR; catalog proxy +
   Quality settings follow in a later change.
-- **Follow-up**: writable Abbenay config volume (seed ConfigMap → emptyDir/PVC)
-  so runtime admin survives restart —
-  [#498](https://github.com/ansible/apme/issues/498).
+- **Config durability** ([#498](https://github.com/ansible/apme/issues/498)):
+  implemented — seed ConfigMap → writable emptyDir (default) / optional PVC
+  (`persistence.abbenay`); Podman RW `containers/abbenay/config/`; seed-once;
+  runtime SoT after first configure.
 
 ## Related Decisions
 
@@ -227,3 +240,4 @@ runtime admin API.
 |------|--------|--------|
 | 2026-08-03 | cidrblock | Accepted — Simple in-pod Abbenay; Gateway HTTP admin proxy |
 | 2026-08-03 | bthornto | Amended allowlist: added `GET /engines` for read-only engine discovery |
+| 2026-08-03 | bthornto | §6 Config durability implemented (#498): seed→RW emptyDir/PVC; Podman RW config dir |
