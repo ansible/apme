@@ -30,8 +30,12 @@ helm repo update
 helm install apme apme/apme \
   --namespace apme --create-namespace \
   --set route.enabled=true \
-  --set route.host=apme.apps.ocp.example.com  # Openshift, fix URL to match domain
+  --set route.host=apme.apps.ocp.example.com
 ```
+
+Replace `route.host` with a hostname under your cluster's OpenShift
+ingress domain (for example `apme.apps.<cluster-domain>`) before installing —
+`example.com` will not resolve.
 
 Defaults pull from `quay.io/ansible` with image tag `2026.7.3` (`Chart.appVersion`).
 For unreleased SHA builds, set `--set image.tag=sha-<commit>`.
