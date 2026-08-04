@@ -29,7 +29,8 @@ helm repo add apme https://ansible.github.io/apme
 helm repo update
 helm install apme apme/apme \
   --namespace apme --create-namespace \
-  --set route.enabled=true   # OpenShift
+  --set route.enabled=true \
+  --set route.host=apme.apps.ocp.example.com  # Openshift, fix URL to match domain
 ```
 
 Defaults pull from `quay.io/ansible` with image tag `2026.7.3` (`Chart.appVersion`).
