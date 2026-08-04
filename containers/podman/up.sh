@@ -40,7 +40,14 @@ _relabel_host_path_for_podman() {
     echo "ERROR: SELinux is Enforcing but chcon is not available; cannot relabel $host_path" >&2
     return 1
   fi
-  if ! chcon -l s0 -t container_file_t "$host_path" 2>/dev/null; then
+  # Directories must be labeled recursively so files created after mkdir
+  # (e.g. seeded config.yaml) are readable inside the container.
+  if [[ -d "$host_path" ]]; then
+    if ! chcon -R -l s0 -t container_file_t "$host_path" 2>/dev/null; then
+      echo "ERROR: could not recursively relabel $host_path for SELinux" >&2
+      return 1
+    fi
+  elif ! chcon -l s0 -t container_file_t "$host_path" 2>/dev/null; then
     echo "ERROR: could not relabel $host_path for SELinux" >&2
     return 1
   fi
@@ -215,7 +222,11 @@ mount = '$CA_MOUNT_PATH'
 ca_path_yaml = json.dumps(ca_path)
 mount_yaml = json.dumps(mount)
 abbenay_env_marker = '        - name: XDG_RUNTIME_DIR'
-abbenay_vol_marker = '          readOnly: true\n    - name: galaxy-proxy'
+# Writable config dir has no readOnly; anchor on mountPath before galaxy-proxy.
+abbenay_vol_marker = (
+    '          mountPath: /home/abbenay/.config/abbenay\n'
+    '    - name: galaxy-proxy'
+)
 gateway_env_marker = '        - name: APME_FEEDBACK_GITHUB_TOKEN'
 gateway_vol_marker = '      volumeMounts:\n        - name: gateway-data'
 galaxy_marker = '    - name: galaxy-proxy\n      image: apme-galaxy-proxy:latest'
@@ -237,7 +248,7 @@ yaml = yaml.replace(
     '        ' + abbenay_env_marker.lstrip())
 yaml = yaml.replace(
     abbenay_vol_marker,
-    '          readOnly: true\n'
+    '          mountPath: /home/abbenay/.config/abbenay\n'
     '        - name: abbenay-ca-bundle\n'
     '          mountPath: ' + mount_yaml + '\n'
     '          readOnly: true\n'
@@ -386,11 +397,13 @@ fi
 # Set up writable Abbenay config directory (seed from legacy config.yaml if present).
 # The hostPath Directory mount replaces the old read-only File mount so that
 # runtime admin writes (POST /api/v1/ai/provider/.../configure) survive restarts.
-# Rootless Podman maps host-owned files to root inside the container; Abbenay
-# runs as UID 1001, so the seed dir/file must be world-writable (a+rwX) or
-# configure returns EACCES.
+# Rootless Podman maps host UID to root inside the user namespace; Abbenay runs
+# as UID 1001, so ownership must be 1001:1001 in that namespace (podman unshare
+# chown) or configure returns EACCES. Avoid world-writable chmod.
 ABBENAY_CONFIG_DIR="$ROOT/containers/abbenay/config"
 mkdir -p "$ABBENAY_CONFIG_DIR"
+# Relabel the empty dir first so seed copies land on a container-readable parent.
+_relabel_host_path_for_podman "$ABBENAY_CONFIG_DIR"
 if [[ ! -f "$ABBENAY_CONFIG_DIR/config.yaml" ]]; then
   if [[ -f "$ROOT/containers/abbenay/config.yaml" ]]; then
     cp "$ROOT/containers/abbenay/config.yaml" "$ABBENAY_CONFIG_DIR/config.yaml"
@@ -400,10 +413,16 @@ if [[ ! -f "$ABBENAY_CONFIG_DIR/config.yaml" ]]; then
     echo "Seeded Abbenay config from containers/abbenay/config.yaml.example"
   fi
 fi
-chmod a+rwX "$ABBENAY_CONFIG_DIR"
-if [[ -f "$ABBENAY_CONFIG_DIR/config.yaml" ]]; then
-  chmod a+rw "$ABBENAY_CONFIG_DIR/config.yaml"
+if command -v podman >/dev/null 2>&1; then
+  if ! podman unshare chown -R 1001:1001 "$ABBENAY_CONFIG_DIR"; then
+    echo "ERROR: could not chown Abbenay config dir to 1001:1001 via podman unshare" >&2
+    exit 1
+  fi
+else
+  echo "ERROR: podman is required to set Abbenay config ownership (UID 1001)" >&2
+  exit 1
 fi
+# Re-relabel after seed/chown so config.yaml itself is container_file_t.
 _relabel_host_path_for_podman "$ABBENAY_CONFIG_DIR"
 _relabel_host_path_for_podman "$ROOT/containers/otel-collector/config.yaml"
 if [[ -n "$ABBENAY_CA_BUNDLE" ]]; then

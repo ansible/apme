@@ -35,7 +35,7 @@ the first write, the runtime file is the source of truth.
 | Deploy | Seed | Writable volume | Notes |
 |--------|------|-----------------|-------|
 | **Helm** | ConfigMap `*-abbenay-config` (from `abbenay.providers`) | `emptyDir` by default; optional PVC via `persistence.abbenay.enabled=true` | Init `init-abbenay-config` copies seed only if `config.yaml` is absent. Mount: `/etc/abbenay-config`. |
-| **Podman** | `containers/abbenay/config.yaml` (or `.example`) on first `tox -e up` | Host dir `containers/abbenay/config/` → `/home/abbenay/.config/abbenay` | `up.sh` seeds when the dir has no `config.yaml`, then `chmod a+rwX` so UID 1001 can write under rootless Podman. Dir is gitignored. |
+| **Podman** | `containers/abbenay/config.yaml` (or `.example`) on first `tox -e up` | Host dir `containers/abbenay/config/` → `/home/abbenay/.config/abbenay` | `up.sh` seeds when the dir has no `config.yaml`, then `podman unshare chown -R 1001:1001` so UID 1001 can write under rootless Podman. Dir is gitignored. |
 
 Helm PVC knobs (`persistence.abbenay.*`):
 

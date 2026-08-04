@@ -102,7 +102,8 @@ admin writes persist there as the source of truth after first configure:
 - **Podman**: `containers/abbenay/config/` is a hostPath RW mount at
   `/home/abbenay/.config/abbenay`. `up.sh` seeds `config.yaml` from the legacy
   `containers/abbenay/config.yaml` (or `.example`) when the dir is empty, then
-  `chmod a+rwX` so UID 1001 can write under rootless Podman host-UID mapping.
+  `podman unshare chown -R 1001:1001` so UID 1001 can write under rootless
+  Podman host-UID mapping.
 
 After the first successful configure, the writable file is SoT — Helm value /
 ConfigMap changes do not overwrite an existing runtime config.

@@ -68,8 +68,9 @@ The `.env` file is gitignored. Abbenay config lives in the **writable** host
 directory `containers/abbenay/config/` (mounted RW at
 `/home/abbenay/.config/abbenay`). On first `tox -e up`, `up.sh` seeds
 `config.yaml` from `containers/abbenay/config.yaml` or
-`config.yaml.example` if the directory is empty, then applies `chmod a+rwX`
-so the container UID 1001 can write under rootless Podman. Edit
+`config.yaml.example` if the directory is empty, then runs
+`podman unshare chown -R 1001:1001` so the container UID 1001 can write under
+rootless Podman. Edit
 `containers/abbenay/config/config.yaml` (or use the Gateway admin proxy) to
 change providers/models — runtime configure writes persist across container
 restarts.
