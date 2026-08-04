@@ -178,6 +178,14 @@ HPA_ERR="$("${HELM_BIN}" template test-release "${CHART_DIR}" \
 }
 assert_fail_message "HPA rejected" "${HPA_ERR}" "autoscaling.enabled must be false"
 
+ROUTE_HOST_ERR="$("${HELM_BIN}" template test-release "${CHART_DIR}" \
+  --set route.enabled=true \
+  --api-versions route.openshift.io/v1 2>&1 >/dev/null)" && {
+  echo "FAIL: expected helm template to fail when route.enabled=true without route.host (ui enabled)" >&2
+  exit 1
+}
+assert_fail_message "route.host required" "${ROUTE_HOST_ERR}" "route.host is required"
+
 # Confirm Service selectors + no Abbenay Service / extra Deployments
 RENDER_FILE="$(mktemp)"
 trap 'rm -f "${RENDER_FILE}"' EXIT
