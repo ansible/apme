@@ -124,27 +124,34 @@ jobs:
     timeout-minutes: 30
     outputs:
       consumer_tags: ${{ steps.tags.outputs.tags }}
-      owner_lc: ${{ steps.owner.outputs.lc }}
+      # Do not export owner_lc or quay_ns — GitHub may skip outputs that match
+      # masked secrets (e.g. Quay org name). Downstream jobs compute these locally.
       quay_enabled: ${{ steps.quay-check.outputs.enabled }}
-      quay_ns: ${{ steps.quay-check.outputs.ns }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v6
+        with:
+          # workflow_dispatch + packages:write — do not leave GITHUB_TOKEN in
+          # local git config for merge-manifests.sh (zizmor artipacked).
+          persist-credentials: false
 
       - id: owner
         run: echo "lc=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
 
+      # Namespace is public (image paths); use a repo variable, not a secret.
+      # A secret-derived ns would mask subjects.json and drop the job output.
       - id: quay-check
         run: |
           if [ -n "$QUAY_USER" ] && [ -n "$QUAY_PASS" ]; then
             echo "enabled=true" >> "$GITHUB_OUTPUT"
-            echo "ns=${QUAY_ORG:-${{ steps.owner.outputs.lc }}}" >> "$GITHUB_OUTPUT"
+            echo "ns=${QUAY_ORG:-$OWNER_LC}" >> "$GITHUB_OUTPUT"
           else
             echo "enabled=false" >> "$GITHUB_OUTPUT"
           fi
         env:
+          OWNER_LC: ${{ steps.owner.outputs.lc }}
           QUAY_USER: ${{ secrets.QUAY_USERNAME }}
           QUAY_PASS: ${{ secrets.QUAY_PASSWORD }}
-          QUAY_ORG: ${{ secrets.QUAY_NAMESPACE }}
+          QUAY_ORG: ${{ vars.QUAY_NAMESPACE }}
 
       - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4
 
@@ -255,13 +262,31 @@ jobs:
 
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
 
+      - id: owner
+        run: echo "lc=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
+
+      # Same as merge-manifests: public ns via vars (not a masked secret).
+      - id: quay-check
+        run: |
+          if [ -n "$QUAY_USER" ] && [ -n "$QUAY_PASS" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "ns=${QUAY_ORG:-$OWNER_LC}" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          OWNER_LC: ${{ steps.owner.outputs.lc }}
+          QUAY_USER: ${{ secrets.QUAY_USERNAME }}
+          QUAY_PASS: ${{ secrets.QUAY_PASSWORD }}
+          QUAY_ORG: ${{ vars.QUAY_NAMESPACE }}
+
       - name: Sign images and generate container SBOMs
         env:
           GHCR_REGISTRY: ${{ env.GHCR_REGISTRY }}
           QUAY_REGISTRY: ${{ env.QUAY_REGISTRY }}
-          OWNER_LC: ${{ needs.merge-manifests.outputs.owner_lc }}
-          QUAY_ENABLED: ${{ needs.merge-manifests.outputs.quay_enabled }}
-          QUAY_NS: ${{ needs.merge-manifests.outputs.quay_ns }}
+          OWNER_LC: ${{ steps.owner.outputs.lc }}
+          QUAY_ENABLED: ${{ steps.quay-check.outputs.enabled }}
+          QUAY_NS: ${{ steps.quay-check.outputs.ns }}
         run: |
           args=(
             --owner "$OWNER_LC"

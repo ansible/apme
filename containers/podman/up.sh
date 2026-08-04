@@ -9,17 +9,32 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
 # Return SELinux mode: disabled, Permissive, Enforcing, or unknown (fail closed).
+# A bare /sys/fs/selinux directory without enforce is a stub (common in nested
+# containers / Podman-in-Podman) — treat as disabled, not unknown.
 _selinux_mode() {
-  if [[ ! -d /sys/fs/selinux ]]; then
+  if [[ ! -e /sys/fs/selinux/enforce ]]; then
     echo "disabled"
     return 0
   fi
   local mode
-  if ! mode=$(getenforce 2>/dev/null) || [[ -z "$mode" ]]; then
+  if mode=$(getenforce 2>/dev/null) && [[ -n "$mode" ]]; then
+    echo "$mode"
+    return 0
+  fi
+  # Fallback when getenforce is missing but selinuxfs is mounted.
+  local enforce
+  if ! enforce=$(cat /sys/fs/selinux/enforce 2>/dev/null); then
     echo "unknown"
     return 1
   fi
-  echo "$mode"
+  case "$enforce" in
+    1) echo "Enforcing" ;;
+    0) echo "Permissive" ;;
+    *)
+      echo "unknown"
+      return 1
+      ;;
+  esac
   return 0
 }
 
@@ -71,22 +86,193 @@ _selinux_marker_exists() {
   [[ -f "$(_selinux_repair_marker_path "$1")" ]]
 }
 
+# Return 0 when Podman is running rootless.
+_podman_is_rootless() {
+  podman info --format '{{.Host.Security.Rootless}}' 2>/dev/null | grep -qx true
+}
+
+# Create a file after volume chown. Rootless mounts are often mode 1755 owned by
+# the subordinate UID for container 1001, so the host user cannot touch(1) them.
+_touch_in_volume_namespace() {
+  local path="$1"
+  if _podman_is_rootless; then
+    podman unshare touch "$path" 2>/dev/null || return 1
+  elif ! touch "$path" 2>/dev/null; then
+    return 1
+  fi
+}
+
 _write_selinux_marker() {
   local mountpoint="$1"
   local marker
   marker=$(_selinux_repair_marker_path "$mountpoint")
-  if ! touch "$marker" 2>/dev/null; then
+  if ! _touch_in_volume_namespace "$marker"; then
     return 1
   fi
   chcon -l s0 -t container_file_t "$marker" 2>/dev/null || true
 }
 
+_CHOWN_REPAIR_MARKER=".apme-chown-repair-v1"
+
+_chown_repair_marker_path() {
+  echo "$1/${_CHOWN_REPAIR_MARKER}"
+}
+
+_chown_marker_exists() {
+  [[ -f "$(_chown_repair_marker_path "$1")" ]]
+}
+
+_write_chown_marker() {
+  local mountpoint="$1"
+  local marker
+  marker=$(_chown_repair_marker_path "$mountpoint")
+  if ! _touch_in_volume_namespace "$marker"; then
+    return 1
+  fi
+  chcon -l s0 -t container_file_t "$marker" 2>/dev/null || true
+}
+
+# Chown a host path so a container UID can write it.
+# Rootless: podman unshare (host subordinate UIDs). Rootful: direct chown.
+_chown_for_container_uid() {
+  local uid_gid="$1"
+  local path="$2"
+  if _podman_is_rootless; then
+    podman unshare chown -R "$uid_gid" "$path"
+  else
+    chown -R "$uid_gid" "$path"
+  fi
+}
+
+# Return 0 when path is owned by the given container UID.
+_owned_by_container_uid() {
+  local uid="$1"
+  local path="$2"
+  local actual
+  if _podman_is_rootless; then
+    actual=$(podman unshare stat -c '%u' "$path" 2>/dev/null) || return 1
+  else
+    actual=$(stat -c '%u' "$path" 2>/dev/null) || return 1
+  fi
+  [[ "$actual" == "$uid" ]]
+}
+
+# Host UID that corresponds to a container UID (rootless subordinate map).
+# Resolve from the live user-namespace uid_map: rootless Podman maps container
+# UID 0 to the host user and UID 1..N onto /etc/subuid, so container 1001 is
+# subuid_start+1000 — not subuid_start+1001. Arithmetic on /etc/subuid alone
+# is off-by-one for non-zero container UIDs.
+_host_uid_for_container_uid() {
+  local container_uid="$1"
+  if ! _podman_is_rootless; then
+    echo "$container_uid"
+    return 0
+  fi
+  local mapped
+  mapped=$(podman unshare awk -v uid="$container_uid" '
+    uid >= $1 && uid < $1 + $3 {
+      print $2 + uid - $1
+      found = 1
+      exit
+    }
+    END { exit !found }
+  ' /proc/self/uid_map) || return 1
+  if [[ -z "$mapped" ]]; then
+    return 1
+  fi
+  echo "$mapped"
+}
+
+# Return 0 when container UID can open path (rootless user-namespace probe).
+_container_uid_can_read() {
+  local container_uid="$1"
+  local path="$2"
+  podman unshare python3 -c '
+import os, sys
+uid = int(sys.argv[1])
+path = sys.argv[2]
+os.setgid(uid)
+os.setuid(uid)
+with open(path, "rb"):
+    pass
+' "$container_uid" "$path"
+}
+
+# Make Abbenay cache config usable by the host user and container UID 1001.
+# Rootless: keep host ownership; grant a POSIX ACL to the subordinate UID so
+# the next tox -e up can still chmod/seed and developers can edit config.yaml.
+# Rootful: chown to 1001:1001. Migrates caches that were previously chowned
+# exclusively to the subordinate UID (which locked the host user out).
+_ensure_abbenay_config_access() {
+  local path="$1"
+  local cuid=1001
+
+  if _podman_is_rootless; then
+    if [[ -d "$path" ]] && [[ ! -w "$path" ]]; then
+      if _owned_by_container_uid "$cuid" "$path"; then
+        echo "Restoring host ownership of Abbenay config cache (prior rootless chown)..."
+        # Inside the user namespace, the host user is UID 0.
+        podman unshare chown -R 0:0 "$path" || return 1
+      else
+        echo "ERROR: Abbenay config cache is not writable: $path" >&2
+        return 1
+      fi
+    fi
+    if ! command -v setfacl >/dev/null 2>&1; then
+      echo "ERROR: setfacl is required for rootless Abbenay config (host edit + UID 1001)" >&2
+      return 1
+    fi
+    local mapped
+    mapped=$(_host_uid_for_container_uid "$cuid") || {
+      echo "ERROR: could not resolve subordinate UID for container UID $cuid" >&2
+      return 1
+    }
+    setfacl -m "u:${mapped}:rwx" "$path" || return 1
+    setfacl -d -m "u:${mapped}:rwx" "$path" || return 1
+    if [[ -f "$path/config.yaml" ]]; then
+      setfacl -m "u:${mapped}:rw" "$path/config.yaml" || return 1
+      if ! _container_uid_can_read "$cuid" "$path/config.yaml"; then
+        echo "ERROR: container UID $cuid cannot read $path/config.yaml after ACL grant" >&2
+        return 1
+      fi
+    fi
+    return 0
+  fi
+
+  if ! _chown_for_container_uid "${cuid}:${cuid}" "$path" \
+    || ! _owned_by_container_uid "$cuid" "$path"; then
+    return 1
+  fi
+}
+
+# Recursive chown only when the mountpoint needs migration or lacks a marker.
+# Large session/gateway volumes must not be walked on every tox -e up.
+_ensure_volume_owned_by_container_uid() {
+  local uid_gid="$1"
+  local uid="${uid_gid%%:*}"
+  local path="$2"
+  if _owned_by_container_uid "$uid" "$path" && _chown_marker_exists "$path"; then
+    return 0
+  fi
+  if ! _chown_for_container_uid "$uid_gid" "$path"; then
+    return 1
+  fi
+  if ! _owned_by_container_uid "$uid" "$path"; then
+    return 1
+  fi
+  if ! _write_chown_marker "$path"; then
+    return 1
+  fi
+}
+
 # Relabel named Podman volume mountpoints so pod containers can read/write under SELinux.
 # Standalone `podman run -v vol:path:Z` probes can stamp MCS categories the pod
 # cannot access, breaking gateway DB writes (project creation, scans, etc.).
-# Only relabel when the mountpoint context is wrong; avoid recursive walks on every
-# startup (large apme-sessions trees). Set APME_SELINUX_FULL_RELABEL=1 for a one-time
-# recursive repair of an existing volume.
+# Also ensure UID 1001 owns the mountpoint — pvc.yaml annotations are not always
+# applied to pre-existing volumes or rootful Podman (mode 1755 root-owned → EACCES).
+# Only relabel/chown when needed; avoid recursive walks on every startup (large
+# apme-sessions trees). Set APME_SELINUX_FULL_RELABEL=1 for a one-time recursive
+# SELinux repair of an existing volume.
 _relabel_podman_volumes() {
   local vol mountpoint
   for vol in apme-sessions apme-gateway-data apme-proxy-cache; do
@@ -96,6 +282,10 @@ _relabel_podman_volumes() {
     mountpoint=$(podman volume inspect "$vol" --format '{{.Mountpoint}}')
     if [[ -z "$mountpoint" || ! -d "$mountpoint" ]]; then
       continue
+    fi
+    if ! _ensure_volume_owned_by_container_uid 1001:0 "$mountpoint"; then
+      echo "ERROR: could not chown volume $vol ($mountpoint) to 1001:0" >&2
+      return 1
     fi
     local mode
     mode=$(_selinux_mode) || {
@@ -394,18 +584,35 @@ print(yaml)
   echo "Vertex AI project: $GOOGLE_VERTEX_PROJECT (location: $GOOGLE_VERTEX_LOCATION)"
 fi
 
-# Set up writable Abbenay config directory (seed from legacy config.yaml if present).
+# Set up writable Abbenay config directory (seed from repo / legacy files).
 # The hostPath Directory mount replaces the old read-only File mount so that
 # runtime admin writes (POST /api/v1/ai/provider/.../configure) survive restarts.
-# Rootless Podman maps host UID to root inside the user namespace; Abbenay runs
-# as UID 1001, so ownership must be 1001:1001 in that namespace (podman unshare
-# chown) or configure returns EACCES. Avoid world-writable chmod.
-ABBENAY_CONFIG_DIR="$ROOT/containers/abbenay/config"
+# Never chown the git checkout: rootless Podman maps UID 1001 to a subordinate
+# host UID and would lock the developer out of containers/abbenay/config.
+# Runtime config always lives under CACHE_PATH (mode 0700/0600; credentials).
+# Rootless: host keeps ownership; container UID 1001 gets a POSIX ACL.
+# Rootful: chown the cache copy to 1001:1001.
+ABBENAY_CONFIG_SEED="$ROOT/containers/abbenay/config"
+ABBENAY_CONFIG_REPO_PATH="$ABBENAY_CONFIG_SEED"
+ABBENAY_CONFIG_DIR="$CACHE_PATH/abbenay/config"
+if ! command -v podman >/dev/null 2>&1; then
+  echo "ERROR: podman is required to set Abbenay config ownership (UID 1001)" >&2
+  exit 1
+fi
+# Migrate prior exclusive subordinate-UID ownership before host chmod/seed.
+if [[ -d "$ABBENAY_CONFIG_DIR" ]] && [[ ! -w "$ABBENAY_CONFIG_DIR" ]]; then
+  if ! _ensure_abbenay_config_access "$ABBENAY_CONFIG_DIR"; then
+    echo "ERROR: could not restore host access to Abbenay config cache $ABBENAY_CONFIG_DIR" >&2
+    exit 1
+  fi
+fi
 mkdir -p "$ABBENAY_CONFIG_DIR"
-# Relabel the empty dir first so seed copies land on a container-readable parent.
-_relabel_host_path_for_podman "$ABBENAY_CONFIG_DIR"
+chmod 0700 "$ABBENAY_CONFIG_DIR"
 if [[ ! -f "$ABBENAY_CONFIG_DIR/config.yaml" ]]; then
-  if [[ -f "$ROOT/containers/abbenay/config.yaml" ]]; then
+  if [[ -f "$ABBENAY_CONFIG_SEED/config.yaml" ]]; then
+    cp "$ABBENAY_CONFIG_SEED/config.yaml" "$ABBENAY_CONFIG_DIR/config.yaml"
+    echo "Seeded Abbenay config from containers/abbenay/config/config.yaml"
+  elif [[ -f "$ROOT/containers/abbenay/config.yaml" ]]; then
     cp "$ROOT/containers/abbenay/config.yaml" "$ABBENAY_CONFIG_DIR/config.yaml"
     echo "Seeded Abbenay config from containers/abbenay/config.yaml (legacy location)"
   elif [[ -f "$ROOT/containers/abbenay/config.yaml.example" ]]; then
@@ -413,18 +620,30 @@ if [[ ! -f "$ABBENAY_CONFIG_DIR/config.yaml" ]]; then
     echo "Seeded Abbenay config from containers/abbenay/config.yaml.example"
   fi
 fi
-# Relabel seeded files while still host-owned; chcon after podman unshare
-# chown to a subordinate UID can fail on Enforcing hosts.
+if [[ -f "$ABBENAY_CONFIG_DIR/config.yaml" ]]; then
+  chmod 0600 "$ABBENAY_CONFIG_DIR/config.yaml"
+fi
 _relabel_host_path_for_podman "$ABBENAY_CONFIG_DIR"
-if command -v podman >/dev/null 2>&1; then
-  if ! podman unshare chown -R 1001:1001 "$ABBENAY_CONFIG_DIR"; then
-    echo "ERROR: could not chown Abbenay config dir to 1001:1001 via podman unshare" >&2
-    exit 1
-  fi
-else
-  echo "ERROR: podman is required to set Abbenay config ownership (UID 1001)" >&2
+if ! _ensure_abbenay_config_access "$ABBENAY_CONFIG_DIR"; then
+  echo "ERROR: could not grant Abbenay container UID 1001 access to $ABBENAY_CONFIG_DIR" >&2
   exit 1
 fi
+# POD_YAML still has the repo hostPath from envsubst; always mount the cache copy.
+if ! POD_YAML=$(ABBENAY_CONFIG_REPO_PATH="$ABBENAY_CONFIG_REPO_PATH" \
+  ABBENAY_CONFIG_DIR="$ABBENAY_CONFIG_DIR" python3 -c '
+import os, sys
+yaml = sys.stdin.read()
+old = "path: " + os.environ["ABBENAY_CONFIG_REPO_PATH"]
+new = "path: " + os.environ["ABBENAY_CONFIG_DIR"]
+if old not in yaml:
+    print("ERROR: abbenay-config hostPath not found in pod YAML", file=sys.stderr)
+    sys.exit(1)
+print(yaml.replace(old, new, 1), end="")
+' <<< "$POD_YAML"); then
+  echo "ERROR: could not retarget Abbenay config hostPath in pod YAML" >&2
+  exit 1
+fi
+echo "Abbenay config hostPath: $ABBENAY_CONFIG_DIR (seed sources remain under containers/abbenay/)"
 _relabel_host_path_for_podman "$ROOT/containers/otel-collector/config.yaml"
 if [[ -n "$ABBENAY_CA_BUNDLE" ]]; then
   _relabel_host_path_for_podman "$ABBENAY_CA_BUNDLE"

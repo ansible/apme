@@ -35,7 +35,7 @@ the first write, the runtime file is the source of truth.
 | Deploy | Seed | Writable volume | Notes |
 |--------|------|-----------------|-------|
 | **Helm** | ConfigMap `*-abbenay-config` (from `abbenay.providers`) | `emptyDir` by default; optional PVC via `persistence.abbenay.enabled=true` | Init `init-abbenay-config` copies seed only if `config.yaml` is absent. Mount: `/etc/abbenay-config`. |
-| **Podman** | `containers/abbenay/config.yaml` (or `.example`) on first `tox -e up` | Host dir `containers/abbenay/config/` → `/home/abbenay/.config/abbenay` | `up.sh` seeds when the dir has no `config.yaml`, then `podman unshare chown -R 1001:1001` so UID 1001 can write under rootless Podman. Dir is gitignored. |
+| **Podman** | `containers/abbenay/config/` (or legacy `config.yaml` / `.example`) on first `tox -e up` | Cache dir `${XDG_CACHE_HOME:-$HOME/.cache}/apme/abbenay/config/` → `/home/abbenay/.config/abbenay` | `up.sh` seeds into the cache path (mode `0700`/`0600`). Rootful chowns the cache copy to UID 1001; rootless keeps host ownership and grants UID 1001 a POSIX ACL. The repo tree is never chowned. |
 
 Helm PVC knobs (`persistence.abbenay.*`):
 

@@ -99,11 +99,14 @@ admin writes persist there as the source of truth after first configure:
   volume **once** (only if the file is absent). Default volume is `emptyDir`
   (pod lifetime). Optional PVC via `persistence.abbenay.enabled=true` survives
   restarts. Abbenay mounts the writable dir at `/etc/abbenay-config`.
-- **Podman**: `containers/abbenay/config/` is a hostPath RW mount at
-  `/home/abbenay/.config/abbenay`. `up.sh` seeds `config.yaml` from the legacy
-  `containers/abbenay/config.yaml` (or `.example`) when the dir is empty, then
-  `podman unshare chown -R 1001:1001` so UID 1001 can write under rootless
-  Podman host-UID mapping.
+- **Podman**: Writable hostPath is
+  `${XDG_CACHE_HOME:-$HOME/.cache}/apme/abbenay/config/` (override via
+  `APME_CACHE_HOST_PATH`), mounted at `/home/abbenay/.config/abbenay`.
+  `up.sh` seeds `config.yaml` from `containers/abbenay/config/` (or legacy
+  `config.yaml` / `.example`) when the cache file is absent, applies
+  `0700`/`0600`, then grants container UID 1001 access on the **cache copy**
+  (rootful: chown; rootless: POSIX ACL so the host user can still edit). The
+  git checkout is never chowned.
 
 After the first successful configure, the writable file is SoT — Helm value /
 ConfigMap changes do not overwrite an existing runtime config.
@@ -211,7 +214,8 @@ runtime admin API.
   Quality settings follow in a later change.
 - **Config durability** ([#498](https://github.com/ansible/apme/issues/498)):
   implemented — seed ConfigMap → writable emptyDir (default) / optional PVC
-  (`persistence.abbenay`); Podman RW `containers/abbenay/config/`; seed-once;
+  (`persistence.abbenay`); Podman RW cache
+  (`${XDG_CACHE_HOME:-$HOME/.cache}/apme/abbenay/config/`); seed-once;
   runtime SoT after first configure.
 
 ## Related Decisions

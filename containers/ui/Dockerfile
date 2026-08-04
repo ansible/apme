@@ -29,10 +29,14 @@ RUN dnf install -y gettext && dnf clean all
 COPY containers/ui/nginx.conf /etc/nginx/nginx.conf
 COPY containers/ui/nginx.conf.template /etc/nginx/conf.d/default.conf.template
 COPY containers/ui/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+# Host checkouts on virtiofs may present git 0644 files as 0600; UID 1001 must
+# read nginx configs and the entrypoint (shell scripts need +r, not only +x).
+RUN chmod a+rx /entrypoint.sh \
+    && chmod a+r /etc/nginx/nginx.conf /etc/nginx/conf.d/default.conf.template
 COPY --from=build /app/dist /usr/share/nginx/html
 
-RUN chmod -R g+w /etc/nginx/conf.d /var/log/nginx /run
+RUN chmod -R a+rX /usr/share/nginx/html \
+    && chmod -R g+w /etc/nginx/conf.d /var/log/nginx /run
 USER 1001
 
 EXPOSE 8081

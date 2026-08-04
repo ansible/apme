@@ -131,7 +131,11 @@ artifact type, translate it:
 
 5. **Are dependencies and versions pinned to intent?** Check every
    version range, action tag, and base image. Does each one express
-   what you actually mean — not tighter, not looser?
+   what you actually mean — not tighter, not looser? For workflow
+   checkouts: if the job has write scopes (`packages: write`, etc.)
+   or runs untrusted/repo scripts after checkout, is
+   `persist-credentials: false` set so `GITHUB_TOKEN` is not left
+   in local Git config? Match sibling jobs in the same workflow.
 
 6. **Is there dead weight?** Check for unused imports, unreachable
    branches, written-but-never-read variables, parameters accepted
@@ -354,7 +358,9 @@ critical/high/medium/low.
 - Test gaps for behaviors the code/docs claim
 - Silent no-ops, dead branches, wrong defaults
 - **Dependencies pinned to intent** — version ranges, GitHub Action
-  tags, base images, pip/uv specs (not tighter, not looser)
+  tags, base images, pip/uv specs (not tighter, not looser);
+  checkout `persist-credentials: false` when write-scoped tokens
+  must not remain in local Git config for later steps
 - **Dead weight** — unused imports/params; paid-for-but-wasteful work:
   double JSON parse, list.pop(0)/insert(0,…) vs deque, len(list(seq)),
   O(P×V) nested scans that should be O(P+V)

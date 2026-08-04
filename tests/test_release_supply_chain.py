@@ -111,6 +111,50 @@ def test_python_sbom_builds_into_isolated_output_dir() -> None:
     assert "dist/*.whl" not in content
 
 
+def test_container_workflow_computes_owner_locally_in_supply_chain() -> None:
+    """owner_lc must not cross job outputs (GitHub may skip secret-matching values)."""
+    workflow = yaml.safe_load(CONTAINER_WORKFLOW.read_text(encoding="utf-8"))
+    merge_outputs = workflow["jobs"]["merge-manifests"]["outputs"]
+    assert "owner_lc" not in merge_outputs
+    assert "quay_ns" not in merge_outputs
+
+    supply_steps = workflow["jobs"]["supply-chain"]["steps"]
+    step_ids = [step.get("id", "") for step in supply_steps if isinstance(step, dict)]
+    assert "owner" in step_ids
+    assert "quay-check" in step_ids
+
+    sign_step = next(
+        step
+        for step in supply_steps
+        if isinstance(step, dict) and step.get("name") == "Sign images and generate container SBOMs"
+    )
+    assert sign_step["env"]["OWNER_LC"] == "${{ steps.owner.outputs.lc }}"
+    assert sign_step["env"]["QUAY_ENABLED"] == "${{ steps.quay-check.outputs.enabled }}"
+    assert sign_step["env"]["QUAY_NS"] == "${{ steps.quay-check.outputs.ns }}"
+
+
+def test_container_workflow_quay_namespace_is_repo_variable() -> None:
+    """Quay org is public image path data — must be vars, not secrets.
+
+    If QUAY_NAMESPACE is a secret, subjects.json embeds the masked value and
+    GitHub discards the subjects job output, breaking attest-provenance.
+    """
+    content = CONTAINER_WORKFLOW.read_text(encoding="utf-8")
+    assert "${{ secrets.QUAY_NAMESPACE }}" not in content
+    assert content.count("${{ vars.QUAY_NAMESPACE }}") >= 2
+
+    workflow = yaml.safe_load(content)
+    for job_name in ("merge-manifests", "supply-chain"):
+        quay_check = next(
+            step
+            for step in workflow["jobs"][job_name]["steps"]
+            if isinstance(step, dict) and step.get("id") == "quay-check"
+        )
+        assert quay_check["env"]["QUAY_ORG"] == "${{ vars.QUAY_NAMESPACE }}"
+        assert quay_check["env"]["QUAY_USER"] == "${{ secrets.QUAY_USERNAME }}"
+        assert quay_check["env"]["QUAY_PASS"] == "${{ secrets.QUAY_PASSWORD }}"
+
+
 def test_container_workflow_runs_supply_chain_after_merge() -> None:
     """Published images must be signed and SBOM'd after manifest merge."""
     workflow = yaml.safe_load(CONTAINER_WORKFLOW.read_text(encoding="utf-8"))
@@ -315,6 +359,78 @@ echo '{"bomFormat":"CycloneDX","specVersion":"1.5","version":1,"components":[]}'
     assert sorted(subjects, key=lambda item: item["name"]) == [
         {"name": "ghcr.io/ansible/apme-gateway", "digest": "sha256:bbb222"},
         {"name": "ghcr.io/ansible/apme-primary", "digest": "sha256:aaa111"},
+    ]
+
+
+def test_subjects_json_includes_configured_quay_namespace() -> None:
+    """Configured --quay-ns must appear in provenance subjects for attest matrix."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir)
+        bindir = root / "bin"
+        bindir.mkdir()
+        output_dir = root / "sboms"
+        subjects_file = root / "subjects.json"
+        images_file = root / "images.txt"
+        tags_file = root / "tags.txt"
+        images_file.write_text("primary\n", encoding="utf-8")
+        tags_file.write_text("v1.0.0\n", encoding="utf-8")
+
+        docker_stub = """\
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == "buildx" && "${2:-}" == "imagetools" && "${3:-}" == "inspect" ]]; then
+  case "${4:-}" in
+    *ghcr.io/*/apme-primary*) echo "sha256:aaa111" ;;
+    *quay.io/private-org/apme-primary*) echo "sha256:ccc333" ;;
+    *)
+      echo "unexpected image ref: ${4:-}" >&2
+      exit 1
+      ;;
+  esac
+  exit 0
+fi
+echo "unexpected docker invocation: $*" >&2
+exit 1
+"""
+        syft_stub = """\
+#!/usr/bin/env bash
+set -euo pipefail
+echo '{"bomFormat":"CycloneDX","specVersion":"1.5","version":1,"components":[]}'
+"""
+        for name, body in (("docker", docker_stub), ("syft", syft_stub)):
+            script = bindir / name
+            script.write_text(body, encoding="utf-8")
+            script.chmod(0o755)
+
+        result = subprocess.run(
+            [
+                "bash",
+                "-c",
+                f"""
+                set -euo pipefail
+                export PATH="{bindir}:$PATH"
+                export SYFT_INSTALL_DIR="{bindir}"
+                export IMAGES_FILE="{images_file}"
+                export SUPPLY_CHAIN_PARALLELISM=1
+                {SUPPLY_CHAIN_SH} \\
+                  --owner ansible \\
+                  --tags-file {tags_file} \\
+                  --output-dir {output_dir} \\
+                  --quay-ns private-org \\
+                  --skip-sign \\
+                  --list-subjects {subjects_file}
+                """,
+            ],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr or result.stdout
+        subjects = json.loads(subjects_file.read_text(encoding="utf-8"))
+    assert sorted(subjects, key=lambda item: item["name"]) == [
+        {"name": "ghcr.io/ansible/apme-primary", "digest": "sha256:aaa111"},
+        {"name": "quay.io/private-org/apme-primary", "digest": "sha256:ccc333"},
     ]
 
 
