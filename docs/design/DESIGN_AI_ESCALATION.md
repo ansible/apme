@@ -576,7 +576,7 @@ Install with: pip install apme-engine[ai]
 Pre-built multi-arch Abbenay images (amd64 + arm64) are available on GHCR:
 
 ```bash
-podman pull ghcr.io/redhat-developer/abbenay:latest
+podman pull ghcr.io/redhat-developer/abbenay:v2026.8.1
 ```
 
 | Tag | Meaning |
