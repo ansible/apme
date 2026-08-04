@@ -64,7 +64,7 @@ These require parsing Python into an AST and analyzing call sites, not just impo
 
 ### Functional
 
-1. **PythonASTValidator Service**: New gRPC validator on port 50058
+1. **PythonASTValidator Service**: New gRPC validator on port 50062 (50058 is Collection Health; 50059 Dep Audit; 50060 Gateway gRPC)
 2. **AST Parsing**: Parse Python files using `ast` module
 3. **Pattern Detection**:
    - Method definitions (`def method_name`)
@@ -86,78 +86,74 @@ These require parsing Python into an AST and analyzing call sites, not just impo
 
 ### New Service: `apme-python-validator`
 
-```
+```text
 ┌──────────────────────────────────────────────────┐
 │  Primary Orchestrator :50051                     │
 │    ├── Native :50055 (YAML rules)                │
 │    ├── OPA :50054 (Rego rules)                   │
 │    ├── Ansible :50053 (runtime checks)           │
 │    ├── Gitleaks :50056 (secrets)                 │
-│    └── Python :50058 (AST rules) ← NEW           │
+│    └── Python :50062 (AST rules) ← NEW           │
 └──────────────────────────────────────────────────┘
 ```
 
 ### Proto Definition
 
-```protobuf
-// proto/apme/v1/python_validator.proto
-service PythonValidator {
-  rpc ValidatePython(PythonValidateRequest) returns (PythonValidateResponse);
-}
+Implements the shared `Validator` service from `proto/apme/v1/validate.proto` (ADR-001). No separate proto file — Primary fans out via the same `Validate(ValidateRequest) returns (ValidateResponse)` contract used by Native, OPA, Ansible, and Gitleaks.
 
-message PythonValidateRequest {
-  string scan_id = 1;
-  repeated PythonFile files = 2;
-  repeated string enabled_rules = 3;
-}
-
-message PythonFile {
-  string path = 1;
-  string content = 2;
-}
-
-message PythonValidateResponse {
-  repeated Violation violations = 1;
-}
-```
+Python file content is delivered through `ValidateRequest.files` (path + raw bytes). Rule enablement follows the standard validator registration path. No adapter layer required.
 
 ### AST Visitor Pattern
+
+Visitors scope matches to plugin file context (directory path) and enclosing class hierarchy to avoid flagging unrelated helpers:
 
 ```python
 class DeprecationVisitor(ast.NodeVisitor):
     """Detect deprecated patterns in Python AST."""
-    
+
+    # File-scope gates (set before visiting each file)
+    CALLBACK_DIRS = ("callback_plugins", "plugins/callback")
+    SHELL_DIRS = ("shell_plugins", "plugins/shell")
+    TEMPLAR_CONTEXT = "templar"  # class name or module path hint
+
     def visit_FunctionDef(self, node: ast.FunctionDef):
-        # M035: callback v2_on_any
-        if node.name == "v2_on_any":
-            self.report("M035", node, "v2_on_any callback method is deprecated")
-        # M036: v1 callback methods
-        if node.name.startswith(("playbook_on_", "runner_on_")):
-            self.report("M036", node, f"V1 callback method {node.name} is deprecated")
+        # M035/M036: callback methods — only in callback plugin files
+        if self.file_scope == "callback":
+            if node.name == "v2_on_any":
+                self.report("M035", node, "v2_on_any callback method is deprecated")
+            elif node.name.startswith(("playbook_on_", "runner_on_")):
+                self.report("M036", node, f"V1 callback method {node.name} is deprecated")
         self.generic_visit(node)
-    
+
     def visit_Attribute(self, node: ast.Attribute):
-        # M043: _available_variables
-        if node.attr == "_available_variables":
+        # M043: Templar._available_variables — only when enclosing class is Templar
+        if node.attr == "_available_variables" and self.enclosing_class == "Templar":
             self.report("M043", node, "Direct access to _available_variables is deprecated")
         self.generic_visit(node)
-    
+
     def visit_Call(self, node: ast.Call):
-        # M037: wrap_for_exec
-        if isinstance(node.func, ast.Attribute) and node.func.attr == "wrap_for_exec":
+        # M037: Shell.wrap_for_exec — only in shell plugin files
+        if (
+            self.file_scope == "shell"
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "wrap_for_exec"
+        ):
             self.report("M037", node, "Shell.wrap_for_exec method is deprecated")
         self.generic_visit(node)
 ```
 
+`file_scope` is derived from the file path (`callback_plugins/`, `shell_plugins/`, etc.). `enclosing_class` is tracked via a class stack during `visit_ClassDef`. Acceptance tests must confirm unrelated functions and objects in non-plugin files are not reported.
+
 ## Acceptance Criteria
 
-- [ ] PythonASTValidator service starts on :50058
+- [ ] PythonASTValidator service starts on :50062
 - [ ] Primary orchestrator fans out to Python validator
 - [ ] M035 detects `v2_on_any` method definition
 - [ ] M036 detects v1 callback method patterns
 - [ ] M037-M039 detect deprecated shell method calls
 - [ ] M040-M042 detect PluginLoader deprecations
 - [ ] M043-M046 detect Templar internal access
+- [ ] Scoped matching: callback rules ignore non-callback files; shell rules ignore non-shell files; Templar rules require enclosing Templar class
 - [ ] Container builds and runs in pod
 - [ ] Proto definitions and codegen complete
 - [ ] `tox -e lint` passes

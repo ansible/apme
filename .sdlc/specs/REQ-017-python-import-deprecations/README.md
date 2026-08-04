@@ -22,7 +22,7 @@ APME currently scans only YAML content. These rules extend scanning to Python fi
 |------|--------|-------------------|-------------|
 | M031 | `import_cache_plugins_base` | `from ansible.plugins.cache.base import ...` | `from ansible.plugins.cache import BaseCacheModule` |
 | M032 | `import_ansiblefiltertypeerror` | `from ansible.errors import AnsibleFilterTypeError` | `from ansible.errors import AnsibleTypeError` |
-| M033 | `import_ansibleactiondone` | `from ansible.errors import AnsibleActionDone` | Return directly from action plugins |
+| M033 | `import_ansibleactiondone` | `from ansible.errors import _AnsibleActionDone` | Return directly from action plugins |
 | M034 | `compat_importlib_resources` | `from ansible.compat.importlib_resources import ...` | `from importlib.resources import ...` |
 
 ## Requirements
@@ -34,7 +34,7 @@ APME currently scans only YAML content. These rules extend scanning to Python fi
    - `plugins/` (all subdirectories)
    - `module_utils/`
    - `library/` (legacy module location)
-3. **Detection**: Regex match on import statements (both `import X` and `from X import Y` forms)
+3. **Detection**: Regex match on import statements. Module deprecations (M031, M034) match both `import X` and `from X import Y` forms; class deprecations (M032, M033) match `from X import Y` only (no valid plain-import form for a class symbol).
 4. **Message**: Include deprecated import and recommended replacement
 5. **Line Numbers**: Report exact line of offending import
 
@@ -47,10 +47,10 @@ APME currently scans only YAML content. These rules extend scanning to Python fi
 
 ## Acceptance Criteria
 
-- [ ] M031 detects `from ansible.plugins.cache.base import`
+- [ ] M031 detects `from ansible.plugins.cache.base import` and `import ansible.plugins.cache.base`
 - [ ] M032 detects `AnsibleFilterTypeError` import
-- [ ] M033 detects `AnsibleActionDone` import
-- [ ] M034 detects `ansible.compat.importlib_resources` import
+- [ ] M033 detects `_AnsibleActionDone` import
+- [ ] M034 detects `from ansible.compat.importlib_resources import` and `import ansible.compat.importlib_resources`
 - [ ] Rules ignore non-plugin Python files (tests, scripts)
 - [ ] Rules report file path and line number
 - [ ] Unit tests cover all 4 patterns
@@ -64,12 +64,23 @@ APME currently scans only YAML content. These rules extend scanning to Python fi
 Native validator extension—no new validator service needed:
 
 ```python
-# Regex patterns
+# Regex patterns — module deprecations (M031, M034) match both import forms;
+# class deprecations (M032, M033) appear only as `from X import Y`.
 DEPRECATED_IMPORTS = {
-    "M031": r"from\s+ansible\.plugins\.cache\.base\s+import",
-    "M032": r"from\s+ansible\.errors\s+import\s+.*AnsibleFilterTypeError",
-    "M033": r"from\s+ansible\.errors\s+import\s+.*AnsibleActionDone",
-    "M034": r"from\s+ansible\.compat\.importlib_resources\s+import",
+    "M031": [
+        r"from\s+ansible\.plugins\.cache\.base\s+import",
+        r"import\s+ansible\.plugins\.cache\.base(?:\s|;|$)",
+    ],
+    "M032": [
+        r"from\s+ansible\.errors\s+import\s+.*AnsibleFilterTypeError",
+    ],
+    "M033": [
+        r"from\s+ansible\.errors\s+import\s+.*_AnsibleActionDone",
+    ],
+    "M034": [
+        r"from\s+ansible\.compat\.importlib_resources\s+import",
+        r"import\s+ansible\.compat\.importlib_resources(?:\s|;|$)",
+    ],
 }
 ```
 
