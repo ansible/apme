@@ -158,18 +158,44 @@ _owned_by_container_uid() {
 }
 
 # Host UID that corresponds to a container UID (rootless subordinate map).
+# Resolve from the live user-namespace uid_map: rootless Podman maps container
+# UID 0 to the host user and UID 1..N onto /etc/subuid, so container 1001 is
+# subuid_start+1000 — not subuid_start+1001. Arithmetic on /etc/subuid alone
+# is off-by-one for non-zero container UIDs.
 _host_uid_for_container_uid() {
   local container_uid="$1"
   if ! _podman_is_rootless; then
     echo "$container_uid"
     return 0
   fi
-  local start
-  start=$(awk -F: -v u="$(id -un)" '$1 == u { print $2; exit }' /etc/subuid)
-  if [[ -z "$start" ]]; then
+  local mapped
+  mapped=$(podman unshare awk -v uid="$container_uid" '
+    uid >= $1 && uid < $1 + $3 {
+      print $2 + uid - $1
+      found = 1
+      exit
+    }
+    END { exit !found }
+  ' /proc/self/uid_map) || return 1
+  if [[ -z "$mapped" ]]; then
     return 1
   fi
-  echo $((start + container_uid))
+  echo "$mapped"
+}
+
+# Return 0 when container UID can open path (rootless user-namespace probe).
+_container_uid_can_read() {
+  local container_uid="$1"
+  local path="$2"
+  podman unshare python3 -c '
+import os, sys
+uid = int(sys.argv[1])
+path = sys.argv[2]
+os.setgid(uid)
+os.setuid(uid)
+with open(path, "rb"):
+    pass
+' "$container_uid" "$path"
 }
 
 # Make Abbenay cache config usable by the host user and container UID 1001.
@@ -205,6 +231,10 @@ _ensure_abbenay_config_access() {
     setfacl -d -m "u:${mapped}:rwx" "$path" || return 1
     if [[ -f "$path/config.yaml" ]]; then
       setfacl -m "u:${mapped}:rw" "$path/config.yaml" || return 1
+      if ! _container_uid_can_read "$cuid" "$path/config.yaml"; then
+        echo "ERROR: container UID $cuid cannot read $path/config.yaml after ACL grant" >&2
+        return 1
+      fi
     fi
     return 0
   fi

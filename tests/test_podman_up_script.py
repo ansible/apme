@@ -1,4 +1,4 @@
-"""Regression tests for CA bundle injection in ``containers/podman/up.sh``."""
+"""Regression tests for ``containers/podman/up.sh`` helpers and YAML injection."""
 
 from __future__ import annotations
 
@@ -163,3 +163,25 @@ def test_up_sh_injects_ca_bundle_into_galaxy_proxy() -> None:
     assert (
         f"    - name: galaxy-ca-bundle\n      hostPath:\n        path: {quoted_ca_path}\n        type: File\n"
     ) in rendered
+
+
+def test_up_sh_maps_rootless_acl_from_uid_map() -> None:
+    """Rootless ACL host UID comes from uid_map, with a UID 1001 read probe.
+
+    Rootless Podman maps container UID 0 to the host user and UID 1 onto
+    ``/etc/subuid`` start, so container 1001 is ``subuid_start+1000``. Adding
+    the container UID directly to ``/etc/subuid`` targets the wrong host UID.
+    """
+    script = UP_SH.read_text(encoding="utf-8")
+    helper_start = script.index("_host_uid_for_container_uid() {")
+    helper_end = script.index("\n}\n", helper_start) + 3
+    helper = script[helper_start:helper_end]
+
+    assert "podman unshare awk" in helper
+    assert "/proc/self/uid_map" in helper
+    assert "$2 + uid - $1" in helper
+    assert "start + container_uid" not in helper
+    assert "/etc/subuid" not in helper
+
+    assert "_container_uid_can_read() {" in script
+    assert '_container_uid_can_read "$cuid" "$path/config.yaml"' in script
