@@ -112,10 +112,12 @@ accepts — gets flagged.
 
 **Information exposure.** The reviewer asks "should this data be visible
 here?" for every piece of information that escapes internal scope:
-logged data, error messages, API responses, documentation examples.
+logged data, error messages, API responses, documentation examples,
+and credentials left in local Git config by `actions/checkout`.
 User content in info-level logs, credentials on CLI examples, internal
-paths in error messages — all get flagged because the reviewer assumes
-the minimum-exposure principle.
+paths in error messages, and a write-capable `GITHUB_TOKEN` persisted
+into `.git/config` for later job steps — all get flagged because the
+reviewer assumes the minimum-exposure principle.
 
 **Caller safety.** The reviewer reads every public interface from the
 caller's perspective and asks "could this surprise me?" Nullable
@@ -191,7 +193,11 @@ above should catch novel issues these don't cover.
   `prek` directly in docs, scripts, or CI (ADR-047). Always use
   `tox -e <env>`.
 - **GitHub Actions pinning**: pin to commit SHAs with a tag comment
-  (`actions/checkout@SHA # v4`), not mutable tags.
+  (`actions/checkout@SHA # v4`), not mutable tags. On workflows with
+  `packages: write` (or other write scopes) that run untrusted
+  scripts after checkout—especially `workflow_dispatch`—set
+  `persist-credentials: false` on `actions/checkout` so
+  `GITHUB_TOKEN` is not left in local Git config (zizmor artipacked).
 - **OPA is subprocess, not REST**: the OPA validator invokes `opa eval`
   via subprocess — do not introduce httpx or HTTP client dependencies
   for OPA (verified in code, documented in AGENTS.md invariant 9).
@@ -210,6 +216,19 @@ note the original tag:
 ```yaml
 - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
 ```
+
+When a job (or workflow-level `permissions`) grants write scopes and later
+steps run repo scripts, disable checkout credential persistence:
+
+```yaml
+- uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+  with:
+    persist-credentials: false
+```
+
+Check sibling jobs in the same workflow for consistency — if supply-chain
+or attest already set `persist-credentials: false`, merge/build jobs that
+share `packages: write` should match.
 
 ### Inaccurate documentation
 

@@ -129,6 +129,10 @@ jobs:
       quay_enabled: ${{ steps.quay-check.outputs.enabled }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v6
+        with:
+          # workflow_dispatch + packages:write — do not leave GITHUB_TOKEN in
+          # local git config for merge-manifests.sh (zizmor artipacked).
+          persist-credentials: false
 
       - id: owner
         run: echo "lc=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
