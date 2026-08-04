@@ -60,6 +60,27 @@ These require parsing Python into an AST and analyzing call sites, not just impo
 | M045 | `templar_environment` | `.environment` access on Templar | Deprecated attribute |
 | M046 | `templar_copy_context_overrides` | `copy_with_new_env(...)` with overrides | Deprecated arguments |
 
+### AST Rule Predicates (M035-M046)
+
+Each rule below defines an executable predicate (no type inference). `file_scope` is derived from the file path; `enclosing_class` is tracked via a class stack during `visit_ClassDef`. Predicates return a violation or nothing.
+
+| Rule | File scope | AST predicate | Positive example | Negative example |
+|------|-----------|---------------|------------------|------------------|
+| M035 | `callback_plugins/` or `plugins/callback/` | `visit_FunctionDef`: `node.name == "v2_on_any"` | `def v2_on_any(self, result):` in callback plugin | Same method name in `module_utils/helper.py` |
+| M036 | callback scope | `visit_FunctionDef`: `node.name.startswith(("playbook_on_", "runner_on_"))` | `def playbook_on_start(self):` | `def playbook_on_start(self):` in a test helper |
+| M037 | `shell_plugins/` or `plugins/shell/` | `visit_Call`: `isinstance(node.func, ast.Attribute) and node.func.attr == "wrap_for_exec"` | `self.wrap_for_exec(cmd)` in shell plugin | `self.wrap_for_exec(cmd)` in action plugin |
+| M038 | shell scope | `visit_Call`: `node.func.attr == "checksum"` and receiver is `self` | `self.checksum(path)` in shell plugin | `obj.checksum(path)` in unrelated module |
+| M039 | shell scope (powershell file) | `visit_Call`: `node.func.attr == "_encode_script"` | `self._encode_script(script)` in `powershell.py` | Same call in non-shell file |
+| M040 | `inventory_plugins/` or `plugins/inventory/` | `visit_Call`: any `keyword.arg == "disable_lookups"` | `Constructable(..., disable_lookups=True)` | `templar.template(disable_lookups=True)` (Templar API, out of scope for M040) |
+| M041 | any plugin file importing `PluginLoader` | `visit_Call`: callee name is `PluginLoader` and any `kw.arg == "aliases"` | `PluginLoader("cache", aliases=["json"])` | `SomeClass(aliases=["json"])` |
+| M042 | same as M041 | `visit_Attribute`: `node.attr == "aliases"` and receiver variable assigned from `PluginLoader(...)` in same function | `loader.aliases` after `loader = PluginLoader(...)` | `config.aliases` on unrelated object |
+| M043 | any file | `visit_Attribute`: `node.attr == "_available_variables"` and `enclosing_class == "Templar"` | `self._available_variables` inside `class Templar` | `self._available_variables` in `class Helper` |
+| M044 | any file | `visit_Attribute`: `node.attr == "_loader"` and `enclosing_class == "Templar"` | `self._loader` in Templar subclass | `self._loader` elsewhere |
+| M045 | any file | `visit_Attribute`: `node.attr == "environment"` and `enclosing_class == "Templar"` | `self.environment` in Templar class | `self.environment` in config parser |
+| M046 | any file | `visit_Call`: `node.func.attr == "copy_with_new_env"` and (`environment_class` keyword present OR any other keyword arg) | `self.copy_with_new_env(environment_class=Env)` | `self.copy_with_new_env()` with no kwargs |
+
+M042 assignment tracking: on `visit_Assign`, record `{target.id: "PluginLoader"}` when the RHS is a `Call` with callee `PluginLoader`. Clear on function exit.
+
 ## Requirements
 
 ### Functional
@@ -114,7 +135,7 @@ class DeprecationVisitor(ast.NodeVisitor):
     # File-scope gates (set before visiting each file)
     CALLBACK_DIRS = ("callback_plugins", "plugins/callback")
     SHELL_DIRS = ("shell_plugins", "plugins/shell")
-    TEMPLAR_CONTEXT = "templar"  # class name or module path hint
+    INVENTORY_DIRS = ("inventory_plugins", "plugins/inventory")
 
     def visit_FunctionDef(self, node: ast.FunctionDef):
         # M035/M036: callback methods — only in callback plugin files
@@ -125,20 +146,53 @@ class DeprecationVisitor(ast.NodeVisitor):
                 self.report("M036", node, f"V1 callback method {node.name} is deprecated")
         self.generic_visit(node)
 
+    def visit_Assign(self, node: ast.Assign):
+        # M042: track PluginLoader assignments for .aliases detection
+        if isinstance(node.value, ast.Call) and self._callee_name(node.value) == "PluginLoader":
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    self.pluginloader_vars.add(target.id)
+        self.generic_visit(node)
+
     def visit_Attribute(self, node: ast.Attribute):
-        # M043: Templar._available_variables — only when enclosing class is Templar
-        if node.attr == "_available_variables" and self.enclosing_class == "Templar":
-            self.report("M043", node, "Direct access to _available_variables is deprecated")
+        # M042: PluginLoader.aliases property
+        if node.attr == "aliases" and isinstance(node.value, ast.Name):
+            if node.value.id in self.pluginloader_vars:
+                self.report("M042", node, "PluginLoader.aliases property is deprecated")
+        # M043-M045: Templar internal attributes
+        if self.enclosing_class == "Templar":
+            if node.attr == "_available_variables":
+                self.report("M043", node, "Direct access to _available_variables is deprecated")
+            elif node.attr == "_loader":
+                self.report("M044", node, "Direct access to _loader is deprecated")
+            elif node.attr == "environment":
+                self.report("M045", node, ".environment on Templar is deprecated")
         self.generic_visit(node)
 
     def visit_Call(self, node: ast.Call):
-        # M037: Shell.wrap_for_exec — only in shell plugin files
-        if (
-            self.file_scope == "shell"
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr == "wrap_for_exec"
-        ):
-            self.report("M037", node, "Shell.wrap_for_exec method is deprecated")
+        # M037-M039: shell plugin method calls
+        if self.file_scope == "shell" and isinstance(node.func, ast.Attribute):
+            if node.func.attr == "wrap_for_exec":
+                self.report("M037", node, "Shell.wrap_for_exec method is deprecated")
+            elif node.func.attr == "checksum":
+                self.report("M038", node, "ShellModule.checksum method is deprecated")
+            elif node.func.attr == "_encode_script":
+                self.report("M039", node, "PowerShell._encode_script method is deprecated")
+        # M040: disable_lookups in inventory plugins
+        if self.file_scope == "inventory":
+            for kw in node.keywords:
+                if kw.arg == "disable_lookups":
+                    self.report("M040", node, "disable_lookups argument is deprecated")
+        # M041: PluginLoader(aliases=...)
+        if self._callee_name(node) == "PluginLoader":
+            for kw in node.keywords:
+                if kw.arg == "aliases":
+                    self.report("M041", node, "PluginLoader aliases= argument is deprecated")
+        # M046: copy_with_new_env with deprecated overrides
+        if isinstance(node.func, ast.Attribute) and node.func.attr == "copy_with_new_env":
+            deprecated_kwargs = [kw.arg for kw in node.keywords if kw.arg]
+            if deprecated_kwargs:
+                self.report("M046", node, f"copy_with_new_env kwargs {deprecated_kwargs} are deprecated")
         self.generic_visit(node)
 ```
 
@@ -159,6 +213,52 @@ class DeprecationVisitor(ast.NodeVisitor):
 - [ ] `tox -e lint` passes
 - [ ] `tox -e unit` passes with coverage
 - [ ] `tox -e integration` includes Python validator tests
+
+- [ ] Integration test sends `ValidateRequest.files` through Primary to Python AST validator and asserts M035 violation
+
+## Service Wiring
+
+Follow the same pattern as Collection Health (`:50058`) and Dep Audit (`:50059`). Implementation artifacts:
+
+| Artifact | Value |
+|----------|-------|
+| `VALIDATOR_ENV_VARS` key | `"python_ast": "PYTHON_AST_GRPC_ADDRESS"` |
+| Primary env var | `PYTHON_AST_GRPC_ADDRESS=127.0.0.1:50062` |
+| Listen env var | `APME_PYTHON_AST_VALIDATOR_LISTEN=0.0.0.0:50062` |
+| CLI entry point | `apme-python-ast-validator = apme_engine.daemon.python_ast_validator_main:main` |
+| Server module | `src/apme_engine/daemon/python_ast_validator_server.py` |
+| Main module | `src/apme_engine/daemon/python_ast_validator_main.py` |
+| Container image | `containers/python-ast/Dockerfile` → `apme-python-ast:latest` |
+| Pod container name | `python-ast` |
+| OTEL service name | `apme-python-ast` |
+
+### Files to modify (implementation task)
+
+1. `src/apme_engine/daemon/primary_server.py` — add `"python_ast": "PYTHON_AST_GRPC_ADDRESS"` to `VALIDATOR_ENV_VARS`
+2. `src/apme_engine/daemon/launcher.py` — add port `50062`, env var mapping, and `serve()` call
+3. `pyproject.toml` — add `apme-python-ast-validator` console script
+4. `containers/podman/pod.yaml` — add `python-ast` container; set `PYTHON_AST_GRPC_ADDRESS` on Primary
+5. `deploy/helm/apme/templates/engine-deployment.yaml` — add env vars (mirror dep-audit pattern)
+6. `src/apme_gateway/api/router.py` — add health-check entry for Python AST validator
+
+### Health and failure behavior
+
+- Implements `Validator.Health` returning `HealthResponse` with rule count (same contract as Native/Gitleaks)
+- Primary fan-out uses `asyncio.gather(..., return_exceptions=True)` — validator failure yields empty violations + diagnostic error, scan continues
+- Readiness: container starts when gRPC server binds `:50062`; Primary skips validator when `PYTHON_AST_GRPC_ADDRESS` is unset (optional service, like Gitleaks)
+
+### Integration test
+
+Add `tests/integration/test_python_ast_validator.py`:
+
+```python
+@pytest.mark.integration
+async def test_primary_fans_out_python_files_to_ast_validator(daemon_env):
+    """ValidateRequest.files with deprecated callback reaches Python AST validator."""
+    # 1. Ensure PYTHON_AST_GRPC_ADDRESS is set in daemon fixture
+    # 2. Submit a .py file under plugins/callback/ containing def v2_on_any
+    # 3. Assert response includes M035 violation with line number
+```
 
 ## Technical Notes
 
@@ -185,9 +285,8 @@ Prefer native `ast` module for simplicity and control.
 
 ## Dependencies
 
-- ADR for new validator service (ADR-055 or similar)
-- Container image build integration
-- Primary orchestrator fan-out extension
+- ADR-055 (new validator service) — documents port assignment and optional-service classification
+- Implementation task(s) derived from this spec cover the artifacts listed in Service Wiring above
 
 ## Out of Scope
 

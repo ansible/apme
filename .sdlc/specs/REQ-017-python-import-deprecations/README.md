@@ -34,7 +34,7 @@ APME currently scans only YAML content. These rules extend scanning to Python fi
    - `plugins/` (all subdirectories)
    - `module_utils/`
    - `library/` (legacy module location)
-3. **Detection**: Regex match on import statements. Module deprecations (M031, M034) match both `import X` and `from X import Y` forms; class deprecations (M032, M033) match `from X import Y` only (no valid plain-import form for a class symbol).
+3. **Detection**: Regex match on import statements applied per physical line after comment/string stripping (see below). Module deprecations (M031, M034) match both `import X` and `from X import Y` forms; class deprecations (M032, M033) match `from X import Y` only (no valid plain-import form for a class symbol).
 4. **Message**: Include deprecated import and recommended replacement
 5. **Line Numbers**: Report exact line of offending import
 
@@ -53,7 +53,7 @@ APME currently scans only YAML content. These rules extend scanning to Python fi
 - [ ] M034 detects `from ansible.compat.importlib_resources import` and `import ansible.compat.importlib_resources`
 - [ ] Rules ignore non-plugin Python files (tests, scripts)
 - [ ] Rules report file path and line number
-- [ ] Unit tests cover all 4 patterns
+- [ ] Unit tests cover all 4 patterns (positive and negative cases per table below)
 - [ ] `tox -e lint` passes
 - [ ] `tox -e unit` passes with coverage
 
@@ -64,25 +64,53 @@ APME currently scans only YAML content. These rules extend scanning to Python fi
 Native validator extension—no new validator service needed:
 
 ```python
-# Regex patterns — module deprecations (M031, M034) match both import forms;
-# class deprecations (M032, M033) appear only as `from X import Y`.
+# Regex patterns — applied per line with re.MULTILINE after preprocessing.
+# Module deprecations (M031, M034) match both import forms; class deprecations
+# (M032, M033) appear only as `from X import Y`.
+#
+# Preprocessing (before matching):
+#   1. Split source into physical lines.
+#   2. Strip trailing `# ...` comments (not inside string literals).
+#   3. Skip lines that are only whitespace or comments.
+#   4. Match patterns anchored to line start (^\s*).
+#
+# Module patterns use (?![.\w]) after the final segment to reject longer names
+# (e.g. `ansible.plugins.cache.base_extra`). Class patterns use \b word
+# boundaries to reject suffixed names (e.g. `AnsibleFilterTypeErrorExtra`).
+# Plain-import patterns accept comma-separated and `as alias` forms.
+
+_MODULE_SUFFIX = r"(?![.\w])"  # reject longer dotted module names
+_IMPORT_END = r"(?:\s*[,;]|\s+as\s+\w+|\s*$)"  # comma, semicolon, as-alias, EOL
+
 DEPRECATED_IMPORTS = {
     "M031": [
-        r"from\s+ansible\.plugins\.cache\.base\s+import",
-        r"import\s+ansible\.plugins\.cache\.base(?:\s|;|$)",
+        rf"^\s*from\s+ansible\.plugins\.cache\.base\s+import\b",
+        rf"^\s*import\s+ansible\.plugins\.cache\.base{_MODULE_SUFFIX}{_IMPORT_END}",
     ],
     "M032": [
-        r"from\s+ansible\.errors\s+import\s+.*AnsibleFilterTypeError",
+        r"^\s*from\s+ansible\.errors\s+import\s+.*\bAnsibleFilterTypeError\b",
     ],
     "M033": [
-        r"from\s+ansible\.errors\s+import\s+.*_AnsibleActionDone",
+        r"^\s*from\s+ansible\.errors\s+import\s+.*\b_AnsibleActionDone\b",
     ],
     "M034": [
-        r"from\s+ansible\.compat\.importlib_resources\s+import",
-        r"import\s+ansible\.compat\.importlib_resources(?:\s|;|$)",
+        rf"^\s*from\s+ansible\.compat\.importlib_resources\s+import\b",
+        rf"^\s*import\s+ansible\.compat\.importlib_resources{_MODULE_SUFFIX}{_IMPORT_END}",
     ],
 }
 ```
+
+### Pattern test matrix
+
+| Rule | Positive (must match) | Negative (must not match) |
+|------|----------------------|---------------------------|
+| M031 | `from ansible.plugins.cache.base import BaseCache` | `from ansible.plugins.cache.base_extra import X` |
+| M031 | `import ansible.plugins.cache.base` | `# from ansible.plugins.cache.base import X` (comment) |
+| M031 | `import ansible.plugins.cache.base, other` | `"import ansible.plugins.cache.base"` (string literal) |
+| M031 | `import ansible.plugins.cache.base as cache` | |
+| M032 | `from ansible.errors import AnsibleFilterTypeError` | `from ansible.errors import AnsibleFilterTypeErrorExtra` |
+| M033 | `from ansible.errors import _AnsibleActionDone` | `from ansible.errors import _AnsibleActionDoneExtra` |
+| M034 | `import ansible.compat.importlib_resources, foo` | `import ansible.compat.importlib_resources_v2` |
 
 ### File Discovery
 
