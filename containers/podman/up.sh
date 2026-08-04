@@ -413,6 +413,9 @@ if [[ ! -f "$ABBENAY_CONFIG_DIR/config.yaml" ]]; then
     echo "Seeded Abbenay config from containers/abbenay/config.yaml.example"
   fi
 fi
+# Relabel seeded files while still host-owned; chcon after podman unshare
+# chown to a subordinate UID can fail on Enforcing hosts.
+_relabel_host_path_for_podman "$ABBENAY_CONFIG_DIR"
 if command -v podman >/dev/null 2>&1; then
   if ! podman unshare chown -R 1001:1001 "$ABBENAY_CONFIG_DIR"; then
     echo "ERROR: could not chown Abbenay config dir to 1001:1001 via podman unshare" >&2
@@ -422,8 +425,6 @@ else
   echo "ERROR: podman is required to set Abbenay config ownership (UID 1001)" >&2
   exit 1
 fi
-# Re-relabel after seed/chown so config.yaml itself is container_file_t.
-_relabel_host_path_for_podman "$ABBENAY_CONFIG_DIR"
 _relabel_host_path_for_podman "$ROOT/containers/otel-collector/config.yaml"
 if [[ -n "$ABBENAY_CA_BUNDLE" ]]; then
   _relabel_host_path_for_podman "$ABBENAY_CA_BUNDLE"
