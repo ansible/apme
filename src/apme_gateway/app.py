@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from apme_gateway._galaxy_proxy_sync import schedule_push
+from apme_gateway.api.abbenay_proxy import router as abbenay_proxy_router
 from apme_gateway.api.feedback import router as feedback_router
 from apme_gateway.api.operation_router import operation_router
 from apme_gateway.api.router import router
@@ -45,14 +46,17 @@ def create_app() -> FastAPI:
         description=(
             "Reporting persistence and REST API for projects, activity, "
             "and operations (ADR-020 / ADR-029 / ADR-052). Public contract "
-            "under /api/v1 (ADR-060)."
+            "under /api/v1 (ADR-060). Abbenay admin HTTP proxy (ADR-070)."
         ),
         version="0.1.0",
         lifespan=_lifespan,
     )
+    # Main router first so GET /api/v1/ai/models (Primary) wins over the
+    # ADR-070 Abbenay admin catch-all /api/v1/ai/{path}.
     app.include_router(router)
     app.include_router(feedback_router)
     app.include_router(operation_router)
+    app.include_router(abbenay_proxy_router)
     from apme_engine.observability.http_middleware import HttpMetricsMiddleware
 
     app.add_middleware(HttpMetricsMiddleware, service="gateway")

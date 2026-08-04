@@ -4,6 +4,52 @@ This guide covers configuring APME's Abbenay AI service for Tier 2
 (AI-assisted) remediation. Abbenay supports multiple LLM backends via the
 Vercel AI SDK.
 
+## Gateway admin proxy (ADR-070)
+
+In the Simple in-pod topology (ADR-069 / ADR-070), Abbenay serves HTTP admin
+and gRPC on loopback (`--host 127.0.0.1 --port 8787` and
+`--grpc-host 127.0.0.1 --grpc-port 50057`; image ≥ v2026.8.0). No cluster
+Service or hostPort — Helm Simple and Podman share a netns, so Primary/
+Gateway reach Abbenay at `127.0.0.1`. The Gateway reverse-proxies an
+**allowlisted** admin surface:
+
+| Gateway | Abbenay |
+|---------|---------|
+| `GET/POST /api/v1/ai/config` | `/api/config` |
+| `GET /api/v1/ai/engines` | `/api/engines` |
+| `GET /api/v1/ai/providers` | `/api/providers` |
+| `POST /api/v1/ai/provider/{id}/configure` | `/api/provider/{id}/configure` |
+| `DELETE /api/v1/ai/provider/{id}` | `/api/provider/{id}` |
+
+`GET /api/v1/ai/models` remains Primary → Abbenay gRPC (`ListAIModels`). Chat
+is **not** proxied. Set `APME_ABBENAY_HTTP_URL` (default
+`http://127.0.0.1:8787`) and `APME_ABBENAY_HTTP_TOKEN` on the Gateway (same
+secret as `ABBENAY_API_TOKEN` / `abbenay.token` in Helm).
+
+### Writable config volume (#498)
+
+Runtime admin writes (configure / delete provider) persist on a **writable**
+Abbenay config directory. Deploy-time values seed that directory once; after
+the first write, the runtime file is the source of truth.
+
+| Deploy | Seed | Writable volume | Notes |
+|--------|------|-----------------|-------|
+| **Helm** | ConfigMap `*-abbenay-config` (from `abbenay.providers`) | `emptyDir` by default; optional PVC via `persistence.abbenay.enabled=true` | Init `init-abbenay-config` copies seed only if `config.yaml` is absent. Mount: `/etc/abbenay-config`. |
+| **Podman** | `containers/abbenay/config.yaml` (or `.example`) on first `tox -e up` | Host dir `containers/abbenay/config/` → `/home/abbenay/.config/abbenay` | `up.sh` seeds when the dir has no `config.yaml`, then `podman unshare chown -R 1001:1001` so UID 1001 can write under rootless Podman. Dir is gitignored. |
+
+Helm PVC knobs (`persistence.abbenay.*`):
+
+```yaml
+persistence:
+  abbenay:
+    enabled: true    # false = emptyDir (lost on pod restart)
+    size: 100Mi
+    storageClass: ""
+    accessMode: ReadWriteOnce
+```
+
+See [ADR-070](../../.sdlc/adrs/ADR-070-gateway-abbenay-admin-proxy.md) §6.
+
 ---
 
 ## Supported Engines

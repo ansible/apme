@@ -122,6 +122,11 @@ jobs:
     needs: build-images
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    outputs:
+      consumer_tags: ${{ steps.tags.outputs.tags }}
+      owner_lc: ${{ steps.owner.outputs.lc }}
+      quay_enabled: ${{ steps.quay-check.outputs.enabled }}
+      quay_ns: ${{ steps.quay-check.outputs.ns }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v6
 
@@ -172,26 +177,155 @@ jobs:
         env:
           DOCKER_METADATA_OUTPUT_JSON: ${{ steps.meta.outputs.json }}
         run: |
-          jq -r '.tags[]' <<<"$DOCKER_METADATA_OUTPUT_JSON" \
-            | awk -F: '{print $NF}' \
-            | sort -u \
-            > /tmp/consumer-tags.txt
+          mapfile -t tag_lines < <(
+            jq -r '.tags[]' <<<"$DOCKER_METADATA_OUTPUT_JSON" \
+              | awk -F: '{print $NF}' \
+              | sort -u
+          )
+          printf '%s\n' "${tag_lines[@]}" > /tmp/consumer-tags.txt
           echo "Consumer tags:"
           cat /tmp/consumer-tags.txt
+          {
+            echo 'tags<<EOF'
+            printf '%s\n' "${tag_lines[@]}"
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
 
       - name: Merge multi-arch manifests
         env:
           GHCR_REGISTRY: ${{ env.GHCR_REGISTRY }}
           QUAY_REGISTRY: ${{ env.QUAY_REGISTRY }}
+          OWNER_LC: ${{ steps.owner.outputs.lc }}
+          QUAY_ENABLED: ${{ steps.quay-check.outputs.enabled }}
+          QUAY_NS: ${{ steps.quay-check.outputs.ns }}
           # Parallel imagetools create across images (merge was the wall-clock bottleneck).
           MERGE_PARALLELISM: "6"
         run: |
           args=(
-            --owner "${{ steps.owner.outputs.lc }}"
+            --owner "$OWNER_LC"
             --sha "${{ github.sha }}"
             --tags-file /tmp/consumer-tags.txt
           )
-          if [ "${{ steps.quay-check.outputs.enabled }}" = "true" ]; then
-            args+=(--quay-ns "${{ steps.quay-check.outputs.ns }}")
+          if [ "$QUAY_ENABLED" = "true" ]; then
+            args+=(--quay-ns "$QUAY_NS")
           fi
           ./containers/ci/merge-manifests.sh "${args[@]}"
+
+  supply-chain:
+    needs: merge-manifests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    outputs:
+      subjects: ${{ steps.subjects.outputs.subjects }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v6
+        with:
+          persist-credentials: false
+
+      - name: Restore consumer tags from merge-manifests
+        env:
+          CONSUMER_TAGS: ${{ needs.merge-manifests.outputs.consumer_tags }}
+        run: |
+          printf '%s\n' "$CONSUMER_TAGS" > /tmp/consumer-tags.txt
+          echo "Consumer tags:"
+          cat /tmp/consumer-tags.txt
+
+      - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4
+
+      - uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4
+        with:
+          registry: ${{ env.GHCR_REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4
+        if: needs.merge-manifests.outputs.quay_enabled == 'true'
+        with:
+          registry: ${{ env.QUAY_REGISTRY }}
+          username: ${{ secrets.QUAY_USERNAME }}
+          password: ${{ secrets.QUAY_PASSWORD }}
+
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8
+        with:
+          enable-cache: false
+
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Sign images and generate container SBOMs
+        env:
+          GHCR_REGISTRY: ${{ env.GHCR_REGISTRY }}
+          QUAY_REGISTRY: ${{ env.QUAY_REGISTRY }}
+          OWNER_LC: ${{ needs.merge-manifests.outputs.owner_lc }}
+          QUAY_ENABLED: ${{ needs.merge-manifests.outputs.quay_enabled }}
+          QUAY_NS: ${{ needs.merge-manifests.outputs.quay_ns }}
+        run: |
+          args=(
+            --owner "$OWNER_LC"
+            --tags-file /tmp/consumer-tags.txt
+            --output-dir /tmp/sboms/containers
+            --list-subjects /tmp/subjects.json
+          )
+          if [ "$QUAY_ENABLED" = "true" ]; then
+            args+=(--quay-ns "$QUAY_NS")
+          fi
+          ./containers/ci/supply-chain.sh "${args[@]}"
+
+      - name: Generate Python wheel SBOM
+        run: ./containers/ci/generate-python-sbom.sh --output-dir /tmp/sboms/python
+
+      - name: Upload release SBOM artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-sboms-${{ github.sha }}
+          path: /tmp/sboms/
+          retention-days: 90
+
+      - name: Write provenance subject matrix
+        id: subjects
+        run: |
+          if [ ! -s /tmp/subjects.json ] || [ "$(jq 'length' /tmp/subjects.json)" -eq 0 ]; then
+            echo "No provenance subjects produced" >&2
+            exit 1
+          fi
+          echo "subjects=$(jq -c '.' /tmp/subjects.json)" >> "$GITHUB_OUTPUT"
+
+  attest-provenance:
+    needs: [merge-manifests, supply-chain]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    strategy:
+      fail-fast: false
+      matrix:
+        subject: ${{ fromJson(needs.supply-chain.outputs.subjects) }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v6
+        with:
+          persist-credentials: false
+
+      - uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4
+        with:
+          registry: ${{ env.GHCR_REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4
+        if: needs.merge-manifests.outputs.quay_enabled == 'true'
+        with:
+          registry: ${{ env.QUAY_REGISTRY }}
+          username: ${{ secrets.QUAY_USERNAME }}
+          password: ${{ secrets.QUAY_PASSWORD }}
+
+      - uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-name: ${{ matrix.subject.name }}
+          subject-digest: ${{ matrix.subject.digest }}
+          push-to-registry: true

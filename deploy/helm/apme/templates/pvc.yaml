@@ -45,3 +45,22 @@ spec:
   resources:
     requests:
       storage: {{ .Values.persistence.proxyCache.size }}
+{{- if and .Values.abbenay.enabled .Values.persistence.abbenay.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "apme.fullname" . }}-abbenay-config
+  labels:
+    {{- include "apme.labels" . | nindent 4 }}
+    app.kubernetes.io/component: abbenay
+spec:
+  accessModes:
+    - {{ .Values.persistence.abbenay.accessMode }}
+  {{- if .Values.persistence.abbenay.storageClass }}
+  storageClassName: {{ .Values.persistence.abbenay.storageClass | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.abbenay.size }}
+{{- end }}

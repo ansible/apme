@@ -143,7 +143,16 @@ assert_template_contains "gateway sidecar" "${RENDER}" $'- name: gateway\n'
 assert_template_contains "ui sidecar" "${RENDER}" $'- name: ui\n'
 assert_template_contains "abbenay sidecar" "${RENDER}" $'- name: abbenay\n'
 assert_template_contains "Abbenay loopback" "${RENDER}" "--grpc-host"
-assert_template_contains "Abbenay loopback host" "${RENDER}" "127.0.0.1"
+assert_template_contains "Abbenay HTTP web (ADR-070)" "${RENDER}" '"web"'
+assert_template_contains "Abbenay HTTP args ordered (ADR-070)" "${RENDER}" \
+  $'- "--host"\n            - "127.0.0.1"\n            - "--port"\n            - "8787"'
+assert_template_contains "Gateway Abbenay HTTP URL (ADR-070)" "${RENDER}" 'value: "http://127.0.0.1:8787"'
+assert_template_lacks "no Abbenay HTTP Service port" "${RENDER}" "name: abbenay-http"
+assert_template_lacks "no Abbenay HTTP hostPort" "${RENDER}" $'containerPort: 8787\n          hostPort:'
+assert_template_contains "init-abbenay-config init container (#498)" "${RENDER}" $'- name: init-abbenay-config\n'
+assert_template_contains "abbenay-config-seed volume (#498)" "${RENDER}" 'abbenay-config-seed'
+assert_template_contains "abbenay-config emptyDir by default (#498)" "${RENDER}" $'name: abbenay-config\n          emptyDir'
+assert_template_lacks "abbenay-config data mount not readOnly (#498)" "${RENDER}" $'name: abbenay-config\n              readOnly: true'
 assert_template_contains "reporting localhost" "${RENDER}" 'value: "127.0.0.1:50060"'
 assert_template_contains "abbenay addr localhost" "${RENDER}" 'value: "127.0.0.1:50057"'
 assert_template_contains "gateway primary addr localhost" "${RENDER}" 'value: "127.0.0.1:50051"'

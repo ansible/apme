@@ -5,6 +5,13 @@
 #
 # Consumers: the "apme" consumer uses a well-known dev token so the
 # Primary container can authenticate without per-dev setup.
+#
+# ADR-070: HTTP admin (Gateway reverse-proxies /api/v1/ai/* → /api/*).
+# Set ABBENAY_API_TOKEN in .env (pod.yaml uses the same value as APME_ABBENAY_TOKEN).
+
+server:
+  host: "127.0.0.1"
+  api_token_env: ABBENAY_API_TOKEN
 
 providers:
   openrouter:

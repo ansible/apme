@@ -172,7 +172,12 @@ Gateway DB and Abbenay down together.
   (`-engine`, `-gateway`, `-ui`) select this pod for Ingress/port-forward.
 - **UI** (optional): nginx SPA; `ui.enabled: false` via `values-portal.yaml`
   for portal / Backstage (ADR-030 Option B).
-- **Abbenay** (optional): AI provider on `127.0.0.1:50057`.
+- **Abbenay** (optional): AI provider gRPC on `127.0.0.1:50057` plus HTTP
+  admin on `127.0.0.1:8787` (no Service / hostPort). Gateway reverse-proxies
+  **allowlisted** admin paths under `/api/v1/ai/` → Abbenay `/api/` (config,
+  engines, providers, provider configure/delete; not chat/sessions/OpenAI-compat) —
+  see [ADR-070](../../../.sdlc/adrs/ADR-070-gateway-abbenay-admin-proxy.md).
+  `GET /api/v1/ai/models` remains Primary `ListAIModels`.
 
 ## Key values
 
@@ -188,8 +193,8 @@ Gateway DB and Abbenay down together.
 | `ui.enabled` | `true` | Include UI sidecar (`false` via `values-portal.yaml`) |
 | `ui.replicas` | `1` | Must be `1` when UI enabled |
 | `abbenay.enabled` | `false` | Enable AI provider sidecar |
-| `abbenay.token` | `""` | Abbenay service token (required when `abbenay.enabled=true`) |
-| `abbenay.image` | `ghcr.io/redhat-developer/abbenay:2026.4.1-alpha` | Abbenay image |
+| `abbenay.token` | `""` | Abbenay gRPC + HTTP admin token (required when `abbenay.enabled=true`) |
+| `abbenay.image` | `ghcr.io/redhat-developer/abbenay:v2026.8.0` | Abbenay image |
 | `abbenay.providers` | `{}` | LLM provider map (see [ABBENAY_AI.md](../../../docs/guides/ABBENAY_AI.md)) |
 | `abbenay.aiModel` | `""` | Default AI model ID |
 | `ingress.enabled` | `false` | Create Kubernetes Ingress |
@@ -199,6 +204,8 @@ Gateway DB and Abbenay down together.
 | `podDisruptionBudget.enabled` | `false` | Enable PDB |
 | `persistence.sessions.size` | `10Gi` | Session venv PVC size |
 | `persistence.gateway.size` | `5Gi` | Gateway DB PVC size |
+| `persistence.abbenay.enabled` | `false` | When `true` (and `abbenay.enabled`), PVC for Abbenay runtime config; otherwise `emptyDir` |
+| `persistence.abbenay.size` | `100Mi` | Abbenay config PVC size (seed-once from ConfigMap; runtime SoT after configure) |
 
 See [`values.yaml`](values.yaml) for the complete reference with all resource
 limits, tolerations, affinity, and topology spread constraints.

@@ -65,8 +65,9 @@ spec:
       securityContext:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- if .Values.ui.enabled }}
+      {{- if or .Values.ui.enabled .Values.abbenay.enabled }}
       initContainers:
+        {{- if .Values.ui.enabled }}
         - name: init-nginx-conf
           image: {{ include "apme.image" (dict "registry" .Values.image.registry "name" "ui" "tag" .Values.image.tag "fallbackTag" .Chart.AppVersion) }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
@@ -78,6 +79,30 @@ spec:
           volumeMounts:
             - name: nginx-conf
               mountPath: /mnt/conf.d
+        {{- end }}
+        {{- if .Values.abbenay.enabled }}
+        - name: init-abbenay-config
+          image: {{ .Values.abbenay.image }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          command:
+            - sh
+            - -c
+            - |
+              mkdir -p /mnt/config/abbenay
+              if [ ! -f /mnt/config/abbenay/config.yaml ]; then
+                cp /seed/config.yaml /mnt/config/abbenay/config.yaml
+              fi
+          volumeMounts:
+            - name: abbenay-config-seed
+              mountPath: /seed
+              readOnly: true
+            - name: abbenay-config
+              mountPath: /mnt/config
+        {{- end }}
       {{- end }}
       containers:
         # -- Primary orchestrator
@@ -355,6 +380,16 @@ spec:
               value: "0.0.0.0"
             - name: APME_GATEWAY_HTTP_PORT
               value: "8080"
+            {{- if .Values.abbenay.enabled }}
+            # ADR-070: reverse-proxy Abbenay HTTP admin on loopback
+            - name: APME_ABBENAY_HTTP_URL
+              value: "http://127.0.0.1:8787"
+            - name: APME_ABBENAY_HTTP_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $fullname }}-secrets
+                  key: abbenay-token
+            {{- end }}
             {{- if .Values.collectionHealth.enabled }}
             - name: COLLECTION_HEALTH_GRPC_ADDRESS
               value: "127.0.0.1:50058"
@@ -447,9 +482,24 @@ spec:
           securityContext:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-          args: ["daemon", "--grpc-host", "127.0.0.1", "--grpc-port", "50057"]
+          # ADR-070: HTTP admin + gRPC on loopback (no Service/hostPort 8787).
+          args:
+            - "web"
+            - "--host"
+            - "127.0.0.1"
+            - "--port"
+            - "8787"
+            - "--grpc-host"
+            - "127.0.0.1"
+            - "--grpc-port"
+            - "50057"
           env:
             - name: APME_ABBENAY_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $fullname }}-secrets
+                  key: abbenay-token
+            - name: ABBENAY_API_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: {{ $fullname }}-secrets
@@ -523,8 +573,7 @@ spec:
             {{- toYaml .Values.abbenay.resources | nindent 12 }}
           volumeMounts:
             - name: abbenay-config
-              mountPath: /etc/abbenay-config/abbenay
-              readOnly: true
+              mountPath: /etc/abbenay-config
             {{- if and $hasVertexADC $hasGcpCreds }}
             - name: gcp-credentials
               mountPath: /var/run/secrets/gcp
@@ -551,9 +600,16 @@ spec:
           emptyDir: {}
         {{- end }}
         {{- if .Values.abbenay.enabled }}
-        - name: abbenay-config
+        - name: abbenay-config-seed
           configMap:
             name: {{ $fullname }}-abbenay-config
+        - name: abbenay-config
+          {{- if .Values.persistence.abbenay.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ $fullname }}-abbenay-config
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
         {{- if and $hasVertexADC $hasGcpCreds }}
         - name: gcp-credentials
           secret:
