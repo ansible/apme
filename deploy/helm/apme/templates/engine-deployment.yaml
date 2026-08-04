@@ -75,7 +75,7 @@ spec:
           securityContext:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-          command: ["sh", "-c", "cp -a /etc/nginx/conf.d/. /mnt/conf.d/"]
+          command: ["sh", "-c", "cp -a -r --no-preserve=mode,ownership,timestamps /etc/nginx/conf.d/. /mnt/conf.d/"]
           volumeMounts:
             - name: nginx-conf
               mountPath: /mnt/conf.d

@@ -154,7 +154,7 @@ ui:
 # See docs/guides/ABBENAY_AI.md for GCP-specific setup.
 abbenay:
   enabled: false
-  image: ghcr.io/redhat-developer/abbenay:v2026.8.0
+  image: ghcr.io/redhat-developer/abbenay:v2026.8.1
   # -- Token APME uses to authenticate with Abbenay (required when enabled)
   token: ""
   # -- Override the default model APME selects (e.g. "vertex-claude/claude-sonnet-4-6")
@@ -279,10 +279,9 @@ ingress:
   tls: []
 
 # -- OpenShift Route (alternative to Ingress for OCP clusters)
-# Set route.host to serve the UI and API on the same domain (e.g.
-# "apme.apps.ocp.example.com").  When host is empty, OpenShift
-# auto-assigns a different host per Route and the UI/API will be on
-# separate domains.
+# When ui.enabled=true, route.host is required so the UI (/) and Gateway
+# (/api) Routes share one hostname. When ui.enabled=false (portal), leave
+# host empty to let OpenShift auto-assign the API Route hostname.
 route:
   enabled: false
   host: ""
