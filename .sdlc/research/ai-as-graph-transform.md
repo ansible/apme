@@ -12,7 +12,7 @@ uses `UnitSegmenter` to chunk tasks by line range, sends snippets to the LLM,
 and returns patches as diffs.  That path is disconnected from the
 `GraphRemediationEngine` convergence loop:
 
-```
+```text
 Historical flow (pre-graph AI gate):
   GraphRemediationEngine.remediate()    # Tier 1 only
     └─ converge: scan → transform → rescan → repeat

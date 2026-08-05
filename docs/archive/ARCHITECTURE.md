@@ -156,7 +156,7 @@ All gRPC servers use `grpc.aio` (fully async). This means multiple scan requests
 | Engine | `asyncio.gather()` fan-out; engine scan via `run_in_executor()` | 16 |
 | Native | CPU-bound rules via `run_in_executor()` | 32 |
 | OPA | Blocking `opa eval` subprocess via `run_in_executor()` | 32 |
-| Ansible | Blocking venv build + subprocess via `run_in_executor()` | 8 |
+| Ansible | Blocking subprocess via `run_in_executor()` (read-only `venv_path` from Engine) | 8 |
 | Gitleaks | Blocking subprocess via `run_in_executor()` | 16 |
 
 Each service's `maximum_concurrent_rpcs` is configurable via environment variable (e.g., `APME_ENGINE_MAX_RPCS`).
@@ -336,7 +336,9 @@ CLI displays with -v / -vv
 | `-v` | Engine time, validator summaries (tree format), top 10 slowest rules |
 | `-vv` | Full per-rule breakdown for every validator, metadata, engine phase timing |
 
-With `--json`, the `diagnostics` key is included when `-v` or `-vv` is set.
+`SessionEvent` / `SessionResult` do not carry `ScanDiagnostics`; the aggregated
+message is emitted on the `FixCompletedEvent` reporting path. CLI `-v` / `-vv`
+surfaces pipeline `ProgressUpdate` logs from the session stream.
 
 ## Health checks
 

@@ -15,10 +15,13 @@ APME supports multiple deployment methods depending on your environment and need
 
 Full deployment methods (Podman, bootc, Helm) run the complete engine stack
 (Engine + all validators + Galaxy Proxy). The CLI daemon runs Engine plus core
-validators (Native, OPA, Ansible) + Galaxy Proxy + Gateway HTTP and Reporting
-gRPC (ADR-049). Optional validators (Gitleaks, Collection Health, Dep Audit) are
-not started unless `include_optional=True`. The difference from full deployment
-is lifecycle management and additional pod-level services (UI, Abbenay AI).
+validators (Native, OPA, Ansible) + Galaxy Proxy. Optional validators
+(Gitleaks, Collection Health, Dep Audit) are not started unless
+`include_optional=True`. Gateway HTTP/Reporting gRPC co-location in the local
+daemon is planned (ADR-049) but not implemented in `launcher.py` yet — use the
+Podman pod or start Gateway separately for REST-backed commands such as
+`apme sbom`. The difference from full deployment is lifecycle management and
+additional pod-level services (Gateway, UI, Abbenay AI, OTel Collector).
 
 ---
 
@@ -95,7 +98,7 @@ The start script (`up.sh`) automatically mounts the bundle into the `abbenay`, `
 tox -e up
 ```
 
-This runs `podman play kube containers/podman/pod.yaml`, which starts the pod `apme-pod` with all service containers (Engine, Native, OPA, Ansible, Gitleaks, Collection Health, Dep Audit, Galaxy Proxy, Gateway, UI, Abbenay). The `up.sh` script sources `containers/abbenay/.env` to inject LLM API keys into the Abbenay container. A sessions directory is created for session-scoped venvs.
+This runs `podman play kube containers/podman/pod.yaml`, which starts the pod `apme-pod` with twelve service containers (Engine, Native, OPA, Ansible, Gitleaks, Collection Health, Dep Audit, Galaxy Proxy, Gateway, UI, Abbenay, OTel Collector). The `up.sh` script sources `containers/abbenay/.env` to inject LLM API keys into the Abbenay container. A sessions directory is created for session-scoped venvs.
 
 ### Run CLI commands
 

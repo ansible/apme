@@ -86,11 +86,10 @@ read-only to access the resolved venv for runtime checks.
 
 ### Workspace Volume
 
-The CLI container bind-mounts the user's current working directory as
-read-only. The CLI reads files from this mount and sends their bytes through
-`FixSession`; Engine receives the uploaded file bytes rather than reading
-the mount directly. For pod-mode CLI (`--pod apme-pod`), the mount uses
-`:ro,Z` for SELinux compatibility.
+The CLI container bind-mounts the user's current working directory at
+`/workspace` (`:Z` for SELinux). The CLI reads files from this mount and sends
+their bytes through `FixSession`; Engine receives the uploaded file bytes rather
+than reading the mount directly.
 
 ## Horizontal Scaling
 

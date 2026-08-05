@@ -60,7 +60,7 @@ The **API Gateway** is a new container in the pod. It:
 | Concern | Engine | Gateway |
 |---------|---------|---------|
 | Protocol | gRPC only | HTTP/WS → gRPC translation |
-| State | Stateless (each operation is independent) | Stateful (activity history, users, queue) |
+| State | Ephemeral `SessionState` for `FixSession` (no durable DB); Gateway owns persistence | Stateful (activity history, users, queue) |
 | Scaling | Scale with pod | Could be extracted for multi-pod |
 | Auth | None (internal trust) | OAuth2/OIDC, API tokens |
 | Dependencies | grpcio, engine | FastAPI, SQLAlchemy, auth libraries |

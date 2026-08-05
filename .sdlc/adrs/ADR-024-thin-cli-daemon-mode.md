@@ -198,12 +198,13 @@ fix workflow design.
 New module `src/apme_engine/daemon/launcher.py`:
 
 - `start_daemon()` — fork a background process that starts Engine, Native,
-  OPA, Ansible, Galaxy Proxy, Gateway HTTP, and Gateway Reporting gRPC on
-  localhost (ADR-049). Engine and validators use async gRPC; Galaxy Proxy and
-  Gateway HTTP intentionally use uvicorn/HTTP (PEP 503/admin and REST,
-  respectively — documented HTTP exceptions to gRPC-only inter-service traffic).
-  Write PID and ports to `~/.apme-data/daemon.json`. Optional services
-  (`gitleaks`, `collection_health`, `dep_audit`) start when
+  OPA, Ansible, and Galaxy Proxy on localhost. Engine and validators use async
+  gRPC; Galaxy Proxy intentionally uses uvicorn/HTTP (PEP 503 — documented
+  HTTP exception to gRPC-only inter-service traffic). Gateway HTTP and
+  Reporting gRPC co-location in the local daemon is specified by ADR-049 but
+  not yet implemented in `launcher.py` (integration tests and `apme sbom` start
+  Gateway separately today). Write PID and ports to `~/.apme-data/daemon.json`.
+  Optional services (`gitleaks`, `collection_health`, `dep_audit`) start when
   `include_optional=True`.
 - `stop_daemon()` — read PID from state file, SIGTERM, remove state file.
 - `daemon_status()` — check PID liveness, return port info and uptime.
@@ -223,15 +224,14 @@ State file (`~/.apme-data/daemon.json`):
     "native": "127.0.0.1:50055",
     "opa": "127.0.0.1:50054",
     "ansible": "127.0.0.1:50053",
-    "galaxy_proxy": "127.0.0.1:8765",
-    "gateway_http": "127.0.0.1:8080",
-    "gateway_grpc": "127.0.0.1:50060"
+    "galaxy_proxy": "127.0.0.1:8765"
   }
 }
 ```
 
 `services` is the discovery map written by `start_daemon()` (Engine-core
-endpoints plus Gateway HTTP and Reporting gRPC per ADR-049).
+endpoints). When ADR-049 embedding lands, `gateway_http` and `gateway_grpc`
+entries will be added for CLI Gateway discovery.
 Version field enables auto-restart when the installed package is updated.
 
 ### Backend discovery order

@@ -99,9 +99,10 @@ As more CLI subcommands migrate to Gateway REST (health, session list, etc.), th
 
 ## Recommendation
 
-**Option A (Embed Gateway in Daemon)**. The Galaxy Proxy precedent proves the pattern works. The daemon already runs a uvicorn app (`create_app()`) as an `asyncio.create_task()` — the Gateway HTTP server is structurally identical. The ReportingServicer can be added to the existing gRPC server or on a separate port. This keeps the "just works" UX promise from ADR-024 and enables the CLI→REST migration path without friction.
-
-The key implementation detail: Engine needs to send `FixCompletedEvent` to the co-located ReportingServicer. In daemon mode this is localhost gRPC on port 50060 (same as pod). The existing `GrpcReportingSink` already handles this — it just needs `APME_REPORTING_ADDRESS` set to the local Gateway gRPC port.
+**Option A (Embed Gateway in Daemon)** — **Accepted** (see ADR-049). The Galaxy
+Proxy precedent proves the pattern works. Implementation in `launcher.py` is
+pending; integration tests and `apme sbom` start Gateway as a separate process
+today.
 
 ---
 

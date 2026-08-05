@@ -200,13 +200,13 @@ token exchange, API root normalization) from the proxy.  Replace with
 
 - Proxy runs `ansible-galaxy collection download` (keeps outbound fetches in
   the pod's designated external-facing service, preserving invariant 11).
-  Engine sends `GalaxyServerDef` values and collection specs to the proxy
-  over gRPC (no shared volume). The proxy creates and removes its own
-  temporary `ansible.cfg` for each download. No Engine-side Galaxy download
-  fallback and no Engine-owned credential file. Local-daemon mode may write
-  `SessionState.galaxy_cfg_path` and set `ANSIBLE_CONFIG` for the in-process
-  proxy; pod/Helm mode provisions credentials via Gateway
-  `POST /admin/galaxy-config` (not Engine-to-proxy gRPC credential injection).
+  **Local daemon:** Engine forwards `GalaxyServerDef` values and collection
+  specs to Galaxy Proxy over gRPC; the proxy materializes a temporary
+  `ansible.cfg` per download. `SessionState.galaxy_cfg_path` may set
+  `ANSIBLE_CONFIG` for the in-process proxy. **Pod/Helm:** Gateway provisions
+  credentials via `POST /admin/galaxy-config`; Engine still forwards collection
+  specs to Galaxy Proxy over gRPC (no Engine-owned credential file). No
+  Engine-side Galaxy download fallback.
 - Proxy: convert local tarballs to wheels (endpoint or filesystem watcher)
 - Remove `GalaxyClient` upstream fetching from proxy
 

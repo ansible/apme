@@ -3548,7 +3548,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                     downstream.append(ServiceHealth(name=name, status=status, address=addr))
                 finally:
                     await channel.close(grace=None)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - health probe must degrade
                 if name in REQUIRED_VALIDATORS:
                     unhealthy = True
                 downstream.append(ServiceHealth(name=name, status=f"error: {e}", address=addr))
@@ -3591,7 +3591,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                             address=proxy_url,
                         )
                     )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - health probe must degrade
                 unhealthy = True
                 downstream.append(ServiceHealth(name="galaxy_proxy", status=f"error: {e}", address=proxy_url))
 

@@ -400,9 +400,9 @@ Validator → ValidateResponse.diagnostics (ValidatorDiagnostics)
                     ↓
 Engine aggregates all ValidatorDiagnostics + engine timing
                     ↓
-SessionEvent.diagnostics (ScanDiagnostics)
+FixCompletedEvent.diagnostics (ScanDiagnostics) on reporting path
                     ↓
-CLI displays with -v / -vv
+CLI -v / -vv surfaces ProgressUpdate logs from the session stream
 ```
 
 ### CLI Verbosity
@@ -413,7 +413,8 @@ CLI displays with -v / -vv
 | `-v` | Engine time, validator summaries (tree format), top 10 slowest rules |
 | `-vv` | Full per-rule breakdown for every validator, metadata, engine phase timing |
 
-With `--json`, the `diagnostics` key is included when `-v` or `-vv` is set.
+With `--json`, violation output is JSON; `-v` / `-vv` add `ProgressUpdate`
+timing logs from the session stream (not a `ScanDiagnostics` protobuf field).
 
 ---
 
