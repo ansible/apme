@@ -75,7 +75,7 @@ message RuleDefinition {
 }
 ```
 
-Primary populates this during `RegisterRules`. The Gateway exposes it via the rule catalog REST API.
+Engine populates this during `RegisterRules`. The Gateway exposes it via the rule catalog REST API.
 
 ### 4. Violation metadata: `ansible_core_version` key
 

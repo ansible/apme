@@ -148,7 +148,9 @@ incrementally.
 
 ### Neutral
 
-- The CLI is unaffected — it communicates via gRPC to Primary, not REST
+- Scan and remediate CLI paths are unaffected by this REST contract — they
+  communicate via gRPC to Engine. Commands that already use Gateway REST
+  (for example `apme sbom`) follow this ADR like any other REST consumer.
 - Internal gRPC interfaces between engine services are not covered by
   this ADR (they have no external consumers)
 

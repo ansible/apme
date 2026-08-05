@@ -4,7 +4,7 @@ import grpc
 import warnings
 
 from apme.v1 import common_pb2 as apme_dot_v1_dot_common__pb2
-from apme.v1 import primary_pb2 as apme_dot_v1_dot_primary__pb2
+from apme.v1 import engine_pb2 as apme_dot_v1_dot_engine__pb2
 
 GRPC_GENERATED_VERSION = '1.83.0'
 GRPC_VERSION = grpc.__version__
@@ -19,16 +19,16 @@ except ImportError:
 if _version_not_supported:
     raise RuntimeError(
         f'The grpc package installed is at version {GRPC_VERSION},'
-        + ' but the generated code in apme/v1/primary_pb2_grpc.py depends on'
+        + ' but the generated code in apme/v1/engine_pb2_grpc.py depends on'
         + f' grpcio>={GRPC_GENERATED_VERSION}.'
         + f' Please upgrade your grpc module to grpcio>={GRPC_GENERATED_VERSION}'
         + f' or downgrade your generated code using grpcio-tools<={GRPC_VERSION}.'
     )
 
 
-class PrimaryStub:
-    """Primary is the orchestrator daemon and sole API surface for all clients.
-    Clients send file bytes in, receive processed bytes out. The Primary
+class EngineStub:
+    """Engine is the orchestrator daemon and sole API surface for all clients.
+    Clients send file bytes in, receive processed bytes out. The Engine
     delegates internally to validators and remediation — clients never need
     to know the internal service topology.
     """
@@ -40,35 +40,35 @@ class PrimaryStub:
             channel: A grpc.Channel.
         """
         self.Format = channel.unary_unary(
-                '/apme.v1.Primary/Format',
-                request_serializer=apme_dot_v1_dot_primary__pb2.FormatRequest.SerializeToString,
-                response_deserializer=apme_dot_v1_dot_primary__pb2.FormatResponse.FromString,
+                '/apme.v1.Engine/Format',
+                request_serializer=apme_dot_v1_dot_engine__pb2.FormatRequest.SerializeToString,
+                response_deserializer=apme_dot_v1_dot_engine__pb2.FormatResponse.FromString,
                 _registered_method=True)
         self.FormatStream = channel.stream_unary(
-                '/apme.v1.Primary/FormatStream',
-                request_serializer=apme_dot_v1_dot_primary__pb2.ScanChunk.SerializeToString,
-                response_deserializer=apme_dot_v1_dot_primary__pb2.FormatResponse.FromString,
+                '/apme.v1.Engine/FormatStream',
+                request_serializer=apme_dot_v1_dot_engine__pb2.ScanChunk.SerializeToString,
+                response_deserializer=apme_dot_v1_dot_engine__pb2.FormatResponse.FromString,
                 _registered_method=True)
         self.Health = channel.unary_unary(
-                '/apme.v1.Primary/Health',
+                '/apme.v1.Engine/Health',
                 request_serializer=apme_dot_v1_dot_common__pb2.HealthRequest.SerializeToString,
                 response_deserializer=apme_dot_v1_dot_common__pb2.HealthResponse.FromString,
                 _registered_method=True)
         self.FixSession = channel.stream_stream(
-                '/apme.v1.Primary/FixSession',
-                request_serializer=apme_dot_v1_dot_primary__pb2.SessionCommand.SerializeToString,
-                response_deserializer=apme_dot_v1_dot_primary__pb2.SessionEvent.FromString,
+                '/apme.v1.Engine/FixSession',
+                request_serializer=apme_dot_v1_dot_engine__pb2.SessionCommand.SerializeToString,
+                response_deserializer=apme_dot_v1_dot_engine__pb2.SessionEvent.FromString,
                 _registered_method=True)
         self.ListAIModels = channel.unary_unary(
-                '/apme.v1.Primary/ListAIModels',
-                request_serializer=apme_dot_v1_dot_primary__pb2.ListAIModelsRequest.SerializeToString,
-                response_deserializer=apme_dot_v1_dot_primary__pb2.ListAIModelsResponse.FromString,
+                '/apme.v1.Engine/ListAIModels',
+                request_serializer=apme_dot_v1_dot_engine__pb2.ListAIModelsRequest.SerializeToString,
+                response_deserializer=apme_dot_v1_dot_engine__pb2.ListAIModelsResponse.FromString,
                 _registered_method=True)
 
 
-class PrimaryServicer:
-    """Primary is the orchestrator daemon and sole API surface for all clients.
-    Clients send file bytes in, receive processed bytes out. The Primary
+class EngineServicer:
+    """Engine is the orchestrator daemon and sole API surface for all clients.
+    Clients send file bytes in, receive processed bytes out. The Engine
     delegates internally to validators and remediation — clients never need
     to know the internal service topology.
     """
@@ -108,17 +108,17 @@ class PrimaryServicer:
         raise NotImplementedError('Method not implemented!')
 
 
-def add_PrimaryServicer_to_server(servicer, server):
+def add_EngineServicer_to_server(servicer, server):
     rpc_method_handlers = {
             'Format': grpc.unary_unary_rpc_method_handler(
                     servicer.Format,
-                    request_deserializer=apme_dot_v1_dot_primary__pb2.FormatRequest.FromString,
-                    response_serializer=apme_dot_v1_dot_primary__pb2.FormatResponse.SerializeToString,
+                    request_deserializer=apme_dot_v1_dot_engine__pb2.FormatRequest.FromString,
+                    response_serializer=apme_dot_v1_dot_engine__pb2.FormatResponse.SerializeToString,
             ),
             'FormatStream': grpc.stream_unary_rpc_method_handler(
                     servicer.FormatStream,
-                    request_deserializer=apme_dot_v1_dot_primary__pb2.ScanChunk.FromString,
-                    response_serializer=apme_dot_v1_dot_primary__pb2.FormatResponse.SerializeToString,
+                    request_deserializer=apme_dot_v1_dot_engine__pb2.ScanChunk.FromString,
+                    response_serializer=apme_dot_v1_dot_engine__pb2.FormatResponse.SerializeToString,
             ),
             'Health': grpc.unary_unary_rpc_method_handler(
                     servicer.Health,
@@ -127,25 +127,25 @@ def add_PrimaryServicer_to_server(servicer, server):
             ),
             'FixSession': grpc.stream_stream_rpc_method_handler(
                     servicer.FixSession,
-                    request_deserializer=apme_dot_v1_dot_primary__pb2.SessionCommand.FromString,
-                    response_serializer=apme_dot_v1_dot_primary__pb2.SessionEvent.SerializeToString,
+                    request_deserializer=apme_dot_v1_dot_engine__pb2.SessionCommand.FromString,
+                    response_serializer=apme_dot_v1_dot_engine__pb2.SessionEvent.SerializeToString,
             ),
             'ListAIModels': grpc.unary_unary_rpc_method_handler(
                     servicer.ListAIModels,
-                    request_deserializer=apme_dot_v1_dot_primary__pb2.ListAIModelsRequest.FromString,
-                    response_serializer=apme_dot_v1_dot_primary__pb2.ListAIModelsResponse.SerializeToString,
+                    request_deserializer=apme_dot_v1_dot_engine__pb2.ListAIModelsRequest.FromString,
+                    response_serializer=apme_dot_v1_dot_engine__pb2.ListAIModelsResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
-            'apme.v1.Primary', rpc_method_handlers)
+            'apme.v1.Engine', rpc_method_handlers)
     server.add_generic_rpc_handlers((generic_handler,))
-    server.add_registered_method_handlers('apme.v1.Primary', rpc_method_handlers)
+    server.add_registered_method_handlers('apme.v1.Engine', rpc_method_handlers)
 
 
  # This class is part of an EXPERIMENTAL API.
-class Primary:
-    """Primary is the orchestrator daemon and sole API surface for all clients.
-    Clients send file bytes in, receive processed bytes out. The Primary
+class Engine:
+    """Engine is the orchestrator daemon and sole API surface for all clients.
+    Clients send file bytes in, receive processed bytes out. The Engine
     delegates internally to validators and remediation — clients never need
     to know the internal service topology.
     """
@@ -164,9 +164,9 @@ class Primary:
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/apme.v1.Primary/Format',
-            apme_dot_v1_dot_primary__pb2.FormatRequest.SerializeToString,
-            apme_dot_v1_dot_primary__pb2.FormatResponse.FromString,
+            '/apme.v1.Engine/Format',
+            apme_dot_v1_dot_engine__pb2.FormatRequest.SerializeToString,
+            apme_dot_v1_dot_engine__pb2.FormatResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -191,9 +191,9 @@ class Primary:
         return grpc.experimental.stream_unary(
             request_iterator,
             target,
-            '/apme.v1.Primary/FormatStream',
-            apme_dot_v1_dot_primary__pb2.ScanChunk.SerializeToString,
-            apme_dot_v1_dot_primary__pb2.FormatResponse.FromString,
+            '/apme.v1.Engine/FormatStream',
+            apme_dot_v1_dot_engine__pb2.ScanChunk.SerializeToString,
+            apme_dot_v1_dot_engine__pb2.FormatResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -218,7 +218,7 @@ class Primary:
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/apme.v1.Primary/Health',
+            '/apme.v1.Engine/Health',
             apme_dot_v1_dot_common__pb2.HealthRequest.SerializeToString,
             apme_dot_v1_dot_common__pb2.HealthResponse.FromString,
             options,
@@ -245,9 +245,9 @@ class Primary:
         return grpc.experimental.stream_stream(
             request_iterator,
             target,
-            '/apme.v1.Primary/FixSession',
-            apme_dot_v1_dot_primary__pb2.SessionCommand.SerializeToString,
-            apme_dot_v1_dot_primary__pb2.SessionEvent.FromString,
+            '/apme.v1.Engine/FixSession',
+            apme_dot_v1_dot_engine__pb2.SessionCommand.SerializeToString,
+            apme_dot_v1_dot_engine__pb2.SessionEvent.FromString,
             options,
             channel_credentials,
             insecure,
@@ -272,9 +272,9 @@ class Primary:
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/apme.v1.Primary/ListAIModels',
-            apme_dot_v1_dot_primary__pb2.ListAIModelsRequest.SerializeToString,
-            apme_dot_v1_dot_primary__pb2.ListAIModelsResponse.FromString,
+            '/apme.v1.Engine/ListAIModels',
+            apme_dot_v1_dot_engine__pb2.ListAIModelsRequest.SerializeToString,
+            apme_dot_v1_dot_engine__pb2.ListAIModelsResponse.FromString,
             options,
             channel_credentials,
             insecure,

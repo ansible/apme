@@ -15,7 +15,7 @@ class GatewayConfig:
         grpc_listen: Address for the gRPC Reporting service.
         http_host: Host for the FastAPI HTTP server.
         http_port: Port for the FastAPI HTTP server.
-        primary_address: gRPC address of the Primary orchestrator.
+        engine_address: gRPC address of the Engine orchestrator.
         feedback_enabled: Enable the user feedback endpoint (POC feature).
         feedback_github_repo: GitHub repo for issue creation (e.g. ``owner/repo``).
         feedback_github_token: GitHub token with ``issues:write`` for feedback.
@@ -29,7 +29,7 @@ class GatewayConfig:
     grpc_listen: str = field(default_factory=lambda: os.environ.get("APME_GATEWAY_GRPC_LISTEN", "0.0.0.0:50060"))
     http_host: str = field(default_factory=lambda: os.environ.get("APME_GATEWAY_HTTP_HOST", "0.0.0.0"))
     http_port: int = field(default_factory=lambda: int(os.environ.get("APME_GATEWAY_HTTP_PORT", "8080")))
-    primary_address: str = field(default_factory=lambda: os.environ.get("APME_PRIMARY_ADDRESS", "localhost:50051"))
+    engine_address: str = field(default_factory=lambda: os.environ.get("APME_ENGINE_ADDRESS", "localhost:50051"))
     feedback_enabled: bool = field(
         default_factory=lambda: os.environ.get("APME_FEEDBACK_ENABLED", "false").lower() in ("1", "true", "yes"),
     )

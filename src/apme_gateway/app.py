@@ -51,7 +51,7 @@ def create_app() -> FastAPI:
         version="0.1.0",
         lifespan=_lifespan,
     )
-    # Main router first so GET /api/v1/ai/models (Primary) wins over the
+    # Main router first so GET /api/v1/ai/models (Engine) wins over the
     # ADR-070 Abbenay admin catch-all /api/v1/ai/{path}.
     app.include_router(router)
     app.include_router(feedback_router)

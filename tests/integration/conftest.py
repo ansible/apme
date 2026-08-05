@@ -1,7 +1,7 @@
 """Integration test infrastructure: daemon + gateway + galaxy proxy lifecycle.
 
 Starts a galaxy proxy (for collection installs), the reporting gateway
-(gRPC + REST), and the local APME daemon (Primary + Native + OPA + Ansible)
+(gRPC + REST), and the local APME daemon (Engine + Native + OPA + Ansible)
 when integration-marked tests are collected, and tears all down in
 ``pytest_sessionfinish``.
 
@@ -28,7 +28,7 @@ LOGGER = logging.getLogger(__name__)
 
 _ENV_KEYS = (
     "APME_DATA_DIR",
-    "APME_PRIMARY_ADDRESS",
+    "APME_ENGINE_ADDRESS",
     "APME_GALAXY_PROXY_URL",
     "APME_REPORTING_ENDPOINT",
     "APME_DB_PATH",
@@ -41,7 +41,7 @@ class Infrastructure:
     """Holds daemon, proxy, and gateway state for restoration on teardown.
 
     Attributes:
-        primary_address: gRPC address of the Primary service.
+        engine_address: gRPC address of the Engine service.
         data_dir: Temporary directory used for daemon state isolation.
         proxy_process: Galaxy proxy subprocess (terminated on teardown).
         gateway_process: Gateway subprocess (terminated on teardown).
@@ -50,7 +50,7 @@ class Infrastructure:
         original_env: Snapshot of env vars before daemon start.
     """
 
-    primary_address: str = ""
+    engine_address: str = ""
     data_dir: str = ""
     proxy_process: subprocess.Popen[bytes] | None = None
     gateway_process: subprocess.Popen[bytes] | None = None
@@ -167,8 +167,10 @@ def _start_infrastructure() -> None:
     gateway_grpc_port = _free_port()
     gateway_http_port = _free_port()
     gateway_db_path = str(Path(data_dir) / "gateway.db")
+    engine_addr = "127.0.0.1:50051"
     gateway_env = {
         **os.environ,
+        "APME_ENGINE_ADDRESS": engine_addr,
         "APME_DB_PATH": gateway_db_path,
         "APME_GATEWAY_GRPC_LISTEN": f"127.0.0.1:{gateway_grpc_port}",
         "APME_GATEWAY_HTTP_HOST": "127.0.0.1",
@@ -219,11 +221,11 @@ def _start_infrastructure() -> None:
         pytest.exit(f"Failed to start daemon: {exc}", returncode=2)
         return
 
-    os.environ["APME_PRIMARY_ADDRESS"] = state.primary
-    LOGGER.warning("APME daemon ready at %s (pid %d)", state.primary, state.pid)
+    os.environ["APME_ENGINE_ADDRESS"] = state.engine
+    LOGGER.warning("APME daemon ready at %s (pid %d)", state.engine, state.pid)
 
     INFRASTRUCTURE = Infrastructure(
-        primary_address=state.primary,
+        engine_address=state.engine,
         data_dir=data_dir,
         proxy_process=proxy_proc,
         gateway_process=gateway_proc,

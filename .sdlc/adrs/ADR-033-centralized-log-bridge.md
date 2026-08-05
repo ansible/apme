@@ -25,18 +25,18 @@ how long each phase takes, or what decisions the engine is making.
 
 ### Two deployment modes with different process boundaries
 
-**Daemon mode** (`launcher.py`): A single process runs Primary + all
+**Daemon mode** (`launcher.py`): A single process runs Engine + all
 validators in the same event loop. Stderr is dup2'd to
 `~/.apme-data/daemon.log`. All services share the same Python logging
 infrastructure.
 
 **Pod mode** (Podman pod via `tox -e up`, ADR-004): Each service is a separate container with
-its own entry point (`primary_main.py`, `native_validator_main.py`, etc.).
+its own entry point (`engine_main.py`, `native_validator_main.py`, etc.).
 Container stderr goes to container logs. Validators communicate with
-Primary via gRPC over the network.
+Engine via gRPC over the network.
 
 In pod mode, validator logs are trapped in their own container and never
-reach the Primary or CLI. The `ValidateResponse` proto has no mechanism
+reach the Engine or CLI. The `ValidateResponse` proto has no mechanism
 to carry logs back.
 
 ### The FixSession stream already has a log channel
@@ -47,7 +47,9 @@ messages with `LogLevel`, `phase`, and `message` fields. The CLI's
 
 - `ProgressUpdate` messages are manually constructed, not driven by a
   logging system
-- `Scan` and `Format` are unary RPCs with no log channel at all
+- `Format` is a unary RPC with no streaming log channel; response logs are
+  returned in `FormatResponse.logs`. `FixSession` streams logs via
+  `ProgressUpdate` but other phases are still inconsistent
 - There is no consistency — some phases emit progress, others are silent
 
 ### Forces in tension
@@ -57,7 +59,7 @@ messages with `LogLevel`, `phase`, and `message` fields. The CLI's
 - Logs must reach the CLI across gRPC boundaries in both deployment modes
 - Logs must also persist to files for daemon/container debugging
 - The solution must not require infrastructure (EFK, Loki) for local use
-- Unary RPCs (Scan, Format) cannot stream logs during processing —
+- Utility RPCs (`Format`) cannot stream logs during processing —
   logs must be collected and returned in the response
 
 ## Decision
@@ -66,7 +68,7 @@ messages with `LogLevel`, `phase`, and `message` fields. The CLI's
 Python `logging`, a shared `RequestLogHandler` collects log records
 per-request via `contextvars`, and logs are transported back to the CLI
 through gRPC responses. Validators return their logs in
-`ValidateResponse`; Primary merges them with its own and forwards the
+`ValidateResponse`; Engine merges them with its own and forwards the
 combined set to the CLI.**
 
 ### Core components
@@ -82,19 +84,18 @@ combined set to the CLI.**
    - `install_handler()` — idempotent setup called by every entry point
 
 2. **Proto changes** — `ProgressUpdate` and `LogLevel` move from
-   `primary.proto` to `common.proto` for clean layering. New `logs`
-   fields added to `ValidateResponse`, `ScanResponse`, and
-   `FormatResponse`.
+   `engine.proto` to `common.proto` for clean layering. New `logs`
+   fields added to `ValidateResponse` and `FormatResponse`.
 
 3. **Log flow**:
    - Validator code logs via `logging.getLogger("apme.native")` etc.
    - Validator's `Validate()` handler attaches a `CollectorSink`,
      returns collected logs in `ValidateResponse.logs`
-   - Primary's `_call_validator()` extracts logs from each response
-   - Primary merges its own logs with validator logs
-   - CLI receives merged logs in `ScanResponse.logs` or as
-     `SessionEvent.progress` messages and renders them based on
-     `-v`/`-vv` verbosity
+   - Engine's `_call_validator()` extracts logs from each response
+   - Engine merges its own logs with validator logs
+   - CLI receives merged logs as `SessionEvent.progress` messages during
+     `FixSession` check/remediate runs, or in `FormatResponse.logs` for
+     format operations, and renders them based on `-v`/`-vv` verbosity
 
 4. **Milestone logging convention** — every major pipeline phase logs
    a start message (INFO) and a finish message (INFO with duration).
@@ -114,7 +115,7 @@ and container stderr only.
 
 **Cons**:
 - CLI users see nothing during scans
-- Pod mode validator logs are invisible to Primary
+- Pod mode validator logs are invisible to Engine
 - No structured levels, no filtering
 - Debugging requires SSH/exec into containers or reading daemon.log
 
@@ -194,15 +195,16 @@ control without a custom API.
 
 ### Negative
 
-- **Response size increase.** `ScanResponse` and `ValidateResponse` grow
-  by the size of collected log entries. For typical scans this is a few
-  KB — negligible compared to violations and diagnostics.
+- **Response size increase.** `ValidateResponse`, `FormatResponse`, and
+  `FixSession` progress events grow by the size of collected log entries.
+  For typical scans this is a few KB — negligible compared to violations
+  and diagnostics.
 - **Contextvar discipline.** Every RPC handler must attach/detach a sink.
   Forgetting to attach means logs go to stderr only (safe default, but
   the CLI won't see them).
-- **Unary RPCs show logs after completion.** Scan and Format return logs
-  in the response, so the CLI displays them post-hoc. Only FixSession
-  (streaming) shows logs in real-time.
+- **Format shows logs after completion.** `Format` returns logs in
+  `FormatResponse`; check and remediate stream logs as `SessionEvent.progress`
+  during `FixSession`.
 
 ### Neutral
 
@@ -234,11 +236,6 @@ timeline and `-vv` the full detail.
 
 Logger names follow the `apme.<subsystem>` convention:
 
-- `apme.primary` → phase `"primary"`
-- `apme.native` → phase `"native"`
-- `apme.opa` → phase `"opa"`
-- `apme.ansible` → phase `"ansible"`
-- `apme.gitleaks` → phase `"gitleaks"`
 - `apme.engine` → phase `"engine"`
 - `apme.venv` → phase `"venv"`
 - `apme.remediation` → phase `"remediation"`
@@ -248,7 +245,7 @@ The handler strips the `apme.` prefix to derive the phase field.
 ### Proto changes
 
 ```protobuf
-// common.proto — moved from primary.proto
+// common.proto — moved from engine.proto
 enum LogLevel {
   LOG_LEVEL_UNSPECIFIED = 0;
   DEBUG = 1;
@@ -270,12 +267,7 @@ message ValidateResponse {
   repeated ProgressUpdate logs = 4;
 }
 
-// primary.proto — new fields
-message ScanResponse {
-  // ... existing fields ...
-  repeated ProgressUpdate logs = 7;
-}
-
+// engine.proto — new fields
 message FormatResponse {
   repeated FileDiff diffs = 1;
   repeated ProgressUpdate logs = 2;

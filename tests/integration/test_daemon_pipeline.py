@@ -1,4 +1,4 @@
-"""Full daemon integration test: CLI -> gRPC -> Primary -> validators -> gateway.
+"""Full daemon integration test: CLI -> gRPC -> Engine -> validators -> gateway.
 
 Proves the FQCN collection auto-discovery pipeline (ADR-032) works
 end-to-end using the ``terrible-playbook`` fixture.  ``ansible.posix`` is

@@ -10,7 +10,7 @@ Accepted
 
 ## Context
 
-[ADR-041 (Rule Catalog & Override Architecture)](ADR-041-rule-catalog-override-architecture.md) established the infrastructure for a rule catalog with a `default_severity` field on every rule registration. It defined the mechanism — Primary registers rules with the Gateway, overrides ride with `ScanRequest` — but deliberately left the **assignment policy** undefined: how does each rule get its default severity, and what severity scale do we use?
+[ADR-041 (Rule Catalog & Override Architecture)](ADR-041-rule-catalog-override-architecture.md) established the infrastructure for a rule catalog with a `default_severity` field on every rule registration. It defined the mechanism — the Gateway maintains the authoritative catalog; the authority Engine **pushes** each rule (with `default_severity`) to the Gateway Reporting gRPC sink via `RegisterRules` at startup (ADR-020/ADR-041; not an Engine callback into Gateway application code), and overrides ride with bidirectional `FixSession` (`ScanOptions` on the uploaded `ScanChunk`) — but deliberately left the **assignment policy** undefined: how does each rule get its default severity, and what severity scale do we use?
 
 ### The vocabulary problem
 
@@ -181,7 +181,7 @@ The complete per-rule default severity is maintained as a **static mapping** tha
 - **Machine-readable** — the catalog generation script (`tools/generate_rule_catalog.py`) includes severity in the output
 - **The single source** — individual rule classes and Rego policies no longer carry their own severity; they reference the table
 
-During ADR-041 registration, Primary reads this table and includes `default_severity` for each rule in the `RegisterRulesRequest`.
+During ADR-041 catalog registration, the authority Engine reads this table and includes `default_severity` for each rule in the `RegisterRulesRequest` it pushes to the Gateway Reporting service.
 
 ### 7. Service-affecting action flag
 

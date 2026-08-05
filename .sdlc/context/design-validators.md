@@ -96,7 +96,7 @@ Every validator returns the same violation shape:
 |--------|---------|
 | **Input** | `content_graph_data` (serialized `ContentGraph` JSON dict) |
 | **Execution** | `GraphRule` subclasses with `match()` / `process()` methods, invoked by `graph_scanner.scan()` |
-| **Rules** | ~90 rules: L026–L110 (lint), M005/M010/M014+ (modernize), R101–R501 (risk), A001–A002 (AAP), P001–P004 (legacy) |
+| **Rules** | ~90 rules: L026–L110 (lint), M005/M010/M014+ (modernize), R101–R501 (risk), A001–A002 (legacy pre-ADR-008 AAP IDs), P001–P004 (legacy policy) |
 | **Container** | `apme-native` |
 
 **Why Python**: Full access to the ContentGraph model (nodes, edges, properties, variable tracking). Rules that need to walk call graphs, inspect variable resolution, or apply complex heuristics that would be awkward in Rego.
@@ -108,7 +108,7 @@ Every validator returns the same violation shape:
 | **Input** | `context.root_dir` (files on disk) + `context.hierarchy_payload` |
 | **Execution** | Uses ansible-core's plugin loader, `ansible-playbook --syntax-check`, argspec extraction |
 | **Rules** | L057–L059 (syntax/argspec), M001–M004 (FQCN resolution, deprecation, redirects, removed modules) |
-| **Container** | `apme-ansible` with UV cache pre-warmed for ansible-core 2.18/2.19/2.20; session-scoped venvs managed by the Primary orchestrator via `VenvSessionManager` |
+| **Container** | `apme-ansible` with UV cache pre-warmed for ansible-core 2.18/2.19/2.20; session-scoped venvs managed by the Engine orchestrator via `VenvSessionManager` |
 
 **Why separate container**: Requires actual ansible-core installation; multi-version support needs isolated venvs; sessions volume mounted read-only
 
@@ -173,11 +173,11 @@ Everything downstream (validators, daemon, CLI) calls `run_scan()` and works wit
 
 ## Parallel Execution
 
-Primary calls all configured validators concurrently using `asyncio.gather()` with async gRPC stubs (`grpc.aio`). Each validator is a gRPC call to an independent container. The `ValidateRequest` is immutable and shared across all calls.
+Engine calls all configured validators concurrently using `asyncio.gather()` with async gRPC stubs (`grpc.aio`). Each validator is a gRPC call to an independent container. The `ValidateRequest` is immutable and shared across all calls.
 
 **Total latency = max(validators)** instead of sum.
 
-Each validator is discovered by environment variable (`NATIVE_GRPC_ADDRESS`, `OPA_GRPC_ADDRESS`, `ANSIBLE_GRPC_ADDRESS`, `GITLEAKS_GRPC_ADDRESS`, `COLLECTION_HEALTH_GRPC_ADDRESS`, `DEP_AUDIT_GRPC_ADDRESS`). If a variable is unset, that validator is skipped — no error, just fewer results. This makes it possible to run a subset of validators during development or testing.
+Each validator is discovered by environment variable (`NATIVE_GRPC_ADDRESS`, `OPA_GRPC_ADDRESS`, `ANSIBLE_GRPC_ADDRESS`, `GITLEAKS_GRPC_ADDRESS`, `COLLECTION_HEALTH_GRPC_ADDRESS`, `DEP_AUDIT_GRPC_ADDRESS`). **Required** validators (Native, OPA, Ansible) must have their addresses set and healthy. **Optional** validators (Gitleaks, Collection Health, Dep Audit) may be omitted — Engine skips unset optional addresses with graceful degradation (no error, just fewer results). This still allows running a subset of optional validators during development or testing.
 
 ---
 
@@ -194,20 +194,23 @@ service Validator {
 
 The `ValidateRequest` is a superset — it carries fields for all validators. Each validator consumes only what it needs and ignores the rest. This means adding a new validator requires:
 
-1. Implement `ValidatorServicer` (one `Validate` method)
+1. Implement `ValidatorServicer` with both `Validate` and `Health` RPCs
 2. Build a container image
-3. Add an environment variable to Primary
+3. Add an environment variable so Engine can reach the validator (`*_GRPC_ADDRESS`)
 4. Add the service to the pod spec
+5. Register the daemon launcher entry: port in `_DEFAULT_PORTS` or `_OPTIONAL_SERVICES`, `env_map` key, and a spawn block in `_run_daemon()` (`src/apme_engine/daemon/launcher.py`)
 
-**No proto changes, no Primary code changes, no other validators affected.**
+**No proto changes and no Engine scan/orchestration code changes** — other validators are unaffected. The launcher registry above is the one Engine-adjacent wiring change required for local daemon mode.
 
 ---
 
 ## Rule ID Independence
 
-Rule IDs (L, M, R, P) describe **what** is checked, not **who** checks it. The user sees `L002` (FQCN check); whether OPA or a Python rule implements it is irrelevant. Multiple validators can fire for the same concept (e.g., OPA L002 is syntactic FQCN; Ansible M001 is semantic FQCN resolution) — they have different rule IDs because they're different checks.
+Rule IDs (L, M, R, P, SEC, EXT-) describe **what** is checked, not **who**
+checks it (`SEC` for secrets via Gitleaks; `EXT-` for plugin rules per
+ADR-042). The user sees `L002` (FQCN check); whether OPA or a Python rule implements it is irrelevant. Multiple validators can fire for the same concept (e.g., OPA L002 is syntactic FQCN; Ansible M001 is semantic FQCN resolution) — they have different rule IDs because they're different checks.
 
-Deduplication happens at the Primary level by `(rule_id, file, line)`. If two validators produce the same rule/file/line, only one is reported.
+Deduplication happens at the Engine level by `(rule_id, file, line)`. If two validators produce the same rule/file/line, only one is reported.
 
 ---
 
@@ -229,7 +232,7 @@ ValidatorDiagnostics(
 )
 ```
 
-Primary aggregates all `ValidatorDiagnostics` plus engine phase timing into `ScanDiagnostics` on the `SessionEvent` stream. `apme check` (and related clients) show diagnostics with `-v` (summary + top 10 slowest rules) or `-vv` (full per-rule breakdown).
+Engine aggregates all `ValidatorDiagnostics` plus engine phase timing into `ScanDiagnostics` on the `FixCompletedEvent` reporting path. `apme check` (and related clients) show pipeline `ProgressUpdate` logs with `-v`/`-vv`; structured diagnostics are emitted on the reporting path, not on `SessionEvent` or `SessionResult`.
 
 ---
 

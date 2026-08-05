@@ -134,7 +134,7 @@ src/apme_engine/
 │   ├── remediate.py        Remediate subcommand (FixSession bidi stream, ADR-028)
 │   ├── health.py           Health-check subcommand
 │   ├── daemon_cmd.py       daemon start/stop/status
-│   ├── discovery.py        resolve_primary() — gRPC channel setup
+│   ├── discovery.py        resolve_engine() — gRPC channel setup
 │   ├── output.py           Human-readable / structured CLI output
 │   ├── ansi.py             Zero-dependency ANSI styling (NO_COLOR/FORCE_COLOR)
 │   ├── _convert.py         Internal proto ↔ dict conversion
@@ -193,8 +193,8 @@ src/apme_engine/
 │   └── ansible_best_practices.yml  structured best practices for AI prompts
 │
 ├── daemon/                 async gRPC servers (all use grpc.aio)
-│   ├── primary_server.py   Primary orchestrator (engine + fan-out + remediation)
-│   ├── primary_main.py     entry point: apme-primary (asyncio.run)
+│   ├── engine_server.py   Engine orchestrator (engine + fan-out + remediation)
+│   ├── engine_main.py     entry point: apme-engine (asyncio.run)
 │   ├── native_validator_server.py   (async, CPU work in run_in_executor)
 │   ├── native_validator_main.py
 │   ├── opa_validator_server.py      (async, OPA via subprocess in executor)
@@ -443,7 +443,7 @@ The underlying scripts in `containers/podman/` remain directly callable for debu
 
 ### Observability (OTel → Prometheus → Grafana)
 
-The pod includes an `otel-collector` that scrapes as **http://localhost:8889/metrics**. Primary exports scan/phase/validator duration histograms; each validator exports `apme.grpc.server.*` for `Validate`/`Health` RPCs; Gateway and Galaxy Proxy export HTTP request durations. See ADR-067.
+The pod includes an `otel-collector` that scrapes as **http://localhost:8889/metrics**. Engine exports scan/phase/validator duration histograms; each validator exports `apme.grpc.server.*` for `Validate`/`Health` RPCs; Gateway and Galaxy Proxy export HTTP request durations. See ADR-067.
 
 ```bash
 ./containers/observability/up.sh     # Prometheus :9091, Grafana :3002
@@ -493,7 +493,7 @@ This runs the formatter, verifies idempotency (a second format pass produces zer
 
 ### gRPC Format RPC
 
-The Primary service exposes `Format` (unary) and `FormatStream` (streaming) RPCs with `FileDiff` messages. The CLI uses `FormatStream` to stream files to the Primary and receive diffs back.
+The Engine service exposes `Format` (unary) and `FormatStream` (streaming) RPCs with `FileDiff` messages. The CLI uses `FormatStream` to stream files to the Engine and receive diffs back.
 
 ## Concurrency model
 
@@ -508,11 +508,11 @@ Every validator receives `request.request_id` and should include it in log outpu
 
 The OPA validator invokes `opa eval` via subprocess (not REST) — see AGENTS.md invariant #9.
 
-The Ansible validator uses session-scoped venvs provided by the Primary (read-only via `/sessions` volume). Warm sessions pay near-zero cost; cold sessions are built once by the Primary's `VenvSessionManager`.
+The Ansible validator uses session-scoped venvs provided by the Engine (read-only via `/sessions` volume). Warm sessions pay near-zero cost; cold sessions are built once by the Engine's `VenvSessionManager`.
 
 ## Diagnostics
 
-Every validator collects per-rule timing data and returns it in `ValidateResponse.diagnostics`. The Primary aggregates engine timing + all validator diagnostics into `ScanDiagnostics` on the `ScanResponse`.
+Every validator collects per-rule timing data and returns it in `ValidateResponse.diagnostics`. The Engine aggregates engine timing + all validator diagnostics into `ScanDiagnostics` on the `FixCompletedEvent` reporting path during `FixSession`. `SessionEvent` / `SessionResult` do not carry diagnostics fields.
 
 ### CLI verbosity flags
 
@@ -551,7 +551,7 @@ When implementing a new `ValidatorServicer`:
 3. Build a `common_pb2.ValidatorDiagnostics` with `validator_name`, `total_ms`, `files_received`, `violations_found`, `rule_timings`, and any validator-specific `metadata`
 4. Set `diagnostics=diag` on the `ValidateResponse`
 
-The Primary automatically collects diagnostics from all validators and includes them in `ScanDiagnostics`.
+The Engine automatically collects diagnostics from all validators and includes them in `ScanDiagnostics`.
 
 ## Deprecation pipeline
 
@@ -633,7 +633,7 @@ Defined in `pyproject.toml`:
 | Command | Module | Purpose |
 |---------|--------|---------|
 | `apme` | `apme_engine.cli:main` | CLI (check, format, remediate, health-check) |
-| `apme-primary` | `apme_engine.daemon.primary_main:main` | Primary daemon |
+| `apme-engine` | `apme_engine.daemon.engine_main:main` | Engine daemon |
 | `apme-native-validator` | `apme_engine.daemon.native_validator_main:main` | Native validator daemon |
 | `apme-opa-validator` | `apme_engine.daemon.opa_validator_main:main` | OPA validator daemon |
 | `apme-ansible-validator` | `apme_engine.daemon.ansible_validator_main:main` | Ansible validator daemon |

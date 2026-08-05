@@ -6,14 +6,14 @@
 
 ## Problem
 
-AI remediation (Tier 2) currently runs as a separate post-convergence phase
-in the legacy `RemediationEngine`.  It operates on files, uses
-`UnitSegmenter` to chunk tasks by line range, sends snippets to the LLM,
-and returns patches as diffs.  This path is disconnected from the
+The legacy `RemediationEngine` path runs AI remediation (Tier 2) as a separate
+post-convergence phase after Tier 1 graph convergence.  It operates on files,
+uses `UnitSegmenter` to chunk tasks by line range, sends snippets to the LLM,
+and returns patches as diffs.  That path is disconnected from the
 `GraphRemediationEngine` convergence loop:
 
 ```
-Current flow:
+Historical flow (pre-graph AI gate):
   GraphRemediationEngine.remediate()    # Tier 1 only
     └─ converge: scan → transform → rescan → repeat
     └─ splice_modifications()
@@ -25,10 +25,17 @@ Current flow:
     └─ returns AIProposal diffs
 ```
 
-The graph path explicitly skips AI (`primary_server.py:1683`):
-*"Graph engine does not support Tier 2 AI yet — go straight to result."*
+The active graph path runs Tier 2 AI via
+`EngineServicer._session_run_ai_gate()` after Gate 1 approval
+(`engine_server.py`, graph remediation flow around `_session_run_graph_ai`),
+not through the separate `RemediationEngine` phase above.
 
-### What's wrong with the current split
+The active Engine graph path already invokes Tier 2 through
+`EngineServicer._session_run_ai_gate()` after Gate 1 approval (see above),
+but CLI remediate paths that still use `RemediationEngine` retain the legacy
+split.  This research targets full unification in the graph convergence loop.
+
+### What's wrong with the legacy split
 
 1. **Two convergence models**.  Tier 1 converges in-memory on the graph.
    Tier 2 operates on post-splice files.  If an AI fix introduces a new

@@ -14,9 +14,11 @@ APME supports multiple deployment methods depending on your environment and need
 > `deploy/helm/apme/`. Do not use Podman on K8s/OCP.
 
 Full deployment methods (Podman, bootc, Helm) run the complete engine stack
-(Primary + all validators + Galaxy Proxy). The CLI daemon runs only core
-validators (Native, OPA, Ansible) + Galaxy Proxy. The difference is lifecycle
-management, persistence, and additional services (UI, Gateway, Abbenay AI).
+(Engine + all validators + Galaxy Proxy). The CLI daemon runs Engine plus core
+validators (Native, OPA, Ansible) + Galaxy Proxy + Gateway HTTP and Reporting
+gRPC (ADR-049). Optional validators (Gitleaks, Collection Health, Dep Audit) are
+not started unless `include_optional=True`. The difference from full deployment
+is lifecycle management and additional pod-level services (UI, Abbenay AI).
 
 ---
 
@@ -42,7 +44,7 @@ This builds a shared base image, eleven service images, and pulls one official i
 
 | Image | Source | Purpose |
 |-------|--------|---------|
-| `apme-primary:latest` | `containers/primary/Dockerfile` | Orchestrator + engine + session venv manager |
+| `apme-engine:latest` | `containers/engine/Dockerfile` | Orchestrator + engine + session venv manager |
 | `apme-native:latest` | `containers/native/Dockerfile` | Native Python validator |
 | `apme-opa:latest` | `containers/opa/Dockerfile` | OPA + gRPC wrapper |
 | `apme-ansible:latest` | `containers/ansible/Dockerfile` | Ansible validator (reads session venvs) |
@@ -93,7 +95,7 @@ The start script (`up.sh`) automatically mounts the bundle into the `abbenay`, `
 tox -e up
 ```
 
-This runs `podman play kube containers/podman/pod.yaml`, which starts the pod `apme-pod` with all service containers (Primary, Native, OPA, Ansible, Gitleaks, Collection Health, Dep Audit, Galaxy Proxy, Gateway, UI, Abbenay). The `up.sh` script sources `containers/abbenay/.env` to inject LLM API keys into the Abbenay container. A sessions directory is created for session-scoped venvs.
+This runs `podman play kube containers/podman/pod.yaml`, which starts the pod `apme-pod` with all service containers (Engine, Native, OPA, Ansible, Gitleaks, Collection Health, Dep Audit, Galaxy Proxy, Gateway, UI, Abbenay). The `up.sh` script sources `containers/abbenay/.env` to inject LLM API keys into the Abbenay container. A sessions directory is created for session-scoped venvs.
 
 ### Run CLI commands
 
@@ -106,7 +108,7 @@ tox -e cli -- format --check .          # YAML format check
 tox -e cli -- health-check              # health check
 ```
 
-The CLI container joins `apme-pod`, mounts CWD as `/workspace:Z` (read-write for `remediate`/`format`), and communicates with Primary at `127.0.0.1:50051` via gRPC.
+The CLI container joins `apme-pod`, mounts CWD as `/workspace:Z` (read-write for `remediate`/`format`), and communicates with Engine at `127.0.0.1:50051` via gRPC.
 
 The `remediate` command uses a bidirectional streaming RPC (`FixSession`, ADR-028, ADR-039) for real-time progress and interactive AI proposal review. **`check`** uses the same `FixSession` RPC in check mode.
 
@@ -123,19 +125,21 @@ tox -e wipe    # also delete database, session cache, and Abbenay secrets.json
 apme health-check
 ```
 
-The CLI discovers the Primary via `APME_PRIMARY_ADDRESS` env var, a running daemon, or auto-starts one locally.
+The CLI discovers the Engine via `APME_ENGINE_ADDRESS` env var, a running daemon, or auto-starts one locally.
 
-Reports status of all services (Primary, Native, OPA, Ansible, Gitleaks, Collection Health, Dep Audit) with latency.
+Reports status of Engine-core services (Engine, Native, OPA, Ansible, Galaxy
+Proxy, Gateway HTTP, Gateway Reporting gRPC) plus optional validators
+(Gitleaks, Collection Health, Dep Audit) with latency.
 
 ## Container configuration
 
 ### Environment variables
 
-#### Primary
+#### Engine
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `APME_PRIMARY_LISTEN` | `0.0.0.0:50051` | gRPC listen address |
+| `APME_ENGINE_LISTEN` | `0.0.0.0:50051` | gRPC listen address |
 | `NATIVE_GRPC_ADDRESS` | — | Native validator address (e.g., `127.0.0.1:50055`) |
 | `OPA_GRPC_ADDRESS` | — | OPA validator address (e.g., `127.0.0.1:50054`) |
 | `ANSIBLE_GRPC_ADDRESS` | — | Ansible validator address (e.g., `127.0.0.1:50053`) |
@@ -146,7 +150,7 @@ Reports status of all services (Primary, Native, OPA, Ansible, Gitleaks, Collect
 | `APME_ABBENAY_ADDR` | — | Abbenay AI daemon address (e.g., `127.0.0.1:50057`). Supports `host:port` and `unix://` formats. |
 | `APME_ABBENAY_TOKEN` | — | Consumer token for Abbenay authentication. Must match a token in Abbenay's `config.yaml`. |
 | `APME_AI_MODEL` | — | Default AI model ID (e.g., `anthropic/claude-sonnet-4`). Overridden by UI Settings or CLI `--model`. |
-| `APME_RULE_AUTHORITY` | `true` | Set to `true` on exactly one Primary in multi-pod deployments. Only the authority registers the rule catalog to the Gateway (ADR-041). |
+| `APME_RULE_AUTHORITY` | `true` | Set to `true` on exactly one Engine in multi-pod deployments. Only the authority registers the rule catalog to the Gateway (ADR-041). |
 
 If a validator address is unset, that validator is skipped during fan-out. If Abbenay is unreachable, AI remediation is skipped (Tier 1 deterministic fixes still run).
 
@@ -233,7 +237,7 @@ place; `tox -e wipe` deletes it. To add providers or models, edit the cache
 `config.yaml` or POST via the Gateway admin proxy
 (`/api/v1/ai/provider/{id}/configure`); writes survive Abbenay restarts.
 
-The Abbenay daemon exposes a gRPC API on port 50057. Primary connects to it for AI model listing (`ListAIModels`) and batch remediation requests.
+The Abbenay daemon exposes a gRPC API on port 50057. Engine connects to it for AI model listing (`ListAIModels`) and batch remediation requests.
 
 #### UI
 
@@ -245,7 +249,7 @@ The Settings page (`/settings`) provides a model picker that queries available A
 
 | Name | Host Path | Container Mount | Services | Access |
 |------|-----------|-----------------|----------|--------|
-| `sessions` | `apme-sessions/` | `/sessions` | Primary (rw), Ansible, Collection Health, Dep Audit (ro) | rw / ro |
+| `sessions` | `apme-sessions/` | `/sessions` | Engine (rw), Ansible, Collection Health, Dep Audit (ro) | rw / ro |
 | `proxy-cache` | `<cache>/proxy/` | `/cache` | Galaxy Proxy | rw |
 | `gateway-data` | `<cache>/gateway/` | `/data` | Gateway | rw |
 | `abbenay-config` | `<cache>/abbenay/config/` | `/home/abbenay/.config/abbenay` | Abbenay | rw |
@@ -273,11 +277,11 @@ The Rego bundle is baked into the image at build time (no volume mount needed).
 
 ### Ansible container details
 
-The Ansible container receives session-scoped venvs via the `/sessions` volume (read-only). The Primary orchestrator builds and manages these venvs using `VenvSessionManager`; the Ansible validator simply uses the `venv_path` provided in each `ValidateRequest`.
+The Ansible container receives session-scoped venvs via the `/sessions` volume (read-only). The Engine builds and manages these venvs using `VenvSessionManager`; the Ansible validator simply uses the `venv_path` provided in each `ValidateRequest`.
 
 Collections are installed into the venv's `site-packages/ansible_collections/` directory by `uv pip install` through the Galaxy Proxy — they're on the Python path natively (no `ANSIBLE_COLLECTIONS_PATH` or `ansible.cfg` needed).
 
-The Ansible validator requires a `venv_path` from the Primary orchestrator. If none is provided (e.g., standalone testing without Primary), the validator returns an infrastructure error and skips validation.
+The Ansible validator requires a `venv_path` from the Engine. If none is provided (e.g., standalone testing without Engine), the validator returns an infrastructure error and skips validation.
 
 ### Galaxy Proxy index strategy (`unsafe-best-match`)
 
@@ -304,15 +308,16 @@ If your environment has stricter dependency policies (e.g. air-gapped or
 internal registries), note that the `UV_INDEX_STRATEGY` environment variable
 **will not** override this setting because the CLI flag takes precedence.
 To change the strategy, set the `APME_UV_INDEX_STRATEGY` environment variable
-in the Primary container — the venv manager reads this at runtime and passes
+in the Engine container — the venv manager reads this at runtime and passes
 it as the `--index-strategy` argument to `uv pip install`.
 
 ## Local development (daemon mode)
 
 For development and testing without the Podman pod, the CLI can start a
-local daemon that runs Primary, Native, OPA, and Ansible as localhost gRPC
-servers plus Galaxy Proxy as an HTTP service (ADR-024). Optional validators
-(Gitleaks, Collection Health, Dep Audit) are not started by the daemon.
+local daemon that runs Engine, Native, OPA, and Ansible as localhost gRPC
+servers, Galaxy Proxy as an HTTP service, and Gateway HTTP plus Reporting
+gRPC per ADR-049. Optional validators (Gitleaks, Collection Health, Dep Audit)
+start only when `include_optional=True`.
 
 ```bash
 # Install tox + project (one-time)
@@ -331,7 +336,7 @@ apme remediate .
 apme daemon stop
 ```
 
-**Daemon mode** starts a local Primary server with Native, OPA, and Ansible validators as in-process gRPC servers, plus Galaxy Proxy as an HTTP service (uvicorn). Optional validators (Gitleaks, Collection Health, Dep Audit) are not started. OPA uses Podman by default; falls back to a local `opa` binary if Podman is unavailable; skipped if neither is found.
+**Daemon mode** starts a local Engine with Native, OPA, and Ansible validators as in-process gRPC servers, Galaxy Proxy as an HTTP service (uvicorn), and Gateway HTTP plus Reporting gRPC (ADR-049). Optional validators (Gitleaks, Collection Health, Dep Audit) start only when `include_optional=True`. The OPA validator gRPC server is always started; policy evaluation uses Podman by default or a local `opa` binary when `OPA_USE_PODMAN=0`. OPA infrastructure failures surface as validator R902 errors so `check` and `remediate` cannot return silently incomplete results.
 
 ## Troubleshooting
 
@@ -345,7 +350,7 @@ See [PODMAN_OPA_ISSUES.md](PODMAN_OPA_ISSUES.md) for common Podman rootless issu
 
 | Port | Service | Listen Variable |
 |------|---------|-----------------|
-| 50051 | Primary | `APME_PRIMARY_LISTEN` |
+| 50051 | Engine | `APME_ENGINE_LISTEN` |
 | 50053 | Ansible | `APME_ANSIBLE_VALIDATOR_LISTEN` |
 | 50054 | OPA | `APME_OPA_VALIDATOR_LISTEN` |
 | 50055 | Native | `APME_NATIVE_VALIDATOR_LISTEN` |
@@ -421,7 +426,7 @@ localhost (ADR-005). Multi-replica engine HPA is not offered by this chart.
 
 **Highlights (ADR-069 Simple / EAP / upstream):**
 
-- One Deployment: Primary + validators + Galaxy Proxy + Gateway + UI + optional Abbenay (localhost)
+- One Deployment: Engine + validators + Galaxy Proxy + Gateway + UI + optional Abbenay (localhost)
 - `replicas: 1` (HPA unsupported while Gateway SQLite shares the pod)
 - Ingress/Route support (OpenShift Routes included)
 - NetworkPolicy for Ingress → Gateway/UI HTTP ports only

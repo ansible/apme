@@ -2,7 +2,7 @@
 
 ## Overview
 
-APME is a multi-container gRPC microservice system. The Primary service runs the engine (load definitions → build ContentGraph → apply rules → hierarchy), then fans validation out in parallel to six independent validator backends over a unified gRPC contract. The CLI is ephemeral — run on-the-fly with the project directory mounted.
+APME is a multi-container gRPC microservice system. The Engine runs the scan pipeline (load definitions → build ContentGraph → apply rules → hierarchy), then fans validation out in parallel to six independent validator backends over a unified gRPC contract. The CLI is ephemeral — run on-the-fly with the project directory mounted.
 
 **Deployment methods** (choose based on target environment):
 
@@ -31,7 +31,7 @@ co-located shape on Kubernetes/OpenShift — see the [Scaling](#scaling) section
 ┌──────────────────────────────────── apme-pod ──────────────────────────────────┐
 │                                                                                 │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐        │
-│  │ Primary  │  │  Native  │  │   OPA    │  │ Ansible  │  │ Gitleaks │        │
+│  │  Engine  │  │  Native  │  │   OPA    │  │ Ansible  │  │ Gitleaks │        │
 │  │  :50051  │  │  :50055  │  │  :50054  │  │  :50053  │  │  :50056  │        │
 │  │          │  │          │  │          │  │          │  │          │        │
 │  │ engine + │  │ GraphRule │  │ OPA bin  │  │ ansible- │  │ gitleaks │        │
@@ -67,7 +67,7 @@ co-located shape on Kubernetes/OpenShift — see the [Scaling](#scaling) section
 
 | Service | Image | Port | Role |
 |---------|-------|------|------|
-| **Primary** | apme-primary | 50051 | Runs the engine (load → build_content_graph → apply_rules → hierarchy); manages session-scoped venvs (`VenvSessionManager`); fans out `ValidateRequest` to all validators in parallel; merges, deduplicates, and streams violations via `FixSession` |
+| **Engine** | apme-engine | 50051 | Runs the engine (load → build_content_graph → apply_rules → hierarchy); manages session-scoped venvs (`VenvSessionManager`); fans out `ValidateRequest` to all validators in parallel; merges, deduplicates, and streams violations via `FixSession` |
 | **Native** | apme-native | 50055 | ~90 GraphRule subclasses operating on deserialized `ContentGraph`. Rules span L027–L110, M005–M030, A001–A002, R101–R501 (see `src/apme_engine/validators/native/rules/`) |
 | **OPA** | apme-opa | 50054 | OPA binary (invoked via subprocess) + Python gRPC wrapper. Rego rules L003–L025, M006/M008/M009/M011, R118 on the hierarchy JSON |
 | **Ansible** | apme-ansible | 50053 | Ansible-runtime checks using session-scoped venvs (shared read-only via `/sessions` volume). Rules L057–L059, M001–M004 |
@@ -77,7 +77,7 @@ co-located shape on Kubernetes/OpenShift — see the [Scaling](#scaling) section
 | **Galaxy Proxy** | apme-galaxy-proxy | 8765 | PEP 503 simple repository API that converts Galaxy collection tarballs to pip-installable Python wheels. Caching is the proxy's concern — the engine has zero cache management code |
 | **Gateway** | apme-gateway | 50060 (gRPC), 8080 (HTTP) | REST API + gRPC Reporting service + SQLAlchemy/SQLite persistence. Receives engine events via `GrpcReportingSink`; serves scan history, project management, and rule catalog to UI and external consumers (ADR-029, ADR-038) |
 | **UI** | apme-ui | 8081 | nginx-served React/PatternFly SPA. Consumes Gateway REST API. No direct engine communication (ADR-030, ADR-037) |
-| **Abbenay** | abbenay | 50057 | AI provider for Tier 2 remediation. Receives fix requests from Primary, queries LLM providers, returns proposed patches |
+| **Abbenay** | abbenay | 50057 | AI provider for Tier 2 remediation. Receives fix requests from Engine, queries LLM providers, returns proposed patches |
 | **CLI** | apme-cli | — | Ephemeral. Reads project files, chunks uploads, drives **`FixSession`** for user **check** and **remediate** (ADR-039). Run with `--pod apme-pod` and CWD mounted |
 
 ---
@@ -86,10 +86,10 @@ co-located shape on Kubernetes/OpenShift — see the [Scaling](#scaling) section
 
 Proto definitions live in `proto/apme/v1/`. Generated Python stubs in `src/apme/v1/`.
 
-### Primary (`primary.proto`)
+### Engine (`engine.proto`)
 
 ```protobuf
-service Primary {
+service Engine {
   rpc Format(FormatRequest) returns (FormatResponse);
   rpc FormatStream(stream ScanChunk) returns (FormatResponse);
   rpc Health(HealthRequest) returns (HealthResponse);
@@ -125,7 +125,7 @@ Every validator container implements this service. The `ValidateRequest` carries
 
 The `ValidateResponse` echoes back `request_id` for correlation and includes a `ValidatorDiagnostics` message with timing data, violation counts, and validator-specific metadata.
 
-Each validator ignores the data fields it doesn't need. This keeps the contract uniform — adding a new validator means implementing one RPC and choosing which fields to consume.
+Each validator ignores the data fields it doesn't need. This keeps the contract uniform — adding a new validator means implementing both `Validate` and `Health` RPCs and choosing which request fields to consume.
 
 ### Common Types (`common.proto`)
 
@@ -141,14 +141,14 @@ Each validator ignores the data fields it doesn't need. This keeps the contract 
 
 ## Parallel Validator Fan-Out
 
-Primary calls all configured validators concurrently using `asyncio.gather()` with async gRPC stubs:
+Engine calls all configured validators concurrently using `asyncio.gather()` with async gRPC stubs:
 
-```
+```text
               ┌─► Native          ─── violations ──┐
               │                                     │
               ├─► OPA             ─── violations ──┤
               │                                     │
-Primary ──────┼─► Ansible         ─── violations ──┼──► merge + dedup + sort
+Engine ──────┼─► Ansible         ─── violations ──┼──► merge + dedup + sort
   (async)     │                                     │
               ├─► Gitleaks        ─── violations ──┤
               │                                     │
@@ -159,7 +159,7 @@ Primary ──────┼─► Ansible         ─── violations ──�
 
 **Wall-clock time = max(validators)** instead of sum.
 
-Each validator is discovered by environment variable (`NATIVE_GRPC_ADDRESS`, `OPA_GRPC_ADDRESS`, `ANSIBLE_GRPC_ADDRESS`, `GITLEAKS_GRPC_ADDRESS`, `COLLECTION_HEALTH_GRPC_ADDRESS`, `DEP_AUDIT_GRPC_ADDRESS`). If a variable is unset, that validator is skipped.
+Each validator is discovered by environment variable (`NATIVE_GRPC_ADDRESS`, `OPA_GRPC_ADDRESS`, `ANSIBLE_GRPC_ADDRESS`, `GITLEAKS_GRPC_ADDRESS`, `COLLECTION_HEALTH_GRPC_ADDRESS`, `DEP_AUDIT_GRPC_ADDRESS`). **Required** validators (Native, OPA, Ansible) must have their addresses set and healthy; scans fail if any are missing. **Optional** validators (Gitleaks, Collection Health, Dep Audit) may be omitted — Engine skips unset optional addresses with graceful degradation.
 
 ---
 
@@ -169,7 +169,7 @@ All gRPC servers use **grpc.aio** (fully async). This means multiple scan reques
 
 | Service | Concurrency strategy | `maximum_concurrent_rpcs` | Env var |
 |---------|---------------------|---------------------------|---------|
-| Primary | `asyncio.gather()` fan-out; engine scan via `run_in_executor()` | 16 | `APME_PRIMARY_MAX_RPCS` |
+| Engine | `asyncio.gather()` fan-out; engine scan via `run_in_executor()` | 16 | `APME_ENGINE_MAX_RPCS` |
 | Native | CPU-bound rules via `run_in_executor()` | 32 | `APME_NATIVE_MAX_RPCS` |
 | OPA | Blocking subprocess via `run_in_executor()` | 32 | `APME_OPA_MAX_RPCS` |
 | Ansible | Blocking venv build + subprocess via `run_in_executor()` | 8 | `APME_ANSIBLE_MAX_RPCS` |
@@ -181,9 +181,9 @@ All gRPC servers use **grpc.aio** (fully async). This means multiple scan reques
 
 ## Session-Scoped Venvs
 
-The Primary orchestrator manages session-scoped venvs via `VenvSessionManager`. Within each session, venvs are keyed by `ansible_core_version` — like tox matrix entries. Collections discovered by FQCN auto-discovery (ADR-032) are installed incrementally via the Galaxy Proxy. Venvs are shared read-only with validators via a `/sessions` volume.
+The Engine manages session-scoped venvs via `VenvSessionManager`. Within each session, venvs are keyed by `ansible_core_version` — like tox matrix entries. Collections discovered by FQCN auto-discovery (ADR-032) are installed incrementally via the Galaxy Proxy. Venvs are shared read-only with validators via a `/sessions` volume.
 
-- **Single writer, many readers**: Primary owns venv creation/updates (rw); validators mount read-only
+- **Single writer, many readers**: Engine owns venv creation/updates (rw); validators mount read-only
 - **Additive, never destructive**: Collections are only added; a new core version creates a sibling venv
 - **Idempotent installs**: `uv pip install` is a no-op for already-installed packages — warm sessions pay near-zero cost
 - **Client-controlled identity**: `session_id` is always client-provided (VS Code workspace hash, CI job ID)
@@ -196,7 +196,7 @@ The Primary orchestrator manages session-scoped venvs via `VenvSessionManager`. 
 Every scan request carries a `request_id` (derived from the session's scan_id) that propagates through the entire system:
 
 ```
-CLI → Primary (scan_id) → ValidateRequest.request_id → each validator logs [req=xxx]
+CLI → Engine (scan_id) → ValidateRequest.request_id → each validator logs [req=xxx]
                                                       → ValidateResponse.request_id (echo)
 ```
 
@@ -208,10 +208,10 @@ All validator logs are prefixed with `[req=xxx]` for end-to-end correlation acro
 
 | Data | Format | Wire type | Producer | Consumer |
 |------|--------|-----------|----------|----------|
-| Hierarchy payload | JSON (`json.dumps`) | bytes in protobuf | Engine (Primary) | OPA, Ansible |
-| ContentGraph | `ContentGraph.to_dict(slim=True)` | JSON bytes in protobuf | Engine (Primary) | Native, Gitleaks |
-| Violations | Protobuf `Violation` messages | gRPC | All validators | Primary |
-| Project files | Protobuf `File` messages | gRPC | CLI | Primary, Ansible |
+| Hierarchy payload | JSON (`json.dumps`) | bytes in protobuf | Engine | OPA, Ansible |
+| ContentGraph | `ContentGraph.to_dict(slim=True)` | JSON bytes in protobuf | Engine | Native, Gitleaks |
+| Violations | Protobuf `Violation` messages | gRPC | All validators | Engine |
+| Project files | Protobuf `File` messages | gRPC | CLI | Engine, Ansible |
 
 The Native validator receives a serialized `ContentGraph` (JSON dict) which it deserializes via `ContentGraph.from_dict()`. This replaced the earlier `jsonpickle`-encoded `SingleScan` (`scandata`) path. The ContentGraph is a lightweight directed graph of nodes (tasks, plays, roles, files) with properties — no complex Python objects requiring `jsonpickle`.
 
@@ -236,7 +236,9 @@ The same `opa_client.run_opa()` code is used, but the binary is accessed differe
 | `1` (default) | `podman run --rm ... opa eval` — ephemeral container per evaluation | Slower (container startup overhead) |
 | `0` | Local `opa` binary on `$PATH` | Fast (same as in-container) |
 
-If neither Podman nor a local binary is available, OPA validation is skipped (graceful degradation). A circuit breaker disables OPA after 3 consecutive 60s timeouts.
+If neither Podman nor a local binary is available, OPA policy checks cannot
+run until one is installed. A circuit breaker disables OPA after 3 consecutive
+60s timeouts.
 
 ---
 
@@ -263,7 +265,7 @@ The wrapper adds **Ansible-aware filtering**:
 
 | Volume | Mount | Services | Access | Notes |
 |--------|-------|----------|--------|-------|
-| `sessions` | `/sessions` | Primary (rw), Ansible (ro), Collection Health (ro), Dep Audit (ro) | Session-scoped venvs with ansible-core + collections | PVC when replicas=1; emptyDir when replicas>1 (each replica owns its sessions) |
+| `sessions` | `/sessions` | Engine (rw), Ansible (ro), Collection Health (ro), Dep Audit (ro) | Session-scoped venvs with ansible-core + collections | PVC when replicas=1; emptyDir when replicas>1 (each replica owns its sessions) |
 | `proxy-cache` | `/cache` | Galaxy Proxy | Wheel cache | PVC when replicas=1; emptyDir when replicas>1 |
 | `workspace` | `/workspace` | CLI (ro) | Project being scanned (mounted from host CWD) | Podman only (CLI container joins pod) |
 
@@ -273,7 +275,7 @@ The wrapper adds **Ansible-aware filtering**:
 
 | Port | Service | Protocol |
 |------|---------|----------|
-| 50051 | Primary | gRPC |
+| 50051 | Engine | gRPC |
 | 50053 | Ansible | gRPC |
 | 50054 | OPA | gRPC (wrapper; OPA binary invoked via subprocess) |
 | 50055 | Native | gRPC |
@@ -301,7 +303,7 @@ SQLite shares that pod.
             │
             ▼
   ┌──────────────── apme Simple pod (replicas: 1) ────────────────┐
-  │  Primary + validators + Galaxy Proxy + Gateway + UI + Abbenay*  │
+  │  Engine + validators + Galaxy Proxy + Gateway + UI + Abbenay*  │
   │              all via 127.0.0.1:<port> (ADR-005)                  │
   └─────────────────────────────────────────────────────────────────┘
 ```
@@ -312,13 +314,13 @@ On Kubernetes/OpenShift the chart deploys **one** Deployment (Simple / all-in-on
 
 | Deployment | Containers (sidecars) | Scaling |
 |-----------|----------------------|---------|
-| **Simple (all-in-one)** | Primary, Native, OPA, Ansible, Gitleaks*, Coll Health*, Dep Audit*, Galaxy Proxy, Gateway, UI*, Abbenay*, OTel* | **replicas: 1** (HPA off) |
+| **Simple (all-in-one)** | Engine, Native, OPA, Ansible, Gitleaks*, Coll Health*, Dep Audit*, Galaxy Proxy, Gateway, UI*, Abbenay*, OTel* | **replicas: 1** (HPA off) |
 
 *\* = conditionally included via chart values / profiles*
 
 Key K8s behavior:
 - **Single replica**: Chart validation rejects `replicas > 1` / HPA for this topology
-- **Localhost**: Primary → Abbenay `127.0.0.1:50057`; reporting → `127.0.0.1:50060` (no Abbenay TLS for the chart path)
+- **Localhost**: Engine → Abbenay `127.0.0.1:50057`; reporting → `127.0.0.1:50060` (no Abbenay TLS for the chart path)
 - **PodDisruptionBudget**: Protects the Simple Deployment during node drains
 - **NetworkPolicy**: Optional default-deny with allow rules for Ingress → Gateway/UI
 
@@ -396,7 +398,7 @@ The engine (`run_scan()`) reports per-phase timing via `EngineDiagnostics`:
 ```
 Validator → ValidateResponse.diagnostics (ValidatorDiagnostics)
                     ↓
-Primary aggregates all ValidatorDiagnostics + engine timing
+Engine aggregates all ValidatorDiagnostics + engine timing
                     ↓
 SessionEvent.diagnostics (ScanDiagnostics)
                     ↓
@@ -420,10 +422,10 @@ With `--json`, the `diagnostics` key is included when `-v` or `-vv` is set.
 The CLI `health-check` subcommand calls `Health` on all services and reports status:
 
 ```bash
-APME_PRIMARY_ADDRESS=127.0.0.1:50051 apme health-check
+APME_ENGINE_ADDRESS=127.0.0.1:50051 apme health-check
 ```
 
-Primary, Native, OPA, Ansible, Gitleaks, Collection Health, and Dep Audit all implement the `Health` RPC. A service returning `status: "ok"` is healthy; any gRPC error marks it degraded.
+Engine, Native, OPA, Ansible, Gitleaks, Collection Health, and Dep Audit all implement the gRPC `Health` RPC. Galaxy Proxy is probed separately via HTTP `GET http://<host>:8765/health` (expects JSON `{"status": "ok"}`). A gRPC service returning `status: "ok"` or a successful Galaxy Proxy HTTP health response is healthy; any gRPC error or failed HTTP probe marks that service degraded.
 
 ---
 

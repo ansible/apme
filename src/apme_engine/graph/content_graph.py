@@ -1,6 +1,6 @@
 """ContentGraph — DAG-backed model for Ansible content (ADR-044, ADR-059).
 
-Shared graph data structure used by both the engine (Primary) and the
+Shared graph data structure used by both the Engine and the
 native validator.  This module has **no** dependency on
 ``apme_engine.engine`` — the dependency arrow points from engine → graph.
 

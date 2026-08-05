@@ -368,7 +368,7 @@ The best practices YAML can be updated manually or via automation:
 
 ### Auto-Discovery
 
-When `--ai` is set, Primary auto-discovers the Abbenay daemon:
+When `--ai` is set, Engine auto-discovers the Abbenay daemon:
 
 1. Check `$XDG_RUNTIME_DIR/abbenay/daemon.sock` (Linux standard)
 2. Fall back to `/run/user/<uid>/abbenay/daemon.sock`
@@ -377,7 +377,7 @@ When `--ai` is set, Primary auto-discovers the Abbenay daemon:
 
 ### Preflight Health Check
 
-Before entering the remediation loop, `_resolve_ai_provider` in Primary checks prerequisites:
+Before entering the remediation loop, `_resolve_ai_provider` in Engine checks prerequisites:
 
 ```python
 if not fix_opts or not fix_opts.enable_ai:
@@ -406,7 +406,7 @@ The `apme health-check` subcommand checks all engine services:
 ```
 $ apme health-check
 
-  primary  (localhost:50051)  ok   12ms
+  engine  (localhost:50051)  ok   12ms
   native   (localhost:50055)  ok    8ms
   opa      (localhost:50054)  ok   15ms
   ansible  (localhost:50053)  ok   22ms
@@ -608,7 +608,7 @@ podman pull ghcr.io/redhat-developer/abbenay:v2026.8.6
 +--------------------------- apme-pod ----------------------------+
 |                                                                   |
 |  +----------+  +----------+  +----------+  +----------+         |
-|  | Primary  |  |  Native  |  |   OPA    |  | Ansible  |  ...    |
+|  | Engine  |  |  Native  |  |   OPA    |  | Ansible  |  ...    |
 |  |  :50051  |  |  :50055  |  |  :50054  |  |  :50053  |         |
 |  | engine + |  |          |  |          |  |          |         |
 |  | remediat |  |          |  |          |  |          |         |

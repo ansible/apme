@@ -461,7 +461,7 @@ class ScanPythonPackage(Base):
 class Rule(Base):
     """A registered rule from the engine's rule catalog (ADR-041).
 
-    Populated by ``RegisterRules`` from the authority Primary on startup.
+    Populated by ``RegisterRules`` from the authority Engine on startup.
     Overrides are stored separately in ``rule_overrides``.
 
     Attributes:

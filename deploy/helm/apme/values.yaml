@@ -20,15 +20,18 @@ imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""
 
-# -- Simple pod: Primary + validators + Galaxy Proxy (+ Gateway/UI/Abbenay sidecars)
+# -- Simple pod: Engine + validators + Galaxy Proxy (+ Gateway/UI/Abbenay sidecars)
 engine:
   # ADR-069: must be 1. Chart fails render if set higher.
   replicas: 1
+  # Max concurrent Engine FixSession/Health RPCs (APME_ENGINE_MAX_RPCS).
+  maxConcurrentRpcs: 16
   # Recreate avoids RWO PVC conflicts during single-replica rolling updates.
   strategy:
     type: Recreate
   resources:
-    primary:
+    # Engine container resources. Override engine.resources.engine in values.
+    engine:
       requests:
         cpu: 250m
         memory: 512Mi

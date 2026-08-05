@@ -1,4 +1,4 @@
-"""Tests for the ListAIModels gRPC RPC on PrimaryServicer."""
+"""Tests for the ListAIModels gRPC RPC on EngineServicer."""
 
 from __future__ import annotations
 
@@ -9,8 +9,8 @@ import types
 from dataclasses import dataclass
 from unittest.mock import MagicMock, patch
 
-from apme.v1.primary_pb2 import ListAIModelsRequest
-from apme_engine.daemon.primary_server import PrimaryServicer
+from apme.v1.engine_pb2 import ListAIModelsRequest
+from apme_engine.daemon.engine_server import EngineServicer
 
 
 @dataclass
@@ -67,12 +67,12 @@ def _make_stub_module(client_cls: type | None = None) -> types.ModuleType:
 
 
 # ---------------------------------------------------------------------------
-# Primary.ListAIModels
+# Engine.ListAIModels
 # ---------------------------------------------------------------------------
 
 
-class TestPrimaryListAIModels:
-    """Test the ListAIModels gRPC method on PrimaryServicer."""
+class TestEngineListAIModels:
+    """Test the ListAIModels gRPC method on EngineServicer."""
 
     def test_returns_models_from_abbenay(self) -> None:
         """ListAIModels returns models when Abbenay is reachable."""
@@ -92,7 +92,7 @@ class TestPrimaryListAIModels:
             patch.dict(os.environ, {"APME_ABBENAY_ADDR": "127.0.0.1:50057"}),
             patch.dict(sys.modules, {"abbenay_grpc": stub_mod}),
         ):
-            servicer = PrimaryServicer()
+            servicer = EngineServicer()
             ctx = MagicMock()
             resp = asyncio.run(servicer.ListAIModels(ListAIModelsRequest(), ctx))
 
@@ -104,7 +104,7 @@ class TestPrimaryListAIModels:
         """ListAIModels returns empty list when APME_ABBENAY_ADDR is not set."""
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("APME_ABBENAY_ADDR", None)
-            servicer = PrimaryServicer()
+            servicer = EngineServicer()
             ctx = MagicMock()
             resp = asyncio.run(servicer.ListAIModels(ListAIModelsRequest(), ctx))
 
@@ -123,7 +123,7 @@ class TestPrimaryListAIModels:
             patch.dict(os.environ, {"APME_ABBENAY_ADDR": "127.0.0.1:50057"}),
             patch.dict(sys.modules, {"abbenay_grpc": stub_mod}),
         ):
-            servicer = PrimaryServicer()
+            servicer = EngineServicer()
             ctx = MagicMock()
             resp = asyncio.run(servicer.ListAIModels(ListAIModelsRequest(), ctx))
 
@@ -135,7 +135,7 @@ class TestPrimaryListAIModels:
             patch.dict(os.environ, {"APME_ABBENAY_ADDR": "127.0.0.1:50057"}),
             patch.dict(sys.modules, {"abbenay_grpc": None}),
         ):
-            servicer = PrimaryServicer()
+            servicer = EngineServicer()
             ctx = MagicMock()
             resp = asyncio.run(servicer.ListAIModels(ListAIModelsRequest(), ctx))
 

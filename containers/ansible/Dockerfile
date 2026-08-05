@@ -1,6 +1,6 @@
 # Ansible validator: async gRPC server, read-only consumer of session venvs.
-# UV cache is pre-warmed at build time so venv creation by Primary is near-instant.
-# Sessions volume mounted read-only from the Primary orchestrator.
+# UV cache is pre-warmed at build time so venv creation by Engine is near-instant.
+# Sessions volume mounted read-only from the Engine.
 ARG BASE_IMAGE=localhost/apme-base:latest
 FROM $BASE_IMAGE
 

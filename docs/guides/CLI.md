@@ -1,14 +1,16 @@
 # CLI Guide
 
-APME's CLI is a thin gRPC client that connects to a Primary service. It
-discovers the Primary using a three-tier strategy: (1) `APME_PRIMARY_ADDRESS`
+APME's CLI is a thin gRPC client that connects to an Engine service. It
+discovers the Engine using a three-tier strategy: (1) `APME_ENGINE_ADDRESS`
 env var, (2) a running local daemon, (3) auto-start a local daemon. For scan
 commands (`check`, `remediate`, `format`, `health-check`), this discovery
 happens automatically. Commands like `sbom` and `suppress` talk to the Gateway
-REST API or operate locally without a Primary. No full pod required — just
-`pip install` and go (OPA uses a Podman container by default; set
-`OPA_USE_PODMAN=0` for a local binary, or OPA is skipped if neither is
-available).
+REST API or operate locally without an Engine. No full pod required — just
+`pip install` and go (the OPA validator gRPC server is always started;
+policy evaluation uses Podman by default or a local `opa` binary when
+`OPA_USE_PODMAN=0`). OPA infrastructure failures (unavailable binary, eval
+errors, circuit-breaker disable) propagate as validator R902 errors — scans do
+not succeed with silently missing OPA findings.
 
 ## Installation
 
@@ -30,21 +32,22 @@ CLI release does not imply the Helm repo has published matching images yet.
 ### Requirements
 
 - Python 3.12+
-- Podman **or** `opa` binary on `$PATH` (optional — OPA uses Podman by default; falls back to local `opa`; skipped if neither is available)
+- Podman **or** `opa` binary on `$PATH` (required for OPA policy evaluation;
+  Podman is the default, or set `OPA_USE_PODMAN=0` for a local binary)
 
 ## How it works
 
 The CLI uses a **daemon architecture**:
 
 1. On first use, `apme` starts a background daemon process
-2. The daemon runs Primary, Native, OPA, and Ansible as in-process gRPC servers,
+2. The daemon runs Engine, Native, OPA, and Ansible as in-process gRPC servers,
    plus Galaxy Proxy as an HTTP service (uvicorn), all on localhost
 3. The CLI sends file bytes to the daemon over gRPC and receives results
 4. The daemon stays running between commands for fast subsequent scans
 
-```
+```text
 ┌───────────┐  gRPC   ┌──────────────────────────────────────────┐
-│  apme CLI │ ──────► │          Local Daemon (Primary)          │
+│  apme CLI │ ──────► │          Local Daemon (Engine)          │
 │  (client) │         │  ┌────────┬───────┬─────────┬────────┐  │
 └───────────┘         │  │ Native │  OPA  │ Ansible │ Galaxy │  │
                       │  │        │       │         │ Proxy  │  │
@@ -254,7 +257,7 @@ production use or full feature access, use a [deployment method](DEPLOYMENT.md).
 The CLI reads configuration from these sources (in priority order):
 
 1. CLI flags (highest priority)
-2. Environment variables (`APME_PRIMARY_ADDRESS`, `APME_ABBENAY_ADDR`, etc.)
+2. Environment variables (`APME_ENGINE_ADDRESS`, `APME_ABBENAY_ADDR`, etc.)
 3. Project-level `.apme/rules.yml` for rule configuration
 
 ### Rule configuration

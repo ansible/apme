@@ -157,10 +157,10 @@ class ReportingServicer(reporting_pb2_grpc.ReportingServicer):
         request: reporting_pb2.RegisterRulesRequest,
         context: grpc.aio.ServicerContext,  # type: ignore[type-arg]
     ) -> reporting_pb2.RegisterRulesResponse:
-        """Reconcile the rule catalog from a Primary registration (ADR-041).
+        """Reconcile the rule catalog from an Engine registration (ADR-041).
 
         Args:
-            request: Full rule set from the registering Primary.
+            request: Full rule set from the registering Engine.
             context: gRPC servicer context.
 
         Returns:
@@ -205,7 +205,7 @@ async def _reconcile_rules(
 
     Args:
         db: Active async database session.
-        incoming: Proto RuleDefinition messages from the registering Primary.
+        incoming: Proto RuleDefinition messages from the registering Engine.
 
     Returns:
         Tuple of (added, removed, unchanged) counts.

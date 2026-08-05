@@ -9,7 +9,7 @@ spec:
   type: ClusterIP
   ports:
     # HTTP for Ingress / in-cluster REST. Gateway gRPC (50060) is pod-local only
-    # (Primary → 127.0.0.1:50060 per ADR-069); do not publish it on the Service.
+    # (Engine → 127.0.0.1:50060 per ADR-069); do not publish it on the Service.
     - name: http
       port: 8080
       targetPort: 8080

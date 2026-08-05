@@ -5,7 +5,7 @@ This module provides a custom handler that:
 
 1. Always writes to stderr (daemon.log in daemon mode, container log in pod mode)
 2. Conditionally collects ``ProgressUpdate`` protos into a per-request
-   ``CollectorSink`` (validators, Primary ``Format`` RPC, etc.)
+   ``CollectorSink`` (validators, Engine ``Format`` RPC, etc.)
 
 The active sink is tracked via ``contextvars`` so concurrent requests each
 get their own log collection without interference. Blocking validator work
@@ -56,7 +56,7 @@ class LogSink:
 class CollectorSink(LogSink):
     """Thread-safe sink that appends entries to a list.
 
-    Used by validators (per ``Validate()`` call) and by Primary for
+    Used by validators (per ``Validate()`` call) and by Engine for
     unary RPCs such as ``Format``.
     """
 
@@ -116,7 +116,7 @@ def attach_collector() -> _AttachCollector:
 def _derive_phase(logger_name: str) -> str:
     """Derive the ``phase`` field from a logger name.
 
-    ``apme.primary`` -> ``"primary"``, ``apme.remediation.engine`` -> ``"remediation"``.
+    ``apme.engine`` -> ``"engine"``, ``apme.remediation.engine`` -> ``"remediation"``.
 
     Args:
         logger_name: Dotted Python logger name.

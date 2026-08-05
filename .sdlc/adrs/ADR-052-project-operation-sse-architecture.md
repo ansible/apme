@@ -11,7 +11,7 @@ Accepted
 ## Context
 
 Project operations (check/remediate) today use a WebSocket tunnel: browser ↔ WS
-↔ Gateway ↔ gRPC ↔ Primary. All operation state lives in React `useState` inside
+↔ Gateway ↔ gRPC ↔ Engine. All operation state lives in React `useState` inside
 the `useProjectOperation` hook. This creates several problems:
 
 1. **State lost on navigation.** Navigating away during a 2+ minute AI proposal
@@ -31,7 +31,7 @@ the `useProjectOperation` hook. This creates several problems:
 
 The Playground already addressed session persistence via `sessionStorage` and
 WebSocket `?resume=` (PR #279), but the project path is architecturally
-different: the Gateway clones the repo and drives Primary's `FixSession`, so the
+different: the Gateway clones the repo and drives Engine's `FixSession`, so the
 browser is not a direct participant in the gRPC stream.
 
 Issue #94 identified this gap. Frontend-only persistence (sessionStorage) was
@@ -48,7 +48,7 @@ model**:
 - **OperationRegistry** (in-memory) as the Gateway's source of truth
 
 The Gateway becomes the owner of the operation lifecycle. It maintains the gRPC
-stream to Primary independently of any browser connection. The UI is a pure
+stream to Engine independently of any browser connection. The UI is a pure
 state renderer that any client can attach to at any time via SSE.
 
 ### State machine
@@ -99,7 +99,7 @@ REST POST calls. SSE provides:
 ### Why in-memory
 
 Operations are ephemeral (minutes, not hours). If the Gateway restarts, the
-Primary gRPC stream dies too, so there is nothing to recover. The completed scan
+Engine gRPC stream dies too, so there is nothing to recover. The completed scan
 is already persisted to SQLite via the reporting sink. In-memory storage keeps
 the implementation simple and avoids schema changes for transient state.
 
@@ -132,8 +132,10 @@ the implementation simple and avoids schema changes for transient state.
 - **Terminal state retention.** Completed/failed/expired operations remain in
   the registry for 10 minutes (configurable) so returning users see results.
   After that, results are available only via the persisted `scans` REST API.
-- **No Primary changes.** The Primary's `SessionStore`, `FixSession` RPC, and
-  proto definitions are unchanged.
+- **No Engine behavioral changes.** The Engine's `SessionStore`, `FixSession`
+  semantics, and message fields are unchanged by this ADR. The orchestrator
+  rename from Primary to Engine (`engine.proto`, PR #500) is complete and
+  independent of this ADR.
 - **Engine invariants preserved.** The engine never queries out (ADR-020),
   validators are read-only (ADR-009), stateless engine (ADR-029).
 

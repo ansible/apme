@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from apme.v1 import primary_pb2
+from apme.v1 import engine_pb2
 from apme_gateway.scan.driver import (
     _REMOTE_HEAD_CACHE,
     _git_subprocess_env,
@@ -163,7 +163,7 @@ async def _async_iter(
 @pytest.mark.asyncio  # type: ignore[untyped-decorator]
 async def test_run_project_scan_full_flow() -> None:
     """Verify run_project_scan clones, chunks, and streams FixSession (check mode)."""
-    mock_chunks = [primary_pb2.ScanChunk(last=True, scan_id="test-scan")]
+    mock_chunks = [engine_pb2.ScanChunk(last=True, scan_id="test-scan")]
 
     progress_events: list[object] = []
 
@@ -197,14 +197,14 @@ async def test_run_project_scan_full_flow() -> None:
         mock_channel_cls.return_value = mock_channel
 
         with patch(
-            "apme_gateway.scan.driver.primary_pb2_grpc.PrimaryStub",
+            "apme_gateway.scan.driver.engine_pb2_grpc.EngineStub",
             return_value=mock_stub,
         ):
             scan_id, result, commit_sha = await run_project_scan(
                 project_id="test-proj",
                 repo_url="https://github.com/test/repo.git",
                 branch="main",
-                primary_address="127.0.0.1:50051",
+                engine_address="127.0.0.1:50051",
                 progress_callback=track_progress,
             )
 

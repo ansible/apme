@@ -1,8 +1,8 @@
-# Podman pod: Primary, Native, OPA, Ansible, Gitleaks, Collection Health,
+# Podman pod: Engine, Native, OPA, Ansible, Gitleaks, Collection Health,
 # Dep Audit, Galaxy Proxy, Gateway, UI, Abbenay, OTel Collector.
 # All validators implement the unified Validator gRPC service (validate.proto).
 # Galaxy Proxy serves collections as Python wheels via PEP 503 (ADR-031).
-# Session venvs are built by Primary (read-write) and shared with validators
+# Session venvs are built by Engine (read-write) and shared with validators
 # (read-only) via the sessions volume.
 # OTel Collector receives OTLP from sibling containers and exposes Prometheus
 # metrics on :8889 for an external Prometheus scrape.
@@ -18,10 +18,10 @@ metadata:
 spec:
   hostname: apme-pod
   containers:
-    - name: primary
-      image: apme-primary:latest
+    - name: engine
+      image: apme-engine:latest
       env:
-        - name: APME_PRIMARY_LISTEN
+        - name: APME_ENGINE_LISTEN
           value: "0.0.0.0:50051"
         - name: NATIVE_GRPC_ADDRESS
           value: "127.0.0.1:50055"
@@ -48,7 +48,7 @@ spec:
         - name: OTEL_EXPORTER_OTLP_ENDPOINT
           value: "http://127.0.0.1:4318"
         - name: OTEL_SERVICE_NAME
-          value: "apme-primary"
+          value: "apme-engine"
         - name: OTEL_RESOURCE_ATTRIBUTES
           value: "service.namespace=apme,service.instance.id=apme-pod"
         - name: OTEL_METRIC_EXPORT_INTERVAL

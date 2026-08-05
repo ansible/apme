@@ -105,9 +105,9 @@ spec:
         {{- end }}
       {{- end }}
       containers:
-        # -- Primary orchestrator
-        - name: primary
-          image: {{ include "apme.image" (dict "registry" .Values.image.registry "name" "primary" "tag" .Values.image.tag "fallbackTag" .Chart.AppVersion) }}
+        # -- Engine orchestrator
+        - name: engine
+          image: {{ include "apme.image" (dict "registry" .Values.image.registry "name" "engine" "tag" .Values.image.tag "fallbackTag" .Chart.AppVersion) }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           {{- with .Values.securityContext }}
           securityContext:
@@ -116,8 +116,10 @@ spec:
           env:
             - name: UV_CACHE_DIR
               value: /tmp/uv-cache
-            - name: APME_PRIMARY_LISTEN
+            - name: APME_ENGINE_LISTEN
               value: "0.0.0.0:50051"
+            - name: APME_ENGINE_MAX_RPCS
+              value: {{ .Values.engine.maxConcurrentRpcs | default 16 | quote }}
             - name: NATIVE_GRPC_ADDRESS
               value: "127.0.0.1:50055"
             - name: OPA_GRPC_ADDRESS
@@ -171,7 +173,7 @@ spec:
             - name: sessions
               mountPath: /sessions
           resources:
-            {{- toYaml .Values.engine.resources.primary | nindent 12 }}
+            {{- toYaml (.Values.engine.resources.engine | default dict) | nindent 12 }}
 
         # -- Native validator
         - name: native
@@ -370,7 +372,7 @@ spec:
             {{- toYaml . | nindent 12 }}
           {{- end }}
           env:
-            - name: APME_PRIMARY_ADDRESS
+            - name: APME_ENGINE_ADDRESS
               value: "127.0.0.1:50051"
             - name: APME_DB_PATH
               value: /data/apme.db
@@ -482,7 +484,7 @@ spec:
           securityContext:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-          # ADR-070: HTTP admin + gRPC on loopback (no Service/hostPort 8787).
+          # ADR-070: gRPC for Engine + HTTP admin on loopback (no Service/hostPort 8787).
           args:
             - "web"
             - "--host"

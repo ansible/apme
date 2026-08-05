@@ -31,7 +31,10 @@ Currently scans are stateless — results are returned to the CLI and not persis
 
 ## Context
 
-The current APME architecture is completely stateless. The CLI sends files, Primary scans them, results return to CLI. There's no database, no persistence, no history.
+At the time this DR was raised, the CLI-only path was stateless: the CLI sent
+files, Engine scanned them, and results returned to the CLI with no persistence.
+ADR-029 (Gateway + SQLite) and ADR-049 (Gateway in the local daemon) now provide
+persistence at the Gateway edge; Engine remains stateless per ADR-020.
 
 A dashboard implies:
 - Persistent storage of scan results

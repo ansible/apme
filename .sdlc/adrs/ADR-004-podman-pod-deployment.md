@@ -27,12 +27,14 @@ only.** For Kubernetes and OpenShift deployments, see
 ## Context
 
 APME runs multiple services:
-- Primary (orchestrator + session venv manager)
+- Engine (orchestrator + session venv manager)
 - Native validator
 - OPA validator
 - Ansible validator
-- Gitleaks validator
 - Galaxy Proxy (PEP 503 collection proxy)
+- Gitleaks validator (optional)
+- Collection Health validator (optional)
+- Dep Audit validator (optional)
 - CLI
 
 We needed a deployment model for **local development and single-node evaluation**.

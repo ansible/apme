@@ -235,7 +235,7 @@ for nodes above it in the same file.
 - [x] `_record_violations()` + `_count_modified_nodes()` helpers
 - [x] 17 unit tests: 4 rescan_dirty, 8 GraphRemediationEngine, 5 splice
 - [x] Lint clean (prek, mypy, pydoclint all pass)
-- [ ] Primary server integration (deferred — separate PR scope)
+- [ ] Engine server integration (deferred — separate PR scope)
 
 ## Out of Scope
 

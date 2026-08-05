@@ -3,7 +3,7 @@
 Maps a **small allowlist** of Gateway ``/api/v1/ai/...`` routes to Abbenay
 ``/api/...`` on localhost. Injects Abbenay's HTTP Bearer token; does not pass
 through caller ``Authorization``. Inference (``GET /api/v1/ai/models`` and
-Abbenay chat) is **not** proxied — chat stays Primary → Abbenay gRPC.
+Abbenay chat) is **not** proxied — chat stays Engine → Abbenay gRPC.
 ``GET /api/v1/ai/engines`` proxies Abbenay's engine registry (read-only
 discovery path, ADR-070 amendment 2026-08-03).
 ``GET/POST /api/v1/ai/secrets`` and ``DELETE /api/v1/ai/secrets/{key}`` proxy
@@ -14,6 +14,7 @@ Abbenay ≥ v2026.8.6. Gateway does not persist keys and does not parse
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -31,6 +32,8 @@ _HTTP_TOKEN_ENV: Final = "APME_ABBENAY_HTTP_TOKEN"
 _GRPC_TOKEN_ENV: Final = "APME_ABBENAY_TOKEN"
 _ABBENAY_API_TOKEN_ENV: Final = "ABBENAY_API_TOKEN"
 _PROXY_TIMEOUT_S: Final = 60.0
+# Cleartext HTTP is only for the Simple loopback topology (ADR-070).
+_LOOPBACK_HOSTS: Final = frozenset({"127.0.0.1", "localhost", "::1"})
 
 # Hop-by-hop + sensitive headers must not be forwarded (RFC 7230 + ADR-070).
 _REQUEST_DROP: Final = frozenset(
@@ -85,6 +88,36 @@ def abbenay_http_base_url() -> str:
         Configured base URL, or ``http://127.0.0.1:8787`` when unset.
     """
     return os.environ.get(_HTTP_URL_ENV, "").strip().rstrip("/") or _HTTP_URL_DEFAULT
+
+
+def _abbenay_http_url_error(url: str) -> str | None:
+    """Return an error detail when *url* is not an allowed Abbenay admin URL.
+
+    HTTPS is always allowed. Cleartext HTTP is allowed only for loopback hosts
+    used by the Simple in-pod topology (ADR-070).
+
+    Args:
+        url: Absolute Abbenay HTTP base URL.
+
+    Returns:
+        Human-readable rejection reason, or ``None`` when the URL is allowed.
+    """
+    try:
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").lower()
+        _ = parsed.port  # reject invalid port strings before httpx sees the URL
+    except ValueError:
+        return "APME_ABBENAY_HTTP_URL is not a valid URL"
+    scheme = (parsed.scheme or "").lower()
+    if not parsed.netloc or not host:
+        return "APME_ABBENAY_HTTP_URL must include a host"
+    if scheme == "https":
+        return None
+    if scheme == "http" and host in _LOOPBACK_HOSTS:
+        return None
+    if scheme == "http":
+        return "APME_ABBENAY_HTTP_URL must use https except for loopback hosts"
+    return "APME_ABBENAY_HTTP_URL must be an http(s) URL"
 
 
 def abbenay_http_token() -> str:
@@ -214,7 +247,7 @@ async def proxy_abbenay_admin(path: str, request: Request) -> Response:
     ``GET /ai/providers``, ``POST /ai/provider/{id}/configure``,
     ``DELETE /ai/provider/{id}``, ``GET/POST /ai/secrets``,
     ``DELETE /ai/secrets/{key}``.
-    ``GET /api/v1/ai/models`` remains on the main router (Primary). Chat and
+    ``GET /api/v1/ai/models`` remains on the main router (Engine). Chat and
     other Abbenay surfaces are not proxied.
 
     Args:
@@ -239,6 +272,14 @@ async def proxy_abbenay_admin(path: str, request: Request) -> Response:
             media_type="application/json",
         )
 
+    url_error = _abbenay_http_url_error(abbenay_http_base_url())
+    if url_error is not None:
+        return Response(
+            content=json.dumps({"detail": url_error}).encode(),
+            status_code=503,
+            media_type="application/json",
+        )
+
     url = _upstream_url(admin_path, request.url.query)
     if url is None:
         return Response(
@@ -251,7 +292,7 @@ async def proxy_abbenay_admin(path: str, request: Request) -> Response:
     body = await request.body()
 
     try:
-        async with httpx.AsyncClient(timeout=_PROXY_TIMEOUT_S) as client:
+        async with httpx.AsyncClient(timeout=_PROXY_TIMEOUT_S, follow_redirects=False) as client:
             upstream = await client.request(
                 request.method,
                 url,

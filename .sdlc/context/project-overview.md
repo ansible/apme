@@ -63,7 +63,7 @@ pod (engine + Gateway + UI + optional Abbenay). The CLI can also run as a
 standalone daemon for quick evaluation.
 
 Key services:
-- **Primary** (:50051) — orchestrator, engine, session venv manager
+- **Engine** (:50051) — orchestrator, engine runtime, session venv manager
 - **Native** (:50055) — Python rule validator
 - **OPA** (:50054) — Rego rule validator (subprocess, not REST)
 - **Ansible** (:50053) — runtime checks against session venvs

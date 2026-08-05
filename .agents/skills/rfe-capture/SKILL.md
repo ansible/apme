@@ -83,7 +83,7 @@ What's the source? (Jira key, customer name, or "internal")
 
 5. **Check output formats**:
    - CLI: `apme check --json` capabilities
-   - gRPC: `ScanResponse` proto structure
+   - gRPC: `SessionResult` / `SessionEvent` proto structure
    - What structured data already exists?
 
 ### Phase 3: Gap Analysis
@@ -130,7 +130,7 @@ against every invariant. Present findings:
 | 4 | Unified Validator contract | No impact / CONFLICT: [describe] |
 | 5 | Stateless engine, edge persistence | No impact / CONFLICT: [describe] |
 | 6 | Scale pods, not services | No impact / CONFLICT: [describe] |
-| 7 | Session venvs are Primary-owned | No impact / CONFLICT: [describe] |
+| 7 | Session venvs are Engine-owned | No impact / CONFLICT: [describe] |
 | 8 | Rule ID conventions (ADR-008) | No impact / CONFLICT: [describe] |
 | 9 | OPA uses subprocess, not REST | No impact / CONFLICT: [describe] |
 | 10 | FixSession is the unified client path | No impact / CONFLICT: [describe] |
@@ -164,7 +164,7 @@ Redesign suggestion: [propose alternative that respects the architecture]
 
 **If the RFE requires the engine to be aware of the caller** (e.g., "engine
 should format output differently for the UI vs CLI"), this is always a conflict.
-The engine produces a `ScanResponse` / `SessionEvent` — presentation is the
+The engine produces a `SessionResult` / `SessionEvent` — presentation is the
 caller's responsibility.
 
 ### Phase 5: Decision
@@ -229,7 +229,7 @@ Researching existing capabilities...
 - L004 (OPA): Static deprecated modules check against curated list
 - M002 (Ansible): Runtime introspection via ansible-core's module_loader
 - M004 (Ansible): Removed/tombstoned module detection
-- Output: ScanResponse includes violations with metadata map
+- Output: SessionResult includes violations with metadata map
 
 Gap Analysis:
 - APME already detects deprecated modules comprehensively

@@ -319,7 +319,7 @@ async def replace_scan_proposals(
     prior_rows = list((await db.execute(select(Proposal).where(Proposal.scan_id == scan_id))).scalars().all())
     await db.execute(delete(Proposal).where(Proposal.scan_id == scan_id))
     # Bridge live stubs → archival groups. Key by file+source+primary_rule+line
-    # because primary.Proposal has no path field — stubs always have path="".
+    # because engine.Proposal has no path field — stubs always have path="".
     # Normalize: coupled stubs may store "L007,L013" while groups use "L007";
     # ai-candidate groups must match stub source "ai".
     # Carry analytics_flushed / terminal status / stamp_rule_ids so gate-commit

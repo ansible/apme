@@ -380,7 +380,7 @@ async def test_gate_commit_preserves_analytics_across_replace() -> None:
         assert prop.status == "approved"
 
         # Seeded stub has line_start=0; archival group must match that key
-        # (primary.Proposal has no path — bridge is file+rule+line_start).
+        # (engine.Proposal has no path — bridge is file+rule+line_start).
         await replace_scan_proposals(
             db,
             scan_id=scan_id,

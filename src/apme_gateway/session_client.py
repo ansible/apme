@@ -1,7 +1,7 @@
 """Gateway session client — WebSocket-to-FixSession gRPC bridge.
 
 Replaces the SSE-based scan_client with a bidirectional WebSocket
-transport that maps onto Primary's FixSession gRPC stream (ADR-028/029).
+transport that maps onto Engine's FixSession gRPC stream (ADR-028/029).
 Supports both scan-only (enable_ai=false) and interactive fix sessions
 with AI proposal approval.
 
@@ -46,9 +46,9 @@ import grpc.aio
 from fastapi import WebSocket, WebSocketDisconnect
 from google.protobuf.json_format import MessageToDict
 
-from apme.v1 import primary_pb2_grpc
+from apme.v1 import engine_pb2_grpc
 from apme.v1.common_pb2 import GalaxyServerDef
-from apme.v1.primary_pb2 import (
+from apme.v1.engine_pb2 import (
     AiEscalateRequest,
     AiEscalateTarget,
     ApprovalRequest,
@@ -112,7 +112,7 @@ def _status_name(status: int) -> str:
 
 
 async def _load_scan_rule_configs() -> list[RuleConfig]:
-    """Load resolved rule configs from the gateway DB for Primary ``ScanOptions``.
+    """Load resolved rule configs from the gateway DB for Engine ``ScanOptions``.
 
     Best-effort: returns an empty list if the DB is unavailable, the query
     fails, or no rules are registered yet.
@@ -328,7 +328,7 @@ async def _forward_events(
     """Read SessionEvents from gRPC and forward as JSON to the WebSocket.
 
     Tolerates a closed WebSocket: continues draining gRPC events so the
-    Primary finishes normally and persists scan results to the gateway.
+    Engine finishes normally and the Gateway can persist the streamed result.
 
     Args:
         response_stream: Async iterator of gRPC SessionEvent messages.
@@ -514,27 +514,27 @@ async def _forward_events(
 
 async def handle_session(
     ws: WebSocket,
-    primary_address: str,
+    engine_address: str,
     *,
     resume_session_id: str | None = None,
     resume_scan_id: str | None = None,
 ) -> None:
-    """Bridge a WebSocket connection to a Primary FixSession gRPC stream.
+    """Bridge a WebSocket connection to an Engine FixSession gRPC stream.
 
     Orchestrates the full lifecycle: file upload collection, gRPC
     FixSession initiation, bidirectional event forwarding, and cleanup.
 
     When *resume_session_id* is provided, skips file uploads and sends a
     ``ResumeRequest`` to reconnect to an existing server-side session.
-    The Primary replays tier1/proposal state so the UI can pick up where
+    The Engine replays tier1/proposal state so the UI can pick up where
     it left off.
 
     No client-side gRPC deadline is applied.  Session lifetime is managed
-    by the Primary's session store (``APME_SESSION_TTL``, default 1800s).
+    by the Engine's session store (``APME_SESSION_TTL``, default 1800s).
 
     Args:
         ws: Accepted FastAPI WebSocket.
-        primary_address: gRPC address of the Primary orchestrator.
+        engine_address: gRPC address of the Engine orchestrator.
         resume_session_id: If set, resume this existing session instead
             of starting a new upload.
         resume_scan_id: Original scan_id for the session being resumed,
@@ -565,9 +565,9 @@ async def handle_session(
         command_queue: asyncio.Queue[SessionCommand | None] = asyncio.Queue()
         done = asyncio.Event()
 
-        channel = grpc.aio.insecure_channel(primary_address)
+        channel = grpc.aio.insecure_channel(engine_address)
         try:
-            stub = primary_pb2_grpc.PrimaryStub(channel)  # type: ignore[no-untyped-call]
+            stub = engine_pb2_grpc.EngineStub(channel)  # type: ignore[no-untyped-call]
 
             if resume_session_id:
 

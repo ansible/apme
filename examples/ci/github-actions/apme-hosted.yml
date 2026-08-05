@@ -2,12 +2,12 @@
 #
 # Copy this file to .github/workflows/apme.yml in your Ansible repo.
 # Connects to your existing APME deployment (Kubernetes, VM, or any running
-# pod). Requires network connectivity from the runner to the APME Primary
+# pod). Requires network connectivity from the runner to the APME Engine
 # gRPC endpoint.
 #
 # Prerequisites:
 #   - A running APME deployment accessible from your GitHub Actions runners
-#   - APME_PRIMARY_ADDRESS secret set to your Primary gRPC endpoint (host:port)
+#   - APME_ENGINE_ADDRESS secret set to your Engine gRPC endpoint (host:port)
 ---
 name: APME Check
 
@@ -37,9 +37,9 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
 
       - name: Run APME
-        uses: ansible/apme@v1
+        uses: ansible/apme@8629999da689ef4cd7e0f65a86129dd06627b77e # unreleased dev (PR #500)
         with:
-          primary-address: ${{ secrets.APME_PRIMARY_ADDRESS }}
+          engine-address: ${{ secrets.APME_ENGINE_ADDRESS }}
           target: .
           sarif: "true"
           comment: "true"

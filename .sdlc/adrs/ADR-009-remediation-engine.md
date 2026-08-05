@@ -101,7 +101,7 @@ The remediation engine has evolved significantly since this ADR:
 
 - **`RemediationEngine`** (file-based) has been replaced by **`GraphRemediationEngine`** (graph-based, `src/apme_engine/remediation/graph_engine.py`), which operates on `ContentGraph` nodes rather than raw YAML ASTs (ADR-044).
 - **`TransformRegistry`** now exclusively maps rule IDs to `NodeTransformFn` functions (`(CommentedMap, ViolationDict) -> bool`). The older string-based `TransformFn` and `StructuredTransformFn` have been removed.
-- Remediation remains in-process within Primary (not a separate container/service), accessed via the `FixSession` RPC (ADR-039).
+- Remediation remains in-process within Engine (not a separate container/service), accessed via the `FixSession` RPC (ADR-039).
 - The core principle — validators are read-only, remediation is a separate write path — remains unchanged.
 
 ## Related Decisions
