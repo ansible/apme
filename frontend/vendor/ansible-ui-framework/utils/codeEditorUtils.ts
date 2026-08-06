@@ -1,4 +1,4 @@
-import jsyaml from 'js-yaml';
+import { dump, load } from 'js-yaml';
 
 export function jsonToYaml(jsonString: string) {
   if (jsonString.trim() === '') {
@@ -8,7 +8,7 @@ export function jsonToYaml(jsonString: string) {
   if (Object.entries(value).length === 0) {
     return '';
   }
-  return jsyaml.dump(value);
+  return dump(value);
 }
 export function isJsonString(jsonString: unknown) {
   if (typeof jsonString !== 'string') {
@@ -24,7 +24,7 @@ export function isJsonString(jsonString: unknown) {
   return typeof value === 'object' && value !== null;
 }
 export function yamlToJson(yamlString: string) {
-  const value: object = jsyaml.load(yamlString) as object;
+  const value: object = load(yamlString) as object;
   if (!value) {
     return '{}';
   }

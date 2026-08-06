@@ -1,4 +1,4 @@
-import jsyaml from 'js-yaml';
+import { dump, load } from 'js-yaml';
 
 const MAX_SAFE_INTEGER = Number.MAX_SAFE_INTEGER;
 
@@ -59,7 +59,7 @@ export function safeLoad(input: string): unknown {
     }
   );
 
-  return jsyaml.load(processedYaml);
+  return load(processedYaml);
 }
 
 /**
@@ -88,7 +88,7 @@ export function safeLoad(input: string): unknown {
  * ```
  */
 export function safeDump(obj: unknown): string {
-  let yaml = jsyaml.dump(obj);
+  let yaml = dump(obj);
 
   const STRING_INT_PATTERN = /['"](-?\d{17,})['"]/g;
 
