@@ -69,7 +69,9 @@ def write_temp_ansible_cfg(
 
     The generated config uses a ``[galaxy]`` section with ``server_list``
     pointing to per-server ``[galaxy_server.<name>]`` sections — the same
-    format ``ansible-galaxy`` reads natively.
+    format ``ansible-galaxy`` reads natively.  It currently also sets
+    ``ignore_certs = true`` so private Hub installs work with self-signed
+    certificates (temporary; should become configurable).
 
     Args:
         servers: Ordered list of Galaxy server configurations.
@@ -96,6 +98,9 @@ def write_temp_ansible_cfg(
 
     cfg.add_section("galaxy")
     cfg.set("galaxy", "server_list", ",".join(server_names))
+    # Temporary: allow Hub/Galaxy pulls against self-signed lab CAs.
+    # Track making this configurable: do not leave always-on for production trust models.
+    cfg.set("galaxy", "ignore_certs", "true")
 
     for srv in servers:
         section = f"galaxy_server.{srv.name}"
@@ -261,6 +266,9 @@ async def download_collections(
     status = "error"
 
     try:
+        # Temporary default: ansible-galaxy must reach private Hub with self-signed TLS.
+        # Prefer an explicit operator override when present.
+        env.setdefault("ANSIBLE_GALAXY_IGNORE", "true")
         if servers:
             try:
                 _inject_galaxy_env(env, servers)

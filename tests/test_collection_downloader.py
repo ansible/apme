@@ -61,6 +61,7 @@ class TestWriteTempAnsibleCfg:
         parser = configparser.ConfigParser()
         parser.read(cfg_path)
         assert parser.get("galaxy", "server_list") == "galaxy"
+        assert parser.get("galaxy", "ignore_certs") == "true"
         assert parser.get("galaxy_server.galaxy", "url") == "https://galaxy.ansible.com"
 
     def test_multiple_servers_with_auth(self, tmp_path: Path) -> None:
@@ -337,6 +338,7 @@ class TestDownloadCollections:
             )
 
         assert captured_env.get("ANSIBLE_CONFIG") == str(cfg_path)
+        assert captured_env.get("ANSIBLE_GALAXY_IGNORE") == "true"
 
     @pytest.mark.asyncio  # type: ignore[untyped-decorator]
     async def test_uses_servers_injects_env_vars(self, tmp_path: Path) -> None:
@@ -371,6 +373,7 @@ class TestDownloadCollections:
         assert captured_env.get("ANSIBLE_GALAXY_SERVER_LIST") == "hub"
         assert captured_env.get("ANSIBLE_GALAXY_SERVER_HUB_URL") == "https://hub.example.com"
         assert captured_env.get("ANSIBLE_GALAXY_SERVER_HUB_TOKEN") == "tok"
+        assert captured_env.get("ANSIBLE_GALAXY_IGNORE") == "true"
         assert "ANSIBLE_CONFIG" not in captured_env
 
     @pytest.mark.asyncio  # type: ignore[untyped-decorator]
