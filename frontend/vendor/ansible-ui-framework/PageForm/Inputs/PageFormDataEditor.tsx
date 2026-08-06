@@ -2,7 +2,7 @@ import { Flex, FlexItem, Icon, ToggleGroup, ToggleGroupItem } from '@patternfly/
 import { CopyIcon, DownloadIcon, UploadIcon } from '@patternfly/react-icons';
 import isDeepEqual from 'fast-deep-equal';
 import getValue from 'get-value';
-import jsyaml, { YAMLException } from 'js-yaml';
+import { load, YAMLException } from 'js-yaml';
 import { ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { parseJSONPreservingLargeInts, stringifyPreservingLargeInts } from '../../utils/jsonUtils';
 import { safeDump, safeLoad } from '../../utils/yamlSchema';
@@ -228,7 +228,7 @@ export function PageFormDataEditor<
                   '__preserveYamlString' in valueAsObject
                 ) {
                   const preservedObj = valueAsObject as { __preserveYamlString: string };
-                  const actualObject = jsyaml.load(preservedObj.__preserveYamlString) as object;
+                  const actualObject = load(preservedObj.__preserveYamlString) as object;
                   onChange(actualObject);
                   return;
                 }
