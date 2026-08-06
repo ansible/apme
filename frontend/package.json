@@ -63,7 +63,7 @@
     "typescript": "^5.7.2",
     "vite": "^8.2.0",
     "vitest": "^4.1.9",
-    "zustand": "^5.0.12"
+    "zustand": "^5.0.14"
   },
   "overrides": {
     "undici": "7.28.0",
