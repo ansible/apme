@@ -17,11 +17,11 @@ repos:
           - types-PyYAML
           - grpc-stubs
   - repo: https://github.com/astral-sh/uv-pre-commit
-    rev: 0.11.25
+    rev: 0.11.27
     hooks:
       - id: uv-lock
   - repo: https://github.com/jsh9/pydoclint
-    rev: 0.9.0
+    rev: 0.9.1
     hooks:
       - id: pydoclint
         args: [--exclude=src/apme/v1/, src/, tests/, scripts/]
