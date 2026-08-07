@@ -53,7 +53,7 @@ This builds a shared base image, eleven service images, and pulls one official i
 | `apme-gateway:latest` | `containers/gateway/Dockerfile` | REST API + gRPC Reporting service (SQLite) |
 | `apme-ui:latest` | `containers/ui/Dockerfile` | React SPA served by nginx (proxies API to Gateway) |
 | `apme-cli:latest` | `containers/cli/Dockerfile` | CLI client |
-| `ghcr.io/redhat-developer/abbenay:v2026.8.1` | [Official image](https://github.com/redhat-developer/abbenay/pkgs/container/abbenay) (pulled) | Abbenay AI daemon (LLM gateway for Tier 2 remediation) |
+| `ghcr.io/redhat-developer/abbenay:v2026.8.2` | [Official image](https://github.com/redhat-developer/abbenay/pkgs/container/abbenay) (pulled) | Abbenay AI daemon (LLM gateway for Tier 2 remediation) |
 
 ### Configure Abbenay AI (optional)
 
@@ -501,7 +501,7 @@ SHA or release tag (and Quay only when that publish included Quay credentials).
 
 | Value | Description |
 |-------|-------------|
-| `image.tag` | Image tag (default `2026.7.3` / `Chart.appVersion`; override with SHA like `sha-b7d1683`) |
+| `image.tag` | Image tag (default `2026.8.6` / `Chart.appVersion`; override with SHA like `sha-b7d1683`) |
 | `engine.replicas` | Engine pod replicas (default: 1) |
 | `abbenay.enabled` | Enable AI provider (default: false) |
 | `abbenay.token` | Abbenay service token (required when `abbenay.enabled=true`) |
