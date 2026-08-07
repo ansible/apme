@@ -69,7 +69,7 @@ if [[ "${1:-}" == "--wipe" ]]; then
       mapped=$(podman unshare awk -v cuid="$cuid" '
         BEGIN { found = 0 }
         {
-          inside_ns = $1; count = $2; outside_ns = $3
+          inside_ns = $1; outside_ns = $2; count = $3
           if (cuid >= inside_ns && cuid < inside_ns + count) {
             print outside_ns + (cuid - inside_ns)
             found = 1
@@ -82,13 +82,17 @@ if [[ "${1:-}" == "--wipe" ]]; then
     }
     mapped=$(_host_uid_for_container_uid 1001 2>/dev/null) || mapped=""
     if [[ -n "$mapped" ]]; then
-      home_real=$(cd "$HOME" && pwd -P)
-      for dir in "$home_real" "${XDG_CACHE_HOME:-$HOME/.cache}"; do
-        if getfacl -p "$dir" 2>/dev/null | grep -q "^user:${mapped}:"; then
-          setfacl -x "u:${mapped}" "$dir" 2>/dev/null && \
-            echo "Revoked traversal ACL for UID $mapped on $dir"
-        fi
-      done
+      local state_file="${APME_CACHE_HOST_PATH:-${XDG_CACHE_HOME:-$HOME/.cache}/apme}/.traversal-acls"
+      if [[ -f "$state_file" ]]; then
+        while IFS= read -r dir; do
+          [[ -n "$dir" ]] || continue
+          if getfacl -p "$dir" 2>/dev/null | grep -q "^user:${mapped}:"; then
+            setfacl -x "u:${mapped}" "$dir" 2>/dev/null && \
+              echo "Revoked traversal ACL for UID $mapped on $dir"
+          fi
+        done < "$state_file"
+        rm -f "$state_file"
+      fi
     fi
   fi
 fi

@@ -224,7 +224,7 @@ _grant_ancestor_traversal() {
   target_path=$(realpath -m "$target_path")
   # If the target is outside $HOME, the container accesses it via a Podman
   # volume mount — no host-filesystem traversal ACLs are needed.
-  if [[ "$target_path" != "$home_real"* ]]; then
+  if [[ "$target_path" != "$home_real" && "$target_path" != "$home_real"/* ]]; then
     return 0
   fi
   local current
@@ -246,13 +246,16 @@ _grant_ancestor_traversal() {
     if (( (8#$perms & 8#001) != 0 )); then
       continue
     fi
-    # Skip if the mapped UID already has an ACL entry with 'x'.
-    if getfacl -p "$dir" 2>/dev/null | grep -q "^user:${mapped_uid}:.*x"; then
+    # Skip if the mapped UID already has effective execute via ACL.
+    if getfacl -ep "$dir" 2>/dev/null | grep -q "^user:${mapped_uid}:.*x"; then
       continue
     fi
     setfacl -m "u:${mapped_uid}:x" "$dir" || {
       echo "WARNING: could not grant traversal ACL on $dir for UID $mapped_uid" >&2
+      return 1
     }
+    # Record for later revocation by down.sh --wipe.
+    echo "$dir" >> "${APME_TRAVERSAL_STATE_FILE:-/dev/null}"
   done
 }
 
@@ -302,7 +305,7 @@ _ensure_abbenay_config_access() {
     # config path so the subordinate UID can reach the target.  Without this,
     # hosts with mode 700 on $HOME or $HOME/.cache block access at the first
     # path component (see #528).
-    _grant_ancestor_traversal "$mapped" "$path"
+    _grant_ancestor_traversal "$mapped" "$path" || return 1
     setfacl -m "u:${mapped}:rwx" "$path" || return 1
     setfacl -d -m "u:${mapped}:rwx" "$path" || return 1
     if [[ -f "$path/config.yaml" ]]; then
@@ -415,6 +418,7 @@ _relabel_podman_volumes() {
 
 # Default: XDG cache dir (persists across reboots); override with APME_CACHE_HOST_PATH
 CACHE_PATH="${APME_CACHE_HOST_PATH:-${XDG_CACHE_HOME:-$HOME/.cache}/apme}"
+APME_TRAVERSAL_STATE_FILE="$CACHE_PATH/.traversal-acls"
 
 if [[ "$CACHE_PATH" != /* ]]; then
   echo "ERROR: APME_CACHE_HOST_PATH must be an absolute path (got: $CACHE_PATH)" >&2
@@ -427,6 +431,8 @@ if [[ "$CACHE_PATH" == *$'\n'* ]]; then
 fi
 
 mkdir -p "$CACHE_PATH"
+# Reset traversal state for this run; down.sh --wipe reads this to undo ACLs.
+: > "$APME_TRAVERSAL_STATE_FILE"
 
 # Load Abbenay secrets (.env) if present.
 ABBENAY_ENV="$ROOT/containers/abbenay/.env"
