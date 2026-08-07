@@ -99,7 +99,7 @@ def write_temp_ansible_cfg(
     cfg.add_section("galaxy")
     cfg.set("galaxy", "server_list", ",".join(server_names))
     # Temporary: allow Hub/Galaxy pulls against self-signed lab CAs.
-    # Track making this configurable: do not leave always-on for production trust models.
+    # CA bundle injection is too hard in the current lab path; flip via #526.
     cfg.set("galaxy", "ignore_certs", "true")
 
     for srv in servers:
@@ -266,9 +266,11 @@ async def download_collections(
     status = "error"
 
     try:
-        # Temporary default: ansible-galaxy must reach private Hub with self-signed TLS.
-        # Prefer an explicit operator override when present.
-        env.setdefault("ANSIBLE_GALAXY_IGNORE", "true")
+        # Temporary lab default for Hub/self-signed TLS. Env vars outrank INI, so
+        # only inject when the caller did not supply ansible.cfg (their
+        # galaxy.ignore_certs must win). Track flipping the default: #526.
+        if ansible_cfg_path is None:
+            env.setdefault("ANSIBLE_GALAXY_IGNORE", "true")
         if servers:
             try:
                 _inject_galaxy_env(env, servers)

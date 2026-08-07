@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import configparser
+import os
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -330,7 +331,11 @@ class TestDownloadCollections:
                 captured_env.update(env)
             return mock_process
 
-        with patch("galaxy_proxy.collection_downloader.asyncio.create_subprocess_exec", side_effect=capture_exec):
+        with (
+            patch("galaxy_proxy.collection_downloader.asyncio.create_subprocess_exec", side_effect=capture_exec),
+            patch.dict(os.environ, {}, clear=False),
+        ):
+            os.environ.pop("ANSIBLE_GALAXY_IGNORE", None)
             await download_collections(
                 ["a.b"],
                 download_dir,
@@ -338,7 +343,8 @@ class TestDownloadCollections:
             )
 
         assert captured_env.get("ANSIBLE_CONFIG") == str(cfg_path)
-        assert captured_env.get("ANSIBLE_GALAXY_IGNORE") == "true"
+        # Env would override the caller's INI galaxy.ignore_certs — do not inject.
+        assert "ANSIBLE_GALAXY_IGNORE" not in captured_env
 
     @pytest.mark.asyncio  # type: ignore[untyped-decorator]
     async def test_uses_servers_injects_env_vars(self, tmp_path: Path) -> None:
@@ -363,7 +369,11 @@ class TestDownloadCollections:
                 captured_env.update(env)
             return mock_process
 
-        with patch("galaxy_proxy.collection_downloader.asyncio.create_subprocess_exec", side_effect=capture_exec):
+        with (
+            patch("galaxy_proxy.collection_downloader.asyncio.create_subprocess_exec", side_effect=capture_exec),
+            patch.dict(os.environ, {}, clear=False),
+        ):
+            os.environ.pop("ANSIBLE_GALAXY_IGNORE", None)
             await download_collections(
                 ["a.b"],
                 download_dir,
