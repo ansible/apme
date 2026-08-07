@@ -216,7 +216,7 @@ spec:
         - containerPort: 8081
           hostPort: 8081
     - name: abbenay
-      image: ghcr.io/redhat-developer/abbenay:v2026.8.1
+      image: ghcr.io/redhat-developer/abbenay:v2026.8.2
       # ADR-070: HTTP + gRPC on loopback (pod-shared netns). No hostPort for
       # Abbenay — matches Helm Simple and avoids plaintext host exposure.
       args:

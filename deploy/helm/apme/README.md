@@ -37,7 +37,7 @@ Replace `route.host` with a hostname under your cluster's OpenShift
 ingress domain (for example `apme.apps.<cluster-domain>`) before installing —
 `example.com` will not resolve.
 
-Defaults pull from `quay.io/ansible` with image tag `2026.7.3` (`Chart.appVersion`).
+Defaults pull from `quay.io/ansible` with image tag `2026.8.6` (`Chart.appVersion`).
 For unreleased SHA builds, set `--set image.tag=sha-<commit>`.
 
 > **Observability:** The reference Podman pod includes an OpenTelemetry Collector
@@ -82,7 +82,7 @@ spec:
 - Helm 3.x
 - Access to `quay.io/ansible` (default pull registry) or a mirror. CI always
   publishes to `ghcr.io/ansible` and publishes to Quay when credentials are set
-- Default image tag is pinned to `2026.7.3` (GitHub release `v2026.7.3`; must
+- Default image tag is pinned to `2026.8.6` (GitHub release `v2026.8.6`; must
   match Chart.appVersion). Override with `--set image.tag=…` for another
   release or a SHA build (e.g. `sha-b7d1683`)
 - Cluster nodes on `linux/amd64` or `linux/arm64`. Tags published by CI after
@@ -192,7 +192,7 @@ Gateway DB and Abbenay down together.
 | Value | Default | Description |
 |-------|---------|-------------|
 | `image.registry` | `quay.io/ansible` | Container registry |
-| `image.tag` | `2026.7.3` | Image tag (GitHub release `v2026.7.3`; Quay omits the `v`) |
+| `image.tag` | `2026.8.6` | Image tag (GitHub release `v2026.8.6`; Quay omits the `v`) |
 | `engine.replicas` | `1` | Must be `1` (ADR-069) |
 | `gitleaks.enabled` | `true` | Enable Gitleaks validator |
 | `collectionHealth.enabled` | `true` | Enable Collection Health validator |
@@ -202,7 +202,7 @@ Gateway DB and Abbenay down together.
 | `ui.replicas` | `1` | Must be `1` when UI enabled |
 | `abbenay.enabled` | `false` | Enable AI provider sidecar |
 | `abbenay.token` | `""` | Abbenay gRPC + HTTP admin token (required when `abbenay.enabled=true`) |
-| `abbenay.image` | `ghcr.io/redhat-developer/abbenay:v2026.8.1` | Abbenay image |
+| `abbenay.image` | `ghcr.io/redhat-developer/abbenay:v2026.8.2` | Abbenay image |
 | `abbenay.providers` | `{}` | LLM provider map (see [ABBENAY_AI.md](../../../docs/guides/ABBENAY_AI.md)) |
 | `abbenay.aiModel` | `""` | Default AI model ID |
 | `ingress.enabled` | `false` | Create Kubernetes Ingress |

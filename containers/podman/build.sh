@@ -16,7 +16,7 @@ echo "==> Building base image (shared dependencies)..."
 podman build "${BUILD_ARGS[@]}" -t localhost/apme-base:latest -f containers/base/Dockerfile .
 
 echo "==> Pulling Abbenay AI image..."
-podman pull ghcr.io/redhat-developer/abbenay:v2026.8.1
+podman pull ghcr.io/redhat-developer/abbenay:v2026.8.2
 
 echo "==> Building service images..."
 podman build "${BUILD_ARGS[@]}" -t apme-primary:latest -f containers/primary/Dockerfile .

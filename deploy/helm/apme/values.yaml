@@ -10,10 +10,10 @@ image:
   registry: quay.io/ansible
   # -- Image tag for all APME containers.
   # Pinned default shipped with this chart (must match Chart.yaml
-  # appVersion). Corresponds to GitHub release v2026.7.3; Quay/GHCR
+  # appVersion). Corresponds to GitHub release v2026.8.6; Quay/GHCR
   # release tags omit the leading "v". Override with a SHA tag
   # (e.g. "sha-b7d1683") for unreleased builds.
-  tag: "2026.7.3"
+  tag: "2026.8.6"
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []
@@ -154,7 +154,7 @@ ui:
 # See docs/guides/ABBENAY_AI.md for GCP-specific setup.
 abbenay:
   enabled: false
-  image: ghcr.io/redhat-developer/abbenay:v2026.8.1
+  image: ghcr.io/redhat-developer/abbenay:v2026.8.2
   # -- Token APME uses to authenticate with Abbenay (required when enabled)
   token: ""
   # -- Override the default model APME selects (e.g. "vertex-claude/claude-sonnet-4-6")
