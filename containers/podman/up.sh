@@ -212,6 +212,50 @@ with open(path, "rb"):
 ' "$container_uid" "$path"
 }
 
+# Grant execute-only (traversal) ACL to a mapped UID on each ancestor directory
+# between $HOME and the given path that lacks world-execute or an existing ACL
+# for that UID.  Prevents EACCES on mode-700 home directories (#528).
+# Only grants 'x' — never read or write — to minimise exposure.
+_grant_ancestor_traversal() {
+  local mapped_uid="$1"
+  local target_path="$2"
+  local home_real
+  home_real=$(cd "$HOME" && pwd -P)
+  target_path=$(realpath -m "$target_path")
+  # If the target is outside $HOME, the container accesses it via a Podman
+  # volume mount — no host-filesystem traversal ACLs are needed.
+  if [[ "$target_path" != "$home_real"* ]]; then
+    return 0
+  fi
+  local current
+  current=$(dirname "$target_path")
+  local -a ancestors=()
+  # Walk up from the target's parent to (and including) $HOME.
+  while [[ "$current" != "/" && "$current" != "$home_real" ]]; do
+    ancestors=("$current" "${ancestors[@]}")
+    current=$(dirname "$current")
+  done
+  # Include $HOME itself at the front.
+  if [[ "$current" == "$home_real" ]]; then
+    ancestors=("$home_real" "${ancestors[@]}")
+  fi
+  for dir in "${ancestors[@]}"; do
+    # Skip if world-executable — traversal already possible.
+    local perms
+    perms=$(stat -c '%a' "$dir" 2>/dev/null) || continue
+    if (( (8#$perms & 8#001) != 0 )); then
+      continue
+    fi
+    # Skip if the mapped UID already has an ACL entry with 'x'.
+    if getfacl -p "$dir" 2>/dev/null | grep -q "^user:${mapped_uid}:.*x"; then
+      continue
+    fi
+    setfacl -m "u:${mapped_uid}:x" "$dir" || {
+      echo "WARNING: could not grant traversal ACL on $dir for UID $mapped_uid" >&2
+    }
+  done
+}
+
 # Make Abbenay cache config usable by the host user and container UID 1001.
 # Rootless: keep host ownership; grant a POSIX ACL to the subordinate UID so
 # the next tox -e up can still chmod/seed and developers can edit config.yaml.
@@ -254,6 +298,11 @@ _ensure_abbenay_config_access() {
       echo "ERROR: could not resolve subordinate UID for container UID $cuid" >&2
       return 1
     }
+    # Grant execute-only traversal on ancestor directories between $HOME and the
+    # config path so the subordinate UID can reach the target.  Without this,
+    # hosts with mode 700 on $HOME or $HOME/.cache block access at the first
+    # path component (see #528).
+    _grant_ancestor_traversal "$mapped" "$path"
     setfacl -m "u:${mapped}:rwx" "$path" || return 1
     setfacl -d -m "u:${mapped}:rwx" "$path" || return 1
     if [[ -f "$path/config.yaml" ]]; then

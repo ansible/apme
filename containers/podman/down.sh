@@ -59,4 +59,36 @@ if [[ "${1:-}" == "--wipe" ]]; then
   else
     echo "No Abbenay secrets.json found at $ABBENAY_SECRETS"
   fi
+
+  # Revoke traversal ACLs granted on $HOME ancestors for rootless Abbenay
+  # config access (see up.sh _grant_ancestor_traversal / #528).
+  if command -v podman >/dev/null 2>&1 && command -v setfacl >/dev/null 2>&1; then
+    _host_uid_for_container_uid() {
+      local cuid="$1"
+      local mapped
+      mapped=$(podman unshare awk -v cuid="$cuid" '
+        BEGIN { found = 0 }
+        {
+          inside_ns = $1; count = $2; outside_ns = $3
+          if (cuid >= inside_ns && cuid < inside_ns + count) {
+            print outside_ns + (cuid - inside_ns)
+            found = 1
+            exit
+          }
+        }
+        END { exit !found }
+      ' /proc/self/uid_map) || return 1
+      echo "$mapped"
+    }
+    mapped=$(_host_uid_for_container_uid 1001 2>/dev/null) || mapped=""
+    if [[ -n "$mapped" ]]; then
+      home_real=$(cd "$HOME" && pwd -P)
+      for dir in "$home_real" "${XDG_CACHE_HOME:-$HOME/.cache}"; do
+        if getfacl -p "$dir" 2>/dev/null | grep -q "^user:${mapped}:"; then
+          setfacl -x "u:${mapped}" "$dir" 2>/dev/null && \
+            echo "Revoked traversal ACL for UID $mapped on $dir"
+        fi
+      done
+    fi
+  fi
 fi
