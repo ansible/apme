@@ -6,6 +6,33 @@ entries:
       artifacthub.io/license: Apache-2.0
       charts.openshift.io/name: APME
     apiVersion: v2
+    appVersion: 2026.8.6
+    created: "2026-08-07T15:45:21.492516942Z"
+    description: Ansible Policy & Modernization Engine — policy enforcement and modernization
+      for Ansible content
+    digest: e665c49caa67c47ed8bd13a410bdcfba5da6b91321637a08889aef2cd6244de8
+    home: https://github.com/ansible/apme
+    icon: https://raw.githubusercontent.com/ansible/apme/main/docs/images/apme.png
+    keywords:
+    - ansible
+    - policy
+    - modernization
+    - static-analysis
+    - grpc
+    maintainers:
+    - name: APME Team
+    name: apme
+    sources:
+    - https://github.com/ansible/apme
+    type: application
+    urls:
+    - https://github.com/ansible/apme/releases/download/apme-0.1.4/apme-0.1.4.tgz
+    version: 0.1.4
+  - annotations:
+      artifacthub.io/category: integration-delivery
+      artifacthub.io/license: Apache-2.0
+      charts.openshift.io/name: APME
+    apiVersion: v2
     appVersion: 2026.7.3
     created: "2026-07-16T18:54:25.506056813Z"
     description: Ansible Policy & Modernization Engine — policy enforcement and modernization
@@ -55,4 +82,4 @@ entries:
     urls:
     - https://github.com/ansible/apme/releases/download/apme-0.1.2/apme-0.1.2.tgz
     version: 0.1.2
-generated: "2026-07-16T18:54:25.506071451Z"
+generated: "2026-08-07T15:45:21.492525978Z"
