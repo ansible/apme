@@ -95,7 +95,9 @@ _podman_is_rootless() {
 # the subordinate UID for container 1001, so the host user cannot touch(1) them.
 _touch_in_volume_namespace() {
   local path="$1"
-  if _podman_is_rootless; then
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    touch "$path" 2>/dev/null || return 0
+  elif _podman_is_rootless; then
     podman unshare touch "$path" 2>/dev/null || return 1
   elif ! touch "$path" 2>/dev/null; then
     return 1
@@ -134,9 +136,11 @@ _write_chown_marker() {
 
 # Chown a host path so a container UID can write it.
 # Rootless: podman unshare (host subordinate UIDs). Rootful: direct chown.
+# Darwin/macOS: Podman Machine manages volume perms in the VM; no-op.
 _chown_for_container_uid() {
   local uid_gid="$1"
   local path="$2"
+  [[ "$(uname -s)" == "Darwin" ]] && return 0
   if _podman_is_rootless; then
     podman unshare chown -R "$uid_gid" "$path"
   else
@@ -145,9 +149,11 @@ _chown_for_container_uid() {
 }
 
 # Return 0 when path is owned by the given container UID.
+# Darwin/macOS: always return 0 (Podman Machine manages ownership in VM).
 _owned_by_container_uid() {
   local uid="$1"
   local path="$2"
+  [[ "$(uname -s)" == "Darwin" ]] && return 0
   local actual
   if _podman_is_rootless; then
     actual=$(podman unshare stat -c '%u' "$path" 2>/dev/null) || return 1
@@ -164,6 +170,10 @@ _owned_by_container_uid() {
 # is off-by-one for non-zero container UIDs.
 _host_uid_for_container_uid() {
   local container_uid="$1"
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    echo "$container_uid"
+    return 0
+  fi
   if ! _podman_is_rootless; then
     echo "$container_uid"
     return 0
@@ -184,9 +194,11 @@ _host_uid_for_container_uid() {
 }
 
 # Return 0 when container UID can open path (rootless user-namespace probe).
+# Darwin/macOS: always return 0 (virtiofs sharing handles access).
 _container_uid_can_read() {
   local container_uid="$1"
   local path="$2"
+  [[ "$(uname -s)" == "Darwin" ]] && return 0
   podman unshare python3 -c '
 import os, sys
 uid = int(sys.argv[1])
@@ -208,7 +220,7 @@ _ensure_abbenay_config_access() {
   local cuid=1001
 
   if _podman_is_rootless; then
-    if [[ -d "$path" ]] && [[ ! -w "$path" ]]; then
+    if [[ "$(uname -s)" != "Darwin" ]] && [[ -d "$path" ]] && [[ ! -w "$path" ]]; then
       if _owned_by_container_uid "$cuid" "$path"; then
         echo "Restoring host ownership of Abbenay config cache (prior rootless chown)..."
         # Inside the user namespace, the host user is UID 0.
@@ -217,6 +229,13 @@ _ensure_abbenay_config_access() {
         echo "ERROR: Abbenay config cache is not writable: $path" >&2
         return 1
       fi
+    fi
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+      # macOS: setfacl unavailable; Podman Machine VM shares files via virtiofs
+      # so world-readable perms are sufficient for the container UID.
+      chmod 755 "$path"
+      [[ -f "$path/config.yaml" ]] && chmod 644 "$path/config.yaml"
+      return 0
     fi
     if ! command -v setfacl >/dev/null 2>&1; then
       echo "ERROR: setfacl is required for rootless Abbenay config (host edit + UID 1001)" >&2
