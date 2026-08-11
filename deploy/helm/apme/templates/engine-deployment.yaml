@@ -374,8 +374,13 @@ spec:
           env:
             - name: APME_ENGINE_ADDRESS
               value: "127.0.0.1:50051"
+            {{- if .Values.gateway.database.url }}
+            - name: APME_DATABASE_URL
+              value: {{ .Values.gateway.database.url | quote }}
+            {{- else }}
             - name: APME_DB_PATH
               value: /data/apme.db
+            {{- end }}
             - name: APME_GATEWAY_GRPC_LISTEN
               value: "0.0.0.0:50060"
             - name: APME_GATEWAY_HTTP_HOST

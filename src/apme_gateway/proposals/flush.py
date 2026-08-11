@@ -7,9 +7,10 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 
 from sqlalchemy import ColumnElement, delete, select, update
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from apme_gateway.db import get_in_clause_chunk_size
+from apme_gateway.db.dialect import dialect_insert
 from apme_gateway.db.models import Proposal, ProposalRuleAnalytics, Scan, Violation
 from apme_gateway.proposals.grouping import (
     analytics_increments,
@@ -20,9 +21,6 @@ from apme_gateway.proposals.grouping import (
 )
 
 logger = logging.getLogger(__name__)
-
-# Stay under SQLite's default SQLITE_MAX_VARIABLE_NUMBER (999).
-_SQLITE_BIND_LIMIT = 900
 
 
 def _now_iso() -> str:
@@ -41,9 +39,10 @@ async def fetch_violations_by_ids(db: AsyncSession, int_ids: Sequence[int]) -> l
     """
     if not int_ids:
         return []
+    chunk_size = get_in_clause_chunk_size()
     out: list[Violation] = []
-    for i in range(0, len(int_ids), _SQLITE_BIND_LIMIT):
-        chunk = list(int_ids[i : i + _SQLITE_BIND_LIMIT])
+    for i in range(0, len(int_ids), chunk_size):
+        chunk = list(int_ids[i : i + chunk_size])
         result = await db.execute(select(Violation).where(Violation.id.in_(chunk)))
         out.extend(result.scalars().all())
     return out
@@ -64,7 +63,7 @@ async def upsert_analytics_increment(
 ) -> None:
     """Atomically add deltas to a proposal_rule_analytics row.
 
-    Uses SQLite ``ON CONFLICT DO UPDATE`` so concurrent flushes cannot both
+    Uses dialect ``ON CONFLICT DO UPDATE`` so concurrent flushes cannot both
     insert the same unique key or lose increments.
 
     Args:
@@ -80,7 +79,9 @@ async def upsert_analytics_increment(
         declined_delta: Decline increment.
     """
     now = _now_iso()
-    stmt = sqlite_insert(ProposalRuleAnalytics).values(
+    bind = db.get_bind()
+    insert = dialect_insert(bind, ProposalRuleAnalytics)
+    stmt = insert.values(
         project_id=project_id,
         rule_id=rule_id,
         source=source,
