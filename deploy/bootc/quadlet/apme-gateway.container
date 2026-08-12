@@ -6,7 +6,7 @@ After=apme-pod.service
 Image=ghcr.io/ansible/apme-gateway:latest
 Pod=apme.pod
 EnvironmentFile=/etc/apme/env/apme.env
-Environment=APME_DATABASE_URL=postgresql+asyncpg://apme:apme@127.0.0.1:5432/apme
+Environment=APME_DB_PATH=/data/apme.db
 Environment=APME_GATEWAY_GRPC_LISTEN=0.0.0.0:50060
 Environment=APME_GATEWAY_HTTP_HOST=0.0.0.0
 Environment=APME_GATEWAY_HTTP_PORT=8080

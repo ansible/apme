@@ -169,25 +169,11 @@ spec:
         - name: sessions
           mountPath: /sessions
           readOnly: true
-    - name: postgres
-      image: docker.io/library/postgres:16
-      env:
-        - name: POSTGRES_USER
-          value: "apme"
-        - name: POSTGRES_PASSWORD
-          value: "apme"
-        - name: POSTGRES_DB
-          value: "apme"
-      ports:
-        - containerPort: 5432
-      volumeMounts:
-        - name: gateway-data
-          mountPath: /var/lib/postgresql/data
     - name: gateway
       image: apme-gateway:latest
       env:
-        - name: APME_DATABASE_URL
-          value: "postgresql+asyncpg://apme:apme@127.0.0.1:5432/apme"
+        - name: APME_DB_PATH
+          value: "/data/apme.db"
         - name: APME_GATEWAY_GRPC_LISTEN
           value: "0.0.0.0:50060"
         - name: APME_GATEWAY_HTTP_HOST

@@ -1,5 +1,5 @@
 # Gateway: gRPC Reporting receiver + FastAPI REST API.
-# Persists scan/fix events to PostgreSQL (ADR-020 / ADR-029).
+# Persists scan/fix events to the configured database (ADR-020 / ADR-029).
 # Project operations require git for on-demand cloning (ADR-037).
 ARG BASE_IMAGE=localhost/apme-base:latest
 FROM $BASE_IMAGE

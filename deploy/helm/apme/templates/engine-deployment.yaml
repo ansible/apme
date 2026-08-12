@@ -363,39 +363,7 @@ spec:
           resources:
             {{- toYaml .Values.engine.resources.galaxyProxy | nindent 12 }}
 
-        # -- Embedded PostgreSQL (loopback) when no external database URL is set
-        {{- if and (not .Values.gateway.database.url) .Values.gateway.database.embedded.enabled }}
-        - name: postgres
-          image: {{ .Values.gateway.database.embedded.image }}
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
-          {{- with .Values.securityContext }}
-          securityContext:
-            {{- toYaml . | nindent 12 }}
-          {{- end }}
-          env:
-            - name: POSTGRES_USER
-              value: {{ .Values.gateway.database.embedded.user | quote }}
-            - name: POSTGRES_PASSWORD
-              value: {{ .Values.gateway.database.embedded.password | quote }}
-            - name: POSTGRES_DB
-              value: {{ .Values.gateway.database.embedded.database | quote }}
-          ports:
-            - name: postgres
-              containerPort: 5432
-              protocol: TCP
-          volumeMounts:
-            - name: gateway-data
-              mountPath: /var/lib/postgresql/data
-          resources:
-            requests:
-              cpu: 100m
-              memory: 256Mi
-            limits:
-              cpu: 500m
-              memory: 512Mi
-        {{- end }}
-
-        # -- Gateway (REST + gRPC reporting + PostgreSQL)
+        # -- Gateway (REST + gRPC reporting + SQLite)
         - name: gateway
           image: {{ include "apme.image" (dict "registry" .Values.image.registry "name" "gateway" "tag" .Values.image.tag "fallbackTag" .Chart.AppVersion) }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
@@ -406,14 +374,18 @@ spec:
           env:
             - name: APME_ENGINE_ADDRESS
               value: "127.0.0.1:50051"
-            {{- if .Values.gateway.database.url }}
+            {{- if .Values.gateway.database.existingSecret.name }}
+            - name: APME_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.gateway.database.existingSecret.name }}
+                  key: {{ .Values.gateway.database.existingSecret.key }}
+            {{- else if .Values.gateway.database.url }}
             - name: APME_DATABASE_URL
               value: {{ .Values.gateway.database.url | quote }}
-            {{- else if .Values.gateway.database.embedded.enabled }}
-            - name: APME_DATABASE_URL
-              value: {{ printf "postgresql+asyncpg://%s:%s@127.0.0.1:5432/%s" .Values.gateway.database.embedded.user .Values.gateway.database.embedded.password .Values.gateway.database.embedded.database | quote }}
             {{- else }}
-            {{- fail "gateway.database.url is required when embedded PostgreSQL is disabled" }}
+            - name: APME_DB_PATH
+              value: /data/apme.db
             {{- end }}
             - name: APME_GATEWAY_GRPC_LISTEN
               value: "0.0.0.0:50060"
@@ -469,6 +441,9 @@ spec:
               port: http
             initialDelaySeconds: 5
             periodSeconds: 10
+          volumeMounts:
+            - name: gateway-data
+              mountPath: /data
           resources:
             {{- toYaml .Values.gateway.resources | nindent 12 }}
 
