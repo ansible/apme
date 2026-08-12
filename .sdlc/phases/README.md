@@ -8,7 +8,7 @@ This directory contains the phased delivery roadmap. Each phase groups related r
 |-------|------|--------|--------------|
 | PHASE-001 | CLI Scanner | In Progress | REQ-001 |
 | PHASE-002 | Rewrite Engine | Implemented | REQ-002 |
-| PHASE-003 | Enterprise Dashboard | In Progress | REQ-003, REQ-004, REQ-008, REQ-010–014 |
+| PHASE-003 | Enterprise Dashboard | In Progress | REQ-003, REQ-004, REQ-008, REQ-010–014, REQ-016 |
 | PHASE-004 | AI Remediation | Implemented | DR-005 decided |
 
 ## Phase Lifecycle
@@ -53,7 +53,8 @@ PHASE-003: Enterprise Dashboard (In Progress)
 ├── REQ-011: AA Deprecated Module Reporting (Draft)
 ├── REQ-012: EDA Rulebook Validation (Draft)
 ├── REQ-013: Extended OPA Policy Inputs (Draft)
-└── REQ-014: Policy Permissive Mode (Draft)
+├── REQ-014: Policy Permissive Mode (Draft)
+└── REQ-016: Phase 2 SCM Providers (In Progress)
 
 PHASE-004: AI Remediation (Implemented)
 └── DR-005: AI-Assisted Remediation (Decided — Abbenay AI integration)

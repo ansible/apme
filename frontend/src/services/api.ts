@@ -39,10 +39,43 @@ import { apmeApiUrl, getApmeApiAdapter } from "../api/apmeApiAdapter";
 
 class ApiError extends Error {
   status: number;
+  body: string;
   constructor(status: number, body: string) {
     super(`${status}: ${body}`);
     this.status = status;
+    this.body = body;
   }
+}
+
+/** Extract a user-facing message from a failed API request. */
+export function apiErrorMessage(err: unknown, fallback = "Request failed"): string {
+  if (err instanceof ApiError) {
+    const body = err.body;
+    try {
+      const parsed = JSON.parse(body) as { detail?: string | Array<{ msg?: string }> };
+      const detail = parsed.detail;
+      if (typeof detail === "string" && detail.trim()) {
+        return detail;
+      }
+      if (Array.isArray(detail)) {
+        const messages = detail
+          .map((item) => (typeof item?.msg === "string" ? item.msg : ""))
+          .filter(Boolean);
+        if (messages.length > 0) {
+          return messages.join("; ");
+        }
+      }
+    } catch {
+      // Fall through to the raw body when JSON parsing fails.
+    }
+    if (body.trim()) {
+      return body;
+    }
+  }
+  if (err instanceof Error && err.message.trim()) {
+    return err.message;
+  }
+  return fallback;
 }
 
 async function apiFetch(

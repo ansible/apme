@@ -63,10 +63,24 @@ platform:
 
 ```python
 class ScmProvider(Protocol):
-    async def create_branch(self, repo_url: str, base_branch: str, new_branch: str, token: str) -> None: ...
-    async def push_files(self, repo_url: str, branch: str, files: dict[str, bytes], commit_message: str, token: str) -> str: ...
-    async def create_pull_request(self, repo_url: str, base_branch: str, head_branch: str, title: str, body: str, token: str) -> PullRequestResult: ...
+    async def create_branch(self, repo_url: str, base_branch: str, new_branch: str, token: str) -> str: ...
+    async def push_files(
+        self,
+        repo_url: str,
+        branch: str,
+        files: dict[str, bytes],
+        commit_message: str,
+        token: str,
+        *,
+        parent_commit_sha: str | None = None,
+    ) -> str: ...
+    async def create_pull_request(
+        self, repo_url: str, base_branch: str, head_branch: str, title: str, body: str, token: str
+    ) -> PullRequestResult: ...
 ```
+
+Concrete providers may also implement an optional `branch_head_sha(repo_url, branch, token) -> str | None`
+helper (not part of the protocol). Canonical definition: `src/apme_gateway/scm/base.py`.
 
 A registry maps SCM provider types (`github`, `gitlab`, `bitbucket`) to
 implementations. The provider type is inferred from the repo URL
@@ -87,9 +101,9 @@ Token resolution: if the project has `scm_token` set, use it. Otherwise, fall
 back to `APME_SCM_TOKEN`. If neither is set, the "Create PR" action is
 unavailable (UI disables the button, API returns 422).
 
-Tokens are stored encrypted at rest in the database (project-level) or read
-from the environment (global). Tokens are never logged — `[REDACTED]` per
-SECURITY.md.
+Tokens are stored in the database as plaintext today (project-level) or read
+from the environment (global). Encryption at rest is planned via `APME_SECRET_KEY`
+but not yet implemented. Tokens are never logged — `[REDACTED]` per SECURITY.md.
 
 ### 3. REST API
 
@@ -310,7 +324,8 @@ is simpler and self-contained.
 - **New dependency**: The Gateway gains an HTTP client dependency for SCM API
   calls (e.g., `httpx`). Subject to ADR-019 governance.
 - **Token management**: Users must configure SCM tokens. Project-level tokens
-  require secure storage (encrypted at rest in the database).
+  are stored plaintext in the database today; encryption at rest is a planned
+  follow-up.
 - **Patched file retention**: Storing patched file content in the database
   increases storage requirements. Mitigated by configurable retention and
   cleanup on activity deletion.
@@ -343,9 +358,9 @@ globally via `APME_GITHUB_API_URL`.
 
 ### Database Changes
 
-- **Project table**: Add optional `scm_token` column (encrypted text) and
-  optional `scm_provider` column (enum: `github`, `gitlab`, `bitbucket`, or
-  auto-detected from URL).
+- **Project table**: Add optional `scm_token` column (plaintext text today; encryption
+  at rest is a planned follow-up) and optional `scm_provider` column (enum: `github`,
+  `gitlab`, `bitbucket`, or auto-detected from URL).
 - **Scan/Activity table**: Add optional `pr_url` column (text). Patched file
   content is stored in a related `patched_files` table with columns
   `(activity_id, path TEXT, content BLOB)`. Files are Ansible YAML (UTF-8
@@ -359,15 +374,17 @@ globally via `APME_GITHUB_API_URL`.
 |---------|-------|-------------|
 | `APME_SCM_TOKEN` | Global (env) | Default SCM token for all projects |
 | `APME_GITHUB_API_URL` | Global (env) | GitHub API base URL (default: `https://api.github.com`) |
-| `APME_SECRET_KEY` | Global (env) | Symmetric application secret used for encrypting stored SCM tokens at rest |
+| `APME_GITLAB_API_URL` | Global (env) | GitLab API base URL (default: `https://gitlab.com/api/v4`) |
+| `APME_BITBUCKET_API_URL` | Global (env) | Bitbucket API base URL (default: `https://api.bitbucket.org/2.0`; Server/DC e.g. `https://bitbucket.example.com/rest/api/1.0`) |
+| `APME_SECRET_KEY` | Global (env) | Planned symmetric secret for encrypting stored SCM tokens at rest (not yet implemented) |
 | `scm_token` | Project (DB) | Per-project SCM token override |
 | `scm_provider` | Project (DB) | Explicit provider type (auto-detected if unset) |
 
 ### Security Considerations
 
-- Tokens are encrypted at rest in the database using a symmetric key derived
-  from the `APME_SECRET_KEY` environment variable (documented in the
-  Configuration table above).
+- SCM tokens are stored as plaintext in the database today. Encryption at rest via
+  `APME_SECRET_KEY` is planned but not yet implemented; REQ-016 documents this gap
+  explicitly until a follow-up lands.
 - Tokens are never included in API responses, logs, or error messages.
 - The "Create PR" endpoint validates that the requesting user has access to
   the project (relevant for enterprise mode with auth).
@@ -397,3 +414,5 @@ globally via `APME_GITHUB_API_URL`.
 |------|--------|--------|
 | 2026-04-07 | AI Agent | Initial proposal |
 | 2026-07-06 | AI Agent | Consolidated to unified `/operation/submit` endpoint with `create_pr` flag; removed `POST /activity/{id}/pull-request` and `POST /operation/create-pr`; status → Accepted |
+| 2026-08-12 | AI Agent | Phase 2 implemented: GitLab + Bitbucket Cloud/Server providers (REQ-016); `APME_GITLAB_API_URL` / `APME_BITBUCKET_API_URL` |
+| 2026-08-12 | AI Agent | Clarify scm_token is plaintext at rest today; `APME_SECRET_KEY` encryption deferred to follow-up |

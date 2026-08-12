@@ -6,10 +6,14 @@ import { RuleId } from '../components/RuleId';
 import {
   Badge,
   Button,
+  Alert,
+  AlertActionCloseButton,
   Card,
   CardBody,
   Flex,
   FlexItem,
+  FormSelect,
+  FormSelectOption,
   Label,
   Split,
   SplitItem,
@@ -23,7 +27,7 @@ import {
   ExclamationTriangleIcon,
   ShieldAltIcon,
 } from '@patternfly/react-icons';
-import { deleteProject, getProject, getProjectDependencies, getProjectDepHealth, getProjectGraph, getProjectSbom, getProjectTrend, listProjectActivity, listProjectViolations, updateProject } from '../services/api';
+import { deleteProject, getProject, getProjectDependencies, getProjectDepHealth, getProjectGraph, getProjectSbom, getProjectTrend, listProjectActivity, listProjectViolations, updateProject, apiErrorMessage } from '../services/api';
 import type { GraphData } from '../services/api';
 import type { ActivitySummary, DepHealthSummary, ProjectDependencies, ProjectDetail, TrendPoint, ViolationDetail } from '../types/api';
 import { GraphVisualization } from '../components/GraphVisualization';
@@ -227,8 +231,11 @@ export function ProjectDetailPage() {
   const [editUrl, setEditUrl] = useState('');
   const [editBranch, setEditBranch] = useState('');
   const [editScmToken, setEditScmToken] = useState('');
+  const [editScmProvider, setEditScmProvider] = useState('');
   const [scmTokenDirty, setScmTokenDirty] = useState(false);
+  const [scmProviderDirty, setScmProviderDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   useEffect(() => {
     if (project) {
@@ -236,27 +243,33 @@ export function ProjectDetailPage() {
       setEditUrl(project.repo_url);
       setEditBranch(project.branch);
       setEditScmToken('');
+      setEditScmProvider(project.scm_provider || '');
       setScmTokenDirty(false);
+      setScmProviderDirty(false);
     }
   }, [project]);
 
   const handleSave = useCallback(async () => {
     if (!projectId || !project) return;
     setSaving(true);
+    setSaveError(null);
     try {
-      const updates: Record<string, string> = {};
+      const updates: Record<string, string | null> = {};
       if (editName !== project.name) updates.name = editName;
       if (editUrl !== project.repo_url) updates.repo_url = editUrl;
       if (editBranch !== project.branch) updates.branch = editBranch;
       if (scmTokenDirty) updates.scm_token = editScmToken.trim();
+      if (scmProviderDirty) updates.scm_provider = editScmProvider || null;
       if (Object.keys(updates).length > 0) {
         await updateProject(projectId, updates);
         fetchData();
       }
+    } catch (err) {
+      setSaveError(apiErrorMessage(err, 'Failed to save project.'));
     } finally {
       setSaving(false);
     }
-  }, [projectId, project, editName, editUrl, editBranch, editScmToken, scmTokenDirty, fetchData]);
+  }, [projectId, project, editName, editUrl, editBranch, editScmToken, editScmProvider, scmTokenDirty, scmProviderDirty, fetchData]);
 
   if (loading && !project) {
     return (
@@ -587,6 +600,26 @@ export function ProjectDetailPage() {
                       <TextInput id="edit-branch" value={editBranch} onChange={(_e, v) => setEditBranch(v)} />
                     </FlexItem>
                     <FlexItem>
+                      <label htmlFor="edit-scm-provider" style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}>
+                        SCM Provider
+                      </label>
+                      <FormSelect
+                        id="edit-scm-provider"
+                        value={editScmProvider}
+                        onChange={(_e, v) => { setEditScmProvider(v); setScmProviderDirty(true); }}
+                        aria-label="SCM provider"
+                      >
+                        <FormSelectOption value="" label="Auto-detect from URL" />
+                        <FormSelectOption value="github" label="GitHub" />
+                        <FormSelectOption value="gitlab" label="GitLab" />
+                        <FormSelectOption value="bitbucket" label="Bitbucket" />
+                      </FormSelect>
+                      <div style={{ fontSize: 12, marginTop: 4, opacity: 0.6 }}>
+                        Required for self-hosted GitLab or Bitbucket Server/Data Center.
+                        Also set APME_GITLAB_API_URL or APME_BITBUCKET_API_URL on the Gateway.
+                      </div>
+                    </FlexItem>
+                    <FlexItem>
                       <label htmlFor="edit-scm-token" style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}>
                         SCM Token
                         {project?.has_scm_token && (
@@ -598,12 +631,22 @@ export function ProjectDetailPage() {
                         type="password"
                         value={editScmToken}
                         onChange={(_e, v) => { setEditScmToken(v); setScmTokenDirty(true); }}
-                        placeholder={project?.has_scm_token ? '••••••••' : 'GitHub PAT or App token'}
+                        placeholder={project?.has_scm_token ? '••••••••' : 'PAT, access token, or username:app-password'}
                       />
                       <div style={{ fontSize: 12, marginTop: 4, opacity: 0.6 }}>
-                        Used for creating pull requests from remediation results. Leave blank to keep current value.
+                        Used for private clones and creating pull/merge requests. Leave blank to keep current value.
                       </div>
                     </FlexItem>
+                    {saveError && (
+                      <FlexItem>
+                        <Alert
+                          variant="danger"
+                          title={saveError}
+                          isInline
+                          actionClose={<AlertActionCloseButton onClose={() => setSaveError(null)} />}
+                        />
+                      </FlexItem>
+                    )}
                     <FlexItem>
                       <Flex gap={{ default: 'gapSm' }}>
                         <Button variant="primary" onClick={handleSave} isDisabled={saving}>

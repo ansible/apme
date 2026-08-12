@@ -14,7 +14,6 @@ from apme_gateway.scan.driver import (
     _REMOTE_HEAD_CACHE,
     _git_subprocess_env,
     _inject_token_in_url,
-    _redact_credentials,
     clone_repo,
     coerce_option_bool,
     derive_session_id,
@@ -22,6 +21,7 @@ from apme_gateway.scan.driver import (
     get_clone_head,
     run_project_scan,
 )
+from apme_gateway.scm.redaction import redact_credentials
 
 
 @pytest.mark.parametrize(  # type: ignore[untyped-decorator]
@@ -295,6 +295,37 @@ class TestInjectTokenInUrl:
         url = _inject_token_in_url("https://bitbucket.org/owner/repo.git", "bb_test123")
         assert url == "https://x-token-auth:bb_test123@bitbucket.org/owner/repo.git"
 
+    def test_bitbucket_app_password_uses_user_pass(self) -> None:
+        """Bitbucket app passwords use username:password credentials."""
+        url = _inject_token_in_url("https://bitbucket.org/owner/repo.git", "alice:app-secret")
+        assert url == "https://alice:app-secret@bitbucket.org/owner/repo.git"
+
+    def test_gitlab_deploy_token_uses_user_pass(self) -> None:
+        """GitLab deploy tokens use username:password credentials."""
+        url = _inject_token_in_url(
+            "https://gitlab.com/group/repo.git",
+            "gitlab+deploy-token-1:secret",
+        )
+        assert url == "https://gitlab%2Bdeploy-token-1:secret@gitlab.com/group/repo.git"
+
+    def test_provider_hint_for_self_hosted_bitbucket(self) -> None:
+        """Explicit scm_provider selects Bitbucket auth on non-bitbucket hostnames."""
+        url = _inject_token_in_url(
+            "https://git.corp.example.com/scm/PROJ/repo.git",
+            "bb_token",
+            scm_provider="bitbucket",
+        )
+        assert url == "https://x-token-auth:bb_token@git.corp.example.com/scm/PROJ/repo.git"
+
+    def test_provider_hint_for_self_hosted_gitlab(self) -> None:
+        """Explicit scm_provider selects GitLab oauth2 on custom hosts."""
+        url = _inject_token_in_url(
+            "https://git.corp.example.com/group/repo.git",
+            "glpat-x",
+            scm_provider="gitlab",
+        )
+        assert url == "https://oauth2:glpat-x@git.corp.example.com/group/repo.git"
+
     def test_unknown_provider_uses_git(self) -> None:
         """Unknown providers use git as fallback username."""
         url = _inject_token_in_url("https://custom-git.example.com/repo.git", "token123")
@@ -325,12 +356,12 @@ class TestInjectTokenInUrl:
 
 
 class TestRedactCredentials:
-    """Tests for _redact_credentials helper."""
+    """Tests for redact_credentials helper."""
 
     def test_redacts_token_in_url(self) -> None:
         """Credentials in URLs are redacted."""
         text = "fatal: https://x-access-token:ghp_secret123@github.com/repo.git not found"
-        result = _redact_credentials(text)
+        result = redact_credentials(text)
         assert "ghp_secret123" not in result
         assert "[REDACTED]" in result
         assert "github.com/repo.git" in result
@@ -338,14 +369,14 @@ class TestRedactCredentials:
     def test_redacts_multiple_urls(self) -> None:
         """Multiple URLs in text are all redacted."""
         text = "tried https://user:pass1@a.com and https://user:pass2@b.com"
-        result = _redact_credentials(text)
+        result = redact_credentials(text)
         assert "pass1" not in result
         assert "pass2" not in result
 
     def test_preserves_urls_without_auth(self) -> None:
         """URLs without credentials are unchanged."""
         text = "clone https://github.com/public/repo.git"
-        result = _redact_credentials(text)
+        result = redact_credentials(text)
         assert result == text
 
 

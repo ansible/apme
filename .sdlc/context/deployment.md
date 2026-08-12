@@ -152,6 +152,22 @@ Reports status of all services (Primary, Native, OPA, Ansible, Gitleaks, Collect
 |----------|---------|-------------|
 | `APME_GALAXY_PROXY_URL` | `http://127.0.0.1:8765` | Galaxy proxy base URL |
 
+#### Gateway (SCM / PR creation)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `APME_SCM_TOKEN` | — | Global SCM token fallback for private clone and PR/MR creation (ADR-050) |
+| `APME_GITHUB_API_URL` | `https://api.github.com` | GitHub API base (GHES: set to enterprise API URL) |
+| `APME_GITLAB_API_URL` | `https://gitlab.com/api/v4` | GitLab API base (self-hosted: `https://gitlab.example.com/api/v4`) |
+| `APME_BITBUCKET_API_URL` | `https://api.bitbucket.org/2.0` | Bitbucket API base (Server/DC: `https://bitbucket.example.com/rest/api/1.0`) |
+
+Self-hosted GitLab/Bitbucket projects should also set project `scm_provider` to
+`gitlab` or `bitbucket`, and must set `APME_GITLAB_API_URL` /
+`APME_BITBUCKET_API_URL` to the forge API base (including any context path,
+e.g. `https://corp.example/bitbucket/rest/api/1.0`). The Gateway does not
+derive API bases from clone URLs (SSRF / context-path safety). Bitbucket Cloud
+app passwords may be stored as `username:app_password` in the SCM token field.
+
 ### Volumes
 
 | Name | Host Path | Container Mount | Services | Access |

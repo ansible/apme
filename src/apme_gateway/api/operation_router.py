@@ -216,6 +216,7 @@ async def initiate_operation(project_id: str, body: OperateRequest) -> OperateRe
             scan_id=scan_id,
             galaxy_servers=galaxy_servers,
             scm_token=proj.scm_token or cfg.scm_token,
+            scm_provider=proj.scm_provider,
         )
     )
     state.grpc_task = task
@@ -610,7 +611,29 @@ async def submit_operation(
             detail=f"Cannot detect SCM provider from URL: {project.repo_url}",
         )
 
-    api_base = cfg.github_api_url if provider_type == "github" else None
+    api_base: str | None = None
+    from apme_gateway.scm.urls import (
+        resolve_bitbucket_api_url,
+        resolve_gitlab_api_url,
+    )
+
+    api_base_resolvers: dict[str, tuple[str, Any]] = {
+        "github": (cfg.github_api_url, _resolve_github_api_base),
+        "gitlab": (cfg.gitlab_api_url, resolve_gitlab_api_url),
+        "bitbucket": (cfg.bitbucket_api_url, resolve_bitbucket_api_url),
+    }
+    resolver_entry = api_base_resolvers.get(provider_type)
+    if resolver_entry is not None:
+        configured, resolve = resolver_entry
+        try:
+            api_base = resolve(configured, project.repo_url)
+        except ValueError as exc:
+            if state:
+                get_operation_registry().transition(
+                    state.operation_id,
+                    OperationStatus.COMPLETED,
+                )
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
     try:
         provider = get_provider(provider_type, api_base_url=api_base)
     except ValueError as exc:
@@ -633,9 +656,12 @@ async def submit_operation(
             if isinstance(head, str) and head:
                 existing_head = head
 
+        files = {pf.path: pf.content for pf in patched}
+        # Always push patched files when the branch already exists. Skipping
+        # push on create_pr=true caused empty PRs after a failed first attempt
+        # where create_branch succeeded but push_files did not.
         if existing_head is None:
             parent_sha = await provider.create_branch(project.repo_url, project.branch, branch_name, token)
-            files = {pf.path: pf.content for pf in patched}
             commit_sha = await provider.push_files(
                 project.repo_url,
                 branch_name,
@@ -644,17 +670,14 @@ async def submit_operation(
                 token,
                 parent_commit_sha=parent_sha,
             )
-        elif body.create_pr:
-            # Two-step UI flow: branch was pushed earlier; only open the PR now.
-            commit_sha = existing_head
         else:
-            files = {pf.path: pf.content for pf in patched}
             commit_sha = await provider.push_files(
                 project.repo_url,
                 branch_name,
                 files,
                 commit_title,
                 token,
+                parent_commit_sha=existing_head,
             )
 
         pr_url: str | None = None
@@ -670,12 +693,18 @@ async def submit_operation(
             )
             pr_url = pr_result.pr_url
     except Exception as exc:
-        logger.exception("SCM provider error for project %s", project_id)
+        # Do not log raw httpx response bodies (may echo tokens / internal hosts).
+        logger.error(
+            "SCM provider error for project %s: %s: %s",
+            project_id,
+            type(exc).__name__,
+            _safe_scm_error(exc),
+        )
         if state:
             get_operation_registry().transition(
                 state.operation_id,
                 OperationStatus.COMPLETED,
-                error=str(exc),
+                error=_safe_scm_error(exc),
             )
         raise HTTPException(status_code=502, detail="SCM provider error") from exc
 
@@ -814,6 +843,39 @@ def _sse_format(event: str, data: dict[str, Any]) -> str:
 # ── PR body builder ───────────────────────────────────────────────────
 
 
+def _resolve_github_api_base(configured: str, _repo_url: str) -> str:
+    """Validate and return the configured GitHub API base URL.
+
+    Args:
+        configured: GitHub API base from gateway config.
+        _repo_url: Unused; kept for resolver dispatch parity.
+
+    Returns:
+        The validated API base URL.
+    """
+    from apme_gateway.scm.urls import require_https_api_base
+
+    require_https_api_base(configured, "GitHub")
+    return configured
+
+
+def _safe_scm_error(exc: BaseException) -> str:
+    """Return a log-safe SCM error summary without response bodies or tokens.
+
+    Args:
+        exc: Exception raised by an SCM provider call.
+
+    Returns:
+        Short ``Type: message`` string with credentials redacted.
+    """
+    from apme_gateway.scm.redaction import redact_credentials
+
+    raw = f"{type(exc).__name__}: {exc}"
+    redacted = redact_credentials(raw)
+    # Truncate to avoid dumping large httpx response payloads into logs/DB.
+    return redacted if len(redacted) <= 300 else redacted[:300] + "…"
+
+
 def _build_pr_body(scan: Scan, patched_files: Sequence[PatchedFile]) -> str:
     """Generate a Markdown PR body from scan data (ADR-050).
 
@@ -933,6 +995,7 @@ async def _drive_operation(
     scan_id: str,
     galaxy_servers: Any = None,
     scm_token: str | None = None,
+    scm_provider: str | None = None,
 ) -> None:
     """Background task that clones the repo and drives Primary's FixSession.
 
@@ -950,6 +1013,7 @@ async def _drive_operation(
         scan_id: Engine scan identifier.
         galaxy_servers: Galaxy server defs.
         scm_token: Optional SCM token for private repository access.
+        scm_provider: Optional explicit SCM provider for clone auth.
     """
     from apme_gateway.scan.driver import (
         coerce_option_bool,
@@ -960,7 +1024,7 @@ async def _drive_operation(
     registry = get_operation_registry()
 
     try:
-        await fetch_remote_head(repo_url, branch, scm_token=scm_token)
+        await fetch_remote_head(repo_url, branch, scm_token=scm_token, scm_provider=scm_provider)
 
         registry.transition(operation_id, OperationStatus.CLONING)
 
@@ -1284,6 +1348,7 @@ async def _drive_operation(
             scan_id=scan_id,
             galaxy_servers=galaxy_servers or None,
             scm_token=scm_token,
+            scm_provider=scm_provider,
         )
 
         if bridge_task is not None:
