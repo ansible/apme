@@ -5,6 +5,11 @@ from __future__ import annotations
 import os
 from urllib.parse import urlsplit, urlunsplit
 
+from sqlalchemy.engine import make_url
+
+_INVALID_URL_MSG = "APME_DATABASE_URL must be a SQLAlchemy URL"
+_EXPLICIT_URL_MSG = "database_url must be a SQLAlchemy URL"
+
 
 def is_database_url(target: str) -> bool:
     """Return True when *target* looks like a SQLAlchemy database URL.
@@ -44,15 +49,16 @@ def resolve_database_url(*, database_url: str | None = None, db_path: str | None
         SQLAlchemy async database URL.
 
     Raises:
-        ValueError: When ``APME_DATABASE_URL`` is set but not a valid URL.
+        ValueError: When a configured database URL is not a valid SQLAlchemy URL.
     """
     if database_url:
+        if "://" not in database_url:
+            raise ValueError(_EXPLICIT_URL_MSG)
         return database_url
     env_url = os.environ.get("APME_DATABASE_URL", "").strip()
     if env_url:
         if "://" not in env_url:
-            msg = "APME_DATABASE_URL must be a SQLAlchemy URL"
-            raise ValueError(msg)
+            raise ValueError(_INVALID_URL_MSG)
         return env_url
     path = db_path if db_path is not None else os.environ.get("APME_DB_PATH", "/data/apme.db")
     return sqlite_url_from_path(path)
@@ -105,10 +111,11 @@ def sqlite_parent_dir(url: str) -> str | None:
     """
     if not is_sqlite_url(url) or not is_database_url(url):
         return None
-    if ":memory:" in url:
+    try:
+        db_path = make_url(url).database
+    except Exception:
         return None
-    path = urlsplit(url).path
-    if not path or path.endswith(":memory:"):
+    if not db_path or db_path == ":memory:":
         return None
-    parent = os.path.dirname(path)
+    parent = os.path.dirname(db_path)
     return parent or None

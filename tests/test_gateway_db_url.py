@@ -9,6 +9,7 @@ from apme_gateway.db.url import (
     is_sqlite_url,
     resolve_database_url,
     sanitize_database_url,
+    sqlite_parent_dir,
     sqlite_url_from_path,
 )
 
@@ -47,6 +48,12 @@ def test_resolve_database_url_from_environment(monkeypatch: pytest.MonkeyPatch) 
     assert resolve_database_url() == "postgresql+asyncpg://apme:apme@localhost:5432/apme"
 
 
+def test_resolve_database_url_rejects_malformed_explicit_url() -> None:
+    """Malformed explicit database_url raises without echoing the value."""
+    with pytest.raises(ValueError, match="database_url must be a SQLAlchemy URL"):
+        resolve_database_url(database_url="not-a-url")
+
+
 def test_resolve_database_url_rejects_malformed_env_url(monkeypatch: pytest.MonkeyPatch) -> None:
     """Malformed APME_DATABASE_URL raises without echoing the value.
 
@@ -70,3 +77,18 @@ def test_is_database_url_and_sqlite_detection() -> None:
     assert is_sqlite_url("/data/apme.db")
     assert is_sqlite_url("sqlite+aiosqlite:////data/apme.db")
     assert not is_sqlite_url("postgresql+asyncpg://localhost/apme")
+
+
+def test_sqlite_parent_dir_absolute_path() -> None:
+    """Absolute SQLite URLs resolve parent directories correctly."""
+    assert sqlite_parent_dir("sqlite+aiosqlite:////data/apme.db") == "/data"
+
+
+def test_sqlite_parent_dir_relative_path() -> None:
+    """Relative SQLite URLs preserve relative parent directories."""
+    assert sqlite_parent_dir("sqlite+aiosqlite:///state/apme.db") == "state"
+
+
+def test_sqlite_parent_dir_memory_returns_none() -> None:
+    """In-memory SQLite URLs have no parent directory."""
+    assert sqlite_parent_dir("sqlite+aiosqlite:///:memory:") is None
