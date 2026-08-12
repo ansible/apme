@@ -1,35 +1,49 @@
 ---
 rule_id: L031
 validator: native
-description: File permission may be insecure (annotation-based).
+description: File permission may be insecure.
 scope: task
-status: stub
-status_reason: >
-  Covered by OPA rules L020/L021 which check file mode arguments directly.
-  This annotation-based variant is retained as a placeholder for future
-  annotation-driven detection (requires engine annotation pipeline).
+status: active
 ---
 
 ## Insecure file permission (L031)
 
-File permission may be insecure (annotation-based). This rule depends on the
-engine annotation pipeline emitting `is_insecure_permissions` on nodes. It is
-**not currently implemented** as a GraphRule because the equivalent check is
-already covered by OPA rules L020 and L021 which inspect `mode` arguments
-directly.
+Detects insecure file permission values on file-related modules. Complements
+OPA rules L020 (numeric mode) and L021 (missing mode) by catching **insecure
+permission values** — world-writable bits, overly permissive patterns like
+0777/0666, and boolean mode values.
 
-### Status
+### Detection
 
-**Stub** — no `_graph.py` implementation. OPA L020/L021 provide equivalent
-coverage. This rule may be implemented in the future if annotation-based
-detection offers additional value beyond what OPA checks provide.
+Checks the `mode` parameter of file-related modules (`copy`, `file`,
+`template`, `lineinfile`, `replace`, `synchronize`, `unarchive`, `assemble`)
+for:
+
+- **World-writable** modes (others write bit set, e.g. `0777`, `0646`)
+- **Overly permissive** patterns (`0777`, `0666`, `0776`, `0767`, `0677`)
+- **Boolean** mode values (which silently produce wrong permissions)
+- Templated values (Jinja) are skipped since the actual value is unknown
+
+### Remediation
+
+Use restrictive permissions: `0644` for files, `0755` for directories.
+
+### Example: fail
+
+```yaml
+- name: Create world-writable file
+  ansible.builtin.file:
+    path: /tmp/data
+    mode: "0777"
+    state: touch
+```
 
 ### Example: pass
 
 ```yaml
-- name: Example play
-  hosts: localhost
-  tasks:
-    - name: Ok
-      ansible.builtin.command: whoami
+- name: Create file with safe permissions
+  ansible.builtin.file:
+    path: /tmp/data
+    mode: "0644"
+    state: touch
 ```

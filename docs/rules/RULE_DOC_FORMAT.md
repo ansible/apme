@@ -5,6 +5,7 @@ Rule `.md` files describe a single rule and provide examples that can be used bo
 ## File location
 
 - **Native rules:** `src/apme_engine/validators/native/rules/<rule_file_stem>.md` (e.g. `R102_command_instead_of_shell.md` next to `R102_command_instead_of_shell.py`).
+- **Graph rules:** `src/apme_engine/graph/rules/<rule_file_stem>.md` (e.g. `M029_inventory_script_missing__meta.md` next to `M029_inventory_script_missing__meta_graph.py`). Place `scope` and other catalog frontmatter here — `get_rule_scope()` reads from this directory, not the legacy Native rules path.
 - **OPA rules:** `src/apme_engine/validators/opa/bundle/<rule_id>.md` (e.g. `L002.md`, `R118.md` next to the `.rego` file).
 - **Ansible rules:** `src/apme_engine/validators/ansible/rules/<rule_id>.md` (e.g. `L057.md`, `M001.md`).
 
@@ -14,7 +15,12 @@ Rule `.md` files describe a single rule and provide examples that can be used bo
    - `rule_id` — Rule identifier (e.g. `L026`, `R102`, `L024`).
    - `validator` — `native`, `opa`, or `ansible`.
    - `description` — One-line description.
+   - `scope` — Structural scope per ADR-026: `task`, `block`, `play`, `playbook`, `role`, `inventory`, or `collection`. Drives remediation routing.
    - `ai_prompt` — *(optional)* Per-rule guidance injected into the AI remediation prompt. Use YAML literal block (`|`) for multiline text. Tells the AI how to handle this rule — e.g., when to add `# noqa` instead of modifying code, or domain context about when the flagged pattern is legitimate. See `src/apme_engine/remediation/abbenay_provider.py` for how hints are loaded and injected.
+
+   **Note:** Default severity is **not** set in rule docs. It comes from
+   `src/apme_engine/graph/severity.py` (ADR-043) and appears in
+   [RULE_CATALOG.md](RULE_CATALOG.md).
 
 2. **Title and prose** — Human-readable explanation of what the rule checks.
 
