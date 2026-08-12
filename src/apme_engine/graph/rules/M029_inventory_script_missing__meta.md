@@ -18,9 +18,9 @@ Inventory scripts must include `_meta.hostvars` in JSON output (enforced in 2.23
 ### Detection
 
 Scans for Python files in `inventory/` and `inventories/` directories adjacent
-to playbooks. Files that appear to be dynamic inventory scripts (contain
-`--list` argument handling) but do not reference `_meta` in their source are
-flagged.
+to playbooks, including executable extensionless scripts with a Python shebang.
+Files that appear to be dynamic inventory scripts (contain `--list` argument
+handling) but do not reference `_meta` in their source are flagged.
 
 **Limitations**: This is a heuristic static analysis — it checks source-level
 `_meta` references rather than actual JSON output. Scripts that construct the

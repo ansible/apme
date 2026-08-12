@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import stat
 from pathlib import Path
 
 import pytest
@@ -16,7 +17,9 @@ from apme_engine.graph.content_graph import (
 from apme_engine.graph.rules.M029_inventory_script_missing__meta_graph import (
     InventoryScriptMissingMetaGraphRule,
     _has_meta_reference,
+    _is_python_inventory_candidate,
     _looks_like_inventory_script,
+    _read_script_source,
 )
 
 
@@ -64,6 +67,67 @@ class TestLooksLikeInventoryScript:
         """Regular Python file not detected."""
         source = "def main():\n    print('hello')\n"
         assert _looks_like_inventory_script(source) is False
+
+
+class TestIsPythonInventoryCandidate:
+    """Tests for _is_python_inventory_candidate helper."""
+
+    def test_py_file(self, tmp_path: Path) -> None:
+        """Regular .py files are candidates.
+
+        Args:
+            tmp_path: Pytest temp directory.
+        """
+        script = tmp_path / "ec2.py"
+        script.write_text("print('hello')\n")
+        assert _is_python_inventory_candidate(str(script)) is True
+
+    def test_init_py_excluded(self, tmp_path: Path) -> None:
+        """__init__.py is excluded.
+
+        Args:
+            tmp_path: Pytest temp directory.
+        """
+        init = tmp_path / "__init__.py"
+        init.write_text("")
+        assert _is_python_inventory_candidate(str(init)) is False
+
+    def test_extensionless_executable_python(self, tmp_path: Path) -> None:
+        """Executable extensionless Python shebang scripts are candidates.
+
+        Args:
+            tmp_path: Pytest temp directory.
+        """
+        script = tmp_path / "ec2"
+        script.write_text('#!/usr/bin/env python\nparser.add_argument("--list")\n')
+        script.chmod(script.stat().st_mode | stat.S_IXUSR)
+        assert _is_python_inventory_candidate(str(script)) is True
+
+    def test_extensionless_non_executable_ignored(self, tmp_path: Path) -> None:
+        """Non-executable extensionless files are ignored.
+
+        Args:
+            tmp_path: Pytest temp directory.
+        """
+        script = tmp_path / "ec2"
+        script.write_text('#!/usr/bin/env python\nparser.add_argument("--list")\n')
+        assert _is_python_inventory_candidate(str(script)) is False
+
+
+class TestReadScriptSource:
+    """Tests for _read_script_source helper."""
+
+    def test_latin1_encoding_declaration(self, tmp_path: Path) -> None:
+        """Declared non-UTF-8 encodings are honored.
+
+        Args:
+            tmp_path: Pytest temp directory.
+        """
+        script = tmp_path / "ec2.py"
+        script.write_bytes(b'# -*- coding: latin-1 -*-\nparser.add_argument("--list")\n# caf\xe9\n')
+        source = _read_script_source(str(script))
+        assert source is not None
+        assert "caf\xe9" in source or "café" in source
 
 
 class TestHasMetaReference:
@@ -137,6 +201,64 @@ class TestInventoryScriptMissingMetaGraphRule:
         result = rule.process(g, nid)
         assert result is not None
         assert result.verdict is False
+
+    def test_extensionless_inventory_script_missing_meta_fires(
+        self, rule: InventoryScriptMissingMetaGraphRule, tmp_path: Path
+    ) -> None:
+        """Executable extensionless inventory script without _meta triggers violation.
+
+        Args:
+            rule: Rule instance under test.
+            tmp_path: Pytest temp directory.
+        """
+        inv_dir = tmp_path / "inventory"
+        inv_dir.mkdir()
+        script = inv_dir / "ec2"
+        script.write_text(
+            "#!/usr/bin/env python\n"
+            "import argparse\n"
+            "parser = argparse.ArgumentParser()\n"
+            'parser.add_argument("--list", action="store_true")\n'
+            "args = parser.parse_args()\n"
+            'print(\'{"all": {"hosts": ["h1"]}}\')\n'
+        )
+        script.chmod(script.stat().st_mode | stat.S_IXUSR)
+        pb_file = tmp_path / "site.yml"
+        pb_file.write_text("---\n- hosts: all\n")
+        g, nid = _make_playbook(file_path=str(pb_file))
+        result = rule.process(g, nid)
+        assert result is not None
+        assert result.verdict is True
+        assert result.detail is not None
+        assert "ec2" in str(result.detail.get("message", ""))
+        assert "ec2.py" not in str(result.detail.get("message", ""))
+
+    def test_latin1_inventory_script_missing_meta_fires(
+        self, rule: InventoryScriptMissingMetaGraphRule, tmp_path: Path
+    ) -> None:
+        """Non-UTF-8 encoded inventory scripts are still scanned.
+
+        Args:
+            rule: Rule instance under test.
+            tmp_path: Pytest temp directory.
+        """
+        inv_dir = tmp_path / "inventory"
+        inv_dir.mkdir()
+        script = inv_dir / "ec2.py"
+        script.write_bytes(
+            b"# -*- coding: latin-1 -*-\n"
+            b"import argparse\n"
+            b"parser = argparse.ArgumentParser()\n"
+            b'parser.add_argument("--list", action="store_true")\n'
+            b"args = parser.parse_args()\n"
+            b'print(\'{"all": {"hosts": ["h1"]}}\')\n'
+        )
+        pb_file = tmp_path / "site.yml"
+        pb_file.write_text("---\n- hosts: all\n")
+        g, nid = _make_playbook(file_path=str(pb_file))
+        result = rule.process(g, nid)
+        assert result is not None
+        assert result.verdict is True
 
     def test_inventory_script_missing_meta_fires(
         self, rule: InventoryScriptMissingMetaGraphRule, tmp_path: Path

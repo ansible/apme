@@ -8,8 +8,10 @@ deprecated.
 Since runtime execution of inventory scripts is out of scope for static
 analysis, this rule uses a **heuristic**: it scans for Python files in
 standard inventory locations (``inventory/``, ``inventories/``) relative
-to each playbook's directory.  Files that look like executable inventory
-scripts (contain ``--list`` argument handling) but do not reference
+to each playbook's directory.  Executable Python scripts without a
+``.py`` suffix are included when they have a Python shebang.  Files that
+look like executable inventory scripts (contain ``--list`` argument
+handling) but do not reference
 ``_meta`` in their source are flagged.
 
 Limitations:
@@ -23,6 +25,7 @@ from __future__ import annotations
 
 import logging
 import os
+import tokenize
 from dataclasses import dataclass, field
 
 from apme_engine.graph.content_graph import ContentGraph, NodeType
@@ -39,11 +42,38 @@ _INVENTORY_DIR_NAMES = frozenset({"inventory", "inventories"})
 _REQUIRED_INVENTORY_MARKER = "--list"
 
 
+def _is_python_inventory_candidate(path: str) -> bool:
+    """Return True when *path* is a Python inventory script candidate.
+
+    Accepts ``.py`` files (except ``__init__.py``) and extensionless files
+    that are executable and start with a Python shebang.
+
+    Args:
+        path: Absolute path to a file under an inventory directory.
+
+    Returns:
+        True when the file should be scanned for inventory-script markers.
+    """
+    basename = os.path.basename(path)
+    if basename == "__init__.py":
+        return False
+    if basename.endswith(".py"):
+        return True
+    if not os.access(path, os.X_OK):
+        return False
+    try:
+        with open(path, encoding="utf-8") as f:
+            first_line = f.readline()
+    except OSError:
+        return False
+    return first_line.startswith("#!") and "python" in first_line.lower()
+
+
 def _find_inventory_scripts(playbook_dir: str) -> list[str]:
     """Discover Python files in standard inventory directories.
 
     Walks ``inventory/`` and ``inventories/`` subdirectories of the given
-    path looking for ``.py`` files.
+    path looking for ``.py`` files and executable extensionless Python scripts.
 
     Args:
         playbook_dir: Directory containing the playbook.
@@ -58,9 +88,26 @@ def _find_inventory_scripts(playbook_dir: str) -> list[str]:
             continue
         for dirpath, _dirs, files in os.walk(inv_dir):
             for fname in files:
-                if fname.endswith(".py") and fname != "__init__.py":
-                    candidates.append(os.path.join(dirpath, fname))
+                path = os.path.join(dirpath, fname)
+                if _is_python_inventory_candidate(path):
+                    candidates.append(path)
     return sorted(candidates)
+
+
+def _read_script_source(script_path: str) -> str | None:
+    """Read inventory script source, honoring declared encodings.
+
+    Args:
+        script_path: Absolute path to the script file.
+
+    Returns:
+        Source text, or None when the file cannot be read or decoded.
+    """
+    try:
+        with tokenize.open(script_path) as f:
+            return f.read()
+    except (OSError, UnicodeError, SyntaxError):
+        return None
 
 
 def _looks_like_inventory_script(source: str) -> bool:
@@ -167,10 +214,8 @@ class InventoryScriptMissingMetaGraphRule(GraphRule):
 
         missing_meta: list[str] = []
         for script_path in scripts:
-            try:
-                with open(script_path, encoding="utf-8") as f:
-                    source = f.read()
-            except OSError:
+            source = _read_script_source(script_path)
+            if source is None:
                 continue
             if _looks_like_inventory_script(source) and not _has_meta_reference(source):
                 missing_meta.append(os.path.relpath(script_path, playbook_dir))
