@@ -37,8 +37,8 @@ generalize `get_provider` / operation submit API-base wiring.
 
 ## Verification
 
-- [ ] `tox -e lint`
-- [ ] `tox -e unit` (existing GitHub PR tests still pass)
+- [x] `tox -e lint`
+- [x] `tox -e unit` (existing GitHub PR tests still pass)
 
 ## Acceptance Criteria Reference
 

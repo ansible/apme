@@ -166,14 +166,18 @@ def _inject_token_in_url(
     host_l = hostname.lower()
 
     user_pass = split_user_pass_token(token)
-    if user_pass is not None and (provider == "bitbucket" or "bitbucket" in host_l):
-        username, password = user_pass
-        encoded_user = quote(username, safe="")
-        encoded_token = quote(password, safe="")
-        netloc_with_auth = f"{encoded_user}:{encoded_token}@{hostname}"
-        if parsed.port:
-            netloc_with_auth += f":{parsed.port}"
-        return urlunparse(parsed._replace(netloc=netloc_with_auth))
+    if user_pass is not None:
+        use_user_pass = provider in {"bitbucket", "gitlab"} or (
+            not provider and ("bitbucket" in host_l or "gitlab" in host_l)
+        )
+        if use_user_pass:
+            username, password = user_pass
+            encoded_user = quote(username, safe="")
+            encoded_token = quote(password, safe="")
+            netloc_with_auth = f"{encoded_user}:{encoded_token}@{hostname}"
+            if parsed.port:
+                netloc_with_auth += f":{parsed.port}"
+            return urlunparse(parsed._replace(netloc=netloc_with_auth))
 
     if provider == "github" or (not provider and "github" in host_l):
         username = "x-access-token"

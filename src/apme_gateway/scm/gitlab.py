@@ -104,6 +104,34 @@ class GitLabProvider:
         suffix = "/".join(parts)
         return f"{self._api}/projects/{project}/{suffix}"
 
+    async def _file_exists(
+        self,
+        client: httpx.AsyncClient,
+        project: str,
+        branch: str,
+        file_path: str,
+        headers: dict[str, str],
+    ) -> bool:
+        """Return True when *file_path* exists on *branch*.
+
+        Args:
+            client: Active HTTP client for GitLab API calls.
+            project: URL-encoded project path.
+            branch: Branch name to inspect.
+            file_path: Repository-relative file path.
+            headers: Authenticated request headers.
+
+        Returns:
+            ``True`` when the file exists on the branch, else ``False``.
+        """
+        encoded_path = quote(file_path, safe="")
+        resp = await client.head(
+            self._project_url(project, f"repository/files/{encoded_path}"),
+            headers=headers,
+            params={"ref": branch},
+        )
+        return bool(resp.status_code == 200)
+
     async def branch_head_sha(
         self,
         repo_url: str,
@@ -245,18 +273,27 @@ class GitLabProvider:
                     "actions": actions,
                 },
             )
-            # If some paths are new (create), retry those actions as create.
+            # If some paths are new (create), retry with per-file create/update.
             if resp.status_code == 400:
                 err_text = (resp.text or "").lower()
                 if "does not exist" in err_text or "a file with this name doesn't exist" in err_text:
-                    create_actions = [{**a, "action": "create"} for a in actions]
+                    mixed_actions: list[dict[str, str]] = []
+                    for action in actions:
+                        exists = await self._file_exists(
+                            client,
+                            project,
+                            branch,
+                            action["file_path"],
+                            headers,
+                        )
+                        mixed_actions.append({**action, "action": "update" if exists else "create"})
                     resp = await client.post(
                         self._project_url(project, "repository/commits"),
                         headers=headers,
                         json={
                             "branch": branch,
                             "commit_message": commit_message,
-                            "actions": create_actions,
+                            "actions": mixed_actions,
                         },
                     )
             resp.raise_for_status()

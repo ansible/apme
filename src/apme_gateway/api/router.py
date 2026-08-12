@@ -726,10 +726,11 @@ async def update_project(
         existing = await q.resolve_project(db, project_id)
         if not existing:
             raise HTTPException(status_code=404, detail="Project not found")
-        effective_url = updates.get("repo_url", existing.repo_url) or existing.repo_url
-        # Use `in` — clearing scm_provider stores None and must not fall back.
-        effective_provider = updates["scm_provider"] if "scm_provider" in updates else existing.scm_provider  # noqa: SIM401
-        _require_scm_provider_for_repo(effective_url, effective_provider)
+        if "repo_url" in updates or "scm_provider" in updates:
+            effective_url = updates.get("repo_url", existing.repo_url) or existing.repo_url
+            # Use `in` — clearing scm_provider stores None and must not fall back.
+            effective_provider = updates["scm_provider"] if "scm_provider" in updates else existing.scm_provider  # noqa: SIM401
+            _require_scm_provider_for_repo(effective_url, effective_provider)
         proj = await q.update_project(db, project_id, **updates)
         if not proj:
             raise HTTPException(status_code=404, detail="Project not found")

@@ -859,9 +859,9 @@ def _safe_scm_error(exc: BaseException) -> str:
     from apme_gateway.scan.driver import _redact_credentials
 
     raw = f"{type(exc).__name__}: {exc}"
+    redacted = _redact_credentials(raw)
     # Truncate to avoid dumping large httpx response payloads into logs/DB.
-    truncated = raw if len(raw) <= 300 else raw[:300] + "…"
-    return _redact_credentials(truncated)
+    return redacted if len(redacted) <= 300 else redacted[:300] + "…"
 
 
 def _build_pr_body(scan: Scan, patched_files: Sequence[PatchedFile]) -> str:

@@ -316,7 +316,12 @@ class BitbucketCloudProvider:
                 existing = await client.get(
                     self._repo_url(workspace, repo, "pullrequests"),
                     headers=_auth_headers(token),
-                    params={"state": "OPEN"},
+                    params={
+                        "q": (
+                            f'source.branch.name="{head_branch}" AND '
+                            f'destination.branch.name="{base_branch}" AND state="OPEN"'
+                        ),
+                    },
                 )
                 if existing.status_code == 200:
                     values = existing.json().get("values") or []

@@ -13,6 +13,28 @@ _CLOUD_GITLAB_HOSTS = frozenset({"gitlab.com"})
 _CLOUD_BITBUCKET_HOSTS = frozenset({"bitbucket.org"})
 
 
+def _is_gitlab_cloud_api_url(url: str) -> bool:
+    """Return True when *url* is a well-formed GitLab SaaS API base.
+
+    Args:
+        url: Candidate GitLab API base URL.
+
+    Returns:
+        ``True`` when the URL uses HTTPS, targets ``gitlab.com``, and ends
+        with ``/api/v4``.
+    """
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        return False
+    host = (parsed.hostname or "").lower()
+    if host.startswith("www."):
+        host = host[4:]
+    if host not in _CLOUD_GITLAB_HOSTS:
+        return False
+    path = (parsed.path or "").rstrip("/")
+    return path == "/api/v4" or path.endswith("/api/v4")
+
+
 def _hostname(repo_url: str) -> str:
     """Return the lowercased hostname from *repo_url*, or empty string.
 
@@ -75,15 +97,18 @@ def resolve_gitlab_api_url(configured: str, repo_url: str) -> str:
     """
     configured = (configured or DEFAULT_GITLAB_API_URL).rstrip("/")
     host = _hostname(repo_url)
+    configured_host = _hostname(configured)
     if not host:
         msg = f"Cannot resolve GitLab API URL from invalid repo URL: {repo_url}"
         raise ValueError(msg)
 
     if host in _CLOUD_GITLAB_HOSTS:
-        return configured if configured.endswith("/api/v4") or "gitlab.com" in configured else DEFAULT_GITLAB_API_URL
+        if _is_gitlab_cloud_api_url(configured):
+            return configured
+        return DEFAULT_GITLAB_API_URL
 
     # Self-hosted / Dedicated: require explicit non-cloud API base.
-    if configured.rstrip("/") == DEFAULT_GITLAB_API_URL.rstrip("/") or "gitlab.com" in configured:
+    if configured.rstrip("/") == DEFAULT_GITLAB_API_URL.rstrip("/") or configured_host in _CLOUD_GITLAB_HOSTS:
         msg = (
             f"Self-hosted GitLab at '{host}' requires APME_GITLAB_API_URL "
             f"(e.g. https://{host}/api/v4). Auto-derivation from repo_url is disabled."
@@ -116,11 +141,11 @@ def resolve_bitbucket_api_url(configured: str, repo_url: str) -> str:
         raise ValueError(msg)
 
     if host in _CLOUD_BITBUCKET_HOSTS:
-        if "api.bitbucket.org" in configured:
+        if is_bitbucket_cloud_api(configured):
             return configured
         return DEFAULT_BITBUCKET_CLOUD_API_URL
 
-    if configured.rstrip("/") == DEFAULT_BITBUCKET_CLOUD_API_URL.rstrip("/") or "api.bitbucket.org" in configured:
+    if configured.rstrip("/") == DEFAULT_BITBUCKET_CLOUD_API_URL.rstrip("/") or is_bitbucket_cloud_api(configured):
         msg = (
             f"Self-hosted Bitbucket at '{host}' requires APME_BITBUCKET_API_URL "
             f"(e.g. https://{host}/rest/api/1.0). Auto-derivation from repo_url is disabled."

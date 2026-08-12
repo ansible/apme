@@ -10,6 +10,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient, Response
 
 from apme_gateway.app import create_app
+from apme_gateway.config import GatewayConfig
 from apme_gateway.db import close_db, get_session, init_db
 from apme_gateway.db.models import PatchedFile, Project, Scan, Session
 from apme_gateway.operation_registry import get_operation_registry
@@ -120,6 +121,14 @@ class TestUrlHelpers:
             "https://gitlab.corp.example/group/repo.git",
         )
         assert url == "https://gitlab.corp.example/gitlab/api/v4"
+
+    def test_resolve_gitlab_self_hosted_ignores_cloud_host_in_path(self) -> None:
+        """Only parsed hostname determines cloud API base, not path substrings."""
+        url = resolve_gitlab_api_url(
+            "https://gitlab.corp.example/gitlab.com/api/v4",
+            "https://gitlab.corp.example/group/repo.git",
+        )
+        assert url == "https://gitlab.corp.example/gitlab.com/api/v4"
 
     def test_resolve_bitbucket_self_hosted_requires_env(self) -> None:
         """Self-hosted Bitbucket rejects Cloud-default API URL."""
@@ -519,10 +528,14 @@ class TestSubmitPhase2Providers:
             repo_url="https://bb.corp.example/scm/PROJ/repo.git",
             scm_provider="bitbucket",
         )
-        resp = await client.post(
-            "/api/v1/projects/proj-1/operation/submit",
-            json={"activity_id": "scan-1", "create_pr": True},
-        )
+        with patch(
+            "apme_gateway.config.load_config",
+            return_value=GatewayConfig(bitbucket_api_url="https://api.bitbucket.org/2.0"),
+        ):
+            resp = await client.post(
+                "/api/v1/projects/proj-1/operation/submit",
+                json={"activity_id": "scan-1", "create_pr": True},
+            )
         assert resp.status_code == 422
         assert "APME_BITBUCKET_API_URL" in resp.json()["detail"]
 
@@ -563,3 +576,20 @@ class TestProjectScmValidation:
         )
         assert resp.status_code == 400
         assert "scm_provider" in resp.json()["detail"]
+
+    async def test_update_unrelated_fields_skips_provider_check(self, client: AsyncClient) -> None:
+        """Patching name on legacy self-hosted projects does not require scm_provider.
+
+        Args:
+            client: Async test client.
+        """
+        await _seed(
+            repo_url="https://bb.corp.example/scm/PROJ/repo.git",
+            scm_provider=None,
+        )
+        resp = await client.patch(
+            "/api/v1/projects/proj-1",
+            json={"name": "renamed"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["name"] == "renamed"

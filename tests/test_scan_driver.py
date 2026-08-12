@@ -300,6 +300,14 @@ class TestInjectTokenInUrl:
         url = _inject_token_in_url("https://bitbucket.org/owner/repo.git", "alice:app-secret")
         assert url == "https://alice:app-secret@bitbucket.org/owner/repo.git"
 
+    def test_gitlab_deploy_token_uses_user_pass(self) -> None:
+        """GitLab deploy tokens use username:password credentials."""
+        url = _inject_token_in_url(
+            "https://gitlab.com/group/repo.git",
+            "gitlab+deploy-token-1:secret",
+        )
+        assert url == "https://gitlab%2Bdeploy-token-1:secret@gitlab.com/group/repo.git"
+
     def test_provider_hint_for_self_hosted_bitbucket(self) -> None:
         """Explicit scm_provider selects Bitbucket auth on non-bitbucket hostnames."""
         url = _inject_token_in_url(

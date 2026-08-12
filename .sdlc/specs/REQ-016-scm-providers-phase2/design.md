@@ -18,4 +18,7 @@ Harden clone token injection to honor `scm_provider` and `user:pass` tokens.
 ## Flavor Selection (Bitbucket)
 
 - Default / `api.bitbucket.org` / host `bitbucket.org` → Cloud
-- Non-default `APME_BITBUCKET_API_URL` or self-hosted host with `scm_provider=bitbucket` → Server/DC
+- Server/DC requires **both** `scm_provider=bitbucket` **and** an explicit,
+  non-default `APME_BITBUCKET_API_URL` (e.g. `https://bb.example.com/rest/api/1.0`).
+  `scm_provider=bitbucket` alone does not select Server/DC when the env var is
+  still the Cloud default — `resolve_bitbucket_api_url` rejects that combination.
