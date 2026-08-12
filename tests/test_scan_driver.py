@@ -295,6 +295,29 @@ class TestInjectTokenInUrl:
         url = _inject_token_in_url("https://bitbucket.org/owner/repo.git", "bb_test123")
         assert url == "https://x-token-auth:bb_test123@bitbucket.org/owner/repo.git"
 
+    def test_bitbucket_app_password_uses_user_pass(self) -> None:
+        """Bitbucket app passwords use username:password credentials."""
+        url = _inject_token_in_url("https://bitbucket.org/owner/repo.git", "alice:app-secret")
+        assert url == "https://alice:app-secret@bitbucket.org/owner/repo.git"
+
+    def test_provider_hint_for_self_hosted_bitbucket(self) -> None:
+        """Explicit scm_provider selects Bitbucket auth on non-bitbucket hostnames."""
+        url = _inject_token_in_url(
+            "https://git.corp.example.com/scm/PROJ/repo.git",
+            "bb_token",
+            scm_provider="bitbucket",
+        )
+        assert url == "https://x-token-auth:bb_token@git.corp.example.com/scm/PROJ/repo.git"
+
+    def test_provider_hint_for_self_hosted_gitlab(self) -> None:
+        """Explicit scm_provider selects GitLab oauth2 on custom hosts."""
+        url = _inject_token_in_url(
+            "https://git.corp.example.com/group/repo.git",
+            "glpat-x",
+            scm_provider="gitlab",
+        )
+        assert url == "https://oauth2:glpat-x@git.corp.example.com/group/repo.git"
+
     def test_unknown_provider_uses_git(self) -> None:
         """Unknown providers use git as fallback username."""
         url = _inject_token_in_url("https://custom-git.example.com/repo.git", "token123")

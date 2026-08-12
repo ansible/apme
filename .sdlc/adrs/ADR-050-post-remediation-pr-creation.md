@@ -359,6 +359,8 @@ globally via `APME_GITHUB_API_URL`.
 |---------|-------|-------------|
 | `APME_SCM_TOKEN` | Global (env) | Default SCM token for all projects |
 | `APME_GITHUB_API_URL` | Global (env) | GitHub API base URL (default: `https://api.github.com`) |
+| `APME_GITLAB_API_URL` | Global (env) | GitLab API base URL (default: `https://gitlab.com/api/v4`) |
+| `APME_BITBUCKET_API_URL` | Global (env) | Bitbucket API base URL (default: `https://api.bitbucket.org/2.0`; Server/DC e.g. `https://bitbucket.example.com/rest/api/1.0`) |
 | `APME_SECRET_KEY` | Global (env) | Symmetric application secret used for encrypting stored SCM tokens at rest |
 | `scm_token` | Project (DB) | Per-project SCM token override |
 | `scm_provider` | Project (DB) | Explicit provider type (auto-detected if unset) |
@@ -397,3 +399,4 @@ globally via `APME_GITHUB_API_URL`.
 |------|--------|--------|
 | 2026-04-07 | AI Agent | Initial proposal |
 | 2026-07-06 | AI Agent | Consolidated to unified `/operation/submit` endpoint with `create_pr` flag; removed `POST /activity/{id}/pull-request` and `POST /operation/create-pr`; status → Accepted |
+| 2026-08-12 | AI Agent | Phase 2 implemented: GitLab + Bitbucket Cloud/Server providers (REQ-016); `APME_GITLAB_API_URL` / `APME_BITBUCKET_API_URL` |

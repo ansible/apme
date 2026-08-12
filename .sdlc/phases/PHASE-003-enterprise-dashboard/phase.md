@@ -36,6 +36,7 @@ Enterprise Dashboard with ROI/Time-Saved reporting and Custom Policy engine. Sec
 | REQ-012 | EDA Rulebook Validation | Draft |
 | REQ-013 | Extended OPA Policy Inputs | Draft |
 | REQ-014 | Policy Permissive Mode | Draft |
+| REQ-016 | Phase 2 SCM Providers (GitLab + Bitbucket) | Implemented |
 
 ## Dependencies
 

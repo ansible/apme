@@ -7,6 +7,8 @@ import {
   EmptyStateBody,
   Flex,
   FlexItem,
+  FormSelect,
+  FormSelectOption,
   Label,
   MenuToggle,
   Modal,
@@ -65,6 +67,7 @@ export function ProjectsPage() {
   const [createUrl, setCreateUrl] = useState('');
   const [createBranch, setCreateBranch] = useState('main');
   const [createScmToken, setCreateScmToken] = useState('');
+  const [createScmProvider, setCreateScmProvider] = useState('');
   const [creating, setCreating] = useState(false);
   const [nameManuallyEdited, setNameManuallyEdited] = useState(false);
   const [openKebab, setOpenKebab] = useState<string | null>(null);
@@ -114,18 +117,26 @@ export function ProjectsPage() {
     if (!createName.trim() || !createUrl.trim()) return;
     setCreating(true);
     try {
-      const body: { name: string; repo_url: string; branch: string; scm_token?: string } = {
+      const body: {
+        name: string;
+        repo_url: string;
+        branch: string;
+        scm_token?: string;
+        scm_provider?: string;
+      } = {
         name: createName.trim(),
         repo_url: createUrl.trim(),
         branch: createBranch.trim() || 'main',
       };
       if (createScmToken.trim()) body.scm_token = createScmToken.trim();
+      if (createScmProvider) body.scm_provider = createScmProvider;
       await createProject(body);
       setShowCreate(false);
       setCreateName('');
       setCreateUrl('');
       setCreateBranch('main');
       setCreateScmToken('');
+      setCreateScmProvider('');
       setNameManuallyEdited(false);
       fetchProjects();
     } catch {
@@ -133,7 +144,7 @@ export function ProjectsPage() {
     } finally {
       setCreating(false);
     }
-  }, [createName, createUrl, createBranch, createScmToken, fetchProjects]);
+  }, [createName, createUrl, createBranch, createScmToken, createScmProvider, fetchProjects]);
 
   const handleDelete = useCallback(async (proj: ProjectSummary) => {
     if (!confirm(`Delete project "${proj.name}"? This cannot be undone.`)) return;
@@ -362,10 +373,30 @@ export function ProjectsPage() {
               <TextInput id="proj-branch" value={createBranch} onChange={(_e, v) => setCreateBranch(v)} placeholder="main" />
             </FlexItem>
             <FlexItem>
-              <label htmlFor="proj-scm-token" style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}>SCM Token <span style={{ fontWeight: 400, opacity: 0.6 }}>(optional)</span></label>
-              <TextInput id="proj-scm-token" type="password" value={createScmToken} onChange={(_e, v) => setCreateScmToken(v)} placeholder="GitHub PAT or App token" />
+              <label htmlFor="proj-scm-provider" style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}>
+                SCM Provider <span style={{ fontWeight: 400, opacity: 0.6 }}>(optional)</span>
+              </label>
+              <FormSelect
+                id="proj-scm-provider"
+                value={createScmProvider}
+                onChange={(_e, v) => setCreateScmProvider(v)}
+                aria-label="SCM provider"
+              >
+                <FormSelectOption value="" label="Auto-detect from URL" />
+                <FormSelectOption value="github" label="GitHub" />
+                <FormSelectOption value="gitlab" label="GitLab" />
+                <FormSelectOption value="bitbucket" label="Bitbucket" />
+              </FormSelect>
               <div style={{ fontSize: 12, marginTop: 4, opacity: 0.6 }}>
-                Used for creating pull requests from remediation results.
+                Required for self-hosted GitLab or Bitbucket Server/Data Center.
+                Also set APME_GITLAB_API_URL or APME_BITBUCKET_API_URL on the Gateway.
+              </div>
+            </FlexItem>
+            <FlexItem>
+              <label htmlFor="proj-scm-token" style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}>SCM Token <span style={{ fontWeight: 400, opacity: 0.6 }}>(optional)</span></label>
+              <TextInput id="proj-scm-token" type="password" value={createScmToken} onChange={(_e, v) => setCreateScmToken(v)} placeholder="PAT, access token, or username:app-password" />
+              <div style={{ fontSize: 12, marginTop: 4, opacity: 0.6 }}>
+                Used for private clones and creating pull/merge requests after remediation.
               </div>
             </FlexItem>
           </Flex>

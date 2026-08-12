@@ -10,6 +10,8 @@ import {
   CardBody,
   Flex,
   FlexItem,
+  FormSelect,
+  FormSelectOption,
   Label,
   Split,
   SplitItem,
@@ -227,7 +229,9 @@ export function ProjectDetailPage() {
   const [editUrl, setEditUrl] = useState('');
   const [editBranch, setEditBranch] = useState('');
   const [editScmToken, setEditScmToken] = useState('');
+  const [editScmProvider, setEditScmProvider] = useState('');
   const [scmTokenDirty, setScmTokenDirty] = useState(false);
+  const [scmProviderDirty, setScmProviderDirty] = useState(false);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -236,7 +240,9 @@ export function ProjectDetailPage() {
       setEditUrl(project.repo_url);
       setEditBranch(project.branch);
       setEditScmToken('');
+      setEditScmProvider(project.scm_provider || '');
       setScmTokenDirty(false);
+      setScmProviderDirty(false);
     }
   }, [project]);
 
@@ -249,6 +255,7 @@ export function ProjectDetailPage() {
       if (editUrl !== project.repo_url) updates.repo_url = editUrl;
       if (editBranch !== project.branch) updates.branch = editBranch;
       if (scmTokenDirty) updates.scm_token = editScmToken.trim();
+      if (scmProviderDirty) updates.scm_provider = editScmProvider;
       if (Object.keys(updates).length > 0) {
         await updateProject(projectId, updates);
         fetchData();
@@ -256,7 +263,7 @@ export function ProjectDetailPage() {
     } finally {
       setSaving(false);
     }
-  }, [projectId, project, editName, editUrl, editBranch, editScmToken, scmTokenDirty, fetchData]);
+  }, [projectId, project, editName, editUrl, editBranch, editScmToken, editScmProvider, scmTokenDirty, scmProviderDirty, fetchData]);
 
   if (loading && !project) {
     return (
@@ -587,6 +594,26 @@ export function ProjectDetailPage() {
                       <TextInput id="edit-branch" value={editBranch} onChange={(_e, v) => setEditBranch(v)} />
                     </FlexItem>
                     <FlexItem>
+                      <label htmlFor="edit-scm-provider" style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}>
+                        SCM Provider
+                      </label>
+                      <FormSelect
+                        id="edit-scm-provider"
+                        value={editScmProvider}
+                        onChange={(_e, v) => { setEditScmProvider(v); setScmProviderDirty(true); }}
+                        aria-label="SCM provider"
+                      >
+                        <FormSelectOption value="" label="Auto-detect from URL" />
+                        <FormSelectOption value="github" label="GitHub" />
+                        <FormSelectOption value="gitlab" label="GitLab" />
+                        <FormSelectOption value="bitbucket" label="Bitbucket" />
+                      </FormSelect>
+                      <div style={{ fontSize: 12, marginTop: 4, opacity: 0.6 }}>
+                        Required for self-hosted GitLab or Bitbucket Server/Data Center.
+                        Also set APME_GITLAB_API_URL or APME_BITBUCKET_API_URL on the Gateway.
+                      </div>
+                    </FlexItem>
+                    <FlexItem>
                       <label htmlFor="edit-scm-token" style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}>
                         SCM Token
                         {project?.has_scm_token && (
@@ -598,10 +625,10 @@ export function ProjectDetailPage() {
                         type="password"
                         value={editScmToken}
                         onChange={(_e, v) => { setEditScmToken(v); setScmTokenDirty(true); }}
-                        placeholder={project?.has_scm_token ? '••••••••' : 'GitHub PAT or App token'}
+                        placeholder={project?.has_scm_token ? '••••••••' : 'PAT, access token, or username:app-password'}
                       />
                       <div style={{ fontSize: 12, marginTop: 4, opacity: 0.6 }}>
-                        Used for creating pull requests from remediation results. Leave blank to keep current value.
+                        Used for private clones and creating pull/merge requests. Leave blank to keep current value.
                       </div>
                     </FlexItem>
                     <FlexItem>

@@ -21,6 +21,8 @@ class GatewayConfig:
         feedback_github_token: GitHub token with ``issues:write`` for feedback.
         scm_token: Global SCM token fallback for PR creation (ADR-050).
         github_api_url: GitHub API base URL (ADR-050). Default ``https://api.github.com``.
+        gitlab_api_url: GitLab API base URL (ADR-050 Phase 2). Default ``https://gitlab.com/api/v4``.
+        bitbucket_api_url: Bitbucket API base URL (ADR-050 Phase 2). Default Cloud 2.0 API.
     """
 
     db_path: str = field(default_factory=lambda: os.environ.get("APME_DB_PATH", "/data/apme.db"))
@@ -42,6 +44,12 @@ class GatewayConfig:
     )
     github_api_url: str = field(
         default_factory=lambda: os.environ.get("APME_GITHUB_API_URL", "https://api.github.com"),
+    )
+    gitlab_api_url: str = field(
+        default_factory=lambda: os.environ.get("APME_GITLAB_API_URL", "https://gitlab.com/api/v4"),
+    )
+    bitbucket_api_url: str = field(
+        default_factory=lambda: os.environ.get("APME_BITBUCKET_API_URL", "https://api.bitbucket.org/2.0"),
     )
 
 

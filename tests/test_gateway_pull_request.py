@@ -181,6 +181,30 @@ class TestProviderRegistry:
         provider = get_provider("github")
         assert isinstance(provider, GitHubProvider)
 
+    def test_gitlab_provider(self) -> None:
+        """Return GitLabProvider for 'gitlab'."""
+        from apme_gateway.scm.gitlab import GitLabProvider
+
+        provider = get_provider("gitlab")
+        assert isinstance(provider, GitLabProvider)
+
+    def test_bitbucket_cloud_provider(self) -> None:
+        """Return Bitbucket Cloud provider for default API URL."""
+        from apme_gateway.scm.bitbucket import BitbucketCloudProvider
+
+        provider = get_provider("bitbucket")
+        assert isinstance(provider, BitbucketCloudProvider)
+
+    def test_bitbucket_server_provider(self) -> None:
+        """Return Bitbucket Server provider for non-cloud API URL."""
+        from apme_gateway.scm.bitbucket import BitbucketServerProvider
+
+        provider = get_provider(
+            "bitbucket",
+            api_base_url="https://bitbucket.example.com/rest/api/1.0",
+        )
+        assert isinstance(provider, BitbucketServerProvider)
+
     def test_github_with_custom_url(self) -> None:
         """Return GitHubProvider with custom API URL for GHE."""
         provider = get_provider("github", api_base_url="https://ghe.example.com/api/v3")
@@ -228,7 +252,7 @@ class TestGitHubProviderTls:
             patch.dict("os.environ", {"SSL_CERT_FILE": "/etc/ssl/certs/custom-ca-bundle.pem"}, clear=True),
             patch.object(ssl.SSLContext, "load_default_certs"),
             patch.object(ssl.SSLContext, "load_verify_locations"),
-            patch("apme_gateway.scm.github.httpx.AsyncClient") as mock_client,
+            patch("apme_gateway.scm._http.httpx.AsyncClient") as mock_client,
         ):
             provider = GitHubProvider()
             provider._client(timeout=30)  # noqa: SLF001
@@ -651,8 +675,8 @@ class TestSubmitEndpoint:
         assert data["pr_url"] == "https://github.com/org/repo/pull/99"
         assert data["commit_sha"] == "db_commit_sha"
 
-    async def test_submit_create_pr_skips_push_when_branch_exists(self, client: AsyncClient) -> None:
-        """PR-only submit reuses an existing branch from the prior push step.
+    async def test_submit_create_pr_pushes_when_branch_exists(self, client: AsyncClient) -> None:
+        """Retry/submit with an existing branch still pushes patched files.
 
         Args:
             client: Async test client.
@@ -666,7 +690,7 @@ class TestSubmitEndpoint:
             mock_provider = AsyncMock()
             mock_provider.branch_head_sha = AsyncMock(return_value="existing_commit_sha")
             mock_provider.create_branch = AsyncMock(return_value="parent_sha")
-            mock_provider.push_files = AsyncMock(return_value="should_not_push")
+            mock_provider.push_files = AsyncMock(return_value="pushed_commit_sha")
             mock_provider.create_pull_request = AsyncMock(return_value=_MOCK_PR_RESULT)
             mock_get.return_value = mock_provider
             mock_cfg.return_value.scm_token = ""
@@ -680,9 +704,9 @@ class TestSubmitEndpoint:
         assert resp.status_code == 200
         data = resp.json()
         assert data["pr_url"] == "https://github.com/org/repo/pull/99"
-        assert data["commit_sha"] == "existing_commit_sha"
+        assert data["commit_sha"] == "pushed_commit_sha"
         mock_provider.create_branch.assert_not_called()
-        mock_provider.push_files.assert_not_called()
+        mock_provider.push_files.assert_called_once()
         mock_provider.create_pull_request.assert_called_once()
 
     async def test_activity_id_wrong_project(self, client: AsyncClient) -> None:

@@ -1,8 +1,7 @@
 """SCM provider abstraction for post-remediation PR creation (ADR-050).
 
 This package defines the ``ScmProvider`` protocol and concrete provider
-implementations.  Phase 1 ships with GitHub; Phase 2 adds GitLab and
-Bitbucket via the same protocol.
+implementations for GitHub, GitLab, and Bitbucket (Cloud + Server/DC).
 """
 
 from apme_gateway.scm.base import PullRequestResult, ScmProvider, detect_provider

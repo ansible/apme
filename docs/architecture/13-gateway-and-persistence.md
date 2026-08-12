@@ -313,7 +313,21 @@ sequenceDiagram
 | `src/apme_gateway/db/models.py` | ORM model definitions |
 | `src/apme_gateway/db/queries.py` | Database query functions |
 | `src/apme_gateway/config.py` | `load_config()` — environment-based configuration |
+| `src/apme_gateway/scm/` | SCM providers (GitHub, GitLab, Bitbucket Cloud/Server) for post-remediation PR/MR (ADR-050) |
 | `proto/apme/v1/reporting.proto` | `Reporting` service definition |
+
+## SCM configuration (ADR-050)
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `APME_SCM_TOKEN` | — | Global token fallback |
+| `APME_GITHUB_API_URL` | `https://api.github.com` | GitHub / GHES API |
+| `APME_GITLAB_API_URL` | `https://gitlab.com/api/v4` | GitLab API |
+| `APME_BITBUCKET_API_URL` | `https://api.bitbucket.org/2.0` | Bitbucket Cloud 2.0 or Server/DC 1.0 REST base |
+
+Self-hosted / GitLab Dedicated forges require an explicit non-default
+`APME_GITLAB_API_URL` or `APME_BITBUCKET_API_URL` (including context path).
+The Gateway does not derive API hosts from `repo_url`.
 
 ## Related ADRs
 
@@ -323,6 +337,8 @@ sequenceDiagram
 - **ADR-040** — Dependency manifest (ProjectManifest / SBOM)
 - **ADR-041** — Rule catalog and overrides
 - **ADR-045** — Galaxy server settings
+- **ADR-050** — Post-remediation PR creation (GitHub Phase 1; GitLab + Bitbucket Phase 2)
+- **ADR-056** — APME owns SCM commit/push
 
 ---
 

@@ -10,52 +10,18 @@ from __future__ import annotations
 
 import base64
 import logging
-import os
-import ssl
 from urllib.parse import quote, urlparse
 
 import httpx
 
+from apme_gateway.scm._http import async_client, custom_ca_bundle, http_verify
 from apme_gateway.scm.base import PullRequestResult
 
 logger = logging.getLogger(__name__)
 
-
-def _custom_ca_bundle() -> str:
-    """Return the configured custom CA bundle path, if any.
-
-    Returns:
-        Absolute CA bundle path when configured, else an empty string.
-    """
-    for key in ("SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE"):
-        candidate = os.environ.get(key, "").strip()
-        if candidate:
-            return candidate
-    return ""
-
-
-def _http_verify() -> ssl.SSLContext | bool:
-    """Return TLS verification settings for outbound HTTPS.
-
-    The gateway may run behind a corporate TLS intercept or use an internal CA.
-    In that case ``up.sh`` injects one or more standard CA environment variables
-    into the container. ``httpx`` is given the resolved bundle path explicitly so
-    SCM API calls trust both the platform store and the custom corporate root.
-
-    Returns:
-        SSL context with system roots plus the configured custom bundle, else
-        ``True`` for the default platform trust store.
-    """
-    custom_bundle = _custom_ca_bundle()
-    if not custom_bundle:
-        return True
-
-    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-    context.verify_mode = ssl.CERT_REQUIRED
-    context.check_hostname = True
-    context.load_default_certs(ssl.Purpose.SERVER_AUTH)
-    context.load_verify_locations(cafile=custom_bundle)
-    return context
+# Re-export under legacy private names for existing tests.
+_custom_ca_bundle = custom_ca_bundle
+_http_verify = http_verify
 
 
 def _parse_owner_repo(repo_url: str) -> tuple[str, str]:
@@ -138,7 +104,7 @@ class GitHubProvider:
         Returns:
             Configured ``httpx.AsyncClient`` instance.
         """
-        return httpx.AsyncClient(timeout=timeout, verify=_http_verify())
+        return async_client(timeout=timeout)
 
     async def branch_head_sha(
         self,

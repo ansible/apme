@@ -82,6 +82,9 @@ except Exception:  # noqa: BLE001
     _TOOLS_VERSION = "0.1.0"
 
 
+_ALLOWED_SCM_PROVIDERS = frozenset({"github", "gitlab", "bitbucket"})
+
+
 def _normalize_scm_provider(value: str | None) -> str | None:
     """Strip whitespace and lowercase an SCM provider identifier.
 
@@ -90,11 +93,50 @@ def _normalize_scm_provider(value: str | None) -> str | None:
 
     Returns:
         Lowercased, trimmed provider name, or None if blank/absent.
+
+    Raises:
+        HTTPException: 400 if a non-empty value is not a known provider.
     """
     if value is None:
         return None
     cleaned = value.strip().lower()
-    return cleaned or None
+    if not cleaned:
+        return None
+    if cleaned not in _ALLOWED_SCM_PROVIDERS:
+        allowed = ", ".join(sorted(_ALLOWED_SCM_PROVIDERS))
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported scm_provider '{cleaned}'. Allowed: {allowed}",
+        )
+    return cleaned
+
+
+def _require_scm_provider_for_repo(repo_url: str, scm_provider: str | None) -> None:
+    """Reject self-hosted repos that omit an explicit scm_provider.
+
+    Args:
+        repo_url: HTTPS clone URL.
+        scm_provider: Explicit provider, or None for auto-detect.
+
+    Raises:
+        HTTPException: 400 when the host is not a known SaaS forge and
+            *scm_provider* is unset.
+    """
+    from apme_gateway.scm.base import detect_provider
+    from apme_gateway.scm.urls import is_cloud_scm_host
+
+    if scm_provider:
+        return
+    if detect_provider(repo_url) or is_cloud_scm_host(repo_url):
+        return
+    raise HTTPException(
+        status_code=400,
+        detail=(
+            "Self-hosted repository URLs require scm_provider "
+            "(github, gitlab, or bitbucket). Also set APME_GITLAB_API_URL or "
+            "APME_BITBUCKET_API_URL for non-cloud forges."
+        ),
+    )
 
 
 _UPSTREAM_SERVICES: list[tuple[str, str, str]] = [
@@ -421,6 +463,8 @@ async def create_project(body: CreateProjectRequest) -> ProjectSummary:
     from sqlalchemy.exc import IntegrityError
 
     project_id = uuid.uuid4().hex
+    scm_provider = _normalize_scm_provider(body.scm_provider)
+    _require_scm_provider_for_repo(body.repo_url, scm_provider)
     try:
         async with get_session() as db:
             proj = await q.create_project(
@@ -430,7 +474,7 @@ async def create_project(body: CreateProjectRequest) -> ProjectSummary:
                 repo_url=body.repo_url,
                 branch=body.branch,
                 scm_token=body.scm_token.strip() or None if body.scm_token else None,
-                scm_provider=_normalize_scm_provider(body.scm_provider),
+                scm_provider=scm_provider,
             )
     except IntegrityError:
         raise HTTPException(status_code=409, detail=f"Project named '{body.name}' already exists") from None
@@ -604,7 +648,9 @@ async def get_project_detail(project_id: str) -> ProjectDetail:
 
         cfg = load_config()
         token = proj.scm_token or cfg.scm_token
-        remote_sha = await fetch_remote_head(proj.repo_url, proj.branch, scm_token=token)
+        remote_sha = await fetch_remote_head(
+            proj.repo_url, proj.branch, scm_token=token, scm_provider=proj.scm_provider
+        )
         if remote_sha and remote_sha != proj.last_scanned_commit:
             has_new = True
 
@@ -677,6 +723,13 @@ async def update_project(
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")
     async with get_session() as db:
+        existing = await q.resolve_project(db, project_id)
+        if not existing:
+            raise HTTPException(status_code=404, detail="Project not found")
+        effective_url = updates.get("repo_url", existing.repo_url) or existing.repo_url
+        # Use `in` — clearing scm_provider stores None and must not fall back.
+        effective_provider = updates["scm_provider"] if "scm_provider" in updates else existing.scm_provider  # noqa: SIM401
+        _require_scm_provider_for_repo(effective_url, effective_provider)
         proj = await q.update_project(db, project_id, **updates)
         if not proj:
             raise HTTPException(status_code=404, detail="Project not found")
@@ -2201,7 +2254,9 @@ async def project_operate_ws(
 
         cfg = load_config()
         scm_token = proj.scm_token or cfg.scm_token
-        remote_sha = await fetch_remote_head(proj.repo_url, proj.branch, scm_token=scm_token)
+        remote_sha = await fetch_remote_head(
+            proj.repo_url, proj.branch, scm_token=scm_token, scm_provider=proj.scm_provider
+        )
         if remote_sha and proj.last_scanned_commit and remote_sha != proj.last_scanned_commit:
             await websocket.send_json(
                 {
@@ -2383,6 +2438,7 @@ async def project_operate_ws(
                     scan_id=op_scan_id,
                     galaxy_servers=galaxy_servers or None,
                     scm_token=scm_token,
+                    scm_provider=proj.scm_provider,
                 )
 
             op_task = asyncio.create_task(_run_op())
@@ -2426,6 +2482,7 @@ async def project_operate_ws(
                 scan_id=op_scan_id,
                 galaxy_servers=galaxy_servers or None,
                 scm_token=scm_token,
+                scm_provider=proj.scm_provider,
             )
             if result is not None:
                 completed_scan_id = scan_id
