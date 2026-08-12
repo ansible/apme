@@ -34,7 +34,9 @@ logger = logging.getLogger(__name__)
 
 _INVENTORY_DIR_NAMES = frozenset({"inventory", "inventories"})
 
-_INVENTORY_SCRIPT_MARKERS = frozenset({"--list", "--host", "parse_args", "argparse"})
+# ``--list`` is required: helpers in inventory/ may use argparse or --host without
+# being dynamic inventory scripts.
+_REQUIRED_INVENTORY_MARKER = "--list"
 
 
 def _find_inventory_scripts(playbook_dir: str) -> list[str]:
@@ -64,17 +66,16 @@ def _find_inventory_scripts(playbook_dir: str) -> list[str]:
 def _looks_like_inventory_script(source: str) -> bool:
     """Return True if source appears to be a dynamic inventory script.
 
-    Checks for argument-handling patterns typical of inventory scripts
-    (``--list``, ``--host``, ``argparse``).
+    Requires ``--list`` argument handling, which is the canonical signal that
+    Ansible uses to enumerate inventory from a script.
 
     Args:
         source: Python source code text.
 
     Returns:
-        True when the source matches inventory script patterns.
+        True when the source contains ``--list`` handling.
     """
-    lower = source.lower()
-    return any(marker in lower for marker in _INVENTORY_SCRIPT_MARKERS)
+    return _REQUIRED_INVENTORY_MARKER in source.lower()
 
 
 def _has_meta_reference(source: str) -> bool:

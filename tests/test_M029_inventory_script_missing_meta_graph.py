@@ -50,15 +50,15 @@ class TestLooksLikeInventoryScript:
         source = 'parser.add_argument("--list", action="store_true")\n'
         assert _looks_like_inventory_script(source) is True
 
-    def test_with_host_flag(self) -> None:
-        """Script with --host detected."""
+    def test_with_host_flag_only(self) -> None:
+        """Script with only --host is not treated as inventory."""
         source = 'parser.add_argument("--host")\n'
-        assert _looks_like_inventory_script(source) is True
+        assert _looks_like_inventory_script(source) is False
 
-    def test_with_argparse(self) -> None:
-        """Script using argparse detected."""
+    def test_with_argparse_only(self) -> None:
+        """Script using argparse without --list is not treated as inventory."""
         source = "import argparse\nparser = argparse.ArgumentParser()\n"
-        assert _looks_like_inventory_script(source) is True
+        assert _looks_like_inventory_script(source) is False
 
     def test_regular_python(self) -> None:
         """Regular Python file not detected."""
