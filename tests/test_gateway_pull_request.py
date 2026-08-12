@@ -236,8 +236,8 @@ class TestGitHubProviderTls:
     def test_http_verify_builds_ssl_context_with_custom_bundle(self) -> None:
         """Custom CA configuration merges platform roots and the extra bundle."""
         fake_paths = ssl.DefaultVerifyPaths(
-            cafile="/platform/ca.pem",
-            capath="/platform/capath",
+            cafile="/env/selected/custom.pem",
+            capath="",
             openssl_cafile_env="SSL_CERT_FILE",
             openssl_cafile="/platform/ca.pem",
             openssl_capath_env="SSL_CERT_DIR",

@@ -15,7 +15,7 @@ provider-aware clone token injection for self-hosted hosts.
 
 ## Prerequisites
 
-- [ ] TASK-003 should be in progress or complete (shared `bitbucket.py`)
+- [x] TASK-003 should be in progress or complete (shared `bitbucket.py`)
 
 ## Implementation Notes
 
@@ -37,8 +37,8 @@ provider-aware clone token injection for self-hosted hosts.
 
 ## Verification
 
-- [ ] `tox -e lint`
-- [ ] `tox -e unit`
+- [x] `tox -e lint`
+- [x] `tox -e unit`
 
 ## Acceptance Criteria Reference
 

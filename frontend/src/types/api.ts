@@ -200,7 +200,7 @@ export interface UpdateProjectRequest {
   repo_url?: string;
   branch?: string;
   scm_token?: string;
-  scm_provider?: string;
+  scm_provider?: string | null;
 }
 
 // ── SCM submit types (ADR-050) ───────────────────────────────────────

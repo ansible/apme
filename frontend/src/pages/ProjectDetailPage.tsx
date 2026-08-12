@@ -254,12 +254,12 @@ export function ProjectDetailPage() {
     setSaving(true);
     setSaveError(null);
     try {
-      const updates: Record<string, string> = {};
+      const updates: Record<string, string | null> = {};
       if (editName !== project.name) updates.name = editName;
       if (editUrl !== project.repo_url) updates.repo_url = editUrl;
       if (editBranch !== project.branch) updates.branch = editBranch;
       if (scmTokenDirty) updates.scm_token = editScmToken.trim();
-      if (scmProviderDirty) updates.scm_provider = editScmProvider;
+      if (scmProviderDirty) updates.scm_provider = editScmProvider || null;
       if (Object.keys(updates).length > 0) {
         await updateProject(projectId, updates);
         fetchData();

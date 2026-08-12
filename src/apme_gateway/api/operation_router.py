@@ -612,36 +612,21 @@ async def submit_operation(
         )
 
     api_base: str | None = None
-    if provider_type == "github":
-        from apme_gateway.scm.urls import require_https_api_base
+    from apme_gateway.scm.urls import (
+        resolve_bitbucket_api_url,
+        resolve_gitlab_api_url,
+    )
 
-        api_base = cfg.github_api_url
+    api_base_resolvers: dict[str, tuple[str, Any]] = {
+        "github": (cfg.github_api_url, _resolve_github_api_base),
+        "gitlab": (cfg.gitlab_api_url, resolve_gitlab_api_url),
+        "bitbucket": (cfg.bitbucket_api_url, resolve_bitbucket_api_url),
+    }
+    resolver_entry = api_base_resolvers.get(provider_type)
+    if resolver_entry is not None:
+        configured, resolve = resolver_entry
         try:
-            require_https_api_base(api_base, "GitHub")
-        except ValueError as exc:
-            if state:
-                get_operation_registry().transition(
-                    state.operation_id,
-                    OperationStatus.COMPLETED,
-                )
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-    elif provider_type == "gitlab":
-        from apme_gateway.scm.urls import resolve_gitlab_api_url
-
-        try:
-            api_base = resolve_gitlab_api_url(cfg.gitlab_api_url, project.repo_url)
-        except ValueError as exc:
-            if state:
-                get_operation_registry().transition(
-                    state.operation_id,
-                    OperationStatus.COMPLETED,
-                )
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-    elif provider_type == "bitbucket":
-        from apme_gateway.scm.urls import resolve_bitbucket_api_url
-
-        try:
-            api_base = resolve_bitbucket_api_url(cfg.bitbucket_api_url, project.repo_url)
+            api_base = resolve(configured, project.repo_url)
         except ValueError as exc:
             if state:
                 get_operation_registry().transition(
@@ -858,6 +843,22 @@ def _sse_format(event: str, data: dict[str, Any]) -> str:
 # ── PR body builder ───────────────────────────────────────────────────
 
 
+def _resolve_github_api_base(configured: str, _repo_url: str) -> str:
+    """Validate and return the configured GitHub API base URL.
+
+    Args:
+        configured: GitHub API base from gateway config.
+        _repo_url: Unused; kept for resolver dispatch parity.
+
+    Returns:
+        The validated API base URL.
+    """
+    from apme_gateway.scm.urls import require_https_api_base
+
+    require_https_api_base(configured, "GitHub")
+    return configured
+
+
 def _safe_scm_error(exc: BaseException) -> str:
     """Return a log-safe SCM error summary without response bodies or tokens.
 
@@ -867,10 +868,10 @@ def _safe_scm_error(exc: BaseException) -> str:
     Returns:
         Short ``Type: message`` string with credentials redacted.
     """
-    from apme_gateway.scan.driver import _redact_credentials
+    from apme_gateway.scm.redaction import redact_credentials
 
     raw = f"{type(exc).__name__}: {exc}"
-    redacted = _redact_credentials(raw)
+    redacted = redact_credentials(raw)
     # Truncate to avoid dumping large httpx response payloads into logs/DB.
     return redacted if len(redacted) <= 300 else redacted[:300] + "…"
 

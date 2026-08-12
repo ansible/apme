@@ -44,12 +44,12 @@ def http_verify() -> ssl.SSLContext | bool:
     # honors SSL_CERT_FILE and can omit public CA roots when that env points at a
     # private-only corporate bundle.
     paths = ssl.get_default_verify_paths()
-    if paths.cafile:
+    if paths.openssl_cafile:
         with contextlib.suppress(OSError):
-            context.load_verify_locations(cafile=paths.cafile)
-    if paths.capath:
+            context.load_verify_locations(cafile=paths.openssl_cafile)
+    if paths.openssl_capath:
         with contextlib.suppress(OSError):
-            context.load_verify_locations(capath=paths.capath)
+            context.load_verify_locations(capath=paths.openssl_capath)
     context.load_verify_locations(cafile=custom_bundle)
     return context
 

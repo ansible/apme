@@ -14,7 +14,6 @@ import contextlib
 import hashlib
 import logging
 import os
-import re
 import shutil
 import subprocess
 import tempfile
@@ -30,6 +29,7 @@ import grpc.aio
 from apme.v1 import primary_pb2, primary_pb2_grpc
 from apme.v1.common_pb2 import GalaxyServerDef
 from apme_engine.daemon.chunked_fs import yield_scan_chunks
+from apme_gateway.scm.redaction import redact_credentials as _redact_credentials
 
 logger = logging.getLogger(__name__)
 
@@ -88,23 +88,6 @@ _ALLOWED_SCHEMES = ("https://",)
 _REMOTE_HEAD_CACHE: dict[str, tuple[float, str | None]] = {}
 _REMOTE_HEAD_TTL = 60.0  # seconds
 _REMOTE_HEAD_CACHE_MAX = 256
-
-_CRED_REDACT_RE = re.compile(r"(https?://)[^@]+@")
-
-
-def _redact_credentials(text: str) -> str:
-    """Redact embedded credentials from URLs in text.
-
-    Replaces ``https://user:token@host`` with ``https://[REDACTED]@host``
-    to prevent token exposure in logs or error messages.
-
-    Args:
-        text: Text potentially containing URLs with credentials.
-
-    Returns:
-        Text with credentials redacted.
-    """
-    return _CRED_REDACT_RE.sub(r"\1[REDACTED]@", text)
 
 
 def _git_subprocess_env() -> dict[str, str]:

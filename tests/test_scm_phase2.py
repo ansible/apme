@@ -451,6 +451,57 @@ class TestBitbucketServerUnit:
         assert result.provider == "bitbucket"
         assert result.pr_url.endswith("/pull-requests/7")
 
+    async def test_reuse_existing_pr_matches_target_branch(self) -> None:
+        """Reuse only an open PR whose target branch matches base_branch."""
+        provider = BitbucketServerProvider("https://bb.example.com/rest/api/1.0")
+        client = AsyncMock()
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=False)
+        client.post = AsyncMock(return_value=_mock_response(409))
+        client.get = AsyncMock(
+            return_value=_mock_response(
+                200,
+                {
+                    "values": [
+                        {
+                            "id": 3,
+                            "fromRef": {"id": "refs/heads/apme/fix"},
+                            "toRef": {"id": "refs/heads/develop"},
+                            "links": {
+                                "self": [
+                                    {
+                                        "href": ("https://bb.example.com/projects/PROJ/repos/repo/pull-requests/3"),
+                                    }
+                                ]
+                            },
+                        },
+                        {
+                            "id": 7,
+                            "fromRef": {"id": "refs/heads/apme/fix"},
+                            "toRef": {"id": "refs/heads/main"},
+                            "links": {
+                                "self": [
+                                    {
+                                        "href": ("https://bb.example.com/projects/PROJ/repos/repo/pull-requests/7"),
+                                    }
+                                ]
+                            },
+                        },
+                    ],
+                },
+            )
+        )
+        with patch.object(BitbucketServerProvider, "_client", return_value=client):
+            result = await provider.create_pull_request(
+                "https://bb.example.com/scm/PROJ/repo.git",
+                "main",
+                "apme/fix",
+                "title",
+                "body",
+                "token",
+            )
+        assert result.pr_url.endswith("/pull-requests/7")
+
     async def test_push_files_uses_multipart_and_omits_source_for_create(self) -> None:
         """Server browse PUT uses multipart; new files omit sourceCommitId."""
         provider = BitbucketServerProvider("https://bb.example.com/rest/api/1.0")

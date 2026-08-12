@@ -15,7 +15,7 @@ Implement Bitbucket Cloud (API 2.0) with access-token Bearer and
 
 ## Prerequisites
 
-- [ ] TASK-001 must be complete
+- [x] TASK-001 must be complete
 
 ## Implementation Notes
 
@@ -33,8 +33,8 @@ Implement Bitbucket Cloud (API 2.0) with access-token Bearer and
 
 ## Verification
 
-- [ ] `tox -e lint`
-- [ ] `tox -e unit`
+- [x] `tox -e lint`
+- [x] `tox -e unit`
 
 ## Acceptance Criteria Reference
 

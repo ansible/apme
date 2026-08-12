@@ -494,36 +494,46 @@ class BitbucketServerProvider:
 
         async with self._client(timeout=60) as client:
             headers = _auth_headers(token)
+            pushed_paths: list[str] = []
             for path, content in files.items():
-                # Probe existence: sourceCommitId is required for edits and must
-                # be omitted for new files.
-                probe = await client.get(
-                    self._repo_url(project, repo, "browse", quote(path, safe="/")),
-                    headers=headers,
-                    params={"at": f"refs/heads/{branch}"},
-                )
-                exists = probe.status_code == 200
+                try:
+                    # Probe existence: sourceCommitId is required for edits and must
+                    # be omitted for new files.
+                    probe = await client.get(
+                        self._repo_url(project, repo, "browse", quote(path, safe="/")),
+                        headers=headers,
+                        params={"at": f"refs/heads/{branch}"},
+                    )
+                    exists = probe.status_code == 200
 
-                # Multipart form — Server rejects urlencoded bodies for browse PUT.
-                # Send raw bytes; text is UTF-8, binary is raw file bytes.
-                form_parts: list[tuple[str, tuple[None, str | bytes]]] = [
-                    ("content", (None, content)),
-                    ("message", (None, commit_message)),
-                    ("branch", (None, branch)),
-                ]
-                if exists:
-                    form_parts.append(("sourceCommitId", (None, commit_sha)))
+                    # Multipart form — Server rejects urlencoded bodies for browse PUT.
+                    # Send raw bytes; text is UTF-8, binary is raw file bytes.
+                    form_parts: list[tuple[str, tuple[None, str | bytes]]] = [
+                        ("content", (None, content)),
+                        ("message", (None, commit_message)),
+                        ("branch", (None, branch)),
+                    ]
+                    if exists:
+                        form_parts.append(("sourceCommitId", (None, commit_sha)))
 
-                resp = await client.put(
-                    self._repo_url(project, repo, "browse", quote(path, safe="/")),
-                    headers=headers,
-                    files=form_parts,
-                )
-                resp.raise_for_status()
-                # Refresh the tip so the next file's sourceCommitId is current.
-                tip = await self.branch_head_sha(repo_url, branch, token)
-                if tip:
-                    commit_sha = tip
+                    resp = await client.put(
+                        self._repo_url(project, repo, "browse", quote(path, safe="/")),
+                        headers=headers,
+                        files=form_parts,
+                    )
+                    resp.raise_for_status()
+                    # Refresh the tip so the next file's sourceCommitId is current.
+                    tip = await self.branch_head_sha(repo_url, branch, token)
+                    if tip:
+                        commit_sha = tip
+                    pushed_paths.append(path)
+                except httpx.HTTPStatusError as exc:
+                    msg = (
+                        f"Bitbucket Server push failed after {len(pushed_paths)} of "
+                        f"{len(files)} files on branch '{branch}' "
+                        f"(non-atomic; branch may be partially updated): {exc}"
+                    )
+                    raise ValueError(msg) from exc
 
         tip = await self.branch_head_sha(repo_url, branch, token) or commit_sha
         logger.info("Pushed %d files to Bitbucket Server %s/%s@%s (%s)", len(files), project, repo, branch, tip[:8])
@@ -584,8 +594,19 @@ class BitbucketServerProvider:
                 )
                 if existing.status_code == 200:
                     values = existing.json().get("values") or []
-                    if values:
-                        pr_url = _server_pr_url(values[0], repo_url)
+                    target_ref = f"refs/heads/{base_branch}"
+                    head_ref = f"refs/heads/{head_branch}"
+                    match = next(
+                        (
+                            pr
+                            for pr in values
+                            if ((pr.get("fromRef") or {}).get("id") == head_ref)
+                            and ((pr.get("toRef") or {}).get("id") == target_ref)
+                        ),
+                        None,
+                    )
+                    if match is not None:
+                        pr_url = _server_pr_url(match, repo_url)
                         logger.info("Reusing existing Bitbucket Server PR %s", pr_url)
                         return PullRequestResult(pr_url=pr_url, branch_name=head_branch, provider="bitbucket")
             resp.raise_for_status()

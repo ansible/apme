@@ -14,7 +14,6 @@ from apme_gateway.scan.driver import (
     _REMOTE_HEAD_CACHE,
     _git_subprocess_env,
     _inject_token_in_url,
-    _redact_credentials,
     clone_repo,
     coerce_option_bool,
     derive_session_id,
@@ -22,6 +21,7 @@ from apme_gateway.scan.driver import (
     get_clone_head,
     run_project_scan,
 )
+from apme_gateway.scm.redaction import redact_credentials
 
 
 @pytest.mark.parametrize(  # type: ignore[untyped-decorator]
@@ -356,12 +356,12 @@ class TestInjectTokenInUrl:
 
 
 class TestRedactCredentials:
-    """Tests for _redact_credentials helper."""
+    """Tests for redact_credentials helper."""
 
     def test_redacts_token_in_url(self) -> None:
         """Credentials in URLs are redacted."""
         text = "fatal: https://x-access-token:ghp_secret123@github.com/repo.git not found"
-        result = _redact_credentials(text)
+        result = redact_credentials(text)
         assert "ghp_secret123" not in result
         assert "[REDACTED]" in result
         assert "github.com/repo.git" in result
@@ -369,14 +369,14 @@ class TestRedactCredentials:
     def test_redacts_multiple_urls(self) -> None:
         """Multiple URLs in text are all redacted."""
         text = "tried https://user:pass1@a.com and https://user:pass2@b.com"
-        result = _redact_credentials(text)
+        result = redact_credentials(text)
         assert "pass1" not in result
         assert "pass2" not in result
 
     def test_preserves_urls_without_auth(self) -> None:
         """URLs without credentials are unchanged."""
         text = "clone https://github.com/public/repo.git"
-        result = _redact_credentials(text)
+        result = redact_credentials(text)
         assert result == text
 
 
