@@ -11,6 +11,11 @@
 {{- if .Values.autoscaling.enabled }}
 {{- fail "ADR-069 Simple topology: autoscaling.enabled must be false (HPA is not supported while Gateway/Abbenay share the pod)." }}
 {{- end }}
+{{- if .Values.gateway.database.url }}
+{{- if not (hasPrefix "postgresql+asyncpg://" .Values.gateway.database.url) }}
+{{- fail "gateway.database.url must use the async driver postgresql+asyncpg:// (plain postgresql:// is not supported by create_async_engine)" }}
+{{- end }}
+{{- end }}
 {{- if .Values.abbenay.enabled }}
 {{- include "apme.abbenay.validateLegacyKeys" . -}}
 {{- include "apme.abbenay.validateProviderSchema" . -}}

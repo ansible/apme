@@ -54,6 +54,25 @@ def test_resolve_database_url_rejects_malformed_explicit_url() -> None:
         resolve_database_url(database_url="not-a-url")
 
 
+def test_resolve_database_url_rejects_sync_postgresql_driver() -> None:
+    """Synchronous postgresql:// URLs are rejected at the config boundary."""
+    with pytest.raises(ValueError, match="database_url must be a SQLAlchemy URL"):
+        resolve_database_url(database_url="postgresql://user:pass@db:5432/apme")
+
+
+def test_resolve_database_url_rejects_unsupported_async_driver(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only postgresql+asyncpg and sqlite+aiosqlite drivers are accepted.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+    monkeypatch.setenv("APME_DATABASE_URL", "mysql+aiomysql://user:pass@db/apme")
+    with pytest.raises(ValueError, match="APME_DATABASE_URL must be a SQLAlchemy URL"):
+        resolve_database_url()
+
+
 def test_resolve_database_url_rejects_malformed_env_url(monkeypatch: pytest.MonkeyPatch) -> None:
     """Malformed APME_DATABASE_URL raises without echoing the value.
 

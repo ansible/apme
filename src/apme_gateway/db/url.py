@@ -9,6 +9,7 @@ from sqlalchemy.engine import make_url
 
 _INVALID_URL_MSG = "APME_DATABASE_URL must be a SQLAlchemy URL"
 _EXPLICIT_URL_MSG = "database_url must be a SQLAlchemy URL"
+_SUPPORTED_ASYNC_DRIVERS = frozenset({"postgresql+asyncpg", "sqlite+aiosqlite"})
 
 
 def is_database_url(target: str) -> bool:
@@ -21,6 +22,30 @@ def is_database_url(target: str) -> bool:
         True if the value contains a URL scheme.
     """
     return "://" in target
+
+
+def _validate_async_database_url(url: str, *, error_msg: str) -> str:
+    """Return *url* when it uses a supported async SQLAlchemy driver.
+
+    Args:
+        url: Candidate SQLAlchemy database URL.
+        error_msg: Message for invalid or unsupported URLs.
+
+    Returns:
+        The validated URL unchanged.
+
+    Raises:
+        ValueError: When *url* is malformed or uses an unsupported driver.
+    """
+    if "://" not in url:
+        raise ValueError(error_msg)
+    try:
+        parsed = make_url(url)
+    except Exception:
+        raise ValueError(error_msg) from None
+    if parsed.drivername not in _SUPPORTED_ASYNC_DRIVERS:
+        raise ValueError(error_msg)
+    return url
 
 
 def sqlite_url_from_path(db_path: str) -> str:
@@ -50,16 +75,12 @@ def resolve_database_url(*, database_url: str | None = None, db_path: str | None
 
     Raises:
         ValueError: When a configured database URL is not a valid SQLAlchemy URL.
-    """
+    """  # noqa: DOC502
     if database_url:
-        if "://" not in database_url:
-            raise ValueError(_EXPLICIT_URL_MSG)
-        return database_url
+        return _validate_async_database_url(database_url, error_msg=_EXPLICIT_URL_MSG)
     env_url = os.environ.get("APME_DATABASE_URL", "").strip()
     if env_url:
-        if "://" not in env_url:
-            raise ValueError(_INVALID_URL_MSG)
-        return env_url
+        return _validate_async_database_url(env_url, error_msg=_INVALID_URL_MSG)
     path = db_path if db_path is not None else os.environ.get("APME_DB_PATH", "/data/apme.db")
     return sqlite_url_from_path(path)
 

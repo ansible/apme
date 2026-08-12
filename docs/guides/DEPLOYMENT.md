@@ -431,7 +431,8 @@ localhost (ADR-005). Multi-replica engine HPA is not offered by this chart.
 **Highlights (ADR-069 Simple / EAP / upstream):**
 
 - One Deployment: Engine + validators + Galaxy Proxy + Gateway + UI + optional Abbenay (localhost)
-- `replicas: 1` (HPA unsupported while Gateway persistence is pod-local SQLite)
+- `replicas: 1` for both engine and gateway (HPA and `autoscaling.enabled` are
+  unsupported for SQLite and PostgreSQL in the Simple chart)
 - Ingress/Route support (OpenShift Routes included)
 - NetworkPolicy for Ingress → Gateway/UI HTTP ports only
 - PVCs for sessions, Gateway DB, and Galaxy Proxy cache
@@ -453,6 +454,12 @@ allowed engine HPA. Upgrading to this chart:
 PVC names (`*-sessions`, `*-gateway-data`, `*-proxy-cache`) are unchanged.
 
 ### PostgreSQL (optional)
+
+> **Migration warning:** Changing the backend does not migrate existing SQLite
+> data. Back up the SQLite database and perform a separate migration before
+> switching an existing installation to PostgreSQL. Activity, sessions, rules,
+> and overrides remain on the SQLite PVC while PostgreSQL starts with an empty
+> database.
 
 By default the Gateway uses SQLite on the `gateway-data` PVC (`APME_DB_PATH=/data/apme.db`).
 For PostgreSQL, set `gateway.database.existingSecret.name` and

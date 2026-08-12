@@ -112,7 +112,8 @@ gateway:
   replicas: 1
   # When ``database.url`` or ``database.existingSecret`` is set, Gateway uses
   # PostgreSQL (``APME_DATABASE_URL``) instead of the default SQLite file on
-  # the gateway-data volume.
+  # the gateway-data volume. URLs must use the async driver
+  # ``postgresql+asyncpg://`` (plain ``postgresql://`` is rejected).
   database:
     url: ""
     existingSecret:
