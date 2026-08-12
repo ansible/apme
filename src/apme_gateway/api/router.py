@@ -125,9 +125,15 @@ def _require_scm_provider_for_repo(repo_url: str, scm_provider: str | None) -> N
     from apme_gateway.scm.base import detect_provider
     from apme_gateway.scm.urls import is_cloud_scm_host
 
+    detected_provider = detect_provider(repo_url)
     if scm_provider:
+        if detected_provider and scm_provider != detected_provider:
+            raise HTTPException(
+                status_code=400,
+                detail=f"scm_provider '{scm_provider}' does not match repository URL",
+            )
         return
-    if detect_provider(repo_url) or is_cloud_scm_host(repo_url):
+    if detected_provider or is_cloud_scm_host(repo_url):
         return
     raise HTTPException(
         status_code=400,
@@ -718,7 +724,7 @@ async def update_project(
     if body.scm_token is not None:
         scm_token = body.scm_token.strip()
         updates["scm_token"] = scm_token or None
-    if body.scm_provider is not None:
+    if "scm_provider" in body.model_fields_set:
         updates["scm_provider"] = _normalize_scm_provider(body.scm_provider)
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")

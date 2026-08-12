@@ -520,19 +520,10 @@ class BitbucketServerProvider:
                     files=form_parts,
                 )
                 resp.raise_for_status()
-                # Response includes the new commit id; fall back to tip lookup.
-                try:
-                    body = resp.json()
-                    commit_sha = str(body.get("id") or body.get("commitId") or commit_sha)
-                except Exception:
-                    tip = await self.branch_head_sha(repo_url, branch, token)
-                    if tip:
-                        commit_sha = tip
-                else:
-                    # Always refresh tip so the next file's sourceCommitId is current.
-                    tip = await self.branch_head_sha(repo_url, branch, token)
-                    if tip:
-                        commit_sha = tip
+                # Refresh the tip so the next file's sourceCommitId is current.
+                tip = await self.branch_head_sha(repo_url, branch, token)
+                if tip:
+                    commit_sha = tip
 
         tip = await self.branch_head_sha(repo_url, branch, token) or commit_sha
         logger.info("Pushed %d files to Bitbucket Server %s/%s@%s (%s)", len(files), project, repo, branch, tip[:8])

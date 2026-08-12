@@ -17,7 +17,7 @@ from apme_gateway.scm.urls import (
     DEFAULT_GITLAB_API_URL,
 )
 
-_PROVIDERS: dict[str, type] = {
+_PROVIDERS: dict[str, type[ScmProvider]] = {
     "github": GitHubProvider,
     "gitlab": GitLabProvider,
 }
@@ -50,4 +50,4 @@ def get_provider(provider_type: str, *, api_base_url: str | None = None) -> ScmP
         kwargs["api_base_url"] = api_base_url
     elif provider_type == "gitlab":
         kwargs["api_base_url"] = DEFAULT_GITLAB_API_URL
-    return cls(**kwargs)  # type: ignore[no-any-return]
+    return cls(**kwargs)

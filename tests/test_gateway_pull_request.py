@@ -715,6 +715,7 @@ class TestSubmitEndpoint:
         assert data["commit_sha"] == "pushed_commit_sha"
         mock_provider.create_branch.assert_not_called()
         mock_provider.push_files.assert_called_once()
+        assert mock_provider.push_files.call_args.kwargs.get("parent_commit_sha") == "existing_commit_sha"
         mock_provider.create_pull_request.assert_called_once()
 
     async def test_activity_id_wrong_project(self, client: AsyncClient) -> None:

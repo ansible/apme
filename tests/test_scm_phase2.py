@@ -526,7 +526,7 @@ async def _seed(
     *,
     repo_url: str,
     scm_provider: str | None,
-    scm_token: str = "tok",
+    scm_token: str = "tok",  # noqa: S107 - test fixture value, not a real credential
 ) -> None:
     """Seed a remediated project for submit tests.
 
@@ -619,7 +619,16 @@ class TestSubmitPhase2Providers:
                 provider="bitbucket",
             )
         )
-        with patch("apme_gateway.scm.get_provider", return_value=mock_provider):
+        with (
+            patch(
+                "apme_gateway.config.load_config",
+                return_value=GatewayConfig(
+                    bitbucket_api_url="https://api.bitbucket.org/2.0",
+                    scm_token="",
+                ),
+            ),
+            patch("apme_gateway.scm.get_provider", return_value=mock_provider),
+        ):
             resp = await client.post(
                 "/api/v1/projects/proj-1/operation/submit",
                 json={"activity_id": "scan-1", "create_pr": True},
@@ -669,6 +678,24 @@ class TestProjectScmValidation:
         )
         assert resp.status_code == 400
 
+    async def test_reject_provider_mismatch(self, client: AsyncClient) -> None:
+        """Explicit scm_provider must match a detectable cloud host.
+
+        Args:
+            client: Async test client.
+        """
+        resp = await client.post(
+            "/api/v1/projects",
+            json={
+                "name": "mismatch",
+                "repo_url": "https://github.com/org/repo.git",
+                "branch": "main",
+                "scm_provider": "gitlab",
+            },
+        )
+        assert resp.status_code == 400
+        assert "does not match" in resp.json()["detail"]
+
     async def test_self_hosted_requires_provider(self, client: AsyncClient) -> None:
         """Self-hosted URL without scm_provider returns 400.
 
@@ -702,3 +729,20 @@ class TestProjectScmValidation:
         )
         assert resp.status_code == 200
         assert resp.json()["name"] == "renamed"
+
+    async def test_clear_scm_provider_with_null(self, client: AsyncClient) -> None:
+        """Explicit JSON null clears scm_provider on update.
+
+        Args:
+            client: Async test client.
+        """
+        await _seed(
+            repo_url="https://github.com/org/repo.git",
+            scm_provider="github",
+        )
+        resp = await client.patch(
+            "/api/v1/projects/proj-1",
+            json={"scm_provider": None},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["scm_provider"] is None
