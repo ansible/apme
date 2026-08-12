@@ -63,10 +63,24 @@ platform:
 
 ```python
 class ScmProvider(Protocol):
-    async def create_branch(self, repo_url: str, base_branch: str, new_branch: str, token: str) -> None: ...
-    async def push_files(self, repo_url: str, branch: str, files: dict[str, bytes], commit_message: str, token: str) -> str: ...
-    async def create_pull_request(self, repo_url: str, base_branch: str, head_branch: str, title: str, body: str, token: str) -> PullRequestResult: ...
+    async def create_branch(self, repo_url: str, base_branch: str, new_branch: str, token: str) -> str: ...
+    async def push_files(
+        self,
+        repo_url: str,
+        branch: str,
+        files: dict[str, bytes],
+        commit_message: str,
+        token: str,
+        *,
+        parent_commit_sha: str | None = None,
+    ) -> str: ...
+    async def create_pull_request(
+        self, repo_url: str, base_branch: str, head_branch: str, title: str, body: str, token: str
+    ) -> PullRequestResult: ...
 ```
+
+Concrete providers may also implement an optional `branch_head_sha(repo_url, branch, token) -> str | None`
+helper (not part of the protocol). Canonical definition: `src/apme_gateway/scm/base.py`.
 
 A registry maps SCM provider types (`github`, `gitlab`, `bitbucket`) to
 implementations. The provider type is inferred from the repo URL

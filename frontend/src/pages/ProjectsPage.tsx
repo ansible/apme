@@ -359,7 +359,10 @@ export function ProjectsPage() {
 
       <Modal
         isOpen={showCreate}
-        onClose={() => setShowCreate(false)}
+        onClose={() => {
+          setShowCreate(false);
+          setCreateError(null);
+        }}
         variant="small"
       >
         <ModalHeader title="Create Project" />
@@ -419,7 +422,15 @@ export function ProjectsPage() {
           <Button variant="primary" onClick={handleCreate} isDisabled={creating || !createName.trim() || !createUrl.trim()}>
             {creating ? 'Creating...' : 'Create'}
           </Button>
-          <Button variant="link" onClick={() => setShowCreate(false)}>Cancel</Button>
+          <Button
+            variant="link"
+            onClick={() => {
+              setShowCreate(false);
+              setCreateError(null);
+            }}
+          >
+            Cancel
+          </Button>
         </ModalFooter>
       </Modal>
     </PageLayout>

@@ -2,7 +2,7 @@
 
 ## ScmProvider Protocol
 
-Unchanged from ADR-050. New implementations must provide:
+Canonical protocol: `src/apme_gateway/scm/base.py` (aligned with ADR-050). New implementations must provide:
 
 - `create_branch(repo_url, base_branch, new_branch, token) -> sha`
 - `push_files(repo_url, branch, files, commit_message, token, *, parent_commit_sha=None) -> sha`
