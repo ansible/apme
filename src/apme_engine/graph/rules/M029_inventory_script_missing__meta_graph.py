@@ -23,6 +23,7 @@ Limitations:
 
 from __future__ import annotations
 
+import ast
 import logging
 import os
 import tokenize
@@ -39,7 +40,8 @@ _INVENTORY_DIR_NAMES = frozenset({"inventory", "inventories"})
 
 # ``--list`` is required: helpers in inventory/ may use argparse or --host without
 # being dynamic inventory scripts.
-_REQUIRED_INVENTORY_MARKER = "--list"
+_LIST_FLAG = "--list"
+_META_KEY = "_meta"
 
 
 def _is_python_inventory_candidate(path: str) -> bool:
@@ -110,11 +112,26 @@ def _read_script_source(script_path: str) -> str | None:
         return None
 
 
+def _parse_inventory_script_source(source: str) -> ast.Module | None:
+    """Parse inventory script source for syntax-aware marker checks.
+
+    Args:
+        source: Python source code text.
+
+    Returns:
+        Parsed module AST, or None when the source is not valid Python.
+    """
+    try:
+        return ast.parse(source)
+    except SyntaxError:
+        return None
+
+
 def _looks_like_inventory_script(source: str) -> bool:
     """Return True if source appears to be a dynamic inventory script.
 
-    Requires ``--list`` argument handling, which is the canonical signal that
-    Ansible uses to enumerate inventory from a script.
+    Requires a ``--list`` string literal in executable code (not comments).
+    Ansible uses ``--list`` to enumerate inventory from a script.
 
     Args:
         source: Python source code text.
@@ -122,19 +139,33 @@ def _looks_like_inventory_script(source: str) -> bool:
     Returns:
         True when the source contains ``--list`` handling.
     """
-    return _REQUIRED_INVENTORY_MARKER in source.lower()
+    tree = _parse_inventory_script_source(source)
+    if tree is None:
+        return False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value.lower() == _LIST_FLAG:
+            return True
+    return False
 
 
 def _has_meta_reference(source: str) -> bool:
-    """Return True if source references ``_meta``.
+    """Return True if source references ``_meta`` in executable code.
 
     Args:
         source: Python source code text.
 
     Returns:
-        True when ``_meta`` appears in the source.
+        True when ``_meta`` appears as a name or string literal in code.
     """
-    return "_meta" in source
+    tree = _parse_inventory_script_source(source)
+    if tree is None:
+        return False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and node.id == _META_KEY:
+            return True
+        if isinstance(node, ast.Constant) and node.value == _META_KEY:
+            return True
+    return False
 
 
 @dataclass

@@ -68,6 +68,11 @@ class TestLooksLikeInventoryScript:
         source = "def main():\n    print('hello')\n"
         assert _looks_like_inventory_script(source) is False
 
+    def test_comment_only_list_flag_ignored(self) -> None:
+        """Comment mentioning --list does not qualify as inventory script."""
+        source = "# supports --list later\ndef helper():\n    return 42\n"
+        assert _looks_like_inventory_script(source) is False
+
 
 class TestIsPythonInventoryCandidate:
     """Tests for _is_python_inventory_candidate helper."""
@@ -140,6 +145,11 @@ class TestHasMetaReference:
     def test_without_meta(self) -> None:
         """Source without _meta not detected."""
         assert _has_meta_reference("result = {'all': {'hosts': []}}") is False
+
+    def test_comment_only_meta_ignored(self) -> None:
+        """Comment mentioning _meta does not satisfy the _meta requirement."""
+        source = "# add _meta later\nresult = {'all': {'hosts': []}}\n"
+        assert _has_meta_reference(source) is False
 
 
 class TestInventoryScriptMissingMetaGraphRule:
