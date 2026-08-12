@@ -100,6 +100,22 @@ class TestUrlHelpers:
         )
         assert url == "https://gitlab.com/api/v4"
 
+    def test_resolve_gitlab_cloud_www_host(self) -> None:
+        """www.gitlab.com clone URLs resolve as SaaS."""
+        url = resolve_gitlab_api_url(
+            "https://gitlab.com/api/v4",
+            "https://www.gitlab.com/group/repo.git",
+        )
+        assert url == "https://gitlab.com/api/v4"
+
+    def test_resolve_bitbucket_cloud_www_host(self) -> None:
+        """www.bitbucket.org clone URLs resolve as Cloud."""
+        url = resolve_bitbucket_api_url(
+            "https://api.bitbucket.org/2.0",
+            "https://www.bitbucket.org/ws/repo.git",
+        )
+        assert url == "https://api.bitbucket.org/2.0"
+
     def test_resolve_gitlab_self_hosted_requires_env(self) -> None:
         """Self-hosted GitLab rejects cloud-default API URL (SSRF / context-path)."""
         with pytest.raises(ValueError, match="APME_GITLAB_API_URL"):
@@ -386,6 +402,34 @@ class TestBitbucketCloudUnit:
         assert by_name["parents"] == (None, "parentsha")
         assert by_name["roles/a.yml"][0] == "a.yml"
         assert by_name["roles/a.yml"][1] == b"x: 1\n"
+
+    async def test_push_files_rejects_non_success_status(self) -> None:
+        """Cloud /src push treats 3xx responses as failure instead of success."""
+        provider = BitbucketCloudProvider()
+        client = AsyncMock()
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=False)
+        client.post = AsyncMock(return_value=_mock_response(302))
+
+        with (
+            patch.object(BitbucketCloudProvider, "_client", return_value=client),
+            patch.object(
+                BitbucketCloudProvider,
+                "branch_head_sha",
+                new=AsyncMock(return_value="unchangedsha"),
+            ) as mock_tip,
+            pytest.raises(RuntimeError, match="Unexpected status 302"),
+        ):
+            await provider.push_files(
+                "https://bitbucket.org/ws/repo.git",
+                "apme/fix",
+                {"roles/a.yml": b"x: 1\n"},
+                "commit msg",
+                "token",
+                parent_commit_sha="parentsha",
+            )
+
+        mock_tip.assert_not_called()
 
 
 class TestBitbucketServerUnit:

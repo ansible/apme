@@ -66,6 +66,21 @@ def _hostname(repo_url: str) -> str:
         return ""
 
 
+def _normalized_hostname(url: str) -> str:
+    """Return lowercased hostname with a leading ``www.`` stripped.
+
+    Args:
+        url: Parseable URL (clone URL or API base).
+
+    Returns:
+        Normalized hostname, or ``""`` when parsing fails or host is absent.
+    """
+    host = _hostname(url)
+    if host.startswith("www."):
+        return host[4:]
+    return host
+
+
 def is_cloud_scm_host(repo_url: str) -> bool:
     """Return True when *repo_url* targets a known SaaS forge host.
 
@@ -79,11 +94,9 @@ def is_cloud_scm_host(repo_url: str) -> bool:
     Returns:
         ``True`` for github.com / gitlab.com / bitbucket.org (and www).
     """
-    host = _hostname(repo_url)
+    host = _normalized_hostname(repo_url)
     if not host:
         return False
-    if host.startswith("www."):
-        host = host[4:]
     if host == "github.com" or host.endswith(".github.com"):
         # github.com and gist.github.com; Enterprise is a different hostname.
         return host == "github.com"
@@ -112,8 +125,8 @@ def resolve_gitlab_api_url(configured: str, repo_url: str) -> str:
             is still the cloud default (or host is empty).
     """
     configured = (configured or DEFAULT_GITLAB_API_URL).rstrip("/")
-    host = _hostname(repo_url)
-    configured_host = _hostname(configured)
+    host = _normalized_hostname(repo_url)
+    configured_host = _normalized_hostname(configured)
     if not host:
         msg = f"Cannot resolve GitLab API URL from invalid repo URL: {repo_url}"
         raise ValueError(msg)
@@ -154,7 +167,7 @@ def resolve_bitbucket_api_url(configured: str, repo_url: str) -> str:
             the Cloud default (or host is empty).
     """
     configured = (configured or DEFAULT_BITBUCKET_CLOUD_API_URL).rstrip("/")
-    host = _hostname(repo_url)
+    host = _normalized_hostname(repo_url)
     if not host:
         msg = f"Cannot resolve Bitbucket API URL from invalid repo URL: {repo_url}"
         raise ValueError(msg)

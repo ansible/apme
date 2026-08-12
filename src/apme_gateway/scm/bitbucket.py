@@ -267,6 +267,8 @@ class BitbucketCloudProvider:
             # Cloud returns 201 with empty body on success; resolve new tip.
             if resp.status_code not in {200, 201}:
                 resp.raise_for_status()
+                msg = f"Unexpected status {resp.status_code} from Bitbucket Cloud push on {workspace}/{repo}@{branch}"
+                raise RuntimeError(msg)
 
         new_sha = await self.branch_head_sha(repo_url, branch, token)
         if not new_sha:

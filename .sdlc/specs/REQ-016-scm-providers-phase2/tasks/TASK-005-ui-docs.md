@@ -15,7 +15,7 @@ new env vars, and note Phase 2 completion in ADR-050.
 
 ## Prerequisites
 
-- [ ] Providers registered (TASK-002–004)
+- [x] Providers registered (TASK-002–004)
 
 ## Implementation Notes
 
@@ -35,8 +35,8 @@ new env vars, and note Phase 2 completion in ADR-050.
 
 ## Verification
 
-- [ ] UI builds / types OK
-- [ ] Docs mention new env vars
+- [x] UI builds / types OK
+- [x] Docs mention new env vars
 
 ## Acceptance Criteria Reference
 
