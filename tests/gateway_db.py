@@ -8,7 +8,6 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from urllib.parse import urlparse, urlunparse
 
-import asyncpg
 import pytest
 
 from apme_gateway.db import close_db, init_db, reset_db
@@ -79,6 +78,8 @@ async def ensure_worker_database() -> str:
     Raises:
         RuntimeError: When ``APME_TEST_DATABASE_URL`` is not configured.
     """
+    import asyncpg
+
     base_url = base_test_database_url()
     if not base_url:
         msg = "APME_TEST_DATABASE_URL is not configured"
