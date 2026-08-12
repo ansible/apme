@@ -44,8 +44,8 @@ Recommendation: use underscores (`web_servers`) instead of hyphens (`web-servers
 - [x] L111 ignores `all` and `ungrouped`
 - [x] L111 reports file path and line number
 - [x] Unit tests cover INI and YAML formats
-- [ ] `tox -e lint` passes
-- [ ] `tox -e unit` passes with coverage
+- [x] `tox -e lint` passes
+- [x] `tox -e unit` passes with coverage
 
 ## Technical Notes
 

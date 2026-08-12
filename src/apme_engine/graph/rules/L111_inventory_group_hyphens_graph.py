@@ -9,11 +9,14 @@ Addresses AAPRFE-2997.
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+import yaml
 
 from apme_engine.graph.content_graph import ContentGraph, NodeType
 from apme_engine.graph.rule_base import GraphRule, GraphRuleResult
@@ -22,6 +25,8 @@ from apme_engine.graph.types import RuleTag as Tag
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+
+logger = logging.getLogger(__name__)
 
 # Reserved group names to skip
 _RESERVED_GROUPS = frozenset({"all", "ungrouped"})
@@ -113,7 +118,7 @@ def _parse_yaml_groups(
         line_map: Optional mapping of dotted paths to line numbers.
 
     Yields:
-        (str, int): Tuples of (group_name, line_number).
+        tuple[str, int]: Tuples of (group_name, line_number).
     """
     if not isinstance(data, dict):
         return
@@ -197,13 +202,17 @@ class InventoryGroupHyphensGraphRule(GraphRule):
     scope: str = RuleScope.INVENTORY
     precedence: int = 100  # Run late, after structural rules
 
-    # Track which playbook dirs we've already scanned to avoid duplicates
-    _scanned_dirs: set[str] = field(default_factory=set)
+    # Per-scan state: directories already scanned (reset via reset_scan_state)
+    _scanned_dirs: set[str] = field(default_factory=set, repr=False)
 
     def __post_init__(self) -> None:
         """Initialize mutable state and validate rule metadata."""
         super().__post_init__()
         object.__setattr__(self, "_scanned_dirs", set())
+
+    def reset_scan_state(self) -> None:
+        """Clear directory deduplication state for a new scan pass."""
+        self._scanned_dirs.clear()
 
     def match(self, graph: ContentGraph, node_id: str) -> bool:
         """Match PLAYBOOK nodes to trigger inventory file scanning.
@@ -216,14 +225,7 @@ class InventoryGroupHyphensGraphRule(GraphRule):
             True if the node is a PLAYBOOK.
         """
         node = graph.get_node(node_id)
-        if node is None or node.node_type != NodeType.PLAYBOOK:
-            return False
-        # Only scan each directory once
-        playbook_dir = os.path.dirname(node.file_path)
-        if playbook_dir in self._scanned_dirs:
-            return False
-        self._scanned_dirs.add(playbook_dir)
-        return True
+        return node is not None and node.node_type == NodeType.PLAYBOOK
 
     def process(self, graph: ContentGraph, node_id: str) -> GraphRuleResult | None:
         """Scan inventory files for group names with hyphens.
@@ -239,12 +241,22 @@ class InventoryGroupHyphensGraphRule(GraphRule):
         if node is None:
             return None
 
+        playbook_dir = os.path.dirname(node.file_path)
+        if playbook_dir in self._scanned_dirs:
+            return GraphRuleResult(
+                verdict=False,
+                node_id=node_id,
+                file=(node.file_path, node.line_start),
+            )
+        self._scanned_dirs.add(playbook_dir)
+
         violations: list[YAMLValue] = []
 
         for inv_file in _find_inventory_files(node.file_path):
             try:
                 content = inv_file.read_text(encoding="utf-8", errors="replace")
             except OSError:
+                logger.debug("Skipping unreadable inventory file: %s", inv_file)
                 continue
 
             groups_with_hyphens: list[tuple[str, int]] = []
@@ -252,7 +264,7 @@ class InventoryGroupHyphensGraphRule(GraphRule):
             # Detect format by extension or content
             suffix = inv_file.suffix.lower()
             if suffix in (".yml", ".yaml"):
-                groups_with_hyphens.extend(_parse_yaml_inventory(content))
+                groups_with_hyphens.extend(_parse_yaml_inventory(content, str(inv_file)))
             elif suffix == ".ini" or _looks_like_ini(content):
                 seen_ini: set[str] = set()
                 for group_name, line in _parse_ini_groups(content, str(inv_file)):
@@ -261,7 +273,7 @@ class InventoryGroupHyphensGraphRule(GraphRule):
                         groups_with_hyphens.append((group_name, line))
             elif suffix == "" and _looks_like_yaml(content):
                 # Extensionless inventory files (e.g., "inventory", "hosts")
-                groups_with_hyphens.extend(_parse_yaml_inventory(content))
+                groups_with_hyphens.extend(_parse_yaml_inventory(content, str(inv_file)))
 
             for group_name, line in groups_with_hyphens:
                 violations.append(
@@ -338,20 +350,16 @@ def _looks_like_yaml(content: str) -> bool:
     return False
 
 
-def _parse_yaml_inventory(content: str) -> list[tuple[str, int]]:
+def _parse_yaml_inventory(content: str, source: str = "") -> list[tuple[str, int]]:
     """Parse YAML inventory and return groups with hyphens.
 
     Args:
         content: YAML file content.
+        source: Inventory file path for log context.
 
     Returns:
         List of (group_name, line_number) tuples for groups containing hyphens.
     """
-    import logging
-
-    import yaml
-
-    logger = logging.getLogger(__name__)
     groups_with_hyphens: list[tuple[str, int]] = []
     seen: set[str] = set()
 
@@ -363,8 +371,6 @@ def _parse_yaml_inventory(content: str) -> list[tuple[str, int]]:
                 seen.add(group_name)
                 groups_with_hyphens.append((group_name, line))
     except yaml.YAMLError as err:
-        logger.debug("Failed to parse YAML inventory: %s", err)
-    except Exception as err:
-        logger.debug("Unexpected error parsing YAML inventory: %s", err)
+        logger.warning("Failed to parse YAML inventory %s: %s", source or "<unknown>", err)
 
     return groups_with_hyphens

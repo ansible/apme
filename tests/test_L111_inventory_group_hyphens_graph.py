@@ -23,7 +23,7 @@ from apme_engine.graph.rules.L111_inventory_group_hyphens_graph import (
     _parse_yaml_groups,
     _parse_yaml_inventory,
 )
-from apme_engine.graph.scanner import scan
+from apme_engine.graph.scanner import graph_report_to_violations, rescan_dirty, scan
 
 
 class TestParseIniGroups:
@@ -208,6 +208,27 @@ class TestInventoryGroupHyphensGraphRule:
         )
         g.add_node(pb)
         return g, pb.node_id
+
+    def _make_graph_with_playbooks(self, playbook_paths: list[str]) -> tuple[ContentGraph, list[str]]:
+        """Create a graph with multiple PLAYBOOK nodes.
+
+        Args:
+            playbook_paths: Paths to playbook files.
+
+        Returns:
+            Tuple of (graph, playbook node IDs).
+        """
+        g = ContentGraph()
+        node_ids: list[str] = []
+        for playbook_path in playbook_paths:
+            pb = ContentNode(
+                identity=NodeIdentity(path=playbook_path, node_type=NodeType.PLAYBOOK),
+                file_path=playbook_path,
+                scope=NodeScope.OWNED,
+            )
+            g.add_node(pb)
+            node_ids.append(pb.node_id)
+        return g, node_ids
 
     def test_detects_hyphen_in_ini_group(self) -> None:
         """Rule detects hyphens in INI inventory group names."""
@@ -416,6 +437,70 @@ class TestInventoryGroupHyphensGraphRule:
             assert result is not None
             assert result.verdict is True
             assert "db-servers" in str(result.detail)
+
+    def test_skips_second_playbook_in_same_directory(self) -> None:
+        """Only the first playbook in a directory triggers inventory scanning."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            playbook1 = Path(tmpdir) / "playbook1.yml"
+            playbook2 = Path(tmpdir) / "playbook2.yml"
+            playbook1.write_text("---\n- hosts: all\n")
+            playbook2.write_text("---\n- hosts: all\n")
+            inv_file = Path(tmpdir) / "inventory.ini"
+            inv_file.write_text("[web-servers]\nhost1\n")
+
+            graph, node_ids = self._make_graph_with_playbooks([str(playbook1), str(playbook2)])
+            rule = InventoryGroupHyphensGraphRule()
+
+            assert rule.match(graph, node_ids[0])
+            assert rule.match(graph, node_ids[1])
+
+            first_result = rule.process(graph, node_ids[0])
+            second_result = rule.process(graph, node_ids[1])
+
+            assert first_result is not None
+            assert first_result.verdict is True
+            assert second_result is not None
+            assert second_result.verdict is False
+
+    def test_rescan_dirty_re_evaluates_same_directory(self) -> None:
+        """rescan_dirty resets per-scan state so dirty playbooks are re-evaluated."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            playbook = Path(tmpdir) / "playbook.yml"
+            playbook.write_text("---\n- hosts: all\n")
+            inv_file = Path(tmpdir) / "inventory.ini"
+            inv_file.write_text("[web-servers]\nhost1\n")
+
+            graph, pb_id = self._make_graph_with_playbook(str(playbook))
+            rule = InventoryGroupHyphensGraphRule()
+            rules: list[GraphRule] = [rule]
+
+            first_report = rescan_dirty(graph, rules, frozenset({pb_id}))
+            first_violations = graph_report_to_violations(first_report)
+            assert len(first_violations) == 1
+
+            second_report = rescan_dirty(graph, rules, frozenset({pb_id}))
+            second_violations = graph_report_to_violations(second_report)
+            assert len(second_violations) == 1
+
+    def test_fixture_inventory_files(self) -> None:
+        """Fixture inventory files produce expected hyphen violations."""
+        fixture_dir = Path(__file__).parent / "fixtures" / "L111-inventory-hyphens"
+        playbook = fixture_dir / "playbook.yml"
+
+        graph, pb_id = self._make_graph_with_playbook(str(playbook))
+        rule = InventoryGroupHyphensGraphRule()
+
+        result = rule.process(graph, pb_id)
+
+        assert result is not None
+        assert result.verdict is True
+        assert isinstance(result.detail, dict)
+        violations = result.detail.get("violations", [])
+        assert isinstance(violations, list)
+        group_names = {v["group_name"] for v in violations if isinstance(v, dict)}
+        assert "web-servers" in group_names
+        assert "db-servers" in group_names
+        assert "production-env" in group_names
 
 
 class TestLooksLikeYaml:

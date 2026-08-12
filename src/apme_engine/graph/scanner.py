@@ -187,6 +187,16 @@ def parse_noqa(yaml_lines: str) -> frozenset[str]:
     return frozenset(suppressed)
 
 
+def _reset_rule_scan_state(rules: list[GraphRule]) -> None:
+    """Reset per-scan mutable state on rules before evaluation.
+
+    Args:
+        rules: Enabled rules for the upcoming scan pass.
+    """
+    for rule in rules:
+        rule.reset_scan_state()
+
+
 def _evaluate_node(
     graph: ContentGraph,
     node: ContentNode,
@@ -264,6 +274,7 @@ def scan(
     start = time.monotonic()
     enabled_rules = [r for r in rules if r.enabled]
     report = GraphScanReport(rules_evaluated=len(enabled_rules))
+    _reset_rule_scan_state(enabled_rules)
 
     all_nodes = sorted(graph.nodes(), key=lambda n: n.node_id)
 
@@ -305,6 +316,7 @@ def rescan_dirty(
     start = time.monotonic()
     enabled_rules = [r for r in rules if r.enabled]
     report = GraphScanReport(rules_evaluated=len(enabled_rules))
+    _reset_rule_scan_state(enabled_rules)
 
     for node_id in sorted(dirty_node_ids):
         node = graph.get_node(node_id)
