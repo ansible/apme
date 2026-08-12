@@ -64,11 +64,11 @@ def _is_python_inventory_candidate(path: str) -> bool:
     if not os.access(path, os.X_OK):
         return False
     try:
-        with open(path, encoding="utf-8") as f:
+        with open(path, "rb") as f:
             first_line = f.readline()
     except OSError:
         return False
-    return first_line.startswith("#!") and "python" in first_line.lower()
+    return first_line.startswith(b"#!") and b"python" in first_line.lower()
 
 
 def _find_inventory_scripts(playbook_dir: str) -> list[str]:

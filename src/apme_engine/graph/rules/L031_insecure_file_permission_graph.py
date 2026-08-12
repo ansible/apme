@@ -43,6 +43,10 @@ _FILE_PERMISSION_MODULES = frozenset(
         "ansible.legacy.unarchive",
         "ansible.legacy.assemble",
         "ansible.posix.synchronize",
+        "ansible.builtin.get_url",
+        "ansible.builtin.uri",
+        "ansible.legacy.get_url",
+        "ansible.legacy.uri",
         "copy",
         "file",
         "template",
@@ -51,6 +55,8 @@ _FILE_PERMISSION_MODULES = frozenset(
         "synchronize",
         "unarchive",
         "assemble",
+        "get_url",
+        "uri",
     }
 )
 

@@ -234,6 +234,60 @@ class TestInsecureFilePermissionGraphRule:
         )
         assert rule.match(g, nid) is True
 
+    def test_match_builtin_get_url(self, rule: InsecureFilePermissionGraphRule) -> None:
+        """Matches ansible.builtin.get_url tasks with insecure mode.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, nid = _make_file_task(
+            module="ansible.builtin.get_url",
+            module_options={"url": "https://example.com/file", "dest": "/tmp/out", "mode": "0666"},
+        )
+        assert rule.match(g, nid) is True
+        result = rule.process(g, nid)
+        assert result is not None
+        assert result.verdict is True
+
+    def test_match_legacy_uri(self, rule: InsecureFilePermissionGraphRule) -> None:
+        """Matches ansible.legacy.uri tasks with insecure mode.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, nid = _make_file_task(
+            module="ansible.legacy.uri",
+            module_options={"url": "https://example.com/file", "dest": "/tmp/out", "mode": "0777"},
+        )
+        assert rule.match(g, nid) is True
+        result = rule.process(g, nid)
+        assert result is not None
+        assert result.verdict is True
+
+    def test_match_short_get_url_and_uri(self, rule: InsecureFilePermissionGraphRule) -> None:
+        """Matches short-name get_url and uri tasks with insecure mode.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g_get, nid_get = _make_file_task(
+            module="get_url",
+            module_options={"url": "https://example.com/file", "dest": "/tmp/out", "mode": "0666"},
+        )
+        assert rule.match(g_get, nid_get) is True
+        result_get = rule.process(g_get, nid_get)
+        assert result_get is not None
+        assert result_get.verdict is True
+
+        g_uri, nid_uri = _make_file_task(
+            module="uri",
+            module_options={"url": "https://example.com/file", "dest": "/tmp/out", "mode": "0777"},
+        )
+        assert rule.match(g_uri, nid_uri) is True
+        result_uri = rule.process(g_uri, nid_uri)
+        assert result_uri is not None
+        assert result_uri.verdict is True
+
     def test_no_match_play_node(self, rule: InsecureFilePermissionGraphRule) -> None:
         """Does not match PLAY nodes.
 

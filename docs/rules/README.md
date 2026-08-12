@@ -17,7 +17,7 @@ rules, ID conventions, severity assignments, and coverage analysis.
 
 | Concern | Source |
 |---------|--------|
-| Default severity | `src/apme_engine/severity_defaults.py` (ADR-043) |
+| Default severity | `src/apme_engine/graph/severity.py` (ADR-043) |
 | Remediation routing | `src/apme_engine/remediation/partition.py` (ADR-026) |
 | Rule discovery / docs | `tools/generate_rule_catalog.py` |
 

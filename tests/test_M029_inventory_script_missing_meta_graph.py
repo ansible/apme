@@ -118,6 +118,19 @@ class TestIsPythonInventoryCandidate:
         script.write_text('#!/usr/bin/env python\nparser.add_argument("--list")\n')
         assert _is_python_inventory_candidate(str(script)) is False
 
+    def test_extensionless_latin1_shebang_candidate(self, tmp_path: Path) -> None:
+        """Extensionless Latin-1 shebang scripts are candidates without UTF-8 decode errors.
+
+        Args:
+            tmp_path: Pytest temp directory.
+        """
+        script = tmp_path / "ec2"
+        script.write_bytes(
+            b'#! /usr/bin/env python\n# -*- coding: latin-1 -*-\n# caf\xe9\nparser.add_argument("--list")\n'
+        )
+        script.chmod(script.stat().st_mode | stat.S_IXUSR)
+        assert _is_python_inventory_candidate(str(script)) is True
+
 
 class TestReadScriptSource:
     """Tests for _read_script_source helper."""
@@ -242,6 +255,38 @@ class TestInventoryScriptMissingMetaGraphRule:
         assert result.detail is not None
         assert "ec2" in str(result.detail.get("message", ""))
         assert "ec2.py" not in str(result.detail.get("message", ""))
+
+    def test_extensionless_latin1_inventory_script_missing_meta_fires(
+        self, rule: InventoryScriptMissingMetaGraphRule, tmp_path: Path
+    ) -> None:
+        """Extensionless Latin-1 inventory script without _meta triggers violation.
+
+        Args:
+            rule: Rule instance under test.
+            tmp_path: Pytest temp directory.
+        """
+        inv_dir = tmp_path / "inventory"
+        inv_dir.mkdir()
+        script = inv_dir / "ec2"
+        script.write_bytes(
+            b"#! /usr/bin/env python\n"
+            b"# -*- coding: latin-1 -*-\n"
+            b"import argparse\n"
+            b"parser = argparse.ArgumentParser()\n"
+            b'parser.add_argument("--list", action="store_true")\n'
+            b"args = parser.parse_args()\n"
+            b'print(\'{"all": {"hosts": ["h1"]}}\')\n'
+            b"# caf\xe9\n"
+        )
+        script.chmod(script.stat().st_mode | stat.S_IXUSR)
+        pb_file = tmp_path / "site.yml"
+        pb_file.write_text("---\n- hosts: all\n")
+        g, nid = _make_playbook(file_path=str(pb_file))
+        result = rule.process(g, nid)
+        assert result is not None
+        assert result.verdict is True
+        assert result.detail is not None
+        assert "ec2" in str(result.detail.get("message", ""))
 
     def test_latin1_inventory_script_missing_meta_fires(
         self, rule: InventoryScriptMissingMetaGraphRule, tmp_path: Path
