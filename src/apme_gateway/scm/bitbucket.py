@@ -624,7 +624,11 @@ def _server_pr_url(payload: dict[str, object], repo_url: str) -> str:
     pr_id = payload.get("id")
     parsed = urlparse(repo_url)
     project, repo = parse_server_project_repo(repo_url)
-    return f"{parsed.scheme}://{parsed.netloc}/projects/{project}/repos/{repo}/pull-requests/{pr_id}"
+    host = parsed.hostname or ""
+    if host and ":" in host:
+        host = f"[{host}]"
+    authority = f"{host}:{parsed.port}" if parsed.port else host
+    return f"{parsed.scheme}://{authority}/projects/{project}/repos/{repo}/pull-requests/{pr_id}"
 
 
 def create_bitbucket_provider(api_base_url: str) -> BitbucketCloudProvider | BitbucketServerProvider:

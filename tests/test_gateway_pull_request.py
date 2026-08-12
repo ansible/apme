@@ -234,23 +234,31 @@ class TestGitHubProviderTls:
             assert _custom_ca_bundle() == "/etc/ssl/certs/custom-ca-bundle.pem"
 
     def test_http_verify_builds_ssl_context_with_custom_bundle(self) -> None:
-        """Custom CA configuration merges the extra bundle into TLS verification."""
+        """Custom CA configuration merges platform roots and the extra bundle."""
+        fake_paths = ssl.DefaultVerifyPaths(
+            cafile="/platform/ca.pem",
+            capath="/platform/capath",
+            openssl_cafile_env="SSL_CERT_FILE",
+            openssl_cafile="/platform/ca.pem",
+            openssl_capath_env="SSL_CERT_DIR",
+            openssl_capath="/platform/capath",
+        )
         with (
             patch.dict("os.environ", {"SSL_CERT_FILE": "/etc/ssl/certs/custom-ca-bundle.pem"}, clear=True),
-            patch.object(ssl.SSLContext, "load_default_certs") as mock_defaults,
             patch.object(ssl.SSLContext, "load_verify_locations") as mock_verify_locations,
+            patch("apme_gateway.scm._http.ssl.get_default_verify_paths", return_value=fake_paths),
         ):
             verify = _http_verify()
 
         assert isinstance(verify, ssl.SSLContext)
-        mock_defaults.assert_called_once()
-        mock_verify_locations.assert_called_once_with(cafile="/etc/ssl/certs/custom-ca-bundle.pem")
+        mock_verify_locations.assert_any_call(cafile="/platform/ca.pem")
+        mock_verify_locations.assert_any_call(capath="/platform/capath")
+        mock_verify_locations.assert_any_call(cafile="/etc/ssl/certs/custom-ca-bundle.pem")
 
     def test_client_passes_verify_to_httpx(self) -> None:
         """Provider clients pass the resolved TLS settings to ``httpx``."""
         with (
             patch.dict("os.environ", {"SSL_CERT_FILE": "/etc/ssl/certs/custom-ca-bundle.pem"}, clear=True),
-            patch.object(ssl.SSLContext, "load_default_certs"),
             patch.object(ssl.SSLContext, "load_verify_locations"),
             patch("apme_gateway.scm._http.httpx.AsyncClient") as mock_client,
         ):

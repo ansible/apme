@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router';
 import { PageLayout, PageHeader } from '@ansible/ansible-ui-framework';
 import {
   Button,
+  Alert,
+  AlertActionCloseButton,
   EmptyState,
   EmptyStateBody,
   Flex,
@@ -30,7 +32,7 @@ import {
   SortAmountDownIcon,
   SortAmountUpIcon,
 } from '@patternfly/react-icons';
-import { createProject, deleteProject, listProjects } from '../services/api';
+import { createProject, deleteProject, listProjects, apiErrorMessage } from '../services/api';
 import type { ProjectSummary } from '../types/api';
 import { timeAgo } from '../services/format';
 import { healthLabelColor } from '../components/severity';
@@ -69,6 +71,7 @@ export function ProjectsPage() {
   const [createScmToken, setCreateScmToken] = useState('');
   const [createScmProvider, setCreateScmProvider] = useState('');
   const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
   const [nameManuallyEdited, setNameManuallyEdited] = useState(false);
   const [openKebab, setOpenKebab] = useState<string | null>(null);
 
@@ -116,6 +119,7 @@ export function ProjectsPage() {
   const handleCreate = useCallback(async () => {
     if (!createName.trim() || !createUrl.trim()) return;
     setCreating(true);
+    setCreateError(null);
     try {
       const body: {
         name: string;
@@ -138,9 +142,10 @@ export function ProjectsPage() {
       setCreateScmToken('');
       setCreateScmProvider('');
       setNameManuallyEdited(false);
+      setCreateError(null);
       fetchProjects();
-    } catch {
-      // keep modal open
+    } catch (err) {
+      setCreateError(apiErrorMessage(err, 'Failed to create project.'));
     } finally {
       setCreating(false);
     }
@@ -359,6 +364,15 @@ export function ProjectsPage() {
       >
         <ModalHeader title="Create Project" />
         <ModalBody>
+          {createError && (
+            <Alert
+              variant="danger"
+              title={createError}
+              isInline
+              style={{ marginBottom: 16 }}
+              actionClose={<AlertActionCloseButton onClose={() => setCreateError(null)} />}
+            />
+          )}
           <Flex direction={{ default: 'column' }} gap={{ default: 'gapMd' }}>
             <FlexItem>
               <label htmlFor="proj-url" style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}>Repository URL</label>

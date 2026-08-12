@@ -6,6 +6,8 @@ import { RuleId } from '../components/RuleId';
 import {
   Badge,
   Button,
+  Alert,
+  AlertActionCloseButton,
   Card,
   CardBody,
   Flex,
@@ -25,7 +27,7 @@ import {
   ExclamationTriangleIcon,
   ShieldAltIcon,
 } from '@patternfly/react-icons';
-import { deleteProject, getProject, getProjectDependencies, getProjectDepHealth, getProjectGraph, getProjectSbom, getProjectTrend, listProjectActivity, listProjectViolations, updateProject } from '../services/api';
+import { deleteProject, getProject, getProjectDependencies, getProjectDepHealth, getProjectGraph, getProjectSbom, getProjectTrend, listProjectActivity, listProjectViolations, updateProject, apiErrorMessage } from '../services/api';
 import type { GraphData } from '../services/api';
 import type { ActivitySummary, DepHealthSummary, ProjectDependencies, ProjectDetail, TrendPoint, ViolationDetail } from '../types/api';
 import { GraphVisualization } from '../components/GraphVisualization';
@@ -233,6 +235,7 @@ export function ProjectDetailPage() {
   const [scmTokenDirty, setScmTokenDirty] = useState(false);
   const [scmProviderDirty, setScmProviderDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   useEffect(() => {
     if (project) {
@@ -249,6 +252,7 @@ export function ProjectDetailPage() {
   const handleSave = useCallback(async () => {
     if (!projectId || !project) return;
     setSaving(true);
+    setSaveError(null);
     try {
       const updates: Record<string, string> = {};
       if (editName !== project.name) updates.name = editName;
@@ -260,6 +264,8 @@ export function ProjectDetailPage() {
         await updateProject(projectId, updates);
         fetchData();
       }
+    } catch (err) {
+      setSaveError(apiErrorMessage(err, 'Failed to save project.'));
     } finally {
       setSaving(false);
     }
@@ -631,6 +637,16 @@ export function ProjectDetailPage() {
                         Used for private clones and creating pull/merge requests. Leave blank to keep current value.
                       </div>
                     </FlexItem>
+                    {saveError && (
+                      <FlexItem>
+                        <Alert
+                          variant="danger"
+                          title={saveError}
+                          isInline
+                          actionClose={<AlertActionCloseButton onClose={() => setSaveError(null)} />}
+                        />
+                      </FlexItem>
+                    )}
                     <FlexItem>
                       <Flex gap={{ default: 'gapSm' }}>
                         <Button variant="primary" onClick={handleSave} isDisabled={saving}>

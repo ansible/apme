@@ -25,7 +25,7 @@ Specs answer "What does this feature do?" They provide:
 | REQ-013 | Extended OPA Policy Inputs | PHASE-003 | Draft |
 | REQ-014 | Policy Permissive Mode | PHASE-003 | Draft |
 | REQ-015 | Detect Debug Sensitive Variables | PHASE-001 | Implemented |
-| REQ-016 | Phase 2 SCM Providers (GitLab + Bitbucket) | PHASE-003 | Implemented |
+| REQ-016 | Phase 2 SCM Providers (GitLab + Bitbucket) | PHASE-003 | In Progress |
 
 ## Directory Structure
 
@@ -73,7 +73,7 @@ PHASE-003: Enterprise Dashboard (In Progress)
 ├── REQ-012: EDA Rulebook Validation (Draft)
 ├── REQ-013: Extended OPA Policy Inputs (Draft)
 ├── REQ-014: Policy Permissive Mode (Draft)
-└── REQ-016: Phase 2 SCM Providers (Implemented)
+└── REQ-016: Phase 2 SCM Providers (In Progress)
 
 PHASE-004: AI Remediation (Implemented)
 └── DR-005: AI-Assisted Remediation (Decided)

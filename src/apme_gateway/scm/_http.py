@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import ssl
 
@@ -39,7 +40,16 @@ def http_verify() -> ssl.SSLContext | bool:
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     context.verify_mode = ssl.CERT_REQUIRED
     context.check_hostname = True
-    context.load_default_certs(ssl.Purpose.SERVER_AUTH)
+    # Load platform roots from default paths — not via load_default_certs(), which
+    # honors SSL_CERT_FILE and can omit public CA roots when that env points at a
+    # private-only corporate bundle.
+    paths = ssl.get_default_verify_paths()
+    if paths.cafile:
+        with contextlib.suppress(OSError):
+            context.load_verify_locations(cafile=paths.cafile)
+    if paths.capath:
+        with contextlib.suppress(OSError):
+            context.load_verify_locations(capath=paths.capath)
     context.load_verify_locations(cafile=custom_bundle)
     return context
 

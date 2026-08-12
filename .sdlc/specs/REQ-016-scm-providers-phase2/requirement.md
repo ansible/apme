@@ -3,7 +3,7 @@
 ## Metadata
 
 - **Phase**: PHASE-003 - Enterprise Dashboard
-- **Status**: Implemented
+- **Status**: In Progress
 - **Created**: 2026-08-12
 - **Priority**: High
 
@@ -139,7 +139,9 @@ remediate work for on-prem remotes.
 ## Security Considerations
 
 - Single `scm_token` string; document auth conventions per provider
-- Token encryption at rest remains a separate follow-up (not in this REQ)
+- Token encryption at rest is **not** implemented in Phase 1/2; `scm_token` is stored
+  as plaintext in the database until a follow-up adds `APME_SECRET_KEY`-based encryption
+  (see ADR-050 revision note)
 
 ## Related Artifacts
 

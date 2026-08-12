@@ -613,7 +613,18 @@ async def submit_operation(
 
     api_base: str | None = None
     if provider_type == "github":
+        from apme_gateway.scm.urls import require_https_api_base
+
         api_base = cfg.github_api_url
+        try:
+            require_https_api_base(api_base, "GitHub")
+        except ValueError as exc:
+            if state:
+                get_operation_registry().transition(
+                    state.operation_id,
+                    OperationStatus.COMPLETED,
+                )
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
     elif provider_type == "gitlab":
         from apme_gateway.scm.urls import resolve_gitlab_api_url
 

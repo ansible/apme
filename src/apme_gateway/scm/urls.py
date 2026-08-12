@@ -13,6 +13,22 @@ _CLOUD_GITLAB_HOSTS = frozenset({"gitlab.com"})
 _CLOUD_BITBUCKET_HOSTS = frozenset({"bitbucket.org"})
 
 
+def require_https_api_base(url: str, provider: str) -> None:
+    """Reject SCM API bases that are not absolute HTTPS URLs.
+
+    Args:
+        url: Candidate API base URL.
+        provider: Provider label for error messages (e.g. ``GitLab``).
+
+    Raises:
+        ValueError: When *url* lacks an ``https`` scheme or hostname.
+    """
+    parsed = urlparse(url)
+    if parsed.scheme != "https" or not parsed.hostname:
+        msg = f"{provider} API URL must be an absolute https:// URL, got: {url}"
+        raise ValueError(msg)
+
+
 def _is_gitlab_cloud_api_url(url: str) -> bool:
     """Return True when *url* is a well-formed GitLab SaaS API base.
 
@@ -104,7 +120,9 @@ def resolve_gitlab_api_url(configured: str, repo_url: str) -> str:
 
     if host in _CLOUD_GITLAB_HOSTS:
         if _is_gitlab_cloud_api_url(configured):
+            require_https_api_base(configured, "GitLab")
             return configured
+        require_https_api_base(DEFAULT_GITLAB_API_URL, "GitLab")
         return DEFAULT_GITLAB_API_URL
 
     # Self-hosted / Dedicated: require explicit non-cloud API base.
@@ -114,6 +132,7 @@ def resolve_gitlab_api_url(configured: str, repo_url: str) -> str:
             f"(e.g. https://{host}/api/v4). Auto-derivation from repo_url is disabled."
         )
         raise ValueError(msg)
+    require_https_api_base(configured, "GitLab")
     return configured
 
 
@@ -142,7 +161,9 @@ def resolve_bitbucket_api_url(configured: str, repo_url: str) -> str:
 
     if host in _CLOUD_BITBUCKET_HOSTS:
         if is_bitbucket_cloud_api(configured):
+            require_https_api_base(configured, "Bitbucket")
             return configured
+        require_https_api_base(DEFAULT_BITBUCKET_CLOUD_API_URL, "Bitbucket")
         return DEFAULT_BITBUCKET_CLOUD_API_URL
 
     if configured.rstrip("/") == DEFAULT_BITBUCKET_CLOUD_API_URL.rstrip("/") or is_bitbucket_cloud_api(configured):
@@ -151,6 +172,7 @@ def resolve_bitbucket_api_url(configured: str, repo_url: str) -> str:
             f"(e.g. https://{host}/rest/api/1.0). Auto-derivation from repo_url is disabled."
         )
         raise ValueError(msg)
+    require_https_api_base(configured, "Bitbucket")
     return configured
 
 

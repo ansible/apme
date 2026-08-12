@@ -54,7 +54,7 @@ PHASE-003: Enterprise Dashboard (In Progress)
 ├── REQ-012: EDA Rulebook Validation (Draft)
 ├── REQ-013: Extended OPA Policy Inputs (Draft)
 ├── REQ-014: Policy Permissive Mode (Draft)
-└── REQ-016: Phase 2 SCM Providers (Implemented)
+└── REQ-016: Phase 2 SCM Providers (In Progress)
 
 PHASE-004: AI Remediation (Implemented)
 └── DR-005: AI-Assisted Remediation (Decided — Abbenay AI integration)

@@ -18,11 +18,13 @@ from apme_gateway.scm.base import PullRequestResult
 from apme_gateway.scm.bitbucket import (
     BitbucketCloudProvider,
     BitbucketServerProvider,
+    _server_pr_url,
     parse_server_project_repo,
 )
 from apme_gateway.scm.gitlab import GitLabProvider, _parse_project_path
 from apme_gateway.scm.urls import (
     is_bitbucket_cloud_api,
+    require_https_api_base,
     resolve_bitbucket_api_url,
     resolve_gitlab_api_url,
     split_user_pass_token,
@@ -145,6 +147,46 @@ class TestUrlHelpers:
             "https://corp.example/bitbucket/scm/PROJ/repo.git",
         )
         assert url == "https://corp.example/bitbucket/rest/api/1.0"
+
+    def test_resolve_gitlab_self_hosted_rejects_http_api_url(self) -> None:
+        """Self-hosted GitLab API bases must use HTTPS."""
+        with pytest.raises(ValueError, match="absolute https://"):
+            resolve_gitlab_api_url(
+                "http://gitlab.corp.example/api/v4",
+                "https://gitlab.corp.example/group/repo.git",
+            )
+
+    def test_resolve_bitbucket_self_hosted_rejects_http_api_url(self) -> None:
+        """Self-hosted Bitbucket API bases must use HTTPS."""
+        with pytest.raises(ValueError, match="absolute https://"):
+            resolve_bitbucket_api_url(
+                "http://bb.corp.example/rest/api/1.0",
+                "https://bb.corp.example/scm/PROJ/repo.git",
+            )
+
+    def test_resolve_gitlab_self_hosted_rejects_schemeless_api_url(self) -> None:
+        """API bases without a scheme are rejected."""
+        with pytest.raises(ValueError, match="absolute https://"):
+            resolve_gitlab_api_url(
+                "gitlab.corp.example/api/v4",
+                "https://gitlab.corp.example/group/repo.git",
+            )
+
+    def test_require_https_api_base(self) -> None:
+        """require_https_api_base rejects non-HTTPS URLs."""
+        require_https_api_base("https://api.github.com", "GitHub")
+        with pytest.raises(ValueError, match="GitHub API URL"):
+            require_https_api_base("http://api.github.com", "GitHub")
+
+    def test_server_pr_url_fallback_strips_credentials(self) -> None:
+        """Fallback PR URLs must not echo clone URL credentials."""
+        url = _server_pr_url(
+            {"id": 7},
+            "https://x-token-auth:SECRET@bb.example.com:7990/scm/KEY/repo.git",
+        )
+        assert url == "https://bb.example.com:7990/projects/KEY/repos/repo/pull-requests/7"
+        assert "SECRET" not in url
+        assert "x-token-auth" not in url
 
     def test_is_bitbucket_cloud_api_hostname_only(self) -> None:
         """Only api.bitbucket.org is Cloud; /2.0 on other hosts is Server."""
@@ -482,7 +524,13 @@ class TestSubmitPhase2Providers:
                 provider="gitlab",
             )
         )
-        with patch("apme_gateway.scm.get_provider", return_value=mock_provider) as mock_get:
+        with (
+            patch(
+                "apme_gateway.config.load_config",
+                return_value=GatewayConfig(gitlab_api_url="https://gitlab.com/api/v4", scm_token=""),
+            ),
+            patch("apme_gateway.scm.get_provider", return_value=mock_provider) as mock_get,
+        ):
             resp = await client.post(
                 "/api/v1/projects/proj-1/operation/submit",
                 json={"activity_id": "scan-1", "create_pr": True},
