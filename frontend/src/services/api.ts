@@ -39,16 +39,18 @@ import { apmeApiUrl, getApmeApiAdapter } from "../api/apmeApiAdapter";
 
 class ApiError extends Error {
   status: number;
+  body: string;
   constructor(status: number, body: string) {
     super(`${status}: ${body}`);
     this.status = status;
+    this.body = body;
   }
 }
 
 /** Extract a user-facing message from a failed API request. */
 export function apiErrorMessage(err: unknown, fallback = "Request failed"): string {
   if (err instanceof ApiError) {
-    const body = err.message.replace(/^\d+:\s*/, "");
+    const body = err.body;
     try {
       const parsed = JSON.parse(body) as { detail?: string | Array<{ msg?: string }> };
       const detail = parsed.detail;

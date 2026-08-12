@@ -6,6 +6,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 from httpx import ASGITransport, AsyncClient, Response
 
@@ -235,7 +236,11 @@ def _mock_response(
     if status >= 400:
 
         def _raise() -> None:
-            raise Exception(f"HTTP {status}")
+            raise httpx.HTTPStatusError(
+                f"HTTP {status}",
+                request=httpx.Request("GET", "https://example.invalid"),
+                response=resp,
+            )
 
         resp.raise_for_status.side_effect = _raise
     return resp

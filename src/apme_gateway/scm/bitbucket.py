@@ -315,13 +315,17 @@ class BitbucketCloudProvider:
                 },
             )
             if resp.status_code in {400, 409}:
+
+                def _bbql(value: str) -> str:
+                    return value.replace("\\", "\\\\").replace('"', '\\"')
+
                 existing = await client.get(
                     self._repo_url(workspace, repo, "pullrequests"),
                     headers=_auth_headers(token),
                     params={
                         "q": (
-                            f'source.branch.name="{head_branch}" AND '
-                            f'destination.branch.name="{base_branch}" AND state="OPEN"'
+                            f'source.branch.name="{_bbql(head_branch)}" AND '
+                            f'destination.branch.name="{_bbql(base_branch)}" AND state="OPEN"'
                         ),
                     },
                 )
