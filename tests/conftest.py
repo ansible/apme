@@ -6,6 +6,8 @@ import pytest
 
 from apme_engine.engine.models import YAMLDict
 
+pytest_plugins = ["tests.gateway_db"]
+
 
 @pytest.fixture  # type: ignore[untyped-decorator]
 def repo_root() -> Path:

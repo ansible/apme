@@ -1,9 +1,9 @@
 {{- /* ADR-069: Simple all-in-one — single Deployment, replicas must be 1 */ -}}
 {{- if ne (int .Values.engine.replicas) 1 }}
-{{- fail "ADR-069 Simple topology: engine.replicas must be 1 (Gateway SQLite and Abbenay share this pod). Multi-replica requires a future topology ADR." }}
+{{- fail "ADR-069 Simple topology: engine.replicas must be 1 (Gateway PostgreSQL and Abbenay share this pod). Multi-replica requires a future topology ADR." }}
 {{- end }}
 {{- if ne (int .Values.gateway.replicas) 1 }}
-{{- fail "ADR-069 Simple topology: gateway.replicas must be 1 (Gateway is a sidecar; SQLite is not multi-replica)." }}
+{{- fail "ADR-069 Simple topology: gateway.replicas must be 1 (Gateway is a sidecar; PostgreSQL is not multi-replica)." }}
 {{- end }}
 {{- if and .Values.ui.enabled (ne (int .Values.ui.replicas) 1) }}
 {{- fail "ADR-069 Simple topology: ui.replicas must be 1 (UI is a sidecar in the Simple pod)." }}
@@ -363,7 +363,39 @@ spec:
           resources:
             {{- toYaml .Values.engine.resources.galaxyProxy | nindent 12 }}
 
-        # -- Gateway (REST + gRPC reporting + SQLite)
+        # -- Embedded PostgreSQL (loopback) when no external database URL is set
+        {{- if and (not .Values.gateway.database.url) .Values.gateway.database.embedded.enabled }}
+        - name: postgres
+          image: {{ .Values.gateway.database.embedded.image }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          env:
+            - name: POSTGRES_USER
+              value: {{ .Values.gateway.database.embedded.user | quote }}
+            - name: POSTGRES_PASSWORD
+              value: {{ .Values.gateway.database.embedded.password | quote }}
+            - name: POSTGRES_DB
+              value: {{ .Values.gateway.database.embedded.database | quote }}
+          ports:
+            - name: postgres
+              containerPort: 5432
+              protocol: TCP
+          volumeMounts:
+            - name: gateway-data
+              mountPath: /var/lib/postgresql/data
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+        {{- end }}
+
+        # -- Gateway (REST + gRPC reporting + PostgreSQL)
         - name: gateway
           image: {{ include "apme.image" (dict "registry" .Values.image.registry "name" "gateway" "tag" .Values.image.tag "fallbackTag" .Chart.AppVersion) }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
@@ -377,9 +409,11 @@ spec:
             {{- if .Values.gateway.database.url }}
             - name: APME_DATABASE_URL
               value: {{ .Values.gateway.database.url | quote }}
+            {{- else if .Values.gateway.database.embedded.enabled }}
+            - name: APME_DATABASE_URL
+              value: {{ printf "postgresql+asyncpg://%s:%s@127.0.0.1:5432/%s" .Values.gateway.database.embedded.user .Values.gateway.database.embedded.password .Values.gateway.database.embedded.database | quote }}
             {{- else }}
-            - name: APME_DB_PATH
-              value: /data/apme.db
+            {{- fail "gateway.database.url is required when embedded PostgreSQL is disabled" }}
             {{- end }}
             - name: APME_GATEWAY_GRPC_LISTEN
               value: "0.0.0.0:50060"
@@ -435,9 +469,6 @@ spec:
               port: http
             initialDelaySeconds: 5
             periodSeconds: 10
-          volumeMounts:
-            - name: gateway-data
-              mountPath: /data
           resources:
             {{- toYaml .Values.gateway.resources | nindent 12 }}
 

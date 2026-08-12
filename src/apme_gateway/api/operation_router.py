@@ -928,7 +928,7 @@ async def finalize_operation_scan(
     """Link a completed operation to its persisted scan row and store patches.
 
     The engine commits the scan via ``ReportFixCompleted`` asynchronously. If
-    the gateway tries to insert ``scan_patches`` before that row exists, SQLite
+    the gateway tries to insert ``scan_patches`` before that row exists, PostgreSQL
     raises a foreign-key error. Live proposal stubs may create an early Scan
     row (ADR-062 Phase 2); poll until ``ReportFixCompleted`` has replaced the
     placeholder session id (not ``op-*``) or timeout.

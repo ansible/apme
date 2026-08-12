@@ -39,7 +39,6 @@ ai = [
 ]
 gateway = [
     "sqlalchemy>=2.0",
-    "aiosqlite>=0.20",
     "asyncpg>=0.30",
     "python-multipart>=0.0.31",
 ]
@@ -159,8 +158,6 @@ module = [
     "uvicorn.*",
     "sqlalchemy",
     "sqlalchemy.*",
-    "aiosqlite",
-    "aiosqlite.*",
     "asyncpg",
     "asyncpg.*",
     "pydantic",

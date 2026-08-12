@@ -42,7 +42,7 @@ def _chunked_not_in(column: Any, ids: set[int]) -> Any:
     For sets within a single chunk, produces a single ``column NOT IN (...)``
     clause with bound parameters. For larger sets, inlines the integer PKs as
     SQL literals in a single ``NOT IN (...)`` clause — no bind parameters and
-    no compound selects — to avoid SQLite's low parameter limits.
+    no compound selects — to stay within bind-parameter limits.
 
     Args:
         column: SQLAlchemy column to filter.
@@ -2476,7 +2476,7 @@ async def suppressed_violation_ids(
     (ADR-055), and checks against stored suppression hashes.
 
     Uses a DB-side subquery for scan ID filtering to avoid exceeding
-    SQLite's per-statement bind-variable limit when many projects exist.
+    PostgreSQL bind-variable limits when many projects exist.
 
     When ``project_id`` is provided (single-project view), only global and
     that project's scoped suppressions are checked. When ``project_id`` is

@@ -3,28 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from pathlib import Path
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 from apme_gateway.app import create_app
-from apme_gateway.db import close_db, init_db
 
-
-@pytest.fixture(autouse=True)  # type: ignore[untyped-decorator]
-async def _db(tmp_path: Path) -> AsyncIterator[None]:
-    """Initialise a fresh DB per test.
-
-    Args:
-        tmp_path: Pytest-provided temporary directory.
-
-    Yields:
-        None: Test runs between setup and teardown.
-    """
-    await init_db(str(tmp_path / "test.db"))
-    yield
-    await close_db()
+pytestmark = pytest.mark.usefixtures("gateway_db")
 
 
 @pytest.fixture  # type: ignore[untyped-decorator]

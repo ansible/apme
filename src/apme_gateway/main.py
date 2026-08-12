@@ -22,7 +22,7 @@ from apme.v1 import reporting_pb2_grpc
 from apme_gateway.app import create_app
 from apme_gateway.config import load_config
 from apme_gateway.db import close_db, init_db_from_config
-from apme_gateway.db.url import is_sqlite_url, resolve_database_url, sanitize_database_url
+from apme_gateway.db.url import sanitize_database_url
 from apme_gateway.grpc_reporting.servicer import ReportingServicer
 
 logger = logging.getLogger(__name__)
@@ -89,13 +89,7 @@ async def _run() -> None:
     """Orchestrate both servers with shared lifecycle."""
     cfg = load_config()
 
-    resolved_url = resolve_database_url(database_url=cfg.database_url, db_path=cfg.db_path)
-    if is_sqlite_url(resolved_url):
-        db_dir = os.path.dirname(cfg.db_path)
-        if db_dir:
-            os.makedirs(db_dir, exist_ok=True)
-
-    db_url = await init_db_from_config(database_url=cfg.database_url, db_path=cfg.db_path)
+    db_url = await init_db_from_config(database_url=cfg.database_url or None)
 
     stop_event = asyncio.Event()
 

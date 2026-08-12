@@ -28,7 +28,7 @@ def _now_iso() -> str:
 
 
 async def fetch_violations_by_ids(db: AsyncSession, int_ids: Sequence[int]) -> list[Violation]:
-    """Load violations by PK, chunking IN clauses for SQLite bind limits.
+    """Load violations by PK, chunking IN clauses for bind-parameter limits.
 
     Args:
         db: Active async session.

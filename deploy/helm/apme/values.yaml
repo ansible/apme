@@ -106,14 +106,19 @@ collectionHealth:
 depAudit:
   enabled: true
 
-# -- Gateway sidecar (REST + gRPC reporting + SQLite) — ADR-069 Simple pod
+# -- Gateway sidecar (REST + gRPC reporting + PostgreSQL) — ADR-069 Simple pod
 gateway:
   # Retained for compatibility; must be 1 (Gateway is not a separate Deployment).
   replicas: 1
-  # When ``database.url`` is set, Gateway uses PostgreSQL (``APME_DATABASE_URL``)
-  # instead of the default SQLite file on the gateway-data volume.
   database:
+    # External PostgreSQL URL. When empty, embedded PostgreSQL is used.
     url: ""
+    embedded:
+      enabled: true
+      image: docker.io/library/postgres:16
+      user: apme
+      password: apme
+      database: apme
   resources:
     requests:
       cpu: 250m

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
-from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
@@ -20,9 +18,11 @@ from apme_engine.rule_catalog import (
     _collect_gitleaks_rules,
     collect_all_rules,
 )
-from apme_gateway.db import close_db, get_session, init_db
+from apme_gateway.db import get_session
 from apme_gateway.db import queries as q
 from apme_gateway.grpc_reporting.servicer import ReportingServicer
+
+pytestmark = pytest.mark.usefixtures("gateway_db")
 
 
 @pytest.mark.parametrize(  # type: ignore[untyped-decorator]
@@ -320,21 +320,6 @@ def test_validate_rule_configs_complete_both_directions(
     unknown, missing = _validate_rule_configs(configs, complete=True)
     assert unknown == ["X999"], "X999 is not known to the Engine"
     assert missing == ["L002"], "L002 is known but absent from config"
-
-
-@pytest.fixture(autouse=True)  # type: ignore[untyped-decorator]
-async def _db(tmp_path: Path) -> AsyncIterator[None]:
-    """Initialise a fresh SQLite DB for ReportingServicer tests.
-
-    Args:
-        tmp_path: Pytest temporary directory.
-
-    Yields:
-        None: Test body runs between init and teardown.
-    """
-    await init_db(str(tmp_path / "test.db"))
-    yield
-    await close_db()
 
 
 def _grpc_context() -> AsyncMock:

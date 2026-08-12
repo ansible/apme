@@ -1,4 +1,4 @@
-"""Reporting gRPC servicer — persists fix events to SQLite.
+"""Reporting gRPC servicer — persists fix events to PostgreSQL.
 
 Engine pods push ``FixCompletedEvent`` messages to this servicer via gRPC
 (ADR-020 push model).  Each event is decomposed into ORM rows and committed
@@ -75,7 +75,7 @@ def _diagnostics_to_json(diag: object) -> str | None:
 
 
 class ReportingServicer(reporting_pb2_grpc.ReportingServicer):
-    """Concrete Reporting servicer that persists events to SQLite."""
+    """Concrete Reporting servicer that persists events to PostgreSQL."""
 
     async def ReportFixCompleted(  # noqa: N802
         self,
