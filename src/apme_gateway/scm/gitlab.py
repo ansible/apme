@@ -273,29 +273,28 @@ class GitLabProvider:
                     "actions": actions,
                 },
             )
-            # If some paths are new (create), retry with per-file create/update.
+            # Mixed create/update: default actions are ``update``; on 400 probe each path
+            # instead of matching GitLab's localized error text.
             if resp.status_code == 400:
-                err_text = (resp.text or "").lower()
-                if "does not exist" in err_text or "a file with this name doesn't exist" in err_text:
-                    mixed_actions: list[dict[str, str]] = []
-                    for action in actions:
-                        exists = await self._file_exists(
-                            client,
-                            project,
-                            branch,
-                            action["file_path"],
-                            headers,
-                        )
-                        mixed_actions.append({**action, "action": "update" if exists else "create"})
-                    resp = await client.post(
-                        self._project_url(project, "repository/commits"),
-                        headers=headers,
-                        json={
-                            "branch": branch,
-                            "commit_message": commit_message,
-                            "actions": mixed_actions,
-                        },
+                mixed_actions: list[dict[str, str]] = []
+                for action in actions:
+                    exists = await self._file_exists(
+                        client,
+                        project,
+                        branch,
+                        action["file_path"],
+                        headers,
                     )
+                    mixed_actions.append({**action, "action": "update" if exists else "create"})
+                resp = await client.post(
+                    self._project_url(project, "repository/commits"),
+                    headers=headers,
+                    json={
+                        "branch": branch,
+                        "commit_message": commit_message,
+                        "actions": mixed_actions,
+                    },
+                )
             resp.raise_for_status()
             commit_sha = str(resp.json()["id"])
 

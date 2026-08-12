@@ -15,7 +15,7 @@ for gitlab.com and self-hosted via `APME_GITLAB_API_URL`.
 
 ## Prerequisites
 
-- [ ] TASK-001 must be complete
+- [x] TASK-001 must be complete
 
 ## Implementation Notes
 
@@ -34,8 +34,8 @@ for gitlab.com and self-hosted via `APME_GITLAB_API_URL`.
 
 ## Verification
 
-- [ ] `tox -e lint`
-- [ ] `tox -e unit`
+- [x] `tox -e lint`
+- [x] `tox -e unit`
 
 ## Acceptance Criteria Reference
 

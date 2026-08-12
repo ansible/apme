@@ -447,7 +447,8 @@ class BitbucketServerProvider:
                     return existing_after
             resp.raise_for_status()
             data = resp.json()
-            sha = str(data.get("latestCommit") or data.get("id") or "")
+            # Server returns ``id`` as ``refs/heads/<branch>``; only ``latestCommit`` is a SHA.
+            sha = str(data.get("latestCommit") or "")
             if not sha:
                 sha = await self.branch_head_sha(repo_url, new_branch, token) or ""
         logger.info("Created Bitbucket Server branch %s from %s on %s/%s", new_branch, base_branch, project, repo)

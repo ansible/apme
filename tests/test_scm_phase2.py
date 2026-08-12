@@ -284,6 +284,40 @@ class TestGitLabProviderUnit:
         headers = GitLabProvider()._headers("gitlab+deploy-token-1:secret")
         assert headers["Authorization"].startswith("Basic ")
 
+    async def test_push_files_retries_mixed_on_400_without_english_error(self) -> None:
+        """On 400, probe each path instead of matching GitLab error text."""
+        provider = GitLabProvider()
+        client = AsyncMock()
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=False)
+        client.post = AsyncMock(
+            side_effect=[
+                _mock_response(400, text="erreur inconnue"),
+                _mock_response(201, {"id": "mixed123"}),
+            ]
+        )
+        client.head = AsyncMock(
+            side_effect=[
+                _mock_response(404),
+                _mock_response(200),
+            ]
+        )
+
+        with patch.object(GitLabProvider, "_client", return_value=client):
+            commit = await provider.push_files(
+                "https://gitlab.com/group/repo.git",
+                "apme/fix",
+                {"new.yml": b"n", "old.yml": b"o"},
+                "msg",
+                "token",
+            )
+
+        assert commit == "mixed123"
+        assert client.post.call_count == 2
+        retry_actions = client.post.call_args_list[1].kwargs["json"]["actions"]
+        by_path = {action["file_path"]: action["action"] for action in retry_actions}
+        assert by_path == {"new.yml": "create", "old.yml": "update"}
+
 
 class TestBitbucketCloudUnit:
     """Mocked unit tests for Bitbucket Cloud."""
@@ -356,6 +390,33 @@ class TestBitbucketCloudUnit:
 
 class TestBitbucketServerUnit:
     """Mocked unit tests for Bitbucket Server/DC."""
+
+    async def test_create_branch_uses_latest_commit_not_ref_id(self) -> None:
+        """Branch-create ``id`` is a ref name; return ``latestCommit`` SHA only."""
+        provider = BitbucketServerProvider("https://bb.example.com/rest/api/1.0")
+        client = AsyncMock()
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=False)
+        client.get = AsyncMock(return_value=_mock_response(404))
+        client.post = AsyncMock(
+            return_value=_mock_response(
+                200,
+                {
+                    "id": "refs/heads/apme/fix",
+                    "latestCommit": "abc123def",
+                },
+            )
+        )
+
+        with patch.object(BitbucketServerProvider, "_client", return_value=client):
+            sha = await provider.create_branch(
+                "https://bb.example.com/scm/PROJ/repo.git",
+                "main",
+                "apme/fix",
+                "token",
+            )
+
+        assert sha == "abc123def"
 
     async def test_create_pr(self) -> None:
         """Create a Server PR and resolve the web URL."""
