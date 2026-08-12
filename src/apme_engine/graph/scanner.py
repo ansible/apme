@@ -367,7 +367,7 @@ def graph_report_to_violations(report: GraphScanReport) -> list[ViolationDict]:
             # Check for nested violations list (e.g., L111 inventory scan)
             nested_violations = detail.get("violations")
             if isinstance(nested_violations, list) and nested_violations:
-                # Expand each nested violation into a separate ViolationDict
+                expanded: list[ViolationDict] = []
                 for nested in nested_violations:
                     if not isinstance(nested, dict):
                         continue
@@ -377,18 +377,21 @@ def graph_report_to_violations(report: GraphScanReport) -> list[ViolationDict]:
                         line_val = nested_line
                     elif isinstance(nested_line, list):
                         line_val = [int(x) for x in nested_line if isinstance(x, int | float)]
-                    v: ViolationDict = {
-                        "rule_id": rid,
-                        "severity": severity_to_label(get_severity(rid)),
-                        "message": str(nested.get("message", rule.description if rule else "")),
-                        "file": str(nested.get("file", "")),
-                        "line": line_val,
-                        "path": rr.node_id,
-                        "source": "native",
-                        "scope": str(detail.get("scope", "")) or (rule.scope if rule else "task"),
-                    }
-                    violations.append(v)
-                continue
+                    expanded.append(
+                        {
+                            "rule_id": rid,
+                            "severity": severity_to_label(get_severity(rid)),
+                            "message": str(nested.get("message", rule.description if rule else "")),
+                            "file": str(nested.get("file", "")),
+                            "line": line_val,
+                            "path": rr.node_id,
+                            "source": "native",
+                            "scope": str(detail.get("scope", "")) or (rule.scope if rule else "task"),
+                        }
+                    )
+                if expanded:
+                    violations.extend(expanded)
+                    continue
 
             # Standard single-violation path
             file_path = ""

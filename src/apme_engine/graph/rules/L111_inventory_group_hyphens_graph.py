@@ -95,12 +95,26 @@ def _parse_ini_groups(content: str, file_path: str) -> Iterator[tuple[str, int]]
     Yields:
         tuple[str, int]: Tuples of (group_name, line_number).
     """
+    in_children_section = False
     for line_num, line in enumerate(content.splitlines(), start=1):
-        match = _INI_SECTION_RE.match(line.strip())
-        if match:
-            group_name = match.group(1)
+        stripped = line.strip()
+        if not stripped:
+            continue
+
+        section_match = _INI_SECTION_RE.match(stripped)
+        if section_match:
+            group_name = section_match.group(1)
+            section_type = section_match.group(2)
+            in_children_section = section_type == "children"
             if group_name not in _RESERVED_GROUPS:
                 yield group_name, line_num
+            continue
+
+        if in_children_section:
+            if stripped.startswith("#") or stripped.startswith(";"):
+                continue
+            if stripped not in _RESERVED_GROUPS:
+                yield stripped, line_num
 
 
 def _parse_yaml_groups(

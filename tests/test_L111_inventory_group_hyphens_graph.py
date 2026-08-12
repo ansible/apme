@@ -36,10 +36,19 @@ class TestParseIniGroups:
         assert ("web-servers", 1) in groups
 
     def test_group_with_children(self) -> None:
-        """Parse group with :children suffix."""
+        """Parse group with :children suffix and listed child groups."""
         content = "[prod-env:children]\nweb-servers"
         groups = list(_parse_ini_groups(content, "test.ini"))
         assert ("prod-env", 1) in groups
+        assert ("web-servers", 2) in groups
+
+    def test_children_section_hyphenated_child_groups(self) -> None:
+        """Parse hyphenated child groups declared under a :children section."""
+        content = "[db-servers:children]\nprimary-db\nreplica-db"
+        groups = list(_parse_ini_groups(content, "test.ini"))
+        assert ("db-servers", 1) in groups
+        assert ("primary-db", 2) in groups
+        assert ("replica-db", 3) in groups
 
     def test_group_with_vars(self) -> None:
         """Parse group with :vars suffix."""
@@ -385,6 +394,25 @@ class TestInventoryGroupHyphensGraphRule:
             assert result is not None
             assert result.verdict is True
             assert "prod-env" in str(result.detail)
+            assert "web-servers" in str(result.detail)
+
+    def test_children_section_child_group_detected(self) -> None:
+        """Rule detects hyphenated child groups listed under :children sections."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            playbook = Path(tmpdir) / "playbook.yml"
+            playbook.write_text("---\n- hosts: all\n")
+            inv_file = Path(tmpdir) / "inventory.ini"
+            inv_file.write_text("[db-servers:children]\nprimary-db\nreplica-db\n")
+
+            graph, pb_id = self._make_graph_with_playbook(str(playbook))
+            rule = InventoryGroupHyphensGraphRule()
+
+            result = rule.process(graph, pb_id)
+
+            assert result is not None
+            assert result.verdict is True
+            assert "primary-db" in str(result.detail)
+            assert "replica-db" in str(result.detail)
 
     def test_vars_suffix_detected(self) -> None:
         """Rule detects hyphens in groups with :vars suffix."""
