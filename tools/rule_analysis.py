@@ -37,6 +37,7 @@ _RULE_SCOPE_NAMES: dict[str, str] = {
 AI_PROPOSABLE_SCOPES = frozenset({"task", "block"})
 CROSS_FILE_RULES = frozenset({"R111", "R112"})
 
+GRAPH_RULES_DIR = REPO_ROOT / "src" / "apme_engine" / "graph" / "rules"
 NATIVE_DIR = REPO_ROOT / "src" / "apme_engine" / "validators" / "native" / "rules"
 OPA_DIR = REPO_ROOT / "src" / "apme_engine" / "validators" / "opa" / "bundle"
 ANSIBLE_DIR = REPO_ROOT / "src" / "apme_engine" / "validators" / "ansible" / "rules"
@@ -182,23 +183,47 @@ def rule_category(rule_id: str) -> str:
 
 def get_rule_scope(rule_id: str, validator: str) -> str:
     """Look up scope from rule doc frontmatter or native class attribute."""
-    dirs = {"OPA": OPA_DIR, "Native": NATIVE_DIR, "Ansible": ANSIBLE_DIR}
+    native_dirs = (GRAPH_RULES_DIR, NATIVE_DIR)
+    dirs: dict[str, Path | tuple[Path, ...]] = {
+        "OPA": OPA_DIR,
+        "Native": native_dirs,
+        "Ansible": ANSIBLE_DIR,
+    }
     d = dirs.get(validator)
     if d:
-        doc = _find_doc(rule_id, d)
-        if doc:
-            fm = _parse_frontmatter(doc)
-            if fm.get("scope"):
-                return fm["scope"]
+        search_dirs = (d,) if isinstance(d, Path) else d
+        for doc_dir in search_dirs:
+            doc = _find_doc(rule_id, doc_dir)
+            if doc:
+                fm = _parse_frontmatter(doc)
+                if fm.get("scope"):
+                    return fm["scope"]
     if validator == "Native":
-        for py in NATIVE_DIR.glob("*.py"):
-            text = py.read_text(encoding="utf-8", errors="replace")
-            if f'"{rule_id}"' not in text and f"'{rule_id}'" not in text:
-                continue
-            m = re.search(r"scope:\s*str\s*=\s*RuleScope\.(\w+)", text)
-            if m:
-                return _RULE_SCOPE_NAMES.get(m.group(1), "task")
+        for native_dir in native_dirs:
+            for py in native_dir.glob("*.py"):
+                text = py.read_text(encoding="utf-8", errors="replace")
+                if f'"{rule_id}"' not in text and f"'{rule_id}'" not in text:
+                    continue
+                m = re.search(r"scope:\s*str\s*=\s*RuleScope\.(\w+)", text)
+                if m:
+                    return _RULE_SCOPE_NAMES.get(m.group(1), "task")
     return "task"
+
+
+def tier3_breakdown_reason(meta: RuleMetadata) -> str:
+    """Return a single Tier 3 reason using classify_remediation_tier precedence."""
+    if meta.severity == "info":
+        return "info severity"
+    if meta.rule_id in CROSS_FILE_RULES:
+        return "cross-file (R111/R112)"
+    scope_labels = {
+        "playbook": "playbook scope",
+        "collection": "collection scope",
+        "role": "role scope",
+        "play": "play scope",
+        "inventory": "inventory scope",
+    }
+    return scope_labels.get(meta.scope, "other")
 
 
 def classify_remediation_tier(

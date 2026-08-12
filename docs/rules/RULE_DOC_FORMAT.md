@@ -18,7 +18,7 @@ Rule `.md` files describe a single rule and provide examples that can be used bo
    - `ai_prompt` — *(optional)* Per-rule guidance injected into the AI remediation prompt. Use YAML literal block (`|`) for multiline text. Tells the AI how to handle this rule — e.g., when to add `# noqa` instead of modifying code, or domain context about when the flagged pattern is legitimate. See `src/apme_engine/remediation/abbenay_provider.py` for how hints are loaded and injected.
 
    **Note:** Default severity is **not** set in rule docs. It comes from
-   `src/apme_engine/severity_defaults.py` (ADR-043) and appears in
+   `src/apme_engine/graph/severity.py` (ADR-043) and appears in
    [RULE_CATALOG.md](RULE_CATALOG.md).
 
 2. **Title and prose** — Human-readable explanation of what the rule checks.

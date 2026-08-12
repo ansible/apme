@@ -32,7 +32,7 @@ For ansible-lint name cross-references and historical renumbering, see
 
 ## Severity Scale (ADR-043)
 
-Default severity is assigned from `src/apme_engine/severity_defaults.py` using this decision tree:
+Default severity is assigned from `src/apme_engine/graph/severity.py` using this decision tree:
 
 1. Security vulnerability? → **critical**
 2. Runtime breakage today? → **error**
@@ -51,8 +51,8 @@ Routing follows `src/apme_engine/remediation/partition.py` (ADR-026 scope metada
 | Tier | Label | Count | Routing |
 |------|-------|-------|---------|
 | 1 | auto | 25 | Deterministic transform in registry — applied by `apme remediate` |
-| 2 | ai | 103 | Task/block scope, no fixer — AI proposes patch (Abbenay) |
-| 3 | manual | 28 | Play/role/collection scope, cross-file, or info severity |
+| 2 | ai | 69 | Task/block scope, no fixer — AI proposes patch (Abbenay) |
+| 3 | manual | 62 | Play/role/collection scope, cross-file, or info severity |
 
 Full analysis and promotion candidates: [REMEDIATION_TIER_REPORT.md](REMEDIATION_TIER_REPORT.md).
 
@@ -86,20 +86,20 @@ Full analysis and promotion candidates: [REMEDIATION_TIER_REPORT.md](REMEDIATION
 | L024 | L | OPA | low | task | ai | Task should have a name. | Yes | Yes | Yes | — |
 | L025 | L | OPA | low | task | auto | Task/play name should start with uppercase. | Yes | Yes | Yes | Yes |
 | L026 | L | Native | low | task | auto | Tasks should use FQCN for modules. | Yes | Yes | Yes | Yes |
-| L027 | L | Native | low | task | ai | Roles should have meta/main.yml with metadata. | Yes | Yes | Yes | — |
+| L027 | L | Native | low | role | manual | Roles should have meta/main.yml with metadata. | Yes | Yes | Yes | — |
 | L030 | L | Native | low | task | ai | Non-builtin module used when a builtin equivalent exists. | Yes | Yes | Yes | — |
 | L031 | L | Native | high | task | ai | File permission may be insecure. | Yes | Yes | Yes | — |
 | L032 | L | Native | low | task | ai | Variable redefinition may cause confusion. | Yes | — | Yes | — |
 | L033 | L | Native | low | task | ai | Overriding vars without conditions. | Yes | — | Yes | — |
-| L034 | L | Native | low | task | ai | Lower-precedence override may be unused. | Yes | — | Yes | — |
+| L034 | L | Native | low | inventory | manual | Lower-precedence override may be unused. | Yes | — | Yes | — |
 | L035 | L | Native | low | task | ai | set_fact with random in args. | Yes | Yes | Yes | — |
 | L036 | L | Native | low | task | ai | include_vars without when/tags. | Yes | Yes | Yes | — |
-| L037 | L | Native | medium | task | ai | Module name could not be resolved. | Yes | Yes | Yes | — |
-| L038 | L | Native | medium | task | ai | Role could not be resolved. | Yes | — | Yes | — |
-| L039 | L | Native | medium | task | ai | Variable use may be undefined. | Yes | — | Yes | — |
-| L040 | L | Native | info | task | manual | YAML should not contain tabs; use spaces. | Yes | Yes | Yes | — |
+| L037 | L | Native | medium | collection | manual | Module name could not be resolved. | Yes | Yes | Yes | — |
+| L038 | L | Native | medium | role | manual | Role could not be resolved. | Yes | — | Yes | — |
+| L039 | L | Native | medium | inventory | manual | Variable use may be undefined. | Yes | — | Yes | — |
+| L040 | L | Native | info | playbook | manual | YAML should not contain tabs; use spaces. | Yes | Yes | Yes | — |
 | L041 | L | Native | low | task | ai | Task keys should follow canonical order (e.g. name before module). | Yes | Yes | Yes | — |
-| L042 | L | Native | info | task | manual | Play/block has high task count. | Yes | Yes | Yes | — |
+| L042 | L | Native | info | play | manual | Play/block has high task count. | Yes | Yes | Yes | — |
 | L043 | L | Native | low | task | auto | Bare variable in with_* loop directive; use {{ var }}. | Yes | Yes | Yes | Yes |
 | L044 | L | Native | low | task | ai | Set state explicitly where it matters. | Yes | Yes | Yes | — |
 | L045 | L | Native | low | task | ai | Avoid inline environment in tasks. | Yes | Yes | Yes | — |
@@ -109,15 +109,15 @@ Full analysis and promotion candidates: [REMEDIATION_TIER_REPORT.md](REMEDIATION
 | L049 | L | Native | low | task | ai | Loop variable should use prefix (e.g. item_). | Yes | Yes | Yes | — |
 | L050 | L | Native | low | task | ai | Variable names: lowercase, underscores. | Yes | Yes | Yes | — |
 | L051 | L | Native | low | task | ai | Jinja spacing: {{ var }} not {{var}}. | Yes | Yes | Yes | — |
-| L052 | L | Native | low | task | ai | Galaxy version in meta should be semantic. | Yes | Yes | Yes | — |
-| L053 | L | Native | low | task | ai | Role meta should have valid structure. | Yes | Yes | Yes | — |
-| L054 | L | Native | low | task | ai | Role meta galaxy_info should include galaxy_tags. | Yes | — | Yes | — |
-| L055 | L | Native | low | task | ai | Role meta video_links should be valid URLs. | Yes | — | Yes | — |
-| L056 | L | Native | info | task | manual | Path may match ignore pattern. | Yes | — | Yes | — |
+| L052 | L | Native | low | role | manual | Galaxy version in meta should be semantic. | Yes | Yes | Yes | — |
+| L053 | L | Native | low | role | manual | Role meta should have valid structure. | Yes | Yes | Yes | — |
+| L054 | L | Native | low | role | manual | Role meta galaxy_info should include galaxy_tags. | Yes | — | Yes | — |
+| L055 | L | Native | low | role | manual | Role meta video_links should be valid URLs. | Yes | — | Yes | — |
+| L056 | L | Native | info | playbook | manual | Path may match ignore pattern. | Yes | — | Yes | — |
 | L057 | L | Ansible | error | playbook | manual | Syntax check via ansible-playbook --syntax-check. | Yes | Yes | Yes | — |
 | L058 | L | Ansible | error | task | ai | Argspec validation (docstring-based). | Yes | Yes | Yes | — |
 | L059 | L | Ansible | error | task | ai | Argspec validation (mock/patch-based). | Yes | Yes | Yes | — |
-| L060 | L | Native | info | task | manual | Line too long (exceeds 160 characters). | Yes | Yes | Yes | — |
+| L060 | L | Native | info | playbook | manual | Line too long (exceeds 160 characters). | Yes | Yes | Yes | — |
 | L061 | L | OPA | low | task | ai | Use true/false for booleans, not yes/no/True/False. | Yes | Yes | Yes | — |
 | L062 | L | OPA | low | task | ai | Use YAML-style module arguments, not key=value one-liners. | Yes | Yes | Yes | — |
 | L063 | L | OPA | low | block | ai | Block should have a name. | Yes | Yes | Yes | — |
@@ -130,39 +130,39 @@ Full analysis and promotion candidates: [REMEDIATION_TIER_REPORT.md](REMEDIATION
 | L070 | L | OPA | info | task | manual | Jinja in task names should only appear at the end of the name string. | Yes | Yes | Yes | — |
 | L071 | L | OPA | info | task | manual | Consider using template instead of copy with Jinja content. | Yes | Yes | Yes | — |
 | L072 | L | OPA | info | task | manual | Consider setting backup true on template/copy tasks. | Yes | Yes | Yes | — |
-| L073 | L | Native | low | task | ai | YAML should use 2-space indentation. | Yes | — | Yes | — |
-| L074 | L | Native | low | task | ai | Role names should not contain dashes. | Yes | Yes | Yes | — |
-| L075 | L | Native | low | task | ai | Template source files should use .j2 extension (ansible_managed best practice). | Yes | — | Yes | — |
+| L073 | L | Native | low | playbook | manual | YAML should use 2-space indentation. | Yes | — | Yes | — |
+| L074 | L | Native | low | role | manual | Role names should not contain dashes. | Yes | Yes | Yes | — |
+| L075 | L | Native | low | role | manual | Template source files should use .j2 extension (ansible_managed best practice). | Yes | — | Yes | — |
 | L076 | L | Native | low | task | ai | Use ansible_facts bracket notation instead of injected fact variables. | Yes | — | Yes | — |
-| L077 | L | Native | low | task | ai | Roles should have meta/argument_specs.yml for fail-fast parameter validation. | Yes | Yes | Yes | — |
+| L077 | L | Native | low | role | manual | Roles should have meta/argument_specs.yml for fail-fast parameter validation. | Yes | Yes | Yes | — |
 | L078 | L | Native | low | task | ai | Use bracket notation for dict key access in Jinja. | Yes | Yes | Yes | — |
-| L079 | L | Native | low | task | ai | Role defaults/vars should be prefixed with the role name. | Yes | Yes | Yes | — |
+| L079 | L | Native | low | role | manual | Role defaults/vars should be prefixed with the role name. | Yes | Yes | Yes | — |
 | L080 | L | Native | low | task | ai | Internal role variables should be prefixed with _ (underscore). | Yes | Yes | Yes | — |
-| L081 | L | Native | low | task | ai | Do not number roles or playbooks. | Yes | Yes | Yes | — |
+| L081 | L | Native | low | playbook | manual | Do not number roles or playbooks. | Yes | Yes | Yes | — |
 | L082 | L | Native | low | task | ai | Template source files should use .j2 extension. | Yes | — | Yes | — |
 | L083 | L | Native | low | task | ai | Do not hardcode host group names in roles. | Yes | Yes | Yes | — |
 | L084 | L | Native | low | task | auto | Task names in included sub-task files should use a prefix. | Yes | Yes | Yes | Yes |
 | L085 | L | Native | low | task | ai | Use explicit role_path prefix in include paths within roles. | Yes | Yes | Yes | — |
-| L086 | L | Native | low | task | ai | Avoid playbook/play vars for routine config; use inventory vars. | Yes | — | Yes | — |
-| L087 | L | Native | low | task | ai | Collection root should have a LICENSE or COPYING file. | Yes | Yes | Yes | — |
-| L088 | L | Native | low | task | ai | Collection README should document supported ansible-core versions. | Yes | Yes | Yes | — |
-| L089 | L | Native | low | task | ai | Plugin Python files should include type hints. | Yes | Yes | Yes | — |
-| L090 | L | Native | low | task | ai | Plugin entry files should be small; move helpers to module_utils. | Yes | Yes | Yes | — |
+| L086 | L | Native | low | play | manual | Avoid playbook/play vars for routine config; use inventory vars. | Yes | — | Yes | — |
+| L087 | L | Native | low | collection | manual | Collection root should have a LICENSE or COPYING file. | Yes | Yes | Yes | — |
+| L088 | L | Native | low | collection | manual | Collection README should document supported ansible-core versions. | Yes | Yes | Yes | — |
+| L089 | L | Native | low | collection | manual | Plugin Python files should include type hints. | Yes | Yes | Yes | — |
+| L090 | L | Native | low | collection | manual | Plugin entry files should be small; move helpers to module_utils. | Yes | Yes | Yes | — |
 | L091 | L | Native | low | task | ai | Use \| bool for bare variables in when conditions. | Yes | — | Yes | — |
 | L092 | L | Native | low | task | ai | Avoid loop variable references in task names. | Yes | — | Yes | — |
 | L093 | L | Native | low | task | ai | Do not override role defaults/vars with set_fact. | Yes | — | Yes | — |
 | L094 | L | Native | low | task | ai | Do not put dynamic dates in templates; breaks change detection. | Yes | — | Yes | — |
-| L095 | L | Native | error | task | ai | YAML file does not match expected schema structure. | Yes | Yes | Yes | — |
-| L096 | L | Native | high | task | ai | meta/runtime.yml should declare requires_ansible. | Yes | Yes | Yes | — |
-| L097 | L | Native | low | task | ai | Task names should be unique within a play. | Yes | — | Yes | — |
-| L098 | L | Native | error | task | ai | YAML files should not have duplicate mapping keys. | Yes | Yes | Yes | — |
-| L099 | L | Native | info | task | manual | Prefer double quotes for YAML string values. | Yes | Yes | Yes | — |
-| L100 | L | Native | medium | task | ai | Variable names must not be Python or Ansible keywords. | Yes | Yes | Yes | — |
-| L101 | L | Native | medium | task | ai | Variable names must not collide with Ansible reserved names. | Yes | — | Yes | — |
-| L102 | L | Native | medium | task | ai | Do not set read-only Ansible variables. | Yes | — | Yes | — |
-| L103 | L | Native | low | task | ai | Collection should have a CHANGELOG file. | Yes | Yes | Yes | — |
-| L104 | L | Native | low | task | ai | Collection should have meta/runtime.yml. | Yes | Yes | Yes | — |
-| L105 | L | Native | low | task | ai | galaxy.yml should have a repository key. | Yes | Yes | Yes | — |
+| L095 | L | Native | error | playbook | manual | YAML file does not match expected schema structure. | Yes | Yes | Yes | — |
+| L096 | L | Native | high | collection | manual | meta/runtime.yml should declare requires_ansible. | Yes | Yes | Yes | — |
+| L097 | L | Native | low | playbook | manual | Task names should be unique within a play. | Yes | — | Yes | — |
+| L098 | L | Native | error | playbook | manual | YAML files should not have duplicate mapping keys. | Yes | Yes | Yes | — |
+| L099 | L | Native | info | playbook | manual | Prefer double quotes for YAML string values. | Yes | Yes | Yes | — |
+| L100 | L | Native | medium | playbook | manual | Variable names must not be Python or Ansible keywords. | Yes | Yes | Yes | — |
+| L101 | L | Native | medium | playbook | manual | Variable names must not collide with Ansible reserved names. | Yes | — | Yes | — |
+| L102 | L | Native | medium | playbook | manual | Do not set read-only Ansible variables. | Yes | — | Yes | — |
+| L103 | L | Native | low | collection | manual | Collection should have a CHANGELOG file. | Yes | Yes | Yes | — |
+| L104 | L | Native | low | collection | manual | Collection should have meta/runtime.yml. | Yes | Yes | Yes | — |
+| L105 | L | Native | low | collection | manual | galaxy.yml should have a repository key. | Yes | Yes | Yes | — |
 | L106 | L | OPA | medium | task | ai | set_fact with loop and when is a scaling anti-pattern. | Yes | Yes | Yes | — |
 | L110 | L | Native | high | task | ai | Debug tasks should not log sensitive variables without no_log. | Yes | Yes | Yes | — |
 | M001 | M | Ansible | high | task | auto | FQCN resolution — module resolved to a different canonical name. | Yes | Yes | Yes | Yes |
@@ -173,7 +173,7 @@ Full analysis and promotion candidates: [REMEDIATION_TIER_REPORT.md](REMEDIATION
 | M006 | M | OPA | high | task | auto | become with ignore_errors will not catch timeout in 2.19+. | Yes | Yes | Yes | Yes |
 | M008 | M | OPA | high | task | auto | Bare include is removed in 2.19+; use include_tasks or import_tasks. | Yes | Yes | Yes | Yes |
 | M009 | M | OPA | high | task | auto | with_* loops are deprecated; use loop instead. | Yes | Yes | Yes | Yes |
-| M010 | M | Native | high | task | ai | ansible_python_interpreter set to Python 2; dropped in 2.18+. | Yes | Yes | Yes | — |
+| M010 | M | Native | high | play | manual | ansible_python_interpreter set to Python 2; dropped in 2.18+. | Yes | Yes | Yes | — |
 | M011 | M | OPA | high | collection | manual | Network module may require collection upgrade for 2.19+ compatibility. | Yes | Yes | Yes | — |
 | M014 | M | Native | medium | task | ai | Use ansible_facts["name"] instead of injected ansible_* fact variables (removed in 2.24) | Yes | Yes | Yes | — |
 | M015 | M | Native | medium | task | ai | Use ansible_play_batch instead of deprecated play_hosts variable (removed in 2.23) | Yes | — | Yes | — |
@@ -190,31 +190,31 @@ Full analysis and promotion candidates: [REMEDIATION_TIER_REPORT.md](REMEDIATION
 | M026 | M | Native | medium | task | ai | Inventory variable names must be valid Python identifiers (enforced in 2.23) | Yes | — | Yes | — |
 | M027 | M | Native | low | task | ai | Mixing inline k=v arguments with args: mapping is deprecated (2.23) | Yes | — | Yes | — |
 | M028 | M | OPA | high | task | ai | first_found lookup auto-splitting paths on delimiters is deprecated (2.23) | Yes | Yes | Yes | — |
-| M029 | M | Native | medium | task | ai | Inventory scripts must include _meta.hostvars in JSON output (enforced in 2.23) | Yes | Yes | Yes | — |
+| M029 | M | Native | medium | playbook | manual | Inventory scripts must include _meta.hostvars in JSON output (enforced in 2.23) | Yes | Yes | Yes | — |
 | M030 | M | Native | medium | task | ai | Conditional expressions that fail Jinja2 parsing will error in 2.23 instead of being silently ignored | Yes | — | Yes | — |
 | P001 | P | Native | error | task | ai | Validate module name (Ansible required). | — | Yes | Yes | — |
 | P002 | P | Native | error | task | ai | Validate module argument keys (Ansible required). | — | Yes | Yes | — |
 | P003 | P | Native | error | task | ai | Validate module argument values (Ansible required). | — | — | Yes | — |
-| P004 | P | Native | error | task | ai | Validate variables (Ansible required). | — | — | Yes | — |
+| P004 | P | Native | error | inventory | manual | Validate variables (Ansible required). | — | — | Yes | — |
 | R101 | R | Native | medium | task | ai | Task executes parameterized command (annotation-based) | Yes | Yes | Yes | — |
 | R103 | R | Native | medium | task | ai | Task downloads and executes (annotation-based). | Yes | Yes | Yes | — |
 | R104 | R | Native | medium | task | ai | Download from unauthorized source (annotation-based). | Yes | Yes | Yes | — |
 | R105 | R | Native | medium | task | ai | Outbound transfer (annotation-based). | Yes | — | Yes | — |
 | R106 | R | Native | medium | task | ai | Inbound transfer (annotation-based). | Yes | — | Yes | — |
 | R107 | R | Native | medium | task | ai | Package install with insecure option (annotation-based). | Yes | — | Yes | — |
-| R108 | R | Native | medium | task | ai | Privilege escalation (annotation-based). | Yes | Yes | Yes | — |
+| R108 | R | Native | medium | play | manual | Privilege escalation (annotation-based). | Yes | Yes | Yes | — |
 | R109 | R | Native | medium | task | ai | Key/config change (annotation-based). | Yes | — | Yes | — |
 | R111 | R | Native | medium | task | manual | Parameterized role import (annotation-based). | Yes | Yes | Yes | — |
 | R112 | R | Native | medium | task | manual | Parameterized taskfile import (annotation-based). | Yes | Yes | Yes | — |
 | R113 | R | Native | medium | task | ai | Parameterized package install (annotation-based). | Yes | Yes | Yes | — |
 | R114 | R | Native | medium | task | ai | File change (annotation-based). | Yes | Yes | Yes | — |
 | R115 | R | Native | medium | task | ai | File deletion (annotation-based). | Yes | — | Yes | — |
-| R117 | R | Native | info | task | manual | Role is from Galaxy/external source. | Yes | — | Yes | — |
+| R117 | R | Native | info | role | manual | Role is from Galaxy/external source. | Yes | — | Yes | — |
 | R118 | R | OPA | info | task | manual | Task downloads from an external source (inbound transfer). | Yes | Yes | Yes | — |
-| R401 | R | Native | info | task | manual | Report inbound transfer sources. | Yes | — | Yes | — |
+| R401 | R | Native | info | playbook | manual | Report inbound transfer sources. | Yes | — | Yes | — |
 | R402 | R | Native | info | task | manual | Report variables used at end of sequence. | — | — | Yes | — |
 | R404 | R | Native | info | task | manual | Expose variable_set for the task. | — | — | Yes | — |
-| R501 | R | Native | info | task | manual | Suggest collection/role dependency. | — | — | Yes | — |
+| R501 | R | Native | info | collection | manual | Suggest collection/role dependency. | — | — | Yes | — |
 | SEC:* | SEC | Gitleaks | critical | task | ai | Secret/credential detection (delegated to Gitleaks binary). | Yes | Yes | — | — |
 
 ## By Validator
@@ -280,20 +280,20 @@ Full analysis and promotion candidates: [REMEDIATION_TIER_REPORT.md](REMEDIATION
 | A001 | medium | task | ai | Tasks should use named_url instead of hardcoded template IDs. | Yes | Yes | Yes | — |
 | A002 | high | task | ai | Tasks should not use deprecated AAP API endpoints or deprecated ansible.hub modules. | Yes | Yes | Yes | — |
 | L026 | low | task | auto | Tasks should use FQCN for modules. | Yes | Yes | Yes | Yes |
-| L027 | low | task | ai | Roles should have meta/main.yml with metadata. | Yes | Yes | Yes | — |
+| L027 | low | role | manual | Roles should have meta/main.yml with metadata. | Yes | Yes | Yes | — |
 | L030 | low | task | ai | Non-builtin module used when a builtin equivalent exists. | Yes | Yes | Yes | — |
 | L031 | high | task | ai | File permission may be insecure. | Yes | Yes | Yes | — |
 | L032 | low | task | ai | Variable redefinition may cause confusion. | Yes | — | Yes | — |
 | L033 | low | task | ai | Overriding vars without conditions. | Yes | — | Yes | — |
-| L034 | low | task | ai | Lower-precedence override may be unused. | Yes | — | Yes | — |
+| L034 | low | inventory | manual | Lower-precedence override may be unused. | Yes | — | Yes | — |
 | L035 | low | task | ai | set_fact with random in args. | Yes | Yes | Yes | — |
 | L036 | low | task | ai | include_vars without when/tags. | Yes | Yes | Yes | — |
-| L037 | medium | task | ai | Module name could not be resolved. | Yes | Yes | Yes | — |
-| L038 | medium | task | ai | Role could not be resolved. | Yes | — | Yes | — |
-| L039 | medium | task | ai | Variable use may be undefined. | Yes | — | Yes | — |
-| L040 | info | task | manual | YAML should not contain tabs; use spaces. | Yes | Yes | Yes | — |
+| L037 | medium | collection | manual | Module name could not be resolved. | Yes | Yes | Yes | — |
+| L038 | medium | role | manual | Role could not be resolved. | Yes | — | Yes | — |
+| L039 | medium | inventory | manual | Variable use may be undefined. | Yes | — | Yes | — |
+| L040 | info | playbook | manual | YAML should not contain tabs; use spaces. | Yes | Yes | Yes | — |
 | L041 | low | task | ai | Task keys should follow canonical order (e.g. name before module). | Yes | Yes | Yes | — |
-| L042 | info | task | manual | Play/block has high task count. | Yes | Yes | Yes | — |
+| L042 | info | play | manual | Play/block has high task count. | Yes | Yes | Yes | — |
 | L043 | low | task | auto | Bare variable in with_* loop directive; use {{ var }}. | Yes | Yes | Yes | Yes |
 | L044 | low | task | ai | Set state explicitly where it matters. | Yes | Yes | Yes | — |
 | L045 | low | task | ai | Avoid inline environment in tasks. | Yes | Yes | Yes | — |
@@ -303,48 +303,48 @@ Full analysis and promotion candidates: [REMEDIATION_TIER_REPORT.md](REMEDIATION
 | L049 | low | task | ai | Loop variable should use prefix (e.g. item_). | Yes | Yes | Yes | — |
 | L050 | low | task | ai | Variable names: lowercase, underscores. | Yes | Yes | Yes | — |
 | L051 | low | task | ai | Jinja spacing: {{ var }} not {{var}}. | Yes | Yes | Yes | — |
-| L052 | low | task | ai | Galaxy version in meta should be semantic. | Yes | Yes | Yes | — |
-| L053 | low | task | ai | Role meta should have valid structure. | Yes | Yes | Yes | — |
-| L054 | low | task | ai | Role meta galaxy_info should include galaxy_tags. | Yes | — | Yes | — |
-| L055 | low | task | ai | Role meta video_links should be valid URLs. | Yes | — | Yes | — |
-| L056 | info | task | manual | Path may match ignore pattern. | Yes | — | Yes | — |
-| L060 | info | task | manual | Line too long (exceeds 160 characters). | Yes | Yes | Yes | — |
-| L073 | low | task | ai | YAML should use 2-space indentation. | Yes | — | Yes | — |
-| L074 | low | task | ai | Role names should not contain dashes. | Yes | Yes | Yes | — |
-| L075 | low | task | ai | Template source files should use .j2 extension (ansible_managed best practice). | Yes | — | Yes | — |
+| L052 | low | role | manual | Galaxy version in meta should be semantic. | Yes | Yes | Yes | — |
+| L053 | low | role | manual | Role meta should have valid structure. | Yes | Yes | Yes | — |
+| L054 | low | role | manual | Role meta galaxy_info should include galaxy_tags. | Yes | — | Yes | — |
+| L055 | low | role | manual | Role meta video_links should be valid URLs. | Yes | — | Yes | — |
+| L056 | info | playbook | manual | Path may match ignore pattern. | Yes | — | Yes | — |
+| L060 | info | playbook | manual | Line too long (exceeds 160 characters). | Yes | Yes | Yes | — |
+| L073 | low | playbook | manual | YAML should use 2-space indentation. | Yes | — | Yes | — |
+| L074 | low | role | manual | Role names should not contain dashes. | Yes | Yes | Yes | — |
+| L075 | low | role | manual | Template source files should use .j2 extension (ansible_managed best practice). | Yes | — | Yes | — |
 | L076 | low | task | ai | Use ansible_facts bracket notation instead of injected fact variables. | Yes | — | Yes | — |
-| L077 | low | task | ai | Roles should have meta/argument_specs.yml for fail-fast parameter validation. | Yes | Yes | Yes | — |
+| L077 | low | role | manual | Roles should have meta/argument_specs.yml for fail-fast parameter validation. | Yes | Yes | Yes | — |
 | L078 | low | task | ai | Use bracket notation for dict key access in Jinja. | Yes | Yes | Yes | — |
-| L079 | low | task | ai | Role defaults/vars should be prefixed with the role name. | Yes | Yes | Yes | — |
+| L079 | low | role | manual | Role defaults/vars should be prefixed with the role name. | Yes | Yes | Yes | — |
 | L080 | low | task | ai | Internal role variables should be prefixed with _ (underscore). | Yes | Yes | Yes | — |
-| L081 | low | task | ai | Do not number roles or playbooks. | Yes | Yes | Yes | — |
+| L081 | low | playbook | manual | Do not number roles or playbooks. | Yes | Yes | Yes | — |
 | L082 | low | task | ai | Template source files should use .j2 extension. | Yes | — | Yes | — |
 | L083 | low | task | ai | Do not hardcode host group names in roles. | Yes | Yes | Yes | — |
 | L084 | low | task | auto | Task names in included sub-task files should use a prefix. | Yes | Yes | Yes | Yes |
 | L085 | low | task | ai | Use explicit role_path prefix in include paths within roles. | Yes | Yes | Yes | — |
-| L086 | low | task | ai | Avoid playbook/play vars for routine config; use inventory vars. | Yes | — | Yes | — |
-| L087 | low | task | ai | Collection root should have a LICENSE or COPYING file. | Yes | Yes | Yes | — |
-| L088 | low | task | ai | Collection README should document supported ansible-core versions. | Yes | Yes | Yes | — |
-| L089 | low | task | ai | Plugin Python files should include type hints. | Yes | Yes | Yes | — |
-| L090 | low | task | ai | Plugin entry files should be small; move helpers to module_utils. | Yes | Yes | Yes | — |
+| L086 | low | play | manual | Avoid playbook/play vars for routine config; use inventory vars. | Yes | — | Yes | — |
+| L087 | low | collection | manual | Collection root should have a LICENSE or COPYING file. | Yes | Yes | Yes | — |
+| L088 | low | collection | manual | Collection README should document supported ansible-core versions. | Yes | Yes | Yes | — |
+| L089 | low | collection | manual | Plugin Python files should include type hints. | Yes | Yes | Yes | — |
+| L090 | low | collection | manual | Plugin entry files should be small; move helpers to module_utils. | Yes | Yes | Yes | — |
 | L091 | low | task | ai | Use \| bool for bare variables in when conditions. | Yes | — | Yes | — |
 | L092 | low | task | ai | Avoid loop variable references in task names. | Yes | — | Yes | — |
 | L093 | low | task | ai | Do not override role defaults/vars with set_fact. | Yes | — | Yes | — |
 | L094 | low | task | ai | Do not put dynamic dates in templates; breaks change detection. | Yes | — | Yes | — |
-| L095 | error | task | ai | YAML file does not match expected schema structure. | Yes | Yes | Yes | — |
-| L096 | high | task | ai | meta/runtime.yml should declare requires_ansible. | Yes | Yes | Yes | — |
-| L097 | low | task | ai | Task names should be unique within a play. | Yes | — | Yes | — |
-| L098 | error | task | ai | YAML files should not have duplicate mapping keys. | Yes | Yes | Yes | — |
-| L099 | info | task | manual | Prefer double quotes for YAML string values. | Yes | Yes | Yes | — |
-| L100 | medium | task | ai | Variable names must not be Python or Ansible keywords. | Yes | Yes | Yes | — |
-| L101 | medium | task | ai | Variable names must not collide with Ansible reserved names. | Yes | — | Yes | — |
-| L102 | medium | task | ai | Do not set read-only Ansible variables. | Yes | — | Yes | — |
-| L103 | low | task | ai | Collection should have a CHANGELOG file. | Yes | Yes | Yes | — |
-| L104 | low | task | ai | Collection should have meta/runtime.yml. | Yes | Yes | Yes | — |
-| L105 | low | task | ai | galaxy.yml should have a repository key. | Yes | Yes | Yes | — |
+| L095 | error | playbook | manual | YAML file does not match expected schema structure. | Yes | Yes | Yes | — |
+| L096 | high | collection | manual | meta/runtime.yml should declare requires_ansible. | Yes | Yes | Yes | — |
+| L097 | low | playbook | manual | Task names should be unique within a play. | Yes | — | Yes | — |
+| L098 | error | playbook | manual | YAML files should not have duplicate mapping keys. | Yes | Yes | Yes | — |
+| L099 | info | playbook | manual | Prefer double quotes for YAML string values. | Yes | Yes | Yes | — |
+| L100 | medium | playbook | manual | Variable names must not be Python or Ansible keywords. | Yes | Yes | Yes | — |
+| L101 | medium | playbook | manual | Variable names must not collide with Ansible reserved names. | Yes | — | Yes | — |
+| L102 | medium | playbook | manual | Do not set read-only Ansible variables. | Yes | — | Yes | — |
+| L103 | low | collection | manual | Collection should have a CHANGELOG file. | Yes | Yes | Yes | — |
+| L104 | low | collection | manual | Collection should have meta/runtime.yml. | Yes | Yes | Yes | — |
+| L105 | low | collection | manual | galaxy.yml should have a repository key. | Yes | Yes | Yes | — |
 | L110 | high | task | ai | Debug tasks should not log sensitive variables without no_log. | Yes | Yes | Yes | — |
 | M005 | high | task | ai | Registered variable used in Jinja template may be untrusted in 2.19+. | Yes | Yes | Yes | — |
-| M010 | high | task | ai | ansible_python_interpreter set to Python 2; dropped in 2.18+. | Yes | Yes | Yes | — |
+| M010 | high | play | manual | ansible_python_interpreter set to Python 2; dropped in 2.18+. | Yes | Yes | Yes | — |
 | M014 | medium | task | ai | Use ansible_facts["name"] instead of injected ansible_* fact variables (removed in 2.24) | Yes | Yes | Yes | — |
 | M015 | medium | task | ai | Use ansible_play_batch instead of deprecated play_hosts variable (removed in 2.23) | Yes | — | Yes | — |
 | M019 | low | task | ai | !!omap and !!pairs YAML tags are deprecated; standard YAML mappings preserve order in Python 3.7+ (2.23) | Yes | — | Yes | — |
@@ -352,30 +352,30 @@ Full analysis and promotion candidates: [REMEDIATION_TIER_REPORT.md](REMEDIATION
 | M022 | medium | task | ai | tree and oneline callback plugins are removed in 2.23; choose an alternative | Yes | Yes | Yes | — |
 | M026 | medium | task | ai | Inventory variable names must be valid Python identifiers (enforced in 2.23) | Yes | — | Yes | — |
 | M027 | low | task | ai | Mixing inline k=v arguments with args: mapping is deprecated (2.23) | Yes | — | Yes | — |
-| M029 | medium | task | ai | Inventory scripts must include _meta.hostvars in JSON output (enforced in 2.23) | Yes | Yes | Yes | — |
+| M029 | medium | playbook | manual | Inventory scripts must include _meta.hostvars in JSON output (enforced in 2.23) | Yes | Yes | Yes | — |
 | M030 | medium | task | ai | Conditional expressions that fail Jinja2 parsing will error in 2.23 instead of being silently ignored | Yes | — | Yes | — |
 | P001 | error | task | ai | Validate module name (Ansible required). | — | Yes | Yes | — |
 | P002 | error | task | ai | Validate module argument keys (Ansible required). | — | Yes | Yes | — |
 | P003 | error | task | ai | Validate module argument values (Ansible required). | — | — | Yes | — |
-| P004 | error | task | ai | Validate variables (Ansible required). | — | — | Yes | — |
+| P004 | error | inventory | manual | Validate variables (Ansible required). | — | — | Yes | — |
 | R101 | medium | task | ai | Task executes parameterized command (annotation-based) | Yes | Yes | Yes | — |
 | R103 | medium | task | ai | Task downloads and executes (annotation-based). | Yes | Yes | Yes | — |
 | R104 | medium | task | ai | Download from unauthorized source (annotation-based). | Yes | Yes | Yes | — |
 | R105 | medium | task | ai | Outbound transfer (annotation-based). | Yes | — | Yes | — |
 | R106 | medium | task | ai | Inbound transfer (annotation-based). | Yes | — | Yes | — |
 | R107 | medium | task | ai | Package install with insecure option (annotation-based). | Yes | — | Yes | — |
-| R108 | medium | task | ai | Privilege escalation (annotation-based). | Yes | Yes | Yes | — |
+| R108 | medium | play | manual | Privilege escalation (annotation-based). | Yes | Yes | Yes | — |
 | R109 | medium | task | ai | Key/config change (annotation-based). | Yes | — | Yes | — |
 | R111 | medium | task | manual | Parameterized role import (annotation-based). | Yes | Yes | Yes | — |
 | R112 | medium | task | manual | Parameterized taskfile import (annotation-based). | Yes | Yes | Yes | — |
 | R113 | medium | task | ai | Parameterized package install (annotation-based). | Yes | Yes | Yes | — |
 | R114 | medium | task | ai | File change (annotation-based). | Yes | Yes | Yes | — |
 | R115 | medium | task | ai | File deletion (annotation-based). | Yes | — | Yes | — |
-| R117 | info | task | manual | Role is from Galaxy/external source. | Yes | — | Yes | — |
-| R401 | info | task | manual | Report inbound transfer sources. | Yes | — | Yes | — |
+| R117 | info | role | manual | Role is from Galaxy/external source. | Yes | — | Yes | — |
+| R401 | info | playbook | manual | Report inbound transfer sources. | Yes | — | Yes | — |
 | R402 | info | task | manual | Report variables used at end of sequence. | — | — | Yes | — |
 | R404 | info | task | manual | Expose variable_set for the task. | — | — | Yes | — |
-| R501 | info | task | manual | Suggest collection/role dependency. | — | — | Yes | — |
+| R501 | info | collection | manual | Suggest collection/role dependency. | — | — | Yes | — |
 
 ### Ansible (7 rules, 7 impl, 6 tested, 4 fixers)
 

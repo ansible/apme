@@ -10,26 +10,26 @@ Analysis of default remediation routing for all rules. Regenerate with:
 | Tier | Count | % of 156 |
 |------|-------|--------|
 | Tier 1 — auto (has transform) | 25 | 16% |
-| Tier 2 — AI (task/block, no fixer) | 103 | 66% |
-| Tier 3 — manual | 28 | 17% |
+| Tier 2 — AI (task/block, no fixer) | 69 | 44% |
+| Tier 3 — manual | 62 | 39% |
 
 ### Promotion potential
 
-- **28** Tier 2 rules could likely move to Tier 1 (mechanical transforms)
-- **7** Tier 3 rules have mechanical fixes blocked by scope
-- **103 - 28 = 75** Tier 2 rules should stay AI (judgment/security)
+- **27** Tier 2 rules could likely move to Tier 1 (mechanical transforms)
+- **8** Tier 3 rules have mechanical fixes blocked by scope
+- **69 - 27 = 42** Tier 2 rules should stay AI (judgment/security)
 
 ### Tier 3 breakdown
 
 | Reason | Count |
 |--------|-------|
 | info severity | 19 |
-| playbook scope | 2 |
-| collection scope | 1 |
-| role scope | 0 |
-| play scope | 5 |
-| inventory scope | 0 |
 | cross-file (R111/R112) | 2 |
+| playbook scope | 11 |
+| collection scope | 10 |
+| role scope | 10 |
+| play scope | 7 |
+| inventory scope | 3 |
 
 ## Tier 1 — Auto (25 rules)
 
@@ -61,7 +61,7 @@ Analysis of default remediation routing for all rules. Regenerate with:
 | M008 | OPA | high | task | Bare include is removed in 2.19+; use include_tasks or import_tasks. |
 | M009 | OPA | high | task | with_* loops are deprecated; use loop instead. |
 
-## Tier 2 — AI (103 rules)
+## Tier 2 — AI (69 rules)
 
 ### Could move to Tier 1 auto
 
@@ -76,11 +76,10 @@ Analysis of default remediation routing for all rules. Regenerate with:
 | L062 | low | task | Convert key=value to YAML mapping style |
 | L063 | low | block | Add block name |
 | L064 | low | task | Replace meta end_play with end_host |
-| L073 | low | task | Fix YAML indentation to 2 spaces |
 | L076 | low | task | Rewrite ansible_* to ansible_facts[] |
 | L078 | low | task | Convert dot to bracket notation in Jinja |
 | L080 | low | task | Prefix internal vars with underscore |
-| L091 | low | task | Add | bool filter to bare when vars |
+| L091 | low | task | Add \| bool filter to bare when vars |
 | L092 | low | task | Remove loop var from task name |
 | L110 | high | task | Add no_log to debug task |
 | M014 | medium | task | Rewrite ansible_* facts to ansible_facts bracket notation |
@@ -106,77 +105,44 @@ Analysis of default remediation routing for all rules. Regenerate with:
 | L006 | low | task | Task/block scope — AI can propose fix (Tier 2) |
 | L014 | low | task | Task/block scope — AI can propose fix (Tier 2) |
 | L017 | low | task | Task/block scope — AI can propose fix (Tier 2) |
-| L027 | low | task | Task/block scope — AI can propose fix (Tier 2) |
 | L030 | low | task | Task/block scope — AI can propose fix (Tier 2) |
 | L031 | high | task | Task/block scope — AI can propose fix (Tier 2) |
 | L032 | low | task | Task/block scope — AI can propose fix (Tier 2) |
 | L033 | low | task | Task/block scope — AI can propose fix (Tier 2) |
-| L034 | low | task | Task/block scope — AI can propose fix (Tier 2) |
 | L035 | low | task | Task/block scope — AI can propose fix (Tier 2) |
 | L036 | low | task | Task/block scope — AI can propose fix (Tier 2) |
-| L037 | medium | task | Task/block scope — AI can propose fix (Tier 2) |
-| L038 | medium | task | Task/block scope — AI can propose fix (Tier 2) |
-| L039 | medium | task | Task/block scope — AI can propose fix (Tier 2) |
 | L041 | low | task | Task/block scope — AI can propose fix (Tier 2) |
 | L044 | low | task | Task/block scope — AI can propose fix (Tier 2) |
 | L045 | low | task | Task/block scope — AI can propose fix (Tier 2) |
 | L048 | low | task | Task/block scope — AI can propose fix (Tier 2) |
-| L052 | low | task | Task/block scope — AI can propose fix (Tier 2) |
-| L053 | low | task | Task/block scope — AI can propose fix (Tier 2) |
-| L054 | low | task | Task/block scope — AI can propose fix (Tier 2) |
-| L055 | low | task | Task/block scope — AI can propose fix (Tier 2) |
 | L058 | error | task | Task/block scope — AI can propose fix (Tier 2) |
 | L059 | error | task | Task/block scope — AI can propose fix (Tier 2) |
-| L074 | low | task | Task/block scope — AI can propose fix (Tier 2) |
-| L075 | low | task | Task/block scope — AI can propose fix (Tier 2) |
-| L077 | low | task | Task/block scope — AI can propose fix (Tier 2) |
-| L079 | low | task | Task/block scope — AI can propose fix (Tier 2) |
-| L081 | low | task | Task/block scope — AI can propose fix (Tier 2) |
 | L082 | low | task | Task/block scope — AI can propose fix (Tier 2) |
 | L083 | low | task | Task/block scope — AI can propose fix (Tier 2) |
 | L085 | low | task | Task/block scope — AI can propose fix (Tier 2) |
-| L086 | low | task | Task/block scope — AI can propose fix (Tier 2) |
-| L087 | low | task | Task/block scope — AI can propose fix (Tier 2) |
-| L088 | low | task | Task/block scope — AI can propose fix (Tier 2) |
-| L089 | low | task | Task/block scope — AI can propose fix (Tier 2) |
-| L090 | low | task | Task/block scope — AI can propose fix (Tier 2) |
 | L093 | low | task | Task/block scope — AI can propose fix (Tier 2) |
 | L094 | low | task | Task/block scope — AI can propose fix (Tier 2) |
-| L095 | error | task | Task/block scope — AI can propose fix (Tier 2) |
-| L096 | high | task | Task/block scope — AI can propose fix (Tier 2) |
-| L097 | low | task | Task/block scope — AI can propose fix (Tier 2) |
-| L098 | error | task | Task/block scope — AI can propose fix (Tier 2) |
-| L100 | medium | task | Task/block scope — AI can propose fix (Tier 2) |
-| L101 | medium | task | Task/block scope — AI can propose fix (Tier 2) |
-| L102 | medium | task | Task/block scope — AI can propose fix (Tier 2) |
-| L103 | low | task | Task/block scope — AI can propose fix (Tier 2) |
-| L104 | low | task | Task/block scope — AI can propose fix (Tier 2) |
-| L105 | low | task | Task/block scope — AI can propose fix (Tier 2) |
 | L106 | medium | task | Task/block scope — AI can propose fix (Tier 2) |
 | M005 | high | task | Task/block scope — AI can propose fix (Tier 2) |
-| M010 | high | task | Task/block scope — AI can propose fix (Tier 2) |
 | M022 | medium | task | Task/block scope — AI can propose fix (Tier 2) |
 | M028 | high | task | Task/block scope — AI can propose fix (Tier 2) |
-| M029 | medium | task | Task/block scope — AI can propose fix (Tier 2) |
 | M030 | medium | task | Task/block scope — AI can propose fix (Tier 2) |
 | P001 | error | task | Task/block scope — AI can propose fix (Tier 2) |
 | P002 | error | task | Task/block scope — AI can propose fix (Tier 2) |
 | P003 | error | task | Task/block scope — AI can propose fix (Tier 2) |
-| P004 | error | task | Task/block scope — AI can propose fix (Tier 2) |
 | R101 | medium | task | Task/block scope — AI can propose fix (Tier 2) |
 | R103 | medium | task | Task/block scope — AI can propose fix (Tier 2) |
 | R104 | medium | task | Task/block scope — AI can propose fix (Tier 2) |
 | R105 | medium | task | Task/block scope — AI can propose fix (Tier 2) |
 | R106 | medium | task | Task/block scope — AI can propose fix (Tier 2) |
 | R107 | medium | task | Task/block scope — AI can propose fix (Tier 2) |
-| R108 | medium | task | Task/block scope — AI can propose fix (Tier 2) |
 | R109 | medium | task | Task/block scope — AI can propose fix (Tier 2) |
 | R113 | medium | task | Task/block scope — AI can propose fix (Tier 2) |
 | R114 | medium | task | Task/block scope — AI can propose fix (Tier 2) |
 | R115 | medium | task | Task/block scope — AI can propose fix (Tier 2) |
 | SEC:* | critical | task | Task/block scope — AI can propose fix (Tier 2) |
 
-## Tier 3 — Manual (28 rules)
+## Tier 3 — Manual (62 rules)
 
 | Rule ID | Validator | Severity | Scope | Auto candidate? | Reason |
 |---------|-----------|----------|-------|-----------------|--------|
@@ -184,11 +150,20 @@ Analysis of default remediation routing for all rules. Regenerate with:
 | L016 | OPA | info | task | — | Info severity — informational, no auto-fix |
 | L019 | OPA | low | playbook | — | Scope 'playbook' — play/role/collection not AI-proposable |
 | L023 | OPA | info | play | — | Info severity — informational, no auto-fix |
-| L040 | Native | info | task | Replace tabs with spaces | Info severity — informational, no auto-fix |
-| L042 | Native | info | task | — | Info severity — informational, no auto-fix |
-| L056 | Native | info | task | — | Info severity — informational, no auto-fix |
+| L027 | Native | low | role | — | Scope 'role' — play/role/collection not AI-proposable |
+| L034 | Native | low | inventory | — | Scope 'inventory' — play/role/collection not AI-proposable |
+| L037 | Native | medium | collection | — | Scope 'collection' — play/role/collection not AI-proposable |
+| L038 | Native | medium | role | — | Scope 'role' — play/role/collection not AI-proposable |
+| L039 | Native | medium | inventory | — | Scope 'inventory' — play/role/collection not AI-proposable |
+| L040 | Native | info | playbook | Replace tabs with spaces | Info severity — informational, no auto-fix |
+| L042 | Native | info | play | — | Info severity — informational, no auto-fix |
+| L052 | Native | low | role | — | Scope 'role' — play/role/collection not AI-proposable |
+| L053 | Native | low | role | — | Scope 'role' — play/role/collection not AI-proposable |
+| L054 | Native | low | role | — | Scope 'role' — play/role/collection not AI-proposable |
+| L055 | Native | low | role | — | Scope 'role' — play/role/collection not AI-proposable |
+| L056 | Native | info | playbook | — | Info severity — informational, no auto-fix |
 | L057 | Ansible | error | playbook | — | Scope 'playbook' — play/role/collection not AI-proposable |
-| L060 | Native | info | task | Wrap long lines | Info severity — informational, no auto-fix |
+| L060 | Native | info | playbook | Wrap long lines | Info severity — informational, no auto-fix |
 | L065 | OPA | low | play | Remove Jinja from play name | Scope 'play' — play/role/collection not AI-proposable |
 | L066 | OPA | low | play | — | Scope 'play' — play/role/collection not AI-proposable |
 | L067 | OPA | info | task | Add verbosity to debug task | Info severity — informational, no auto-fix |
@@ -197,14 +172,39 @@ Analysis of default remediation routing for all rules. Regenerate with:
 | L070 | OPA | info | task | Move Jinja to end of task name | Info severity — informational, no auto-fix |
 | L071 | OPA | info | task | — | Info severity — informational, no auto-fix |
 | L072 | OPA | info | task | Add backup: true | Info severity — informational, no auto-fix |
-| L099 | Native | info | task | — | Info severity — informational, no auto-fix |
+| L073 | Native | low | playbook | Fix YAML indentation to 2 spaces | Scope 'playbook' — play/role/collection not AI-proposable |
+| L074 | Native | low | role | — | Scope 'role' — play/role/collection not AI-proposable |
+| L075 | Native | low | role | — | Scope 'role' — play/role/collection not AI-proposable |
+| L077 | Native | low | role | — | Scope 'role' — play/role/collection not AI-proposable |
+| L079 | Native | low | role | — | Scope 'role' — play/role/collection not AI-proposable |
+| L081 | Native | low | playbook | — | Scope 'playbook' — play/role/collection not AI-proposable |
+| L086 | Native | low | play | — | Scope 'play' — play/role/collection not AI-proposable |
+| L087 | Native | low | collection | — | Scope 'collection' — play/role/collection not AI-proposable |
+| L088 | Native | low | collection | — | Scope 'collection' — play/role/collection not AI-proposable |
+| L089 | Native | low | collection | — | Scope 'collection' — play/role/collection not AI-proposable |
+| L090 | Native | low | collection | — | Scope 'collection' — play/role/collection not AI-proposable |
+| L095 | Native | error | playbook | — | Scope 'playbook' — play/role/collection not AI-proposable |
+| L096 | Native | high | collection | — | Scope 'collection' — play/role/collection not AI-proposable |
+| L097 | Native | low | playbook | — | Scope 'playbook' — play/role/collection not AI-proposable |
+| L098 | Native | error | playbook | — | Scope 'playbook' — play/role/collection not AI-proposable |
+| L099 | Native | info | playbook | — | Info severity — informational, no auto-fix |
+| L100 | Native | medium | playbook | — | Scope 'playbook' — play/role/collection not AI-proposable |
+| L101 | Native | medium | playbook | — | Scope 'playbook' — play/role/collection not AI-proposable |
+| L102 | Native | medium | playbook | — | Scope 'playbook' — play/role/collection not AI-proposable |
+| L103 | Native | low | collection | — | Scope 'collection' — play/role/collection not AI-proposable |
+| L104 | Native | low | collection | — | Scope 'collection' — play/role/collection not AI-proposable |
+| L105 | Native | low | collection | — | Scope 'collection' — play/role/collection not AI-proposable |
+| M010 | Native | high | play | — | Scope 'play' — play/role/collection not AI-proposable |
 | M011 | OPA | high | collection | — | Scope 'collection' — play/role/collection not AI-proposable |
 | M025 | OPA | high | play | — | Scope 'play' — play/role/collection not AI-proposable |
+| M029 | Native | medium | playbook | — | Scope 'playbook' — play/role/collection not AI-proposable |
+| P004 | Native | error | inventory | — | Scope 'inventory' — play/role/collection not AI-proposable |
+| R108 | Native | medium | play | — | Scope 'play' — play/role/collection not AI-proposable |
 | R111 | Native | medium | task | — | Cross-file context required (R111/R112) |
 | R112 | Native | medium | task | — | Cross-file context required (R111/R112) |
-| R117 | Native | info | task | — | Info severity — informational, no auto-fix |
+| R117 | Native | info | role | — | Info severity — informational, no auto-fix |
 | R118 | OPA | info | task | — | Info severity — informational, no auto-fix |
-| R401 | Native | info | task | — | Info severity — informational, no auto-fix |
+| R401 | Native | info | playbook | — | Info severity — informational, no auto-fix |
 | R402 | Native | info | task | — | Info severity — informational, no auto-fix |
 | R404 | Native | info | task | — | Info severity — informational, no auto-fix |
-| R501 | Native | info | task | — | Info severity — informational, no auto-fix |
+| R501 | Native | info | collection | — | Info severity — informational, no auto-fix |

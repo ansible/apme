@@ -1,5 +1,7 @@
 """Unit tests for GraphRule L031: insecure file permissions."""
 
+# ruff: noqa: S108
+
 from __future__ import annotations
 
 import pytest
@@ -207,6 +209,30 @@ class TestInsecureFilePermissionGraphRule:
             module_options={"msg": "hello"},
         )
         assert rule.match(g, nid) is False
+
+    def test_match_posix_synchronize(self, rule: InsecureFilePermissionGraphRule) -> None:
+        """Matches ansible.posix.synchronize tasks with mode.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, nid = _make_file_task(
+            module="ansible.posix.synchronize",
+            module_options={"src": "/tmp/a", "dest": "/tmp/b", "mode": "0644"},
+        )
+        assert rule.match(g, nid) is True
+
+    def test_match_legacy_assemble(self, rule: InsecureFilePermissionGraphRule) -> None:
+        """Matches ansible.legacy.assemble tasks with mode.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, nid = _make_file_task(
+            module="ansible.legacy.assemble",
+            module_options={"src": "/tmp/fragments", "dest": "/tmp/out", "mode": "0644"},
+        )
+        assert rule.match(g, nid) is True
 
     def test_no_match_play_node(self, rule: InsecureFilePermissionGraphRule) -> None:
         """Does not match PLAY nodes.

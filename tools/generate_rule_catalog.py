@@ -41,6 +41,7 @@ sys.path.insert(0, str(REPO_ROOT / "tools"))
 from rule_analysis import (  # noqa: E402
     RuleMetadata,
     enrich_rule,
+    tier3_breakdown_reason,
 )
 
 _FRONTMATTER = re.compile(r"^---\s*\n(.*?)\n---", re.DOTALL)
@@ -493,7 +494,7 @@ def _severity_section() -> list[str]:
     return [
         "## Severity Scale (ADR-043)",
         "",
-        "Default severity is assigned from `src/apme_engine/severity_defaults.py` using this decision tree:",
+        "Default severity is assigned from `src/apme_engine/graph/severity.py` using this decision tree:",
         "",
         "1. Security vulnerability? → **critical**",
         "2. Runtime breakage today? → **error**",
@@ -647,7 +648,7 @@ def generate() -> str:
         lines.append("")
 
     if no_severity:
-        lines.append(f"### Missing from severity_defaults.py (fallback to medium) — {len(no_severity)}")
+        lines.append(f"### Missing from graph/severity.py (fallback to medium) — {len(no_severity)}")
         lines.append("")
         for m in no_severity:
             lines.append(f"- **{m.rule_id}** ({m.validator}): add to `SEVERITY_DEFAULTS` per ADR-043")
@@ -696,6 +697,11 @@ def generate_remediation_report() -> str:
     ai_promote = [m for m in auto_candidates if m.remediation_tier == "ai"]
     manual_promote = [m for m in auto_candidates if m.remediation_tier == "manual"]
 
+    total = len(meta)
+
+    def pct(n: int) -> str:
+        return f"{n * 100 // total}%" if total else "0%"
+
     lines = [
         "# Remediation Tier Report",
         "",
@@ -706,11 +712,11 @@ def generate_remediation_report() -> str:
         "",
         "## Summary",
         "",
-        f"| Tier | Count | % of {len(meta)} |",
+        f"| Tier | Count | % of {total} |",
         "|------|-------|--------|",
-        f"| Tier 1 — auto (has transform) | {len(auto)} | {len(auto) * 100 // len(meta)}% |",
-        f"| Tier 2 — AI (task/block, no fixer) | {len(ai)} | {len(ai) * 100 // len(meta)}% |",
-        f"| Tier 3 — manual | {len(manual)} | {len(manual) * 100 // len(meta)}% |",
+        f"| Tier 1 — auto (has transform) | {len(auto)} | {pct(len(auto))} |",
+        f"| Tier 2 — AI (task/block, no fixer) | {len(ai)} | {pct(len(ai))} |",
+        f"| Tier 3 — manual | {len(manual)} | {pct(len(manual))} |",
         "",
         "### Promotion potential",
         "",
@@ -722,19 +728,32 @@ def generate_remediation_report() -> str:
         "",
         "| Reason | Count |",
         "|--------|-------|",
-        f"| info severity | {sum(1 for m in manual if m.severity == 'info')} |",
-        f"| playbook scope | {sum(1 for m in manual if m.scope == 'playbook')} |",
-        f"| collection scope | {sum(1 for m in manual if m.scope == 'collection')} |",
-        f"| role scope | {sum(1 for m in manual if m.scope == 'role')} |",
-        f"| play scope | {sum(1 for m in manual if m.scope == 'play')} |",
-        f"| inventory scope | {sum(1 for m in manual if m.scope == 'inventory')} |",
-        f"| cross-file (R111/R112) | {sum(1 for m in manual if m.rule_id in {'R111', 'R112'})} |",
-        "",
-        f"## Tier 1 — Auto ({len(auto)} rules)",
-        "",
-        "| Rule ID | Validator | Severity | Scope | Description |",
-        "|---------|-----------|----------|-------|-------------|",
     ]
+    tier3_reasons = (
+        "info severity",
+        "cross-file (R111/R112)",
+        "playbook scope",
+        "collection scope",
+        "role scope",
+        "play scope",
+        "inventory scope",
+        "other",
+    )
+    reason_counts = {reason: 0 for reason in tier3_reasons}
+    for m in manual:
+        reason_counts[tier3_breakdown_reason(m)] += 1
+    for reason in tier3_reasons:
+        if reason_counts[reason]:
+            lines.append(f"| {reason} | {reason_counts[reason]} |")
+    lines.extend(
+        [
+            "",
+            f"## Tier 1 — Auto ({len(auto)} rules)",
+            "",
+            "| Rule ID | Validator | Severity | Scope | Description |",
+            "|---------|-----------|----------|-------|-------------|",
+        ]
+    )
     rule_by_id = {r.rule_id: r for r in all_rules}
     for m in sorted(auto, key=lambda x: x.rule_id):
         r = rule_by_id[m.rule_id]
@@ -752,7 +771,7 @@ def generate_remediation_report() -> str:
         ]
     )
     for m in sorted(ai_promote, key=lambda x: x.rule_id):
-        lines.append(f"| {m.rule_id} | {m.severity} | {m.scope} | {m.auto_candidate} |")
+        lines.append(f"| {m.rule_id} | {m.severity} | {m.scope} | {_escape_md_cell(m.auto_candidate or '')} |")
 
     lines.extend(
         [
@@ -777,7 +796,7 @@ def generate_remediation_report() -> str:
     )
     for m in sorted(manual, key=lambda x: x.rule_id):
         r = rule_by_id[m.rule_id]
-        cand = m.auto_candidate or "—"
+        cand = _escape_md_cell(m.auto_candidate) if m.auto_candidate else "—"
         lines.append(
             f"| {m.rule_id} | {r.validator} | {m.severity} | {m.scope} | {cand} "
             f"| {_escape_md_cell(m.remediation_reason)} |"
