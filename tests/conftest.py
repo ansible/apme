@@ -6,7 +6,12 @@ import pytest
 
 from apme_engine.engine.models import YAMLDict
 
-pytest_plugins = ["tests.gateway_db"]
+try:
+    import sqlalchemy  # noqa: F401
+except ImportError:
+    pytest_plugins: list[str] = []
+else:
+    pytest_plugins = ["tests.gateway_db"]
 
 
 @pytest.fixture  # type: ignore[untyped-decorator]
