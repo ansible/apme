@@ -26,6 +26,9 @@ Specs answer "What does this feature do?" They provide:
 | REQ-014 | Policy Permissive Mode | PHASE-003 | Draft |
 | REQ-015 | Detect Debug Sensitive Variables | PHASE-001 | Implemented |
 | REQ-016 | Phase 2 SCM Providers (GitLab + Bitbucket) | PHASE-003 | In Progress |
+| REQ-017 | Python Import Deprecations | PHASE-001 | Draft |
+| REQ-018 | Python AST Validator | PHASE-001 | Draft |
+| REQ-019 | Scan Attestation | Unassigned | Draft |
 
 ## Directory Structure
 
