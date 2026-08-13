@@ -34,7 +34,7 @@
     "react-syntax-highlighter": "^16.1.1",
     "styled-components": "^6.4.3",
     "swr": "^2.2.5",
-    "undici": "7.29.0"
+    "undici": "8.7.0"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.9.1",
@@ -65,7 +65,7 @@
     "zustand": "^5.0.14"
   },
   "overrides": {
-    "undici": "7.29.0",
+    "undici": "8.7.0",
     "@babel/core": ">=7.29.6",
     "postcss": "8.5.23"
   },
