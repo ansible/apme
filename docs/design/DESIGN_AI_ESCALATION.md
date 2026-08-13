@@ -553,13 +553,32 @@ ai = [
 ]
 ```
 
-Install with: `pip install apme-engine[ai]`
+**Install (preferred — hashed via ``uv.lock``):**
+
+```bash
+uv sync --extra ai
+```
+
+Container images use ``uv sync --frozen --extra ai`` (see
+``containers/base/Dockerfile``), so deployed builds verify wheel/sdist
+digests from the lockfile.
+
+**Install (pip — version pin only):**
+
+```bash
+pip install apme-engine[ai]
+```
+
+``pip`` does not consume ``uv.lock`` hashes. That matches other optional
+extras (``gateway``, ``dev``): the version pin is the contract; artifact
+integrity for production comes from ``uv sync --frozen``.
 
 If `--ai` is set but `abbenay-client` is not installed:
 
 ```
 Error: AI escalation requires the 'ai' extra.
-Install with: pip install apme-engine[ai]
+Install with: uv sync --extra ai
+# or: pip install apme-engine[ai]
 ```
 
 ---

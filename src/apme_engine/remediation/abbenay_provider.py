@@ -1,7 +1,8 @@
 """AbbenayProvider — default AIProvider implementation using abbenay_grpc.
 
 This is the sole file in the codebase that imports abbenay_grpc.
-Install with: pip install apme-engine[ai]
+Install with: ``uv sync --extra ai`` (preferred; hashes via ``uv.lock``)
+or ``pip install apme-engine[ai]`` (version pin only).
 """
 
 from __future__ import annotations
@@ -656,7 +657,9 @@ class AbbenayProvider:
             from abbenay_grpc import AbbenayClient  # noqa: PLC0415
         except ImportError:
             raise ImportError(
-                "AI escalation requires the 'ai' extra.\nInstall with: pip install apme-engine[ai]"
+                "AI escalation requires the 'ai' extra.\n"
+                "Install with: uv sync --extra ai\n"
+                "or: pip install apme-engine[ai]"
             ) from None
 
         if addr.startswith("unix://"):
