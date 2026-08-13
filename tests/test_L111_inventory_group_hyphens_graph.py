@@ -146,6 +146,12 @@ class TestGetYamlLineMap:
         assert line_map.get("all.children") == 2
         assert line_map.get("all.children.webservers") == 3
 
+    def test_quoted_group_key(self) -> None:
+        """Map quoted YAML group keys to their declaration line."""
+        content = 'all:\n  children:\n    "web-servers":\n      hosts:\n        host1:\n'
+        line_map = _get_yaml_line_map(content)
+        assert line_map.get("all.children.web-servers") == 3
+
 
 class TestFindInventoryFiles:
     """Tests for _find_inventory_files helper."""
@@ -448,6 +454,29 @@ class TestInventoryGroupHyphensGraphRule:
             assert result is not None
             assert result.verdict is True
             assert "web-servers" in str(result.detail)
+
+    def test_quoted_yaml_group_reports_declaration_line(self) -> None:
+        """Quoted YAML group keys report the declaration line, not line 1."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            playbook = Path(tmpdir) / "playbook.yml"
+            playbook.write_text("---\n- hosts: all\n")
+            inv_file = Path(tmpdir) / "inventory.yml"
+            inv_file.write_text('all:\n  children:\n    "web-servers":\n      hosts:\n        host1:\n')
+
+            graph, pb_id = self._make_graph_with_playbook(str(playbook))
+            rule = InventoryGroupHyphensGraphRule()
+
+            result = rule.process(graph, pb_id)
+
+            assert result is not None
+            assert result.verdict is True
+            assert isinstance(result.detail, dict)
+            violations = result.detail.get("violations", [])
+            assert isinstance(violations, list)
+            assert len(violations) == 1
+            first_violation = violations[0]
+            assert isinstance(first_violation, dict)
+            assert first_violation.get("line") == 3
 
     def test_extensionless_hosts_yaml_inventory(self) -> None:
         """Rule detects hyphens in extensionless 'hosts' file with YAML content."""

@@ -94,5 +94,6 @@
 {"rule_id":"L103","filepath":"apme_engine/graph/rules/L103_galaxy_changelog.py","commit_id":"0000000000000000000000000000000000000000"}
 {"rule_id":"L104","filepath":"apme_engine/graph/rules/L104_galaxy_runtime.py","commit_id":"0000000000000000000000000000000000000000"}
 {"rule_id":"L105","filepath":"apme_engine/graph/rules/L105_galaxy_repository.py","commit_id":"0000000000000000000000000000000000000000"}
+{"rule_id":"L111","filepath":"apme_engine/graph/rules/L111_inventory_group_hyphens_graph.py","commit_id":"0000000000000000000000000000000000000000"}
 {"rule_id":"Sample101","filepath":"ansible_risk_insight/rules/sample_rule.py","commit_id":"d2fa33d401e398641ee8cf6cb6589b378395e9bd"}
 

@@ -131,6 +131,14 @@ These rules operate on the content graph hierarchy JSON via OPA/Rego.
 | L072 | L072.rego | Consider setting backup true on template/copy tasks |
 | L106 | L106.rego | set_fact + loop + when scaling anti-pattern |
 
+## Graph rules (Python) — L100+
+
+These rules operate on the content graph via native Python `GraphRule` implementations in `src/apme_engine/graph/rules/`.
+
+| Rule ID | File | Description |
+|---------|------|-------------|
+| L111 | L111_inventory_group_hyphens_graph.py | Inventory group names should not contain hyphens |
+
 ## Modernize rules — M001-M004 (ansible validator)
 
 These rules use ansible-core's plugin loader (`find_plugin_with_context()`) to resolve modules against the actual runtime metadata (`ansible_builtin_runtime.yml` and collection `meta/runtime.yml`). They stay current with whichever ansible-core version is in the venv.

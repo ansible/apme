@@ -166,7 +166,9 @@ def _get_yaml_line_map(content: str) -> dict[str, int]:
         Dict mapping dotted key paths to line numbers.
     """
     line_map: dict[str, int] = {}
-    key_re = re.compile(r"^(\s*)([a-zA-Z0-9_-]+):")
+    key_re = re.compile(
+        r'^(\s*)(?:"([^"]+)"|\'([^\']+)\'|([a-zA-Z0-9_-]+)):',
+    )
     path_stack: list[tuple[int, str]] = []
 
     for line_num, line in enumerate(content.splitlines(), start=1):
@@ -174,7 +176,9 @@ def _get_yaml_line_map(content: str) -> dict[str, int]:
         if not match:
             continue
         indent = len(match.group(1))
-        key = match.group(2)
+        key = match.group(2) or match.group(3) or match.group(4)
+        if key is None:
+            continue
 
         # Pop stack to current indent level
         while path_stack and path_stack[-1][0] >= indent:
