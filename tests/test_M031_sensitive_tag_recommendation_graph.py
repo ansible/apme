@@ -12,9 +12,7 @@ from apme_engine.graph.content_graph import (
     NodeScope,
     NodeType,
 )
-from apme_engine.graph.scanner import scan
 from apme_engine.graph.rule_base import GraphRule
-from apme_engine.graph.types import YAMLDict, YAMLValue
 from apme_engine.graph.rules.M031_sensitive_tag_recommendation_graph import (
     SensitiveTagRecommendationGraphRule,
     _find_sensitive_registered_vars,
@@ -22,6 +20,8 @@ from apme_engine.graph.rules.M031_sensitive_tag_recommendation_graph import (
     _value_has_sensitive_filter,
     _var_name_is_sensitive,
 )
+from apme_engine.graph.scanner import scan
+from apme_engine.graph.types import YAMLDict, YAMLValue
 
 
 def _make_set_fact_graph(
