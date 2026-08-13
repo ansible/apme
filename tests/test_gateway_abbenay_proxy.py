@@ -226,15 +226,27 @@ async def test_post_secrets_proxied(app_client: AsyncClient) -> None:
         app_client: Async HTTP test client.
     """
     client = _mock_upstream(content=b'{"ok":true}')
-    body = {"key": "OPENROUTER_API_KEY", "value": "sk-or-test"}
+    body = {
+        "key": "OPENROUTER_API_KEY",
+        "value": "sk-or-test",
+        "secretStore": "memory",
+    }
     with patch("apme_gateway.api.abbenay_proxy.httpx.AsyncClient", return_value=client):
-        resp = await app_client.post("/api/v1/ai/secrets", json=body)
+        resp = await app_client.post(
+            "/api/v1/ai/secrets",
+            json=body,
+            headers={"Cookie": "session=caller-cookie"},
+        )
 
     assert resp.status_code == 200
     assert client.request.await_args is not None
     assert client.request.await_args.args[1] == "http://127.0.0.1:8787/api/secrets"
     assert client.request.await_args.kwargs["headers"]["Authorization"] == "Bearer admin-http-token"
-    assert b"sk-or-test" in (client.request.await_args.kwargs.get("content") or b"")
+    assert "Cookie" not in client.request.await_args.kwargs["headers"]
+    content = client.request.await_args.kwargs.get("content") or b""
+    assert b"sk-or-test" in content
+    assert b"secretStore" in content
+    assert b"memory" in content
 
 
 @pytest.mark.asyncio  # type: ignore[untyped-decorator]

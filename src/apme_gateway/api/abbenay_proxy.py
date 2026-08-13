@@ -201,7 +201,8 @@ def _filter_response_headers(upstream: httpx.Response) -> dict[str, str]:
     "/ai/{path:path}",
     methods=["GET", "POST", "DELETE"],
     # Transparent proxy — Abbenay owns the admin schema (ADR-070).
-    # Omit HEAD: Starlette derives it from GET without a response body.
+    # HEAD is intentionally omitted: with an explicit methods list FastAPI
+    # returns 405 for HEAD (it is not auto-derived from GET here).
     include_in_schema=False,
 )
 async def proxy_abbenay_admin(path: str, request: Request) -> Response:
