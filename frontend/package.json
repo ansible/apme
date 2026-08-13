@@ -59,7 +59,7 @@
     "p-limit": "^7.3.0",
     "react-hook-form": "^7.80.0",
     "type-fest": "^5.7.0",
-    "typescript": "^5.7.2",
+    "typescript": "^7.0.2",
     "vite": "^8.2.0",
     "vitest": "^4.1.9",
     "zustand": "^5.0.14"
