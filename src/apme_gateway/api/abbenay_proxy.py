@@ -6,6 +6,8 @@ through caller ``Authorization``. Inference (``GET /api/v1/ai/models`` and
 Abbenay chat) is **not** proxied — chat stays Primary → Abbenay gRPC.
 ``GET /api/v1/ai/engines`` proxies Abbenay's engine registry (read-only
 discovery path, ADR-070 amendment 2026-08-03).
+``GET/POST /api/v1/ai/secrets`` and ``DELETE /api/v1/ai/secrets/{key}`` proxy
+Abbenay's memory secret store (ADR-070 amendment 2026-08-13, Abbenay ≥ v2026.8.5).
 """
 
 from __future__ import annotations
@@ -63,12 +65,13 @@ _RESPONSE_DROP: Final = frozenset(
 )
 
 # Admin-only path allowlist (decoded, no leading slash). Matches ADR-070 /
-# ABBENAY_AI.md — no chat/sessions/secrets/templates.
-_GET_PATHS: Final = frozenset({"config", "engines", "providers"})
+# ABBENAY_AI.md — no chat/sessions/templates.
+_GET_PATHS: Final = frozenset({"config", "engines", "providers", "secrets"})
 _GET_PROVIDER_RE: Final = re.compile(r"^provider/[^/]+$")
-_POST_PATHS: Final = frozenset({"config"})
+_POST_PATHS: Final = frozenset({"config", "secrets"})
 _POST_CONFIGURE_RE: Final = re.compile(r"^provider/[^/]+/configure$")
 _DELETE_PROVIDER_RE: Final = re.compile(r"^provider/[^/]+$")
+_DELETE_SECRET_RE: Final = re.compile(r"^secrets/[^/]+$")
 
 router = APIRouter(prefix="/api/v1", tags=["abbenay-admin"])
 
@@ -134,7 +137,7 @@ def _method_allows_path(method: str, admin_path: str) -> bool:
     if method == "POST":
         return admin_path in _POST_PATHS or bool(_POST_CONFIGURE_RE.fullmatch(admin_path))
     if method == "DELETE":
-        return bool(_DELETE_PROVIDER_RE.fullmatch(admin_path))
+        return bool(_DELETE_PROVIDER_RE.fullmatch(admin_path)) or bool(_DELETE_SECRET_RE.fullmatch(admin_path))
     return False
 
 
@@ -206,7 +209,8 @@ async def proxy_abbenay_admin(path: str, request: Request) -> Response:
 
     Allowed (examples): ``GET/POST /ai/config``, ``GET /ai/engines``,
     ``GET /ai/providers``, ``POST /ai/provider/{id}/configure``,
-    ``DELETE /ai/provider/{id}``.
+    ``DELETE /ai/provider/{id}``, ``GET/POST /ai/secrets``,
+    ``DELETE /ai/secrets/{key}``.
     ``GET /api/v1/ai/models`` remains on the main router (Primary). Chat and
     other Abbenay surfaces are not proxied.
 

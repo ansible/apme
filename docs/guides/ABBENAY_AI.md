@@ -20,11 +20,51 @@ Gateway reach Abbenay at `127.0.0.1`. The Gateway reverse-proxies an
 | `GET /api/v1/ai/providers` | `/api/providers` |
 | `POST /api/v1/ai/provider/{id}/configure` | `/api/provider/{id}/configure` |
 | `DELETE /api/v1/ai/provider/{id}` | `/api/provider/{id}` |
+| `GET/POST /api/v1/ai/secrets` | `/api/secrets` |
+| `DELETE /api/v1/ai/secrets/{key}` | `/api/secrets/{key}` |
 
 `GET /api/v1/ai/models` remains Primary → Abbenay gRPC (`ListAIModels`). Chat
 is **not** proxied. Set `APME_ABBENAY_HTTP_URL` (default
 `http://127.0.0.1:8787`) and `APME_ABBENAY_HTTP_TOKEN` on the Gateway (same
 secret as `ABBENAY_API_TOKEN` / `abbenay.token` in Helm).
+
+### Memory secret store (Abbenay >= v2026.8.5)
+
+Abbenay supports a process-lifetime in-memory secret store for containerized
+environments where a system keychain is unavailable. Secrets (API keys) can be
+injected at runtime via the Gateway proxy instead of requiring env vars or Helm
+Secrets at deploy time.
+
+**Inject a secret at runtime:**
+
+```bash
+curl -X POST http://gateway:8080/api/v1/ai/secrets \
+  -H "Content-Type: application/json" \
+  -d '{"key": "OPENROUTER_API_KEY", "value": "sk-or-...", "secretStore": "memory"}'
+```
+
+**List stored secret names:**
+
+```bash
+curl http://gateway:8080/api/v1/ai/secrets
+```
+
+**Remove a secret:**
+
+```bash
+curl -X DELETE http://gateway:8080/api/v1/ai/secrets/OPENROUTER_API_KEY
+```
+
+After injecting a secret, configure a provider to use it via
+`POST /api/v1/ai/provider/{id}/configure` with `secretName` and
+`secretStore: memory`. Memory-stored secrets do not survive pod restarts;
+re-inject after a restart or use Helm Secrets / env vars for persistence.
+
+> **Security note:** `GET /api/v1/ai/secrets` returns stored key **names**
+> (not values) to any client that can reach Gateway `:8080`. The Gateway REST
+> API relies on network-isolation auth (ADR-048) — operators must ensure an
+> outer auth layer (Ingress, Route, reverse proxy) before exposing `:8080`
+> outside the cluster.
 
 ### Writable config volume (#498)
 

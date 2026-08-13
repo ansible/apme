@@ -1,7 +1,8 @@
 # Abbenay dev configuration for the APME pod.
 #
-# Models: configure one or more LLM providers below. API keys are read
-# from environment variables (set in containers/abbenay/.env).
+# Models: configure one or more LLM providers below. API keys are
+# referenced via secret_name + secret_store (env | memory | keychain).
+# For env-var-based keys, set values in containers/abbenay/.env.
 #
 # Consumers: the "apme" consumer uses a well-known dev token so the
 # Primary container can authenticate without per-dev setup.
@@ -20,7 +21,8 @@ providers:
       anthropic/claude-sonnet-4: {}
       anthropic/claude-opus-4.6: {}
       x-ai/grok-4.5: {}
-    api_key_env: OPENROUTER_API_KEY
+    secret_name: OPENROUTER_API_KEY
+    secret_store: env
 
   # Direct Vertex AI Claude (GCP ADC — no API key).
   # Set ABBENAY_GCP_CREDENTIALS + GOOGLE_VERTEX_PROJECT in .env (see .env.example).
@@ -36,7 +38,8 @@ providers:
   # vertex-anthropic-proxy:
   #   engine: vertex-anthropic
   #   base_url: "https://your-proxy.example.com:443/models"
-  #   api_key_env: "VERTEX_ANTHROPIC_API_KEY"
+  #   secret_name: "VERTEX_ANTHROPIC_API_KEY"
+  #   secret_store: env
   #   models:
   #     claude-sonnet-4@20250514: {}
 
