@@ -136,7 +136,7 @@ with open(path, "w") as f:
 
 | Package | Purpose |
 |---------|---------|
-| `abbenay-client==2026.8.5` | gRPC client for the Abbenay AI provider (Tier 2 remediation); PyPI, CalVer-aligned with daemon image `v2026.8.5`. Prefer `uv sync --extra ai` (hashes in `uv.lock`); `pip install apme-engine[ai]` is version-pin only. |
+| `abbenay-client==2026.8.5` | gRPC client for the Abbenay AI provider (Tier 2 remediation); PyPI, CalVer-aligned with daemon image `v2026.8.5`. Local/dev: `uv sync --extra ai`. Production/containers: `uv sync --frozen --extra ai` (hashes in `uv.lock`). `pip install apme-engine[ai]` is version-pin only. |
 
 ### Gateway (`[project.optional-dependencies.gateway]`)
 
