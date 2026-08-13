@@ -543,30 +543,48 @@ Future MCP integration (when implemented) would allow the LLM to autonomously ca
 
 ## Optional Dependency
 
-`abbenay-client` is an optional dependency:
-
-Currently pinned via direct wheel URL with SHA256 verification:
+`abbenay-client` is an optional dependency, published on PyPI. Pin it to
+the same CalVer as the Abbenay daemon image (currently `v2026.8.5`):
 
 ```toml
 [project.optional-dependencies]
 ai = [
-    "abbenay-client @ https://github.com/redhat-developer/abbenay/releases/download/v2026.4.1-alpha/abbenay_client-2026.4.1a0-py3-none-any.whl#sha256=8a4730...",
+    "abbenay-client==2026.8.5",
 ]
 ```
 
-Once `abbenay-client` is published to PyPI, this can be simplified to:
+**Install (local / development):**
 
-```toml
-ai = ["abbenay-client>=2026.4.1a0"]
+```bash
+uv sync --extra ai
 ```
 
-Install with: `pip install apme-engine[ai]`
+**Install (production / containers — hashed via ``uv.lock``):**
+
+```bash
+uv sync --frozen --extra ai
+```
+
+Container images use the frozen form (see ``containers/base/Dockerfile``)
+so deployed builds verify wheel/sdist digests from the lockfile.
+
+**Install (pip — version pin only, not for production):**
+
+```bash
+pip install apme-engine[ai]
+```
+
+``pip`` does not consume ``uv.lock`` hashes. That matches other optional
+extras (``gateway``, ``dev``): the version pin is the contract; artifact
+integrity for production comes from ``uv sync --frozen``.
 
 If `--ai` is set but `abbenay-client` is not installed:
 
-```
+```text
 Error: AI escalation requires the 'ai' extra.
-Install with: pip install apme-engine[ai]
+Install with: uv sync --extra ai
+# or: pip install apme-engine[ai]
+# Production/containers: uv sync --frozen --extra ai
 ```
 
 ---

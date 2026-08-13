@@ -34,7 +34,8 @@ dependencies = [
 
 [project.optional-dependencies]
 ai = [
-    "abbenay-client @ https://github.com/redhat-developer/abbenay/releases/download/v2026.4.1-alpha/abbenay_client-2026.4.1a0-py3-none-any.whl#sha256=8a473016b6b2d06c0620abb3d03f583b2b2c958654e293e8e66da70516e5dd33",
+    # Pin to the same CalVer as the Abbenay daemon image (deploy pins).
+    "abbenay-client==2026.8.5",
 ]
 gateway = [
     "sqlalchemy>=2.0",

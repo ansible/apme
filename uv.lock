@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -20,25 +20,16 @@ constraints = [
 
 [[package]]
 name = "abbenay-client"
-version = "2026.4.1a0"
-source = { url = "https://github.com/redhat-developer/abbenay/releases/download/v2026.4.1-alpha/abbenay_client-2026.4.1a0-py3-none-any.whl" }
+version = "2026.8.5"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "grpcio" },
     { name = "protobuf" },
 ]
+sdist = { url = "https://files.pythonhosted.org/packages/84/1e/30227da7b62ef1981056f86a31a31aeffec44781b9f34022b9eeb864227d/abbenay_client-2026.8.5.tar.gz", hash = "sha256:87b305ed62fcab4f4204b3cf59f4bbe5e5949bfb38e19db04be6b82f1bb2ff97", size = 36609, upload-time = "2026-08-13T17:06:47.471Z" }
 wheels = [
-    { url = "https://github.com/redhat-developer/abbenay/releases/download/v2026.4.1-alpha/abbenay_client-2026.4.1a0-py3-none-any.whl", hash = "sha256:8a473016b6b2d06c0620abb3d03f583b2b2c958654e293e8e66da70516e5dd33" },
+    { url = "https://files.pythonhosted.org/packages/49/3c/e4e3218675c9943698ab9845e7285930f5f0a5f27c6c5403db6033d533c2/abbenay_client-2026.8.5-py3-none-any.whl", hash = "sha256:693bf3e86836f855a25e4df30aa027b3e70ff3a855fc2ab8ebcf9d43f2c0fa2b", size = 38443, upload-time = "2026-08-13T17:06:46.108Z" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "grpcio", specifier = ">=1.60.0" },
-    { name = "grpcio-tools", marker = "extra == 'dev'", specifier = ">=1.60.0" },
-    { name = "protobuf", specifier = ">=4.25.0" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
-    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23.0" },
-]
-provides-extras = ["dev"]
 
 [[package]]
 name = "aiosqlite"
@@ -312,7 +303,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "abbenay-client", marker = "extra == 'ai'", url = "https://github.com/redhat-developer/abbenay/releases/download/v2026.4.1-alpha/abbenay_client-2026.4.1a0-py3-none-any.whl" },
+    { name = "abbenay-client", marker = "extra == 'ai'", specifier = "==2026.8.5" },
     { name = "aiosqlite", marker = "extra == 'gateway'", specifier = ">=0.20" },
     { name = "ansible-core", specifier = ">=2.20.7" },
     { name = "fastapi", specifier = ">=0.100" },
