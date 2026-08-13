@@ -1,7 +1,7 @@
 """GraphRule L111: inventory group names should not contain hyphens.
 
 Detects hyphens in inventory group names which cause issues with Jinja2
-dot notation access (e.g., ``groups.web-servers`` fails as Python syntax).
+dot notation access (e.g., ``groups.web-servers`` is parsed as subtraction).
 
 Scans INI and YAML inventory files discovered relative to playbook locations.
 Addresses AAPRFE-2997.
@@ -196,7 +196,7 @@ class InventoryGroupHyphensGraphRule(GraphRule):
     """Detect hyphens in inventory group names.
 
     Hyphens in group names cause Jinja2 dot notation access to fail
-    (``groups.web-servers`` is invalid Python syntax).
+    (``groups.web-servers`` is parsed as ``groups.web`` minus ``servers``).
 
     Attributes:
         rule_id: Rule identifier.
