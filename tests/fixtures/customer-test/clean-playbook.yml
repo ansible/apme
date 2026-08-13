@@ -1,0 +1,40 @@
+---
+# clean-playbook.yml
+# A well-structured playbook that should pass all APME checks.
+# Use this as a reference for best practices.
+
+- name: Configure web server
+  hosts: webservers
+  become: true
+  become_user: root
+
+  vars:
+    http_port: 8080
+    max_clients: 200
+
+  tasks:
+    - name: Ensure Apache is installed
+      ansible.builtin.package:
+        name: httpd
+        state: present
+      register: apache_install
+
+    - name: Configure Apache port
+      ansible.builtin.lineinfile:
+        path: /etc/httpd/conf/httpd.conf
+        regexp: "^Listen "
+        line: "Listen {{ http_port }}"
+      notify: Restart Apache
+      when: apache_install is changed
+
+    - name: Start Apache service
+      ansible.builtin.service:
+        name: httpd
+        state: started
+        enabled: true
+
+  handlers:
+    - name: Restart Apache
+      ansible.builtin.service:
+        name: httpd
+        state: restarted

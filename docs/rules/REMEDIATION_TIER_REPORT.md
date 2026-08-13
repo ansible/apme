@@ -7,17 +7,17 @@ Analysis of default remediation routing for all rules. Regenerate with:
 
 ## Summary
 
-| Tier | Count | % of 156 |
+| Tier | Count | % of 157 |
 |------|-------|--------|
-| Tier 1 — auto (has transform) | 25 | 16% |
-| Tier 2 — AI (task/block, no fixer) | 69 | 44% |
+| Tier 1 — auto (has transform) | 25 | 15% |
+| Tier 2 — AI (task/block, no fixer) | 70 | 44% |
 | Tier 3 — manual | 62 | 39% |
 
 ### Promotion potential
 
 - **27** Tier 2 rules could likely move to Tier 1 (mechanical transforms)
 - **8** Tier 3 rules have mechanical fixes blocked by scope
-- **69 - 27 = 42** Tier 2 rules should stay AI (judgment/security)
+- **70 - 27 = 43** Tier 2 rules should stay AI (judgment/security)
 
 ### Tier 3 breakdown
 
@@ -61,7 +61,7 @@ Analysis of default remediation routing for all rules. Regenerate with:
 | M008 | OPA | high | task | Bare include is removed in 2.19+; use include_tasks or import_tasks. |
 | M009 | OPA | high | task | with_* loops are deprecated; use loop instead. |
 
-## Tier 2 — AI (69 rules)
+## Tier 2 — AI (70 rules)
 
 ### Could move to Tier 1 auto
 
@@ -127,6 +127,7 @@ Analysis of default remediation routing for all rules. Regenerate with:
 | M022 | medium | task | Task/block scope — AI can propose fix (Tier 2) |
 | M028 | high | task | Task/block scope — AI can propose fix (Tier 2) |
 | M030 | medium | task | Task/block scope — AI can propose fix (Tier 2) |
+| M031 | medium | task | Task/block scope — AI can propose fix (Tier 2) |
 | P001 | error | task | Task/block scope — AI can propose fix (Tier 2) |
 | P002 | error | task | Task/block scope — AI can propose fix (Tier 2) |
 | P003 | error | task | Task/block scope — AI can propose fix (Tier 2) |

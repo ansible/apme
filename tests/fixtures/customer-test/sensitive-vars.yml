@@ -1,0 +1,58 @@
+---
+# Demonstrates M031: Sensitive tag recommendation for ansible-core 2.19+
+# Run: apme check tests/fixtures/customer-test/sensitive-vars.yml
+
+- name: M031 Sensitive Tag Demonstration
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    # --- SHOULD TRIGGER M031 ---
+
+    # set_fact with sensitive variable names
+    - name: Store database password (triggers M031)
+      ansible.builtin.set_fact:
+        db_password: "{{ vault_db_pass }}"
+
+    - name: Store API credentials (triggers M031)
+      ansible.builtin.set_fact:
+        api_token: "{{ lookup('env', 'API_TOKEN') }}"
+        client_secret: "{{ vault_client_secret }}"
+
+    # register to sensitive variable names
+    - name: Fetch secret from vault (triggers M031)
+      ansible.builtin.uri:
+        url: "https://vault.example.com/v1/secret/data/app"
+        headers:
+          X-Vault-Token: "{{ vault_token }}"
+      register: api_key_response
+
+    - name: Get SSH key (triggers M031)
+      ansible.builtin.slurp:
+        src: /home/deploy/.ssh/id_rsa
+      register: private_key_content
+
+    # --- SHOULD NOT TRIGGER M031 ---
+
+    # Already using no_log (addressed differently)
+    - name: Store password with no_log (no M031 - already protected)
+      ansible.builtin.set_fact:
+        admin_password: "{{ vault_admin_pass }}"
+      no_log: true
+
+    # Already using Sensitive filter (2.19+)
+    - name: Store token with Sensitive tag (no M031 - already tagged)
+      ansible.builtin.set_fact:
+        bearer_token: "{{ vault_bearer | sensitive }}"
+
+    # Non-sensitive variable names
+    - name: Store regular config (no M031 - not sensitive)
+      ansible.builtin.set_fact:
+        app_config:
+          timeout: 30
+          retries: 3
+
+    - name: Get file content (no M031 - not sensitive name)
+      ansible.builtin.slurp:
+        src: /etc/app/config.yml
+      register: config_content
