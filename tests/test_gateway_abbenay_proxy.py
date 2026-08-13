@@ -199,18 +199,71 @@ async def test_chat_path_not_proxied(app_client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio  # type: ignore[untyped-decorator]
-async def test_secrets_path_not_proxied(app_client: AsyncClient) -> None:
-    """GET /api/v1/ai/secrets is outside the documented admin allowlist.
+async def test_get_secrets_proxied(app_client: AsyncClient) -> None:
+    """GET /api/v1/ai/secrets proxies to Abbenay /api/secrets (memory store).
 
     Args:
         app_client: Async HTTP test client.
     """
-    client = _mock_upstream()
+    secrets_body = b'{"secrets":["OPENROUTER_API_KEY"]}'
+    client = _mock_upstream(content=secrets_body)
     with patch("apme_gateway.api.abbenay_proxy.httpx.AsyncClient", return_value=client):
         resp = await app_client.get("/api/v1/ai/secrets")
 
-    assert resp.status_code == 404
-    client.request.assert_not_awaited()
+    assert resp.status_code == 200
+    assert resp.content == secrets_body
+    assert client.request.await_args is not None
+    assert client.request.await_args.args[1] == "http://127.0.0.1:8787/api/secrets"
+    assert client.request.await_args.kwargs["headers"]["Authorization"] == "Bearer admin-http-token"
+    assert "Cookie" not in client.request.await_args.kwargs["headers"]
+
+
+@pytest.mark.asyncio  # type: ignore[untyped-decorator]
+async def test_post_secrets_proxied(app_client: AsyncClient) -> None:
+    """POST /api/v1/ai/secrets proxies to Abbenay /api/secrets (set secret).
+
+    Args:
+        app_client: Async HTTP test client.
+    """
+    client = _mock_upstream(content=b'{"ok":true}')
+    body = {
+        "key": "OPENROUTER_API_KEY",
+        "value": "sk-or-test",
+        "secretStore": "memory",
+    }
+    with patch("apme_gateway.api.abbenay_proxy.httpx.AsyncClient", return_value=client):
+        resp = await app_client.post(
+            "/api/v1/ai/secrets",
+            json=body,
+            headers={"Cookie": "session=caller-cookie"},
+        )
+
+    assert resp.status_code == 200
+    assert client.request.await_args is not None
+    assert client.request.await_args.args[1] == "http://127.0.0.1:8787/api/secrets"
+    assert client.request.await_args.kwargs["headers"]["Authorization"] == "Bearer admin-http-token"
+    assert "Cookie" not in client.request.await_args.kwargs["headers"]
+    content = client.request.await_args.kwargs.get("content") or b""
+    assert b"sk-or-test" in content
+    assert b"secretStore" in content
+    assert b"memory" in content
+
+
+@pytest.mark.asyncio  # type: ignore[untyped-decorator]
+async def test_delete_secret_by_key_proxied(app_client: AsyncClient) -> None:
+    """DELETE /api/v1/ai/secrets/{key} proxies to Abbenay /api/secrets/{key}.
+
+    Args:
+        app_client: Async HTTP test client.
+    """
+    client = _mock_upstream(content=b'{"deleted":true}')
+    with patch("apme_gateway.api.abbenay_proxy.httpx.AsyncClient", return_value=client):
+        resp = await app_client.delete("/api/v1/ai/secrets/OPENROUTER_API_KEY")
+
+    assert resp.status_code == 200
+    assert client.request.await_args is not None
+    assert client.request.await_args.args[1] == ("http://127.0.0.1:8787/api/secrets/OPENROUTER_API_KEY")
+    assert client.request.await_args.kwargs["headers"]["Authorization"] == "Bearer admin-http-token"
 
 
 @pytest.mark.asyncio  # type: ignore[untyped-decorator]

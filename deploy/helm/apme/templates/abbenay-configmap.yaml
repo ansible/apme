@@ -20,7 +20,8 @@ data:
         base_url: {{ $provider.baseUrl | quote }}
       {{- end }}
       {{- if or $provider.apiKey $provider.apiKeySecret }}
-        api_key_env_var_name: {{ printf "ABBENAY_PROVIDER_%s" (upper (replace "-" "_" $name)) | quote }}
+        secret_name: {{ printf "ABBENAY_PROVIDER_%s" (upper (replace "-" "_" $name)) | quote }}
+        secret_store: env
       {{- end }}
       {{- if and (eq $provider.engine "vertex-anthropic") (not $provider.baseUrl) }}
       {{- with $.Values.abbenay.gcp }}

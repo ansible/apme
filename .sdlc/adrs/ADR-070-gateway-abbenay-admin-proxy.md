@@ -66,7 +66,8 @@ Abbenay surfaces (ADR-046 inference stays Primary). Reject path traversal
 (`..` / encoded forms). Abbenay remains the source of truth for config.
 
 Allowlist: `GET/POST /config`, `GET /engines`, `GET /providers`,
-`POST /provider/{id}/configure`, `DELETE /provider/{id}`.
+`POST /provider/{id}/configure`, `DELETE /provider/{id}`,
+`GET/POST /secrets`, `DELETE /secrets/{key}`.
 
 **3. Enable Abbenay HTTP on loopback when Abbenay is enabled.**  
 In addition to gRPC `:50057` (Primary), start Abbenay’s HTTP admin surface on
@@ -208,8 +209,9 @@ runtime admin API.
 - **OpenAPI**: proxy routes `include_in_schema=False` (Abbenay owns schemas);
   Gateway `info.description` references ADR-070.
 - **Tests**: path rewrite, Bearer inject, Cookie strip, 502, models/chat not
-  proxied, traversal rejected, missing token 503, Set-Cookie stripped; helm
-  asserts ordered `--host`/`127.0.0.1`/`--port`/`8787` and Gateway HTTP URL.
+  proxied, traversal rejected, missing token 503, Set-Cookie stripped; secrets
+  GET/POST/DELETE proxy tests; helm asserts ordered
+  `--host`/`127.0.0.1`/`--port`/`8787` and Gateway HTTP URL.
 - **Portal UI**: out of scope for the first implementation PR; catalog proxy +
   Quality settings follow in a later change.
 - **Config durability** ([#498](https://github.com/ansible/apme/issues/498)):
@@ -245,3 +247,4 @@ runtime admin API.
 | 2026-08-03 | cidrblock | Accepted — Simple in-pod Abbenay; Gateway HTTP admin proxy |
 | 2026-08-03 | bthornto | Amended allowlist: added `GET /engines` for read-only engine discovery |
 | 2026-08-03 | bthornto | §6 Config durability implemented (#498): seed→RW emptyDir/PVC; Podman RW config dir |
+| 2026-08-13 | bthornto | Amended allowlist: added `GET/POST /secrets`, `DELETE /secrets/{key}` for Abbenay ≥ v2026.8.5 memory secret store |
