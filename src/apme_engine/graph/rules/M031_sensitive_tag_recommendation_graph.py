@@ -20,10 +20,10 @@ import re
 from dataclasses import dataclass
 from typing import cast
 
-from apme_engine.engine.content_graph import ContentGraph, ContentNode, NodeType
-from apme_engine.engine.models import RuleTag as Tag
-from apme_engine.engine.models import Severity, YAMLDict, YAMLValue
-from apme_engine.validators.native.rules.graph_rule_base import GraphRule, GraphRuleResult
+from apme_engine.graph.content_graph import ContentGraph, ContentNode, NodeType
+from apme_engine.graph.rule_base import GraphRule, GraphRuleResult
+from apme_engine.graph.types import RuleTag as Tag
+from apme_engine.graph.types import Severity, YAMLDict, YAMLValue
 
 _TASK_TYPES = frozenset({NodeType.TASK, NodeType.HANDLER})
 

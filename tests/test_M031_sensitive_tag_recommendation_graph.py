@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import cast
 
-from apme_engine.engine.content_graph import (
+from apme_engine.graph.content_graph import (
     ContentGraph,
     ContentNode,
     EdgeType,
@@ -12,10 +12,10 @@ from apme_engine.engine.content_graph import (
     NodeScope,
     NodeType,
 )
-from apme_engine.engine.graph_scanner import scan
-from apme_engine.engine.models import YAMLDict, YAMLValue
-from apme_engine.validators.native.rules.graph_rule_base import GraphRule
-from apme_engine.validators.native.rules.M031_sensitive_tag_recommendation_graph import (
+from apme_engine.graph.scanner import scan
+from apme_engine.graph.rule_base import GraphRule
+from apme_engine.graph.types import YAMLDict, YAMLValue
+from apme_engine.graph.rules.M031_sensitive_tag_recommendation_graph import (
     SensitiveTagRecommendationGraphRule,
     _find_sensitive_registered_vars,
     _find_sensitive_set_facts,
