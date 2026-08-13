@@ -136,7 +136,7 @@ with open(path, "w") as f:
 
 | Package | Purpose |
 |---------|---------|
-| `abbenay-client` | gRPC client for the Abbenay AI provider (Tier 2 remediation) |
+| `abbenay-client==2026.8.5` | gRPC client for the Abbenay AI provider (Tier 2 remediation); PyPI, CalVer-aligned with daemon image `v2026.8.5` |
 
 ### Gateway (`[project.optional-dependencies.gateway]`)
 

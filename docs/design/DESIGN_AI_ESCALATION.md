@@ -543,21 +543,14 @@ Future MCP integration (when implemented) would allow the LLM to autonomously ca
 
 ## Optional Dependency
 
-`abbenay-client` is an optional dependency:
-
-Currently pinned via direct wheel URL with SHA256 verification:
+`abbenay-client` is an optional dependency, published on PyPI. Pin it to
+the same CalVer as the Abbenay daemon image (currently `v2026.8.5`):
 
 ```toml
 [project.optional-dependencies]
 ai = [
-    "abbenay-client @ https://github.com/redhat-developer/abbenay/releases/download/v2026.4.1-alpha/abbenay_client-2026.4.1a0-py3-none-any.whl#sha256=8a4730...",
+    "abbenay-client==2026.8.5",
 ]
-```
-
-Once `abbenay-client` is published to PyPI, this can be simplified to:
-
-```toml
-ai = ["abbenay-client>=2026.4.1a0"]
 ```
 
 Install with: `pip install apme-engine[ai]`
