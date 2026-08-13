@@ -18,7 +18,6 @@
     "noUncheckedIndexedAccess": true,
     "forceConsistentCasingInFileNames": true,
     "types": ["vitest/globals"],
-    "baseUrl": ".",
     "paths": {
       "@apme/ui-workflow": ["./packages/ui-workflow/src/index.ts"]
     }
