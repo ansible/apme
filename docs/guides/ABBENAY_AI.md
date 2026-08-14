@@ -74,10 +74,10 @@ or Helm Secrets / env vars (`secret_store: env`).
 For durable API keys in containers (no system keychain), Abbenay persists
 secrets to `<configDir>/secrets.json` on the **same writable volume** as
 `config.yaml`. Abbenay writes the file mode `0600`. On macOS Podman Machine,
-`up.sh` may relax it to `0644` so virtiofs can map container UID 1001 (the
-same workaround as `config.yaml`); treat
-`${XDG_CACHE_HOME:-$HOME/.cache}/apme/abbenay/config/` as secret material.
-Granting UID 1001 write without world access is [#562](https://github.com/ansible/apme/issues/562).
+virtiofs cannot grant container UID 1001 read/write to that file without
+world-opening it; `up.sh` does **not** chmod `secrets.json`. Use
+`secret_store: env` or `memory` on Darwin until
+[#562](https://github.com/ansible/apme/issues/562) (named volume or keep-id).
 Gateway reverse-proxies the JSON body unchanged and does **not** store keys
 (ADR-070). Pair file-store usage with a durable config volume:
 
@@ -85,7 +85,8 @@ Gateway reverse-proxies the JSON body unchanged and does **not** store keys
 |--------|--------|----------|
 | **Helm (default)** | `emptyDir` | Abbenay **container** restart; lost on **pod** recycle (reschedule, drain, Helm `Recreate` upgrade) |
 | **Helm PVC** | `persistence.abbenay.enabled=true` | Pod recycle / upgrade (PVC may hold plaintext `secrets.json`) |
-| **Podman** | RW cache `${XDG_CACHE_HOME:-$HOME/.cache}/apme/abbenay/config/` | `tox -e down` / container restart. `tox -e wipe` deletes `secrets.json`. |
+| **Podman (Linux)** | RW cache `${XDG_CACHE_HOME:-$HOME/.cache}/apme/abbenay/config/` | `tox -e down` / container restart. `tox -e wipe` deletes `secrets.json`. |
+| **Podman (macOS)** | Same hostPath; virtiofs | File store unsupported until [#562](https://github.com/ansible/apme/issues/562). Use env or memory. |
 
 **Inject a secret into the file store:**
 
@@ -127,7 +128,7 @@ the first write, the runtime file is the source of truth.
 | Deploy | Seed | Writable volume | Notes |
 |--------|------|-----------------|-------|
 | **Helm** | ConfigMap `*-abbenay-config` (from `abbenay.providers`) | `emptyDir` by default; optional PVC via `persistence.abbenay.enabled=true` | Init `init-abbenay-config` copies seed only if `config.yaml` is absent. Mount: `/etc/abbenay-config`. The same volume holds file-store `secrets.json` (Abbenay ≥ v2026.8.6). |
-| **Podman** | `containers/abbenay/config/` (or legacy `config.yaml` / `.example`) on first `tox -e up` | Cache dir `${XDG_CACHE_HOME:-$HOME/.cache}/apme/abbenay/config/` → `/home/abbenay/.config/abbenay` | `up.sh` seeds into the cache path (mode `0700`/`0600`). Rootful chowns the cache copy to UID 1001; rootless keeps host ownership and grants UID 1001 a POSIX ACL. The repo tree is never chowned. File-store `secrets.json` is written here; `tox -e wipe` deletes it. |
+| **Podman** | `containers/abbenay/config/` (or legacy `config.yaml` / `.example`) on first `tox -e up` | Cache dir `${XDG_CACHE_HOME:-$HOME/.cache}/apme/abbenay/config/` → `/home/abbenay/.config/abbenay` | `up.sh` seeds into the cache path (mode `0700`/`0600`). Rootful chowns the cache copy to UID 1001; rootless Linux keeps host ownership and grants UID 1001 a POSIX ACL. macOS virtiofs cannot grant UID 1001 access to `secrets.json` without world-opening it — file store unsupported until [#562](https://github.com/ansible/apme/issues/562). The repo tree is never chowned. `tox -e wipe` deletes `secrets.json`. |
 
 Helm PVC knobs (`persistence.abbenay.*`):
 

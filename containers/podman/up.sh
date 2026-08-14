@@ -231,14 +231,16 @@ _ensure_abbenay_config_access() {
       fi
     fi
     if [[ "$(uname -s)" == "Darwin" ]]; then
-      # macOS: setfacl unavailable; Podman Machine virtiofs presents the host
-      # user as owner and container UID 1001 as other, so other-read is required
-      # for config.yaml. Do not chmod 0666/0777 on secrets.json (world-writable
-      # keys). File-store persist without world access is #562 (named volume or
-      # keep-id). Treat this cache dir as secret material.
+      # macOS: setfacl unavailable; virtiofs presents the host user as owner
+      # and container UID 1001 as other. config.yaml uses 0644 so UID 1001
+      # can read the seed. Do not chmod secrets.json: 0644 is other-readable
+      # and still not other-writable, so file-store persist cannot work.
+      # Named volume / keep-id: #562.
       chmod 755 "$path"
       [[ -f "$path/config.yaml" ]] && chmod 644 "$path/config.yaml"
-      [[ -f "$path/secrets.json" ]] && chmod 644 "$path/secrets.json"
+      if [[ -f "$path/secrets.json" ]]; then
+        echo "NOTE: Abbenay file secret store is unsupported on macOS virtiofs hostPath until #562. Leave secrets.json owner-only; use secret_store: env or memory. See https://github.com/ansible/apme/issues/562"
+      fi
       return 0
     fi
     if ! command -v setfacl >/dev/null 2>&1; then

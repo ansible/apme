@@ -225,7 +225,10 @@ files) and never chowns the git checkout. The config defines LLM providers and
 models. Deploy-time API keys are injected from environment variables — never
 committed to the config file. Runtime file-store keys (Abbenay ≥ v2026.8.6,
 `secretStore: file`) are written to `secrets.json` on this same cache
-directory (treat as secret material). `tox -e down` leaves that file in
+directory (treat as secret material). On macOS, virtiofs cannot give
+container UID 1001 access to `secrets.json` without world-opening it; file
+store is unsupported there until [#562](https://github.com/ansible/apme/issues/562)
+(use env or memory). `tox -e down` leaves that file in
 place; `tox -e wipe` deletes it. To add providers or models, edit the cache
 `config.yaml` or POST via the Gateway admin proxy
 (`/api/v1/ai/provider/{id}/configure`); writes survive Abbenay restarts.

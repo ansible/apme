@@ -118,18 +118,21 @@ Abbenay. Gateway reverse-proxies the secrets API and does **not** persist
 provider keys. Durable keys in containers use Abbenay's filesystem store
 (`secretStore: "file"`, Abbenay ≥ v2026.8.6), which writes
 `<configDir>/secrets.json` (mode `0600` as written by Abbenay) on the same
-writable volume as `config.yaml`. On macOS Podman Machine, `up.sh` may set
-the file to `0644` so virtiofs can map container UID 1001 — treat the host
-cache directory as secret material ([#562](https://github.com/ansible/apme/issues/562)
-for write access without world-open perms). File-store keys survive a restart
+writable volume as `config.yaml`. On macOS Podman Machine, virtiofs cannot
+give container UID 1001 access without world-opening the file; `up.sh` does
+not chmod `secrets.json`. File store on Darwin hostPath is unsupported until
+[#562](https://github.com/ansible/apme/issues/562) (named volume or keep-id);
+use env or memory. File-store keys survive a restart
 **only** when that volume is durable:
 
 - **Helm**: `persistence.abbenay.enabled=true` (PVC). The chart default is
   `emptyDir` — file-store keys then last for the **pod** lifetime only
   (survive Abbenay container restart; lost on pod recycle, drain, and Helm
   upgrade with `Recreate`).
-- **Podman**: RW host cache (survives `tox -e down`; `tox -e wipe` removes
-  `secrets.json`).
+- **Podman (Linux)**: RW host cache (survives `tox -e down`; `tox -e wipe`
+  removes `secrets.json`). **macOS**: file store on the virtiofs hostPath is
+  unsupported until [#562](https://github.com/ansible/apme/issues/562); use
+  env or memory.
 
 The process-lifetime `memory` store remains available. Deploy-time Helm
 Secrets / env (`secret_store: env`) are unchanged. DELETE must pass
