@@ -1,7 +1,7 @@
 # Abbenay dev configuration for the APME pod.
 #
 # Models: configure one or more LLM providers below. API keys are
-# referenced via secret_name + secret_store (env | memory | keychain).
+# referenced via secret_name + secret_store (env | memory | keychain | file).
 # For env-var-based keys, set values in containers/abbenay/.env.
 #
 # Consumers: the "apme" consumer uses a well-known dev token so the

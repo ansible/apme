@@ -68,7 +68,7 @@ The health check probes all validators via **gRPC** through the Primary orchestr
 
 ```bash
 tox -e down             # stop
-tox -e wipe             # stop + wipe DB and session cache
+tox -e wipe             # stop + wipe DB, session cache, and Abbenay secrets.json
 
 # Or directly
 podman pod stop apme-pod

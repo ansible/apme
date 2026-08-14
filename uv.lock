@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -20,15 +20,15 @@ constraints = [
 
 [[package]]
 name = "abbenay-client"
-version = "2026.8.5"
+version = "2026.8.6"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "grpcio" },
     { name = "protobuf" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/84/1e/30227da7b62ef1981056f86a31a31aeffec44781b9f34022b9eeb864227d/abbenay_client-2026.8.5.tar.gz", hash = "sha256:87b305ed62fcab4f4204b3cf59f4bbe5e5949bfb38e19db04be6b82f1bb2ff97", size = 36609, upload-time = "2026-08-13T17:06:47.471Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/4e/b4/651d5f154c6ca3e921ede19e0c13e595a9c24d73000ee1c424942ab7b048/abbenay_client-2026.8.6.tar.gz", hash = "sha256:c6b1f147790764757b06610e1e99714ca73d80c5165e44be8be825ec6c5dc51d", size = 36628, upload-time = "2026-08-14T18:06:28.014Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/49/3c/e4e3218675c9943698ab9845e7285930f5f0a5f27c6c5403db6033d533c2/abbenay_client-2026.8.5-py3-none-any.whl", hash = "sha256:693bf3e86836f855a25e4df30aa027b3e70ff3a855fc2ab8ebcf9d43f2c0fa2b", size = 38443, upload-time = "2026-08-13T17:06:46.108Z" },
+    { url = "https://files.pythonhosted.org/packages/20/9d/1fba7bed3e3f5dae6c3ad77ce2e00d976f64bd656d107312719560b35e8a/abbenay_client-2026.8.6-py3-none-any.whl", hash = "sha256:4ccfe2f199b53a34cad298425cdcf2fdedfd262878636637ff8ddcb022ff0bbf", size = 38460, upload-time = "2026-08-14T18:06:26.754Z" },
 ]
 
 [[package]]
@@ -303,7 +303,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "abbenay-client", marker = "extra == 'ai'", specifier = "==2026.8.5" },
+    { name = "abbenay-client", marker = "extra == 'ai'", specifier = "==2026.8.6" },
     { name = "aiosqlite", marker = "extra == 'gateway'", specifier = ">=0.20" },
     { name = "ansible-core", specifier = ">=2.20.7" },
     { name = "fastapi", specifier = ">=0.100" },

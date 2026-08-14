@@ -53,7 +53,7 @@ This builds a shared base image, eleven service images, and pulls one official i
 | `apme-gateway:latest` | `containers/gateway/Dockerfile` | REST API + gRPC Reporting service (SQLite) |
 | `apme-ui:latest` | `containers/ui/Dockerfile` | React SPA served by nginx (proxies API to Gateway) |
 | `apme-cli:latest` | `containers/cli/Dockerfile` | CLI client |
-| `ghcr.io/redhat-developer/abbenay:v2026.8.5` | [Official image](https://github.com/redhat-developer/abbenay/pkgs/container/abbenay) (pulled) | Abbenay AI daemon (LLM gateway for Tier 2 remediation) |
+| `ghcr.io/redhat-developer/abbenay:v2026.8.6` | [Official image](https://github.com/redhat-developer/abbenay/pkgs/container/abbenay) (pulled) | Abbenay AI daemon (LLM gateway for Tier 2 remediation) |
 
 ### Configure Abbenay AI (optional)
 
@@ -114,7 +114,7 @@ The `remediate` command uses a bidirectional streaming RPC (`FixSession`, ADR-02
 
 ```bash
 tox -e down
-tox -e wipe    # also delete database + session cache
+tox -e wipe    # also delete database, session cache, and Abbenay secrets.json
 ```
 
 ### Health check
@@ -222,10 +222,16 @@ Abbenay uses `${XDG_CACHE_HOME:-$HOME/.cache}/apme/abbenay/config/` as a
 **writable** hostPath mount (`abbenay-config` → `/home/abbenay/.config/abbenay`).
 `up.sh` seeds that cache dir from `containers/abbenay/config/` (or legacy
 files) and never chowns the git checkout. The config defines LLM providers and
-models. API keys are injected from environment variables — never committed to
-the config file. To add providers or models, edit the cache `config.yaml` or
-POST via the Gateway admin proxy (`/api/v1/ai/provider/{id}/configure`);
-writes survive Abbenay restarts.
+models. Deploy-time API keys are injected from environment variables — never
+committed to the config file. Runtime file-store keys (Abbenay ≥ v2026.8.6,
+`secretStore: file`) are written to `secrets.json` on this same cache
+directory (treat as secret material). On macOS, virtiofs cannot give
+container UID 1001 access to `secrets.json` without world-opening it; file
+store is unsupported there until [#562](https://github.com/ansible/apme/issues/562)
+(use env or memory). `tox -e down` leaves that file in
+place; `tox -e wipe` deletes it. To add providers or models, edit the cache
+`config.yaml` or POST via the Gateway admin proxy
+(`/api/v1/ai/provider/{id}/configure`); writes survive Abbenay restarts.
 
 The Abbenay daemon exposes a gRPC API on port 50057. Primary connects to it for AI model listing (`ListAIModels`) and batch remediation requests.
 

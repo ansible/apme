@@ -231,10 +231,16 @@ _ensure_abbenay_config_access() {
       fi
     fi
     if [[ "$(uname -s)" == "Darwin" ]]; then
-      # macOS: setfacl unavailable; Podman Machine VM shares files via virtiofs
-      # so world-readable perms are sufficient for the container UID.
+      # macOS: setfacl unavailable; virtiofs presents the host user as owner
+      # and container UID 1001 as other. config.yaml uses 0644 so UID 1001
+      # can read the seed. Do not chmod secrets.json: 0644 is other-readable
+      # and still not other-writable, so file-store persist cannot work.
+      # Named volume / keep-id: #562.
       chmod 755 "$path"
       [[ -f "$path/config.yaml" ]] && chmod 644 "$path/config.yaml"
+      if [[ -f "$path/secrets.json" ]]; then
+        echo "NOTE: Abbenay file secret store is unsupported on macOS virtiofs hostPath until #562. Leave secrets.json owner-only; use secret_store: env or memory. See https://github.com/ansible/apme/issues/562"
+      fi
       return 0
     fi
     if ! command -v setfacl >/dev/null 2>&1; then
@@ -252,6 +258,13 @@ _ensure_abbenay_config_access() {
       setfacl -m "u:${mapped}:rw" "$path/config.yaml" || return 1
       if ! _container_uid_can_read "$cuid" "$path/config.yaml"; then
         echo "ERROR: container UID $cuid cannot read $path/config.yaml after ACL grant" >&2
+        return 1
+      fi
+    fi
+    if [[ -f "$path/secrets.json" ]]; then
+      setfacl -m "u:${mapped}:rw" "$path/secrets.json" || return 1
+      if ! _container_uid_can_read "$cuid" "$path/secrets.json"; then
+        echo "ERROR: container UID $cuid cannot read $path/secrets.json after ACL grant" >&2
         return 1
       fi
     fi

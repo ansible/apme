@@ -154,7 +154,7 @@ ui:
 # See docs/guides/ABBENAY_AI.md for GCP-specific setup.
 abbenay:
   enabled: false
-  image: ghcr.io/redhat-developer/abbenay:v2026.8.5
+  image: ghcr.io/redhat-developer/abbenay:v2026.8.6
   # -- Token APME uses to authenticate with Abbenay (required when enabled)
   token: ""
   # -- Override the default model APME selects (e.g. "vertex-claude/claude-sonnet-4-6")
@@ -254,8 +254,9 @@ persistence:
     storageClass: ""
     accessMode: ReadWriteOnce
   # -- Writable config volume for Abbenay runtime admin (ADR-070 / #498).
-  # emptyDir by default (pod lifetime only — config resets on pod restart).
-  # Enable persistence for a PVC that survives restarts.
+  # emptyDir by default (pod lifetime only — config and file-store secrets
+  # reset on pod restart). Enable persistence for a PVC that survives
+  # restarts (config.yaml + secrets.json when secretStore is file).
   abbenay:
     enabled: false
     size: 100Mi

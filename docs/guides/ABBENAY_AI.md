@@ -49,22 +49,75 @@ curl -X POST http://gateway:8080/api/v1/ai/secrets \
 curl http://gateway:8080/api/v1/ai/secrets
 ```
 
-**Remove a secret:**
+The response lists engine API-key slots (name, engine, `hasValue`, and
+`secretStore` when a registry backend holds the value). It does **not**
+return secret values. Helm env-injected keys typically show
+`hasValue: false` here because env is not a registry backend. Custom keys
+that are not an engine's default env var name are not listed.
+
+**Remove a secret:** Abbenay defaults omitted `secretStore` to **keychain**.
+Always pass the store you used when injecting, or the delete will no-op
+against the wrong backend (and still return success):
 
 ```bash
-curl -X DELETE http://gateway:8080/api/v1/ai/secrets/OPENROUTER_API_KEY
+curl -X DELETE 'http://gateway:8080/api/v1/ai/secrets/OPENROUTER_API_KEY?secretStore=memory'
 ```
 
 After injecting a secret, configure a provider to use it via
 `POST /api/v1/ai/provider/{id}/configure` with `secretName` and
-`secretStore: memory`. Memory-stored secrets do not survive pod restarts;
-re-inject after a restart or use Helm Secrets / env vars for persistence.
+`secretStore: memory`. Memory-stored secrets do not survive Abbenay or pod
+restarts. For keys that must survive a restart, use the file store below,
+or Helm Secrets / env vars (`secret_store: env`).
 
-> **Security note:** `GET /api/v1/ai/secrets` returns stored key **names**
-> (not values) to any client that can reach Gateway `:8080`. The Gateway REST
-> API relies on network-isolation auth (ADR-048) — operators must ensure an
-> outer auth layer (Ingress, Route, reverse proxy) before exposing `:8080`
-> outside the cluster.
+### File secret store (Abbenay >= v2026.8.6)
+
+For durable API keys in containers (no system keychain), Abbenay persists
+secrets to `<configDir>/secrets.json` on the **same writable volume** as
+`config.yaml`. Abbenay writes the file mode `0600`. On macOS Podman Machine,
+virtiofs cannot grant container UID 1001 read/write to that file without
+world-opening it; `up.sh` does **not** chmod `secrets.json`. Use
+`secret_store: env` or `memory` on Darwin until
+[#562](https://github.com/ansible/apme/issues/562) (named volume or keep-id).
+Gateway reverse-proxies the JSON body unchanged and does **not** store keys
+(ADR-070). Pair file-store usage with a durable config volume:
+
+| Deploy | Volume | Survives |
+|--------|--------|----------|
+| **Helm (default)** | `emptyDir` | Abbenay **container** restart; lost on **pod** recycle (reschedule, drain, Helm `Recreate` upgrade) |
+| **Helm PVC** | `persistence.abbenay.enabled=true` | Pod recycle / upgrade (PVC may hold plaintext `secrets.json`) |
+| **Podman (Linux)** | RW cache `${XDG_CACHE_HOME:-$HOME/.cache}/apme/abbenay/config/` | `tox -e down` / container restart. `tox -e wipe` deletes `secrets.json`. |
+| **Podman (macOS)** | Same hostPath; virtiofs | File store unsupported until [#562](https://github.com/ansible/apme/issues/562). Use env or memory. |
+
+**Inject a secret into the file store:**
+
+```bash
+curl -X POST http://gateway:8080/api/v1/ai/secrets \
+  -H "Content-Type: application/json" \
+  -d '{"key": "OPENROUTER_API_KEY", "value": "sk-or-...", "secretStore": "file"}'
+```
+
+Then configure the provider with `secretName` and `secretStore: file` via
+`POST /api/v1/ai/provider/{id}/configure`. File-store keys and Helm env
+keys (`secret_store: env` in the seed ConfigMap) are **separate** backends:
+injecting `secretStore: file` does not override an env-backed provider until
+you reconfigure `secretStore`. Deploy-time Helm Secrets / env are unchanged.
+
+**Remove a file-store secret:**
+
+```bash
+curl -X DELETE 'http://gateway:8080/api/v1/ai/secrets/OPENROUTER_API_KEY?secretStore=file'
+```
+
+If `secrets.json` exists but is not valid JSON, Abbenay treats reads as empty
+and **refuses writes** (it will not overwrite a corrupt file). Fix or remove
+the file on the config volume, then re-inject.
+
+> **Security note:** `GET /api/v1/ai/secrets` returns engine key **names**
+> and store metadata (not values) to any client that can reach Gateway
+> `:8080`. The Gateway REST API relies on network-isolation auth (ADR-048)
+> — operators must ensure an outer auth layer (Ingress, Route, reverse
+> proxy) before exposing `:8080` outside the cluster. Treat the Abbenay
+> config volume as secret material (`secrets.json`).
 
 ### Writable config volume (#498)
 
@@ -74,8 +127,8 @@ the first write, the runtime file is the source of truth.
 
 | Deploy | Seed | Writable volume | Notes |
 |--------|------|-----------------|-------|
-| **Helm** | ConfigMap `*-abbenay-config` (from `abbenay.providers`) | `emptyDir` by default; optional PVC via `persistence.abbenay.enabled=true` | Init `init-abbenay-config` copies seed only if `config.yaml` is absent. Mount: `/etc/abbenay-config`. |
-| **Podman** | `containers/abbenay/config/` (or legacy `config.yaml` / `.example`) on first `tox -e up` | Cache dir `${XDG_CACHE_HOME:-$HOME/.cache}/apme/abbenay/config/` → `/home/abbenay/.config/abbenay` | `up.sh` seeds into the cache path (mode `0700`/`0600`). Rootful chowns the cache copy to UID 1001; rootless keeps host ownership and grants UID 1001 a POSIX ACL. The repo tree is never chowned. |
+| **Helm** | ConfigMap `*-abbenay-config` (from `abbenay.providers`) | `emptyDir` by default; optional PVC via `persistence.abbenay.enabled=true` | Init `init-abbenay-config` copies seed only if `config.yaml` is absent. Mount: `/etc/abbenay-config`. The same volume holds file-store `secrets.json` (Abbenay ≥ v2026.8.6). |
+| **Podman** | `containers/abbenay/config/` (or legacy `config.yaml` / `.example`) on first `tox -e up` | Cache dir `${XDG_CACHE_HOME:-$HOME/.cache}/apme/abbenay/config/` → `/home/abbenay/.config/abbenay` | `up.sh` seeds into the cache path (mode `0700`/`0600`). Rootful chowns the cache copy to UID 1001; rootless Linux keeps host ownership and grants UID 1001 a POSIX ACL. macOS virtiofs cannot grant UID 1001 access to `secrets.json` without world-opening it — file store unsupported until [#562](https://github.com/ansible/apme/issues/562). The repo tree is never chowned. `tox -e wipe` deletes `secrets.json`. |
 
 Helm PVC knobs (`persistence.abbenay.*`):
 
@@ -88,7 +141,7 @@ persistence:
     accessMode: ReadWriteOnce
 ```
 
-See [ADR-070](../../.sdlc/adrs/ADR-070-gateway-abbenay-admin-proxy.md) §6.
+See [ADR-070](../../.sdlc/adrs/ADR-070-gateway-abbenay-admin-proxy.md) §6 (config durability) and §7 (secrets remain Abbenay SoT).
 
 ---
 

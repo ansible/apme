@@ -202,7 +202,7 @@ Gateway DB and Abbenay down together.
 | `ui.replicas` | `1` | Must be `1` when UI enabled |
 | `abbenay.enabled` | `false` | Enable AI provider sidecar |
 | `abbenay.token` | `""` | Abbenay gRPC + HTTP admin token (required when `abbenay.enabled=true`) |
-| `abbenay.image` | `ghcr.io/redhat-developer/abbenay:v2026.8.5` | Abbenay image |
+| `abbenay.image` | `ghcr.io/redhat-developer/abbenay:v2026.8.6` | Abbenay image |
 | `abbenay.providers` | `{}` | LLM provider map (see [ABBENAY_AI.md](../../../docs/guides/ABBENAY_AI.md)) |
 | `abbenay.aiModel` | `""` | Default AI model ID |
 | `ingress.enabled` | `false` | Create Kubernetes Ingress |
@@ -213,8 +213,8 @@ Gateway DB and Abbenay down together.
 | `podDisruptionBudget.enabled` | `false` | Enable PDB |
 | `persistence.sessions.size` | `10Gi` | Session venv PVC size |
 | `persistence.gateway.size` | `5Gi` | Gateway DB PVC size |
-| `persistence.abbenay.enabled` | `false` | When `true` (and `abbenay.enabled`), PVC for Abbenay runtime config; otherwise `emptyDir` |
-| `persistence.abbenay.size` | `100Mi` | Abbenay config PVC size (seed-once from ConfigMap; runtime SoT after configure) |
+| `persistence.abbenay.enabled` | `false` | When `true` (and `abbenay.enabled`), PVC for Abbenay runtime config and file-store secrets (`secrets.json`); otherwise `emptyDir` |
+| `persistence.abbenay.size` | `100Mi` | Abbenay config PVC size (seed-once from ConfigMap; runtime SoT after configure; also holds `secrets.json` for `secretStore: file`) |
 
 See [`values.yaml`](values.yaml) for the complete reference with all resource
 limits, tolerations, affinity, and topology spread constraints.
@@ -332,8 +332,9 @@ securityContext:
   runAsUser: 1001
 ```
 
-`fsGroup` ensures PVC mounts for `/sessions`, `/data`, and `/cache` are writable by
-the application UID. Local Podman uses the same PVC definitions in
+`fsGroup` ensures PVC mounts for `/sessions`, `/data`, `/cache`, and
+Abbenay `/etc/abbenay-config` are writable by the application UID. Local
+Podman uses the same PVC definitions in
 `containers/podman/pvc.yaml` (with `volume.podman.io/uid` annotations).
 
 ## Uninstall
@@ -342,10 +343,32 @@ the application UID. Local Podman uses the same PVC definitions in
 helm uninstall apme
 ```
 
-PVCs are not deleted automatically. Remove them manually if desired:
+Helm 3 deletes chart-managed PVCs. The `kubectl delete pvc` command below is
+only needed if a claim was left behind (failed uninstall, or a PVC created
+outside the chart).
+
+If the StorageClass reclaim policy is **Delete**, the CSI driver typically
+removes the backing volume when the PVC is gone.
+
+If the reclaim policy is **Retain**, uninstall (and deleting the PVC) does
+**not** erase the disk. A PV in `Released` phase can still hold plaintext
+`secrets.json` (Abbenay file store) and runtime `config.yaml`. Identify it,
+destroy or crypto-erase the volume in the **storage provider**, then delete
+the PV object. `kubectl` cannot securely overwrite those bytes.
 
 ```bash
+# Find APME PVs (claims are <release>-abbenay-config, -gateway-data, …)
+kubectl get pv -o custom-columns=\
+NAME:.metadata.name,\
+RECLAIM:.spec.persistentVolumeReclaimPolicy,\
+STATUS:.status.phase,\
+CLAIM:.spec.claimRef.namespace/.spec.claimRef.name
+
+# Leftover chart PVCs (usually none after a clean helm uninstall)
 kubectl delete pvc -l app.kubernetes.io/instance=apme
+
+# After wiping/destroying a Retain volume in the storage provider:
+# kubectl delete pv <pv-name>
 ```
 
 ## Related

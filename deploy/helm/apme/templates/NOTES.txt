@@ -66,3 +66,12 @@ WARNING: image.tag is not set. Falling back to Chart.appVersion
 ({{ .Chart.AppVersion }}). Confirm that tag exists in the configured
 registry (or set --set image.tag=sha-<commit> for unreleased builds).
 {{- end }}
+
+{{- if and .Values.abbenay.enabled (not .Values.persistence.abbenay.enabled) }}
+
+NOTE: persistence.abbenay is disabled (emptyDir). Abbenay runtime
+config.yaml and file-store secrets.json last for the pod lifetime
+(survive Abbenay container restart; lost on pod recycle, drain, or
+Helm Recreate upgrade). Set persistence.abbenay.enabled=true for
+durable keys, or keep using Helm Secrets / env (secret_store: env).
+{{- end }}

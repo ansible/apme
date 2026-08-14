@@ -200,7 +200,7 @@ async def test_chat_path_not_proxied(app_client: AsyncClient) -> None:
 
 @pytest.mark.asyncio  # type: ignore[untyped-decorator]
 async def test_get_secrets_proxied(app_client: AsyncClient) -> None:
-    """GET /api/v1/ai/secrets proxies to Abbenay /api/secrets (memory store).
+    """GET /api/v1/ai/secrets proxies to Abbenay /api/secrets.
 
     Args:
         app_client: Async HTTP test client.
@@ -218,18 +218,20 @@ async def test_get_secrets_proxied(app_client: AsyncClient) -> None:
     assert "Cookie" not in client.request.await_args.kwargs["headers"]
 
 
+@pytest.mark.parametrize("secret_store", ["memory", "file"])  # type: ignore[untyped-decorator]
 @pytest.mark.asyncio  # type: ignore[untyped-decorator]
-async def test_post_secrets_proxied(app_client: AsyncClient) -> None:
-    """POST /api/v1/ai/secrets proxies to Abbenay /api/secrets (set secret).
+async def test_post_secrets_proxied(app_client: AsyncClient, secret_store: str) -> None:
+    """POST /api/v1/ai/secrets forwards JSON including secretStore unchanged.
 
     Args:
         app_client: Async HTTP test client.
+        secret_store: Abbenay store name forwarded as-is (``memory`` or ``file``).
     """
     client = _mock_upstream(content=b'{"ok":true}')
     body = {
         "key": "OPENROUTER_API_KEY",
         "value": "sk-or-test",
-        "secretStore": "memory",
+        "secretStore": secret_store,
     }
     with patch("apme_gateway.api.abbenay_proxy.httpx.AsyncClient", return_value=client):
         resp = await app_client.post(
@@ -246,23 +248,42 @@ async def test_post_secrets_proxied(app_client: AsyncClient) -> None:
     content = client.request.await_args.kwargs.get("content") or b""
     assert b"sk-or-test" in content
     assert b"secretStore" in content
-    assert b"memory" in content
+    assert secret_store.encode() in content
 
 
+@pytest.mark.parametrize(  # type: ignore[untyped-decorator]
+    ("query", "expected_suffix"),
+    [
+        ("", ""),
+        ("secretStore=memory", "?secretStore=memory"),
+        ("secretStore=file", "?secretStore=file"),
+    ],
+)
 @pytest.mark.asyncio  # type: ignore[untyped-decorator]
-async def test_delete_secret_by_key_proxied(app_client: AsyncClient) -> None:
-    """DELETE /api/v1/ai/secrets/{key} proxies to Abbenay /api/secrets/{key}.
+async def test_delete_secret_by_key_proxied(
+    app_client: AsyncClient,
+    query: str,
+    expected_suffix: str,
+) -> None:
+    """DELETE /api/v1/ai/secrets/{key} forwards secretStore query unchanged.
 
     Args:
         app_client: Async HTTP test client.
+        query: Raw query string (empty, or ``secretStore=…``).
+        expected_suffix: Expected ``?…`` suffix on the upstream URL.
     """
     client = _mock_upstream(content=b'{"deleted":true}')
+    path = "/api/v1/ai/secrets/OPENROUTER_API_KEY"
+    if query:
+        path = f"{path}?{query}"
     with patch("apme_gateway.api.abbenay_proxy.httpx.AsyncClient", return_value=client):
-        resp = await app_client.delete("/api/v1/ai/secrets/OPENROUTER_API_KEY")
+        resp = await app_client.delete(path)
 
     assert resp.status_code == 200
     assert client.request.await_args is not None
-    assert client.request.await_args.args[1] == ("http://127.0.0.1:8787/api/secrets/OPENROUTER_API_KEY")
+    assert client.request.await_args.args[1] == (
+        f"http://127.0.0.1:8787/api/secrets/OPENROUTER_API_KEY{expected_suffix}"
+    )
     assert client.request.await_args.kwargs["headers"]["Authorization"] == "Bearer admin-http-token"
 
 
