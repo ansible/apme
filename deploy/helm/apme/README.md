@@ -343,10 +343,9 @@ Podman uses the same PVC definitions in
 helm uninstall apme
 ```
 
-PVCs are not deleted automatically. The Abbenay config PVC may contain
-plaintext `secrets.json` (file secret store) as well as runtime
-`config.yaml`. Remove PVCs when decommissioning or before reinstalling
-under the same release name (reinstall otherwise reattaches the old keys):
+Helm 3 deletes chart-managed PVCs on uninstall. If the StorageClass
+reclaim policy is Retain, orphaned PVs can still hold plaintext
+`secrets.json`. Delete leftover PVs/PVCs when decommissioning:
 
 ```bash
 kubectl delete pvc -l app.kubernetes.io/instance=apme

@@ -43,7 +43,7 @@ Constraints and drivers:
 |-----------|--------|
 | 1. Validators read-only | Consistent |
 | 2. gRPC between backend services | Consistent — admin uses Abbenay’s existing HTTP API; inference stays gRPC via Primary |
-| 5. Stateless engine / persistence at Gateway | Consistent — Abbenay remains config SoT; Gateway does not persist Abbenay config |
+| 5. Stateless engine / persistence at Gateway | Consistent — Abbenay remains config and secrets SoT; Gateway does not persist Abbenay config or provider keys |
 | 11. Engine never queries out | Consistent — Gateway (not engine) reaches Abbenay admin |
 | 16. Helm Simple / Podman localhost | Consistent with ADR-069 |
 | 17. REST versioning (ADR-060) | Additive `/api/v1/ai/*` proxy mount |
@@ -117,13 +117,16 @@ Runtime API keys injected via `POST /api/v1/ai/secrets` are stored by
 Abbenay. Gateway reverse-proxies the secrets API and does **not** persist
 provider keys. Durable keys in containers use Abbenay's filesystem store
 (`secretStore: "file"`, Abbenay ≥ v2026.8.6), which writes
-`<configDir>/secrets.json` (mode `0600`) on the same writable volume as
-`config.yaml`. File-store keys survive a restart **only** when that volume
-is durable:
+`<configDir>/secrets.json` (mode `0600` as written by Abbenay) on the same
+writable volume as `config.yaml`. On macOS Podman Machine, `up.sh` may set
+the file to `0644` so virtiofs can map container UID 1001 — treat the host
+cache directory as secret material. File-store keys survive a restart
+**only** when that volume is durable:
 
 - **Helm**: `persistence.abbenay.enabled=true` (PVC). The chart default is
   `emptyDir` — file-store keys then last for the **pod** lifetime only
-  (lost on restart, OOM, drain, and Helm upgrade with `Recreate`).
+  (survive Abbenay container restart; lost on pod recycle, drain, and Helm
+  upgrade with `Recreate`).
 - **Podman**: RW host cache (survives `tox -e down`; `tox -e wipe` removes
   `secrets.json`).
 

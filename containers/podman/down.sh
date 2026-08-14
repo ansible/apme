@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Stop the APME pod and optionally wipe the database.
+# Stop the APME pod and optionally wipe local state (Gateway DB, sessions,
+# Abbenay secrets.json).
 #
 # Usage:
 #   ./down.sh          # stop pod only

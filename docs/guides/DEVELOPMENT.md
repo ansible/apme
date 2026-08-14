@@ -430,7 +430,7 @@ tox -e cli      # default: apme check .
 tox -e up                        # build images and start the pod
 tox -e up -- --no-cache          # rebuild from scratch and start
 tox -e build                     # build images only (no start)
-tox -e build-clean               # wipe DB/sessions + rebuild --no-cache
+tox -e build-clean               # wipe DB/sessions/Abbenay secrets.json + rebuild --no-cache
 tox -e up-clean                  # wipe + rebuild + start (clean slate)
 tox -e down                      # stop the pod
 tox -e wipe                          # stop + wipe DB, session cache, and Abbenay secrets.json

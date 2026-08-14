@@ -49,9 +49,11 @@ curl -X POST http://gateway:8080/api/v1/ai/secrets \
 curl http://gateway:8080/api/v1/ai/secrets
 ```
 
-The response lists key **names** plus which store holds them (`secretStore`,
-`hasValue`). It does **not** return secret values. Env-injected Helm keys
-do not appear in this registry list.
+The response lists engine API-key slots (name, engine, `hasValue`, and
+`secretStore` when a registry backend holds the value). It does **not**
+return secret values. Helm env-injected keys typically show
+`hasValue: false` here because env is not a registry backend. Custom keys
+that are not an engine's default env var name are not listed.
 
 **Remove a secret:** Abbenay defaults omitted `secretStore` to **keychain**.
 Always pass the store you used when injecting, or the delete will no-op
@@ -59,7 +61,6 @@ against the wrong backend (and still return success):
 
 ```bash
 curl -X DELETE 'http://gateway:8080/api/v1/ai/secrets/OPENROUTER_API_KEY?secretStore=memory'
-curl -X DELETE 'http://gateway:8080/api/v1/ai/secrets/OPENROUTER_API_KEY?secretStore=file'
 ```
 
 After injecting a secret, configure a provider to use it via
@@ -71,15 +72,19 @@ or Helm Secrets / env vars (`secret_store: env`).
 ### File secret store (Abbenay >= v2026.8.6)
 
 For durable API keys in containers (no system keychain), Abbenay persists
-secrets to `<configDir>/secrets.json` (mode `0600`) on the **same writable
-volume** as `config.yaml`. Gateway reverse-proxies the JSON body unchanged
-and does **not** store keys (ADR-070). Pair file-store usage with a durable
-config volume:
+secrets to `<configDir>/secrets.json` on the **same writable volume** as
+`config.yaml`. Abbenay writes the file mode `0600`. On macOS Podman Machine,
+`up.sh` may relax it to `0644` so virtiofs can map container UID 1001 (the
+same workaround as `config.yaml`); treat
+`${XDG_CACHE_HOME:-$HOME/.cache}/apme/abbenay/config/` as secret material.
+Gateway reverse-proxies the JSON body unchanged and does **not** store keys
+(ADR-070). Pair file-store usage with a durable config volume:
 
-| Deploy | Durable volume | Lost on restart? |
-|--------|----------------|------------------|
-| **Helm** | `persistence.abbenay.enabled=true` (PVC) | `emptyDir` (the default) loses `secrets.json` |
-| **Podman** | RW cache `${XDG_CACHE_HOME:-$HOME/.cache}/apme/abbenay/config/` | Survives `tox -e down` / container restart. `tox -e wipe` deletes `secrets.json`. |
+| Deploy | Volume | Survives |
+|--------|--------|----------|
+| **Helm (default)** | `emptyDir` | Abbenay **container** restart; lost on **pod** recycle (reschedule, drain, Helm `Recreate` upgrade) |
+| **Helm PVC** | `persistence.abbenay.enabled=true` | Pod recycle / upgrade (PVC may hold plaintext `secrets.json`) |
+| **Podman** | RW cache `${XDG_CACHE_HOME:-$HOME/.cache}/apme/abbenay/config/` | `tox -e down` / container restart. `tox -e wipe` deletes `secrets.json`. |
 
 **Inject a secret into the file store:**
 
@@ -105,12 +110,12 @@ If `secrets.json` exists but is not valid JSON, Abbenay treats reads as empty
 and **refuses writes** (it will not overwrite a corrupt file). Fix or remove
 the file on the config volume, then re-inject.
 
-> **Security note:** `GET /api/v1/ai/secrets` returns stored key **names**
-> (not values) to any client that can reach Gateway `:8080`. The Gateway REST
-> API relies on network-isolation auth (ADR-048) — operators must ensure an
-> outer auth layer (Ingress, Route, reverse proxy) before exposing `:8080`
-> outside the cluster. File-store `secrets.json` is mode `0600` on the
-> Abbenay config volume; treat that volume as secret material.
+> **Security note:** `GET /api/v1/ai/secrets` returns engine key **names**
+> and store metadata (not values) to any client that can reach Gateway
+> `:8080`. The Gateway REST API relies on network-isolation auth (ADR-048)
+> — operators must ensure an outer auth layer (Ingress, Route, reverse
+> proxy) before exposing `:8080` outside the cluster. Treat the Abbenay
+> config volume as secret material (`secrets.json`).
 
 ### Writable config volume (#498)
 
@@ -134,7 +139,7 @@ persistence:
     accessMode: ReadWriteOnce
 ```
 
-See [ADR-070](../../.sdlc/adrs/ADR-070-gateway-abbenay-admin-proxy.md) §6.
+See [ADR-070](../../.sdlc/adrs/ADR-070-gateway-abbenay-admin-proxy.md) §6 (config durability) and §7 (secrets remain Abbenay SoT).
 
 ---
 
