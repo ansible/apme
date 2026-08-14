@@ -117,6 +117,20 @@ class TestParseYamlGroups:
         assert "ungrouped" not in group_names
         assert "web-servers" in group_names
 
+    def test_recursive_yaml_alias_does_not_recurse(self) -> None:
+        """Recursive YAML aliases do not cause RecursionError."""
+        import yaml
+
+        content = """
+all: &root
+  children:
+    bad-group: *root
+"""
+        data = yaml.safe_load(content)
+        groups = list(_parse_yaml_groups(data))
+        group_names = [g[0] for g in groups]
+        assert "bad-group" in group_names
+
 
 class TestLooksLikeIni:
     """Tests for _looks_like_ini helper."""
@@ -628,3 +642,14 @@ class TestParseYamlInventory:
         content = "all:\n  children:\n    web_servers:\n"
         result = _parse_yaml_inventory(content)
         assert result == []
+
+    def test_recursive_yaml_alias_inventory(self) -> None:
+        """Recursive YAML aliases are handled without RecursionError."""
+        content = """
+all: &root
+  children:
+    bad-group: *root
+"""
+        result = _parse_yaml_inventory(content)
+        group_names = [g[0] for g in result]
+        assert group_names == ["bad-group"]

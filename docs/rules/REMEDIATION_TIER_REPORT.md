@@ -9,8 +9,8 @@ Analysis of default remediation routing for all rules. Regenerate with:
 
 | Tier | Count | % of 157 |
 |------|-------|--------|
-| Tier 1 — auto (has transform) | 25 | 15% |
-| Tier 2 — AI (task/block, no fixer) | 69 | 43% |
+| Tier 1 — auto (has transform) | 25 | 16% |
+| Tier 2 — AI (task/block, no fixer) | 69 | 44% |
 | Tier 3 — manual | 63 | 40% |
 
 ### Promotion potential

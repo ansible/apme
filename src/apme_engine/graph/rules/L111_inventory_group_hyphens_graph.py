@@ -121,21 +121,30 @@ def _parse_yaml_groups(
     data: object,
     path: tuple[str, ...] = (),
     line_map: dict[str, int] | None = None,
+    visited: frozenset[int] | None = None,
 ) -> Iterator[tuple[str, int]]:
     """Extract group names from YAML inventory structure.
 
     Recursively walks YAML looking for keys under 'children' at any depth.
+    Tracks active mapping identities to avoid infinite recursion on YAML aliases.
 
     Args:
         data: Parsed YAML data.
         path: Current path for context.
         line_map: Optional mapping of dotted paths to line numbers.
+        visited: Mapping object ids already being traversed (cycle guard).
 
     Yields:
         tuple[str, int]: Tuples of (group_name, line_number).
     """
     if not isinstance(data, dict):
         return
+
+    active = visited or frozenset()
+    data_id = id(data)
+    if data_id in active:
+        return
+    next_visited = active | frozenset({data_id})
 
     # Check if this dict has children key
     children = data.get("children")
@@ -147,11 +156,16 @@ def _parse_yaml_groups(
             line = line_map.get(f"{'.'.join(path)}.children.{group_name}", 1) if line_map else 1
             yield group_name, line
             # Recurse into child groups
-            yield from _parse_yaml_groups(children[group_name], (*path, "children", group_name), line_map)
+            yield from _parse_yaml_groups(
+                children[group_name],
+                (*path, "children", group_name),
+                line_map,
+                next_visited,
+            )
 
     # Also check top-level keys in 'all' structure
     if "all" in data and isinstance(data["all"], dict):
-        yield from _parse_yaml_groups(data["all"], (*path, "all"), line_map)
+        yield from _parse_yaml_groups(data["all"], (*path, "all"), line_map, next_visited)
 
 
 def _get_yaml_line_map(content: str) -> dict[str, int]:
