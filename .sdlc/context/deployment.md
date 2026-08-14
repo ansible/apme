@@ -93,7 +93,7 @@ The **`remediate`** command uses a **bidirectional streaming RPC** (`FixSession`
 
 ```bash
 tox -e down                             # stop pod only
-tox -e wipe                             # stop pod and delete DB + session cache
+tox -e wipe                             # stop pod and delete DB, sessions, Abbenay secrets.json
 ```
 
 ### Health Check
@@ -270,7 +270,7 @@ See `PODMAN_OPA_ISSUES.md` for common Podman rootless issues:
 tox -e up                               # build + start
 tox -e cli                              # run a scan (check .)
 tox -e down                             # stop
-tox -e wipe                             # stop + wipe DB/sessions
+tox -e wipe                             # stop + wipe DB/sessions/Abbenay secrets.json
 ```
 
 ### Port Map

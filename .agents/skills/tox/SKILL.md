@@ -88,7 +88,7 @@ directly. Every task maps to a `tox -e <env>` command.
 | `tox -e up -- --no-cache` | Full rebuild + start | When cached layers are stale. |
 | `tox -e build` | `containers/podman/build.sh` | Build images only (no start). |
 | `tox -e down` | `containers/podman/down.sh` | Stop the APME pod. |
-| `tox -e wipe` | Stop + wipe DB and sessions | Preserve images, wipe state. |
+| `tox -e wipe` | Stop + wipe DB, sessions, and Abbenay `secrets.json` | Preserve images, wipe state. |
 | `tox -e build-clean` | Wipe + rebuild `--no-cache` | Full clean rebuild (no start). |
 | `tox -e up-clean` | Wipe + rebuild `--no-cache` + start | Nuclear option — clean slate. |
 | `tox -e cli -- <args>` | `containers/podman/run-cli.sh` | Run CLI commands in the pod. |

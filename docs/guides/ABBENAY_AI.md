@@ -49,10 +49,17 @@ curl -X POST http://gateway:8080/api/v1/ai/secrets \
 curl http://gateway:8080/api/v1/ai/secrets
 ```
 
-**Remove a secret:**
+The response lists key **names** plus which store holds them (`secretStore`,
+`hasValue`). It does **not** return secret values. Env-injected Helm keys
+do not appear in this registry list.
+
+**Remove a secret:** Abbenay defaults omitted `secretStore` to **keychain**.
+Always pass the store you used when injecting, or the delete will no-op
+against the wrong backend (and still return success):
 
 ```bash
-curl -X DELETE http://gateway:8080/api/v1/ai/secrets/OPENROUTER_API_KEY
+curl -X DELETE 'http://gateway:8080/api/v1/ai/secrets/OPENROUTER_API_KEY?secretStore=memory'
+curl -X DELETE 'http://gateway:8080/api/v1/ai/secrets/OPENROUTER_API_KEY?secretStore=file'
 ```
 
 After injecting a secret, configure a provider to use it via
@@ -72,7 +79,7 @@ config volume:
 | Deploy | Durable volume | Lost on restart? |
 |--------|----------------|------------------|
 | **Helm** | `persistence.abbenay.enabled=true` (PVC) | `emptyDir` (the default) loses `secrets.json` |
-| **Podman** | RW cache `${XDG_CACHE_HOME:-$HOME/.cache}/apme/abbenay/config/` | Survives `tox -e down` / container restart |
+| **Podman** | RW cache `${XDG_CACHE_HOME:-$HOME/.cache}/apme/abbenay/config/` | Survives `tox -e down` / container restart. `tox -e wipe` deletes `secrets.json`. |
 
 **Inject a secret into the file store:**
 
@@ -83,8 +90,20 @@ curl -X POST http://gateway:8080/api/v1/ai/secrets \
 ```
 
 Then configure the provider with `secretName` and `secretStore: file` via
-`POST /api/v1/ai/provider/{id}/configure`. Deploy-time Helm Secrets / env
-(`secret_store: env` in the seed ConfigMap) are unchanged.
+`POST /api/v1/ai/provider/{id}/configure`. File-store keys and Helm env
+keys (`secret_store: env` in the seed ConfigMap) are **separate** backends:
+injecting `secretStore: file` does not override an env-backed provider until
+you reconfigure `secretStore`. Deploy-time Helm Secrets / env are unchanged.
+
+**Remove a file-store secret:**
+
+```bash
+curl -X DELETE 'http://gateway:8080/api/v1/ai/secrets/OPENROUTER_API_KEY?secretStore=file'
+```
+
+If `secrets.json` exists but is not valid JSON, Abbenay treats reads as empty
+and **refuses writes** (it will not overwrite a corrupt file). Fix or remove
+the file on the config volume, then re-inject.
 
 > **Security note:** `GET /api/v1/ai/secrets` returns stored key **names**
 > (not values) to any client that can reach Gateway `:8080`. The Gateway REST
@@ -102,7 +121,7 @@ the first write, the runtime file is the source of truth.
 | Deploy | Seed | Writable volume | Notes |
 |--------|------|-----------------|-------|
 | **Helm** | ConfigMap `*-abbenay-config` (from `abbenay.providers`) | `emptyDir` by default; optional PVC via `persistence.abbenay.enabled=true` | Init `init-abbenay-config` copies seed only if `config.yaml` is absent. Mount: `/etc/abbenay-config`. The same volume holds file-store `secrets.json` (Abbenay ≥ v2026.8.6). |
-| **Podman** | `containers/abbenay/config/` (or legacy `config.yaml` / `.example`) on first `tox -e up` | Cache dir `${XDG_CACHE_HOME:-$HOME/.cache}/apme/abbenay/config/` → `/home/abbenay/.config/abbenay` | `up.sh` seeds into the cache path (mode `0700`/`0600`). Rootful chowns the cache copy to UID 1001; rootless keeps host ownership and grants UID 1001 a POSIX ACL. The repo tree is never chowned. File-store `secrets.json` is written here. |
+| **Podman** | `containers/abbenay/config/` (or legacy `config.yaml` / `.example`) on first `tox -e up` | Cache dir `${XDG_CACHE_HOME:-$HOME/.cache}/apme/abbenay/config/` → `/home/abbenay/.config/abbenay` | `up.sh` seeds into the cache path (mode `0700`/`0600`). Rootful chowns the cache copy to UID 1001; rootless keeps host ownership and grants UID 1001 a POSIX ACL. The repo tree is never chowned. File-store `secrets.json` is written here; `tox -e wipe` deletes it. |
 
 Helm PVC knobs (`persistence.abbenay.*`):
 

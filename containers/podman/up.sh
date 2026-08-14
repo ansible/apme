@@ -235,6 +235,7 @@ _ensure_abbenay_config_access() {
       # so world-readable perms are sufficient for the container UID.
       chmod 755 "$path"
       [[ -f "$path/config.yaml" ]] && chmod 644 "$path/config.yaml"
+      [[ -f "$path/secrets.json" ]] && chmod 644 "$path/secrets.json"
       return 0
     fi
     if ! command -v setfacl >/dev/null 2>&1; then
@@ -252,6 +253,13 @@ _ensure_abbenay_config_access() {
       setfacl -m "u:${mapped}:rw" "$path/config.yaml" || return 1
       if ! _container_uid_can_read "$cuid" "$path/config.yaml"; then
         echo "ERROR: container UID $cuid cannot read $path/config.yaml after ACL grant" >&2
+        return 1
+      fi
+    fi
+    if [[ -f "$path/secrets.json" ]]; then
+      setfacl -m "u:${mapped}:rw" "$path/secrets.json" || return 1
+      if ! _container_uid_can_read "$cuid" "$path/secrets.json"; then
+        echo "ERROR: container UID $cuid cannot read $path/secrets.json after ACL grant" >&2
         return 1
       fi
     fi

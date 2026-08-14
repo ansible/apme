@@ -59,7 +59,7 @@ tox is the single entry point for all developer tasks. Every CI check has a corr
 | `tox -e build` | `containers/podman/build.sh` | Pod lifecycle |
 | `tox -e up` | `build.sh` + `up.sh` | Pod lifecycle |
 | `tox -e down` | `containers/podman/down.sh` | Pod lifecycle |
-| `tox -e wipe` | `down --wipe` (stop + delete DB/sessions) | Pod lifecycle |
+| `tox -e wipe` | `down --wipe` (stop + delete DB/sessions/Abbenay secrets.json) | Pod lifecycle |
 | `tox -e build-clean` | `wipe` + `build --no-cache` | Pod lifecycle |
 | `tox -e up-clean` | `wipe` + `build --no-cache` + `up` | Pod lifecycle |
 | `tox -e cli` | `containers/podman/run-cli.sh` | Pod lifecycle |
@@ -77,7 +77,7 @@ Use `--` to pass arguments through to the underlying command:
 tox -e unit -- -k test_sbom             # run a single test
 tox -e unit -- --no-cov                 # skip coverage
 tox -e build -- --no-cache          # rebuild from scratch
-tox -e wipe                          # stop + wipe DB/sessions
+tox -e wipe                          # stop + wipe DB/sessions/Abbenay secrets.json
 tox -e cli -- check .               # run CLI check in pod
 tox -e cli -- health-check          # run health check in pod
 ```
@@ -433,7 +433,7 @@ tox -e build                     # build images only (no start)
 tox -e build-clean               # wipe DB/sessions + rebuild --no-cache
 tox -e up-clean                  # wipe + rebuild + start (clean slate)
 tox -e down                      # stop the pod
-tox -e wipe                          # stop + wipe DB and session cache
+tox -e wipe                          # stop + wipe DB, session cache, and Abbenay secrets.json
 tox -e cli -- check .            # run check in pod
 tox -e cli -- health-check       # health check all services
 tox -e pm                            # build, start, wait, open browser

@@ -332,8 +332,9 @@ securityContext:
   runAsUser: 1001
 ```
 
-`fsGroup` ensures PVC mounts for `/sessions`, `/data`, and `/cache` are writable by
-the application UID. Local Podman uses the same PVC definitions in
+`fsGroup` ensures PVC mounts for `/sessions`, `/data`, `/cache`, and
+Abbenay `/etc/abbenay-config` are writable by the application UID. Local
+Podman uses the same PVC definitions in
 `containers/podman/pvc.yaml` (with `volume.podman.io/uid` annotations).
 
 ## Uninstall
@@ -342,7 +343,10 @@ the application UID. Local Podman uses the same PVC definitions in
 helm uninstall apme
 ```
 
-PVCs are not deleted automatically. Remove them manually if desired:
+PVCs are not deleted automatically. The Abbenay config PVC may contain
+plaintext `secrets.json` (file secret store) as well as runtime
+`config.yaml`. Remove PVCs when decommissioning or before reinstalling
+under the same release name (reinstall otherwise reattaches the old keys):
 
 ```bash
 kubectl delete pvc -l app.kubernetes.io/instance=apme
