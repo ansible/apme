@@ -343,12 +343,32 @@ Podman uses the same PVC definitions in
 helm uninstall apme
 ```
 
-Helm 3 deletes chart-managed PVCs on uninstall. If the StorageClass
-reclaim policy is Retain, orphaned PVs can still hold plaintext
-`secrets.json`. Delete leftover PVs/PVCs when decommissioning:
+Helm 3 deletes chart-managed PVCs. The `kubectl delete pvc` command below is
+only needed if a claim was left behind (failed uninstall, or a PVC created
+outside the chart).
+
+If the StorageClass reclaim policy is **Delete**, the CSI driver typically
+removes the backing volume when the PVC is gone.
+
+If the reclaim policy is **Retain**, uninstall (and deleting the PVC) does
+**not** erase the disk. A PV in `Released` phase can still hold plaintext
+`secrets.json` (Abbenay file store) and runtime `config.yaml`. Identify it,
+destroy or crypto-erase the volume in the **storage provider**, then delete
+the PV object. `kubectl` cannot securely overwrite those bytes.
 
 ```bash
+# Find APME PVs (claims are <release>-abbenay-config, -gateway-data, …)
+kubectl get pv -o custom-columns=\
+NAME:.metadata.name,\
+RECLAIM:.spec.persistentVolumeReclaimPolicy,\
+STATUS:.status.phase,\
+CLAIM:.spec.claimRef.namespace/.spec.claimRef.name
+
+# Leftover chart PVCs (usually none after a clean helm uninstall)
 kubectl delete pvc -l app.kubernetes.io/instance=apme
+
+# After wiping/destroying a Retain volume in the storage provider:
+# kubectl delete pv <pv-name>
 ```
 
 ## Related

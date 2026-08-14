@@ -231,9 +231,11 @@ _ensure_abbenay_config_access() {
       fi
     fi
     if [[ "$(uname -s)" == "Darwin" ]]; then
-      # macOS: setfacl unavailable; Podman Machine VM shares files via virtiofs
-      # so other-readable perms are required for container UID 1001. Treat this
-      # cache dir as secret material (secrets.json may be 0644, not 0600).
+      # macOS: setfacl unavailable; Podman Machine virtiofs presents the host
+      # user as owner and container UID 1001 as other, so other-read is required
+      # for config.yaml. Do not chmod 0666/0777 on secrets.json (world-writable
+      # keys). File-store persist without world access is #562 (named volume or
+      # keep-id). Treat this cache dir as secret material.
       chmod 755 "$path"
       [[ -f "$path/config.yaml" ]] && chmod 644 "$path/config.yaml"
       [[ -f "$path/secrets.json" ]] && chmod 644 "$path/secrets.json"

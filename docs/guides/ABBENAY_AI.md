@@ -77,6 +77,7 @@ secrets to `<configDir>/secrets.json` on the **same writable volume** as
 `up.sh` may relax it to `0644` so virtiofs can map container UID 1001 (the
 same workaround as `config.yaml`); treat
 `${XDG_CACHE_HOME:-$HOME/.cache}/apme/abbenay/config/` as secret material.
+Granting UID 1001 write without world access is [#562](https://github.com/ansible/apme/issues/562).
 Gateway reverse-proxies the JSON body unchanged and does **not** store keys
 (ADR-070). Pair file-store usage with a durable config volume:
 

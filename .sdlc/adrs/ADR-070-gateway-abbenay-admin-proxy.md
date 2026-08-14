@@ -120,7 +120,8 @@ provider keys. Durable keys in containers use Abbenay's filesystem store
 `<configDir>/secrets.json` (mode `0600` as written by Abbenay) on the same
 writable volume as `config.yaml`. On macOS Podman Machine, `up.sh` may set
 the file to `0644` so virtiofs can map container UID 1001 — treat the host
-cache directory as secret material. File-store keys survive a restart
+cache directory as secret material ([#562](https://github.com/ansible/apme/issues/562)
+for write access without world-open perms). File-store keys survive a restart
 **only** when that volume is durable:
 
 - **Helm**: `persistence.abbenay.enabled=true` (PVC). The chart default is
