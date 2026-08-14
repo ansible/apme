@@ -7,7 +7,8 @@ Abbenay chat) is **not** proxied — chat stays Primary → Abbenay gRPC.
 ``GET /api/v1/ai/engines`` proxies Abbenay's engine registry (read-only
 discovery path, ADR-070 amendment 2026-08-03).
 ``GET/POST /api/v1/ai/secrets`` and ``DELETE /api/v1/ai/secrets/{key}`` proxy
-Abbenay's memory secret store (ADR-070 amendment 2026-08-13, Abbenay ≥ v2026.8.5).
+Abbenay's secret store (memory or file; ADR-070 amendments 2026-08-13 /
+2026-08-14, Abbenay ≥ v2026.8.6). Gateway does not persist keys.
 """
 
 from __future__ import annotations

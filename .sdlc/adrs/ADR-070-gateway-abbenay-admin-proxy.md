@@ -112,6 +112,22 @@ admin writes persist there as the source of truth after first configure:
 After the first successful configure, the writable file is SoT — Helm value /
 ConfigMap changes do not overwrite an existing runtime config.
 
+**7. Secrets source of truth remains Abbenay (not Gateway).**  
+Runtime API keys injected via `POST /api/v1/ai/secrets` are stored by
+Abbenay. Gateway reverse-proxies the secrets API and does **not** persist
+provider keys. Durable keys in containers use Abbenay's filesystem store
+(`secretStore: "file"`, Abbenay ≥ v2026.8.6), which writes
+`<configDir>/secrets.json` (mode `0600`) on the same writable volume as
+`config.yaml` (Helm `persistence.abbenay`, Podman RW cache). The
+process-lifetime `memory` store remains available. Deploy-time Helm
+Secrets / env (`secret_store: env`) are unchanged.
+
+Rejected: a Gateway `ai_providers` SQLite table as source of truth with
+push-into-Abbenay-memory
+([#560](https://github.com/ansible/apme/pull/560)). That inverts this
+ADR's "Abbenay remains config SoT" (invariant 5) and makes Gateway a
+secrets vault it is not designed to be.
+
 **We will use an allowlisted HTTP reverse-proxy on the Gateway for in-pod
 Abbenay admin, not a catch-all façade and not Gateway→Abbenay gRPC for chat.**
 
@@ -163,6 +179,25 @@ runtime admin API.
 - Slow feedback loop for EAP demos and day-2 model changes
 
 **Why not chosen**: Product needs runtime admin through the Gateway edge.
+
+### Alternative 4: Gateway SQLite as secrets SoT, push to Abbenay memory
+
+**Description**: Persist providers and API keys in Gateway DB; push into
+Abbenay `secretStore: memory` before AI-enabled scans (proposed in
+[#560](https://github.com/ansible/apme/pull/560)).
+
+**Pros**:
+- Survives Abbenay restart without a PVC
+- Portal CRUD can live next to other Gateway settings
+
+**Cons**:
+- Gateway becomes a secrets vault (SQLite is not designed for that)
+- Two sources of truth; push-before-scan races and restart windows
+- Breaks "Abbenay remains config SoT" (this ADR / invariant 5)
+- Memory store is still ephemeral in Abbenay; durability is only in Gateway
+
+**Why not chosen**: Durable keys belong in Abbenay's file store on the
+existing config volume. Gateway stays a proxy.
 
 ## Consequences
 
@@ -219,6 +254,9 @@ runtime admin API.
   (`persistence.abbenay`); Podman RW cache
   (`${XDG_CACHE_HOME:-$HOME/.cache}/apme/abbenay/config/`); seed-once;
   runtime SoT after first configure.
+- **Secrets durability** (Abbenay ≥ v2026.8.6): `secretStore: "file"` writes
+  `<configDir>/secrets.json` on that same volume. Gateway does not parse
+  `secretStore`. Do not persist provider keys in Gateway SQLite.
 
 ## Related Decisions
 
@@ -248,3 +286,4 @@ runtime admin API.
 | 2026-08-03 | bthornto | Amended allowlist: added `GET /engines` for read-only engine discovery |
 | 2026-08-03 | bthornto | §6 Config durability implemented (#498): seed→RW emptyDir/PVC; Podman RW config dir |
 | 2026-08-13 | bthornto | Amended allowlist: added `GET/POST /secrets`, `DELETE /secrets/{key}` for Abbenay ≥ v2026.8.5 memory secret store |
+| 2026-08-14 | bthornto | §7 secrets remain Abbenay SoT: file store (`secretStore: "file"`, ≥ v2026.8.6) on the config volume; Gateway stays proxy-only (not Gateway DB; closes #560) |

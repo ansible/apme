@@ -57,14 +57,41 @@ curl -X DELETE http://gateway:8080/api/v1/ai/secrets/OPENROUTER_API_KEY
 
 After injecting a secret, configure a provider to use it via
 `POST /api/v1/ai/provider/{id}/configure` with `secretName` and
-`secretStore: memory`. Memory-stored secrets do not survive pod restarts;
-re-inject after a restart or use Helm Secrets / env vars for persistence.
+`secretStore: memory`. Memory-stored secrets do not survive Abbenay or pod
+restarts. For keys that must survive a restart, use the file store below,
+or Helm Secrets / env vars (`secret_store: env`).
+
+### File secret store (Abbenay >= v2026.8.6)
+
+For durable API keys in containers (no system keychain), Abbenay persists
+secrets to `<configDir>/secrets.json` (mode `0600`) on the **same writable
+volume** as `config.yaml`. Gateway reverse-proxies the JSON body unchanged
+and does **not** store keys (ADR-070). Pair file-store usage with a durable
+config volume:
+
+| Deploy | Durable volume | Lost on restart? |
+|--------|----------------|------------------|
+| **Helm** | `persistence.abbenay.enabled=true` (PVC) | `emptyDir` (the default) loses `secrets.json` |
+| **Podman** | RW cache `${XDG_CACHE_HOME:-$HOME/.cache}/apme/abbenay/config/` | Survives `tox -e down` / container restart |
+
+**Inject a secret into the file store:**
+
+```bash
+curl -X POST http://gateway:8080/api/v1/ai/secrets \
+  -H "Content-Type: application/json" \
+  -d '{"key": "OPENROUTER_API_KEY", "value": "sk-or-...", "secretStore": "file"}'
+```
+
+Then configure the provider with `secretName` and `secretStore: file` via
+`POST /api/v1/ai/provider/{id}/configure`. Deploy-time Helm Secrets / env
+(`secret_store: env` in the seed ConfigMap) are unchanged.
 
 > **Security note:** `GET /api/v1/ai/secrets` returns stored key **names**
 > (not values) to any client that can reach Gateway `:8080`. The Gateway REST
 > API relies on network-isolation auth (ADR-048) — operators must ensure an
 > outer auth layer (Ingress, Route, reverse proxy) before exposing `:8080`
-> outside the cluster.
+> outside the cluster. File-store `secrets.json` is mode `0600` on the
+> Abbenay config volume; treat that volume as secret material.
 
 ### Writable config volume (#498)
 
@@ -74,8 +101,8 @@ the first write, the runtime file is the source of truth.
 
 | Deploy | Seed | Writable volume | Notes |
 |--------|------|-----------------|-------|
-| **Helm** | ConfigMap `*-abbenay-config` (from `abbenay.providers`) | `emptyDir` by default; optional PVC via `persistence.abbenay.enabled=true` | Init `init-abbenay-config` copies seed only if `config.yaml` is absent. Mount: `/etc/abbenay-config`. |
-| **Podman** | `containers/abbenay/config/` (or legacy `config.yaml` / `.example`) on first `tox -e up` | Cache dir `${XDG_CACHE_HOME:-$HOME/.cache}/apme/abbenay/config/` → `/home/abbenay/.config/abbenay` | `up.sh` seeds into the cache path (mode `0700`/`0600`). Rootful chowns the cache copy to UID 1001; rootless keeps host ownership and grants UID 1001 a POSIX ACL. The repo tree is never chowned. |
+| **Helm** | ConfigMap `*-abbenay-config` (from `abbenay.providers`) | `emptyDir` by default; optional PVC via `persistence.abbenay.enabled=true` | Init `init-abbenay-config` copies seed only if `config.yaml` is absent. Mount: `/etc/abbenay-config`. The same volume holds file-store `secrets.json` (Abbenay ≥ v2026.8.6). |
+| **Podman** | `containers/abbenay/config/` (or legacy `config.yaml` / `.example`) on first `tox -e up` | Cache dir `${XDG_CACHE_HOME:-$HOME/.cache}/apme/abbenay/config/` → `/home/abbenay/.config/abbenay` | `up.sh` seeds into the cache path (mode `0700`/`0600`). Rootful chowns the cache copy to UID 1001; rootless keeps host ownership and grants UID 1001 a POSIX ACL. The repo tree is never chowned. File-store `secrets.json` is written here. |
 
 Helm PVC knobs (`persistence.abbenay.*`):
 

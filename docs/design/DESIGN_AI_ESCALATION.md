@@ -531,7 +531,7 @@ Future MCP integration (when implemented) would allow the LLM to autonomously ca
 
 ### Secret Handling
 
-- API keys are managed by Abbenay (in its config or env vars), never passed through APME
+- API keys are managed by Abbenay (env, memory, keychain, or file store), never persisted by the Gateway
 - Consumer tokens are passed via gRPC metadata, not logged
 - File content sent to the LLM may contain sensitive data -- this is the user's responsibility (same as any LLM-assisted coding tool)
 
@@ -544,12 +544,12 @@ Future MCP integration (when implemented) would allow the LLM to autonomously ca
 ## Optional Dependency
 
 `abbenay-client` is an optional dependency, published on PyPI. Pin it to
-the same CalVer as the Abbenay daemon image (currently `v2026.8.5`):
+the same CalVer as the Abbenay daemon image (currently `v2026.8.6`):
 
 ```toml
 [project.optional-dependencies]
 ai = [
-    "abbenay-client==2026.8.5",
+    "abbenay-client==2026.8.6",
 ]
 ```
 
@@ -594,14 +594,14 @@ Install with: uv sync --extra ai
 Pre-built multi-arch Abbenay images (amd64 + arm64) are available on GHCR:
 
 ```bash
-podman pull ghcr.io/redhat-developer/abbenay:v2026.8.5
+podman pull ghcr.io/redhat-developer/abbenay:v2026.8.6
 ```
 
 | Tag | Meaning |
 |-----|---------|
 | `:main` | Latest merged code |
 | `:sha-<short>` | Specific commit |
-| `:v2026.8.5` | Release (`v` prefix; APME pin) |
+| `:v2026.8.6` | Release (`v` prefix; APME pin) |
 | `:latest` | Latest stable release |
 
 ```
