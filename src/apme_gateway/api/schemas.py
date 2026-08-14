@@ -815,6 +815,121 @@ class UpdateGalaxyServerRequest(BaseModel):  # type: ignore[misc]
     auth_url: str | None = None
 
 
+# ── AI provider settings (portal-managed Abbenay) ────────────────────
+
+
+class AiEngineInfo(BaseModel):  # type: ignore[misc]
+    """Abbenay engine descriptor for the provider wizard.
+
+    Attributes:
+        id: Abbenay engine id (e.g. ``openrouter``).
+        requires_key: Whether the engine needs an API key.
+        default_base_url: Suggested API root when none is configured.
+        default_env_var: Legacy env-var name hint (informational only).
+    """
+
+    id: str
+    requires_key: bool = True
+    default_base_url: str = ""
+    default_env_var: str = ""
+
+
+class AiProviderSchema(BaseModel):  # type: ignore[misc]
+    """A portal-managed Abbenay LLM provider (API key never exposed).
+
+    Attributes:
+        id: Auto-increment primary key.
+        name: Virtual Abbenay provider name (slug).
+        engine: Abbenay engine id.
+        base_url: Optional custom API base URL.
+        models: Model id → params map.
+        has_api_key: Whether an API key is stored (value never exposed).
+        extra: Optional engine-specific metadata.
+        created_at: ISO 8601 creation timestamp.
+        updated_at: ISO 8601 last-update timestamp.
+    """
+
+    id: int
+    name: str
+    engine: str
+    base_url: str = ""
+    models: dict[str, dict[str, object]] = Field(default_factory=dict)
+    has_api_key: bool = False
+    extra: dict[str, object] = Field(default_factory=dict)
+    created_at: str
+    updated_at: str
+
+
+class CreateAiProviderRequest(BaseModel):  # type: ignore[misc]
+    """Request body for creating an AI provider.
+
+    Attributes:
+        name: Virtual Abbenay provider name (slug).
+        engine: Abbenay engine id.
+        base_url: Optional custom API base URL.
+        api_key: Provider API key (may be empty for keyless engines).
+        models: Model id → params map.
+        extra: Optional engine-specific metadata.
+    """
+
+    name: str
+    engine: str
+    base_url: str = ""
+    api_key: str = ""
+    models: dict[str, dict[str, object]] = Field(default_factory=dict)
+    extra: dict[str, object] = Field(default_factory=dict)
+
+
+class UpdateAiProviderRequest(BaseModel):  # type: ignore[misc]
+    """Partial update for an AI provider.
+
+    Attributes:
+        name: New virtual provider name, or None to leave unchanged.
+        engine: New engine id, or None to leave unchanged.
+        base_url: New base URL, or None to leave unchanged.
+        api_key: New API key, or None/empty to leave unchanged.
+        models: New models map, or None to leave unchanged.
+        extra: New metadata, or None to leave unchanged.
+    """
+
+    name: str | None = None
+    engine: str | None = None
+    base_url: str | None = None
+    api_key: str | None = None
+    models: dict[str, dict[str, object]] | None = None
+    extra: dict[str, object] | None = None
+
+
+class DiscoverAiModelsRequest(BaseModel):  # type: ignore[misc]
+    """Discover models from an engine API (wizard helper).
+
+    Attributes:
+        engine: Abbenay engine id to query.
+        api_key: Optional API key for authenticated discovery.
+        base_url: Optional custom API base URL.
+    """
+
+    engine: str
+    api_key: str = ""
+    base_url: str = ""
+
+
+class DiscoveredAiModel(BaseModel):  # type: ignore[misc]
+    """Model discovered from an engine API.
+
+    Attributes:
+        id: Engine model id.
+        name: Human-readable model name.
+        provider: Upstream provider label from Abbenay.
+        engine: Abbenay engine id used for discovery.
+    """
+
+    id: str
+    name: str = ""
+    provider: str = ""
+    engine: str = ""
+
+
 class DashboardSummary(BaseModel):  # type: ignore[misc]
     """Cross-project aggregate statistics (ADR-037).
 

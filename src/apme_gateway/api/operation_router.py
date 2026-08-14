@@ -1270,6 +1270,17 @@ async def _drive_operation(
         bridge_task: asyncio.Task[None] | None = None
         enable_ai = coerce_option_bool(options.get("enable_ai", False))
 
+        if enable_ai:
+            from apme_gateway._abbenay_sync import push_ai_providers  # noqa: PLC0415
+
+            pushed = await push_ai_providers()
+            if not pushed:
+                logger.warning(
+                    "AI provider push to Abbenay failed before operation %s — "
+                    "continuing; inference may fail if Abbenay has no memory creds",
+                    operation_id[:12],
+                )
+
         if remediate or assess_pause:
             approval_queue = asyncio.Queue()
             if assess_pause:

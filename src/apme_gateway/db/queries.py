@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from apme_gateway.db.models import (
+    AiProvider,
     GalaxyServer,
     Notification,
     PatchedFile,
@@ -1798,6 +1799,125 @@ async def update_galaxy_server(
     await db.commit()
     await db.refresh(server)
     return server
+
+
+# ---------------------------------------------------------------------------
+# AI provider settings (portal-managed Abbenay)
+# ---------------------------------------------------------------------------
+
+
+async def list_ai_providers(db: AsyncSession) -> list[AiProvider]:
+    """Return all configured AI providers ordered by name.
+
+    Args:
+        db: Async database session.
+
+    Returns:
+        List of AiProvider rows.
+    """
+    result = await db.execute(select(AiProvider).order_by(AiProvider.name))
+    return list(result.scalars().all())
+
+
+async def get_ai_provider(db: AsyncSession, provider_id: int) -> AiProvider | None:
+    """Fetch a single AI provider by ID.
+
+    Args:
+        db: Async database session.
+        provider_id: Primary key.
+
+    Returns:
+        AiProvider or None if not found.
+    """
+    row: AiProvider | None = await db.get(AiProvider, provider_id)
+    return row
+
+
+async def create_ai_provider(
+    db: AsyncSession,
+    *,
+    name: str,
+    engine: str,
+    base_url: str = "",
+    api_key: str = "",
+    models_json: str = "{}",
+    extra_json: str = "{}",
+) -> AiProvider:
+    """Insert a new AI provider definition.
+
+    Args:
+        db: Async database session.
+        name: Virtual provider name.
+        engine: Abbenay engine id.
+        base_url: Optional custom API base URL.
+        api_key: Provider API key (may be empty).
+        models_json: JSON models map.
+        extra_json: Optional metadata JSON.
+
+    Returns:
+        The newly created AiProvider row.
+    """
+    now = datetime.now(tz=UTC).isoformat()
+    row = AiProvider(
+        name=name,
+        engine=engine,
+        base_url=base_url,
+        api_key=api_key,
+        models_json=models_json,
+        extra_json=extra_json,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(row)
+    await db.commit()
+    await db.refresh(row)
+    return row
+
+
+async def update_ai_provider(
+    db: AsyncSession,
+    provider_id: int,
+    **fields: str,
+) -> AiProvider | None:
+    """Update mutable fields on an AI provider.
+
+    Args:
+        db: Async database session.
+        provider_id: Primary key.
+        **fields: Allowed keys name/engine/base_url/api_key/models_json/extra_json.
+
+    Returns:
+        Updated AiProvider or None if not found.
+    """
+    row: AiProvider | None = await db.get(AiProvider, provider_id)
+    if row is None:
+        return None
+    allowed = {"name", "engine", "base_url", "api_key", "models_json", "extra_json"}
+    for key, value in fields.items():
+        if key in allowed:
+            setattr(row, key, value)
+    row.updated_at = datetime.now(tz=UTC).isoformat()
+    await db.commit()
+    await db.refresh(row)
+    return row
+
+
+async def delete_ai_provider(db: AsyncSession, provider_id: int) -> bool:
+    """Delete an AI provider by ID.
+
+    Args:
+        db: Async database session.
+        provider_id: Primary key.
+
+    Returns:
+        True if a row was deleted.
+    """
+    row = await db.get(AiProvider, provider_id)
+    if row is None:
+        return False
+    await db.delete(row)
+    await db.commit()
+    return True
 
 
 async def delete_galaxy_server(db: AsyncSession, server_id: int) -> bool:

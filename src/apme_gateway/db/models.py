@@ -576,6 +576,39 @@ class GalaxyServer(Base):
     updated_at: Mapped[str] = mapped_column(Text, nullable=False)
 
 
+class AiProvider(Base):
+    """A portal-managed Abbenay LLM provider (Gateway SoT for scan-time push).
+
+    API keys are stored as plaintext in this release; application-layer
+    encryption is a documented follow-up (same pattern as Galaxy ADR-045).
+    At AI-enabled scan time the Gateway pushes these rows into Abbenay's
+    process-lifetime ``memory`` secret store (DR-047).
+
+    Attributes:
+        id: Auto-increment primary key.
+        name: Virtual provider name (Abbenay config key).
+        engine: Abbenay engine id (e.g. ``openrouter``, ``ollama``).
+        base_url: Optional custom API base URL.
+        api_key: Provider API key (may be empty for keyless engines).
+        models_json: JSON object mapping model id → params (usually ``{}``).
+        extra_json: Optional engine-specific metadata.
+        created_at: ISO 8601 creation timestamp.
+        updated_at: ISO 8601 last-update timestamp.
+    """
+
+    __tablename__ = "ai_providers"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    engine: Mapped[str] = mapped_column(Text, nullable=False)
+    base_url: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    api_key: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    models_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    extra_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    created_at: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[str] = mapped_column(Text, nullable=False)
+
+
 # ── ContentGraph visualization table ──────────────────────────────────
 
 

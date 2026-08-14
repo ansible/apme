@@ -23,23 +23,34 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from apme_engine.graph.severity import severity_from_proto, severity_to_label
+from apme_gateway.api.ai_providers import (
+    dump_extra,
+    dump_models,
+    to_ai_provider_schema,
+    validate_provider_name,
+)
 from apme_gateway.api.schemas import (
     ActiveOperationSummary,
     ActivityDetail,
     ActivitySummary,
     AiAcceptanceEntry,
+    AiEngineInfo,
     AiModelInfo,
+    AiProviderSchema,
     CollectionDetail,
     CollectionHealthSummary,
     CollectionProjectRef,
     CollectionRefSchema,
     CollectionSummary,
     ComponentHealth,
+    CreateAiProviderRequest,
     CreateGalaxyServerRequest,
     CreateProjectRequest,
     CreateSuppressionRequest,
     DashboardSummary,
     DepHealthSummary,
+    DiscoverAiModelsRequest,
+    DiscoveredAiModel,
     GalaxyServerSchema,
     HealthStatus,
     LogEntry,
@@ -62,6 +73,7 @@ from apme_gateway.api.schemas import (
     SuppressionSchema,
     TopViolation,
     TrendPoint,
+    UpdateAiProviderRequest,
     UpdateGalaxyServerRequest,
     UpdateProjectRequest,
     ViolationDetail,
@@ -448,6 +460,250 @@ async def delete_galaxy_server(server_id: int) -> None:
     from apme_gateway._galaxy_proxy_sync import schedule_push  # noqa: PLC0415
 
     schedule_push()
+
+
+# ── AI provider settings (portal-managed Abbenay) ────────────────────
+
+
+@router.get("/settings/ai-engines")  # type: ignore[untyped-decorator]
+async def list_ai_engines() -> list[AiEngineInfo]:
+    """Return Abbenay engine types for the provider wizard.
+
+    Returns:
+        Engine descriptors (empty when Abbenay is unavailable).
+    """
+    from apme_gateway._abbenay_admin import open_abbenay_admin  # noqa: PLC0415
+
+    client = await open_abbenay_admin()
+    if client is None:
+        return []
+    try:
+        engines = await client.list_engines()
+        return [
+            AiEngineInfo(
+                id=e.id,
+                requires_key=e.requires_key,
+                default_base_url=e.default_base_url,
+                default_env_var=e.default_env_var,
+            )
+            for e in engines
+            if e.id != "mock"
+        ]
+    except Exception:
+        logger.warning("Failed to list Abbenay engines", exc_info=True)
+        return []
+    finally:
+        await client.close()
+
+
+@router.post("/settings/ai-providers/discover-models")  # type: ignore[untyped-decorator]
+async def discover_ai_models(body: DiscoverAiModelsRequest) -> list[DiscoveredAiModel]:
+    """Discover models from an engine API (wizard helper).
+
+    Args:
+        body: Engine id plus optional credentials for discovery.
+
+    Returns:
+        Discovered model descriptors from Abbenay.
+
+    Raises:
+        HTTPException: 400 when engine is missing; 503 when Abbenay is down;
+            502 when discovery fails.
+    """
+    if not body.engine.strip():
+        raise HTTPException(status_code=400, detail="engine is required")
+    from apme_gateway._abbenay_admin import open_abbenay_admin  # noqa: PLC0415
+
+    client = await open_abbenay_admin()
+    if client is None:
+        raise HTTPException(status_code=503, detail="Abbenay admin unavailable")
+    try:
+        models = await client.discover_models(
+            engine_id=body.engine.strip(),
+            api_key=body.api_key,
+            base_url=body.base_url,
+        )
+        return [
+            DiscoveredAiModel(
+                id=m.id,
+                name=m.name,
+                provider=m.provider,
+                engine=m.engine,
+            )
+            for m in models
+        ]
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Model discovery failed: {exc}",
+        ) from exc
+    finally:
+        await client.close()
+
+
+@router.get("/settings/ai-providers")  # type: ignore[untyped-decorator]
+async def list_ai_providers() -> list[AiProviderSchema]:
+    """Return all portal-managed AI providers (secrets masked).
+
+    Returns:
+        Provider definitions with ``has_api_key`` instead of raw secrets.
+    """
+    async with get_session() as db:
+        rows = await q.list_ai_providers(db)
+    return [to_ai_provider_schema(r) for r in rows]
+
+
+@router.post("/settings/ai-providers", status_code=201)  # type: ignore[untyped-decorator]
+async def create_ai_provider(body: CreateAiProviderRequest) -> AiProviderSchema:
+    """Create a new AI provider definition (Gateway SoT).
+
+    Args:
+        body: Provider creation payload (including optional API key).
+
+    Returns:
+        Newly created provider (API key masked).
+
+    Raises:
+        HTTPException: 400 on invalid name/engine; 409 on duplicate name.
+    """
+    from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
+
+    name = validate_provider_name(body.name)
+    engine = body.engine.strip()
+    if not engine:
+        raise HTTPException(status_code=400, detail="engine is required")
+
+    try:
+        async with get_session() as db:
+            row = await q.create_ai_provider(
+                db,
+                name=name,
+                engine=engine,
+                base_url=body.base_url.strip(),
+                api_key=body.api_key,
+                models_json=dump_models(body.models),
+                extra_json=dump_extra(body.extra),
+            )
+    except IntegrityError:
+        raise HTTPException(
+            status_code=409,
+            detail=f"AI provider named '{name}' already exists",
+        ) from None
+
+    from apme_gateway._abbenay_sync import schedule_sync  # noqa: PLC0415
+
+    schedule_sync()
+    return to_ai_provider_schema(row)
+
+
+@router.get("/settings/ai-providers/{provider_id}")  # type: ignore[untyped-decorator]
+async def get_ai_provider(provider_id: int) -> AiProviderSchema:
+    """Fetch a single AI provider by ID.
+
+    Args:
+        provider_id: Gateway primary key.
+
+    Returns:
+        Provider definition (API key masked).
+
+    Raises:
+        HTTPException: 404 if not found.
+    """
+    async with get_session() as db:
+        row = await q.get_ai_provider(db, provider_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="AI provider not found")
+    return to_ai_provider_schema(row)
+
+
+@router.patch("/settings/ai-providers/{provider_id}")  # type: ignore[untyped-decorator]
+async def update_ai_provider(
+    provider_id: int,
+    body: UpdateAiProviderRequest,
+) -> AiProviderSchema:
+    """Update an AI provider definition.
+
+    Args:
+        provider_id: Gateway primary key.
+        body: Partial update payload.
+
+    Returns:
+        Updated provider (API key masked).
+
+    Raises:
+        HTTPException: 400 when no fields are provided or validation fails;
+            404 if not found; 409 on duplicate name.
+    """
+    from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
+
+    updates: dict[str, str] = {}
+    if body.name is not None:
+        updates["name"] = validate_provider_name(body.name)
+    if body.engine is not None:
+        engine = body.engine.strip()
+        if not engine:
+            raise HTTPException(status_code=400, detail="engine cannot be empty")
+        updates["engine"] = engine
+    if body.base_url is not None:
+        updates["base_url"] = body.base_url.strip()
+    if body.api_key is not None and body.api_key != "":
+        updates["api_key"] = body.api_key
+    if body.models is not None:
+        updates["models_json"] = dump_models(body.models)
+    if body.extra is not None:
+        updates["extra_json"] = dump_extra(body.extra)
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    try:
+        async with get_session() as db:
+            row = await q.update_ai_provider(db, provider_id, **updates)
+    except IntegrityError:
+        raise HTTPException(
+            status_code=409,
+            detail=f"AI provider named '{updates.get('name', '')}' already exists",
+        ) from None
+    if row is None:
+        raise HTTPException(status_code=404, detail="AI provider not found")
+
+    from apme_gateway._abbenay_sync import schedule_sync  # noqa: PLC0415
+
+    schedule_sync()
+    return to_ai_provider_schema(row)
+
+
+@router.delete("/settings/ai-providers/{provider_id}", status_code=204)  # type: ignore[untyped-decorator]
+async def delete_ai_provider(provider_id: int) -> None:
+    """Delete an AI provider definition and remove it from Abbenay.
+
+    Args:
+        provider_id: Gateway primary key.
+
+    Raises:
+        HTTPException: 404 if not found.
+    """
+    async with get_session() as db:
+        row = await q.get_ai_provider(db, provider_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="AI provider not found")
+        provider_name = row.name
+        ok = await q.delete_ai_provider(db, provider_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="AI provider not found")
+
+    from apme_gateway._abbenay_admin import open_abbenay_admin  # noqa: PLC0415
+    from apme_gateway._abbenay_sync import schedule_sync  # noqa: PLC0415
+
+    client = await open_abbenay_admin()
+    if client is not None:
+        try:
+            await client.remove_provider(provider_name)
+        except Exception:
+            logger.debug("Abbenay remove_provider(%s) failed", provider_name, exc_info=True)
+        finally:
+            await client.close()
+
+    schedule_sync()
 
 
 # ── Project CRUD (ADR-037) ───────────────────────────────────────────

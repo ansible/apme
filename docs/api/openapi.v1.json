@@ -309,6 +309,35 @@
         "title": "AiAcceptanceEntry",
         "type": "object"
       },
+      "AiEngineInfo": {
+        "description": "Abbenay engine descriptor for the provider wizard.\n\nAttributes:\n    id: Abbenay engine id (e.g. ``openrouter``).\n    requires_key: Whether the engine needs an API key.\n    default_base_url: Suggested API root when none is configured.\n    default_env_var: Legacy env-var name hint (informational only).",
+        "properties": {
+          "default_base_url": {
+            "default": "",
+            "title": "Default Base Url",
+            "type": "string"
+          },
+          "default_env_var": {
+            "default": "",
+            "title": "Default Env Var",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "requires_key": {
+            "default": true,
+            "title": "Requires Key",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "title": "AiEngineInfo",
+        "type": "object"
+      },
       "AiEscalateTargetBody": {
         "description": "One AI escalation target (path + optional rule_ids).\n\nAttributes:\n    path: Content-graph location path (empty rule_ids = entire path).\n    rule_ids: Optional rule filter; omit or empty for the whole path.",
         "properties": {
@@ -352,6 +381,63 @@
           "name"
         ],
         "title": "AiModelInfo",
+        "type": "object"
+      },
+      "AiProviderSchema": {
+        "description": "A portal-managed Abbenay LLM provider (API key never exposed).\n\nAttributes:\n    id: Auto-increment primary key.\n    name: Virtual Abbenay provider name (slug).\n    engine: Abbenay engine id.\n    base_url: Optional custom API base URL.\n    models: Model id \u2192 params map.\n    has_api_key: Whether an API key is stored (value never exposed).\n    extra: Optional engine-specific metadata.\n    created_at: ISO 8601 creation timestamp.\n    updated_at: ISO 8601 last-update timestamp.",
+        "properties": {
+          "base_url": {
+            "default": "",
+            "title": "Base Url",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "engine": {
+            "title": "Engine",
+            "type": "string"
+          },
+          "extra": {
+            "additionalProperties": true,
+            "title": "Extra",
+            "type": "object"
+          },
+          "has_api_key": {
+            "default": false,
+            "title": "Has Api Key",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "models": {
+            "additionalProperties": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Models",
+            "type": "object"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "engine",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "AiProviderSchema",
         "type": "object"
       },
       "ApproveRequest": {
@@ -576,6 +662,48 @@
         "title": "ComponentHealth",
         "type": "object"
       },
+      "CreateAiProviderRequest": {
+        "description": "Request body for creating an AI provider.\n\nAttributes:\n    name: Virtual Abbenay provider name (slug).\n    engine: Abbenay engine id.\n    base_url: Optional custom API base URL.\n    api_key: Provider API key (may be empty for keyless engines).\n    models: Model id \u2192 params map.\n    extra: Optional engine-specific metadata.",
+        "properties": {
+          "api_key": {
+            "default": "",
+            "title": "Api Key",
+            "type": "string"
+          },
+          "base_url": {
+            "default": "",
+            "title": "Base Url",
+            "type": "string"
+          },
+          "engine": {
+            "title": "Engine",
+            "type": "string"
+          },
+          "extra": {
+            "additionalProperties": true,
+            "title": "Extra",
+            "type": "object"
+          },
+          "models": {
+            "additionalProperties": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Models",
+            "type": "object"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "engine"
+        ],
+        "title": "CreateAiProviderRequest",
+        "type": "object"
+      },
       "CreateGalaxyServerRequest": {
         "description": "Request body for creating a Galaxy server.\n\nAttributes:\n    name: Short label.\n    url: Base API URL.\n    token: API token (optional, empty for public Galaxy).\n    auth_url: SSO/Keycloak token endpoint (optional).",
         "properties": {
@@ -779,6 +907,59 @@
           }
         },
         "title": "DepHealthSummary",
+        "type": "object"
+      },
+      "DiscoverAiModelsRequest": {
+        "description": "Discover models from an engine API (wizard helper).\n\nAttributes:\n    engine: Abbenay engine id to query.\n    api_key: Optional API key for authenticated discovery.\n    base_url: Optional custom API base URL.",
+        "properties": {
+          "api_key": {
+            "default": "",
+            "title": "Api Key",
+            "type": "string"
+          },
+          "base_url": {
+            "default": "",
+            "title": "Base Url",
+            "type": "string"
+          },
+          "engine": {
+            "title": "Engine",
+            "type": "string"
+          }
+        },
+        "required": [
+          "engine"
+        ],
+        "title": "DiscoverAiModelsRequest",
+        "type": "object"
+      },
+      "DiscoveredAiModel": {
+        "description": "Model discovered from an engine API.\n\nAttributes:\n    id: Engine model id.\n    name: Human-readable model name.\n    provider: Upstream provider label from Abbenay.\n    engine: Abbenay engine id used for discovery.",
+        "properties": {
+          "engine": {
+            "default": "",
+            "title": "Engine",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "default": "",
+            "title": "Name",
+            "type": "string"
+          },
+          "provider": {
+            "default": "",
+            "title": "Provider",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "title": "DiscoveredAiModel",
         "type": "object"
       },
       "DraftProposalUpdate": {
@@ -2376,6 +2557,84 @@
           "scan_type"
         ],
         "title": "TrendPoint",
+        "type": "object"
+      },
+      "UpdateAiProviderRequest": {
+        "description": "Partial update for an AI provider.\n\nAttributes:\n    name: New virtual provider name, or None to leave unchanged.\n    engine: New engine id, or None to leave unchanged.\n    base_url: New base URL, or None to leave unchanged.\n    api_key: New API key, or None/empty to leave unchanged.\n    models: New models map, or None to leave unchanged.\n    extra: New metadata, or None to leave unchanged.",
+        "properties": {
+          "api_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Key"
+          },
+          "base_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Url"
+          },
+          "engine": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Engine"
+          },
+          "extra": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extra"
+          },
+          "models": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Models"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "title": "UpdateAiProviderRequest",
         "type": "object"
       },
       "UpdateGalaxyServerRequest": {
@@ -4911,6 +5170,251 @@
           }
         },
         "summary": "Session Trend Endpoint"
+      }
+    },
+    "/api/v1/settings/ai-engines": {
+      "get": {
+        "description": "Return Abbenay engine types for the provider wizard.\n\nReturns:\n    Engine descriptors (empty when Abbenay is unavailable).",
+        "operationId": "list_ai_engines_api_v1_settings_ai_engines_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AiEngineInfo"
+                  },
+                  "title": "Response List Ai Engines Api V1 Settings Ai Engines Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Ai Engines"
+      }
+    },
+    "/api/v1/settings/ai-providers": {
+      "get": {
+        "description": "Return all portal-managed AI providers (secrets masked).\n\nReturns:\n    Provider definitions with ``has_api_key`` instead of raw secrets.",
+        "operationId": "list_ai_providers_api_v1_settings_ai_providers_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AiProviderSchema"
+                  },
+                  "title": "Response List Ai Providers Api V1 Settings Ai Providers Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Ai Providers"
+      },
+      "post": {
+        "description": "Create a new AI provider definition (Gateway SoT).\n\nArgs:\n    body: Provider creation payload (including optional API key).\n\nReturns:\n    Newly created provider (API key masked).\n\nRaises:\n    HTTPException: 400 on invalid name/engine; 409 on duplicate name.",
+        "operationId": "create_ai_provider_api_v1_settings_ai_providers_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateAiProviderRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiProviderSchema"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Ai Provider"
+      }
+    },
+    "/api/v1/settings/ai-providers/discover-models": {
+      "post": {
+        "description": "Discover models from an engine API (wizard helper).\n\nArgs:\n    body: Engine id plus optional credentials for discovery.\n\nReturns:\n    Discovered model descriptors from Abbenay.\n\nRaises:\n    HTTPException: 400 when engine is missing; 503 when Abbenay is down;\n        502 when discovery fails.",
+        "operationId": "discover_ai_models_api_v1_settings_ai_providers_discover_models_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiscoverAiModelsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/DiscoveredAiModel"
+                  },
+                  "title": "Response Discover Ai Models Api V1 Settings Ai Providers Discover Models Post",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Discover Ai Models"
+      }
+    },
+    "/api/v1/settings/ai-providers/{provider_id}": {
+      "delete": {
+        "description": "Delete an AI provider definition and remove it from Abbenay.\n\nArgs:\n    provider_id: Gateway primary key.\n\nRaises:\n    HTTPException: 404 if not found.",
+        "operationId": "delete_ai_provider_api_v1_settings_ai_providers__provider_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "provider_id",
+            "required": true,
+            "schema": {
+              "title": "Provider Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Ai Provider"
+      },
+      "get": {
+        "description": "Fetch a single AI provider by ID.\n\nArgs:\n    provider_id: Gateway primary key.\n\nReturns:\n    Provider definition (API key masked).\n\nRaises:\n    HTTPException: 404 if not found.",
+        "operationId": "get_ai_provider_api_v1_settings_ai_providers__provider_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "provider_id",
+            "required": true,
+            "schema": {
+              "title": "Provider Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiProviderSchema"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Ai Provider"
+      },
+      "patch": {
+        "description": "Update an AI provider definition.\n\nArgs:\n    provider_id: Gateway primary key.\n    body: Partial update payload.\n\nReturns:\n    Updated provider (API key masked).\n\nRaises:\n    HTTPException: 400 when no fields are provided or validation fails;\n        404 if not found; 409 on duplicate name.",
+        "operationId": "update_ai_provider_api_v1_settings_ai_providers__provider_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "provider_id",
+            "required": true,
+            "schema": {
+              "title": "Provider Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateAiProviderRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiProviderSchema"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Ai Provider"
       }
     },
     "/api/v1/settings/galaxy-servers": {
