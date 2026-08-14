@@ -700,7 +700,7 @@ def generate_remediation_report() -> str:
     total = len(meta)
 
     def pct(n: int) -> str:
-        return f"{n * 100 // total}%" if total else "0%"
+        return f"{round(n * 100 / total)}%" if total else "0%"
 
     lines = [
         "# Remediation Tier Report",

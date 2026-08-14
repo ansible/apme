@@ -127,3 +127,6 @@ class GraphRule(RuleMetadata):
             NotImplementedError: Subclasses must override.
         """
         raise NotImplementedError
+
+    def reset_scan_state(self) -> None:
+        """Clear per-scan mutable state before ``scan()`` or ``rescan_dirty()``."""

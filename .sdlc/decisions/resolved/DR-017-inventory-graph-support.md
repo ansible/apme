@@ -1,6 +1,6 @@
 # DR-017: Inventory Graph Support
 
-**Status:** Open
+**Status:** Resolved
 **Created:** 2026-06-23
 **Category:** Architecture
 **Priority:** Low
@@ -61,7 +61,9 @@ Option C — ship file-based L111 per REQ-016, revisit graph support when additi
 
 ## Decision
 
-*Pending*
+**Option C accepted** — L111 shipped as file-based rule. Graph support deferred until additional inventory rules justify the investment.
+
+Implemented: 2026-06-24
 
 ## References
 

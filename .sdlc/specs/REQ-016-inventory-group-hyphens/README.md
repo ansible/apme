@@ -1,6 +1,6 @@
 # REQ-016: Inventory Group Hyphen Detection (L111)
 
-**Status:** Draft
+**Status:** Implemented
 **Created:** 2026-06-23
 **Priority:** Medium
 **Phase:** PHASE-001
@@ -39,13 +39,13 @@ Recommendation: use underscores (`web_servers`) instead of hyphens (`web-servers
 
 ## Acceptance Criteria
 
-- [ ] L111 detects `[web-servers]` in INI inventory
-- [ ] L111 detects `web-servers:` under `children:` in YAML inventory
-- [ ] L111 ignores `all` and `ungrouped`
-- [ ] L111 reports file path and line number
-- [ ] Unit tests cover INI and YAML formats
-- [ ] `tox -e lint` passes
-- [ ] `tox -e unit` passes with coverage
+- [x] L111 detects `[web-servers]` in INI inventory
+- [x] L111 detects `web-servers:` under `children:` in YAML inventory
+- [x] L111 ignores `all` and `ungrouped`
+- [x] L111 reports file path and line number
+- [x] Unit tests cover INI and YAML formats
+- [x] `tox -e lint` passes
+- [x] `tox -e unit` passes with coverage
 
 ## Technical Notes
 

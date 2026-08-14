@@ -1,0 +1,17 @@
+---
+all:
+  children:
+    web-servers:
+      hosts:
+        web1.example.com:
+        web2.example.com:
+    database-servers:
+      hosts:
+        db1.example.com:
+    app_servers:
+      hosts:
+        app1.example.com:
+    staging-env:
+      children:
+        web-servers:
+        database-servers:
