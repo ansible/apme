@@ -960,7 +960,6 @@ class TestGraphReportToViolations:
         assert violations[0]["file"] == "playbook.yml"
         assert violations[0]["line"] == 1
 
-
     def test_audit_json_detail_keys_serialized(self) -> None:
         """Audit rule payloads (variables_used, variable_set) survive conversion."""
         import json
