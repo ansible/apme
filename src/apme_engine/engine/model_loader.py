@@ -1245,6 +1245,22 @@ def load_role(
                 roleObj.dependency["roles"] = roleObj.metadata.get("dependencies", [])
                 roleObj.dependency["collections"] = roleObj.metadata.get("collections", [])
 
+    # Load standalone argument_specs if not in meta/main.yml (Ansible 2.11+ pattern)
+    if roleObj.metadata is None:
+        roleObj.metadata = {}
+    if isinstance(roleObj.metadata, dict) and not roleObj.metadata.get("argument_specs"):
+        for ext in ("yml", "yaml"):
+            arg_specs_path = os.path.join(fullpath, f"meta/argument_specs.{ext}")
+            if os.path.exists(arg_specs_path):
+                with open(arg_specs_path) as file:
+                    try:
+                        arg_specs_data = yaml.load(file, Loader=Loader)
+                        if isinstance(arg_specs_data, dict) and "argument_specs" in arg_specs_data:
+                            roleObj.metadata["argument_specs"] = arg_specs_data["argument_specs"]
+                    except Exception as e:
+                        logger.debug(f"failed to load argument_specs file; {e.args[0]}")
+                break
+
     requirements_yml_path = os.path.join(fullpath, "requirements.yml")
     if os.path.exists(requirements_yml_path):
         with open(requirements_yml_path) as file:
