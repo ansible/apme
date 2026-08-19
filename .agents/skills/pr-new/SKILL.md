@@ -186,7 +186,10 @@ artifact type, translate it:
    parse the inner language before applying the outer check.
    After stripping, also construct the whole-string-is-inner-language
    case (`{{ command }}`): empty remainder is uninspectable, not
-   proven-safe.
+   proven-safe. When the same predicate exists in two languages
+   (Rego helper vs Python transform), construct whitespace that one
+   trim would drop and the other would keep (`\t` vs `" "` cutset)
+   — "empty" must mean the same thing on both sides.
    Also construct _temporal_ failures: what happens when an async
    dependency never responds, times out, or responds after the
    consumer has moved on? What happens when `asyncio.gather()`
@@ -351,6 +354,9 @@ critical/high/medium/low.
   vs filtered implementation)
 - Dual input shapes that normalize differently (ORM vs dict, dataclass
   vs mapping, servicer vs flush path)
+- Dual implementations of the same predicate (Rego helper vs Python
+  transform) that disagree on empty/whitespace (`trim(..., " ")` vs
+  `str.strip()` / `trim_space`)
 - Overlay fields that drift (tier/source/gate/status→review must stay
   aligned for all pre-group sources). When a column documents
   "empty means fall back to X" (e.g. ``stamp_rule_ids_json`` →
@@ -439,6 +445,9 @@ Compare ADR/doc claims to what shipped. Label each finding
   before applying the outer check. After stripping, an empty remainder
   is uninspectable, not proven-safe — treat it as the conservative
   case (keep shell / skip substitution), not as "no features found".
+  "Empty" must use the same whitespace definition in every
+  implementation of the check (`trim_space` / `str.strip()`, not a
+  space-only cutset).
 - **Information exposure** — logs, errors, user-facing strings,
   persisted diffs/explanations: credentials, secrets, user content,
   internal paths? Capability grants, CORS origins, container caps —

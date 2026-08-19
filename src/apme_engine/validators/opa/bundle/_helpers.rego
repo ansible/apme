@@ -38,11 +38,12 @@ set_fact_modules[m] if {
 # Inspected after Jinja {{ }} is stripped so |quote is not a pipe.
 # A command that is only Jinja (nothing inspectable after the strip)
 # is treated as using shell features — the rendered value is unknown.
+# Use trim_space so tabs/CR match Python str.strip(), not a space-only cutset.
 shell_metacharacters := ["|", "&&", "||", ";", ">", ">>", "<", "$(", "`", "*", "?", "&", "(", ")", "$", "\n"]
 
 uses_shell_features(cmd) if {
 	is_string(cmd)
-	stripped := trim(regex.replace(cmd, `\{\{[^{}]*\}\}`, " "), " ")
+	stripped := trim_space(regex.replace(cmd, `\{\{[^{}]*\}\}`, " "))
 	stripped == ""
 }
 

@@ -89,3 +89,9 @@ test_L007_does_not_fire_when_command_is_only_jinja if {
 	node := tree.nodes[0]
 	not rules.command_instead_of_shell(tree, node)
 }
+
+test_L007_does_not_fire_when_jinja_command_has_trailing_tab if {
+	tree := {"nodes": [{"type": "taskcall", "module": "ansible.builtin.shell", "module_options": {"cmd": "{{ command }}\t"}, "line": [1], "key": "k", "file": "f.yml"}]}
+	node := tree.nodes[0]
+	not rules.command_instead_of_shell(tree, node)
+}

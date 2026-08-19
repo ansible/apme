@@ -653,6 +653,12 @@ class TestL007ShellToCommand:
         result = _apply_node(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
         assert result.applied is False
 
+    def test_no_change_when_jinja_command_has_trailing_tab(self) -> None:
+        """Verifies Jinja plus trailing whitespace is still uninspectable."""
+        content = '- name: Dynamic command\n  ansible.builtin.shell: "{{ command }}\t"\n'
+        result = _apply_node(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
+        assert result.applied is False
+
 
 # ---------------------------------------------------------------------------
 # M001/M003 transform: FQCN
