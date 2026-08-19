@@ -37,11 +37,12 @@ each violation to one of three tiers:
 |------|----------|---------|
 | **Tier 1** | Registry has a deterministic transform | L007, L013, M001 |
 | **Tier 2** | Scope is `task` or `block`, not cross-file, `ai_proposable=True` | L011 (complex naming) |
-| **Tier 3** | Play/role/collection scope, cross-file rules, or `info` severity | R111, R112, play-level |
+| **Tier 3** | Play/role/collection scope, cross-file / data-flow rules, or `info` severity | R111, R112, L006, L080, play-level |
 
 The routing uses scope metadata (ADR-026) rather than hardcoded rule lists.
-Cross-file rules (R111, R112) are always Tier 3 because their fix requires
-role/taskfile inventory context.
+Cross-file and data-flow rules (R111, R112, L006, L080) are always Tier 3
+because a node-local fix would change the producer without rewriting
+readers (role inventory, register consumers, or `set_fact` references).
 
 ## TransformRegistry
 

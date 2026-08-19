@@ -16,11 +16,17 @@ from apme_engine.remediation.registry import TransformRegistry
 
 AI_PROPOSABLE_SCOPES: frozenset[str] = frozenset({RuleScope.TASK, RuleScope.BLOCK})
 
-# Task-scoped rules whose remediation requires cross-file context.
+# Task-scoped rules whose remediation is unsafe at a single node.
+# Node-local AI would change the producer (module, set_fact key, register
+# shape) without rewriting readers — often silently, because the old name
+# remains defined as a role default. These need project-level context
+# (ADR-027) or a complete usage index before they can be auto-fixed.
 CROSS_FILE_RULES: frozenset[str] = frozenset(
     {
         "R111",  # parameterized role import — needs role inventory
         "R112",  # parameterized task import — needs taskfile inventory
+        "L006",  # command→module (e.g. cat→slurp) changes register result shape
+        "L080",  # __ prefix on set_fact keys — consumers keep the old name
     }
 )
 

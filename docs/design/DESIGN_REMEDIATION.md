@@ -150,6 +150,13 @@ This is intentionally simple. A violation is resolvable if and only if the trans
 
 Violations that fail this check proceed to AI escalation (Tier 2) if an AIProvider is available (via `--ai`), otherwise they are reported as manual review (Tier 3).
 
+A small set of **task-scoped** rules still route to Tier 3
+(`CROSS_FILE_RULES` in `partition.py`): R111/R112 (need role/taskfile
+inventory) and L006/L080 (need every consumer of a register or `set_fact`
+rewritten). Node-local AI would rename the producer and leave readers on
+the old name or the old result shape. These wait for project-level
+remediation (ADR-027).
+
 ### Rule Metadata
 
 Each rule across all validators declares tier-awareness in its metadata:

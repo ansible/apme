@@ -28,8 +28,37 @@ def _uses_shell_features(cmd: str) -> bool:
     return any(ch in cmd for ch in _SHELL_CHARS)
 
 
+def _extract_command_string(module_args: object) -> str:
+    """Return the inspectable command string from shell module arguments.
+
+    Prefers free-form / ``cmd`` over ``argv``.  Returns empty when the
+    command cannot be inspected, in which case the transform must not
+    convert shell to command.
+
+    Args:
+        module_args: Scalar command string or argument mapping.
+
+    Returns:
+        Command string, or empty if none is available.
+    """
+    if isinstance(module_args, str):
+        return module_args
+    if not isinstance(module_args, dict):
+        return ""
+    cmd = module_args.get("cmd", "")
+    if isinstance(cmd, str) and cmd:
+        return cmd
+    argv = module_args.get("argv")
+    if isinstance(argv, list) and argv:
+        return " ".join(str(part) for part in argv)
+    return ""
+
+
 def fix_shell_to_command(task: CommentedMap, violation: ViolationDict) -> bool:
     """Replace shell with command when the command string uses no shell features.
+
+    Inspects free-form, ``cmd``, and ``argv``.  Refuses to convert when the
+    command cannot be inspected or contains shell metacharacters.
 
     Args:
         task: Task CommentedMap to modify in-place.
@@ -43,13 +72,8 @@ def fix_shell_to_command(task: CommentedMap, violation: ViolationDict) -> bool:
         return False
 
     module_args = task.get(module_key)
-    cmd = ""
-    if isinstance(module_args, str):
-        cmd = module_args
-    elif isinstance(module_args, dict):
-        cmd = module_args.get("cmd", "")
-
-    if cmd and _uses_shell_features(cmd):
+    cmd = _extract_command_string(module_args)
+    if not cmd or _uses_shell_features(cmd):
         return False
 
     new_key = _SHELL_TO_COMMAND[module_key]

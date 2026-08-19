@@ -325,16 +325,25 @@ class TestPartition:
         assert len(t2) == 1
 
     def test_partition_cross_file_rules_still_tier3(self) -> None:
-        """Verifies R111/R112 still route to tier3 with NEEDS_CROSS_FILE."""
+        """Verifies cross-file and data-flow rules route to tier3."""
         reg = TransformRegistry()
         violations: list[ViolationDict] = [
             {"rule_id": "R111", "scope": RuleScope.TASK},
             {"rule_id": "R112", "scope": "task"},
+            {"rule_id": "L006", "scope": RuleScope.TASK},
+            {"rule_id": "L080", "scope": "task"},
         ]
         t1, t2, t3 = partition_violations(violations, reg)
-        assert len(t3) == 2
+        assert len(t1) == 0
+        assert len(t2) == 0
+        assert len(t3) == 4
         for v in t3:
             assert v["remediation_resolution"] == RemediationResolution.NEEDS_CROSS_FILE
+
+    def test_classify_data_flow_rules_manual_review(self) -> None:
+        """Verifies L006/L080 classify as manual-review despite task scope."""
+        assert classify_violation({"rule_id": "L006", "scope": RuleScope.TASK}) == RemediationClass.MANUAL_REVIEW
+        assert classify_violation({"rule_id": "L080", "scope": "task"}) == RemediationClass.MANUAL_REVIEW
 
     def test_partition_missing_scope_defaults_to_task(self) -> None:
         """Verifies violations without scope default to task (AI proposable)."""
@@ -537,6 +546,43 @@ class TestL007ShellToCommand:
         result = _apply_node(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
         assert result.applied is True
         assert "ansible.builtin.command" in result.content
+
+    def test_converts_argv_without_shell_features(self) -> None:
+        """Verifies argv-only shell without pipes is converted to command."""
+        content = textwrap.dedent("""\
+        - name: Simple argv
+          ansible.builtin.shell:
+            argv:
+              - whoami
+        """)
+        result = _apply_node(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
+        assert result.applied is True
+        assert "ansible.builtin.command" in result.content
+
+    def test_no_change_when_argv_has_pipe(self) -> None:
+        """Verifies argv containing a pipe is not converted to command."""
+        content = textwrap.dedent("""\
+        - name: Piped argv
+          ansible.builtin.shell:
+            argv:
+              - cat
+              - /proc/meminfo
+              - "|"
+              - grep
+              - MemTotal
+        """)
+        result = _apply_node(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
+        assert result.applied is False
+
+    def test_no_change_when_command_uninspectable(self) -> None:
+        """Verifies shell without cmd or argv is left unchanged."""
+        content = textwrap.dedent("""\
+        - name: Only chdir
+          ansible.builtin.shell:
+            chdir: /tmp
+        """)
+        result = _apply_node(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
+        assert result.applied is False
 
 
 # ---------------------------------------------------------------------------

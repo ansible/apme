@@ -33,6 +33,16 @@ set_fact_modules[m] if {
 	m := data.apme.ansible.set_fact_modules[_]
 }
 
+# Shell metacharacters that require ansible.builtin.shell (or make a
+# command-instead-of-module substitution invalid, e.g. cat | grep).
+shell_metacharacters := ["|", "&&", "||", ";", ">", ">>", "<", "$(", "`", "*", "?"]
+
+uses_shell_features(cmd) if {
+	is_string(cmd)
+	some ch in shell_metacharacters
+	contains(cmd, ch)
+}
+
 has_with_loop(opts) := key if {
 	some key in object.keys(opts)
 	startswith(key, "with_")

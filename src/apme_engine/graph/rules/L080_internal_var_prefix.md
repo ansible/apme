@@ -26,3 +26,8 @@ Only fires inside `roles/` directories. Checks `set_fact` keys for a missing lea
   ansible.builtin.set_fact:
     _temp_value: "something"
 ```
+
+Renaming a `set_fact` key without updating every reader (`when`, later
+tasks, templates) leaves consumers on the old name — often a role default
+that stays `false`. L080 is not auto-remediated until a project-level
+rewrite can update all references.
