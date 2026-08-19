@@ -275,9 +275,8 @@ class TestL077RoleArgSpecs:
     """L077: roles should have argument_specs in metadata.
 
     The golden collection embeds ``argument_specs`` inline in
-    ``roles/run/meta/main.yml`` so the loader populates ``role_metadata``
-    correctly (the separate ``meta/argument_specs.yml`` file is not read
-    by the loader today).
+    ``roles/run/meta/main.yml``. The loader also reads standalone
+    ``meta/argument_specs.yml`` when inline specs are absent.
     """
 
     def test_fires_without_argument_specs(self, collection_root: Path) -> None:

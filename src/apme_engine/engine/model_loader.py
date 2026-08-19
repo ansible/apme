@@ -20,6 +20,8 @@ except Exception:
 
 import contextlib
 
+from apme_engine.graph.argument_specs import extract_argument_specs_from_standalone_yaml
+
 from . import logger
 from .awx_utils import could_be_playbook, search_playbooks
 from .finder import (
@@ -1255,8 +1257,9 @@ def load_role(
                 try:
                     with open(arg_specs_path) as file:
                         arg_specs_data = yaml.load(file, Loader=Loader)
-                        if isinstance(arg_specs_data, dict) and "argument_specs" in arg_specs_data:
-                            roleObj.metadata["argument_specs"] = arg_specs_data["argument_specs"]
+                    specs = extract_argument_specs_from_standalone_yaml(arg_specs_data)
+                    if specs is not None:
+                        roleObj.metadata["argument_specs"] = specs
                 except Exception as e:
                     logger.debug(f"failed to load argument_specs file; {e.args[0]}")
                 break
