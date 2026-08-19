@@ -2,12 +2,33 @@
 
 from __future__ import annotations
 
+import re
+
 from ruamel.yaml.comments import CommentedMap
 
 from apme_engine.engine.models import ViolationDict
 from apme_engine.remediation.transforms._helpers import get_module_key, rename_key
 
-_SHELL_CHARS = ("|", "&&", "||", ";", ">", ">>", "<", "$(", "`", "*", "?")
+# Inspected after Jinja ``{{ }}`` is stripped so ``|quote`` is not a pipe.
+_JINJA_RE = re.compile(r"\{\{[^{}]*\}\}")
+_SHELL_CHARS = (
+    "|",
+    "&&",
+    "||",
+    ";",
+    ">",
+    ">>",
+    "<",
+    "$(",
+    "`",
+    "*",
+    "?",
+    "&",
+    "(",
+    ")",
+    "$",
+    "\n",
+)
 
 _SHELL_TO_COMMAND = {
     "ansible.builtin.shell": "ansible.builtin.command",
@@ -19,13 +40,17 @@ _SHELL_TO_COMMAND = {
 def _uses_shell_features(cmd: str) -> bool:
     """Check if command string uses shell features (pipes, redirects, etc).
 
+    Jinja ``{{ }}`` expressions are stripped first so a filter such as
+    ``{{ path | quote }}`` is not treated as a shell pipe.
+
     Args:
         cmd: Command string to check.
 
     Returns:
-        True if cmd contains shell-specific characters.
+        True if the non-Jinja remainder contains shell-specific characters.
     """
-    return any(ch in cmd for ch in _SHELL_CHARS)
+    stripped = _JINJA_RE.sub(" ", cmd)
+    return any(ch in stripped for ch in _SHELL_CHARS)
 
 
 def _extract_command_string(module_args: object) -> str:

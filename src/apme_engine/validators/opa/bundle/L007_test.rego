@@ -64,3 +64,22 @@ test_L007_does_not_fire_for_command_module if {
 	node := tree.nodes[0]
 	not rules.command_instead_of_shell(tree, node)
 }
+
+test_L007_fires_when_pipe_is_jinja_filter if {
+	tree := {"nodes": [{"type": "taskcall", "module": "ansible.builtin.shell", "module_options": {"cmd": "cat {{ myfile|quote }}"}, "line": [1], "key": "k", "file": "f.yml"}]}
+	node := tree.nodes[0]
+	v := rules.command_instead_of_shell(tree, node)
+	v.rule_id == "L007"
+}
+
+test_L007_does_not_fire_when_shell_has_background if {
+	tree := {"nodes": [{"type": "taskcall", "module": "ansible.builtin.shell", "module_options": {"cmd": "sleep 10 &"}, "line": [1], "key": "k", "file": "f.yml"}]}
+	node := tree.nodes[0]
+	not rules.command_instead_of_shell(tree, node)
+}
+
+test_L007_does_not_fire_when_shell_has_dollar_var if {
+	tree := {"nodes": [{"type": "taskcall", "module": "ansible.builtin.shell", "module_options": {"cmd": "echo $HOME"}, "line": [1], "key": "k", "file": "f.yml"}]}
+	node := tree.nodes[0]
+	not rules.command_instead_of_shell(tree, node)
+}

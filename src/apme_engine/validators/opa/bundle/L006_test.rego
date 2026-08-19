@@ -29,3 +29,16 @@ test_L006_does_not_fire_when_cmd_has_and if {
 	node := tree.nodes[0]
 	not rules.command_instead_of_module(tree, node)
 }
+
+test_L006_fires_when_pipe_is_jinja_filter if {
+	tree := {"nodes": [{"type": "taskcall", "module": "ansible.builtin.command", "module_options": {"cmd": "cat {{ myfile|quote }}"}, "line": [1], "key": "k", "file": "f.yml"}]}
+	node := tree.nodes[0]
+	v := rules.command_instead_of_module(tree, node)
+	v.rule_id == "L006"
+}
+
+test_L006_does_not_fire_when_cmd_has_background if {
+	tree := {"nodes": [{"type": "taskcall", "module": "ansible.builtin.command", "module_options": {"cmd": "sleep 10 &"}, "line": [1], "key": "k", "file": "f.yml"}]}
+	node := tree.nodes[0]
+	not rules.command_instead_of_module(tree, node)
+}

@@ -179,6 +179,11 @@ artifact type, translate it:
    an empty-but-not-falsy value. Trace it through the code path.
    If it fails silently, sends a vacuous request, or produces a
    return value that violates the declared type, that's a finding.
+   When a check treats a character as a metacharacter (shell `|`,
+   glob `*`, YAML `&`), construct an input where that character is
+   a token in a *different* grammar in the same string — Jinja
+   filters (`{{ x | quote }}`), URLs, or quoted YAML. Strip or
+   parse the inner language before applying the outer check.
    Also construct _temporal_ failures: what happens when an async
    dependency never responds, times out, or responds after the
    consumer has moved on? What happens when `asyncio.gather()`
@@ -425,6 +430,10 @@ Compare ADR/doc claims to what shipped. Label each finding
 **Lens — break it / rethink it:** Be creatively adversarial:
 - Weird but realistic scenarios that corrupt durable state, double-count
   analytics, or bypass filters
+- **Overloaded tokens** — a character that is a metacharacter in one
+  grammar (shell `|`, glob `*`) is an operator in another (Jinja
+  `|quote`) in the same string. Strip or parse the inner language
+  before applying the outer check.
 - **Information exposure** — logs, errors, user-facing strings,
   persisted diffs/explanations: credentials, secrets, user content,
   internal paths? Capability grants, CORS origins, container caps —

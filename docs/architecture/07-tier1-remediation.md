@@ -39,8 +39,8 @@ each violation to one of three tiers:
 | **Tier 2** | Scope is `task` or `block`, not cross-file, `ai_proposable=True` | L011 (complex naming) |
 | **Tier 3** | Play/role/collection scope, cross-file / data-flow rules, or `info` severity | R111, R112, L006, L080, play-level |
 
-The routing uses scope metadata (ADR-026) rather than hardcoded rule lists.
-Cross-file and data-flow rules (R111, R112, L006, L080) are always Tier 3
+The routing uses scope metadata (ADR-026) for normal routing. The explicit
+`CROSS_FILE_RULES` exceptions (R111, R112, L006, L080) are always Tier 3
 because a node-local fix would change the producer without rewriting
 readers (role inventory, register consumers, or `set_fact` references).
 

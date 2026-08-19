@@ -35,12 +35,14 @@ set_fact_modules[m] if {
 
 # Shell metacharacters that require ansible.builtin.shell (or make a
 # command-instead-of-module substitution invalid, e.g. cat | grep).
-shell_metacharacters := ["|", "&&", "||", ";", ">", ">>", "<", "$(", "`", "*", "?"]
+# Inspected after Jinja {{ }} is stripped so |quote is not a pipe.
+shell_metacharacters := ["|", "&&", "||", ";", ">", ">>", "<", "$(", "`", "*", "?", "&", "(", ")", "$", "\n"]
 
 uses_shell_features(cmd) if {
 	is_string(cmd)
+	stripped := regex.replace(cmd, `\{\{[^{}]*\}\}`, " ")
 	some ch in shell_metacharacters
-	contains(cmd, ch)
+	contains(stripped, ch)
 }
 
 has_with_loop(opts) := key if {

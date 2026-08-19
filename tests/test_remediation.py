@@ -340,6 +340,24 @@ class TestPartition:
         for v in t3:
             assert v["remediation_resolution"] == RemediationResolution.NEEDS_CROSS_FILE
 
+    def test_cross_file_rules_beat_registry(self) -> None:
+        """Verifies L006/L080 stay Tier 3 even if a transform is registered."""
+        reg = TransformRegistry()
+        reg.register("L006", node=lambda t, v: False)
+        reg.register("L080", node=lambda t, v: False)
+        violations: list[ViolationDict] = [
+            {"rule_id": "L006", "scope": RuleScope.TASK},
+            {"rule_id": "L080", "scope": "task"},
+        ]
+        assert is_finding_resolvable(violations[0], reg) is False
+        assert is_finding_resolvable(violations[1], reg) is False
+        t1, t2, t3 = partition_violations(violations, reg)
+        assert t1 == []
+        assert t2 == []
+        assert len(t3) == 2
+        for v in t3:
+            assert v["remediation_resolution"] == RemediationResolution.NEEDS_CROSS_FILE
+
     def test_classify_data_flow_rules_manual_review(self) -> None:
         """Verifies L006/L080 classify as manual-review despite task scope."""
         assert classify_violation({"rule_id": "L006", "scope": RuleScope.TASK}) == RemediationClass.MANUAL_REVIEW
@@ -580,6 +598,48 @@ class TestL007ShellToCommand:
         - name: Only chdir
           ansible.builtin.shell:
             chdir: /tmp
+        """)
+        result = _apply_node(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
+        assert result.applied is False
+
+    def test_converts_when_pipe_is_jinja_filter(self) -> None:
+        """Verifies Jinja |quote is not treated as a shell pipe."""
+        content = textwrap.dedent("""\
+        - name: Cat quoted path
+          ansible.builtin.shell: "cat {{ myfile | quote }}"
+        """)
+        result = _apply_node(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
+        assert result.applied is True
+        assert "ansible.builtin.command" in result.content
+
+    def test_no_change_when_background_ampersand(self) -> None:
+        """Verifies standalone & is treated as a shell feature."""
+        content = textwrap.dedent("""\
+        - name: Background sleep
+          ansible.builtin.shell:
+            cmd: sleep 10 &
+        """)
+        result = _apply_node(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
+        assert result.applied is False
+
+    def test_no_change_when_argv_has_ampersand(self) -> None:
+        """Verifies argv containing & is not converted to command."""
+        content = textwrap.dedent("""\
+        - name: Background argv
+          ansible.builtin.shell:
+            argv:
+              - sleep
+              - "10"
+              - "&"
+        """)
+        result = _apply_node(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
+        assert result.applied is False
+
+    def test_no_change_when_shell_variable(self) -> None:
+        """Verifies $VAR expansion is treated as a shell feature."""
+        content = textwrap.dedent("""\
+        - name: Echo home
+          ansible.builtin.shell: "echo $HOME"
         """)
         result = _apply_node(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
         assert result.applied is False
