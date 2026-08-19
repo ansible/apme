@@ -20,7 +20,10 @@ except Exception:
 
 import contextlib
 
-from apme_engine.graph.argument_specs import extract_argument_specs_from_standalone_yaml
+from apme_engine.graph.argument_specs import (
+    extract_argument_specs_from_standalone_yaml,
+    get_argument_specs_from_metadata,
+)
 
 from . import logger
 from .awx_utils import could_be_playbook, search_playbooks
@@ -1248,9 +1251,9 @@ def load_role(
                 roleObj.dependency["collections"] = roleObj.metadata.get("collections", [])
 
     # Load standalone argument_specs if not in meta/main.yml (Ansible 2.11+ pattern)
-    if roleObj.metadata is None:
+    if not isinstance(roleObj.metadata, dict):
         roleObj.metadata = {}
-    if isinstance(roleObj.metadata, dict) and not roleObj.metadata.get("argument_specs"):
+    if get_argument_specs_from_metadata(roleObj.metadata) is None:
         for ext in ("yml", "yaml"):
             arg_specs_path = os.path.join(fullpath, f"meta/argument_specs.{ext}")
             if os.path.exists(arg_specs_path):

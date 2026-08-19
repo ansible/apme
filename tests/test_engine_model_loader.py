@@ -992,3 +992,25 @@ class TestLoadRoleArgumentSpecs:
         assert isinstance(role, Role)
         assert role.metadata is not None
         assert "argument_specs" not in role.metadata
+
+    def test_loads_standalone_when_inline_argument_specs_invalid(self, tmp_path: Path) -> None:
+        """Invalid inline argument_specs in main.yml falls back to standalone file.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        role_dir = self._make_role_dir(tmp_path)
+        meta_dir = role_dir / "meta"
+        meta_dir.mkdir()
+        (meta_dir / "main.yml").write_text("---\nargument_specs: invalid\ngalaxy_info:\n  author: me\n")
+        (meta_dir / "argument_specs.yml").write_text(
+            "---\nmain:\n  short_description: Role description.\n  options: {}\n"
+        )
+
+        role = load_role(str(role_dir), basedir=str(tmp_path), load_children=False)
+
+        assert isinstance(role, Role)
+        assert role.metadata is not None
+        assert role.metadata.get("argument_specs") == {
+            "main": {"short_description": "Role description.", "options": {}},
+        }
