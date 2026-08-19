@@ -184,6 +184,9 @@ artifact type, translate it:
    a token in a *different* grammar in the same string — Jinja
    filters (`{{ x | quote }}`), URLs, or quoted YAML. Strip or
    parse the inner language before applying the outer check.
+   After stripping, also construct the whole-string-is-inner-language
+   case (`{{ command }}`): empty remainder is uninspectable, not
+   proven-safe.
    Also construct _temporal_ failures: what happens when an async
    dependency never responds, times out, or responds after the
    consumer has moved on? What happens when `asyncio.gather()`
@@ -433,7 +436,9 @@ Compare ADR/doc claims to what shipped. Label each finding
 - **Overloaded tokens** — a character that is a metacharacter in one
   grammar (shell `|`, glob `*`) is an operator in another (Jinja
   `|quote`) in the same string. Strip or parse the inner language
-  before applying the outer check.
+  before applying the outer check. After stripping, an empty remainder
+  is uninspectable, not proven-safe — treat it as the conservative
+  case (keep shell / skip substitution), not as "no features found".
 - **Information exposure** — logs, errors, user-facing strings,
   persisted diffs/explanations: credentials, secrets, user content,
   internal paths? Capability grants, CORS origins, container caps —

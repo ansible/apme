@@ -42,3 +42,9 @@ test_L006_does_not_fire_when_cmd_has_background if {
 	node := tree.nodes[0]
 	not rules.command_instead_of_module(tree, node)
 }
+
+test_L006_does_not_fire_when_command_is_only_jinja if {
+	tree := {"nodes": [{"type": "taskcall", "module": "ansible.builtin.command", "module_options": {"cmd": "{{ command }}"}, "line": [1], "key": "k", "file": "f.yml"}]}
+	node := tree.nodes[0]
+	not rules.command_instead_of_module(tree, node)
+}

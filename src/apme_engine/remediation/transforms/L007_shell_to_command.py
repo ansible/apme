@@ -41,15 +41,20 @@ def _uses_shell_features(cmd: str) -> bool:
     """Check if command string uses shell features (pipes, redirects, etc).
 
     Jinja ``{{ }}`` expressions are stripped first so a filter such as
-    ``{{ path | quote }}`` is not treated as a shell pipe.
+    ``{{ path | quote }}`` is not treated as a shell pipe.  A command that
+    is only Jinja (nothing inspectable after the strip) is treated as
+    using shell features — the rendered value is unknown.
 
     Args:
         cmd: Command string to check.
 
     Returns:
-        True if the non-Jinja remainder contains shell-specific characters.
+        True if the non-Jinja remainder is empty or contains shell-specific
+        characters.
     """
     stripped = _JINJA_RE.sub(" ", cmd)
+    if not stripped.strip():
+        return True
     return any(ch in stripped for ch in _SHELL_CHARS)
 
 

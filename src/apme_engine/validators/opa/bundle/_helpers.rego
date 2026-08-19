@@ -36,7 +36,15 @@ set_fact_modules[m] if {
 # Shell metacharacters that require ansible.builtin.shell (or make a
 # command-instead-of-module substitution invalid, e.g. cat | grep).
 # Inspected after Jinja {{ }} is stripped so |quote is not a pipe.
+# A command that is only Jinja (nothing inspectable after the strip)
+# is treated as using shell features — the rendered value is unknown.
 shell_metacharacters := ["|", "&&", "||", ";", ">", ">>", "<", "$(", "`", "*", "?", "&", "(", ")", "$", "\n"]
+
+uses_shell_features(cmd) if {
+	is_string(cmd)
+	stripped := trim(regex.replace(cmd, `\{\{[^{}]*\}\}`, " "), " ")
+	stripped == ""
+}
 
 uses_shell_features(cmd) if {
 	is_string(cmd)
