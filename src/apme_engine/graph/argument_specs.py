@@ -9,6 +9,31 @@ import yaml
 
 from apme_engine.graph.types import YAMLDict
 
+_META_MAIN_KEYS = frozenset(
+    {
+        "galaxy_info",
+        "dependencies",
+        "collections",
+        "allows_duplicates",
+    }
+)
+
+
+def _is_valid_argument_specs_mapping(specs: object) -> YAMLDict | None:
+    """Return specs when mapping entry points are non-empty dict values.
+
+    Args:
+        specs: Parsed argument-spec mapping candidate.
+
+    Returns:
+        The validated mapping, or ``None`` when shape is invalid.
+    """
+    if not isinstance(specs, dict) or not specs:
+        return None
+    if not all(isinstance(entry, dict) for entry in specs.values()):
+        return None
+    return cast(YAMLDict, specs)
+
 
 def get_argument_specs_from_metadata(metadata: object) -> YAMLDict | None:
     """Return the inline ``argument_specs`` mapping from parsed role metadata.
@@ -21,8 +46,7 @@ def get_argument_specs_from_metadata(metadata: object) -> YAMLDict | None:
     """
     if not isinstance(metadata, dict):
         return None
-    specs = metadata.get("argument_specs")
-    return cast(YAMLDict, specs) if isinstance(specs, dict) else None
+    return _is_valid_argument_specs_mapping(metadata.get("argument_specs"))
 
 
 def extract_argument_specs_from_standalone_yaml(data: object) -> YAMLDict | None:
@@ -41,10 +65,11 @@ def extract_argument_specs_from_standalone_yaml(data: object) -> YAMLDict | None
         return None
     if "argument_specs" in data:
         specs = data["argument_specs"]
-        return cast(YAMLDict, specs) if isinstance(specs, dict) else None
-    if data:
-        return cast(YAMLDict, data)
-    return None
+    elif data.keys() & _META_MAIN_KEYS:
+        return None
+    else:
+        specs = data
+    return _is_valid_argument_specs_mapping(specs)
 
 
 def load_standalone_argument_specs(role_path: str) -> YAMLDict | None:

@@ -956,3 +956,39 @@ class TestLoadRoleArgumentSpecs:
         assert isinstance(role, Role)
         assert role.metadata is not None
         assert "argument_specs" not in role.metadata
+
+    def test_ignores_standalone_galaxy_info_mapping(self, tmp_path: Path) -> None:
+        """Standalone files with only galaxy_info are not treated as argument_specs.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        role_dir = self._make_role_dir(tmp_path)
+        meta_dir = role_dir / "meta"
+        meta_dir.mkdir()
+        (meta_dir / "main.yml").write_text("---\ngalaxy_info:\n  author: me\ndependencies: []\n")
+        (meta_dir / "argument_specs.yml").write_text("---\ngalaxy_info:\n  author: me\n")
+
+        role = load_role(str(role_dir), basedir=str(tmp_path), load_children=False)
+
+        assert isinstance(role, Role)
+        assert role.metadata is not None
+        assert "argument_specs" not in role.metadata
+
+    def test_ignores_standalone_invalid_entry_point(self, tmp_path: Path) -> None:
+        """Standalone files with scalar entry-point values are not merged.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        role_dir = self._make_role_dir(tmp_path)
+        meta_dir = role_dir / "meta"
+        meta_dir.mkdir()
+        (meta_dir / "main.yml").write_text("---\ngalaxy_info:\n  author: me\ndependencies: []\n")
+        (meta_dir / "argument_specs.yml").write_text("---\nargument_specs:\n  main: invalid\n")
+
+        role = load_role(str(role_dir), basedir=str(tmp_path), load_children=False)
+
+        assert isinstance(role, Role)
+        assert role.metadata is not None
+        assert "argument_specs" not in role.metadata
