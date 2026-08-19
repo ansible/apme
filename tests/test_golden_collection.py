@@ -275,19 +275,23 @@ class TestL077RoleArgSpecs:
     """L077: roles should have argument_specs in metadata.
 
     The golden collection embeds ``argument_specs`` inline in
-    ``roles/run/meta/main.yml`` so the loader populates ``role_metadata``
-    correctly (the separate ``meta/argument_specs.yml`` file is not read
-    by the loader today).
+    ``roles/run/meta/main.yml``. The loader also reads standalone
+    ``meta/argument_specs.yml`` when inline specs are absent.
     """
 
     def test_fires_without_argument_specs(self, collection_root: Path) -> None:
-        """Rewriting meta/main.yml without argument_specs causes L077 to fire.
+        """Removing argument_specs from both main.yml and standalone file causes L077 to fire.
 
         Args:
             collection_root: Isolated copy of the golden collection.
         """
-        meta_main = collection_root / "roles" / "run" / "meta" / "main.yml"
+        meta_dir = collection_root / "roles" / "run" / "meta"
+        meta_main = meta_dir / "main.yml"
         meta_main.write_text("---\ngalaxy_info:\n  author: foo\ndependencies: []\n")
+        # Also remove standalone argument_specs file (now loaded by model_loader)
+        arg_specs_file = meta_dir / "argument_specs.yml"
+        if arg_specs_file.exists():
+            arg_specs_file.unlink()
         graph = _build_graph(collection_root)
         assert "L077" in _violations_for(graph, [RoleArgSpecsGraphRule()])
 
@@ -297,6 +301,22 @@ class TestL077RoleArgSpecs:
         Args:
             collection_root: Isolated copy of the golden collection.
         """
+        graph = _build_graph(collection_root)
+        assert "L077" not in _violations_for(graph, [RoleArgSpecsGraphRule()])
+
+    def test_passes_with_standalone_argument_specs(self, collection_root: Path) -> None:
+        """Standalone meta/argument_specs.yml is detected by model loader.
+
+        Args:
+            collection_root: Isolated copy of the golden collection.
+        """
+        meta_dir = collection_root / "roles" / "run" / "meta"
+        # Remove argument_specs from main.yml but keep standalone file
+        meta_main = meta_dir / "main.yml"
+        meta_main.write_text("---\ngalaxy_info:\n  author: foo\ndependencies: []\n")
+        # Ensure standalone file exists
+        arg_specs_file = meta_dir / "argument_specs.yml"
+        assert arg_specs_file.exists(), "Test requires standalone argument_specs.yml"
         graph = _build_graph(collection_root)
         assert "L077" not in _violations_for(graph, [RoleArgSpecsGraphRule()])
 

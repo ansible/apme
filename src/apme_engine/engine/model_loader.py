@@ -20,6 +20,11 @@ except Exception:
 
 import contextlib
 
+from apme_engine.graph.argument_specs import (
+    extract_argument_specs_from_standalone_yaml,
+    get_argument_specs_from_metadata,
+)
+
 from . import logger
 from .awx_utils import could_be_playbook, search_playbooks
 from .finder import (
@@ -1244,6 +1249,23 @@ def load_role(
             if roleObj.metadata is not None and isinstance(roleObj.metadata, dict):
                 roleObj.dependency["roles"] = roleObj.metadata.get("dependencies", [])
                 roleObj.dependency["collections"] = roleObj.metadata.get("collections", [])
+
+    # Load standalone argument_specs if not in meta/main.yml (Ansible 2.11+ pattern)
+    if not isinstance(roleObj.metadata, dict):
+        roleObj.metadata = {}
+    if get_argument_specs_from_metadata(roleObj.metadata) is None:
+        for ext in ("yml", "yaml"):
+            arg_specs_path = os.path.join(fullpath, f"meta/argument_specs.{ext}")
+            if os.path.exists(arg_specs_path):
+                try:
+                    with open(arg_specs_path) as file:
+                        arg_specs_data = yaml.load(file, Loader=Loader)
+                    specs = extract_argument_specs_from_standalone_yaml(arg_specs_data)
+                    if specs is not None:
+                        roleObj.metadata["argument_specs"] = specs
+                except Exception as e:
+                    logger.debug(f"failed to load argument_specs file; {e.args[0]}")
+                break
 
     requirements_yml_path = os.path.join(fullpath, "requirements.yml")
     if os.path.exists(requirements_yml_path):

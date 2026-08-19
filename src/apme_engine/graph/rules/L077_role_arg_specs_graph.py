@@ -1,9 +1,9 @@
 """GraphRule L077: Roles should declare argument_specs for fail-fast validation."""
 
 from dataclasses import dataclass
-from pathlib import Path
 from typing import cast
 
+from apme_engine.graph.argument_specs import get_argument_specs_from_metadata, load_standalone_argument_specs
 from apme_engine.graph.content_graph import ContentGraph, NodeType
 from apme_engine.graph.rule_base import GraphRule, GraphRuleResult
 from apme_engine.graph.types import RuleScope, Severity, YAMLDict
@@ -52,11 +52,9 @@ class RoleArgSpecsGraphRule(GraphRule):
     def process(self, graph: ContentGraph, node_id: str) -> GraphRuleResult | None:
         """Flag roles missing ``argument_specs`` in metadata.
 
-        Falls back to a filesystem check for a standalone
-        ``meta/argument_specs.yml`` (or ``.yaml``).  ``node.file_path``
-        for ROLE nodes is relative to the scan basedir, so the on-disk
-        check assumes CWD is the project root (same assumption as the
-        CLI and daemon scan entry-points).
+        Falls back to parsing standalone ``meta/argument_specs.yml`` (or
+        ``.yaml``) when inline metadata is absent. Malformed standalone
+        content does not satisfy the rule.
 
         Args:
             graph: The full ContentGraph.
@@ -69,10 +67,11 @@ class RoleArgSpecsGraphRule(GraphRule):
         if node is None:
             return None
 
-        has_arg_specs = bool(node.role_metadata.get("argument_specs"))
+        specs = get_argument_specs_from_metadata(node.role_metadata)
+        has_arg_specs = bool(specs)
         if not has_arg_specs and node.file_path:
-            meta_dir = Path(node.file_path) / "meta"
-            has_arg_specs = (meta_dir / "argument_specs.yml").is_file() or (meta_dir / "argument_specs.yaml").is_file()
+            standalone_specs = load_standalone_argument_specs(node.file_path)
+            has_arg_specs = bool(standalone_specs)
         verdict = not has_arg_specs
         if verdict:
             return GraphRuleResult(

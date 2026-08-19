@@ -14,6 +14,7 @@ from apme_engine.engine.model_loader import (
     load_playbook,
     load_playbooks,
     load_requirements,
+    load_role,
     load_roleinplay,
     load_roles,
     load_task,
@@ -25,6 +26,7 @@ from apme_engine.engine.models import (
     Play,
     Playbook,
     PlaybookFormatError,
+    Role,
     RoleInPlay,
     Task,
     TaskFile,
@@ -883,3 +885,132 @@ class TestLoadRoles:
         assert len(roles) == 1
         assert "helper" in str(roles[0])
         assert not any("requirements.yml" in str(r) for r in roles)
+
+
+class TestLoadRoleArgumentSpecs:
+    """Tests for standalone meta/argument_specs loading in load_role."""
+
+    def _make_role_dir(self, tmp_path: Path) -> Path:
+        role_dir = tmp_path / "myrole"
+        tasks_dir = role_dir / "tasks"
+        tasks_dir.mkdir(parents=True)
+        (tasks_dir / "main.yml").write_text("---\n- name: Hello\n  ansible.builtin.debug:\n    msg: hi\n")
+        return role_dir
+
+    def test_loads_standalone_argument_specs_yml(self, tmp_path: Path) -> None:
+        """Standalone ``meta/argument_specs.yml`` merges into role metadata.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        role_dir = self._make_role_dir(tmp_path)
+        meta_dir = role_dir / "meta"
+        meta_dir.mkdir()
+        (meta_dir / "main.yml").write_text("---\ngalaxy_info:\n  author: me\ndependencies: []\n")
+        (meta_dir / "argument_specs.yml").write_text(
+            "---\nmain:\n  short_description: Role description.\n  options: {}\n"
+        )
+
+        role = load_role(str(role_dir), basedir=str(tmp_path), load_children=False)
+
+        assert isinstance(role, Role)
+        assert role.metadata is not None
+        assert role.metadata.get("argument_specs") == {
+            "main": {"short_description": "Role description.", "options": {}},
+        }
+
+    def test_loads_standalone_argument_specs_yaml(self, tmp_path: Path) -> None:
+        """Standalone ``meta/argument_specs.yaml`` merges into role metadata.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        role_dir = self._make_role_dir(tmp_path)
+        meta_dir = role_dir / "meta"
+        meta_dir.mkdir()
+        (meta_dir / "main.yml").write_text("---\ngalaxy_info:\n  author: me\ndependencies: []\n")
+        (meta_dir / "argument_specs.yaml").write_text(
+            "---\nargument_specs:\n  main:\n    short_description: Role description.\n"
+        )
+
+        role = load_role(str(role_dir), basedir=str(tmp_path), load_children=False)
+
+        assert isinstance(role, Role)
+        assert role.metadata is not None
+        assert role.metadata.get("argument_specs") == {"main": {"short_description": "Role description."}}
+
+    def test_ignores_malformed_standalone_argument_specs(self, tmp_path: Path) -> None:
+        """Malformed standalone argument_specs files are not merged into metadata.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        role_dir = self._make_role_dir(tmp_path)
+        meta_dir = role_dir / "meta"
+        meta_dir.mkdir()
+        (meta_dir / "main.yml").write_text("---\ngalaxy_info:\n  author: me\ndependencies: []\n")
+        (meta_dir / "argument_specs.yml").write_text("invalid\n")
+
+        role = load_role(str(role_dir), basedir=str(tmp_path), load_children=False)
+
+        assert isinstance(role, Role)
+        assert role.metadata is not None
+        assert "argument_specs" not in role.metadata
+
+    def test_ignores_standalone_galaxy_info_mapping(self, tmp_path: Path) -> None:
+        """Standalone files with only galaxy_info are not treated as argument_specs.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        role_dir = self._make_role_dir(tmp_path)
+        meta_dir = role_dir / "meta"
+        meta_dir.mkdir()
+        (meta_dir / "main.yml").write_text("---\ngalaxy_info:\n  author: me\ndependencies: []\n")
+        (meta_dir / "argument_specs.yml").write_text("---\ngalaxy_info:\n  author: me\n")
+
+        role = load_role(str(role_dir), basedir=str(tmp_path), load_children=False)
+
+        assert isinstance(role, Role)
+        assert role.metadata is not None
+        assert "argument_specs" not in role.metadata
+
+    def test_ignores_standalone_invalid_entry_point(self, tmp_path: Path) -> None:
+        """Standalone files with scalar entry-point values are not merged.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        role_dir = self._make_role_dir(tmp_path)
+        meta_dir = role_dir / "meta"
+        meta_dir.mkdir()
+        (meta_dir / "main.yml").write_text("---\ngalaxy_info:\n  author: me\ndependencies: []\n")
+        (meta_dir / "argument_specs.yml").write_text("---\nargument_specs:\n  main: invalid\n")
+
+        role = load_role(str(role_dir), basedir=str(tmp_path), load_children=False)
+
+        assert isinstance(role, Role)
+        assert role.metadata is not None
+        assert "argument_specs" not in role.metadata
+
+    def test_loads_standalone_when_inline_argument_specs_invalid(self, tmp_path: Path) -> None:
+        """Invalid inline argument_specs in main.yml falls back to standalone file.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        role_dir = self._make_role_dir(tmp_path)
+        meta_dir = role_dir / "meta"
+        meta_dir.mkdir()
+        (meta_dir / "main.yml").write_text("---\nargument_specs: invalid\ngalaxy_info:\n  author: me\n")
+        (meta_dir / "argument_specs.yml").write_text(
+            "---\nmain:\n  short_description: Role description.\n  options: {}\n"
+        )
+
+        role = load_role(str(role_dir), basedir=str(tmp_path), load_children=False)
+
+        assert isinstance(role, Role)
+        assert role.metadata is not None
+        assert role.metadata.get("argument_specs") == {
+            "main": {"short_description": "Role description.", "options": {}},
+        }

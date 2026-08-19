@@ -475,6 +475,82 @@ class TestL077RoleArgSpecsGraphRule:
         assert result is not None
         assert result.verdict is False
 
+    def test_violation_malformed_standalone_yml(self, rule: RoleArgSpecsGraphRule, tmp_path: Path) -> None:
+        """Malformed standalone ``meta/argument_specs.yml`` still violates.
+
+        Args:
+            rule: Rule instance under test.
+            tmp_path: Pytest-provided temporary directory.
+        """
+        role_dir = tmp_path / "myrole"
+        (role_dir / "meta").mkdir(parents=True)
+        (role_dir / "meta" / "argument_specs.yml").write_text("invalid\n")
+        g, rid = _make_role(
+            role_metadata={},
+            file_path=str(role_dir),
+            path=str(role_dir),
+        )
+        result = rule.process(g, rid)
+        assert result is not None
+        assert result.verdict is True
+
+    def test_violation_malformed_standalone_yaml(self, rule: RoleArgSpecsGraphRule, tmp_path: Path) -> None:
+        """Malformed standalone ``meta/argument_specs.yaml`` still violates.
+
+        Args:
+            rule: Rule instance under test.
+            tmp_path: Pytest-provided temporary directory.
+        """
+        role_dir = tmp_path / "myrole"
+        (role_dir / "meta").mkdir(parents=True)
+        (role_dir / "meta" / "argument_specs.yaml").write_text("- invalid\n")
+        g, rid = _make_role(
+            role_metadata={},
+            file_path=str(role_dir),
+            path=str(role_dir),
+        )
+        result = rule.process(g, rid)
+        assert result is not None
+        assert result.verdict is True
+
+    def test_violation_standalone_invalid_entry_point(self, rule: RoleArgSpecsGraphRule, tmp_path: Path) -> None:
+        """Scalar entry-point values in standalone files still violate.
+
+        Args:
+            rule: Rule instance under test.
+            tmp_path: Pytest-provided temporary directory.
+        """
+        role_dir = tmp_path / "myrole"
+        (role_dir / "meta").mkdir(parents=True)
+        (role_dir / "meta" / "argument_specs.yml").write_text("---\nargument_specs:\n  main: invalid\n")
+        g, rid = _make_role(
+            role_metadata={},
+            file_path=str(role_dir),
+            path=str(role_dir),
+        )
+        result = rule.process(g, rid)
+        assert result is not None
+        assert result.verdict is True
+
+    def test_violation_standalone_galaxy_info_only(self, rule: RoleArgSpecsGraphRule, tmp_path: Path) -> None:
+        """Standalone files with only galaxy_info do not satisfy L077.
+
+        Args:
+            rule: Rule instance under test.
+            tmp_path: Pytest-provided temporary directory.
+        """
+        role_dir = tmp_path / "myrole"
+        (role_dir / "meta").mkdir(parents=True)
+        (role_dir / "meta" / "argument_specs.yml").write_text("---\ngalaxy_info:\n  author: me\n")
+        g, rid = _make_role(
+            role_metadata={},
+            file_path=str(role_dir),
+            path=str(role_dir),
+        )
+        result = rule.process(g, rid)
+        assert result is not None
+        assert result.verdict is True
+
     def test_violation_no_standalone_file(self, rule: RoleArgSpecsGraphRule, tmp_path: Path) -> None:
         """Role with empty meta dir and no argument_specs still violates.
 
