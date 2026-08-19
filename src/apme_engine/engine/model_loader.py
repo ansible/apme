@@ -1252,13 +1252,13 @@ def load_role(
         for ext in ("yml", "yaml"):
             arg_specs_path = os.path.join(fullpath, f"meta/argument_specs.{ext}")
             if os.path.exists(arg_specs_path):
-                with open(arg_specs_path) as file:
-                    try:
+                try:
+                    with open(arg_specs_path) as file:
                         arg_specs_data = yaml.load(file, Loader=Loader)
                         if isinstance(arg_specs_data, dict) and "argument_specs" in arg_specs_data:
                             roleObj.metadata["argument_specs"] = arg_specs_data["argument_specs"]
-                    except Exception as e:
-                        logger.debug(f"failed to load argument_specs file; {e.args[0]}")
+                except Exception as e:
+                    logger.debug(f"failed to load argument_specs file; {e.args[0]}")
                 break
 
     requirements_yml_path = os.path.join(fullpath, "requirements.yml")
