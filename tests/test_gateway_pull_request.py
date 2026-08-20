@@ -467,14 +467,13 @@ class TestGitHubBlobRateLimit:
 
         assert _max_rate_limit_retry_wait_s() == (_BLOB_MAX_RETRIES - 1) * _MAX_RETRY_AFTER_S
 
-    def test_blob_operation_timeout_covers_default_retry_waits(self) -> None:
-        """Operation deadline survives two default secondary-limit retry waits."""
+    def test_blob_operation_timeout_covers_worst_case_retry_budget(self) -> None:
+        """Operation deadline covers the full capped Retry-After retry budget."""
         from apme_gateway.scm.github import (
             _blob_operation_timeout_s,
             _max_rate_limit_retry_wait_s,
         )
 
-        assert _max_rate_limit_retry_wait_s() >= 60.0 + 72.0
         assert _blob_operation_timeout_s(1) >= _max_rate_limit_retry_wait_s()
 
     def test_blob_operation_timeout_includes_request_time(self) -> None:
@@ -497,10 +496,10 @@ class TestGitHubBlobRateLimit:
         assert _blob_operation_timeout_s(file_count) >= expected_min
 
     def test_blob_operation_timeout_scales_for_large_submissions(self) -> None:
-        """Very large submissions scale past the base cap to fit pacing and requests."""
+        """Very large submissions scale past the base budget to fit pacing and requests."""
         from apme_gateway.scm.github import (
             _BLOB_MIN_INTERVAL_S,
-            _PUSH_MAX_OPERATION_TIMEOUT_S,
+            _PUSH_BASE_OPERATION_TIMEOUT_S,
             _PUSH_NON_BLOB_REQUEST_COUNT,
             _PUSH_PER_REQUEST_TIMEOUT_S,
             _blob_operation_timeout_s,
@@ -510,7 +509,7 @@ class TestGitHubBlobRateLimit:
         floor = file_count * (_BLOB_MIN_INTERVAL_S + _PUSH_PER_REQUEST_TIMEOUT_S) + (
             _PUSH_NON_BLOB_REQUEST_COUNT * _PUSH_PER_REQUEST_TIMEOUT_S
         )
-        assert floor > _PUSH_MAX_OPERATION_TIMEOUT_S
+        assert floor > _PUSH_BASE_OPERATION_TIMEOUT_S
         assert _blob_operation_timeout_s(file_count) == floor
 
     async def test_paced_post_json_respects_operation_deadline(self) -> None:

@@ -30,7 +30,11 @@ _DEFAULT_RETRY_AFTER_S = 60.0
 _MAX_RETRY_AFTER_S = 180.0
 _PUSH_PER_REQUEST_TIMEOUT_S = 60.0
 _PUSH_NON_BLOB_REQUEST_COUNT = 5
-_PUSH_MAX_OPERATION_TIMEOUT_S = 1800.0
+# Baseline operation budget for small pushes. Large submissions scale above
+# this via the pacing floor (not a hard ceiling — see _blob_operation_timeout_s).
+_PUSH_BASE_OPERATION_TIMEOUT_S = 1800.0
+# Back-compat alias for tests and callers that still import the old name.
+_PUSH_MAX_OPERATION_TIMEOUT_S = _PUSH_BASE_OPERATION_TIMEOUT_S
 
 # Re-export under legacy private names for existing tests.
 _custom_ca_bundle = custom_ca_bundle
@@ -408,20 +412,23 @@ def _is_secondary_rate_limit(response: httpx.Response) -> bool:
 def _max_rate_limit_retry_wait_s() -> float:
     """Return worst-case wait time across rate-limit retries for one blob upload.
 
+    Budgets every retry at ``_MAX_RETRY_AFTER_S`` (the sleep cap enforced by
+    ``_paced_request_json``), not the default 60s Retry-After. That overestimates
+    typical waits so the operation deadline never expires mid-retry budget.
+
     Returns:
         Total sleep budget in seconds before retries are exhausted.
     """
-    total = 0.0
-    for attempt in range(_BLOB_MAX_RETRIES - 1):
-        total += max(
-            _BLOB_MIN_INTERVAL_S,
-            min(_MAX_RETRY_AFTER_S * (1.2**attempt), _MAX_RETRY_AFTER_S),
-        )
-    return total
+    return (_BLOB_MAX_RETRIES - 1) * _MAX_RETRY_AFTER_S
 
 
 def _blob_operation_timeout_s(file_count: int) -> float:
     """Return the push_files operation deadline for *file_count* blob uploads.
+
+    For small submissions this is roughly ``_PUSH_BASE_OPERATION_TIMEOUT_S``.
+    For large remediations the pacing floor grows with *file_count* (there is
+    no hard max), so a ~200-file push can budget multi-hour worst-case retries
+    while happy-path pacing stays a few minutes.
 
     Args:
         file_count: Number of files in the submission.
@@ -434,7 +441,7 @@ def _blob_operation_timeout_s(file_count: int) -> float:
     non_blob_request_budget = _PUSH_NON_BLOB_REQUEST_COUNT * _PUSH_PER_REQUEST_TIMEOUT_S
     computed = file_count * per_file_pacing_and_retries + blob_request_budget + non_blob_request_budget
     floor = file_count * (_BLOB_MIN_INTERVAL_S + _PUSH_PER_REQUEST_TIMEOUT_S) + non_blob_request_budget
-    return max(120.0, min(max(_PUSH_MAX_OPERATION_TIMEOUT_S, floor), computed))
+    return max(120.0, min(max(_PUSH_BASE_OPERATION_TIMEOUT_S, floor), computed))
 
 
 def _remaining_operation_time_s(operation_deadline: float) -> float:

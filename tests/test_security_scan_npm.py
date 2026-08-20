@@ -165,6 +165,30 @@ class TestUndiciSemverScan:
         assert findings[0].vulnerable is True
         assert findings[0].version_or_range == "*"
 
+    def test_spaced_comparator_range_flagged(self) -> None:
+        """Flag compound ranges with spaces after the upper-bound operator."""
+        data = json.loads((FIXTURES / "package_spaced_comparator_vuln.json").read_text())
+        findings = find_undici_in_package_json(data)
+        assert len(findings) == 1
+        assert findings[0].vulnerable is True
+        assert findings[0].version_or_range == ">=8.0.0 < 8.9.0"
+
+    def test_spaced_gte_range_flagged(self) -> None:
+        """Flag >= ranges that include whitespace after the operator."""
+        data = json.loads((FIXTURES / "package_spaced_gte_vuln.json").read_text())
+        findings = find_undici_in_package_json(data)
+        assert len(findings) == 1
+        assert findings[0].vulnerable is True
+        assert findings[0].version_or_range == ">= 8.0.0"
+
+    def test_v_prefix_version_flagged(self) -> None:
+        """Flag exact versions that use an optional npm v prefix."""
+        data = json.loads((FIXTURES / "package_v_prefix_vuln.json").read_text())
+        findings = find_undici_in_package_json(data)
+        assert len(findings) == 1
+        assert findings[0].vulnerable is True
+        assert findings[0].version_or_range == "v8.8.0"
+
     def test_safe_version_not_flagged(self) -> None:
         """Do not flag jsdom-compatible undici 7.29.0."""
         data = json.loads((FIXTURES / "package_safe.json").read_text())

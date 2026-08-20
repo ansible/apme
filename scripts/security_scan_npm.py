@@ -9,11 +9,17 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 from packaging.version import InvalidVersion, Version
+
+# Collapse whitespace after npm comparators ("< 8.9.0" → "<8.9.0").
+_COMPARATOR_SPACE_RE = re.compile(r"(<=|>=|<|>|=)\s+")
+# Strip a leading "v" from version-like tokens ("v8.8.0", ">=v8.0.0").
+_V_PREFIX_RE = re.compile(r"(^|[\s=<>~^]|npm:)v(?=\d)")
 
 UNDICI_VULN_MIN = Version("8.0.0")
 UNDICI_VULN_MAX_EXCLUSIVE = Version("8.9.0")
@@ -257,6 +263,10 @@ def _normalize_npm_range_spec(spec: str) -> str:
     spec = spec.strip()
     if not spec:
         return "*"
+    # Join "op version" tokens so compound ranges parse reliably.
+    spec = _COMPARATOR_SPACE_RE.sub(r"\1", spec)
+    # npm accepts optional "v" prefixes on version numbers.
+    spec = _V_PREFIX_RE.sub(r"\1", spec)
     if spec.startswith("="):
         spec = spec[1:].strip()
     if spec and spec[0].isdigit() and ("X" in spec or "*" in spec or "x" in spec):
