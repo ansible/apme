@@ -83,6 +83,9 @@ grep -rn "github.com/aquasecurity/trivy" go.mod go.sum 2>/dev/null
 
 # npm - compromised packages (use patterns from vulnerable-packages.md)
 grep -rn "@emilgroup/\|@opengov/\|@pypestream/" package*.json yarn.lock 2>/dev/null
+
+# npm - undici 8.x advisories (semver-aware manifest + lockfile scan)
+python scripts/security_scan_npm.py frontend/package.json
 ```
 
 ## Output Format

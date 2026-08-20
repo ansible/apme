@@ -1,0 +1,6 @@
+{
+  "name": "fixture-hyphen-vuln",
+  "dependencies": {
+    "undici": "8.0.0 - 8.8.0"
+  }
+}
