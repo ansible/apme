@@ -213,6 +213,9 @@ def _compound_comparator_range_may_be_vulnerable(spec: str) -> bool | None:
     return _comparator_range_overlaps_vulnerable(comparators)
 
 
+_WILDCARD_PREFIX_OPS = (">=", "<=", ">", "<", "^", "~")
+
+
 def _npm_x_range_may_be_vulnerable(prefix: str) -> bool:
     """Return True for npm ``8.x`` / ``8.7.x`` style ranges overlapping the advisory.
 
@@ -232,6 +235,23 @@ def _npm_x_range_may_be_vulnerable(prefix: str) -> bool:
     except ValueError:
         return False
     return minor < UNDICI_VULN_MAX_EXCLUSIVE.minor
+
+
+def _npm_wildcard_x_range_may_be_vulnerable(spec: str) -> bool:
+    """Evaluate npm ``8.x`` / ``8.*`` ranges, including prefixed forms like ``>=8.x``.
+
+    Args:
+        spec: Wildcard range ending in ``.x`` or ``.*``.
+
+    Returns:
+        True when the wildcard range may include vulnerable 8.x releases.
+    """
+    prefix = spec[:-2]
+    for op in _WILDCARD_PREFIX_OPS:
+        if prefix.startswith(op):
+            prefix = prefix[len(op) :].strip()
+            break
+    return _npm_x_range_may_be_vulnerable(prefix)
 
 
 def _extract_npm_alias_spec(spec: str) -> str:
@@ -294,11 +314,8 @@ def _npm_range_may_resolve_to_vulnerable(range_str: str) -> bool:
     if "||" in spec:
         return any(_npm_range_may_resolve_to_vulnerable(part.strip()) for part in spec.split("||"))
 
-    if spec.endswith(".*"):
-        return _npm_x_range_may_be_vulnerable(spec[:-2])
-
-    if spec.endswith(".x"):
-        return _npm_x_range_may_be_vulnerable(spec[:-2])
+    if spec.endswith(".*") or spec.endswith(".x"):
+        return _npm_wildcard_x_range_may_be_vulnerable(spec)
 
     if " - " in spec:
         lower_str, upper_str = (part.strip() for part in spec.split(" - ", 1))

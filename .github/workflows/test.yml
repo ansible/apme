@@ -44,7 +44,7 @@ jobs:
           curl -fsSL --retry 3 --retry-delay 5 -o /tmp/opa_linux_amd64_static \
             "https://github.com/open-policy-agent/opa/releases/download/v${OPA_VERSION}/opa_linux_amd64_static"
           echo "${OPA_SHA256}  /tmp/opa_linux_amd64_static" | sha256sum --check -
-          install -m 755 /tmp/opa_linux_amd64_static /usr/local/bin/opa
+          sudo install -m 755 /tmp/opa_linux_amd64_static /usr/local/bin/opa
           opa version
       - run: uvx --with tox-uv tox -e integration
         env:
@@ -73,7 +73,7 @@ jobs:
           curl -fsSL --retry 3 --retry-delay 5 -o /tmp/opa_linux_amd64_static \
             "https://github.com/open-policy-agent/opa/releases/download/v${OPA_VERSION}/opa_linux_amd64_static"
           echo "${OPA_SHA256}  /tmp/opa_linux_amd64_static" | sha256sum --check -
-          install -m 755 /tmp/opa_linux_amd64_static /usr/local/bin/opa
+          sudo install -m 755 /tmp/opa_linux_amd64_static /usr/local/bin/opa
       - name: Build and serve UI
         run: |
           cd frontend && npm ci && npm run build && cd ..
