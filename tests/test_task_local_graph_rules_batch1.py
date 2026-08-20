@@ -365,6 +365,30 @@ class TestL044AvoidImplicitGraphRule:
         g, tid = _make_task(module="ansible.builtin.debug")
         assert not rule.match(g, tid)
 
+    def test_no_match_copy_without_state(self, rule: AvoidImplicitGraphRule) -> None:
+        """Copy module has no state parameter and must not match.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, tid = _make_task(
+            module="ansible.builtin.copy",
+            module_options={"src": "a", "dest": "b"},
+        )
+        assert not rule.match(g, tid)
+
+    def test_no_match_template_without_state(self, rule: AvoidImplicitGraphRule) -> None:
+        """Template module has no state parameter and must not match.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, tid = _make_task(
+            module="ansible.builtin.template",
+            module_options={"src": "a.j2", "dest": "b"},
+        )
+        assert not rule.match(g, tid)
+
 
 class TestL048NoSameOwnerGraphRule:
     """Tests for ``NoSameOwnerGraphRule`` (L048)."""

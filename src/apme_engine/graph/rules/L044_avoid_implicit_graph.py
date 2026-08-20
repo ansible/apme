@@ -9,9 +9,7 @@ from apme_engine.graph.types import Severity, YAMLDict
 
 _TASK_TYPES = frozenset({NodeType.TASK, NodeType.HANDLER})
 
-_SHORT_NAMES = frozenset(
-    {"file", "copy", "template", "package", "apt", "dnf", "yum", "service", "mount", "user", "group"}
-)
+_SHORT_NAMES = frozenset({"file", "package", "apt", "dnf", "yum", "service", "mount", "user", "group"})
 
 MODULES_NEEDING_STATE = frozenset(
     _SHORT_NAMES | {f"ansible.builtin.{n}" for n in _SHORT_NAMES} | {f"ansible.legacy.{n}" for n in _SHORT_NAMES}
