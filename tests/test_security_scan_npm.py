@@ -69,6 +69,14 @@ class TestUndiciSemverScan:
         assert findings[0].vulnerable is True
         assert findings[0].version_or_range == ">=8.x"
 
+    def test_prefixed_multi_segment_wildcard_range_flagged(self) -> None:
+        """Flag npm >=8.x.x style wildcard ranges with leading comparators."""
+        data = json.loads((FIXTURES / "package_gte_wildcard_multi_segment_vuln.json").read_text())
+        findings = find_undici_in_package_json(data)
+        assert len(findings) == 1
+        assert findings[0].vulnerable is True
+        assert findings[0].version_or_range == ">=8.x.x"
+
     def test_lt_range_flagged(self) -> None:
         """Flag npm <8.9.0 range declarations in package.json."""
         data = json.loads((FIXTURES / "package_lt_vuln.json").read_text())

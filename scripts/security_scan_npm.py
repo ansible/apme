@@ -289,11 +289,13 @@ def _normalize_npm_range_spec(spec: str) -> str:
     spec = _V_PREFIX_RE.sub(r"\1", spec)
     if spec.startswith("="):
         spec = spec[1:].strip()
-    if spec and spec[0].isdigit() and ("X" in spec or "*" in spec or "x" in spec):
-        parts = [("x" if part in ("x", "X", "*") else part) for part in spec.split(".")]
+    body = spec.lstrip("<>=^~ ")
+    if body and body[0].isdigit() and ("X" in body or "*" in body or "x" in body):
+        op = spec[: len(spec) - len(body)]
+        parts = [("x" if part in ("x", "X", "*") else part) for part in body.split(".")]
         while len(parts) > 1 and parts[-1] == "x" and parts[-2] == "x":
             parts.pop()
-        spec = ".".join(parts)
+        spec = op + ".".join(parts)
     return spec
 
 
