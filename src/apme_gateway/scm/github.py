@@ -474,6 +474,7 @@ async def _paced_request_json(
         Tuple of (response, monotonic timestamp after the successful request).
 
     Raises:
+        RuntimeError: When the retry loop completes without producing a response.
         TimeoutError: When the operation deadline is exceeded before a retry can complete.
         httpx.HTTPStatusError: When the request fails after retries are exhausted.
     """
@@ -533,7 +534,9 @@ async def _paced_request_json(
         await response.aclose()
         await asyncio.sleep(wait_s)
 
-    assert response is not None
+    if response is None:  # pragma: no cover - loop always performs one request
+        msg = "GitHub request produced no response"
+        raise RuntimeError(msg)
     message = _github_error_message(response)
     if message:
         raise httpx.HTTPStatusError(

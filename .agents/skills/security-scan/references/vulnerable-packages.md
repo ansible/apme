@@ -69,7 +69,7 @@ as security advisories are published.
 - **Affected**: `>= 8.0.0, < 8.9.0` (also avoid 8.x with jsdom — breaks `undici/lib/handler/wrap-handler.js`)
 - **Severity**: HIGH (cross-user cache disclosure); additional MEDIUM (CRLF, cookie injection, desync)
 - **Source**: [GitHub Advisory Database](https://github.com/advisories) / Dependabot
-- **Pattern**: `"undici":\s*"(?:\^|~)?8\.[0-8]\.` (grep quick-check; misses some range forms)
+- **Pattern**: `"undici":[[:space:]]*"[~^]?8\.[0-8]\.` (POSIX ERE for `grep -E`; misses some range forms)
 - **Semver scan**: `python scripts/security_scan_npm.py frontend/package.json` (manifest ranges + lockfile resolved versions)
 - **Fixtures**: `tests/fixtures/security_scan_npm/` (exact, caret, tilde, lockfile)
 - **Files**: `frontend/package.json`, `frontend/package-lock.json`

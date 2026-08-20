@@ -258,9 +258,12 @@ def _normalize_npm_range_spec(spec: str) -> str:
     if not spec:
         return "*"
     if spec.startswith("="):
-        return spec[1:].strip()
-    if spec.endswith(".X"):
-        return f"{spec[:-2]}.x"
+        spec = spec[1:].strip()
+    if spec and spec[0].isdigit() and ("X" in spec or "*" in spec or "x" in spec):
+        parts = [("x" if part in ("x", "X", "*") else part) for part in spec.split(".")]
+        while len(parts) > 1 and parts[-1] == "x" and parts[-2] == "x":
+            parts.pop()
+        spec = ".".join(parts)
     return spec
 
 
