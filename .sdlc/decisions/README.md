@@ -101,10 +101,9 @@ Decision Requests (DRs) provide a formal mechanism for:
 
 | DR | Title | Category | Priority | Raised |
 |----|-------|----------|----------|--------|
+| [DR-013](open/DR-013-aa-integration-approach.md) | Automation Analytics Integration Approach | Architecture | Medium | 2026-03-25 |
 | [DR-014](open/DR-014-eda-integration-approach.md) | EDA Integration Approach | Architecture | High | 2026-03-25 |
 | [DR-015](open/DR-015-controller-policy-integration.md) | Controller Policy Integration | Architecture | High | 2026-03-25 |
-| [DR-013](open/DR-013-aa-integration-approach.md) | Automation Analytics Integration Approach | Architecture | Medium | 2026-03-25 |
-| [DR-018](open/DR-018-risk-rule-guidance-trust-context.md) | Risk Rule Guidance and Trust Context | Product | Medium | 2026-08-20 |
 
 ### Closed: Decided
 
