@@ -463,7 +463,7 @@ class VariableProvenanceResolver:
 
         loop_ctrl = node.loop_control or {}
         loop_var = loop_ctrl.get("loop_var", "item")
-        if isinstance(loop_var, str) and loop_var not in result:
+        if isinstance(loop_var, str):
             result[loop_var] = VariableProvenance(
                 name=loop_var,
                 value=None,
@@ -474,7 +474,7 @@ class VariableProvenanceResolver:
             )
 
         index_var = loop_ctrl.get("index_var")
-        if isinstance(index_var, str) and index_var not in result:
+        if isinstance(index_var, str):
             result[index_var] = VariableProvenance(
                 name=index_var,
                 value=None,
@@ -501,7 +501,8 @@ class VariableProvenanceResolver:
         loop_ctrl = node.loop_control or {}
         loop_var = loop_ctrl.get("loop_var", "item")
         if isinstance(loop_var, str):
-            result.setdefault(loop_var, []).append(
+            result.setdefault(loop_var, []).insert(
+                0,
                 VariableProvenance(
                     name=loop_var,
                     value=None,
@@ -509,12 +510,13 @@ class VariableProvenanceResolver:
                     defining_node_id=node.node_id,
                     file_path=node.file_path,
                     line=node.line_start,
-                )
+                ),
             )
 
         index_var = loop_ctrl.get("index_var")
         if isinstance(index_var, str):
-            result.setdefault(index_var, []).append(
+            result.setdefault(index_var, []).insert(
+                0,
                 VariableProvenance(
                     name=index_var,
                     value=None,
@@ -522,5 +524,5 @@ class VariableProvenanceResolver:
                     defining_node_id=node.node_id,
                     file_path=node.file_path,
                     line=node.line_start,
-                )
+                ),
             )

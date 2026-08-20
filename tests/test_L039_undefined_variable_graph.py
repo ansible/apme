@@ -438,3 +438,18 @@ class TestLoopControlVars:
         results = _run(g)
         assert len(results) == 1
         assert "some_undefined" in _undef_vars(results)
+
+    def test_loop_var_shadows_play_var(self) -> None:
+        """Loop variable shadows same-named variable from outer scope.
+
+        Tests:
+            ``item_site`` is defined at play level but loop_var takes precedence.
+        """
+        g, _ = _make_graph(
+            play_vars={"item_site": "should_be_shadowed"},
+            task_module_options={"dest": "/etc/{{ item_site['key'] }}"},
+            task_loop="{{ sites | dict2items }}",
+            task_loop_control={"loop_var": "item_site"},
+        )
+        results = _run(g)
+        assert results == []
