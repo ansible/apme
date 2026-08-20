@@ -1,6 +1,6 @@
 # Vulnerable Packages Registry
 
-Last updated: 2026-03-25
+Last updated: 2026-08-18
 
 This file contains known vulnerable packages to scan for. Add new entries
 as security advisories are published.
@@ -58,6 +58,23 @@ as security advisories are published.
 - **Pattern**: `github.com/aquasecurity/trivy`
 - **Files**: `go.mod`, `go.sum`
 - **Remediation**: Upgrade to patched version
+
+---
+
+## npm Packages (undici)
+
+### undici (8.x cache / CRLF advisories)
+
+- **Package**: `undici`
+- **Affected**: `>= 8.0.0, < 8.9.0`
+- **Severity**: HIGH (cross-user cache disclosure); additional MEDIUM (CRLF, cookie injection, desync)
+- **Source**: [GitHub Advisory Database](https://github.com/advisories) / Dependabot
+- **Pattern**: `"undici":[[:space:]]*"[~^]?8\.[0-8]\.` (POSIX ERE for `grep -E`; misses some range forms)
+- **Semver scan**: `python scripts/security_scan_npm.py frontend/package.json` (manifest ranges + lockfile resolved versions)
+- **Fixtures**: `tests/fixtures/security_scan_npm/` (exact, caret, tilde, spaced comparators, lockfile)
+- **Files**: `frontend/package.json`, `frontend/package-lock.json`
+- **Notes**: Older jsdom (<29) expected undici 7.x and could break on undici 8.x `wrap-handler`. jsdom 29 works with undici 8.x (this repo: jsdom `^29.1.1` + undici `8.9.0` override).
+- **Remediation**: Pin `undici` to `>=8.9.0` when on jsdom 29+, or `7.29.0` if stuck on a jsdom that requires undici 7.x
 
 ---
 
