@@ -1,0 +1,6 @@
+{
+  "name": "fixture",
+  "overrides": {
+    "undici": "8.7.0"
+  }
+}

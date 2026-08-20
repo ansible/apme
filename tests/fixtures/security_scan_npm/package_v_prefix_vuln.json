@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "undici": "v8.8.0"
+  }
+}

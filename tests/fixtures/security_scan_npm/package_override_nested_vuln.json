@@ -1,0 +1,8 @@
+{
+  "name": "fixture",
+  "overrides": {
+    "jsdom": {
+      "undici": "8.7.0"
+    }
+  }
+}

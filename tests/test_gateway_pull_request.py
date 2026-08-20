@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import ssl
+import time
 from collections.abc import AsyncIterator
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -267,6 +270,275 @@ class TestGitHubProviderTls:
 
         assert isinstance(mock_client.call_args.kwargs["verify"], ssl.SSLContext)
         assert mock_client.call_args.kwargs["timeout"] == 30
+
+
+class TestGitHubBlobRateLimit:
+    """Tests for GitHub blob upload pacing and secondary rate-limit retries."""
+
+    def test_is_secondary_rate_limit_detects_message(self) -> None:
+        """Secondary rate-limit responses are recognized from the JSON body."""
+        from apme_gateway.scm.github import _is_secondary_rate_limit
+
+        response = httpx.Response(
+            403,
+            json={"message": "You have exceeded a secondary rate limit. Please wait."},
+        )
+        assert _is_secondary_rate_limit(response) is True
+
+    async def test_paced_post_json_retries_secondary_rate_limit(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Blob uploads retry after GitHub secondary rate-limit responses.
+
+        Args:
+            monkeypatch: Pytest monkeypatch fixture to skip real asyncio sleeps.
+        """
+        from apme_gateway.scm.github import _BLOB_MIN_INTERVAL_S, _paced_post_json
+
+        sleep_calls: list[float] = []
+
+        async def _track_sleep(seconds: float) -> None:
+            sleep_calls.append(seconds)
+
+        monkeypatch.setattr(asyncio, "sleep", _track_sleep)
+
+        calls = {"count": 0}
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            calls["count"] += 1
+            if calls["count"] == 1:
+                return httpx.Response(
+                    403,
+                    json={"message": "You have exceeded a secondary rate limit."},
+                    headers={"retry-after": "0"},
+                )
+            return httpx.Response(201, json={"sha": "abc123"})
+
+        transport = httpx.MockTransport(handler)
+        async with httpx.AsyncClient(transport=transport) as client:
+            response, _ = await _paced_post_json(
+                client,
+                url="https://api.github.com/repos/o/r/git/blobs",
+                headers={},
+                json={"content": "x", "encoding": "utf-8"},
+                last_request_at=None,
+            )
+
+        assert response.status_code == 201
+        assert calls["count"] == 2
+        assert len(sleep_calls) == 1
+        assert sleep_calls[0] >= _BLOB_MIN_INTERVAL_S
+
+    async def test_paced_post_json_closes_rate_limited_response_before_retry(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Rate-limited responses are closed before retry sleeps to release connections.
+
+        Args:
+            monkeypatch: Pytest monkeypatch fixture to skip real asyncio sleeps.
+        """
+        from apme_gateway.scm.github import _paced_post_json
+
+        closed: list[httpx.Response] = []
+        original_aclose = httpx.Response.aclose
+
+        async def _tracked_aclose(self: httpx.Response) -> None:
+            closed.append(self)
+            await original_aclose(self)
+
+        monkeypatch.setattr(httpx.Response, "aclose", _tracked_aclose)
+
+        async def _track_sleep(_seconds: float) -> None:
+            return None
+
+        monkeypatch.setattr(asyncio, "sleep", _track_sleep)
+
+        calls = {"count": 0}
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            calls["count"] += 1
+            if calls["count"] == 1:
+                return httpx.Response(
+                    403,
+                    json={"message": "You have exceeded a secondary rate limit."},
+                    headers={"retry-after": "0"},
+                )
+            return httpx.Response(201, json={"sha": "abc123"})
+
+        transport = httpx.MockTransport(handler)
+        async with httpx.AsyncClient(transport=transport) as client:
+            response, _ = await _paced_post_json(
+                client,
+                url="https://api.github.com/repos/o/r/git/blobs",
+                headers={},
+                json={"content": "x", "encoding": "utf-8"},
+                last_request_at=None,
+            )
+
+        assert response.status_code == 201
+        assert len(closed) == 1
+
+    async def test_paced_post_json_skips_sleep_on_final_rate_limit(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Exhausted retries fail immediately without a trailing sleep.
+
+        Args:
+            monkeypatch: Pytest monkeypatch fixture to skip real asyncio sleeps.
+        """
+        from apme_gateway.scm.github import _BLOB_MAX_RETRIES, _paced_post_json
+
+        sleep_calls: list[float] = []
+
+        async def _track_sleep(seconds: float) -> None:
+            sleep_calls.append(seconds)
+
+        monkeypatch.setattr(asyncio, "sleep", _track_sleep)
+
+        calls = {"count": 0}
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            calls["count"] += 1
+            return httpx.Response(
+                403,
+                json={"message": "You have exceeded a secondary rate limit."},
+                headers={"retry-after": "0"},
+            )
+
+        transport = httpx.MockTransport(handler)
+        async with httpx.AsyncClient(transport=transport) as client:
+            with pytest.raises(httpx.HTTPStatusError):
+                await _paced_post_json(
+                    client,
+                    url="https://api.github.com/repos/o/r/git/blobs",
+                    headers={},
+                    json={"content": "x", "encoding": "utf-8"},
+                    last_request_at=None,
+                )
+
+        assert calls["count"] == _BLOB_MAX_RETRIES
+        assert len(sleep_calls) == _BLOB_MAX_RETRIES - 1
+
+    async def test_paced_post_json_caps_retry_after(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Retry-After values above the cap use _MAX_RETRY_AFTER_S for pacing.
+
+        Args:
+            monkeypatch: Pytest monkeypatch fixture to skip real asyncio sleeps.
+        """
+        from apme_gateway.scm.github import _MAX_RETRY_AFTER_S, _paced_post_json
+
+        sleep_calls: list[float] = []
+
+        async def _track_sleep(seconds: float) -> None:
+            sleep_calls.append(seconds)
+
+        monkeypatch.setattr(asyncio, "sleep", _track_sleep)
+
+        calls = {"count": 0}
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            calls["count"] += 1
+            if calls["count"] == 1:
+                return httpx.Response(
+                    403,
+                    json={"message": "You have exceeded a secondary rate limit."},
+                    headers={"retry-after": "180"},
+                )
+            return httpx.Response(201, json={"sha": "abc123"})
+
+        transport = httpx.MockTransport(handler)
+        async with httpx.AsyncClient(transport=transport) as client:
+            response, _ = await _paced_post_json(
+                client,
+                url="https://api.github.com/repos/o/r/git/blobs",
+                headers={},
+                json={"content": "x", "encoding": "utf-8"},
+                last_request_at=None,
+            )
+
+        assert response.status_code == 201
+        assert calls["count"] == 2
+        assert sleep_calls == [_MAX_RETRY_AFTER_S]
+
+    def test_max_rate_limit_retry_wait_uses_cap(self) -> None:
+        """Retry budget assumes the Retry-After cap enforced by _paced_post_json."""
+        from apme_gateway.scm.github import (
+            _BLOB_MAX_RETRIES,
+            _MAX_RETRY_AFTER_S,
+            _max_rate_limit_retry_wait_s,
+        )
+
+        assert _max_rate_limit_retry_wait_s() == (_BLOB_MAX_RETRIES - 1) * _MAX_RETRY_AFTER_S
+
+    def test_blob_operation_timeout_covers_worst_case_retry_budget(self) -> None:
+        """Operation deadline covers the full capped Retry-After retry budget."""
+        from apme_gateway.scm.github import (
+            _blob_operation_timeout_s,
+            _max_rate_limit_retry_wait_s,
+        )
+
+        assert _blob_operation_timeout_s(1) >= _max_rate_limit_retry_wait_s()
+
+    def test_blob_operation_timeout_includes_request_time(self) -> None:
+        """Operation deadline covers per-request timeouts for blob and non-blob calls."""
+        from apme_gateway.scm.github import (
+            _BLOB_MAX_RETRIES,
+            _BLOB_MIN_INTERVAL_S,
+            _PUSH_NON_BLOB_REQUEST_COUNT,
+            _PUSH_PER_REQUEST_TIMEOUT_S,
+            _blob_operation_timeout_s,
+            _max_rate_limit_retry_wait_s,
+        )
+
+        file_count = 1
+        expected_min = (
+            file_count * (_BLOB_MIN_INTERVAL_S * (_BLOB_MAX_RETRIES + 1) + _max_rate_limit_retry_wait_s())
+            + file_count * _BLOB_MAX_RETRIES * _PUSH_PER_REQUEST_TIMEOUT_S
+            + _PUSH_NON_BLOB_REQUEST_COUNT * _PUSH_PER_REQUEST_TIMEOUT_S
+        )
+        assert _blob_operation_timeout_s(file_count) >= expected_min
+
+    def test_blob_operation_timeout_scales_for_large_submissions(self) -> None:
+        """Very large submissions scale past the base budget to fit pacing and requests."""
+        from apme_gateway.scm.github import (
+            _BLOB_MIN_INTERVAL_S,
+            _PUSH_BASE_OPERATION_TIMEOUT_S,
+            _PUSH_NON_BLOB_REQUEST_COUNT,
+            _PUSH_PER_REQUEST_TIMEOUT_S,
+            _blob_operation_timeout_s,
+        )
+
+        file_count = 217
+        floor = file_count * (_BLOB_MIN_INTERVAL_S + _PUSH_PER_REQUEST_TIMEOUT_S) + (
+            _PUSH_NON_BLOB_REQUEST_COUNT * _PUSH_PER_REQUEST_TIMEOUT_S
+        )
+        assert floor > _PUSH_BASE_OPERATION_TIMEOUT_S
+        assert _blob_operation_timeout_s(file_count) == floor
+
+    async def test_paced_post_json_respects_operation_deadline(self) -> None:
+        """Rate-limit retries stop when the push operation budget is exhausted."""
+        from apme_gateway.scm.github import _paced_post_json
+
+        calls = {"count": 0}
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            calls["count"] += 1
+            return httpx.Response(
+                403,
+                json={"message": "You have exceeded a secondary rate limit."},
+                headers={"retry-after": "60"},
+            )
+
+        transport = httpx.MockTransport(handler)
+        async with httpx.AsyncClient(transport=transport) as client:
+            with pytest.raises(TimeoutError, match="operation deadline"):
+                await _paced_post_json(
+                    client,
+                    url="https://api.github.com/repos/o/r/git/blobs",
+                    headers={},
+                    json={"content": "x", "encoding": "utf-8"},
+                    last_request_at=None,
+                    operation_deadline=time.monotonic() + 5.0,
+                )
+
+        assert calls["count"] == 1
 
 
 # ── DB model tests ───────────────────────────────────────────────────

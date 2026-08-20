@@ -1,0 +1,16 @@
+{
+  "name": "fixture",
+  "lockfileVersion": 3,
+  "packages": {
+    "": {
+      "name": "fixture",
+      "dependencies": {
+        "undici": "8.7.0"
+      }
+    },
+    "node_modules/undici": {
+      "version": "8.7.0",
+      "resolved": "https://registry.npmjs.org/undici/-/undici-8.7.0.tgz"
+    }
+  }
+}
