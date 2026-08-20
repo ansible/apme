@@ -20,8 +20,8 @@ jobs:
   test:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
-      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
       - run: uvx --with tox-uv tox -e unit
       - name: Fail if git reports dirty
         run: |
@@ -34,13 +34,17 @@ jobs:
   integration:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
-      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
       - name: Install OPA binary
+        env:
+          OPA_VERSION: "1.17.1"
+          OPA_SHA256: "3d4bb88482958d990351ec5d2f7558509992776bc473bc1b78d86d76cb993ca3"
         run: |
-          curl -fsSL -o /usr/local/bin/opa \
-            https://openpolicyagent.org/downloads/latest/opa_linux_amd64_static
-          chmod +x /usr/local/bin/opa
+          curl -fsSL --retry 3 --retry-delay 5 -o /tmp/opa_linux_amd64_static \
+            "https://github.com/open-policy-agent/opa/releases/download/v${OPA_VERSION}/opa_linux_amd64_static"
+          echo "${OPA_SHA256}  /tmp/opa_linux_amd64_static" | sha256sum --check -
+          install -m 755 /tmp/opa_linux_amd64_static /usr/local/bin/opa
           opa version
       - run: uvx --with tox-uv tox -e integration
         env:
@@ -54,18 +58,22 @@ jobs:
   ui:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
-      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - name: Install OPA binary
+        env:
+          OPA_VERSION: "1.17.1"
+          OPA_SHA256: "3d4bb88482958d990351ec5d2f7558509992776bc473bc1b78d86d76cb993ca3"
         run: |
-          curl -fsSL -o /usr/local/bin/opa \
-            https://openpolicyagent.org/downloads/latest/opa_linux_amd64_static
-          chmod +x /usr/local/bin/opa
+          curl -fsSL --retry 3 --retry-delay 5 -o /tmp/opa_linux_amd64_static \
+            "https://github.com/open-policy-agent/opa/releases/download/v${OPA_VERSION}/opa_linux_amd64_static"
+          echo "${OPA_SHA256}  /tmp/opa_linux_amd64_static" | sha256sum --check -
+          install -m 755 /tmp/opa_linux_amd64_static /usr/local/bin/opa
       - name: Build and serve UI
         run: |
           cd frontend && npm ci && npm run build && cd ..
@@ -87,6 +95,6 @@ jobs:
   test-ai-extra:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
-      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
       - run: uvx --with tox-uv tox -e ai

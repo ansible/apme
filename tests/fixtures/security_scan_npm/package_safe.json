@@ -1,0 +1,6 @@
+{
+  "name": "fixture",
+  "dependencies": {
+    "undici": "7.29.0"
+  }
+}

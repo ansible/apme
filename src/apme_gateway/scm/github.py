@@ -8,8 +8,11 @@ configurable ``api_base_url``.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
+import time
+from typing import Any
 from urllib.parse import quote, urlparse
 
 import httpx
@@ -18,6 +21,16 @@ from apme_gateway.scm._http import async_client, custom_ca_bundle, http_verify
 from apme_gateway.scm.base import PullRequestResult
 
 logger = logging.getLogger(__name__)
+
+# GitHub secondary rate limits content-creation endpoints (e.g. POST /git/blobs)
+# to roughly 80 requests/minute. Large remediations exceed that without pacing.
+_BLOB_MIN_INTERVAL_S = 0.85
+_BLOB_MAX_RETRIES = 6
+_DEFAULT_RETRY_AFTER_S = 60.0
+_MAX_RETRY_AFTER_S = 180.0
+_PUSH_PER_REQUEST_TIMEOUT_S = 60.0
+_PUSH_NON_BLOB_REQUEST_COUNT = 5
+_PUSH_MAX_OPERATION_TIMEOUT_S = 1800.0
 
 # Re-export under legacy private names for existing tests.
 _custom_ca_bundle = custom_ca_bundle
@@ -197,76 +210,103 @@ class GitHubProvider:
 
         Returns:
             SHA of the new commit.
+
+        Raises:
+            TimeoutError: When the full operation exceeds the submission budget.
         """
         owner, repo = _parse_owner_repo(repo_url)
-        async with self._client(timeout=60) as client:
-            headers = self._headers(token)
+        # Per-request timeout caps a single hung blob/tree/commit call; operation
+        # deadline bounds the full multi-file submission (pacing + retries).
+        per_request_timeout = _PUSH_PER_REQUEST_TIMEOUT_S
+        operation_timeout_s = _blob_operation_timeout_s(len(files))
+        operation_deadline = time.monotonic() + operation_timeout_s
+        commit_sha: str
+        try:
+            async with asyncio.timeout(operation_timeout_s):
+                async with self._client(timeout=per_request_timeout) as client:
+                    headers = self._headers(token)
 
-            if parent_commit_sha:
-                commit_sha_head = parent_commit_sha
-            else:
-                ref_resp = await client.get(
-                    _branch_ref_url(self._api, owner, repo, branch),
-                    headers=headers,
-                )
-                ref_resp.raise_for_status()
-                commit_sha_head = str(ref_resp.json()["object"]["sha"])
+                    if parent_commit_sha:
+                        commit_sha_head = parent_commit_sha
+                    else:
+                        ref_resp = await client.get(
+                            _branch_ref_url(self._api, owner, repo, branch),
+                            headers=headers,
+                        )
+                        ref_resp.raise_for_status()
+                        commit_sha_head = str(ref_resp.json()["object"]["sha"])
 
-            commit_detail = await client.get(
-                f"{self._api}/repos/{owner}/{repo}/git/commits/{commit_sha_head}",
-                headers=headers,
-            )
-            commit_detail.raise_for_status()
-            base_tree_sha = commit_detail.json()["tree"]["sha"]
+                    commit_detail = await client.get(
+                        f"{self._api}/repos/{owner}/{repo}/git/commits/{commit_sha_head}",
+                        headers=headers,
+                    )
+                    commit_detail.raise_for_status()
+                    base_tree_sha = commit_detail.json()["tree"]["sha"]
 
-            tree_items = []
-            for path, content in files.items():
-                if _is_text(content):
-                    blob_json = {"content": content.decode("utf-8"), "encoding": "utf-8"}
-                else:
-                    blob_json = {"content": base64.b64encode(content).decode(), "encoding": "base64"}
+                    tree_items = []
+                    last_request_at: float | None = None
+                    for path, content in files.items():
+                        if _is_text(content):
+                            blob_json = {"content": content.decode("utf-8"), "encoding": "utf-8"}
+                        else:
+                            blob_json = {
+                                "content": base64.b64encode(content).decode(),
+                                "encoding": "base64",
+                            }
 
-                blob_resp = await client.post(
-                    f"{self._api}/repos/{owner}/{repo}/git/blobs",
-                    headers=headers,
-                    json=blob_json,
-                )
-                blob_resp.raise_for_status()
-                tree_items.append(
-                    {
-                        "path": path,
-                        "mode": "100644",
-                        "type": "blob",
-                        "sha": blob_resp.json()["sha"],
-                    }
-                )
+                        blob_resp, last_request_at = await _paced_post_json(
+                            client,
+                            url=f"{self._api}/repos/{owner}/{repo}/git/blobs",
+                            headers=headers,
+                            json=blob_json,
+                            last_request_at=last_request_at,
+                            operation_deadline=operation_deadline,
+                        )
+                        tree_items.append(
+                            {
+                                "path": path,
+                                "mode": "100644",
+                                "type": "blob",
+                                "sha": blob_resp.json()["sha"],
+                            }
+                        )
 
-            tree_resp = await client.post(
-                f"{self._api}/repos/{owner}/{repo}/git/trees",
-                headers=headers,
-                json={"base_tree": base_tree_sha, "tree": tree_items},
-            )
-            tree_resp.raise_for_status()
-            tree_sha = tree_resp.json()["sha"]
+                    tree_resp, last_request_at = await _paced_post_json(
+                        client,
+                        url=f"{self._api}/repos/{owner}/{repo}/git/trees",
+                        headers=headers,
+                        json={"base_tree": base_tree_sha, "tree": tree_items},
+                        last_request_at=last_request_at,
+                        operation_deadline=operation_deadline,
+                    )
+                    tree_sha = tree_resp.json()["sha"]
 
-            commit_resp = await client.post(
-                f"{self._api}/repos/{owner}/{repo}/git/commits",
-                headers=headers,
-                json={
-                    "message": commit_message,
-                    "tree": tree_sha,
-                    "parents": [commit_sha_head],
-                },
-            )
-            commit_resp.raise_for_status()
-            commit_sha: str = commit_resp.json()["sha"]
+                    commit_resp, last_request_at = await _paced_post_json(
+                        client,
+                        url=f"{self._api}/repos/{owner}/{repo}/git/commits",
+                        headers=headers,
+                        json={
+                            "message": commit_message,
+                            "tree": tree_sha,
+                            "parents": [commit_sha_head],
+                        },
+                        last_request_at=last_request_at,
+                        operation_deadline=operation_deadline,
+                    )
+                    commit_sha = commit_resp.json()["sha"]
 
-            update_resp = await client.patch(
-                _branch_refs_update_url(self._api, owner, repo, branch),
-                headers=headers,
-                json={"sha": commit_sha},
-            )
-            update_resp.raise_for_status()
+                    await _paced_request_json(
+                        client,
+                        method="PATCH",
+                        url=_branch_refs_update_url(self._api, owner, repo, branch),
+                        headers=headers,
+                        json={"sha": commit_sha},
+                        last_request_at=last_request_at,
+                        operation_deadline=operation_deadline,
+                    )
+        except TimeoutError as exc:
+            msg = f"GitHub push_files timed out after {operation_timeout_s:.0f}s ({len(files)} files)"
+            raise TimeoutError(msg) from exc
 
         logger.info("Pushed %d files to %s/%s@%s (%s)", len(files), owner, repo, branch, commit_sha[:8])
         return commit_sha
@@ -328,6 +368,214 @@ class GitHubProvider:
         pr_url = data["html_url"]
         logger.info("Created PR %s on %s/%s", pr_url, owner, repo)
         return PullRequestResult(pr_url=pr_url, branch_name=head_branch, provider="github")
+
+
+def _github_error_message(response: httpx.Response) -> str | None:
+    """Extract a human-readable error message from a GitHub API response.
+
+    Args:
+        response: HTTP response from the GitHub API.
+
+    Returns:
+        Message string when present in the JSON body, else ``None``.
+    """
+    try:
+        payload = response.json()
+    except ValueError:
+        return None
+    if isinstance(payload, dict):
+        message = payload.get("message")
+        if isinstance(message, str) and message:
+            return message
+    return None
+
+
+def _is_secondary_rate_limit(response: httpx.Response) -> bool:
+    """Return whether *response* indicates a GitHub secondary rate limit.
+
+    Args:
+        response: HTTP response from the GitHub API.
+
+    Returns:
+        True when GitHub reports a secondary rate limit or HTTP 429.
+    """
+    if response.status_code == 429:
+        return True
+    message = _github_error_message(response)
+    return bool(message and "secondary rate limit" in message.lower())
+
+
+def _max_rate_limit_retry_wait_s() -> float:
+    """Return worst-case wait time across rate-limit retries for one blob upload.
+
+    Returns:
+        Total sleep budget in seconds before retries are exhausted.
+    """
+    total = 0.0
+    for attempt in range(_BLOB_MAX_RETRIES - 1):
+        total += max(
+            _BLOB_MIN_INTERVAL_S,
+            min(_MAX_RETRY_AFTER_S * (1.2**attempt), _MAX_RETRY_AFTER_S),
+        )
+    return total
+
+
+def _blob_operation_timeout_s(file_count: int) -> float:
+    """Return the push_files operation deadline for *file_count* blob uploads.
+
+    Args:
+        file_count: Number of files in the submission.
+
+    Returns:
+        Operation timeout in seconds, including pacing and worst-case retries.
+    """
+    per_file_pacing_and_retries = _BLOB_MIN_INTERVAL_S * (_BLOB_MAX_RETRIES + 1) + _max_rate_limit_retry_wait_s()
+    blob_request_budget = file_count * _BLOB_MAX_RETRIES * _PUSH_PER_REQUEST_TIMEOUT_S
+    non_blob_request_budget = _PUSH_NON_BLOB_REQUEST_COUNT * _PUSH_PER_REQUEST_TIMEOUT_S
+    computed = file_count * per_file_pacing_and_retries + blob_request_budget + non_blob_request_budget
+    floor = file_count * (_BLOB_MIN_INTERVAL_S + _PUSH_PER_REQUEST_TIMEOUT_S) + non_blob_request_budget
+    return max(120.0, min(max(_PUSH_MAX_OPERATION_TIMEOUT_S, floor), computed))
+
+
+def _remaining_operation_time_s(operation_deadline: float) -> float:
+    """Return seconds remaining before *operation_deadline*.
+
+    Args:
+        operation_deadline: Monotonic timestamp when the operation must end.
+
+    Returns:
+        Remaining seconds (may be negative when the deadline has passed).
+    """
+    return operation_deadline - time.monotonic()
+
+
+async def _paced_request_json(
+    client: httpx.AsyncClient,
+    *,
+    method: str = "POST",
+    url: str,
+    headers: dict[str, str],
+    json: dict[str, Any],
+    last_request_at: float | None,
+    operation_deadline: float | None = None,
+) -> tuple[httpx.Response, float]:
+    """Issue a paced GitHub JSON request with secondary rate-limit retries.
+
+    Args:
+        client: Active HTTP client.
+        method: HTTP method (POST, PATCH, etc.).
+        url: Request URL.
+        headers: Request headers.
+        json: JSON request body.
+        last_request_at: Monotonic timestamp of the prior paced request, if any.
+        operation_deadline: Optional monotonic deadline for the full push operation.
+
+    Returns:
+        Tuple of (response, monotonic timestamp after the successful request).
+
+    Raises:
+        TimeoutError: When the operation deadline is exceeded before a retry can complete.
+        httpx.HTTPStatusError: When the request fails after retries are exhausted.
+    """
+    if operation_deadline is not None and _remaining_operation_time_s(operation_deadline) <= 0:
+        msg = "GitHub blob upload exceeded the push operation deadline"
+        raise TimeoutError(msg)
+
+    if last_request_at is not None:
+        elapsed = time.monotonic() - last_request_at
+        if elapsed < _BLOB_MIN_INTERVAL_S:
+            sleep_s = _BLOB_MIN_INTERVAL_S - elapsed
+            if operation_deadline is not None:
+                remaining = _remaining_operation_time_s(operation_deadline)
+                if remaining <= 0:
+                    msg = "GitHub blob upload exceeded the push operation deadline"
+                    raise TimeoutError(msg)
+                sleep_s = min(sleep_s, remaining)
+            await asyncio.sleep(sleep_s)
+
+    response: httpx.Response | None = None
+    for attempt in range(_BLOB_MAX_RETRIES):
+        if operation_deadline is not None and _remaining_operation_time_s(operation_deadline) <= 0:
+            msg = "GitHub blob upload exceeded the push operation deadline"
+            raise TimeoutError(msg)
+
+        response = await client.request(method, url, headers=headers, json=json)
+        if response.is_success or not _is_secondary_rate_limit(response):
+            response.raise_for_status()
+            return response, time.monotonic()
+
+        is_last_attempt = attempt == _BLOB_MAX_RETRIES - 1
+        if is_last_attempt:
+            break
+
+        retry_after_raw = response.headers.get("retry-after", str(int(_DEFAULT_RETRY_AFTER_S)))
+        try:
+            retry_after = float(retry_after_raw)
+        except ValueError:
+            retry_after = _DEFAULT_RETRY_AFTER_S
+        wait_s = max(
+            _BLOB_MIN_INTERVAL_S,
+            min(retry_after * (1.2**attempt), _MAX_RETRY_AFTER_S),
+        )
+        if operation_deadline is not None:
+            remaining = _remaining_operation_time_s(operation_deadline)
+            if remaining <= 0 or wait_s > remaining:
+                await response.aclose()
+                msg = "GitHub blob upload exceeded the push operation deadline during rate-limit retry"
+                raise TimeoutError(msg)
+        logger.warning(
+            "GitHub secondary rate limit on %s (attempt %d/%d); waiting %.1fs",
+            url.rsplit("/", 1)[-1],
+            attempt + 1,
+            _BLOB_MAX_RETRIES,
+            wait_s,
+        )
+        await response.aclose()
+        await asyncio.sleep(wait_s)
+
+    assert response is not None
+    message = _github_error_message(response)
+    if message:
+        raise httpx.HTTPStatusError(
+            f"GitHub API error {response.status_code}: {message}",
+            request=response.request,
+            response=response,
+        )
+    response.raise_for_status()
+    return response, time.monotonic()
+
+
+async def _paced_post_json(
+    client: httpx.AsyncClient,
+    *,
+    url: str,
+    headers: dict[str, str],
+    json: dict[str, Any],
+    last_request_at: float | None,
+    operation_deadline: float | None = None,
+) -> tuple[httpx.Response, float]:
+    """POST JSON to GitHub with pacing and secondary rate-limit retries.
+
+    Args:
+        client: Active HTTP client.
+        url: Request URL.
+        headers: Request headers.
+        json: JSON request body.
+        last_request_at: Monotonic timestamp of the prior paced request, if any.
+        operation_deadline: Optional monotonic deadline for the full push operation.
+
+    Returns:
+        Tuple of (response, monotonic timestamp after the successful request).
+    """
+    return await _paced_request_json(
+        client,
+        method="POST",
+        url=url,
+        headers=headers,
+        json=json,
+        last_request_at=last_request_at,
+        operation_deadline=operation_deadline,
+    )
 
 
 def _is_text(data: bytes) -> bool:

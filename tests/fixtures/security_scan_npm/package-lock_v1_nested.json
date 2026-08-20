@@ -1,0 +1,14 @@
+{
+  "name": "fixture",
+  "lockfileVersion": 1,
+  "dependencies": {
+    "consumer": {
+      "version": "1.0.0",
+      "dependencies": {
+        "undici": {
+          "version": "8.7.0"
+        }
+      }
+    }
+  }
+}
