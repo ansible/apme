@@ -195,6 +195,7 @@ class VariableProvenanceResolver:
             self._collect_vars_file_vars(scope_node, result)
 
         self._collect_runtime_vars(node_id, result)
+        self._collect_loop_vars(node, result)
 
         return result
 
@@ -263,6 +264,7 @@ class VariableProvenanceResolver:
             self._collect_vars_file_all(scope_node, result)
 
         self._collect_runtime_vars_all(node_id, result)
+        self._collect_loop_vars_all(node, result)
 
         return result
 
@@ -440,3 +442,87 @@ class VariableProvenanceResolver:
                         line=source_node.line_start,
                     )
                 )
+
+    def _collect_loop_vars(
+        self,
+        node: ContentNode,
+        result: dict[str, VariableProvenance],
+    ) -> None:
+        """Collect loop variables from loop_control on a task node.
+
+        When a task has a loop, Ansible defines a loop variable (default
+        ``item``) and optionally an index variable. Custom names are set
+        via ``loop_control.loop_var`` and ``loop_control.index_var``.
+
+        Args:
+            node: Task or handler node that may have a loop.
+            result: Mutable provenance map updated in place.
+        """
+        if node.loop is None:
+            return
+
+        loop_ctrl = node.loop_control or {}
+        loop_var = loop_ctrl.get("loop_var", "item")
+        if isinstance(loop_var, str):
+            result[loop_var] = VariableProvenance(
+                name=loop_var,
+                value=None,
+                source=ProvenanceSource.LOCAL,
+                defining_node_id=node.node_id,
+                file_path=node.file_path,
+                line=node.line_start,
+            )
+
+        index_var = loop_ctrl.get("index_var")
+        if isinstance(index_var, str):
+            result[index_var] = VariableProvenance(
+                name=index_var,
+                value=None,
+                source=ProvenanceSource.LOCAL,
+                defining_node_id=node.node_id,
+                file_path=node.file_path,
+                line=node.line_start,
+            )
+
+    def _collect_loop_vars_all(
+        self,
+        node: ContentNode,
+        result: dict[str, list[VariableProvenance]],
+    ) -> None:
+        """Collect loop variables into a multi-definition map.
+
+        Args:
+            node: Task or handler node that may have a loop.
+            result: Multi-definition map updated in place.
+        """
+        if node.loop is None:
+            return
+
+        loop_ctrl = node.loop_control or {}
+        loop_var = loop_ctrl.get("loop_var", "item")
+        if isinstance(loop_var, str):
+            result.setdefault(loop_var, []).insert(
+                0,
+                VariableProvenance(
+                    name=loop_var,
+                    value=None,
+                    source=ProvenanceSource.LOCAL,
+                    defining_node_id=node.node_id,
+                    file_path=node.file_path,
+                    line=node.line_start,
+                ),
+            )
+
+        index_var = loop_ctrl.get("index_var")
+        if isinstance(index_var, str):
+            result.setdefault(index_var, []).insert(
+                0,
+                VariableProvenance(
+                    name=index_var,
+                    value=None,
+                    source=ProvenanceSource.LOCAL,
+                    defining_node_id=node.node_id,
+                    file_path=node.file_path,
+                    line=node.line_start,
+                ),
+            )

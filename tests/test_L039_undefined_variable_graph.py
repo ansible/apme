@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import cast
 
-from apme_engine.engine.models import YAMLDict
+from apme_engine.engine.models import YAMLDict, YAMLValue
 from apme_engine.graph.content_graph import (
     ContentGraph,
     ContentNode,
@@ -30,6 +30,8 @@ def _make_graph(
     task_changed_when: str | None = None,
     task_environment: YAMLDict | None = None,
     task_variables: YAMLDict | None = None,
+    task_loop: YAMLValue | None = None,
+    task_loop_control: YAMLDict | None = None,
 ) -> tuple[ContentGraph, str]:
     """Build a playbook > play > task graph for L039 testing.
 
@@ -43,6 +45,8 @@ def _make_graph(
         task_changed_when: changed_when expression.
         task_environment: Environment dict.
         task_variables: Task-level vars.
+        task_loop: Loop expression or iterable.
+        task_loop_control: Loop control options dict.
 
     Returns:
         Tuple of (graph, task_node_id).
@@ -72,6 +76,8 @@ def _make_graph(
         changed_when=task_changed_when,
         environment=task_environment,
         variables=task_variables or {},
+        loop=task_loop,
+        loop_control=task_loop_control,
         scope=NodeScope.OWNED,
     )
     g.add_node(pb)
@@ -366,6 +372,84 @@ class TestNoJinja:
         """
         g, _ = _make_graph(
             task_module_options={"msg": "hello world"},
+        )
+        results = _run(g)
+        assert results == []
+
+
+# ---- Loop control variables ----
+
+
+class TestLoopControlVars:
+    """L039 should recognize custom loop variables from loop_control."""
+
+    def test_custom_loop_var_not_flagged(self) -> None:
+        """Custom loop_var defined via loop_control should not be flagged.
+
+        Tests:
+            ``item_site`` is defined by loop_control.loop_var, not undefined.
+        """
+        g, _ = _make_graph(
+            task_module_options={"dest": "/etc/nginx/{{ item_site['key'] }}"},
+            task_loop="{{ sites | dict2items }}",
+            task_loop_control={"loop_var": "item_site"},
+        )
+        results = _run(g)
+        assert results == []
+
+    def test_custom_index_var_not_flagged(self) -> None:
+        """Custom index_var defined via loop_control should not be flagged.
+
+        Tests:
+            ``my_idx`` is defined by loop_control.index_var.
+        """
+        g, _ = _make_graph(
+            task_module_options={"msg": "Item {{ my_idx }}: {{ item }}"},
+            task_loop=["a", "b", "c"],
+            task_loop_control={"index_var": "my_idx"},
+        )
+        results = _run(g)
+        assert results == []
+
+    def test_default_item_with_loop(self) -> None:
+        """Default loop var ``item`` is recognized when task has a loop.
+
+        Tests:
+            ``item`` from a loop is valid even without explicit loop_var.
+        """
+        g, _ = _make_graph(
+            task_module_options={"msg": "{{ item }}"},
+            task_loop=["x", "y"],
+        )
+        results = _run(g)
+        assert results == []
+
+    def test_undefined_var_with_loop_still_flagged(self) -> None:
+        """Undefined variables are still flagged even when task has a loop.
+
+        Tests:
+            ``some_undefined`` is not the loop var and should be flagged.
+        """
+        g, _ = _make_graph(
+            task_module_options={"msg": "{{ some_undefined }}"},
+            task_loop=["a", "b"],
+            task_loop_control={"loop_var": "my_item"},
+        )
+        results = _run(g)
+        assert len(results) == 1
+        assert "some_undefined" in _undef_vars(results)
+
+    def test_loop_var_shadows_play_var(self) -> None:
+        """Loop variable shadows same-named variable from outer scope.
+
+        Tests:
+            ``item_site`` is defined at play level but loop_var takes precedence.
+        """
+        g, _ = _make_graph(
+            play_vars={"item_site": "should_be_shadowed"},
+            task_module_options={"dest": "/etc/{{ item_site['key'] }}"},
+            task_loop="{{ sites | dict2items }}",
+            task_loop_control={"loop_var": "item_site"},
         )
         results = _run(g)
         assert results == []
