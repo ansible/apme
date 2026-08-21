@@ -30,7 +30,7 @@ Regulated enterprises require verifiable evidence that policy validation occurre
 ### AC-1: Signed SARIF Attestation
 
 **Given** a completed scan with violations or clean result
-**When** attestation output is requested (`--attest` CLI flag or `attest=true` on scan creation)
+**When** attestation output is requested (`--attest` CLI flag or `options.attest=true` on operation creation)
 **Then** APME produces an in-toto attestation envelope containing:
 - SARIF payload as the predicate
 - `attestedAt` timestamp (RFC 3339) recording Gateway envelope creation time (UTC system clock)
@@ -87,7 +87,8 @@ Regulated enterprises require verifiable evidence that policy validation occurre
 - **Audience**: certificate OIDC audience must match configured value (default: `sigstore`).
 - **Fulcio roots**: verify against bundled Sigstore public root certificates; roots are versioned and updatable via Gateway configuration.
 - **Rekor policy**: keyless attestations must have a verifiable Rekor transparency-log entry in the configured Rekor instance (default: public Sigstore Rekor).
-- **Unavailable services**: when Rekor/Fulcio/OIDC are unreachable and no keyed fallback is configured, signing fails with `SIGSTORE_UNAVAILABLE`; verification reports `valid: false` with reason `TRUST_SERVICE_UNAVAILABLE`. Air-gapped deployments use keyed signing only (see design.md).
+- **Signing availability**: when Rekor/Fulcio/OIDC are unreachable and no keyed fallback is configured, signing fails with `SIGSTORE_UNAVAILABLE`. Air-gapped deployments use keyed signing only (see design.md).
+- **Verification availability**: keyless verification of a persisted Sigstore Bundle uses embedded certificate, claims, and Rekor proof with local trust roots — **independent of live OIDC, Fulcio, or Rekor reachability**. `TRUST_SERVICE_UNAVAILABLE` applies only when required verification inputs are missing (no bundle, no local trust root, or live lookup required for an incomplete envelope) — not merely because external services are unreachable.
 
 ## Technical Approach
 

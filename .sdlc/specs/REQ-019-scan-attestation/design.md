@@ -12,8 +12,12 @@ Keyless Sigstore signing requires outbound OIDC, Fulcio, and Rekor access. Air-g
 
 Verification when `APME_SIGSTORE_OFFLINE=true`:
 - **Keyed attestations**: verify signature against the configured trust-set public keys only; Rekor checks are skipped.
-- **Keyless attestations**: Rekor verification is **never** bypassed. Verifiers require the persisted `verificationMaterial` bundle (Fulcio chain + Rekor proof) captured at signing time. If the bundle is missing or incomplete, verification returns `valid: false` with reason `REKOR_ENTRY_MISSING` or `TRUST_SERVICE_UNAVAILABLE` — not a silent pass.
-- **Live keyless verification without embedded bundle**: requires Rekor/Fulcio/OIDC reachability; returns `TRUST_SERVICE_UNAVAILABLE` when offline.
+- **Keyless attestations with persisted bundle**: verify using embedded certificate, OIDC claims, Rekor SET, and the persisted `trustedRoot` metadata — **no live OIDC, Fulcio, or Rekor network access required**. If the bundle is missing or incomplete, verification returns `valid: false` with reason `REKOR_ENTRY_MISSING` or `TRUST_SERVICE_UNAVAILABLE` — not a silent pass.
+- **Live keyless verification without embedded bundle**: requires Rekor/Fulcio reachability to fetch missing proof material; returns `TRUST_SERVICE_UNAVAILABLE` when required inputs cannot be obtained.
+
+**Historical certificate validation** (retained keyless attestations):
+- Fulcio signing certificates are short-lived. For attestations within the retention window, `EXPIRED_CERTIFICATE` checks use the authenticated Rekor `integratedTime` (or bundled SET timestamp), **not** the verifier's current clock.
+- Gateway persists the Sigstore `trustedRoot` version used at signing alongside `verificationMaterial`. Retired Fulcio roots remain available for verification until all attestations signed under that root pass the retention window (default: 90 days).
 
 ### Key management (Helm)
 

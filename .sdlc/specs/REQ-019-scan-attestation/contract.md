@@ -2,39 +2,53 @@
 
 ## REST Endpoints
 
-### POST /api/v1/scans (attestation request)
+### POST /api/v1/projects/{project_id}/operation (attestation request)
 
-Scan creation accepts an optional boolean field to request attestation:
+Scans are created through the existing project operation endpoint (ADR-052), not a separate `/api/v1/scans` route. To request attestation, set `options.attest=true` in the operation body:
 
 ```json
 {
-  "project_id": "<uuid>",
-  "path": "<scan-path>",
-  "attest": true
+  "action": "check",
+  "options": {
+    "attest": true
+  }
 }
 ```
 
-When `attest=true`, Gateway assembles and signs the attestation after the scan completes. Signing is idempotent: repeated requests for the same `scan_id` return the same envelope once signing succeeds.
+**Authorization**: Same authentication and project authorization as other `/api/v1/projects/{project_id}/operation` endpoints. Caller must have permission to start a check on the project.
+
+**Response** (201):
+
+```json
+{
+  "operation_id": "<uuid>"
+}
+```
+
+Gateway generates `scan_id` internally at operation creation. Clients obtain it from `GET /api/v1/projects/{project_id}/operation` (or the operation SSE stream), which includes `scan_id` in the snapshot once the operation exists. The scan record stores initial attestation state `not_requested` or `pending` when `options.attest=true`.
+
+When `options.attest=true`, Gateway assembles and signs the attestation after the scan completes. Signing is idempotent: repeated `GET .../attestation` requests for the same `scan_id` return the same envelope once signing succeeds.
 
 ### GET /api/v1/scans/{scan_id}/attestation
 
 Returns signed attestation for a completed scan.
 
-**Authorization**: Requires an authenticated session (same mechanism as other `/api/v1/scans` endpoints). Caller must have read access to the scan's tenant/project.
+**Authorization**: Requires an authenticated session (same mechanism as other scan read endpoints). Caller must have read access to the scan's tenant/project.
 
 **Responses**:
 
 | Status | Condition |
 |--------|-----------|
 | `200` | Attestation ready (body below) |
-| `202` | Scan complete; Gateway signing still in progress. Include `Retry-After` header. Body: `{"status": "pending"}` |
+| `202` | Scan still running. Include `Retry-After: 5`. Body: `{"status": "scan_in_progress"}` |
+| `202` | Scan complete; Gateway signing still in progress. Include `Retry-After: 5`. Body: `{"status": "signing_pending"}` |
 | `404` | Unknown `scan_id` |
 | `403` | Authenticated but not authorized for this scan |
-| `409` | Scan exists but attestation was not requested (`attest=false` or absent) |
+| `409` | Scan exists but attestation was not requested (`attest=false` or absent), or signing failed (see Gateway failure reporting) |
 
 **Response** (200):
 
-Returns the in-toto envelope plus Sigstore verification material required by AC-5. For keyless attestations, Gateway persists and returns a [Sigstore Bundle](https://docs.sigstore.dev/about/bundle/) (or equivalent) containing the Fulcio certificate chain, OIDC claims, and Rekor inclusion proof alongside the signed statement. For keyed attestations, the envelope includes the configured `keyid` and signature only.
+Returns the in-toto DSSE envelope plus Sigstore verification material required by AC-5. For keyless attestations, Gateway persists and returns a [Sigstore Bundle v0.3](https://docs.sigstore.dev/about/bundle/) (`mediaType`: `application/vnd.dev.sigstore.bundle.v0.3+json`) containing the DSSE envelope, Fulcio certificate chain, and Rekor Signed Entry Timestamp (SET). For keyed attestations, the envelope includes the configured `keyid` and signature only; `verificationMaterial` is omitted.
 
 ```json
 {
@@ -54,6 +68,15 @@ Returns the in-toto envelope plus Sigstore verification material required by AC-
 ```
 
 `verificationMaterial` is present for keyless attestations and omitted for keyed attestations signed with a configured trust-set key. Gateway stores the full bundle at signing time so later retrieval does not depend on live Rekor/Fulcio availability.
+
+**Wire format** (DSSE v1 + Sigstore Bundle binding):
+
+- **Statement bytes**: UTF-8 JSON of the in-toto Statement (see [requirement.md](requirement.md)); no pretty-printing; keys sorted lexicographically where the serializer supports canonical ordering.
+- **DSSE envelope**: `payloadType` is always `application/vnd.in-toto+json`; `payload` is standard Base64 (no URL-safe alphabet) of the Statement bytes; exactly one entry in `signatures`.
+- **PAE (Pre-Authentication Encoding)**: Signatures cover DSSE v1 PAE over `(payloadType, payload)` per [DSSE protocol v1.0.0](https://github.com/secure-systems-lab/dsse/blob/v1.0.0/protocol.md): `DSSEv1` + SP + LEN(type) + SP + type + SP + LEN(body) + SP + body, where LEN is decimal byte length and body is the raw Statement bytes (before Base64).
+- **Keyless signature algorithm**: ECDSA P-256 SHA-256 over the PAE bytes; Fulcio-issued X.509 certificate binds the signature. `keyid` in the envelope is the certificate fingerprint (SHA-256 of DER, hex-encoded) or empty when implied by `verificationMaterial`.
+- **Keyed signature algorithm**: ECDSA P-256 SHA-256 or Ed25519 over the PAE bytes; `keyid` is the stable public-key fingerprint registered in the Gateway trust set (see [design.md](design.md)).
+- **Sigstore Bundle binding**: Bundle `messageSignature` matches the DSSE `signatures[0].sig`; bundle `verificationMaterial` (certificate chain + Rekor SET) validates against the same PAE input. Gateway persists the bundle `trustedRoot` metadata version alongside `verificationMaterial` for historical verification within the retention window.
 
 ### POST /api/v1/attestations/verify
 
@@ -85,12 +108,24 @@ When verification fails, `valid` is `false` and `reason` is a stable machine-rea
 | `UNTRUSTED_IDENTITY` | Certificate subject does not match configured pattern |
 | `INVALID_AUDIENCE` | OIDC audience mismatch |
 | `REKOR_ENTRY_MISSING` | No matching Rekor transparency-log entry |
-| `TRUST_SERVICE_UNAVAILABLE` | Fulcio/Rekor/OIDC unreachable |
-| `EXPIRED_CERTIFICATE` | Signing certificate outside validity window |
+| `TRUST_SERVICE_UNAVAILABLE` | Required verification inputs missing (no persisted bundle, no local trust root, or live lookup required but unavailable) |
+| `EXPIRED_CERTIFICATE` | Signing certificate outside validity window at verification time (see [design.md](design.md) for historical validation) |
+| `UNTRUSTED_KEYID` | Keyed attestation: `keyid` not in configured trust set |
+| `MALFORMED_ENVELOPE` | Envelope structure, Base64, or JSON invalid |
+
+**HTTP errors** (malformed request — distinct from verification failure):
+
+| Status | Condition |
+|--------|-----------|
+| `400` | Missing `envelope`, invalid JSON, or envelope fails structural validation before cryptographic checks |
+| `401` | Unauthenticated |
+| `403` | Authenticated but not authorized to invoke verification |
+
+Malformed requests return `400` with `{"detail": "<human-readable>"}`; they do not return the 200 verification body above.
 
 `signer` and `attestedAt` are populated only when `valid` is `true`.
 
-Verification applies the Sigstore trust policy defined in AC-5 of [requirement.md](requirement.md).
+Verification applies the Sigstore trust policy defined in AC-5 of [requirement.md](requirement.md). **Keyed attestations**: signature is valid only when `keyid` resolves to a public key in the Gateway trust set; unknown `keyid` returns `valid: false` with reason `UNTRUSTED_KEYID`.
 
 ## CLI Commands
 
@@ -131,9 +166,12 @@ When attestation is unavailable, the CLI must not write a truncated or placehold
 **v1 is REST-only.** Attestation signing, storage, and retrieval are Gateway responsibilities; Primary and FixSession remain unchanged for v1. No new Primary RPC or FixSession fields are required in the initial release.
 
 **Gateway handoff**:
-1. Client sets `attest=true` on scan creation (REST) or forwards the flag through the existing Gateway→Primary scan driver metadata path.
-2. Primary completes the scan and returns SARIF/results to Gateway as today.
-3. Gateway assembles the in-toto statement, signs it, persists the full Sigstore bundle, and exposes completion via `GET /api/v1/scans/{scan_id}/attestation`.
+1. Client sets `options.attest=true` on `POST /api/v1/projects/{project_id}/operation` (REST) or forwards the flag through the existing Gateway→Primary scan driver metadata path (CLI `--attest`).
+2. Primary completes the scan and returns SARIF/results to Gateway as today, plus attestation inputs persisted on the scan record:
+   - `scanCompletedAt` (UTC RFC 3339, from Primary completion timestamp)
+   - Subject digest manifest inputs: relative paths and per-file SHA-256 of all content-graph source files (same rules as AC-1 Subject Digest)
+   - `toolVersion`, `verdict`, `violationCount`
+3. Gateway computes the Subject Digest from the manifest, assembles the in-toto Statement, signs the DSSE envelope, persists the full Sigstore bundle (including `trustedRoot` metadata version), and exposes completion via `GET /api/v1/scans/{scan_id}/attestation`.
 
 **Completion states** (stored on the scan record):
 
