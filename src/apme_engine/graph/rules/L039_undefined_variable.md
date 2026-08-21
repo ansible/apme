@@ -2,7 +2,16 @@
 rule_id: L039
 validator: native
 description: Variable use may be undefined.
-scope: inventory
+scope: task
+ai_prompt: |
+  L039 flags variables that may be undefined at static analysis time. If the
+  variable appears to come from inventory, role parameters, extra_vars, or is
+  a registered variable from a prior task, add "# noqa: L039" to the task
+  line — but your explanation MUST justify why (e.g. "variable comes from
+  role defaults" or "registered by prior task"). If the variable appears
+  genuinely undefined with no clear source, skip the finding and let the
+  user handle it manually. Do NOT add default() filters unless the user's
+  intent is clear.
 ---
 
 ## Undefined variable (L039)
