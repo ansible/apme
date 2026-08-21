@@ -41,7 +41,7 @@ Regulated enterprises require verifiable evidence that policy validation occurre
 **Subject Digest** (`subject[].digest.sha256`):
 - Covers all source files parsed into the content graph for the scan (not build artifacts or SARIF output)
 - Canonicalization: relative paths sorted lexicographically (POSIX `/`, NFC Unicode), each entry contributes `path + "\0" + sha256(raw_file_bytes) + "\n"`; project digest is SHA-256 of the UTF-8 manifest string (hex-encoded in the envelope)
-- Verifiers reproduce the digest from the same scanned tree to bind the attestation to scanned content
+- Verifiers reproduce the digest from the same scanned tree to bind the attestation to scanned content (see AC-4)
 
 ### AC-2: CLI Integration
 
@@ -61,11 +61,15 @@ Regulated enterprises require verifiable evidence that policy validation occurre
 ### AC-4: Verification Command
 
 **Given** a signed attestation file
-**When** `apme verify-attestation <file>` is invoked
+**When** `apme verify-attestation [--path <source-tree>] <file>` is invoked
 **Then** validates signature and trust policy, prints verification status to stdout, and exits:
-- `0` when valid
-- `1` when signature or trust policy checks fail
+- `0` when valid (including subject digest match when `--path` is provided)
+- `1` when signature, trust policy, or subject digest checks fail
 - `2` on file read or parse errors
+
+**Subject digest verification**:
+- With `--path <source-tree>`: recompute the Subject Digest using the same file-selection and canonicalization rules as AC-1 and compare to `subject[].digest.sha256` in the attestation. Mismatch fails with exit `1`.
+- Without `--path`: verify signature and trust policy only; report the signed digest value but do not assert it matches local content (stdout includes `"digestVerified": false`).
 
 ### AC-5: Keyless and Keyed Signing
 
@@ -106,7 +110,7 @@ Signing requires outbound calls (Sigstore Rekor transparency log). Per ADR-020/A
 
 ### Attestation Format
 
-in-toto Statement (SLSA Provenance):
+in-toto Statement (APME Scan Predicate):
 ```json
 {
   "_type": "https://in-toto.io/Statement/v1",
