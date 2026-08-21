@@ -29,7 +29,7 @@ Analysis of default remediation routing for all rules. Regenerate with:
 | collection scope | 10 |
 | role scope | 10 |
 | play scope | 7 |
-| inventory scope | 4 |
+| inventory scope | 3 |
 
 ## Tier 1 — Auto (25 rules)
 
@@ -109,6 +109,7 @@ Analysis of default remediation routing for all rules. Regenerate with:
 | L033 | low | task | Task/block scope — AI can propose fix (Tier 2) |
 | L035 | low | task | Task/block scope — AI can propose fix (Tier 2) |
 | L036 | low | task | Task/block scope — AI can propose fix (Tier 2) |
+| L039 | medium | task | Task/block scope — AI can propose fix (Tier 2) |
 | L041 | low | task | Task/block scope — AI can propose fix (Tier 2) |
 | L044 | low | task | Task/block scope — AI can propose fix (Tier 2) |
 | L045 | low | task | Task/block scope — AI can propose fix (Tier 2) |
@@ -153,7 +154,6 @@ Analysis of default remediation routing for all rules. Regenerate with:
 | L034 | Native | low | inventory | — | Scope 'inventory' — play/role/collection not AI-proposable |
 | L037 | Native | medium | collection | — | Scope 'collection' — play/role/collection not AI-proposable |
 | L038 | Native | medium | role | — | Scope 'role' — play/role/collection not AI-proposable |
-| L039 | Native | medium | inventory | — | Scope 'inventory' — play/role/collection not AI-proposable |
 | L040 | Native | info | playbook | Replace tabs with spaces | Info severity — informational, no auto-fix |
 | L042 | Native | info | play | — | Info severity — informational, no auto-fix |
 | L052 | Native | low | role | — | Scope 'role' — play/role/collection not AI-proposable |
