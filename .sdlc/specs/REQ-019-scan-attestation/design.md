@@ -15,9 +15,9 @@ Keyless Sigstore signing is performed **only by Gateway**. The OIDC identity pre
 - Trust policy issuer allowlist + issuer-to-identity mapping are configured to match that Gateway service account / workload subject (see AC-5).
 - CI pipelines request attestation via REST or `apme check --attest`; they verify that the returned Bundle was signed by the **trusted Gateway identity**, not by the CI job itself.
 
-**Optional CI-bound identity**:
-- Operators may configure Gateway to exchange or accept a short-lived OIDC token whose subject matches a dedicated CI identity pattern **only when** that pattern is registered in the Gateway trust policy and Gateway is the component that performs Fulcio/Rekor calls.
-- CLI/`--attest` never sends private keys; any token handoff is non-secret and Gateway-validated.
+**Optional CI-bound identity** (out of v1 scope):
+- v1 does **not** accept client-supplied OIDC tokens. Gateway obtains its workload identity token itself.
+- Any future token-accept path requires a separate ADR covering TLS-only transport, issuer/audience/subject validation, log redaction, memory-only handling, and threat model. Until then, CLI/`--attest` never sends private keys or OIDC bearer tokens.
 
 **Forbidden ambiguity**:
 - Do not document or implement "keyless with no identity path."
@@ -31,16 +31,20 @@ Rekor writes are not naturally idempotent. Gateway must enforce one logical atte
 
 1. Persist scan completion first.
 2. Atomically claim signing (`scan_in_progress` → `pending`) for exactly one worker.
-3. Stage Bundle/envelope bytes before marking `ready`.
-4. On retry after Fulcio/Rekor success + persist failure: flush staged bytes; never open a second Rekor entry for the same claim.
-5. If staging is lost: `failed` / `SIGNING_RECOVERY_FAILED` — do not invent a second winner.
-6. `ready` records are immutable; GET endpoints never sign.
+3. Confine paths and compute Subject Digest from the immutable snapshot.
+4. Assemble the in-toto Statement (RFC 8785) including that digest.
+5. **Durable write-ahead before any Fulcio/Rekor network write**: persist claim metadata and Statement/PAE bytes keyed by `scan_id` **before** calling Rekor.
+6. After external signing succeeds, stage Bundle/envelope bytes durably before marking `ready`.
+7. On retry after Fulcio/Rekor success + persist failure: flush staged bytes; never open a second Rekor entry for the same claim.
+8. If staging is lost after an external write: `failed` / `SIGNING_RECOVERY_FAILED` — do not invent a second winner.
+9. Retain the snapshot until attestation is terminal (`ready`/`failed`); then delete.
+10. `ready` records are immutable; GET endpoints never sign.
 
 See [contract.md](contract.md) for the normative API wording.
 
 ### Subject digest ownership
 
-Gateway owns Subject Digest computation (clone working tree + paths from persisted `content_graph_json`). This preserves "no FixSession / Primary proto change" for v1 while keeping digest binding over actual scanned sources. Missing graph paths at signing time fail closed (`SUBJECT_TREE_INCOMPLETE`).
+Gateway owns Subject Digest computation against an **immutable snapshot** it staged for the `scan_id`, using **owned-scope** paths from persisted `content_graph_json` after path confinement. Digest epoch is **`submitted_snapshot`** (Gateway staged bytes), with format-rewrite disabled for attest sessions so Primary analysis aligns with those bytes. Missing owned paths at signing time fail closed (`SUBJECT_TREE_INCOMPLETE`). Invalid/escaping/referenced-out-of-tree paths fail closed (`SUBJECT_PATH_INVALID`).
 
 ### Offline / air-gapped mode
 
@@ -48,8 +52,10 @@ Keyless Sigstore signing requires outbound OIDC, Fulcio, and Rekor access. Air-g
 
 Verification when `APME_SIGSTORE_OFFLINE=true`:
 - **Keyed attestations**: verify signature against the configured trust-set public keys only; Rekor checks are skipped.
-- **Keyless attestations with persisted bundle**: verify using embedded certificate, OIDC claims, Rekor SET, and the persisted `trustedRoot` metadata — **no live OIDC, Fulcio, or Rekor network access required**. If the bundle is missing or incomplete, verification returns `valid: false` with reason `REKOR_ENTRY_MISSING` or `TRUST_SERVICE_UNAVAILABLE` — not a silent pass.
-- **Live keyless verification without embedded bundle**: requires Rekor/Fulcio reachability to fetch missing proof material; returns `TRUST_SERVICE_UNAVAILABLE` when required inputs cannot be obtained.
+- **Keyless attestations with persisted bundle**: verify using embedded certificate, OIDC claims, Rekor SET, and the persisted `trustedRoot` metadata — **no live OIDC, Fulcio, or Rekor network access**. If the bundle is missing or incomplete, verification returns `valid: false` with reason `REKOR_ENTRY_MISSING` or `TRUST_SERVICE_UNAVAILABLE` immediately — **without attempting network calls**.
+- **Keyless without embedded bundle under offline mode**: return `valid: false` with `TRUST_SERVICE_UNAVAILABLE` immediately; do not attempt live trust-service lookup.
+
+Live Rekor/Fulcio fetch for incomplete envelopes is allowed **only** when `APME_SIGSTORE_OFFLINE` is unset/false (explicitly online verification).
 
 **Historical certificate validation** (retained keyless attestations):
 - Fulcio signing certificates are short-lived. For attestations within the retention window, `EXPIRED_CERTIFICATE` checks use the authenticated Rekor `integratedTime` (or bundled SET timestamp), **not** the verifier's current clock.
@@ -59,9 +65,9 @@ Verification when `APME_SIGSTORE_OFFLINE=true`:
 
 Signing keys live in a Kubernetes Secret mounted read-only into the Gateway container (e.g., `/etc/apme/secrets/signing-key.pem`). Gateway reads the path from `APME_SIGNING_KEY`. Keys are never mounted into engine containers.
 
-Each keyed signer has a stable **key ID** (`keyid` in the envelope) derived from the public key fingerprint. Gateway persists the public key material in a verifier **trust set** keyed by `keyid`.
+Each keyed signer has a stable **key ID** (`keyid` in the envelope) derived from the public key fingerprint (see contract wire-format section for exact algorithm). Gateway persists the public key material in a verifier **trust set** keyed by `keyid`.
 
-**CLI `--signing-key`**: opaque reference resolved only on Gateway — allowlisted `keyid` or path under the configured in-container signing-key directory. Client host paths are not accepted.
+**CLI `--signing-key <keyid-or-path>`** and **`APME_SIGNING_KEY`**: same grammar — allowlisted `keyid` or path under the configured in-container signing-key directory. Client host paths are not accepted. Resolved only on Gateway.
 
 **Rotation procedure**:
 1. Add the new private key to the Secret (or a parallel Secret) and configure Gateway to sign with the new key.
