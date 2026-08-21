@@ -25,7 +25,7 @@ Scans are created through the existing project operation endpoint (ADR-052), not
 }
 ```
 
-Gateway generates `scan_id` internally at operation creation. Clients obtain it from `GET /api/v1/projects/{project_id}/operation` (or the operation SSE stream), which includes `scan_id` in the snapshot once the operation exists. The scan record stores initial attestation state `not_requested` or `pending` when `options.attest=true`.
+Gateway generates `scan_id` internally at operation creation. Clients obtain it from `GET /api/v1/projects/{project_id}/operation` (or the operation SSE stream), which includes `scan_id` in the snapshot once the operation exists. The scan record stores initial attestation state `not_requested` or `scan_in_progress` when `options.attest=true`. `pending` is set only after the completed scan is persisted and Gateway begins signing.
 
 When `options.attest=true`, Gateway assembles and signs the attestation after the scan completes. Signing is idempotent: repeated `GET .../attestation` requests for the same `scan_id` return the same envelope once signing succeeds.
 
@@ -85,9 +85,17 @@ Verify a signed attestation.
 **Request**:
 ```json
 {
-  "envelope": { ... }
+  "envelope": { ... },
+  "sourceManifest": {
+    "files": [
+      {"path": "playbooks/site.yml", "sha256": "<hex>"},
+      {"path": "roles/common/tasks/main.yml", "sha256": "<hex>"}
+    ]
+  }
 }
 ```
+
+`sourceManifest` is optional. When omitted, Gateway verifies signature and trust policy only (same semantics as CLI without `--path`). When present, Gateway recomputes the Subject Digest from the manifest using the same canonicalization rules as AC-1 and compares it to `subject[].digest.sha256` in the attestation.
 
 **Response** (200):
 ```json
@@ -95,9 +103,12 @@ Verify a signed attestation.
   "valid": true,
   "signer": "<identity>",
   "attestedAt": "<RFC3339>",
+  "digestVerified": false,
   "reason": null
 }
 ```
+
+`digestVerified` is `true` when `sourceManifest` was supplied and the recomputed Subject Digest matches the attestation; `false` when `sourceManifest` was omitted or the digest does not match. When `sourceManifest` is supplied and the digest mismatches, `valid` is `false` and `reason` is `SUBJECT_DIGEST_MISMATCH`.
 
 When verification fails, `valid` is `false` and `reason` is a stable machine-readable code:
 
@@ -109,7 +120,8 @@ When verification fails, `valid` is `false` and `reason` is a stable machine-rea
 | `INVALID_AUDIENCE` | OIDC audience mismatch |
 | `REKOR_ENTRY_MISSING` | No matching Rekor transparency-log entry |
 | `TRUST_SERVICE_UNAVAILABLE` | Required verification inputs missing (no persisted bundle, no local trust root, or live lookup required but unavailable) |
-| `EXPIRED_CERTIFICATE` | Signing certificate outside validity window at verification time (see [design.md](design.md) for historical validation) |
+| `EXPIRED_CERTIFICATE` | **Keyless**: signing certificate outside validity window at the authenticated Rekor `integratedTime` or bundled SET timestamp (not the verifier's current clock). **Keyed**: signature verification uses the configured trust-set public keys only; certificate expiry checks do not apply (see [design.md](design.md)) |
+| `SUBJECT_DIGEST_MISMATCH` | `sourceManifest` supplied but recomputed Subject Digest does not match attestation |
 | `UNTRUSTED_KEYID` | Keyed attestation: `keyid` not in configured trust set |
 | `MALFORMED_ENVELOPE` | Envelope structure, Base64, or JSON invalid |
 
@@ -121,9 +133,18 @@ When verification fails, `valid` is `false` and `reason` is a stable machine-rea
 | `401` | Unauthenticated |
 | `403` | Authenticated but not authorized to invoke verification |
 
-Malformed requests return `400` with `{"detail": "<human-readable>"}`; they do not return the 200 verification body above.
+Malformed requests return `400` with a stable machine-readable reason and human-readable detail:
 
-`signer` and `attestedAt` are populated only when `valid` is `true`.
+```json
+{
+  "reason": "MALFORMED_ENVELOPE",
+  "detail": "<human-readable>"
+}
+```
+
+They do not return the 200 verification body above.
+
+`signer` and `attestedAt` are populated only when `valid` is `true`. `digestVerified` is populated only in the 200 verification body.
 
 Verification applies the Sigstore trust policy defined in AC-5 of [requirement.md](requirement.md). **Keyed attestations**: signature is valid only when `keyid` resolves to a public key in the Gateway trust set; unknown `keyid` returns `valid: false` with reason `UNTRUSTED_KEYID`.
 
@@ -140,8 +161,8 @@ Private key material is loaded **only by Gateway**. CLI and Primary never read s
 
 | Source | Resolved by | Notes |
 |--------|-------------|-------|
-| `--signing-key <path>` | Gateway | CLI forwards the path as an opaque reference in the scan request metadata |
-| `APME_SIGNING_KEY` | Gateway | Filesystem path to PEM key; evaluated on Gateway only |
+| `--signing-key <id-or-path>` | Gateway | CLI forwards an opaque key reference in scan request metadata. Gateway resolves **only** (a) a configured allowlisted key identifier (`keyid`) or (b) a path under its configured signing-key directory. Reject path traversal, symlinks escaping the directory, and references outside the allowlist. |
+| `APME_SIGNING_KEY` | Gateway | Default signing key path or `keyid` on Gateway only; same resolution rules as `--signing-key` |
 | (none) | Gateway | Sigstore keyless signing per AC-5 trust policy |
 
 **Precedence** (highest wins): `--signing-key` → `APME_SIGNING_KEY` → keyless Sigstore.
@@ -178,7 +199,8 @@ When attestation is unavailable, the CLI must not write a truncated or placehold
 | State | Meaning |
 |-------|---------|
 | `not_requested` | Scan created without `attest=true` |
-| `pending` | Scan complete; Gateway signing in progress |
+| `scan_in_progress` | Attestation requested; scan not yet complete (`GET .../attestation` returns `202` with `{"status": "scan_in_progress"}`) |
+| `pending` | Scan complete and persisted; Gateway signing in progress (`GET .../attestation` returns `202` with `{"status": "signing_pending"}`) |
 | `ready` | Signed attestation persisted and retrievable |
 | `failed` | Signing failed; `reason` field set per Gateway failure reporting above |
 

@@ -83,7 +83,7 @@ Regulated enterprises require verifiable evidence that policy validation occurre
 
 **Sigstore trust policy** (applies to keyless signing and verification):
 - **OIDC issuer**: configurable allowlist; default includes CI OIDC issuers (`https://token.actions.githubusercontent.com`, GitLab, Azure Pipelines). Reject signatures whose certificate OIDC issuer is not allowlisted.
-- **Workload identity**: certificate `subject` (OIDC `sub`) must match a configured identity pattern for the deployment.
+- **Issuer-to-identity mapping**: each allowed OIDC issuer must have a **non-empty** configured identity pattern (regex or glob on certificate `subject` / OIDC `sub`). Reject verification when an allowlisted issuer has no matching identity policy configured. Wildcards that trust every workload from an issuer (e.g., `*`) are forbidden.
 - **Audience**: certificate OIDC audience must match configured value (default: `sigstore`).
 - **Fulcio roots**: verify against bundled Sigstore public root certificates; roots are versioned and updatable via Gateway configuration.
 - **Rekor policy**: keyless attestations must have a verifiable Rekor transparency-log entry in the configured Rekor instance (default: public Sigstore Rekor).
