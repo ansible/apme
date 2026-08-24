@@ -184,6 +184,12 @@ artifact type, translate it:
    a token in a *different* grammar in the same string — Jinja
    filters (`{{ x | quote }}`), URLs, or quoted YAML. Strip or
    parse the inner language before applying the outer check.
+   The strip pattern must allow nested tokens of the inner language
+   (Jinja dicts ``{{ {'k': 'v'} }}`` — ``[^{}]*`` fails). Leftover
+   delimiters after the strip (``{{``) are still uninspectable.
+   Glob character classes (``[ab]``) are shell features like ``*``.
+   If a transform inspects ``cmd`` and ``argv``, the detector must
+   inspect those same sources — ``not mo["cmd"]`` is not "safe".
    After stripping, also construct the whole-string-is-inner-language
    case (`{{ command }}`): empty remainder is uninspectable, not
    proven-safe. When the same predicate exists in two languages
@@ -361,7 +367,9 @@ critical/high/medium/low.
   `str.strip()` / `trim_space`). After one path uses ``trim_space``,
   later tokenize/split on the **same string** must use that whitespace
   class — ``split(trim(cmd, " "), " ")`` will miss tabs/CRs the
-  emptiness check already treats as blank.
+  emptiness check already treats as blank. They must also inspect the
+  **same input shapes** (``cmd`` vs ``argv`` vs ``_raw_params`` vs
+  missing).
 - Overlay fields that drift (tier/source/gate/status→review must stay
   aligned for all pre-group sources). When a column documents
   "empty means fall back to X" (e.g. ``stamp_rule_ids_json`` →

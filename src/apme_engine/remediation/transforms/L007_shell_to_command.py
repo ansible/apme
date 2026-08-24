@@ -10,7 +10,8 @@ from apme_engine.engine.models import ViolationDict
 from apme_engine.remediation.transforms._helpers import get_module_key, rename_key
 
 # Inspected after Jinja ``{{ }}`` is stripped so ``|quote`` is not a pipe.
-_JINJA_RE = re.compile(r"\{\{[^{}]*\}\}")
+# Non-greedy so dict literals like ``{{ {'k': 'v'} }}`` are stripped too.
+_JINJA_RE = re.compile(r"\{\{.*?\}\}", re.DOTALL)
 _SHELL_CHARS = (
     "|",
     "&&",
@@ -26,6 +27,8 @@ _SHELL_CHARS = (
     "&",
     "(",
     ")",
+    "[",
+    "]",
     "$",
     "\n",
 )
@@ -43,16 +46,20 @@ def _uses_shell_features(cmd: str) -> bool:
     Jinja ``{{ }}`` expressions are stripped first so a filter such as
     ``{{ path | quote }}`` is not treated as a shell pipe.  A command that
     is only Jinja (nothing inspectable after the strip) is treated as
-    using shell features — the rendered value is unknown.
+    using shell features — the rendered value is unknown.  Leftover
+    ``{{`` after the strip (unclosed or nested beyond the pattern) is
+    also uninspectable.
 
     Args:
         cmd: Command string to check.
 
     Returns:
-        True if the non-Jinja remainder is empty or contains shell-specific
-        characters.
+        True if the non-Jinja remainder is empty, still contains Jinja
+        delimiters, or contains shell-specific characters.
     """
     stripped = _JINJA_RE.sub(" ", cmd)
+    if "{{" in stripped or "}}" in stripped:
+        return True
     if not stripped.strip():
         return True
     return any(ch in stripped for ch in _SHELL_CHARS)

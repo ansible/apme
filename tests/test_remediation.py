@@ -659,6 +659,34 @@ class TestL007ShellToCommand:
         result = _apply_node(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
         assert result.applied is False
 
+    def test_no_change_when_jinja_has_dict_literal(self) -> None:
+        """Verifies a Jinja dict literal is stripped, not treated as inspectable."""
+        content = textwrap.dedent("""\
+        - name: Dynamic mapping
+          ansible.builtin.shell: "{{ {'k': 'v'} }}"
+        """)
+        result = _apply_node(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
+        assert result.applied is False
+
+    def test_converts_when_jinja_dict_is_an_argument(self) -> None:
+        """Verifies Jinja dict-plus-filter is stripped so cat remains convertible."""
+        content = textwrap.dedent("""\
+        - name: Cat quoted mapping
+          ansible.builtin.shell: "cat {{ {'path': item} | quote }}"
+        """)
+        result = _apply_node(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
+        assert result.applied is True
+        assert "ansible.builtin.command" in result.content
+
+    def test_no_change_when_bracket_glob(self) -> None:
+        """Verifies [ab] glob classes are treated as shell features."""
+        content = textwrap.dedent("""\
+        - name: Cat glob
+          ansible.builtin.shell: cat /tmp/[ab].txt
+        """)
+        result = _apply_node(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
+        assert result.applied is False
+
 
 # ---------------------------------------------------------------------------
 # M001/M003 transform: FQCN
