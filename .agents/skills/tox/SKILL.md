@@ -32,7 +32,7 @@ directly. Every task maps to a `tox -e <env>` command.
 ## Hard Rules
 
 1. **Never run `pytest` directly.** Use `tox -e unit`, `tox -e integration`,
-   `tox -e ai`, `tox -e ui`, or `tox -e ui-workflow-pack`.
+   `tox -e ai`, or `tox -e ui`.
 2. **Never run `ruff`, `mypy`, or `prek` directly.** Use `tox -e lint`.
 3. **Never run `./scripts/gen_grpc.sh` directly.** Use `tox -e grpc`.
 4. **Never run `./containers/podman/*.sh` directly.** Use `tox -e build`,
@@ -98,7 +98,8 @@ directly. Every task maps to a `tox -e <env>` command.
 ### Default set
 
 Running `tox` with no `-e` flag executes: `lint`, `unit`, `integration`, `ai`,
-`ui`. This is the full quality gate.
+`ui`. CI also runs `ui-workflow-pack` (needs Node/npm); run it locally after
+`frontend/packages/ui-workflow` changes.
 
 ## Common Agent Workflows
 
@@ -107,6 +108,12 @@ Running `tox` with no `-e` flag executes: `lint`, `unit`, `integration`, `ai`,
 ```bash
 tox -e lint              # check style + types
 tox -e unit              # run tests
+```
+
+### "I changed frontend/packages/ui-workflow or TypeScript in that package"
+
+```bash
+tox -e ui-workflow-pack   # npm pack (prepack tsc + CSS copy); do not run npm pack directly
 ```
 
 ### "I changed a proto file"
