@@ -739,6 +739,7 @@ class TestR114FileChangeGraphRule:
         assert result.verdict is True
         assert result.detail is not None
         assert result.detail["path"] == "{{ target_path }}"
+        assert "# noqa: R114 - <why trusted>" in str(result.detail["message"])
 
     def test_templated_src(self, rule: FileChangeGraphRule) -> None:
         """Templated source triggers violation.
