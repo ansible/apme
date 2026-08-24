@@ -75,7 +75,7 @@ export function OperationResultCard({
           {wasRemediate && (
             <Metric value={result.remediated_count ?? 0} label="Remediated" color="var(--pf-t--global--color--status--success--default)" />
           )}
-          <Metric value={result.manual_review} label="Manual" color="#9e8700" />
+          <Metric value={result.manual_review} label="Manual review" color="#9e8700" />
         </Split>
 
         {hasAi && (

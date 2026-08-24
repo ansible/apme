@@ -56,9 +56,9 @@ import { RESOLUTION_AI_ABSTAINED } from '../types/constants';
 
 function tierLabel(rc: number, isRemediate: boolean, resolution?: number): string {
   if (resolution === RESOLUTION_AI_ABSTAINED) return 'AI Tried';
-  if (rc === 1) return isRemediate ? 'Fixed' : 'Fixable';
-  if (rc === 2) return 'AI';
-  if (rc === 3) return 'Manual';
+  if (rc === 1) return isRemediate ? 'Fixed' : 'Rule-based fix';
+  if (rc === 2) return 'AI fix';
+  if (rc === 3) return 'Manual review';
   return 'Unknown';
 }
 

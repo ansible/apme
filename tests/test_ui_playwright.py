@@ -350,7 +350,7 @@ def test_settings_info_text(settings_page: Page) -> None:
 
 
 def test_playground_auto_apply_tier1_toggle(dashboard: Page) -> None:
-    """Playground advanced options expose Auto-apply Tier 1 (interactive default).
+    """Playground advanced options expose auto-apply rule-based fixes (interactive default).
 
     Args:
         dashboard: Page positioned on the dashboard.
