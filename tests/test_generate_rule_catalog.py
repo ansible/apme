@@ -333,6 +333,25 @@ class TestGetTestCache:
         for rid in ("M001", "M002", "M003", "M004"):
             assert "test_ansible_cache.py" in cache.get(rid, [])
 
+    def test_direct_rule_id_import_from_rules_package(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Package-level direct rule ID imports (e.g. ``from ...rules import R404``).
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+            monkeypatch: Pytest monkeypatch fixture.
+        """
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        test_file = tests_dir / "test_r404_direct.py"
+        test_file.write_text(
+            "from apme_engine.graph.rules import R404\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(_mod, "TESTS_DIR", tests_dir)
+        monkeypatch.setattr(_mod, "_TEST_CACHE", None)
+        cache = _mod._get_test_cache()
+        assert "test_r404_direct.py" in cache.get("R404", [])
+
     def test_parenthesized_grouped_module_import_expands_rule_range(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

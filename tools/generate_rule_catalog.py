@@ -184,6 +184,7 @@ def _is_incidental_reference(rule_id: str, text: str, filename: str) -> bool:
 
 
 _RULE_RANGE_IN_MODULE = re.compile(r"([A-Z])(\d+)_\1(\d+)_")
+_SINGLE_RULE_ID = re.compile(r"[A-Z]\d+")
 
 
 def _rule_ids_from_module_name(module_fragment: str) -> set[str]:
@@ -223,11 +224,15 @@ def _rule_ids_from_imports(text: str) -> set[str]:
     for node in ast.walk(tree):
         if not isinstance(node, ast.ImportFrom):
             continue
+        module_parts = node.module.split(".") if node.module else []
+        is_rule_package = "rules" in module_parts or "validators" in module_parts
         if node.module:
             for fragment in node.module.split("."):
                 ids.update(_rule_ids_from_module_name(fragment))
         for alias in node.names:
             ids.update(_rule_ids_from_module_name(alias.name))
+            if is_rule_package and _SINGLE_RULE_ID.fullmatch(alias.name):
+                ids.add(alias.name)
     return ids
 
 
