@@ -182,8 +182,8 @@ Gateway DB and Abbenay down together.
   for portal / Backstage (ADR-030 Option B).
 - **Abbenay** (optional): AI provider gRPC via Unix socket
   (`unix:///tmp/abbenay-run/abbenay/daemon.sock`) plus HTTP admin on
-  `127.0.0.1:8787` (no Service / hostPort). TCP `127.0.0.1:50057` is for
-  in-container health probes. Gateway reverse-proxies
+  `127.0.0.1:8787` (no Service / hostPort). TCP `127.0.0.1:50057` is leftover
+  bind; Helm probes connect to the Unix socket. Gateway reverse-proxies
   **allowlisted** admin paths under `/api/v1/ai/` → Abbenay `/api/` (config,
   engines, providers, provider configure/delete; not chat/sessions/OpenAI-compat) —
   see [ADR-070](../../../.sdlc/adrs/ADR-070-gateway-abbenay-admin-proxy.md).

@@ -74,7 +74,8 @@ over `127.0.0.1` (ADR-005) except Engine→Abbenay gRPC, which uses a Unix socke
    `127.0.0.1:<port>`, matching Podman. Engine→Abbenay gRPC uses a Unix socket
    on a shared `emptyDir` (`APME_ABBENAY_ADDR=unix:///tmp/abbenay-run/abbenay/daemon.sock`)
    because `abbenay-client` ≥ 2026.8.7 rejects consumer tokens on plaintext TCP.
-   Abbenay still binds `--grpc-host 127.0.0.1` for TCP health probes (no token).
+   Abbenay still binds `--grpc-host 127.0.0.1` as leftover TCP (no token);
+   Helm probes connect to the Unix socket.
 3. **Single replica** — Chart defaults and validation: `replicas: 1`. HPA for
    this Deployment is disabled or rejected. Multi-replica requires a future ADR
    that reintroduces a split (or otherwise solves Gateway SQLite + session
@@ -210,4 +211,4 @@ EAP AI remediation.
 | Date | Author | Change |
 |------|--------|--------|
 | 2026-08-03 | APME Team | Accepted: Helm Simple all-in-one for EAP/upstream |
-| 2026-08-24 | APME Team | Engine→Abbenay gRPC uses a shared Unix socket; TCP remains for health probes |
+| 2026-08-24 | APME Team | Engine→Abbenay gRPC uses a shared Unix socket; leftover TCP `:50057`; Helm probes the socket |

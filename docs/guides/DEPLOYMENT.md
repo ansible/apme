@@ -241,7 +241,7 @@ place; `tox -e wipe` deletes it. To add providers or models, edit the cache
 `config.yaml` or POST via the Gateway admin proxy
 (`/api/v1/ai/provider/{id}/configure`); writes survive Abbenay restarts.
 
-The Abbenay daemon still binds gRPC TCP on `127.0.0.1:50057` (health probes). Engine AI RPCs and Gateway `/health` use `APME_ABBENAY_ADDR=unix:///tmp/abbenay-run/abbenay/daemon.sock` (shared `emptyDir`) because `abbenay-client` ≥ 2026.8.7 rejects consumer tokens on plaintext TCP.
+The Abbenay daemon still binds leftover gRPC TCP on `127.0.0.1:50057`. Engine AI RPCs, Gateway `/health`, and Helm probes use `APME_ABBENAY_ADDR=unix:///tmp/abbenay-run/abbenay/daemon.sock` (shared `emptyDir`) because `abbenay-client` ≥ 2026.8.7 rejects consumer tokens on plaintext TCP.
 
 #### UI
 
