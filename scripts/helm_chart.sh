@@ -165,6 +165,7 @@ assert_template_contains "reporting localhost" "${RENDER}" 'value: "127.0.0.1:50
 assert_template_contains "abbenay addr unix socket" "${RENDER}" 'value: "unix:///tmp/abbenay-run/abbenay/daemon.sock"'
 assert_template_contains "abbenay-run emptyDir" "${RENDER}" $'name: abbenay-run\n          emptyDir'
 assert_template_contains "engine abbenay-run mount" "${RENDER}" $'name: abbenay-run\n              mountPath: /tmp/abbenay-run'
+assert_template_contains "abbenay XDG_RUNTIME_DIR" "${RENDER}" "value: /tmp/abbenay-run"
 assert_template_contains "gateway engine addr localhost" "${RENDER}" 'value: "127.0.0.1:50051"'
 assert_template_contains "gateway Service" "${RENDER}" "name: test-release-apme-gateway"
 assert_template_contains "engine Deployment" "${RENDER}" "name: test-release-apme-engine"

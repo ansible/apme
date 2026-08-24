@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+import sys
+import types
 from pathlib import Path
 from unittest.mock import patch
 
@@ -15,6 +17,7 @@ from apme_engine.remediation.abbenay_provider import (
     _load_ai_prompts,
     _load_best_practices,
     discover_abbenay,
+    make_abbenay_client,
 )
 from apme_engine.remediation.ai_context import AINodeContext
 from apme_engine.remediation.ai_provider import (
@@ -126,6 +129,44 @@ class TestDiscoverAbbenay:
             result = discover_abbenay()
 
         assert result is None
+
+
+class TestMakeAbbenayClient:
+    """Tests for unix:// vs host:port client construction."""
+
+    def test_unix_addr_uses_socket_path_kwarg(self) -> None:
+        """unix:// URIs are passed as a bare socket_path, not a positional URI."""
+
+        class _Client:
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                self.args = args
+                self.kwargs = kwargs
+
+        stub = types.ModuleType("abbenay_grpc")
+        stub.AbbenayClient = _Client  # type: ignore[attr-defined]
+        with patch.dict(sys.modules, {"abbenay_grpc": stub}):
+            client = make_abbenay_client("unix:///tmp/abbenay-run/abbenay/daemon.sock")
+
+        assert isinstance(client, _Client)
+        assert client.args == ()
+        assert client.kwargs == {"socket_path": "/tmp/abbenay-run/abbenay/daemon.sock"}
+
+    def test_tcp_addr_uses_host_port(self) -> None:
+        """host:port URIs use host and port kwargs."""
+
+        class _Client:
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                self.args = args
+                self.kwargs = kwargs
+
+        stub = types.ModuleType("abbenay_grpc")
+        stub.AbbenayClient = _Client  # type: ignore[attr-defined]
+        with patch.dict(sys.modules, {"abbenay_grpc": stub}):
+            client = make_abbenay_client("127.0.0.1:50057")
+
+        assert isinstance(client, _Client)
+        assert client.args == ()
+        assert client.kwargs == {"host": "127.0.0.1", "port": 50057}
 
 
 # ---------------------------------------------------------------------------

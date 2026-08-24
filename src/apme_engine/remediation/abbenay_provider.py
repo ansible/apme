@@ -407,6 +407,39 @@ def discover_abbenay() -> str | None:
     return None
 
 
+def make_abbenay_client(addr: str) -> object:
+    """Build an ``AbbenayClient`` from ``APME_ABBENAY_ADDR``.
+
+    ``abbenay-client`` ≥ 2026.8.7 treats the first positional argument as
+    ``socket_path`` and prefixes ``unix://``. Callers must pass a bare path
+    via ``socket_path=``, not a ``unix://`` URI.
+
+    Args:
+        addr: ``unix:///path/to.sock`` or ``host:port``.
+
+    Returns:
+        An ``AbbenayClient`` bound to *addr*.
+
+    Raises:
+        ImportError: If ``abbenay_grpc`` is not installed.
+    """
+    try:
+        from abbenay_grpc import AbbenayClient  # noqa: PLC0415
+    except ImportError:
+        raise ImportError(
+            "AI escalation requires the 'ai' extra.\n"
+            "Install (local/dev): uv sync --extra ai\n"
+            "Install (production/containers): uv sync --frozen --extra ai\n"
+            "or: pip install apme-engine[ai]"
+        ) from None
+    if addr.startswith("unix://"):
+        return AbbenayClient(socket_path=addr.removeprefix("unix://"))
+    if ":" in addr:
+        host, _, port_str = addr.rpartition(":")
+        return AbbenayClient(host=host, port=int(port_str))
+    return AbbenayClient(host=addr)
+
+
 def _load_best_practices() -> dict[str, list[str]]:
     """Load the structured best practices mapping from the data package.
 
@@ -650,32 +683,11 @@ class AbbenayProvider:
             addr: Daemon address (e.g. 'unix:///run/user/1000/abbenay/daemon.sock').
             token: Optional consumer auth token for inline policy access.
             model: Optional default model (e.g. 'openai/gpt-4o').
-
-        Raises:
-            ImportError: If abbenay_grpc is not installed.
         """
-        try:
-            from abbenay_grpc import AbbenayClient  # noqa: PLC0415
-        except ImportError:
-            raise ImportError(
-                "AI escalation requires the 'ai' extra.\n"
-                "Install (local/dev): uv sync --extra ai\n"
-                "Install (production/containers): uv sync --frozen --extra ai\n"
-                "or: pip install apme-engine[ai]"
-            ) from None
-
-        if addr.startswith("unix://"):
-            socket_path = addr.removeprefix("unix://")
-            self._client: object = AbbenayClient(socket_path=socket_path)
-        elif ":" in addr:
-            host, _, port_str = addr.rpartition(":")
-            self._client = AbbenayClient(host=host, port=int(port_str))
-        else:
-            self._client = AbbenayClient(host=addr)
+        self._client: object = make_abbenay_client(addr)
         self._addr = addr
         self._token = token
         self._model = model
-        self._AbbenayClient = AbbenayClient
 
     def _make_client(self) -> object:
         """Create a fresh AbbenayClient instance for the current event loop.
@@ -683,13 +695,7 @@ class AbbenayProvider:
         Returns:
             New AbbenayClient bound to the current asyncio loop.
         """
-        addr = self._addr
-        if addr.startswith("unix://"):
-            return self._AbbenayClient(socket_path=addr.removeprefix("unix://"))
-        if ":" in addr:
-            host, _, port_str = addr.rpartition(":")
-            return self._AbbenayClient(host=host, port=int(port_str))
-        return self._AbbenayClient(host=addr)
+        return make_abbenay_client(self._addr)
 
     async def preflight(self) -> bool:
         """Connect to the daemon and run a health check.
