@@ -588,7 +588,7 @@ spec:
               command:
                 - node
                 - -e
-                - "const fs=require('fs');if(!fs.existsSync('/tmp/abbenay-run/abbenay/daemon.sock'))process.exit(1);require('net').createConnection(50057,'127.0.0.1').on('connect',function(c){c.end();process.exit(0)}).on('error',function(){process.exit(1)})"
+                - "const fs=require('fs');if(!fs.existsSync('/tmp/abbenay-run/abbenay/daemon.sock'))process.exit(1);const s=require('net').createConnection(50057,'127.0.0.1');s.on('connect',function(){s.end();process.exit(0)}).on('error',function(){process.exit(1)})"
             initialDelaySeconds: 5
             periodSeconds: 10
           livenessProbe:
@@ -596,7 +596,7 @@ spec:
               command:
                 - node
                 - -e
-                - "const fs=require('fs');if(!fs.existsSync('/tmp/abbenay-run/abbenay/daemon.sock'))process.exit(1);require('net').createConnection(50057,'127.0.0.1').on('connect',function(c){c.end();process.exit(0)}).on('error',function(){process.exit(1)})"
+                - "const fs=require('fs');if(!fs.existsSync('/tmp/abbenay-run/abbenay/daemon.sock'))process.exit(1);const s=require('net').createConnection(50057,'127.0.0.1');s.on('connect',function(){s.end();process.exit(0)}).on('error',function(){process.exit(1)})"
             initialDelaySeconds: 15
             periodSeconds: 30
           resources:

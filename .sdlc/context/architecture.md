@@ -268,6 +268,7 @@ The wrapper adds **Ansible-aware filtering**:
 | `sessions` | `/sessions` | Engine (rw), Ansible (ro), Collection Health (ro), Dep Audit (ro) | Session-scoped venvs with ansible-core + collections | PVC when replicas=1; emptyDir when replicas>1 (each replica owns its sessions) |
 | `proxy-cache` | `/cache` | Galaxy Proxy | Wheel cache | PVC when replicas=1; emptyDir when replicas>1 |
 | `workspace` | `/workspace` | CLI (ro) | Project being scanned (mounted from host CWD) | Podman only (CLI container joins pod) |
+| `abbenay-run` | `/tmp/abbenay-run` | Engine, Gateway, Abbenay | Shared Abbenay gRPC socket (`daemon.sock`) | emptyDir |
 
 ---
 
@@ -304,7 +305,8 @@ SQLite shares that pod.
             ▼
   ┌──────────────── apme Simple pod (replicas: 1) ────────────────┐
   │  Engine + validators + Galaxy Proxy + Gateway + UI + Abbenay*  │
-  │              all via 127.0.0.1:<port> (ADR-005)                  │
+  │  localhost TCP (ADR-005); Engine/Gateway→Abbenay unix socket   │
+  │  unix:///tmp/abbenay-run/abbenay/daemon.sock (abbenay-run vol) │
   └─────────────────────────────────────────────────────────────────┘
 ```
 

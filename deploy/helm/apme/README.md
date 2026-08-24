@@ -336,12 +336,12 @@ securityContext:
 
 `fsGroup` ensures PVC mounts for `/sessions`, `/data`, `/cache`,
 Abbenay `/etc/abbenay-config`, and the shared `abbenay-run` emptyDir are
-group-accessible. Engine and Abbenay must share the same UID (UBI and the
-Abbenay image both default to 1001; OpenShift injects one UID for the pod).
-Do not set a different `runAsUser` on only one of those containers — the
-gRPC socket is created mode `0600`. Local Podman uses the same PVC
-definitions in `containers/podman/pvc.yaml` (with `volume.podman.io/uid`
-annotations).
+group-accessible. Engine, Gateway, and Abbenay must share the same UID
+(UBI and the Abbenay image both default to 1001; OpenShift injects one
+UID for the pod). Do not set a different `runAsUser` on only one of
+those containers — the gRPC socket is created mode `0600`. Local Podman
+uses the same PVC definitions in `containers/podman/pvc.yaml` (with
+`volume.podman.io/uid` annotations).
 
 ## Uninstall
 

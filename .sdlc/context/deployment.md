@@ -176,6 +176,7 @@ app passwords may be stored as `username:app_password` in the SCM token field.
 | `gateway-data` | `$CACHE/gateway` | `/data` | Gateway | rw |
 | `proxy-cache` | `$CACHE/proxy` | `/cache` | Galaxy Proxy | rw |
 | `workspace` | CWD (CLI only) | `/workspace` | CLI | rw |
+| `abbenay-run` | emptyDir | `/tmp/abbenay-run` | Engine, Gateway, Abbenay | rw |
 
 ---
 
