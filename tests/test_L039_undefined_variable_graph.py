@@ -28,6 +28,7 @@ def _make_graph(
     task_name: str | None = None,
     task_register: str | None = None,
     task_changed_when: str | None = None,
+    task_failed_when: str | None = None,
     task_environment: YAMLDict | None = None,
     task_variables: YAMLDict | None = None,
     task_loop: YAMLValue | None = None,
@@ -43,6 +44,7 @@ def _make_graph(
         task_name: Task name.
         task_register: Register name.
         task_changed_when: changed_when expression.
+        task_failed_when: failed_when expression.
         task_environment: Environment dict.
         task_variables: Task-level vars.
         task_loop: Loop expression or iterable.
@@ -74,6 +76,7 @@ def _make_graph(
         name=task_name,
         register=task_register,
         changed_when=task_changed_when,
+        failed_when=task_failed_when,
         environment=task_environment,
         variables=task_variables or {},
         loop=task_loop,
@@ -161,6 +164,7 @@ def _run(graph: ContentGraph) -> list[dict[str, object]]:
         List of result detail dicts for L039 violations.
     """
     rule = UndefinedVariableGraphRule()
+    assert rule.rule_id == "L039"
     report = scan(graph, [rule], owned_only=False)
     results: list[dict[str, object]] = []
     for nr in report.node_results:
@@ -343,6 +347,88 @@ class TestExtraFields:
         results = _run(g)
         assert len(results) == 1
         assert "deploy_status" in _undef_vars(results)
+
+    def test_register_in_changed_when_same_task(self) -> None:
+        """Task's own register variable in changed_when should not trigger L039.
+
+        Regression test: register creates a variable available in changed_when
+        and failed_when because those are evaluated post-task execution.
+
+        Tests:
+            ``cmd_result`` is registered on the same task that uses it in
+            ``changed_when`` — this is valid Ansible and should not be flagged.
+        """
+        g, _ = _make_graph(
+            task_module="ansible.builtin.shell",
+            task_module_options={"cmd": "ufw --force default deny"},
+            task_register="cmd_result",
+            task_changed_when="'changed' in cmd_result.stdout",
+        )
+        results = _run(g)
+        assert results == []
+
+    def test_register_in_failed_when_same_task(self) -> None:
+        """Task's own register variable in failed_when should not trigger L039.
+
+        Regression test: same as changed_when — failed_when is also evaluated
+        post-task, so the register variable is available.
+
+        Tests:
+            ``cmd_result`` is registered on the same task that uses it in
+            ``failed_when`` — this is valid Ansible and should not be flagged.
+        """
+        g, _ = _make_graph(
+            task_module="ansible.builtin.shell",
+            task_module_options={"cmd": "ufw --force default deny"},
+            task_register="cmd_result",
+            task_failed_when="cmd_result.rc != 0",
+        )
+        results = _run(g)
+        assert results == []
+
+    def test_register_in_module_options_same_task(self) -> None:
+        """Same-task register in module_options should still trigger L039.
+
+        Module arguments are evaluated before the task runs, so the register
+        variable does not exist yet.
+        """
+        g, _ = _make_graph(
+            task_register="cmd_result",
+            task_module_options={"msg": "{{ cmd_result.stdout }}"},
+        )
+        results = _run(g)
+        assert len(results) == 1
+        assert "cmd_result" in _undef_vars(results)
+
+    def test_register_in_when_same_task(self) -> None:
+        """Same-task register in when should still trigger L039."""
+        g, _ = _make_graph(
+            task_register="cmd_result",
+            task_when="cmd_result.rc == 0",
+        )
+        results = _run(g)
+        assert len(results) == 1
+        assert "cmd_result" in _undef_vars(results)
+
+    def test_register_in_name_same_task(self) -> None:
+        """Same-task register in task name should still trigger L039."""
+        g, _ = _make_graph(
+            task_register="cmd_result",
+            task_name="Deploy {{ cmd_result }}",
+        )
+        results = _run(g)
+        assert len(results) == 1
+        assert "cmd_result" in _undef_vars(results)
+
+    def test_register_in_environment_same_task(self) -> None:
+        """Same-task register in environment should still trigger L039."""
+        g, _ = _make_graph(
+            task_register="cmd_result",
+            task_environment={"RESULT": "{{ cmd_result.stdout }}"},
+        )
+        results = _run(g)
+        assert len(results) == 1
+        assert "cmd_result" in _undef_vars(results)
 
     def test_undefined_in_environment(self) -> None:
         """Undefined variable in environment triggers L039.

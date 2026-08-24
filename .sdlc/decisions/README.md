@@ -101,9 +101,9 @@ Decision Requests (DRs) provide a formal mechanism for:
 
 | DR | Title | Category | Priority | Raised |
 |----|-------|----------|----------|--------|
-| [DR-013](open/DR-013-aa-integration-approach.md) | Automation Analytics Integration Approach | Architecture | Medium | 2026-03-25 |
 | [DR-014](open/DR-014-eda-integration-approach.md) | EDA Integration Approach | Architecture | High | 2026-03-25 |
 | [DR-015](open/DR-015-controller-policy-integration.md) | Controller Policy Integration | Architecture | High | 2026-03-25 |
+| [DR-013](open/DR-013-aa-integration-approach.md) | Automation Analytics Integration Approach | Architecture | Medium | 2026-03-25 |
 
 ### Closed: Decided
 
@@ -120,6 +120,7 @@ Decision Requests (DRs) provide a formal mechanism for:
 | [DR-008](closed/decided/DR-008-data-persistence.md) | Scan Result Persistence | Resolved by ADR-029 (SQLite in web gateway) | 2026-03-19 |
 | [DR-005](closed/decided/DR-005-ai-remediation.md) | AI-Assisted Remediation | Option C (Hybrid) — Abbenay AI with provider abstraction (ADR-025) | 2026-03-25 |
 | [DR-016](closed/decided/DR-016-gateway-in-daemon.md) | Embed Gateway in Local Daemon | Embed Gateway in daemon (Galaxy Proxy precedent) | 2026-04-01 |
+| [DR-021](closed/decided/DR-021-l039-ai-remediation-guidance.md) | L039 AI Remediation Guidance | Option A — ai_prompt with noqa-when-trusted | 2026-08-24 |
 
 ### Closed: Deferred
 
