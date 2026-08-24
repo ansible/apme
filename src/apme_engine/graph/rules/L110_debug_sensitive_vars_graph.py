@@ -14,12 +14,15 @@ import re
 from dataclasses import dataclass
 from typing import cast
 
-from apme_engine.graph.content_graph import ContentGraph, ContentNode, NodeType
+from apme_engine.graph.content_graph import ContentGraph, ContentNode
 from apme_engine.graph.rule_base import GraphRule, GraphRuleResult
+from apme_engine.graph.sensitivity import var_looks_sensitive
 from apme_engine.graph.types import RuleTag as Tag
 from apme_engine.graph.types import Severity, YAMLDict, YAMLValue
-
-_TASK_TYPES = frozenset({NodeType.TASK, NodeType.HANDLER})
+from apme_engine.graph.variable_helpers import (
+    TASK_TYPES,
+    no_log_true_in_scope,
+)
 
 _DEBUG_MODULES = frozenset(
     {
@@ -29,30 +32,9 @@ _DEBUG_MODULES = frozenset(
     }
 )
 
-_SENSITIVE_WORDS = frozenset(
-    {
-        "password",
-        "passwd",
-        "pwd",
-        "secret",
-        "secrets",
-        "token",
-        "api_key",
-        "apikey",
-        "credential",
-        "credentials",
-        "cred",
-        "private_key",
-        "ssh_key",
-        "access_key",
-        "client_key",
-    }
-)
-
 _JINJA_VAR_RE = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*)")
 _JINJA_BLOCK_RE = re.compile(r"\{\{(.*?)\}\}", re.DOTALL)
 _JINJA_ATTR_RE = re.compile(r"\[['\"]([a-zA-Z_][a-zA-Z0-9_]*)['\"]")
-_WORD_BOUNDARY_RE = re.compile(r"(?:^|[_.'\"\[])({})(?:[_.'\"\[\]]|$)".format("|".join(_SENSITIVE_WORDS)))
 
 
 def _extract_jinja_vars(text: str) -> set[str]:
@@ -80,27 +62,6 @@ def _extract_jinja_vars(text: str) -> set[str]:
     return result
 
 
-def _var_looks_sensitive(var_name: str) -> bool:
-    """Check if a variable name matches sensitive patterns.
-
-    Uses word-boundary matching to avoid false positives like 'secretary_name'
-    (contains 'secret') or 'tokenized_value' (contains 'token'). Matches when
-    a sensitive word appears as a complete segment bounded by underscores,
-    dots, brackets, or string start/end.
-
-    Handles both simple names (db_password) and nested paths (vault.db_password,
-    credentials['token']).
-
-    Args:
-        var_name: Variable name or dotted path to check.
-
-    Returns:
-        True if the variable name contains a sensitive word as a segment.
-    """
-    lower = var_name.lower()
-    return bool(_WORD_BOUNDARY_RE.search(lower))
-
-
 def _find_sensitive_vars_in_debug(node: ContentNode) -> list[str]:
     """Find sensitive variable references in debug task msg/var/_raw/_raw_params.
 
@@ -119,11 +80,11 @@ def _find_sensitive_vars_in_debug(node: ContentNode) -> list[str]:
     msg = mo.get("msg", "")
     if msg:
         for var_name in _extract_jinja_vars(str(msg)):
-            if _var_looks_sensitive(var_name):
+            if var_looks_sensitive(var_name):
                 sensitive_found.add(var_name)
 
     var_param = mo.get("var", "")
-    if var_param and isinstance(var_param, str) and _var_looks_sensitive(var_param):
+    if var_param and isinstance(var_param, str) and var_looks_sensitive(var_param):
         sensitive_found.add(var_param)
 
     # Check both _raw and _raw_params for free-form module args
@@ -131,42 +92,10 @@ def _find_sensitive_vars_in_debug(node: ContentNode) -> list[str]:
         raw = mo.get(raw_key, "")
         if raw:
             for var_name in _extract_jinja_vars(str(raw)):
-                if _var_looks_sensitive(var_name):
+                if var_looks_sensitive(var_name):
                     sensitive_found.add(var_name)
 
     return sorted(sensitive_found)
-
-
-def _no_log_true_in_scope(graph: ContentGraph, node_id: str) -> bool:
-    """Return True if no_log is effectively True at this node.
-
-    Ansible allows more-specific scopes to override inherited keywords. A task
-    with no_log: false can opt out of a block/play with no_log: true. We walk
-    the chain from the task outward (closest to farthest) and return on the
-    first explicit no_log setting. This correctly handles cases like:
-    - Task: unset, Block: false, Play: true → effective false (block wins)
-    - Task: unset, Block: true, Play: false → effective true (block wins)
-
-    Args:
-        graph: Content graph for the scan.
-        node_id: Task or handler node id.
-
-    Returns:
-        True when no_log is effectively true at this scope.
-    """
-    node = graph.get_node(node_id)
-    if node is None:
-        return False
-    if node.no_log is False:
-        return False
-    if node.no_log is True:
-        return True
-    for ancestor in graph.ancestors(node_id):
-        if ancestor.no_log is False:
-            return False
-        if ancestor.no_log is True:
-            return True
-    return False
 
 
 @dataclass
@@ -210,7 +139,7 @@ class DebugSensitiveVarsGraphRule(GraphRule):
         node = graph.get_node(node_id)
         if node is None:
             return False
-        if node.node_type not in _TASK_TYPES:
+        if node.node_type not in TASK_TYPES:
             return False
         if node.module not in _DEBUG_MODULES:
             return False
@@ -240,7 +169,7 @@ class DebugSensitiveVarsGraphRule(GraphRule):
                 file=(node.file_path, node.line_start),
             )
 
-        if _no_log_true_in_scope(graph, node_id):
+        if no_log_true_in_scope(graph, node_id):
             return GraphRuleResult(
                 verdict=False,
                 node_id=node_id,

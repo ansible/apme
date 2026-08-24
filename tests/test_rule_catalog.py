@@ -72,11 +72,14 @@ def test_collect_all_rules_non_empty_and_fields() -> None:
 
 
 def test_collect_all_rules_registers_disabled_by_default_audit_rules() -> None:
-    """R402/R404 appear in the catalog with ``enabled=False`` for ADR-041 opt-in."""
+    """Disabled-by-default audit rules in the catalog have ``enabled=False`` for ADR-041 opt-in."""
+    from apme_engine.graph.scanner import DISABLED_BY_DEFAULT_GRAPH_RULE_IDS
+
     rules = collect_all_rules()
     by_id = {r.rule_id: r for r in rules}
-    for rule_id in ("R402", "R404"):
-        assert rule_id in by_id, f"{rule_id} must be registered in collect_all_rules()"
+    assert {"R402", "R404"} <= DISABLED_BY_DEFAULT_GRAPH_RULE_IDS
+    assert set(DISABLED_BY_DEFAULT_GRAPH_RULE_IDS) <= set(by_id)
+    for rule_id in sorted(DISABLED_BY_DEFAULT_GRAPH_RULE_IDS):
         assert by_id[rule_id].enabled is False, f"{rule_id} must remain disabled by default in catalog"
         assert by_id[rule_id].source == "native"
 

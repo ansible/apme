@@ -51,7 +51,6 @@ environment that developers run locally.
 | `tox -e integration` | Integration tests (requires OPA binary) | `test.yml` |
 | `tox -e ai` | AI extra tests (abbenay) | `test.yml` |
 | `tox -e ui` | Playwright UI tests | `test.yml` |
-| `tox -e ui-workflow-pack` | Pack `@apme/ui-workflow` release tarball | `test.yml` |
 | `tox -e grpc` | Regenerate gRPC stubs | manual |
 | `tox -e helm` | Lint + package Helm chart | `helm-charts.yml` |
 | `tox -e build` | Build container images | `container-images.yml` (GHCR) |
@@ -67,10 +66,9 @@ CI has six workflows in `.github/workflows/`:
 
 - **prek.yml**: Runs `prek` (ruff lint, ruff format, mypy strict, pydoclint,
   uv-lock). Quality gate for code style and type safety.
-- **test.yml**: Runs `tox -e unit`, `tox -e integration`, `tox -e ui`,
-  `tox -e ai`, and `tox -e ui-workflow-pack` as separate jobs. Quality gate
-  for correctness. Coverage threshold is enforced via `--cov-fail-under` in
-  `tox.ini`.
+- **test.yml**: Runs `tox -e unit`, `tox -e integration`, `tox -e ui`, and
+  `tox -e ai` as separate jobs. Quality gate for correctness. Coverage threshold
+  is enforced via `--cov-fail-under` in `tox.ini`.
 - **container-images.yml**: Builds and pushes multi-arch container images
   (`linux/amd64` + `linux/arm64`, ADR-063) to GHCR on `main`, version tags, and
   `workflow_dispatch`, then merges manifests via

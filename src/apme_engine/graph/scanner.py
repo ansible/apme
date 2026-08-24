@@ -444,9 +444,10 @@ def expand_dirty_node_ids(
             continue
         if node.node_type in aggregate_node_types:
             expanded.add(node_id)
-        for ancestor in graph.ancestors(node_id):
-            if ancestor.node_type in aggregate_node_types:
-                expanded.add(ancestor.node_id)
+        for ancestor_id in graph.positional_ancestor_ids(node_id):
+            ancestor = graph.get_node(ancestor_id)
+            if ancestor is not None and ancestor.node_type in aggregate_node_types:
+                expanded.add(ancestor_id)
     return frozenset(expanded)
 
 

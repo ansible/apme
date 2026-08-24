@@ -2132,15 +2132,25 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         originals = await loop.run_in_executor(None, _load_yaml_originals, yaml_paths, temp_dir)
 
         # 2. Convergence: all validators on dirty nodes via gRPC
+        opt_in_rules = graph_rule_opt_in_from_rule_configs(rule_configs)
         rules, missing_opt_in = load_graph_rules(
             rules_dir=native_rules_dir(),
-            opt_in_rule_ids=graph_rule_opt_in_from_rule_configs(rule_configs),
+            opt_in_rule_ids=opt_in_rules,
         )
         if missing_opt_in:
             logger.warning(
                 "Remediation: requested opt-in graph rules failed to load: %s",
                 ", ".join(missing_opt_in),
             )
+            _opt_in_warn = ProgressUpdate(
+                message=f"Requested audit rule(s) not loaded: {', '.join(missing_opt_in)}",
+                phase="graph-tier1",
+                level=3,  # WARNING
+            )
+            session.record_progress(task_linked=is_task_linked_progress(_opt_in_warn.phase))
+            self._stamp_progress_update(_opt_in_warn, session)
+            session.progress_logs.append(_opt_in_warn)
+            yield SessionEvent(progress=_opt_in_warn)
 
         async def _rescan_bridge(
             g: ContentGraph,
@@ -2191,6 +2201,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                             request_id=f"{scan_id}-rescan",
                             content_graph_data=graph_data,
                             dirty_node_ids=sorted(dirty_ids),
+                            graph_rule_opt_in=opt_in_rules,
                         ),
                     )
                 )

@@ -9,13 +9,38 @@ from apme_engine.graph.audit_metadata import (
     sanitize_audit_metadata_value,
     serialize_audit_metadata_value,
 )
-from apme_engine.graph.sensitivity import redact_url_userinfo
+from apme_engine.graph.sensitivity import redact_url_userinfo, value_looks_sensitive
 
 
 def test_redact_url_userinfo_strips_credentials() -> None:
     """URLs with embedded credentials are redacted."""
     raw = "https://user:secret@example.com/path"
     assert redact_url_userinfo(raw) == "https://[REDACTED]@example.com/path"
+
+
+def test_redact_url_userinfo_password_with_at_sign() -> None:
+    """Passwords containing @ are fully redacted (userinfo ends at host delimiter)."""
+    raw = "https://user:p@ss@example.com/path"
+    redacted = redact_url_userinfo(raw)
+    assert redacted == "https://[REDACTED]@example.com/path"
+    assert "p@ss" not in redacted
+    assert "ss@" not in redacted
+
+
+def test_redact_url_userinfo_preserves_at_in_query_and_fragment() -> None:
+    """@ in query or fragment is not treated as URL userinfo."""
+    query_url = "https://example.com?token=user@secret"
+    fragment_url = "https://example.com/path#user@secret"
+    assert redact_url_userinfo(query_url) == query_url
+    assert redact_url_userinfo(fragment_url) == fragment_url
+
+
+def test_value_looks_sensitive_openssh_private_key() -> None:
+    """OPENSSH and EC PEM private-key headers are detected."""
+    openssh = "-----BEGIN OPENSSH PRIVATE KEY-----\ndata\n-----END OPENSSH PRIVATE KEY-----"
+    ec = "-----BEGIN EC PRIVATE KEY-----\ndata\n-----END EC PRIVATE KEY-----"
+    assert value_looks_sensitive(openssh)
+    assert value_looks_sensitive(ec)
 
 
 def test_build_audit_metadata_blob_decodes_proto_strings() -> None:

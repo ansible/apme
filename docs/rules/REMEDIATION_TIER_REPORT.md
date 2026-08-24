@@ -206,6 +206,6 @@ Analysis of default remediation routing for all rules. Regenerate with:
 | R117 | Native | info | role | — | Info severity — informational, no auto-fix |
 | R118 | OPA | info | task | — | Info severity — informational, no auto-fix |
 | R401 | Native | info | playbook | — | Info severity — informational, no auto-fix |
-| R402 | Native | info | task | — | Info severity — informational, no auto-fix |
+| R402 | Native | info | play | — | Info severity — informational, no auto-fix |
 | R404 | Native | info | task | — | Info severity — informational, no auto-fix |
 | R501 | Native | info | collection | — | Info severity — informational, no auto-fix |

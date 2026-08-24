@@ -247,8 +247,8 @@ class TestParseFrontmatter:
 
         def fake_import(
             name: str,
-            globals: Mapping[str, object] | None = None,
-            locals: Mapping[str, object] | None = None,
+            globals: Mapping[str, object] | None = None,  # noqa: A002
+            locals: Mapping[str, object] | None = None,  # noqa: A002
             fromlist: Sequence[str] = (),
             level: int = 0,
         ) -> object:
