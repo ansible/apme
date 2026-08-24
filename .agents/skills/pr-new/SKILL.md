@@ -355,8 +355,10 @@ have required side effects (e.g. promote ledger status after approving
 progression — evaluate both unconditionally).
 When a parser treats ``:`` as host/port, construct the edge cases that
 break ``rpartition(":")``: empty host (``:port``), unbracketed IPv6
-(``::1``), and ``[ipv6]:port``. Do not treat “contains a colon” as
-proof of TCP.
+(``::1``), ``[ipv6]:port``, and malformed ports (``[::1]:``,
+``host:abc``). If a caller claims graceful degrade and only catches
+``ImportError``, also construct a parse ``ValueError`` through that
+caller. Do not treat “contains a colon” as proof of TCP.
 Treat structured health/status bodies as contracts: reject
 substring/`"ok" in body` checks when the peer emits JSON with a
 ``status`` field — require exact equality (``status == "ok"``).
