@@ -268,6 +268,7 @@ The wrapper adds **Ansible-aware filtering**:
 | `sessions` | `/sessions` | Engine (rw), Ansible (ro), Collection Health (ro), Dep Audit (ro) | Session-scoped venvs with ansible-core + collections | PVC when replicas=1; emptyDir when replicas>1 (each replica owns its sessions) |
 | `proxy-cache` | `/cache` | Galaxy Proxy | Wheel cache | PVC when replicas=1; emptyDir when replicas>1 |
 | `workspace` | `/workspace` | CLI (ro) | Project being scanned (mounted from host CWD) | Podman only (CLI container joins pod) |
+| `abbenay-run` | `/tmp/abbenay-run` | Engine, Gateway, Abbenay | Shared Abbenay gRPC socket (`daemon.sock`) | emptyDir |
 
 ---
 
@@ -304,7 +305,8 @@ SQLite shares that pod.
             ▼
   ┌──────────────── apme Simple pod (replicas: 1) ────────────────┐
   │  Engine + validators + Galaxy Proxy + Gateway + UI + Abbenay*  │
-  │              all via 127.0.0.1:<port> (ADR-005)                  │
+  │  localhost TCP (ADR-005); Engine/Gateway→Abbenay unix socket   │
+  │  unix:///tmp/abbenay-run/abbenay/daemon.sock (abbenay-run vol) │
   └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -320,14 +322,15 @@ On Kubernetes/OpenShift the chart deploys **one** Deployment (Simple / all-in-on
 
 Key K8s behavior:
 - **Single replica**: Chart validation rejects `replicas > 1` / HPA for this topology
-- **Localhost**: Engine → Abbenay `127.0.0.1:50057`; reporting → `127.0.0.1:50060` (no Abbenay TLS for the chart path)
+- **Localhost**: Engine/Gateway → Abbenay Unix socket (`unix:///tmp/abbenay-run/abbenay/daemon.sock`; required when a consumer token is set); reporting → `127.0.0.1:50060`. Abbenay still binds gRPC on `127.0.0.1:50057` as leftover TCP (no TLS for the chart path). Helm probes connect to the Unix socket.
 - **PodDisruptionBudget**: Protects the Simple Deployment during node drains
 - **NetworkPolicy**: Optional default-deny with allow rules for Ingress → Gateway/UI
 
 ### Podman Pod (local dev)
 
-Same co-located shape as Helm Simple: Gateway, UI, and Abbenay share the pod and
-communicate over localhost (`tox -e up`).
+Same co-located shape as Helm Simple: Gateway, UI, and Abbenay share the pod
+(`tox -e up`). Most traffic is localhost TCP; Engine→Abbenay gRPC uses the
+shared Unix socket described above.
 
 ### Scaling Constraints
 

@@ -67,15 +67,17 @@ shape as the Podman pod).
 
 #### Networking
 
-All in-stack containers communicate via `127.0.0.1:<port>` — identical to the
-Podman pod (ADR-005). External access uses Service + Ingress:
+In-stack containers communicate via `127.0.0.1:<port>` (ADR-005), except
+Engine→Abbenay gRPC which uses a shared Unix socket when a consumer token
+is set (`abbenay-client` ≥ 2026.8.7 rejects tokens on plaintext TCP).
+External access uses Service + Ingress:
 
 | From | To | Address |
 |------|-----|---------|
-| Containers (intra-pod) | Each other | `127.0.0.1:<port>` |
+| Containers (intra-pod) | Each other | `127.0.0.1:<port>` (Engine→Abbenay gRPC: Unix socket; see below) |
 | UI (browser) / external API | Gateway REST | Ingress → Service `:8080` |
 | Engine | Gateway Reporting | `127.0.0.1:50060` |
-| Engine | Abbenay | `127.0.0.1:50057` (loopback; no TLS) |
+| Engine | Abbenay | Unix socket `unix:///tmp/abbenay-run/abbenay/daemon.sock` (token + `abbenay-client` ≥ 2026.8.7); leftover TCP `127.0.0.1:50057` |
 
 #### Storage
 
@@ -241,3 +243,4 @@ not the default.
 |------|--------|--------|
 | 2026-04-10 | APME Team | Initial acceptance (Helm + bootc) |
 | 2026-08-03 | APME Team | Helm topology amended by ADR-069 (Simple all-in-one) |
+| 2026-08-24 | APME Team | Engine→Abbenay uses a shared Unix socket (token on plaintext TCP rejected) |

@@ -156,7 +156,7 @@ _UPSTREAM_SERVICES: list[tuple[str, str, str]] = [
     ("Collection Health", "COLLECTION_HEALTH_GRPC_ADDRESS", "127.0.0.1:50058"),
     ("Dep Audit", "DEP_AUDIT_GRPC_ADDRESS", "127.0.0.1:50059"),
     ("Galaxy Proxy", "APME_GALAXY_PROXY_URL", "http://127.0.0.1:8765"),
-    ("Abbenay AI", "APME_ABBENAY_ADDR", "127.0.0.1:50057"),
+    ("Abbenay AI", "APME_ABBENAY_ADDR", "unix:///tmp/abbenay-run/abbenay/daemon.sock"),
 ]
 
 
@@ -167,7 +167,7 @@ async def _probe_grpc(address: str) -> bool:
     responds with ``UNIMPLEMENTED`` (reachable but no health service).
 
     Args:
-        address: ``host:port`` of the gRPC service.
+        address: ``host:port`` or ``unix:///path/to.sock`` of the gRPC service.
 
     Returns:
         True if the service is reachable.

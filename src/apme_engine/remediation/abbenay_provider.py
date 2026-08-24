@@ -407,6 +407,87 @@ def discover_abbenay() -> str | None:
     return None
 
 
+def make_abbenay_client(addr: str) -> object:
+    """Build an ``AbbenayClient`` from ``APME_ABBENAY_ADDR``.
+
+    ``abbenay-client`` ≥ 2026.8.7 treats the first positional argument as
+    ``socket_path`` and prefixes ``unix://``. Callers must pass a bare path
+    via ``socket_path=``, not a ``unix://`` URI.
+
+    Args:
+        addr: ``unix:///path/to.sock``, ``host:port``, ``:port`` (localhost),
+            ``[ipv6]:port``, or a bare host (including unbracketed IPv6).
+
+    Returns:
+        An ``AbbenayClient`` bound to *addr*.
+
+    Raises:
+        ImportError: If ``abbenay_grpc`` is not installed.
+    """
+    try:
+        from abbenay_grpc import AbbenayClient  # noqa: PLC0415
+    except ImportError:
+        raise ImportError(
+            "AI escalation requires the 'ai' extra.\n"
+            "Install (local/dev): uv sync --extra ai\n"
+            "Install (production/containers): uv sync --frozen --extra ai\n"
+            "or: pip install apme-engine[ai]"
+        ) from None
+    if addr.startswith("unix://"):
+        return AbbenayClient(socket_path=addr.removeprefix("unix://"))
+    return AbbenayClient(**_abbenay_tcp_kwargs(addr))
+
+
+def _abbenay_tcp_kwargs(addr: str) -> dict[str, str | int]:
+    """Parse a TCP Abbenay address into AbbenayClient host/port kwargs.
+
+    ``host:port`` uses a single colon. ``:port`` means localhost. Bracketed
+    IPv6 (``[::1]:50057``) is supported. Unbracketed IPv6 (``::1``) is a
+    host with no port — it is not split on ``:``.
+
+    Args:
+        addr: Non-unix Abbenay address.
+
+    Returns:
+        Kwargs for ``AbbenayClient`` (``host``, and ``port`` when present).
+    """
+    if addr.startswith("["):
+        close = addr.find("]")
+        if close == -1:
+            return {"host": addr}
+        host = addr[1:close]
+        rest = addr[close + 1 :]
+        if rest.startswith(":"):
+            return {"host": host, "port": _parse_abbenay_port(rest[1:])}
+        return {"host": host}
+    if addr.count(":") == 1:
+        host, _, port_str = addr.partition(":")
+        return {"host": host or "localhost", "port": _parse_abbenay_port(port_str)}
+    return {"host": addr}
+
+
+def _parse_abbenay_port(port_str: str) -> int:
+    """Parse a TCP port from an Abbenay address.
+
+    Args:
+        port_str: Port digits from ``host:port`` or ``[ipv6]:port``.
+
+    Returns:
+        The port as an integer.
+
+    Raises:
+        ValueError: If *port_str* is empty or not an integer in 1–65535.
+    """
+    if not port_str.isdigit():
+        msg = f"invalid Abbenay port {port_str!r}"
+        raise ValueError(msg)
+    port = int(port_str)
+    if not 1 <= port <= 65535:
+        msg = f"invalid Abbenay port {port_str!r}"
+        raise ValueError(msg)
+    return port
+
+
 def _load_best_practices() -> dict[str, list[str]]:
     """Load the structured best practices mapping from the data package.
 
@@ -650,32 +731,11 @@ class AbbenayProvider:
             addr: Daemon address (e.g. 'unix:///run/user/1000/abbenay/daemon.sock').
             token: Optional consumer auth token for inline policy access.
             model: Optional default model (e.g. 'openai/gpt-4o').
-
-        Raises:
-            ImportError: If abbenay_grpc is not installed.
         """
-        try:
-            from abbenay_grpc import AbbenayClient  # noqa: PLC0415
-        except ImportError:
-            raise ImportError(
-                "AI escalation requires the 'ai' extra.\n"
-                "Install (local/dev): uv sync --extra ai\n"
-                "Install (production/containers): uv sync --frozen --extra ai\n"
-                "or: pip install apme-engine[ai]"
-            ) from None
-
-        if addr.startswith("unix://"):
-            socket_path = addr.removeprefix("unix://")
-            self._client: object = AbbenayClient(socket_path=socket_path)
-        elif ":" in addr:
-            host, _, port_str = addr.rpartition(":")
-            self._client = AbbenayClient(host=host, port=int(port_str))
-        else:
-            self._client = AbbenayClient(host=addr)
+        self._client: object = make_abbenay_client(addr)
         self._addr = addr
         self._token = token
         self._model = model
-        self._AbbenayClient = AbbenayClient
 
     def _make_client(self) -> object:
         """Create a fresh AbbenayClient instance for the current event loop.
@@ -683,13 +743,7 @@ class AbbenayProvider:
         Returns:
             New AbbenayClient bound to the current asyncio loop.
         """
-        addr = self._addr
-        if addr.startswith("unix://"):
-            return self._AbbenayClient(socket_path=addr.removeprefix("unix://"))
-        if ":" in addr:
-            host, _, port_str = addr.rpartition(":")
-            return self._AbbenayClient(host=host, port=int(port_str))
-        return self._AbbenayClient(host=addr)
+        return make_abbenay_client(self._addr)
 
     async def preflight(self) -> bool:
         """Connect to the daemon and run a health check.

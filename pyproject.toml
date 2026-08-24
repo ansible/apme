@@ -35,7 +35,7 @@ dependencies = [
 [project.optional-dependencies]
 ai = [
     # Pin to the same CalVer as the Abbenay daemon image (deploy pins).
-    "abbenay-client==2026.8.6",
+    "abbenay-client==2026.8.7",
 ]
 gateway = [
     "sqlalchemy>=2.0",
