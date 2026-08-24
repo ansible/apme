@@ -64,7 +64,7 @@ change Podman, bootc, or the daemon.
 
 **The APME Helm chart uses a Simple (all-in-one) topology: one Deployment whose
 pod co-locates the engine stack, Gateway, UI, and optional Abbenay, communicating
-over `127.0.0.1` (ADR-005).**
+over `127.0.0.1` (ADR-005) except Engine→Abbenay gRPC, which uses a Unix socket.**
 
 1. **Single workload** — Prefer one Deployment (name may remain `engine` or
    become `apme`; implementation detail). Containers: Engine, validators,

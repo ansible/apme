@@ -370,10 +370,11 @@ The best practices YAML can be updated manually or via automation:
 
 When `--ai` is set, Engine auto-discovers the Abbenay daemon:
 
-1. Check `$XDG_RUNTIME_DIR/abbenay/daemon.sock` (Linux standard)
-2. Fall back to `/run/user/<uid>/abbenay/daemon.sock`
-3. Fall back to `/tmp/abbenay/daemon.sock`
-4. Override with `APME_ABBENAY_ADDR` env var
+1. Override with `APME_ABBENAY_ADDR` (Helm/Podman set
+   `unix:///tmp/abbenay-run/abbenay/daemon.sock` when a token is set)
+2. Else `$XDG_RUNTIME_DIR/abbenay/daemon.sock` (Linux standard)
+3. Fall back to `/run/user/<uid>/abbenay/daemon.sock`
+4. Fall back to `/tmp/abbenay/daemon.sock`
 
 ### Preflight Health Check
 
@@ -615,12 +616,11 @@ podman pull ghcr.io/redhat-developer/abbenay:v2026.8.7
 |  | + AI esc |  |          |  |          |  |          |         |
 |  +----+-----+  +----------+  +----------+  +----------+         |
 |       |                                                           |
-|       | gRPC (optional, only when --ai)                           |
+|       | gRPC unix socket when a token is set; TCP :50057 for probes |
 |       v                                                           |
 |  +----------+                                                     |
 |  | Abbenay  |  AI daemon -- manages LLM providers                |
-|  |  :50057  |  GHCR image or binary                               |
-|  +----------+                                                     |
+|  +----------+  GHCR image or binary                               |
 |                                                                   |
 |  +--------------------------------------------+                  |
 |  |       Galaxy Proxy :8765 (PEP 503)         |                  |

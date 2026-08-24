@@ -326,8 +326,9 @@ Key K8s behavior:
 
 ### Podman Pod (local dev)
 
-Same co-located shape as Helm Simple: Gateway, UI, and Abbenay share the pod and
-communicate over localhost (`tox -e up`).
+Same co-located shape as Helm Simple: Gateway, UI, and Abbenay share the pod
+(`tox -e up`). Most traffic is localhost TCP; Engine→Abbenay gRPC uses the
+shared Unix socket described above.
 
 ### Scaling Constraints
 

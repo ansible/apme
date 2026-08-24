@@ -74,7 +74,7 @@ External access uses Service + Ingress:
 
 | From | To | Address |
 |------|-----|---------|
-| Containers (intra-pod) | Each other | `127.0.0.1:<port>` |
+| Containers (intra-pod) | Each other | `127.0.0.1:<port>` (Engine→Abbenay gRPC: Unix socket; see below) |
 | UI (browser) / external API | Gateway REST | Ingress → Service `:8080` |
 | Engine | Gateway Reporting | `127.0.0.1:50060` |
 | Engine | Abbenay | Unix socket `unix:///tmp/abbenay-run/abbenay/daemon.sock` (token + `abbenay-client` ≥ 2026.8.7); TCP `127.0.0.1:50057` remains for health probes |

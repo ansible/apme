@@ -446,8 +446,9 @@ allowed engine HPA. Upgrading to this chart:
 
 - Collapses those workloads into the `*-engine` Deployment (old Deployments are
   removed on upgrade)
-- Binds Abbenay to `127.0.0.1` and **removes** the `*-abbenay` Service — in-cluster
-  clients must not use `<release>-abbenay:50057`
+- Binds Abbenay HTTP/gRPC TCP to `127.0.0.1` and **removes** the `*-abbenay`
+  Service — in-cluster clients must not use `<release>-abbenay:50057`. Engine
+  AI gRPC uses `unix:///tmp/abbenay-run/abbenay/daemon.sock`
 - Rejects `engine.replicas > 1` and `autoscaling.enabled=true`
 - Keeps ClusterIP Service names `*-gateway` and `*-ui` (they now select the
   Simple pod)

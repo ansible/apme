@@ -158,7 +158,7 @@ Deployments:
 | Before | After (this chart) |
 |--------|--------------------|
 | 4 Deployments | 1 Deployment (`*-engine`) |
-| Abbenay Service DNS | Abbenay on `127.0.0.1` only (Service removed) |
+| Abbenay Service DNS | No Abbenay Service; HTTP admin on `127.0.0.1:8787`; Engine gRPC via Unix socket |
 | Optional engine HPA | HPA / `replicas > 1` fail render |
 | Gateway/UI Services | Same names; selectors target the Simple pod |
 
@@ -194,7 +194,7 @@ Gateway DB and Abbenay down together.
 | Value | Default | Description |
 |-------|---------|-------------|
 | `image.registry` | `quay.io/ansible` | Container registry |
-| `image.tag` | `2026.8.6` | Image tag (GitHub release `v2026.8.6`; Quay omits the `v`) |
+| `image.tag` | `2026.8.6` | APME image tag (GitHub release `v2026.8.6`; stays here until the next APME release) |
 | `engine.replicas` | `1` | Must be `1` (ADR-069) |
 | `gitleaks.enabled` | `true` | Enable Gitleaks validator |
 | `collectionHealth.enabled` | `true` | Enable Collection Health validator |
@@ -204,7 +204,7 @@ Gateway DB and Abbenay down together.
 | `ui.replicas` | `1` | Must be `1` when UI enabled |
 | `abbenay.enabled` | `false` | Enable AI provider sidecar |
 | `abbenay.token` | `""` | Abbenay gRPC + HTTP admin token (required when `abbenay.enabled=true`) |
-| `abbenay.image` | `ghcr.io/redhat-developer/abbenay:v2026.8.7` | Abbenay image |
+| `abbenay.image` | `ghcr.io/redhat-developer/abbenay:v2026.8.7` | Abbenay daemon image (independent of `image.tag`) |
 | `abbenay.providers` | `{}` | LLM provider map (see [ABBENAY_AI.md](../../../docs/guides/ABBENAY_AI.md)) |
 | `abbenay.aiModel` | `""` | Default AI model ID |
 | `ingress.enabled` | `false` | Create Kubernetes Ingress |
