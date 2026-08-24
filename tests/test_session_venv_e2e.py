@@ -265,7 +265,7 @@ def test_native_violations_with_session_venv(dep_dir: str) -> None:
     import apme_engine.graph.rules as _rules_pkg
 
     rules_dir = str(Path(_rules_pkg.__file__).parent)
-    rules = load_graph_rules(rules_dir=rules_dir)
+    rules, _ = load_graph_rules(rules_dir=rules_dir)
     report = graph_scan(graph, rules)
     violations = cast(list[dict[str, object]], graph_report_to_violations(report))
 

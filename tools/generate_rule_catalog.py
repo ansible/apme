@@ -69,10 +69,16 @@ class Rule:
     has_doc: bool = False
     impl_file: str = ""
     test_files: list[str] = field(default_factory=list)
+    status: str = ""
+    status_reason: str = ""
 
 
 def _parse_frontmatter(path: Path) -> dict[str, str]:
     """Parse YAML-ish frontmatter from a markdown file.
+
+    Uses ``yaml.safe_load`` for correct handling of multiline scalars
+    (folded ``>``, literal ``|``, etc.).  Falls back to regex extraction
+    when PyYAML is unavailable.
 
     Args:
         path: Path to the markdown file.
@@ -84,7 +90,21 @@ def _parse_frontmatter(path: Path) -> dict[str, str]:
     m = _FRONTMATTER.match(text)
     if not m:
         return {}
-    pairs = _KV.findall(m.group(1))
+    raw = m.group(1)
+    try:
+        import yaml
+
+        parsed = yaml.safe_load(raw)
+        if isinstance(parsed, dict):
+            return {str(k): str(v).strip() for k, v in parsed.items() if v is not None}
+    except ImportError:
+        print(
+            f"WARNING: PyYAML not available; using regex fallback for {path}",
+            file=sys.stderr,
+        )
+    except yaml.YAMLError as exc:
+        print(f"WARNING: YAML parse error in {path}: {exc}; falling back to regex", file=sys.stderr)
+    pairs = _KV.findall(raw)
     return {k: v.strip("\"'") for k, v in pairs}
 
 
@@ -130,32 +150,59 @@ def _get_fixable_ids() -> set[str]:
     return set()
 
 
-def _find_pytest_files_for_rule(rule_id: str) -> list[str]:
-    """Find pytest files that reference a specific rule ID.
+def _is_incidental_reference(rule_id: str, text: str, filename: str) -> bool:
+    """Check if a rule_id mention in a test file is just fixture/example data.
 
-    Searches test file contents for the quoted rule_id string.  Only scans
-    Python files under tests/.
+    A reference is considered incidental if the test file doesn't import or
+    instantiate anything related to the rule.  Files named after rule
+    categories (e.g. ``test_ansible_rules.py``) or containing a class/def
+    whose name includes the rule ID are genuine.
 
     Args:
-        rule_id: Rule identifier to search for.
+        rule_id: Rule identifier found in the file.
+        text: Full file content.
+        filename: Base filename.
 
     Returns:
-        List of test filenames (relative to tests/) that reference this rule.
+        True if the reference is likely incidental fixture data.
     """
-    matches: list[str] = []
-    if not TESTS_DIR.is_dir():
-        return matches
-    pat = re.compile(rf'(?:"|\'|rule_id["\s:=]+){re.escape(rule_id)}(?:"|\')')
-    for py in sorted(TESTS_DIR.rglob("*.py")):
-        if py.name.startswith("_"):
-            continue
-        try:
-            text = py.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        if pat.search(text):
-            matches.append(py.relative_to(TESTS_DIR).as_posix())
-    return matches
+    rid_lower = rule_id.lower().replace("-", "_")
+    if rid_lower in filename.lower():
+        return False
+    rule_context = re.compile(
+        rf"(?:class\s+\w*{re.escape(rule_id)}\w*|"
+        rf"def\s+test_\w*{re.escape(rid_lower)}\w*|"
+        rf"import\s+.*{re.escape(rule_id)}|"
+        rf"Rule.*{re.escape(rule_id)})",
+        re.IGNORECASE,
+    )
+    if rule_context.search(text):
+        return False
+    rule_id_assignment = re.compile(rf'rule_id\s*[=:]\s*["\']{re.escape(rule_id)}["\']')
+    return not rule_id_assignment.search(text)
+
+
+_RULE_RANGE_IN_MODULE = re.compile(r"([A-Z])(\d+)_\1(\d+)_")
+
+
+def _rule_ids_from_module_name(module_fragment: str) -> set[str]:
+    """Expand grouped rule modules (e.g. M001_M004_introspect) to rule IDs.
+
+    Args:
+        module_fragment: Import path segment or module stem.
+
+    Returns:
+        Rule IDs covered by a range module name, or empty set.
+    """
+    m = _RULE_RANGE_IN_MODULE.search(module_fragment)
+    if not m:
+        return set()
+    letter, start_s, end_s = m.group(1), m.group(2), m.group(3)
+    start, end = int(start_s), int(end_s)
+    if end < start or end - start > 50:
+        return set()
+    width = max(len(start_s), len(end_s))
+    return {f"{letter}{i:0{width}d}" for i in range(start, end + 1)}
 
 
 _TEST_CACHE: dict[str, list[str]] | None = None
@@ -180,6 +227,11 @@ def _get_test_cache() -> dict[str, list[str]]:
         return cache
 
     all_rule_id_pat = re.compile(r'["\']((?:A|L|M|R|P)\d+|SEC:[a-zA-Z0-9_*-]+)["\']')
+    import_rule_id_pat = re.compile(
+        r"(?:from\s+\S+\.(?:rules|validators)\.\S*(?:_|\b)([A-Z]\d+)|"
+        r"class\s+\w*?([A-Z]\d+)\w*(?:Rule|Test)|"
+        r"def\s+test_\w*?([a-z]\d+))",
+    )
     for py in sorted(TESTS_DIR.rglob("*.py")):
         if py.name.startswith("_"):
             continue
@@ -188,8 +240,19 @@ def _get_test_cache() -> dict[str, list[str]]:
         except OSError:
             continue
         rel = py.relative_to(TESTS_DIR).as_posix()
+        seen_ids: set[str] = set()
         for m in all_rule_id_pat.finditer(text):
             rid = m.group(1)
+            if _is_incidental_reference(rid, text, py.name):
+                continue
+            seen_ids.add(rid)
+        for m in import_rule_id_pat.finditer(text):
+            rid = (m.group(1) or m.group(2) or (m.group(3) or "").upper()).strip()
+            if rid:
+                seen_ids.add(rid)
+        for m in re.finditer(r"from\s+[\w.]+\s+import\s+(\w+)", text):
+            seen_ids.update(_rule_ids_from_module_name(m.group(1)))
+        for rid in seen_ids:
             cache.setdefault(rid, [])
             if rel not in cache[rid]:
                 cache[rid].append(rel)
@@ -238,6 +301,26 @@ def _find_doc(rule_id: str, doc_dir: Path) -> Path | None:
         if md.stem.startswith(rule_id):
             return md
     return None
+
+
+_VALIDATOR_NAMES: dict[str, str] = {
+    "opa": "OPA",
+    "native": "Native",
+    "ansible": "Ansible",
+    "gitleaks": "Gitleaks",
+}
+
+
+def _normalize_validator(raw: str) -> str:
+    """Normalize a validator name preserving canonical casing.
+
+    Args:
+        raw: Raw validator string from frontmatter.
+
+    Returns:
+        Canonical validator name, defaulting to ``Native``.
+    """
+    return _VALIDATOR_NAMES.get(raw.lower().strip(), raw.capitalize()) if raw else "Native"
 
 
 def _collect_opa_rules() -> list[Rule]:
@@ -322,16 +405,20 @@ def _collect_native_rules() -> list[Rule]:
         test_cache = _get_test_cache()
         pytest_files = test_cache.get(rid, [])
 
+        fm_validator = _normalize_validator(fm.get("validator", ""))
+
         rules.append(
             Rule(
                 rule_id=rid,
-                validator="Native",
+                validator=fm_validator,
                 description=fm.get("description", ""),
                 has_impl=False,
                 impl_file="",
                 has_doc=True,
                 has_test=bool(pytest_files),
                 test_files=pytest_files,
+                status=fm.get("status", ""),
+                status_reason=fm.get("status_reason", ""),
             )
         )
 
@@ -626,11 +713,33 @@ def generate() -> str:
     no_severity = [m for m in meta if m.severity_source == "fallback"]
     adr_mismatch = [m for m in meta if m.adr043_mismatch]
 
-    if no_impl:
-        lines.append(f"### Doc-only rules (no implementation) — {len(no_impl)}")
+    resolved_statuses = {"stub", "delegated"}
+    no_impl_resolved = [r for r in no_impl if r.status in resolved_statuses]
+    no_impl_planned = [r for r in no_impl if r.status == "planned"]
+    no_impl_unknown = [r for r in no_impl if r.status not in resolved_statuses and r.status != "planned"]
+
+    if no_impl_unknown:
+        lines.append(f"### Doc-only rules (no implementation) — {len(no_impl_unknown)}")
         lines.append("")
-        for r in no_impl:
+        for r in no_impl_unknown:
             lines.append(f"- **{r.rule_id}** ({r.validator}): {r.description}")
+        lines.append("")
+
+    if no_impl_planned:
+        lines.append(f"### Planned rules (implementation pending) — {len(no_impl_planned)}")
+        lines.append("")
+        for r in no_impl_planned:
+            reason = f" — {r.status_reason}" if r.status_reason else ""
+            lines.append(f"- **{r.rule_id}** ({r.validator}): {r.description}{reason}")
+        lines.append("")
+
+    if no_impl_resolved:
+        lines.append(f"### Resolved without implementation — {len(no_impl_resolved)}")
+        lines.append("")
+        for r in no_impl_resolved:
+            label = "Delegated" if r.status == "delegated" else "Stub"
+            reason = f" — {r.status_reason}" if r.status_reason else ""
+            lines.append(f"- **{r.rule_id}** ({r.validator}): [{label}] {r.description}{reason}")
         lines.append("")
 
     if no_test:

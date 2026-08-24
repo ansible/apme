@@ -71,6 +71,16 @@ def test_collect_all_rules_non_empty_and_fields() -> None:
     assert ids == sorted(ids), "collect_all_rules must return rules sorted by rule_id"
 
 
+def test_collect_all_rules_registers_disabled_by_default_audit_rules() -> None:
+    """R402/R404 appear in the catalog with ``enabled=False`` for ADR-041 opt-in."""
+    rules = collect_all_rules()
+    by_id = {r.rule_id: r for r in rules}
+    for rule_id in ("R402", "R404"):
+        assert rule_id in by_id, f"{rule_id} must be registered in collect_all_rules()"
+        assert by_id[rule_id].enabled is False, f"{rule_id} must remain disabled by default in catalog"
+        assert by_id[rule_id].source == "native"
+
+
 def test_collect_gitleaks_rules_sec_placeholder_critical() -> None:
     """Gitleaks contributes a single ``SEC:*`` placeholder with critical severity.
 

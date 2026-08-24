@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import os
 import uuid
@@ -22,6 +23,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
+from apme_engine.graph.audit_metadata import sanitize_audit_metadata_value
 from apme_engine.graph.severity import severity_from_proto, severity_to_label
 from apme_gateway.api.schemas import (
     ActiveOperationSummary,
@@ -1471,6 +1473,15 @@ def _to_violation_detail(
     if not suppressed and rule_only_hashes:
         fp_rule = _violation_fingerprint(v.rule_id, "", mode="rule_only")  # type: ignore[attr-defined]
         suppressed = fp_rule in rule_only_hashes
+    audit_metadata: dict[str, object] | None = None
+    raw_audit = getattr(v, "audit_metadata", "") or ""
+    if raw_audit:
+        try:
+            parsed_audit = json.loads(raw_audit)
+            if isinstance(parsed_audit, dict):
+                audit_metadata = {key: sanitize_audit_metadata_value(key, value) for key, value in parsed_audit.items()}
+        except json.JSONDecodeError:
+            audit_metadata = None
     return ViolationDetail(
         id=v.id,  # type: ignore[attr-defined]
         rule_id=v.rule_id,  # type: ignore[attr-defined]
@@ -1490,6 +1501,7 @@ def _to_violation_detail(
         node_type=getattr(v, "node_type", "") or "",
         ai_reason=v.ai_reason,  # type: ignore[attr-defined]
         ai_suggestion=v.ai_suggestion,  # type: ignore[attr-defined]
+        audit_metadata=audit_metadata,
         suppressed=suppressed,
         review_status=getattr(v, "review_status", None),
     )

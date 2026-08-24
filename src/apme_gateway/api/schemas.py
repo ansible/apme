@@ -83,6 +83,7 @@ class ViolationDetail(BaseModel):  # type: ignore[misc]
         node_type: ContentGraph NodeType value (task, block, play, …).
         ai_reason: Why the AI could not fix this violation (ai_abstained only).
         ai_suggestion: Manual remediation guidance from the AI (ai_abstained only).
+        audit_metadata: Parsed audit rule payloads when present.
         suppressed: True if this violation matches an active suppression (ADR-055).
         review_status: Human/gate decision (ADR-062); null if never reviewed.
     """
@@ -105,6 +106,7 @@ class ViolationDetail(BaseModel):  # type: ignore[misc]
     node_type: str = ""
     ai_reason: str = ""
     ai_suggestion: str = ""
+    audit_metadata: dict[str, object] | None = None
     suppressed: bool = False
     review_status: str | None = None
 

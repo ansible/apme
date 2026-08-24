@@ -183,12 +183,33 @@ class TestNativeValidatorServicer:
         )
 
         servicer = NativeValidatorServicer()
-        with patch("apme_engine.daemon.native_validator_server._run_graph", return_value=mock_result):
+        with patch("apme_engine.daemon.native_validator_server._run_graph", return_value=mock_result) as mock_run:
             resp = await servicer.Validate(request, FakeGrpcContext())  # type: ignore[arg-type]
 
         assert len(resp.violations) == 1  # type: ignore[attr-defined]
         assert resp.violations[0].rule_id == "L026"  # type: ignore[attr-defined]
         assert resp.request_id == "native-1"  # type: ignore[attr-defined]
+        mock_run.assert_called_once_with(graph_data, None, [])
+
+    async def test_validate_passes_graph_rule_opt_in(self) -> None:
+        """graph_rule_opt_in from ValidateRequest is forwarded to _run_graph."""
+        from apme_engine.daemon.native_validator_server import NativeValidatorServicer, _GraphRunResult
+        from apme_engine.graph.content_graph import ContentGraph
+
+        graph = ContentGraph()
+        graph_data = json.dumps(graph.to_dict()).encode()
+        request = validate_pb2.ValidateRequest(
+            request_id="native-opt-in",
+            content_graph_data=graph_data,
+            graph_rule_opt_in=["R402", "R404"],
+        )
+        mock_result = _GraphRunResult(violations=[])
+
+        servicer = NativeValidatorServicer()
+        with patch("apme_engine.daemon.native_validator_server._run_graph", return_value=mock_result) as mock_run:
+            await servicer.Validate(request, FakeGrpcContext())  # type: ignore[arg-type]
+
+        mock_run.assert_called_once_with(graph_data, None, ["R402", "R404"])
 
     async def test_validate_returns_diagnostics(self) -> None:
         """Validate returns ValidatorDiagnostics with violation count."""
@@ -279,7 +300,7 @@ class TestNativeValidatorServicer:
         graph_data = json.dumps(graph.to_dict()).encode()
 
         with (
-            patch("apme_engine.daemon.native_validator_server.load_graph_rules", return_value=[]),
+            patch("apme_engine.daemon.native_validator_server.load_graph_rules", return_value=([], [])),
             patch("apme_engine.daemon.native_validator_server.rescan_dirty") as mock_rescan,
             patch("apme_engine.daemon.native_validator_server.graph_scan") as mock_scan,
         ):
@@ -301,7 +322,7 @@ class TestNativeValidatorServicer:
         graph_data = json.dumps(graph.to_dict()).encode()
 
         with (
-            patch("apme_engine.daemon.native_validator_server.load_graph_rules", return_value=[]),
+            patch("apme_engine.daemon.native_validator_server.load_graph_rules", return_value=([], [])),
             patch("apme_engine.daemon.native_validator_server.rescan_dirty") as mock_rescan,
             patch("apme_engine.daemon.native_validator_server.graph_scan") as mock_scan,
         ):
@@ -338,8 +359,9 @@ class TestNativeValidatorServicer:
             resp = await servicer.Validate(request, FakeGrpcContext())  # type: ignore[arg-type]
 
         mock_run.assert_called_once()
-        _data, dirty_arg = mock_run.call_args[0]
+        _data, dirty_arg, opt_in_arg = mock_run.call_args[0]
         assert dirty_arg == frozenset({"node-a", "node-b"})
+        assert opt_in_arg == []
         assert len(resp.violations) == 0  # type: ignore[attr-defined]
 
     async def test_validate_empty_dirty_node_ids_triggers_full_scan(self) -> None:
@@ -365,8 +387,9 @@ class TestNativeValidatorServicer:
             await servicer.Validate(request, FakeGrpcContext())  # type: ignore[arg-type]
 
         mock_run.assert_called_once()
-        _data, dirty_arg = mock_run.call_args[0]
+        _data, dirty_arg, opt_in_arg = mock_run.call_args[0]
         assert dirty_arg is None
+        assert opt_in_arg == []
 
 
 class TestGitleaksValidatorServicerDiagnostics:

@@ -1062,7 +1062,7 @@ class TestSessionGraphRemediate:
         progress_queue: asyncio.Queue[ProgressUpdate | None] = asyncio.Queue()
 
         with (
-            patch("apme_engine.graph.scanner.load_graph_rules", return_value=[]),
+            patch("apme_engine.graph.scanner.load_graph_rules", return_value=([], [])),
             patch("apme_engine.remediation.graph_engine.GraphRemediationEngine") as MockGRE,
             patch("apme_engine.remediation.graph_engine.splice_modifications", return_value=mock_patches),
             patch("apme_engine.remediation.partition.add_classification_to_violations"),
@@ -1146,7 +1146,7 @@ class TestSessionGraphRemediate:
             return []
 
         with (
-            patch("apme_engine.graph.scanner.load_graph_rules", return_value=[]),
+            patch("apme_engine.graph.scanner.load_graph_rules", return_value=([], [])),
             patch("apme_engine.remediation.graph_engine.GraphRemediationEngine") as MockGRE,
             patch("apme_engine.remediation.graph_engine.splice_modifications", return_value=[]),
             patch("apme_engine.remediation.partition.add_classification_to_violations"),
@@ -1203,7 +1203,7 @@ class TestSessionGraphRemediate:
             return []
 
         with (
-            patch("apme_engine.graph.scanner.load_graph_rules", return_value=[]),
+            patch("apme_engine.graph.scanner.load_graph_rules", return_value=([], [])),
             patch("apme_engine.remediation.graph_engine.GraphRemediationEngine") as MockGRE,
             patch("apme_engine.remediation.graph_engine.splice_modifications", return_value=[]),
             patch("apme_engine.remediation.partition.add_classification_to_violations"),
@@ -1272,7 +1272,7 @@ class TestSessionGraphRemediate:
         )
 
         with (
-            patch("apme_engine.graph.scanner.load_graph_rules", return_value=[]),
+            patch("apme_engine.graph.scanner.load_graph_rules", return_value=([], [])),
             patch("apme_engine.remediation.graph_engine.GraphRemediationEngine") as MockGRE,
             patch("apme_engine.remediation.graph_engine.splice_modifications", return_value=[]),
             patch("apme_engine.remediation.partition.add_classification_to_violations"),
@@ -1361,7 +1361,7 @@ class TestSessionGraphRemediate:
             return []
 
         with (
-            patch("apme_engine.graph.scanner.load_graph_rules", return_value=[]),
+            patch("apme_engine.graph.scanner.load_graph_rules", return_value=([], [])),
             patch("apme_engine.remediation.graph_engine.GraphRemediationEngine") as MockGRE,
             patch("apme_engine.remediation.graph_engine.splice_modifications", return_value=[]),
             patch("apme_engine.remediation.partition.add_classification_to_violations"),
@@ -1462,7 +1462,7 @@ class TestSessionRescanBridge:
             return mock_engine
 
         with (
-            patch("apme_engine.graph.scanner.load_graph_rules", return_value=[]),
+            patch("apme_engine.graph.scanner.load_graph_rules", return_value=([], [])),
             patch(
                 "apme_engine.remediation.graph_engine.GraphRemediationEngine",
                 side_effect=capture_gre_init,
@@ -1516,9 +1516,9 @@ class TestSessionRescanBridge:
 
         captured_rules_dir: list[str | None] = [None]
 
-        def mock_load_graph_rules(rules_dir: str = "", **kwargs: object) -> list[object]:
+        def mock_load_graph_rules(rules_dir: str = "", **kwargs: object) -> tuple[list[object], list[str]]:
             captured_rules_dir[0] = rules_dir
-            return []
+            return [], []
 
         async def async_scan_fn_rules(_paths: list[str]) -> list[ViolationDict]:
             return []

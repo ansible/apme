@@ -63,6 +63,7 @@ def _default_rules_dir() -> str:
 def _run_graph(
     raw_graph_data: bytes,
     dirty_node_ids: frozenset[str] | None = None,
+    opt_in_rule_ids: list[str] | None = None,
 ) -> _GraphRunResult:
     """Blocking function: deserialize ContentGraph, load GraphRules, and scan.
 
@@ -77,6 +78,7 @@ def _run_graph(
     Args:
         raw_graph_data: Raw JSON bytes from ``ValidateRequest.content_graph_data``.
         dirty_node_ids: Optional set of node IDs to rescan.
+        opt_in_rule_ids: Disabled-by-default GraphRule IDs to enable for this scan.
 
     Returns:
         _GraphRunResult with violations and the raw report.
@@ -84,10 +86,11 @@ def _run_graph(
     graph_dict = json.loads(raw_graph_data)
     content_graph = ContentGraph.from_dict(graph_dict)
     rules_dir = _default_rules_dir()
-    rules = load_graph_rules(rules_dir=rules_dir)
-
-    report = rescan_dirty(content_graph, rules, dirty_node_ids) if dirty_node_ids else graph_scan(content_graph, rules)
-
+    rules, missing = load_graph_rules(rules_dir=rules_dir, opt_in_rule_ids=opt_in_rule_ids or [])
+    if dirty_node_ids:
+        report = rescan_dirty(content_graph, rules, dirty_node_ids)
+    else:
+        report = graph_scan(content_graph, rules, missing_requested_rule_ids=missing)
     violations = graph_report_to_violations(report)
     return _GraphRunResult(violations=violations, report=report)
 
@@ -127,6 +130,7 @@ class NativeValidatorServicer(validate_pb2_grpc.ValidatorServicer):
                         req_id,
                     )
 
+                opt_in = list(request.graph_rule_opt_in)
                 ctx = contextvars.copy_context()
                 result = await asyncio.get_event_loop().run_in_executor(
                     None,
@@ -134,6 +138,7 @@ class NativeValidatorServicer(validate_pb2_grpc.ValidatorServicer):
                     _run_graph,
                     request.content_graph_data,
                     dirty,
+                    opt_in,
                 )
 
                 total_ms = (time.monotonic() - t0) * 1000
@@ -144,12 +149,19 @@ class NativeValidatorServicer(validate_pb2_grpc.ValidatorServicer):
                     req_id,
                 )
 
+                diag_metadata: dict[str, str] = {}
+                if result.report and result.report.missing_requested_rule_ids:
+                    diag_metadata["missing_requested_rules"] = ",".join(result.report.missing_requested_rule_ids)
+                if result.report and result.report.audit_serialization_failures:
+                    diag_metadata["audit_serialization_failures"] = str(result.report.audit_serialization_failures)
+
                 diag = ValidatorDiagnostics(
                     validator_name="native",
                     request_id=req_id,
                     total_ms=total_ms,
                     files_received=len(request.files),
                     violations_found=len(result.violations),
+                    metadata=diag_metadata,
                 )
 
                 return validate_pb2.ValidateResponse(

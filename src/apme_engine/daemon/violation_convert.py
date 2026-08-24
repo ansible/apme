@@ -1,10 +1,16 @@
 """Convert between dict violations (validator output) and proto Violation."""
 
+import json
 from collections.abc import Mapping
 
 from apme.v1 import common_pb2
 from apme.v1.common_pb2 import LineRange, Violation
 from apme_engine.engine.models import RemediationClass, RemediationResolution, RuleScope, ViolationDict
+from apme_engine.graph.audit_metadata import (
+    AUDIT_JSON_METADATA_KEYS,
+    sanitize_audit_metadata_value,
+    serialize_audit_metadata_value,
+)
 from apme_engine.graph.severity import (
     Severity,
     get_severity,
@@ -54,8 +60,13 @@ _METADATA_KEYS = frozenset(
         "ai_reason",
         "ai_suggestion",
         "ansible_core_version",
+        "variables_used",
+        "variable_set",
+        "inbound_src",
     }
 )
+
+_JSON_METADATA_KEYS = AUDIT_JSON_METADATA_KEYS
 
 _REMEDIATION_CLASS_TO_PROTO: dict[str, int] = {
     RemediationClass.AUTO_FIXABLE.value: common_pb2.REMEDIATION_CLASS_AUTO_FIXABLE,  # type: ignore[attr-defined]
@@ -219,7 +230,30 @@ def violation_dict_to_proto(v: ViolationDict | Mapping[str, str | int | list[int
     for key in _METADATA_KEYS:
         val = v.get(key)
         if val is not None:
-            if isinstance(val, list):
+            if key in _JSON_METADATA_KEYS:
+                if isinstance(val, str):
+                    try:
+                        parsed = json.loads(val)
+                    except json.JSONDecodeError:
+                        out.metadata[key] = val
+                    else:
+                        sanitized = sanitize_audit_metadata_value(key, parsed)
+                        serialized = serialize_audit_metadata_value(
+                            sanitized,
+                            rule_id=str(v.get("rule_id") or ""),
+                            key=key,
+                        )
+                        if serialized is not None:
+                            out.metadata[key] = serialized
+                else:
+                    serialized = serialize_audit_metadata_value(
+                        val,
+                        rule_id=str(v.get("rule_id") or ""),
+                        key=key,
+                    )
+                    if serialized is not None:
+                        out.metadata[key] = serialized
+            elif isinstance(val, list):
                 out.metadata[key] = ",".join(str(x) for x in val)
             else:
                 out.metadata[key] = str(val)
@@ -279,10 +313,19 @@ def violation_proto_to_dict(v: Violation) -> ViolationDict:
     if v.affected_children > 0:
         result["affected_children"] = v.affected_children
 
+    module_fqcn = v.metadata.get("resolved_fqcn") or v.metadata.get("original_module") or v.metadata.get("fqcn") or ""
+    if module_fqcn:
+        result["module_fqcn"] = module_fqcn
+
     for key, val in v.metadata.items():
         if key in _METADATA_KEYS and val:
             if key == "redirect_chain":
                 result[key] = val.split(",")  # type: ignore[assignment]
+            elif key in _JSON_METADATA_KEYS:
+                try:
+                    result[key] = json.loads(val)
+                except json.JSONDecodeError:
+                    result[key] = val
             else:
                 result[key] = val
 

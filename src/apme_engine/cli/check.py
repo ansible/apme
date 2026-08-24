@@ -20,7 +20,6 @@ from apme.v1.engine_pb2 import (
     FixReport,
     SessionCommand,
 )
-from apme_engine.cli._convert import violation_proto_to_dict
 from apme_engine.cli._exit_codes import EXIT_ERROR, EXIT_VIOLATIONS
 from apme_engine.cli._galaxy_config import discover_galaxy_servers
 from apme_engine.cli._models import ViolationDict
@@ -36,6 +35,7 @@ from apme_engine.cli.output import (
 )
 from apme_engine.cli.sarif import violations_to_sarif
 from apme_engine.daemon.chunked_fs import yield_scan_chunks
+from apme_engine.daemon.violation_convert import violation_proto_to_dict
 from apme_engine.remediation.partition import count_by_remediation_class, count_by_resolution
 
 _SAFE_SESSION_RE = __import__("re").compile(r"^[A-Za-z0-9_\-]+$")

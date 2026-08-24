@@ -193,6 +193,7 @@ async def test_report_fix_deduplicates_duplicate_python_packages() -> None:
         source="cli",
         manifest=manifest,
     )
+
     await servicer.ReportFixCompleted(event, _mock_context())
 
     async with get_session() as db:

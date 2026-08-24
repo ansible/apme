@@ -12,7 +12,9 @@ from apme_engine.engine.models import ViolationDict
 from apme_engine.graph.content_graph import (
     ContentGraph,
     ContentNode,
+    EdgeType,
     NodeIdentity,
+    NodeScope,
     NodeType,
 )
 from apme_engine.graph.rule_base import (
@@ -24,7 +26,7 @@ from apme_engine.graph.scanner import (
     rescan_dirty,
     scan,
 )
-from apme_engine.graph.types import RemediationResolution
+from apme_engine.graph.types import RemediationResolution, RuleScope
 from apme_engine.remediation.graph_engine import (
     GraphRemediationEngine,
     splice_modifications,
@@ -83,6 +85,44 @@ def _make_node(
     )
 
 
+def _make_play_task_graph(*, task_module: str = "apt") -> tuple[ContentGraph, ContentNode, ContentNode, ContentNode]:
+    """Build a playbook graph with one play containing one task.
+
+    Args:
+        task_module: Module name to assign to the task node.
+
+    Returns:
+        Tuple of ``(graph, playbook, play, task)``.
+    """
+    graph = ContentGraph()
+    playbook = ContentNode(
+        identity=NodeIdentity(path="site.yml", node_type=NodeType.PLAYBOOK),
+        file_path="/workspace/site.yml",
+        scope=NodeScope.OWNED,
+    )
+    play = ContentNode(
+        identity=NodeIdentity(path="site.yml/plays[0]", node_type=NodeType.PLAY),
+        file_path="/workspace/site.yml",
+        line_start=1,
+        scope=NodeScope.OWNED,
+    )
+    task = ContentNode(
+        identity=NodeIdentity(path="site.yml/plays[0]/tasks[0]", node_type=NodeType.TASK),
+        file_path="/workspace/site.yml",
+        line_start=3,
+        line_end=6,
+        module=task_module,
+        yaml_lines=_TASK_YAML_APT if task_module == "apt" else _TASK_YAML_FQCN,
+        scope=NodeScope.OWNED,
+    )
+    graph.add_node(playbook)
+    graph.add_node(play)
+    graph.add_node(task)
+    graph.add_edge(playbook.node_id, play.node_id, EdgeType.CONTAINS)
+    graph.add_edge(play.node_id, task.node_id, EdgeType.CONTAINS)
+    return graph, playbook, play, task
+
+
 class _FQCNRule(GraphRule):
     """Mock rule that flags non-FQCN module names."""
 
@@ -119,6 +159,49 @@ class _AlwaysPassRule(GraphRule):
 
     def process(self, graph: ContentGraph, node_id: str) -> GraphRuleResult | None:
         return GraphRuleResult(verdict=False, node_id=node_id)
+
+
+class _PlayAggregateRule(GraphRule):
+    """Mock play-scoped rule that reflects descendant task module state."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            rule_id="R402",
+            description="Play still contains short module names",
+            enabled=True,
+            precedence=5,
+            scope=RuleScope.PLAY,
+        )
+
+    def match(self, graph: ContentGraph, node_id: str) -> bool:
+        node = graph.get_node(node_id)
+        return node is not None and node.node_type == NodeType.PLAY
+
+    def process(self, graph: ContentGraph, node_id: str) -> GraphRuleResult | None:
+        node = graph.get_node(node_id)
+        if node is None:
+            return None
+        short_modules = []
+        for desc_id in graph.structural_descendants(node_id):
+            desc = graph.get_node(desc_id)
+            if desc is None or desc.node_type != NodeType.TASK:
+                continue
+            if desc.module and "." not in desc.module:
+                short_modules.append(desc.module)
+        if not short_modules:
+            return GraphRuleResult(
+                rule=self.get_metadata(),
+                verdict=False,
+                node_id=node_id,
+                file=(node.file_path, node.line_start or 0),
+            )
+        return GraphRuleResult(
+            rule=self.get_metadata(),
+            verdict=True,
+            node_id=node_id,
+            file=(node.file_path, node.line_start or 0),
+            detail={"message": f"Play references short modules: {', '.join(sorted(short_modules))}"},
+        )
 
 
 def _fqcn_transform(task: CommentedMap, violation: ViolationDict) -> bool:
@@ -203,6 +286,18 @@ class TestRescanDirty:
         report = rescan_dirty(graph, [_FQCNRule()], frozenset({n.node_id}))
         assert report.nodes_scanned == 1
         assert not graph_report_to_violations(report)
+
+    def test_play_scoped_rules_rescan_enclosing_play(self) -> None:
+        """Dirty task rescans enclosing play when a play-scoped rule is enabled."""
+        graph, _playbook, play, task = _make_play_task_graph(task_module="apt")
+
+        report = rescan_dirty(graph, [_PlayAggregateRule()], frozenset({task.node_id}))
+
+        assert report.nodes_scanned == 2
+        violations = graph_report_to_violations(report)
+        assert len(violations) == 1
+        assert violations[0]["rule_id"] == "R402"
+        assert violations[0]["path"] == play.node_id
 
 
 # ---------------------------------------------------------------------------
@@ -387,6 +482,20 @@ class TestGraphRemediationEngine:
         fixed = graph.query_violations(status="fixed")
         assert len(fixed) >= 1
         assert any(v["rule_id"] == "M001" for v in fixed)
+        assert graph.collect_violations() == []
+
+    async def test_play_scoped_violation_resolved_after_task_fix(self) -> None:
+        """Aggregate play violations are resolved when descendant tasks are fixed."""
+        graph, _playbook, _play, _task = _make_play_task_graph(task_module="apt")
+        rules: list[GraphRule] = [_FQCNRule(), _PlayAggregateRule()]
+        registry = _build_registry_with_fqcn()
+
+        engine = GraphRemediationEngine(registry, graph, rules)
+        await engine.remediate()
+
+        fixed = graph.query_violations(status="fixed")
+        assert any(v["rule_id"] == "M001" for v in fixed)
+        assert any(v["rule_id"] == "R402" for v in fixed)
         assert graph.collect_violations() == []
 
     async def test_progress_callback(self) -> None:

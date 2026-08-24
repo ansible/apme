@@ -150,7 +150,7 @@ def _scan_collection(
         logger.debug("No ContentGraph for collection %s %s", fqcn, version)
         return []
 
-    rules = load_graph_rules(
+    rules, _ = load_graph_rules(
         rules_dir=native_rules_dir(),
         rule_id_list=list(CURATED_RULE_IDS),
     )

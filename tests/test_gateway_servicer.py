@@ -102,6 +102,67 @@ async def test_report_fix_with_violations() -> None:
     assert scan.violations[0].rule_id == "L001"
 
 
+async def test_report_fix_persists_structured_audit_metadata() -> None:
+    """Audit metadata JSON strings are decoded once before Gateway persistence."""
+    import json
+
+    servicer = ReportingServicer()
+    payload = [{"name": "my_var", "source": "play", "task": "tasks[0]"}]
+    viol = common_pb2.Violation(
+        rule_id="R402",
+        severity=common_pb2.SEVERITY_INFO,
+        message="audit",
+        file="a.yml",
+        line=1,
+        metadata={"variables_used": json.dumps(payload)},
+    )
+    event = reporting_pb2.FixCompletedEvent(
+        scan_id="audit-scan",
+        session_id="sess-1",
+        project_path="/p",
+        remaining_violations=[viol],
+    )
+    await servicer.ReportFixCompleted(event, _mock_context())
+
+    async with get_session() as db:
+        scan = await q.get_scan(db, "audit-scan")
+    assert scan is not None
+    assert len(scan.violations) == 1
+    stored = json.loads(scan.violations[0].audit_metadata)
+    assert stored["variables_used"] == payload
+
+
+async def test_report_fix_resanitizes_variable_set_before_persistence() -> None:
+    """Gateway persistence scrubs cleartext values from audit metadata blobs."""
+    import json
+
+    servicer = ReportingServicer()
+    payload = [{"name": "db_password", "value": "s3cret", "source": "play"}]
+    viol = common_pb2.Violation(
+        rule_id="R404",
+        severity=common_pb2.SEVERITY_INFO,
+        message="audit",
+        file="a.yml",
+        line=1,
+        metadata={"variable_set": json.dumps(payload)},
+    )
+    event = reporting_pb2.FixCompletedEvent(
+        scan_id="audit-r404",
+        session_id="sess-1",
+        project_path="/p",
+        remaining_violations=[viol],
+    )
+    await servicer.ReportFixCompleted(event, _mock_context())
+
+    async with get_session() as db:
+        scan = await q.get_scan(db, "audit-r404")
+    assert scan is not None
+    assert len(scan.violations) == 1
+    stored = json.loads(scan.violations[0].audit_metadata)
+    assert stored["variable_set"][0]["name"] == "[REDACTED]"
+    assert stored["variable_set"][0]["value"] == "[REDACTED]"
+
+
 async def test_report_fix_with_logs() -> None:
     """Pipeline logs in the event are persisted."""
     servicer = ReportingServicer()

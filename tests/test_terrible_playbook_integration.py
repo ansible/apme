@@ -101,7 +101,7 @@ def _run_graph_rules(graph: ContentGraph) -> list[ViolationDict]:
     Returns:
         List of violation dicts.
     """
-    rules = load_graph_rules(rules_dir=str(_native_rules_dir()))
+    rules, _ = load_graph_rules(rules_dir=str(_native_rules_dir()))
     report = graph_scan(graph, rules)
     return graph_report_to_violations(report)
 

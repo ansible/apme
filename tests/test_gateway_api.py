@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -209,6 +210,39 @@ async def test_get_scan_detail_with_children(client: AsyncClient) -> None:
     assert len(body["proposals"]) == 1
     assert body["proposals"][0]["status"] == "approved"
     assert len(body["logs"]) == 1
+
+
+async def test_get_scan_detail_resanitizes_audit_metadata(client: AsyncClient) -> None:
+    """Activity detail re-sanitizes persisted audit metadata on read.
+
+    Args:
+        client: Async HTTP test client.
+    """
+    await _seed(add_violation=False)
+    async with get_session() as db:
+        db.add(
+            Violation(
+                scan_id="scan-1",
+                rule_id="R404",
+                level="info",
+                message="audit",
+                file="a.yml",
+                line=5,
+                audit_metadata=json.dumps(
+                    {"variable_set": [{"name": "db_password", "value": "s3cret", "source": "play"}]}
+                ),
+            )
+        )
+        await db.commit()
+
+    resp = await client.get("/api/v1/activity/scan-1")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body["violations"]) == 1
+    audit = body["violations"][0]["audit_metadata"]
+    assert audit is not None
+    assert audit["variable_set"][0]["name"] == "[REDACTED]"
+    assert audit["variable_set"][0]["value"] == "[REDACTED]"
 
 
 async def test_get_scan_not_found(client: AsyncClient) -> None:

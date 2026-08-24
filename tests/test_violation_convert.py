@@ -187,6 +187,66 @@ class TestViolationDictToProto:
         assert proto.node_type == ""
         assert list(proto.co_fixes) == []
 
+    def test_audit_json_metadata_round_trip(self) -> None:
+        """JSON audit metadata survives proto conversion."""
+        import json
+
+        payload: list[dict[str, str]] = [{"name": "nginx_port", "value": "8080", "source": "play"}]
+        v: ViolationDict = {
+            "rule_id": "R404",
+            "variable_set": json.dumps(payload),
+        }
+        proto = violation_dict_to_proto(v)
+        assert json.loads(proto.metadata["variable_set"]) == payload
+        restored = violation_proto_to_dict(proto)
+        restored_val = restored.get("variable_set")
+        assert json.dumps(restored_val, sort_keys=True) == json.dumps(payload, sort_keys=True)
+
+    def test_audit_json_metadata_preserialized_string_is_sanitized(self) -> None:
+        """Pre-serialized audit JSON is re-sanitized before proto persistence."""
+        import json
+
+        payload: list[dict[str, str]] = [{"name": "db_password", "value": "s3cret", "source": "play"}]
+        v: ViolationDict = {
+            "rule_id": "R404",
+            "variable_set": json.dumps(payload),
+        }
+        proto = violation_dict_to_proto(v)
+        stored = json.loads(proto.metadata["variable_set"])
+        assert stored[0]["name"] == "[REDACTED]"
+        assert stored[0]["value"] == "[REDACTED]"
+
+    def test_variables_used_preserialized_string_is_sanitized(self) -> None:
+        """Pre-serialized variables_used JSON is re-sanitized before persistence."""
+        import json
+
+        payload: list[dict[str, str]] = [{"name": "db_password", "source": "play", "task": "tasks[0]"}]
+        v: ViolationDict = {
+            "rule_id": "R402",
+            "variables_used": json.dumps(payload),
+        }
+        proto = violation_dict_to_proto(v)
+        stored = json.loads(proto.metadata["variables_used"])
+        assert stored[0]["name"] == "[REDACTED]"
+
+    def test_audit_json_metadata_invalid_json_passthrough(self) -> None:
+        """Malformed audit JSON in proto metadata round-trips as raw string."""
+        proto = Violation(rule_id="R404")
+        proto.metadata["variable_set"] = "not-json"
+        restored = violation_proto_to_dict(proto)
+        assert restored.get("variable_set") == "not-json"
+
+
+class TestCheckCliConverter:
+    """Ensure check uses the full daemon violation converter."""
+
+    def test_check_imports_daemon_converter(self) -> None:
+        """check.py must expose audit metadata via daemon violation_convert."""
+        from apme_engine.cli import check as check_mod
+        from apme_engine.daemon.violation_convert import violation_proto_to_dict as daemon_fn
+
+        assert check_mod.violation_proto_to_dict is daemon_fn
+
 
 class TestViolationProtoToDict:
     """Tests for converting proto violations to dict."""
@@ -208,6 +268,16 @@ class TestViolationProtoToDict:
         assert d["file"] == "playbook.yml"
         assert d["line"] == 10
         assert d["path"] == "tasks"
+
+    def test_module_fqcn_synthesized_from_metadata(self) -> None:
+        """CLI JSON includes consolidated module_fqcn from proto metadata."""
+        proto = Violation(
+            rule_id="L046",
+            metadata={"resolved_fqcn": "ansible.builtin.command"},
+        )
+        d = violation_proto_to_dict(proto)
+        assert d.get("module_fqcn") == "ansible.builtin.command"
+        assert d.get("resolved_fqcn") == "ansible.builtin.command"
 
     def test_severity_critical(self) -> None:
         """Proto SEVERITY_CRITICAL converts to 'critical' label."""
