@@ -247,7 +247,8 @@ _grant_ancestor_traversal() {
       continue
     fi
     # Skip if the mapped UID already has effective execute via ACL.
-    if getfacl -ep "$dir" 2>/dev/null | grep -q "^user:${mapped_uid}:.*x"; then
+    # -e: effective perms (ACL mask); -n: numeric UID so name lookup cannot miss.
+    if getfacl -enp "$dir" 2>/dev/null | grep -q "^user:${mapped_uid}:.*x"; then
       continue
     fi
     setfacl -m "u:${mapped_uid}:x" "$dir" || {

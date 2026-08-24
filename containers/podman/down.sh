@@ -9,6 +9,59 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
+# Host UID for a container UID (rootless uid_map: ns_uid host_uid count).
+_host_uid_for_container_uid() {
+  local cuid="$1"
+  local mapped
+  mapped=$(podman unshare awk -v cuid="$cuid" '
+    BEGIN { found = 0 }
+    {
+      inside_ns = $1; outside_ns = $2; count = $3
+      if (cuid >= inside_ns && cuid < inside_ns + count) {
+        print outside_ns + (cuid - inside_ns)
+        found = 1
+        exit
+      }
+    }
+    END { exit !found }
+  ' /proc/self/uid_map) || return 1
+  echo "$mapped"
+}
+
+# Revoke traversal ACLs recorded by up.sh. Keep the state file (and fail) if
+# any entry still has the mapped-UID ACL after this pass.
+_revoke_traversal_acls() {
+  local state_file="$1"
+  local mapped="$2"
+  local dir acl failed=0 tmp
+  tmp="${state_file}.tmp"
+  : > "$tmp"
+  while IFS= read -r dir; do
+    [[ -n "$dir" ]] || continue
+    if ! acl=$(getfacl -np "$dir" 2>/dev/null); then
+      echo "ERROR: could not read ACL on $dir" >&2
+      printf '%s\n' "$dir" >> "$tmp"
+      failed=1
+      continue
+    fi
+    if ! grep -q "^user:${mapped}:" <<<"$acl"; then
+      continue
+    fi
+    if setfacl -x "u:${mapped}" "$dir" 2>/dev/null; then
+      echo "Revoked traversal ACL for UID $mapped on $dir"
+    else
+      echo "ERROR: could not revoke traversal ACL for UID $mapped on $dir" >&2
+      printf '%s\n' "$dir" >> "$tmp"
+      failed=1
+    fi
+  done < "$state_file"
+  if (( failed )); then
+    mv "$tmp" "$state_file"
+    return 1
+  fi
+  rm -f "$tmp" "$state_file"
+}
+
 echo "Stopping apme-pod..."
 podman pod stop apme-pod 2>/dev/null || true
 podman pod rm  apme-pod 2>/dev/null || true
@@ -62,36 +115,15 @@ if [[ "${1:-}" == "--wipe" ]]; then
 
   # Revoke traversal ACLs granted on $HOME ancestors for rootless Abbenay
   # config access (see up.sh _grant_ancestor_traversal / #528).
-  if command -v podman >/dev/null 2>&1 && command -v setfacl >/dev/null 2>&1; then
-    _host_uid_for_container_uid() {
-      local cuid="$1"
-      local mapped
-      mapped=$(podman unshare awk -v cuid="$cuid" '
-        BEGIN { found = 0 }
-        {
-          inside_ns = $1; outside_ns = $2; count = $3
-          if (cuid >= inside_ns && cuid < inside_ns + count) {
-            print outside_ns + (cuid - inside_ns)
-            found = 1
-            exit
-          }
-        }
-        END { exit !found }
-      ' /proc/self/uid_map) || return 1
-      echo "$mapped"
-    }
+  if command -v podman >/dev/null 2>&1 \
+    && command -v setfacl >/dev/null 2>&1 \
+    && command -v getfacl >/dev/null 2>&1; then
     mapped=$(_host_uid_for_container_uid 1001 2>/dev/null) || mapped=""
-    if [[ -n "$mapped" ]]; then
-      local state_file="${APME_CACHE_HOST_PATH:-${XDG_CACHE_HOME:-$HOME/.cache}/apme}/.traversal-acls"
-      if [[ -f "$state_file" ]]; then
-        while IFS= read -r dir; do
-          [[ -n "$dir" ]] || continue
-          if getfacl -p "$dir" 2>/dev/null | grep -q "^user:${mapped}:"; then
-            setfacl -x "u:${mapped}" "$dir" 2>/dev/null && \
-              echo "Revoked traversal ACL for UID $mapped on $dir"
-          fi
-        done < "$state_file"
-        rm -f "$state_file"
+    state_file="$CACHE_PATH/.traversal-acls"
+    if [[ -n "$mapped" && -f "$state_file" ]]; then
+      if ! _revoke_traversal_acls "$state_file" "$mapped"; then
+        echo "ERROR: traversal ACL cleanup incomplete; kept $state_file" >&2
+        exit 1
       fi
     fi
   fi
