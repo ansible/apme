@@ -427,7 +427,7 @@ def _no_log_any_play_scoped_path(graph: ContentGraph, node_id: str, play_scope: 
     def walk(current_id: str, path: tuple[str, ...]) -> bool:
         if current_id in path:
             return False
-        next_path = path + (current_id,)
+        next_path = (*path, current_id)
         if next_path in seen_paths:
             return False
         seen_paths.add(next_path)

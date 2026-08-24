@@ -8,7 +8,6 @@ from apme.v1.common_pb2 import LineRange, Violation
 from apme_engine.engine.models import RemediationClass, RemediationResolution, RuleScope, ViolationDict
 from apme_engine.graph.audit_metadata import (
     AUDIT_JSON_METADATA_KEYS,
-    sanitize_audit_metadata_value,
     serialize_audit_metadata_value,
 )
 from apme_engine.graph.severity import (
@@ -231,35 +230,19 @@ def violation_dict_to_proto(v: ViolationDict | Mapping[str, str | int | list[int
         val = v.get(key)
         if val is not None:
             if key in _JSON_METADATA_KEYS:
+                payload: object = val
                 if isinstance(val, str):
                     try:
-                        parsed = json.loads(val)
+                        payload = json.loads(val)
                     except json.JSONDecodeError:
-                        sanitized = sanitize_audit_metadata_value(key, val)
-                        serialized = serialize_audit_metadata_value(
-                            sanitized,
-                            rule_id=str(v.get("rule_id") or ""),
-                            key=key,
-                        )
-                        if serialized is not None:
-                            out.metadata[key] = serialized
-                    else:
-                        sanitized = sanitize_audit_metadata_value(key, parsed)
-                        serialized = serialize_audit_metadata_value(
-                            sanitized,
-                            rule_id=str(v.get("rule_id") or ""),
-                            key=key,
-                        )
-                        if serialized is not None:
-                            out.metadata[key] = serialized
-                else:
-                    serialized = serialize_audit_metadata_value(
-                        val,
-                        rule_id=str(v.get("rule_id") or ""),
-                        key=key,
-                    )
-                    if serialized is not None:
-                        out.metadata[key] = serialized
+                        payload = val
+                serialized = serialize_audit_metadata_value(
+                    payload,
+                    rule_id=str(v.get("rule_id") or ""),
+                    key=key,
+                )
+                if serialized is not None:
+                    out.metadata[key] = serialized
             elif isinstance(val, list):
                 out.metadata[key] = ",".join(str(x) for x in val)
             else:
