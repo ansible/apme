@@ -333,6 +333,28 @@ class TestGetTestCache:
         for rid in ("M001", "M002", "M003", "M004"):
             assert "test_ansible_cache.py" in cache.get(rid, [])
 
+    def test_parenthesized_grouped_module_import_expands_rule_range(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Parenthesized multiline imports still credit grouped rule modules.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+            monkeypatch: Pytest monkeypatch fixture.
+        """
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        test_file = tests_dir / "test_ansible_cache_paren.py"
+        test_file.write_text(
+            "from apme_engine.validators.ansible.rules import (\n    M001_M004_introspect,\n)\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(_mod, "TESTS_DIR", tests_dir)
+        monkeypatch.setattr(_mod, "_TEST_CACHE", None)
+        cache = _mod._get_test_cache()
+        for rid in ("M001", "M002", "M003", "M004"):
+            assert "test_ansible_cache_paren.py" in cache.get(rid, [])
+
     def test_incidental_string_literal_excluded(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """String literals mentioning a rule ID without imports are incidental.
 

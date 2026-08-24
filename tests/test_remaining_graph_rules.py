@@ -2640,7 +2640,7 @@ class TestR404ShowVariablesGraphRule:
         Args:
             rule: Rule instance under test (unused; kept for fixture symmetry).
         """
-        secret = "mysql://user:secret@db.example.com/prod"
+        secret = "mysql://user:secret@db.example.com/prod"  # noqa: S105
         assert value_looks_sensitive(secret)
         sanitized = sanitize_audit_metadata_value(
             "variable_set",
@@ -2657,7 +2657,7 @@ class TestR404ShowVariablesGraphRule:
         Args:
             rule: Rule instance under test (unused; kept for fixture symmetry).
         """
-        token = "sk-live-abc123xyz"
+        token = "sk-live-abc123xyz"  # noqa: S105
         assert value_looks_sensitive(token)
         sanitized = sanitize_audit_metadata_value(
             "variable_set",

@@ -19,6 +19,7 @@ Outputs:
 
 from __future__ import annotations
 
+import ast
 import re
 import sys
 from dataclasses import dataclass, field
@@ -205,6 +206,31 @@ def _rule_ids_from_module_name(module_fragment: str) -> set[str]:
     return {f"{letter}{i:0{width}d}" for i in range(start, end + 1)}
 
 
+def _rule_ids_from_imports(text: str) -> set[str]:
+    """Extract rule IDs from ``from ... import`` statements (incl. parenthesized).
+
+    Args:
+        text: Python source of a test module.
+
+    Returns:
+        Rule IDs implied by imported module fragments and symbol names.
+    """
+    ids: set[str] = set()
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return ids
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        if node.module:
+            for fragment in node.module.split("."):
+                ids.update(_rule_ids_from_module_name(fragment))
+        for alias in node.names:
+            ids.update(_rule_ids_from_module_name(alias.name))
+    return ids
+
+
 _TEST_CACHE: dict[str, list[str]] | None = None
 
 
@@ -250,9 +276,7 @@ def _get_test_cache() -> dict[str, list[str]]:
             rid = (m.group(1) or m.group(2) or (m.group(3) or "").upper()).strip()
             if rid:
                 seen_ids.add(rid)
-        for m in re.finditer(r"from\s+([\w.]+)\s+import\s+([\w, ]+)", text):
-            for fragment in (*m.group(1).split("."), *(n.strip() for n in m.group(2).split(","))):
-                seen_ids.update(_rule_ids_from_module_name(fragment))
+        seen_ids.update(_rule_ids_from_imports(text))
         for rid in seen_ids:
             cache.setdefault(rid, [])
             if rel not in cache[rid]:
