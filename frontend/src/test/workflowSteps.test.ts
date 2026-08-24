@@ -26,19 +26,23 @@ function baseState(
 }
 
 describe('workflowStepDefs', () => {
-  it('omits AI steps when AI is off but always includes Commit', () => {
-    expect(workflowStepDefs(false).map((s) => s.id)).toEqual([
+  it('uses simplified Apply findings step when AI is off (AAP-88780)', () => {
+    const defs = workflowStepDefs(false);
+    expect(defs.map((s) => s.id)).toEqual([
       'scan',
       'findings',
-      'tier1_proposals',
-      'tier1_applied',
+      'apply_findings',
       'commit',
       'complete',
     ]);
+    expect(defs.find((s) => s.id === 'apply_findings')?.label).toBe('Apply findings');
+    expect(defs.find((s) => s.id === 'commit')?.label).toBe('Create branch');
+    expect(defs.find((s) => s.id === 'complete')?.label).toBe('Commit');
   });
 
-  it('includes AI steps when AI is on', () => {
-    expect(workflowStepDefs(true).map((s) => s.id)).toEqual([
+  it('includes AI steps with separate tier1 when AI is on', () => {
+    const defs = workflowStepDefs(true);
+    expect(defs.map((s) => s.id)).toEqual([
       'scan',
       'findings',
       'tier1_proposals',
@@ -49,9 +53,14 @@ describe('workflowStepDefs', () => {
       'commit',
       'complete',
     ]);
-    expect(workflowStepDefs(true).find((s) => s.id === 'ai_escalation')?.label).toBe(
+    expect(defs.find((s) => s.id === 'ai_escalation')?.label).toBe(
       'AI escalation',
     );
+    expect(defs.find((s) => s.id === 'tier1_proposals')?.label).toBe(
+      'Rule-based fix proposals',
+    );
+    expect(defs.find((s) => s.id === 'commit')?.label).toBe('Create branch');
+    expect(defs.find((s) => s.id === 'complete')?.label).toBe('Commit');
   });
 });
 
@@ -76,7 +85,7 @@ describe('resolveCurrentWorkflowStep', () => {
     ).toBe('findings');
   });
 
-  it('uses Quick-fix proposals for Gate 1 awaiting_approval', () => {
+  it('uses apply_findings for Gate 1 awaiting_approval when AI is off (AAP-88780)', () => {
     const state = baseState({
       status: 'awaiting_approval',
       proposals: [
@@ -92,6 +101,26 @@ describe('resolveCurrentWorkflowStep', () => {
     });
     const latch = updateWorkflowLatch(emptyWorkflowLatch(), state, false);
     expect(resolveCurrentWorkflowStep(state, false, latch)).toBe(
+      'apply_findings',
+    );
+  });
+
+  it('uses tier1_proposals for Gate 1 awaiting_approval when AI is on', () => {
+    const state = baseState({
+      status: 'awaiting_approval',
+      proposals: [
+        {
+          id: 't1-1',
+          rule_id: 'M001',
+          file: 'a.yml',
+          tier: 1,
+          confidence: 1,
+          source: 'deterministic',
+        },
+      ],
+    });
+    const latch = updateWorkflowLatch(emptyWorkflowLatch(), state, true);
+    expect(resolveCurrentWorkflowStep(state, true, latch)).toBe(
       'tier1_proposals',
     );
   });
@@ -305,7 +334,7 @@ describe('shouldIncludeAiSteps', () => {
 });
 
 describe('stepVisualState', () => {
-  it('marks prior steps success and current info', () => {
+  it('marks prior steps success and current info (non-AI)', () => {
     const defs = workflowStepDefs(false);
     expect(stepVisualState('scan', 'findings', defs, 'assessed')).toEqual({
       variant: 'success',
@@ -314,6 +343,17 @@ describe('stepVisualState', () => {
     expect(stepVisualState('findings', 'findings', defs, 'assessed')).toEqual({
       variant: 'info',
       isCurrent: true,
+    });
+    expect(
+      stepVisualState('apply_findings', 'findings', defs, 'assessed'),
+    ).toEqual({ variant: 'pending', isCurrent: false });
+  });
+
+  it('marks prior steps success and current info (AI)', () => {
+    const defs = workflowStepDefs(true);
+    expect(stepVisualState('scan', 'findings', defs, 'assessed')).toEqual({
+      variant: 'success',
+      isCurrent: false,
     });
     expect(
       stepVisualState('tier1_proposals', 'findings', defs, 'assessed'),

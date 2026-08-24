@@ -581,7 +581,7 @@ export function AssessFindingsPanel({
           },
           {
             key: 'auto',
-            label: 'Quick-fix',
+            label: 'Rule-based fix',
             primary: inventory.autoFindings,
             secondary: inventory.autoNodes,
             tone: 'auto',
@@ -612,7 +612,7 @@ export function AssessFindingsPanel({
 
   const nextSummary =
     inventory.autoFindings > 0
-      ? `Move on to remediation — review quick-fix proposals for ${findingsPhrase(inventory.autoFindings)} (same session, no rescan).`
+      ? `Move on to remediation — review rule-based fix proposals for ${findingsPhrase(inventory.autoFindings)} (same session, no rescan).`
       : 'Move on to remediation — continue this session to review any available fixes (no rescan).';
 
   return (

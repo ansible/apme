@@ -26,11 +26,11 @@ export function Tier1ResultsPanel({ tier1 }: Tier1ResultsPanelProps) {
       <CardBody>
         <Split hasGutter>
           <SplitItem>
-            <Label color="green" isCompact>Auto-Fix</Label>
+            <Label color="green" isCompact>Rule-based fix</Label>
           </SplitItem>
           <SplitItem isFilled>
             <h3>
-              Quick-fix — {patchCount} fix{patchCount !== 1 ? 'es' : ''} applied
+              Rule-based fix — {patchCount} fix{patchCount !== 1 ? 'es' : ''} applied
               {formatCount > 0 && `, ${formatCount} formatted`}
             </h3>
           </SplitItem>
