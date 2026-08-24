@@ -731,7 +731,7 @@ def generate_remediation_report() -> str:
     ]
     tier3_reasons = (
         "info severity",
-        "cross-file (R111/R112)",
+        "cross-file / data-flow context",
         "playbook scope",
         "collection scope",
         "role scope",

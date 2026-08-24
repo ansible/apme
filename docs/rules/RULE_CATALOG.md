@@ -51,8 +51,8 @@ Routing follows `src/apme_engine/remediation/partition.py` (ADR-026 scope metada
 | Tier | Label | Count | Routing |
 |------|-------|-------|---------|
 | 1 | auto | 25 | Deterministic transform in registry — applied by `apme remediate` |
-| 2 | ai | 69 | Task/block scope, no fixer — AI proposes patch (Abbenay) |
-| 3 | manual | 63 | Play/role/collection scope, cross-file, or info severity |
+| 2 | ai | 67 | Task/block scope, no fixer — AI proposes patch (Abbenay) |
+| 3 | manual | 65 | Play/role/collection scope, cross-file, or info severity |
 
 Full analysis and promotion candidates: [REMEDIATION_TIER_REPORT.md](REMEDIATION_TIER_REPORT.md).
 
@@ -65,7 +65,7 @@ Full analysis and promotion candidates: [REMEDIATION_TIER_REPORT.md](REMEDIATION
 | L003 | L | OPA | low | play | manual | Each play should have a name. | Yes | Yes | Yes | — |
 | L004 | L | OPA | high | task | ai | Do not use deprecated modules. | Yes | Yes | Yes | — |
 | L005 | L | OPA | low | task | auto | Community collection module detected; use certified or validated collections. | Yes | Yes | Yes | Yes |
-| L006 | L | OPA | low | task | ai | Use dedicated module instead of command. | Yes | Yes | Yes | — |
+| L006 | L | OPA | low | task | manual | Use dedicated module instead of command. | Yes | Yes | Yes | — |
 | L007 | L | OPA | low | task | auto | Prefer command when no shell features needed. | Yes | Yes | Yes | Yes |
 | L008 | L | OPA | low | task | auto | Use delegate_to: localhost instead of local_action. | Yes | Yes | Yes | Yes |
 | L009 | L | OPA | medium | task | auto | Avoid comparison to empty string in when. | Yes | Yes | Yes | Yes |
@@ -137,7 +137,7 @@ Full analysis and promotion candidates: [REMEDIATION_TIER_REPORT.md](REMEDIATION
 | L077 | L | Native | low | role | manual | Roles should have meta/argument_specs.yml for fail-fast parameter validation. | Yes | Yes | Yes | — |
 | L078 | L | Native | low | task | ai | Use bracket notation for dict key access in Jinja. | Yes | Yes | Yes | — |
 | L079 | L | Native | low | role | manual | Role defaults/vars should be prefixed with the role name. | Yes | Yes | Yes | — |
-| L080 | L | Native | low | task | ai | Internal role variables should be prefixed with _ (underscore). | Yes | Yes | Yes | — |
+| L080 | L | Native | low | task | manual | Internal role variables should be prefixed with _ (underscore). | Yes | Yes | Yes | — |
 | L081 | L | Native | low | playbook | manual | Do not number roles or playbooks. | Yes | Yes | Yes | — |
 | L082 | L | Native | low | task | ai | Template source files should use .j2 extension. | Yes | — | Yes | — |
 | L083 | L | Native | low | task | ai | Do not hardcode host group names in roles. | Yes | Yes | Yes | — |
@@ -227,7 +227,7 @@ Full analysis and promotion candidates: [REMEDIATION_TIER_REPORT.md](REMEDIATION
 | L003 | low | play | manual | Each play should have a name. | Yes | Yes | Yes | — |
 | L004 | high | task | ai | Do not use deprecated modules. | Yes | Yes | Yes | — |
 | L005 | low | task | auto | Community collection module detected; use certified or validated collections. | Yes | Yes | Yes | Yes |
-| L006 | low | task | ai | Use dedicated module instead of command. | Yes | Yes | Yes | — |
+| L006 | low | task | manual | Use dedicated module instead of command. | Yes | Yes | Yes | — |
 | L007 | low | task | auto | Prefer command when no shell features needed. | Yes | Yes | Yes | Yes |
 | L008 | low | task | auto | Use delegate_to: localhost instead of local_action. | Yes | Yes | Yes | Yes |
 | L009 | medium | task | auto | Avoid comparison to empty string in when. | Yes | Yes | Yes | Yes |
@@ -317,7 +317,7 @@ Full analysis and promotion candidates: [REMEDIATION_TIER_REPORT.md](REMEDIATION
 | L077 | low | role | manual | Roles should have meta/argument_specs.yml for fail-fast parameter validation. | Yes | Yes | Yes | — |
 | L078 | low | task | ai | Use bracket notation for dict key access in Jinja. | Yes | Yes | Yes | — |
 | L079 | low | role | manual | Role defaults/vars should be prefixed with the role name. | Yes | Yes | Yes | — |
-| L080 | low | task | ai | Internal role variables should be prefixed with _ (underscore). | Yes | Yes | Yes | — |
+| L080 | low | task | manual | Internal role variables should be prefixed with _ (underscore). | Yes | Yes | Yes | — |
 | L081 | low | playbook | manual | Do not number roles or playbooks. | Yes | Yes | Yes | — |
 | L082 | low | task | ai | Template source files should use .j2 extension. | Yes | — | Yes | — |
 | L083 | low | task | ai | Do not hardcode host group names in roles. | Yes | Yes | Yes | — |
