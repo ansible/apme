@@ -116,6 +116,11 @@ tox -e unit              # run tests
 tox -e ui-workflow-pack   # npm pack (prepack tsc + CSS copy); do not run npm pack directly
 ```
 
+tox substitutes `{name}` in `commands =`. Only use braces for tox placeholders
+(`{env_tmp_dir}`, `{posargs}`). Python set literals and f-strings in
+`python -c` must use `set((...))` / `%s`, not `{...}`.
+
+
 ### "I changed a proto file"
 
 ```bash
