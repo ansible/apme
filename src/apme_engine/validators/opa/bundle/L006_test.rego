@@ -48,3 +48,17 @@ test_L006_does_not_fire_when_command_is_only_jinja if {
 	node := tree.nodes[0]
 	not rules.command_instead_of_module(tree, node)
 }
+
+test_L006_fires_when_cat_has_leading_tab if {
+	tree := {"nodes": [{"type": "taskcall", "module": "ansible.builtin.command", "module_options": {"cmd": "\tcat /etc/hostname"}, "line": [1], "key": "k", "file": "f.yml"}]}
+	node := tree.nodes[0]
+	v := rules.command_instead_of_module(tree, node)
+	v.rule_id == "L006"
+}
+
+test_L006_fires_when_cat_has_tab_separator if {
+	tree := {"nodes": [{"type": "taskcall", "module": "ansible.builtin.command", "module_options": {"cmd": "cat\t/etc/hostname"}, "line": [1], "key": "k", "file": "f.yml"}]}
+	node := tree.nodes[0]
+	v := rules.command_instead_of_module(tree, node)
+	v.rule_id == "L006"
+}

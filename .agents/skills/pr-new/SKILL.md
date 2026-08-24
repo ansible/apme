@@ -189,7 +189,9 @@ artifact type, translate it:
    proven-safe. When the same predicate exists in two languages
    (Rego helper vs Python transform), construct whitespace that one
    trim would drop and the other would keep (`\t` vs `" "` cutset)
-   — "empty" must mean the same thing on both sides.
+   — "empty" must mean the same thing on both sides. After the
+   emptiness check uses ``trim_space``, tokenize/split on that
+   string with the same whitespace class, not ``split(trim(x, " "), " ")``.
    Also construct _temporal_ failures: what happens when an async
    dependency never responds, times out, or responds after the
    consumer has moved on? What happens when `asyncio.gather()`
@@ -356,7 +358,10 @@ critical/high/medium/low.
   vs mapping, servicer vs flush path)
 - Dual implementations of the same predicate (Rego helper vs Python
   transform) that disagree on empty/whitespace (`trim(..., " ")` vs
-  `str.strip()` / `trim_space`)
+  `str.strip()` / `trim_space`). After one path uses ``trim_space``,
+  later tokenize/split on the **same string** must use that whitespace
+  class — ``split(trim(cmd, " "), " ")`` will miss tabs/CRs the
+  emptiness check already treats as blank.
 - Overlay fields that drift (tier/source/gate/status→review must stay
   aligned for all pre-group sources). When a column documents
   "empty means fall back to X" (e.g. ``stamp_rule_ids_json`` →

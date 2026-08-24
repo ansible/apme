@@ -54,6 +54,12 @@ uses_shell_features(cmd) if {
 	contains(stripped, ch)
 }
 
+# Collapse all whitespace so first-token lookup matches trim_space emptiness
+# (tabs/CR, not a space-only cutset).
+normalized_cmd(cmd) := trim_space(regex.replace(cmd, `\s+`, " ")) if {
+	is_string(cmd)
+}
+
 has_with_loop(opts) := key if {
 	some key in object.keys(opts)
 	startswith(key, "with_")
