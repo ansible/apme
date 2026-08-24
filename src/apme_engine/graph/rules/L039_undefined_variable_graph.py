@@ -445,9 +445,14 @@ class UndefinedVariableGraphRule(GraphRule):
             )
 
         resolver = VariableProvenanceResolver(graph)
-        defined = resolver.resolve_variables(node_id)
+        defined = set(resolver.resolve_variables(node_id))
 
-        undefined = sorted(non_magic - set(defined))
+        # The task's own register variable is available in changed_when/failed_when
+        # because those are evaluated post-task execution.
+        if node.register:
+            defined.add(node.register)
+
+        undefined = sorted(non_magic - defined)
         if not undefined:
             return GraphRuleResult(
                 verdict=False,
