@@ -1481,6 +1481,11 @@ def _to_violation_detail(
             if isinstance(parsed_audit, dict):
                 audit_metadata = {key: sanitize_audit_metadata_value(key, value) for key, value in parsed_audit.items()}
         except json.JSONDecodeError:
+            logger.warning(
+                "Failed to parse audit_metadata JSON for violation id=%s rule_id=%s",
+                getattr(v, "id", None),
+                getattr(v, "rule_id", None),
+            )
             audit_metadata = None
     return ViolationDetail(
         id=v.id,  # type: ignore[attr-defined]

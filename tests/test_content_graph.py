@@ -918,48 +918,6 @@ class TestGraphReportToViolations:
         assert violations[1]["line"] == 5
         assert "db-servers" in str(violations[1]["message"])
 
-    def test_nested_violations_all_invalid_falls_back_to_parent(self) -> None:
-        """All-invalid nested violations preserve the parent violation path."""
-        from apme_engine.engine.models import RuleMetadata
-        from apme_engine.graph.rule_base import GraphRuleResult
-        from apme_engine.graph.scanner import (
-            GraphNodeResult,
-            GraphScanReport,
-            graph_report_to_violations,
-        )
-
-        node = ContentNode(
-            identity=NodeIdentity(path="playbook.yml/plays[0]", node_type=NodeType.PLAYBOOK),
-            file_path="playbook.yml",
-            line_start=1,
-        )
-        report = GraphScanReport(
-            node_results=[
-                GraphNodeResult(
-                    node_id="playbook.yml/plays[0]",
-                    node=node,
-                    rule_results=[
-                        GraphRuleResult(
-                            rule=RuleMetadata(rule_id="L111", severity="warning", scope="inventory"),
-                            verdict=True,
-                            detail={
-                                "message": "Parent inventory violation",
-                                "violations": ["invalid"],
-                            },
-                            node_id="playbook.yml/plays[0]",
-                            file=("playbook.yml", 1),
-                        ),
-                    ],
-                ),
-            ],
-        )
-        violations = graph_report_to_violations(report)
-
-        assert len(violations) == 1
-        assert violations[0]["message"] == "Parent inventory violation"
-        assert violations[0]["file"] == "playbook.yml"
-        assert violations[0]["line"] == 1
-
     def test_audit_json_detail_keys_serialized(self) -> None:
         """Audit rule payloads (variables_used, variable_set) survive conversion."""
         import json
@@ -1024,6 +982,48 @@ class TestGraphReportToViolations:
         roundtrip = violation_proto_to_dict(proto)
         assert isinstance(roundtrip["variables_used"], list)
         assert roundtrip["variables_used"] == variables_used
+
+    def test_nested_violations_all_invalid_falls_back_to_parent(self) -> None:
+        """All-invalid nested violations preserve the parent violation path."""
+        from apme_engine.engine.models import RuleMetadata
+        from apme_engine.graph.rule_base import GraphRuleResult
+        from apme_engine.graph.scanner import (
+            GraphNodeResult,
+            GraphScanReport,
+            graph_report_to_violations,
+        )
+
+        node = ContentNode(
+            identity=NodeIdentity(path="playbook.yml/plays[0]", node_type=NodeType.PLAYBOOK),
+            file_path="playbook.yml",
+            line_start=1,
+        )
+        report = GraphScanReport(
+            node_results=[
+                GraphNodeResult(
+                    node_id="playbook.yml/plays[0]",
+                    node=node,
+                    rule_results=[
+                        GraphRuleResult(
+                            rule=RuleMetadata(rule_id="L111", severity="warning", scope="inventory"),
+                            verdict=True,
+                            detail={
+                                "message": "Parent inventory violation",
+                                "violations": ["invalid"],
+                            },
+                            node_id="playbook.yml/plays[0]",
+                            file=("playbook.yml", 1),
+                        ),
+                    ],
+                ),
+            ],
+        )
+        violations = graph_report_to_violations(report)
+
+        assert len(violations) == 1
+        assert violations[0]["message"] == "Parent inventory violation"
+        assert violations[0]["file"] == "playbook.yml"
+        assert violations[0]["line"] == 1
 
     def test_audit_json_skips_non_serializable_values(self) -> None:
         """Non-serializable audit metadata is omitted instead of aborting conversion."""

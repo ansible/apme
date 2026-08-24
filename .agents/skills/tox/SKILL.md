@@ -58,7 +58,6 @@ directly. Every task maps to a `tox -e <env>` command.
 | `tox -e integration` | `pytest tests/integration/` (needs OPA binary) | After engine or validator changes. |
 | `tox -e ai` | `pytest` with AI extras (abbenay) | After AI/remediation changes. |
 | `tox -e ui` | `pytest -m ui` (Playwright, needs running pod) | After Gateway or UI changes. |
-| `tox -e ui-workflow-pack` | `npm pack` for `@apme/ui-workflow` (release tarball) | After `frontend/packages/ui-workflow` or TypeScript changes. |
 
 ### Code generation
 
@@ -98,8 +97,7 @@ directly. Every task maps to a `tox -e <env>` command.
 ### Default set
 
 Running `tox` with no `-e` flag executes: `lint`, `unit`, `integration`, `ai`,
-`ui`. CI also runs `ui-workflow-pack` (needs Node/npm); run it locally after
-`frontend/packages/ui-workflow` changes.
+`ui`. This is the full quality gate.
 
 ## Common Agent Workflows
 
@@ -108,12 +106,6 @@ Running `tox` with no `-e` flag executes: `lint`, `unit`, `integration`, `ai`,
 ```bash
 tox -e lint              # check style + types
 tox -e unit              # run tests
-```
-
-### "I changed frontend/packages/ui-workflow or TypeScript in that package"
-
-```bash
-tox -e ui-workflow-pack   # npm pack (prepack tsc + CSS copy); do not run npm pack directly
 ```
 
 ### "I changed a proto file"
