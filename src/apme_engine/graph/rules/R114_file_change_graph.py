@@ -101,6 +101,11 @@ class FileChangeGraphRule(GraphRule):
                 file=(node.file_path, node.line_start),
             )
 
+        detail["message"] = (
+            "A file change with parameterized path found; "
+            "exempt trusted vars with '# noqa: R114' or add path validation"
+        )
+
         return GraphRuleResult(
             verdict=True,
             detail=detail,
