@@ -17,6 +17,7 @@ import pytest
 from apme_gateway.db import close_db, get_session, init_db, reset_db
 from apme_gateway.db import queries as q
 from apme_gateway.db.models import Session
+from tests.gateway_db import ensure_worker_database
 
 pytestmark = pytest.mark.skipif(
     not os.environ.get("APME_TEST_DATABASE_URL", "").strip(),
@@ -31,7 +32,7 @@ async def _postgresql_db() -> AsyncIterator[None]:
     Yields:
         None: Test runs between setup and teardown.
     """
-    url = os.environ["APME_TEST_DATABASE_URL"].strip()
+    url = await ensure_worker_database()
     await close_db()
     await init_db(url)
     await reset_db()
