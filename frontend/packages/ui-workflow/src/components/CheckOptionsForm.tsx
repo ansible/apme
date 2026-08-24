@@ -19,8 +19,8 @@ export interface CheckOptionsFormProps {
   enableAi: boolean;
   onEnableAiChange: (checked: boolean) => void;
   /**
-   * When true, remediate uses interactive=false (legacy auto-apply quick-fixes).
-   * Default unchecked → interactive Quick-fix review (ADR-062 Option C).
+   * When true, remediate uses interactive=false (legacy auto-apply rule-based fixes).
+   * Default unchecked → interactive rule-based fix review (ADR-062 Option C).
    */
   autoApplyTier1?: boolean;
   onAutoApplyTier1Change?: (checked: boolean) => void;
@@ -97,7 +97,7 @@ export function CheckOptionsForm({
           <FlexItem>
             <Checkbox
               id={`${prefix}enable-ai`}
-              label="Enable AI-assisted remediation (Tier 2)"
+              label="Enable AI fix"
               isChecked={enableAi}
               onChange={(_e, checked) => onEnableAiChange(checked)}
             />
@@ -107,8 +107,8 @@ export function CheckOptionsForm({
           <FlexItem>
             <Checkbox
               id={`${prefix}auto-apply-tier1`}
-              label="Auto-apply quick-fixes (skip review)"
-              description="Applies after you leave Assessment (Remediate). Scan always pauses on findings first. When unchecked (default), Quick-fix proposals pause for per-location Accept / Decline."
+              label="Auto-apply rule-based fixes (skip review)"
+              description="Applies after you leave Assessment (Remediate). Scan always pauses on findings first. When unchecked (default), rule-based fix proposals pause for per-location Accept / Decline."
               isChecked={autoApplyTier1}
               onChange={(_e, checked) => onAutoApplyTier1Change(checked)}
             />

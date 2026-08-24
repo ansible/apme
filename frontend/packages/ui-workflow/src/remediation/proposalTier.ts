@@ -29,7 +29,7 @@ export function proposalNodeTitle(proposal: OperationProposal): string {
   return file;
 }
 
-/** True when the proposal is Gate 2 AI (not Quick-fix / deterministic). */
+/** True when the proposal is Gate 2 AI (not rule-based fix / deterministic). */
 export function isAiRemediationProposal(proposal: OperationProposal): boolean {
   if (proposal.source === 'ai' || proposal.source === 'ai-candidate') {
     return true;
@@ -75,7 +75,7 @@ export function gateLabel(proposals: OperationProposal[]): string {
   }
   return isAiRemediationProposal(proposals[0]!)
     ? 'AI proposals'
-    : 'Quick-fix proposals';
+    : 'Rule-based fix proposals';
 }
 
 /**
