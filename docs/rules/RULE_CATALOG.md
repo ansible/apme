@@ -7,7 +7,7 @@
 | Metric | Count |
 |--------|-------|
 | Implemented | 150/157 |
-| Tested | 118/157 |
+| Tested | 119/157 |
 | Documented | 156/157 |
 | Deterministic fixer (Tier 1) | 25/157 |
 | Severity resolved (ADR-043 table or SEC: prefix) | 157/157 |
@@ -51,8 +51,8 @@ Routing follows `src/apme_engine/remediation/partition.py` (ADR-026 scope metada
 | Tier | Label | Count | Routing |
 |------|-------|-------|---------|
 | 1 | auto | 25 | Deterministic transform in registry — applied by `apme remediate` |
-| 2 | ai | 67 | Task/block scope, no fixer — AI proposes patch (Abbenay) |
-| 3 | manual | 65 | Play/role/collection scope, cross-file, or info severity |
+| 2 | ai | 68 | Task/block scope, no fixer — AI proposes patch (Abbenay) |
+| 3 | manual | 64 | Play/role/collection scope, cross-file, or info severity |
 
 Full analysis and promotion candidates: [REMEDIATION_TIER_REPORT.md](REMEDIATION_TIER_REPORT.md).
 
@@ -96,7 +96,7 @@ Full analysis and promotion candidates: [REMEDIATION_TIER_REPORT.md](REMEDIATION
 | L036 | L | Native | low | task | ai | include_vars without when/tags. | Yes | Yes | Yes | — |
 | L037 | L | Native | medium | collection | manual | Module name could not be resolved. | Yes | Yes | Yes | — |
 | L038 | L | Native | medium | role | manual | Role could not be resolved. | Yes | — | Yes | — |
-| L039 | L | Native | medium | task | ai | Variable use may be undefined. | Yes | — | Yes | — |
+| L039 | L | Native | low | task | ai | Variable use may be undefined. | Yes | Yes | Yes | — |
 | L040 | L | Native | info | playbook | manual | YAML should not contain tabs; use spaces. | Yes | Yes | Yes | — |
 | L041 | L | Native | low | task | ai | Task keys should follow canonical order (e.g. name before module). | Yes | Yes | Yes | — |
 | L042 | L | Native | info | play | manual | Play/block has high task count. | Yes | Yes | Yes | — |
@@ -274,7 +274,7 @@ Full analysis and promotion candidates: [REMEDIATION_TIER_REPORT.md](REMEDIATION
 | M028 | high | task | ai | first_found lookup auto-splitting paths on delimiters is deprecated (2.23) | Yes | Yes | Yes | — |
 | R118 | info | task | manual | Task downloads from an external source (inbound transfer). | Yes | Yes | Yes | — |
 
-### Native (100 rules, 93 impl, 62 tested, 4 fixers)
+### Native (100 rules, 93 impl, 63 tested, 4 fixers)
 
 | Rule ID | Severity | Scope | Tier | Description | Impl | Test | Doc | Fix |
 |---------|----------|-------|------|-------------|------|------|-----|-----|
@@ -291,7 +291,7 @@ Full analysis and promotion candidates: [REMEDIATION_TIER_REPORT.md](REMEDIATION
 | L036 | low | task | ai | include_vars without when/tags. | Yes | Yes | Yes | — |
 | L037 | medium | collection | manual | Module name could not be resolved. | Yes | Yes | Yes | — |
 | L038 | medium | role | manual | Role could not be resolved. | Yes | — | Yes | — |
-| L039 | medium | task | ai | Variable use may be undefined. | Yes | — | Yes | — |
+| L039 | low | task | ai | Variable use may be undefined. | Yes | Yes | Yes | — |
 | L040 | info | playbook | manual | YAML should not contain tabs; use spaces. | Yes | Yes | Yes | — |
 | L041 | low | task | ai | Task keys should follow canonical order (e.g. name before module). | Yes | Yes | Yes | — |
 | L042 | info | play | manual | Play/block has high task count. | Yes | Yes | Yes | — |
@@ -409,13 +409,12 @@ Full analysis and promotion candidates: [REMEDIATION_TIER_REPORT.md](REMEDIATION
 - **R404** (Native): Expose variable_set for the task.
 - **R501** (Native): Suggest collection/role dependency.
 
-### Implemented but untested — 34
+### Implemented but untested — 33
 
 - **L032** (Native): Variable redefinition may cause confusion.
 - **L033** (Native): Overriding vars without conditions.
 - **L034** (Native): Lower-precedence override may be unused.
 - **L038** (Native): Role could not be resolved.
-- **L039** (Native): Variable use may be undefined.
 - **L054** (Native): Role meta galaxy_info should include galaxy_tags.
 - **L055** (Native): Role meta video_links should be valid URLs.
 - **L056** (Native): Path may match ignore pattern.

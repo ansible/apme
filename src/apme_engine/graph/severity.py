@@ -53,6 +53,7 @@ SEVERITY_DEFAULTS: dict[str, Severity] = {
     "L034": Severity.LOW,
     "L035": Severity.LOW,
     "L036": Severity.LOW,
+    "L039": Severity.LOW,
     "L041": Severity.LOW,
     "L043": Severity.LOW,
     "L044": Severity.LOW,
@@ -108,7 +109,6 @@ SEVERITY_DEFAULTS: dict[str, Severity] = {
     # Medium: correctness smell / probable bug
     "L037": Severity.MEDIUM,
     "L038": Severity.MEDIUM,
-    "L039": Severity.MEDIUM,
     "L106": Severity.MEDIUM,
     "L100": Severity.MEDIUM,
     "L101": Severity.MEDIUM,

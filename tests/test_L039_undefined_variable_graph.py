@@ -164,6 +164,7 @@ def _run(graph: ContentGraph) -> list[dict[str, object]]:
         List of result detail dicts for L039 violations.
     """
     rule = UndefinedVariableGraphRule()
+    assert rule.rule_id == "L039"
     report = scan(graph, [rule], owned_only=False)
     results: list[dict[str, object]] = []
     for nr in report.node_results:
@@ -384,6 +385,50 @@ class TestExtraFields:
         )
         results = _run(g)
         assert results == []
+
+    def test_register_in_module_options_same_task(self) -> None:
+        """Same-task register in module_options should still trigger L039.
+
+        Module arguments are evaluated before the task runs, so the register
+        variable does not exist yet.
+        """
+        g, _ = _make_graph(
+            task_register="cmd_result",
+            task_module_options={"msg": "{{ cmd_result.stdout }}"},
+        )
+        results = _run(g)
+        assert len(results) == 1
+        assert "cmd_result" in _undef_vars(results)
+
+    def test_register_in_when_same_task(self) -> None:
+        """Same-task register in when should still trigger L039."""
+        g, _ = _make_graph(
+            task_register="cmd_result",
+            task_when="cmd_result.rc == 0",
+        )
+        results = _run(g)
+        assert len(results) == 1
+        assert "cmd_result" in _undef_vars(results)
+
+    def test_register_in_name_same_task(self) -> None:
+        """Same-task register in task name should still trigger L039."""
+        g, _ = _make_graph(
+            task_register="cmd_result",
+            task_name="Deploy {{ cmd_result }}",
+        )
+        results = _run(g)
+        assert len(results) == 1
+        assert "cmd_result" in _undef_vars(results)
+
+    def test_register_in_environment_same_task(self) -> None:
+        """Same-task register in environment should still trigger L039."""
+        g, _ = _make_graph(
+            task_register="cmd_result",
+            task_environment={"RESULT": "{{ cmd_result.stdout }}"},
+        )
+        results = _run(g)
+        assert len(results) == 1
+        assert "cmd_result" in _undef_vars(results)
 
     def test_undefined_in_environment(self) -> None:
         """Undefined variable in environment triggers L039.

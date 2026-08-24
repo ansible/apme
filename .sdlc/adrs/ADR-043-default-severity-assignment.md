@@ -103,7 +103,6 @@ These examples illustrate the criteria applied to real rules:
 - L013 — Missing `changed_when` (idempotency broken)
 - L037 — Unresolved module name
 - L038 — Unresolved role
-- L039 — Possibly undefined variable
 - L102 — Setting read-only Ansible variables
 - R101–R115 — Risk annotation findings (command exec, privilege escalation, etc.)
 
@@ -111,6 +110,7 @@ These examples illustrate the criteria applied to real rules:
 - L005, L026 — FQCN usage
 - L003, L024, L025 — Naming conventions (play/task names)
 - L041 — Key ordering
+- L039 — Possibly undefined variable (static analysis; false positives expected)
 - L050, L074, L079–L081 — Variable/role naming conventions
 - L073 — Indentation
 - L087, L088, L103–L105 — Collection metadata

@@ -63,7 +63,7 @@ ADR043_EXPECTED: dict[str, Severity] = {
     "L031": Severity.HIGH,
     "L037": Severity.MEDIUM,
     "L038": Severity.MEDIUM,
-    "L039": Severity.MEDIUM,
+    "L039": Severity.LOW,
     "L042": Severity.INFO,
     "L047": Severity.HIGH,
     "L057": Severity.ERROR,

@@ -314,47 +314,49 @@ def _extract_bare_refs(texts: list[str]) -> set[str]:
     return refs
 
 
-def _collect_strings(node: object) -> tuple[list[str], list[str]]:
-    """Gather string fields from a node, split by expression type.
+def _collect_strings(node: object) -> tuple[list[str], list[str], list[str]]:
+    """Gather string fields from a node, split by evaluation timing.
 
     Args:
         node: A ContentNode (duck-typed to avoid circular import in tests).
 
     Returns:
-        Tuple of (template_strings, bare_expression_strings).
-        Template strings may contain ``{{ }}``; bare expression strings
-        are implicitly Jinja (``when``, ``changed_when``, ``failed_when``).
+        Tuple of (pre_task_templates, pre_task_bare, post_task_bare).
+        Pre-task fields (``when``, module args, name, ``environment``) are
+        evaluated before the task result exists.  ``changed_when`` and
+        ``failed_when`` are evaluated post-task and may reference ``register``.
     """
-    templates: list[str] = []
-    bare: list[str] = []
+    pre_templates: list[str] = []
+    pre_bare: list[str] = []
+    post_bare: list[str] = []
 
     when_expr = getattr(node, "when_expr", None)
     if when_expr:
         if isinstance(when_expr, list):
-            bare.extend(str(w) for w in when_expr)
+            pre_bare.extend(str(w) for w in when_expr)
         else:
-            bare.append(str(when_expr))
+            pre_bare.append(str(when_expr))
 
     name = getattr(node, "name", None)
     if isinstance(name, str):
-        templates.append(name)
+        pre_templates.append(name)
 
     mo = getattr(node, "module_options", None)
     if isinstance(mo, dict):
-        _collect_dict_strings(mo, templates)
+        _collect_dict_strings(mo, pre_templates)
 
     for attr in ("changed_when", "failed_when"):
         val = getattr(node, attr, None)
         if isinstance(val, str):
-            bare.append(val)
+            post_bare.append(val)
         elif isinstance(val, list):
-            bare.extend(str(v) for v in val)
+            post_bare.extend(str(v) for v in val)
 
     env = getattr(node, "environment", None)
     if isinstance(env, dict):
-        _collect_dict_strings(env, templates)
+        _collect_dict_strings(env, pre_templates)
 
-    return templates, bare
+    return pre_templates, pre_bare, post_bare
 
 
 def _collect_dict_strings(d: dict[str, object], out: list[str]) -> None:
@@ -426,18 +428,19 @@ class UndefinedVariableGraphRule(GraphRule):
         if node is None:
             return None
 
-        templates, bare = _collect_strings(node)
-        refs = _extract_jinja_refs(templates) | _extract_bare_refs(bare)
-        if not refs:
+        pre_templates, pre_bare, post_bare = _collect_strings(node)
+        pre_refs = _extract_jinja_refs(pre_templates) | _extract_bare_refs(pre_bare)
+        post_refs = _extract_bare_refs(post_bare)
+        if not pre_refs and not post_refs:
             return GraphRuleResult(
                 verdict=False,
                 node_id=node_id,
                 file=(node.file_path, node.line_start),
             )
 
-        # Any ansible_* prefix is treated as a potential fact / connection var
-        non_magic = {r for r in refs if r not in _MAGIC_VARS and not r.startswith("ansible_")}
-        if not non_magic:
+        pre_non_magic = {r for r in pre_refs if r not in _MAGIC_VARS and not r.startswith("ansible_")}
+        post_non_magic = {r for r in post_refs if r not in _MAGIC_VARS and not r.startswith("ansible_")}
+        if not pre_non_magic and not post_non_magic:
             return GraphRuleResult(
                 verdict=False,
                 node_id=node_id,
@@ -447,12 +450,12 @@ class UndefinedVariableGraphRule(GraphRule):
         resolver = VariableProvenanceResolver(graph)
         defined = set(resolver.resolve_variables(node_id))
 
-        # The task's own register variable is available in changed_when/failed_when
-        # because those are evaluated post-task execution.
+        # Register is available only in changed_when/failed_when (post-task).
+        post_defined = defined
         if node.register:
-            defined.add(node.register)
+            post_defined = defined | {node.register}
 
-        undefined = sorted(non_magic - defined)
+        undefined = sorted((pre_non_magic - defined) | (post_non_magic - post_defined))
         if not undefined:
             return GraphRuleResult(
                 verdict=False,
