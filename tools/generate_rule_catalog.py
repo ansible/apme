@@ -250,8 +250,9 @@ def _get_test_cache() -> dict[str, list[str]]:
             rid = (m.group(1) or m.group(2) or (m.group(3) or "").upper()).strip()
             if rid:
                 seen_ids.add(rid)
-        for m in re.finditer(r"from\s+[\w.]+\s+import\s+(\w+)", text):
-            seen_ids.update(_rule_ids_from_module_name(m.group(1)))
+        for m in re.finditer(r"from\s+([\w.]+)\s+import\s+([\w, ]+)", text):
+            for fragment in (*m.group(1).split("."), *(n.strip() for n in m.group(2).split(","))):
+                seen_ids.update(_rule_ids_from_module_name(fragment))
         for rid in seen_ids:
             cache.setdefault(rid, [])
             if rel not in cache[rid]:
@@ -320,7 +321,13 @@ def _normalize_validator(raw: str) -> str:
     Returns:
         Canonical validator name, defaulting to ``Native``.
     """
-    return _VALIDATOR_NAMES.get(raw.lower().strip(), raw.capitalize()) if raw else "Native"
+    if not raw:
+        return "Native"
+    normalized = _VALIDATOR_NAMES.get(raw.lower().strip())
+    if normalized is None:
+        print(f"WARNING: unknown validator '{raw}' in frontmatter; defaulting to Native", file=sys.stderr)
+        return "Native"
+    return normalized
 
 
 def _collect_opa_rules() -> list[Rule]:

@@ -166,7 +166,7 @@ class _PlayAggregateRule(GraphRule):
 
     def __init__(self) -> None:
         super().__init__(
-            rule_id="R402",
+            rule_id="TPLAY1",
             description="Play still contains short module names",
             enabled=True,
             precedence=5,
@@ -296,7 +296,7 @@ class TestRescanDirty:
         assert report.nodes_scanned == 2
         violations = graph_report_to_violations(report)
         assert len(violations) == 1
-        assert violations[0]["rule_id"] == "R402"
+        assert violations[0]["rule_id"] == "TPLAY1"
         assert violations[0]["path"] == play.node_id
 
 
@@ -495,7 +495,7 @@ class TestGraphRemediationEngine:
 
         fixed = graph.query_violations(status="fixed")
         assert any(v["rule_id"] == "M001" for v in fixed)
-        assert any(v["rule_id"] == "R402" for v in fixed)
+        assert any(v["rule_id"] == "TPLAY1" for v in fixed)
         assert graph.collect_violations() == []
 
     async def test_progress_callback(self) -> None:

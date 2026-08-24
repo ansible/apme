@@ -247,14 +247,14 @@ class TestParseFrontmatter:
 
         def fake_import(
             name: str,
-            globals: Mapping[str, object] | None = None,  # noqa: A002
-            locals: Mapping[str, object] | None = None,  # noqa: A002
+            globals_: Mapping[str, object] | None = None,
+            locals_: Mapping[str, object] | None = None,
             fromlist: Sequence[str] = (),
             level: int = 0,
         ) -> object:
             if name == "yaml":
                 raise ImportError("PyYAML not installed")
-            return real_import(name, globals, locals, fromlist, level)
+            return real_import(name, globals_, locals_, fromlist, level)
 
         monkeypatch.setattr(builtins, "__import__", fake_import)
         result = _parse_frontmatter(md)
@@ -275,9 +275,16 @@ class TestNormalizeValidator:
         """Lowercase ansible maps to Ansible."""
         assert _normalize_validator("ansible") == "Ansible"
 
-    def test_unknown_string_capitalized(self) -> None:
-        """Unknown validator strings are title-cased."""
-        assert _normalize_validator("custom") == "Custom"
+    def test_unknown_validator_warns_and_defaults_to_native(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """Unknown validator strings warn and default to Native.
+
+        Args:
+            capsys: Pytest capture fixture for stderr.
+        """
+        assert _normalize_validator("custom") == "Native"
+        captured = capsys.readouterr()
+        assert "WARNING" in captured.err
+        assert "custom" in captured.err
 
     def test_empty_defaults_to_native(self) -> None:
         """Empty string defaults to Native."""
@@ -298,8 +305,7 @@ class TestGetTestCache:
         tests_dir.mkdir()
         test_file = tests_dir / "test_r402_loader.py"
         test_file.write_text(
-            "from apme_engine.validators.native.rules.R402_list_all_used_variables_graph import "
-            "ListAllUsedVariablesGraphRule\n",
+            "from apme_engine.graph.rules.R402_list_all_used_variables_graph import ListAllUsedVariablesGraphRule\n",
             encoding="utf-8",
         )
         monkeypatch.setattr(_mod, "TESTS_DIR", tests_dir)
