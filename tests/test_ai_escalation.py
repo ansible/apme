@@ -9,6 +9,10 @@ import types
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
+from apme.v1.engine_pb2 import FixOptions
+from apme_engine.daemon.engine_server import EngineServicer
 from apme_engine.remediation.abbenay_provider import (
     _build_node_prompt,
     _build_validation_prompt,
@@ -215,6 +219,46 @@ class TestMakeAbbenayClient:
 
         assert isinstance(client, _Client)
         assert client.kwargs == {"host": "::1", "port": 50057}
+
+    def test_invalid_port_raises_value_error(self) -> None:
+        """Empty or non-numeric ports raise ValueError instead of crashing later."""
+
+        class _Client:
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                self.args = args
+                self.kwargs = kwargs
+
+        stub = types.ModuleType("abbenay_grpc")
+        stub.AbbenayClient = _Client  # type: ignore[attr-defined]
+        with patch.dict(sys.modules, {"abbenay_grpc": stub}):
+            with pytest.raises(ValueError, match="invalid Abbenay port"):
+                make_abbenay_client("[::1]:")
+            with pytest.raises(ValueError, match="invalid Abbenay port"):
+                make_abbenay_client("[::1]:abc")
+            with pytest.raises(ValueError, match="invalid Abbenay port"):
+                make_abbenay_client("127.0.0.1:abc")
+
+
+class TestResolveAiProvider:
+    """Invalid APME_ABBENAY_ADDR must not crash FixSession setup."""
+
+    def test_invalid_tcp_addr_returns_none(self) -> None:
+        """ValueError from a bad port degrades to no AI provider."""
+
+        class _Client:
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                self.args = args
+                self.kwargs = kwargs
+
+        stub = types.ModuleType("abbenay_grpc")
+        stub.AbbenayClient = _Client  # type: ignore[attr-defined]
+        opts = FixOptions(enable_ai=True, ai_model="openai/gpt-4o")
+        with (
+            patch.dict(sys.modules, {"abbenay_grpc": stub}),
+            patch.dict(os.environ, {"APME_ABBENAY_ADDR": "[::1]:abc"}),
+        ):
+            result = EngineServicer._resolve_ai_provider(opts)
+        assert result is None
 
 
 # ---------------------------------------------------------------------------

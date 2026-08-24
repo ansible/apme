@@ -458,12 +458,34 @@ def _abbenay_tcp_kwargs(addr: str) -> dict[str, str | int]:
         host = addr[1:close]
         rest = addr[close + 1 :]
         if rest.startswith(":"):
-            return {"host": host, "port": int(rest[1:])}
+            return {"host": host, "port": _parse_abbenay_port(rest[1:])}
         return {"host": host}
     if addr.count(":") == 1:
         host, _, port_str = addr.partition(":")
-        return {"host": host or "localhost", "port": int(port_str)}
+        return {"host": host or "localhost", "port": _parse_abbenay_port(port_str)}
     return {"host": addr}
+
+
+def _parse_abbenay_port(port_str: str) -> int:
+    """Parse a TCP port from an Abbenay address.
+
+    Args:
+        port_str: Port digits from ``host:port`` or ``[ipv6]:port``.
+
+    Returns:
+        The port as an integer.
+
+    Raises:
+        ValueError: If *port_str* is empty or not an integer in 1–65535.
+    """
+    if not port_str.isdigit():
+        msg = f"invalid Abbenay port {port_str!r}"
+        raise ValueError(msg)
+    port = int(port_str)
+    if not 1 <= port <= 65535:
+        msg = f"invalid Abbenay port {port_str!r}"
+        raise ValueError(msg)
+    return port
 
 
 def _load_best_practices() -> dict[str, list[str]]:

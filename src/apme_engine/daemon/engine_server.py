@@ -2633,6 +2633,9 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         except ImportError:
             logger.warning("Failed to create AbbenayProvider — abbenay-client not installed")
             return None
+        except ValueError:
+            logger.warning("Failed to create AbbenayProvider — invalid APME_ABBENAY_ADDR %r", addr)
+            return None
 
         logger.info("AI provider ready: %s model=%s", addr, model)
         return provider
