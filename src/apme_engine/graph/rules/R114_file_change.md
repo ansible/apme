@@ -20,11 +20,15 @@ ai_prompt: |
      extra_vars, API responses, registered output from commands):
      - Add an ansible.builtin.assert task BEFORE this task to validate
        the path is under an allowed base directory
-     - Example validation:
+       - Example validation (rejects '..' traversal; does not follow
+         symlinks — do not use an allowed base that contains
+         user-controlled symlinks):
        ```yaml
        - name: Validate path is under allowed base
          ansible.builtin.assert:
            that:
+             - my_path is abs
+             - "'..' not in my_path"
              - my_path is match('^/opt/server/')
            fail_msg: "Invalid path: {{ my_path }}"
        ```
@@ -69,11 +73,18 @@ If the variable is trusted (from role defaults/vars):
     dest: "{{ app_config_path }}"  # noqa: R114 - path from role defaults
 ```
 
-If the variable could be untrusted, add validation:
+If the variable could be untrusted, add validation. Prefix match alone
+is not enough — `/opt/myapp/../../etc/passwd` still matches
+`^/opt/myapp/`. Reject `..` and require an absolute path. This example
+does not resolve symlinks; do not use an allowed base that contains
+user-controlled symlinks.
+
 ```yaml
 - name: Validate destination path
   ansible.builtin.assert:
     that:
+      - dest_path is abs
+      - "'..' not in dest_path"
       - dest_path is match('^/opt/myapp/')
     fail_msg: "Invalid destination: {{ dest_path }}"
 
