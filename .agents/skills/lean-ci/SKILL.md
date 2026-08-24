@@ -28,12 +28,17 @@ locally-runnable tox environments; CI just calls them.
    CI runs `uvx --with tox-uv tox -e <env>`.
 
 3. **No scattered version pinning.** Python version is in `pyproject.toml`
-   (`requires-python`). Tool versions are managed in `.pre-commit-config.yaml`
+   (`requires-python`). Node is in `frontend/package.json` (`engines.node`).
+   Tool versions are managed in `.pre-commit-config.yaml`
    (ruff, mypy) and `pyproject.toml` (deps). Not in workflow YAML.
+   Jobs that need Node use `actions/setup-node` with
+   `node-version-file: frontend/package.json`.
 
 4. **Minimal setup actions.** `astral-sh/setup-uv` and `actions/checkout` only.
    No `actions/setup-python` (uv handles it). No other setup actions without
    explicit justification.
+   **Exception:** `test.yml` jobs `ui` and `ui-workflow-pack` use
+   `actions/setup-node` because `tox -e ui` / `ui-workflow-pack` need `npm`.
 
 5. **Pin actions to commit SHAs.** Mutable tags (`@v4`) allow upstream changes
    to affect CI without review. Always pin to a full commit SHA with a comment
