@@ -52,6 +52,7 @@ tox is the single entry point for all developer tasks. Every CI check has a corr
 | `tox -e integration` | `pytest tests/integration/` (requires OPA binary) | Test |
 | `tox -e ai` | `pytest` with AI extras (abbenay) | Test |
 | `tox -e ui` | `pytest -m ui` (Playwright, requires running gateway + UI) | Test |
+| `tox -e ui-workflow-pack` | `npm pack` for `@apme/ui-workflow` (release tarball) | Test |
 | `tox -e openapi` | Export/check `docs/api/openapi.v1.json` | Code generation |
 | `tox -e grpc` | `scripts/gen_grpc.sh` | Code generation |
 | `tox -e helm` | `scripts/helm_chart.sh` (`helm lint` + `helm package`) | Helm chart |
