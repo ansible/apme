@@ -32,7 +32,7 @@ directly. Every task maps to a `tox -e <env>` command.
 ## Hard Rules
 
 1. **Never run `pytest` directly.** Use `tox -e unit`, `tox -e integration`,
-   `tox -e ai`, or `tox -e ui`.
+   `tox -e ai`, `tox -e ui`, or `tox -e ui-workflow-pack`.
 2. **Never run `ruff`, `mypy`, or `prek` directly.** Use `tox -e lint`.
 3. **Never run `./scripts/gen_grpc.sh` directly.** Use `tox -e grpc`.
 4. **Never run `./containers/podman/*.sh` directly.** Use `tox -e build`,
@@ -58,6 +58,7 @@ directly. Every task maps to a `tox -e <env>` command.
 | `tox -e integration` | `pytest tests/integration/` (needs OPA binary) | After engine or validator changes. |
 | `tox -e ai` | `pytest` with AI extras (abbenay) | After AI/remediation changes. |
 | `tox -e ui` | `pytest -m ui` (Playwright, needs running pod) | After Gateway or UI changes. |
+| `tox -e ui-workflow-pack` | `npm pack` for `@apme/ui-workflow` (release tarball) | After `frontend/packages/ui-workflow` or TypeScript changes. |
 
 ### Code generation
 
