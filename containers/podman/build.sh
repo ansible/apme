@@ -19,7 +19,7 @@ echo "==> Pulling Abbenay AI image..."
 podman pull ghcr.io/redhat-developer/abbenay:v2026.8.6
 
 echo "==> Building service images..."
-podman build "${BUILD_ARGS[@]}" -t apme-primary:latest -f containers/primary/Dockerfile .
+podman build "${BUILD_ARGS[@]}" -t apme-engine:latest -f containers/engine/Dockerfile .
 podman build "${BUILD_ARGS[@]}" -t apme-native:latest -f containers/native/Dockerfile .
 podman build "${BUILD_ARGS[@]}" -t apme-opa:latest -f containers/opa/Dockerfile .
 podman build "${BUILD_ARGS[@]}" -t apme-ansible:latest -f containers/ansible/Dockerfile .

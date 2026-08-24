@@ -72,15 +72,15 @@ For organizations managing hundreds of roles and collections across ansible-core
 - **AI-assisted fixes** — optional Tier 2 escalation via [Abbenay](https://github.com/redhat-developer/abbenay) for violations without deterministic transforms
 - **YAML formatter** — normalize indentation, key ordering, Jinja spacing with comment preservation
 - **Structured diagnostics** — per-rule timing data (`-v` summary, `-vv` full breakdown)
-- **Unified gRPC contract** — adding a validator means implementing one RPC
+- **Unified gRPC contract** — adding a validator means implementing both `Validate` and `Health` RPCs
 
 ## Architecture at a glance
 
-```
+```text
 ┌─────────┐      gRPC       ┌────────────┐      gRPC (parallel)      ┌────────────┐
-│   CLI   │ ──────────────► │  Primary   │ ──────────────────────►   │   Native   │
+│   CLI   │ ──────────────► │  Engine    │ ──────────────────────►   │   Native   │
 │         │                 │ (orchestr) │                           │    OPA     │
-└─────────┘                 │   Engine   │                           │  Ansible   │
+└─────────┘                 │            │                           │  Ansible   │
                             │  parse →   │                           │  Gitleaks  │
                             │  annotate →│                           │  Coll.Hlth │
                             │  fan-out   │                           │  Dep.Audit │
@@ -116,7 +116,11 @@ CLI tag may be newer than the chart published at
 `https://ansible.github.io/apme`. Pin each channel explicitly for your
 environment; see the [Helm Guide](deploy/helm/apme/README.md) for chart versions.
 
-The CLI automatically starts a local daemon with core validators (Native, OPA, Ansible) and Galaxy Proxy — no full pod required. OPA uses a Podman container by default; set `OPA_USE_PODMAN=0` to use a local `opa` binary, or it is skipped if neither is available. Optional validators (Gitleaks, Collection Health, Dep Audit) are not started by the daemon. See the [CLI Guide](docs/guides/CLI.md) for full usage, CI integration, and limitations compared to deployment methods.
+The CLI automatically starts a local daemon with core validators (Native, OPA, Ansible) and Galaxy Proxy — no full pod required. The OPA validator gRPC server is always started; policy evaluation uses Podman by default (`OPA_USE_PODMAN=1`) or a local `opa` binary when `OPA_USE_PODMAN=0`. Optional validators (Gitleaks, Collection Health, Dep Audit) are not started by
+default; pass `include_optional=True` to `start_daemon()` (or
+`apme daemon start --include-optional`) to start them. See the
+[CLI Guide](docs/guides/CLI.md) for full usage, CI integration, and limitations
+compared to deployment methods.
 
 ### Remediation
 

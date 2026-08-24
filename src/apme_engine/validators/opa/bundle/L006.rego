@@ -17,8 +17,9 @@ command_instead_of_module(tree, node) := v if {
 	mo := object.get(node, "module_options", {})
 	cmd := mo["cmd"]
 	cmd != null
-	trim(cmd, " ") != ""
-	first_token := split(trim(cmd, " "), " ")[0]
+	normalized_cmd(cmd) != ""
+	not uses_shell_features(cmd)
+	first_token := split(normalized_cmd(cmd), " ")[0]
 	suggested := data.apme.ansible.command_to_module[first_token]
 	suggested != ""
 	count(node.line) > 0

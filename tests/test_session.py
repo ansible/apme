@@ -19,7 +19,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from apme.v1.common_pb2 import ProgressUpdate
-from apme.v1.primary_pb2 import (
+from apme.v1.engine_pb2 import (
     ApprovalRequest,
     CloseRequest,
     ExtendRequest,
@@ -398,7 +398,7 @@ class TestSessionApplyApproved:
 
     def test_full_approval_sets_complete(self) -> None:
         """Approving all proposals marks session complete and clears proposals."""
-        from apme_engine.daemon.primary_server import PrimaryServicer
+        from apme_engine.daemon.engine_server import EngineServicer
 
         session = SessionState(session_id="test")
         session.proposals = {
@@ -413,14 +413,14 @@ class TestSessionApplyApproved:
         session.status = 1
         session.working_files = {"t.yml": b"old content"}
 
-        applied, _ = PrimaryServicer._session_apply_approved(session, {"t2-0000"})
+        applied, _ = EngineServicer._session_apply_approved(session, {"t2-0000"})
         assert applied == 1
         assert session.status == 3  # COMPLETE
         assert session.proposals == {}
 
     def test_partial_approval_completes_session(self) -> None:
         """Partial approval completes and stashes unapproved proposals for telemetry."""
-        from apme_engine.daemon.primary_server import PrimaryServicer
+        from apme_engine.daemon.engine_server import EngineServicer
 
         session = SessionState(session_id="test")
         session.proposals = {
@@ -430,7 +430,7 @@ class TestSessionApplyApproved:
         session.status = 1
         session.working_files = {"a.yml": b"old1", "b.yml": b"old2"}
 
-        applied, _ = PrimaryServicer._session_apply_approved(session, {"p1"})
+        applied, _ = EngineServicer._session_apply_approved(session, {"p1"})
         assert applied == 1
         assert session.status == 3  # COMPLETE after approval processing
         assert session.proposals == {}
@@ -438,7 +438,7 @@ class TestSessionApplyApproved:
 
     def test_approval_modifies_working_files(self) -> None:
         """Approved proposal replaces before_text with after_text in working_files."""
-        from apme_engine.daemon.primary_server import PrimaryServicer
+        from apme_engine.daemon.engine_server import EngineServicer
 
         session = SessionState(session_id="test")
         session.proposals = {
@@ -453,7 +453,7 @@ class TestSessionApplyApproved:
         session.status = 1
         session.working_files = {"test.yml": b"hello world"}
 
-        PrimaryServicer._session_apply_approved(session, {"p1"})
+        EngineServicer._session_apply_approved(session, {"p1"})
         assert session.working_files["test.yml"] == b"goodbye world"
 
 
@@ -462,9 +462,9 @@ class TestSessionBuildResult:
 
     async def test_includes_only_changed_files(self) -> None:
         """Result patches list only files whose content changed."""
-        from apme_engine.daemon.primary_server import PrimaryServicer
+        from apme_engine.daemon.engine_server import EngineServicer
 
-        servicer = PrimaryServicer()
+        servicer = EngineServicer()
         session = SessionState(session_id="test")
         session.original_files = {"a.yml": b"orig-a", "b.yml": b"same"}
         session.working_files = {"a.yml": b"patched-a", "b.yml": b"same"}
@@ -478,9 +478,9 @@ class TestSessionBuildResult:
 
     async def test_diff_is_unified_format(self) -> None:
         """Patch diff uses unified diff markers and line changes."""
-        from apme_engine.daemon.primary_server import PrimaryServicer
+        from apme_engine.daemon.engine_server import EngineServicer
 
-        servicer = PrimaryServicer()
+        servicer = EngineServicer()
         session = SessionState(session_id="test")
         session.original_files = {"f.yml": b"line1\nline2\n"}
         session.working_files = {"f.yml": b"line1\nchanged\n"}
@@ -501,7 +501,7 @@ class TestWorkingFilesKey:
         Args:
             tmp_path: Pytest temporary directory fixture.
         """
-        from apme_engine.daemon.primary_server import _working_files_key
+        from apme_engine.daemon.engine_server import _working_files_key
 
         abs_path = str(tmp_path / "playbooks" / "main.yml")
         assert _working_files_key(tmp_path, abs_path) == "playbooks/main.yml"
@@ -512,13 +512,13 @@ class TestWorkingFilesKey:
         Args:
             tmp_path: Pytest temporary directory fixture.
         """
-        from apme_engine.daemon.primary_server import _working_files_key
+        from apme_engine.daemon.engine_server import _working_files_key
 
         assert _working_files_key(tmp_path, "roles/x.yml") == "roles/x.yml"
 
     def test_no_temp_dir_returns_path(self) -> None:
         """Without a temp root the raw path is preserved."""
-        from apme_engine.daemon.primary_server import _working_files_key
+        from apme_engine.daemon.engine_server import _working_files_key
 
         assert _working_files_key(None, "/abs/file.yml") == "/abs/file.yml"
 
@@ -532,7 +532,7 @@ class TestWritePatchesToTempDir:
         Args:
             tmp_path: Pytest temporary directory fixture.
         """
-        from apme_engine.daemon.primary_server import _write_patches_to_temp_dir
+        from apme_engine.daemon.engine_server import _write_patches_to_temp_dir
         from apme_engine.remediation.graph_engine import FilePatch
 
         patch = FilePatch(path="playbooks/main.yml", original="a\n", patched="b\n", diff="", rule_ids=[])
@@ -545,7 +545,7 @@ class TestWritePatchesToTempDir:
         Args:
             tmp_path: Pytest temporary directory fixture.
         """
-        from apme_engine.daemon.primary_server import _write_patches_to_temp_dir
+        from apme_engine.daemon.engine_server import _write_patches_to_temp_dir
         from apme_engine.remediation.graph_engine import FilePatch
 
         patch = FilePatch(path="../escape.yml", original="a\n", patched="b\n", diff="", rule_ids=[])
@@ -558,7 +558,7 @@ class TestWritePatchesToTempDir:
         Args:
             tmp_path: Pytest temporary directory fixture.
         """
-        from apme_engine.daemon.primary_server import _write_patches_to_temp_dir
+        from apme_engine.daemon.engine_server import _write_patches_to_temp_dir
         from apme_engine.remediation.graph_engine import FilePatch
 
         target = tmp_path / "roles" / "x.yml"
@@ -578,8 +578,8 @@ class TestSessionApprovalGates:
         """
         from dataclasses import replace
 
-        from apme.v1.primary_pb2 import Proposal
-        from apme_engine.daemon.primary_server import _apply_graph_approvals
+        from apme.v1.engine_pb2 import Proposal
+        from apme_engine.daemon.engine_server import _apply_graph_approvals
         from apme_engine.graph.content_graph import ContentGraph, ContentNode, NodeIdentity, NodeType
         from apme_engine.remediation.graph_engine import Tier1NodeProposal
 
@@ -665,18 +665,18 @@ class TestSessionApprovalGates:
 
     async def test_tier1_approval_without_ai_finalizes(self) -> None:
         """Tier 1 approval finalizes immediately when AI gate is disabled."""
-        from apme_engine.daemon.primary_server import PrimaryServicer
+        from apme_engine.daemon.engine_server import EngineServicer
 
-        servicer = PrimaryServicer()
+        servicer = EngineServicer()
         session = SessionState(session_id="gate-no-ai")
         session.awaiting_tier1_gate = True
         session.fix_options = FixOptions(enable_ai=False)
         session.status = 1
 
-        async def _fake_build_result(_self: PrimaryServicer, _session: SessionState) -> AsyncIterator[SessionEvent]:
+        async def _fake_build_result(_self: EngineServicer, _session: SessionState) -> AsyncIterator[SessionEvent]:
             yield SessionEvent(result=SessionResult())
 
-        with patch.object(PrimaryServicer, "_session_build_result", _fake_build_result):
+        with patch.object(EngineServicer, "_session_build_result", _fake_build_result):
             events = [e async for e in servicer._session_handle_approval(session, set())]
 
         event_types = [e.WhichOneof("event") for e in events]
@@ -690,7 +690,7 @@ class TestSessionApprovalGates:
         Args:
             tmp_path: Pytest temporary directory fixture.
         """
-        from apme_engine.daemon.primary_server import PrimaryServicer
+        from apme_engine.daemon.engine_server import EngineServicer
         from apme_engine.graph.content_graph import ContentGraph
 
         class _DummyGraphEngine:
@@ -711,7 +711,7 @@ class TestSessionApprovalGates:
                     )
                 )
 
-        servicer = PrimaryServicer()
+        servicer = EngineServicer()
         session = SessionState(session_id="gate-filter")
         session.content_graph = ContentGraph()
         session.graph_engine = _DummyGraphEngine()
@@ -729,7 +729,7 @@ class TestSessionApprovalGates:
         session.graph_originals = {"play.yml": "- name: test\n  debug:\n    msg: hi\n"}
         session.temp_dir = tmp_path
 
-        async def _fake_build_result(_self: PrimaryServicer, _session: SessionState) -> AsyncIterator[SessionEvent]:
+        async def _fake_build_result(_self: EngineServicer, _session: SessionState) -> AsyncIterator[SessionEvent]:
             yield SessionEvent(result=SessionResult())
 
         with (
@@ -742,7 +742,7 @@ class TestSessionApprovalGates:
                 "apme_engine.formatter.format_content",
                 return_value=SimpleNamespace(changed=True, formatted="- name: test\n  debug:\n    msg: hi there\n"),
             ),
-            patch.object(PrimaryServicer, "_session_build_result", _fake_build_result),
+            patch.object(EngineServicer, "_session_build_result", _fake_build_result),
         ):
             events = [e async for e in servicer._session_run_ai_gate(session)]
 
@@ -769,7 +769,7 @@ class TestSessionApprovalGates:
         Args:
             tmp_path: Pytest temporary directory fixture.
         """
-        from apme_engine.daemon.primary_server import PrimaryServicer
+        from apme_engine.daemon.engine_server import EngineServicer
         from apme_engine.graph.content_graph import ContentGraph
         from apme_engine.remediation.graph_engine import AINodeProposal
 
@@ -803,7 +803,7 @@ class TestSessionApprovalGates:
                     )
                 )
 
-        servicer = PrimaryServicer()
+        servicer = EngineServicer()
         session = SessionState(session_id="gate-no-leak")
         session.content_graph = ContentGraph()
         session.graph_engine = _DummyGraphEngine()
@@ -837,7 +837,7 @@ class TestSessionApprovalGates:
         Args:
             tmp_path: Pytest temporary directory fixture.
         """
-        from apme_engine.daemon.primary_server import PrimaryServicer, _apply_graph_approvals
+        from apme_engine.daemon.engine_server import EngineServicer, _apply_graph_approvals
         from apme_engine.graph.content_graph import ContentGraph
 
         baseline = b"- hosts: all\n  tasks:\n    - debug: msg=keep\n"
@@ -860,7 +860,7 @@ class TestSessionApprovalGates:
         }
         session.ai_proposals = []
 
-        from apme_engine.daemon.primary_server import _write_patches_to_temp_dir
+        from apme_engine.daemon.engine_server import _write_patches_to_temp_dir
 
         applied, rejected, approved, patches = _apply_graph_approvals(
             session,
@@ -876,11 +876,11 @@ class TestSessionApprovalGates:
         assert patches
         _write_patches_to_temp_dir(tmp_path, patches)
         assert (tmp_path / "play.yml").read_bytes() == baseline
-        assert PrimaryServicer is not None  # approval path uses same helpers
+        assert EngineServicer is not None  # approval path uses same helpers
 
     def test_build_fix_event_includes_rejected_telemetry_store(self) -> None:
         """FixCompletedEvent includes rejected outcomes from telemetry snapshots."""
-        from apme_engine.daemon.primary_server import PrimaryServicer
+        from apme_engine.daemon.engine_server import EngineServicer
 
         session = SessionState(session_id="fix-event")
         session.rejected_proposals = {
@@ -893,7 +893,7 @@ class TestSessionApprovalGates:
             }
         }
 
-        event = PrimaryServicer._build_fix_event(session, [])
+        event = EngineServicer._build_fix_event(session, [])
         assert len(event.proposals) == 1
         assert event.proposals[0].proposal_id == "t1-0000"
         assert event.proposals[0].status == "rejected"
@@ -909,11 +909,11 @@ class TestGalaxyProxyConfigActivation:
             tmp_path: Pytest temporary directory fixture.
             monkeypatch: Pytest monkeypatch fixture for safe env manipulation.
         """
-        from apme_engine.daemon.primary_server import PrimaryServicer
+        from apme_engine.daemon.engine_server import EngineServicer
 
         cfg = tmp_path / "ansible.cfg"
         cfg.write_text("[galaxy]\nserver_list = certified\n")
-        servicer = PrimaryServicer()
+        servicer = EngineServicer()
         monkeypatch.setenv("ANSIBLE_CONFIG", "/tmp/original.cfg")
 
         async with servicer._activate_galaxy_proxy_config(cfg):
@@ -930,11 +930,11 @@ class TestGalaxyProxyConfigActivation:
             tmp_path: Pytest temporary directory fixture.
             monkeypatch: Pytest monkeypatch fixture for safe env manipulation.
         """
-        from apme_engine.daemon.primary_server import PrimaryServicer
+        from apme_engine.daemon.engine_server import EngineServicer
 
         cfg = tmp_path / "ansible.cfg"
         cfg.write_text("[galaxy]\nserver_list = certified\n")
-        servicer = PrimaryServicer()
+        servicer = EngineServicer()
         monkeypatch.delenv("ANSIBLE_CONFIG", raising=False)
 
         async with servicer._activate_galaxy_proxy_config(cfg):
@@ -948,9 +948,9 @@ class TestSessionReplayState:
 
     async def test_replays_tier1_summary(self) -> None:
         """Replay emits tier1_complete when tier1 patches exist."""
-        from apme_engine.daemon.primary_server import PrimaryServicer
+        from apme_engine.daemon.engine_server import EngineServicer
 
-        servicer = PrimaryServicer()
+        servicer = EngineServicer()
         session = SessionState(session_id="test")
         session.tier1_patches = [
             FilePatch(path="x.yml", original=b"o", patched=b"p"),
@@ -964,9 +964,9 @@ class TestSessionReplayState:
 
     async def test_replays_pending_proposals(self) -> None:
         """Replay emits tier1_complete and proposals when awaiting approval."""
-        from apme_engine.daemon.primary_server import PrimaryServicer
+        from apme_engine.daemon.engine_server import EngineServicer
 
-        servicer = PrimaryServicer()
+        servicer = EngineServicer()
         session = SessionState(session_id="test")
         session.tier1_patches = [FilePatch(path="x.yml")]
         session.report = FixReport()
@@ -981,9 +981,9 @@ class TestSessionReplayState:
 
     async def test_replays_result_when_complete(self) -> None:
         """Replay emits final result when session status is complete."""
-        from apme_engine.daemon.primary_server import PrimaryServicer
+        from apme_engine.daemon.engine_server import EngineServicer
 
-        servicer = PrimaryServicer()
+        servicer = EngineServicer()
         session = SessionState(session_id="test")
         session.original_files = {"a.yml": b"orig"}
         session.working_files = {"a.yml": b"patched"}
@@ -1010,12 +1010,12 @@ class TestSessionGraphRemediate:
         """
         from unittest.mock import MagicMock
 
-        from apme_engine.daemon.primary_server import PrimaryServicer
+        from apme_engine.daemon.engine_server import EngineServicer
         from apme_engine.graph.content_graph import ContentGraph, ContentNode, NodeIdentity, NodeType
         from apme_engine.remediation.graph_engine import FilePatch as EngineFilePatch
         from apme_engine.remediation.graph_engine import GraphFixReport
 
-        servicer = PrimaryServicer.__new__(PrimaryServicer)
+        servicer = EngineServicer.__new__(EngineServicer)
 
         yaml_content = "- name: Install\n  apt:\n    name: nginx\n    state: present\n"
         patched_content = "- name: Install\n  ansible.builtin.apt:\n    name: nginx\n    state: present\n"
@@ -1127,11 +1127,11 @@ class TestSessionGraphRemediate:
         """
         from unittest.mock import MagicMock
 
-        from apme_engine.daemon.primary_server import PrimaryServicer
+        from apme_engine.daemon.engine_server import EngineServicer
         from apme_engine.graph.content_graph import ContentGraph
         from apme_engine.remediation.graph_engine import GraphFixReport
 
-        servicer = PrimaryServicer.__new__(PrimaryServicer)
+        servicer = EngineServicer.__new__(EngineServicer)
 
         play_file = tmp_path / "play.yml"
         play_file.write_text("- name: OK\n  ansible.builtin.debug:\n    msg: hi\n")
@@ -1185,10 +1185,10 @@ class TestSessionGraphRemediate:
         """
         from unittest.mock import MagicMock
 
-        from apme_engine.daemon.primary_server import PrimaryServicer
+        from apme_engine.daemon.engine_server import EngineServicer
         from apme_engine.remediation.graph_engine import GraphFixReport
 
-        servicer = PrimaryServicer.__new__(PrimaryServicer)
+        servicer = EngineServicer.__new__(EngineServicer)
 
         play_file = tmp_path / "play.yml"
         play_file.write_text("- name: Test\n  debug:\n    msg: hi\n")
@@ -1242,11 +1242,11 @@ class TestSessionGraphRemediate:
         """
         from unittest.mock import MagicMock
 
-        from apme_engine.daemon.primary_server import PrimaryServicer
+        from apme_engine.daemon.engine_server import EngineServicer
         from apme_engine.graph.content_graph import ContentGraph
         from apme_engine.remediation.graph_engine import GraphFixReport
 
-        servicer = PrimaryServicer.__new__(PrimaryServicer)
+        servicer = EngineServicer.__new__(EngineServicer)
 
         play_file = tmp_path / "play.yml"
         play_file.write_text("- name: Test\n  debug:\n    msg: hi\n")
@@ -1309,7 +1309,7 @@ class TestSessionGraphRemediate:
         These violations are not stored in the graph ledger, so they must be
         carried in session state across the approval boundary.
         """
-        from apme_engine.daemon.primary_server import _reconcile_after_approval
+        from apme_engine.daemon.engine_server import _reconcile_after_approval
         from apme_engine.engine.models import RemediationClass
         from apme_engine.graph.content_graph import ContentGraph
 
@@ -1342,11 +1342,11 @@ class TestSessionGraphRemediate:
         """
         from unittest.mock import MagicMock
 
-        from apme_engine.daemon.primary_server import PrimaryServicer
+        from apme_engine.daemon.engine_server import EngineServicer
         from apme_engine.graph.content_graph import ContentGraph
         from apme_engine.remediation.graph_engine import GraphFixReport
 
-        servicer = PrimaryServicer.__new__(PrimaryServicer)
+        servicer = EngineServicer.__new__(EngineServicer)
 
         play_file = tmp_path / "play.yml"
         play_file.write_text("- name: Test\n  debug:\n    msg: hi\n")
@@ -1407,12 +1407,12 @@ class TestSessionRescanBridge:
         """
         from unittest.mock import MagicMock
 
-        from apme_engine.daemon.primary_server import PrimaryServicer
+        from apme_engine.daemon.engine_server import EngineServicer
         from apme_engine.graph.content_graph import ContentGraph, ContentNode, NodeIdentity, NodeType
         from apme_engine.remediation.graph_engine import FilePatch as EngineFilePatch
         from apme_engine.remediation.graph_engine import GraphFixReport
 
-        servicer = PrimaryServicer.__new__(PrimaryServicer)
+        servicer = EngineServicer.__new__(EngineServicer)
 
         yaml_content = "- name: Install\n  apt:\n    name: nginx\n    state: present\n"
         patched_content = "- name: Install\n  ansible.builtin.apt:\n    name: nginx\n    state: present\n"
@@ -1499,11 +1499,11 @@ class TestSessionRescanBridge:
         """
         from unittest.mock import MagicMock
 
-        from apme_engine.daemon.primary_server import PrimaryServicer
+        from apme_engine.daemon.engine_server import EngineServicer
         from apme_engine.graph.content_graph import ContentGraph
         from apme_engine.remediation.graph_engine import GraphFixReport
 
-        servicer = PrimaryServicer.__new__(PrimaryServicer)
+        servicer = EngineServicer.__new__(EngineServicer)
 
         play_file = tmp_path / "play.yml"
         play_file.write_text("- name: OK\n  ansible.builtin.debug:\n    msg: hi\n")
@@ -1651,9 +1651,9 @@ class TestFixSessionRPC:
 
     async def test_session_created_on_first_upload(self) -> None:
         """First upload yields SessionCreated with ID and positive TTL."""
-        from apme_engine.daemon.primary_server import PrimaryServicer
+        from apme_engine.daemon.engine_server import EngineServicer
 
-        servicer = PrimaryServicer()
+        servicer = EngineServicer()
         stream = AsyncCommandStream()
         ctx = FakeGrpcContext()
 
@@ -1665,7 +1665,7 @@ class TestFixSessionRPC:
 
         created = None
         with patch.object(
-            PrimaryServicer,
+            EngineServicer,
             "_session_process",
             _mock_session_process_complete,
         ):
@@ -1684,9 +1684,9 @@ class TestFixSessionRPC:
 
     async def test_close_yields_closed_event(self) -> None:
         """Close command cleanly ends the stream."""
-        from apme_engine.daemon.primary_server import PrimaryServicer
+        from apme_engine.daemon.engine_server import EngineServicer
 
-        servicer = PrimaryServicer()
+        servicer = EngineServicer()
         stream = AsyncCommandStream()
         ctx = FakeGrpcContext()
 
@@ -1698,7 +1698,7 @@ class TestFixSessionRPC:
 
         last_event = None
         with patch.object(
-            PrimaryServicer,
+            EngineServicer,
             "_session_process",
             _mock_session_process_complete,
         ):
@@ -1715,9 +1715,9 @@ class TestFixSessionRPC:
 
     async def test_extend_refreshes_session_ttl(self) -> None:
         """Extend command responds with SessionCreated carrying refreshed TTL."""
-        from apme_engine.daemon.primary_server import PrimaryServicer
+        from apme_engine.daemon.engine_server import EngineServicer
 
-        servicer = PrimaryServicer()
+        servicer = EngineServicer()
         stream = AsyncCommandStream()
         ctx = FakeGrpcContext()
 
@@ -1730,7 +1730,7 @@ class TestFixSessionRPC:
         created_count = 0
         extend_sent = False
         with patch.object(
-            PrimaryServicer,
+            EngineServicer,
             "_session_process",
             _mock_session_process_complete,
         ):
@@ -1751,9 +1751,9 @@ class TestFixSessionRPC:
 
     async def test_resume_existing_session(self) -> None:
         """Resuming an active session replays its state."""
-        from apme_engine.daemon.primary_server import PrimaryServicer
+        from apme_engine.daemon.engine_server import EngineServicer
 
-        servicer = PrimaryServicer()
+        servicer = EngineServicer()
         store = servicer._get_session_store()
 
         session = store.create()
@@ -1789,9 +1789,9 @@ class TestFixSessionRPC:
 
     async def test_resume_nonexistent_aborts(self) -> None:
         """Resuming an unknown session aborts with NOT_FOUND."""
-        from apme_engine.daemon.primary_server import PrimaryServicer
+        from apme_engine.daemon.engine_server import EngineServicer
 
-        servicer = PrimaryServicer()
+        servicer = EngineServicer()
         stream = AsyncCommandStream()
         ctx = FakeGrpcContext()
 
@@ -1809,9 +1809,9 @@ class TestFixSessionRPC:
 
     async def test_approval_flow_end_to_end(self) -> None:
         """Upload → proposals → approve → result → close."""
-        from apme_engine.daemon.primary_server import PrimaryServicer
+        from apme_engine.daemon.engine_server import EngineServicer
 
-        servicer = PrimaryServicer()
+        servicer = EngineServicer()
         stream = AsyncCommandStream()
         ctx = FakeGrpcContext()
 
@@ -1823,7 +1823,7 @@ class TestFixSessionRPC:
 
         events: list[SessionEvent] = []
         with patch.object(
-            PrimaryServicer,
+            EngineServicer,
             "_session_process",
             _mock_session_process_with_proposals,
         ):
@@ -1852,9 +1852,9 @@ class TestFixSessionRPC:
 
     async def test_max_sessions_returns_resource_exhausted(self) -> None:
         """Exceeding max sessions raises RESOURCE_EXHAUSTED."""
-        from apme_engine.daemon.primary_server import PrimaryServicer
+        from apme_engine.daemon.engine_server import EngineServicer
 
-        servicer = PrimaryServicer()
+        servicer = EngineServicer()
         store = servicer._get_session_store()
 
         for _ in range(_MAX_SESSIONS):

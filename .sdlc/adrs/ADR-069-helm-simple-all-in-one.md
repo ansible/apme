@@ -11,7 +11,7 @@ Accepted
 ## Context
 
 ADR-054 defined the Helm chart as a **split** Kubernetes topology: engine
-Deployment (Primary + validators + Galaxy Proxy) separate from Gateway, UI, and
+Deployment (Engine + validators + Galaxy Proxy) separate from Gateway, UI, and
 Abbenay Deployments. That shape assumed a production scale path where engines
 horizontally scale behind a shared Gateway and optional AI daemon.
 
@@ -19,7 +19,7 @@ In practice the Helm chart’s audience is **EAP and upstream evaluation /
 single-site installs**, not a multi-replica engine farm. The split topology
 forces:
 
-- Cross-pod Service DNS for Primary → Abbenay and Primary → Gateway reporting
+- Cross-pod Service DNS for Engine → Abbenay and Engine → Gateway reporting
 - Abbenay C2 / DR-029 TLS or `--insecure` on non-loopback binds (APME #400,
   Abbenay #63 / #65, APME PR #492 CA Secret seeding)
 - Chart and ops complexity (multiple Deployments, Services, NetworkPolicies,
@@ -67,7 +67,7 @@ pod co-locates the engine stack, Gateway, UI, and optional Abbenay, communicatin
 over `127.0.0.1` (ADR-005).**
 
 1. **Single workload** — Prefer one Deployment (name may remain `engine` or
-   become `apme`; implementation detail). Containers: Primary, validators,
+   become `apme`; implementation detail). Containers: Engine, validators,
    Galaxy Proxy, Gateway, UI nginx, optional Abbenay (and optional OTel
    collector per ADR-067).
 2. **Localhost addresses** — `APME_ABBENAY_ADDR`, reporting sink, and other
@@ -170,7 +170,7 @@ EAP AI remediation.
 - Collapse `gateway-deployment.yaml`, `ui-deployment.yaml`, and
   `abbenay-deployment.yaml` into the primary workload template (or equivalent
   single Deployment). Adjust Services accordingly.
-- Set Abbenay `--grpc-host 127.0.0.1`; Primary `APME_ABBENAY_ADDR=127.0.0.1:50057`
+- Set Abbenay `--grpc-host 127.0.0.1`; Engine `APME_ABBENAY_ADDR=127.0.0.1:50057`
   (or configured port). Drop Helm `abbenay.grpc.tls` / CA Secret requirements
   for the default path.
 - Wire `APME_REPORTING_ENDPOINT=127.0.0.1:50060` (same as daemon / Podman).

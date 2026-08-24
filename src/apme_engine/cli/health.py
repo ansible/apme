@@ -1,4 +1,4 @@
-"""Health-check subcommand: probe Primary aggregate health."""
+"""Health-check subcommand: probe Engine aggregate health."""
 
 from __future__ import annotations
 
@@ -8,9 +8,9 @@ import sys
 
 import grpc
 
-from apme.v1 import primary_pb2_grpc
+from apme.v1 import engine_pb2_grpc
 from apme.v1.common_pb2 import HealthRequest
-from apme_engine.cli.discovery import resolve_primary
+from apme_engine.cli.discovery import resolve_engine
 
 
 def run_health_check(args: argparse.Namespace) -> None:
@@ -19,23 +19,23 @@ def run_health_check(args: argparse.Namespace) -> None:
     Args:
         args: Parsed CLI arguments.
     """
-    channel, addr = resolve_primary(args)
-    stub = primary_pb2_grpc.PrimaryStub(channel)  # type: ignore[no-untyped-call]
+    channel, addr = resolve_engine(args)
+    stub = engine_pb2_grpc.EngineStub(channel)  # type: ignore[no-untyped-call]
 
     timeout = getattr(args, "timeout", 5.0)
     try:
         resp = stub.Health(HealthRequest(), timeout=timeout)
     except grpc.RpcError as e:
         if args.json:
-            print(json.dumps({"primary": {"status": f"error: {e}", "address": addr}}))
+            print(json.dumps({"engine": {"status": f"error: {e}", "address": addr}}))
         else:
-            sys.stderr.write(f"Primary ({addr}): error - {e}\n")
+            sys.stderr.write(f"Engine ({addr}): error - {e}\n")
         sys.exit(1)
     finally:
         channel.close()
 
     results: dict[str, dict[str, str]] = {
-        "primary": {"status": resp.status, "address": addr},
+        "engine": {"status": resp.status, "address": addr},
     }
     for svc in resp.downstream:
         results[svc.name] = {"status": svc.status, "address": svc.address}

@@ -176,7 +176,7 @@ above should catch novel issues these don't cover.
 
 - **Validator read-only invariant**: validators must never modify files
   (ADR-009). If a validator writes, creates, or deletes any file, flag it.
-- **Proto-servicer parity**: every RPC in `primary.proto` /
+- **Proto-servicer parity**: every RPC in `engine.proto` /
   `validate.proto` must have a matching servicer method in
   `daemon/`. Missing handlers mean gRPC returns UNIMPLEMENTED at runtime.
 - **Rule ID conventions**: L/M/R/P/SEC per ADR-008, EXT- for plugins
@@ -187,7 +187,7 @@ above should catch novel issues these don't cover.
   async server methods.
 - **Dependency direction**: engine never imports from gateway
   (ADR-020, ADR-029). If `apme_engine` imports `apme_gateway`, flag it.
-- **Session venv ownership**: only Primary writes to `/sessions`
+- **Session venv ownership**: only Engine writes to `/sessions`
   (ADR-022). Other services mount it read-only.
 - **tox-only invocation**: never invoke `ruff`, `mypy`, `pytest`, or
   `prek` directly in docs, scripts, or CI (ADR-047). Always use

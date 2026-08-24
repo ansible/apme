@@ -9,7 +9,7 @@ Vercel AI SDK.
 In the Simple in-pod topology (ADR-069 / ADR-070), Abbenay serves HTTP admin
 and gRPC on loopback (`--host 127.0.0.1 --port 8787` and
 `--grpc-host 127.0.0.1 --grpc-port 50057`; image ≥ v2026.8.0). No cluster
-Service or hostPort — Helm Simple and Podman share a netns, so Primary/
+Service or hostPort — Helm Simple and Podman share a netns, so Engine/
 Gateway reach Abbenay at `127.0.0.1`. The Gateway reverse-proxies an
 **allowlisted** admin surface:
 
@@ -23,10 +23,13 @@ Gateway reach Abbenay at `127.0.0.1`. The Gateway reverse-proxies an
 | `GET/POST /api/v1/ai/secrets` | `/api/secrets` |
 | `DELETE /api/v1/ai/secrets/{key}` | `/api/secrets/{key}` |
 
-`GET /api/v1/ai/models` remains Primary → Abbenay gRPC (`ListAIModels`). Chat
+`GET /api/v1/ai/models` remains Engine → Abbenay gRPC (`ListAIModels`). Chat
 is **not** proxied. Set `APME_ABBENAY_HTTP_URL` (default
-`http://127.0.0.1:8787`) and `APME_ABBENAY_HTTP_TOKEN` on the Gateway (same
-secret as `ABBENAY_API_TOKEN` / `abbenay.token` in Helm).
+`http://127.0.0.1:8787` for loopback-only Simple topology) and
+`APME_ABBENAY_HTTP_TOKEN` on the Gateway (same secret as `ABBENAY_API_TOKEN` /
+`abbenay.token` in Helm). Cleartext HTTP is allowed only for loopback hosts
+(`127.0.0.1`, `localhost`, `::1`); any non-loopback URL must use HTTPS, and the
+Gateway proxy keeps TLS certificate validation enabled.
 
 ### Memory secret store (Abbenay >= v2026.8.5)
 

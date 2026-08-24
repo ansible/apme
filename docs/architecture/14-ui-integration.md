@@ -101,7 +101,7 @@ Gateway resolves the active operation by `project_id` (not by embedding
 sequenceDiagram
     participant UI as React SPA
     participant GW as Gateway :8080
-    participant Primary as Primary :50051
+    participant Engine as Engine :50051
 
     UI->>GW: POST /api/v1/projects/{project_id}/operation
     Note right of UI: {"action": "check", "options": {...}}
@@ -112,15 +112,15 @@ sequenceDiagram
 
     GW->>GW: Clone repo from project.repo_url
     GW-->>UI: event: status_changed / progress
-    GW->>Primary: FixSession gRPC stream
+    GW->>Engine: FixSession gRPC stream
     GW-->>UI: event: snapshot / status_changed
 
     loop Progress events
-        Primary-->>GW: SessionEvent(progress)
+        Engine-->>GW: SessionEvent(progress)
         GW-->>UI: event: progress
     end
 
-    Primary-->>GW: SessionEvent(result)
+    Engine-->>GW: SessionEvent(result)
     GW-->>UI: event: result
 ```
 
@@ -191,7 +191,7 @@ on the Gateway side. The protocol differs slightly:
 1. Client sends `{"type": "start", "options": {...}}` with scan options
 2. Client uploads files as `{"type": "file", "path": "...", "content": "<base64>"}`
 3. Client signals `{"type": "files_done"}` to begin processing
-4. Gateway bridges to Primary's `FixSession` and forwards events
+4. Gateway bridges to Engine's `FixSession` and forwards events
 5. Supports `{"type": "approve", "approved_ids": [...]}` for AI approval
 6. Supports session resume via `?resume=<session_id>` query parameter
 
@@ -264,7 +264,7 @@ flowchart TD
     B --> C[POST /api/v1/projects/{project_id}/operation]
     C --> D[GET /api/v1/projects/{project_id}/operation/events SSE]
     D --> E[Gateway clones repo]
-    E --> F[Gateway opens FixSession to Primary]
+    E --> F[Gateway opens FixSession to Engine]
     F --> G[Progress events stream to UI via SSE]
     G --> H{AI proposals?}
     H -->|Yes| I[ProposalReviewPanel shown]

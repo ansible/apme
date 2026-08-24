@@ -14,7 +14,7 @@ The current `/api/v1/health` endpoint (PR #69) probes a **hardcoded list** of up
 
 ```python
 _UPSTREAM_SERVICES: list[tuple[str, str, str]] = [
-    ("Primary Orchestrator", "APME_PRIMARY_ADDRESS", "127.0.0.1:50051"),
+    ("Engine Orchestrator", "APME_ENGINE_ADDRESS", "127.0.0.1:50051"),
     ("Native Validator",     "NATIVE_GRPC_ADDRESS",  "127.0.0.1:50055"),
     ...
 ]
@@ -22,7 +22,7 @@ _UPSTREAM_SERVICES: list[tuple[str, str, str]] = [
 
 This works for single-pod and local daemon deployments where all services share `localhost`. It breaks in multi-pod topologies (ADR-012) because:
 
-1. **Unknown pod count.** The gateway cannot enumerate N engine pods from static env vars. Each pod is a self-contained stack (Primary + validators + Galaxy Proxy), and pods are created/destroyed dynamically by an orchestrator.
+1. **Unknown pod count.** The gateway cannot enumerate N engine pods from static env vars. Each pod is a self-contained stack (Engine + validators + Galaxy Proxy), and pods are created/destroyed dynamically by an orchestrator.
 
 2. **No registration path.** ADR-005 rejected etcd/service-discovery for the single-pod case. That decision is correct *within* a pod (fixed ports, known services), but does not address the *between-pod* problem: how does the gateway know which pods exist?
 
@@ -67,7 +67,7 @@ Engine pods announce themselves to the gateway via periodic heartbeat messages o
 message PodHeartbeat {
   string pod_id       = 1;  // stable identifier (hostname or UUID)
   string version      = 2;  // apme-engine version
-  map<string, string> services = 3;  // name → address (e.g. "primary" → "10.0.1.5:50051")
+  map<string, string> services = 3;  // name → address (e.g. "engine" → "10.0.1.5:50051")
   google.protobuf.Timestamp started_at = 4;
   float cpu_load      = 5;  // optional: enables future load-aware routing
 }
@@ -198,7 +198,7 @@ No new connections, no new dependencies. The heartbeat uses the same gRPC channe
 
 1. Use `cpu_load` from heartbeats to weight routing decisions
 2. Gateway forwards scan requests to least-loaded pod
-3. Requires a routing layer in front of Primary (separate ADR)
+3. Requires a routing layer in front of Engine (separate ADR)
 
 ### Backward compatibility
 

@@ -42,7 +42,7 @@ in the presentation layer (ADR-020).
 ```
                    ┌──────────────────── apme-pod ────────────────────┐
                    │  ┌──────────┐  ┌──────────┐  ┌──────────┐      │
-                   │  │ Primary  │  │  Native  │  │   OPA    │  ... │
+                   │  │ Engine  │  │  Native  │  │   OPA    │  ... │
                    │  │  :50051  │  │  :50055  │  │  :50054  │      │
                    │  └──────────┘  └──────────┘  └──────────┘      │
                    └─────────┬──────────────────────────────────────┘
@@ -124,7 +124,7 @@ For enterprise deployments, APME sits behind the **AAP Gateway** — the existin
 │  ┌──────────────────────────── apme-pod ────────────────────────┐   │
 │  │                                                               │   │
 │  │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐     │   │
-│  │  │ Primary  │  │  Native  │  │   OPA    │  │ Ansible  │ ... │   │
+│  │  │ Engine  │  │  Native  │  │   OPA    │  │ Ansible  │ ... │   │
 │  │  │  :50051  │  │  :50055  │  │  :50054  │  │  :50053  │     │   │
 │  │  └──────────┘  └──────────┘  └──────────┘  └──────────┘     │   │
 │  │                                                               │   │
@@ -148,7 +148,7 @@ For enterprise deployments, APME sits behind the **AAP Gateway** — the existin
 
 | Concern | Handled By |
 |---------|------------|
-| Check / remediate execution | Primary service (gRPC, `FixSession`) |
+| Check / remediate execution | Engine service (gRPC, `FixSession`) |
 | Validation | Native, OPA, Ansible, Gitleaks validators |
 | Remediation | Remediation engine (Phase 3) |
 | API endpoints | Stateless REST API (no auth, trusts gateway headers) |
@@ -237,7 +237,7 @@ messages:
 
 Files are uploaded as base64-encoded content within JSON messages. The gateway
 writes them to a temp directory, constructs `ScanChunk` protobuf messages, and
-streams them to Primary over the `FixSession` gRPC stream.
+streams them to Engine over the `FixSession` gRPC stream.
 
 ### No Authentication
 
@@ -363,7 +363,7 @@ containers:
 
 ### Phase 4a: Standalone UI Backend
 
-1. **FastAPI app** — REST API + WebSocket with gRPC client to Primary
+1. **FastAPI app** — REST API + WebSocket with gRPC client to Engine
 2. **SQLite persistence** — activity history, violations, proposals
 3. **WS /api/v1/ws/session** — unified check + remediate session over WebSocket (`FixSession`)
 4. **GET /api/v1/activity** — list with pagination/filtering
@@ -402,7 +402,7 @@ The standalone UI translates HTTP requests to gRPC calls:
 @router.post("/api/v1/activity")
 async def create_operation(body: OperationCreate):
     async with grpc.aio.insecure_channel("127.0.0.1:50051") as channel:
-        stub = primary_pb2_grpc.PrimaryStub(channel)
+        stub = engine_pb2_grpc.EngineStub(channel)
         async for event in stub.FixSession(build_session_commands(body)):
             # process SessionEvent (progress, violations, patches)
             ...
@@ -411,10 +411,10 @@ async def create_operation(body: OperationCreate):
     return record
 ```
 
-The UI/Gateway container **never** runs the engine directly. It always delegates to Primary via the **`FixSession`** bidirectional stream (ADR-039). This means:
+The UI/Gateway container **never** runs the engine directly. It always delegates to Engine via the **`FixSession`** bidirectional stream (ADR-039). This means:
 
 - The UI has no dependency on `apme_engine`
-- Primary's contract is the single source of truth
+- Engine's contract is the single source of truth
 - The CLI and UI are interchangeable consumers
 
 ---

@@ -46,7 +46,7 @@ def test_ai_triage_candidates_use_current_yaml_not_scan_baseline() -> None:
     Returns:
         None.
     """
-    from apme_engine.daemon.primary_server import _collect_ai_triage_candidates
+    from apme_engine.daemon.engine_server import _collect_ai_triage_candidates
     from apme_engine.daemon.session import SessionState
     from apme_engine.engine.models import RemediationClass
     from apme_engine.graph.content_graph import ContentGraph, ContentNode, NodeIdentity, NodeType
@@ -94,7 +94,7 @@ def test_decline_skipped_ai_escalation_keeps_allow_list_open() -> None:
     Returns:
         None.
     """
-    from apme_engine.daemon.primary_server import _decline_skipped_ai_escalation
+    from apme_engine.daemon.engine_server import _decline_skipped_ai_escalation
     from apme_engine.daemon.session import SessionState
     from apme_engine.engine.models import RemediationClass, ViolationDict
     from apme_engine.graph.content_graph import ContentGraph, ContentNode, NodeIdentity, NodeType
@@ -160,7 +160,7 @@ def test_filter_violations_by_escalate_targets() -> None:
     Returns:
         None.
     """
-    from apme_engine.daemon.primary_server import _filter_violations_by_escalate_targets
+    from apme_engine.daemon.engine_server import _filter_violations_by_escalate_targets
     from apme_engine.engine.models import ViolationDict
 
     viols: list[ViolationDict] = [
@@ -195,7 +195,7 @@ def test_decline_skipped_ai_escalation_normalizes_native_prefix() -> None:
     Returns:
         None.
     """
-    from apme_engine.daemon.primary_server import _decline_skipped_ai_escalation
+    from apme_engine.daemon.engine_server import _decline_skipped_ai_escalation
     from apme_engine.daemon.session import SessionState
     from apme_engine.engine.models import RemediationClass, ViolationDict
     from apme_engine.graph.content_graph import ContentGraph, ContentNode, NodeIdentity, NodeType

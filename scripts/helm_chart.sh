@@ -125,6 +125,14 @@ assert_fail_message() {
   fi
 }
 
+engine_container_block() {
+  awk '
+    /- name: engine$/ {grab=1}
+    grab {print}
+    grab && /^        - name: / && !/- name: engine$/ {exit}
+  '
+}
+
 echo "==> helm template assertions (ADR-069 Simple)"
 RENDER="$("${HELM_BIN}" template test-release "${CHART_DIR}" \
   --set abbenay.enabled=true \
@@ -155,9 +163,22 @@ assert_template_contains "abbenay-config emptyDir by default (#498)" "${RENDER}"
 assert_template_lacks "abbenay-config data mount not readOnly (#498)" "${RENDER}" $'name: abbenay-config\n              readOnly: true'
 assert_template_contains "reporting localhost" "${RENDER}" 'value: "127.0.0.1:50060"'
 assert_template_contains "abbenay addr localhost" "${RENDER}" 'value: "127.0.0.1:50057"'
-assert_template_contains "gateway primary addr localhost" "${RENDER}" 'value: "127.0.0.1:50051"'
+assert_template_contains "gateway engine addr localhost" "${RENDER}" 'value: "127.0.0.1:50051"'
 assert_template_contains "gateway Service" "${RENDER}" "name: test-release-apme-gateway"
 assert_template_contains "engine Deployment" "${RENDER}" "name: test-release-apme-engine"
+
+ENGINE_OVERRIDE_RENDER="$("${HELM_BIN}" template test-release "${CHART_DIR}" \
+  --set engine.resources.engine.limits.memory=4Gi \
+  --set engine.resources.engine.limits.cpu=4)"
+# Scope assertions to the engine container block so sibling containers with the
+# same default requests (cpu: 250m / memory: 512Mi) cannot satisfy the check.
+ENGINE_CONTAINER_BLOCK="$(printf '%s\n' "${ENGINE_OVERRIDE_RENDER}" | engine_container_block)"
+assert_template_contains "engine resource override memory" "${ENGINE_CONTAINER_BLOCK}" "memory: 4Gi"
+assert_template_contains "engine resource override cpu" "${ENGINE_CONTAINER_BLOCK}" "cpu: 4"
+assert_template_contains "engine override preserves default requests" "${ENGINE_CONTAINER_BLOCK}" "cpu: 250m"
+assert_template_contains "engine override preserves default memory request" "${ENGINE_CONTAINER_BLOCK}" "memory: 512Mi"
+assert_template_contains "engine max concurrent RPCs" "${ENGINE_OVERRIDE_RENDER}" \
+  'name: APME_ENGINE_MAX_RPCS'
 
 PORTAL_RENDER="$("${HELM_BIN}" template test-release "${CHART_DIR}" \
   -f "${CHART_DIR}/values-portal.yaml")"
@@ -222,7 +243,7 @@ for d in services:
 
 if "--grpc-host" not in text or "127.0.0.1" not in text:
     raise SystemExit("FAIL: Abbenay must bind 127.0.0.1")
-# Gateway gRPC stays pod-local (Primary → 127.0.0.1:50060); Service exposes HTTP only.
+# Gateway gRPC stays pod-local (Engine → 127.0.0.1:50060); Service exposes HTTP only.
 for d in services:
     if "port: 50060" in d:
         raise SystemExit(

@@ -32,7 +32,7 @@ This is an architecture-forcing question: adding persistence changes the deploym
 ## Context
 
 Current architecture (per ARCHITECTURE.md):
-- CLI → Primary → Validators → CLI
+- CLI → Engine → Validators → CLI
 - No database, no persistence, no history
 - Results are in-memory only
 
@@ -80,7 +80,7 @@ apme check . --json > results/$(date +%Y%m%d).json
 
 ### Option B: SQLite (Embedded)
 
-**Description**: Add SQLite database to Primary container. Scan results persisted automatically.
+**Description**: Add SQLite database to the Gateway container (Engine remains stateless per ADR-020/ADR-029). Scan results persisted automatically.
 
 **Pros**:
 - Zero additional infrastructure

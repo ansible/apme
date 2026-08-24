@@ -18,7 +18,7 @@ The Ansible validator creates Python venvs containing `ansible-core` (and option
 
 ## Decision
 
-**Replace the shared hash-keyed venv pool with session-scoped venvs managed by `VenvSessionManager`, owned by the Primary orchestrator and shared read-only with validators.**
+**Replace the shared hash-keyed venv pool with session-scoped venvs managed by `VenvSessionManager`, owned by the Engine orchestrator and shared read-only with validators.**
 
 Each session gets its own isolated directory with:
 - A file lock (`.lock`) for safe concurrent creation via `fcntl.flock()`
@@ -41,7 +41,7 @@ $SESSIONS_ROOT/
 
 ### Ownership Model
 
-The **Primary orchestrator** is the sole venv authority (single writer). It calls `VenvSessionManager.acquire()` before fanning out to validators. Validators mount the sessions volume **read-only** — they receive a `venv_path` in `ValidateRequest` and use it as-is. This eliminates concurrent validator writes and corruption risk.
+The **Engine orchestrator** is the sole venv authority (single writer). It calls `VenvSessionManager.acquire()` before fanning out to validators. Validators mount the sessions volume **read-only** — they receive a `venv_path` in `ValidateRequest` and use it as-is. This eliminates concurrent validator writes and corruption risk.
 
 ### CLI Integration
 

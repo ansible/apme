@@ -24,7 +24,7 @@ CLI/UI display. Those concerns are complementary, not interchangeable:
 Constraints and drivers:
 
 - Reference deployment is a multi-container Podman pod sharing localhost
-  (ADR-004, ADR-005). Primary, Gateway, and Galaxy Proxy all emit metrics.
+  (ADR-004, ADR-005). Engine, Gateway, and Galaxy Proxy all emit metrics.
 - Align with the AAP direction for OTEL-based observability (emit OTLP;
   BYO/platform collector; do not bundle a logging product).
 - Apps must stay **emitter-only**. They must not embed Prometheus scrape
@@ -128,7 +128,7 @@ strictly simpler and safer than fan-out from every container.
 
 ### Positive
 
-- One instrumentation API (OTel) across Primary, Gateway, and Galaxy Proxy.
+- One instrumentation API (OTel) across Engine, Gateway, and Galaxy Proxy.
 - Apps remain dumb emitters to localhost; collector owns export policy.
 - Local Prom scrape (`:8889`) works without external dependencies.
 - Forward-out to platform/BYO collectors can be added on the sidecar without
@@ -161,7 +161,7 @@ strictly simpler and safer than fan-out from every container.
   `apme.http.server.*`, `apme.grpc.server.*`).
 - Validator RPC middleware: `GrpcMetricsInterceptor` via
   `apme_engine.daemon.validator_grpc.start_validator_server` (all six
-  validators). Distinct from Primary's `apme.validator.duration` (ADR-013).
+  validators). Distinct from Engine's `apme.validator.duration` (ADR-013).
 - Pod: `otel-collector` in `containers/podman/pod.yaml`; config under
   `containers/observability/` / collector config in-tree.
 - Local dashboards: `containers/observability/up.sh` (Prometheus + Grafana
@@ -173,7 +173,7 @@ strictly simpler and safer than fan-out from every container.
 
 ## Acceptance Criteria
 
-- [x] Instrumented services (Primary, Gateway, Galaxy Proxy, and the six
+- [x] Instrumented services (Engine, Gateway, Galaxy Proxy, and the six
       validators via `apme.grpc.server.*`) emit OTLP/HTTP only when
       `OTEL_EXPORTER_OTLP_ENDPOINT` is set; otherwise metrics are no-op and
       startup never fails on OTel misconfiguration.

@@ -214,8 +214,8 @@ match.
 - Phase 2: scan-scoped draft/commit; gate commit writes analytics (and
   `review_status` when violation ids are already linked — live stubs often
   stamp at FixCompleted after the id bridge); pre-Phase-3 bridge was keyed
-  by `(file, source, rule_id, line_start)` before `primary.Proposal.path` was
-  added; `PATCH .../operation/proposals` + SSE
+  by `(file, source, rule_id, line_start)` — the stable bridge identity before
+  Phase 3 `Proposal.path`; `PATCH .../operation/proposals` + SSE
   `proposal_updated`; `abandon_working_set` resets draft status to pending;
   PR/push = publish flush — **done** (#392). UI wiring of PATCH /
   `proposal_updated` is a follow-up (types only in this change set).

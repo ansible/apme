@@ -14,43 +14,43 @@ check mode, interactive mode, and auto-approve mode differ.
 
 ```mermaid
 sequenceDiagram
-    participant Primary as PrimaryServicer
+    participant Engine as EngineServicer
     participant CLI as CLI / UI
 
     alt Interactive Gate 1 enabled
-        Note over Primary: Deterministic Tier 1 proposals generated
-        Primary-->>CLI: ProposalsReady(tier=1, id=t1-*)
-        CLI->>Primary: ApprovalRequest(approved_ids=[...])
-        Primary-->>CLI: ApprovalAck(applied_count)
+        Note over Engine: Deterministic Tier 1 proposals generated
+        Engine-->>CLI: ProposalsReady(tier=1, id=t1-*)
+        CLI->>Engine: ApprovalRequest(approved_ids=[...])
+        Engine-->>CLI: ApprovalAck(applied_count)
     end
 
     alt AI enabled
-        Note over Primary: AI gate evaluates remaining violations
-        Primary-->>CLI: ProposalsReady(tier=2, id=ai-*)
+        Note over Engine: AI gate evaluates remaining violations
+        Engine-->>CLI: ProposalsReady(tier=2, id=ai-*)
     end
 
     alt Check mode
-        CLI->>Primary: ApprovalRequest(approved_ids=[])
+        CLI->>Engine: ApprovalRequest(approved_ids=[])
         Note over CLI: Declines all — read-only
     else Interactive mode
         loop For each proposal
             CLI->>CLI: Display diff + explanation
             CLI->>CLI: Prompt: y/n/a/s/q
         end
-        CLI->>Primary: ApprovalRequest(approved_ids=[...])
+        CLI->>Engine: ApprovalRequest(approved_ids=[...])
     else Auto-approve mode (--auto-approve)
-        CLI->>Primary: ApprovalRequest(approved_ids=[all])
+        CLI->>Engine: ApprovalRequest(approved_ids=[all])
     end
 
-    Primary->>Primary: _session_apply_approved(approved_ids)
-    Primary-->>CLI: ApprovalAck(applied_count)
-    Primary->>Primary: _session_build_result()
-    Primary-->>CLI: SessionResult
+    Engine->>Engine: _session_apply_approved(approved_ids)
+    Engine-->>CLI: ApprovalAck(applied_count)
+    Engine->>Engine: _session_build_result()
+    Engine-->>CLI: SessionResult
 ```
 
 ## ProposalsReady Event
 
-When the graph engine produces AI proposals, the Primary converts them to
+When the graph engine produces AI proposals, the Engine converts them to
 `Proposal` proto messages and emits a `ProposalsReady` event:
 
 ```protobuf
@@ -121,7 +121,7 @@ Useful for CI pipelines where human review is not practical.
 
 ## Applying Approvals
 
-`PrimaryServicer._session_apply_approved()` processes the `ApprovalRequest`:
+`EngineServicer._session_apply_approved()` processes the `ApprovalRequest`:
 
 ### Graph-Based Proposals (Tier 1 + AI)
 
@@ -178,10 +178,10 @@ is not offered on Gate 1 node cards.
 
 | File | Key types/functions |
 |------|---------------------|
-| `src/apme_engine/daemon/primary_server.py` | `_session_apply_approved()`, `_build_graph_proposals()`, `_apply_graph_approvals()` |
+| `src/apme_engine/daemon/engine_server.py` | `_session_apply_approved()`, `_build_graph_proposals()`, `_apply_graph_approvals()` |
 | `src/apme_engine/cli/remediate.py` | `_interactive_review()`, `_prompt_ynasq()` |
 | `src/apme_engine/cli/check.py` | Auto-decline on `proposals` event |
-| `proto/apme/v1/primary.proto` | `Proposal`, `ProposalsReady`, `ApprovalRequest`, `ApprovalAck` |
+| `proto/apme/v1/engine.proto` | `Proposal`, `ProposalsReady`, `ApprovalRequest`, `ApprovalAck` |
 
 ## Related ADRs
 

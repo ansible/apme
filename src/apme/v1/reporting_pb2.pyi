@@ -8,7 +8,7 @@ from apme.v1.common_pb2 import (
     ScanSummary,
     Violation,
 )
-from apme.v1.primary_pb2 import (
+from apme.v1.engine_pb2 import (
     FilePatch,
     FixReport,
     ScanDiagnostics,

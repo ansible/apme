@@ -133,8 +133,8 @@ apme check .
 # JSON output
 apme check . --json
 
-# With diagnostics
-apme check . -v --primary-addr localhost:50051
+# With diagnostics (engine address via APME_ENGINE_ADDRESS or daemon discovery)
+APME_ENGINE_ADDRESS=localhost:50051 apme check . -v
 ```
 
 **Related PRs**:

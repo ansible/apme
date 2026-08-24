@@ -64,11 +64,10 @@ server credentials are already configured.
   fire-and-forget event sinks (see AGENTS.md, architectural invariant 11).
   Today the Galaxy Proxy already performs outbound fetches to Galaxy/AH servers
   on behalf of the engine — it is the pod's designated external-facing download
-  service.  `ansible-galaxy collection download` should run in the proxy
-  container (or a sidecar with outbound access), not in Primary, to preserve
-  the invariant.  If implementation requires running it in Primary, this ADR
-  proposes a narrowly scoped exception to invariant 11 for Galaxy/AH tarball
-  downloads, to be documented in AGENTS.md.
+  service.  `ansible-galaxy collection download` must run in the proxy
+  container (or a sidecar with outbound access), not in Engine, to preserve
+  the invariant.  An Engine-side download path is out of scope and would
+  require a separate approved ADR amending invariant 11.
 
 ## Decision
 
@@ -83,8 +82,8 @@ which is the authoritative, maintained implementation.
 Galaxy server configuration flows as scan metadata:
 
 ```
-CLI (reads ansible.cfg)  ──► gRPC ScanOptions.galaxy_servers ──► Primary
-UI  (global server defs) ──► Gateway ──► gRPC ScanOptions     ──► Primary
+CLI (reads ansible.cfg)  ──► gRPC ScanOptions.galaxy_servers ──► Engine
+UI  (global server defs) ──► Gateway ──► gRPC ScanOptions     ──► Engine
                                                                      │
                                                           galaxy_servers + collection specs
                                                                      │
@@ -169,9 +168,9 @@ should use it for all cases and eliminate the custom client entirely.
 ### Negative
 
 - **ansible-core dependency**: `ansible-galaxy collection download` requires
-  ansible-core.  Session venvs already have it; the proxy container may need
-  it added, or the download step moves to Primary (which has access to session
-  venvs)
+  ansible-core.  Session venvs already have it; the Galaxy Proxy container
+  must gain ansible-core (or an equivalent download sidecar) so outbound
+  fetches stay outside Engine
 - **Proto evolution**: New `GalaxyServerDef` message and field on
   `ScanOptions`/`FixOptions` — requires proto regeneration and client updates
 - **Subprocess latency**: `ansible-galaxy collection download` is slower than
@@ -199,12 +198,15 @@ Remove the custom `GalaxyClient` (httpx-based Galaxy V3 REST client, SSO
 token exchange, API root normalization) from the proxy.  Replace with
 `ansible-galaxy collection download` to fetch tarballs.
 
-- Preferred: proxy runs `ansible-galaxy collection download` (keeps outbound
-  fetches in the pod's designated external-facing service, preserving
-  invariant 11).  Primary sends the temp `ansible.cfg` path + collection
-  specs to the proxy via gRPC or shared volume.
-- Fallback: Primary runs `ansible-galaxy collection download` directly —
-  requires documenting a narrow invariant 11 exception in AGENTS.md
+- Proxy runs `ansible-galaxy collection download` (keeps outbound fetches in
+  the pod's designated external-facing service, preserving invariant 11).
+  **Local daemon:** Engine forwards `GalaxyServerDef` values and collection
+  specs to Galaxy Proxy over gRPC; the proxy materializes a temporary
+  `ansible.cfg` per download. `SessionState.galaxy_cfg_path` may set
+  `ANSIBLE_CONFIG` for the in-process proxy. **Pod/Helm:** Gateway provisions
+  credentials via `POST /admin/galaxy-config`; Engine still forwards collection
+  specs to Galaxy Proxy over gRPC (no Engine-owned credential file). No
+  Engine-side Galaxy download fallback.
 - Proxy: convert local tarballs to wheels (endpoint or filesystem watcher)
 - Remove `GalaxyClient` upstream fetching from proxy
 
@@ -218,7 +220,9 @@ Add proto fields and wire the CLI to read the user's `ansible.cfg`.
   `FixOptions`
 - CLI: parse `ansible.cfg` `[galaxy_server_list]` sections, populate
   `galaxy_servers` on scan requests
-- Primary: write temp `ansible.cfg` from `galaxy_servers`, scope to session
+- Engine: forward `galaxy_servers` to Galaxy Proxy over gRPC; the proxy
+  materializes a temporary `ansible.cfg` for `ansible-galaxy` and deletes
+  it after the download completes
 
 ### PR 3: Gateway + UI — global Galaxy server management
 

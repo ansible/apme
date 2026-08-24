@@ -23,7 +23,7 @@ from apme_engine.engine.models import ViolationDict, YAMLDict
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 POD_NAME = "apme-pod"
 CLI_IMAGE = "apme-cli:latest"
-PRIMARY_ADDR = "127.0.0.1:50051"
+ENGINE_ADDR = "127.0.0.1:50051"
 POD_STARTUP_TIMEOUT = 90
 SERVICE_SETTLE_SECONDS = 5
 
@@ -68,7 +68,7 @@ def _container_logs(name: str) -> str:
     """Return pod container logs.
 
     Args:
-        name: Container name (e.g. 'primary', 'native').
+        name: Container name (e.g. 'engine', 'native').
 
     Returns:
         Combined stdout and stderr.
@@ -138,7 +138,7 @@ def scan_result(pod: None) -> YAMLDict:
             "-w",
             "/workspace",
             "-e",
-            f"APME_PRIMARY_ADDRESS={PRIMARY_ADDR}",
+            f"APME_ENGINE_ADDRESS={ENGINE_ADDR}",
             "--entrypoint",
             "apme",
             CLI_IMAGE,
@@ -192,13 +192,11 @@ class TestHealthCheck:
                 "--pod",
                 POD_NAME,
                 "-e",
-                f"APME_PRIMARY_ADDRESS={PRIMARY_ADDR}",
+                f"APME_ENGINE_ADDRESS={ENGINE_ADDR}",
                 "--entrypoint",
                 "apme",
                 CLI_IMAGE,
                 "health-check",
-                "--primary-addr",
-                PRIMARY_ADDR,
             ]
         )
         combined = r.stdout + r.stderr
@@ -338,25 +336,25 @@ class TestNoDuplicates:
 class TestContainerLogs:
     """Tests for container log content."""
 
-    def test_primary_logged_opa_count(self, scan_result: YAMLDict) -> None:
-        """Primary logs OPA count.
+    def test_engine_logged_opa_count(self, scan_result: YAMLDict) -> None:
+        """Engine logs OPA count.
 
         Args:
             scan_result: Fixture providing scan result dict.
 
         """
-        logs = _container_logs("primary")
-        assert "Opa=" in logs, f"Primary did not log OPA count:\n{logs[-500:]}"
+        logs = _container_logs("engine")
+        assert "Opa=" in logs, f"Engine did not log OPA count:\n{logs[-500:]}"
 
-    def test_primary_logged_native_count(self, scan_result: YAMLDict) -> None:
-        """Primary logs Native count.
+    def test_engine_logged_native_count(self, scan_result: YAMLDict) -> None:
+        """Engine logs Native count.
 
         Args:
             scan_result: Fixture providing scan result dict.
 
         """
-        logs = _container_logs("primary")
-        assert "Native=" in logs, f"Primary did not log Native count:\n{logs[-500:]}"
+        logs = _container_logs("engine")
+        assert "Native=" in logs, f"Engine did not log Native count:\n{logs[-500:]}"
 
     def test_opa_wrapper_logged(self, scan_result: YAMLDict) -> None:
         """OPA wrapper logs OPA returned.
@@ -425,13 +423,11 @@ class TestGitleaks:
                 "--pod",
                 POD_NAME,
                 "-e",
-                f"APME_PRIMARY_ADDRESS={PRIMARY_ADDR}",
+                f"APME_ENGINE_ADDRESS={ENGINE_ADDR}",
                 "--entrypoint",
                 "apme",
                 CLI_IMAGE,
                 "health-check",
-                "--primary-addr",
-                PRIMARY_ADDR,
             ]
         )
         combined = r.stdout + r.stderr
@@ -449,15 +445,15 @@ class TestGitleaks:
         logs = _container_logs("gitleaks")
         assert "Gitleaks validator" in logs, f"Gitleaks did not log:\n{logs[-500:]}"
 
-    def test_primary_logged_gitleaks_count(self, scan_result: YAMLDict) -> None:
-        """Primary logs Gitleaks count.
+    def test_engine_logged_gitleaks_count(self, scan_result: YAMLDict) -> None:
+        """Engine logs Gitleaks count.
 
         Args:
             scan_result: Fixture providing scan result dict.
 
         """
-        logs = _container_logs("primary")
-        assert "Gitleaks=" in logs, f"Primary did not log Gitleaks count:\n{logs[-500:]}"
+        logs = _container_logs("engine")
+        assert "Gitleaks=" in logs, f"Engine did not log Gitleaks count:\n{logs[-500:]}"
 
 
 # ---------------------------------------------------------------------------

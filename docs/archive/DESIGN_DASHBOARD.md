@@ -28,14 +28,14 @@ The presentation layer adds two components to the pod:
 ┌──────────────────────────── apme-pod ─────────────────────────────┐
 │                                                                    │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐          │
-│  │ Primary  │  │  Native  │  │   OPA    │  │ Ansible  │  ...     │
+│  │ Engine  │  │  Native  │  │   OPA    │  │ Ansible  │  ...     │
 │  │  :50051  │  │  :50055  │  │  :50054  │  │  :50053  │          │
 │  └────┬─────┘  └──────────┘  └──────────┘  └──────────┘          │
 │       │                                                           │
 │  ┌────┴──────────────────────────────────────────┐                │
 │  │            API Gateway :8080                   │                │
 │  │  FastAPI (async) — REST + WebSocket            │                │
-│  │  gRPC client → Primary.FixSession (check/remediate), Format     │                │
+│  │  gRPC client → Engine.FixSession (check/remediate), Format     │                │
 │  │  SQLite/PostgreSQL for activity history                         │                │
 │  └────┬──────────────────────────────────────────┘                │
 │       │                                                           │
@@ -51,21 +51,21 @@ The presentation layer adds two components to the pod:
 The **API Gateway** is a new container in the pod. It:
 
 1. Speaks HTTP/WebSocket externally (port 8080)
-2. Speaks gRPC internally to Primary (localhost:50051)
+2. Speaks gRPC internally to Engine (localhost:50051)
 3. Owns the persistence layer (activity history, user sessions, remediation queue)
 4. Serves the static SPA assets (or delegates to a CDN in production)
 
-### Why a gateway container, not an HTTP layer on Primary
+### Why a gateway container, not an HTTP layer on Engine
 
-| Concern | Primary | Gateway |
+| Concern | Engine | Gateway |
 |---------|---------|---------|
 | Protocol | gRPC only | HTTP/WS → gRPC translation |
-| State | Stateless (each operation is independent) | Stateful (activity history, users, queue) |
+| State | Ephemeral `SessionState` for `FixSession` (no durable DB); Gateway owns persistence | Stateful (activity history, users, queue) |
 | Scaling | Scale with pod | Could be extracted for multi-pod |
 | Auth | None (internal trust) | OAuth2/OIDC, API tokens |
 | Dependencies | grpcio, engine | FastAPI, SQLAlchemy, auth libraries |
 
-Primary stays pure gRPC and stateless. The gateway handles everything HTTP, auth, and persistence. This separation means Primary's contract is unchanged — the CLI, gateway, and any future consumer use the same gRPC surface (notably **`FixSession`** for check and remediate per ADR-039; unary **`Scan`** remains for simple callers).
+Engine stays pure gRPC and stateless. The gateway handles everything HTTP, auth, and persistence. This separation means Engine's contract is unchanged — the CLI, gateway, and any future consumer use the same gRPC surface via **`FixSession`** for check and remediate (ADR-039).
 
 ---
 
@@ -255,7 +255,7 @@ Phase 4 starts with a single role (all authenticated users can do everything). R
 | **Activity list** | Paginated table of runs with status, violation count, date. Filter by project, date range, status. |
 | **Activity detail** | Violations grouped by file or rule. Severity badges. Expandable code context (3-5 lines around the violation). Diagnostics panel (engine timing, validator breakdown). |
 | **Playground** | File upload for ad-hoc check/remediate. Real-time progress. AI proposal review with diff viewer. |
-| **Health** | Service status cards (Primary, Native, OPA, Ansible, Gitleaks, Galaxy Proxy, Abbenay AI) with latency. |
+| **Health** | Service status cards (Engine, Native, OPA, Ansible, Gitleaks, Galaxy Proxy, Abbenay AI) with latency. |
 | **Settings** | AI model selection for remediation. |
 
 ---
@@ -264,7 +264,7 @@ Phase 4 starts with a single role (all authenticated users can do everything). R
 
 ### Phase 4a: API gateway + activity history
 
-1. **Gateway container** — FastAPI app with gRPC client + WebSocket to Primary
+1. **Gateway container** — FastAPI app with gRPC client + WebSocket to Engine
 2. **`WS /api/v1/ws/session`** — unified check + remediate session over WebSocket
 3. **`GET /api/v1/activity`** — list stored activity with pagination and filtering
 4. **`GET /api/v1/activity/{id}`** — return violations + diagnostics
@@ -301,21 +301,30 @@ The gateway translates between HTTP and gRPC. The pattern is consistent:
 ```python
 @router.post("/api/v1/activity")
 async def create_activity(body: ActivityCreate):
-    request = build_scan_request(body.files, body.options)
-
     async with grpc.aio.insecure_channel("127.0.0.1:50051") as channel:
-        stub = primary_pb2_grpc.PrimaryStub(channel)
-        # Unary Scan for simple request/response; interactive UI mirrors the CLI via FixSession (ADR-039).
-        response = await stub.Scan(request, timeout=120)
-
-    activity_record = store_activity(response)
-    return activity_record
+        stub = engine_pb2_grpc.EngineStub(channel)
+        # Interactive UI mirrors the CLI via FixSession (ADR-039).
+        got_result = False
+        async for event in stub.FixSession(_session_commands(body)):
+            if event.HasField("result"):
+                got_result = True
+                activity_record = store_activity(event.result)
+                return activity_record
+            if event.HasField("error"):
+                raise HTTPException(status_code=500, detail=event.error.message)
+            if event.HasField("closed"):
+                break
+        if not got_result:
+            raise HTTPException(
+                status_code=502,
+                detail="Engine closed FixSession without a result",
+            )
 ```
 
-The gateway never runs the engine directly. It always delegates to Primary via gRPC. This means:
+The gateway never runs the engine directly. It always delegates to Engine via gRPC. This means:
 
 - The gateway has no dependency on `apme_engine` (only on `apme.v1` proto stubs)
-- Primary's contract is the single source of truth
+- Engine's contract is the single source of truth
 - The CLI and gateway are interchangeable consumers of the same backend
 
 ---

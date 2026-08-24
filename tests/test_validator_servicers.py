@@ -122,6 +122,27 @@ class TestOpaValidatorServicer:
         assert resp.violations[0].rule_id == RULE_VALIDATOR_FAILURE  # type: ignore[attr-defined]
         assert resp.violations[0].message == PUBLIC_VALIDATOR_ERROR  # type: ignore[attr-defined]
 
+    async def test_validate_opa_infra_error_returns_infra_violation(self) -> None:
+        """Validate returns R902 when OPA infrastructure fails."""
+        from apme_engine.daemon.opa_validator_server import OpaValidatorServicer
+        from apme_engine.daemon.validator_errors import PUBLIC_VALIDATOR_ERROR, RULE_VALIDATOR_FAILURE
+        from apme_engine.opa_client import OpaInfrastructureError
+
+        request = validate_pb2.ValidateRequest(
+            request_id="test-req-3b",
+            hierarchy_payload=json.dumps({"hierarchy": []}).encode(),
+        )
+
+        servicer = OpaValidatorServicer()
+        with patch(
+            "apme_engine.daemon.opa_validator_server._run_opa",
+            side_effect=OpaInfrastructureError("OPA binary is not available"),
+        ):
+            resp = await servicer.Validate(request, FakeGrpcContext())  # type: ignore[arg-type]
+        assert len(resp.violations) == 1  # type: ignore[attr-defined]
+        assert resp.violations[0].rule_id == RULE_VALIDATOR_FAILURE  # type: ignore[attr-defined]
+        assert resp.violations[0].message == PUBLIC_VALIDATOR_ERROR  # type: ignore[attr-defined]
+
     async def test_health_returns_ok(self) -> None:
         """Health always returns ok (no external dependency)."""
         from apme_engine.daemon.opa_validator_server import OpaValidatorServicer
@@ -452,12 +473,12 @@ class TestAnsibleValidatorServicerMigration:
         assert diag.metadata["ansible_core_version"] == "2.18"
 
 
-class TestPrimaryFanOut:
-    """Verify Primary uses async fan-out for all backends."""
+class TestEngineFanOut:
+    """Verify Engine uses async fan-out for all backends."""
 
     async def test_call_validator_uses_async_channel(self) -> None:
         """_call_validator uses grpc.aio channel and returns violations."""
-        from apme_engine.daemon.primary_server import _call_validator
+        from apme_engine.daemon.engine_server import _call_validator
 
         mock_resp = MagicMock()
         mock_resp.violations = []
@@ -466,12 +487,12 @@ class TestPrimaryFanOut:
         mock_stub = MagicMock()
         mock_stub.Validate = AsyncMock(return_value=mock_resp)
 
-        with patch("apme_engine.daemon.primary_server.grpc.aio.insecure_channel") as mock_channel:
+        with patch("apme_engine.daemon.engine_server.grpc.aio.insecure_channel") as mock_channel:
             mock_channel_instance = MagicMock()
             mock_channel_instance.close = AsyncMock()
             mock_channel.return_value = mock_channel_instance
-            with patch("apme_engine.daemon.primary_server.validate_pb2_grpc.ValidatorStub", return_value=mock_stub):
-                request = validate_pb2.ValidateRequest(request_id="primary-1")
+            with patch("apme_engine.daemon.engine_server.validate_pb2_grpc.ValidatorStub", return_value=mock_stub):
+                request = validate_pb2.ValidateRequest(request_id="engine-1")
                 result = await _call_validator("localhost:50055", request)
 
         mock_stub.Validate.assert_called_once()
@@ -479,7 +500,7 @@ class TestPrimaryFanOut:
 
     async def test_call_validator_captures_diagnostics(self) -> None:
         """_call_validator captures diagnostics from response."""
-        from apme_engine.daemon.primary_server import _call_validator
+        from apme_engine.daemon.engine_server import _call_validator
 
         diag = common_pb2.ValidatorDiagnostics(
             validator_name="native",
@@ -494,12 +515,12 @@ class TestPrimaryFanOut:
         mock_stub = MagicMock()
         mock_stub.Validate = AsyncMock(return_value=mock_resp)
 
-        with patch("apme_engine.daemon.primary_server.grpc.aio.insecure_channel") as mock_channel:
+        with patch("apme_engine.daemon.engine_server.grpc.aio.insecure_channel") as mock_channel:
             mock_channel_instance = MagicMock()
             mock_channel_instance.close = AsyncMock()
             mock_channel.return_value = mock_channel_instance
-            with patch("apme_engine.daemon.primary_server.validate_pb2_grpc.ValidatorStub", return_value=mock_stub):
-                request = validate_pb2.ValidateRequest(request_id="primary-diag-1")
+            with patch("apme_engine.daemon.engine_server.validate_pb2_grpc.ValidatorStub", return_value=mock_stub):
+                request = validate_pb2.ValidateRequest(request_id="engine-diag-1")
                 result = await _call_validator("localhost:50055", request)
 
         assert result.diagnostics is not None
@@ -508,7 +529,7 @@ class TestPrimaryFanOut:
 
     async def test_call_validator_propagates_dirty_node_ids(self) -> None:
         """_call_validator round-trips dirty_node_ids in the ValidateRequest."""
-        from apme_engine.daemon.primary_server import _call_validator
+        from apme_engine.daemon.engine_server import _call_validator
 
         mock_resp = MagicMock()
         mock_resp.violations = []
@@ -517,11 +538,11 @@ class TestPrimaryFanOut:
         mock_stub = MagicMock()
         mock_stub.Validate = AsyncMock(return_value=mock_resp)
 
-        with patch("apme_engine.daemon.primary_server.grpc.aio.insecure_channel") as mock_channel:
+        with patch("apme_engine.daemon.engine_server.grpc.aio.insecure_channel") as mock_channel:
             mock_channel_instance = MagicMock()
             mock_channel_instance.close = AsyncMock()
             mock_channel.return_value = mock_channel_instance
-            with patch("apme_engine.daemon.primary_server.validate_pb2_grpc.ValidatorStub", return_value=mock_stub):
+            with patch("apme_engine.daemon.engine_server.validate_pb2_grpc.ValidatorStub", return_value=mock_stub):
                 request = validate_pb2.ValidateRequest(
                     request_id="rescan-1",
                     content_graph_data=b'{"version":1}',
@@ -535,48 +556,48 @@ class TestPrimaryFanOut:
 
     def test_rescan_bridge_sends_dirty_node_ids_to_native(self) -> None:
         """_rescan_bridge constructs ValidateRequest with dirty_node_ids for native."""
-        import apme_engine.daemon.primary_server as ps
+        import apme_engine.daemon.engine_server as es
 
-        source = Path(ps.__file__).read_text()
+        source = Path(es.__file__).read_text()
         assert "dirty_node_ids=sorted(dirty_ids)" in source
         assert "NATIVE_GRPC_ADDRESS" in source
 
-    def test_primary_no_longer_imports_native_validator(self) -> None:
-        """Primary should not import NativeValidator directly (it's in its own container)."""
-        import apme_engine.daemon.primary_server as ps
+    def test_engine_no_longer_imports_native_validator(self) -> None:
+        """Engine should not import NativeValidator directly (it's in its own container)."""
+        import apme_engine.daemon.engine_server as es
 
-        source = Path(ps.__file__).read_text()
+        source = Path(es.__file__).read_text()
         assert "from apme_engine.validators.native" not in source
         assert "NativeValidator()" not in source
 
-    def test_primary_no_longer_imports_opa_client(self) -> None:
-        """Primary should not import opa_client (OPA is behind gRPC now)."""
-        import apme_engine.daemon.primary_server as ps
+    def test_engine_no_longer_imports_opa_client(self) -> None:
+        """Engine should not import opa_client (OPA is behind gRPC now)."""
+        import apme_engine.daemon.engine_server as es
 
-        source = Path(ps.__file__).read_text()
+        source = Path(es.__file__).read_text()
         assert "from apme_engine.opa_client" not in source
         assert "_call_opa" not in source
 
-    def test_primary_propagates_request_id(self) -> None:
-        """Primary should set request_id on ValidateRequest."""
-        import apme_engine.daemon.primary_server as ps
+    def test_engine_propagates_request_id(self) -> None:
+        """Engine should set request_id on ValidateRequest."""
+        import apme_engine.daemon.engine_server as es
 
-        source = Path(ps.__file__).read_text()
+        source = Path(es.__file__).read_text()
         assert "request_id=scan_id" in source
 
-    def test_primary_serve_is_async(self) -> None:
-        """Primary serve function is an async coroutine."""
+    def test_engine_serve_is_async(self) -> None:
+        """Engine serve function is an async coroutine."""
         import inspect
 
-        from apme_engine.daemon.primary_server import serve
+        from apme_engine.daemon.engine_server import serve
 
         assert inspect.iscoroutinefunction(serve)
 
-    def test_primary_aggregates_diagnostics(self) -> None:
-        """Primary should collect validator diagnostics into ScanDiagnostics."""
-        import apme_engine.daemon.primary_server as ps
+    def test_engine_aggregates_diagnostics(self) -> None:
+        """Engine should collect validator diagnostics into ScanDiagnostics."""
+        import apme_engine.daemon.engine_server as es
 
-        source = Path(ps.__file__).read_text()
+        source = Path(es.__file__).read_text()
         assert "ScanDiagnostics" in source
         assert "validator_diagnostics" in source
         assert "engine_diagnostics" in source
@@ -588,7 +609,7 @@ class TestGrpcAioConsistency:
     @pytest.mark.parametrize(
         "module_path",
         [
-            "apme_engine.daemon.primary_server",
+            "apme_engine.daemon.engine_server",
             "apme_engine.daemon.native_validator_server",
             "apme_engine.daemon.opa_validator_server",
             "apme_engine.daemon.ansible_validator_server",
@@ -599,7 +620,7 @@ class TestGrpcAioConsistency:
         """Each module's serve function is async.
 
         Args:
-            module_path: Parametrized module path string (e.g. apme_engine.daemon.primary_server).
+            module_path: Parametrized module path string (e.g. apme_engine.daemon.engine_server).
 
         """
         import importlib
@@ -611,7 +632,7 @@ class TestGrpcAioConsistency:
     @pytest.mark.parametrize(
         "module_path",
         [
-            "apme_engine.daemon.primary_server",
+            "apme_engine.daemon.engine_server",
             "apme_engine.daemon.native_validator_server",
             "apme_engine.daemon.opa_validator_server",
             "apme_engine.daemon.ansible_validator_server",
@@ -622,7 +643,7 @@ class TestGrpcAioConsistency:
         """Each module uses grpc.aio in source.
 
         Args:
-            module_path: Parametrized module path string (e.g. apme_engine.daemon.primary_server).
+            module_path: Parametrized module path string (e.g. apme_engine.daemon.engine_server).
 
         """
         import importlib
@@ -735,10 +756,10 @@ class TestDiagnosticsProtoMessages:
 
     def test_scan_diagnostics(self) -> None:
         """ScanDiagnostics proto holds engine and validator stats."""
-        from apme.v1 import primary_pb2
+        from apme.v1 import engine_pb2
 
         vd = common_pb2.ValidatorDiagnostics(validator_name="native", total_ms=10.0)
-        sd = primary_pb2.ScanDiagnostics(
+        sd = engine_pb2.ScanDiagnostics(
             engine_parse_ms=5.0,
             engine_annotate_ms=8.0,
             engine_total_ms=20.0,
@@ -779,7 +800,7 @@ class TestCliDiagnosticsDisplay:
 
     def test_diag_to_dict(self) -> None:
         """_diag_to_dict converts ScanDiagnostics to dict."""
-        from apme.v1 import primary_pb2
+        from apme.v1 import engine_pb2
         from apme_engine.cli.output import diag_to_dict as _diag_to_dict
 
         vd = common_pb2.ValidatorDiagnostics(
@@ -790,7 +811,7 @@ class TestCliDiagnosticsDisplay:
             rule_timings=[common_pb2.RuleTiming(rule_id="L026", elapsed_ms=4.2, violations=2)],
             metadata={"foo": "bar"},
         )
-        sd = primary_pb2.ScanDiagnostics(
+        sd = engine_pb2.ScanDiagnostics(
             engine_parse_ms=5.0,
             engine_annotate_ms=8.0,
             engine_total_ms=20.0,
@@ -823,7 +844,7 @@ class TestCliDiagnosticsDisplay:
             capsys: Pytest output capture fixture.
 
         """
-        from apme.v1 import primary_pb2
+        from apme.v1 import engine_pb2
         from apme_engine.cli.output import print_diagnostics_v as _print_diagnostics_v
 
         vd = common_pb2.ValidatorDiagnostics(
@@ -832,7 +853,7 @@ class TestCliDiagnosticsDisplay:
             violations_found=3,
             rule_timings=[common_pb2.RuleTiming(rule_id="L026", elapsed_ms=4.2, violations=2)],
         )
-        sd = primary_pb2.ScanDiagnostics(
+        sd = engine_pb2.ScanDiagnostics(
             engine_parse_ms=5.0,
             engine_total_ms=20.0,
             validators=[vd],
@@ -852,7 +873,7 @@ class TestCliDiagnosticsDisplay:
             capsys: Pytest output capture fixture.
 
         """
-        from apme.v1 import primary_pb2
+        from apme.v1 import engine_pb2
         from apme_engine.cli.output import print_diagnostics_vv as _print_diagnostics_vv
 
         vd = common_pb2.ValidatorDiagnostics(
@@ -865,7 +886,7 @@ class TestCliDiagnosticsDisplay:
             ],
             metadata={"opa_query_ms": "20.0"},
         )
-        sd = primary_pb2.ScanDiagnostics(
+        sd = engine_pb2.ScanDiagnostics(
             engine_parse_ms=5.0,
             engine_annotate_ms=3.0,
             engine_total_ms=20.0,

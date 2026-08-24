@@ -24,7 +24,7 @@ _FAST_FAIL_TIMEOUT_S = 1.0
 _HEALTH_INTERVAL_S = 10.0
 _STARTUP_PROBE_RETRIES = 5
 _STARTUP_PROBE_DELAY_S = 2.0
-_GRPC_MAX_MSG = 50 * 1024 * 1024  # 50 MiB — match Primary/validator limits
+_GRPC_MAX_MSG = 50 * 1024 * 1024  # 50 MiB — match Engine/validator limits
 
 
 class GrpcReportingSink:

@@ -15,7 +15,7 @@ how specific APME subsystems were built.
 | [DESIGN_REMEDIATION.md](DESIGN_REMEDIATION.md) | Transform registry, convergence loop, AI escalation strategy |
 | [DESIGN_AI_ESCALATION.md](DESIGN_AI_ESCALATION.md) | Abbenay provider, hybrid validation loop, prompt engineering |
 | [DESIGN_VALIDATORS.md](DESIGN_VALIDATORS.md) | Validator abstraction, unified contract, fan-out model |
-| [THIRD_PARTY_EXTENSIBILITY_OPTIONS.md](THIRD_PARTY_EXTENSIBILITY_OPTIONS.md) | Third-party extensibility options vs current CLI/Primary/remediation use (ADR-042 context) |
+| [THIRD_PARTY_EXTENSIBILITY_OPTIONS.md](THIRD_PARTY_EXTENSIBILITY_OPTIONS.md) | Third-party extensibility options vs current CLI/Engine/remediation use (ADR-042 context) |
 
 ## When to Add a Document Here
 

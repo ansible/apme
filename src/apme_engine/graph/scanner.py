@@ -75,7 +75,7 @@ def native_rules_dir() -> str:
     """Return the absolute path to the built-in graph-rules directory.
 
     Useful for callers outside the native validator daemon that need
-    to load the same rule set (e.g. the Primary remediation bridge).
+    to load the same rule set (e.g. the Engine remediation bridge).
 
     Returns:
         Absolute path to ``graph/rules``.

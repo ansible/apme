@@ -12,14 +12,14 @@ hierarchy payload for validators. This is the analytical core of the pipeline.
 
 ```mermaid
 sequenceDiagram
-    participant Primary as PrimaryServicer
+    participant Engine as EngineServicer
     participant Runner as run_scan()
     participant Scanner as ARIScanner
     participant Parser as Parser.run()
     participant Graph as GraphBuilder
     participant OPA as graph_opa_payload
 
-    Primary->>Runner: run_scan(temp_dir, temp_dir)
+    Engine->>Runner: run_scan(temp_dir, temp_dir)
     Runner->>Scanner: ARIScanner(root_dir, rules_dir="")
     Runner->>Scanner: evaluate(type, name, path, ...)
 
@@ -39,13 +39,13 @@ sequenceDiagram
     Scanner->>Scanner: apply_rules() → Findings
 
     Scanner-->>Runner: SingleScan
-    Runner-->>Primary: ScanContext
+    Runner-->>Engine: ScanContext
 ```
 
 ## run_scan() — The Adapter
 
 `src/apme_engine/runner.py` — `run_scan()` is a thin adapter between the
-Primary and the vendored ARI engine:
+Engine and the vendored ARI engine:
 
 1. Creates an `ARIScanner` with `rules_dir=""` (no native rules at scan time;
    rules live in validators).

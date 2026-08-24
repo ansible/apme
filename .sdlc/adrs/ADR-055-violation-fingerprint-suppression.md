@@ -10,7 +10,7 @@ Accepted
 
 ## Context
 
-APME violations are currently identified by positional keys: `(rule_id, file, line)` for deduplication in the Primary and CLI output, and `(node_id, rule_id)` in the ContentGraph violation ledger (ADR-044). Neither identity is stable across projects, and both break when line numbers shift or tasks are reordered within the same project.
+APME violations are currently identified by positional keys: `(rule_id, file, line)` for deduplication in the Engine and CLI output, and `(node_id, rule_id)` in the ContentGraph violation ledger (ADR-044). Neither identity is stable across projects, and both break when line numbers shift or tasks are reordered within the same project.
 
 Users need the ability to **permanently accept or ignore** a specific violation so that:
 
@@ -232,7 +232,7 @@ Suppressed violations are always available for audit. The default display hides 
 ### Neutral
 
 - Existing `# apme:ignore` inline annotations are unaffected — they remain a valid suppression mechanism at the code level
-- The `_deduplicate_violations` logic in the Primary and CLI output is unaffected — deduplication and suppression are orthogonal concerns
+- The `_deduplicate_violations` logic in the Engine and CLI output is unaffected — deduplication and suppression are orthogonal concerns
 - SARIF export can include fingerprints as `partialFingerprints`, enabling integration with external baseline tools
 
 ## Implementation Notes
@@ -275,7 +275,7 @@ Suppressed violations are always available for audit. The default display hides 
 ## References
 
 - `proto/apme/v1/common.proto` — `Violation` message with `rule_id` (field 1) and `original_yaml` (field 16)
-- `src/apme_engine/daemon/primary_server.py` — current `_deduplicate_violations` using `(rule_id, file, line)`
+- `src/apme_engine/daemon/engine_server.py` — current `_deduplicate_violations` using `(rule_id, file, line)`
 - `src/apme_engine/engine/content_graph.py` — `ViolationKey = (node_id, rule_id)` in the violation ledger
 - SARIF specification — `partialFingerprints` property for baseline matching
 

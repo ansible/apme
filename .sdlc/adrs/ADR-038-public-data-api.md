@@ -167,20 +167,20 @@ Routes under `/api/v1` are the public contract. Breaking changes (removed fields
 
 **Why not chosen**: Inverts the dependency. APME is the authority on scan data; consumers should adapt to APME's API, not the other way around.
 
-### Alternative 2: Expose Primary gRPC directly
+### Alternative 2: Expose Engine gRPC directly
 
-**Description**: Platform consumers speak gRPC to Primary on :50051 for scan results.
+**Description**: Platform consumers speak gRPC to Engine on :50051 for scan results.
 
 **Pros**:
 - Single protocol, no REST translation
 - Strongly typed contracts via protobuf
 
 **Cons**:
-- Primary is stateless (ADR-020) — it has no scan history, no project model
+- Engine is stateless (ADR-020) — it has no scan history, no project model
 - Every consumer would need to scan on demand (no cached results)
 - gRPC is less accessible than REST for CI/CD and web-based consumers
 
-**Why not chosen**: Primary does not have the data consumers need. The Gateway does.
+**Why not chosen**: Engine does not have the data consumers need. The Gateway does.
 
 ### Alternative 3: Separate public API service
 
@@ -215,7 +215,11 @@ Routes under `/api/v1` are the public contract. Breaking changes (removed fields
 
 ### Neutral
 
-- The CLI continues to work independently, connecting to Primary directly. CLI users are unaffected.
+- The CLI continues to work independently, connecting to Engine directly via
+  gRPC (`APME_ENGINE_ADDRESS` / Action input `engine-address`). The
+  orchestrator rename from `APME_PRIMARY_ADDRESS` / `primary-address` (PR
+  #500) is complete; there is no compatibility shim for those env vars or
+  Action inputs.
 - The existing UI BFF routes become a subset of the public API. No separate "internal" vs "external" route sets for V1.
 - The `EventSink` protocol (ADR-020) already delivers scan events to the Gateway. Webhook emission is a Gateway concern — no engine-side architectural change required.
 
@@ -239,7 +243,7 @@ The CLI `--json` output currently drops the violation `metadata` map (rule-speci
 - ADR-029: Web Gateway architecture (REST API, enterprise auth sketch, extraction path)
 - ADR-037: Project-centric UI model (project entity with `repo_url`, health score)
 - ADR-012: Scale pods, not services (Gateway sits outside engine pods)
-- ADR-001: gRPC for inter-service communication (Gateway is a gRPC client to Primary)
+- ADR-001: gRPC for inter-service communication (Gateway is a gRPC client to Engine)
 
 ## References
 

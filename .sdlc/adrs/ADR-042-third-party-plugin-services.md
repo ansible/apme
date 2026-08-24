@@ -31,7 +31,7 @@ Key constraints:
 
 **We will provide extensibility at the service layer through a `Plugin` gRPC service that combines validation and transformation in a single contract.**
 
-Third parties build a container that implements the `Plugin` service. The Primary discovers plugin containers via environment variables, fans out `Validate` calls alongside built-in validators, and routes `Transform` calls back to the originating plugin during fix passes. A Python SDK (`apme-plugin-sdk`) lowers the authoring barrier to ~20 lines of code.
+Third parties build a container that implements the `Plugin` service. The Engine discovers plugin containers via environment variables, fans out `Validate` calls alongside built-in validators, and routes `Transform` calls back to the originating plugin during fix passes. A Python SDK (`apme-plugin-sdk`) lowers the authoring barrier to ~20 lines of code.
 
 ### 1. Plugin gRPC service
 
@@ -79,7 +79,7 @@ message DescribeResponse {
 
 - **Validate** reuses existing `ValidateRequest`/`ValidateResponse`. Plugins consume `files` and `hierarchy_payload` (JSON). They ignore `scandata` (Python-specific serialization) — the contract is language-agnostic.
 - **Transform** receives one file and the violation to fix, plus hierarchy context. Returns the transformed file or `applied=false` / an error.
-- **Describe** lets the plugin self-declare its name, rule ID prefix, and which rule IDs support transforms. The Primary calls this at startup to build the routing table.
+- **Describe** lets the plugin self-declare its name, rule ID prefix, and which rule IDs support transforms. The Engine calls this at startup to build the routing table.
 - **Health** reuses the existing `HealthRequest`/`HealthResponse` from `common.proto`.
 
 ### 2. Rule ID convention: EXT- prefix
@@ -92,7 +92,7 @@ EXT-<plugin_name>-<NNN>
 
 Examples: `EXT-secteam-001`, `EXT-orgpolicy-003`, `EXT-compcheck-010`.
 
-- The Primary enforces the prefix: violations from plugin services that do not start with `EXT-` are rejected or logged and dropped.
+- The Engine enforces the prefix: violations from plugin services that do not start with `EXT-` are rejected or logged and dropped.
 - The `EXT-` prefix is how the remediation path distinguishes plugin-owned violations from built-in ones.
 - The SDK auto-prefixes rule IDs — plugin authors specify only the numeric suffix (e.g., `"001"`), and the SDK prepends `EXT-<name>-`.
 
@@ -111,19 +111,19 @@ APME_PLUGIN_SECTEAM_ADDRESS=localhost:50060
 APME_PLUGIN_ORGPOLICY_ADDRESS=localhost:50061
 ```
 
-- The Primary scans env vars matching `APME_PLUGIN_*_ADDRESS` at startup.
+- The Engine scans env vars matching `APME_PLUGIN_*_ADDRESS` at startup.
 - For each discovered plugin, it calls `Describe` to obtain the rule ID prefix and transform capabilities.
-- If `Describe` is unimplemented (returns `UNIMPLEMENTED`), the Primary infers the plugin name from the env var and uses `EXT-<name_lowercase>-` as the prefix.
+- If `Describe` is unimplemented (returns `UNIMPLEMENTED`), the Engine infers the plugin name from the env var and uses `EXT-<name_lowercase>-` as the prefix.
 - Plugins are called in parallel alongside built-in validators during `_scan_pipeline`.
 
 ### 4. Remediation routing
 
-During fix passes, the Primary (or Remediation Engine) routes violations by rule ID prefix:
+During fix passes, the Engine (or Remediation Engine) routes violations by rule ID prefix:
 
 - **Built-in prefixes** (L, M, R, P, SEC) — routed to the built-in `TransformRegistry` as today.
-- **EXT- prefix** — routed to the originating plugin's `Transform` RPC. The Primary maintains a `rule_prefix -> plugin_address` map built from `Describe` responses.
+- **EXT- prefix** — routed to the originating plugin's `Transform` RPC. The Engine maintains a `rule_prefix -> plugin_address` map built from `Describe` responses.
 
-Plugin transforms participate in the same convergence loop: scan -> fix -> rescan -> repeat until stable. The plugin receives one `TransformRequest` per violation, returns the fixed file (or `applied=false`), and the Primary writes the result back before rescanning.
+Plugin transforms participate in the same convergence loop: scan -> fix -> rescan -> repeat until stable. The plugin receives one `TransformRequest` per violation, returns the fixed file (or `applied=false`), and the Engine writes the result back before rescanning.
 
 If a plugin's `Transform` returns an error or `applied=false` for a given violation, the violation is reclassified as `REMEDIATION_CLASS_AI_CANDIDATE` with `REMEDIATION_RESOLUTION_TRANSFORM_FAILED` (Tier 2), matching the built-in remediation engine's handling of transform failures. The violation then enters the AI escalation path described below.
 
@@ -183,7 +183,7 @@ Plugins receive the following data in `ValidateRequest`:
 | `collection_specs` | `repeated string` | Collection specifiers from requirements.yml |
 | `request_id` | `string` | Correlation ID |
 
-The underlying `ValidateRequest` protobuf message also defines `scandata` as field 4. For calls from the Primary to plugins, the Primary **MUST** send `scandata` unset/empty, and plugin implementations **MUST** ignore any value present in this field. `scandata` contains Python-specific jsonpickle serialization of internal engine state and is **not** part of the stable, language-agnostic public contract, even though the field exists on the wire.
+The underlying `ValidateRequest` protobuf message also defines `scandata` as field 4. For calls from the Engine to plugins, the Engine **MUST** send `scandata` unset/empty, and plugin implementations **MUST** ignore any value present in this field. `scandata` contains Python-specific jsonpickle serialization of internal engine state and is **not** part of the stable, language-agnostic public contract, even though the field exists on the wire.
 
 The `hierarchy_payload` JSON schema should be documented as a versioned public contract (future work — not blocking this ADR).
 
@@ -273,7 +273,7 @@ apme-reviews/
     apme/v1/
       common.proto
       validate.proto
-      primary.proto
+      engine.proto
       plugin.proto                # new
   src/
     apme_engine/                  # existing — main engine package
@@ -335,7 +335,7 @@ apme-reviews/
 
 **Cons**:
 - Two service registrations to discover and manage
-- More complex routing — Primary must track which address has a Validator vs which also has a Transformer
+- More complex routing — Engine must track which address has a Validator vs which also has a Transformer
 - Plugin author implements two separate service interfaces
 
 **Why not chosen**: A single `Plugin` service is simpler to discover, document, and implement. One service, one address, one `Describe` call.
@@ -389,9 +389,9 @@ apme-reviews/
 3. Update `scripts/gen_grpc.sh` to generate stubs for both packages
 4. Write an example plugin (e.g., "all plays must have a department tag")
 
-### Phase 2: Primary integration
+### Phase 2: Engine integration
 
-1. Add `APME_PLUGIN_*_ADDRESS` env var scanning to `primary_server.py`
+1. Add `APME_PLUGIN_*_ADDRESS` env var scanning to `engine_server.py`
 2. Call `Describe` on discovered plugins at startup
 3. Fan out `Validate` calls to plugins alongside built-in validators
 4. Build `rule_prefix -> plugin_address` routing map
@@ -433,7 +433,7 @@ apme-reviews/
 - [docs/design/THIRD_PARTY_EXTENSIBILITY_OPTIONS.md](../../docs/design/THIRD_PARTY_EXTENSIBILITY_OPTIONS.md) — options briefing: current tool paths, strategic alternatives, phased outcomes, cross-ADR tensions
 - `proto/apme/v1/validate.proto` — existing Validator service contract
 - `proto/apme/v1/common.proto` — shared Violation, File, Health types
-- `src/apme_engine/daemon/primary_server.py` — Primary fan-out and remediation orchestration
+- `src/apme_engine/daemon/engine_server.py` — Engine fan-out and remediation orchestration
 - `src/apme_engine/remediation/partition.py` — Rule ID normalization and tier classification
 - `src/apme_engine/remediation/registry.py` — Built-in TransformRegistry
 

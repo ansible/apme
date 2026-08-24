@@ -64,3 +64,72 @@ test_L007_does_not_fire_for_command_module if {
 	node := tree.nodes[0]
 	not rules.command_instead_of_shell(tree, node)
 }
+
+test_L007_fires_when_pipe_is_jinja_filter if {
+	tree := {"nodes": [{"type": "taskcall", "module": "ansible.builtin.shell", "module_options": {"cmd": "cat {{ myfile|quote }}"}, "line": [1], "key": "k", "file": "f.yml"}]}
+	node := tree.nodes[0]
+	v := rules.command_instead_of_shell(tree, node)
+	v.rule_id == "L007"
+}
+
+test_L007_does_not_fire_when_shell_has_background if {
+	tree := {"nodes": [{"type": "taskcall", "module": "ansible.builtin.shell", "module_options": {"cmd": "sleep 10 &"}, "line": [1], "key": "k", "file": "f.yml"}]}
+	node := tree.nodes[0]
+	not rules.command_instead_of_shell(tree, node)
+}
+
+test_L007_does_not_fire_when_shell_has_dollar_var if {
+	tree := {"nodes": [{"type": "taskcall", "module": "ansible.builtin.shell", "module_options": {"cmd": "echo $HOME"}, "line": [1], "key": "k", "file": "f.yml"}]}
+	node := tree.nodes[0]
+	not rules.command_instead_of_shell(tree, node)
+}
+
+test_L007_does_not_fire_when_command_is_only_jinja if {
+	tree := {"nodes": [{"type": "taskcall", "module": "ansible.builtin.shell", "module_options": {"cmd": "{{ command }}"}, "line": [1], "key": "k", "file": "f.yml"}]}
+	node := tree.nodes[0]
+	not rules.command_instead_of_shell(tree, node)
+}
+
+test_L007_does_not_fire_when_jinja_command_has_trailing_tab if {
+	tree := {"nodes": [{"type": "taskcall", "module": "ansible.builtin.shell", "module_options": {"cmd": "{{ command }}\t"}, "line": [1], "key": "k", "file": "f.yml"}]}
+	node := tree.nodes[0]
+	not rules.command_instead_of_shell(tree, node)
+}
+
+test_L007_does_not_fire_when_jinja_has_dict_literal if {
+	tree := {"nodes": [{"type": "taskcall", "module": "ansible.builtin.shell", "module_options": {"cmd": "{{ {'k': 'v'} }}"}, "line": [1], "key": "k", "file": "f.yml"}]}
+	node := tree.nodes[0]
+	not rules.command_instead_of_shell(tree, node)
+}
+
+test_L007_fires_when_jinja_dict_is_an_argument if {
+	tree := {"nodes": [{"type": "taskcall", "module": "ansible.builtin.shell", "module_options": {"cmd": "cat {{ {'path': item} | quote }}"}, "line": [1], "key": "k", "file": "f.yml"}]}
+	node := tree.nodes[0]
+	v := rules.command_instead_of_shell(tree, node)
+	v.rule_id == "L007"
+}
+
+test_L007_does_not_fire_when_shell_has_bracket_glob if {
+	tree := {"nodes": [{"type": "taskcall", "module": "ansible.builtin.shell", "module_options": {"cmd": "cat /tmp/[ab].txt"}, "line": [1], "key": "k", "file": "f.yml"}]}
+	node := tree.nodes[0]
+	not rules.command_instead_of_shell(tree, node)
+}
+
+test_L007_does_not_fire_when_command_uninspectable if {
+	tree := {"nodes": [{"type": "taskcall", "module": "ansible.builtin.shell", "module_options": {"chdir": "/tmp"}, "line": [1], "key": "k", "file": "f.yml"}]}
+	node := tree.nodes[0]
+	not rules.command_instead_of_shell(tree, node)
+}
+
+test_L007_fires_when_argv_has_no_shell_features if {
+	tree := {"nodes": [{"type": "taskcall", "module": "ansible.builtin.shell", "module_options": {"argv": ["whoami"]}, "line": [1], "key": "k", "file": "f.yml"}]}
+	node := tree.nodes[0]
+	v := rules.command_instead_of_shell(tree, node)
+	v.rule_id == "L007"
+}
+
+test_L007_does_not_fire_when_argv_has_pipe if {
+	tree := {"nodes": [{"type": "taskcall", "module": "ansible.builtin.shell", "module_options": {"argv": ["cat", "/proc/meminfo", "|", "grep", "MemTotal"]}, "line": [1], "key": "k", "file": "f.yml"}]}
+	node := tree.nodes[0]
+	not rules.command_instead_of_shell(tree, node)
+}

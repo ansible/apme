@@ -17,8 +17,8 @@ from pathlib import Path
 
 import grpc
 
-from apme.v1 import common_pb2, primary_pb2_grpc
-from apme.v1.primary_pb2 import (
+from apme.v1 import common_pb2, engine_pb2_grpc
+from apme.v1.engine_pb2 import (
     AiEscalateRequest,
     AiEscalateTarget,
     ApprovalRequest,
@@ -36,7 +36,7 @@ from apme_engine.cli._project_root import derive_session_id, discover_project_ro
 from apme_engine.cli._rules_yml import load_rule_configs_from_project
 from apme_engine.cli._suppressions import apply_suppressions, load_suppressions
 from apme_engine.cli.ansi import dim, red, yellow
-from apme_engine.cli.discovery import resolve_primary
+from apme_engine.cli.discovery import resolve_engine
 from apme_engine.daemon.chunked_fs import yield_scan_chunks
 from apme_engine.daemon.violation_convert import violation_proto_to_dict
 from apme_engine.engine.models import ViolationDict
@@ -125,8 +125,8 @@ def run_remediate(args: argparse.Namespace) -> None:
                 return
             yield cmd
 
-    channel, _ = resolve_primary(args)
-    stub = primary_pb2_grpc.PrimaryStub(channel)  # type: ignore[no-untyped-call]
+    channel, _ = resolve_engine(args)
+    stub = engine_pb2_grpc.EngineStub(channel)  # type: ignore[no-untyped-call]
 
     use_json = getattr(args, "json", False)
     tier1_report: FixReport | None = None

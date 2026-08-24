@@ -7,7 +7,7 @@ from pathlib import Path
 
 import yaml
 
-from apme.v1.primary_pb2 import RuleConfig
+from apme.v1.engine_pb2 import RuleConfig
 from apme_engine.graph.severity import severity_from_label, severity_to_proto
 
 RULES_YML_PATH = Path(".apme") / "rules.yml"

@@ -35,7 +35,7 @@ interactive Gate 1/2 — without a full rescan while the session is alive.**
 
 ### Engine (proto additive)
 
-- `FixOptions.assess_pause` (bool, default **false**). When true, Primary:
+- `FixOptions.assess_pause` (bool, default **false**). When true, Engine:
   - Runs the graph remediate path with Tier 1 **computed** but not spliced
     (same as `interactive` for apply deferral).
   - Emits `SessionEvent.findings` (`FindingsReady`) with all content

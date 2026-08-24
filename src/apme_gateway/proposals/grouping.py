@@ -620,7 +620,7 @@ def violation_accepts_review_status(
     if is_ai_source:
         if rem_class == _RC_AI_CANDIDATE:
             return True
-        # Post-apply shapes after Primary rem_class rewrite.
+        # Post-apply shapes after Engine rem_class rewrite.
         if accepted and rem_class == _RC_AUTO_FIXABLE and fixed:
             return True
         return bool(declined and rem_class == _RC_MANUAL_REVIEW and not fixed)

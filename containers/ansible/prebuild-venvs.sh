@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Pre-warm UV cache for ansible-core versions at image build time.
-# Session-scoped venvs are created by the Primary orchestrator,
+# Session-scoped venvs are created by the Engine,
 # but UV caches the wheels so venv creation is near-instant.
 set -e
 

@@ -38,7 +38,7 @@ context = run_scan(
 
 #### Collection Dependencies
 
-The engine never downloads collections. The `VenvSessionManager` (owned by Primary)
+The engine never downloads collections. The `VenvSessionManager` (owned by Engine)
 installs collections into session-scoped venvs via the Galaxy Proxy before the engine
 runs. The engine receives a `dependency_dir` pointing to the venv's `site-packages`
 for pre-installed collection content.

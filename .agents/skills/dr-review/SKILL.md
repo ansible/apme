@@ -106,7 +106,7 @@ Checking architectural impact of chosen option...
 | Unified Validator contract | OK / ⚠ CONFLICT |
 | Stateless engine / edge persistence (ADR-020) | OK / ⚠ CONFLICT |
 | Scale pods, not services (ADR-012) | OK / ⚠ CONFLICT |
-| Session venvs Primary-owned (ADR-022) | OK / ⚠ CONFLICT |
+| Session venvs are Engine-owned (ADR-022) | OK / ⚠ CONFLICT |
 | Rule ID conventions (ADR-008) | OK / ⚠ CONFLICT |
 | OPA subprocess, not REST | OK / ⚠ CONFLICT |
 | FixSession unified path (ADR-039) | OK / ⚠ CONFLICT |

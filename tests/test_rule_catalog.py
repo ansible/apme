@@ -1,4 +1,4 @@
-"""Unit tests for ADR-041 rule catalog, Primary rule config helpers, and Gateway registration."""
+"""Unit tests for ADR-041 rule catalog, Engine rule config helpers, and Gateway registration."""
 
 from __future__ import annotations
 
@@ -9,8 +9,8 @@ from unittest.mock import AsyncMock
 import pytest
 from packaging.specifiers import SpecifierSet
 
-from apme.v1 import common_pb2, primary_pb2, reporting_pb2
-from apme_engine.daemon.primary_server import (
+from apme.v1 import common_pb2, engine_pb2, reporting_pb2
+from apme_engine.daemon.engine_server import (
     _apply_rule_configs,
     _validate_rule_configs,
 )
@@ -128,8 +128,8 @@ def test_apply_rule_configs_filters_disabled_rule() -> None:
         {"rule_id": "L002", "severity": "medium"},
     ]
     configs: list[object] = [
-        primary_pb2.RuleConfig(rule_id="L001", enabled=False, severity=common_pb2.SEVERITY_ERROR),
-        primary_pb2.RuleConfig(rule_id="L002", enabled=True),
+        engine_pb2.RuleConfig(rule_id="L001", enabled=False, severity=common_pb2.SEVERITY_ERROR),
+        engine_pb2.RuleConfig(rule_id="L002", enabled=True),
     ]
     out = _apply_rule_configs(violations, configs)
     assert len(out) == 1, "disabled rule violation should be removed"
@@ -144,7 +144,7 @@ def test_apply_rule_configs_severity_override() -> None:
     """
     violations: list[ViolationDict] = [{"rule_id": "L001", "severity": "medium"}]
     configs: list[object] = [
-        primary_pb2.RuleConfig(rule_id="L001", enabled=True, severity=common_pb2.SEVERITY_HIGH),
+        engine_pb2.RuleConfig(rule_id="L001", enabled=True, severity=common_pb2.SEVERITY_HIGH),
     ]
     out = _apply_rule_configs(violations, configs)
     assert len(out) == 1, "single violation should remain"
@@ -158,7 +158,7 @@ def test_apply_rule_configs_enforced_flag() -> None:
         None: Assert-only test.
     """
     violations: list[ViolationDict] = [{"rule_id": "L001", "severity": "error"}]
-    configs: list[object] = [primary_pb2.RuleConfig(rule_id="L001", enabled=True, enforced=True)]
+    configs: list[object] = [engine_pb2.RuleConfig(rule_id="L001", enabled=True, enforced=True)]
     out = _apply_rule_configs(violations, configs)
     assert len(out) == 1, "violation should pass through when enabled"
     assert out[0].get("_enforced") is True, "enforced=True must set _enforced metadata"
@@ -187,12 +187,12 @@ def test_validate_rule_configs_unknown_ids(
         None: Assert-only test.
     """
     monkeypatch.setattr(
-        "apme_engine.daemon.primary_server._known_rule_ids",
+        "apme_engine.daemon.engine_server._known_rule_ids",
         {"L001", "M001"},
     )
     configs: list[object] = [
-        primary_pb2.RuleConfig(rule_id="L001", enabled=True),
-        primary_pb2.RuleConfig(rule_id="NOT_A_RULE", enabled=True),
+        engine_pb2.RuleConfig(rule_id="L001", enabled=True),
+        engine_pb2.RuleConfig(rule_id="NOT_A_RULE", enabled=True),
     ]
     unknown, missing = _validate_rule_configs(configs)
     assert unknown == ["NOT_A_RULE"], "unknown rule_id must be reported"
@@ -211,12 +211,12 @@ def test_validate_rule_configs_known_ids_pass(
         None: Assert-only test.
     """
     monkeypatch.setattr(
-        "apme_engine.daemon.primary_server._known_rule_ids",
+        "apme_engine.daemon.engine_server._known_rule_ids",
         {"L001", "P010"},
     )
     configs: list[object] = [
-        primary_pb2.RuleConfig(rule_id="L001", enabled=True),
-        primary_pb2.RuleConfig(rule_id="P010", enabled=False),
+        engine_pb2.RuleConfig(rule_id="L001", enabled=True),
+        engine_pb2.RuleConfig(rule_id="P010", enabled=False),
     ]
     unknown, missing = _validate_rule_configs(configs)
     assert unknown == [], "all rule IDs are known; no errors expected"
@@ -234,8 +234,8 @@ def test_validate_rule_configs_empty_known_set(
     Returns:
         None: Assert-only test.
     """
-    monkeypatch.setattr("apme_engine.daemon.primary_server._known_rule_ids", set())
-    configs: list[object] = [primary_pb2.RuleConfig(rule_id="ANYTHING", enabled=True)]
+    monkeypatch.setattr("apme_engine.daemon.engine_server._known_rule_ids", set())
+    configs: list[object] = [engine_pb2.RuleConfig(rule_id="ANYTHING", enabled=True)]
     unknown, missing = _validate_rule_configs(configs)
     assert unknown == [], "empty known set must skip validation"
     assert missing == [], "empty known set must skip validation"
@@ -244,7 +244,7 @@ def test_validate_rule_configs_empty_known_set(
 def test_validate_rule_configs_complete_detects_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Bidirectional audit reports rules the Primary knows but the config omits.
+    """Bidirectional audit reports rules the Engine knows but the config omits.
 
     Args:
         monkeypatch: Pytest monkeypatch fixture.
@@ -253,11 +253,11 @@ def test_validate_rule_configs_complete_detects_missing(
         None: Assert-only test.
     """
     monkeypatch.setattr(
-        "apme_engine.daemon.primary_server._known_rule_ids",
+        "apme_engine.daemon.engine_server._known_rule_ids",
         {"L001", "L002", "M001"},
     )
     configs: list[object] = [
-        primary_pb2.RuleConfig(rule_id="L001", enabled=True),
+        engine_pb2.RuleConfig(rule_id="L001", enabled=True),
     ]
     unknown, missing = _validate_rule_configs(configs, complete=True)
     assert unknown == [], "L001 is known; no unknowns"
@@ -276,12 +276,12 @@ def test_validate_rule_configs_complete_all_covered(
         None: Assert-only test.
     """
     monkeypatch.setattr(
-        "apme_engine.daemon.primary_server._known_rule_ids",
+        "apme_engine.daemon.engine_server._known_rule_ids",
         {"L001", "M001"},
     )
     configs: list[object] = [
-        primary_pb2.RuleConfig(rule_id="L001", enabled=True),
-        primary_pb2.RuleConfig(rule_id="M001", enabled=True),
+        engine_pb2.RuleConfig(rule_id="L001", enabled=True),
+        engine_pb2.RuleConfig(rule_id="M001", enabled=True),
     ]
     unknown, missing = _validate_rule_configs(configs, complete=True)
     assert unknown == [], "all config IDs are known"
@@ -300,15 +300,15 @@ def test_validate_rule_configs_complete_both_directions(
         None: Assert-only test.
     """
     monkeypatch.setattr(
-        "apme_engine.daemon.primary_server._known_rule_ids",
+        "apme_engine.daemon.engine_server._known_rule_ids",
         {"L001", "L002"},
     )
     configs: list[object] = [
-        primary_pb2.RuleConfig(rule_id="L001", enabled=True),
-        primary_pb2.RuleConfig(rule_id="X999", enabled=True),
+        engine_pb2.RuleConfig(rule_id="L001", enabled=True),
+        engine_pb2.RuleConfig(rule_id="X999", enabled=True),
     ]
     unknown, missing = _validate_rule_configs(configs, complete=True)
-    assert unknown == ["X999"], "X999 is not known to the Primary"
+    assert unknown == ["X999"], "X999 is not known to the Engine"
     assert missing == ["L002"], "L002 is known but absent from config"
 
 

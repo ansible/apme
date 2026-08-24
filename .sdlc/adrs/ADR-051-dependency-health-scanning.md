@@ -38,10 +38,10 @@ invisible:
 | `list_installed_collections(venv)` | `venv_manager/session.py` | Returns FQCN + version + supplier + license; no quality data |
 | `list_installed_packages(venv)` | `venv_manager/session.py` | Returns name + version + supplier + license; no CVE data |
 | `get_dependency_tree(venv)` | `venv_manager/session.py` | `uv pip tree` text; informational only |
-| `ProjectManifest` in `FixCompletedEvent` | ADR-040, `primary_server.py` | Inventory without health assessment |
+| `ProjectManifest` in `FixCompletedEvent` | ADR-040, `engine_server.py` | Inventory without health assessment |
 | Gateway persistence of manifest | ADR-040, `grpc_reporting` | Stores packages but no vulnerability metadata |
 | Gitleaks optional validator pattern | `gitleaks_validator_server.py` | Template for external-binary validator |
-| Engine scan pipeline (`FixSession`) | `primary_server.py` | Can scan any project root — collections are structurally similar |
+| Engine scan pipeline (`FixSession`) | `engine_server.py` | Can scan any project root — collections are structurally similar |
 | `RuleScope.COLLECTION` in proto | `common.proto` | Already defined for collection-scoped findings |
 | `SEC:` rule ID prefix | ADR-008 | Reserved for secrets; supply-chain risk needs convention |
 
@@ -173,7 +173,7 @@ Environment variables:
 - `COLLECTION_HEALTH_GRPC_ADDRESS` — address of collection health validator
 - `DEP_AUDIT_GRPC_ADDRESS` — address of Python dependency auditor
 
-Primary fans out to these validators in the same `asyncio.gather()` as
+Engine fans out to these validators in the same `asyncio.gather()` as
 existing validators. If the address env var is unset or the service is
 unhealthy, the validator is skipped — same as Gitleaks today.
 
@@ -214,24 +214,24 @@ scan*, not as an afterthought. This ADR adds engine-level validators that
 surface findings inline; REQ-010's sidecar can consume and aggregate those
 same findings from the Gateway for fleet-wide views.
 
-### Alternative 2: Extend Primary Directly (no new services)
+### Alternative 2: Extend Engine Directly (no new services)
 
 **Description**: Add collection scanning and pip-audit as steps inside
-Primary's `_scan_pipeline`, not as separate validator services.
+Engine's `_scan_pipeline`, not as separate validator services.
 
 **Pros**:
 - No new gRPC services or ports
 - Simpler deployment
 
 **Cons**:
-- Violates the validator contract pattern — Primary orchestrates, validators
+- Violates the validator contract pattern — Engine orchestrates, validators
   detect
-- Bloats Primary with domain logic (rule execution, pip-audit parsing)
+- Bloats Engine with domain logic (rule execution, pip-audit parsing)
 - Not independently scalable or disableable
 - Breaks the fan-out model where validators run in parallel
 
 **Why not chosen**: The existing architecture is intentionally decomposed.
-Adding detection logic to Primary regresses that design.
+Adding detection logic to Engine regresses that design.
 
 ### Alternative 3: Native Validator Graph Extension
 
@@ -347,7 +347,7 @@ src/apme_engine/
   output and `--path` to target the session venv's site-packages directly.
 - CVSS → severity mapping follows the standard scale (Critical ≥ 9.0,
   High ≥ 7.0, Medium ≥ 4.0, Low < 4.0).
-- If `pip-audit` is not installed, `Health` returns `NOT_SERVING` and Primary
+- If `pip-audit` is not installed, `Health` returns `NOT_SERVING` and Engine
   skips the validator (identical to Gitleaks without binary).
 - Air-gapped operation requires a pre-populated `pip-audit` cache
   (`--cache-dir`) or a mirrored vulnerability data source; `-l` / `--local`

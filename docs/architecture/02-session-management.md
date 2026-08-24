@@ -4,7 +4,7 @@
 
 ## Purpose
 
-When the Primary receives the first `ScanChunk` via `FixSession`, it creates a
+When the Engine receives the first `ScanChunk` via `FixSession`, it creates a
 session, accumulates uploaded files, and stages them to a temp directory. This
 stage covers session lifecycle, the command dispatch loop, and file staging.
 
@@ -13,29 +13,29 @@ stage covers session lifecycle, the command dispatch loop, and file staging.
 ```mermaid
 sequenceDiagram
     participant CLI as CLI
-    participant Primary as PrimaryServicer
+    participant Engine as EngineServicer
     participant Store as SessionStore
     participant FS as Temp Filesystem
 
-    CLI->>Primary: SessionCommand(upload=chunk1)
-    Primary->>Store: create()
-    Store-->>Primary: SessionState
-    Primary-->>CLI: SessionCreated(session_id, ttl)
-    Primary->>Primary: _session_upload_append(chunk1)
+    CLI->>Engine: SessionCommand(upload=chunk1)
+    Engine->>Store: create()
+    Store-->>Engine: SessionState
+    Engine-->>CLI: SessionCreated(session_id, ttl)
+    Engine->>Engine: _session_upload_append(chunk1)
 
-    CLI->>Primary: SessionCommand(upload=chunk2)
-    Primary->>Primary: _session_upload_append(chunk2)
+    CLI->>Engine: SessionCommand(upload=chunk2)
+    Engine->>Engine: _session_upload_append(chunk2)
 
-    CLI->>Primary: SessionCommand(upload=chunkN, last=true)
-    Primary->>Primary: _session_upload_append(chunkN)
-    Primary->>FS: _write_chunked_fs(files)
-    Note over Primary,FS: Materialize files to temp dir
-    Primary->>Primary: _session_process(session, scan_id)
+    CLI->>Engine: SessionCommand(upload=chunkN, last=true)
+    Engine->>Engine: _session_upload_append(chunkN)
+    Engine->>FS: _write_chunked_fs(files)
+    Note over Engine,FS: Materialize files to temp dir
+    Engine->>Engine: _session_process(session, scan_id)
 ```
 
 ## FixSession Command Loop
 
-`PrimaryServicer.FixSession()` is the bidirectional streaming handler. It
+`EngineServicer.FixSession()` is the bidirectional streaming handler. It
 iterates over incoming `SessionCommand` messages and dispatches on
 `cmd.WhichOneof("command")`:
 
@@ -103,7 +103,7 @@ about to expire.
 ## Session Resume
 
 Clients can reconnect to an existing session via `ResumeRequest(session_id)`.
-The Primary looks up the session in the store and replays its current state:
+The Engine looks up the session in the store and replays its current state:
 
 - If Tier 1 is complete: re-emit `Tier1Summary`
 - If awaiting approval: re-emit `ProposalsReady`
@@ -113,7 +113,7 @@ The Primary looks up the session in the store and replays its current state:
 
 | File | Key types/functions |
 |------|---------------------|
-| `src/apme_engine/daemon/primary_server.py` | `PrimaryServicer.FixSession()`, `_session_upload_start()`, `_session_upload_append()`, `_write_chunked_fs()` |
+| `src/apme_engine/daemon/engine_server.py` | `EngineServicer.FixSession()`, `_session_upload_start()`, `_session_upload_append()`, `_write_chunked_fs()` |
 | `src/apme_engine/daemon/session.py` | `SessionStore`, `SessionState`, `ResourceExhaustedError` |
 
 ## Related ADRs

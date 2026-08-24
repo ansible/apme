@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from apme_engine.engine.models import YAMLDict
-from apme_engine.opa_client import reset_opa_circuit_breaker, run_opa, run_opa_test
+from apme_engine.opa_client import OpaInfrastructureError, reset_opa_circuit_breaker, run_opa, run_opa_test
 
 
 @pytest.fixture(autouse=True)  # type: ignore[untyped-decorator]
@@ -44,57 +44,54 @@ class TestRunOpa:
         with pytest.raises(FileNotFoundError, match="is not a directory"):
             run_opa({"hierarchy": []}, str(missing))
 
-    def test_opa_not_found_returns_empty_list(self, opa_bundle_path: Path) -> None:
-        """When opa command is not found, returns [] and writes to stderr.
+    def test_opa_not_found_raises(self, opa_bundle_path: Path) -> None:
+        """When opa command is not found, raises OpaInfrastructureError.
 
         Args:
             opa_bundle_path: Fixture providing path to OPA bundle.
-
         """
         with (
             patch("apme_engine.opa_client.subprocess.run", side_effect=FileNotFoundError("opa not found")),
             patch("sys.stderr.write") as mock_stderr,
+            pytest.raises(OpaInfrastructureError, match="not available"),
         ):
-            result = run_opa({"hierarchy": []}, str(opa_bundle_path))
-        assert result == []
+            run_opa({"hierarchy": []}, str(opa_bundle_path))
         mock_stderr.assert_called_once()
         assert "opa" in mock_stderr.call_args[0][0].lower()
 
-    def test_opa_nonzero_exit_returns_empty_list(
-        self, opa_bundle_path: Path, sample_hierarchy_payload: YAMLDict
-    ) -> None:
-        """When OPA returns non-zero exit code, returns [] and writes stderr.
+    def test_opa_nonzero_exit_raises(self, opa_bundle_path: Path, sample_hierarchy_payload: YAMLDict) -> None:
+        """When OPA returns non-zero exit code, raises OpaInfrastructureError.
 
         Args:
             opa_bundle_path: Fixture providing path to OPA bundle.
             sample_hierarchy_payload: Fixture providing sample hierarchy data.
-
         """
-        with patch("apme_engine.opa_client.subprocess.run") as mock_run:
+        with (
+            patch("apme_engine.opa_client.subprocess.run") as mock_run,
+            patch("sys.stderr.write") as mock_stderr,
+            pytest.raises(OpaInfrastructureError, match="non-zero"),
+        ):
             mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="policy error")
-            with patch("sys.stderr.write") as mock_stderr:
-                result = run_opa(sample_hierarchy_payload, str(opa_bundle_path))
-        assert result == []
+            run_opa(sample_hierarchy_payload, str(opa_bundle_path))
         mock_stderr.assert_called_once()
-        assert "policy error" in mock_stderr.call_args[0][0]
+        assert "[REDACTED]" in mock_stderr.call_args[0][0]
 
-    def test_opa_invalid_json_returns_empty_list(
-        self, opa_bundle_path: Path, sample_hierarchy_payload: YAMLDict
-    ) -> None:
-        """When OPA stdout is not valid JSON, returns [] and writes stderr.
+    def test_opa_invalid_json_raises(self, opa_bundle_path: Path, sample_hierarchy_payload: YAMLDict) -> None:
+        """When OPA stdout is not valid JSON, raises OpaInfrastructureError.
 
         Args:
             opa_bundle_path: Fixture providing path to OPA bundle.
             sample_hierarchy_payload: Fixture providing sample hierarchy data.
-
         """
-        with patch("apme_engine.opa_client.subprocess.run") as mock_run:
+        with (
+            patch("apme_engine.opa_client.subprocess.run") as mock_run,
+            patch("sys.stderr.write") as mock_stderr,
+            pytest.raises(OpaInfrastructureError, match="invalid JSON"),
+        ):
             mock_run.return_value = MagicMock(returncode=0, stdout="not json", stderr="")
-            with patch("sys.stderr.write") as mock_stderr:
-                result = run_opa(sample_hierarchy_payload, str(opa_bundle_path))
-        assert result == []
+            run_opa(sample_hierarchy_payload, str(opa_bundle_path))
         mock_stderr.assert_called_once()
-        assert "invalid JSON" in mock_stderr.call_args[0][0]
+        assert "[REDACTED]" in mock_stderr.call_args[0][0]
 
     def test_opa_empty_result_returns_empty_list(
         self,
@@ -263,14 +260,17 @@ class TestRunOpa:
             patch("sys.stderr.write"),
         ):
             for _ in range(3):
-                run_opa({"hierarchy": []}, str(opa_bundle_path))
+                with pytest.raises(OpaInfrastructureError):
+                    run_opa({"hierarchy": []}, str(opa_bundle_path))
 
         assert mod._opa_disabled is True
         assert mod._consecutive_timeouts == 3
 
-        with patch("apme_engine.opa_client.subprocess.run") as mock_run:
-            result = run_opa({"hierarchy": []}, str(opa_bundle_path))
-        assert result == []
+        with (
+            patch("apme_engine.opa_client.subprocess.run") as mock_run,
+            pytest.raises(OpaInfrastructureError, match="circuit breaker"),
+        ):
+            run_opa({"hierarchy": []}, str(opa_bundle_path))
         mock_run.assert_not_called()
 
     def test_successful_call_resets_timeout_counter(
@@ -297,8 +297,10 @@ class TestRunOpa:
             ),
             patch("sys.stderr.write"),
         ):
-            run_opa({"hierarchy": []}, str(opa_bundle_path))
-            run_opa({"hierarchy": []}, str(opa_bundle_path))
+            with pytest.raises(OpaInfrastructureError):
+                run_opa({"hierarchy": []}, str(opa_bundle_path))
+            with pytest.raises(OpaInfrastructureError):
+                run_opa({"hierarchy": []}, str(opa_bundle_path))
 
         assert mod._consecutive_timeouts == 2
 
@@ -357,8 +359,10 @@ class TestRunOpa:
             ),
             patch("sys.stderr.write"),
         ):
-            run_opa({"hierarchy": []}, str(opa_bundle_path))
-            run_opa({"hierarchy": []}, str(opa_bundle_path))
+            with pytest.raises(OpaInfrastructureError):
+                run_opa({"hierarchy": []}, str(opa_bundle_path))
+            with pytest.raises(OpaInfrastructureError):
+                run_opa({"hierarchy": []}, str(opa_bundle_path))
 
         assert mod._opa_disabled is True
         assert mod._consecutive_timeouts == 2

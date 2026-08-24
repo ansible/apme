@@ -91,7 +91,7 @@ Every validator returns the same violation shape:
 - **Input**: `context.root_dir` (files on disk) + `context.hierarchy_payload`
 - **Execution**: Uses ansible-core's plugin loader, `ansible-playbook --syntax-check`, argspec extraction
 - **Rules**: L057–L059 (syntax/argspec), M001–M004 (FQCN resolution, deprecation, redirects, removed modules)
-- **Container**: `apme-ansible` with UV cache pre-warmed for ansible-core 2.18/2.19/2.20; session-scoped venvs managed by the Primary orchestrator via `VenvSessionManager`
+- **Container**: `apme-ansible` with UV cache pre-warmed for ansible-core 2.18/2.19/2.20; session-scoped venvs managed by the Engine orchestrator via `VenvSessionManager`
 - **Why separate container**: Requires actual ansible-core installation; multi-version support needs isolated venvs; sessions volume mounted read-only
 
 ### Gitleaks (secrets)
@@ -146,11 +146,17 @@ Everything downstream (validators, daemon, CLI) calls `run_scan()` and works wit
 
 ## Parallel execution
 
-Primary calls all configured validators concurrently using `asyncio.gather()` with async gRPC stubs (`grpc.aio`). Each validator is a gRPC call to an independent container. The `ValidateRequest` is immutable and shared across all calls.
+Engine calls all configured validators concurrently using `asyncio.gather()` with async gRPC stubs (`grpc.aio`). Each validator is a gRPC call to an independent container. The `ValidateRequest` is immutable and shared across all calls.
 
 Total latency = `max(all validators)` instead of `sum`.
 
-Each validator is discovered by environment variable (`NATIVE_GRPC_ADDRESS`, `OPA_GRPC_ADDRESS`, `ANSIBLE_GRPC_ADDRESS`, `GITLEAKS_GRPC_ADDRESS`, `COLLECTION_HEALTH_GRPC_ADDRESS`, `DEP_AUDIT_GRPC_ADDRESS`). If a variable is unset, that validator is skipped — no error, just fewer results. This makes it possible to run a subset of validators during development or testing.
+Core services — Engine, Native, OPA, Ansible, and Galaxy Proxy — are always
+required. Native, OPA, and Ansible are discovered by environment variable
+(`NATIVE_GRPC_ADDRESS`, `OPA_GRPC_ADDRESS`, `ANSIBLE_GRPC_ADDRESS`); Galaxy Proxy
+via `APME_GALAXY_PROXY_URL`. Missing core addresses fail Engine readiness rather
+than silently reducing results. Optional validators (`GITLEAKS_GRPC_ADDRESS`,
+`COLLECTION_HEALTH_GRPC_ADDRESS`, `DEP_AUDIT_GRPC_ADDRESS`) are skipped when
+unset and start only with `include_optional=True` (or in the full pod).
 
 ---
 
@@ -167,12 +173,12 @@ service Validator {
 
 The `ValidateRequest` is a superset — it carries fields for all validators. Each validator consumes only what it needs and ignores the rest. This means adding a new validator requires:
 
-1. Implement `ValidatorServicer` (one `Validate` method)
+1. Implement `ValidatorServicer` (`Validate` and `Health`)
 2. Build a container image
-3. Add an environment variable to Primary
+3. Add its address environment variable and wire it through `_DEFAULT_PORTS` or `_OPTIONAL_SERVICES`, `env_map`, and `_run_daemon()`
 4. Add the service to the pod spec
 
-No proto changes, no Primary code changes, no other validators affected.
+No proto changes or changes to other validators are required.
 
 ---
 
@@ -180,7 +186,7 @@ No proto changes, no Primary code changes, no other validators affected.
 
 Rule IDs (L, M, R, P) describe **what** is checked, not **who** checks it. The user sees a rule ID; whether OPA or a Python rule implements it is irrelevant. Multiple validators can fire for the same concept (e.g., OPA L003 is a structural lint check; Ansible M001 is semantic FQCN resolution) — they have different rule IDs because they're different checks.
 
-Deduplication happens at the Primary level by `(rule_id, file, line)`. If two validators produce the same rule/file/line, only one is reported.
+Deduplication happens at the Engine level by `(rule_id, file, line)`. If two validators produce the same rule/file/line, only one is reported.
 
 ---
 
@@ -202,19 +208,19 @@ ValidatorDiagnostics(
 )
 ```
 
-Primary aggregates all `ValidatorDiagnostics` plus engine phase timing into `ScanDiagnostics` on the `ScanResponse`. The CLI displays diagnostics with `-v` (summary + top 10 slowest rules) or `-vv` (full per-rule breakdown).
+Engine aggregates all `ValidatorDiagnostics` plus engine phase timing into `ScanDiagnostics` on the `FixCompletedEvent` reporting path (`reporting.proto`). `SessionEvent` / `SessionResult` do not carry a diagnostics field. The CLI surfaces pipeline timing via `-v` / `-vv` from session `ProgressUpdate` logs (summary vs full per-rule breakdown).
 
 ---
 
 ## Rule catalog and overrides (ADR-041)
 
-Rule enable/disable, severity overrides, and enforced-mode are managed at the **Primary/Gateway level**, not inside individual validators. Validators remain read-only — they always run all their rules and return all violations. Policy enforcement is orchestration:
+Rule enable/disable, severity overrides, and enforced-mode are managed at the **Engine/Gateway level**, not inside individual validators. Validators remain read-only — they always run all their rules and return all violations. Policy enforcement is orchestration:
 
-1. **Catalog registration**: At startup, the Primary collects `RuleDefinition` metadata from all built-in validators and pushes the full catalog to the Gateway via `RegisterRules`. The Gateway reconciles a `rules` table and stores admin-configured overrides in `rule_overrides`.
+1. **Catalog registration**: At startup, the Engine collects `RuleDefinition` metadata from all built-in validators and pushes the full catalog to the Gateway via `RegisterRules`. The Gateway reconciles a `rules` table and stores admin-configured overrides in `rule_overrides`.
 
 2. **Override delivery**: Each scan carries `repeated RuleConfig rule_configs` in `ScanOptions`. For Gateway-initiated scans, the Gateway loads resolved configs (default + override) and injects them. For CLI scans, configs are parsed from `.apme/rules.yml`.
 
-3. **Primary enforcement**: After validator fan-out, the Primary applies `rule_configs` — filtering violations for disabled rules, overriding severity labels, and attaching `enforced` metadata (bypassing `# apme:ignore`). When `rule_configs_complete` is set (Gateway/enterprise path), the Primary performs a **bidirectional audit** — hard-failing the scan if the config references unknown rule IDs *or* omits rules the engine knows. This catches catalog drift between the Gateway and engine. For CLI-originated scans (partial overrides from `.apme/rules.yml`), unknown IDs produce a warning only.
+3. **Engine enforcement**: After validator fan-out, the Engine applies `rule_configs` — filtering violations for disabled rules, overriding severity labels, and attaching `enforced` metadata (bypassing `# apme:ignore`). When `rule_configs_complete` is set (Gateway/enterprise path), the Engine performs a **bidirectional audit** — hard-failing the scan if the config references unknown rule IDs *or* omits rules the engine knows. This catches catalog drift between the Gateway and engine. For CLI-originated scans (partial overrides from `.apme/rules.yml`), unknown IDs produce a warning only.
 
 The `Validator` gRPC contract (`validate.proto`) is unchanged — validators do not need to know about rule overrides or the catalog.
 

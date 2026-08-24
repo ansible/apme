@@ -32,9 +32,9 @@ def test_fix_options_assess_pause_default_false() -> None:
     Returns:
         None.
     """
-    from apme.v1 import primary_pb2
+    from apme.v1 import engine_pb2
 
-    assert primary_pb2.FixOptions().assess_pause is False
+    assert engine_pb2.FixOptions().assess_pause is False
 
 
 def test_set_findings_reuses_begin_remediate_future() -> None:

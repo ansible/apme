@@ -13,7 +13,7 @@ Accepted
 Portal and other Gateway clients need to **configure** Abbenay (providers,
 models, API keys) at runtime — not only select a model for remediation.
 Today APME ships Abbenay with **deploy-time** `config.yaml` + env/Helm secrets
-and exposes only **gRPC** (`:50057`) for Primary inference (`list_models` /
+and exposes only **gRPC** (`:50057`) for Engine inference (`list_models` /
 `chat`). There is no Gateway path for Abbenay admin.
 
 Abbenay already provides an HTTP admin/config API (`/api/config`,
@@ -25,7 +25,7 @@ Constraints and drivers:
 - **ADR-069 Simple topology** — Helm EAP/upstream co-locates engine + Gateway +
   optional Abbenay in one pod on localhost. Podman and bootc likewise share the
   network namespace. Loopback is the natural admin hop.
-- **ADR-046** rejected Gateway → Abbenay for **LLM inference** (Primary remains
+- **ADR-046** rejected Gateway → Abbenay for **LLM inference** (Engine remains
   the sole `abbenay_grpc` chat / `ListAIModels` path). That rejection must not
   block a separate **admin** concern.
 - **ADR-060** — Gateway REST under `/api/v1` is a versioned public contract;
@@ -42,7 +42,7 @@ Constraints and drivers:
 | Invariant | Status |
 |-----------|--------|
 | 1. Validators read-only | Consistent |
-| 2. gRPC between backend services | Consistent — admin uses Abbenay’s existing HTTP API; inference stays gRPC via Primary |
+| 2. gRPC between backend services | Consistent — admin uses Abbenay’s existing HTTP API; inference stays gRPC via Engine |
 | 5. Stateless engine / persistence at Gateway | Consistent — Abbenay remains config and secrets SoT; Gateway does not persist Abbenay config or provider keys |
 | 11. Engine never queries out | Consistent — Gateway (not engine) reaches Abbenay admin |
 | 16. Helm Simple / Podman localhost | Consistent with ADR-069 |
@@ -62,7 +62,7 @@ Mount additive routes under `/api/v1/ai/...` that forward **only** admin
 operations to Abbenay `/api/...` (same method, query, and body for allowlisted
 paths). Do **not** reimplement Abbenay admin schemas in Gateway Python/gRPC
 clients. Do **not** proxy chat, sessions, OpenAI-compat `/v1`, or arbitrary
-Abbenay surfaces (ADR-046 inference stays Primary). Reject path traversal
+Abbenay surfaces (ADR-046 inference stays Engine). Reject path traversal
 (`..` / encoded forms). Abbenay remains the source of truth for config.
 
 Allowlist: `GET/POST /config`, `GET /engines`, `GET /providers`,
@@ -70,7 +70,7 @@ Allowlist: `GET/POST /config`, `GET /engines`, `GET /providers`,
 `GET/POST /secrets`, `DELETE /secrets/{key}`.
 
 **3. Enable Abbenay HTTP on loopback when Abbenay is enabled.**  
-In addition to gRPC `:50057` (Primary), start Abbenay’s HTTP admin surface on
+In addition to gRPC `:50057` (Engine), start Abbenay’s HTTP admin surface on
 **`127.0.0.1:8787`** (default Abbenay port). Do not publish a cluster Service
 or hostPort for 8787 in the Simple chart.
 
@@ -86,9 +86,37 @@ routes. Portal deployments put Backstage/catalog auth in front of the
 Gateway. Elevating Abbenay admin onto that edge is intentional for Simple
 EAP; operators must not expose Gateway `:8080` without an outer auth layer.
 
+**Caller trust (Simple):** Path allowlisting alone does not authenticate the
+caller. That is intentional under ADR-048 / ADR-069: every container in the
+Simple pod (Helm and Podman) shares one network namespace and is treated as a
+trusted co-tenant of the product runtime. Evidence:
+
+- **Helm Simple** (`deploy/helm/apme/`): Engine, Gateway, UI, optional
+  Abbenay, and validators co-locate in one Pod (`replicas: 1`); Abbenay HTTP
+  has no Service or hostPort; only in-pod processes reach `127.0.0.1:8787`
+  or Gateway `:8080` without an outer Ingress/NetworkPolicy edge.
+- **Podman** (`containers/podman/pod.yaml`): same shared-netns all-in-one
+  pod; Abbenay binds loopback only; Gateway `:8080` is the sole published
+  product REST edge.
+
+A compromised sidecar that can already talk to Gateway can hit
+`/api/v1/ai/*` and trigger the Gateway→Abbenay token rewrite — the same
+privilege any co-located process has against other `/api/v1` routes. App-level
+caller authorization on these routes is out of scope for Simple; introduce it
+only with a new ADR that changes ADR-048.
+
+**Transport (Simple):** Abbenay admin uses plain HTTP on
+`http://127.0.0.1:8787`. Loopback is not transport confidentiality against a
+compromised co-located process; it is a binding constraint so the token never
+crosses a pod boundary. Deployment evidence: no cluster Service/hostPort for
+8787 (Helm chart + Podman), Abbenay `--host 127.0.0.1`, Gateway default
+`APME_ABBENAY_HTTP_URL=http://127.0.0.1:8787`. Hardened hops (HTTPS+mTLS or a
+permission-protected Unix socket) require a separate ADR; they are not part of
+the accepted Simple design.
+
 **5. Inference unchanged.**  
-`GET /api/v1/ai/models` (Primary `ListAIModels`) and remediate `enable_ai` /
-`ai_model` continue via Primary → Abbenay gRPC. The proxy does not replace that
+`GET /api/v1/ai/models` (Engine `ListAIModels`) and remediate `enable_ai` /
+`ai_model` continue via Engine → Abbenay gRPC. The proxy does not replace that
 path and rejects other methods on `models`.
 
 **6. Config durability (implemented — [#498](https://github.com/ansible/apme/issues/498)).**  
@@ -228,7 +256,7 @@ Gateway stays a proxy. Default Helm `emptyDir` is still ephemeral — enable
   reachability without a second public Service.
 - Abbenay-native paths/bodies minimize future client churn if Abbenay moves out
   of the pod.
-- Clear split: **admin** = Gateway HTTP proxy; **inference** = Primary gRPC
+- Clear split: **admin** = Gateway HTTP proxy; **inference** = Engine gRPC
   (ADR-025 / ADR-046).
 
 ### Negative
@@ -242,7 +270,7 @@ Gateway stays a proxy. Default Helm `emptyDir` is still ephemeral — enable
 
 ### Neutral
 
-- `GET /api/v1/ai/models` stays Primary-mediated; Abbenay `/api/models` may exist
+- `GET /api/v1/ai/models` stays Engine-mediated; Abbenay `/api/models` may exist
   behind the proxy but is not the remediate UI contract unless explicitly
   switched later.
 - External / multi-tenant Abbenay is deferred; this ADR does not design that
@@ -260,7 +288,7 @@ Gateway stays a proxy. Default Helm `emptyDir` is still ephemeral — enable
   --port 8787 --grpc-host 127.0.0.1 --grpc-port 50057` (image ≥ v2026.8.0);
   no Service/hostPort for HTTP or gRPC; chart README notes ADR-070. Both
   topologies bind Abbenay to loopback (pod-shared netns).
-- **Conflict**: `GET /api/v1/ai/models` remains Primary-backed; proxy excludes
+- **Conflict**: `GET /api/v1/ai/models` remains Engine-backed; proxy excludes
   `models` for all methods. Register main router before the proxy mount.
 - **OpenAPI**: proxy routes `include_in_schema=False` (Abbenay owns schemas);
   Gateway `info.description` references ADR-070.
@@ -283,7 +311,7 @@ Gateway stays a proxy. Default Helm `emptyDir` is still ephemeral — enable
 
 ## Related Decisions
 
-- [ADR-025](ADR-025-ai-provider-protocol.md): `AIProvider` / Primary-only
+- [ADR-025](ADR-025-ai-provider-protocol.md): `AIProvider` / Engine-only
   `abbenay_grpc` for inference
 - [ADR-046](ADR-046-ai-assisted-report-generation.md): Amended — Gateway must
   not call Abbenay for **chat/inference**; admin HTTP proxy is allowed
@@ -308,5 +336,6 @@ Gateway stays a proxy. Default Helm `emptyDir` is still ephemeral — enable
 | 2026-08-03 | cidrblock | Accepted — Simple in-pod Abbenay; Gateway HTTP admin proxy |
 | 2026-08-03 | bthornto | Amended allowlist: added `GET /engines` for read-only engine discovery |
 | 2026-08-03 | bthornto | §6 Config durability implemented (#498): seed→RW emptyDir/PVC; Podman RW config dir |
+| 2026-08-04 | bthornto | §4: document Simple caller-trust + loopback token threat model (Helm/Podman evidence) |
 | 2026-08-13 | bthornto | Amended allowlist: added `GET/POST /secrets`, `DELETE /secrets/{key}` for Abbenay ≥ v2026.8.5 memory secret store |
 | 2026-08-14 | bthornto | §7 secrets remain Abbenay SoT: file store (`secretStore: "file"`, ≥ v2026.8.6) on a durable config volume (Helm PVC / Podman cache); Gateway stays proxy-only (rejects Gateway DB SoT, #560) |
