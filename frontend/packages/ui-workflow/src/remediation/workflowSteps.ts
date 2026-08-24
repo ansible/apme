@@ -1,9 +1,12 @@
 /**
  * Derive Scan → Remediate workflow stepper position (ADR-064 + ADR-062 Option C).
  *
- * Steps (AI pair omitted when AI is off):
- *   Scan → Review findings → Quick-fix proposals → Quick-fix applied
- *     → AI escalation → AI proposals → AI applied → Commit → Complete
+ * Non-AI (EAP) path — simplified per AAP-88780:
+ *   Scan → Review findings → Apply findings → Create branch → Commit
+ *
+ * AI path (unchanged):
+ *   Scan → Review findings → Rule-based fix proposals → Rule-based fix applied
+ *     → AI escalation → AI proposals → AI applied → Create branch → Commit
  */
 
 import type { ProjectOperationState } from '../hooks/useProjectOperationState';
@@ -12,6 +15,7 @@ import { isAiRemediationProposal } from './proposalTier';
 export type WorkflowStepId =
   | 'scan'
   | 'findings'
+  | 'apply_findings'
   | 'tier1_proposals'
   | 'tier1_applied'
   | 'ai_escalation'
@@ -50,17 +54,22 @@ export function workflowStepDefs(includeAi: boolean): WorkflowStepDef[] {
   const steps: WorkflowStepDef[] = [
     { id: 'scan', label: 'Scan' },
     { id: 'findings', label: 'Review findings' },
-    { id: 'tier1_proposals', label: 'Quick-fix proposals' },
-    { id: 'tier1_applied', label: 'Quick-fix applied' },
   ];
   if (includeAi) {
     steps.push(
+      { id: 'tier1_proposals', label: 'Rule-based fix proposals' },
+      { id: 'tier1_applied', label: 'Rule-based fix applied' },
       { id: 'ai_escalation', label: 'AI escalation' },
       { id: 'ai_proposals', label: 'AI proposals' },
       { id: 'ai_applied', label: 'AI applied' },
     );
+  } else {
+    steps.push({ id: 'apply_findings', label: 'Apply findings' });
   }
-  steps.push({ id: 'commit', label: 'Commit' }, { id: 'complete', label: 'Complete' });
+  steps.push(
+    { id: 'commit', label: 'Create branch' },
+    { id: 'complete', label: 'Commit' },
+  );
   return steps;
 }
 
@@ -171,8 +180,8 @@ function stepFromLatch(latch: WorkflowLatch, includeAi: boolean): WorkflowStepId
   if (includeAi && latch.pastAiApplied) return 'ai_applied';
   if (includeAi && latch.pastAiReview) return 'ai_proposals';
   if (includeAi && latch.pastAiEscalation) return 'ai_escalation';
-  if (latch.pastTier1Applied) return 'tier1_applied';
-  if (latch.pastTier1Review) return 'tier1_proposals';
+  if (latch.pastTier1Applied) return includeAi ? 'tier1_applied' : 'apply_findings';
+  if (latch.pastTier1Review) return includeAi ? 'tier1_proposals' : 'apply_findings';
   if (latch.pastFindings) return 'findings';
   return 'scan';
 }
@@ -223,17 +232,18 @@ export function resolveCurrentWorkflowStep(
   }
 
   if (status === 'awaiting_approval') {
-    return isAiGate(state) ? 'ai_proposals' : 'tier1_proposals';
+    if (isAiGate(state)) return 'ai_proposals';
+    return includeAi ? 'tier1_proposals' : 'apply_findings';
   }
 
   if (status === 'applying') {
     if (latch.pastAiReview) {
-      return includeAi ? 'ai_applied' : 'tier1_applied';
+      return includeAi ? 'ai_applied' : 'apply_findings';
     }
     if (includeAi && latch.pastAiEscalation) {
       return 'ai_escalation';
     }
-    return 'tier1_applied';
+    return includeAi ? 'tier1_applied' : 'apply_findings';
   }
 
   // queued | cloning | scanning
@@ -242,12 +252,12 @@ export function resolveCurrentWorkflowStep(
       return 'ai_escalation';
     }
     if (latch.pastTier1Applied) {
-      return 'tier1_applied';
+      return includeAi ? 'tier1_applied' : 'apply_findings';
     }
     if (latch.pastTier1Review) {
-      return 'tier1_applied';
+      return includeAi ? 'tier1_applied' : 'apply_findings';
     }
-    return 'tier1_proposals';
+    return includeAi ? 'tier1_proposals' : 'apply_findings';
   }
 
   return 'scan';

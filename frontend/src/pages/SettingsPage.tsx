@@ -380,7 +380,7 @@ export function SettingsPage() {
         </FormGroup>
 
         <p style={{ marginTop: 24, opacity: 0.6, fontSize: 13, marginBottom: 32 }}>
-          The selected model is used for AI-assisted remediation (Tier 2) when
+          The selected model is used for AI fix (Tier 2) when
           starting a new scan with AI enabled. This preference is stored in your
           browser.
         </p>

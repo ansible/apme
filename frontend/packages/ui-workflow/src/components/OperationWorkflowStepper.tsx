@@ -29,6 +29,7 @@ export interface OperationWorkflowStepperProps {
 
 const SPINNING_STEPS = new Set<WorkflowStepId>([
   'scan',
+  'apply_findings',
   'tier1_applied',
   'ai_escalation',
   'ai_applied',

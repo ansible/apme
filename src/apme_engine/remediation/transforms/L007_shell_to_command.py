@@ -2,12 +2,36 @@
 
 from __future__ import annotations
 
+import re
+
 from ruamel.yaml.comments import CommentedMap
 
 from apme_engine.engine.models import ViolationDict
 from apme_engine.remediation.transforms._helpers import get_module_key, rename_key
 
-_SHELL_CHARS = ("|", "&&", "||", ";", ">", ">>", "<", "$(", "`", "*", "?")
+# Inspected after Jinja ``{{ }}`` is stripped so ``|quote`` is not a pipe.
+# Non-greedy so dict literals like ``{{ {'k': 'v'} }}`` are stripped too.
+_JINJA_RE = re.compile(r"\{\{.*?\}\}", re.DOTALL)
+_SHELL_CHARS = (
+    "|",
+    "&&",
+    "||",
+    ";",
+    ">",
+    ">>",
+    "<",
+    "$(",
+    "`",
+    "*",
+    "?",
+    "&",
+    "(",
+    ")",
+    "[",
+    "]",
+    "$",
+    "\n",
+)
 
 _SHELL_TO_COMMAND = {
     "ansible.builtin.shell": "ansible.builtin.command",
@@ -19,17 +43,59 @@ _SHELL_TO_COMMAND = {
 def _uses_shell_features(cmd: str) -> bool:
     """Check if command string uses shell features (pipes, redirects, etc).
 
+    Jinja ``{{ }}`` expressions are stripped first so a filter such as
+    ``{{ path | quote }}`` is not treated as a shell pipe.  A command that
+    is only Jinja (nothing inspectable after the strip) is treated as
+    using shell features — the rendered value is unknown.  Leftover
+    ``{{`` after the strip (unclosed or nested beyond the pattern) is
+    also uninspectable.
+
     Args:
         cmd: Command string to check.
 
     Returns:
-        True if cmd contains shell-specific characters.
+        True if the non-Jinja remainder is empty, still contains Jinja
+        delimiters, or contains shell-specific characters.
     """
-    return any(ch in cmd for ch in _SHELL_CHARS)
+    stripped = _JINJA_RE.sub(" ", cmd)
+    if "{{" in stripped or "}}" in stripped:
+        return True
+    if not stripped.strip():
+        return True
+    return any(ch in stripped for ch in _SHELL_CHARS)
+
+
+def _extract_command_string(module_args: object) -> str:
+    """Return the inspectable command string from shell module arguments.
+
+    Prefers free-form / ``cmd`` over ``argv``.  Returns empty when the
+    command cannot be inspected, in which case the transform must not
+    convert shell to command.
+
+    Args:
+        module_args: Scalar command string or argument mapping.
+
+    Returns:
+        Command string, or empty if none is available.
+    """
+    if isinstance(module_args, str):
+        return module_args
+    if not isinstance(module_args, dict):
+        return ""
+    cmd = module_args.get("cmd", "")
+    if isinstance(cmd, str) and cmd:
+        return cmd
+    argv = module_args.get("argv")
+    if isinstance(argv, list) and argv:
+        return " ".join(str(part) for part in argv)
+    return ""
 
 
 def fix_shell_to_command(task: CommentedMap, violation: ViolationDict) -> bool:
     """Replace shell with command when the command string uses no shell features.
+
+    Inspects free-form, ``cmd``, and ``argv``.  Refuses to convert when the
+    command cannot be inspected or contains shell metacharacters.
 
     Args:
         task: Task CommentedMap to modify in-place.
@@ -43,13 +109,8 @@ def fix_shell_to_command(task: CommentedMap, violation: ViolationDict) -> bool:
         return False
 
     module_args = task.get(module_key)
-    cmd = ""
-    if isinstance(module_args, str):
-        cmd = module_args
-    elif isinstance(module_args, dict):
-        cmd = module_args.get("cmd", "")
-
-    if cmd and _uses_shell_features(cmd):
+    cmd = _extract_command_string(module_args)
+    if not cmd or _uses_shell_features(cmd):
         return False
 
     new_key = _SHELL_TO_COMMAND[module_key]

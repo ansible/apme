@@ -155,7 +155,7 @@ export function scopeLabel(scope: number | undefined): string {
 export const FIX_AI_TRIED = 4;
 
 export const FIX_LABELS: Record<number, string> = {
-  1: 'Fixable', 2: 'AI', 3: 'Manual', [FIX_AI_TRIED]: 'AI Tried',
+  1: 'Rule-based fix', 2: 'AI fix', 3: 'Manual review', [FIX_AI_TRIED]: 'AI Tried',
 };
 
 export const FIX_ORDER = [1, 2, 3, FIX_AI_TRIED] as const;

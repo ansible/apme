@@ -19,11 +19,13 @@ export interface CheckOptionsFormProps {
   enableAi: boolean;
   onEnableAiChange: (checked: boolean) => void;
   /**
-   * When true, remediate uses interactive=false (legacy auto-apply quick-fixes).
-   * Default unchecked → interactive Quick-fix review (ADR-062 Option C).
+   * When true, remediate uses interactive=false (legacy auto-apply rule-based fixes).
+   * Default unchecked → interactive rule-based fix review (ADR-062 Option C).
    */
   autoApplyTier1?: boolean;
   onAutoApplyTier1Change?: (checked: boolean) => void;
+ /** Platform-level AI availability flag; hides AI controls when false and defaults to true for standalone SPA backward compatibility. */
+  showAiOptions?: boolean;
   idPrefix?: string;
 }
 
@@ -36,6 +38,7 @@ export function CheckOptionsForm({
   onEnableAiChange,
   autoApplyTier1 = false,
   onAutoApplyTier1Change,
+  showAiOptions = true,
   idPrefix = '',
 }: CheckOptionsFormProps) {
   const prefix = idPrefix ? `${idPrefix}-` : '';
@@ -90,26 +93,28 @@ export function CheckOptionsForm({
             onChange={(_e, v) => onCollectionsChange(v)}
           />
         </FlexItem>
-        <FlexItem>
-          <Checkbox
-            id={`${prefix}enable-ai`}
-            label="Enable AI-assisted remediation (Tier 2)"
-            isChecked={enableAi}
-            onChange={(_e, checked) => onEnableAiChange(checked)}
-          />
-        </FlexItem>
-        {onAutoApplyTier1Change && (
+        {showAiOptions && (
+          <FlexItem>
+            <Checkbox
+              id={`${prefix}enable-ai`}
+              label="Enable AI fix"
+              isChecked={enableAi}
+              onChange={(_e, checked) => onEnableAiChange(checked)}
+            />
+          </FlexItem>
+        )}
+        {showAiOptions && onAutoApplyTier1Change && (
           <FlexItem>
             <Checkbox
               id={`${prefix}auto-apply-tier1`}
-              label="Auto-apply quick-fixes (skip review)"
-              description="Applies after you leave Assessment (Remediate). Scan always pauses on findings first. When unchecked (default), Quick-fix proposals pause for per-location Accept / Decline."
+              label="Auto-apply rule-based fixes (skip review)"
+              description="Applies after you leave Assessment (Remediate). Scan always pauses on findings first. When unchecked (default), rule-based fix proposals pause for per-location Accept / Decline."
               isChecked={autoApplyTier1}
               onChange={(_e, checked) => onAutoApplyTier1Change(checked)}
             />
           </FlexItem>
         )}
-        {enableAi && (
+        {showAiOptions && enableAi && (
           <FlexItem>
             <label htmlFor={`${prefix}ai-model`} style={{ display: 'block', marginBottom: 4, fontWeight: 600 }}>
               AI Model

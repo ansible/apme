@@ -55,12 +55,12 @@ export function effectiveFixType(
 
 export function fixMethodLabel(fixType: FixType | undefined): string {
   if (fixType === 'auto') {
-    return 'Quick-fix';
+    return 'Rule-based fix';
   }
   if (fixType === 'ai') {
-    return 'AI eligible';
+    return 'AI fix';
   }
-  return 'Manual';
+  return 'Manual review';
 }
 
 /** PatternFly Label ``color`` for a fix-type filter/row pill. */

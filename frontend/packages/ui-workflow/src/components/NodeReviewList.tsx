@@ -10,7 +10,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { Button, Flex, ToggleGroup, ToggleGroupItem } from '@patternfly/react-core';
 import { AngleDownIcon, AngleRightIcon } from '@patternfly/react-icons';
 
-/** Per-node gate decision. ``ignored`` reserved for Quick-fix noqa. */
+/** Per-node gate decision. ``ignored`` reserved for rule-based fix noqa. */
 export type NodeDecision = 'accepted' | 'declined' | 'pending' | 'ignored';
 
 export interface NodeReviewItem {
@@ -34,7 +34,7 @@ export interface NodeReviewListProps {
    * Ignore can be enabled later via ``allowIgnore``.
    */
   decisionMode?: boolean;
-  /** Show Ignore option (Quick-fix noqa) — off until wired. */
+  /** Show Ignore option (rule-based fix noqa) — off until wired. */
   allowIgnore?: boolean;
   decisions?: Map<string, NodeDecision>;
   onDecisionChange?: (id: string, decision: NodeDecision) => void;

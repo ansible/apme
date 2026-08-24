@@ -101,7 +101,7 @@ export interface StartOperationOptions {
   collection_specs?: string[];
   enable_ai?: boolean;
   ai_model?: string;
-  /** ADR-062 Option C: when true, pause for Quick-fix review. */
+  /** ADR-062 Option C: when true, pause for rule-based fix review. */
   interactive?: boolean;
   /** ADR-064: pause after findings before Gate 1 (Scan → Remediate). */
   assess_pause?: boolean;

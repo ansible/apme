@@ -187,6 +187,25 @@ artifact type, translate it:
    an empty-but-not-falsy value. Trace it through the code path.
    If it fails silently, sends a vacuous request, or produces a
    return value that violates the declared type, that's a finding.
+   When a check treats a character as a metacharacter (shell `|`,
+   glob `*`, YAML `&`), construct an input where that character is
+   a token in a *different* grammar in the same string — Jinja
+   filters (`{{ x | quote }}`), URLs, or quoted YAML. Strip or
+   parse the inner language before applying the outer check.
+   The strip pattern must allow nested tokens of the inner language
+   (Jinja dicts ``{{ {'k': 'v'} }}`` — ``[^{}]*`` fails). Leftover
+   delimiters after the strip (``{{``) are still uninspectable.
+   Glob character classes (``[ab]``) are shell features like ``*``.
+   If a transform inspects ``cmd`` and ``argv``, the detector must
+   inspect those same sources — ``not mo["cmd"]`` is not "safe".
+   After stripping, also construct the whole-string-is-inner-language
+   case (`{{ command }}`): empty remainder is uninspectable, not
+   proven-safe. When the same predicate exists in two languages
+   (Rego helper vs Python transform), construct whitespace that one
+   trim would drop and the other would keep (`\t` vs `" "` cutset)
+   — "empty" must mean the same thing on both sides. After the
+   emptiness check uses ``trim_space``, tokenize/split on that
+   string with the same whitespace class, not ``split(trim(x, " "), " ")``.
    Also construct _temporal_ failures: what happens when an async
    dependency never responds, times out, or responds after the
    consumer has moved on? What happens when `asyncio.gather()`
@@ -360,6 +379,14 @@ critical/high/medium/low.
   or an explicit breaking-change note for persisted/public keys.
 - Dual input shapes that normalize differently (ORM vs dict, dataclass
   vs mapping, servicer vs flush path)
+- Dual implementations of the same predicate (Rego helper vs Python
+  transform) that disagree on empty/whitespace (`trim(..., " ")` vs
+  `str.strip()` / `trim_space`). After one path uses ``trim_space``,
+  later tokenize/split on the **same string** must use that whitespace
+  class — ``split(trim(cmd, " "), " ")`` will miss tabs/CRs the
+  emptiness check already treats as blank. They must also inspect the
+  **same input shapes** (``cmd`` vs ``argv`` vs ``_raw_params`` vs
+  missing).
 - Overlay fields that drift (tier/source/gate/status→review must stay
   aligned for all pre-group sources). When a column documents
   "empty means fall back to X" (e.g. ``stamp_rule_ids_json`` →
@@ -442,6 +469,15 @@ Compare ADR/doc claims to what shipped. Label each finding
 **Lens — break it / rethink it:** Be creatively adversarial:
 - Weird but realistic scenarios that corrupt durable state, double-count
   analytics, or bypass filters
+- **Overloaded tokens** — a character that is a metacharacter in one
+  grammar (shell `|`, glob `*`) is an operator in another (Jinja
+  `|quote`) in the same string. Strip or parse the inner language
+  before applying the outer check. After stripping, an empty remainder
+  is uninspectable, not proven-safe — treat it as the conservative
+  case (keep shell / skip substitution), not as "no features found".
+  "Empty" must use the same whitespace definition in every
+  implementation of the check (`trim_space` / `str.strip()`, not a
+  space-only cutset).
 - **Information exposure** — logs, errors, user-facing strings,
   persisted diffs/explanations: credentials, secrets, user content,
   internal paths? Capability grants, CORS origins, container caps —

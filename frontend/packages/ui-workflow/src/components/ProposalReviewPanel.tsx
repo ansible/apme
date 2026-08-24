@@ -441,8 +441,8 @@ export function ProposalReviewPanel({
     } else {
       summary =
         acceptedIds.length > 0
-          ? `Apply ${acceptedIds.length} accepted quick-fix${acceptedIds.length !== 1 ? 'es' : ''}${declinedNote}, then continue to AI assessment if enabled.`
-          : 'Continue with no quick-fixes applied, then AI assessment if enabled (or finish if AI is off).';
+          ? `Apply ${acceptedIds.length} accepted rule-based fix${acceptedIds.length !== 1 ? 'es' : ''}${declinedNote}, then continue to AI assessment if enabled.`
+          : 'Continue with no rule-based fixes applied, then AI assessment if enabled (or finish if AI is off).';
     }
     return {
       label: 'Next',
@@ -481,7 +481,7 @@ export function ProposalReviewPanel({
                 isCompact
                 color={fixTypeLabelColor(isAiGate ? 'ai' : 'auto')}
               >
-                {isAiGate ? 'AI' : 'Quick-fix'}
+                {isAiGate ? 'AI fix' : 'Rule-based fix'}
               </Label>
               <Label
                 isCompact
@@ -519,7 +519,7 @@ export function ProposalReviewPanel({
                             {severityDisplayLabel(sev, ruleId)}
                           </Label>
                         )}
-                        {!isAiGate && <Label isCompact>Quick-fix</Label>}
+                        {!isAiGate && <Label isCompact>Rule-based fix</Label>}
                         <span className="apme-assess-finding-msg">{message}</span>
                       </div>
                     );
@@ -799,7 +799,7 @@ export function ProposalReviewPanel({
           ? undefined
           : {
               items: filteredActionableItems,
-              ariaLabel: isAiGate ? 'AI proposals' : 'Quick-fix proposals',
+              ariaLabel: isAiGate ? 'AI proposals' : 'Rule-based fix proposals',
               decisionMode: true,
               decisions,
               onDecisionChange: handleDecisionChange,
