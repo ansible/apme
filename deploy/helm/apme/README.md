@@ -172,7 +172,7 @@ Gateway DB and Abbenay down together.
 │  Engine  Native  OPA  Ansible  Gitleaks*                  │
 │  Collection-Health*  Dep-Audit*  Galaxy-Proxy              │
 │  Gateway  UI*  Abbenay*                                    │
-│  (all via 127.0.0.1; Abbenay binds loopback, no TLS)       │
+│  (localhost / Unix socket; Abbenay binds loopback, no TLS) │
 └────────────────────────────────────────────────────────────┘
 ```
 
@@ -180,8 +180,10 @@ Gateway DB and Abbenay down together.
   (`-engine`, `-gateway`, `-ui`) select this pod for Ingress/port-forward.
 - **UI** (optional): nginx SPA; `ui.enabled: false` via `values-portal.yaml`
   for portal / Backstage (ADR-030 Option B).
-- **Abbenay** (optional): AI provider gRPC on `127.0.0.1:50057` plus HTTP
-  admin on `127.0.0.1:8787` (no Service / hostPort). Gateway reverse-proxies
+- **Abbenay** (optional): AI provider gRPC via Unix socket
+  (`unix:///tmp/abbenay-run/abbenay/daemon.sock`) plus HTTP admin on
+  `127.0.0.1:8787` (no Service / hostPort). TCP `127.0.0.1:50057` is for
+  in-container health probes. Gateway reverse-proxies
   **allowlisted** admin paths under `/api/v1/ai/` → Abbenay `/api/` (config,
   engines, providers, provider configure/delete; not chat/sessions/OpenAI-compat) —
   see [ADR-070](../../../.sdlc/adrs/ADR-070-gateway-abbenay-admin-proxy.md).

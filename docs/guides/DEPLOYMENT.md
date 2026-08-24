@@ -150,7 +150,7 @@ Proxy, Gateway HTTP, Gateway Reporting gRPC) plus optional validators
 | `COLLECTION_HEALTH_GRPC_ADDRESS` | — | Collection Health validator address (e.g., `127.0.0.1:50058`) |
 | `DEP_AUDIT_GRPC_ADDRESS` | — | Dep Audit validator address (e.g., `127.0.0.1:50059`) |
 | `APME_REPORTING_ENDPOINT` | — | Gateway gRPC Reporting address (e.g., `127.0.0.1:50060`). Events are pushed after each check or remediate run. |
-| `APME_ABBENAY_ADDR` | — | Abbenay AI daemon address (e.g., `127.0.0.1:50057`). Supports `host:port` and `unix://` formats. |
+| `APME_ABBENAY_ADDR` | — | Abbenay AI daemon address. Helm/Podman default is `unix:///tmp/abbenay-run/abbenay/daemon.sock` (required when a consumer token is set; `abbenay-client` ≥ 2026.8.7 rejects tokens on plaintext TCP). Also accepts `host:port`. |
 | `APME_ABBENAY_TOKEN` | — | Consumer token for Abbenay authentication. Must match a token in Abbenay's `config.yaml`. |
 | `APME_AI_MODEL` | — | Default AI model ID (e.g., `anthropic/claude-sonnet-4`). Overridden by UI Settings or CLI `--model`. |
 | `APME_RULE_AUTHORITY` | `true` | Set to `true` on exactly one Engine in multi-pod deployments. Only the authority registers the rule catalog to the Gateway (ADR-041). |
@@ -241,7 +241,7 @@ place; `tox -e wipe` deletes it. To add providers or models, edit the cache
 `config.yaml` or POST via the Gateway admin proxy
 (`/api/v1/ai/provider/{id}/configure`); writes survive Abbenay restarts.
 
-The Abbenay daemon exposes a gRPC API on port 50057. Engine connects to it for AI model listing (`ListAIModels`) and batch remediation requests.
+The Abbenay daemon still binds gRPC TCP on `127.0.0.1:50057` (health probes). Engine AI RPCs use `APME_ABBENAY_ADDR=unix:///tmp/abbenay-run/abbenay/daemon.sock` (shared `emptyDir`) because `abbenay-client` ≥ 2026.8.7 rejects consumer tokens on plaintext TCP.
 
 #### UI
 
@@ -257,6 +257,7 @@ The Settings page (`/settings`) provides a model picker that queries available A
 | `proxy-cache` | `<cache>/proxy/` | `/cache` | Galaxy Proxy | rw |
 | `gateway-data` | `<cache>/gateway/` | `/data` | Gateway | rw |
 | `abbenay-config` | `<cache>/abbenay/config/` | `/home/abbenay/.config/abbenay` | Abbenay | rw |
+| `abbenay-run` | emptyDir | `/tmp/abbenay-run` | Engine + Abbenay | rw |
 | `workspace` | CWD (CLI only) | `/workspace` | CLI | rw |
 
 #### Observability (Podman pod only)

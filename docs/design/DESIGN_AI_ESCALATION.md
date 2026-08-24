@@ -497,7 +497,7 @@ When `--auto-approve` is set, all proposals are accepted without prompting — n
 
 ### Communication
 
-The `abbenay-client` Python package (import: `abbenay_grpc`) runs in-process with the engine (no separate container for the client). It connects to the Abbenay daemon via Unix socket (local) or TCP (remote/container).
+The `abbenay-client` Python package (import: `abbenay_grpc`) runs in-process with the engine (no separate container for the client). It connects to the Abbenay daemon via Unix socket (local, and Helm/Podman when a consumer token is set) or TCP (remote, or tokenless plaintext). `abbenay-client` ≥ 2026.8.7 rejects tokens on plaintext TCP.
 
 ### Inline Policy
 

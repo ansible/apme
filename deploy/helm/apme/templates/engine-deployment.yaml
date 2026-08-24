@@ -148,8 +148,9 @@ spec:
             - name: APME_REPORTING_ENDPOINT
               value: "127.0.0.1:50060"
             {{- if .Values.abbenay.enabled }}
+            # abbenay-client >= 2026.8.7 rejects consumer tokens on plaintext TCP.
             - name: APME_ABBENAY_ADDR
-              value: "127.0.0.1:50057"
+              value: "unix:///tmp/abbenay-run/abbenay/daemon.sock"
             - name: APME_ABBENAY_TOKEN
               valueFrom:
                 secretKeyRef:
@@ -177,6 +178,10 @@ spec:
           volumeMounts:
             - name: sessions
               mountPath: /sessions
+            {{- if .Values.abbenay.enabled }}
+            - name: abbenay-run
+              mountPath: /tmp/abbenay-run
+            {{- end }}
           resources:
             {{- toYaml (.Values.engine.resources.engine | default dict) | nindent 12 }}
 
@@ -592,6 +597,8 @@ spec:
           volumeMounts:
             - name: abbenay-config
               mountPath: /etc/abbenay-config
+            - name: abbenay-run
+              mountPath: /tmp/abbenay-run
             {{- if and $hasVertexADC $hasGcpCreds }}
             - name: gcp-credentials
               mountPath: /var/run/secrets/gcp
@@ -628,6 +635,8 @@ spec:
           {{- else }}
           emptyDir: {}
           {{- end }}
+        - name: abbenay-run
+          emptyDir: {}
         {{- if and $hasVertexADC $hasGcpCreds }}
         - name: gcp-credentials
           secret:

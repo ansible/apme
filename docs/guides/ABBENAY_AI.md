@@ -9,8 +9,10 @@ Vercel AI SDK.
 In the Simple in-pod topology (ADR-069 / ADR-070), Abbenay serves HTTP admin
 and gRPC on loopback (`--host 127.0.0.1 --port 8787` and
 `--grpc-host 127.0.0.1 --grpc-port 50057`; image ≥ v2026.8.0). No cluster
-Service or hostPort — Helm Simple and Podman share a netns, so Engine/
-Gateway reach Abbenay at `127.0.0.1`. The Gateway reverse-proxies an
+Service or hostPort. Gateway HTTP admin uses `127.0.0.1:8787`. Engine
+gRPC uses a shared Unix socket (`APME_ABBENAY_ADDR=unix:///tmp/abbenay-run/abbenay/daemon.sock`)
+because `abbenay-client` ≥ 2026.8.7 rejects consumer tokens on plaintext TCP.
+The Gateway reverse-proxies an
 **allowlisted** admin surface:
 
 | Gateway | Abbenay |
@@ -466,5 +468,6 @@ https://us-east5-aiplatform.googleapis.com/v1/projects/your-project/locations/us
 | `undefined` in Vertex API URL | Missing `gcp.project` or `gcp.location` | Set both in values |
 | `PERMISSION_DENIED` | SA lacks `roles/aiplatform.user` | Grant role to the service account |
 | Pod stuck in `ContainerCreating` | Credentials Secret missing | Create Secret or use workload identity |
-| `apme-engine: connection refused` on port 50057 | Abbenay not running | Check `abbenay.enabled: true` and pod logs |
+| Engine AI chat fails with token-on-plaintext-TCP | Token sent on plaintext TCP (`abbenay-client` ≥ 2026.8.7) | Use the Unix socket ADDR (Helm/Podman default) or TLS |
+| `apme-engine: connection refused` on Abbenay | Abbenay not running or socket not shared | Check `abbenay.enabled: true`, `abbenay-run` volume, and pod logs |
 | `401 Unauthorized` on OpenRouter/Anthropic | Wrong or expired API key | Rotate key in Secret |

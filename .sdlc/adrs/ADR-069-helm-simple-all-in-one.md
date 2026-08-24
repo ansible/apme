@@ -70,10 +70,11 @@ over `127.0.0.1` (ADR-005).**
    become `apme`; implementation detail). Containers: Engine, validators,
    Galaxy Proxy, Gateway, UI nginx, optional Abbenay (and optional OTel
    collector per ADR-067).
-2. **Localhost addresses** — `APME_ABBENAY_ADDR`, reporting sink, and other
-   in-stack clients use `127.0.0.1:<port>`, matching Podman. Abbenay binds
-   `--grpc-host 127.0.0.1` (plaintext loopback; no `--grpc-tls` / CA Secret for
-   the chart path).
+2. **Localhost addresses** — reporting sink and other in-stack clients use
+   `127.0.0.1:<port>`, matching Podman. Engine→Abbenay gRPC uses a Unix socket
+   on a shared `emptyDir` (`APME_ABBENAY_ADDR=unix:///tmp/abbenay-run/abbenay/daemon.sock`)
+   because `abbenay-client` ≥ 2026.8.7 rejects consumer tokens on plaintext TCP.
+   Abbenay still binds `--grpc-host 127.0.0.1` for TCP health probes (no token).
 3. **Single replica** — Chart defaults and validation: `replicas: 1`. HPA for
    this Deployment is disabled or rejected. Multi-replica requires a future ADR
    that reintroduces a split (or otherwise solves Gateway SQLite + session
@@ -170,9 +171,10 @@ EAP AI remediation.
 - Collapse `gateway-deployment.yaml`, `ui-deployment.yaml`, and
   `abbenay-deployment.yaml` into the primary workload template (or equivalent
   single Deployment). Adjust Services accordingly.
-- Set Abbenay `--grpc-host 127.0.0.1`; Engine `APME_ABBENAY_ADDR=127.0.0.1:50057`
-  (or configured port). Drop Helm `abbenay.grpc.tls` / CA Secret requirements
-  for the default path.
+- Set Abbenay `--grpc-host 127.0.0.1`; Engine
+  `APME_ABBENAY_ADDR=unix:///tmp/abbenay-run/abbenay/daemon.sock` (shared
+  `emptyDir`). Drop Helm `abbenay.grpc.tls` / CA Secret requirements for the
+  default path.
 - Wire `APME_REPORTING_ENDPOINT=127.0.0.1:50060` (same as daemon / Podman).
 - Fail Helm render if `replicas > 1` or HPA enabled for the Simple Deployment.
 - Update `docs/guides/DEPLOYMENT.md`, chart README/NOTES, and
@@ -206,3 +208,4 @@ EAP AI remediation.
 | Date | Author | Change |
 |------|--------|--------|
 | 2026-08-03 | APME Team | Accepted: Helm Simple all-in-one for EAP/upstream |
+| 2026-08-24 | APME Team | Engine→Abbenay gRPC uses a shared Unix socket; TCP remains for health probes |

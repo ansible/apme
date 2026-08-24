@@ -502,9 +502,11 @@ mount = '$CA_MOUNT_PATH'
 ca_path_yaml = json.dumps(ca_path)
 mount_yaml = json.dumps(mount)
 abbenay_env_marker = '        - name: XDG_RUNTIME_DIR'
-# Writable config dir has no readOnly; anchor on mountPath before galaxy-proxy.
+# Writable config dir has no readOnly; shared runtime dir precedes galaxy-proxy.
 abbenay_vol_marker = (
     '          mountPath: /home/abbenay/.config/abbenay\n'
+    '        - name: abbenay-run\n'
+    '          mountPath: /tmp/abbenay-run\n'
     '    - name: galaxy-proxy'
 )
 gateway_env_marker = '        - name: APME_FEEDBACK_GITHUB_TOKEN'
@@ -529,6 +531,8 @@ yaml = yaml.replace(
 yaml = yaml.replace(
     abbenay_vol_marker,
     '          mountPath: /home/abbenay/.config/abbenay\n'
+    '        - name: abbenay-run\n'
+    '          mountPath: /tmp/abbenay-run\n'
     '        - name: abbenay-ca-bundle\n'
     '          mountPath: ' + mount_yaml + '\n'
     '          readOnly: true\n'

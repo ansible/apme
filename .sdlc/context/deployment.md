@@ -121,7 +121,7 @@ Reports status of configured backend services (Engine, Native, OPA, Ansible, Gal
 | `GITLEAKS_GRPC_ADDRESS` | — | Gitleaks validator address (e.g., `127.0.0.1:50056`) |
 | `COLLECTION_HEALTH_GRPC_ADDRESS` | — | Collection Health validator address (e.g., `127.0.0.1:50058`) |
 | `DEP_AUDIT_GRPC_ADDRESS` | — | Dep Audit validator address (e.g., `127.0.0.1:50059`) |
-| `APME_ABBENAY_ADDR` | — | Abbenay AI daemon address (e.g., `127.0.0.1:50057`) |
+| `APME_ABBENAY_ADDR` | — | Abbenay AI daemon address (`unix://…` in Helm/Podman when a consumer token is set) |
 | `APME_REPORTING_ENDPOINT` | — | Gateway gRPC Reporting address (e.g., `127.0.0.1:50060`) |
 
 > Required Engine-core services (Engine, Native, OPA, Ansible, Galaxy Proxy) must be available. Optional validators (Gitleaks, Collection Health, Dep Audit) may be unset and are skipped during fan-out.
