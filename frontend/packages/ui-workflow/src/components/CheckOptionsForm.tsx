@@ -24,6 +24,8 @@ export interface CheckOptionsFormProps {
    */
   autoApplyTier1?: boolean;
   onAutoApplyTier1Change?: (checked: boolean) => void;
+ /** Platform-level AI availability flag; hides AI controls when false and defaults to true for standalone SPA backward compatibility. */
+  showAiOptions?: boolean;
   idPrefix?: string;
 }
 
@@ -36,6 +38,7 @@ export function CheckOptionsForm({
   onEnableAiChange,
   autoApplyTier1 = false,
   onAutoApplyTier1Change,
+  showAiOptions = true,
   idPrefix = '',
 }: CheckOptionsFormProps) {
   const prefix = idPrefix ? `${idPrefix}-` : '';
@@ -90,15 +93,17 @@ export function CheckOptionsForm({
             onChange={(_e, v) => onCollectionsChange(v)}
           />
         </FlexItem>
-        <FlexItem>
-          <Checkbox
-            id={`${prefix}enable-ai`}
-            label="Enable AI-assisted remediation (Tier 2)"
-            isChecked={enableAi}
-            onChange={(_e, checked) => onEnableAiChange(checked)}
-          />
-        </FlexItem>
-        {onAutoApplyTier1Change && (
+        {showAiOptions && (
+          <FlexItem>
+            <Checkbox
+              id={`${prefix}enable-ai`}
+              label="Enable AI-assisted remediation (Tier 2)"
+              isChecked={enableAi}
+              onChange={(_e, checked) => onEnableAiChange(checked)}
+            />
+          </FlexItem>
+        )}
+        {showAiOptions && onAutoApplyTier1Change && (
           <FlexItem>
             <Checkbox
               id={`${prefix}auto-apply-tier1`}
@@ -109,7 +114,7 @@ export function CheckOptionsForm({
             />
           </FlexItem>
         )}
-        {enableAi && (
+        {showAiOptions && enableAi && (
           <FlexItem>
             <label htmlFor={`${prefix}ai-model`} style={{ display: 'block', marginBottom: 4, fontWeight: 600 }}>
               AI Model
