@@ -20,15 +20,15 @@ constraints = [
 
 [[package]]
 name = "abbenay-client"
-version = "2026.8.6"
+version = "2026.8.7"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "grpcio" },
     { name = "protobuf" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/4e/b4/651d5f154c6ca3e921ede19e0c13e595a9c24d73000ee1c424942ab7b048/abbenay_client-2026.8.6.tar.gz", hash = "sha256:c6b1f147790764757b06610e1e99714ca73d80c5165e44be8be825ec6c5dc51d", size = 36628, upload-time = "2026-08-14T18:06:28.014Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/11/7d/8eefa040f05fe8d96a0c26def4f9ee70c170a39d0879a82aa2c0210f428e/abbenay_client-2026.8.7.tar.gz", hash = "sha256:94f5a26307162d862961cdf4e3bb5e505be1ff74b303f38dbfbe97dba51ebe2a", size = 37119, upload-time = "2026-08-24T20:36:59.082Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/20/9d/1fba7bed3e3f5dae6c3ad77ce2e00d976f64bd656d107312719560b35e8a/abbenay_client-2026.8.6-py3-none-any.whl", hash = "sha256:4ccfe2f199b53a34cad298425cdcf2fdedfd262878636637ff8ddcb022ff0bbf", size = 38460, upload-time = "2026-08-14T18:06:26.754Z" },
+    { url = "https://files.pythonhosted.org/packages/ec/63/2403f1322b77570d9dcf2b05564a9f184dd6c11774c6605906aba28b1dd6/abbenay_client-2026.8.7-py3-none-any.whl", hash = "sha256:a3969143d0794edb03e38ce7c5161dbf44f361ed4aa1f74289c2c060580b00de", size = 38948, upload-time = "2026-08-24T20:36:57.642Z" },
 ]
 
 [[package]]
@@ -304,7 +304,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "abbenay-client", marker = "extra == 'ai'", specifier = "==2026.8.6" },
+    { name = "abbenay-client", marker = "extra == 'ai'", specifier = "==2026.8.7" },
     { name = "aiosqlite", marker = "extra == 'gateway'", specifier = ">=0.20" },
     { name = "ansible-core", specifier = ">=2.20.7" },
     { name = "asyncpg", marker = "extra == 'gateway'", specifier = ">=0.30" },
