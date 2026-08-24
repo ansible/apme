@@ -353,6 +353,10 @@ sibling helpers (``resolve`` + ``is_relative_to`` / reject ``..``),
 and short-circuiting ``a() or b()`` / ``a() and b()`` when both calls
 have required side effects (e.g. promote ledger status after approving
 progression — evaluate both unconditionally).
+When a parser treats ``:`` as host/port, construct the edge cases that
+break ``rpartition(":")``: empty host (``:port``), unbracketed IPv6
+(``::1``), and ``[ipv6]:port``. Do not treat “contains a colon” as
+proof of TCP.
 Treat structured health/status bodies as contracts: reject
 substring/`"ok" in body` checks when the peer emits JSON with a
 ``status`` field — require exact equality (``status == "ok"``).
@@ -398,7 +402,9 @@ critical/high/medium/low.
   OpenAPI shape is unchanged — prefer log+ignore / intersection
   unless an ADR explicitly hardens the contract.
 - Cross-artifact parity (proto RPC ↔ daemon servicer; rule IDs ADR-008;
-  _DEFAULT_PORTS ↔ started services)
+  _DEFAULT_PORTS ↔ started services; Helm template ↔ Podman
+  ``pod.yaml`` for the same in-pod env/volume/probe wiring — if Helm
+  mounts a shared socket for Gateway health, Podman Gateway must too)
 - Test gaps for behaviors the code/docs claim
 - Silent no-ops, dead branches, wrong defaults
 - **Dependencies pinned to intent** — version ranges, GitHub Action
