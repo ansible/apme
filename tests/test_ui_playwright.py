@@ -360,7 +360,7 @@ def test_playground_auto_apply_tier1_toggle(dashboard: Page) -> None:
     advanced = dashboard.locator("button:has-text('Advanced Options')")
     expect(advanced).to_be_visible()
     advanced.click()
-    toggle = dashboard.locator("label:has-text('Auto-apply quick-fixes')")
+    toggle = dashboard.locator("label:has-text('Auto-apply rule-based fixes')")
     expect(toggle).to_be_visible()
     checkbox = dashboard.locator("#auto-apply-tier1")
     expect(checkbox).to_be_visible()

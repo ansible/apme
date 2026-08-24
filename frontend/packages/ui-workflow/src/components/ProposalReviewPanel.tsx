@@ -481,7 +481,7 @@ export function ProposalReviewPanel({
                 isCompact
                 color={fixTypeLabelColor(isAiGate ? 'ai' : 'auto')}
               >
-                {isAiGate ? 'AI' : 'Rule-based fix'}
+                {isAiGate ? 'AI fix' : 'Rule-based fix'}
               </Label>
               <Label
                 isCompact

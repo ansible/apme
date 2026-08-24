@@ -588,14 +588,14 @@ export function AssessFindingsPanel({
           },
           {
             key: 'ai',
-            label: 'AI eligible',
+            label: 'AI fix',
             primary: inventory.aiFindings,
             secondary: inventory.aiNodes,
             tone: 'ai',
           },
           {
             key: 'manual',
-            label: 'Manual',
+            label: 'Manual review',
             primary: inventory.manualFindings,
             secondary: inventory.manualNodes,
             tone: 'manual',

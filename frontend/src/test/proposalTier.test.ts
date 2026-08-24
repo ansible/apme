@@ -94,7 +94,7 @@ describe("proposalsGateKey / gateLabel", () => {
     const ai = [prop({ id: "ai-0001", source: "ai", tier: 2 })];
     expect(proposalsGateKey(t1)).toBe("t1:t1-0001");
     expect(proposalsGateKey(ai)).toBe("ai:ai-0001");
-    expect(gateLabel(t1)).toContain("Quick-fix");
+    expect(gateLabel(t1)).toContain("Rule-based fix");
     expect(gateLabel(ai)).toContain("AI");
   });
 });
@@ -116,6 +116,6 @@ describe("fixTypes", () => {
   it("maps effective fix type with AI toggle", () => {
     expect(effectiveFixType(2, true)).toBe("ai");
     expect(effectiveFixType(2, false)).toBe("manual");
-    expect(fixMethodLabel("auto")).toBe("Quick-fix");
+    expect(fixMethodLabel("auto")).toBe("Rule-based fix");
   });
 });
