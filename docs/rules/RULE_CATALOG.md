@@ -51,8 +51,8 @@ Routing follows `src/apme_engine/remediation/partition.py` (ADR-026 scope metada
 | Tier | Label | Count | Routing |
 |------|-------|-------|---------|
 | 1 | auto | 25 | Deterministic transform in registry — applied by `apme remediate` |
-| 2 | ai | 68 | Task/block scope, no fixer — AI proposes patch (Abbenay) |
-| 3 | manual | 64 | Play/role/collection scope, cross-file, or info severity |
+| 2 | ai | 69 | Task/block scope, no fixer — AI proposes patch (Abbenay) |
+| 3 | manual | 63 | Play/role/collection scope, cross-file, or info severity |
 
 Full analysis and promotion candidates: [REMEDIATION_TIER_REPORT.md](REMEDIATION_TIER_REPORT.md).
 
@@ -96,7 +96,7 @@ Full analysis and promotion candidates: [REMEDIATION_TIER_REPORT.md](REMEDIATION
 | L036 | L | Native | low | task | ai | include_vars without when/tags. | Yes | Yes | Yes | — |
 | L037 | L | Native | medium | collection | manual | Module name could not be resolved. | Yes | Yes | Yes | — |
 | L038 | L | Native | medium | role | manual | Role could not be resolved. | Yes | Yes | Yes | — |
-| L039 | L | Native | medium | inventory | manual | Variable use may be undefined. | Yes | Yes | Yes | — |
+| L039 | L | Native | medium | task | ai | Variable use may be undefined. | Yes | Yes | Yes | — |
 | L040 | L | Native | info | playbook | manual | YAML should not contain tabs; use spaces. | Yes | Yes | Yes | — |
 | L041 | L | Native | low | task | ai | Task keys should follow canonical order (e.g. name before module). | Yes | Yes | Yes | — |
 | L042 | L | Native | info | play | manual | Play/block has high task count. | Yes | Yes | Yes | — |
@@ -291,7 +291,7 @@ Full analysis and promotion candidates: [REMEDIATION_TIER_REPORT.md](REMEDIATION
 | L036 | low | task | ai | include_vars without when/tags. | Yes | Yes | Yes | — |
 | L037 | medium | collection | manual | Module name could not be resolved. | Yes | Yes | Yes | — |
 | L038 | medium | role | manual | Role could not be resolved. | Yes | Yes | Yes | — |
-| L039 | medium | inventory | manual | Variable use may be undefined. | Yes | Yes | Yes | — |
+| L039 | medium | task | ai | Variable use may be undefined. | Yes | Yes | Yes | — |
 | L040 | info | playbook | manual | YAML should not contain tabs; use spaces. | Yes | Yes | Yes | — |
 | L041 | low | task | ai | Task keys should follow canonical order (e.g. name before module). | Yes | Yes | Yes | — |
 | L042 | info | play | manual | Play/block has high task count. | Yes | Yes | Yes | — |
