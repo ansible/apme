@@ -65,7 +65,7 @@ def test_database_url() -> str:
     if not base_url:
         msg = "APME_TEST_DATABASE_URL is not configured"
         raise RuntimeError(msg)
-    parsed = urlparse(base_url.replace("postgresql+asyncpg://", "postgresql://"))
+    parsed = urlparse(base_url)
     return urlunparse(parsed._replace(path=f"/{worker_database_name()}"))
 
 

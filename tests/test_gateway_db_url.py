@@ -90,6 +90,12 @@ def test_sanitize_database_url_redacts_password() -> None:
     assert sanitize_database_url(raw) == "postgresql+asyncpg://apme:[REDACTED]@postgres:5432/apme"
 
 
+def test_sanitize_database_url_redacts_query_password() -> None:
+    """Query-string credentials must not appear in logged URLs."""
+    raw = "postgresql+asyncpg://db/apme?password=secret"
+    assert sanitize_database_url(raw) == "postgresql+asyncpg://db/apme?password=[REDACTED]"
+
+
 def test_is_database_url_and_sqlite_detection() -> None:
     """URL helpers distinguish SQLite URLs from filesystem paths."""
     assert not is_database_url("/data/apme.db")
