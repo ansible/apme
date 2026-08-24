@@ -168,6 +168,54 @@ class TestMakeAbbenayClient:
         assert client.args == ()
         assert client.kwargs == {"host": "127.0.0.1", "port": 50057}
 
+    def test_port_only_addr_defaults_localhost(self) -> None:
+        """``:port`` is localhost, matching the old ListAIModels shorthand."""
+
+        class _Client:
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                self.args = args
+                self.kwargs = kwargs
+
+        stub = types.ModuleType("abbenay_grpc")
+        stub.AbbenayClient = _Client  # type: ignore[attr-defined]
+        with patch.dict(sys.modules, {"abbenay_grpc": stub}):
+            client = make_abbenay_client(":50057")
+
+        assert isinstance(client, _Client)
+        assert client.kwargs == {"host": "localhost", "port": 50057}
+
+    def test_unbracketed_ipv6_is_host_only(self) -> None:
+        """Bare IPv6 is not split on colons."""
+
+        class _Client:
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                self.args = args
+                self.kwargs = kwargs
+
+        stub = types.ModuleType("abbenay_grpc")
+        stub.AbbenayClient = _Client  # type: ignore[attr-defined]
+        with patch.dict(sys.modules, {"abbenay_grpc": stub}):
+            client = make_abbenay_client("::1")
+
+        assert isinstance(client, _Client)
+        assert client.kwargs == {"host": "::1"}
+
+    def test_bracketed_ipv6_with_port(self) -> None:
+        """``[ipv6]:port`` splits host and port."""
+
+        class _Client:
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                self.args = args
+                self.kwargs = kwargs
+
+        stub = types.ModuleType("abbenay_grpc")
+        stub.AbbenayClient = _Client  # type: ignore[attr-defined]
+        with patch.dict(sys.modules, {"abbenay_grpc": stub}):
+            client = make_abbenay_client("[::1]:50057")
+
+        assert isinstance(client, _Client)
+        assert client.kwargs == {"host": "::1", "port": 50057}
+
 
 # ---------------------------------------------------------------------------
 # _extract_json_object tests

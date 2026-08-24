@@ -186,6 +186,8 @@ spec:
           value: "http://127.0.0.1:8787"
         - name: APME_ABBENAY_HTTP_TOKEN
           value: "apme-dev-token"
+        - name: APME_ABBENAY_ADDR
+          value: "unix:///tmp/abbenay-run/abbenay/daemon.sock"
         - name: COLLECTION_HEALTH_GRPC_ADDRESS
           value: "127.0.0.1:50058"
         - name: DEP_AUDIT_GRPC_ADDRESS
@@ -212,6 +214,8 @@ spec:
       volumeMounts:
         - name: gateway-data
           mountPath: /data
+        - name: abbenay-run
+          mountPath: /tmp/abbenay-run
     - name: ui
       image: apme-ui:latest
       ports:

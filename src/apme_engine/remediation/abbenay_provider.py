@@ -415,7 +415,8 @@ def make_abbenay_client(addr: str) -> object:
     via ``socket_path=``, not a ``unix://`` URI.
 
     Args:
-        addr: ``unix:///path/to.sock`` or ``host:port``.
+        addr: ``unix:///path/to.sock``, ``host:port``, ``:port`` (localhost),
+            ``[ipv6]:port``, or a bare host (including unbracketed IPv6).
 
     Returns:
         An ``AbbenayClient`` bound to *addr*.
@@ -434,10 +435,35 @@ def make_abbenay_client(addr: str) -> object:
         ) from None
     if addr.startswith("unix://"):
         return AbbenayClient(socket_path=addr.removeprefix("unix://"))
-    if ":" in addr:
-        host, _, port_str = addr.rpartition(":")
-        return AbbenayClient(host=host, port=int(port_str))
-    return AbbenayClient(host=addr)
+    return AbbenayClient(**_abbenay_tcp_kwargs(addr))
+
+
+def _abbenay_tcp_kwargs(addr: str) -> dict[str, str | int]:
+    """Parse a TCP Abbenay address into AbbenayClient host/port kwargs.
+
+    ``host:port`` uses a single colon. ``:port`` means localhost. Bracketed
+    IPv6 (``[::1]:50057``) is supported. Unbracketed IPv6 (``::1``) is a
+    host with no port — it is not split on ``:``.
+
+    Args:
+        addr: Non-unix Abbenay address.
+
+    Returns:
+        Kwargs for ``AbbenayClient`` (``host``, and ``port`` when present).
+    """
+    if addr.startswith("["):
+        close = addr.find("]")
+        if close == -1:
+            return {"host": addr}
+        host = addr[1:close]
+        rest = addr[close + 1 :]
+        if rest.startswith(":"):
+            return {"host": host, "port": int(rest[1:])}
+        return {"host": host}
+    if addr.count(":") == 1:
+        host, _, port_str = addr.partition(":")
+        return {"host": host or "localhost", "port": int(port_str)}
+    return {"host": addr}
 
 
 def _load_best_practices() -> dict[str, list[str]]:
