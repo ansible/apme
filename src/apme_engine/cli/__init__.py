@@ -1,6 +1,6 @@
 """Thin CLI for APME — presentation layer.
 
-The CLI talks to the Primary service (gRPC) for engine operations and to
+The CLI talks to the Engine service (gRPC) for engine operations and to
 the Gateway (REST) for read-heavy queries on persisted data (e.g. SBOM).
 It handles local file I/O (read files, chunk for streaming, write patched
 bytes back) and output rendering.  All engine logic lives server-side.

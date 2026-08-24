@@ -3,7 +3,7 @@
 from typing import cast
 from unittest.mock import MagicMock
 
-from apme_engine.daemon.primary_server import (
+from apme_engine.daemon.engine_server import (
     _build_manifest,
     _classify_collections,
     _discover_collection_specs,

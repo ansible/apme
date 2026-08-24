@@ -5,7 +5,7 @@
 ## Purpose
 
 Ansible validation requires installed collections (for module argument specs,
-`ansible-lint` integration, etc.). The Primary creates a session-scoped virtual
+`ansible-lint` integration, etc.). The Engine creates a session-scoped virtual
 environment, installs the required `ansible-core` version and collections via
 the Galaxy Proxy, and passes the venv path to validators.
 
@@ -13,18 +13,18 @@ the Galaxy Proxy, and passes the venv path to validators.
 
 ```mermaid
 sequenceDiagram
-    participant Primary as PrimaryServicer
+    participant Engine as EngineServicer
     participant Discovery as Collection Discovery
     participant VenvMgr as VenvSessionManager
     participant Galaxy as Galaxy Proxy :8765
     participant PyPI as Upstream PyPI/Galaxy
 
-    Primary->>Discovery: _discover_collection_specs(files)
+    Engine->>Discovery: _discover_collection_specs(files)
     Note over Discovery: Parse requirements.yml
-    Primary->>Discovery: hierarchy_payload.collection_set
-    Primary->>Primary: merge_collection_specs(request, discovered, hierarchy)
+    Engine->>Discovery: hierarchy_payload.collection_set
+    Engine->>Engine: merge_collection_specs(request, discovered, hierarchy)
 
-    Primary->>VenvMgr: acquire(session_id, core_version, specs)
+    Engine->>VenvMgr: acquire(session_id, core_version, specs)
 
     alt Warm hit
         VenvMgr->>VenvMgr: All specs installed → return immediately
@@ -38,7 +38,7 @@ sequenceDiagram
         Galaxy-->>VenvMgr: Installed packages
     end
 
-    VenvMgr-->>Primary: VenvSession(venv_root, installed, failed)
+    VenvMgr-->>Engine: VenvSession(venv_root, installed, failed)
 ```
 
 ## Collection Discovery
@@ -125,16 +125,16 @@ with whatever collections could be installed. Failed specs are recorded in
 
 ### Warm Venv Hint
 
-Before the ARI tree build, the Primary checks for a warm session venv. If one
+Before the ARI tree build, the Engine checks for a warm session venv. If one
 exists, its `site-packages` path is passed as `dependency_dir` to
 `run_scan()`, allowing ARI to resolve pre-installed collection definitions
 without downloading them again.
 
 ## Venv Authority Model (ADR-022)
 
-The Primary is the **sole writer** to session venvs. Validators receive a
+The Engine is the **sole writer** to session venvs. Validators receive a
 read-only `venv_path` in the `ValidateRequest` proto. In the Podman pod,
-the `/sessions` volume is mounted read-write for Primary and read-only for
+the `/sessions` volume is mounted read-write for Engine and read-only for
 validator containers.
 
 ## Session Reaping
@@ -147,13 +147,13 @@ session directory are reaped, the session directory is removed entirely.
 
 | File | Key types/functions |
 |------|---------------------|
-| `src/apme_engine/daemon/primary_server.py` | `_discover_collection_specs()`, `merge_collection_specs()`, `_scan_pipeline()` step 2-3 |
+| `src/apme_engine/daemon/engine_server.py` | `_discover_collection_specs()`, `merge_collection_specs()`, `_scan_pipeline()` step 2-3 |
 | `src/apme_engine/venv_manager/session.py` | `VenvSessionManager`, `VenvSession`, `create_base_venv()`, `install_collections_incremental()` |
 | `src/galaxy_proxy/` | Galaxy Proxy PEP 503 implementation |
 
 ## Related ADRs
 
-- **ADR-022** — Session-scoped venvs, Primary as sole writer
+- **ADR-022** — Session-scoped venvs, Engine as sole writer
 - **ADR-031** — Galaxy Proxy PEP 503 design
 - **ADR-045** — Galaxy server configuration
 

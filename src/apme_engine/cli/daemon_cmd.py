@@ -17,13 +17,17 @@ def run_daemon(args: argparse.Namespace) -> None:
     cmd = args.daemon_command
 
     if cmd == "start":
-        state = daemon_status()
+        try:
+            state = daemon_status()
+        except RuntimeError as e:
+            sys.stderr.write(f"{e}\n")
+            sys.exit(1)
         if state is not None:
-            sys.stderr.write(f"Daemon already running (pid {state.pid}, primary {state.primary})\n")
+            sys.stderr.write(f"Daemon already running (pid {state.pid}, engine {state.engine})\n")
             return
         try:
             state = start_daemon()
-            sys.stderr.write(f"Daemon started (pid {state.pid}, primary {state.primary})\n")
+            sys.stderr.write(f"Daemon started (pid {state.pid}, engine {state.engine})\n")
         except RuntimeError as e:
             sys.stderr.write(f"Failed to start daemon: {e}\n")
             sys.exit(1)
@@ -35,12 +39,16 @@ def run_daemon(args: argparse.Namespace) -> None:
             sys.stderr.write("No daemon running.\n")
 
     elif cmd == "status":
-        state = daemon_status()
+        try:
+            state = daemon_status()
+        except RuntimeError as e:
+            sys.stderr.write(f"{e}\n")
+            sys.exit(1)
         if state is None:
             sys.stderr.write("No daemon running.\n")
             sys.exit(1)
         sys.stdout.write(f"PID:      {state.pid}\n")
-        sys.stdout.write(f"Primary:  {state.primary}\n")
+        sys.stdout.write(f"Engine:   {state.engine}\n")
         sys.stdout.write(f"Version:  {state.version}\n")
         sys.stdout.write(f"Started:  {state.started_at}\n")
         if state.services:

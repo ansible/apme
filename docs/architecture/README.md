@@ -21,7 +21,7 @@ flowchart TD
         A[apme check / remediate / format]
     end
 
-    subgraph primary [Primary Orchestrator :50051]
+    subgraph engine [Engine :50051]
         B[Session Management]
         C[YAML Formatting]
         D[Parse and Graph Construction]

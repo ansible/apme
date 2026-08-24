@@ -24,9 +24,9 @@ Should the Gateway (REST API + persistence) run as part of the local daemon proc
 
 ## Context
 
-ADR-024 established the local daemon pattern: `ensure_daemon()` auto-starts Primary + validators as localhost gRPC servers, giving standalone users the same architecture as the pod. The daemon already runs five gRPC servers and a uvicorn app (Galaxy Proxy) in a single async event loop.
+ADR-024 established the local daemon pattern: `ensure_daemon()` auto-starts Engine + validators as localhost gRPC servers, giving standalone users the same architecture as the pod. The daemon already runs five gRPC servers and a uvicorn app (Galaxy Proxy) in a single async event loop.
 
-PR 3 of the SBOM implementation (ADR-040) introduces `apme sbom` as the first CLI subcommand that calls the Gateway REST API instead of Primary gRPC. ADR-024's "Future Direction" section explicitly identifies this as the intended pattern for read-heavy operations on persisted data.
+PR 3 of the SBOM implementation (ADR-040) introduces `apme sbom` as the first CLI subcommand that calls the Gateway REST API instead of Engine gRPC. ADR-024's "Future Direction" section explicitly identifies this as the intended pattern for read-heavy operations on persisted data.
 
 The problem: today the Gateway is classified as a "pod-level/enterprise service" that the CLI daemon does not start (CLAUDE.md). This means `apme sbom` only works when a full pod is running — breaking the "just works" UX that `apme check` and `apme remediate` provide via auto-daemon-start.
 
@@ -36,7 +36,7 @@ As more CLI subcommands migrate to Gateway REST (health, session list, etc.), th
 
 - `apme sbom` requires manual Gateway startup or a running pod — poor standalone DX
 - Future CLI→REST migrations (per ADR-024) face the same friction
-- Risk of pressure to add duplicate gRPC endpoints on Primary to avoid the Gateway dependency, creating the dual-code-path problem ADR-024 was designed to eliminate
+- Risk of pressure to add duplicate gRPC endpoints on Engine to avoid the Gateway dependency, creating the dual-code-path problem ADR-024 was designed to eliminate
 
 ---
 
@@ -99,9 +99,10 @@ As more CLI subcommands migrate to Gateway REST (health, session list, etc.), th
 
 ## Recommendation
 
-**Option A (Embed Gateway in Daemon)**. The Galaxy Proxy precedent proves the pattern works. The daemon already runs a uvicorn app (`create_app()`) as an `asyncio.create_task()` — the Gateway HTTP server is structurally identical. The ReportingServicer can be added to the existing gRPC server or on a separate port. This keeps the "just works" UX promise from ADR-024 and enables the CLI→REST migration path without friction.
-
-The key implementation detail: Primary needs to send `FixCompletedEvent` to the co-located ReportingServicer. In daemon mode this is localhost gRPC on port 50060 (same as pod). The existing `GrpcReportingSink` already handles this — it just needs `APME_REPORTING_ADDRESS` set to the local Gateway gRPC port.
+**Option A (Embed Gateway in Daemon)** — **Accepted** (see ADR-049). The Galaxy
+Proxy precedent proves the pattern works. Implementation in `launcher.py` is
+pending; integration tests and `apme sbom` start Gateway as a separate process
+today.
 
 ---
 
@@ -131,7 +132,7 @@ The key implementation detail: Primary needs to send `FixCompletedEvent` to the 
 
 **Decision**: Option A — Embed Gateway in Daemon
 
-**Rationale**: The Galaxy Proxy precedent proves the pattern works. The daemon already runs a uvicorn app (`create_app()`) as an `asyncio.create_task()` — the Gateway HTTP server is structurally identical. The ReportingServicer can be added to the existing gRPC server or on a separate port. This keeps the "just works" UX promise from ADR-024 and enables the CLI→REST migration path without friction. The existing `GrpcReportingSink` wires Primary→Gateway on localhost automatically via `APME_REPORTING_ADDRESS`.
+**Rationale**: The Galaxy Proxy precedent proves the pattern works. The daemon already runs a uvicorn app (`create_app()`) as an `asyncio.create_task()` — the Gateway HTTP server is structurally identical. The ReportingServicer can be added to the existing gRPC server or on a separate port. This keeps the "just works" UX promise from ADR-024 and enables the CLI→REST migration path without friction. The existing `GrpcReportingSink` wires Engine→Gateway on localhost automatically via `APME_REPORTING_ADDRESS`.
 
 **Action Items**:
 - [ ] Create ADR documenting Gateway-in-daemon architecture

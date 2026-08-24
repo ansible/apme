@@ -19,7 +19,7 @@ from apme_engine.observability.buckets import (
 from apme_engine.observability.otel_setup import get_meter
 
 if TYPE_CHECKING:
-    from apme.v1.primary_pb2 import ScanDiagnostics
+    from apme.v1.engine_pb2 import ScanDiagnostics
 
 logger = logging.getLogger(__name__)
 
@@ -182,7 +182,7 @@ def record_scan_diagnostics(diag: ScanDiagnostics, *, status: str = "ok") -> Non
     """Record histograms/counters from a completed ``ScanDiagnostics``.
 
     Args:
-        diag: Aggregated scan diagnostics from the Primary pipeline.
+        diag: Aggregated scan diagnostics from the Engine pipeline.
         status: Outcome label (``ok`` or ``error``).
     """
     if not _ensure_instruments():
@@ -283,7 +283,7 @@ def record_grpc_request(
 ) -> None:
     """Record a gRPC server RPC duration (validator ``Validate`` / ``Health``).
 
-    Distinct from ``apme.validator.duration``, which Primary records from
+    Distinct from ``apme.validator.duration``, which Engine records from
     ADR-013 scan diagnostics after fan-out completes.
 
     Args:

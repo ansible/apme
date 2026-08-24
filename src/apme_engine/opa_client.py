@@ -6,9 +6,9 @@ Podman container (openpolicyagent/opa) or a local ``opa`` binary.
 A timeout-based circuit-breaker avoids repeatedly running OPA when evaluations
 consistently time out. After a configurable number of consecutive timeouts
 (see ``APME_OPA_MAX_CONSECUTIVE_TIMEOUTS``), OPA evaluation is temporarily
-disabled and :func:`run_opa` short-circuits and returns an empty list. A
-successful call resets the counter. Use :func:`reset_opa_circuit_breaker` to
-clear the counter and re-enable OPA evaluation.
+disabled and :func:`run_opa` raises :exc:`OpaInfrastructureError`. A successful
+call resets the counter. Use :func:`reset_opa_circuit_breaker` to clear the
+counter and re-enable OPA evaluation.
 """
 
 import json
@@ -23,6 +23,10 @@ OPA_IMAGE = "docker.io/openpolicyagent/opa:1.17.1"
 
 _consecutive_timeouts = 0
 _opa_disabled = False
+
+
+class OpaInfrastructureError(RuntimeError):
+    """OPA evaluation failed due to infrastructure or runtime errors."""
 
 
 def _max_consecutive_timeouts() -> int:
@@ -272,9 +276,9 @@ def run_opa(
 
     A timeout-based circuit-breaker is applied. If evaluations time out
     consecutively (see ``APME_OPA_MAX_CONSECUTIVE_TIMEOUTS``, default 3), OPA
-    evaluation is temporarily disabled for the process and this function
-    returns an empty list without invoking OPA. Call :func:`reset_opa_circuit_breaker`
-    to re-enable.
+    evaluation is temporarily disabled for the process. This function raises
+    :class:`OpaInfrastructureError` without invoking OPA. Call
+    :func:`reset_opa_circuit_breaker` to re-enable.
 
     Args:
         input_data: Hierarchy payload as YAML dict for OPA input.
@@ -283,16 +287,17 @@ def run_opa(
 
     Returns:
         List of violation objects (each with ``rule_id``, ``level``, ``message``,
-        ``file``, ``line``, ``path``). An empty list may mean no violations or
-        that OPA is disabled by the circuit-breaker.
+        ``file``, ``line``, ``path``). An empty list means OPA found no violations.
 
     Raises:
         FileNotFoundError: If bundle_path is not a directory.
+        OpaInfrastructureError: If OPA is unavailable, evaluation fails, or the
+            circuit breaker has disabled evaluation.
     """
     global _consecutive_timeouts, _opa_disabled
 
     if _opa_disabled:
-        return []
+        raise OpaInfrastructureError("OPA evaluation is disabled by the circuit breaker")
 
     bundle = Path(bundle_path)
     if not bundle.is_dir():
@@ -326,7 +331,7 @@ def run_opa(
             out = None  # fall back to local opa
         except subprocess.TimeoutExpired:
             _on_timeout("Podman")
-            return []
+            raise OpaInfrastructureError("OPA evaluation timed out via Podman") from None
     if out is None:
         try:
             out = _run_opa_local(input_str, bundle, entrypoint, timeout)
@@ -340,21 +345,21 @@ def run_opa(
                 sys.stderr.write(
                     "opa: command not found. Install OPA or set OPA_USE_PODMAN=1 to use the OPA container.\n"
                 )
-            return []
+            raise OpaInfrastructureError("OPA binary is not available") from None
         except subprocess.TimeoutExpired:
             _on_timeout("local binary")
-            return []
+            raise OpaInfrastructureError("OPA evaluation timed out via local binary") from None
 
     _consecutive_timeouts = 0
 
     if out.returncode != 0:
-        sys.stderr.write(f"OPA eval failed: {out.stderr or out.stdout}\n")
-        return []
+        sys.stderr.write("OPA eval failed: [REDACTED]\n")
+        raise OpaInfrastructureError("OPA evaluation returned a non-zero exit code")
     try:
         result = json.loads(out.stdout)
     except json.JSONDecodeError:
-        sys.stderr.write(f"OPA returned invalid JSON: {out.stdout[:500]}\n")
-        return []
+        sys.stderr.write("OPA returned invalid JSON: [REDACTED]\n")
+        raise OpaInfrastructureError("OPA evaluation returned invalid JSON") from None
     # OPA eval returns { "result": [ { "expressions": [ { "value": [...] } ] } ] }
     expressions = result.get("result", [])
     if not expressions:

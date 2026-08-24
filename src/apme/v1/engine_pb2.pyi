@@ -1,4 +1,4 @@
-"""Stub for generated primary_pb2 (proto types)."""
+"""Stub for generated engine_pb2 (proto types)."""
 
 from collections.abc import Iterable
 

@@ -109,7 +109,7 @@ M042 assignment tracking: on `visit_Assign`, record `{target.id: "PluginLoader"}
 
 ```text
 ┌──────────────────────────────────────────────────┐
-│  Primary Orchestrator :50051                     │
+│  Engine :50051                                   │
 │    ├── Native :50055 (YAML rules)                │
 │    ├── OPA :50054 (Rego rules)                   │
 │    ├── Ansible :50053 (runtime checks)           │
@@ -120,7 +120,7 @@ M042 assignment tracking: on `visit_Assign`, record `{target.id: "PluginLoader"}
 
 ### Proto Definition
 
-Implements the shared `Validator` service from `proto/apme/v1/validate.proto` (ADR-001). No separate proto file — Primary fans out via the same `Validate(ValidateRequest) returns (ValidateResponse)` contract used by Native, OPA, Ansible, and Gitleaks.
+Implements the shared `Validator` service from `proto/apme/v1/validate.proto` (ADR-001). No separate proto file — Engine fans out via the same `Validate(ValidateRequest) returns (ValidateResponse)` contract used by Native, OPA, Ansible, and Gitleaks.
 
 Python file content is delivered through `ValidateRequest.files` (path + raw bytes). Rule enablement follows the standard validator registration path. No adapter layer required.
 
@@ -201,7 +201,7 @@ class DeprecationVisitor(ast.NodeVisitor):
 ## Acceptance Criteria
 
 - [ ] PythonASTValidator service starts on :50062
-- [ ] Primary orchestrator fans out to Python validator
+- [ ] Engine orchestrator fans out to Python validator
 - [ ] M035 detects `v2_on_any` method definition
 - [ ] M036 detects v1 callback method patterns
 - [ ] M037-M039 detect deprecated shell method calls
@@ -214,7 +214,7 @@ class DeprecationVisitor(ast.NodeVisitor):
 - [ ] `tox -e unit` passes with coverage
 - [ ] `tox -e integration` includes Python validator tests
 
-- [ ] Integration test sends `ValidateRequest.files` through Primary to Python AST validator and asserts M035 violation
+- [ ] Integration test sends `ValidateRequest.files` through Engine to Python AST validator and asserts M035 violation
 
 ## Service Wiring
 
@@ -223,7 +223,7 @@ Follow the same pattern as Collection Health (`:50058`) and Dep Audit (`:50059`)
 | Artifact | Value |
 |----------|-------|
 | `VALIDATOR_ENV_VARS` key | `"python_ast": "PYTHON_AST_GRPC_ADDRESS"` |
-| Primary env var | `PYTHON_AST_GRPC_ADDRESS=127.0.0.1:50062` |
+| Engine container env var | `PYTHON_AST_GRPC_ADDRESS=127.0.0.1:50062` |
 | Listen env var | `APME_PYTHON_AST_VALIDATOR_LISTEN=0.0.0.0:50062` |
 | CLI entry point | `apme-python-ast-validator = apme_engine.daemon.python_ast_validator_main:main` |
 | Server module | `src/apme_engine/daemon/python_ast_validator_server.py` |
@@ -234,18 +234,18 @@ Follow the same pattern as Collection Health (`:50058`) and Dep Audit (`:50059`)
 
 ### Files to modify (implementation task)
 
-1. `src/apme_engine/daemon/primary_server.py` — add `"python_ast": "PYTHON_AST_GRPC_ADDRESS"` to `VALIDATOR_ENV_VARS`
+1. `src/apme_engine/daemon/engine_server.py` — add `"python_ast": "PYTHON_AST_GRPC_ADDRESS"` to `VALIDATOR_ENV_VARS`
 2. `src/apme_engine/daemon/launcher.py` — add port `50062`, env var mapping, and `serve()` call
 3. `pyproject.toml` — add `apme-python-ast-validator` console script
-4. `containers/podman/pod.yaml` — add `python-ast` container; set `PYTHON_AST_GRPC_ADDRESS` on Primary
+4. `containers/podman/pod.yaml` — add `python-ast` container; set `PYTHON_AST_GRPC_ADDRESS` on Engine
 5. `deploy/helm/apme/templates/engine-deployment.yaml` — add env vars (mirror dep-audit pattern)
 6. `src/apme_gateway/api/router.py` — add health-check entry for Python AST validator
 
 ### Health and failure behavior
 
 - Implements `Validator.Health` returning `HealthResponse` with rule count (same contract as Native/Gitleaks)
-- Primary fan-out uses `asyncio.gather(..., return_exceptions=True)` — validator failure yields empty violations + diagnostic error, scan continues
-- Readiness: container starts when gRPC server binds `:50062`; Primary skips validator when `PYTHON_AST_GRPC_ADDRESS` is unset (optional service, like Gitleaks)
+- Engine fan-out uses `asyncio.gather(..., return_exceptions=True)` — validator failure yields empty violations + diagnostic error, scan continues
+- Readiness: container starts when gRPC server binds `:50062`; Engine skips validator when `PYTHON_AST_GRPC_ADDRESS` is unset (optional service, like Gitleaks)
 
 ### Integration test
 
@@ -253,7 +253,7 @@ Add `tests/integration/test_python_ast_validator.py`:
 
 ```python
 @pytest.mark.integration
-async def test_primary_fans_out_python_files_to_ast_validator(daemon_env):
+async def test_engine_fans_out_python_files_to_ast_validator(daemon_env):
     """ValidateRequest.files with deprecated callback reaches Python AST validator."""
     # 1. Ensure PYTHON_AST_GRPC_ADDRESS is set in daemon fixture
     # 2. Submit a .py file under plugins/callback/ containing def v2_on_any

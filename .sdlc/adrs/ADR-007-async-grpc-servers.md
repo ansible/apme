@@ -21,7 +21,8 @@ The original gRPC servers used synchronous `grpc.server()` with `ThreadPoolExecu
 
 ## Decision
 
-**grpc.aio for all gRPC servers** (Primary, Native, OPA, Ansible, Gitleaks).
+**grpc.aio for all gRPC servers** (Engine, Native, OPA, Ansible, Gitleaks,
+Collection Health, Dep Audit, and Gateway Reporting where applicable).
 
 - CPU-bound work runs via `run_in_executor()`
 - I/O-bound work uses native async libraries:
@@ -31,7 +32,7 @@ The original gRPC servers used synchronous `grpc.server()` with `ThreadPoolExecu
 ## Rationale
 
 - The implementation pattern is consistent across validators — the async overhead is minimal
-- Primary benefits most: `asyncio.gather()` for parallel validator fan-out replaces `ThreadPoolExecutor.map()`
+- Engine benefits most: `asyncio.gather()` for parallel validator fan-out replaces `ThreadPoolExecutor.map()`
 - OPA validator: `requests.post()` → `httpx.AsyncClient.post()` — truly non-blocking HTTP
 - Each server sets `maximum_concurrent_rpcs` for backpressure control
 - `request_id` propagation is naturally supported through async call chains
@@ -53,7 +54,7 @@ The original gRPC servers used synchronous `grpc.server()` with `ThreadPoolExecu
 ## Implementation Notes
 
 ```python
-# Primary fan-out
+# Engine fan-out
 async def validate(self, request):
     tasks = [
         self.native_stub.Validate(request),

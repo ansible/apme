@@ -4,7 +4,7 @@
 
 ## Purpose
 
-After convergence and approval, the Primary assembles the final
+After convergence and approval, the Engine assembles the final
 `SessionResult` containing file patches, remaining violations, and the fix
 report. It also emits a `FixCompletedEvent` to the Gateway for persistence.
 
@@ -12,30 +12,30 @@ report. It also emits a `FixCompletedEvent` to the Gateway for persistence.
 
 ```mermaid
 sequenceDiagram
-    participant Primary as PrimaryServicer
+    participant Engine as EngineServicer
     participant Graph as ContentGraph
     participant Gateway as Gateway :50060
     participant CLI as CLI
 
-    Primary->>Graph: splice_modifications(graph, originals)
-    Graph-->>Primary: FilePatch[] (path, original, patched, diff)
+    Engine->>Graph: splice_modifications(graph, originals)
+    Graph-->>Engine: FilePatch[] (path, original, patched, diff)
 
-    Primary->>Primary: Format patched content
-    Primary->>Primary: Generate unified diffs
-    Primary->>Primary: Write patched files to temp_dir
+    Engine->>Engine: Format patched content
+    Engine->>Engine: Generate unified diffs
+    Engine->>Engine: Write patched files to temp_dir
 
-    Primary->>Primary: graph.collect_violations()
-    Primary->>Primary: add_classification_to_violations()
+    Engine->>Engine: graph.collect_violations()
+    Engine->>Engine: add_classification_to_violations()
 
-    Primary->>Primary: Build Tier1Summary
-    Primary-->>CLI: SessionEvent(tier1_complete)
+    Engine->>Engine: Build Tier1Summary
+    Engine-->>CLI: SessionEvent(tier1_complete)
 
-    Note over Primary: If no AI proposals...
-    Primary->>Primary: _session_build_result()
-    Primary-->>CLI: SessionEvent(result=SessionResult)
+    Note over Engine: If no AI proposals...
+    Engine->>Engine: _session_build_result()
+    Engine-->>CLI: SessionEvent(result=SessionResult)
 
-    Primary->>Gateway: emit_fix_completed(FixCompletedEvent)
-    Note over Primary,Gateway: Fire-and-forget, health-gated
+    Engine->>Gateway: emit_fix_completed(FixCompletedEvent)
+    Note over Engine,Gateway: Fire-and-forget, health-gated
 ```
 
 ## splice_modifications()
@@ -107,7 +107,7 @@ loop, enriched with remediation class counts from `partition.py`.
 
 ## Event Emission
 
-After sending the `SessionResult` to the client, the Primary emits a
+After sending the `SessionResult` to the client, the Engine emits a
 `FixCompletedEvent` to the Gateway for persistence:
 
 ```python
@@ -163,11 +163,11 @@ This ensures the engine scan path is never bottlenecked by persistence.
 | File | Key types/functions |
 |------|---------------------|
 | `src/apme_engine/remediation/graph_engine.py` | `splice_modifications()`, `FilePatch`, `GraphFixReport` |
-| `src/apme_engine/daemon/primary_server.py` | `_session_build_result()`, `_build_fix_event()`, `_build_manifest()` |
+| `src/apme_engine/daemon/engine_server.py` | `_session_build_result()`, `_build_fix_event()`, `_build_manifest()` |
 | `src/apme_engine/daemon/event_emitter.py` | `emit_fix_completed()`, `EventSink` protocol |
 | `src/apme_engine/daemon/sinks/grpc_reporting.py` | `GrpcReportingSink` |
 | `proto/apme/v1/reporting.proto` | `FixCompletedEvent`, `ReportAck` |
-| `proto/apme/v1/primary.proto` | `SessionResult`, `FixReport`, `FilePatch` |
+| `proto/apme/v1/engine.proto` | `SessionResult`, `FixReport`, `FilePatch` |
 
 ## Related ADRs
 

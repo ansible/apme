@@ -102,7 +102,7 @@ options). This ADR amends ADR-052’s “no local state machine” wording: no
    tab, Backstage, or API client. React latch/attach cannot be shared.
 2. **Coarse vs dense UX.** Status enum is the product contract; the stepper is
    a presentation projection that may add labels without expanding the API.
-3. **Ephemerality.** Registry loss on Gateway restart matches Primary stream
+3. **Ephemerality.** Registry loss on Gateway restart matches Engine stream
    death; durable Activity is the audit trail, not the resume protocol
    (rebuild-from-drafts remains out of scope unless a future ADR says
    otherwise).
@@ -151,7 +151,7 @@ stays the shared contract.
 
 **Cons**:
 - Ops are minutes-scale; schema and flush complexity for transient state.
-- Primary stream still dies on restart — false sense of recoverability
+- Engine stream still dies on restart — false sense of recoverability
   (ADR-052 “why in-memory”).
 
 **Why not chosen**: Keep registry ephemeral; durable store for completed

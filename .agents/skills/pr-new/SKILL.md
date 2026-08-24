@@ -85,7 +85,7 @@ type — not just Python. If a question feels inapplicable to an
 artifact type, translate it:
 
 - "caller" in proto means any service or CLI that invokes an RPC
-  (e.g., Primary calling `Validator.Validate`, CLI calling
+  (e.g., Engine calling `Validator.Validate`, CLI calling
   `FixSession`)
 - "type signature" in Rego means a rule's expected input/output
   shape (e.g., `input.hierarchy` must contain certain keys)
@@ -117,7 +117,9 @@ artifact type, translate it:
    where the signature implies it won't? Does it have side effects
    (logging, I/O, global state) that its name or signature doesn't
    advertise? Does it behave differently from sibling functions in
-   the same module?
+   the same module? When a helper opens a channel, socket, or other
+   closeable resource, does every return path (success and failure)
+   close it — typically via `finally` — or can a failed RPC leak it?
 
 4. **Is everything still true after this change?** Diff comments and
    docstrings against the code they describe. Did you rename something
@@ -127,7 +129,13 @@ artifact type, translate it:
    intentional filter or exception (e.g. stamp only compatible
    members of a mixed group), update any ADR/doc that still says
    "all" / "every" — prose that overclaims is drift even if the
-   code is correct.
+   code is correct. When one ADR cites another coupling or inventory
+   rule (sole import site, core vs optional validators, required
+   services), confirm the citing ADR does not invent a second path
+   that contradicts it. When docs name protobuf fields on
+   `SessionEvent` / `SessionResult` / reporting events, verify the
+   field exists on that message in the active `.proto` — aggregated
+   types defined elsewhere do not imply they are streamed.
 
 5. **Are dependencies and versions pinned to intent?** Check every
    version range, action tag, and base image. Does each one express
@@ -345,6 +353,10 @@ sibling helpers (``resolve`` + ``is_relative_to`` / reject ``..``),
 and short-circuiting ``a() or b()`` / ``a() and b()`` when both calls
 have required side effects (e.g. promote ledger status after approving
 progression — evaluate both unconditionally).
+Treat structured health/status bodies as contracts: reject
+substring/`"ok" in body` checks when the peer emits JSON with a
+``status`` field — require exact equality (``status == "ok"``).
+``{"status":"not ok"}`` must not pass a contains-ok test.
 
 Do NOT discuss architecture philosophy. Rank findings
 critical/high/medium/low.
@@ -360,6 +372,11 @@ critical/high/medium/low.
 **Lens — consistency & drift:** Assume Pass 1 caught obvious bugs. Hunt for:
 - Docstring/ADR/comment vs code drift (especially "all"/"every" claims
   vs filtered implementation)
+- Rename/migration incompleteness: when an identifier is renamed in the
+  diff, scan the same affected docs, tests, Helm keys, and state-file
+  contracts for leftover old names in *current* guidance (historical
+  notes OK only when explicitly marked). Prefer a compatibility alias
+  or an explicit breaking-change note for persisted/public keys.
 - Dual input shapes that normalize differently (ORM vs dict, dataclass
   vs mapping, servicer vs flush path)
 - Dual implementations of the same predicate (Rego helper vs Python
@@ -468,7 +485,8 @@ Compare ADR/doc claims to what shipped. Label each finding
 - Multi-tenant / empty project_id / confused or hostile clients against
   additive API fields
 - Time travel: clock skew, flush-then-rebuild inconsistency, partial
-  claim failures
+  claim failures; tests that encode absolute calendar timestamps for
+  "stale" / "within window" checks instead of `now() ± offset`
 - If you deleted 50% of this design, what still ships the goal?
 
 Return: (1) adversarial findings that could be real bugs,

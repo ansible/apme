@@ -17,7 +17,7 @@ convention — there is no service discovery, no message queue.
 ┌────────────────────────────── apme-pod ───────────────────────────────┐
 │                                                                       │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐ │
-│  │ Primary  │  │  Native  │  │   OPA    │  │ Ansible  │  │ Gitleaks │ │
+│  │ Engine  │  │  Native  │  │   OPA    │  │ Ansible  │  │ Gitleaks │ │
 │  │  :50051  │  │  :50055  │  │  :50054  │  │  :50053  │  │  :50056  │ │
 │  │          │  │          │  │          │  │          │  │          │ │
 │  │ engine + │  │ Python   │  │ OPA bin  │  │ ansible- │  │ gitleaks │ │
@@ -56,7 +56,7 @@ convention — there is no service discovery, no message queue.
 
 | Port | Service | Protocol | Purpose |
 |------|---------|----------|---------|
-| 50051 | Primary | gRPC | Engine orchestrator — sole client API surface |
+| 50051 | Engine | gRPC | Engine orchestrator — sole client API surface |
 | 50053 | Ansible | gRPC | Ansible-runtime validator |
 | 50054 | OPA | gRPC | OPA policy validator (subprocess wrapper) |
 | 50055 | Native | gRPC | Python graph rules validator |
@@ -74,27 +74,27 @@ convention — there is no service discovery, no message queue.
 
 | Volume | Mount path | Services | Access | Purpose |
 |--------|-----------|----------|--------|---------|
-| `sessions` | `/sessions` | Primary (rw), Ansible, Collection Health, Dep Audit (ro) | Named volume | Session-scoped venvs with ansible-core + installed collections |
+| `sessions` | `/sessions` | Engine (rw), Ansible, Collection Health, Dep Audit (ro) | Named volume | Session-scoped venvs with ansible-core + installed collections |
 | `workspace` | `/workspace` | CLI (ro) | Bind mount from host CWD | Project being scanned |
 
 ### Sessions Volume
 
-Primary is the single writer to `/sessions` (ADR-022). Each session gets
+Engine is the single writer to `/sessions` (ADR-022). Each session gets
 a directory keyed by `session_id`, with sub-directories per
 `ansible_core_version`. The Ansible validator mounts this volume
 read-only to access the resolved venv for runtime checks.
 
 ### Workspace Volume
 
-The CLI container bind-mounts the user's current working directory as
-read-only. The Primary reads files from this mount during `FixSession`
-upload. For pod-mode CLI (`--pod apme-pod`), the mount uses `:ro,Z` for
-SELinux compatibility.
+The CLI container bind-mounts the user's current working directory at
+`/workspace` (`:Z` for SELinux). The CLI reads files from this mount and sends
+their bytes through `FixSession`; Engine receives the uploaded file bytes rather
+than reading the mount directly.
 
 ## Horizontal Scaling
 
 **Scale pods, not individual services within a pod.** The engine runtime
-is a unit: Primary + all validators + Galaxy Proxy. Each pod can process
+is a unit: Engine + all validators + Galaxy Proxy. Each pod can process
 a scan request end-to-end.
 
 ```
@@ -147,11 +147,10 @@ The CLI operates in two modes:
 
 ### Daemon mode (default)
 
-The CLI auto-starts a local daemon process that runs Primary + all
-validators + Galaxy Proxy. The daemon persists across CLI invocations
-for session reuse. Engine-core services (Primary, Native, OPA, Ansible,
-Galaxy Proxy) are all required — only Gitleaks is optional (requires
-external binary).
+The CLI auto-starts a local daemon process that runs Engine + required
+validators + Galaxy Proxy. Optional validators (Gitleaks, Collection Health,
+Dep Audit) start when `include_optional=True`. The daemon persists across CLI
+invocations for session reuse.
 
 ### Pod mode (`--pod`)
 
@@ -163,14 +162,14 @@ podman run --rm --pod apme-pod \
   apme-cli:latest apme check .
 ```
 
-The CLI connects to the Primary at `127.0.0.1:50051` within the pod
+The CLI connects to the Engine at `127.0.0.1:50051` within the pod
 network.
 
 ## Container Images
 
 | Image | Base | Contents |
 |-------|------|----------|
-| `apme-primary` | Python 3.12 UBI10 | Engine, Primary server, VenvSessionManager |
+| `apme-engine` | Python 3.12 UBI10 | Engine, Engine server, VenvSessionManager |
 | `apme-native` | Python 3.12 UBI10 | Native validator server |
 | `apme-opa` | Python 3.12 UBI10 + OPA binary | OPA validator server + Rego bundle |
 | `apme-ansible` | Python 3.12 UBI10 | Ansible validator server |
@@ -212,7 +211,7 @@ changes.
 ## Related ADRs
 
 - **ADR-012** — Scale pods, not individual services
-- **ADR-022** — Primary is sole venv writer (`/sessions` volume)
+- **ADR-022** — Engine is sole venv writer (`/sessions` volume)
 - **ADR-047** — tox is the sole orchestration tool
 
 ---

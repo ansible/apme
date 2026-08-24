@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from apme.v1.common_pb2 import ValidatorDiagnostics
-from apme.v1.primary_pb2 import ScanDiagnostics
+from apme.v1.engine_pb2 import ScanDiagnostics
 from apme_engine.observability import metrics as metrics_mod
 from apme_engine.observability import otel_setup
 

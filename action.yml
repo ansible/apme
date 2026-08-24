@@ -1,13 +1,13 @@
 # APME GitHub Action — Ansible Policy & Modernization Engine
 #
 # Scans Ansible content against an existing APME deployment.
-# Installs the CLI, connects to the hosted Primary gRPC endpoint,
+# Installs the CLI, connects to the hosted Engine gRPC endpoint,
 # and uploads SARIF / posts a PR summary comment.
 #
-# Usage:
-#   - uses: ansible/apme@v1
+# Usage (pin a commit SHA until ansible/apme@v1 is published — see #501):
+#   - uses: ansible/apme@<commit-sha>
 #     with:
-#       primary-address: ${{ secrets.APME_PRIMARY_ADDRESS }}
+#       engine-address: ${{ secrets.APME_ENGINE_ADDRESS }}
 #       target: .
 ---
 name: APME Check
@@ -35,8 +35,9 @@ inputs:
     description: Additional arguments passed to apme check
     required: false
     default: ""
-  primary-address:
-    description: "Primary gRPC address for the hosted APME deployment (host:port)"
+  engine-address:
+    description: >
+      gRPC address of the APME Engine service (host:port).
     required: true
   sarif:
     description: Upload SARIF to GitHub Code Scanning (requires security-events:write)
@@ -89,7 +90,7 @@ runs:
       id: scan
       shell: bash
       env:
-        APME_PRIMARY_ADDRESS: ${{ inputs.primary-address }}
+        APME_ENGINE_ADDRESS: ${{ inputs.engine-address }}
         APME_TARGET: ${{ inputs.target }}
         APME_ANSIBLE_VERSION: ${{ inputs.ansible-version }}
         APME_COLLECTIONS: ${{ inputs.collections }}
@@ -98,6 +99,10 @@ runs:
         APME_ARTIFACT: ${{ inputs.upload-artifact }}
         APME_COMMENT: ${{ inputs.comment }}
       run: |
+        if [ -z "$APME_ENGINE_ADDRESS" ]; then
+          echo "engine-address is required" >&2
+          exit 1
+        fi
         CLI_ARGS=()
         if [ -n "$APME_ANSIBLE_VERSION" ]; then
           CLI_ARGS+=(--ansible-version "$APME_ANSIBLE_VERSION")

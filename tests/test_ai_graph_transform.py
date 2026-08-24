@@ -787,7 +787,7 @@ class TestBuildGraphProposals:
 
     def test_line_fields_forwarded_to_proto(self) -> None:
         """Line start/end from AINodeProposal appear on the Proposal proto."""
-        from apme_engine.daemon.primary_server import PrimaryServicer
+        from apme_engine.daemon.engine_server import EngineServicer
 
         anp = AINodeProposal(
             node_id="site.yml/plays[0]/tasks[0]",
@@ -799,7 +799,7 @@ class TestBuildGraphProposals:
             line_start=5,
             line_end=8,
         )
-        proposals = PrimaryServicer._build_graph_proposals([anp])
+        proposals = EngineServicer._build_graph_proposals([anp])
 
         assert len(proposals) == 1
         assert proposals[0].line_start == 5

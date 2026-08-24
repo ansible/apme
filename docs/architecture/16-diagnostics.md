@@ -47,8 +47,8 @@ The `metadata` map carries validator-specific key-value pairs (e.g.,
 
 ### ScanDiagnostics
 
-Aggregated diagnostics for an entire scan, returned in the
-`SessionResult`:
+Aggregated diagnostics for an entire scan, emitted on the
+`FixCompletedEvent` reporting path (not on `SessionResult`):
 
 ```protobuf
 message ScanDiagnostics {
@@ -69,9 +69,9 @@ message ScanDiagnostics {
 ```
 Validator → ValidateResponse.diagnostics (ValidatorDiagnostics)
                     ↓
-Primary aggregates all ValidatorDiagnostics + engine timing
+Engine aggregates all ValidatorDiagnostics + engine timing
                     ↓
-SessionResult.diagnostics (ScanDiagnostics)
+            ScanDiagnostics (FixCompletedEvent.diagnostics)
                     ↓
             ┌───────┴────────┐
             ▼                ▼
@@ -80,14 +80,14 @@ SessionResult.diagnostics (ScanDiagnostics)
 ```
 
 Each validator returns its `ValidatorDiagnostics` in the
-`ValidateResponse`. The Primary collects all of them, adds engine-level
-timing, and assembles the `ScanDiagnostics`. This travels two paths:
-back to the CLI via the `SessionResult`, and to the Gateway via
-`FixCompletedEvent` for persistence.
+`ValidateResponse`. The Engine collects all of them, adds engine-level
+timing, and assembles the `ScanDiagnostics`. This travels to the Gateway via
+`FixCompletedEvent` for persistence; the CLI surfaces pipeline timing through
+`-v` / `-vv` progress logs and JSON output when diagnostics are available.
 
 ## Per-Validator Instrumentation
 
-### Engine (Primary)
+### Engine instrumentation
 
 The engine (`run_scan()`) reports per-phase timing:
 
@@ -212,7 +212,7 @@ from this data.
 | File | Role |
 |------|------|
 | `proto/apme/v1/common.proto` | `RuleTiming`, `ValidatorDiagnostics`, `ScanDiagnostics` |
-| `src/apme_engine/daemon/primary_server.py` | Aggregates validator diagnostics + engine timing |
+| `src/apme_engine/daemon/engine_server.py` | Aggregates validator diagnostics + engine timing |
 | `src/apme_engine/runner.py` | Engine phase timing (`parse_ms`, `annotate_ms`) |
 | `src/apme_engine/cli/output.py` | `print_diagnostics_v()`, `print_diagnostics_vv()` |
 | `src/apme_gateway/grpc_reporting/servicer.py` | `_diagnostics_to_json()` for persistence |

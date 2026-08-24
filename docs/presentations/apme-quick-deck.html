@@ -359,7 +359,7 @@
   <div class="deck">
     
     <!-- SLIDE 1: TITLE -->
-    <div class="slide" data-notes="<strong>Navigation:</strong> Arrow keys or click to navigate. Press 'N' for contextual notes like this one.<br><br><strong>About APME:</strong> Ansible Policy & Modernization Engine — a multi-validator static analysis platform that parses playbooks, roles, collections, and task files, then validates them in parallel across four backends.<br><br><strong>Links:</strong><br>• <a href='https://github.com/ansible/apme'>github.com/ansible/apme</a><br>• Apache 2.0 licensed<br><br>[IMAGE OPPORTUNITY] Prompt for AI image: 'Abstract visualization of code being analyzed and validated, with red streams of data flowing through dark geometric shapes, dark background, Red Hat brand colors (red, black, dark gray), no text, 16:9 aspect ratio'">
+    <div class="slide" data-notes="<strong>Navigation:</strong> Arrow keys or click to navigate. Press 'N' for contextual notes like this one.<br><br><strong>About APME:</strong> Ansible Policy & Modernization Engine — a multi-validator static analysis platform that parses playbooks, roles, collections, and task files, then validates them in parallel across three core backends plus optional validators.<br><br><strong>Links:</strong><br>• <a href='https://github.com/ansible/apme'>github.com/ansible/apme</a><br>• Apache 2.0 licensed<br><br>[IMAGE OPPORTUNITY] Prompt for AI image: 'Abstract visualization of code being analyzed and validated, with red streams of data flowing through dark geometric shapes, dark background, Red Hat brand colors (red, black, dark gray), no text, 16:9 aspect ratio'">
       <div class="breadcrumb">
         <svg class="rh-logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 613 145" role="img" aria-label="Red Hat">
           <title>Red Hat</title>
@@ -424,46 +424,50 @@
     </div>
 
     <!-- SLIDE 4: THE SOLUTION -->
-    <div class="slide" data-notes="<strong>Key insight:</strong> Parse once, validate many. APME parses Ansible content into a structured hierarchy, then fans validation out in parallel across four independent backends.<br><br><strong>Latency math:</strong> Because validators run concurrently via asyncio.gather(), total latency = max(validators), not sum(validators). A 4-validator scan doesn't take 4x longer.<br><br><strong>Links:</strong><br>• <a href='https://github.com/ansible/apme'>APME on GitHub</a>">
+    <div class="slide" data-notes="<strong>Key insight:</strong> Parse once, validate many. APME parses Ansible content into a structured hierarchy, then fans validation out in parallel across three core backends (Native, OPA, Ansible) plus optional validators (Gitleaks, Collection Health, Dep Audit).<br><br><strong>Latency math:</strong> Because validators run concurrently via asyncio.gather(), total latency = max(validators), not sum(validators). A multi-validator scan doesn't take Nx longer.<br><br><strong>Links:</strong><br>• <a href='https://github.com/ansible/apme'>APME on GitHub</a>">
       <div class="slide-label animate-in">—— THE INSIGHT</div>
       <h2 class="animate-in">Parse Once, <span class="accent">Validate Everywhere</span></h2>
       <div class="content-body animate-in">
         <p style="margin-bottom: 24px;">APME is a <strong>multi-validator static analysis platform</strong>. It reads your YAML, reasons about structure and module usage, and reports what it finds — without running tasks or executing against target hosts.</p>
-        <p>Four independent validation backends run in parallel:</p>
+        <p>Three core validation backends run in parallel (plus optional secret and supply-chain validators):</p>
         <ul style="margin-top: 16px;">
           <li><strong>OPA/Rego</strong> — Policy rules for organizational standards</li>
           <li><strong>Native Python</strong> — Structural and semantic checks</li>
           <li><strong>Ansible Runtime</strong> — Argspec validation against real module signatures</li>
-          <li><strong>Gitleaks</strong> — 800+ secret patterns, credential detection</li>
+          <li><strong>Gitleaks</strong> (optional) — 800+ secret patterns, credential detection</li>
         </ul>
       </div>
     </div>
 
     <!-- SLIDE 5: ARCHITECTURE -->
-    <div class="slide" data-notes="<strong>Architecture details:</strong><br>• 9 containers in one pod (Primary, Native, OPA, Ansible, Gitleaks, Galaxy Proxy, Gateway, UI, Abbenay)<br>• All inter-service communication is gRPC<br>• Galaxy Proxy converts Ansible collections into PEP 503 Python wheels<br>• Session venvs are UV-cached for fast ansible-core version switching<br><br><strong>See also:</strong> docs/architecture/ in the repo for the full design.">
+    <div class="slide" data-notes="<strong>Architecture details:</strong><br>• 11 service containers in one pod (Engine, Native, OPA, Ansible, Gitleaks, Collection Health, Dep Audit, Galaxy Proxy, Gateway, UI, Abbenay)<br>• Backend services use gRPC; Galaxy Proxy exposes the PEP 503 HTTP endpoint<br>• Gitleaks, Collection Health, and Dep Audit are optional validators<br>• Galaxy Proxy converts Ansible collections into PEP 503 Python wheels<br>• Session venvs are UV-cached for fast ansible-core version switching<br><br><strong>See also:</strong> docs/architecture/ in the repo for the full design.">
       <div class="slide-label animate-in">—— ARCHITECTURE</div>
-      <h2 class="animate-in">Nine Apps, One Pod, <span class="accent">Parallel Fan-Out</span></h2>
+      <h2 class="animate-in">Eleven Apps, One Pod, <span class="accent">Parallel Fan-Out</span></h2>
       <div class="arch-diagram animate-in" style="margin-top: 24px;">
         <div class="arch-row">
           <div class="arch-box">CLI<span class="port">on-the-fly</span></div>
           <div class="arch-arrow">→</div>
-          <div class="arch-box primary">Primary<span class="port">:50051 gRPC</span></div>
+          <div class="arch-box primary">Engine<span class="port">:50051 gRPC</span></div>
         </div>
         <div class="arch-arrow" style="transform: rotate(90deg);">→</div>
         <div class="arch-row">
           <div class="arch-box">Native<span class="port">:50055</span></div>
           <div class="arch-box">OPA<span class="port">:50054</span></div>
           <div class="arch-box">Ansible<span class="port">:50053</span></div>
-          <div class="arch-box">Gitleaks<span class="port">:50056</span></div>
+          <div class="arch-box">Gitleaks<span class="port">:50056 optional</span></div>
         </div>
         <div class="arch-row" style="margin-top: 16px;">
-          <div class="arch-box">Galaxy Proxy<span class="port">:8765 PEP 503</span></div>
+          <div class="arch-box">Coll. Health<span class="port">:50058 optional</span></div>
+          <div class="arch-box">Dep Audit<span class="port">:50059 optional</span></div>
+          <div class="arch-box">Galaxy Proxy<span class="port">:8765 HTTP</span></div>
           <div class="arch-box">Gateway<span class="port">:8080 REST</span></div>
+        </div>
+        <div class="arch-row" style="margin-top: 16px;">
           <div class="arch-box">UI<span class="port">:8081</span></div>
           <div class="arch-box">Abbenay<span class="port">:50057 AI</span></div>
         </div>
       </div>
-      <p class="source animate-in">Unified gRPC contract — adding a new validator means implementing one RPC</p>
+      <p class="source animate-in">Unified gRPC contract — adding a new validator means implementing Validate + Health</p>
     </div>
 
     <!-- SLIDE 6: WHAT THE ENGINE ENABLES -->
@@ -538,11 +542,11 @@
     </div>
 
     <!-- SLIDE 9: BIG NUMBER -->
-    <div class="slide center-content" data-notes="<strong>Rule coverage:</strong> 150+ rules across four backends, including:<br>• L003–L105: Lint rules (structural, semantic)<br>• M001–M030: Module compatibility rules<br>• R101–R501: Risk rules<br>• SEC:*: 800+ Gitleaks secret patterns<br><br>Every rule has colocated tests (*_test.py, *_test.rego) for validation.">
+    <div class="slide center-content" data-notes="<strong>Rule coverage:</strong> 150+ rules across three core backends plus optional Gitleaks, including:<br>• L003–L105: Lint rules (structural, semantic)<br>• M001–M030: Module compatibility rules<br>• R101–R501: Risk rules<br>• SEC:*: 800+ Gitleaks secret patterns (optional validator)<br><br>Every rule has colocated tests (*_test.py, *_test.rego) for validation.">
       <div class="slide-label animate-in">—— BY THE NUMBERS</div>
       <div class="big-number animate-in">150+</div>
-      <p class="big-number-context animate-in">rules across four validation backends</p>
-      <p class="source animate-in">OPA/Rego · Native Python · Ansible Runtime · Gitleaks</p>
+      <p class="big-number-context animate-in">rules across three core backends (+ optional Gitleaks)</p>
+      <p class="source animate-in">OPA/Rego · Native Python · Ansible Runtime · Gitleaks (optional)</p>
     </div>
 
     <!-- SLIDE 10: DEPENDENCY HEALTH -->
@@ -607,7 +611,7 @@
     </div>
 
     <!-- SLIDE 14: CTA -->
-    <div class="slide" data-notes="<strong>Quick start commands:</strong><br>• apme check /path — run all validators<br>• apme check --json . — JSON output for CI<br>• apme check -v . — timing diagnostics<br>• apme format --apply . — auto-format YAML<br>• apme remediate --ai . — AI-assisted fixes<br><br><strong>Container deployment:</strong> tox -e up builds 9 images and starts the pod.">
+    <div class="slide" data-notes="<strong>Quick start commands:</strong><br>• apme check /path — run all validators<br>• apme check --json . — JSON output for CI<br>• apme check -v . — timing diagnostics<br>• apme format --apply . — auto-format YAML<br>• apme remediate --ai . — AI-assisted fixes<br><br><strong>Container deployment:</strong> tox -e up builds eleven service images (plus OTel Collector pulled from upstream) and starts the twelve-container pod.">
       <div class="slide-label animate-in">—— GET STARTED</div>
       <h2 class="animate-in">Try APME <span class="accent">Today</span></h2>
       <ul class="cta-list animate-in">

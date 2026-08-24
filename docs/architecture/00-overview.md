@@ -14,8 +14,8 @@ how the three user-facing commands share the same infrastructure.
 ```mermaid
 sequenceDiagram
     participant CLI as apme CLI
-    participant Primary as Primary :50051
-    participant Engine as ARI Scanner
+    participant Engine as Engine :50051
+    participant Scanner as ARI Scanner
     participant Venv as VenvSessionManager
     participant Galaxy as Galaxy Proxy :8765
     participant Native as Native :50055
@@ -28,43 +28,43 @@ sequenceDiagram
     participant AI as Abbenay :50057
     participant Gateway as Gateway :50060
 
-    CLI->>Primary: FixSession(SessionCommand stream)
-    Note over CLI,Primary: Upload chunks with ScanOptions/FixOptions
+    CLI->>Engine: FixSession(SessionCommand stream)
+    Note over CLI,Engine: Upload chunks with ScanOptions/FixOptions
 
-    Primary->>Primary: Create session, stage files
+    Engine->>Engine: Create session, stage files
 
-    Primary->>Primary: Format YAML files
-    Primary->>Primary: Idempotency check (format again)
+    Engine->>Engine: Format YAML files
+    Engine->>Engine: Idempotency check (format again)
 
-    Primary->>Engine: run_scan(temp_dir)
-    Engine-->>Primary: ScanContext (hierarchy, ContentGraph)
+    Engine->>Scanner: run_scan(temp_dir)
+    Scanner-->>Engine: ScanContext (hierarchy, ContentGraph)
 
-    Primary->>Venv: acquire(session_id, version, specs)
+    Engine->>Venv: acquire(session_id, version, specs)
     Venv->>Galaxy: pip install via PEP 503
-    Venv-->>Primary: VenvSession (venv_path)
+    Venv-->>Engine: VenvSession (venv_path)
 
     par Validator fan-out
-        Primary->>Native: Validate(hierarchy, graph)
-        Primary->>OPA: Validate(hierarchy)
-        Primary->>Ansible: Validate(hierarchy, venv_path)
-        Primary->>Gitleaks: Validate(graph)
-        Primary->>CollHealth: Validate(venv_path)
-        Primary->>DepAudit: Validate(venv_path)
+        Engine->>Native: Validate(hierarchy, graph)
+        Engine->>OPA: Validate(hierarchy)
+        Engine->>Ansible: Validate(hierarchy, venv_path)
+        Engine->>Gitleaks: Validate(graph)
+        Engine->>CollHealth: Validate(venv_path)
+        Engine->>DepAudit: Validate(venv_path)
     end
-    Native-->>Primary: violations
-    OPA-->>Primary: violations
-    Ansible-->>Primary: violations
-    Gitleaks-->>Primary: violations
-    CollHealth-->>Primary: collection findings
-    DepAudit-->>Primary: Python CVE findings
+    Native-->>Engine: violations
+    OPA-->>Engine: violations
+    Ansible-->>Engine: violations
+    Gitleaks-->>Engine: violations
+    CollHealth-->>Engine: collection findings
+    DepAudit-->>Engine: Python CVE findings
 
-    Primary->>Remediation: remediate(violations, graph)
+    Engine->>Remediation: remediate(violations, graph)
     loop Convergence loop
         Remediation->>Remediation: Apply Tier 1 transforms
-        Remediation->>Primary: rescan dirty nodes
-        Primary->>Native: gRPC Validate(dirty_node_ids)
-        Primary->>OPA: mini hierarchy
-        Primary->>Ansible: task nodes
+        Remediation->>Engine: rescan dirty nodes
+        Engine->>Native: gRPC Validate(dirty_node_ids)
+        Engine->>OPA: mini hierarchy
+        Engine->>Ansible: task nodes
     end
 
     opt AI enabled
@@ -73,13 +73,13 @@ sequenceDiagram
         Remediation->>Remediation: Post-AI Tier 1 cleanup
     end
 
-    Primary-->>CLI: Tier1Summary
-    Primary-->>CLI: ProposalsReady (if AI)
-    CLI->>Primary: ApprovalRequest
+    Engine-->>CLI: Tier1Summary
+    Engine-->>CLI: ProposalsReady (if interactive Gate 1 or AI Gate 2)
+    CLI->>Engine: SessionCommand(approve=ApprovalRequest) on FixSession stream
 
-    Primary->>Primary: splice_modifications
-    Primary-->>CLI: SessionResult (patches, violations)
-    Primary->>Gateway: emit_fix_completed
+    Engine->>Engine: splice_modifications
+    Engine-->>CLI: SessionResult (patches, violations)
+    Engine->>Gateway: emit_fix_completed
 ```
 
 ## Three Commands, One Pipeline
@@ -117,7 +117,7 @@ The pipeline spans multiple services within the APME pod:
 
 | Service | Port | Role in pipeline |
 |---------|------|------------------|
-| Primary | 50051 | Orchestrator — sole API surface |
+| Engine | 50051 | Orchestrator — sole API surface |
 | Native validator | 50055 | Python graph rules (L/M/R series) |
 | OPA validator | 50054 | Rego policy rules (P series) |
 | Ansible validator | 50053 | Runtime checks using session venv |
@@ -134,7 +134,7 @@ The pipeline spans multiple services within the APME pod:
 | File | Role |
 |------|------|
 | `src/apme_engine/cli/__init__.py` | CLI entry point and command dispatch |
-| `src/apme_engine/daemon/primary_server.py` | Primary orchestrator (`PrimaryServicer`) |
+| `src/apme_engine/daemon/engine_server.py` | Engine orchestrator (`EngineServicer`) |
 | `src/apme_engine/runner.py` | ARI scanner adapter (`run_scan`) |
 | `src/apme_engine/engine/scanner.py` | ARI scanner (`ARIScanner.evaluate`) |
 | `src/apme_engine/engine/content_graph.py` | `ContentGraph` model |
@@ -149,7 +149,7 @@ The pipeline spans multiple services within the APME pod:
 | ADR-001 | gRPC for all inter-service communication |
 | ADR-007 | Async gRPC (grpc.aio) for all servers |
 | ADR-009 | Validators are read-only; remediation is separate |
-| ADR-022 | Primary is sole venv writer |
+| ADR-022 | Engine is sole venv writer |
 | ADR-028/039 | FixSession bidirectional streaming |
 | ADR-044 | ContentGraph as the remediation working copy |
 

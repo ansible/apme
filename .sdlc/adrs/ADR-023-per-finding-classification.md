@@ -105,7 +105,7 @@ enum RemediationResolution { ... } // field 9
 
 ### Single Source of Truth
 
-Classification happens server-side in `primary_server.py` before proto serialization. CLI clients consuming gRPC responses receive pre-classified violations and do not re-classify. The local (in-process) scan path classifies via the same `add_classification_to_violations` function.
+Classification happens server-side in `engine_server.py` before proto serialization. CLI clients consuming gRPC responses receive pre-classified violations and do not re-classify. The local (in-process) scan path classifies via the same `add_classification_to_violations` function.
 
 ## Alternatives Considered
 

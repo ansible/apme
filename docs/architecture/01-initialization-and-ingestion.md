@@ -5,7 +5,7 @@
 ## Purpose
 
 This stage covers everything from the user typing `apme check` (or
-`remediate`) to the first bytes arriving at the Primary orchestrator over
+`remediate`) to the first bytes arriving at the Engine orchestrator over
 gRPC. It includes CLI argument parsing, project root discovery, filesystem
 walking, chunked serialization, and gRPC channel setup.
 
@@ -16,7 +16,7 @@ sequenceDiagram
     participant User
     participant CLI as apme CLI
     participant FS as Filesystem
-    participant Primary as Primary :50051
+    participant Engine as Engine :50051
 
     User->>CLI: apme check ./project
     CLI->>CLI: build_parser() / parse_args()
@@ -26,9 +26,9 @@ sequenceDiagram
     CLI->>FS: load_rule_configs_from_project(project_root)
     CLI->>FS: yield_scan_chunks(target)
     Note over CLI,FS: Walk tree, filter files, chunk to 1 MiB
-    CLI->>Primary: resolve_primary() → gRPC channel
-    CLI->>Primary: PrimaryStub.FixSession(command_iter())
-    Note over CLI,Primary: Background thread feeds upload chunks
+    CLI->>Engine: resolve_engine() → gRPC channel
+    CLI->>Engine: EngineStub.FixSession(command_iter())
+    Note over CLI,Engine: Background thread feeds upload chunks
 ```
 
 ## CLI Entry Point
@@ -92,11 +92,11 @@ For `remediate`, the first chunk also carries `FixOptions` (max_passes,
 
 ## gRPC Channel Setup
 
-`src/apme_engine/cli/discovery.py` — `resolve_primary(args)` finds the Primary
+`src/apme_engine/cli/discovery.py` — `resolve_engine(args)` finds the Engine
 daemon address:
 
-1. Checks for a running local daemon (socket file)
-2. Falls back to `APME_PRIMARY_ADDRESS` env var
+1. Uses `APME_ENGINE_ADDRESS` when set (explicit override)
+2. Reuses a running local daemon from `~/.apme-data/daemon.json`
 3. Auto-starts a daemon if needed
 
 Returns a `grpc.Channel` and address string.
@@ -121,7 +121,7 @@ pushed onto this queue from the main thread.
 
 ## Key Proto Messages
 
-From `proto/apme/v1/primary.proto`:
+From `proto/apme/v1/engine.proto`:
 
 - **`ScanChunk`** — `scan_id`, `project_root`, `options`, `files[]`, `last`,
   `fix_options`
@@ -141,7 +141,7 @@ From `proto/apme/v1/primary.proto`:
 | `src/apme_engine/cli/check.py` | `run_check()`, `_resolve_session_id()` |
 | `src/apme_engine/cli/remediate.py` | `run_remediate()` |
 | `src/apme_engine/daemon/chunked_fs.py` | `yield_scan_chunks()`, `build_scan_bundle()` |
-| `src/apme_engine/cli/discovery.py` | `resolve_primary()` |
+| `src/apme_engine/cli/discovery.py` | `resolve_engine()` |
 
 ---
 

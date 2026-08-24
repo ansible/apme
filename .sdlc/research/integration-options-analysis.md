@@ -41,8 +41,8 @@ Rule IDs use prefixes per ADR-008: L = Lint, M = Modernize, R = Risk, P = Policy
 
 **How it works**:
 - CLI auto-spawns local daemon on first use (ADR-024)
-- Daemon runs Primary + Native + OPA + Ansible validators and Galaxy Proxy on localhost gRPC (only Gitleaks is optional — requires external binary)
-- No containers required — the daemon provides the same validation as the pod minus Gitleaks, Gateway, UI, and Abbenay
+- Daemon runs Engine + Native + OPA + Ansible validators on localhost gRPC, plus Galaxy Proxy as a localhost HTTP (uvicorn) service. Optional services — Gitleaks, Collection Health, and Dep Audit — start with `include_optional=True` (require external binaries or venv-dependent scanning).
+- No containers required — by default the daemon matches the pod's core stack minus Gitleaks, Collection Health, Dep Audit, Gateway, UI, and Abbenay (optional validators need `include_optional=True`)
 - State persisted in `~/.apme-data/daemon.json`
 
 **Commands**:
@@ -70,15 +70,17 @@ apme daemon status                  # Check daemon health
 **Persona**: CI pipeline, shared validation service, team server
 
 **How it works**:
-- Full pod with 9 containers (Primary, Native, OPA, Ansible, Gitleaks, Galaxy-Proxy, Gateway, UI, Abbenay)
-- CLI connects via `APME_PRIMARY_ADDRESS` env var
+- Full pod with 12 containers (Engine, Native, OPA, Ansible, Gitleaks,
+  Collection Health, Dep Audit, Galaxy Proxy, Gateway, UI, Abbenay,
+  OTel Collector)
+- CLI connects via `APME_ENGINE_ADDRESS` env var
 - Gateway provides REST API + persistence
 
 **Deployment**:
 ```bash
 tox -e build                        # Build all images
 tox -e up                           # Start pod
-APME_PRIMARY_ADDRESS=localhost:50051 apme check .
+APME_ENGINE_ADDRESS=localhost:50051 apme check .
 ```
 
 **Why use this**:

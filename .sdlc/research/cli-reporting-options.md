@@ -331,8 +331,8 @@ Options:
 ┌─────────────────────────────────────────────────────────────────┐
 │ CLI (Typer)                                                     │
 │   ├── check command receives flags                              │
-│   ├── Calls Primary (check / FixSession) via gRPC               │
-│   ├── Receives ScanResponse with violations                     │
+│   ├── Calls Engine via bidirectional FixSession gRPC           │
+│   ├── Receives SessionEvent stream (final SessionResult)        │
 │   └── Calls format_output(result, format, output)              │
 └─────────────────────────────────────────────────────────────────┘
                               │

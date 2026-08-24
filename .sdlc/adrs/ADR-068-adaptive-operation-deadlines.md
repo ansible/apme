@@ -112,7 +112,7 @@ flowchart TB
 
 ### 1. Adaptive operation budget
 
-When the engine knows how much work remains, Primary computes an **operation
+When the engine knows how much work remains, Engine computes an **operation
 budget** in seconds. Formulas differ by phase because `operation_started_at`
 anchors at phase entry (see below):
 
@@ -160,7 +160,7 @@ The enforcement check `monotonic() - operation_started_at > operation_budget`
 therefore measures only the current phase. Scan and Tier 1 preamble time does
 not consume the AI budget.
 
-At every phase anchor, Primary sets **both** `operation_started_at` and
+At every phase anchor, Engine sets **both** `operation_started_at` and
 `last_progress_at` to the same monotonic instant, and increments
 `operation_generation` (a monotonic counter per session). This prevents inherited
 progress timestamps from an earlier phase (e.g. a long Tier 1 pass) from
@@ -182,7 +182,7 @@ deadline supervisor as Tier 1 work.
 
 **Session lifetime cap.** `max_budget` bounds a single operation's duration, not
 the session's absolute age. All enforcement comparisons use **monotonic time
-only**. At session creation, Primary records:
+only**. At session creation, Engine records:
 
 ```text
 max_lifetime_deadline_mono = monotonic() + APME_SESSION_MAX_LIFETIME
@@ -210,7 +210,7 @@ operation_deadline = min(
 )
 ```
 
-Primary enforces this absolute deadline explicitly so a session that spends time
+Engine enforces this absolute deadline explicitly so a session that spends time
 in scan, approval, or triage cannot receive a full `max_budget` operation that
 runs past the session maximum.
 
@@ -247,7 +247,7 @@ at call start. Gateway and CLI **omit the client-side gRPC deadline** for
 
 ### 2. Stall detection (fail fast)
 
-Independent of `operation_budget`, Primary tracks **time since last task-linked
+Independent of `operation_budget`, Engine tracks **time since last task-linked
 progress event** — not heartbeats. The existing 15s heartbeat keeps the
 `FixSession` stream alive and refreshes idle TTL via `session.touch()`, but does
 **not** reset the stall clock.
@@ -306,7 +306,7 @@ This feeds stall detection, UI progress bars, and budget re-estimation if
 ### 6. nginx / proxy alignment
 
 `proxy_read_timeout` limits the **inactivity interval between upstream reads**,
-not total response lifetime. With Primary heartbeats every 15s (and Gateway SSE
+not total response lifetime. With Engine heartbeats every 15s (and Gateway SSE
 keepalive every 30s) forwarded and flushed through nginx, an active long-running
 stream resets the read timer on each chunk — the connection stays open for the
 full operation without requiring `proxy_read_timeout` to exceed `max_budget`.
@@ -402,7 +402,7 @@ reliable; `extend` remains for **idle** approval waits (ADR-028).
 - Budget estimation can be wrong if Abbenay latency is bimodal (first call slow,
   rest fast); may complete early or occasionally hit ceiling — mitigated by
   margin and `max_ai_attempts` visibility in progress
-- Slightly more complex Primary session state (`operation_deadline`,
+- Slightly more complex Engine session state (`operation_deadline`,
   `last_progress_at`)
 - Proto additive fields require `tox -e grpc` and OpenAPI note if exposed
 
@@ -413,16 +413,16 @@ reliable; `extend` remains for **idle** approval waits (ADR-028).
 
 ## Implementation Notes
 
-### Phase 1 — Engine (Primary)
+### Phase 1 — Engine
 
 | File | Change |
 |------|--------|
 | `src/apme_engine/daemon/session.py` | Add `operation_budget_s`, `operation_started_at`, `last_progress_at`, `operation_generation`, `max_lifetime_deadline_mono` to `SessionState`; `begin_operation_phase()` sets anchors and increments generation |
 | `src/apme_engine/daemon/deadline.py` (new) | `estimate_operation_budget(...) -> int` (separate non-AI and AI formulas; validate inputs), `stall_window(budget) -> int`, `is_task_linked_progress(update, generation) -> bool` |
-| `src/apme_engine/daemon/primary_server.py` | `begin_operation_phase` at `_session_process` start (non-AI); shared deadline/stall supervisor wraps full non-AI path; AI gate re-anchors and enforces in `_session_graph_remediate` drain loop |
+| `src/apme_engine/daemon/engine_server.py` | `begin_operation_phase` at `_session_process` start (non-AI); shared deadline/stall supervisor wraps full non-AI path; AI gate re-anchors and enforces in `_session_graph_remediate` drain loop |
 | `src/apme_engine/remediation/graph_engine.py` | Per-node `_progress("graph-ai", f"AI {i}/{n}: …", i/n)` in `_apply_ai_transforms` |
 | `proto/apme/v1/common.proto` | Add optional `int32 budget_seconds`, `int32 ai_completed`, `int32 ai_total` to `ProgressUpdate` (additive) |
-| `proto/apme/v1/primary.proto` | Add optional `int32 operation_budget_seconds` to `SessionCreated` (additive); `ttl_seconds` unchanged |
+| `proto/apme/v1/engine.proto` | Add optional `int32 operation_budget_seconds` to `SessionCreated` (additive); `ttl_seconds` unchanged |
 
 ### Phase 2 — Gateway
 
@@ -451,7 +451,7 @@ reliable; `extend` remains for **idle** approval waits (ADR-028).
 ### Enforcement loop (pseudocode)
 
 ```python
-# Inside _session_graph_remediate drain loop (primary_server.py)
+# Inside _session_graph_remediate drain loop (engine_server.py)
 budget = session.operation_budget_s
 stall_limit = stall_window(budget)
 operation_deadline = min(
@@ -489,7 +489,7 @@ while not remediate_task.done():
     session.touch()  # idle TTL refresh (heartbeats included)
     if (
         update.operation_generation == session.operation_generation
-        and is_task_linked_progress(update)
+        and is_task_linked_progress(update, session.operation_generation)
     ):
         session.last_progress_at = monotonic()
     yield SessionEvent(progress=update)

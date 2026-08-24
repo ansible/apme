@@ -1,8 +1,8 @@
 """Project operation driver — clone, chunk, check/remediate via gRPC (ADR-037, ADR-039).
 
-The gateway acts as a gRPC client to Primary for project-initiated operations.
+The gateway acts as a gRPC client to Engine for project-initiated operations.
 On each invocation the project repo is shallow-cloned into a temporary directory,
-chunked via the engine's ``yield_scan_chunks``, and streamed to Primary via
+chunked via the engine's ``yield_scan_chunks``, and streamed to Engine via
 ``FixSession`` (check mode omits ``fix_options`` on chunks; remediate mode sets
 them on the first chunk).
 """
@@ -26,14 +26,14 @@ from urllib.parse import quote, urlparse, urlunparse
 import grpc
 import grpc.aio
 
-from apme.v1 import primary_pb2, primary_pb2_grpc
+from apme.v1 import engine_pb2, engine_pb2_grpc
 from apme.v1.common_pb2 import GalaxyServerDef
 from apme_engine.daemon.chunked_fs import yield_scan_chunks
 from apme_gateway.scm.redaction import redact_credentials as _redact_credentials
 
 logger = logging.getLogger(__name__)
 
-_GRPC_MAX_MSG = 50 * 1024 * 1024  # 50 MiB — matches Primary
+_GRPC_MAX_MSG = 50 * 1024 * 1024  # 50 MiB — matches Engine
 
 # ADR-068: server enforces adaptive deadlines; no fixed client gRPC timeout.
 
@@ -329,7 +329,7 @@ async def clone_repo(
         raise RuntimeError(f"git clone failed (exit {result.returncode}): {safe_stderr}")
 
 
-ProgressCallback = Callable[[primary_pb2.SessionEvent], Coroutine[Any, Any, None]]
+ProgressCallback = Callable[[engine_pb2.SessionEvent], Coroutine[Any, Any, None]]
 
 
 async def run_project_operation(
@@ -337,7 +337,7 @@ async def run_project_operation(
     project_id: str,
     repo_url: str,
     branch: str,
-    primary_address: str,
+    engine_address: str,
     remediate: bool = False,
     ansible_version: str = "",
     collection_specs: list[str] | None = None,
@@ -353,8 +353,8 @@ async def run_project_operation(
     galaxy_servers: list[GalaxyServerDef] | None = None,
     scm_token: str | None = None,
     scm_provider: str | None = None,
-) -> tuple[str, primary_pb2.SessionResult | None, str]:
-    """Clone a project repo and run check or remediate via Primary ``FixSession``.
+) -> tuple[str, engine_pb2.SessionResult | None, str]:
+    """Clone a project repo and run check or remediate via Engine ``FixSession``.
 
     Check mode (``remediate=False``) sends chunks without ``fix_options``
     unless ``assess_pause`` is set (ADR-064 — attaches FixOptions so the
@@ -364,7 +364,7 @@ async def run_project_operation(
         project_id: UUID of the project (used to derive session_id).
         repo_url: SCM clone URL.
         branch: Branch to clone.
-        primary_address: ``host:port`` for the Primary gRPC service.
+        engine_address: ``host:port`` for the Engine gRPC service.
         remediate: When True, attach fix options and handle AI approval flow.
         ansible_version: Target ansible-core version.
         collection_specs: Collection install specs.
@@ -423,7 +423,7 @@ async def run_project_operation(
 
         attach_fix = remediate or assess_pause
         if attach_fix and chunks:
-            fix_opts = primary_pb2.FixOptions(
+            fix_opts = engine_pb2.FixOptions(
                 ansible_core_version=ansible_version,
                 collection_specs=collection_specs or [],
                 enable_ai=enable_ai,
@@ -434,12 +434,12 @@ async def run_project_operation(
             )
             chunks[0].fix_options.CopyFrom(fix_opts)  # type: ignore[union-attr]
 
-        command_queue: asyncio.Queue[primary_pb2.SessionCommand | None] = asyncio.Queue()
+        command_queue: asyncio.Queue[engine_pb2.SessionCommand | None] = asyncio.Queue()
 
         for chunk in chunks:
-            await command_queue.put(primary_pb2.SessionCommand(upload=chunk))
+            await command_queue.put(engine_pb2.SessionCommand(upload=chunk))
 
-        async def _command_stream() -> AsyncIterator[primary_pb2.SessionCommand]:
+        async def _command_stream() -> AsyncIterator[engine_pb2.SessionCommand]:
             while True:
                 cmd = await command_queue.get()
                 if cmd is None:
@@ -447,18 +447,18 @@ async def run_project_operation(
                 yield cmd
 
         channel = grpc.aio.insecure_channel(
-            primary_address,
+            engine_address,
             options=[
                 ("grpc.max_send_message_length", _GRPC_MAX_MSG),
                 ("grpc.max_receive_message_length", _GRPC_MAX_MSG),
             ],
         )
         try:
-            stub = primary_pb2_grpc.PrimaryStub(channel)  # type: ignore[no-untyped-call]
+            stub = engine_pb2_grpc.EngineStub(channel)  # type: ignore[no-untyped-call]
 
             response_stream = stub.FixSession(_command_stream())
 
-            result: primary_pb2.SessionResult | None = None
+            result: engine_pb2.SessionResult | None = None
             async for event in response_stream:
                 if progress_callback:
                     await progress_callback(event)
@@ -468,7 +468,7 @@ async def run_project_operation(
                     if begin_remediate_queue is not None:
                         await begin_remediate_queue.get()
                     await command_queue.put(
-                        primary_pb2.SessionCommand(begin_remediate=primary_pb2.BeginRemediateRequest())
+                        engine_pb2.SessionCommand(begin_remediate=engine_pb2.BeginRemediateRequest())
                     )
                 elif kind == "ai_triage":
                     target_dicts: list[dict[str, object]]
@@ -478,40 +478,40 @@ async def run_project_operation(
                         # No queue — escalate every candidate path (allow-all).
                         paths = sorted({c.path for c in event.ai_triage.candidates if c.path})
                         target_dicts = [{"path": p, "rule_ids": []} for p in paths]
-                    targets: list[primary_pb2.AiEscalateTarget] = []
+                    targets: list[engine_pb2.AiEscalateTarget] = []
                     for t in target_dicts:
                         path = str(t.get("path") or "")
                         if not path:
                             continue
                         raw_rules = t.get("rule_ids") or []
                         rule_ids = [str(r) for r in raw_rules] if isinstance(raw_rules, list) else []
-                        targets.append(primary_pb2.AiEscalateTarget(path=path, rule_ids=rule_ids))
+                        targets.append(engine_pb2.AiEscalateTarget(path=path, rule_ids=rule_ids))
                     await command_queue.put(
-                        primary_pb2.SessionCommand(ai_escalate=primary_pb2.AiEscalateRequest(targets=targets))
+                        engine_pb2.SessionCommand(ai_escalate=engine_pb2.AiEscalateRequest(targets=targets))
                     )
                 elif kind == "proposals" and approval_queue is not None:
                     approved_ids = await approval_queue.get()
                     await command_queue.put(
-                        primary_pb2.SessionCommand(approve=primary_pb2.ApprovalRequest(approved_ids=approved_ids))
+                        engine_pb2.SessionCommand(approve=engine_pb2.ApprovalRequest(approved_ids=approved_ids))
                     )
                 elif kind == "proposals":
                     # No approval_queue — decline all proposals to avoid hanging.
                     await command_queue.put(
-                        primary_pb2.SessionCommand(approve=primary_pb2.ApprovalRequest(approved_ids=[]))
+                        engine_pb2.SessionCommand(approve=engine_pb2.ApprovalRequest(approved_ids=[]))
                     )
                 elif kind == "result":
                     result = event.result
-                    await command_queue.put(primary_pb2.SessionCommand(close=primary_pb2.CloseRequest()))
+                    await command_queue.put(engine_pb2.SessionCommand(close=engine_pb2.CloseRequest()))
                     await command_queue.put(None)
                 elif kind == "error":
-                    await command_queue.put(primary_pb2.SessionCommand(close=primary_pb2.CloseRequest()))
+                    await command_queue.put(engine_pb2.SessionCommand(close=engine_pb2.CloseRequest()))
                     await command_queue.put(None)
                     break
 
             return scan_id, result, clone_sha
         except asyncio.CancelledError:
             with contextlib.suppress(Exception):
-                command_queue.put_nowait(primary_pb2.SessionCommand(close=primary_pb2.CloseRequest()))
+                command_queue.put_nowait(engine_pb2.SessionCommand(close=engine_pb2.CloseRequest()))
                 command_queue.put_nowait(None)
             raise
         finally:
@@ -528,7 +528,7 @@ async def run_project_scan(
     project_id: str,
     repo_url: str,
     branch: str,
-    primary_address: str,
+    engine_address: str,
     ansible_version: str = "",
     collection_specs: list[str] | None = None,
     progress_callback: ProgressCallback | None = None,
@@ -536,7 +536,7 @@ async def run_project_scan(
     galaxy_servers: list[GalaxyServerDef] | None = None,
     scm_token: str | None = None,
     scm_provider: str | None = None,
-) -> tuple[str, primary_pb2.SessionResult | None, str]:
+) -> tuple[str, engine_pb2.SessionResult | None, str]:
     """Backward-compatible alias for check mode.
 
     Delegates to :func:`run_project_operation` with ``remediate=False``.
@@ -546,7 +546,7 @@ async def run_project_scan(
         project_id: UUID of the project.
         repo_url: SCM clone URL.
         branch: Branch to clone.
-        primary_address: ``host:port`` for the Primary gRPC service.
+        engine_address: ``host:port`` for the Engine gRPC service.
         ansible_version: Target ansible-core version.
         collection_specs: Collection install specs.
         progress_callback: Optional async callable for each ``SessionEvent``.
@@ -562,7 +562,7 @@ async def run_project_scan(
         project_id=project_id,
         repo_url=repo_url,
         branch=branch,
-        primary_address=primary_address,
+        engine_address=engine_address,
         remediate=False,
         ansible_version=ansible_version,
         collection_specs=collection_specs,

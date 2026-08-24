@@ -2807,7 +2807,7 @@
     },
     "/api/v1/ai/models": {
       "get": {
-        "description": "Return AI models available from the Abbenay daemon via Primary.\n\nCalls the Primary's ``ListAIModels`` gRPC method and translates the\nresponse to JSON.  Returns an empty list when Primary or Abbenay is\nunreachable (graceful degradation).\n\nReturns:\n    List of available AI models.",
+        "description": "Return AI models available from the Abbenay daemon via Engine.\n\nCalls the Engine's ``ListAIModels`` gRPC method and translates the\nresponse to JSON.  Returns an empty list when Engine or Abbenay is\nunreachable (graceful degradation).\n\nReturns:\n    List of available AI models.",
         "operationId": "list_ai_models_api_v1_ai_models_get",
         "responses": {
           "200": {
@@ -3916,7 +3916,7 @@
     },
     "/api/v1/projects/{project_id}/operation/approve": {
       "post": {
-        "description": "Submit approval decisions for live proposals (engine ids).\n\nGate-commits Gateway working-set rows (omit = decline) and rolls\nanalytics when claimable, then resolves the operation's\n``approval_future`` so the background gRPC task can send the approval\nto Primary. ``review_status`` is stamped when violation ids are already\nlinked; otherwise FixCompleted stamps after the id bridge. Request /\nresponse shape is unchanged (ADR-060).\n\nArgs:\n    project_id: Target project UUID.\n    body: Approved **engine** proposal IDs.\n\nReturns:\n    Confirmation message.\n\nRaises:\n    HTTPException: 404 if no operation, 409 if not in awaiting_approval.",
+        "description": "Submit approval decisions for live proposals (engine ids).\n\nGate-commits Gateway working-set rows (omit = decline) and rolls\nanalytics when claimable, then resolves the operation's\n``approval_future`` so the background gRPC task can send the approval\nto Engine. ``review_status`` is stamped when violation ids are already\nlinked; otherwise FixCompleted stamps after the id bridge. Request /\nresponse shape is unchanged (ADR-060).\n\nArgs:\n    project_id: Target project UUID.\n    body: Approved **engine** proposal IDs.\n\nReturns:\n    Confirmation message.\n\nRaises:\n    HTTPException: 404 if no operation, 409 if not in awaiting_approval.",
         "operationId": "approve_proposals_api_v1_projects__project_id__operation_approve_post",
         "parameters": [
           {

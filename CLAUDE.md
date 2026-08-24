@@ -6,14 +6,14 @@ This document is the authoritative source of truth for AI agents. All developmen
 
 ## Overview
 
-APME is a multi-service system that automates policy enforcement and modernization of Ansible content for AAP 2.5+. Services: Primary Orchestrator, Native/OPA/Ansible/Gitleaks Validators, Galaxy Proxy, Remediation Engine, Gateway (REST + persistence), UI (React SPA), CLI.
+APME is a multi-service system that automates policy enforcement and modernization of Ansible content for AAP 2.5+. Services: Engine (including in-process remediation per ADR-009), Native/OPA/Ansible/Gitleaks Validators, Galaxy Proxy, Gateway (REST + persistence), UI (React SPA), CLI.
 
 ## Architecture
 
-```
+```text
 ┌──────────────────────────────── apme-pod ─────────────────────────────┐
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐ │
-│  │ Primary  │  │  Native  │  │   OPA    │  │ Ansible  │  │ Gitleaks │ │
+│  │  Engine  │  │  Native  │  │   OPA    │  │ Ansible  │  │ Gitleaks │ │
 │  │  :50051  │  │  :50055  │  │  :50054  │  │  :50053  │  │  :50056  │ │
 │  └────┬─────┘  └──────────┘  └──────────┘  └──────────┘  └──────────┘ │
 │  ┌────┴─────────────────────────────────────┐  ┌──────────┐          │
@@ -81,7 +81,7 @@ Full workflow: [workflow.md](/.sdlc/context/workflow.md) | Getting started: [get
 - **Use gRPC** — all inter-service communication
 - **Async servers** — grpc.aio, not synchronous
 - **Rule IDs** — L/M/R/P/SEC convention per ADR-008
-- **Engine-core services are required** — Primary, Native, OPA, Ansible, and Galaxy Proxy are all required for both the CLI daemon and pod. Their deps are core, not optional extras. Gitleaks, Collection Health, and Dep Audit are optional (`_OPTIONAL_SERVICES`; start with `include_optional=True`). UI and Abbenay are pod-level/enterprise services the CLI daemon does not start. Gateway is co-located in the local daemon (ADR-049) and in Helm Simple / Podman (ADR-069 / ADR-004).
+- **Engine-core services are required** — Engine, Native, OPA, Ansible, and Galaxy Proxy are all required for both the CLI daemon and pod. Their deps are core, not optional extras. Gitleaks, Collection Health, and Dep Audit are optional (`_OPTIONAL_SERVICES`; start with `include_optional=True`). UI, Abbenay, and Gateway are pod-level/enterprise services the CLI daemon does not start. Gateway is co-located in Helm Simple / Podman (ADR-069 / ADR-004); ADR-049 plans Gateway embedding in the local daemon.
 - Do NOT modify files outside task scope
 - Do NOT add features not in requirements
 - Ask for clarification if specs are ambiguous

@@ -20,7 +20,7 @@ The rule set is not static or uniform:
 
 - **Built-in rules** are baked into the engine image. Different engine versions have different rules (e.g., v2.1 adds L073).
 - **Plugin rules** are dynamic. [ADR-042 (Third-Party Plugin Services)](ADR-042-third-party-plugin-services.md) plugins register `EXT-` prefixed rules via their `Describe` RPC. A pod with the `secteam` plugin has rules that a pod without it does not.
-- **Multi-pod deployments** (ADR-012, ADR-034) mean multiple Primaries, potentially with different engine versions or plugin sets. A management UI that shows rules from one pod may not reflect the reality of another.
+- **Multi-pod deployments** (ADR-012, ADR-034) mean multiple Engines, potentially with different engine versions or plugin sets. A management UI that shows rules from one pod may not reflect the reality of another.
 
 ### Override delivery
 
@@ -35,11 +35,11 @@ In a multi-pod deployment, which pod's rule set is canonical? If Pod A has `EXT-
 
 ## Decision
 
-**We will establish the Gateway as the authoritative rule catalog and the Primary as the registration source, with overrides delivered at scan time via `ScanRequest`.**
+**We will establish the Gateway as the authoritative rule catalog and the Engine as the registration source, with overrides delivered at scan time via `FixSession` (`SessionCommand.upload` carries `ScanChunk`; `ScanChunk` carries `ScanOptions` on the first chunk).**
 
-### 1. Primary registers rules with the Gateway on startup
+### 1. Engine registers rules with the Gateway on startup
 
-When a Primary starts, it discovers its validators and plugins (per ADR-005 and [ADR-042](ADR-042-third-party-plugin-services.md)), collects the full rule set from each, and registers the catalog with the Gateway.
+When an Engine starts, it discovers its validators and plugins (per ADR-005 and [ADR-042](ADR-042-third-party-plugin-services.md)), collects the full rule set from each, and registers the catalog with the Gateway.
 
 Each rule registration includes:
 
@@ -53,32 +53,32 @@ Each rule registration includes:
 | `scope` | string | Rule scope (per ADR-026) |
 | `enabled` | bool | Default enabled state |
 
-The registration mechanism reuses the existing engine → Gateway push channel (ADR-020 / ADR-034). A new `RegisterRules` RPC on the Gateway's Reporting service (or a dedicated management RPC) accepts the full rule set from a Primary.
+The registration mechanism reuses the existing engine → Gateway push channel (ADR-020 / ADR-034). A new `RegisterRules` RPC on the Gateway's Reporting service (`reporting.proto`) accepts the full rule set from an Engine.
 
-Built-in rules and plugin rules use the **same registration path**. No build-time injection, no separate mechanism. The Primary is the single source that reports everything it can execute.
+Built-in rules and plugin rules use the **same registration path**. No build-time injection, no separate mechanism. The Engine is the single source that reports everything it can execute.
 
 ### 2. Gateway reconciles on re-registration
 
-The Gateway treats each registration as the **complete current state** of the registering Primary's rule set. On re-registration (Primary restart, engine upgrade, plugin added/removed):
+The Gateway treats each registration as the **complete current state** of the registering Engine's rule set. On re-registration (Engine restart, engine upgrade, plugin added/removed):
 
 - **New rules** (in registration but not in DB) → added to catalog
 - **Removed rules** (in DB but not in registration) → removed from catalog; orphaned overrides flagged
 - **Unchanged rules** → no-op
 
-This makes rule lifecycle automatic. Engine upgrade adds L073? Primary restarts, re-registers, Gateway catalog updated. Plugin removed? Primary restarts without those `EXT-` rules, re-registers, Gateway drops them. No manual intervention.
+This makes rule lifecycle automatic. Engine upgrade adds L073? Engine restarts, re-registers, Gateway catalog updated. Plugin removed? Engine restarts without those `EXT-` rules, re-registers, Gateway drops them. No manual intervention.
 
 ### 3. Rule authority model
 
-**Single-pod** (default): the one Primary is the authority. No flag needed.
+**Single-pod** (default): the one Engine is the authority. No flag needed.
 
-**Multi-pod**: one pod is designated as the **rule authority** via explicit configuration (e.g., `APME_RULE_AUTHORITY=true` env var). Exactly one Primary per deployment should have this flag set. That Primary's registration defines the canonical catalog. Other Primaries do not register rules — they are listeners that receive scan requests and execute.
+**Multi-pod**: one pod is designated as the **rule authority** via explicit configuration (e.g., `APME_RULE_AUTHORITY=true` env var). Exactly one Engine per deployment should have this flag set. That Engine's registration defines the canonical catalog. Other Engines do not register rules — they are listeners that receive scan requests and execute.
 
-- The Gateway only accepts rule registrations from a Primary that identifies itself as the authority. Registrations from non-authority Primaries are rejected (no-op, logged). There is no implicit "first to register wins" behavior.
-- If the authority Primary goes down, other Primaries keep scanning. The catalog is in the Gateway's DB. The authority is a registration-time concept, not a runtime dependency.
-- If the authority Primary comes back (or upgrades), it re-registers. The Gateway reconciles the catalog.
-- For identical replicas (same image, same plugins), any Primary can be chosen as the authority since they all have the same rule set, but the choice is explicit via configuration.
+- The Gateway only accepts rule registrations from an Engine that identifies itself as the authority. Registrations from non-authority Engines are rejected (no-op, logged). There is no implicit "first to register wins" behavior.
+- If the authority Engine goes down, other Engines keep scanning. The catalog is in the Gateway's DB. The authority is a registration-time concept, not a runtime dependency.
+- If the authority Engine comes back (or upgrades), it re-registers. The Gateway reconciles the catalog.
+- For identical replicas (same image, same plugins), any Engine can be chosen as the authority since they all have the same rule set, but the choice is explicit via configuration.
 
-### 4. Overrides ride with `ScanRequest`
+### 4. Overrides ride with `FixSession` (`ScanOptions`)
 
 The Gateway sends the **full resolved rule configuration** — not just deltas — with every scan request. This keeps the engine stateless: it executes exactly what it's told, with no need to remember what it registered or cache previous overrides.
 
@@ -97,36 +97,43 @@ message ScanOptions {
   string ansible_core_version = 2;
   repeated string collection_specs = 3;
   string session_id = 4;
-  repeated RuleConfig rule_configs = 5;   // NEW — full resolved rule set
+  repeated GalaxyServerDef galaxy_servers = 5;
+  repeated RuleConfig rule_configs = 6;   // NEW — full resolved rule set
+  bool rule_configs_complete = 7;       // true = Gateway sent the full catalog
 }
 ```
 
-At ~100 bytes per rule in protobuf, a 200-rule catalog is ~20KB — negligible compared to the file payloads already in `ScanRequest`.
+At ~100 bytes per rule in protobuf, a 200-rule catalog is ~20KB — negligible compared to the file payloads already in a `FixSession` upload.
 
-The Primary applies the rule configuration before fanning out to validators:
+The Engine applies rule configuration after validator fan-out:
 
-- Rules with `enabled=false` are excluded from the validation fan-out
-- Severity values are applied to violations before returning results
+- Validators run first; the Engine filters disabled rules and applies
+  severity overrides to the merged violation set before returning results
 - Rules with `enforced=true` ignore inline `# apme:ignore` annotations — the violation always counts regardless of code-level suppression. This is the compliance lever: an admin can mandate that certain rules (e.g., SEC, policy) cannot be suppressed by developers at the code level
-- If the request includes a `rule_id` the Primary doesn't have → hard fail (see §5)
+- Unknown rule IDs in `rule_configs` hard-fail only when the Gateway sends
+  a complete catalog (`rule_configs_complete=true`); CLI-only unknown IDs
+  produce warnings (see §5)
 
 The CLI can also pass rule configs (from a local `.apme/rules.yml` or flags), enabling the same mechanism outside the Gateway.
 
 ### 5. Hard fail on rule mismatch
 
-If the Gateway sends a scan request that references a rule the Primary cannot execute (e.g., plugin not deployed, engine version skew), the Primary **fails the scan** with a descriptive error — not a silent skip, not a warning.
+When `rule_configs_complete=true`, the Engine treats both unknown and omitted
+rule IDs as errors and **fails the scan** with a descriptive error — not a
+silent skip. When `rule_configs_complete=false` (typical CLI-only configs),
+the same conditions produce warnings and scanning continues.
 
-This is the consistency enforcement mechanism:
+This is the consistency enforcement mechanism for Gateway-delivered catalogs:
 
 - Rolling upgrade with new Gateway catalog but old engine → scans fail → forces completion of the upgrade
 - Multi-pod deployment where one pod is missing a plugin → scans fail → operational signal to deploy the plugin or deregister the rules
-- No silent degradation — you always know what you're scanning for
+- No silent degradation when the Gateway asserts a complete catalog — you always know what you're scanning for
 
 ### 6. Plugin registration is a cluster-wide commitment
 
-When a Primary registers plugin rules (`EXT-*`) with the Gateway, those rules become part of the canonical catalog. The Gateway includes them in scan requests to **all** Primaries. Any Primary without the corresponding plugin cannot execute those rules and will fail the scan.
+When an Engine registers plugin rules (`EXT-*`) with the Gateway, those rules become part of the canonical catalog. The Gateway includes them in scan requests to **all** Engines. Any Engine without the corresponding plugin cannot execute those rules and will fail the scan.
 
-Deploying a plugin to one pod means deploying it to all pods. Removing a plugin means the authority Primary re-registers without those rules, and the Gateway drops them from the catalog.
+Deploying a plugin to one pod means deploying it to all pods. Removing a plugin means the authority Engine re-registers without those rules, and the Gateway drops them from the catalog.
 
 ## Alternatives Considered
 
@@ -143,11 +150,11 @@ Deploying a plugin to one pod means deploying it to all pods. Removing a plugin 
 - Two mechanisms needed: build-time for built-in rules, runtime registration for plugins
 - Rolling upgrades become more complex — Gateway manifest must match engine version exactly
 
-**Why not chosen**: Runtime registration handles both built-in and plugin rules uniformly. The startup delay (Primary registers before scans can run) is acceptable since the Gateway already can't scan until an engine is up.
+**Why not chosen**: Runtime registration handles both built-in and plugin rules uniformly. The startup delay (Engine registers before scans can run) is acceptable since the Gateway already can't scan until an engine is up.
 
 ### Alternative 2: Each pod is an island
 
-**Description**: Each Primary registers with its own Gateway independently. No authority model. Each pod manages its own catalog and overrides.
+**Description**: Each Engine registers with its own Gateway independently. No authority model. Each pod manages its own catalog and overrides.
 
 **Pros**:
 - Simplest implementation — no coordination
@@ -181,58 +188,62 @@ Deploying a plugin to one pod means deploying it to all pods. Removing a plugin 
 
 **Pros**:
 - Engine always has latest overrides
-- No proto change on `ScanRequest`
+- No proto change on `ScanOptions` / `FixSession`
 
 **Cons**:
 - Inverts the dependency direction — engine would depend on Gateway
 - Creates a circular dependency (Gateway → engine for scans, engine → Gateway for config)
 - Engine can't scan if Gateway is down (for the config fetch)
 
-**Why not chosen**: The current architecture has a clean dependency direction: Gateway depends on engine, not the other way. Overrides in `ScanRequest` preserve this.
+**Why not chosen**: The current architecture has a clean dependency direction: Gateway depends on engine, not the other way. Overrides in `FixSession` (`ScanOptions`) preserve this.
 
 ## Consequences
 
 ### Positive
 
 - **Single mechanism** for both built-in and plugin rule registration — no special cases
-- **Self-healing catalog** — re-registration on Primary restart handles additions, removals, and upgrades automatically
-- **Clean dependency direction** — overrides flow Gateway → engine via `ScanRequest`, no circular dependency
-- **Resilient** — authority Primary going down does not affect scanning; catalog is persisted in Gateway DB
+- **Self-healing catalog** — re-registration on Engine restart handles additions, removals, and upgrades automatically
+- **Clean dependency direction** — overrides flow Gateway → engine via `FixSession` (`ScanOptions`), no circular dependency
+- **Resilient** — authority Engine going down does not affect scanning; catalog is persisted in Gateway DB
 - **Consistency enforcement** — hard fail on rule mismatch prevents silent degradation
 - **Enables REQ-005 and REQ-007** — severity management and rule enable/disable become Gateway UI + CRUD once this infrastructure exists
 
 ### Negative
 
-- **Startup ordering dependency** — Gateway cannot show the rule management UI or send overrides until the authority Primary has registered. Mitigated: the Gateway already can't scan until an engine is up.
-- **Single authority limitation** — in early multi-pod deployments, accidental dual-authority (two Primaries both marked as authority with different rule sets) would cause catalog thrashing. Mitigated: operational discipline and eventual conflict detection.
+- **Startup ordering dependency** — Gateway cannot show the rule management UI or send overrides until the authority Engine has registered. Mitigated: the Gateway already can't scan until an engine is up.
+- **Single authority limitation** — in early multi-pod deployments, accidental dual-authority (two Engines both marked as authority with different rule sets) would cause catalog thrashing. Mitigated: operational discipline and eventual conflict detection.
 - **Proto change** — adding `RuleConfig` to `ScanOptions` and a registration RPC requires proto regeneration and coordinated deployment.
 
 ### Neutral
 
 - Inline acknowledgment (`# apme:ignore`) is unaffected — it's scan-time annotation parsing in the engine, independent of the catalog.
 - Existing scan behavior is unchanged when no overrides are present (all rules enabled at default severity).
-- Plugin `Describe` RPC ([ADR-042](ADR-042-third-party-plugin-services.md)) provides the rule metadata that Primaries forward during registration.
+- Plugin `Describe` RPC ([ADR-042](ADR-042-third-party-plugin-services.md)) provides the rule metadata that Engines forward during registration.
 
 ## Implementation Notes
 
 ### Phase 1: Registration contract
 
-1. Define `RegisterRulesRequest`/`RegisterRulesResponse` messages in `reporting.proto` (or a new `management.proto`)
+1. Define `RegisterRulesRequest`/`RegisterRulesResponse` messages and the
+   `RegisterRules` RPC on the Gateway Reporting service in `reporting.proto`
 2. Each validator exposes its rule metadata (ID, default severity, description, scope) via an internal interface
-3. Primary aggregates across validators and plugins, calls `RegisterRules` on Gateway at startup
+3. Engine aggregates across validators and plugins, calls `RegisterRules` on Gateway at startup
 4. Gateway persists catalog in a `rules` table, reconciles on re-registration
 
 ### Phase 2: Override delivery
 
-1. Add `RuleConfig` message and `repeated RuleConfig rule_configs` to `ScanOptions` in `primary.proto`
-2. Primary applies overrides: filters disabled rules, attaches severity overrides to violations
-3. Gateway sends overrides with each `ScanRequest` from its stored override config
+1. Add `RuleConfig` message and `repeated RuleConfig rule_configs` to `ScanOptions` in `engine.proto`
+2. Engine applies overrides after fan-out: filters disabled rules, attaches severity overrides to violations
+3. Gateway sends overrides with each `FixSession` request from its stored override config
 4. CLI reads overrides from `.apme/rules.yml` and passes them in `ScanOptions`
 
 ### Phase 3: Rule mismatch enforcement
 
-1. Primary validates incoming rule configs against its known rule set
-2. If a config references a rule the Primary doesn't have → Primary aborts the `Scan` RPC with `FAILED_PRECONDITION` status, including the unknown rule IDs in the status detail
+1. Engine validates incoming rule configs against its known rule set
+2. When `rule_configs_complete=true`, missing or unknown rule IDs → Engine
+   aborts the `FixSession` RPC with `FAILED_PRECONDITION` status, including
+   the offending rule IDs in the status detail. When `rule_configs_complete=false`,
+   the same conditions produce warnings only.
 3. Gateway interprets this non-OK gRPC status as a deployment/configuration issue and surfaces it in the UI
 
 ### Phase 4: Gateway UI (REQ-005 / REQ-007)
@@ -256,7 +267,7 @@ Deploying a plugin to one pod means deploying it to all pods. Removing a plugin 
 
 - PR #88: REQ-005 Rule Rating & Severity (blocked on this ADR)
 - PR #90: REQ-007 Rule Management & Issue Acknowledgment (blocked on this ADR)
-- `proto/apme/v1/primary.proto` — `ScanOptions`, `ScanRequest`
+- `proto/apme/v1/engine.proto` — `ScanOptions`, `FixSession`, `SessionCommand`
 - `proto/apme/v1/reporting.proto` — Reporting service (registration endpoint)
 
 ---

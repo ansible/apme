@@ -6,7 +6,7 @@ Collections are installed *incrementally* into the active core-version venv;
 old core-version venvs are retained until TTL reaping.
 
 Write authority / read-only consumers:
-    The Primary orchestrator is the sole venv authority (calls ``acquire()``).
+    The Engine orchestrator is the sole venv authority (calls ``acquire()``).
     Validators mount the sessions volume read-only and receive a ``venv_path``
     in ``ValidateRequest``.
 

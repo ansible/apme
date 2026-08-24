@@ -60,7 +60,7 @@ class ReportingServicer:
         raise NotImplementedError('Method not implemented!')
 
     def RegisterRules(self, request, context):
-        """Rule catalog registration (ADR-041).  The authority Primary pushes
+        """Rule catalog registration (ADR-041).  The authority Engine pushes
         its full rule set on startup; the Gateway reconciles its catalog.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)

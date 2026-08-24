@@ -2,7 +2,7 @@
 
 This document traces a **check** request from CLI to violation output, covering every transformation and serialization boundary. (The engine still **scans** files internally; the user action is **check**, not “run a scan.”)
 
-**ADR-039:** `ScanStream` and unary `Scan` were removed. The thin CLI and gateway use **`FixSession`** for both **check** and **remediate**. The sequence below shows the engine pipeline and validator fan-out once Primary has the project files via the `FixSession` chunked upload.
+**ADR-039:** `ScanStream` and unary `Scan` were removed. The thin CLI and gateway use **`FixSession`** for both **check** and **remediate**. The sequence below shows the engine pipeline and validator fan-out once Engine has the project files via the `FixSession` chunked upload.
 
 ## Request Lifecycle
 
@@ -22,11 +22,11 @@ User runs:  apme check /path/to/project
 │     - options (ansible_core_version, collection_specs)│
 │     - No fix_options = check mode (dry-run)           │
 │                                                       │
-│  gRPC: Primary.FixSession(stream SessionCommand) ─────────┐
+│  gRPC: Engine.FixSession(stream SessionCommand) ─────────┐
 └───────────────────────────────────────────────────────┘    │
                                                              ▼
 ┌──────────────────────────────────────────────────────────────────┐
-│  Primary (daemon/primary_server.py)                              │
+│  Engine (daemon/engine_server.py)                              │
 │                                                                  │
 │  4. _write_chunked_fs(): write uploaded files to temp dir        │
 │                                                                  │
@@ -79,7 +79,7 @@ User runs:  apme check /path/to/project
 │     │  │                                                  │      │
 │     │  ├─► Ansible :50053                                 │      │
 │     │  │   - Write files to temp dir                      │      │
-│     │  │   - Use session venv from Primary (read-only)     │      │
+│     │  │   - Use session venv from Engine (read-only)     │      │
 │     │  │   - Run AnsibleValidator (syntax, argspec,       │      │
 │     │  │     FQCN, deprecation, redirect, removed)        │      │
 │     │  │   → violations[] + ValidatorDiagnostics          │      │
@@ -108,7 +108,8 @@ User runs:  apme check /path/to/project
 │     - Each validator's ValidatorDiagnostics                      │
 │     - Fan-out wall-clock, total wall-clock                       │
 │                                                                  │
-│  Stream back SessionEvent(violations, diagnostics, patches)      │
+│  Stream SessionEvent(violations, patches, progress) to the CLI; emit        │
+│  FixCompletedEvent(diagnostics) on the reporting path (Gateway sink)      │
 └──────────────────────────────────────────────────────────────────┘
                          │
                          ▼
@@ -194,11 +195,11 @@ Serializes into a flat JSON structure consumable by OPA and other payload-based 
 
 ## Serialization Boundaries
 
-### CLI → Primary (gRPC)
+### CLI → Engine (gRPC)
 
-Files are sent as protobuf `File` messages (`path` + `content` bytes). This is the **"chunked filesystem" pattern** — the CLI reads all text files from the project and sends them over the wire so the Primary doesn't need filesystem access.
+Files are sent as protobuf `File` messages (`path` + `content` bytes). This is the **"chunked filesystem" pattern** — the CLI reads all text files from the project and sends them over the wire so the Engine doesn't need filesystem access.
 
-### Primary → Validators (gRPC)
+### Engine → Validators (gRPC)
 
 Multiple serialization formats in one `ValidateRequest`:
 
@@ -209,13 +210,13 @@ Multiple serialization formats in one `ValidateRequest`:
 | `files` | protobuf `File` messages | Ansible | Raw file content for writing to temp dirs (syntax check). |
 | `venv_path` | string | Ansible, Collection Health, Dep Audit | Path to session-scoped venv (read-only for validators). |
 
-### Validators → Primary (gRPC)
+### Validators → Engine (gRPC)
 
 Each validator returns `ValidateResponse` containing:
 - Protobuf `Violation` messages
 - `ValidatorDiagnostics` with per-rule timing, violation counts, and validator-specific metadata
 
-Primary converts violations to dicts, merges, deduplicates, and converts back to proto. It also aggregates all `ValidatorDiagnostics` with engine phase timing into a `ScanDiagnostics` message streamed via the `SessionEvent`.
+Engine converts violations to dicts, merges, deduplicates, and converts back to proto. It also aggregates all `ValidatorDiagnostics` with engine phase timing into a `ScanDiagnostics` message. `SessionEvent` / `SessionResult` do not carry diagnostics; the aggregated message is emitted on the `FixCompletedEvent` reporting path (and recorded as OTel metrics). CLI `-v` / `-vv` surfaces pipeline `ProgressUpdate` logs from the session stream, not a protobuf diagnostics field on `SessionEvent`.
 
 ---
 
@@ -231,9 +232,10 @@ Gitleaks→ ValidatorDiagnostics (subprocess_ms)
 Coll Health → ValidatorDiagnostics (per-collection timing, collections_scanned)
 Dep Audit → ValidatorDiagnostics (subprocess_ms, packages_audited)
                               ↓
-Primary aggregates → ScanDiagnostics
+Engine aggregates → ScanDiagnostics
                               ↓
-SessionEvent.diagnostics → CLI (-v / -vv) or JSON consumer
+FixCompletedEvent.diagnostics → Gateway reporting sink / OTel metrics
+Session ProgressUpdate logs → CLI (-v / -vv)
 ```
 
 ---
@@ -284,10 +286,10 @@ OPA evaluation for the remainder of the process when evaluations consistently ha
 
 ## Daemon Mode
 
-The CLI daemon (`apme daemon start`) runs Primary + validators as localhost gRPC
+The CLI daemon (`apme daemon start`) runs Engine + validators as localhost gRPC
 servers in a single process without containers:
 
-1. Engine + Primary run directly
+1. Engine and validators run directly
 2. Native, OPA, Ansible validators run as in-process gRPC servers
 3. Galaxy Proxy runs as a local uvicorn HTTP server
 4. OPA invoked via Podman container or local binary (see table above)
@@ -303,8 +305,8 @@ Optional validators (Gitleaks, Collection Health, Dep Audit) start when
 
 ```
 ┌─────────────┐     ┌─────────────┐     ┌─────────────────────────────────┐
-│    CLI      │────►│   Primary   │────►│           Validators            │
-│             │     │   Engine    │     │  Native | OPA | Ansible |       │
+│    CLI      │────►│   Engine    │────►│           Validators            │
+│             │     │ orchestrator│     │  Native | OPA | Ansible |       │
 │ FixSession  │     │             │     │  Gitleaks | CollHealth | Dep    │
 │ (files)     │     │ hierarchy + │     │                                 │
 └─────────────┘     │ graph +     │     │ ValidateRequest                 │
@@ -317,7 +319,7 @@ Optional validators (Gitleaks, Collection Health, Dep Audit) start when
                            │         + diagnostics
                            ▼
                     ┌─────────────┐
-                    │   Primary   │
+                    │   Engine    │
                     │   Merge +   │
                     │   Dedup     │
                     └──────┬──────┘

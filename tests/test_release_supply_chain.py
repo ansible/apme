@@ -301,7 +301,7 @@ def test_subjects_json_format_from_supply_chain_skip_sign() -> None:
         subjects_file = root / "subjects.json"
         images_file = root / "images.txt"
         tags_file = root / "tags.txt"
-        images_file.write_text("primary\ngateway\n", encoding="utf-8")
+        images_file.write_text("engine\ngateway\n", encoding="utf-8")
         tags_file.write_text("v1.0.0\n", encoding="utf-8")
 
         docker_stub = """\
@@ -309,7 +309,7 @@ def test_subjects_json_format_from_supply_chain_skip_sign() -> None:
 set -euo pipefail
 if [[ "${1:-}" == "buildx" && "${2:-}" == "imagetools" && "${3:-}" == "inspect" ]]; then
   case "${4:-}" in
-    *apme-primary*) echo "sha256:aaa111" ;;
+    *apme-engine*) echo "sha256:aaa111" ;;
     *apme-gateway*) echo "sha256:bbb222" ;;
     *)
       echo "unexpected image ref: ${4:-}" >&2
@@ -357,8 +357,8 @@ echo '{"bomFormat":"CycloneDX","specVersion":"1.5","version":1,"components":[]}'
         assert result.returncode == 0, result.stderr or result.stdout
         subjects = json.loads(subjects_file.read_text(encoding="utf-8"))
     assert sorted(subjects, key=lambda item: item["name"]) == [
+        {"name": "ghcr.io/ansible/apme-engine", "digest": "sha256:aaa111"},
         {"name": "ghcr.io/ansible/apme-gateway", "digest": "sha256:bbb222"},
-        {"name": "ghcr.io/ansible/apme-primary", "digest": "sha256:aaa111"},
     ]
 
 
@@ -372,7 +372,7 @@ def test_subjects_json_includes_configured_quay_namespace() -> None:
         subjects_file = root / "subjects.json"
         images_file = root / "images.txt"
         tags_file = root / "tags.txt"
-        images_file.write_text("primary\n", encoding="utf-8")
+        images_file.write_text("engine\n", encoding="utf-8")
         tags_file.write_text("v1.0.0\n", encoding="utf-8")
 
         docker_stub = """\
@@ -380,8 +380,8 @@ def test_subjects_json_includes_configured_quay_namespace() -> None:
 set -euo pipefail
 if [[ "${1:-}" == "buildx" && "${2:-}" == "imagetools" && "${3:-}" == "inspect" ]]; then
   case "${4:-}" in
-    *ghcr.io/*/apme-primary*) echo "sha256:aaa111" ;;
-    *quay.io/private-org/apme-primary*) echo "sha256:ccc333" ;;
+    *ghcr.io/*/apme-engine*) echo "sha256:aaa111" ;;
+    *quay.io/private-org/apme-engine*) echo "sha256:ccc333" ;;
     *)
       echo "unexpected image ref: ${4:-}" >&2
       exit 1
@@ -429,8 +429,8 @@ echo '{"bomFormat":"CycloneDX","specVersion":"1.5","version":1,"components":[]}'
         assert result.returncode == 0, result.stderr or result.stdout
         subjects = json.loads(subjects_file.read_text(encoding="utf-8"))
     assert sorted(subjects, key=lambda item: item["name"]) == [
-        {"name": "ghcr.io/ansible/apme-primary", "digest": "sha256:aaa111"},
-        {"name": "quay.io/private-org/apme-primary", "digest": "sha256:ccc333"},
+        {"name": "ghcr.io/ansible/apme-engine", "digest": "sha256:aaa111"},
+        {"name": "quay.io/private-org/apme-engine", "digest": "sha256:ccc333"},
     ]
 
 
@@ -443,8 +443,8 @@ def test_subjects_json_format_from_supply_chain_helper() -> None:
         tmp_file.write_text(
             "\n".join(
                 [
-                    "ghcr.io/ansible/apme-primary\tsha256:abc",
-                    "ghcr.io/ansible/apme-primary\tsha256:abc",
+                    "ghcr.io/ansible/apme-engine\tsha256:abc",
+                    "ghcr.io/ansible/apme-engine\tsha256:abc",
                     "ghcr.io/ansible/apme-gateway\tsha256:def",
                 ]
             )
@@ -470,8 +470,8 @@ def test_subjects_json_format_from_supply_chain_helper() -> None:
         )
     subjects = json.loads(result.stdout)
     assert sorted(subjects, key=lambda item: item["name"]) == [
+        {"name": "ghcr.io/ansible/apme-engine", "digest": "sha256:abc"},
         {"name": "ghcr.io/ansible/apme-gateway", "digest": "sha256:def"},
-        {"name": "ghcr.io/ansible/apme-primary", "digest": "sha256:abc"},
     ]
 
 
@@ -482,7 +482,7 @@ def test_subjects_json_rejects_malformed_rows() -> None:
         subjects_file = Path(tmpdir) / "subjects.json"
         tmp_file = Path(f"{subjects_file}.tmp")
         tmp_file.write_text(
-            "ghcr.io/ansible/apme-primary\tsha256:abc\n"
+            "ghcr.io/ansible/apme-engine\tsha256:abc\n"
             "missing-digest-column\n"
             "ghcr.io/ansible/apme-gateway\tsha256:def\n",
             encoding="utf-8",
@@ -514,7 +514,7 @@ def test_subjects_json_rejects_extra_fields() -> None:
         subjects_file = Path(tmpdir) / "subjects.json"
         tmp_file = Path(f"{subjects_file}.tmp")
         tmp_file.write_text(
-            "ghcr.io/ansible/apme-primary\tsha256:abc\nghcr.io/ansible/apme-gateway\tsha256:def\textra-field\n",
+            "ghcr.io/ansible/apme-engine\tsha256:abc\nghcr.io/ansible/apme-gateway\tsha256:def\textra-field\n",
             encoding="utf-8",
         )
 
@@ -543,9 +543,7 @@ def test_subjects_json_normalizes_crlf_input() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         subjects_file = Path(tmpdir) / "subjects.json"
         tmp_file = Path(f"{subjects_file}.tmp")
-        tmp_file.write_bytes(
-            b"ghcr.io/ansible/apme-primary\tsha256:abc\r\nghcr.io/ansible/apme-gateway\tsha256:def\r\n"
-        )
+        tmp_file.write_bytes(b"ghcr.io/ansible/apme-engine\tsha256:abc\r\nghcr.io/ansible/apme-gateway\tsha256:def\r\n")
 
         result = subprocess.run(
             [
@@ -565,8 +563,8 @@ def test_subjects_json_normalizes_crlf_input() -> None:
         )
     subjects = json.loads(result.stdout)
     assert sorted(subjects, key=lambda item: item["name"]) == [
+        {"name": "ghcr.io/ansible/apme-engine", "digest": "sha256:abc"},
         {"name": "ghcr.io/ansible/apme-gateway", "digest": "sha256:def"},
-        {"name": "ghcr.io/ansible/apme-primary", "digest": "sha256:abc"},
     ]
 
 
@@ -577,5 +575,6 @@ def test_images_file_lists_published_services() -> None:
         for line in IMAGES_FILE.read_text(encoding="utf-8").splitlines()
         if line.strip() and not line.strip().startswith("#")
     }
-    for image_name in ("primary", "gateway", "ui"):
+    for image_name in ("engine", "gateway", "ui"):
         assert image_name in names
+    assert "primary" not in names

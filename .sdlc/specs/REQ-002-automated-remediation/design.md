@@ -7,7 +7,7 @@ See [design-remediation.md](../../context/design-remediation.md) for detailed re
 
 ## Implementation Approach
 
-Implemented as a two-pass remediation engine (ADR-036) within the Primary service. The engine consumes scan violations and produces file patches through a three-tier classification model.
+Implemented as a two-pass remediation engine (ADR-036) within the Engine service. The engine consumes scan violations and produces file patches through a three-tier classification model.
 
 ## Key Components
 

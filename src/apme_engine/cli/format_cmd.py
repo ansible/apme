@@ -1,4 +1,4 @@
-"""Format subcommand: stream files to Primary.FormatStream, apply/show diffs."""
+"""Format subcommand: stream files to Engine.FormatStream, apply/show diffs."""
 
 from __future__ import annotations
 
@@ -8,10 +8,10 @@ from pathlib import Path
 
 import grpc
 
-from apme.v1 import primary_pb2_grpc
+from apme.v1 import engine_pb2_grpc
 from apme_engine.cli._exit_codes import EXIT_ERROR, EXIT_VIOLATIONS
 from apme_engine.cli._project_root import derive_session_id, discover_project_root
-from apme_engine.cli.discovery import resolve_primary
+from apme_engine.cli.discovery import resolve_engine
 from apme_engine.cli.output import render_logs
 from apme_engine.daemon.chunked_fs import yield_scan_chunks
 
@@ -40,8 +40,8 @@ def run_format(args: argparse.Namespace) -> None:
         sys.stderr.write(f"{e}\n")
         sys.exit(EXIT_ERROR)
 
-    channel, _ = resolve_primary(args)
-    stub = primary_pb2_grpc.PrimaryStub(channel)  # type: ignore[no-untyped-call]
+    channel, _ = resolve_engine(args)
+    stub = engine_pb2_grpc.EngineStub(channel)  # type: ignore[no-untyped-call]
     try:
         resp = stub.FormatStream(chunks, timeout=120)
     except grpc.RpcError as e:

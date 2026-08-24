@@ -118,7 +118,7 @@ The rescan uses multiple strategies depending on the validator:
 | Gitleaks | Slim graph data from dirty node YAML |
 
 All validator rescans are dispatched via `_rescan_bridge()` in
-`primary_server.py`, which uses `asyncio.gather()` for parallel execution
+`engine_server.py`, which uses `asyncio.gather()` for parallel execution
 over gRPC.
 
 ### Auto-Approval
@@ -172,7 +172,7 @@ supporting both the approval flow and step-by-step diff generation.
 | `src/apme_engine/remediation/registry.py` | `TransformRegistry`, `NodeTransformFn` |
 | `src/apme_engine/remediation/transforms/` | Built-in transform implementations |
 | `src/apme_engine/engine/content_graph.py` | `ContentGraph.apply_transform()`, `ContentNode` |
-| `src/apme_engine/daemon/primary_server.py` | `_session_graph_remediate()`, `_rescan_bridge()` |
+| `src/apme_engine/daemon/engine_server.py` | `_session_graph_remediate()`, `_rescan_bridge()` |
 
 ## Related ADRs
 

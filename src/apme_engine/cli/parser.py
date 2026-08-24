@@ -211,7 +211,7 @@ def build_parser() -> argparse.ArgumentParser:
     health_p = subparsers.add_parser(
         "health-check",
         parents=[global_opts],
-        help="Check health of the engine (Primary + all downstream services)",
+        help="Check health of the Engine and all downstream services",
     )
     health_p.add_argument("--timeout", type=float, default=5.0, help="Timeout per check (default: 5s)")
     health_p.add_argument("--json", action="store_true", help="Output as JSON")

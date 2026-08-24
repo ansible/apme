@@ -242,7 +242,7 @@
     },
     {
       "title": "Validator gRPC Validate p95",
-      "description": "Live Validate RPC latency per validator process (server middleware). Distinct from ADR-013 apme_validator_duration_* recorded by Primary after fan-out.",
+      "description": "Live Validate RPC latency per validator process (server middleware). Distinct from ADR-013 apme_validator_duration_* recorded by Engine after fan-out.",
       "type": "timeseries",
       "gridPos": {
         "h": 8,

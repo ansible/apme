@@ -117,10 +117,10 @@ APME **does not use these capabilities** for its file pipeline because:
    no Ansible awareness.
 
 2. **Protobuf chunking**: Files must be packaged into `ScanChunk` protobuf
-   messages for the gRPC stream to Primary. This is APME-specific serialization
+   messages for the gRPC stream to Engine. This is APME-specific serialization
    that Backstage cannot provide.
 
-3. **gRPC streaming**: The chunked files are streamed to Primary over
+3. **gRPC streaming**: The chunked files are streamed to Engine over
    `FixSession` (check and remediate modes; ADR-039). The gateway must hold the gRPC
    stream and correlate it with the WebSocket connection. This is the gateway's
    core responsibility.

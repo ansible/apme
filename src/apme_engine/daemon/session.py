@@ -19,7 +19,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from apme.v1.common_pb2 import ProgressUpdate
-from apme.v1.primary_pb2 import (
+from apme.v1.engine_pb2 import (
     FileDiff,
     FilePatch,
     FixOptions,
@@ -40,7 +40,7 @@ _REAP_INTERVAL = 60  # seconds
 
 @dataclass
 class SessionState:
-    """Ephemeral per-session state held on the Primary.
+    """Ephemeral per-session state held on the Engine.
 
     Attributes:
         session_id: Unique session identifier.
@@ -161,7 +161,7 @@ class SessionState:
     progress_logs: list[ProgressUpdate] = field(default_factory=list)
 
     # Session-scoped ansible.cfg for Galaxy auth (ADR-045).
-    # Written by Primary from proto galaxy_servers; cleaned up with temp_dir.
+    # Written by Engine from proto galaxy_servers; cleaned up with temp_dir.
     galaxy_cfg_path: Path | None = None
 
     # Manifest data captured from the first scan pass (ADR-040)

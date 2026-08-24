@@ -79,7 +79,7 @@ interaction).
 ```
                    ┌──────────────────────────── apme-pod ────────────────────────┐
                    │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐    │
-                   │  │ Primary  │  │  Native  │  │   OPA    │  │ Ansible  │ ...│
+                   │  │ Engine   │  │  Native  │  │   OPA    │  │ Ansible  │ ...│
                    │  │  :50051  │  │  :50055  │  │  :50054  │  │  :50053  │    │
                    │  └──────────┘  └──────────┘  └──────────┘  └──────────┘    │
                    └─────────┬──────────────────────────────────────────────────┘
@@ -91,7 +91,7 @@ interaction).
 │  │  FastAPI (async)                                                   │        │
 │  │  ├── REST API (/api/v1/scans, /health, /rules, ...)               │        │
 │  │  ├── WebSocket ↔ FixSession bidi gRPC bridge                      │        │
-│  │  ├── gRPC client → Primary (FixSession, FormatStream, Health)     │        │
+│  │  ├── gRPC client → Engine (FixSession, FormatStream, Health)     │        │
 │  │  ├── File discovery + chunking (mounted vol or SCM clone)         │        │
 │  │  └── SQLite persistence (scan history, violations, proposals)     │        │
 │  └───────────────────────────────────────────────────────────────────┘        │
@@ -121,7 +121,7 @@ RHDH/Backstage instance (hosts UI plugin)
 ### Cross-Pod Deployment
 
 The gateway lives **outside** the engine pod. For V1 (single engine pod), the
-gateway connects directly to `APME_PRIMARY_ADDRESS` (e.g., `host:50051`). For
+gateway connects directly to `APME_ENGINE_ADDRESS` (e.g., `host:50051`). For
 multi-pod deployments, a standard L4 load balancer (Kubernetes Service, HAProxy,
 Envoy) sits between the gateway and N engine pods:
 
@@ -174,7 +174,7 @@ closes on WebSocket disconnect or explicit close command.
 ### File Ingestion Paths
 
 Three file ingestion paths are supported, each ending with the gateway
-constructing `ScanChunk` protobuf messages and streaming them to Primary:
+constructing `ScanChunk` protobuf messages and streaming them to Engine:
 
 **Path 1 — Browser upload**: User uploads files via the WebSocket session.
 Files are sent as base64-encoded JSON messages, written to a temp directory on
@@ -186,12 +186,12 @@ is negligible.
 The gateway clones the repo via direct `git clone` into a temp directory (or
 via `CacheMaintainer.CloneOrg` for org-level batch operations), runs
 APME-specific file discovery, reads files, and streams `ScanChunk` messages
-to Primary. For single-repo URLs, `git clone` is the primary mechanism;
+to Engine. For single-repo URLs, `git clone` is the primary mechanism;
 `CloneOrg` is used when scanning entire GitHub/GitLab organizations.
 
 **Path 3 — Local directory**: User submits a filesystem path (e.g.,
 `/workspace/my-project`). The gateway reads files from a mounted volume, applies
-file discovery, and streams `ScanChunk` messages to Primary.
+file discovery, and streams `ScanChunk` messages to Engine.
 
 In all cases the gateway owns the entire file → chunk → gRPC pipeline.
 
@@ -308,7 +308,7 @@ dashboard's core value proposition.
 - **Engine stays stateless** — no database client, no schema, no persistence
   logic in the engine. Consistent with ADR-020.
 - **CLI and web UI are interchangeable consumers** — both talk to the same
-  Primary gRPC contract. Adding the web gateway changes zero engine code.
+  Engine gRPC contract. Adding the web gateway changes zero engine code.
 - **HITL remediation via existing protocol** — the FixSession bidi stream
   (ADR-028) was designed to be client-agnostic. The web gateway is the second
   client (after the CLI) proving that design.
@@ -324,7 +324,7 @@ dashboard's core value proposition.
 - **SQLite single-writer limitation** — concurrent writes are serialized.
   Acceptable for single-user V1; PostgreSQL upgrade path documented.
 - **Gateway becomes a critical path** — if the gateway is down, the web UI is
-  unavailable. The CLI continues to work independently (it talks to Primary
+  unavailable. The CLI continues to work independently (it talks to Engine
   directly).
 
 ### Neutral
@@ -332,7 +332,7 @@ dashboard's core value proposition.
 - The gateway does not import `apme_engine`. It is a pure gRPC client using
   the generated proto stubs from `apme.v1`.
 - The CLI is unaffected. It continues to work as before, connecting directly
-  to Primary.
+  to Engine.
 - `ScanCompleted` event emission (ADR-020) is optional — the engine works with
   or without a reporting endpoint configured.
 
@@ -343,7 +343,7 @@ dashboard's core value proposition.
 The gateway runs as its own container, deployed alongside (but outside) the
 engine pod. It needs:
 
-- Network access to Primary's gRPC port (50051)
+- Network access to Engine's gRPC port (50051)
 - A mounted volume for SQLite (`/data`)
 - Optional: mounted volume for local project scanning (`/workspace`)
 

@@ -164,7 +164,7 @@ giving the LLM a chance to correct its approach. The loop is capped by
 
 ## Provider Wiring
 
-`PrimaryServicer._resolve_ai_provider()` creates an `AbbenayProvider` when:
+`EngineServicer._resolve_ai_provider()` creates an `AbbenayProvider` when:
 
 1. `FixOptions.enable_ai` is set
 2. Abbenay address is available (`APME_ABBENAY_ADDR` or auto-discovery)
@@ -184,7 +184,7 @@ Auto-discovery checks for Unix sockets at:
 | `src/apme_engine/remediation/ai_provider.py` | `AIProvider` protocol, `AINodeFix`, `AISkipped` |
 | `src/apme_engine/remediation/ai_context.py` | `build_ai_node_context()`, `AINodeContext` |
 | `src/apme_engine/remediation/abbenay_provider.py` | `AbbenayProvider`, `_build_node_prompt()`, `_parse_node_response()` |
-| `src/apme_engine/daemon/primary_server.py` | `_resolve_ai_provider()` |
+| `src/apme_engine/daemon/engine_server.py` | `_resolve_ai_provider()` |
 
 ## Related ADRs
 

@@ -3,7 +3,7 @@
 # Keep this file as the single source of truth for the merge script and
 # the workflow prepare job (do not duplicate the list in YAML).
 base
-primary
+engine
 native
 opa
 ansible

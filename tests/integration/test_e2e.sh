@@ -57,7 +57,7 @@ pass "Pod is Running"
 echo "==> Phase 3: Health check"
 sleep 3  # let services finish starting
 HEALTH_OUTPUT=$(podman run --rm --pod apme-pod \
-  -e APME_PRIMARY_ADDRESS=127.0.0.1:50051 \
+  -e APME_ENGINE_ADDRESS=127.0.0.1:50051 \
   --entrypoint apme apme-cli:latest \
   health-check 2>&1) || true
 echo "$HEALTH_OUTPUT"
@@ -73,7 +73,7 @@ TEST_DIR="$ROOT/tests/integration"
 SCAN_OUTPUT=$(podman run --rm --pod apme-pod \
   -v "$TEST_DIR":/workspace:ro,Z \
   -w /workspace \
-  -e APME_PRIMARY_ADDRESS=127.0.0.1:50051 \
+  -e APME_ENGINE_ADDRESS=127.0.0.1:50051 \
   --entrypoint apme apme-cli:latest \
   check --json . 2>/dev/null) || true
 
@@ -148,21 +148,21 @@ else
   fail "$DUPS duplicate violation(s) found"
 fi
 
-# ─── Phase 7: Primary daemon logs ──────────────────────────────────────────────
-echo "==> Phase 7: Primary daemon logs"
-PRIMARY_LOGS=$(podman logs apme-pod-primary 2>&1 || true)
-echo "$PRIMARY_LOGS" | tail -10
+# ─── Phase 7: Engine daemon logs ───────────────────────────────────────────────
+echo "==> Phase 7: Engine daemon logs"
+ENGINE_LOGS=$(podman logs apme-pod-engine 2>&1 || true)
+echo "$ENGINE_LOGS" | tail -10
 
-if echo "$PRIMARY_LOGS" | grep -q "Opa="; then
-  pass "Primary logged OPA violation count"
+if echo "$ENGINE_LOGS" | grep -q "Opa="; then
+  pass "Engine logged OPA violation count"
 else
-  fail "Primary did not log OPA violation count"
+  fail "Engine did not log OPA violation count"
 fi
 
-if echo "$PRIMARY_LOGS" | grep -q "Native="; then
-  pass "Primary logged Native violation count"
+if echo "$ENGINE_LOGS" | grep -q "Native="; then
+  pass "Engine logged Native violation count"
 else
-  fail "Primary did not log Native violation count"
+  fail "Engine did not log Native violation count"
 fi
 
 # ─── Phase 8: OPA and Native validator logs ───────────────────────────────────

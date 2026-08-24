@@ -32,7 +32,9 @@ one needs to change, write an ADR first.
 
 4. **Unified Validator contract** (`validate.proto`). Every validator implements
    `Validator.Validate` + `Validator.Health`. Adding a validator means
-   implementing one RPC and setting an env var — not changing Primary's code.
+   implementing both RPCs, setting the env var, and wiring the local daemon
+   (`_DEFAULT_PORTS` or `_OPTIONAL_SERVICES`, `env_map`, and a spawn block in
+   `_run_daemon()`). Engine scan/orchestration code does not need changes.
 
 5. **Stateless engine, persistence at the edge** (ADR-020, ADR-029). The engine
    pod has zero database code. Persistence lives in the Gateway (SQLAlchemy +
@@ -40,13 +42,13 @@ one needs to change, write an ADR first.
    path never blocks on reporting.
 
 6. **Scale pods, not individual services** (ADR-012). The engine runtime is a
-   unit: Primary + all validators + Galaxy Proxy. In the reference Podman pod,
+   unit: Engine + all validators + Galaxy Proxy. In the reference Podman pod,
    Gateway, UI, and Abbenay share the same pod for convenience, but the scaling
    invariant applies to the engine/validator stack: horizontal scaling replicates
    that stack as a unit. Do not extract individual validators into separate
    deployments.
 
-7. **Session venvs are Primary-owned** (ADR-022). Primary is the single writer
+7. **Session venvs are Engine-owned** (ADR-022). Engine is the single writer
    to `/sessions`. Ansible validator mounts it read-only. No other service
    writes to venvs.
 
@@ -60,7 +62,7 @@ one needs to change, write an ADR first.
 
 10. **`FixSession` is the sole client path** (ADR-039). Both `check` and
     `remediate` use the bidirectional `FixSession` RPC. The unary `Scan` and
-    `ScanStream` RPCs have been removed from `primary.proto`. All client
+    `ScanStream` RPCs have been removed from `engine.proto`. All client
     operations go through `FixSession`.
 
 11. **The engine never queries out; it only emits** (ADR-020, ADR-029). The
@@ -75,7 +77,7 @@ one needs to change, write an ADR first.
     systems (message buses, webhooks, third-party APIs) belongs in the Gateway.
 
 12. **Engine-core services are required, not optional.** The engine runtime
-    comprises Primary, Native, OPA, Ansible, and Galaxy Proxy. All five are
+    comprises Engine, Native, OPA, Ansible, and Galaxy Proxy. All five are
     required for both the CLI daemon and the Podman pod — their dependencies
     belong in core `dependencies` (not optional extras), and they live in
     `_DEFAULT_PORTS`. Galaxy Proxy is the sole collection installation path
@@ -84,8 +86,8 @@ one needs to change, write an ADR first.
     because they require external binaries or venv-dependent scanning;
     they start when `include_optional=True`. UI and Abbenay are pod-level /
     enterprise services the CLI daemon does not start. The Gateway is
-    co-located in the local daemon (ADR-049) and in Helm Simple / Podman
-    (ADR-069 / ADR-004).
+    co-located in Helm Simple / Podman (ADR-069 / ADR-004); ADR-049 plans
+    Gateway embedding in the local daemon as future work.
 
 13. **Transforms are semantically trusted; the engine owns state and syntax**
     (ADR-044). Transforms operate on an **ephemeral copy** of the graph and
@@ -179,16 +181,16 @@ one needs to change, write an ADR first.
 
 ### 2. Engine Agent
 
-**Purpose**: Implements the project loading engine and Primary orchestrator.
+**Purpose**: Implements the project loading engine and Engine orchestrator.
 
 **Context Files**:
 - `CLAUDE.md`
 - `.sdlc/specs/REQ-001-scanning-engine/`
 - `.sdlc/context/architecture.md`
-- `proto/apme/v1/primary.proto`
+- `proto/apme/v1/engine.proto`
 - `proto/apme/v1/validate.proto`
 
-**Scope**: `src/apme_engine/engine/`, `src/apme_engine/daemon/primary_server.py`, `src/apme_engine/runner.py`
+**Scope**: `src/apme_engine/engine/`, `src/apme_engine/daemon/engine_server.py`, `src/apme_engine/runner.py`
 
 **Capabilities**:
 - Integrate with the vendored project loader engine (ADR-003)
@@ -364,7 +366,7 @@ src/
 ├── apme/v1/                     # Generated proto stubs — NEVER edit by hand
 ├── apme_engine/                  # Core product
 │   ├── cli/                      # apme: check, remediate, format, health-check, daemon, sbom, suppress
-│   ├── daemon/                   # gRPC servers: primary, native, opa, ansible, gitleaks, collection_health, dep_audit
+│   ├── daemon/                   # gRPC servers: engine, native, opa, ansible, gitleaks, collection_health, dep_audit
 │   │   └── sinks/                # Event sinks (grpc_reporting)
 │   ├── engine/                   # Project loader: parser, models, annotators, graph
 │   ├── remediation/              # Convergence engine, transforms, AI provider

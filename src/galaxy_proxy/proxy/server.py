@@ -438,7 +438,7 @@ def create_app(
     async def convert_tarballs(tarball_dir: str) -> dict[str, list[str]]:
         """Convert all tarballs in a directory to wheels and cache them.
 
-        This endpoint supports the flow where Primary sends collection specs
+        This endpoint supports the flow where Engine sends collection specs
         and the proxy converts pre-downloaded tarballs to wheels.
 
         Args:
@@ -539,7 +539,7 @@ def _load_servers_from_ansible_cfg(cfg_path: Path) -> list[GalaxyServerConfig]:
     """Parse Galaxy servers from an ``ansible.cfg`` file.
 
     This is used by the proxy's version-discovery path when no Gateway-pushed
-    server list is present, such as local daemon mode where the Primary
+    server list is present, such as local daemon mode where the Engine
     temporarily exposes a session-scoped ``ANSIBLE_CONFIG``.
 
     Args:

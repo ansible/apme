@@ -13,8 +13,8 @@ Implemented
 ### Current state
 
 ADR-024 refactored the CLI into a thin gRPC client that talks exclusively to the
-Primary orchestrator. The `FixStream` RPC is one-shot: the client streams file
-bytes in, the Primary runs format → Tier 1 convergence loop → post-format, and
+Engine orchestrator. The `FixStream` RPC is one-shot: the client streams file
+bytes in, the Engine runs format → Tier 1 convergence loop → post-format, and
 returns a single `FixResponse` with all applied patches.
 
 ### Problems with one-shot
@@ -65,7 +65,7 @@ editors). gRPC keepalives handle connection health natively.
 
 **Replace `FixStream` with a single bidirectional streaming RPC: `FixSession`.**
 
-An ephemeral session assistant on the Primary holds working state per session.
+An ephemeral session assistant on the Engine holds working state per session.
 The engine (scan, remediate, format) stays stateless. The session streams
 progress events and waits for approval commands. All clients (CLI, web UI, CI)
 use the same pipeline — `--auto-approve` is just the client sending `Approve`
@@ -103,7 +103,7 @@ Close()                      ──────>
 ### gRPC contract
 
 ```protobuf
-service Primary {
+service Engine {
   rpc FixSession(stream SessionCommand) returns (stream SessionEvent);
 }
 ```
@@ -256,7 +256,7 @@ for progress events.
 
 ### Negative
 
-- **Primary becomes session-aware** — ephemeral in-memory state per session
+- **Engine becomes session-aware** — ephemeral in-memory state per session
   (mitigated by timeout-based GC and max session limits)
 - **Bidirectional streaming complexity** — more complex than unary RPCs
   (mitigated by team's existing experience with gRPC back channels in Abbenay)

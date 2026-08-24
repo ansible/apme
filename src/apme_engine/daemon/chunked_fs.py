@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from apme.v1.common_pb2 import File, GalaxyServerDef
-from apme.v1.primary_pb2 import RuleConfig, ScanChunk, ScanOptions
+from apme.v1.engine_pb2 import RuleConfig, ScanChunk, ScanOptions
 
 # Max bytes per ScanChunk message to stay under typical gRPC max message size (e.g. 4 MiB).
 CHUNK_MAX_BYTES = 1024 * 1024  # 1 MiB
