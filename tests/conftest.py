@@ -6,6 +6,13 @@ import pytest
 
 from apme_engine.engine.models import YAMLDict
 
+try:
+    import sqlalchemy  # noqa: F401
+except ImportError:
+    pytest_plugins: list[str] = []
+else:
+    pytest_plugins = ["tests.gateway_db"]
+
 
 @pytest.fixture  # type: ignore[untyped-decorator]
 def repo_root() -> Path:

@@ -5,10 +5,13 @@ from __future__ import annotations
 from sqlalchemy import event, inspect, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
+from apme_gateway.db.dialect import in_clause_chunk_size
 from apme_gateway.db.models import Base
+from apme_gateway.db.url import is_database_url, is_sqlite_url, resolve_database_url, sqlite_url_from_path
 
 _engine: AsyncEngine | None = None
 _session_factory: async_sessionmaker[AsyncSession] | None = None
+_database_url: str | None = None
 
 
 def _set_sqlite_pragma(
@@ -26,21 +29,97 @@ def _set_sqlite_pragma(
     cursor.close()
 
 
-async def init_db(db_path: str) -> None:
+def _normalize_init_target(database_url_or_path: str) -> str:
+    """Accept either a SQLAlchemy URL or a SQLite filesystem path.
+
+    Args:
+        database_url_or_path: URL or SQLite file path.
+
+    Returns:
+        SQLAlchemy async database URL.
+    """
+    if is_database_url(database_url_or_path):
+        return database_url_or_path
+    return sqlite_url_from_path(database_url_or_path)
+
+
+async def init_db(database_url_or_path: str) -> None:
     """Create the async engine, run DDL, and configure the session factory.
 
     Args:
-        db_path: Filesystem path to the SQLite database file.
+        database_url_or_path: SQLAlchemy database URL (``postgresql+asyncpg://...``,
+            ``sqlite+aiosqlite:///...``) or a SQLite filesystem path for backward
+            compatibility with tests and ``APME_DB_PATH``.
     """
-    global _engine, _session_factory  # noqa: PLW0603
-    url = f"sqlite+aiosqlite:///{db_path}"
+    global _engine, _session_factory, _database_url  # noqa: PLW0603
+    url = _normalize_init_target(database_url_or_path)
+    _database_url = url
     _engine = create_async_engine(url, echo=False)
-    event.listen(_engine.sync_engine, "connect", _set_sqlite_pragma)
+    if is_sqlite_url(url):
+        event.listen(_engine.sync_engine, "connect", _set_sqlite_pragma)
     _session_factory = async_sessionmaker(_engine, expire_on_commit=False)
     async with _engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await conn.run_sync(_migrate_violations_table)
         await conn.run_sync(_migrate_proposals_table)
+
+
+async def init_db_from_config(*, database_url: str | None = None, db_path: str | None = None) -> str:
+    """Initialize the database from gateway configuration values.
+
+    Args:
+        database_url: Optional explicit SQLAlchemy URL.
+        db_path: Optional SQLite path when no URL is configured.
+
+    Returns:
+        Resolved database URL used for the engine.
+    """
+    url = resolve_database_url(database_url=database_url, db_path=db_path)
+    await init_db(url)
+    return url
+
+
+async def reset_db() -> None:
+    """Drop all tables and recreate schema (test helper).
+
+    Raises:
+        RuntimeError: If init_db has not been called.
+    """
+    if _engine is None:
+        msg = "Database not initialised — call init_db() first"
+        raise RuntimeError(msg)
+    async with _engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+    async with _engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(_migrate_violations_table)
+        await conn.run_sync(_migrate_proposals_table)
+
+
+def get_engine() -> AsyncEngine:
+    """Return the active async engine.
+
+    Returns:
+        Current AsyncEngine instance.
+
+    Raises:
+        RuntimeError: If init_db has not been called.
+    """
+    if _engine is None:
+        msg = "Database not initialised — call init_db() first"
+        raise RuntimeError(msg)
+    return _engine
+
+
+def get_in_clause_chunk_size() -> int:
+    """Return the safe ``IN`` clause chunk size for the active database.
+
+    Returns:
+        Chunk size for the current engine dialect, or SQLite default before init.
+    """
+    if _engine is None:
+        return 900
+    return in_clause_chunk_size(_engine.sync_engine)
 
 
 def _migrate_violations_table(conn: object) -> None:
@@ -142,11 +221,12 @@ def _migrate_proposals_table(conn: object) -> None:
 
 async def close_db() -> None:
     """Dispose of the engine connection pool."""
-    global _engine, _session_factory  # noqa: PLW0603
+    global _engine, _session_factory, _database_url  # noqa: PLW0603
     if _engine is not None:
         await _engine.dispose()
         _engine = None
         _session_factory = None
+        _database_url = None
 
 
 def get_session() -> AsyncSession:

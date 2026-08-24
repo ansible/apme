@@ -55,7 +55,7 @@ This builds a shared base image, eleven service images, and pulls one official i
 | `apme-collection-health:latest` | `containers/collection-health/Dockerfile` | Installed collection health scanner |
 | `apme-dep-audit:latest` | `containers/dep-audit/Dockerfile` | Python CVE scanner (pip-audit) |
 | `apme-galaxy-proxy:latest` | `containers/galaxy-proxy/Dockerfile` | PEP 503 proxy: Galaxy tarballs → Python wheels |
-| `apme-gateway:latest` | `containers/gateway/Dockerfile` | REST API + gRPC Reporting service (SQLite) |
+| `apme-gateway:latest` | `containers/gateway/Dockerfile` | REST API + gRPC Reporting service (SQLite or PostgreSQL) |
 | `apme-ui:latest` | `containers/ui/Dockerfile` | React SPA served by nginx (proxies API to Gateway) |
 | `apme-cli:latest` | `containers/cli/Dockerfile` | CLI client |
 | `ghcr.io/redhat-developer/abbenay:v2026.8.6` | [Official image](https://github.com/redhat-developer/abbenay/pkgs/container/abbenay) (pulled) | Abbenay AI daemon (LLM gateway for Tier 2 remediation) |
@@ -202,7 +202,8 @@ proxy gRPC requests to it.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `APME_DB_PATH` | `/data/apme.db` | Path to the SQLite database (stores activity, sessions, rule catalog, and rule overrides) |
+| `APME_DATABASE_URL` | *(unset)* | Optional SQLAlchemy URL for PostgreSQL (e.g. `postgresql+asyncpg://user:pass@host:5432/apme`). When set, takes precedence over SQLite. |
+| `APME_DB_PATH` | `/data/apme.db` | Path to the SQLite database when `APME_DATABASE_URL` is unset (stores activity, sessions, rule catalog, and rule overrides) |
 | `APME_GATEWAY_GRPC_LISTEN` | `0.0.0.0:50060` | gRPC Reporting service listen address |
 | `APME_GATEWAY_HTTP_HOST` | `0.0.0.0` | REST API bind host |
 | `APME_GATEWAY_HTTP_PORT` | `8080` | REST API bind port |
@@ -430,7 +431,8 @@ localhost (ADR-005). Multi-replica engine HPA is not offered by this chart.
 **Highlights (ADR-069 Simple / EAP / upstream):**
 
 - One Deployment: Engine + validators + Galaxy Proxy + Gateway + UI + optional Abbenay (localhost)
-- `replicas: 1` (HPA unsupported while Gateway SQLite shares the pod)
+- `replicas: 1` for both engine and gateway (HPA and `autoscaling.enabled` are
+  unsupported for SQLite and PostgreSQL in the Simple chart)
 - Ingress/Route support (OpenShift Routes included)
 - NetworkPolicy for Ingress → Gateway/UI HTTP ports only
 - PVCs for sessions, Gateway DB, and Galaxy Proxy cache
@@ -450,6 +452,22 @@ allowed engine HPA. Upgrading to this chart:
   Simple pod)
 
 PVC names (`*-sessions`, `*-gateway-data`, `*-proxy-cache`) are unchanged.
+
+### PostgreSQL (optional)
+
+> **Migration warning:** Changing the backend does not migrate existing SQLite
+> data. Back up the SQLite database and perform a separate migration before
+> switching an existing installation to PostgreSQL. Activity, sessions, rules,
+> and overrides remain on the SQLite PVC while PostgreSQL starts with an empty
+> database.
+
+By default the Gateway uses SQLite on the `gateway-data` PVC (`APME_DB_PATH=/data/apme.db`).
+For PostgreSQL, set `gateway.database.existingSecret.name` and
+`gateway.database.existingSecret.key` to reference a Kubernetes Secret containing
+the full SQLAlchemy URL (for example `postgresql+asyncpg://user:pass@host:5432/apme`).
+The chart injects it via `valueFrom.secretKeyRef` so credentials are not rendered
+in the Deployment manifest. For non-production installs you may set
+`gateway.database.url` directly instead of a Secret.
 
 ### Quick start
 

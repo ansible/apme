@@ -11,6 +11,7 @@ from sqlalchemy import case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from apme_gateway.db import get_in_clause_chunk_size
 from apme_gateway.db.models import (
     GalaxyServer,
     Notification,
@@ -34,17 +35,14 @@ from apme_gateway.db.models import (
 
 logger = logging.getLogger(__name__)
 
-_SQLITE_BIND_LIMIT = 900
-
 
 def _chunked_not_in(column: Any, ids: set[int]) -> Any:
-    """Build a NOT IN exclusion filter safe for SQLite's bind-parameter limit.
+    """Build a NOT IN exclusion filter safe for the active dialect's bind limit.
 
-    For sets within a single chunk (<=900 IDs), produces a single
-    ``column NOT IN (...)`` clause with bound parameters. For larger sets,
-    inlines the integer PKs as SQL literals in a single ``NOT IN (...)``
-    clause — no bind parameters and no compound selects — to avoid both
-    SQLITE_MAX_VARIABLE_NUMBER (999) and SQLITE_LIMIT_COMPOUND_SELECT (500).
+    For sets within a single chunk, produces a single ``column NOT IN (...)``
+    clause with bound parameters. For larger sets, inlines the integer PKs as
+    SQL literals in a single ``NOT IN (...)`` clause — no bind parameters and
+    no compound selects — to stay within bind-parameter limits.
 
     Args:
         column: SQLAlchemy column to filter.
@@ -58,7 +56,8 @@ def _chunked_not_in(column: Any, ids: set[int]) -> Any:
 
         return true()
     id_list = sorted(ids)
-    if len(id_list) <= _SQLITE_BIND_LIMIT:
+    bind_limit = get_in_clause_chunk_size()
+    if len(id_list) <= bind_limit:
         return column.not_in(id_list)
     from sqlalchemy import literal_column  # noqa: PLC0415
 
@@ -2477,7 +2476,7 @@ async def suppressed_violation_ids(
     (ADR-055), and checks against stored suppression hashes.
 
     Uses a DB-side subquery for scan ID filtering to avoid exceeding
-    SQLite's per-statement bind-variable limit when many projects exist.
+    PostgreSQL bind-variable limits when many projects exist.
 
     When ``project_id`` is provided (single-project view), only global and
     that project's scoped suppressions are checked. When ``project_id`` is

@@ -6,7 +6,6 @@ import asyncio
 import ssl
 import time
 from collections.abc import AsyncIterator
-from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -14,7 +13,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from apme_gateway.app import create_app
-from apme_gateway.db import close_db, get_session, init_db
+from apme_gateway.db import get_session
 from apme_gateway.db.models import PatchedFile, Project, Scan, Session
 from apme_gateway.operation_registry import get_operation_registry
 from apme_gateway.operation_types import OperationResult, OperationStatus
@@ -22,22 +21,7 @@ from apme_gateway.scm.base import PullRequestResult, detect_provider
 from apme_gateway.scm.github import GitHubProvider, _custom_ca_bundle, _http_verify, _parse_owner_repo
 from apme_gateway.scm.registry import get_provider
 
-
-@pytest.fixture(autouse=True)  # type: ignore[untyped-decorator]
-async def _db(tmp_path: Path) -> AsyncIterator[None]:
-    """Initialise a fresh DB and clear operation registry per test.
-
-    Args:
-        tmp_path: Pytest-provided temporary directory.
-
-    Yields:
-        None: Test runs between setup and teardown.
-    """
-    await init_db(str(tmp_path / "test.db"))
-    yield
-    registry = get_operation_registry()
-    await registry.shutdown()
-    await close_db()
+pytestmark = pytest.mark.usefixtures("gateway_db")
 
 
 @pytest.fixture  # type: ignore[untyped-decorator]
