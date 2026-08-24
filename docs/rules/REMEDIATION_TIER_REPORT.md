@@ -109,7 +109,7 @@ Analysis of default remediation routing for all rules. Regenerate with:
 | L033 | low | task | Task/block scope — AI can propose fix (Tier 2) |
 | L035 | low | task | Task/block scope — AI can propose fix (Tier 2) |
 | L036 | low | task | Task/block scope — AI can propose fix (Tier 2) |
-| L039 | low | task | Task/block scope — AI can propose fix (Tier 2) |
+| L039 | medium | task | Task/block scope — AI can propose fix (Tier 2) |
 | L041 | low | task | Task/block scope — AI can propose fix (Tier 2) |
 | L044 | low | task | Task/block scope — AI can propose fix (Tier 2) |
 | L045 | low | task | Task/block scope — AI can propose fix (Tier 2) |

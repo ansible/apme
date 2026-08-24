@@ -398,7 +398,7 @@ class UndefinedVariableGraphRule(GraphRule):
     enabled: bool = True
     name: str = "UndefinedVariable"
     version: str = "v0.0.1"
-    severity: Severity = Severity.LOW
+    severity: Severity = Severity.MEDIUM
     tags: tuple[str, ...] = (Tag.VARIABLE,)
 
     def match(self, graph: ContentGraph, node_id: str) -> bool:

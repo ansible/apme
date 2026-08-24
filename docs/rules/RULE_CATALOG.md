@@ -96,7 +96,7 @@ Full analysis and promotion candidates: [REMEDIATION_TIER_REPORT.md](REMEDIATION
 | L036 | L | Native | low | task | ai | include_vars without when/tags. | Yes | Yes | Yes | — |
 | L037 | L | Native | medium | collection | manual | Module name could not be resolved. | Yes | Yes | Yes | — |
 | L038 | L | Native | medium | role | manual | Role could not be resolved. | Yes | — | Yes | — |
-| L039 | L | Native | low | task | ai | Variable use may be undefined. | Yes | Yes | Yes | — |
+| L039 | L | Native | medium | task | ai | Variable use may be undefined. | Yes | Yes | Yes | — |
 | L040 | L | Native | info | playbook | manual | YAML should not contain tabs; use spaces. | Yes | Yes | Yes | — |
 | L041 | L | Native | low | task | ai | Task keys should follow canonical order (e.g. name before module). | Yes | Yes | Yes | — |
 | L042 | L | Native | info | play | manual | Play/block has high task count. | Yes | Yes | Yes | — |
@@ -291,7 +291,7 @@ Full analysis and promotion candidates: [REMEDIATION_TIER_REPORT.md](REMEDIATION
 | L036 | low | task | ai | include_vars without when/tags. | Yes | Yes | Yes | — |
 | L037 | medium | collection | manual | Module name could not be resolved. | Yes | Yes | Yes | — |
 | L038 | medium | role | manual | Role could not be resolved. | Yes | — | Yes | — |
-| L039 | low | task | ai | Variable use may be undefined. | Yes | Yes | Yes | — |
+| L039 | medium | task | ai | Variable use may be undefined. | Yes | Yes | Yes | — |
 | L040 | info | playbook | manual | YAML should not contain tabs; use spaces. | Yes | Yes | Yes | — |
 | L041 | low | task | ai | Task keys should follow canonical order (e.g. name before module). | Yes | Yes | Yes | — |
 | L042 | info | play | manual | Play/block has high task count. | Yes | Yes | Yes | — |

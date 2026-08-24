@@ -2,7 +2,7 @@
 
 ## Status
 
-Open
+Decided
 
 ## Raised By
 
@@ -119,7 +119,7 @@ ai_prompt: |
 - DR-019: AI Remediation Rule Compliance
 - DR-020: M005 False Positive Exemptions
 - GitHub: eloycoto/ansible-sample PR #2 (test case)
-- **PR #582**: [fix(L039): add ai_prompt for AI-assisted remediation](https://github.com/ansible/apme/pull/582)
+- **PR #586**: [fix(L039): exclude task's own register variable from undefined check](https://github.com/ansible/apme/pull/586) (includes ``ai_prompt``)
 
 ---
 
@@ -129,23 +129,24 @@ ai_prompt: |
 |------|-------------|-------|
 | 2026-08-21 | User | Reported AI remediation not fixing L039 findings |
 | 2026-08-21 | Claude | Found L039 has no ai_prompt; only R-series rules have guidance |
+| 2026-08-24 | ffirg / PR #586 | Implemented Option A: ``ai_prompt`` with noqa-when-trusted, no arbitrary ``default()`` |
 
 ---
 
 ## Decision
 
-**Status**: Open
-**Date**: 
-**Decided By**: 
+**Status**: Decided
+**Date**: 2026-08-24
+**Decided By**: Phil Griffiths (ffirg) via PR #586
 
-**Decision**: 
+**Decision**: Option A — add ``ai_prompt`` with noqa-when-trusted-source guidance
 
-**Rationale**: 
+**Rationale**: Matches the R-series pattern. AI adds ``# noqa: L039`` when the variable appears to come from inventory, role params, extra_vars, or a prior-task register, and skips when the source is genuinely unclear. Arbitrary ``default()`` filters are forbidden because a wrong default can change playbook behavior.
 
 **Action Items**:
-- [ ] Add ai_prompt to L039 guidance file
-- [ ] Test with eloycoto/ansible-sample PR
-- [ ] Document in remediation docs
+- [x] Add ai_prompt to L039 guidance file
+- [x] Unit tests for L039 (PR #586); live eloycoto/ansible-sample retest not required for this decision
+- [x] Document in L039.md and generated rule catalog
 
 ---
 
