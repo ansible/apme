@@ -57,8 +57,8 @@ model we are not delivering via this chart.
 | 16. Helm for K8s/OCP; Podman local | Consistent — Helm method unchanged |
 
 This ADR **amends** ADR-054’s Helm workload topology and the Helm-specific
-reading of ADR-012 / ADR-029 “independent Gateway scaling.” It does **not**
-change Podman, bootc, or the daemon.
+reading of ADR-012 / ADR-029 “independent Gateway scaling.” Podman uses the
+same Engine→Abbenay Unix socket. bootc and the CLI daemon are unchanged.
 
 ## Decision
 
@@ -161,7 +161,8 @@ EAP AI remediation.
 
 ### Neutral
 
-- bootc / Podman / CLI daemon paths unchanged in intent (already co-located).
+- bootc / CLI daemon paths unchanged in intent (already co-located).
+  Podman matches Helm for Engine→Abbenay (Unix socket).
 - ADR-034 multi-pod Gateway registration remains future work if multi-engine
   returns.
 - Portal vs standalone UI values files unchanged in purpose.
@@ -180,7 +181,8 @@ EAP AI remediation.
 - Update `docs/guides/DEPLOYMENT.md`, chart README/NOTES, and
   `.sdlc/context/architecture.md` Scaling section.
 - Align or simplify APME #400 / PR #492: keep client TLS factory for non-Helm
-  remote Abbenay if needed; chart path is loopback plaintext.
+  remote Abbenay if needed; chart Engine gRPC is a Unix socket, TCP loopback
+  remains for in-container probes.
 - Follow-up: Abbenay #65 (cert reuse) remains useful for non-Simple remote
   clients, not required for this chart topology.
 

@@ -412,6 +412,9 @@ spec:
                 secretKeyRef:
                   name: {{ $fullname }}-secrets
                   key: abbenay-token
+            # Same unix ADDR as Engine so /health probes the socket, not leftover TCP.
+            - name: APME_ABBENAY_ADDR
+              value: "unix:///tmp/abbenay-run/abbenay/daemon.sock"
             {{- end }}
             {{- if .Values.collectionHealth.enabled }}
             - name: COLLECTION_HEALTH_GRPC_ADDRESS
@@ -454,6 +457,10 @@ spec:
           volumeMounts:
             - name: gateway-data
               mountPath: /data
+            {{- if .Values.abbenay.enabled }}
+            - name: abbenay-run
+              mountPath: /tmp/abbenay-run
+            {{- end }}
           resources:
             {{- toYaml .Values.gateway.resources | nindent 12 }}
 
@@ -574,14 +581,14 @@ spec:
             - name: abbenay-grpc
               containerPort: 50057
               protocol: TCP
-          # Bind is 127.0.0.1 — kubelet tcpSocket to the pod IP cannot reach it.
-          # Probe localhost inside the container instead (Abbenay image includes node).
+          # Engine AI uses the Unix socket; TCP :50057 is leftover for probes.
+          # Ready only when both the socket exists and loopback gRPC accepts.
           readinessProbe:
             exec:
               command:
                 - node
                 - -e
-                - "require('net').createConnection(50057,'127.0.0.1').on('connect',function(c){c.end();process.exit(0)}).on('error',function(){process.exit(1)})"
+                - "const fs=require('fs');if(!fs.existsSync('/tmp/abbenay-run/abbenay/daemon.sock'))process.exit(1);require('net').createConnection(50057,'127.0.0.1').on('connect',function(c){c.end();process.exit(0)}).on('error',function(){process.exit(1)})"
             initialDelaySeconds: 5
             periodSeconds: 10
           livenessProbe:
@@ -589,7 +596,7 @@ spec:
               command:
                 - node
                 - -e
-                - "require('net').createConnection(50057,'127.0.0.1').on('connect',function(c){c.end();process.exit(0)}).on('error',function(){process.exit(1)})"
+                - "const fs=require('fs');if(!fs.existsSync('/tmp/abbenay-run/abbenay/daemon.sock'))process.exit(1);require('net').createConnection(50057,'127.0.0.1').on('connect',function(c){c.end();process.exit(0)}).on('error',function(){process.exit(1)})"
             initialDelaySeconds: 15
             periodSeconds: 30
           resources:
