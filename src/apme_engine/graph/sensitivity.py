@@ -34,7 +34,7 @@ _SCALAR_SECRET_RE = re.compile(
     r"passwd\s*[=:]|"
     r"api[_-]?key\s*[=:]|"
     r"bearer\s+\S+|"
-    r"BEGIN\s+(?:RSA\s+)?PRIVATE\s+KEY|"
+    r"BEGIN\s+(?:[A-Z]+\s+)?PRIVATE\s+KEY|"
     r"://[^:]+:[^@]+@|"
     r"\$ANSIBLE_VAULT;|"
     r"!vault\b"
@@ -50,7 +50,7 @@ _OPAQUE_TOKEN_RE = re.compile(
     r")"
 )
 _WORD_BOUNDARY_RE = re.compile(r"(?:^|[_.'\"\[])({})(?:[_.'\"\[\]]|$)".format("|".join(_SENSITIVE_WORDS)))
-_URL_USERINFO_RE = re.compile(r"^([^:]+)://([^/@]+):([^/@]+)@")
+_URL_USERINFO_RE = re.compile(r"^([^:/?#]+)://([^/?#]*)@")
 
 
 def redact_url_userinfo(url: str) -> str:

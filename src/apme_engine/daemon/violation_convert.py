@@ -235,7 +235,14 @@ def violation_dict_to_proto(v: ViolationDict | Mapping[str, str | int | list[int
                     try:
                         parsed = json.loads(val)
                     except json.JSONDecodeError:
-                        out.metadata[key] = val
+                        sanitized = sanitize_audit_metadata_value(key, val)
+                        serialized = serialize_audit_metadata_value(
+                            sanitized,
+                            rule_id=str(v.get("rule_id") or ""),
+                            key=key,
+                        )
+                        if serialized is not None:
+                            out.metadata[key] = serialized
                     else:
                         sanitized = sanitize_audit_metadata_value(key, parsed)
                         serialized = serialize_audit_metadata_value(

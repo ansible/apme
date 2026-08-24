@@ -236,6 +236,28 @@ class TestViolationDictToProto:
         restored = violation_proto_to_dict(proto)
         assert restored.get("variable_set") == "not-json"
 
+    def test_audit_json_metadata_non_json_string_is_sanitized_on_write(self) -> None:
+        """Non-JSON audit strings are redacted before proto persistence."""
+        v: ViolationDict = {
+            "rule_id": "R404",
+            "variable_set": "db_password=s3cret",
+        }
+        proto = violation_dict_to_proto(v)
+        stored = proto.metadata["variable_set"]
+        assert stored != "db_password=s3cret"
+        assert "[REDACTED]" in stored
+
+    def test_inbound_src_non_json_string_redacts_url_credentials(self) -> None:
+        """Non-JSON inbound_src strings scrub embedded URL credentials."""
+        v: ViolationDict = {
+            "rule_id": "R401",
+            "inbound_src": "https://admin:pass@host/file.tar.gz",
+        }
+        proto = violation_dict_to_proto(v)
+        stored = proto.metadata["inbound_src"]
+        assert "[REDACTED]" in stored
+        assert "pass" not in stored
+
 
 class TestCheckCliConverter:
     """Ensure check uses the full daemon violation converter."""

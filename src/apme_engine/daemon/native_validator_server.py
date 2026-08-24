@@ -89,6 +89,8 @@ def _run_graph(
     rules, missing = load_graph_rules(rules_dir=rules_dir, opt_in_rule_ids=opt_in_rule_ids or [])
     if dirty_node_ids:
         report = rescan_dirty(content_graph, rules, dirty_node_ids)
+        if missing:
+            report.missing_requested_rule_ids = missing
     else:
         report = graph_scan(content_graph, rules, missing_requested_rule_ids=missing)
     violations = graph_report_to_violations(report)
@@ -132,6 +134,7 @@ class NativeValidatorServicer(validate_pb2_grpc.ValidatorServicer):
 
                 opt_in = list(request.graph_rule_opt_in)
                 ctx = contextvars.copy_context()
+                opt_in = list(request.graph_rule_opt_in)
                 result = await asyncio.get_event_loop().run_in_executor(
                     None,
                     ctx.run,

@@ -8,6 +8,7 @@ from apme_engine.graph.rules._module_risk_mapping import (
     get_risk_profile,
     resolve_field,
 )
+from apme_engine.graph.sensitivity import redact_url_userinfo
 from apme_engine.graph.types import RuleTag as Tag
 from apme_engine.graph.types import Severity, YAMLDict, YAMLValue
 
@@ -85,7 +86,7 @@ class ListAllInboundSrcGraphRule(GraphRule):
                 continue
             src = resolve_field(mo, profile, "src")
             if src:
-                src_list.append(src)
+                src_list.append(redact_url_userinfo(str(src)) if isinstance(src, str) else src)
 
         if not src_list:
             return GraphRuleResult(

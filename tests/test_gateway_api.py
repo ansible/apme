@@ -231,6 +231,40 @@ async def test_get_scan_detail_resanitizes_audit_metadata(client: AsyncClient) -
     assert audit["variable_set"][0]["value"] == "[REDACTED]"
 
 
+async def test_get_scan_detail_logs_malformed_audit_metadata(
+    client: AsyncClient,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Malformed persisted audit_metadata is dropped with a warning.
+
+    Args:
+        client: Async HTTP test client.
+        caplog: Pytest log capture fixture.
+    """
+    await _seed(add_violation=False)
+    async with get_session() as db:
+        db.add(
+            Violation(
+                scan_id="scan-1",
+                rule_id="R404",
+                level="info",
+                message="audit",
+                file="a.yml",
+                line=5,
+                audit_metadata="not-json",
+            )
+        )
+        await db.commit()
+
+    with caplog.at_level("WARNING"):
+        resp = await client.get("/api/v1/activity/scan-1")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["violations"][0]["audit_metadata"] is None
+    assert any("Failed to parse audit_metadata JSON" in rec.message for rec in caplog.records)
+
+
 async def test_get_scan_not_found(client: AsyncClient) -> None:
     """Missing scan returns 404.
 

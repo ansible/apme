@@ -6,7 +6,7 @@
 
 | Metric | Count |
 |--------|-------|
-| Implemented | 150/157 |
+| Implemented | 151/157 |
 | Tested | 154/157 |
 | Documented | 156/157 |
 | Deterministic fixer (Tier 1) | 25/157 |
@@ -213,7 +213,7 @@ Full analysis and promotion candidates: [REMEDIATION_TIER_REPORT.md](REMEDIATION
 | R117 | R | Native | info | role | manual | Role is from Galaxy/external source. | Yes | Yes | Yes | — |
 | R118 | R | OPA | info | task | manual | Task downloads from an external source (inbound transfer). | Yes | Yes | Yes | — |
 | R401 | R | Native | info | playbook | manual | Report inbound transfer sources. | Yes | Yes | Yes | — |
-| R402 | R | Native | info | task | manual | Report variables used at end of sequence. | — | Yes | Yes | — |
+| R402 | R | Native | info | play | manual | Report variables used at end of sequence. | Yes | Yes | Yes | — |
 | R404 | R | Native | info | task | manual | Expose variable_set for the task. | — | Yes | Yes | — |
 | R501 | R | Native | info | collection | manual | Suggest collection/role dependency. | — | — | Yes | — |
 | SEC:* | SEC | Gitleaks | critical | task | ai | Secret/credential detection (delegated to Gitleaks binary). | Yes | Yes | — | — |
@@ -274,7 +274,7 @@ Full analysis and promotion candidates: [REMEDIATION_TIER_REPORT.md](REMEDIATION
 | M028 | high | task | ai | first_found lookup auto-splitting paths on delimiters is deprecated (2.23) | Yes | Yes | Yes | — |
 | R118 | info | task | manual | Task downloads from an external source (inbound transfer). | Yes | Yes | Yes | — |
 
-### Native (96 rules, 93 impl, 95 tested, 4 fixers)
+### Native (96 rules, 94 impl, 95 tested, 4 fixers)
 
 | Rule ID | Severity | Scope | Tier | Description | Impl | Test | Doc | Fix |
 |---------|----------|-------|------|-------------|------|------|-----|-----|
@@ -371,7 +371,7 @@ Full analysis and promotion candidates: [REMEDIATION_TIER_REPORT.md](REMEDIATION
 | R115 | medium | task | ai | File deletion (annotation-based). | Yes | Yes | Yes | — |
 | R117 | info | role | manual | Role is from Galaxy/external source. | Yes | Yes | Yes | — |
 | R401 | info | playbook | manual | Report inbound transfer sources. | Yes | Yes | Yes | — |
-| R402 | info | task | manual | Report variables used at end of sequence. | — | Yes | Yes | — |
+| R402 | info | play | manual | Report variables used at end of sequence. | Yes | Yes | Yes | — |
 | R404 | info | task | manual | Expose variable_set for the task. | — | Yes | Yes | — |
 | R501 | info | collection | manual | Suggest collection/role dependency. | — | — | Yes | — |
 
@@ -399,9 +399,8 @@ Full analysis and promotion candidates: [REMEDIATION_TIER_REPORT.md](REMEDIATION
 
 ## Coverage Gaps
 
-### Planned rules (implementation pending) — 3
+### Planned rules (implementation pending) — 2
 
-- **R402** (Native): Report variables used at end of sequence. — Informational/reporting rule requiring deeper graph analysis to enumerate all variables referenced across a task sequence. Planned for future implementation using VariableProvenanceResolver.
 - **R404** (Native): Expose variable_set for the task. — Informational/debug rule that would expose the resolved variable_set for each task. Disabled by default. Planned for future implementation using VariableProvenanceResolver.
 - **R501** (Native): Suggest collection/role dependency. — Advisory rule requiring collection dependency resolution context. The rule needs access to the Galaxy/collection index to suggest which collection provides an unresolved module. Planned for future implementation.
 
