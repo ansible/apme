@@ -86,6 +86,7 @@ Attestations are stored alongside scan records in Gateway persistence. Retention
 - Keyless: Sigstore Bundle v0.3 with `dsseEnvelope` (not `messageSignature`).
 - Keyed: DSSE envelope only.
 - Statement bytes: RFC 8785 (JCS) before Base64 into DSSE `payload`.
+- Verification splits DSSE PAE signature check from Rekor SET/inclusion-proof check (see contract wire format). The SET binds the logged entry to the exact envelope/signature; it does not re-validate PAE.
 
 ## Open Questions
 

@@ -101,7 +101,7 @@ Regulated enterprises require verifiable evidence that policy validation occurre
 
 **Subject digest verification**:
 - With `--path <source-tree>`: recompute the Subject Digest using the same owned-scope file-selection, path confinement, and canonicalization rules as AC-1 and compare to `subject[].digest.sha256` in the attestation. Mismatch fails with exit `1`. Confinement failures during verify also fail with exit `1`.
-- Without `--path`: verify signature and trust policy only; report the signed digest value but do not assert it matches local content (stdout includes `"digestVerified": null`).
+- Without `--path`: verify signature and trust policy only; do not assert the digest matches local content. Stdout always includes `"subjectDigest": "<sha256-hex>"` (the signed `subject[0].digest.sha256`, lowercase hex) and `"digestVerified": null`.
 - Offline trust policy matches Gateway: when `APME_SIGSTORE_OFFLINE=true` (or CLI equivalent flag documented in the TASK), keyless verify uses embedded Bundle material and local trust roots only — no live OIDC/Fulcio/Rekor calls.
 
 ### AC-5: Keyless and Keyed Signing

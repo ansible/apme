@@ -60,6 +60,7 @@ Creates a Gateway-orchestrated check with optional attestation for a local sourc
 - Co-located `path` must resolve under a configured allowlist of roots; Gateway **copies** into an immutable snapshot (never hashes the live client directory).
 - Remote mode requires the uploaded archive; path mode is rejected.
 - **Response** (201): `{"operation_id": "<uuid>", "scan_id": "<uuid>"}` — `scan_id` is immediately pollable via `GET /api/v1/activity/{scan_id}/attestation`.
+
 ### GET /api/v1/activity/{activity_id}/attestation
 
 Returns the signed attestation for a completed scan. `activity_id` is the scan UUID (`scans.scan_id`); this nests under the existing activity API rather than inventing a `/api/v1/scans/` namespace.
@@ -144,7 +145,10 @@ Gateway persists the full Bundle (including the `trustedRoot` metadata version u
   - **Ed25519**: signature bytes are the raw 64-byte PureEd25519 signature (R ‖ S), then Base64 in `sig`. No ASN.1 wrapping.
 - **Keyed `keyid` fingerprint**: SHA-256 over the public key's SubjectPublicKeyInfo (SPKI) DER bytes, encoded as **lowercase hex** (64 hex chars). That value is the stable trust-set key identifier.
 - **Cross-language test vector** (implementation TASK must ship golden vectors covering): RFC 8785 Statement bytes, DSSE PAE bytes, ECDSA DER `sig` Base64, Ed25519 raw `sig` Base64, and keyed `keyid` derivation from a fixed SPKI. Vectors live under `tests/fixtures/attestation/` when implementation lands.
-- **Sigstore Bundle binding**: For keyless attestations the Bundle content is the **`dsseEnvelope`** oneof (not `messageSignature`). Bundle `dsseEnvelope.signatures[0].sig` is the DSSE signature over the PAE bytes; Bundle `verificationMaterial` (certificate + Rekor SET) validates against that same PAE input. Gateway persists the Bundle `trustedRoot` metadata version alongside the Bundle for historical verification within the retention window.
+- **Sigstore Bundle binding**: For keyless attestations the Bundle content is the **`dsseEnvelope`** oneof (not `messageSignature`).
+- **DSSE verification** (independent of Rekor): Verify `dsseEnvelope.signatures[0].sig` over DSSE v1 PAE of `(payloadType, decoded payload)`. This check does **not** use the Rekor SET.
+- **Rekor SET / inclusion proof** (independent of PAE): Authenticate the canonical Rekor log entry and its inclusion proof. The logged entry **must bind** to the exact `dsseEnvelope` tuple (`payloadType`, `payload`, signature bytes). SET verification proves that this envelope/signature pair was included in Rekor; it does **not** re-validate PAE.
+- Gateway persists the Bundle `trustedRoot` metadata version alongside the Bundle for historical verification within the retention window.
 
 ### Signing idempotency and crash recovery
 
@@ -183,16 +187,22 @@ Verify a signed attestation.
   "valid": true,
   "signer": "<identity>",
   "attestedAt": "<RFC3339>",
+  "subjectDigest": "<sha256-hex>",
   "digestVerified": null,
   "reason": null
 }
 ```
 
+| Field | Presence | Encoding |
+|-------|----------|----------|
+| `subjectDigest` | Always in the 200 body once the Statement is parsed (including `valid: false` after a successful parse). Omitted only when the request is rejected as `400` / `MALFORMED_ENVELOPE`. | Lowercase hex SHA-256; **must equal** `subject[0].digest.sha256` from the signed Statement |
+| `digestVerified` | Always in the 200 body | See table below |
+
 | `digestVerified` | Meaning |
 |------------------|---------|
 | `true` | `sourceManifest` supplied and recomputed Subject Digest matches |
 | `false` | `sourceManifest` supplied and digest does not match (`valid` is `false`, `reason` is `SUBJECT_DIGEST_MISMATCH`) |
-| `null` | `sourceManifest` omitted; digest check skipped |
+| `null` | `sourceManifest` omitted; digest check skipped; `subjectDigest` is still the signed value |
 
 When verification fails, `valid` is `false` and `reason` is a stable machine-readable code:
 
@@ -229,7 +239,7 @@ Malformed requests return `400` with a stable machine-readable reason and human-
 
 They do not return the 200 verification body above.
 
-`signer` and `attestedAt` are populated only when `valid` is `true`. `digestVerified` is populated only in the 200 verification body (`true` / `false` / `null` as above).
+`signer` and `attestedAt` are populated only when `valid` is `true`. `subjectDigest` and `digestVerified` are populated on every 200 verification body as specified above.
 
 Verification applies the Sigstore trust policy defined in AC-5 of [requirement.md](requirement.md). **Keyed attestations**: signature is valid only when `keyid` resolves to a public key in the Gateway trust set; unknown `keyid` returns `valid: false` with reason `UNTRUSTED_KEYID`.
 
@@ -239,6 +249,21 @@ Verification applies the Sigstore trust policy defined in AC-5 of [requirement.m
 apme check --attest [--attest-output <path>] [--signing-key <keyid-or-path>]
 apme verify-attestation [--path <source-tree>] <file>
 ```
+
+**`apme verify-attestation` stdout** (JSON object, even without `--json`):
+
+```json
+{
+  "valid": true,
+  "signer": "<identity>",
+  "attestedAt": "<RFC3339>",
+  "subjectDigest": "<sha256-hex>",
+  "digestVerified": null,
+  "reason": null
+}
+```
+
+Field semantics match `POST /api/v1/attestations/verify`. `subjectDigest` is always present after a successful parse (the signed digest), including when `--path` is omitted (`digestVerified` is then `null`).
 
 ### Signing key resolution (Gateway-owned)
 
