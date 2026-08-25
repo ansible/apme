@@ -191,10 +191,10 @@ class TestViolationDictToProto:
         """JSON audit metadata survives proto conversion."""
         import json
 
-        payload: list[dict[str, str]] = [{"name": "nginx_port", "value": "8080", "source": "play"}]
+        payload: list[dict[str, str]] = [{"name": "nginx_port", "value": "[REDACTED]", "source": "play"}]
         v: ViolationDict = {
             "rule_id": "R404",
-            "variable_set": json.dumps(payload),
+            "variable_set": json.dumps([{"name": "nginx_port", "value": "8080", "source": "play"}]),
         }
         proto = violation_dict_to_proto(v)
         assert json.loads(proto.metadata["variable_set"]) == payload
