@@ -363,6 +363,11 @@ Treat structured health/status bodies as contracts: reject
 substring/`"ok" in body` checks when the peer emits JSON with a
 ``status`` field — require exact equality (``status == "ok"``).
 ``{"status":"not ok"}`` must not pass a contains-ok test.
+When a snippet is embedded in a templated config (tox ``commands =``,
+GitHub ``run:``), construct interpolator collisions: unescaped
+``{...}`` that tox substitutes before Python runs. For
+``next(glob(...))``, construct the empty-match path and require an
+explicit error instead of ``StopIteration``.
 
 Do NOT discuss architecture philosophy. Rank findings
 critical/high/medium/low.
@@ -412,7 +417,11 @@ critical/high/medium/low.
 - **Dependencies pinned to intent** — version ranges, GitHub Action
   tags, base images, pip/uv specs (not tighter, not looser);
   checkout `persist-credentials: false` when write-scoped tokens
-  must not remain in local Git config for later steps
+  must not remain in local Git config for later steps.
+  Tool versions in workflow YAML vs the repo-managed source
+  (``requires-python``, ``frontend/package.json`` ``engines.node``):
+  prefer ``node-version-file`` over a hard-coded number. Extra setup
+  actions need an explicit lean-ci exception next to the job.
 - **Dead weight** — unused imports/params; paid-for-but-wasteful work:
   double JSON parse, list.pop(0)/insert(0,…) vs deque, len(list(seq)),
   O(P×V) nested scans that should be O(P+V)
