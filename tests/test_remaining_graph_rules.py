@@ -2769,7 +2769,7 @@ class TestR404ShowVariablesGraphRule:
             tasks=[
                 {
                     "module": "ansible.builtin.set_fact",
-                    "module_options": {"cacheable_token": "opaque-secret"},
+                    "module_options": {"cached_value": "opaque-data"},
                     "no_log": True,
                 },
                 {"module": "ansible.builtin.debug", "module_options": {"msg": "done"}},
@@ -2777,8 +2777,8 @@ class TestR404ShowVariablesGraphRule:
         )
         task_ids = [n.node_id for n in g.nodes(NodeType.TASK)]
         prov = VariableProvenance(
-            name="cacheable_token",
-            value="opaque-secret",
+            name="cached_value",
+            value="opaque-data",
             source=ProvenanceSource.LOCAL,
             defining_node_id=task_ids[0],
         )
