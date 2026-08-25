@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from apme_engine.engine.models import ViolationDict
 from apme_engine.engine.models import RemediationClass, RemediationResolution, RuleScope
+from apme_engine.graph.scanner import DISABLED_BY_DEFAULT_GRAPH_RULE_IDS
 from apme_engine.remediation.registry import TransformRegistry
 
 AI_PROPOSABLE_SCOPES: frozenset[str] = frozenset({RuleScope.TASK, RuleScope.BLOCK})
@@ -203,6 +204,10 @@ def _to_str_value(val: object, default: str) -> str:
 def count_by_remediation_class(violations: list[ViolationDict]) -> dict[str, int]:
     """Count violations by remediation class.
 
+    Disabled-by-default audit/debug graph rules (for example R402/R404) are
+    excluded so opt-in informational findings do not inflate user-facing
+    remediation totals.
+
     Args:
         violations: List of violations with remediation_class field.
 
@@ -212,6 +217,9 @@ def count_by_remediation_class(violations: list[ViolationDict]) -> dict[str, int
     counts: dict[str, int] = {rc.value: 0 for rc in RemediationClass}
     default = RemediationClass.AI_CANDIDATE.value
     for v in violations:
+        bare_id = normalize_rule_id(str(v.get("rule_id", "")))
+        if bare_id in DISABLED_BY_DEFAULT_GRAPH_RULE_IDS:
+            continue
         rc = _to_str_value(v.get("remediation_class"), default)
         if rc in counts:
             counts[rc] += 1
@@ -240,6 +248,9 @@ def is_ai_reviewable(violation: ViolationDict) -> bool:
 def count_by_resolution(violations: list[ViolationDict]) -> dict[str, int]:
     """Count violations by remediation resolution.
 
+    Disabled-by-default audit/debug graph rules (for example R402/R404) are
+    excluded so opt-in informational findings do not inflate user-facing totals.
+
     Args:
         violations: List of violations with remediation_resolution field.
 
@@ -249,6 +260,9 @@ def count_by_resolution(violations: list[ViolationDict]) -> dict[str, int]:
     default = RemediationResolution.UNRESOLVED.value
     counts: dict[str, int] = {}
     for v in violations:
+        bare_id = normalize_rule_id(str(v.get("rule_id", "")))
+        if bare_id in DISABLED_BY_DEFAULT_GRAPH_RULE_IDS:
+            continue
         res = _to_str_value(v.get("remediation_resolution"), default)
         counts[res] = counts.get(res, 0) + 1
     return counts

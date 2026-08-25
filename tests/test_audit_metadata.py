@@ -84,3 +84,15 @@ def test_sanitize_variable_set_redacts_nested_dict_secrets() -> None:
     nested = entry["value"]
     assert isinstance(nested, dict)
     assert nested["db_password"] == "[REDACTED]"
+
+
+def test_sanitize_variable_set_redacts_benign_scalar_values() -> None:
+    """Scalar values in variable_set are always redacted to match R404 policy."""
+    sanitized = sanitize_audit_metadata_value(
+        "variable_set",
+        [{"name": "http_port", "value": 8080, "source": "play"}],
+    )
+    assert isinstance(sanitized, list)
+    entry = sanitized[0]
+    assert isinstance(entry, dict)
+    assert entry["value"] == "[REDACTED]"

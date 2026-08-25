@@ -975,7 +975,10 @@ class TestGraphReportToViolations:
         r402 = next(v for v in violations if v["rule_id"] == "R402")
         r404 = next(v for v in violations if v["rule_id"] == "R404")
         assert json.loads(str(r402["variables_used"])) == variables_used
-        assert json.loads(str(r404["variable_set"])) == variable_set
+        expected_variable_set = [
+            {"name": "nginx_port", "value": "[REDACTED]", "source": "play"},
+        ]
+        assert json.loads(str(r404["variable_set"])) == expected_variable_set
 
         proto = violation_dict_to_proto(r402)
         assert json.loads(proto.metadata["variables_used"]) == variables_used
@@ -1026,7 +1029,8 @@ class TestGraphReportToViolations:
         assert violations[0]["line"] == 1
 
     def test_audit_json_skips_non_serializable_values(self) -> None:
-        """Non-serializable audit metadata is omitted instead of aborting conversion."""
+        """Non-serializable audit metadata scalars are redacted before conversion."""
+        import json
 
         class _NotSerializable:
             def __str__(self) -> str:
@@ -1074,7 +1078,8 @@ class TestGraphReportToViolations:
         )
         violations = graph_report_to_violations(report)
         assert len(violations) == 1
-        assert "variable_set" not in violations[0]
+        parsed = json.loads(str(violations[0]["variable_set"]))
+        assert parsed[0]["value"] == "[REDACTED]"
 
 
 # ---------------------------------------------------------------------------

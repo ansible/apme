@@ -239,6 +239,27 @@ class TestPartition:
         assert counts[RemediationClass.AI_CANDIDATE.value] == 1
         assert counts[RemediationClass.MANUAL_REVIEW.value] == 1
 
+    def test_count_by_remediation_class_skips_audit_debug_rules(self) -> None:
+        """Disabled-by-default audit rules do not inflate remediation totals."""
+        violations: list[ViolationDict] = [
+            {"rule_id": "L021", "remediation_class": RemediationClass.AI_CANDIDATE},
+            {"rule_id": "R402", "remediation_class": RemediationClass.MANUAL_REVIEW},
+            {"rule_id": "R404", "remediation_class": RemediationClass.MANUAL_REVIEW},
+        ]
+        counts = count_by_remediation_class(violations)
+        assert counts[RemediationClass.AI_CANDIDATE.value] == 1
+        assert counts[RemediationClass.MANUAL_REVIEW.value] == 0
+
+    def test_count_by_resolution_skips_audit_debug_rules(self) -> None:
+        """Disabled-by-default audit rules do not inflate resolution totals."""
+        violations: list[ViolationDict] = [
+            {"rule_id": "L021", "remediation_resolution": RemediationResolution.UNRESOLVED},
+            {"rule_id": "R404", "remediation_resolution": RemediationResolution.INFORMATIONAL},
+        ]
+        counts = count_by_resolution(violations)
+        assert counts[RemediationResolution.UNRESOLVED.value] == 1
+        assert RemediationResolution.INFORMATIONAL.value not in counts
+
     def test_count_by_resolution(self) -> None:
         """Verifies count_by_resolution returns correct counts."""
         violations: list[ViolationDict] = [

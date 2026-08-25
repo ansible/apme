@@ -247,14 +247,14 @@ class TestParseFrontmatter:
 
         def fake_import(
             name: str,
-            globals: Mapping[str, object] | None = None,  # noqa: A002
-            locals: Mapping[str, object] | None = None,  # noqa: A002
+            globals_: Mapping[str, object] | None = None,
+            locals_: Mapping[str, object] | None = None,
             fromlist: Sequence[str] = (),
             level: int = 0,
         ) -> object:
             if name == "yaml":
                 raise ImportError("PyYAML not installed")
-            return real_import(name, globals, locals, fromlist, level)
+            return real_import(name, globals_, locals_, fromlist, level)
 
         monkeypatch.setattr(builtins, "__import__", fake_import)
         result = _parse_frontmatter(md)
@@ -275,9 +275,16 @@ class TestNormalizeValidator:
         """Lowercase ansible maps to Ansible."""
         assert _normalize_validator("ansible") == "Ansible"
 
-    def test_unknown_string_capitalized(self) -> None:
-        """Unknown validator strings are title-cased."""
-        assert _normalize_validator("custom") == "Custom"
+    def test_unknown_validator_warns_and_defaults_to_native(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """Unknown validator strings warn and default to Native.
+
+        Args:
+            capsys: Pytest capture fixture for stderr.
+        """
+        assert _normalize_validator("custom") == "Native"
+        captured = capsys.readouterr()
+        assert "WARNING" in captured.err
+        assert "custom" in captured.err
 
     def test_empty_defaults_to_native(self) -> None:
         """Empty string defaults to Native."""
@@ -298,8 +305,7 @@ class TestGetTestCache:
         tests_dir.mkdir()
         test_file = tests_dir / "test_r402_loader.py"
         test_file.write_text(
-            "from apme_engine.validators.native.rules.R402_list_all_used_variables_graph import "
-            "ListAllUsedVariablesGraphRule\n",
+            "from apme_engine.graph.rules.R402_list_all_used_variables_graph import ListAllUsedVariablesGraphRule\n",
             encoding="utf-8",
         )
         monkeypatch.setattr(_mod, "TESTS_DIR", tests_dir)
@@ -326,6 +332,47 @@ class TestGetTestCache:
         cache = _mod._get_test_cache()
         for rid in ("M001", "M002", "M003", "M004"):
             assert "test_ansible_cache.py" in cache.get(rid, [])
+
+    def test_direct_rule_id_import_from_rules_package(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Package-level direct rule ID imports (e.g. ``from ...rules import R404``).
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+            monkeypatch: Pytest monkeypatch fixture.
+        """
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        test_file = tests_dir / "test_r404_direct.py"
+        test_file.write_text(
+            "from apme_engine.graph.rules import R404\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(_mod, "TESTS_DIR", tests_dir)
+        monkeypatch.setattr(_mod, "_TEST_CACHE", None)
+        cache = _mod._get_test_cache()
+        assert "test_r404_direct.py" in cache.get("R404", [])
+
+    def test_parenthesized_grouped_module_import_expands_rule_range(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Parenthesized multiline imports still credit grouped rule modules.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+            monkeypatch: Pytest monkeypatch fixture.
+        """
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        test_file = tests_dir / "test_ansible_cache_paren.py"
+        test_file.write_text(
+            "from apme_engine.validators.ansible.rules import (\n    M001_M004_introspect,\n)\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(_mod, "TESTS_DIR", tests_dir)
+        monkeypatch.setattr(_mod, "_TEST_CACHE", None)
+        cache = _mod._get_test_cache()
+        for rid in ("M001", "M002", "M003", "M004"):
+            assert "test_ansible_cache_paren.py" in cache.get(rid, [])
 
     def test_incidental_string_literal_excluded(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """String literals mentioning a rule ID without imports are incidental.

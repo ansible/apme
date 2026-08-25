@@ -66,10 +66,8 @@ def _sanitize_audit_structure(key: str, value: object) -> object:
                 patched["name"] = REDACTED
             val = patched.get("value")
             if isinstance(val, (dict, list)):
-                patched["value"] = redact_sensitive_structure(val)
-            elif val is not None and (
-                (var_looks_sensitive(str(name)) if name is not None else False) or value_looks_sensitive(val)
-            ):
+                patched["value"] = redact_sensitive_structure(val, redact_all_scalars=True)
+            elif val is not None:
                 patched["value"] = REDACTED
             sanitized_vars.append(patched)
         return sanitized_vars

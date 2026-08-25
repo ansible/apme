@@ -1,6 +1,6 @@
 """Unit and integration tests for Phase 2J+K GraphRules.
 
-Covers L056, R401, R402, collection metadata rules (L087, L088,
+Covers L056, R401, R402, R404, collection metadata rules (L087, L088,
 L096, L103-L105), and plugin/schema rules (L089, L090, L095).
 """
 
@@ -13,6 +13,7 @@ import pytest
 
 from apme_engine.engine.graph_builder import GraphBuilder
 from apme_engine.engine.models import YAMLDict
+from apme_engine.graph.audit_metadata import sanitize_audit_metadata_value
 from apme_engine.graph.content_graph import (
     ContentGraph,
     ContentNode,
@@ -42,7 +43,14 @@ from apme_engine.graph.rules.M030_broken_conditional_expressions_graph import (
 )
 from apme_engine.graph.rules.R401_list_all_inbound_src_graph import ListAllInboundSrcGraphRule
 from apme_engine.graph.rules.R402_list_all_used_variables_graph import ListAllUsedVariablesGraphRule
+from apme_engine.graph.rules.R404_show_variables_graph import (
+    ShowVariablesGraphRule,
+    _redact_sensitive_keys,
+    _serialize_value,
+    _should_redact_value,
+)
 from apme_engine.graph.scanner import scan
+from apme_engine.graph.sensitivity import REDACTED, value_looks_sensitive
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -1719,7 +1727,7 @@ def _make_play_with_tasks(
         play_vars: Play-level ``vars:`` mapping.
         play_no_log: Play-level ``no_log`` setting.
         tasks: List of dicts with keys ``module``, ``module_options``,
-            ``when_expr``, ``name``.
+            ``when_expr``, ``name``, ``variables``, and ``no_log``.
 
     Returns:
         Tuple of ``(graph, play_node_id)``.
@@ -2476,3 +2484,374 @@ class TestR402ListAllUsedVariablesGraphRule:
         result = rule.process(g, play_a.node_id)
         assert result is not None
         assert result.verdict is False
+
+
+# ===========================================================================
+# R404 — ShowVariables
+# ===========================================================================
+
+
+class TestR404ShowVariablesGraphRule:
+    """Tests for R404 ShowVariablesGraphRule."""
+
+    @pytest.fixture  # type: ignore[untyped-decorator]
+    def rule(self) -> ShowVariablesGraphRule:
+        """Create a rule instance (enabled for testing).
+
+        Returns:
+            A ShowVariablesGraphRule with enabled=True.
+        """
+        return ShowVariablesGraphRule(enabled=True)
+
+    def test_disabled_by_default(self) -> None:
+        """R404 is disabled by default."""
+        rule = ShowVariablesGraphRule()
+        assert rule.rule_id == "R404"
+        assert rule.enabled is False
+
+    def test_match_task_node(self, rule: ShowVariablesGraphRule) -> None:
+        """Matches TASK nodes.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, nid = _make_task()
+        assert rule.match(g, nid)
+
+    def test_no_match_play_node(self, rule: ShowVariablesGraphRule) -> None:
+        """Does not match PLAY nodes.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, play_id = _make_play_with_tasks()
+        assert not rule.match(g, play_id)
+
+    def test_no_variables_verdict_false(self, rule: ShowVariablesGraphRule) -> None:
+        """Task with no variables in scope returns verdict=False.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, nid = _make_task(module="ansible.builtin.command", module_options={"cmd": "whoami"})
+        result = rule.process(g, nid)
+        assert result is not None
+        assert result.verdict is False
+
+    def test_variables_reported(self, rule: ShowVariablesGraphRule) -> None:
+        """Task with play variables in scope reports them.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, play_id = _make_play_with_tasks(
+            play_vars={"server_port": 443},
+            tasks=[{"module": "ansible.builtin.debug", "module_options": {"msg": "test"}}],
+        )
+        play_node = g.get_node(play_id)
+        assert play_node is not None
+        task_ids = [n.node_id for n in g.nodes(NodeType.TASK)]
+        assert len(task_ids) == 1
+        result = rule.process(g, task_ids[0])
+        assert result is not None
+        assert result.verdict is True
+        assert result.detail is not None
+        var_list = cast(list[dict[str, object]], result.detail["variable_set"])
+        names = [v["name"] for v in var_list]
+        assert "server_port" in names
+
+    def test_value_field_present(self, rule: ShowVariablesGraphRule) -> None:
+        """Variable entries include a redacted ``value`` field.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, _ = _make_play_with_tasks(
+            play_vars={"app_name": "myapp"},
+            tasks=[{"module": "ansible.builtin.debug", "module_options": {"msg": "test"}}],
+        )
+        task_ids = [n.node_id for n in g.nodes(NodeType.TASK)]
+        result = rule.process(g, task_ids[0])
+        assert result is not None
+        assert result.detail is not None
+        var_list = cast(list[dict[str, object]], result.detail["variable_set"])
+        var_map: dict[object, dict[str, object]] = {v["name"]: v for v in var_list}
+        assert "app_name" in var_map
+        assert var_map["app_name"]["value"] == REDACTED
+        assert var_map["app_name"]["source"] == "play"
+
+    def test_dict_value_serialized(self, rule: ShowVariablesGraphRule) -> None:
+        """Dict variable values preserve structure while redacting leaf scalars.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, _ = _make_play_with_tasks(
+            play_vars={"config": {"key": "val", "num": 42}},
+            tasks=[{"module": "ansible.builtin.debug", "module_options": {"msg": "test"}}],
+        )
+        task_ids = [n.node_id for n in g.nodes(NodeType.TASK)]
+        result = rule.process(g, task_ids[0])
+        assert result is not None
+        assert result.detail is not None
+        var_list = cast(list[dict[str, object]], result.detail["variable_set"])
+        var_map: dict[object, dict[str, object]] = {v["name"]: v for v in var_list}
+        assert "config" in var_map
+        assert var_map["config"]["value"] == {"key": REDACTED, "num": REDACTED}
+
+    def test_sensitive_var_value_redacted(self, rule: ShowVariablesGraphRule) -> None:
+        """Sensitive variable names have values redacted in output.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, _ = _make_play_with_tasks(
+            play_vars={"db_password": "s3cr3t"},
+            tasks=[{"module": "ansible.builtin.debug", "module_options": {"msg": "test"}}],
+        )
+        task_ids = [n.node_id for n in g.nodes(NodeType.TASK)]
+        result = rule.process(g, task_ids[0])
+        assert result is not None
+        assert result.detail is not None
+        var_list = cast(list[dict[str, object]], result.detail["variable_set"])
+        redacted = [v for v in var_list if v["value"] == REDACTED]
+        assert any(v["name"] == REDACTED for v in redacted)
+
+    def test_ansible_ssh_pass_value_redacted(self, rule: ShowVariablesGraphRule) -> None:
+        """``ansible_ssh_pass`` name is redacted via the ``pass`` sensitive segment.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, _ = _make_play_with_tasks(
+            play_vars={"ansible_ssh_pass": "s3cr3t"},
+            tasks=[{"module": "ansible.builtin.debug", "module_options": {"msg": "test"}}],
+        )
+        task_ids = [n.node_id for n in g.nodes(NodeType.TASK)]
+        result = rule.process(g, task_ids[0])
+        assert result is not None
+        assert result.detail is not None
+        var_list = cast(list[dict[str, object]], result.detail["variable_set"])
+        assert any(v["name"] == REDACTED for v in var_list)
+
+    def test_misnamed_scalar_secret_redacted(self, rule: ShowVariablesGraphRule) -> None:
+        """Cleartext credentials in generically named vars are detected and redacted.
+
+        Args:
+            rule: Rule instance under test (unused; kept for fixture symmetry).
+        """
+        secret = "mysql://user:secret@db.example.com/prod"  # noqa: S105
+        assert value_looks_sensitive(secret)
+        sanitized = sanitize_audit_metadata_value(
+            "variable_set",
+            [{"name": "connection_string", "value": secret, "source": "play"}],
+        )
+        assert isinstance(sanitized, list)
+        entry = sanitized[0]
+        assert isinstance(entry, dict)
+        assert entry["value"] == REDACTED
+
+    def test_opaque_token_under_benign_name_redacted(self, rule: ShowVariablesGraphRule) -> None:
+        """Known opaque token prefixes redact generically named variables.
+
+        Args:
+            rule: Rule instance under test (unused; kept for fixture symmetry).
+        """
+        token = "sk-live-abc123xyz"  # noqa: S105
+        assert value_looks_sensitive(token)
+        sanitized = sanitize_audit_metadata_value(
+            "variable_set",
+            [{"name": "session_token", "value": token, "source": "play"}],
+        )
+        assert isinstance(sanitized, list)
+        entry = sanitized[0]
+        assert isinstance(entry, dict)
+        assert entry["value"] == REDACTED
+
+    def test_vault_ciphertext_redacted(self, rule: ShowVariablesGraphRule) -> None:
+        """Ansible Vault ciphertext scalars are redacted in variable_set.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        vault_blob = "$ANSIBLE_VAULT;1.1;AES256;deadbeef\n53616c74"
+        g, _ = _make_play_with_tasks(
+            play_vars={"app_config": vault_blob},
+            tasks=[{"module": "ansible.builtin.debug", "module_options": {"msg": "test"}}],
+        )
+        task_ids = [n.node_id for n in g.nodes(NodeType.TASK)]
+        result = rule.process(g, task_ids[0])
+        assert result is not None
+        assert result.detail is not None
+        var_list = cast(list[dict[str, object]], result.detail["variable_set"])
+        var_map = {v["name"]: v for v in var_list}
+        assert var_map["app_config"]["value"] == REDACTED
+
+    def test_nested_sensitive_dict_keys_redacted(self, rule: ShowVariablesGraphRule) -> None:
+        """Nested dict keys matching sensitive patterns are redacted.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, _ = _make_play_with_tasks(
+            play_vars={"db_config": {"host": "prod-db", "password": "s3cr3t"}},
+            tasks=[{"module": "ansible.builtin.debug", "module_options": {"msg": "test"}}],
+        )
+        task_ids = [n.node_id for n in g.nodes(NodeType.TASK)]
+        result = rule.process(g, task_ids[0])
+        assert result is not None
+        assert result.detail is not None
+        var_list = cast(list[dict[str, object]], result.detail["variable_set"])
+        var_map = {v["name"]: v for v in var_list}
+        parsed = var_map["db_config"]["value"]
+        assert isinstance(parsed, dict)
+        assert parsed["host"] == REDACTED
+        assert parsed["password"] == REDACTED
+
+    def test_nested_scalar_secret_under_benign_key_redacted(self, rule: ShowVariablesGraphRule) -> None:
+        """Credential-like scalars nested under benign dict keys are redacted.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, _ = _make_play_with_tasks(
+            play_vars={
+                "db_config": {"endpoint": "mysql://user:secret@db.example.com/prod"},
+            },
+            tasks=[{"module": "ansible.builtin.debug", "module_options": {"msg": "test"}}],
+        )
+        task_ids = [n.node_id for n in g.nodes(NodeType.TASK)]
+        result = rule.process(g, task_ids[0])
+        assert result is not None
+        assert result.detail is not None
+        var_list = cast(list[dict[str, object]], result.detail["variable_set"])
+        var_map = {v["name"]: v for v in var_list}
+        parsed = var_map["db_config"]["value"]
+        assert isinstance(parsed, dict)
+        assert parsed["endpoint"] == REDACTED
+
+    def test_serialize_value_redacts_none_under_no_log(self) -> None:
+        """Redaction applies even when the underlying value is None."""
+        assert _serialize_value(None, redact=True) == REDACTED
+
+    def test_serialize_value_list_json(self) -> None:
+        """List values preserve structure while redacting scalar elements."""
+        assert _serialize_value([1, 2], redact=False) == [REDACTED, REDACTED]
+
+    def test_serialize_value_redacts_dict_without_json_leak(self) -> None:
+        """Redact=True returns placeholder without serializing nested content."""
+        assert _serialize_value({"password": "secret"}, redact=True) == REDACTED  # noqa: S105
+
+    def test_no_log_scope_redacts_values(self, rule: ShowVariablesGraphRule) -> None:
+        """Variables under an effective no_log scope have values redacted.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, _ = _make_play_with_tasks(
+            play_vars={"app_name": "myapp"},
+            play_no_log=True,
+            tasks=[{"module": "ansible.builtin.debug", "module_options": {"msg": "test"}}],
+        )
+        task_ids = [n.node_id for n in g.nodes(NodeType.TASK)]
+        result = rule.process(g, task_ids[0])
+        assert result is not None
+        assert result.detail is not None
+        var_list = cast(list[dict[str, object]], result.detail["variable_set"])
+        var_map = {v["name"]: v for v in var_list}
+        assert var_map["app_name"]["value"] == REDACTED
+
+    def test_should_redact_when_defining_task_has_no_log(self) -> None:
+        """Variables defined under a prior task's no_log are redacted on later tasks."""
+        from apme_engine.graph.variable_provenance import ProvenanceSource, VariableProvenance
+
+        g, _ = _make_play_with_tasks(
+            tasks=[
+                {
+                    "module": "ansible.builtin.set_fact",
+                    "module_options": {"cached_value": "opaque-data"},
+                    "no_log": True,
+                },
+                {"module": "ansible.builtin.debug", "module_options": {"msg": "done"}},
+            ],
+        )
+        task_ids = [n.node_id for n in g.nodes(NodeType.TASK)]
+        prov = VariableProvenance(
+            name="cached_value",
+            value="opaque-data",
+            source=ProvenanceSource.LOCAL,
+            defining_node_id=task_ids[0],
+        )
+        assert _should_redact_value(g, task_ids[1], prov) is True
+
+    def test_no_log_false_overrides_play_true_still_redacts_values(self, rule: ShowVariablesGraphRule) -> None:
+        """Task no_log: false still emits redacted values for audit safety.
+
+        Play-defined variables remain redacted when the play sets no_log: true,
+        and the rule now redacts scalar values even outside ``no_log``.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, _ = _make_play_with_tasks(
+            play_vars={"app_name": "myapp"},
+            play_no_log=True,
+            tasks=[
+                {
+                    "module": "ansible.builtin.debug",
+                    "module_options": {"msg": "test"},
+                    "no_log": False,
+                },
+            ],
+        )
+        task_ids = [n.node_id for n in g.nodes(NodeType.TASK)]
+        result = rule.process(g, task_ids[0])
+        assert result is not None
+        assert result.detail is not None
+        var_list = cast(list[dict[str, object]], result.detail["variable_set"])
+        var_map = {v["name"]: v for v in var_list}
+        assert var_map["app_name"]["value"] == REDACTED
+
+    def test_truncates_large_variable_sets(self, rule: ShowVariablesGraphRule) -> None:
+        """R404 caps reported variable_set entries at 500 entries.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        play_vars = {f"var_{i}": i for i in range(501)}
+        g, _ = _make_play_with_tasks(
+            play_vars=cast(YAMLDict, play_vars),
+            tasks=[{"module": "ansible.builtin.debug", "module_options": {"msg": "test"}}],
+        )
+        task_ids = [n.node_id for n in g.nodes(NodeType.TASK)]
+        result = rule.process(g, task_ids[0])
+        assert result is not None
+        assert result.detail is not None
+        var_list = cast(list[dict[str, object]], result.detail["variable_set"])
+        assert len(var_list) == 500
+        assert "(truncated)" in cast(str, result.detail["message"])
+
+    def test_redact_sensitive_keys_depth_limit(self) -> None:
+        """Deeply nested structures redact subtrees once depth exceeds the cap."""
+        nested: dict[str, object] = {"child": {"inner": "value"}}
+        redacted = _redact_sensitive_keys(nested, _max_depth=1)
+        assert redacted == {"child": {"inner": REDACTED}}
+
+    def test_missing_node_returns_none(self, rule: ShowVariablesGraphRule) -> None:
+        """Process on a missing node returns None.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g = ContentGraph()
+        assert rule.process(g, "nonexistent") is None
+
+    def test_via_scanner(self) -> None:
+        """R404 fires through the graph scanner when enabled."""
+        g, _ = _make_play_with_tasks(
+            play_vars={"flag": True},
+            tasks=[{"module": "ansible.builtin.debug", "module_options": {"msg": "test"}}],
+        )
+        report = scan(g, [ShowVariablesGraphRule(enabled=True)])
+        findings = [rr for nr in report.node_results for rr in nr.rule_results if rr.verdict]
+        assert len(findings) == 1

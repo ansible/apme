@@ -467,6 +467,10 @@ def graph_report_to_violations(report: GraphScanReport) -> list[ViolationDict]:
     supports rules like L111 that scan sibling files and emit multiple
     per-file violations from a single graph node.
 
+    Note:
+        Increments ``report.audit_serialization_failures`` in place for each
+        audit metadata value that fails to serialize.
+
     Args:
         report: Completed scan report from ``scan()``.
 

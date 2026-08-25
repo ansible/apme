@@ -19,6 +19,7 @@ Outputs:
 
 from __future__ import annotations
 
+import ast
 import re
 import sys
 from dataclasses import dataclass, field
@@ -183,6 +184,7 @@ def _is_incidental_reference(rule_id: str, text: str, filename: str) -> bool:
 
 
 _RULE_RANGE_IN_MODULE = re.compile(r"([A-Z])(\d+)_\1(\d+)_")
+_SINGLE_RULE_ID = re.compile(r"[A-Z]\d+")
 
 
 def _rule_ids_from_module_name(module_fragment: str) -> set[str]:
@@ -203,6 +205,35 @@ def _rule_ids_from_module_name(module_fragment: str) -> set[str]:
         return set()
     width = max(len(start_s), len(end_s))
     return {f"{letter}{i:0{width}d}" for i in range(start, end + 1)}
+
+
+def _rule_ids_from_imports(text: str) -> set[str]:
+    """Extract rule IDs from ``from ... import`` statements (incl. parenthesized).
+
+    Args:
+        text: Python source of a test module.
+
+    Returns:
+        Rule IDs implied by imported module fragments and symbol names.
+    """
+    ids: set[str] = set()
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return ids
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        module_parts = node.module.split(".") if node.module else []
+        is_rule_package = "rules" in module_parts or "validators" in module_parts
+        if node.module:
+            for fragment in node.module.split("."):
+                ids.update(_rule_ids_from_module_name(fragment))
+        for alias in node.names:
+            ids.update(_rule_ids_from_module_name(alias.name))
+            if is_rule_package and _SINGLE_RULE_ID.fullmatch(alias.name):
+                ids.add(alias.name)
+    return ids
 
 
 _TEST_CACHE: dict[str, list[str]] | None = None
@@ -250,8 +281,7 @@ def _get_test_cache() -> dict[str, list[str]]:
             rid = (m.group(1) or m.group(2) or (m.group(3) or "").upper()).strip()
             if rid:
                 seen_ids.add(rid)
-        for m in re.finditer(r"from\s+[\w.]+\s+import\s+(\w+)", text):
-            seen_ids.update(_rule_ids_from_module_name(m.group(1)))
+        seen_ids.update(_rule_ids_from_imports(text))
         for rid in seen_ids:
             cache.setdefault(rid, [])
             if rel not in cache[rid]:
@@ -320,7 +350,13 @@ def _normalize_validator(raw: str) -> str:
     Returns:
         Canonical validator name, defaulting to ``Native``.
     """
-    return _VALIDATOR_NAMES.get(raw.lower().strip(), raw.capitalize()) if raw else "Native"
+    if not raw:
+        return "Native"
+    normalized = _VALIDATOR_NAMES.get(raw.lower().strip())
+    if normalized is None:
+        print(f"WARNING: unknown validator '{raw}' in frontmatter; defaulting to Native", file=sys.stderr)
+        return "Native"
+    return normalized
 
 
 def _collect_opa_rules() -> list[Rule]:
