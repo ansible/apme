@@ -452,6 +452,7 @@ class GraphRemediationEngine:
                             graph,
                             pass_num,
                             resolve_fixed_by="deterministic",
+                            resolve_status="pending_review" if interactive else "fixed",
                         )
                         violations = graph.collect_violations()
                         _, new_tier2, _ = partition_violations(violations, registry)

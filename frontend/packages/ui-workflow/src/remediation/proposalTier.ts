@@ -29,6 +29,41 @@ export function proposalNodeTitle(proposal: OperationProposal): string {
   return file;
 }
 
+/** True when any proposal belongs to Gate 2 (incl. ai-declined rows). */
+export function proposalsLookLikeAiGate(
+  proposals: OperationProposal[],
+): boolean {
+  return proposals.some(
+    (p) =>
+      isAiRemediationProposal(p) ||
+      (p.tier ?? 0) >= 2 ||
+      p.source === 'ai' ||
+      p.source === 'ai-candidate' ||
+      p.id.startsWith('ai-'),
+  );
+}
+
+export type ProposalReviewGate = 'tier1' | 'ai';
+
+/**
+ * Resolve Gate 1 vs Gate 2 review copy and behavior.
+ *
+ * Proposal shape alone is not enough: Gate 2 can be declined-only (no diffs)
+ * while ``ai_triage_candidates`` proves escalation already happened.
+ */
+export function resolveProposalReviewGate(
+  proposals: OperationProposal[],
+  options: { enableAi?: boolean; pastAiEscalation?: boolean } = {},
+): ProposalReviewGate {
+  if (proposalsLookLikeAiGate(proposals)) {
+    return 'ai';
+  }
+  if (options.enableAi && options.pastAiEscalation) {
+    return 'ai';
+  }
+  return 'tier1';
+}
+
 /** True when the proposal is Gate 2 AI (not rule-based fix / deterministic). */
 export function isAiRemediationProposal(proposal: OperationProposal): boolean {
   if (proposal.source === 'ai' || proposal.source === 'ai-candidate') {
@@ -64,18 +99,22 @@ export function proposalsGateKey(proposals: OperationProposal[]): string {
     return '';
   }
   const ids = proposals.map((p) => p.id).sort();
-  const gate = isAiRemediationProposal(proposals[0]!) ? 'ai' : 't1';
+  const gate = proposalsLookLikeAiGate(proposals) ? 'ai' : 't1';
   return `${gate}:${ids.join(',')}`;
 }
 
 /** Human label for the current approval gate. */
-export function gateLabel(proposals: OperationProposal[]): string {
-  if (proposals.length === 0) {
+export function gateLabel(
+  proposals: OperationProposal[],
+  reviewGate?: ProposalReviewGate,
+): string {
+  if (proposals.length === 0 && !reviewGate) {
     return 'Review';
   }
-  return isAiRemediationProposal(proposals[0]!)
-    ? 'AI proposals'
-    : 'Rule-based fix proposals';
+  const gate =
+    reviewGate ??
+    (proposalsLookLikeAiGate(proposals) ? 'ai' : 'tier1');
+  return gate === 'ai' ? 'AI proposals' : 'Rule-based fix proposals';
 }
 
 /**
