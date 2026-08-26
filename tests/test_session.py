@@ -833,6 +833,208 @@ class TestSessionApprovalGates:
         assert (tmp_path / "play.yml").read_bytes() == baseline
         assert session.pre_gate2_files["play.yml"] == baseline
 
+    async def test_ai_gate_pauses_on_declined_only_proposals(self, tmp_path: Path) -> None:
+        """Gate 2 emits ProposalsReady when AI produces only declined rows.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        from apme_engine.daemon.engine_server import EngineServicer
+        from apme_engine.graph.content_graph import ContentGraph
+
+        remaining = {
+            "rule_id": "L005",
+            "file": "play.yml",
+            "path": "play.yml/plays[0]/tasks[0]",
+            "message": "Use a module instead of command.",
+            "severity": "medium",
+            "line": 1,
+            "scope": "task",
+        }
+
+        class _DummyGraphEngine:
+            def __init__(self) -> None:
+                from apme_engine.remediation.transforms import build_default_registry
+
+                self._registry = build_default_registry()
+                self._ai_provider = None
+                self._max_ai_attempts = 2
+                self.remediate = AsyncMock(
+                    return_value=SimpleNamespace(
+                        passes=1,
+                        fixed=0,
+                        remaining_violations=[remaining],
+                        fixed_violations=[],
+                        oscillation_detected=False,
+                        ai_proposals=[],
+                        tier1_proposals=[],
+                    )
+                )
+
+        servicer = EngineServicer()
+        session = SessionState(session_id="gate-declined-only")
+        session.content_graph = ContentGraph()
+        session.graph_engine = _DummyGraphEngine()
+        baseline = b"- name: test\n  command: echo hi\n"
+        session.working_files = {"play.yml": baseline}
+        session.fix_options = FixOptions(enable_ai=True)
+        session.graph_originals = {"play.yml": baseline.decode()}
+        session.temp_dir = tmp_path
+        (tmp_path / "play.yml").write_bytes(baseline)
+
+        with patch("apme_engine.remediation.graph_engine.GraphRemediationEngine", _DummyGraphEngine):
+            events = [e async for e in servicer._session_run_ai_gate(session)]
+
+        assert [e.WhichOneof("event") for e in events] == ["progress", "proposals"]
+        assert session.status == 1  # AWAITING_APPROVAL
+        assert session.proposals == {}
+        assert list(session.review_declined_proposals) == ["ai-declined-0000"]
+        emitted = events[1].proposals.proposals
+        assert len(emitted) == 1
+        assert emitted[0].id == "ai-declined-0000"
+        assert emitted[0].status == "declined"
+        assert emitted[0].tier == 2
+        assert session.working_files["play.yml"] == baseline
+        assert (tmp_path / "play.yml").read_bytes() == baseline
+
+    async def test_ai_gate_pauses_on_post_ai_tier1_cleanup(self, tmp_path: Path) -> None:
+        """Post-AI deterministic cleanup is staged as g2-t1-* Gate 2 review.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        from apme_engine.daemon.engine_server import EngineServicer
+        from apme_engine.graph.content_graph import ContentGraph
+        from apme_engine.remediation.graph_engine import Tier1NodeProposal
+
+        t1_prop = Tier1NodeProposal(
+            node_id="play.yml/plays[0]/tasks[0]",
+            file_path="play.yml",
+            before_yaml="- name: test\n  command: echo hi\n",
+            after_yaml="- name: test\n  ansible.builtin.command:\n    cmd: echo hi\n",
+            rule_ids=["L001"],
+            violation_summaries=["[L001]: FQCN"],
+            line_start=1,
+            line_end=2,
+            node_type="task",
+        )
+
+        class _DummyGraphEngine:
+            def __init__(self) -> None:
+                from apme_engine.remediation.transforms import build_default_registry
+
+                self._registry = build_default_registry()
+                self._ai_provider = None
+                self._max_ai_attempts = 2
+                self.remediate = AsyncMock(
+                    return_value=SimpleNamespace(
+                        passes=1,
+                        fixed=0,
+                        remaining_violations=[],
+                        fixed_violations=[],
+                        oscillation_detected=False,
+                        ai_proposals=[],
+                        tier1_proposals=[t1_prop],
+                    )
+                )
+
+        servicer = EngineServicer()
+        session = SessionState(session_id="gate-g2-t1")
+        session.content_graph = ContentGraph()
+        session.graph_engine = _DummyGraphEngine()
+        baseline = b"- name: test\n  command: echo hi\n"
+        session.working_files = {"play.yml": baseline}
+        session.fix_options = FixOptions(enable_ai=True)
+        session.graph_originals = {"play.yml": baseline.decode()}
+        session.temp_dir = tmp_path
+        (tmp_path / "play.yml").write_bytes(baseline)
+
+        with patch("apme_engine.remediation.graph_engine.GraphRemediationEngine", _DummyGraphEngine):
+            events = [e async for e in servicer._session_run_ai_gate(session)]
+
+        assert [e.WhichOneof("event") for e in events] == ["progress", "proposals"]
+        assert session.status == 1
+        assert list(session.proposals) == ["g2-t1-0000"]
+        emitted = events[1].proposals.proposals
+        assert emitted[0].id == "g2-t1-0000"
+        assert emitted[0].tier == 2
+        assert emitted[0].source == "deterministic"
+        assert session.working_files["play.yml"] == baseline
+        assert (tmp_path / "play.yml").read_bytes() == baseline
+
+    def test_consolidate_gate2_proposals_merges_same_node(self) -> None:
+        """AI and post-AI Tier 1 rows for one node become a single proposal."""
+        from apme_engine.daemon.engine_server import EngineServicer
+
+        ai_row = Proposal(
+            id="ai-0000",
+            file="play.yml",
+            path="play.yml/plays[0]/tasks[0]",
+            rule_id="L050",
+            after_text="ai after",
+            explanation="AI rewrite",
+            tier=2,
+            source="ai",
+        )
+        t1_same = Proposal(
+            id="g2-t1-0000",
+            file="play.yml",
+            path="play.yml/plays[0]/tasks[0]",
+            rule_id="L001",
+            after_text="t1 after",
+            diff_hunk="@@ t1 @@",
+            explanation="FQCN cleanup",
+            tier=2,
+            source="deterministic",
+        )
+        t1_other = Proposal(
+            id="g2-t1-0001",
+            file="other.yml",
+            path="other.yml/plays[0]/tasks[0]",
+            rule_id="M001",
+            after_text="other after",
+            tier=2,
+            source="deterministic",
+        )
+
+        merged = EngineServicer._consolidate_gate2_proposals([ai_row], [t1_same, t1_other])
+        assert [p.id for p in merged] == ["ai-0000", "g2-t1-0001"]
+        assert merged[0].after_text == "t1 after"
+        assert merged[0].diff_hunk == "@@ t1 @@"
+        assert set(merged[0].rule_id.split(",")) == {"L001", "L050"}
+        assert "FQCN cleanup" in merged[0].explanation
+        assert merged[1].id == "g2-t1-0001"
+
+    async def test_declined_only_gate2_approval_completes(self) -> None:
+        """Empty approve on declined-only Gate 2 marks the session complete."""
+        from apme_engine.daemon.engine_server import EngineServicer
+
+        servicer = EngineServicer()
+        session = SessionState(session_id="declined-approve")
+        session.status = 1
+        session.awaiting_tier1_gate = False
+        session.review_declined_proposals = {
+            "ai-declined-0000": Proposal(
+                id="ai-declined-0000",
+                file="play.yml",
+                rule_id="L005",
+                tier=2,
+                status="declined",
+                source="ai",
+            )
+        }
+
+        async def _fake_build_result(_self: EngineServicer, _session: SessionState) -> AsyncIterator[SessionEvent]:
+            yield SessionEvent(result=SessionResult())
+
+        with patch.object(EngineServicer, "_session_build_result", _fake_build_result):
+            events = [e async for e in servicer._session_handle_approval(session, set())]
+
+        assert [e.WhichOneof("event") for e in events] == ["approval_ack", "result"]
+        assert session.status == 3  # COMPLETE
+        assert session.review_declined_proposals == {}
+        assert events[0].approval_ack.applied_count == 0
+
     async def test_decline_all_restores_pre_gate2_working_files(self, tmp_path: Path) -> None:
         """Declining every Gate 2 proposal restores the pre-AI working tree.
 
