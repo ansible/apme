@@ -23,6 +23,8 @@ export interface OperationWorkflowStepperProps {
   state: ProjectOperationState;
   /** User opted into AI for this run (Activity options). */
   enableAi?: boolean;
+  /** Gate 2 apply step acknowledged — advance to Create branch. */
+  aiApplyFinished?: boolean;
   /** Commit step finished / skipped (or PR already exists). */
   commitFinished?: boolean;
 }
@@ -147,10 +149,10 @@ function badgeContent(
 export function OperationWorkflowStepper({
   state,
   enableAi = false,
+  aiApplyFinished = false,
   commitFinished = false,
 }: OperationWorkflowStepperProps) {
   const includeAi = shouldIncludeAiSteps(enableAi, state);
-  const defs = workflowStepDefs(includeAi);
   const latchRef = useRef<WorkflowLatch>(emptyWorkflowLatch());
   const opIdRef = useRef(state.operation_id);
 
@@ -159,7 +161,11 @@ export function OperationWorkflowStepper({
     latchRef.current = emptyWorkflowLatch();
   }
   latchRef.current = updateWorkflowLatch(latchRef.current, state, includeAi);
+  const defs = workflowStepDefs(includeAi, {
+    skipTier1: latchRef.current.tier1GateSkipped,
+  });
   const currentId = resolveCurrentWorkflowStep(state, includeAi, latchRef.current, {
+    aiApplyFinished,
     commitFinished,
   });
   const activeIndex = defs.findIndex((d) => d.id === currentId);

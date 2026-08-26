@@ -2573,6 +2573,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         if proposed_proposals:
             for p in proposed_proposals:
                 session.proposals[p.id] = p
+            session.review_declined_proposals = {p.id: p for p in declined_proposals}
             session.ai_proposals = list(graph_report.ai_proposals) if graph_report.ai_proposals else []
             session.current_tier = 2
             session.status = 1  # AWAITING_APPROVAL
@@ -2739,6 +2740,53 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                 )
             )
         return proposals
+
+    @staticmethod
+    def _consolidate_gate2_proposals(
+        ai_proposals: list[Proposal],
+        tier1_proposals: list[Proposal],
+    ) -> list[Proposal]:
+        """Return one selectable Gate 2 proposal per graph node.
+
+        AI and post-AI Tier 1 cleanup can target the same node. Approval applies
+        to the whole node, so duplicate rows would let conflicting decisions
+        override each other in ``_apply_graph_approvals``.
+
+        Args:
+            ai_proposals: Gate 2 AI proposals from ``_build_graph_proposals``.
+            tier1_proposals: Gate 2 Tier 1 proposals (``g2-t1-*`` ids).
+
+        Returns:
+            Ordered proposals with at most one row per ``Proposal.path``.
+        """
+        by_node: dict[str, Proposal] = {}
+        order: list[str] = []
+        for proposal in ai_proposals:
+            key = (proposal.path or "").strip() or proposal.id
+            if key not in by_node:
+                order.append(key)
+            by_node[key] = proposal
+        for tier1 in tier1_proposals:
+            key = (tier1.path or "").strip() or tier1.id
+            if key in by_node:
+                existing = by_node[key]
+                merged_rules = {r.strip() for r in existing.rule_id.split(",") if r.strip()}
+                merged_rules.update(r.strip() for r in tier1.rule_id.split(",") if r.strip())
+                if merged_rules:
+                    existing.rule_id = ",".join(sorted(merged_rules))
+                existing.after_text = tier1.after_text
+                existing.diff_hunk = tier1.diff_hunk
+                if tier1.explanation:
+                    existing.explanation = (
+                        f"{existing.explanation}\n{tier1.explanation}".strip()
+                        if existing.explanation
+                        else tier1.explanation
+                    )
+            else:
+                if key not in by_node:
+                    order.append(key)
+                by_node[key] = tier1
+        return [by_node[key] for key in order]
 
     async def _session_begin_remediate(
         self,
@@ -3081,7 +3129,18 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         )
         session.remaining_ai = list(remaining)
 
-        proposed_proposals = self._build_graph_proposals(graph_report.ai_proposals) if graph_report.ai_proposals else []
+        proposed_proposals: list[Proposal] = []
+        ai_built: list[Proposal] = []
+        if graph_report.ai_proposals:
+            ai_built = self._build_graph_proposals(graph_report.ai_proposals)
+        gate2_t1_built: list[Proposal] = []
+        if getattr(graph_report, "tier1_proposals", None):
+            gate2_t1_raw = self._build_tier1_proposals(graph_report.tier1_proposals)
+            for offset, proposal in enumerate(gate2_t1_raw):
+                proposal.id = f"g2-t1-{offset:04d}"
+                proposal.tier = 2
+            gate2_t1_built = gate2_t1_raw
+        proposed_proposals = self._consolidate_gate2_proposals(ai_built, gate2_t1_built)
         proposed_rule_files: set[tuple[str, str]] = set()
         for p in proposed_proposals:
             for raw_rid in p.rule_id.split(","):
@@ -3095,11 +3154,13 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         )
         all_proposals = proposed_proposals + declined_proposals
 
-        if proposed_proposals:
+        if all_proposals:
             # Do NOT splice into working_files until Gate 2 approve/decline.
             for p in proposed_proposals:
                 session.proposals[p.id] = p
-            session.ai_proposals = list(graph_report.ai_proposals)
+            session.review_declined_proposals = {p.id: p for p in declined_proposals}
+            session.ai_proposals = list(graph_report.ai_proposals) if graph_report.ai_proposals else []
+            session.tier1_proposals = list(getattr(graph_report, "tier1_proposals", None) or [])
             session.status = 1  # AWAITING_APPROVAL
             yield SessionEvent(
                 proposals=ProposalsReady(
@@ -3159,6 +3220,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             Number of proposals successfully applied.
         """
         if not approved_ids and not session.proposals:
+            session.review_declined_proposals.clear()
             if finalize:
                 session.status = 3  # COMPLETE
             session.awaiting_tier1_gate = False
@@ -3167,7 +3229,9 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         graph = session.content_graph
         originals = session.graph_originals
 
-        has_graph_proposals = graph is not None and any(pid.startswith(("ai-", "t1-")) for pid in session.proposals)
+        has_graph_proposals = graph is not None and any(
+            pid.startswith(("ai-", "t1-", "g2-t1-")) for pid in session.proposals
+        )
 
         temp_patches: list[SplicedFilePatch] | None = None
         if has_graph_proposals and graph is not None and originals is not None:
@@ -3187,6 +3251,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             applied = _apply_text_approvals(session, approved_ids)
 
         session.awaiting_tier1_gate = False
+        session.review_declined_proposals.clear()
         if finalize:
             session.status = 3  # COMPLETE — user has finished reviewing
         else:
@@ -3461,11 +3526,15 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                 ),
             )
         elif (
-            session.proposals and session.status == 1 and not session.awaiting_assess and not session.awaiting_ai_triage
+            (session.proposals or session.review_declined_proposals)
+            and session.status == 1
+            and not session.awaiting_assess
+            and not session.awaiting_ai_triage
         ):
+            review_proposals = list(session.proposals.values()) + list(session.review_declined_proposals.values())
             yield SessionEvent(
                 proposals=ProposalsReady(
-                    proposals=list(session.proposals.values()),
+                    proposals=review_proposals,
                     tier=session.current_tier,
                     status=1,
                 ),
@@ -3827,6 +3896,7 @@ def _apply_graph_approvals(
         proposal_node_map[f"ai-{idx:04d}"] = anp.node_id
     for idx, tnp in enumerate(tier1_proposals):
         proposal_node_map[f"t1-{idx:04d}"] = tnp.node_id
+        proposal_node_map[f"g2-t1-{idx:04d}"] = tnp.node_id
 
     applied = 0
     rejected_node_ids: set[str] = set()
