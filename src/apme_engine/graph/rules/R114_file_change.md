@@ -11,22 +11,38 @@ ai_prompt: |
 
   RESOLUTION OPTIONS:
 
-  1. If the variable comes from TRUSTED sources (role defaults, group_vars,
-     playbook vars defined by the author):
+  1. If the effective path value is CONSTRAINED to an approved set and CANNOT
+     be overridden by external input (e.g., hardcoded literal, or loop over
+     a compile-time constant list):
      - Add "# noqa: R114" inline comment with justification
-     - Example: "# noqa: R114 - path from role defaults, not user input"
+     - Example: "# noqa: R114 - path is hardcoded literal /opt/app/config.yml"
+     
+     WARNING: Do NOT exempt paths from role defaults, group_vars, or playbook
+     variables alone, as these can be overridden by extra_vars (-e) at runtime.
 
   2. If the variable COULD come from external/untrusted input (inventory,
-     extra_vars, API responses, registered output from commands):
+     extra_vars, API responses, registered output from commands, OR any
+     overridable variable):
      - Add an ansible.builtin.assert task BEFORE this task to validate
-       the path is under an allowed base directory
-     - Example validation:
+       the CANONICAL path (after resolving traversal) is under an allowed base
+     - Example validation (prevents ../ traversal):
        ```yaml
        - name: Validate path is under allowed base
          ansible.builtin.assert:
            that:
              - my_path is match('^/opt/server/')
+             - "'/..' not in my_path"
+             - my_path is not search('\\.\\.')
            fail_msg: "Invalid path: {{ my_path }}"
+       ```
+     
+     Or use realpath filter (Ansible 2.10+) to canonicalize first:
+       ```yaml
+       - name: Canonicalize and validate path
+         ansible.builtin.assert:
+           that:
+             - (my_path | realpath) is match('^/opt/server/')
+           fail_msg: "Path resolves outside allowed directory"
        ```
 
   3. If path components come from a loop variable over trusted data:

@@ -336,11 +336,13 @@ startswith(node.module, "community.")
 
 ### Can I create custom rules without modifying APME source?
 
-**Current:** Not yet. Custom rules must be added to `src/apme_engine/validators/opa/bundle/` and containers rebuilt.
+**Programmatic Use:** Yes. `OpaValidator` supports external custom bundles via `bundle_path` and `entrypoint` parameters (see "OPA Custom Bundles" section above).
 
-**Future:** ADR-042 defines plugin architecture allowing external rule services. Status: design complete, implementation pending.
+**CLI/Container Use:** Custom rules must be added to `src/apme_engine/validators/opa/bundle/` and containers rebuilt to be available in the packaged CLI or pod deployments.
 
-**Workaround:** Fork APME, add rules to `opa/bundle/`, maintain custom image.
+**Future:** ADR-042 defines plugin architecture allowing external rule services discoverable at runtime. Status: design complete, implementation pending.
+
+**Workaround for CLI:** Fork APME, add rules to `opa/bundle/`, maintain custom image.
 
 ### How do I ban multiple collections with one rule?
 
