@@ -222,6 +222,44 @@ describe('applyOperationSseEvent', () => {
     expect(state.proposals).toBeUndefined();
   });
 
+  it('ignores proposals SSE after operation expired', () => {
+    let state: ProjectOperationState = {
+      operation_id: 'op-1',
+      project_id: 'p-1',
+      scan_id: 's-1',
+      status: 'expired',
+      scan_type: 'remediate',
+      started_at: '2026-01-01T00:00:00Z',
+      progress: [],
+    };
+    const setState = vi.fn(
+      (updater: SetStateAction<ProjectOperationState | null>) => {
+        state =
+          typeof updater === 'function'
+            ? (updater(state) ?? state)
+            : (updater ?? state);
+      },
+    ) as Dispatch<SetStateAction<ProjectOperationState | null>>;
+    const setConnected = vi.fn();
+    applyOperationSseEvent(setState, setConnected, {
+      event: 'proposals',
+      data: JSON.stringify({
+        proposals: [
+          {
+            id: 'ai-0001',
+            rule_id: 'L001',
+            file: 'a.yml',
+            tier: 2,
+            confidence: 0.9,
+            source: 'ai',
+          },
+        ],
+      }),
+    });
+    expect(state.status).toBe('expired');
+    expect(state.proposals).toBeUndefined();
+  });
+
   it('merges error_code on status_changed', () => {
     let state: ProjectOperationState = {
       operation_id: 'op-1',

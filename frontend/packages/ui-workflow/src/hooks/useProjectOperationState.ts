@@ -389,12 +389,7 @@ export function applyOperationSseEvent(
         // cannot leave the UI on applying/progress and skip Gate 2 review.
         setState((prev) => {
           if (!prev) return prev;
-          if (
-            prev.status === "completed" ||
-            prev.status === "failed" ||
-            prev.status === "cancelled" ||
-            prev.status === "pr_submitted"
-          ) {
+          if (TERMINAL_STATUSES.has(prev.status)) {
             return prev;
           }
           return {

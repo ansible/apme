@@ -981,6 +981,32 @@ class TestSessionReplayState:
         assert "tier1_complete" in types
         assert "proposals" in types
 
+    async def test_replays_declined_only_gate2_proposals(self) -> None:
+        """Declined-only Gate 2 review rows replay after reconnect."""
+        from apme_engine.daemon.engine_server import EngineServicer
+
+        servicer = EngineServicer()
+        session = SessionState(session_id="declined-replay")
+        session.report = FixReport()
+        session.review_declined_proposals = {
+            "ai-declined-0000": Proposal(
+                id="ai-declined-0000",
+                file="play.yml",
+                rule_id="M001",
+                tier=2,
+                status="declined",
+                source="ai",
+            ),
+        }
+        session.current_tier = 2
+        session.status = 1
+
+        events = [e async for e in servicer._session_replay_state(session)]
+        proposal_events = [e for e in events if e.WhichOneof("event") == "proposals"]
+        assert len(proposal_events) == 1
+        assert len(proposal_events[0].proposals.proposals) == 1
+        assert proposal_events[0].proposals.proposals[0].id == "ai-declined-0000"
+
     async def test_replays_result_when_complete(self) -> None:
         """Replay emits final result when session status is complete."""
         from apme_engine.daemon.engine_server import EngineServicer

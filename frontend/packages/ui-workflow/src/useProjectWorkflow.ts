@@ -151,8 +151,9 @@ export function useProjectWorkflow(
 
   const approveWithState = useCallback(
     async (approvedIds: string[]) => {
-      await approve(approvedIds);
+      const result = await approve(approvedIds);
       applyLocalApprovalAck();
+      return result;
     },
     [approve, applyLocalApprovalAck],
   );

@@ -49,6 +49,8 @@ class SessionState:
         tier1_patches: Applied Tier 1 patches.
         format_diffs: Format diffs from the formatting phase.
         proposals: Pending AI proposals keyed by proposal ID.
+        review_declined_proposals: Declined-only review rows (display/replay;
+            not applied via ApprovalRequest).
         current_tier: Current remediation tier (1, 2, or 3).
         report: Remediation report from the engine.
         temp_dir: Temporary directory for materialized files.
@@ -120,6 +122,7 @@ class SessionState:
     tier1_patches: list[FilePatch] = field(default_factory=list)
     format_diffs: list[FileDiff] = field(default_factory=list)
     proposals: dict[str, Proposal] = field(default_factory=dict)
+    review_declined_proposals: dict[str, Proposal] = field(default_factory=dict)
     current_tier: int = 1
     report: FixReport | None = None
     temp_dir: Path | None = None
