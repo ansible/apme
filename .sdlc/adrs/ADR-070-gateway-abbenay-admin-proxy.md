@@ -96,8 +96,11 @@ trusted co-tenant of the product runtime. Evidence:
   has no Service or hostPort; only in-pod processes reach `127.0.0.1:8787`
   or Gateway `:8080` without an outer Ingress/NetworkPolicy edge.
 - **Podman** (`containers/podman/pod.yaml`): same shared-netns all-in-one
-  pod; Abbenay binds loopback only; Gateway `:8080` is the sole published
-  product REST edge.
+  pod. For local dev, Abbenay HTTP may publish `hostPort: 8787` with
+  `hostIP: 127.0.0.1` only (`http://127.0.0.1:8787`) with
+  `ABBENAY_HTTP_AUTH=0` for passwordless dashboard access on localhost.
+  Gateway `:8080` remains the sole published product REST edge for non-local
+  access. Helm Simple has no hostPort for 8787.
 
 A compromised sidecar that can already talk to Gateway can hit
 `/api/v1/ai/*` and trigger the Gateway→Abbenay token rewrite — the same
@@ -109,7 +112,9 @@ only with a new ADR that changes ADR-048.
 `http://127.0.0.1:8787`. Loopback is not transport confidentiality against a
 compromised co-located process; it is a binding constraint so the token never
 crosses a pod boundary. Deployment evidence: no cluster Service/hostPort for
-8787 (Helm chart + Podman), Abbenay `--host 127.0.0.1`, Gateway default
+8787 in Helm; Podman may use `hostIP: 127.0.0.1` hostPort for localhost dev UI
+only. Abbenay `--host 127.0.0.1` in Helm; Podman dev uses `--host 0.0.0.0` with
+localhost-only host binding. Gateway default
 `APME_ABBENAY_HTTP_URL=http://127.0.0.1:8787`. Hardened hops (HTTPS+mTLS or a
 permission-protected Unix socket) require a separate ADR; they are not part of
 the accepted Simple design.

@@ -241,6 +241,12 @@ place; `tox -e wipe` deletes it. To add providers or models, edit the cache
 `config.yaml` or POST via the Gateway admin proxy
 (`/api/v1/ai/provider/{id}/configure`); writes survive Abbenay restarts.
 
+**Local Podman dev UI:** `tox -e up` publishes Abbenay HTTP admin on
+`http://127.0.0.1:8787` (`hostPort` with `hostIP: 127.0.0.1` only — not LAN).
+`pod.yaml` sets `ABBENAY_HTTP_AUTH=0` so the dashboard loads without a Bearer
+token on that localhost bind. Helm Simple stays loopback-only with no hostPort
+(ADR-070). gRPC for Engine/Gateway remains the shared Unix socket.
+
 The Abbenay daemon still binds leftover gRPC TCP on `127.0.0.1:50057`. Engine AI RPCs, Gateway `/health`, and Helm probes use `APME_ABBENAY_ADDR=unix:///tmp/abbenay-run/abbenay/daemon.sock` (shared `emptyDir`) because `abbenay-client` ≥ 2026.8.7 rejects consumer tokens on plaintext TCP.
 
 #### UI
@@ -360,13 +366,14 @@ See [PODMAN_OPA_ISSUES.md](PODMAN_OPA_ISSUES.md) for common Podman rootless issu
 | 50054 | OPA | `APME_OPA_VALIDATOR_LISTEN` |
 | 50055 | Native | `APME_NATIVE_VALIDATOR_LISTEN` |
 | 50056 | Gitleaks | `APME_GITLEAKS_VALIDATOR_LISTEN` |
-| 50057 | Abbenay AI (pod-local) | `--grpc-host 127.0.0.1 --grpc-port` (no hostPort) |
+| 50057 | Abbenay AI gRPC (pod-local) | `--grpc-host 127.0.0.1 --grpc-port` (no hostPort) |
 | 50058 | Collection Health | `APME_COLLECTION_HEALTH_VALIDATOR_LISTEN` |
 | 50059 | Dep Audit | `APME_DEP_AUDIT_VALIDATOR_LISTEN` |
 | 50060 | Gateway (gRPC) | `APME_GATEWAY_GRPC_LISTEN` |
 | 8080 | Gateway (HTTP) | `APME_GATEWAY_HTTP_PORT` |
 | 8081 | UI (nginx) | — |
 | 8765 | Galaxy Proxy | `APME_GALAXY_PROXY_URL` |
+| 8787 | Abbenay HTTP admin UI (Podman `hostPort`, `hostIP: 127.0.0.1`) | `--host 0.0.0.0 --port` |
 
 ## Related Documents
 
