@@ -241,6 +241,131 @@ APME uses prefixed numeric IDs (per ADR-008):
 
 Custom rules should use the `CUSTOM-` or `EXT-` prefix to avoid conflicts.
 
+## Frequently Asked Questions
+
+### How do I ban a specific collection (e.g., community.general)?
+
+Create a custom OPA policy rule. Example: banning `community.general.*` modules.
+
+**1. Create the rule file:**
+
+`src/apme_engine/validators/opa/bundle/P001.rego`
+
+```rego
+# P001: Banned collection - community.general
+
+package apme.rules
+
+import future.keywords.if
+import future.keywords.in
+
+violations contains v if {
+	some tree in input.hierarchy
+	some node in tree.nodes
+	v := banned_collection(tree, node)
+}
+
+banned_collection(tree, node) := v if {
+	node.type == "taskcall"
+	node.module != ""
+	startswith(node.module, "community.general.")
+	count(node.line) > 0
+	v := {
+		"rule_id": "P001",
+		"severity": "high",
+		"message": sprintf("Banned collection: %s", [node.module]),
+		"file": node.file,
+		"line": node.line[0],
+		"path": node.key,
+		"scope": "task",
+	}
+}
+```
+
+**2. Create tests:**
+
+`src/apme_engine/validators/opa/bundle/P001_test.rego`
+
+```rego
+package apme.rules_test
+
+import data.apme.rules
+
+test_P001_fires_for_community_general if {
+	tree := {"nodes": [{"type": "taskcall", "module": "community.general.sysctl", "line": [1], "key": "k", "file": "f.yml"}]}
+	node := tree.nodes[0]
+	v := rules.banned_collection(tree, node)
+	v.rule_id == "P001"
+	v.severity == "high"
+}
+
+test_P001_does_not_fire_for_builtin if {
+	tree := {"nodes": [{"type": "taskcall", "module": "ansible.builtin.copy", "line": [1], "key": "k", "file": "f.yml"}]}
+	node := tree.nodes[0]
+	not rules.banned_collection(tree, node)
+}
+```
+
+**3. Test:**
+
+```bash
+opa test src/apme_engine/validators/opa/bundle/P001_test.rego \
+         src/apme_engine/validators/opa/bundle/P001.rego -v
+```
+
+**4. Rebuild containers:**
+
+```bash
+tox -e down && tox -e build && tox -e up
+```
+
+**Pattern for other banned collections:**
+
+```rego
+# P002: Ban community.docker
+startswith(node.module, "community.docker.")
+
+# P003: Ban community.aws
+startswith(node.module, "community.aws.")
+
+# P004: Ban any community.* collection
+startswith(node.module, "community.")
+```
+
+**Location:** Rule lives in OPA bundle (`src/apme_engine/validators/opa/bundle/`), automatically loaded on container rebuild.
+
+### Can I create custom rules without modifying APME source?
+
+**Current:** Not yet. Custom rules must be added to `src/apme_engine/validators/opa/bundle/` and containers rebuilt.
+
+**Future:** ADR-042 defines plugin architecture allowing external rule services. Status: design complete, implementation pending.
+
+**Workaround:** Fork APME, add rules to `opa/bundle/`, maintain custom image.
+
+### How do I ban multiple collections with one rule?
+
+Use Rego list matching:
+
+```rego
+banned_collection(tree, node) := v if {
+	node.type == "taskcall"
+	node.module != ""
+	banned_namespaces := ["community.general.", "community.docker.", "community.aws."]
+	some ns in banned_namespaces
+	startswith(node.module, ns)
+	count(node.line) > 0
+	v := {
+		"rule_id": "P001",
+		"severity": "high",
+		"message": sprintf("Banned collection: %s", [node.module]),
+		"file": node.file,
+		"line": node.line[0],
+		"path": node.key,
+		"scope": "task",
+	}
+}
+```
+
 ## Related Documentation
 
 - [Rule Catalog](../rules/RULE_CATALOG.md) — Complete list of built-in rules
