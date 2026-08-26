@@ -3081,7 +3081,17 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         )
         session.remaining_ai = list(remaining)
 
-        proposed_proposals = self._build_graph_proposals(graph_report.ai_proposals) if graph_report.ai_proposals else []
+        proposed_proposals: list[Proposal] = []
+        if graph_report.ai_proposals:
+            proposed_proposals.extend(self._build_graph_proposals(graph_report.ai_proposals))
+        # Post-AI Tier 1 cleanup stays pending until Gate 2 ApprovalRequest.
+        if getattr(graph_report, "tier1_proposals", None):
+            t1_start = len(proposed_proposals)
+            gate2_t1 = self._build_tier1_proposals(graph_report.tier1_proposals)
+            for offset, proposal in enumerate(gate2_t1):
+                proposal.id = f"t1-{t1_start + offset:04d}"
+                proposal.tier = 2
+            proposed_proposals.extend(gate2_t1)
         proposed_rule_files: set[tuple[str, str]] = set()
         for p in proposed_proposals:
             for raw_rid in p.rule_id.split(","):
@@ -3095,11 +3105,12 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         )
         all_proposals = proposed_proposals + declined_proposals
 
-        if proposed_proposals:
+        if all_proposals:
             # Do NOT splice into working_files until Gate 2 approve/decline.
             for p in proposed_proposals:
                 session.proposals[p.id] = p
-            session.ai_proposals = list(graph_report.ai_proposals)
+            session.ai_proposals = list(graph_report.ai_proposals) if graph_report.ai_proposals else []
+            session.tier1_proposals = list(getattr(graph_report, "tier1_proposals", None) or [])
             session.status = 1  # AWAITING_APPROVAL
             yield SessionEvent(
                 proposals=ProposalsReady(

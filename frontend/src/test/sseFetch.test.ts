@@ -146,6 +146,82 @@ describe('applyOperationSseEvent', () => {
     expect(state.status).toBe('scanning');
   });
 
+  it('sets awaiting_approval when proposals arrive', () => {
+    let state: ProjectOperationState = {
+      operation_id: 'op-1',
+      project_id: 'p-1',
+      scan_id: 's-1',
+      status: 'applying',
+      scan_type: 'remediate',
+      started_at: '2026-01-01T00:00:00Z',
+      progress: [],
+    };
+    const setState = vi.fn(
+      (updater: SetStateAction<ProjectOperationState | null>) => {
+        state =
+          typeof updater === 'function'
+            ? (updater(state) ?? state)
+            : (updater ?? state);
+      },
+    ) as Dispatch<SetStateAction<ProjectOperationState | null>>;
+    const setConnected = vi.fn();
+    applyOperationSseEvent(setState, setConnected, {
+      event: 'proposals',
+      data: JSON.stringify({
+        proposals: [
+          {
+            id: 'ai-0001',
+            rule_id: 'L001',
+            file: 'a.yml',
+            tier: 2,
+            confidence: 0.9,
+            source: 'ai',
+          },
+        ],
+      }),
+    });
+    expect(state.status).toBe('awaiting_approval');
+    expect(state.proposals).toHaveLength(1);
+  });
+
+  it('ignores proposals SSE after operation completed', () => {
+    let state: ProjectOperationState = {
+      operation_id: 'op-1',
+      project_id: 'p-1',
+      scan_id: 's-1',
+      status: 'completed',
+      scan_type: 'remediate',
+      started_at: '2026-01-01T00:00:00Z',
+      progress: [],
+    };
+    const setState = vi.fn(
+      (updater: SetStateAction<ProjectOperationState | null>) => {
+        state =
+          typeof updater === 'function'
+            ? (updater(state) ?? state)
+            : (updater ?? state);
+      },
+    ) as Dispatch<SetStateAction<ProjectOperationState | null>>;
+    const setConnected = vi.fn();
+    applyOperationSseEvent(setState, setConnected, {
+      event: 'proposals',
+      data: JSON.stringify({
+        proposals: [
+          {
+            id: 'ai-0001',
+            rule_id: 'L001',
+            file: 'a.yml',
+            tier: 2,
+            confidence: 0.9,
+            source: 'ai',
+          },
+        ],
+      }),
+    });
+    expect(state.status).toBe('completed');
+    expect(state.proposals).toBeUndefined();
+  });
+
   it('merges error_code on status_changed', () => {
     let state: ProjectOperationState = {
       operation_id: 'op-1',
@@ -177,5 +253,91 @@ describe('applyOperationSseEvent', () => {
     expect(state.status).toBe('failed');
     expect(state.error).toBe('Operation stalled without progress');
     expect(state.error_code).toBe('operation_stalled');
+  });
+
+  it('ignores stale applying status_changed while proposals await review', () => {
+    let state: ProjectOperationState = {
+      operation_id: 'op-1',
+      project_id: 'p-1',
+      scan_id: 's-1',
+      status: 'awaiting_approval',
+      scan_type: 'remediate',
+      started_at: '2026-01-01T00:00:00Z',
+      progress: [],
+      proposals: [
+        {
+          id: 'ai-0001',
+          rule_id: 'L001',
+          file: 'a.yml',
+          tier: 2,
+          confidence: 0.9,
+          source: 'ai',
+        },
+      ],
+    };
+    const setState = vi.fn(
+      (updater: SetStateAction<ProjectOperationState | null>) => {
+        state =
+          typeof updater === 'function'
+            ? (updater(state) ?? state)
+            : (updater ?? state);
+      },
+    ) as Dispatch<SetStateAction<ProjectOperationState | null>>;
+    const setConnected = vi.fn();
+    applyOperationSseEvent(setState, setConnected, {
+      event: 'status_changed',
+      data: JSON.stringify({ status: 'applying', previous: 'awaiting_approval' }),
+    });
+    expect(state.status).toBe('awaiting_approval');
+    expect(state.proposals).toHaveLength(1);
+  });
+
+  it('approval_ack moves to applying and clears proposals', () => {
+    let state: ProjectOperationState = {
+      operation_id: 'op-1',
+      project_id: 'p-1',
+      scan_id: 's-1',
+      status: 'awaiting_approval',
+      scan_type: 'remediate',
+      started_at: '2026-01-01T00:00:00Z',
+      progress: [],
+      proposals: [
+        {
+          id: 'ai-0001',
+          rule_id: 'L001',
+          file: 'a.yml',
+          tier: 2,
+          confidence: 0.9,
+          source: 'ai',
+        },
+      ],
+      result: {
+        total_violations: 1,
+        fixable: 1,
+        ai_proposed: 1,
+        ai_declined: 0,
+        ai_accepted: 0,
+        manual_review: 0,
+        remediated_count: 0,
+        fixed_violations: [],
+        patches: [],
+      },
+    };
+    const setState = vi.fn(
+      (updater: SetStateAction<ProjectOperationState | null>) => {
+        state =
+          typeof updater === 'function'
+            ? (updater(state) ?? state)
+            : (updater ?? state);
+      },
+    ) as Dispatch<SetStateAction<ProjectOperationState | null>>;
+    const setConnected = vi.fn();
+    applyOperationSseEvent(setState, setConnected, {
+      event: 'approval_ack',
+      data: JSON.stringify({ applied_count: 2 }),
+    });
+    expect(state.status).toBe('applying');
+    expect(state.proposals).toBeUndefined();
+    expect(state.result?.ai_accepted).toBe(2);
   });
 });

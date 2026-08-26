@@ -21,7 +21,10 @@ export {
   proposalHasVisibleDiff,
   proposalNodeTitle,
   proposalsGateKey,
+  proposalsLookLikeAiGate,
+  resolveProposalReviewGate,
   splitRuleIds,
+  type ProposalReviewGate,
 } from './proposalTier';
 export {
   filterByRuleKeepingNodeContext,

@@ -96,6 +96,39 @@ describe("ProposalReviewPanel", () => {
     expect(onApprove).toHaveBeenCalledWith(["t1-0001"]);
   });
 
+  it("enables Next when Gate 2 has only AI could-not-fix rows", async () => {
+    const user = userEvent.setup();
+    const onApprove = vi.fn();
+    const declinedOnly: OperationProposal[] = [
+      {
+        id: "ai-0000",
+        rule_id: "L005",
+        file: "playbook-1057-wrong-module.yml",
+        path: "playbook-1057-wrong-module.yml/plays[0]/tasks[0]",
+        source: "ai",
+        tier: 2,
+        confidence: 0,
+        status: "declined",
+        explanation: "AI could not generate a fix for this violation.",
+        suggestion: "Use a validated collection instead.",
+      },
+    ];
+    render(
+      <ProposalReviewPanel
+        proposals={declinedOnly}
+        onApprove={onApprove}
+        reviewGate="ai"
+        pastAiEscalation
+      />,
+    );
+    expect(
+      screen.getByText(/Continue with no AI fixes applied/i),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Next$/i })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: /^Next$/i }));
+    expect(onApprove).toHaveBeenCalledWith([]);
+  });
+
   it("Clear resets decisions and disables Next again", async () => {
     const user = userEvent.setup();
     const onDraftUpdate = vi.fn();

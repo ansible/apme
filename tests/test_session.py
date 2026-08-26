@@ -708,6 +708,7 @@ class TestSessionApprovalGates:
                         fixed_violations=[],
                         oscillation_detected=False,
                         ai_proposals=[],
+                        tier1_proposals=[],
                     )
                 )
 
@@ -800,6 +801,7 @@ class TestSessionApprovalGates:
                         fixed_violations=[],
                         oscillation_detected=False,
                         ai_proposals=[ai_prop],
+                        tier1_proposals=[],
                     )
                 )
 

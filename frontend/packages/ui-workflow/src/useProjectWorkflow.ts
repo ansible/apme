@@ -77,7 +77,7 @@ export function useProjectWorkflow(
 
   const [attachOp, setAttachOp] = useState(initiallyAttached);
 
-  const { state: opState, refresh: refreshOp, clear: clearOp } =
+  const { state: opState, refresh: refreshOp, clear: clearOp, applyLocalApprovalAck } =
     useProjectOperationState(projectId, {
       enabled: Boolean(projectId) && attachOp,
     });
@@ -128,6 +128,34 @@ export function useProjectWorkflow(
       refreshOp();
     }
   }, [attachOp, opState?.status, opState?.ai_triage_candidates, refreshOp]);
+
+  // Gate 2: proposals SSE can be missed while status stays applying — poll GET.
+  useEffect(() => {
+    if (!attachOp || !enableAi || opState?.status !== 'applying') {
+      return;
+    }
+    if (opState.ai_triage_candidates === undefined) {
+      return;
+    }
+    const timer = setInterval(() => {
+      refreshOp();
+    }, 3000);
+    return () => clearInterval(timer);
+  }, [
+    attachOp,
+    enableAi,
+    opState?.status,
+    opState?.ai_triage_candidates,
+    refreshOp,
+  ]);
+
+  const approveWithState = useCallback(
+    async (approvedIds: string[]) => {
+      await approve(approvedIds);
+      applyLocalApprovalAck();
+    },
+    [approve, applyLocalApprovalAck],
+  );
 
   const openSession = useCallback(() => {
     setAttachOp(true);
@@ -332,7 +360,7 @@ export function useProjectWorkflow(
     startScan,
     beginRemediate,
     escalateAi,
-    approve,
+    approve: approveWithState,
     cancel,
     createPR,
     patchProposals,
