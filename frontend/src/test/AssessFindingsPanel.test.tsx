@@ -101,4 +101,28 @@ describe("AssessFindingsPanel rule filter", () => {
       screen.getByLabelText("Selected rule filters"),
     ).toHaveTextContent("L050");
   });
+
+  it("resolveRuleHref renders rule definition links instead of filter chips", () => {
+    render(
+      <AssessFindingsPanel
+        findings={findings}
+        resolveRuleHref={(bareId) =>
+          bareId === "L050"
+            ? "/self-service/repositories/quality-settings?rule=L050"
+            : undefined
+        }
+      />,
+    );
+
+    const link = screen.getByRole("link", {
+      name: "View rule definition: L050",
+    });
+    expect(link).toHaveAttribute(
+      "href",
+      "/self-service/repositories/quality-settings?rule=L050",
+    );
+    expect(
+      screen.queryByRole("button", { name: "L050" }),
+    ).not.toBeInTheDocument();
+  });
 });
