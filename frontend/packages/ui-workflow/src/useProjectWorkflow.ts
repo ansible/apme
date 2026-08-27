@@ -42,6 +42,8 @@ export interface ProjectWorkflowController {
   setAttachOp: (v: boolean) => void;
   opState: ProjectOperationState | null;
   isRunning: boolean;
+  /** True while POST cancel is in flight (op snapshot may clear before dismiss). */
+  isCancelling: boolean;
   operationActive: boolean;
   sessionTabVisible: boolean;
   refreshOp: () => void;
@@ -76,6 +78,7 @@ export function useProjectWorkflow(
   const { ansibleVersion, collections, enableAi, autoApplyTier1 } = checkOptions;
 
   const [attachOp, setAttachOp] = useState(initiallyAttached);
+  const [isCancelling, setIsCancelling] = useState(false);
 
   const { state: opState, refresh: refreshOp, clear: clearOp, applyLocalApprovalAck } =
     useProjectOperationState(projectId, {
@@ -114,7 +117,8 @@ export function useProjectWorkflow(
   } = useProjectOperationActions(projectId);
 
   const isRunning =
-    opState != null && LIVE_OPERATION_STATUSES.has(opState.status);
+    isCancelling ||
+    (opState != null && LIVE_OPERATION_STATUSES.has(opState.status));
   const operationActive =
     attachOp && opState != null && opState.status !== 'cancelled';
   const sessionTabVisible = attachOp;
@@ -173,6 +177,7 @@ export function useProjectWorkflow(
   );
 
   const startScan = useCallback(async () => {
+    setIsCancelling(false);
     const colls = buildColls();
     openSession();
 
@@ -279,10 +284,18 @@ export function useProjectWorkflow(
   );
 
   const dismiss = useCallback(() => {
-    clearOp();
     setAttachOp(false);
+    setIsCancelling(false);
+    clearOp();
     onDismissSession?.();
   }, [clearOp, onDismissSession]);
+
+  // Server-side cancel (or stale cancelled snapshot) — detach without blank panel.
+  useEffect(() => {
+    if (attachOp && opState?.status === 'cancelled' && !isCancelling) {
+      dismiss();
+    }
+  }, [attachOp, opState?.status, isCancelling, dismiss]);
 
   const resumeSession = useCallback(() => {
     openSession();
@@ -295,6 +308,7 @@ export function useProjectWorkflow(
     if (!ok) return;
 
     const colls = buildColls();
+    setIsCancelling(false);
     setAttachOp(true);
     onOpenSession?.();
     try {
@@ -346,14 +360,26 @@ export function useProjectWorkflow(
   );
 
   const cancel = useCallback(async () => {
-    await cancelOp();
-  }, [cancelOp]);
+    if (isCancelling) return;
+    setIsCancelling(true);
+    try {
+      await cancelOp();
+      dismiss();
+    } catch (err) {
+      console.error('Failed to cancel operation:', err);
+      setIsCancelling(false);
+      window.alert(
+        err instanceof Error ? err.message : 'Failed to cancel operation.',
+      );
+    }
+  }, [cancelOp, dismiss, isCancelling]);
 
   return {
     attachOp,
     setAttachOp,
     opState,
     isRunning,
+    isCancelling,
     operationActive,
     sessionTabVisible,
     refreshOp,

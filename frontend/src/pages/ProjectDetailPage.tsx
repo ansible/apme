@@ -118,6 +118,7 @@ export function ProjectDetailPage() {
     attachOp,
     opState,
     isRunning,
+    isCancelling,
     operationActive,
     sessionTabVisible,
     startScan: handleScan,
@@ -315,7 +316,11 @@ export function ProjectDetailPage() {
                   <CardBody>
                     <Flex alignItems={{ default: 'alignItemsCenter' }} justifyContent={{ default: 'justifyContentSpaceBetween' }}>
                       <FlexItem>
-                        {operationActive ? 'Live session in progress' : 'Starting session…'}
+                        {isCancelling
+                          ? 'Stopping session…'
+                          : operationActive
+                            ? 'Live session in progress'
+                            : 'Starting session…'}
                         {opState?.status ? (
                           <span style={{ opacity: 0.7, marginLeft: 8 }}>({opState.status})</span>
                         ) : null}
@@ -423,9 +428,11 @@ export function ProjectDetailPage() {
               title={
                 <TabTitleText>
                   Session
-                  {opState?.status
-                    ? ` · ${opState.status.replace(/_/g, ' ')}`
-                    : ' · starting'}
+                  {isCancelling
+                    ? ' · stopping'
+                    : opState?.status
+                      ? ` · ${opState.status.replace(/_/g, ' ')}`
+                      : ' · starting'}
                 </TabTitleText>
               }
             >
