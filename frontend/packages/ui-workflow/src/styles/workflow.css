@@ -562,6 +562,15 @@
   min-width: 0;
 }
 
+button.apme-rule-id-clickable {
+  appearance: none;
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+}
+
 .apme-rule-id-clickable {
   cursor: pointer;
   text-decoration: underline;
@@ -571,6 +580,20 @@
 
 .apme-rule-id-clickable:hover,
 .apme-rule-id-clickable:focus {
+  text-decoration-style: solid;
+}
+
+a.apme-rule-id-link {
+  color: var(--pf-t--global--link--Color, #0066cc);
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+}
+
+a.apme-rule-id-link:hover,
+a.apme-rule-id-link:focus {
+  color: var(--pf-t--global--link--Color--hover, #004080);
   text-decoration-style: solid;
 }
 

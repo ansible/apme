@@ -65,6 +65,11 @@ export interface AssessFindingsPanelProps {
    * Prefixed IDs like ``native:L022`` are normalized to bare form.
    */
   initialRuleFilters?: string[];
+  /**
+   * Host-supplied rule definition URL. When provided, rule chips navigate to
+   * the definition instead of toggling the in-panel rule filter.
+   */
+  resolveRuleHref?: (bareId: string) => string | undefined;
 }
 
 function formatReviewStatus(status: string): string {
@@ -144,12 +149,14 @@ function FindingRow({
   enableAi,
   onHighlightLine,
   onRuleClick,
+  resolveRuleHref,
 }: {
   f: AssessFinding;
   snippetYaml: string;
   enableAi: boolean;
   onHighlightLine?: (line: number | null) => void;
   onRuleClick?: (bareId: string) => void;
+  resolveRuleHref?: (bareId: string) => string | undefined;
 }) {
   const fix = findingFixType(f, enableAi);
   const sev = f.severity || 'info';
@@ -160,6 +167,7 @@ function FindingRow({
       <RuleId
         ruleId={f.rule_id}
         onRuleClick={onRuleClick}
+        resolveRuleHref={resolveRuleHref}
         onHoverChange={
           canHighlight
             ? (hovering) =>
@@ -209,10 +217,12 @@ export function AssessNodeDetail({
   findings,
   enableAi,
   onRuleClick,
+  resolveRuleHref,
 }: {
   findings: AssessFinding[];
   enableAi: boolean;
   onRuleClick?: (bareId: string) => void;
+  resolveRuleHref?: (bareId: string) => string | undefined;
 }) {
   const [highlightLine, setHighlightLine] = useState<number | null>(null);
   // Assess/history findings are read-only: current YAML only. Proposed diffs
@@ -229,6 +239,7 @@ export function AssessNodeDetail({
             snippetYaml={beforeYaml}
             enableAi={enableAi}
             onRuleClick={onRuleClick}
+            resolveRuleHref={resolveRuleHref}
             onHighlightLine={
               beforeYaml.trim() ? setHighlightLine : undefined
             }
@@ -252,6 +263,7 @@ function findingsToNodeItem(
     isSingleton?: boolean;
     enableAi: boolean;
     onRuleClick?: (bareId: string) => void;
+    resolveRuleHref?: (bareId: string) => string | undefined;
   },
 ): NodeReviewItem {
   const nodeType = normalizeFindingNodeType(
@@ -277,6 +289,7 @@ function findingsToNodeItem(
         findings={findings}
         enableAi={opts.enableAi}
         onRuleClick={opts.onRuleClick}
+        resolveRuleHref={opts.resolveRuleHref}
       />
     ),
   };
@@ -312,6 +325,7 @@ export function AssessFindingsPanel({
   enableAi = true,
   error = null,
   initialRuleFilters,
+  resolveRuleHref,
 }: AssessFindingsPanelProps) {
   const [view, setView] = useState<ViewMode>('grouped');
   const [sevFilters, setSevFilters] = useState<Set<string>>(
@@ -378,6 +392,8 @@ export function AssessFindingsPanel({
         : [...prev, bareId],
     );
   }, []);
+
+  const ruleClickHandler = resolveRuleHref ? undefined : toggleRuleFilter;
 
   const ruleFilterSet = useMemo(() => new Set(ruleFilters), [ruleFilters]);
 
@@ -477,7 +493,8 @@ export function AssessFindingsPanel({
           {
             isSingleton: !(f.path || '').trim(),
             enableAi,
-            onRuleClick: toggleRuleFilter,
+            onRuleClick: ruleClickHandler,
+            resolveRuleHref,
           },
         ),
       );
@@ -486,10 +503,11 @@ export function AssessFindingsPanel({
       findingsToNodeItem(g.key, g.title, g.findings, {
         isSingleton: g.isSingleton,
         enableAi,
-        onRuleClick: toggleRuleFilter,
+        onRuleClick: ruleClickHandler,
+        resolveRuleHref,
       }),
     );
-  }, [view, filteredFindings, groups, enableAi, toggleRuleFilter]);
+  }, [view, filteredFindings, groups, enableAi, ruleClickHandler, resolveRuleHref]);
 
   const filterGroups: ReviewFilterGroup[] = useMemo(
     () => [
