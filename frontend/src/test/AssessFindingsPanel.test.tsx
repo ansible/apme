@@ -114,13 +114,16 @@ describe("AssessFindingsPanel rule filter", () => {
       />,
     );
 
-    const link = screen.getByRole("link", {
+    const l050Links = screen.getAllByRole("link", {
       name: "View rule definition: L050",
     });
-    expect(link).toHaveAttribute(
-      "href",
-      "/self-service/repositories/quality-settings?rule=L050",
-    );
+    expect(l050Links).toHaveLength(2);
+    for (const link of l050Links) {
+      expect(link).toHaveAttribute(
+        "href",
+        "/self-service/repositories/quality-settings?rule=L050",
+      );
+    }
     expect(
       screen.queryByRole("button", { name: "L050" }),
     ).not.toBeInTheDocument();
