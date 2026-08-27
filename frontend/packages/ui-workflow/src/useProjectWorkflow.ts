@@ -3,7 +3,7 @@
  * Owns attach/session state and operation actions; presentation is ProjectWorkflowPanel.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   fetchProjectOperationState,
   LIVE_OPERATION_STATUSES,
@@ -79,6 +79,10 @@ export function useProjectWorkflow(
 
   const [attachOp, setAttachOp] = useState(initiallyAttached);
   const [isCancelling, setIsCancelling] = useState(false);
+  /** Bumped when session dismissed or replaced so stale cancelOp() completions are ignored. */
+  const cancelGenerationRef = useRef(0);
+  /** operation_id for the attached session — gates server-side auto-dismiss on cancelled. */
+  const trackedOpIdRef = useRef<string | null>(null);
 
   const { state: opState, refresh: refreshOp, clear: clearOp, applyLocalApprovalAck } =
     useProjectOperationState(projectId, {
@@ -162,6 +166,11 @@ export function useProjectWorkflow(
     [approve, applyLocalApprovalAck],
   );
 
+  const invalidatePendingCancel = useCallback(() => {
+    cancelGenerationRef.current += 1;
+    setIsCancelling(false);
+  }, []);
+
   const openSession = useCallback(() => {
     setAttachOp(true);
     onOpenSession?.();
@@ -177,7 +186,8 @@ export function useProjectWorkflow(
   );
 
   const startScan = useCallback(async () => {
-    setIsCancelling(false);
+    invalidatePendingCancel();
+    clearOp();
     const colls = buildColls();
     openSession();
 
@@ -230,6 +240,8 @@ export function useProjectWorkflow(
     buildColls,
     enableAi,
     getAiModel,
+    clearOp,
+    invalidatePendingCancel,
     openSession,
     refreshOp,
     startOp,
@@ -284,18 +296,36 @@ export function useProjectWorkflow(
   );
 
   const dismiss = useCallback(() => {
+    invalidatePendingCancel();
+    trackedOpIdRef.current = null;
     setAttachOp(false);
-    setIsCancelling(false);
     clearOp();
     onDismissSession?.();
-  }, [clearOp, onDismissSession]);
+  }, [clearOp, invalidatePendingCancel, onDismissSession]);
 
-  // Server-side cancel (or stale cancelled snapshot) — detach without blank panel.
   useEffect(() => {
-    if (attachOp && opState?.status === 'cancelled' && !isCancelling) {
+    if (attachOp && opState?.operation_id) {
+      trackedOpIdRef.current = opState.operation_id;
+    }
+  }, [attachOp, opState?.operation_id]);
+
+  // Server-side cancel — detach without blank panel; ignore stale cancelled snapshots.
+  useEffect(() => {
+    if (
+      attachOp &&
+      opState?.status === 'cancelled' &&
+      !isCancelling &&
+      opState.operation_id === trackedOpIdRef.current
+    ) {
       dismiss();
     }
-  }, [attachOp, opState?.status, isCancelling, dismiss]);
+  }, [
+    attachOp,
+    opState?.status,
+    opState?.operation_id,
+    isCancelling,
+    dismiss,
+  ]);
 
   const resumeSession = useCallback(() => {
     openSession();
@@ -308,7 +338,8 @@ export function useProjectWorkflow(
     if (!ok) return;
 
     const colls = buildColls();
-    setIsCancelling(false);
+    invalidatePendingCancel();
+    clearOp();
     setAttachOp(true);
     onOpenSession?.();
     try {
@@ -329,8 +360,10 @@ export function useProjectWorkflow(
   }, [
     ansibleVersion,
     buildColls,
+    clearOp,
     enableAi,
     getAiModel,
+    invalidatePendingCancel,
     onOpenSession,
     refreshOp,
     startOp,
@@ -361,11 +394,14 @@ export function useProjectWorkflow(
 
   const cancel = useCallback(async () => {
     if (isCancelling) return;
+    const generation = cancelGenerationRef.current;
     setIsCancelling(true);
     try {
       await cancelOp();
+      if (generation !== cancelGenerationRef.current) return;
       dismiss();
     } catch (err) {
+      if (generation !== cancelGenerationRef.current) return;
       console.error('Failed to cancel operation:', err);
       setIsCancelling(false);
       window.alert(
