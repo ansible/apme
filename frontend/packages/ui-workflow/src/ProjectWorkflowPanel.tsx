@@ -1,6 +1,6 @@
 /**
  * Session-tab body for the shared scan/remediate workflow.
- * Host supplies chrome (tabs, Overview); this renders OperationPanel or starting spinner.
+ * Host supplies chrome (tabs, Overview); this renders OperationPanel or session spinners.
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -30,8 +30,8 @@ export function ProjectWorkflowPanel({
   onViewDetails,
 }: ProjectWorkflowPanelProps) {
   const {
-    operationActive,
     opState,
+    isCancelling,
     approve,
     beginRemediate,
     escalateAi,
@@ -51,7 +51,27 @@ export function ProjectWorkflowPanel({
     setDraftError(null);
   }, [operationId, opStatus]);
 
-  if (!operationActive || !opState) {
+  // Cancel clears the op snapshot before dismiss — show stopping, not starting.
+  if (isCancelling) {
+    return (
+      <Card>
+        <CardBody style={{ textAlign: 'center', padding: '48px 24px' }}>
+          <Spinner size="lg" />
+          <div style={{ marginTop: 12, fontSize: 16 }}>Stopping session…</div>
+          <Button
+            variant="link"
+            onClick={dismiss}
+            style={{ marginTop: 16 }}
+          >
+            Dismiss
+          </Button>
+        </CardBody>
+      </Card>
+    );
+  }
+
+  // Only show the pre-op spinner while waiting for the first snapshot.
+  if (!opState) {
     return (
       <Card>
         <CardBody style={{ textAlign: 'center', padding: '48px 24px' }}>

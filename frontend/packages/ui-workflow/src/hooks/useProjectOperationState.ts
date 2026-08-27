@@ -503,6 +503,8 @@ export function useProjectOperationState(
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
   const connectGenRef = useRef(0);
+  /** Bumped on clear/cleanup so in-flight poll() results cannot update stale opState. */
+  const pollGenRef = useRef(0);
   /** Latest operation status for reconnect gating (SSE ends on terminal). */
   const statusRef = useRef<ProjectOperationStatus | null>(null);
   const errorBackoffRef = useRef(0);
@@ -520,6 +522,7 @@ export function useProjectOperationState(
   );
 
   const cleanup = useCallback(() => {
+    pollGenRef.current += 1;
     connectGenRef.current += 1;
     if (abortRef.current) {
       abortRef.current.abort();
@@ -612,10 +615,11 @@ export function useProjectOperationState(
         }
         return;
       }
+      const pollGen = pollGenRef.current;
       try {
         const s = await fetchProjectOperationState(projectId);
-        // Never update React state after unmount — force only bypasses enabled.
-        if (!mountedRef.current) return;
+        // Never update React state after unmount or after clear/cleanup invalidated this poll.
+        if (!mountedRef.current || pollGen !== pollGenRef.current) return;
         if (!s) {
           setStateTracked(null);
           return;
@@ -656,6 +660,7 @@ export function useProjectOperationState(
   }, [poll]);
 
   const clear = useCallback(() => {
+    pollGenRef.current += 1;
     cleanup();
     setStateTracked(null);
   }, [cleanup, setStateTracked]);
