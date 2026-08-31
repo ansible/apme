@@ -1,3 +1,4 @@
+import { Button } from '@patternfly/react-core';
 import { ExternalLinkAltIcon } from '@patternfly/react-icons';
 
 interface PublishedCellProps {
@@ -14,16 +15,20 @@ function shortSha(sha: string): string {
 export function PublishedCell({ pr_url, branch_name, commit_sha }: PublishedCellProps) {
   if (pr_url) {
     return (
-      <a
+      <Button
+        variant="link"
+        isInline
+        component="a"
         href={pr_url}
         target="_blank"
         rel="noopener noreferrer"
+        icon={<ExternalLinkAltIcon />}
+        iconPosition="end"
+        size="sm"
         onClick={(e) => e.stopPropagation()}
-        style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
       >
         View PR
-        <ExternalLinkAltIcon style={{ width: 12, height: 12 }} />
-      </a>
+      </Button>
     );
   }
   if (branch_name) {

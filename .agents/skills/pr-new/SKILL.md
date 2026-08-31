@@ -75,7 +75,10 @@ module** surrounding each changed hunk — not just the hunk itself:
   before writing new code. If you add a `.pyi` field, read the other
   `.pyi` files for conventions. If you write a test, read the sibling
   tests for mock patterns. If you add an env var check, read how
-  existing env var checks handle the missing case.
+  existing env var checks handle the missing case. If you add a UI
+  control for an action the product already has (same label, href, or
+  table-cell pattern), reuse that component rather than a parallel
+  HTML primitive.
 
 **Artifact-type sweep.** Before answering the questions below, list
 every distinct artifact type in the diff (e.g., Python, proto, Rego,
@@ -434,6 +437,11 @@ critical/high/medium/low.
   double JSON parse, list.pop(0)/insert(0,…) vs deque, len(list(seq)),
   O(P×V) nested scans that should be O(P+V)
 - Pydantic/schema mutable defaults (`=[]`) vs sibling Field(default_factory=list)
+- UI controls that duplicate an existing product action with a
+  different primitive (raw ``<a>`` vs PatternFly ``Button
+  variant="link" component="a"`` already used for the same "View PR"
+  / table-cell link). Match the sibling component, including
+  ``isInline`` in table cells.
 
 Explain briefly why a Pass-1-style review would miss each finding.
 ```
