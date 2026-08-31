@@ -128,4 +128,25 @@ describe("AssessFindingsPanel rule filter", () => {
       screen.queryByRole("button", { name: "L050" }),
     ).not.toBeInTheDocument();
   });
+
+  it("resolveRuleHref keeps filter chips for rules without a catalog href", async () => {
+    const user = userEvent.setup();
+    render(
+      <AssessFindingsPanel
+        findings={findings}
+        resolveRuleHref={(bareId) =>
+          bareId === "L050"
+            ? "/self-service/repositories/quality-settings?rule=L050"
+            : undefined
+        }
+      />,
+    );
+
+    const m001Buttons = screen.getAllByRole("button", { name: "M001" });
+    expect(m001Buttons.length).toBeGreaterThan(0);
+    await user.click(m001Buttons[0]!);
+    expect(
+      screen.getByLabelText("Selected rule filters"),
+    ).toHaveTextContent("M001");
+  });
 });
