@@ -393,7 +393,8 @@ export function AssessFindingsPanel({
     );
   }, []);
 
-  const ruleClickHandler = resolveRuleHref ? undefined : toggleRuleFilter;
+  // RuleId prefers definition links; unknown rules still toggle the filter chip.
+  const ruleClickHandler = toggleRuleFilter;
 
   const ruleFilterSet = useMemo(() => new Set(ruleFilters), [ruleFilters]);
 
