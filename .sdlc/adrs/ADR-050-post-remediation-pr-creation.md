@@ -205,8 +205,10 @@ Gateway:
   3. Create branch from project's default branch
   4. Push patched files to the new branch
   5. If create_pr=true: create PR against default branch
-  6. Store PR URL (if created) in scan record
-  7. Transition operation to PR_SUBMITTED
+  6. Stamp ``branch_name`` and ``commit_sha`` on the scan row (always);
+     store ``pr_url`` if a PR was created
+  7. If a PR was created, transition the live operation to PR_SUBMITTED;
+     otherwise leave it COMPLETED
   8. Return branch_name, commit_sha, pr_url to UI
         │
         ▼

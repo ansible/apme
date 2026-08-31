@@ -709,13 +709,15 @@ async def submit_operation(
         raise HTTPException(status_code=502, detail="SCM provider error") from exc
 
     async with get_session() as db:
-        await q.record_scan_scm_publish(
+        persisted = await q.record_scan_scm_publish(
             db,
             scan_id,
             branch_name=branch_name,
             commit_sha=commit_sha,
             pr_url=pr_url,
         )
+    if not persisted:
+        raise HTTPException(status_code=404, detail="Activity not found")
     if pr_url:
         if state:
             get_operation_registry().set_pr_url(state.operation_id, pr_url)

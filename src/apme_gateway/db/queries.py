@@ -2111,6 +2111,10 @@ async def set_scan_pr_url(
 ) -> bool:
     """Atomically record the PR URL on an activity (ADR-050).
 
+    Production submit uses ``record_scan_scm_publish`` so branch and
+    commit SHA are stamped with the PR. This helper remains for
+    PR-only compare-and-set callers (tests and ADR-062 flush).
+
     Uses a compare-and-set update (``WHERE pr_url IS NULL``) so that
     concurrent requests cannot both succeed — the second caller gets
     ``False`` and should return 409.
