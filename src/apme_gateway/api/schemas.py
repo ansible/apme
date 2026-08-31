@@ -685,7 +685,8 @@ class SubmitResponse(BaseModel):  # type: ignore[misc]
     Attributes:
         branch_name: Name of the head branch that was created.
         commit_sha: SHA of the commit pushed to the branch.
-        pr_url: Web URL of the PR, or ``None`` if ``create_pr`` was false.
+        pr_url: PR URL stored on the activity after persist (existing
+            or newly recorded), or ``None`` if none is stored.
         provider: SCM provider that was used (e.g. ``github``).
     """
 

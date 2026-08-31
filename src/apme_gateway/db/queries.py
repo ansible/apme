@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import math
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import Any, NamedTuple, cast
 
 from sqlalchemy import case, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -2049,6 +2049,19 @@ async def get_patched_files(
     return list(result.scalars().all())
 
 
+class ScmPublishRecord(NamedTuple):
+    """Outcome of recording SCM publish metadata on a scan row.
+
+    Attributes:
+        found: True if the scan row existed and was updated.
+        pr_url: PR URL stored on the row after persist (existing or
+            newly recorded), or ``None`` if none is stored.
+    """
+
+    found: bool
+    pr_url: str | None = None
+
+
 async def record_scan_scm_publish(
     db: AsyncSession,
     scan_id: str,
@@ -2056,7 +2069,7 @@ async def record_scan_scm_publish(
     branch_name: str,
     commit_sha: str,
     pr_url: str | None = None,
-) -> bool:
+) -> ScmPublishRecord:
     """Record SCM publish metadata on an activity (ADR-050).
 
     Always stamps ``branch_name`` and ``commit_sha`` after a successful
@@ -2074,8 +2087,10 @@ async def record_scan_scm_publish(
             a branch-only submit.
 
     Returns:
-        True if the scan row was found and updated, False if the scan
-        does not exist.
+        ``ScmPublishRecord`` with ``found`` False if the scan does not
+        exist; otherwise ``found`` True and ``pr_url`` set to the
+        value stored on the row (the existing URL if compare-and-set
+        declined, or the newly recorded URL).
     """
     from apme_gateway.proposals.flush import flush_proposals_for_scan  # noqa: PLC0415
 
@@ -2089,19 +2104,30 @@ async def record_scan_scm_publish(
     row = result.first()
     if row is None:
         await db.commit()
-        return False
+        return ScmPublishRecord(found=False)
 
     project_id = row[0] or ""
-    existing_pr_url = row[1]
-    if pr_url and existing_pr_url is None:
-        pr_stmt = update(Scan).where(Scan.scan_id == scan_id, Scan.pr_url.is_(None)).values(pr_url=pr_url)
-        await db.execute(pr_stmt)
-        # Publish flush is scan-scoped so PR on activity A cannot wipe an open
-        # remediate working set on activity B for the same project.
-        await flush_proposals_for_scan(db, scan_id, project_id=project_id)
+    stored_pr_url = row[1]
+    if pr_url and stored_pr_url is None:
+        pr_stmt = (
+            update(Scan)
+            .where(Scan.scan_id == scan_id, Scan.pr_url.is_(None))
+            .values(pr_url=pr_url)
+            .returning(Scan.pr_url)
+        )
+        pr_result = await db.execute(pr_stmt)
+        cas_row = pr_result.first()
+        if cas_row is not None:
+            stored_pr_url = cas_row[0]
+            # Publish flush is scan-scoped so PR on activity A cannot wipe an open
+            # remediate working set on activity B for the same project.
+            await flush_proposals_for_scan(db, scan_id, project_id=project_id)
+        else:
+            stored = await db.execute(select(Scan.pr_url).where(Scan.scan_id == scan_id))
+            stored_pr_url = stored.scalar_one_or_none()
 
     await db.commit()
-    return True
+    return ScmPublishRecord(found=True, pr_url=stored_pr_url)
 
 
 async def set_scan_pr_url(

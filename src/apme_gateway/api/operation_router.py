@@ -710,7 +710,7 @@ async def submit_operation(
 
     try:
         async with get_session() as db:
-            persisted = await q.record_scan_scm_publish(
+            record = await q.record_scan_scm_publish(
                 db,
                 scan_id,
                 branch_name=branch_name,
@@ -725,13 +725,14 @@ async def submit_operation(
                 OperationStatus.COMPLETED,
             )
         raise HTTPException(status_code=500, detail="Failed to persist SCM publish metadata") from None
-    if not persisted:
+    if not record.found:
         if state:
             get_operation_registry().transition(
                 state.operation_id,
                 OperationStatus.COMPLETED,
             )
         raise HTTPException(status_code=404, detail="Activity not found")
+    pr_url = record.pr_url
     if pr_url:
         if state:
             get_operation_registry().set_pr_url(state.operation_id, pr_url)

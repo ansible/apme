@@ -2286,7 +2286,7 @@
         "type": "object"
       },
       "SubmitResponse": {
-        "description": "Response after a successful SCM submit (ADR-050).\n\nAttributes:\n    branch_name: Name of the head branch that was created.\n    commit_sha: SHA of the commit pushed to the branch.\n    pr_url: Web URL of the PR, or ``None`` if ``create_pr`` was false.\n    provider: SCM provider that was used (e.g. ``github``).",
+        "description": "Response after a successful SCM submit (ADR-050).\n\nAttributes:\n    branch_name: Name of the head branch that was created.\n    commit_sha: SHA of the commit pushed to the branch.\n    pr_url: PR URL stored on the activity after persist (existing\n        or newly recorded), or ``None`` if none is stored.\n    provider: SCM provider that was used (e.g. ``github``).",
         "properties": {
           "branch_name": {
             "title": "Branch Name",

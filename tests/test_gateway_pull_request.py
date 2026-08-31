@@ -15,6 +15,7 @@ from httpx import ASGITransport, AsyncClient
 from apme_gateway.app import create_app
 from apme_gateway.db import get_session
 from apme_gateway.db.models import PatchedFile, Project, Scan, Session
+from apme_gateway.db.queries import ScmPublishRecord
 from apme_gateway.operation_registry import get_operation_registry
 from apme_gateway.operation_types import OperationResult, OperationStatus
 from apme_gateway.scm.base import PullRequestResult, detect_provider
@@ -642,14 +643,15 @@ class TestScanPrUrl:
             await db.commit()
 
         async with get_session() as db:
-            ok = await record_scan_scm_publish(
+            record = await record_scan_scm_publish(
                 db,
                 "sc1",
                 branch_name="apme/remediate-sc1",
                 commit_sha="abc123def",
                 pr_url="https://github.com/org/repo/pull/42",
             )
-        assert ok is True
+        assert record.found is True
+        assert record.pr_url == "https://github.com/org/repo/pull/42"
 
         async with get_session() as db:
             scan = await get_scan(db, "sc1")
@@ -675,13 +677,14 @@ class TestScanPrUrl:
             await db.commit()
 
         async with get_session() as db:
-            ok = await record_scan_scm_publish(
+            record = await record_scan_scm_publish(
                 db,
                 "sc1",
                 branch_name="apme/remediate-sc1",
                 commit_sha="deadbeef",
             )
-        assert ok is True
+        assert record.found is True
+        assert record.pr_url is None
 
         async with get_session() as db:
             scan = await get_scan(db, "sc1")
@@ -708,14 +711,15 @@ class TestScanPrUrl:
             await db.commit()
 
         async with get_session() as db:
-            ok = await record_scan_scm_publish(
+            record = await record_scan_scm_publish(
                 db,
                 "sc1",
                 branch_name="apme/remediate-sc1",
                 commit_sha="newsha",
                 pr_url="https://github.com/org/repo/pull/2",
             )
-        assert ok is True
+        assert record.found is True
+        assert record.pr_url == "https://github.com/org/repo/pull/1"
 
         async with get_session() as db:
             scan = await get_scan(db, "sc1")
@@ -725,17 +729,18 @@ class TestScanPrUrl:
         assert scan.pr_url == "https://github.com/org/repo/pull/1"
 
     async def test_record_scm_publish_not_found(self) -> None:
-        """record_scan_scm_publish returns False for a missing scan."""
+        """record_scan_scm_publish reports not found for a missing scan."""
         from apme_gateway.db.queries import record_scan_scm_publish
 
         async with get_session() as db:
-            ok = await record_scan_scm_publish(
+            record = await record_scan_scm_publish(
                 db,
                 "nonexistent",
                 branch_name="apme/remediate-x",
                 commit_sha="abc",
             )
-        assert ok is False
+        assert record.found is False
+        assert record.pr_url is None
 
 
 class TestProjectScmFields:
@@ -914,7 +919,7 @@ class TestSubmitEndpoint:
             patch(
                 "apme_gateway.api.operation_router.q.record_scan_scm_publish",
                 new_callable=AsyncMock,
-                return_value=False,
+                return_value=ScmPublishRecord(found=False),
             ),
         ):
             mock_provider = AsyncMock()
@@ -964,6 +969,41 @@ class TestSubmitEndpoint:
         op = get_operation_registry().get_by_project("proj-1")
         assert op is not None
         assert op.status == OperationStatus.COMPLETED
+
+    async def test_submit_uses_persisted_pr_url(self, client: AsyncClient) -> None:
+        """Submit response and registry use the PR URL stored on the scan.
+
+        Args:
+            client: Async test client.
+        """
+        await _seed_project_with_remediation(scm_token="ghp_test123")
+        _setup_completed_operation()
+        stored = "https://github.com/org/repo/pull/1"
+
+        with (
+            patch("apme_gateway.scm.get_provider") as mock_get,
+            patch("apme_gateway.config.load_config") as mock_cfg,
+            patch(
+                "apme_gateway.api.operation_router.q.record_scan_scm_publish",
+                new_callable=AsyncMock,
+                return_value=ScmPublishRecord(found=True, pr_url=stored),
+            ),
+        ):
+            mock_provider = AsyncMock()
+            mock_provider.create_branch = AsyncMock(return_value="parent_sha")
+            mock_provider.push_files = AsyncMock(return_value="abc123def")
+            mock_provider.create_pull_request = AsyncMock(return_value=_MOCK_PR_RESULT)
+            mock_get.return_value = mock_provider
+            mock_cfg.return_value.scm_token = ""
+            mock_cfg.return_value.github_api_url = "https://api.github.com"
+
+            resp = await client.post("/api/v1/projects/proj-1/operation/submit")
+
+        assert resp.status_code == 200
+        assert resp.json()["pr_url"] == stored
+        op = get_operation_registry().get_by_project("proj-1")
+        assert op is not None
+        assert op.pr_url == stored
 
     async def test_no_operation(self, client: AsyncClient) -> None:
         """Return 404 when no operation exists for the project.
