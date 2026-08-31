@@ -16,7 +16,12 @@ from apme_engine.engine.models import ViolationDict
 from apme_engine.rule_catalog import (
     _category_from_rule_id,
     _collect_gitleaks_rules,
+    _index_rule_doc_files,
+    _load_rule_guidance_map,
     collect_all_rules,
+    get_rule_documentation,
+    get_rule_guidance,
+    list_rules_with_guidance,
 )
 from apme_gateway.db import get_session
 from apme_gateway.db import queries as q
@@ -323,6 +328,111 @@ def test_validate_rule_configs_complete_both_directions(
     unknown, missing = _validate_rule_configs(configs, complete=True)
     assert unknown == ["X999"], "X999 is not known to the Engine"
     assert missing == ["L002"], "L002 is known but absent from config"
+
+
+class TestGetRuleGuidance:
+    """Tests for the public ``get_rule_guidance`` / ``list_rules_with_guidance`` API."""
+
+    def setup_method(self) -> None:
+        """Clear the guidance cache before each test.
+
+        Returns:
+            None.
+        """
+        _load_rule_guidance_map.cache_clear()
+
+    def teardown_method(self) -> None:
+        """Clear the guidance cache after each test to avoid cross-test leakage.
+
+        Returns:
+            None.
+        """
+        _load_rule_guidance_map.cache_clear()
+
+    def test_get_rule_guidance_known_rule(self) -> None:
+        """``get_rule_guidance`` returns non-empty text for a rule with ``ai_prompt``.
+
+        Returns:
+            None: Assert-only test.
+        """
+        guidance = get_rule_guidance("R114")
+        assert guidance is not None, "R114 defines an ai_prompt and must return guidance"
+        assert "noqa" in guidance.lower(), "R114 guidance should mention the noqa exemption workflow"
+
+    def test_get_rule_guidance_unknown_rule_returns_none(self) -> None:
+        """``get_rule_guidance`` returns ``None`` for a rule with no guidance defined.
+
+        Returns:
+            None: Assert-only test.
+        """
+        assert get_rule_guidance("R9999-does-not-exist") is None
+
+    def test_get_rule_guidance_strips_validator_prefix(self) -> None:
+        """A ``validator:RULE_ID`` prefixed form resolves to the same guidance.
+
+        Returns:
+            None: Assert-only test.
+        """
+        assert get_rule_guidance("native:R114") == get_rule_guidance("R114")
+
+    def test_list_rules_with_guidance_sorted_and_contains_r114(self) -> None:
+        """``list_rules_with_guidance`` returns a sorted list including R114.
+
+        Returns:
+            None: Assert-only test.
+        """
+        rule_ids = list_rules_with_guidance()
+        assert rule_ids == sorted(rule_ids), "rule IDs must be sorted"
+        assert "R114" in rule_ids, "R114 defines ai_prompt and must be listed"
+
+
+class TestGetRuleDocumentation:
+    """Tests for the public ``get_rule_documentation`` full-docs API."""
+
+    def setup_method(self) -> None:
+        """Clear the doc-file index cache before each test.
+
+        Returns:
+            None.
+        """
+        _index_rule_doc_files.cache_clear()
+
+    def teardown_method(self) -> None:
+        """Clear the doc-file index cache after each test.
+
+        Returns:
+            None.
+        """
+        _index_rule_doc_files.cache_clear()
+
+    def test_get_rule_documentation_strips_frontmatter(self) -> None:
+        """``get_rule_documentation`` returns the markdown body without the frontmatter block.
+
+        Returns:
+            None: Assert-only test.
+        """
+        doc = get_rule_documentation("R114")
+        assert doc is not None, "R114 has a doc file and must return content"
+        assert not doc.startswith("---"), "frontmatter delimiter must be stripped"
+        assert "ai_prompt" not in doc, "frontmatter fields must not leak into the doc body"
+        assert "## File change (R114)" in doc, "doc body should retain the markdown heading"
+        assert "### Example: pass" in doc, "doc body should retain worked examples"
+
+    def test_get_rule_documentation_unknown_rule_returns_none(self) -> None:
+        """``get_rule_documentation`` returns ``None`` when no doc file exists for the rule.
+
+        Returns:
+            None: Assert-only test.
+        """
+        assert get_rule_documentation("R9999-does-not-exist") is None
+
+    def test_get_rule_documentation_strips_validator_prefix(self) -> None:
+        """A ``validator:RULE_ID`` prefixed form resolves to the same documentation.
+
+        Returns:
+            None: Assert-only test.
+        """
+        assert get_rule_documentation("native:R114") == get_rule_documentation("R114")
 
 
 def _grpc_context() -> AsyncMock:

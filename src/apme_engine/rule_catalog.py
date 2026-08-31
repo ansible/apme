@@ -14,9 +14,12 @@ rule-ID prefix per ADR-008.
 
 from __future__ import annotations
 
+import functools
 import logging
 import re
 from pathlib import Path
+
+import yaml
 
 from apme.v1 import common_pb2, reporting_pb2
 from apme_engine.engine.models import RuleScope
@@ -188,6 +191,136 @@ def _collect_from_frontmatter(
         )
     logger.info("Collected %d %s rules from frontmatter", len(defs), source)
     return defs
+
+
+@functools.lru_cache(maxsize=1)
+def _load_rule_guidance_map() -> dict[str, str]:
+    """Load ``ai_prompt`` remediation guidance from rule doc frontmatter.
+
+    Walks the native, OPA, and Ansible rule-doc directories, parsing YAML
+    frontmatter with ``yaml.safe_load`` (multiline-safe, unlike the
+    lightweight regex used by ``_parse_frontmatter``). The result is
+    cached for the process lifetime.
+
+    Returns:
+        Mapping of rule_id to stripped ``ai_prompt`` text, for rules that
+        define one.
+    """
+    guidance: dict[str, str] = {}
+    for rule_dir in (_GRAPH_RULES_DIR, _OPA_BUNDLE_DIR, _ANSIBLE_RULES_DIR):
+        if not rule_dir.is_dir():
+            continue
+        for md_path in sorted(rule_dir.glob("*.md")):
+            text = md_path.read_text(encoding="utf-8")
+            m = _FRONTMATTER_RE.match(text)
+            if not m:
+                continue
+            try:
+                fm = yaml.safe_load(m.group(1))
+            except yaml.YAMLError:
+                logger.warning("Failed to parse YAML frontmatter in %s", md_path)
+                continue
+            if not isinstance(fm, dict):
+                continue
+            rule_id = fm.get("rule_id", "")
+            ai_prompt = fm.get("ai_prompt", "")
+            if rule_id and ai_prompt:
+                guidance[str(rule_id)] = str(ai_prompt).strip()
+    return guidance
+
+
+def get_rule_guidance(rule_id: str) -> str | None:
+    """Get AI-remediation guidance text for a rule (public API).
+
+    This is the stable, public way for downstream consumers (e.g. projects
+    depending on ``apme-engine``) to retrieve the same ``ai_prompt``
+    guidance APME's own AI-assisted remediation uses, without reaching
+    into private modules or parsing rule markdown files directly.
+
+    Args:
+        rule_id: Rule identifier, e.g. ``"R114"`` or ``"L026"``. A
+            validator-prefixed form such as ``"opa:P001"`` is also
+            accepted; the prefix before the last ``:`` is stripped.
+
+    Returns:
+        The rule's ``ai_prompt`` guidance text if the rule defines one,
+        else ``None`` (either the rule is unknown or has no AI guidance).
+
+    Example:
+        >>> from apme_engine.rule_catalog import get_rule_guidance
+        >>> guidance = get_rule_guidance("R114")
+        >>> print(guidance)
+    """
+    bare_id = rule_id.split(":")[-1] if ":" in rule_id else rule_id
+    return _load_rule_guidance_map().get(bare_id)
+
+
+def list_rules_with_guidance() -> list[str]:
+    """List rule IDs that have AI-remediation guidance defined (public API).
+
+    Returns:
+        Sorted list of rule IDs whose markdown frontmatter defines an
+        ``ai_prompt``.
+    """
+    return sorted(_load_rule_guidance_map())
+
+
+@functools.lru_cache(maxsize=1)
+def _index_rule_doc_files() -> dict[str, Path]:
+    """Build a rule_id -> markdown file path index across all rule-doc dirs.
+
+    Reads each file's frontmatter (not just its filename) so the index is
+    correct even when a filename doesn't embed the rule_id verbatim.
+
+    Returns:
+        Mapping of rule_id to its ``.md`` doc path. When multiple files
+        declare the same rule_id, the first one found wins (directories
+        are walked in native -> opa -> ansible order).
+    """
+    index: dict[str, Path] = {}
+    for rule_dir in (_GRAPH_RULES_DIR, _OPA_BUNDLE_DIR, _ANSIBLE_RULES_DIR):
+        if not rule_dir.is_dir():
+            continue
+        for md_path in sorted(rule_dir.glob("*.md")):
+            fm = _parse_frontmatter(md_path)
+            rule_id = fm.get("rule_id", "")
+            if rule_id and rule_id not in index:
+                index[rule_id] = md_path
+    return index
+
+
+def get_rule_documentation(rule_id: str) -> str | None:
+    """Get the full markdown documentation body for a rule (public API).
+
+    Unlike :func:`get_rule_guidance` (which returns only the short
+    ``ai_prompt`` frontmatter field used for AI-assisted remediation),
+    this returns the full human-readable docs below the frontmatter:
+    description, pass/fail examples, and detailed remediation steps —
+    i.e. everything you'd see reading the rule's ``.md`` file directly,
+    minus the YAML frontmatter block itself.
+
+    Args:
+        rule_id: Rule identifier, e.g. ``"R114"`` or ``"L026"``. A
+            validator-prefixed form such as ``"opa:P001"`` is also
+            accepted; the prefix before the last ``:`` is stripped.
+
+    Returns:
+        The markdown body text (frontmatter stripped) if the rule has a
+        doc file, else ``None``.
+
+    Example:
+        >>> from apme_engine.rule_catalog import get_rule_documentation
+        >>> print(get_rule_documentation("R114"))
+    """
+    bare_id = rule_id.split(":")[-1] if ":" in rule_id else rule_id
+    md_path = _index_rule_doc_files().get(bare_id)
+    if md_path is None:
+        return None
+    text = md_path.read_text(encoding="utf-8")
+    m = _FRONTMATTER_RE.match(text)
+    if not m:
+        return text.strip()
+    return text[m.end() :].strip()
 
 
 def _collect_gitleaks_rules() -> list[reporting_pb2.RuleDefinition]:
