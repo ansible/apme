@@ -708,14 +708,23 @@ async def submit_operation(
             )
         raise HTTPException(status_code=502, detail="SCM provider error") from exc
 
-    async with get_session() as db:
-        persisted = await q.record_scan_scm_publish(
-            db,
-            scan_id,
-            branch_name=branch_name,
-            commit_sha=commit_sha,
-            pr_url=pr_url,
-        )
+    try:
+        async with get_session() as db:
+            persisted = await q.record_scan_scm_publish(
+                db,
+                scan_id,
+                branch_name=branch_name,
+                commit_sha=commit_sha,
+                pr_url=pr_url,
+            )
+    except Exception:
+        logger.exception("Failed to persist SCM publish metadata for scan %s", scan_id)
+        if state:
+            get_operation_registry().transition(
+                state.operation_id,
+                OperationStatus.COMPLETED,
+            )
+        raise HTTPException(status_code=500, detail="Failed to persist SCM publish metadata") from None
     if not persisted:
         if state:
             get_operation_registry().transition(

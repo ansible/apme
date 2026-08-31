@@ -932,6 +932,39 @@ class TestSubmitEndpoint:
         assert op is not None
         assert op.status == OperationStatus.COMPLETED
 
+    async def test_persist_exception_restores_completed(self, client: AsyncClient) -> None:
+        """Live submit restores COMPLETED if persist raises after push.
+
+        Args:
+            client: Async test client.
+        """
+        await _seed_project_with_remediation(scm_token="ghp_test123")
+        _setup_completed_operation()
+
+        with (
+            patch("apme_gateway.scm.get_provider") as mock_get,
+            patch("apme_gateway.config.load_config") as mock_cfg,
+            patch(
+                "apme_gateway.api.operation_router.q.record_scan_scm_publish",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("db down"),
+            ),
+        ):
+            mock_provider = AsyncMock()
+            mock_provider.create_branch = AsyncMock(return_value="parent_sha")
+            mock_provider.push_files = AsyncMock(return_value="abc123def")
+            mock_provider.create_pull_request = AsyncMock(return_value=_MOCK_PR_RESULT)
+            mock_get.return_value = mock_provider
+            mock_cfg.return_value.scm_token = ""
+            mock_cfg.return_value.github_api_url = "https://api.github.com"
+
+            resp = await client.post("/api/v1/projects/proj-1/operation/submit")
+
+        assert resp.status_code == 500
+        op = get_operation_registry().get_by_project("proj-1")
+        assert op is not None
+        assert op.status == OperationStatus.COMPLETED
+
     async def test_no_operation(self, client: AsyncClient) -> None:
         """Return 404 when no operation exists for the project.
 

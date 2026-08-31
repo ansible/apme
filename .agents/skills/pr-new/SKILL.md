@@ -355,11 +355,12 @@ have required side effects (e.g. promote ledger status after approving
 progression — evaluate both unconditionally).
 When adding a new error return after a status-machine transition
 (``SUBMITTING_PR``, ``APPLYING``, etc.), construct the failure *after*
-that transition and require the same restore-to-terminal path as
-sibling error handlers in the same function — a 404/409/422 that
-skips ``transition(COMPLETED)`` leaves live operations stuck in the
-in-flight status. Match existing SCM/token/provider error paths
-before introducing a new raise.
+that transition — both explicit raises *and* exceptions from helpers
+called in that window (DB commit, flush, RPC). Require the same
+restore-to-terminal path as sibling error handlers in the same
+function; a 404/409/422/500 that skips ``transition(COMPLETED)`` leaves
+live operations stuck in the in-flight status. Match existing
+SCM/token/provider error paths before introducing a new raise.
 When a parser treats ``:`` as host/port, construct the edge cases that
 break ``rpartition(":")``: empty host (``:port``), unbracketed IPv6
 (``::1``), ``[ipv6]:port``, and malformed ports (``[::1]:``,
