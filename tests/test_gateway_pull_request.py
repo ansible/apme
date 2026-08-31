@@ -936,6 +936,7 @@ class TestSubmitEndpoint:
         op = get_operation_registry().get_by_project("proj-1")
         assert op is not None
         assert op.status == OperationStatus.COMPLETED
+        assert op.error == "Activity not found"
 
     async def test_persist_exception_restores_completed(self, client: AsyncClient) -> None:
         """Live submit restores COMPLETED if persist raises after push.
@@ -969,6 +970,7 @@ class TestSubmitEndpoint:
         op = get_operation_registry().get_by_project("proj-1")
         assert op is not None
         assert op.status == OperationStatus.COMPLETED
+        assert op.error == "Failed to persist SCM publish metadata"
 
     async def test_submit_uses_persisted_pr_url(self, client: AsyncClient) -> None:
         """Submit response and registry use the PR URL stored on the scan.

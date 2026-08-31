@@ -363,7 +363,9 @@ called in that window (DB commit, flush, RPC). Require the same
 restore-to-terminal path as sibling error handlers in the same
 function; a 404/409/422/500 that skips ``transition(COMPLETED)`` leaves
 live operations stuck in the in-flight status. Match existing
-SCM/token/provider error paths before introducing a new raise.
+SCM/token/provider error paths before introducing a new raise —
+including the same transition extras (``error=``) sibling failure
+handlers pass, so SSE subscribers see why the in-flight status ended.
 When a parser treats ``:`` as host/port, construct the edge cases that
 break ``rpartition(":")``: empty host (``:port``), unbracketed IPv6
 (``::1``), ``[ipv6]:port``, and malformed ports (``[::1]:``,

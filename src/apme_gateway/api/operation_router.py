@@ -723,6 +723,7 @@ async def submit_operation(
             get_operation_registry().transition(
                 state.operation_id,
                 OperationStatus.COMPLETED,
+                error="Failed to persist SCM publish metadata",
             )
         raise HTTPException(status_code=500, detail="Failed to persist SCM publish metadata") from None
     if not record.found:
@@ -730,6 +731,7 @@ async def submit_operation(
             get_operation_registry().transition(
                 state.operation_id,
                 OperationStatus.COMPLETED,
+                error="Activity not found",
             )
         raise HTTPException(status_code=404, detail="Activity not found")
     pr_url = record.pr_url
