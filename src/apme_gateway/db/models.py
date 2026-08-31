@@ -91,6 +91,8 @@ class Scan(Base):
         ai_accepted: Count of AI proposals accepted by the user.
         diagnostics_json: JSON-serialised ScanDiagnostics.
         pr_url: URL of the pull request created from this activity (ADR-050).
+        branch_name: Head branch pushed during SCM submit (ADR-050), if any.
+        commit_sha: SHA of the commit pushed during SCM submit (ADR-050), if any.
         session: Back-reference to owning Session.
         project: Back-reference to owning Project (ADR-037).
         violations: Related violation rows.
@@ -124,6 +126,8 @@ class Scan(Base):
     ai_accepted: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     diagnostics_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     pr_url: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
+    branch_name: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
+    commit_sha: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
 
     session: Mapped[Session] = relationship(back_populates="scans")
     project: Mapped[Project | None] = relationship(back_populates="scans")

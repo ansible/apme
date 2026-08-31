@@ -7,7 +7,7 @@ import math
 from datetime import UTC, datetime
 from typing import Any, cast
 
-from sqlalchemy import case, func, or_, select
+from sqlalchemy import case, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -2049,6 +2049,61 @@ async def get_patched_files(
     return list(result.scalars().all())
 
 
+async def record_scan_scm_publish(
+    db: AsyncSession,
+    scan_id: str,
+    *,
+    branch_name: str,
+    commit_sha: str,
+    pr_url: str | None = None,
+) -> bool:
+    """Record SCM publish metadata on an activity (ADR-050).
+
+    Always stamps ``branch_name`` and ``commit_sha`` after a successful
+    push (including branch-only submit). When *pr_url* is provided,
+    uses a compare-and-set update (``WHERE pr_url IS NULL``) so that
+    concurrent PR creates cannot both succeed, then flushes this
+    scan's ephemeral proposal working set (ADR-062).
+
+    Args:
+        db: Active async database session.
+        scan_id: UUID of the scan (activity).
+        branch_name: Head branch that received the push.
+        commit_sha: SHA of the commit pushed to the branch.
+        pr_url: Web URL of the created pull request, or ``None`` for
+            a branch-only submit.
+
+    Returns:
+        True if the scan row was found and updated, False if the scan
+        does not exist.
+    """
+    from apme_gateway.proposals.flush import flush_proposals_for_scan  # noqa: PLC0415
+
+    stmt = (
+        update(Scan)
+        .where(Scan.scan_id == scan_id)
+        .values(branch_name=branch_name, commit_sha=commit_sha)
+        .returning(Scan.project_id, Scan.pr_url)
+    )
+    result = await db.execute(stmt)
+    row = result.first()
+    if row is None:
+        await db.commit()
+        return False
+
+    project_id = row[0] or ""
+    existing_pr_url = row[1]
+    if pr_url and existing_pr_url is None:
+        pr_stmt = update(Scan).where(Scan.scan_id == scan_id, Scan.pr_url.is_(None)).values(pr_url=pr_url)
+        await db.execute(pr_stmt)
+        # Publish flush is scan-scoped so PR on activity A cannot wipe an open
+        # remediate working set on activity B for the same project.
+        await flush_proposals_for_scan(db, scan_id, project_id=project_id)
+
+    await db.commit()
+    return True
+
+
 async def set_scan_pr_url(
     db: AsyncSession,
     scan_id: str,
@@ -2073,8 +2128,6 @@ async def set_scan_pr_url(
         True if the scan row was found and updated, False if it was
         already set or the scan does not exist.
     """
-    from sqlalchemy import update
-
     from apme_gateway.proposals.flush import flush_proposals_for_scan  # noqa: PLC0415
 
     # Single compare-and-set UPDATE with RETURNING — avoids a stale ORM

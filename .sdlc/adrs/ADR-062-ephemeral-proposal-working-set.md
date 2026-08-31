@@ -107,9 +107,10 @@ the fix without a human gate.
    and auto-stamps created for that check scan at FixCompleted (engine
    always emits fixed_yaml “would fix” rows).
 2. **PR / commit / push completed** → flush + delete for the **published
-   scan only** (scan-scoped). Phase 1 wires this into `set_scan_pr_url`;
-   push-only publish without a PR URL is Phase 2. Project-wide flush
-   remains for remediate→remediate replacement only.
+   scan only** (scan-scoped). Phase 1 wires this into
+   `record_scan_scm_publish` when a PR URL is set (and `set_scan_pr_url`).
+   Push-only publish without a PR URL does not flush (Phase 2).
+   Project-wide flush remains for remediate→remediate replacement only.
 3. **Historical activity GET** → if no working-set rows, **rebuild** proposals
    from violations in memory; do not `INSERT`. Use `original_yaml` /
    `fixed_yaml` for diffs when present.
@@ -266,3 +267,4 @@ match.
 | 2026-07-09 | Brad Thornton | Phase 2: draft PATCH, gate-commit stamps, id bridge, abandon |
 | 2026-07-20 | Brad Thornton | Cross-link ADR-065 for SPA vs registry ownership |
 | 2026-07-21 | Brad Thornton | AI escalation triage before Gate 2 (lift deferred) |
+| 2026-08-31 | AI Agent | PR flush is invoked from `record_scan_scm_publish` as well as `set_scan_pr_url` |

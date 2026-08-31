@@ -62,6 +62,7 @@ async def init_db(database_url_or_path: str) -> None:
         await conn.run_sync(Base.metadata.create_all)
         await conn.run_sync(_migrate_violations_table)
         await conn.run_sync(_migrate_proposals_table)
+        await conn.run_sync(_migrate_scans_table)
 
 
 async def init_db_from_config(*, database_url: str | None = None, db_path: str | None = None) -> str:
@@ -94,6 +95,7 @@ async def reset_db() -> None:
         await conn.run_sync(Base.metadata.create_all)
         await conn.run_sync(_migrate_violations_table)
         await conn.run_sync(_migrate_proposals_table)
+        await conn.run_sync(_migrate_scans_table)
 
 
 def get_engine() -> AsyncEngine:
@@ -214,6 +216,37 @@ def _migrate_proposals_table(conn: object) -> None:
         migrations.append("ALTER TABLE proposals ADD COLUMN draft INTEGER NOT NULL DEFAULT 0")
     if "stamp_rule_ids_json" not in existing:
         migrations.append("ALTER TABLE proposals ADD COLUMN stamp_rule_ids_json TEXT NOT NULL DEFAULT '[]'")
+
+    for stmt in migrations:
+        conn.execute(text(stmt))
+
+
+def _migrate_scans_table(conn: object) -> None:
+    """Add SCM publish columns to ``scans`` (ADR-050).
+
+    ``create_all`` only creates missing *tables* — it does not add columns
+    to existing tables.  This function inspects the ``scans`` table and
+    issues ``ALTER TABLE ADD COLUMN`` for any that are missing.
+
+    Args:
+        conn: Synchronous SQLAlchemy connection (from ``run_sync``).
+    """
+    from sqlalchemy.engine import Connection  # noqa: PLC0415
+
+    if not isinstance(conn, Connection):
+        return
+    insp = inspect(conn)
+    if not insp.has_table("scans"):
+        return
+    existing = {c["name"] for c in insp.get_columns("scans")}
+
+    migrations: list[str] = []
+    if "pr_url" not in existing:
+        migrations.append("ALTER TABLE scans ADD COLUMN pr_url TEXT DEFAULT NULL")
+    if "branch_name" not in existing:
+        migrations.append("ALTER TABLE scans ADD COLUMN branch_name TEXT DEFAULT NULL")
+    if "commit_sha" not in existing:
+        migrations.append("ALTER TABLE scans ADD COLUMN commit_sha TEXT DEFAULT NULL")
 
     for stmt in migrations:
         conn.execute(text(stmt))

@@ -41,6 +41,8 @@ class ActivitySummary(BaseModel):  # type: ignore[misc]
         manual_review: Count of tier-3 manual violations.
         remediated_count: Total applied (Tier 1 + AI accepted).
         pr_url: URL of the PR created from this activity (ADR-050), if any.
+        branch_name: Head branch pushed during SCM submit (ADR-050), if any.
+        commit_sha: SHA of the commit pushed during SCM submit (ADR-050), if any.
     """
 
     scan_id: str
@@ -59,6 +61,8 @@ class ActivitySummary(BaseModel):  # type: ignore[misc]
     manual_review: int
     remediated_count: int = 0
     pr_url: str | None = None
+    branch_name: str | None = None
+    commit_sha: str | None = None
 
 
 class ViolationDetail(BaseModel):  # type: ignore[misc]
@@ -209,6 +213,8 @@ class ActivityDetail(BaseModel):  # type: ignore[misc]
         manual_review: Count of tier-3 manual violations.
         remediated_count: Total applied (Tier 1 + AI accepted).
         pr_url: URL of the PR created from this activity (ADR-050), if any.
+        branch_name: Head branch pushed during SCM submit (ADR-050), if any.
+        commit_sha: SHA of the commit pushed during SCM submit (ADR-050), if any.
         diagnostics_json: Raw diagnostics JSON string.
         violations: List of violation rows.
         proposals: List of proposal rows.
@@ -232,6 +238,8 @@ class ActivityDetail(BaseModel):  # type: ignore[misc]
     manual_review: int
     remediated_count: int = 0
     pr_url: str | None = None
+    branch_name: str | None = None
+    commit_sha: str | None = None
     diagnostics_json: str | None
     violations: list[ViolationDetail]
     proposals: list[ProposalDetail]

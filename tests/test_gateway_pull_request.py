@@ -625,6 +625,118 @@ class TestScanPrUrl:
             ok = await set_scan_pr_url(db, "nonexistent", "https://example.com")
         assert ok is False
 
+    async def test_record_scm_publish(self) -> None:
+        """Branch, commit SHA, and PR URL are recorded on a scan row."""
+        from apme_gateway.db.queries import get_scan, record_scan_scm_publish
+
+        async with get_session() as db:
+            db.add(Session(session_id="s1", project_path="/p", first_seen="t0", last_seen="t1"))
+            db.add(
+                Scan(
+                    scan_id="sc1",
+                    session_id="s1",
+                    project_path="/p",
+                    created_at="2026-01-01T00:00:00Z",
+                )
+            )
+            await db.commit()
+
+        async with get_session() as db:
+            ok = await record_scan_scm_publish(
+                db,
+                "sc1",
+                branch_name="apme/remediate-sc1",
+                commit_sha="abc123def",
+                pr_url="https://github.com/org/repo/pull/42",
+            )
+        assert ok is True
+
+        async with get_session() as db:
+            scan = await get_scan(db, "sc1")
+        assert scan is not None
+        assert scan.branch_name == "apme/remediate-sc1"
+        assert scan.commit_sha == "abc123def"
+        assert scan.pr_url == "https://github.com/org/repo/pull/42"
+
+    async def test_record_scm_publish_branch_only(self) -> None:
+        """Branch-only publish stamps branch and SHA without a PR URL."""
+        from apme_gateway.db.queries import get_scan, record_scan_scm_publish
+
+        async with get_session() as db:
+            db.add(Session(session_id="s1", project_path="/p", first_seen="t0", last_seen="t1"))
+            db.add(
+                Scan(
+                    scan_id="sc1",
+                    session_id="s1",
+                    project_path="/p",
+                    created_at="2026-01-01T00:00:00Z",
+                )
+            )
+            await db.commit()
+
+        async with get_session() as db:
+            ok = await record_scan_scm_publish(
+                db,
+                "sc1",
+                branch_name="apme/remediate-sc1",
+                commit_sha="deadbeef",
+            )
+        assert ok is True
+
+        async with get_session() as db:
+            scan = await get_scan(db, "sc1")
+        assert scan is not None
+        assert scan.branch_name == "apme/remediate-sc1"
+        assert scan.commit_sha == "deadbeef"
+        assert scan.pr_url is None
+
+    async def test_record_scm_publish_does_not_overwrite_pr_url(self) -> None:
+        """A later publish updates branch/SHA but does not replace an existing PR URL."""
+        from apme_gateway.db.queries import get_scan, record_scan_scm_publish
+
+        async with get_session() as db:
+            db.add(Session(session_id="s1", project_path="/p", first_seen="t0", last_seen="t1"))
+            db.add(
+                Scan(
+                    scan_id="sc1",
+                    session_id="s1",
+                    project_path="/p",
+                    created_at="2026-01-01T00:00:00Z",
+                    pr_url="https://github.com/org/repo/pull/1",
+                )
+            )
+            await db.commit()
+
+        async with get_session() as db:
+            ok = await record_scan_scm_publish(
+                db,
+                "sc1",
+                branch_name="apme/remediate-sc1",
+                commit_sha="newsha",
+                pr_url="https://github.com/org/repo/pull/2",
+            )
+        assert ok is True
+
+        async with get_session() as db:
+            scan = await get_scan(db, "sc1")
+        assert scan is not None
+        assert scan.branch_name == "apme/remediate-sc1"
+        assert scan.commit_sha == "newsha"
+        assert scan.pr_url == "https://github.com/org/repo/pull/1"
+
+    async def test_record_scm_publish_not_found(self) -> None:
+        """record_scan_scm_publish returns False for a missing scan."""
+        from apme_gateway.db.queries import record_scan_scm_publish
+
+        async with get_session() as db:
+            ok = await record_scan_scm_publish(
+                db,
+                "nonexistent",
+                branch_name="apme/remediate-x",
+                commit_sha="abc",
+            )
+        assert ok is False
+
 
 class TestProjectScmFields:
     """Tests for SCM-related project fields (ADR-050)."""
@@ -726,6 +838,20 @@ class TestSubmitEndpoint:
         assert data["provider"] == "github"
         assert data["branch_name"].startswith("apme/remediate-")
 
+        listed = await client.get("/api/v1/activity")
+        assert listed.status_code == 200
+        item = listed.json()["items"][0]
+        assert item["pr_url"] == "https://github.com/org/repo/pull/99"
+        assert item["branch_name"] == data["branch_name"]
+        assert item["commit_sha"] == "abc123def"
+
+        detail = await client.get("/api/v1/activity/scan-1")
+        assert detail.status_code == 200
+        body = detail.json()
+        assert body["pr_url"] == "https://github.com/org/repo/pull/99"
+        assert body["branch_name"] == data["branch_name"]
+        assert body["commit_sha"] == "abc123def"
+
     async def test_push_only_without_pr(self, client: AsyncClient) -> None:
         """Submit with create_pr=false pushes but does not open a PR.
 
@@ -758,6 +884,20 @@ class TestSubmitEndpoint:
         mock_provider.push_files.assert_called_once()
         assert mock_provider.push_files.call_args.kwargs.get("parent_commit_sha") == "parent_sha"
         mock_provider.create_pull_request.assert_not_called()
+
+        listed = await client.get("/api/v1/activity")
+        assert listed.status_code == 200
+        item = listed.json()["items"][0]
+        assert item["pr_url"] is None
+        assert item["branch_name"] == data["branch_name"]
+        assert item["commit_sha"] == "deadbeef"
+
+        detail = await client.get("/api/v1/activity/scan-1")
+        assert detail.status_code == 200
+        body = detail.json()
+        assert body["pr_url"] is None
+        assert body["branch_name"] == data["branch_name"]
+        assert body["commit_sha"] == "deadbeef"
 
     async def test_no_operation(self, client: AsyncClient) -> None:
         """Return 404 when no operation exists for the project.

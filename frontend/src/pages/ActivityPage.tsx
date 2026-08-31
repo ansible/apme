@@ -6,6 +6,7 @@ import { apmeApiUrl, getApmeApiAdapter } from '../api/apmeApiAdapter';
 import { listActivity } from '../services/api';
 import type { ActivitySummary } from '../types/api';
 import { timeAgo } from '../services/format';
+import { PublishedCell } from '../components/PublishedCell';
 import {
   fetchProjectOperationState,
   LIVE_OPERATION_STATUSES,
@@ -158,6 +159,7 @@ export function ActivityPage() {
                 <th role="columnheader" title="AI could not fix">AI Declined</th>
                 <th role="columnheader" title="AI proposals accepted">AI Accepted</th>
                 <th role="columnheader">Manual</th>
+                <th role="columnheader">Published</th>
                 <th role="columnheader">Time</th>
                 <th role="columnheader">
                   <span className="pf-v6-screen-reader">Actions</span>
@@ -212,6 +214,13 @@ export function ActivityPage() {
                   <td role="cell">{item.ai_declined ?? 0}</td>
                   <td role="cell"><span className="apme-count-success">{item.ai_accepted ?? 0}</span></td>
                   <td role="cell"><span className="apme-count-warning">{item.manual_review ?? ''}</span></td>
+                  <td role="cell">
+                    <PublishedCell
+                      pr_url={item.pr_url}
+                      branch_name={item.branch_name}
+                      commit_sha={item.commit_sha}
+                    />
+                  </td>
                   <td role="cell" style={{ opacity: 0.7 }}>{timeAgo(item.created_at)}</td>
                   <td role="cell" onClick={(e) => e.stopPropagation()}>
                     {isResumable && item.project_id ? (

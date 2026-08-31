@@ -361,11 +361,15 @@ globally via `APME_GITHUB_API_URL`.
 - **Project table**: Add optional `scm_token` column (plaintext text today; encryption
   at rest is a planned follow-up) and optional `scm_provider` column (enum: `github`,
   `gitlab`, `bitbucket`, or auto-detected from URL).
-- **Scan/Activity table**: Add optional `pr_url` column (text). Patched file
-  content is stored in a related `patched_files` table with columns
-  `(activity_id, path TEXT, content BLOB)`. Files are Ansible YAML (UTF-8
-  text) but stored as BLOBs to avoid encoding assumptions. A size cap per
-  activity (default 50 MiB total) prevents unbounded growth. Rows are
+- **Scan/Activity table**: Add optional `pr_url`, `branch_name`, and
+  `commit_sha` columns (text). `pr_url` is set when a pull request is
+  created. `branch_name` and `commit_sha` are stamped after every
+  successful push, including branch-only submit (`create_pr: false`).
+  All three are returned on activity list and detail REST responses.
+  Patched file content is stored in a related `patched_files` table with
+  columns `(activity_id, path TEXT, content BLOB)`. Files are Ansible YAML
+  (UTF-8 text) but stored as BLOBs to avoid encoding assumptions. A size cap
+  per activity (default 50 MiB total) prevents unbounded growth. Rows are
   cascade-deleted with the parent activity record.
 
 ### Configuration
@@ -416,3 +420,4 @@ globally via `APME_GITHUB_API_URL`.
 | 2026-07-06 | AI Agent | Consolidated to unified `/operation/submit` endpoint with `create_pr` flag; removed `POST /activity/{id}/pull-request` and `POST /operation/create-pr`; status → Accepted |
 | 2026-08-12 | AI Agent | Phase 2 implemented: GitLab + Bitbucket Cloud/Server providers (REQ-016); `APME_GITLAB_API_URL` / `APME_BITBUCKET_API_URL` |
 | 2026-08-12 | AI Agent | Clarify scm_token is plaintext at rest today; `APME_SECRET_KEY` encryption deferred to follow-up |
+| 2026-08-31 | AI Agent | Persist `branch_name` and `commit_sha` on the scan row; return them with `pr_url` on activity list/detail |

@@ -165,6 +165,10 @@ async def test_list_scans(client: AsyncClient) -> None:
     assert resp.status_code == 200
     body = resp.json()
     assert body["total"] == 1
+    item = body["items"][0]
+    assert item["pr_url"] is None
+    assert item["branch_name"] is None
+    assert item["commit_sha"] is None
 
 
 async def test_list_scans_filter_session(client: AsyncClient) -> None:
