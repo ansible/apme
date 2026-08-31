@@ -717,6 +717,11 @@ async def submit_operation(
             pr_url=pr_url,
         )
     if not persisted:
+        if state:
+            get_operation_registry().transition(
+                state.operation_id,
+                OperationStatus.COMPLETED,
+            )
         raise HTTPException(status_code=404, detail="Activity not found")
     if pr_url:
         if state:
