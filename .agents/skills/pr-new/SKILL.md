@@ -75,7 +75,10 @@ module** surrounding each changed hunk — not just the hunk itself:
   before writing new code. If you add a `.pyi` field, read the other
   `.pyi` files for conventions. If you write a test, read the sibling
   tests for mock patterns. If you add an env var check, read how
-  existing env var checks handle the missing case.
+  existing env var checks handle the missing case. If you add a UI
+  control for an action the product already has (same label, href, or
+  table-cell pattern), reuse that component rather than a parallel
+  HTML primitive.
 
 **Artifact-type sweep.** Before answering the questions below, list
 every distinct artifact type in the diff (e.g., Python, proto, Rego,
@@ -353,6 +356,16 @@ sibling helpers (``resolve`` + ``is_relative_to`` / reject ``..``),
 and short-circuiting ``a() or b()`` / ``a() and b()`` when both calls
 have required side effects (e.g. promote ledger status after approving
 progression — evaluate both unconditionally).
+When adding a new error return after a status-machine transition
+(``SUBMITTING_PR``, ``APPLYING``, etc.), construct the failure *after*
+that transition — both explicit raises *and* exceptions from helpers
+called in that window (DB commit, flush, RPC). Require the same
+restore-to-terminal path as sibling error handlers in the same
+function; a 404/409/422/500 that skips ``transition(COMPLETED)`` leaves
+live operations stuck in the in-flight status. Match existing
+SCM/token/provider error paths before introducing a new raise —
+including the same transition extras (``error=``) sibling failure
+handlers pass, so SSE subscribers see why the in-flight status ended.
 When a parser treats ``:`` as host/port, construct the edge cases that
 break ``rpartition(":")``: empty host (``:port``), unbracketed IPv6
 (``::1``), ``[ipv6]:port``, and malformed ports (``[::1]:``,
@@ -426,6 +439,11 @@ critical/high/medium/low.
   double JSON parse, list.pop(0)/insert(0,…) vs deque, len(list(seq)),
   O(P×V) nested scans that should be O(P+V)
 - Pydantic/schema mutable defaults (`=[]`) vs sibling Field(default_factory=list)
+- UI controls that duplicate an existing product action with a
+  different primitive (raw ``<a>`` vs PatternFly ``Button
+  variant="link" component="a"`` already used for the same "View PR"
+  / table-cell link). Match the sibling component, including
+  ``isInline`` in table cells.
 
 Explain briefly why a Pass-1-style review would miss each finding.
 ```

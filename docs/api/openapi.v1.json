@@ -31,7 +31,7 @@
         "type": "object"
       },
       "ActivityDetail": {
-        "description": "Full activity record with violations, proposals, logs, and patches.\n\nAttributes:\n    scan_id: UUID of the run (``scans.scan_id`` column).\n    session_id: Owning session hash.\n    project_id: Owning project UUID (None for CLI/playground runs).\n    project_path: Project root path.\n    source: Origin of the run.\n    created_at: ISO 8601 timestamp.\n    scan_type: Either ``check`` or ``remediate`` (stored in ``scans.scan_type``).\n    total_violations: Total violation count (initial, before Tier 1 fixes).\n    fixable: Tier-1 auto-fixable violation count (applied or dry-run).\n    ai_candidate: Count of tier-2 AI-candidate violations.\n    ai_proposed: AI proposals offered to the user.\n    ai_declined: Violations the AI could not fix.\n    ai_accepted: AI proposals the user approved and applied.\n    manual_review: Count of tier-3 manual violations.\n    remediated_count: Total applied (Tier 1 + AI accepted).\n    pr_url: URL of the PR created from this activity (ADR-050), if any.\n    diagnostics_json: Raw diagnostics JSON string.\n    violations: List of violation rows.\n    proposals: List of proposal rows.\n    logs: List of log entries.\n    patches: Per-file diffs.",
+        "description": "Full activity record with violations, proposals, logs, and patches.\n\nAttributes:\n    scan_id: UUID of the run (``scans.scan_id`` column).\n    session_id: Owning session hash.\n    project_id: Owning project UUID (None for CLI/playground runs).\n    project_path: Project root path.\n    source: Origin of the run.\n    created_at: ISO 8601 timestamp.\n    scan_type: Either ``check`` or ``remediate`` (stored in ``scans.scan_type``).\n    total_violations: Total violation count (initial, before Tier 1 fixes).\n    fixable: Tier-1 auto-fixable violation count (applied or dry-run).\n    ai_candidate: Count of tier-2 AI-candidate violations.\n    ai_proposed: AI proposals offered to the user.\n    ai_declined: Violations the AI could not fix.\n    ai_accepted: AI proposals the user approved and applied.\n    manual_review: Count of tier-3 manual violations.\n    remediated_count: Total applied (Tier 1 + AI accepted).\n    pr_url: URL of the PR created from this activity (ADR-050), if any.\n    branch_name: Head branch pushed during SCM submit (ADR-050), if any.\n    commit_sha: SHA of the commit pushed during SCM submit (ADR-050), if any.\n    diagnostics_json: Raw diagnostics JSON string.\n    violations: List of violation rows.\n    proposals: List of proposal rows.\n    logs: List of log entries.\n    patches: Per-file diffs.",
         "properties": {
           "ai_accepted": {
             "default": 0,
@@ -51,6 +51,28 @@
             "default": 0,
             "title": "Ai Proposed",
             "type": "integer"
+          },
+          "branch_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch Name"
+          },
+          "commit_sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Commit Sha"
           },
           "created_at": {
             "title": "Created At",
@@ -175,7 +197,7 @@
         "type": "object"
       },
       "ActivitySummary": {
-        "description": "Activity list item (a persisted check or remediate run).\n\nAttributes:\n    scan_id: UUID of the run (``scans.scan_id`` column).\n    session_id: Owning session hash.\n    project_path: Project root path.\n    project_id: Owning project UUID when linked (None for CLI/playground).\n    source: Origin of the run (cli, ci, gateway).\n    created_at: ISO 8601 timestamp.\n    scan_type: Either ``check`` or ``remediate`` (stored in ``scans.scan_type``).\n    total_violations: Total violation count (initial, before Tier 1 fixes).\n    fixable: Tier-1 auto-fixable violation count (applied or dry-run).\n    ai_candidate: Count of tier-2 AI-candidate violations.\n    ai_proposed: AI proposals offered to the user.\n    ai_declined: Violations the AI could not fix.\n    ai_accepted: AI proposals the user approved and applied.\n    manual_review: Count of tier-3 manual violations.\n    remediated_count: Total applied (Tier 1 + AI accepted).\n    pr_url: URL of the PR created from this activity (ADR-050), if any.",
+        "description": "Activity list item (a persisted check or remediate run).\n\nAttributes:\n    scan_id: UUID of the run (``scans.scan_id`` column).\n    session_id: Owning session hash.\n    project_path: Project root path.\n    project_id: Owning project UUID when linked (None for CLI/playground).\n    source: Origin of the run (cli, ci, gateway).\n    created_at: ISO 8601 timestamp.\n    scan_type: Either ``check`` or ``remediate`` (stored in ``scans.scan_type``).\n    total_violations: Total violation count (initial, before Tier 1 fixes).\n    fixable: Tier-1 auto-fixable violation count (applied or dry-run).\n    ai_candidate: Count of tier-2 AI-candidate violations.\n    ai_proposed: AI proposals offered to the user.\n    ai_declined: Violations the AI could not fix.\n    ai_accepted: AI proposals the user approved and applied.\n    manual_review: Count of tier-3 manual violations.\n    remediated_count: Total applied (Tier 1 + AI accepted).\n    pr_url: URL of the PR created from this activity (ADR-050), if any.\n    branch_name: Head branch pushed during SCM submit (ADR-050), if any.\n    commit_sha: SHA of the commit pushed during SCM submit (ADR-050), if any.",
         "properties": {
           "ai_accepted": {
             "default": 0,
@@ -195,6 +217,28 @@
             "default": 0,
             "title": "Ai Proposed",
             "type": "integer"
+          },
+          "branch_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch Name"
+          },
+          "commit_sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Commit Sha"
           },
           "created_at": {
             "title": "Created At",
@@ -2242,7 +2286,7 @@
         "type": "object"
       },
       "SubmitResponse": {
-        "description": "Response after a successful SCM submit (ADR-050).\n\nAttributes:\n    branch_name: Name of the head branch that was created.\n    commit_sha: SHA of the commit pushed to the branch.\n    pr_url: Web URL of the PR, or ``None`` if ``create_pr`` was false.\n    provider: SCM provider that was used (e.g. ``github``).",
+        "description": "Response after a successful SCM submit (ADR-050).\n\nAttributes:\n    branch_name: Name of the head branch that was created.\n    commit_sha: SHA of the commit pushed to the branch.\n    pr_url: PR URL stored on the activity after persist (existing\n        or newly recorded), or ``None`` if none is stored.\n    provider: SCM provider that was used (e.g. ``github``).",
         "properties": {
           "branch_name": {
             "title": "Branch Name",

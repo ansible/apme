@@ -107,9 +107,16 @@ export function ActivityDetailPage() {
     setPrError(null);
     try {
       const result = await submitActivity(detail.project_id, activityId);
-      if (result.pr_url) {
-        setDetail((prev) => (prev ? { ...prev, pr_url: result.pr_url } : prev));
-      }
+      setDetail((prev) =>
+        prev
+          ? {
+              ...prev,
+              pr_url: result.pr_url ?? prev.pr_url,
+              branch_name: result.branch_name ?? prev.branch_name,
+              commit_sha: result.commit_sha ?? prev.commit_sha,
+            }
+          : prev,
+      );
     } catch (err) {
       setPrError(err instanceof Error ? err.message : 'Failed to create pull request');
     } finally {
@@ -173,6 +180,14 @@ export function ActivityDetailPage() {
                 >
                   View PR
                 </Button>
+              </FlexItem>
+            )}
+            {detail.branch_name && (
+              <FlexItem>
+                <span style={{ fontFamily: 'var(--pf-t--global--font--family--mono)', fontSize: '0.875em' }}>
+                  {detail.branch_name}
+                  {detail.commit_sha ? ` @ ${detail.commit_sha.slice(0, 8)}` : ''}
+                </span>
               </FlexItem>
             )}
             {canCreatePR && (

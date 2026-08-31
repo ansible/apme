@@ -74,6 +74,8 @@ export interface ActivitySummary {
   manual_review: number;
   remediated_count: number;
   pr_url: string | null;
+  branch_name?: string | null;
+  commit_sha?: string | null;
 }
 
 export interface PatchDetail {

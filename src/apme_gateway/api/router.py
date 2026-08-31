@@ -1584,6 +1584,8 @@ async def get_activity_detail(activity_id: str) -> ActivityDetail:
         manual_review=scan.manual_review,
         remediated_count=scan.fixed_count if scan.scan_type == "remediate" else 0,
         pr_url=scan.pr_url,
+        branch_name=scan.branch_name,
+        commit_sha=scan.commit_sha,
         diagnostics_json=scan.diagnostics_json,
         violations=[_to_violation_detail(v, suppressed_hashes, rule_only_hashes) for v in scan.violations],
         proposals=_proposals_for_activity(scan),
@@ -1731,6 +1733,8 @@ def _to_activity_summary(scan: Scan) -> ActivitySummary:
         manual_review=scan.manual_review,
         remediated_count=scan.fixed_count if scan.scan_type == "remediate" else 0,
         pr_url=scan.pr_url,
+        branch_name=scan.branch_name,
+        commit_sha=scan.commit_sha,
     )
 
 
