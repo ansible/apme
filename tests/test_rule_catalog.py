@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
@@ -18,6 +19,8 @@ from apme_engine.rule_catalog import (
     _collect_gitleaks_rules,
     _index_rule_doc_files,
     _load_rule_guidance_map,
+    _parse_frontmatter,
+    _strip_quotes,
     collect_all_rules,
     get_rule_documentation,
     get_rule_guidance,
@@ -465,6 +468,80 @@ class TestGetRuleDocumentation:
             None: Assert-only test.
         """
         assert get_rule_documentation("SEC:*") is None
+
+    def test_get_rule_documentation_resolves_quoted_rule_id(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A quoted ``rule_id: "T777"`` frontmatter value is indexed under the bare ID.
+
+        Regression test: ``_index_rule_doc_files`` used the raw regex-based
+        ``_parse_frontmatter`` output as the index key, while
+        ``_parse_ai_prompt_map`` (used by ``get_rule_guidance``) unquotes
+        via ``yaml.safe_load``. A quoted rule_id would therefore be indexed
+        under ``'"T777"'`` instead of ``"T777"``, making
+        ``get_rule_documentation("T777")`` incorrectly return ``None``.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+            monkeypatch: Pytest monkeypatch fixture.
+
+        Returns:
+            None: Assert-only test.
+        """
+        rule_md = tmp_path / "T777_test.md"
+        rule_md.write_text(
+            '---\nrule_id: "T777"\ndescription: quoted rule id\n---\n# T777 body\n',
+            encoding="utf-8",
+        )
+        monkeypatch.setattr("apme_engine.rule_catalog._GRAPH_RULES_DIR", tmp_path)
+        monkeypatch.setattr("apme_engine.rule_catalog._OPA_BUNDLE_DIR", tmp_path / "does-not-exist-opa")
+        monkeypatch.setattr("apme_engine.rule_catalog._ANSIBLE_RULES_DIR", tmp_path / "does-not-exist-ansible")
+        doc = get_rule_documentation("T777")
+        assert doc is not None, "quoted rule_id must still resolve under its bare form"
+        assert "T777 body" in doc
+
+
+class TestParseFrontmatterQuoting:
+    """Tests for ``_strip_quotes`` and ``_parse_frontmatter`` quote normalization."""
+
+    @pytest.mark.parametrize(  # type: ignore[untyped-decorator]
+        ("raw", "expected"),
+        [
+            ('"R114"', "R114"),
+            ("'R114'", "R114"),
+            ("R114", "R114"),
+            ('"unterminated', '"unterminated'),
+            ("'mismatched\"", "'mismatched\""),
+            ('""', ""),
+        ],
+    )
+    def test_strip_quotes(self, raw: str, expected: str) -> None:
+        """``_strip_quotes`` removes one matching pair of quotes, else passes through.
+
+        Args:
+            raw: Raw captured frontmatter value.
+            expected: Expected normalized value.
+
+        Returns:
+            None: Assert-only test.
+        """
+        assert _strip_quotes(raw) == expected
+
+    def test_parse_frontmatter_unquotes_rule_id(self, tmp_path: Path) -> None:
+        """``_parse_frontmatter`` normalizes a quoted ``rule_id`` to its bare form.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+
+        Returns:
+            None: Assert-only test.
+        """
+        rule_md = tmp_path / "T778.md"
+        rule_md.write_text('---\nrule_id: "T778"\n---\n', encoding="utf-8")
+        fm = _parse_frontmatter(rule_md)
+        assert fm["rule_id"] == "T778", "quoted rule_id must be unquoted, matching yaml.safe_load parsers"
 
 
 def _grpc_context() -> AsyncMock:

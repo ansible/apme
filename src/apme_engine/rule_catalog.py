@@ -73,6 +73,30 @@ def _category_from_rule_id(rule_id: str) -> str:
     return "unknown"
 
 
+def _strip_quotes(value: str) -> str:
+    """Strip a single matching pair of surrounding quotes from a value.
+
+    ``_parse_frontmatter`` is a lightweight regex-based parser (not a full
+    YAML parser), so unlike ``yaml.safe_load`` it does not unquote scalar
+    values on its own. Without this, a frontmatter value like
+    ``rule_id: "R114"`` would be captured verbatim as ``'"R114"'``,
+    diverging from the YAML-parsed (quote-stripped) value used elsewhere
+    (e.g. ``_parse_ai_prompt_map``) and causing lookups for the same
+    rule to silently miss.
+
+    Args:
+        value: Raw captured frontmatter value, already stripped of
+            surrounding whitespace by ``_KV_RE``.
+
+    Returns:
+        The value with one matching pair of leading/trailing single or
+        double quotes removed, or the original value if unquoted.
+    """
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+        return value[1:-1]
+    return value
+
+
 def _parse_frontmatter(path: Path) -> dict[str, str]:
     """Parse YAML frontmatter from a markdown file.
 
@@ -81,12 +105,16 @@ def _parse_frontmatter(path: Path) -> dict[str, str]:
 
     Returns:
         Dict of frontmatter key-value pairs, or empty dict if none found.
+        Values are unquoted (see ``_strip_quotes``) so a quoted
+        ``rule_id: "R114"`` normalizes the same as the unquoted
+        ``rule_id: R114`` form and matches ``yaml.safe_load``-based
+        parsers elsewhere in this module.
     """
     text = path.read_text(encoding="utf-8")
     m = _FRONTMATTER_RE.match(text)
     if not m:
         return {}
-    return dict(_KV_RE.findall(m.group(1)))
+    return {key: _strip_quotes(value) for key, value in _KV_RE.findall(m.group(1))}
 
 
 def _collect_native_rules() -> list[reporting_pb2.RuleDefinition]:

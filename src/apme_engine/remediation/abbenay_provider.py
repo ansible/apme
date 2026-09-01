@@ -13,12 +13,12 @@ import functools
 import json
 import logging
 import os
-import re
 from importlib.resources import files as pkg_files
 from pathlib import Path
 
 import yaml
 
+from apme_engine.fingerprint import canonicalize_rule_id
 from apme_engine.remediation.ai_context import AINodeContext
 from apme_engine.remediation.ai_provider import (
     AINodeFix,
@@ -26,6 +26,7 @@ from apme_engine.remediation.ai_provider import (
     AIValidationResult,
     AIValidationVerdict,
 )
+from apme_engine.rule_catalog import _parse_ai_prompt_map
 
 logger = logging.getLogger(__name__)
 
@@ -178,7 +179,7 @@ def _build_validation_prompt(context: AINodeContext) -> str:
     message = str(v.get("message", ""))
 
     ai_prompts = _load_ai_prompts()
-    bare_id = rule_id.split(":")[-1] if ":" in rule_id else rule_id
+    bare_id = canonicalize_rule_id(rule_id)
     hint = ai_prompts.get(bare_id)
     rule_guidance = ""
     if hint:
@@ -276,7 +277,7 @@ def _build_node_prompt(context: AINodeContext) -> str:
     seen_rules: set[str] = set()
     for v in context.violations:
         rid = str(v.get("rule_id", ""))
-        bare = rid.split(":")[-1] if ":" in rid else rid
+        bare = canonicalize_rule_id(rid)
         if bare and bare not in seen_rules:
             hint = ai_prompts.get(bare)
             if hint:
@@ -507,8 +508,6 @@ def _load_best_practices() -> dict[str, list[str]]:
     return _BEST_PRACTICES
 
 
-_FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---", re.DOTALL)
-
 _APME_ENGINE_ROOT = Path(__file__).resolve().parent.parent
 _RULE_DOC_DIRS = [
     _APME_ENGINE_ROOT / "graph" / "rules",
@@ -521,35 +520,17 @@ _RULE_DOC_DIRS = [
 def _load_ai_prompts() -> dict[str, str]:
     """Load ``ai_prompt`` hints from rule doc frontmatter across all validators.
 
-    Walks native/rules, opa/bundle, and ansible/rules directories, parsing
-    YAML frontmatter with ``yaml.safe_load`` to support multiline values.
-    The result is cached for the process lifetime (consistent with
-    ``_load_best_practices``).
+    Delegates to :func:`apme_engine.rule_catalog._parse_ai_prompt_map`, the
+    single shared frontmatter parser, so AI-assisted remediation and the
+    public ``apme_engine.rule_catalog.get_rule_guidance`` API can never
+    drift apart. This wrapper only exists to (a) target ``_RULE_DOC_DIRS``
+    (patched directly by tests) and (b) keep its own cache, independent of
+    ``rule_catalog``'s cache, consistent with ``_load_best_practices``.
 
     Returns:
         Mapping of rule_id to ai_prompt text.
     """
-    prompts: dict[str, str] = {}
-    for rule_dir in _RULE_DOC_DIRS:
-        if not rule_dir.is_dir():
-            continue
-        for md_path in rule_dir.glob("*.md"):
-            text = md_path.read_text(encoding="utf-8")
-            m = _FRONTMATTER_RE.match(text)
-            if not m:
-                continue
-            try:
-                fm = yaml.safe_load(m.group(1))
-            except yaml.YAMLError:
-                logger.warning("Failed to parse YAML frontmatter in %s", md_path)
-                continue
-            if not isinstance(fm, dict):
-                continue
-            rule_id = fm.get("rule_id", "")
-            ai_prompt = fm.get("ai_prompt", "")
-            if rule_id and ai_prompt:
-                prompts[str(rule_id)] = str(ai_prompt).strip()
-
+    prompts = _parse_ai_prompt_map(_RULE_DOC_DIRS)
     logger.debug("Loaded ai_prompt hints for %d rules", len(prompts))
     return prompts
 
@@ -568,7 +549,7 @@ def _get_best_practices_for_rules(rule_ids: list[str]) -> str:
 
     categories: set[str] = set()
     for rid in rule_ids:
-        bare = rid.split(":")[-1] if ":" in rid else rid
+        bare = canonicalize_rule_id(rid)
         cat = RULE_CATEGORY_MAP.get(bare, "")
         if cat:
             categories.add(cat)
