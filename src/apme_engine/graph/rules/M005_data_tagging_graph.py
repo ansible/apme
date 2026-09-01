@@ -72,18 +72,19 @@ def _registered_vars_via_siblings(graph: ContentGraph, node_id: str) -> set[str]
     return registered
 
 
-def _string_values(mapping: object) -> list[str]:
-    """Extract string values from a dict.
+def _string_values(mapping: object, *, excluded_keys: frozenset[str] = frozenset()) -> list[str]:
+    """Extract non-excluded string values from a dict.
 
     Args:
         mapping: Candidate dict to extract strings from.
+        excluded_keys: Mapping keys whose string values should be skipped.
 
     Returns:
         List of string values, empty if mapping is not a dict.
     """
     if not isinstance(mapping, dict):
         return []
-    return [v for v in mapping.values() if isinstance(v, str)]
+    return [v for key, v in mapping.items() if key not in excluded_keys and isinstance(v, str)]
 
 
 @dataclass
@@ -151,7 +152,11 @@ class DataTaggingGraphRule(GraphRule):
                 file=(node.file_path, node.line_start),
             )
 
-        all_strings = _string_values(node.options) + _string_values(node.module_options)
+        # ``loop`` selects data for iteration; it does not re-template strings
+        # contained in the registered result.
+        all_strings = _string_values(node.options, excluded_keys=frozenset({"loop"})) + _string_values(
+            node.module_options
+        )
         flagged: set[str] = set()
         for val in all_strings:
             for m in _JINJA_VAR_REF.finditer(val):

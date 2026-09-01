@@ -650,6 +650,23 @@ class TestM005GraphRule:
         assert result is not None
         assert result.verdict is True
 
+    def test_registered_result_as_loop_source_is_clean(self, rule: DataTaggingGraphRule) -> None:
+        """A registered result used as a loop source is not re-templated.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, task_id = self._build_register_then_use(
+            register_name="nginx_dir_stat_results",
+            consumer_options={"loop": "{{ nginx_dir_stat_results.results }}"},
+            consumer_module_options={
+                "that": ["item_result.stat.exists", "item_result.stat.isdir"],
+            },
+        )
+        result = rule.process(g, task_id)
+        assert result is not None
+        assert result.verdict is False
+
 
 # ---------------------------------------------------------------------------
 # Scanner integration
