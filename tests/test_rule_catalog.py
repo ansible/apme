@@ -398,19 +398,29 @@ class TestGetRuleGuidance:
         """
         assert get_rule_guidance("SEC:*") is None
 
-    def test_get_rule_guidance_preserves_concrete_sec_id(self) -> None:
+    def test_get_rule_guidance_preserves_concrete_sec_id(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """A concrete ``SEC:<id>`` rule ID keeps its colon intact for lookup.
 
         Naively splitting on the last ``:`` would turn
         ``SEC:generic-api-key`` into ``generic-api-key`` before lookup,
         which can never match a real rule_id. Guard against that
-        regression: the bare id passed to the guidance map must retain
-        the ``SEC:`` prefix.
+        regression with a patched guidance map so the assertion can only
+        pass if the full, colon-bearing ID is preserved through
+        canonicalization and used as the lookup key—comparing against the
+        real (empty) map would be vacuous, since both sides could be
+        ``None``.
+
+        Args:
+            monkeypatch: Pytest monkeypatch fixture.
 
         Returns:
             None: Assert-only test.
         """
-        assert get_rule_guidance("SEC:generic-api-key") == _load_rule_guidance_map().get("SEC:generic-api-key")
+        monkeypatch.setattr(
+            "apme_engine.rule_catalog._load_rule_guidance_map",
+            lambda: {"SEC:generic-api-key": "guidance"},
+        )
+        assert get_rule_guidance("SEC:generic-api-key") == "guidance"
 
 
 class TestGetRuleDocumentation:
