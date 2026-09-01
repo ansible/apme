@@ -12,9 +12,12 @@ export interface RuleIdProps {
   onRuleClick?: (bareId: string) => void;
   /**
    * Host-supplied rule definition URL. When it returns a string, the rule chip
-   * navigates in the same tab. When it returns undefined, render plain text.
+   * links to the definition. When it returns undefined, render plain text or
+   * a filter chip when onRuleClick is set.
    */
   resolveRuleHref?: (bareId: string) => string | undefined;
+  /** Anchor target for resolveRuleHref links (default: same tab). */
+  ruleHrefTarget?: '_blank' | '_self';
 }
 
 function SingleRuleId({
@@ -23,12 +26,14 @@ function SingleRuleId({
   onHoverChange,
   onRuleClick,
   resolveRuleHref,
+  ruleHrefTarget,
 }: {
   ruleId: string;
   className?: string;
   onHoverChange?: (hovering: boolean) => void;
   onRuleClick?: (bareId: string) => void;
   resolveRuleHref?: (bareId: string) => string | undefined;
+  ruleHrefTarget?: '_blank' | '_self';
 }) {
   const bare = bareRuleId(ruleId);
   const href = resolveRuleHref?.(bare);
@@ -54,13 +59,26 @@ function SingleRuleId({
     : undefined;
 
   if (href) {
+    const opensNewTab = ruleHrefTarget === '_blank';
     return (
       <a
         href={href}
         className={spanClassName}
-        aria-label={`View rule definition: ${bare}`}
+        target={ruleHrefTarget}
+        rel={opensNewTab ? 'noopener noreferrer' : undefined}
+        aria-label={
+          opensNewTab
+            ? `View rule definition in new tab: ${bare}`
+            : `View rule definition: ${bare}`
+        }
         {...hoverHandlers}
-        onClick={(e) => e.stopPropagation()}
+        onClick={(e) => {
+          e.stopPropagation();
+          if (opensNewTab) {
+            e.preventDefault();
+            window.open(href, '_blank', 'noopener,noreferrer');
+          }
+        }}
       >
         {bare}
       </a>
@@ -101,6 +119,7 @@ export function RuleId({
   onHoverChange,
   onRuleClick,
   resolveRuleHref,
+  ruleHrefTarget,
 }: RuleIdProps) {
   const ids = ruleId.split(',').map((s) => s.trim()).filter(Boolean);
   if (ids.length <= 1) {
@@ -111,6 +130,7 @@ export function RuleId({
         onHoverChange={onHoverChange}
         onRuleClick={onRuleClick}
         resolveRuleHref={resolveRuleHref}
+        ruleHrefTarget={ruleHrefTarget}
       />
     );
   }
@@ -125,6 +145,7 @@ export function RuleId({
             onHoverChange={onHoverChange}
             onRuleClick={onRuleClick}
             resolveRuleHref={resolveRuleHref}
+            ruleHrefTarget={ruleHrefTarget}
           />
         </span>
       ))}
