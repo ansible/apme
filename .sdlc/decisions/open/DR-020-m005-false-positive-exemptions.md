@@ -156,10 +156,10 @@ exclusion for `loop` sources, with no path-based or broad module exemption.
 **Rationale**: 
 
 **Action Items**:
-- [ ] Implement chosen exemption strategy
-- [ ] Add test coverage for exempted patterns
-- [ ] Update M005 rule documentation
-- [ ] Open upstream PR and link it here
+- [x] Implement chosen exemption strategy — PR #621
+- [x] Add regression test coverage
+- [x] Update M005 rule documentation
+- [x] Open upstream PR and link it here
 
 ---
 
@@ -167,3 +167,4 @@ exclusion for `loop` sources, with no path-based or broad module exemption.
 
 | Date | Update |
 |------|--------|
+| 2026-09-01 | [PR #621](https://github.com/ansible/apme/pull/621) opened with field-aware `loop` exclusion and regression coverage |
