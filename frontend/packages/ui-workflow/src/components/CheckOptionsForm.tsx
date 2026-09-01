@@ -26,6 +26,8 @@ export interface CheckOptionsFormProps {
   onAutoApplyTier1Change?: (checked: boolean) => void;
  /** Platform-level AI availability flag; hides AI controls when false and defaults to true for standalone SPA backward compatibility. */
   showAiOptions?: boolean;
+  /** Hide the Collections text input from the form. Defaults to true for standalone SPA backward compatibility. */
+  showCollections?: boolean;
   idPrefix?: string;
 }
 
@@ -39,6 +41,7 @@ export function CheckOptionsForm({
   autoApplyTier1 = false,
   onAutoApplyTier1Change,
   showAiOptions = true,
+  showCollections = true,
   idPrefix = '',
 }: CheckOptionsFormProps) {
   const prefix = idPrefix ? `${idPrefix}-` : '';
@@ -82,17 +85,19 @@ export function CheckOptionsForm({
             onChange={(_e, v) => onAnsibleVersionChange(v)}
           />
         </FlexItem>
-        <FlexItem>
-          <label htmlFor={`${prefix}collections`} style={{ display: 'block', marginBottom: 4, fontWeight: 600 }}>
-            Collections (comma-separated)
-          </label>
-          <TextInput
-            id={`${prefix}collections`}
-            placeholder="e.g. ansible.posix, community.general"
-            value={collections}
-            onChange={(_e, v) => onCollectionsChange(v)}
-          />
-        </FlexItem>
+        {showCollections && (
+          <FlexItem>
+            <label htmlFor={`${prefix}collections`} style={{ display: 'block', marginBottom: 4, fontWeight: 600 }}>
+              Collections (comma-separated)
+            </label>
+            <TextInput
+              id={`${prefix}collections`}
+              placeholder="e.g. ansible.posix, community.general"
+              value={collections}
+              onChange={(_e, v) => onCollectionsChange(v)}
+            />
+          </FlexItem>
+        )}
         {showAiOptions && (
           <FlexItem>
             <Checkbox
