@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
@@ -16,13 +17,18 @@ from apme_engine.engine.models import ViolationDict
 from apme_engine.rule_catalog import (
     _category_from_rule_id,
     _collect_gitleaks_rules,
+    _index_rule_doc_files,
+    _load_rule_guidance_map,
+    _parse_frontmatter,
+    _strip_quotes,
     collect_all_rules,
+    get_rule_documentation,
+    get_rule_guidance,
+    list_rules_with_guidance,
 )
 from apme_gateway.db import get_session
 from apme_gateway.db import queries as q
 from apme_gateway.grpc_reporting.servicer import ReportingServicer
-
-pytestmark = pytest.mark.usefixtures("gateway_db")
 
 
 @pytest.mark.parametrize(  # type: ignore[untyped-decorator]
@@ -325,6 +331,229 @@ def test_validate_rule_configs_complete_both_directions(
     assert missing == ["L002"], "L002 is known but absent from config"
 
 
+class TestGetRuleGuidance:
+    """Tests for the public ``get_rule_guidance`` / ``list_rules_with_guidance`` API."""
+
+    def setup_method(self) -> None:
+        """Clear the guidance cache before each test.
+
+        Returns:
+            None.
+        """
+        _load_rule_guidance_map.cache_clear()
+
+    def teardown_method(self) -> None:
+        """Clear the guidance cache after each test to avoid cross-test leakage.
+
+        Returns:
+            None.
+        """
+        _load_rule_guidance_map.cache_clear()
+
+    def test_get_rule_guidance_known_rule(self) -> None:
+        """``get_rule_guidance`` returns non-empty text for a rule with ``ai_prompt``.
+
+        Returns:
+            None: Assert-only test.
+        """
+        guidance = get_rule_guidance("R114")
+        assert guidance is not None, "R114 defines an ai_prompt and must return guidance"
+        assert "noqa" in guidance.lower(), "R114 guidance should mention the noqa exemption workflow"
+
+    def test_get_rule_guidance_unknown_rule_returns_none(self) -> None:
+        """``get_rule_guidance`` returns ``None`` for a rule with no guidance defined.
+
+        Returns:
+            None: Assert-only test.
+        """
+        assert get_rule_guidance("R9999-does-not-exist") is None
+
+    def test_get_rule_guidance_strips_validator_prefix(self) -> None:
+        """A ``validator:RULE_ID`` prefixed form resolves to the same guidance.
+
+        Returns:
+            None: Assert-only test.
+        """
+        assert get_rule_guidance("native:R114") == get_rule_guidance("R114")
+
+    def test_list_rules_with_guidance_sorted_and_contains_r114(self) -> None:
+        """``list_rules_with_guidance`` returns a sorted list including R114.
+
+        Returns:
+            None: Assert-only test.
+        """
+        rule_ids = list_rules_with_guidance()
+        assert rule_ids == sorted(rule_ids), "rule IDs must be sorted"
+        assert "R114" in rule_ids, "R114 defines ai_prompt and must be listed"
+
+    def test_get_rule_guidance_preserves_sec_wildcard_id(self) -> None:
+        """A colon-bearing ``SEC:*`` rule ID must not be mangled by prefix stripping.
+
+        ``SEC:*`` has no doc frontmatter (Gitleaks is a dynamic external
+        binary, see ``_collect_gitleaks_rules``), so this must resolve to
+        ``None`` rather than being corrupted into looking up ``"*"``.
+
+        Returns:
+            None: Assert-only test.
+        """
+        assert get_rule_guidance("SEC:*") is None
+
+    def test_get_rule_guidance_preserves_concrete_sec_id(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A concrete ``SEC:<id>`` rule ID keeps its colon intact for lookup.
+
+        Naively splitting on the last ``:`` would turn
+        ``SEC:generic-api-key`` into ``generic-api-key`` before lookup,
+        which can never match a real rule_id. Guard against that
+        regression with a patched guidance map so the assertion can only
+        pass if the full, colon-bearing ID is preserved through
+        canonicalization and used as the lookup key—comparing against the
+        real (empty) map would be vacuous, since both sides could be
+        ``None``.
+
+        Args:
+            monkeypatch: Pytest monkeypatch fixture.
+
+        Returns:
+            None: Assert-only test.
+        """
+        monkeypatch.setattr(
+            "apme_engine.rule_catalog._load_rule_guidance_map",
+            lambda: {"SEC:generic-api-key": "guidance"},
+        )
+        assert get_rule_guidance("SEC:generic-api-key") == "guidance"
+
+
+class TestGetRuleDocumentation:
+    """Tests for the public ``get_rule_documentation`` full-docs API."""
+
+    def setup_method(self) -> None:
+        """Clear the doc-file index cache before each test.
+
+        Returns:
+            None.
+        """
+        _index_rule_doc_files.cache_clear()
+
+    def teardown_method(self) -> None:
+        """Clear the doc-file index cache after each test.
+
+        Returns:
+            None.
+        """
+        _index_rule_doc_files.cache_clear()
+
+    def test_get_rule_documentation_strips_frontmatter(self) -> None:
+        """``get_rule_documentation`` returns the markdown body without the frontmatter block.
+
+        Returns:
+            None: Assert-only test.
+        """
+        doc = get_rule_documentation("R114")
+        assert doc is not None, "R114 has a doc file and must return content"
+        assert not doc.startswith("---"), "frontmatter delimiter must be stripped"
+        assert "ai_prompt" not in doc, "frontmatter fields must not leak into the doc body"
+        assert "## File change (R114)" in doc, "doc body should retain the markdown heading"
+        assert "### Example: pass" in doc, "doc body should retain worked examples"
+
+    def test_get_rule_documentation_unknown_rule_returns_none(self) -> None:
+        """``get_rule_documentation`` returns ``None`` when no doc file exists for the rule.
+
+        Returns:
+            None: Assert-only test.
+        """
+        assert get_rule_documentation("R9999-does-not-exist") is None
+
+    def test_get_rule_documentation_strips_validator_prefix(self) -> None:
+        """A ``validator:RULE_ID`` prefixed form resolves to the same documentation.
+
+        Returns:
+            None: Assert-only test.
+        """
+        assert get_rule_documentation("native:R114") == get_rule_documentation("R114")
+
+    def test_get_rule_documentation_preserves_sec_wildcard_id(self) -> None:
+        """``SEC:*`` must not be mangled into ``"*"`` before doc lookup.
+
+        Returns:
+            None: Assert-only test.
+        """
+        assert get_rule_documentation("SEC:*") is None
+
+    def test_get_rule_documentation_resolves_quoted_rule_id(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A quoted ``rule_id: "T777"`` frontmatter value is indexed under the bare ID.
+
+        Regression test: ``_index_rule_doc_files`` used the raw regex-based
+        ``_parse_frontmatter`` output as the index key, while
+        ``_parse_ai_prompt_map`` (used by ``get_rule_guidance``) unquotes
+        via ``yaml.safe_load``. A quoted rule_id would therefore be indexed
+        under ``'"T777"'`` instead of ``"T777"``, making
+        ``get_rule_documentation("T777")`` incorrectly return ``None``.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+            monkeypatch: Pytest monkeypatch fixture.
+
+        Returns:
+            None: Assert-only test.
+        """
+        rule_md = tmp_path / "T777_test.md"
+        rule_md.write_text(
+            '---\nrule_id: "T777"\ndescription: quoted rule id\n---\n# T777 body\n',
+            encoding="utf-8",
+        )
+        monkeypatch.setattr("apme_engine.rule_catalog._GRAPH_RULES_DIR", tmp_path)
+        monkeypatch.setattr("apme_engine.rule_catalog._OPA_BUNDLE_DIR", tmp_path / "does-not-exist-opa")
+        monkeypatch.setattr("apme_engine.rule_catalog._ANSIBLE_RULES_DIR", tmp_path / "does-not-exist-ansible")
+        doc = get_rule_documentation("T777")
+        assert doc is not None, "quoted rule_id must still resolve under its bare form"
+        assert "T777 body" in doc
+
+
+class TestParseFrontmatterQuoting:
+    """Tests for ``_strip_quotes`` and ``_parse_frontmatter`` quote normalization."""
+
+    @pytest.mark.parametrize(  # type: ignore[untyped-decorator]
+        ("raw", "expected"),
+        [
+            ('"R114"', "R114"),
+            ("'R114'", "R114"),
+            ("R114", "R114"),
+            ('"unterminated', '"unterminated'),
+            ("'mismatched\"", "'mismatched\""),
+            ('""', ""),
+        ],
+    )
+    def test_strip_quotes(self, raw: str, expected: str) -> None:
+        """``_strip_quotes`` removes one matching pair of quotes, else passes through.
+
+        Args:
+            raw: Raw captured frontmatter value.
+            expected: Expected normalized value.
+
+        Returns:
+            None: Assert-only test.
+        """
+        assert _strip_quotes(raw) == expected
+
+    def test_parse_frontmatter_unquotes_rule_id(self, tmp_path: Path) -> None:
+        """``_parse_frontmatter`` normalizes a quoted ``rule_id`` to its bare form.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+
+        Returns:
+            None: Assert-only test.
+        """
+        rule_md = tmp_path / "T778.md"
+        rule_md.write_text('---\nrule_id: "T778"\n---\n', encoding="utf-8")
+        fm = _parse_frontmatter(rule_md)
+        assert fm["rule_id"] == "T778", "quoted rule_id must be unquoted, matching yaml.safe_load parsers"
+
+
 def _grpc_context() -> AsyncMock:
     """Build an async mock gRPC servicer context.
 
@@ -355,6 +584,7 @@ def _sample_rule(rule_id: str) -> reporting_pb2.RuleDefinition:
 
 
 @pytest.mark.asyncio  # type: ignore[untyped-decorator]
+@pytest.mark.usefixtures("gateway_db")  # type: ignore[untyped-decorator]
 async def test_register_rules_rejects_non_authority() -> None:
     """``RegisterRules`` with ``is_authority=False`` is rejected without persistence.
 
@@ -377,6 +607,7 @@ async def test_register_rules_rejects_non_authority() -> None:
 
 
 @pytest.mark.asyncio  # type: ignore[untyped-decorator]
+@pytest.mark.usefixtures("gateway_db")  # type: ignore[untyped-decorator]
 async def test_register_rules_adds_new_rules() -> None:
     """Authority ``RegisterRules`` inserts new catalog rows.
 
@@ -402,6 +633,7 @@ async def test_register_rules_adds_new_rules() -> None:
 
 
 @pytest.mark.asyncio  # type: ignore[untyped-decorator]
+@pytest.mark.usefixtures("gateway_db")  # type: ignore[untyped-decorator]
 async def test_register_rules_reconcile_removes_absent_rules() -> None:
     """A second full registration drops rules missing from the incoming set.
 
