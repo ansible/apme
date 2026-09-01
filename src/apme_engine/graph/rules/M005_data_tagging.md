@@ -10,6 +10,20 @@ ansible_core_version: ">=2.19"
 
 In ansible-core 2.19+, the trust model is inverted. Strings from module results (registered variables) are untrusted and will not be re-templated. Playbooks that register a variable and then use it inside `{{ }}` expressions may fail with "Conditional is marked as unsafe."
 
+Registered results used as a loop source are not re-templated and are not a
+violation:
+
+```yaml
+- name: Assert each stat result
+  ansible.builtin.assert:
+    that:
+      - item_result.stat.exists
+      - item_result.stat.isdir
+  loop: "{{ nginx_dir_stat_results.results }}"
+  loop_control:
+    loop_var: item_result
+```
+
 ### Example: violation
 
 ```yaml
