@@ -18,13 +18,15 @@ import os
 import re
 import time
 import traceback
-from dataclasses import dataclass, field
+from collections.abc import Sequence
+from dataclasses import dataclass, field, replace
 
 from apme_engine.graph._loader import load_classes_in_dir
+from apme_engine.graph.audit_metadata import AUDIT_JSON_METADATA_KEYS, serialize_audit_metadata_value
 from apme_engine.graph.content_graph import ContentGraph, ContentNode, NodeScope, NodeType
 from apme_engine.graph.rule_base import GraphRule, GraphRuleResult
 from apme_engine.graph.severity import get_severity, severity_to_label
-from apme_engine.graph.types import ViolationDict
+from apme_engine.graph.types import RuleScope, ViolationDict
 
 logger = logging.getLogger(__name__)
 
@@ -58,12 +60,16 @@ class GraphScanReport:
         rules_evaluated: Number of enabled rules in the scan.
         nodes_scanned: Number of nodes visited.
         elapsed_ms: Total wall-clock time in milliseconds.
+        missing_requested_rule_ids: Rule IDs explicitly requested but not loaded.
+        audit_serialization_failures: Count of audit metadata fields dropped on encode failure.
     """
 
     node_results: list[GraphNodeResult] = field(default_factory=list)
     rules_evaluated: int = 0
     nodes_scanned: int = 0
     elapsed_ms: float = 0.0
+    missing_requested_rule_ids: list[str] = field(default_factory=list)
+    audit_serialization_failures: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -75,7 +81,7 @@ def native_rules_dir() -> str:
     """Return the absolute path to the built-in graph-rules directory.
 
     Useful for callers outside the native validator daemon that need
-    to load the same rule set (e.g. the Primary remediation bridge).
+    to load the same rule set (e.g. the Engine remediation bridge).
 
     Returns:
         Absolute path to ``graph/rules``.
@@ -83,11 +89,35 @@ def native_rules_dir() -> str:
     return os.path.join(os.path.dirname(__file__), "rules")
 
 
+DISABLED_BY_DEFAULT_GRAPH_RULE_IDS: frozenset[str] = frozenset({"R402", "R404"})
+
+
+def graph_rule_opt_in_from_rule_configs(rule_configs: Sequence[object] | None) -> list[str]:
+    """Return disabled-by-default GraphRule IDs enabled via ``RuleConfig``.
+
+    Args:
+        rule_configs: Proto ``RuleConfig`` messages from ``ScanOptions``.
+
+    Returns:
+        Sorted rule IDs to opt in when loading native graph rules.
+    """
+    if not rule_configs:
+        return []
+    return sorted(
+        rc.rule_id  # type: ignore[attr-defined]
+        for rc in rule_configs
+        if rc.enabled and rc.rule_id in DISABLED_BY_DEFAULT_GRAPH_RULE_IDS  # type: ignore[attr-defined]
+    )
+
+
 def load_graph_rules(
     rules_dir: str = "",
     rule_id_list: list[str] | None = None,
+    opt_in_rule_ids: list[str] | None = None,
     exclude_rule_ids: list[str] | None = None,
-) -> list[GraphRule]:
+    *,
+    preserve_disabled_defaults: bool = False,
+) -> tuple[list[GraphRule], list[str]]:
     """Discover and instantiate GraphRule subclasses from directories.
 
     Uses the same directory-scanning approach as ``risk_detector.load_rules``
@@ -95,16 +125,26 @@ def load_graph_rules(
 
     Args:
         rules_dir: Colon-separated directories containing rule modules.
-        rule_id_list: If provided, only include these rule IDs.
+        rule_id_list: If non-empty, only include these rule IDs (restrictive
+            whitelist).  IDs listed here are loaded even when the rule class
+            sets ``enabled=False``.
+        opt_in_rule_ids: In normal (non-whitelist) mode, additionally load
+            these disabled-by-default rule IDs.
         exclude_rule_ids: Rule IDs to skip.
+        preserve_disabled_defaults: When True, do not flip ``enabled=False`` rules
+            to enabled even when explicitly requested via ``rule_id_list`` or
+            ``opt_in_rule_ids``.  Used by the ADR-041 catalog collector.
 
     Returns:
-        Sorted list of enabled GraphRule instances.
+        Tuple of sorted GraphRule instances and any requested rule IDs that
+        failed to load.
     """
     if not rules_dir:
-        return []
+        return [], []
     if rule_id_list is None:
         rule_id_list = []
+    if opt_in_rule_ids is None:
+        opt_in_rule_ids = []
     if exclude_rule_ids is None:
         exclude_rule_ids = []
 
@@ -120,18 +160,33 @@ def load_graph_rules(
                 rule = cls()
                 if not isinstance(rule, GraphRule):
                     continue
-                if rule_id_list and rule.rule_id not in rule_id_list:
-                    continue
                 if rule.rule_id in exclude_rule_ids:
                     continue
-                if not rule.enabled:
-                    continue
+                if rule_id_list:
+                    if rule.rule_id not in rule_id_list:
+                        continue
+                    explicitly_requested = True
+                else:
+                    explicitly_requested = rule.rule_id in opt_in_rule_ids
+                    if not rule.enabled and not explicitly_requested:
+                        continue
+                if explicitly_requested and not rule.enabled and not preserve_disabled_defaults:
+                    rule = replace(rule, enabled=True)
                 rules.append(rule)
             except Exception:
                 logger.warning("Failed to instantiate graph rule %s: %s", cls, traceback.format_exc())
 
+    missing_requested: list[str] = []
+    requested = (set(rule_id_list) | set(opt_in_rule_ids)) - set(exclude_rule_ids)
+    if requested:
+        loaded = {r.rule_id for r in rules}
+        missing = sorted(requested - loaded)
+        if missing:
+            logger.warning("Requested graph rules not loaded: %s", missing)
+            missing_requested = missing
+
     rules.sort(key=lambda r: r.precedence)
-    return rules
+    return rules, missing_requested
 
 
 # ---------------------------------------------------------------------------
@@ -156,6 +211,13 @@ _SCANNABLE_TYPES = frozenset(
 
 _NOQA_RE = re.compile(r"(?:^|\s)#\s*noqa:\s*([A-Za-z0-9_,\t ]+)")
 _QUOTED_RE = re.compile(r""""[^"\\]*(?:\\.[^"\\]*)*"|'[^']*'""")
+_AGGREGATE_SCOPE_NODE_TYPES: dict[str, frozenset[NodeType]] = {
+    RuleScope.BLOCK.value: frozenset({NodeType.BLOCK}),
+    RuleScope.PLAY.value: frozenset({NodeType.PLAY}),
+    RuleScope.PLAYBOOK.value: frozenset({NodeType.PLAYBOOK}),
+    RuleScope.ROLE.value: frozenset({NodeType.ROLE}),
+    RuleScope.COLLECTION.value: frozenset({NodeType.COLLECTION}),
+}
 
 
 def parse_noqa(yaml_lines: str) -> frozenset[str]:
@@ -256,6 +318,7 @@ def scan(
     rules: list[GraphRule],
     *,
     owned_only: bool = True,
+    missing_requested_rule_ids: list[str] | None = None,
 ) -> GraphScanReport:
     """Evaluate all rules against every eligible node in a ContentGraph.
 
@@ -267,13 +330,18 @@ def scan(
         graph: ContentGraph to scan.
         rules: Pre-loaded GraphRule instances.
         owned_only: If True (default), skip ``REFERENCED`` nodes.
+        missing_requested_rule_ids: Rule IDs that were requested at load time
+            but could not be instantiated (surfaced on the report).
 
     Returns:
         GraphScanReport with per-node results and timing.
     """
     start = time.monotonic()
     enabled_rules = [r for r in rules if r.enabled]
-    report = GraphScanReport(rules_evaluated=len(enabled_rules))
+    report = GraphScanReport(
+        rules_evaluated=len(enabled_rules),
+        missing_requested_rule_ids=list(missing_requested_rule_ids or ()),
+    )
     _reset_rule_scan_state(enabled_rules)
 
     all_nodes = sorted(graph.nodes(), key=lambda n: n.node_id)
@@ -318,7 +386,8 @@ def rescan_dirty(
     report = GraphScanReport(rules_evaluated=len(enabled_rules))
     _reset_rule_scan_state(enabled_rules)
 
-    for node_id in sorted(dirty_node_ids):
+    effective_dirty_ids = expand_dirty_node_ids(graph, enabled_rules, dirty_node_ids)
+    for node_id in sorted(effective_dirty_ids):
         node = graph.get_node(node_id)
         if node is None:
             continue
@@ -330,6 +399,56 @@ def rescan_dirty(
 
     report.elapsed_ms = round((time.monotonic() - start) * 1000, 3)
     return report
+
+
+def expand_dirty_node_ids(
+    graph: ContentGraph,
+    rules: Sequence[GraphRule],
+    dirty_node_ids: frozenset[str],
+) -> frozenset[str]:
+    """Expand dirty nodes to include ancestors needed by aggregate-scope rules.
+
+    Task-local rescans are sufficient for task-scoped rules, but play-, role-,
+    playbook-, block-, and collection-scoped rules may derive findings from
+    descendant content. When one of those descendant nodes changes, the enclosing
+    aggregate node must also be re-evaluated so remediation convergence and
+    audit/reporting rules observe the updated graph state.
+
+    Args:
+        graph: ContentGraph containing the dirty nodes.
+        rules: Enabled graph rules participating in the rescan.
+        dirty_node_ids: Node IDs directly modified since the last pass.
+
+    Returns:
+        Dirty node IDs plus any structural ancestors required by enabled
+        aggregate-scope rules.
+    """
+    if not dirty_node_ids:
+        return frozenset()
+
+    aggregate_node_types = {
+        node_type
+        for rule in rules
+        for node_type in _AGGREGATE_SCOPE_NODE_TYPES.get(
+            rule.scope.value if isinstance(rule.scope, RuleScope) else str(rule.scope),
+            frozenset(),
+        )
+    }
+    if not aggregate_node_types:
+        return dirty_node_ids
+
+    expanded = set(dirty_node_ids)
+    for node_id in dirty_node_ids:
+        node = graph.get_node(node_id)
+        if node is None:
+            continue
+        if node.node_type in aggregate_node_types:
+            expanded.add(node_id)
+        for ancestor_id in graph.positional_ancestor_ids(node_id):
+            ancestor = graph.get_node(ancestor_id)
+            if ancestor is not None and ancestor.node_type in aggregate_node_types:
+                expanded.add(ancestor_id)
+    return frozenset(expanded)
 
 
 # ---------------------------------------------------------------------------
@@ -347,6 +466,10 @@ def graph_report_to_violations(report: GraphScanReport) -> list[ViolationDict]:
     into a separate ViolationDict with its own file/line/message. This
     supports rules like L111 that scan sibling files and emit multiple
     per-file violations from a single graph node.
+
+    Note:
+        Increments ``report.audit_serialization_failures`` in place for each
+        audit metadata value that fails to serialize.
 
     Args:
         report: Completed scan report from ``scan()``.
@@ -422,6 +545,15 @@ def graph_report_to_violations(report: GraphScanReport) -> list[ViolationDict]:
                 val = detail.get(key)
                 if val is not None:
                     v[key] = str(val)
+
+            for key in AUDIT_JSON_METADATA_KEYS:
+                val = detail.get(key)
+                if val is not None:
+                    serialized = serialize_audit_metadata_value(val, rule_id=rid, key=key)
+                    if serialized is not None:
+                        v[key] = serialized
+                    else:
+                        report.audit_serialization_failures += 1
 
             affected = detail.get("affected_children")
             if isinstance(affected, int) and affected > 0:

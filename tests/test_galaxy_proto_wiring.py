@@ -1,7 +1,7 @@
 """Tests for Galaxy server proto wiring (ADR-045 PR2).
 
 Verifies that GalaxyServerDef flows through ScanOptions, FixOptions,
-and the Primary's session-scoped config writer.
+and the Engine's session-scoped config writer.
 """
 
 from __future__ import annotations
@@ -9,8 +9,8 @@ from __future__ import annotations
 import configparser
 
 from apme.v1.common_pb2 import GalaxyServerDef
-from apme.v1.primary_pb2 import FixOptions, ScanChunk, ScanOptions
-from apme_engine.daemon.primary_server import _write_session_galaxy_cfg
+from apme.v1.engine_pb2 import FixOptions, ScanChunk, ScanOptions
+from apme_engine.daemon.engine_server import _write_session_galaxy_cfg
 
 
 class TestGalaxyServerDefProto:

@@ -65,6 +65,12 @@ export interface AssessFindingsPanelProps {
    * Prefixed IDs like ``native:L022`` are normalized to bare form.
    */
   initialRuleFilters?: string[];
+  /**
+   * Host-supplied rule definition URL. Known rules link; others keep filter chips.
+   */
+  resolveRuleHref?: (bareId: string) => string | undefined;
+  /** Anchor target for resolveRuleHref links (default: same tab). */
+  ruleHrefTarget?: '_blank' | '_self';
 }
 
 function formatReviewStatus(status: string): string {
@@ -144,12 +150,16 @@ function FindingRow({
   enableAi,
   onHighlightLine,
   onRuleClick,
+  resolveRuleHref,
+  ruleHrefTarget,
 }: {
   f: AssessFinding;
   snippetYaml: string;
   enableAi: boolean;
   onHighlightLine?: (line: number | null) => void;
   onRuleClick?: (bareId: string) => void;
+  resolveRuleHref?: (bareId: string) => string | undefined;
+  ruleHrefTarget?: '_blank' | '_self';
 }) {
   const fix = findingFixType(f, enableAi);
   const sev = f.severity || 'info';
@@ -160,6 +170,8 @@ function FindingRow({
       <RuleId
         ruleId={f.rule_id}
         onRuleClick={onRuleClick}
+        resolveRuleHref={resolveRuleHref}
+        ruleHrefTarget={ruleHrefTarget}
         onHoverChange={
           canHighlight
             ? (hovering) =>
@@ -209,10 +221,14 @@ export function AssessNodeDetail({
   findings,
   enableAi,
   onRuleClick,
+  resolveRuleHref,
+  ruleHrefTarget,
 }: {
   findings: AssessFinding[];
   enableAi: boolean;
   onRuleClick?: (bareId: string) => void;
+  resolveRuleHref?: (bareId: string) => string | undefined;
+  ruleHrefTarget?: '_blank' | '_self';
 }) {
   const [highlightLine, setHighlightLine] = useState<number | null>(null);
   // Assess/history findings are read-only: current YAML only. Proposed diffs
@@ -229,6 +245,8 @@ export function AssessNodeDetail({
             snippetYaml={beforeYaml}
             enableAi={enableAi}
             onRuleClick={onRuleClick}
+            resolveRuleHref={resolveRuleHref}
+            ruleHrefTarget={ruleHrefTarget}
             onHighlightLine={
               beforeYaml.trim() ? setHighlightLine : undefined
             }
@@ -252,6 +270,8 @@ function findingsToNodeItem(
     isSingleton?: boolean;
     enableAi: boolean;
     onRuleClick?: (bareId: string) => void;
+    resolveRuleHref?: (bareId: string) => string | undefined;
+    ruleHrefTarget?: '_blank' | '_self';
   },
 ): NodeReviewItem {
   const nodeType = normalizeFindingNodeType(
@@ -277,6 +297,8 @@ function findingsToNodeItem(
         findings={findings}
         enableAi={opts.enableAi}
         onRuleClick={opts.onRuleClick}
+        resolveRuleHref={opts.resolveRuleHref}
+        ruleHrefTarget={opts.ruleHrefTarget}
       />
     ),
   };
@@ -312,6 +334,8 @@ export function AssessFindingsPanel({
   enableAi = true,
   error = null,
   initialRuleFilters,
+  resolveRuleHref,
+  ruleHrefTarget,
 }: AssessFindingsPanelProps) {
   const [view, setView] = useState<ViewMode>('grouped');
   const [sevFilters, setSevFilters] = useState<Set<string>>(
@@ -378,6 +402,9 @@ export function AssessFindingsPanel({
         : [...prev, bareId],
     );
   }, []);
+
+  // RuleId prefers definition links; unknown rules still toggle the filter chip.
+  const ruleClickHandler = toggleRuleFilter;
 
   const ruleFilterSet = useMemo(() => new Set(ruleFilters), [ruleFilters]);
 
@@ -477,7 +504,9 @@ export function AssessFindingsPanel({
           {
             isSingleton: !(f.path || '').trim(),
             enableAi,
-            onRuleClick: toggleRuleFilter,
+            onRuleClick: ruleClickHandler,
+            resolveRuleHref,
+            ruleHrefTarget,
           },
         ),
       );
@@ -486,10 +515,12 @@ export function AssessFindingsPanel({
       findingsToNodeItem(g.key, g.title, g.findings, {
         isSingleton: g.isSingleton,
         enableAi,
-        onRuleClick: toggleRuleFilter,
+        onRuleClick: ruleClickHandler,
+        resolveRuleHref,
+        ruleHrefTarget,
       }),
     );
-  }, [view, filteredFindings, groups, enableAi, toggleRuleFilter]);
+  }, [view, filteredFindings, groups, enableAi, ruleClickHandler, resolveRuleHref, ruleHrefTarget]);
 
   const filterGroups: ReviewFilterGroup[] = useMemo(
     () => [

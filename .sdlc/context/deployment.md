@@ -47,7 +47,7 @@ This builds eleven images:
 
 | Image | Dockerfile | Purpose |
 |-------|------------|---------|
-| `apme-primary:latest` | `containers/primary/Dockerfile` | Orchestrator + engine + session venv manager |
+| `apme-engine:latest` | `containers/engine/Dockerfile` | Orchestrator + engine + session venv manager |
 | `apme-native:latest` | `containers/native/Dockerfile` | Native Python validator |
 | `apme-opa:latest` | `containers/opa/Dockerfile` | OPA + gRPC wrapper |
 | `apme-ansible:latest` | `containers/ansible/Dockerfile` | Ansible validator (reads session venvs) |
@@ -72,7 +72,7 @@ after that ADR; older release tags stay amd64-only until rebuilt. Local
 tox -e up
 ```
 
-This runs `podman play kube containers/podman/pod.yaml`, which starts the pod `apme-pod` with all service containers (Primary, Native, OPA, Ansible, Gitleaks, Collection Health, Dep Audit, Galaxy Proxy, Gateway, UI, Abbenay). A sessions directory and gateway data directory are created for session-scoped venvs and persistent activity data.
+This runs `podman play kube containers/podman/pod.yaml`, which starts the pod `apme-pod` with all service containers (Engine, Native, OPA, Ansible, Gitleaks, Collection Health, Dep Audit, Galaxy Proxy, Gateway, UI, Abbenay). A sessions directory and gateway data directory are created for session-scoped venvs and persistent activity data.
 
 ### Run CLI Commands
 
@@ -85,7 +85,7 @@ tox -e cli -- format --check .          # YAML format check
 tox -e cli -- health-check              # health check
 ```
 
-The CLI container joins `apme-pod`, mounts CWD as `/workspace:Z` (read-write for `remediate`/`format`), and communicates with Primary at `127.0.0.1:50051` via gRPC.
+The CLI container joins `apme-pod`, mounts CWD as `/workspace:Z` (read-write for `remediate`/`format`), and communicates with Engine at `127.0.0.1:50051` via gRPC.
 
 The **`remediate`** command uses a **bidirectional streaming RPC** (`FixSession`, ADR-028, ADR-039) for real-time progress and interactive AI proposal review. **`check`** uses the same `FixSession` path in dry-run mode (ADR-039).
 
@@ -99,10 +99,10 @@ tox -e wipe                             # stop pod and delete DB, sessions, Abbe
 ### Health Check
 
 ```bash
-APME_PRIMARY_ADDRESS=127.0.0.1:50051 apme health-check
+APME_ENGINE_ADDRESS=127.0.0.1:50051 apme health-check
 ```
 
-Reports status of all services (Primary, Native, OPA, Ansible, Gitleaks, Collection Health, Dep Audit) with latency.
+Reports status of configured backend services (Engine, Native, OPA, Ansible, Galaxy Proxy, and any optional validators that are set — Gitleaks, Collection Health, Dep Audit) with latency.
 
 ---
 
@@ -110,21 +110,21 @@ Reports status of all services (Primary, Native, OPA, Ansible, Gitleaks, Collect
 
 ### Environment Variables
 
-#### Primary
+#### Engine
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `APME_PRIMARY_LISTEN` | `0.0.0.0:50051` | gRPC listen address |
+| `APME_ENGINE_LISTEN` | `0.0.0.0:50051` | gRPC listen address |
 | `NATIVE_GRPC_ADDRESS` | — | Native validator address (e.g., `127.0.0.1:50055`) |
 | `OPA_GRPC_ADDRESS` | — | OPA validator address (e.g., `127.0.0.1:50054`) |
 | `ANSIBLE_GRPC_ADDRESS` | — | Ansible validator address (e.g., `127.0.0.1:50053`) |
 | `GITLEAKS_GRPC_ADDRESS` | — | Gitleaks validator address (e.g., `127.0.0.1:50056`) |
 | `COLLECTION_HEALTH_GRPC_ADDRESS` | — | Collection Health validator address (e.g., `127.0.0.1:50058`) |
 | `DEP_AUDIT_GRPC_ADDRESS` | — | Dep Audit validator address (e.g., `127.0.0.1:50059`) |
-| `APME_ABBENAY_ADDR` | — | Abbenay AI daemon address (e.g., `127.0.0.1:50057`) |
+| `APME_ABBENAY_ADDR` | — | Abbenay AI daemon address (`unix://…` in Helm/Podman when a consumer token is set) |
 | `APME_REPORTING_ENDPOINT` | — | Gateway gRPC Reporting address (e.g., `127.0.0.1:50060`) |
 
-> If a validator address is unset, that validator is skipped during fan-out.
+> Required Engine-core services (Engine, Native, OPA, Ansible, Galaxy Proxy) must be available. Optional validators (Gitleaks, Collection Health, Dep Audit) may be unset and are skipped during fan-out.
 
 #### Native
 
@@ -172,10 +172,11 @@ app passwords may be stored as `username:app_password` in the SCM token field.
 
 | Name | Host Path | Container Mount | Services | Access |
 |------|-----------|-----------------|----------|--------|
-| `sessions` | `$CACHE/sessions` | `/sessions` | Primary, Ansible | rw (primary), ro (ansible) |
+| `sessions` | `$CACHE/sessions` | `/sessions` | Engine, Ansible | rw (engine), ro (ansible) |
 | `gateway-data` | `$CACHE/gateway` | `/data` | Gateway | rw |
 | `proxy-cache` | `$CACHE/proxy` | `/cache` | Galaxy Proxy | rw |
 | `workspace` | CWD (CLI only) | `/workspace` | CLI | rw |
+| `abbenay-run` | emptyDir | `/tmp/abbenay-run` | Engine, Gateway, Abbenay | rw |
 
 ---
 
@@ -207,18 +208,18 @@ The **Rego bundle is baked into the image** at build time (no volume mount neede
 
 ## Ansible Container Details
 
-The Ansible container receives session-scoped venvs via the `/sessions` volume (read-only). The Primary orchestrator builds and manages these venvs using `VenvSessionManager`; the Ansible validator simply uses the `venv_path` provided in each `ValidateRequest`.
+The Ansible container receives session-scoped venvs via the `/sessions` volume (read-only). The Engine builds and manages these venvs using `VenvSessionManager`; the Ansible validator simply uses the `venv_path` provided in each `ValidateRequest`.
 
 Collections are installed into the venv's `site-packages/ansible_collections/` directory by `uv pip install` through the Galaxy Proxy — they're on the Python path natively (no `ANSIBLE_COLLECTIONS_PATH` or `ansible.cfg` needed).
 
-The Ansible validator requires a `venv_path` from the Primary orchestrator. If none is provided (e.g., standalone testing without Primary), the validator returns an infrastructure error and skips validation.
+The Ansible validator requires a `venv_path` from the Engine. If none is provided (e.g., standalone testing without Engine), the validator returns an infrastructure error and skips validation.
 
 ---
 
 ## Local Development (Daemon Mode)
 
 For development and testing without the Podman pod, the CLI can start a
-local daemon that runs the Primary, Native, OPA, and Ansible validators plus the Galaxy Proxy
+local daemon that runs the Engine, Native, OPA, and Ansible validators plus the Galaxy Proxy
 in-process (ADR-024):
 
 ```bash
@@ -238,12 +239,13 @@ apme remediate .
 apme daemon stop
 ```
 
-**Daemon mode** starts a local Primary server with Native, OPA, and Ansible
+**Daemon mode** starts a local Engine with Native, OPA, and Ansible
 validators as in-process gRPC servers, plus Galaxy Proxy as an HTTP service
 (uvicorn). Optional validators (Gitleaks, Collection Health, Dep Audit) are
-not started by the daemon. OPA uses Podman by default (`OPA_USE_PODMAN=1`);
-if Podman is unavailable it falls back to a local `opa` binary; if neither is
-available, OPA validation is skipped.
+not started by the daemon. The OPA validator gRPC server is always started;
+policy evaluation uses Podman by default (`OPA_USE_PODMAN=1`) or a local
+`opa` binary when `OPA_USE_PODMAN=0`. Install one before running scans that
+depend on OPA rules.
 
 The CLI is a **thin gRPC client** — it sends file bytes to the daemon and
 receives results. It does not import engine internals.
@@ -277,7 +279,7 @@ tox -e wipe                             # stop + wipe DB/sessions/Abbenay secret
 
 | Port | Service | Listen Variable |
 |------|---------|-----------------|
-| 50051 | Primary | `APME_PRIMARY_LISTEN` |
+| 50051 | Engine | `APME_ENGINE_LISTEN` |
 | 50053 | Ansible | `APME_ANSIBLE_VALIDATOR_LISTEN` |
 | 50054 | OPA | `APME_OPA_VALIDATOR_LISTEN` |
 | 50055 | Native | `APME_NATIVE_VALIDATOR_LISTEN` |

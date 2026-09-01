@@ -38,7 +38,7 @@ context = run_scan(
 
 #### Collection Dependencies
 
-The engine never downloads collections. The `VenvSessionManager` (owned by Primary)
+The engine never downloads collections. The `VenvSessionManager` (owned by Engine)
 installs collections into session-scoped venvs via the Galaxy Proxy before the engine
 runs. The engine receives a `dependency_dir` pointing to the venv's `site-packages`
 for pre-installed collection content.
@@ -136,7 +136,7 @@ with open(path, "w") as f:
 
 | Package | Purpose |
 |---------|---------|
-| `abbenay-client==2026.8.6` | gRPC client for the Abbenay AI provider (Tier 2 remediation); PyPI, CalVer-aligned with daemon image `v2026.8.6`. Local/dev: `uv sync --extra ai`. Production/containers: `uv sync --frozen --extra ai` (hashes in `uv.lock`). `pip install apme-engine[ai]` is version-pin only. |
+| `abbenay-client==2026.8.7` | gRPC client for the Abbenay AI provider (Tier 2 remediation); PyPI, CalVer-aligned with daemon image `v2026.8.7`. Local/dev: `uv sync --extra ai`. Production/containers: `uv sync --frozen --extra ai` (hashes in `uv.lock`). `pip install apme-engine[ai]` is version-pin only. |
 
 ### Gateway (`[project.optional-dependencies.gateway]`)
 

@@ -559,14 +559,14 @@ class TestProtoRoundTrip:
 
     def test_scan_options_session_id(self) -> None:
         """ScanOptions carries session_id field."""
-        from apme.v1.primary_pb2 import ScanOptions
+        from apme.v1.engine_pb2 import ScanOptions
 
         opts = ScanOptions(session_id="ws-abc", ansible_core_version="2.17.0")
         assert opts.session_id == "ws-abc"
 
     def test_fix_options_session_id(self) -> None:
         """FixOptions carries session_id field."""
-        from apme.v1.primary_pb2 import FixOptions
+        from apme.v1.engine_pb2 import FixOptions
 
         opts = FixOptions(session_id="ci-job-42", ansible_core_version="2.17.0")
         assert opts.session_id == "ci-job-42"

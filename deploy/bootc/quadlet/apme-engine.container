@@ -1,12 +1,12 @@
 [Unit]
-Description=APME Primary Orchestrator
+Description=APME Engine orchestrator
 After=apme-pod.service
 
 [Container]
-Image=ghcr.io/ansible/apme-primary:latest
+Image=ghcr.io/ansible/apme-engine:2026.7.3
 Pod=apme.pod
 EnvironmentFile=/etc/apme/env/apme.env
-Environment=APME_PRIMARY_LISTEN=0.0.0.0:50051
+Environment=APME_ENGINE_LISTEN=0.0.0.0:50051
 Environment=NATIVE_GRPC_ADDRESS=127.0.0.1:50055
 Environment=OPA_GRPC_ADDRESS=127.0.0.1:50054
 Environment=ANSIBLE_GRPC_ADDRESS=127.0.0.1:50053

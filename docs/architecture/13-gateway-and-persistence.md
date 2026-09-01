@@ -7,7 +7,7 @@
 The Gateway is the persistence and REST API layer for APME. It receives
 scan/fix events from the engine via gRPC, stores them in SQLite, and
 serves a read-oriented REST API for dashboards and the React UI. It also
-bridges WebSocket connections from the browser to Primary's `FixSession`
+bridges WebSocket connections from the browser to Engine's `FixSession`
 gRPC stream, enabling the UI to run check/remediate operations directly.
 
 ## Architecture
@@ -81,7 +81,7 @@ deduplication on FQCN.
 
 ### RegisterRules
 
-Receives the full rule catalog from an authority Primary on startup.
+Receives the full rule catalog from an authority Engine on startup.
 Performs a full reconciliation against the existing catalog:
 
 - **New rules** — inserted
@@ -161,7 +161,7 @@ and `/docs` from the Gateway process.
 | Method | Path | Purpose |
 |--------|------|---------|
 | GET | `/health` | Database + upstream service health (gRPC probes) |
-| GET | `/ai/models` | List available AI models from Primary/Abbenay |
+| GET | `/ai/models` | List available AI models from Engine/Abbenay |
 
 #### Projects (ADR-037)
 
@@ -256,7 +256,7 @@ Two WebSocket endpoints bridge the browser to the engine:
 
 1. Client uploads files as base64 JSON messages
 2. Gateway writes files to a temp directory
-3. Gateway opens a `FixSession` gRPC stream to Primary
+3. Gateway opens a `FixSession` gRPC stream to Engine
 4. Bidirectional forwarding: gRPC events to WS JSON, WS commands to gRPC
 5. Supports session resume via `?resume=<session_id>`
 
@@ -271,7 +271,7 @@ The project WebSocket endpoint:
 5. After completion, links the scan to the project and updates health score
 
 Both WebSocket handlers tolerate client disconnects — they continue
-draining gRPC events so the Primary finishes normally and the Reporting
+draining gRPC events so the Engine finishes normally and the Reporting
 servicer receives the `FixCompletedEvent`.
 
 ## Data Flow Summary

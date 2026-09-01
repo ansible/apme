@@ -109,7 +109,7 @@ proposed requirement against the invariants and present:
 | Unified Validator contract | OK / CONFLICT: [describe] |
 | Stateless engine | OK / CONFLICT: [describe] |
 | Scale pods not services | OK / CONFLICT: [describe] |
-| Session venvs Primary-owned | OK / CONFLICT: [describe] |
+| Session venvs are Engine-owned | OK / CONFLICT: [describe] |
 | Rule ID conventions | OK / CONFLICT: [describe] |
 | OPA subprocess | OK / CONFLICT: [describe] |
 | FixSession unified path | OK / CONFLICT: [describe] |

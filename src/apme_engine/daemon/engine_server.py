@@ -1,8 +1,8 @@
-"""Primary daemon: async gRPC server that runs engine then fans out to all validators.
+"""Engine daemon: async gRPC server that runs engine then fans out to all validators.
 
-The Primary is the sole API surface for all clients (CLI, web UI, CI).
+The Engine is the sole API surface for all clients (CLI, web UI, CI).
 Clients send file bytes via gRPC streams and receive processed bytes back.
-The Primary delegates internally to validators and remediation.
+The Engine delegates internally to validators and remediation.
 """
 
 from __future__ import annotations
@@ -27,8 +27,9 @@ if TYPE_CHECKING:
 
 import grpc
 import grpc.aio
+import httpx
 
-from apme.v1 import primary_pb2_grpc, reporting_pb2, validate_pb2_grpc
+from apme.v1 import engine_pb2_grpc, reporting_pb2, validate_pb2_grpc
 from apme.v1.common_pb2 import (
     CollectionRef,
     File,
@@ -42,7 +43,7 @@ from apme.v1.common_pb2 import (
     ServiceHealth,
     ValidatorDiagnostics,
 )
-from apme.v1.primary_pb2 import (
+from apme.v1.engine_pb2 import (
     AIModelInfo,
     AiTriageReady,
     ApprovalAck,
@@ -88,6 +89,7 @@ from apme_engine.daemon.fs_utils import write_chunked_fs as _write_chunked_fs
 from apme_engine.daemon.session import ResourceExhaustedError, SessionState, SessionStore
 from apme_engine.daemon.violation_convert import violation_dict_to_proto, violation_proto_to_dict
 from apme_engine.engine.models import RemediationClass, ViolationDict
+from apme_engine.graph.scanner import graph_rule_opt_in_from_rule_configs
 from apme_engine.log_bridge import attach_collector
 from apme_engine.remediation.graph_engine import FilePatch as SplicedFilePatch
 from apme_engine.runner import run_scan
@@ -99,11 +101,11 @@ from apme_engine.venv_manager.session import (
     list_installed_packages,
 )
 
-logger = logging.getLogger("apme.primary")
+logger = logging.getLogger("apme.engine")
 
 _ExecutorResult = TypeVar("_ExecutorResult")
 
-_MAX_CONCURRENT_RPCS = int(os.environ.get("APME_PRIMARY_MAX_RPCS", "16"))
+_MAX_CONCURRENT_RPCS = int(os.environ.get("APME_ENGINE_MAX_RPCS", "16"))
 _GRPC_MAX_MSG = 50 * 1024 * 1024  # 50 MiB — hierarchy+scandata can exceed the 4 MiB default
 
 
@@ -115,11 +117,13 @@ class _ValidatorResult:
         violations: List of violation dicts from the validator.
         diagnostics: Optional ValidatorDiagnostics from the response.
         logs: ProgressUpdate entries collected by the validator (ADR-033).
+        error: Set when the validator RPC failed (e.g. ``grpc.RpcError``).
     """
 
     violations: list[ViolationDict] = field(default_factory=list)
     diagnostics: ValidatorDiagnostics | None = None
     logs: list[ProgressUpdate] = field(default_factory=list)
+    error: str | None = None
 
 
 def _write_session_galaxy_cfg(
@@ -478,7 +482,7 @@ async def _call_validator(
         )
     except grpc.RpcError as e:
         logger.error("Validator at %s failed (req=%s): %s", address, req_id, e)
-        return _ValidatorResult()
+        return _ValidatorResult(error=str(e))
     finally:
         await channel.close(grace=None)
 
@@ -672,6 +676,13 @@ VALIDATOR_ENV_VARS = {
     "dep_audit": "DEP_AUDIT_GRPC_ADDRESS",
 }
 
+# Core validators — scans fail when any required address is unset (ADR-005).
+REQUIRED_VALIDATORS = frozenset({"native", "opa", "ansible"})
+
+
+class RequiredValidatorDependencyError(RuntimeError):
+    """Required validator missing, unreachable, or returned an RPC error."""
+
 
 def _apply_rule_configs(
     violations: list[ViolationDict],
@@ -721,13 +732,13 @@ def _apply_rule_configs(
 _known_rule_ids: set[str] = set()
 
 
-class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
-    """Primary gRPC servicer — sole API surface for all clients.
+class EngineServicer(engine_pb2_grpc.EngineServicer):
+    """Engine gRPC servicer — sole API surface for all clients.
 
     Runs engine, fans out to validators, orchestrates format + remediation.
     Clients send file bytes in, receive processed bytes out.
 
-    The Primary is the sole venv authority — it calls
+    The Engine is the sole venv authority — it calls
     ``VenvSessionManager.acquire()`` before fanning out to validators,
     passing the resolved ``venv_path`` so validators never write to venvs.
     """
@@ -748,8 +759,8 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
     def _get_galaxy_proxy_cfg_lock(self) -> asyncio.Lock:
         """Return the lock guarding temporary ``ANSIBLE_CONFIG`` overrides.
 
-        The local daemon runs Primary and Galaxy Proxy in the same process.
-        When a scan provides session-scoped Galaxy credentials, Primary
+        The local daemon runs Engine and Galaxy Proxy in the same process.
+        When a scan provides session-scoped Galaxy credentials, Engine
         temporarily exposes that config via ``ANSIBLE_CONFIG`` so the in-process
         proxy can use it during venv acquisition. The lock serializes that
         process-wide override.
@@ -765,7 +776,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
     async def _activate_galaxy_proxy_config(self, galaxy_cfg_path: Path | None) -> AsyncIterator[None]:
         """Temporarily expose a session-scoped Galaxy config to the proxy.
 
-        This only affects local daemon mode where Primary and Galaxy Proxy share
+        This only affects local daemon mode where Engine and Galaxy Proxy share
         a process. Pod deployments use the Gateway's proxy config sync instead.
 
         Args:
@@ -851,7 +862,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                 When provided, disabled rules are filtered and severity is
                 overridden after validator fan-out.
             rule_configs_complete: When ``True`` the incoming ``rule_configs``
-                represents the full catalog (Gateway path).  The Primary
+                represents the full catalog (Gateway path).  The Engine
                 performs bidirectional audit and hard-fails on unknown **or**
                 missing rule IDs.  When ``False`` (CLI path), unknown IDs
                 produce a warning only.
@@ -945,7 +956,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                 When provided, disabled rules are filtered and severity is
                 overridden after validator fan-out.
             rule_configs_complete: When ``True`` the incoming ``rule_configs``
-                represents the full catalog (Gateway path).  The Primary
+                represents the full catalog (Gateway path).  The Engine
                 performs bidirectional audit and hard-fails on unknown **or**
                 missing rule IDs.  When ``False`` (CLI path), unknown IDs
                 produce a warning only.
@@ -954,9 +965,11 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                 request-scoped control over optional validators (ADR-051).
 
         Raises:
+            RequiredValidatorDependencyError: If a required validator
+                (native, opa, ansible) is not configured or its RPC fails.
             ValueError: If ``rule_configs_complete`` is ``True`` and either
                 direction of the bidirectional audit fails (unknown IDs the
-                Primary cannot execute, or known IDs absent from the config).
+                Engine cannot execute, or known IDs absent from the config).
 
         Returns:
             Same tuple as ``_scan_pipeline``.
@@ -1071,21 +1084,36 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             session_id=sid,
             venv_path=venv_path,
             content_graph_data=content_graph_data,
+            graph_rule_opt_in=graph_rule_opt_in_from_rule_configs(rule_configs),
         )
 
         _pcb = progress_callback
 
-        task_names: list[str] = []
-        task_coros: list[Awaitable[_ValidatorResult]] = []
+        validator_targets: list[tuple[str, str]] = []
+        missing_required: list[str] = []
         for name, env_var in VALIDATOR_ENV_VARS.items():
             if name in skip_validators:
                 logger.debug("Skipping validator %s (request skip flag, req=%s)", name, scan_id)
                 continue
             addr = os.environ.get(env_var)
             if not addr:
+                if name in REQUIRED_VALIDATORS:
+                    missing_required.append(f"{name} ({env_var})")
                 continue
-            task_names.append(name)
-            task_coros.append(_call_validator(addr, validate_request))
+            validator_targets.append((name, addr))
+
+        if missing_required:
+            msg = (
+                "Required validator(s) not configured: "
+                f"{', '.join(missing_required)}. Set the corresponding *_GRPC_ADDRESS variables."
+            )
+            logger.error("%s (req=%s)", msg, scan_id)
+            raise RequiredValidatorDependencyError(msg)
+
+        task_names = [name for name, _addr in validator_targets]
+        task_coros: list[Awaitable[_ValidatorResult]] = [
+            _call_validator(addr, validate_request) for _name, addr in validator_targets
+        ]
 
         violations: list[ViolationDict] = []
         validator_diagnostics: list[ValidatorDiagnostics] = []
@@ -1143,8 +1171,15 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             for vname, item in zip(task_names, named_results, strict=True):
                 if isinstance(item, BaseException):
                     logger.error("Validator %s raised (req=%s): %s", vname, scan_id, item)
+                    if vname in REQUIRED_VALIDATORS:
+                        msg = f"Required validator {vname} failed: {item}"
+                        raise RequiredValidatorDependencyError(msg) from item
                     continue
                 name, result = item
+                if name in REQUIRED_VALIDATORS and result.error:
+                    msg = f"Required validator {name} RPC failed: {result.error}"
+                    logger.error("%s (req=%s)", msg, scan_id)
+                    raise RequiredValidatorDependencyError(msg)
                 counts[name] = len(result.violations)
                 violations.extend(result.violations)
                 if result.diagnostics:
@@ -1461,6 +1496,8 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
 
         except ResourceExhaustedError as e:
             await context.abort(grpc.StatusCode.RESOURCE_EXHAUSTED, str(e))
+        except RequiredValidatorDependencyError as e:
+            await context.abort(grpc.StatusCode.UNAVAILABLE, str(e))
         except ValueError as ve:
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(ve))
         except Exception as e:
@@ -1692,7 +1729,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                 ai_completed=ai_completed,
                 ai_total=ai_total,
             )
-            PrimaryServicer._stamp_progress_update(update, session)
+            EngineServicer._stamp_progress_update(update, session)
             loop.call_soon_threadsafe(progress_queue.put_nowait, update)
 
         manifest_captured = False
@@ -1789,6 +1826,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             _heartbeat=_heartbeat,
             format_content=format_content,
             format_diffs=format_diffs,
+            rule_configs=scan_rule_configs or None,
         ):
             yield event
 
@@ -2028,6 +2066,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         _heartbeat: Callable[[], Awaitable[None]],
         format_content: Callable[..., object],
         format_diffs: Sequence[object],
+        rule_configs: list[object] | None = None,
     ) -> AsyncIterator[SessionEvent]:
         """Graph-engine remediation — in-memory convergence, graph-authoritative.
 
@@ -2053,6 +2092,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             _heartbeat: Coroutine factory for periodic heartbeats.
             format_content: Formatter function for post-remediation pass.
             format_diffs: Accumulated format diffs from earlier step.
+            rule_configs: Per-rule overrides for opt-in audit GraphRules.
 
         Yields:
             SessionEvent: Progress, Tier1Summary, and result events.
@@ -2060,6 +2100,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         from apme_engine.engine.graph_opa_payload import content_node_to_opa_dict
         from apme_engine.graph.content_graph import ContentGraph, EdgeType, NodeType
         from apme_engine.graph.scanner import (
+            graph_rule_opt_in_from_rule_configs,
             load_graph_rules,
             native_rules_dir,
         )
@@ -2091,7 +2132,25 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         originals = await loop.run_in_executor(None, _load_yaml_originals, yaml_paths, temp_dir)
 
         # 2. Convergence: all validators on dirty nodes via gRPC
-        rules = load_graph_rules(rules_dir=native_rules_dir())
+        opt_in_rules = graph_rule_opt_in_from_rule_configs(rule_configs)
+        rules, missing_opt_in = load_graph_rules(
+            rules_dir=native_rules_dir(),
+            opt_in_rule_ids=opt_in_rules,
+        )
+        if missing_opt_in:
+            logger.warning(
+                "Remediation: requested opt-in graph rules failed to load: %s",
+                ", ".join(missing_opt_in),
+            )
+            _opt_in_warn = ProgressUpdate(
+                message=f"Requested audit rule(s) not loaded: {', '.join(missing_opt_in)}",
+                phase="graph-tier1",
+                level=3,  # WARNING
+            )
+            session.record_progress(task_linked=is_task_linked_progress(_opt_in_warn.phase))
+            self._stamp_progress_update(_opt_in_warn, session)
+            session.progress_logs.append(_opt_in_warn)
+            yield SessionEvent(progress=_opt_in_warn)
 
         async def _rescan_bridge(
             g: ContentGraph,
@@ -2110,6 +2169,10 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
 
             Returns:
                 Merged violation list from all sources.
+
+            Raises:
+                RequiredValidatorDependencyError: If a required validator
+                    (native, opa, ansible) is not configured or its RPC fails.
             """
             all_violations: list[ViolationDict] = []
 
@@ -2123,7 +2186,9 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             # Native: full graph with dirty_node_ids hint (rules traverse full context)
             native_addr = os.environ.get("NATIVE_GRPC_ADDRESS")
             if not native_addr:
-                logger.warning("NATIVE_GRPC_ADDRESS not set; skipping native rescan (scan_id=%s)", scan_id)
+                raise RequiredValidatorDependencyError(
+                    "Required validator native not configured for rescan (NATIVE_GRPC_ADDRESS unset)"
+                )
             if native_addr:
                 graph_data = await asyncio.get_event_loop().run_in_executor(
                     None,
@@ -2136,6 +2201,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                             request_id=f"{scan_id}-rescan",
                             content_graph_data=graph_data,
                             dirty_node_ids=sorted(dirty_ids),
+                            graph_rule_opt_in=opt_in_rules,
                         ),
                     )
                 )
@@ -2166,6 +2232,10 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
 
             # OPA: mini hierarchy from dirty nodes + their parent plays
             opa_addr = os.environ.get("OPA_GRPC_ADDRESS")
+            if not opa_addr:
+                raise RequiredValidatorDependencyError(
+                    "Required validator opa not configured for rescan (OPA_GRPC_ADDRESS unset)"
+                )
             if opa_addr:
                 opa_node_ids: set[str] = {n.node_id for n in dirty_nodes}
                 for n in dirty_nodes:
@@ -2202,6 +2272,10 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
 
             # Ansible task checks: hierarchy with dirty task nodes (L057 skipped — no files)
             ans_addr = os.environ.get("ANSIBLE_GRPC_ADDRESS")
+            if not ans_addr:
+                raise RequiredValidatorDependencyError(
+                    "Required validator ansible not configured for rescan (ANSIBLE_GRPC_ADDRESS unset)"
+                )
             if ans_addr and session.venv_path:
                 task_dicts = [
                     d
@@ -2241,8 +2315,14 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                 results = await asyncio.gather(*ext_coros, return_exceptions=True)
                 for name, result in zip(ext_names, results, strict=True):
                     if isinstance(result, BaseException):
+                        if name in REQUIRED_VALIDATORS:
+                            msg = f"Required validator {name} failed during rescan: {result}"
+                            raise RequiredValidatorDependencyError(msg) from result
                         logger.warning("Rescan: %s failed: %s", name, result)
                         continue
+                    if name in REQUIRED_VALIDATORS and result.error:
+                        msg = f"Required validator {name} RPC failed during rescan: {result.error}"
+                        raise RequiredValidatorDependencyError(msg)
                     all_violations.extend(result.violations)
 
             return all_violations
@@ -2493,6 +2573,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         if proposed_proposals:
             for p in proposed_proposals:
                 session.proposals[p.id] = p
+            session.review_declined_proposals = {p.id: p for p in declined_proposals}
             session.ai_proposals = list(graph_report.ai_proposals) if graph_report.ai_proposals else []
             session.current_tier = 2
             session.status = 1  # AWAITING_APPROVAL
@@ -2552,6 +2633,9 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             provider = AbbenayProvider(addr, token=token, model=model)
         except ImportError:
             logger.warning("Failed to create AbbenayProvider — abbenay-client not installed")
+            return None
+        except ValueError:
+            logger.warning("Failed to create AbbenayProvider — invalid APME_ABBENAY_ADDR %r", addr)
             return None
 
         logger.info("AI provider ready: %s model=%s", addr, model)
@@ -2656,6 +2740,53 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                 )
             )
         return proposals
+
+    @staticmethod
+    def _consolidate_gate2_proposals(
+        ai_proposals: list[Proposal],
+        tier1_proposals: list[Proposal],
+    ) -> list[Proposal]:
+        """Return one selectable Gate 2 proposal per graph node.
+
+        AI and post-AI Tier 1 cleanup can target the same node. Approval applies
+        to the whole node, so duplicate rows would let conflicting decisions
+        override each other in ``_apply_graph_approvals``.
+
+        Args:
+            ai_proposals: Gate 2 AI proposals from ``_build_graph_proposals``.
+            tier1_proposals: Gate 2 Tier 1 proposals (``g2-t1-*`` ids).
+
+        Returns:
+            Ordered proposals with at most one row per ``Proposal.path``.
+        """
+        by_node: dict[str, Proposal] = {}
+        order: list[str] = []
+        for proposal in ai_proposals:
+            key = (proposal.path or "").strip() or proposal.id
+            if key not in by_node:
+                order.append(key)
+            by_node[key] = proposal
+        for tier1 in tier1_proposals:
+            key = (tier1.path or "").strip() or tier1.id
+            if key in by_node:
+                existing = by_node[key]
+                merged_rules = {r.strip() for r in existing.rule_id.split(",") if r.strip()}
+                merged_rules.update(r.strip() for r in tier1.rule_id.split(",") if r.strip())
+                if merged_rules:
+                    existing.rule_id = ",".join(sorted(merged_rules))
+                existing.after_text = tier1.after_text
+                existing.diff_hunk = tier1.diff_hunk
+                if tier1.explanation:
+                    existing.explanation = (
+                        f"{existing.explanation}\n{tier1.explanation}".strip()
+                        if existing.explanation
+                        else tier1.explanation
+                    )
+            else:
+                if key not in by_node:
+                    order.append(key)
+                by_node[key] = tier1
+        return [by_node[key] for key in order]
 
     async def _session_begin_remediate(
         self,
@@ -2922,7 +3053,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                 ai_completed=ai_completed,
                 ai_total=ai_total,
             )
-            PrimaryServicer._stamp_progress_update(update, session)
+            EngineServicer._stamp_progress_update(update, session)
             loop.call_soon_threadsafe(progress_queue.put_nowait, update)
 
         engine._progress_cb = _gate2_progress  # noqa: SLF001
@@ -2998,7 +3129,18 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         )
         session.remaining_ai = list(remaining)
 
-        proposed_proposals = self._build_graph_proposals(graph_report.ai_proposals) if graph_report.ai_proposals else []
+        proposed_proposals: list[Proposal] = []
+        ai_built: list[Proposal] = []
+        if graph_report.ai_proposals:
+            ai_built = self._build_graph_proposals(graph_report.ai_proposals)
+        gate2_t1_built: list[Proposal] = []
+        if getattr(graph_report, "tier1_proposals", None):
+            gate2_t1_raw = self._build_tier1_proposals(graph_report.tier1_proposals)
+            for offset, proposal in enumerate(gate2_t1_raw):
+                proposal.id = f"g2-t1-{offset:04d}"
+                proposal.tier = 2
+            gate2_t1_built = gate2_t1_raw
+        proposed_proposals = self._consolidate_gate2_proposals(ai_built, gate2_t1_built)
         proposed_rule_files: set[tuple[str, str]] = set()
         for p in proposed_proposals:
             for raw_rid in p.rule_id.split(","):
@@ -3012,11 +3154,13 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         )
         all_proposals = proposed_proposals + declined_proposals
 
-        if proposed_proposals:
+        if all_proposals:
             # Do NOT splice into working_files until Gate 2 approve/decline.
             for p in proposed_proposals:
                 session.proposals[p.id] = p
-            session.ai_proposals = list(graph_report.ai_proposals)
+            session.review_declined_proposals = {p.id: p for p in declined_proposals}
+            session.ai_proposals = list(graph_report.ai_proposals) if graph_report.ai_proposals else []
+            session.tier1_proposals = list(getattr(graph_report, "tier1_proposals", None) or [])
             session.status = 1  # AWAITING_APPROVAL
             yield SessionEvent(
                 proposals=ProposalsReady(
@@ -3076,6 +3220,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             Number of proposals successfully applied.
         """
         if not approved_ids and not session.proposals:
+            session.review_declined_proposals.clear()
             if finalize:
                 session.status = 3  # COMPLETE
             session.awaiting_tier1_gate = False
@@ -3084,7 +3229,9 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         graph = session.content_graph
         originals = session.graph_originals
 
-        has_graph_proposals = graph is not None and any(pid.startswith(("ai-", "t1-")) for pid in session.proposals)
+        has_graph_proposals = graph is not None and any(
+            pid.startswith(("ai-", "t1-", "g2-t1-")) for pid in session.proposals
+        )
 
         temp_patches: list[SplicedFilePatch] | None = None
         if has_graph_proposals and graph is not None and originals is not None:
@@ -3104,6 +3251,7 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             applied = _apply_text_approvals(session, approved_ids)
 
         session.awaiting_tier1_gate = False
+        session.review_declined_proposals.clear()
         if finalize:
             session.status = 3  # COMPLETE — user has finished reviewing
         else:
@@ -3378,11 +3526,15 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
                 ),
             )
         elif (
-            session.proposals and session.status == 1 and not session.awaiting_assess and not session.awaiting_ai_triage
+            (session.proposals or session.review_declined_proposals)
+            and session.status == 1
+            and not session.awaiting_assess
+            and not session.awaiting_ai_triage
         ):
+            review_proposals = list(session.proposals.values()) + list(session.review_declined_proposals.values())
             yield SessionEvent(
                 proposals=ProposalsReady(
-                    proposals=list(session.proposals.values()),
+                    proposals=review_proposals,
                     tier=session.current_tier,
                     status=1,
                 ),
@@ -3410,33 +3562,27 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         Returns:
             ListAIModelsResponse with available models.
         """
-        try:
-            from abbenay_grpc import AbbenayClient  # noqa: PLC0415
-        except ImportError:
-            logger.debug("abbenay_grpc not installed — returning empty model list")
-            return ListAIModelsResponse(models=[])
-
         addr = os.environ.get("APME_ABBENAY_ADDR", "").strip()
         if not addr:
             return ListAIModelsResponse(models=[])
 
         try:
-            if addr.startswith("unix://"):
-                client = AbbenayClient(addr)
-            else:
-                host, sep, port_str = addr.rpartition(":")
-                if sep:
-                    client = AbbenayClient(host=host or "localhost", port=int(port_str))
-                else:
-                    client = AbbenayClient(host=addr)
-            await client.connect()
+            from apme_engine.remediation.abbenay_provider import (  # noqa: PLC0415
+                make_abbenay_client,
+            )
+
+            client = make_abbenay_client(addr)
+            await client.connect()  # type: ignore[attr-defined]
             try:
-                raw_models = await client.list_models()
+                raw_models = await client.list_models()  # type: ignore[attr-defined]
             finally:
-                await client.disconnect()
+                await client.disconnect()  # type: ignore[attr-defined]
 
             models = [AIModelInfo(id=m.id, provider=m.provider, name=m.name) for m in raw_models]
             return ListAIModelsResponse(models=models)
+        except ImportError:
+            logger.debug("abbenay_grpc not installed — returning empty model list")
+            return ListAIModelsResponse(models=[])
         except Exception:
             logger.warning("Failed to list AI models from Abbenay at %s", addr, exc_info=True)
             return ListAIModelsResponse(models=[])
@@ -3448,7 +3594,15 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
         request: HealthRequest,
         context: grpc.aio.ServicerContext,  # type: ignore[type-arg]
     ) -> HealthResponse:
-        """Aggregate health: Primary is ok, plus probe all downstream services.
+        """Aggregate health including required validators and Galaxy Proxy.
+
+        Engine is ok only when required validators and Galaxy Proxy are
+        configured and healthy.
+
+        Required validators (native, OPA, Ansible) missing from the environment
+        yield an unhealthy aggregate status so probes fail before scan setup.
+        Galaxy Proxy (``APME_GALAXY_PROXY_URL``) must respond ``ok`` on
+        ``/health`` — it is a core service, not optional.
 
         Args:
             request: Health request (unused).
@@ -3458,34 +3612,97 @@ class PrimaryServicer(primary_pb2_grpc.PrimaryServicer):
             HealthResponse with aggregate status and downstream service health.
         """
         downstream: list[ServiceHealth] = []
+        unhealthy = False
 
         # Probe validators
         for name, env_var in VALIDATOR_ENV_VARS.items():
             addr = os.environ.get(env_var)
             if not addr:
+                if name in REQUIRED_VALIDATORS:
+                    unhealthy = True
+                    downstream.append(
+                        ServiceHealth(
+                            name=name,
+                            status=f"error: {env_var} not configured",
+                            address="",
+                        )
+                    )
                 continue
             try:
                 channel = grpc.aio.insecure_channel(addr)
                 try:
                     stub = validate_pb2_grpc.ValidatorStub(channel)  # type: ignore[no-untyped-call]
                     resp = await stub.Health(HealthRequest(), timeout=5)
-                    downstream.append(ServiceHealth(name=name, status=resp.status, address=addr))
+                    status = resp.status
+                    if name in REQUIRED_VALIDATORS and status != "ok":
+                        unhealthy = True
+                    downstream.append(ServiceHealth(name=name, status=status, address=addr))
                 finally:
                     await channel.close(grace=None)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - health probe must degrade
+                if name in REQUIRED_VALIDATORS:
+                    unhealthy = True
                 downstream.append(ServiceHealth(name=name, status=f"error: {e}", address=addr))
 
-        return HealthResponse(status="ok", downstream=downstream)
+        # Galaxy Proxy is required (HTTP /health) — sole collection install path.
+        proxy_url = os.environ.get("APME_GALAXY_PROXY_URL", "").strip()
+        if not proxy_url:
+            unhealthy = True
+            downstream.append(
+                ServiceHealth(
+                    name="galaxy_proxy",
+                    status="error: APME_GALAXY_PROXY_URL not configured",
+                    address="",
+                )
+            )
+        else:
+            health_url = proxy_url.rstrip("/") + "/health"
+            try:
+                async with httpx.AsyncClient(timeout=5.0) as client:
+                    http_resp = await client.get(health_url)
+                proxy_ok = False
+                detail = f"HTTP {http_resp.status_code}"
+                if http_resp.status_code == 200:
+                    try:
+                        payload = http_resp.json()
+                    except ValueError:
+                        payload = None
+                    proxy_ok = isinstance(payload, dict) and payload.get("status") == "ok"
+                    if not proxy_ok:
+                        reported = payload.get("status") if isinstance(payload, dict) else None
+                        detail = f"status={reported!r}" if reported is not None else "invalid /health body"
+                if proxy_ok:
+                    downstream.append(ServiceHealth(name="galaxy_proxy", status="ok", address=proxy_url))
+                else:
+                    unhealthy = True
+                    downstream.append(
+                        ServiceHealth(
+                            name="galaxy_proxy",
+                            status=f"error: {detail}",
+                            address=proxy_url,
+                        )
+                    )
+            except Exception as e:  # noqa: BLE001 - health probe must degrade
+                unhealthy = True
+                downstream.append(ServiceHealth(name="galaxy_proxy", status=f"error: {e}", address=proxy_url))
+
+        return HealthResponse(
+            status="unhealthy" if unhealthy else "ok",
+            downstream=downstream,
+        )
 
 
 async def serve(listen_address: str = "0.0.0.0:50051") -> grpc.aio.Server:
-    """Create, bind, and start async gRPC server with Primary servicer.
+    """Create, bind, and start async gRPC server with Engine servicer.
 
     Args:
         listen_address: Host:port to bind (e.g. 0.0.0.0:50051).
 
     Returns:
         Started gRPC server (caller must wait_for_termination).
+
+    Raises:
+        RuntimeError: If the listen address cannot be bound.
     """
     server = grpc.aio.server(
         maximum_concurrent_rpcs=_MAX_CONCURRENT_RPCS,
@@ -3494,12 +3711,11 @@ async def serve(listen_address: str = "0.0.0.0:50051") -> grpc.aio.Server:
             ("grpc.max_send_message_length", _GRPC_MAX_MSG),
         ],
     )
-    primary_pb2_grpc.add_PrimaryServicer_to_server(PrimaryServicer(), server)  # type: ignore[no-untyped-call]
-    if ":" in listen_address:
-        _, _, port = listen_address.rpartition(":")
-        server.add_insecure_port(f"[::]:{port}")
-    else:
-        server.add_insecure_port(listen_address)
+    engine_pb2_grpc.add_EngineServicer_to_server(EngineServicer(), server)  # type: ignore[no-untyped-call]
+    bound_port = server.add_insecure_port(listen_address)
+    if bound_port == 0:
+        msg = f"Engine failed to bind {listen_address}"
+        raise RuntimeError(msg)
     await _collect_rule_catalog()
     await server.start()
     await start_sinks()
@@ -3680,6 +3896,7 @@ def _apply_graph_approvals(
         proposal_node_map[f"ai-{idx:04d}"] = anp.node_id
     for idx, tnp in enumerate(tier1_proposals):
         proposal_node_map[f"t1-{idx:04d}"] = tnp.node_id
+        proposal_node_map[f"g2-t1-{idx:04d}"] = tnp.node_id
 
     applied = 0
     rejected_node_ids: set[str] = set()
@@ -3922,7 +4139,7 @@ async def _collect_rule_catalog() -> None:
 
     This is a **hard requirement** and must complete before the gRPC
     server starts.  If catalog collection fails or returns no rules,
-    the Primary cannot perform bidirectional audit (ADR-041) and must
+    the Engine cannot perform bidirectional audit (ADR-041) and must
     not serve scans.
 
     The collected rules are cached for the subsequent best-effort
@@ -3942,7 +4159,7 @@ async def _collect_rule_catalog() -> None:
     if not rules:
         raise RuntimeError(
             "Rule catalog collection returned zero rules. "
-            "The Primary cannot start without an authoritative catalog (ADR-041)."
+            "The Engine cannot start without an authoritative catalog (ADR-041)."
         )
 
     _known_rule_ids = {r.rule_id for r in rules}
@@ -3966,7 +4183,7 @@ async def _push_rule_catalog_to_gateway() -> None:
     """Push the collected rule catalog to the Gateway (best-effort).
 
     Must be called after ``_collect_rule_catalog`` and ``start_sinks``.
-    The Primary is authoritative even without a Gateway (CLI-only /
+    The Engine is authoritative even without a Gateway (CLI-only /
     daemon mode), so failures here are logged but do not prevent serving.
 
     The cached request is cleared after this call regardless of outcome;
@@ -3990,7 +4207,7 @@ def _validate_rule_configs(
     *,
     complete: bool = False,
 ) -> tuple[list[str], list[str]]:
-    """Validate rule IDs in configs against this Primary's known catalog.
+    """Validate rule IDs in configs against this Engine's known catalog.
 
     Performs a forward check (unknown IDs) always.  When *complete* is
     ``True`` (Gateway path), also performs a reverse check (missing IDs)

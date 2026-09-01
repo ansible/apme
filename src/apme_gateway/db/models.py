@@ -91,6 +91,8 @@ class Scan(Base):
         ai_accepted: Count of AI proposals accepted by the user.
         diagnostics_json: JSON-serialised ScanDiagnostics.
         pr_url: URL of the pull request created from this activity (ADR-050).
+        branch_name: Head branch pushed during SCM submit (ADR-050), if any.
+        commit_sha: SHA of the commit pushed during SCM submit (ADR-050), if any.
         session: Back-reference to owning Session.
         project: Back-reference to owning Project (ADR-037).
         violations: Related violation rows.
@@ -124,6 +126,8 @@ class Scan(Base):
     ai_accepted: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     diagnostics_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     pr_url: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
+    branch_name: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
+    commit_sha: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
 
     session: Mapped[Session] = relationship(back_populates="scans")
     project: Mapped[Project | None] = relationship(back_populates="scans")
@@ -164,6 +168,7 @@ class Violation(Base):
         ai_reason: Why the AI could not fix this violation (ai_abstained only).
         ai_suggestion: Manual remediation guidance from the AI (ai_abstained only).
         review_status: Human/gate decision (ADR-062); null if never reviewed.
+        audit_metadata: JSON blob for audit rule payloads (variables_used, etc.).
         scan: Back-reference to owning Scan.
     """
 
@@ -189,6 +194,7 @@ class Violation(Base):
     ai_reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
     ai_suggestion: Mapped[str] = mapped_column(Text, nullable=False, default="")
     review_status: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
+    audit_metadata: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
     scan: Mapped[Scan] = relationship(back_populates="violations")
 
@@ -461,7 +467,7 @@ class ScanPythonPackage(Base):
 class Rule(Base):
     """A registered rule from the engine's rule catalog (ADR-041).
 
-    Populated by ``RegisterRules`` from the authority Primary on startup.
+    Populated by ``RegisterRules`` from the authority Engine on startup.
     Overrides are stored separately in ``rule_overrides``.
 
     Attributes:

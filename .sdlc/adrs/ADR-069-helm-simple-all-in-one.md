@@ -11,7 +11,7 @@ Accepted
 ## Context
 
 ADR-054 defined the Helm chart as a **split** Kubernetes topology: engine
-Deployment (Primary + validators + Galaxy Proxy) separate from Gateway, UI, and
+Deployment (Engine + validators + Galaxy Proxy) separate from Gateway, UI, and
 Abbenay Deployments. That shape assumed a production scale path where engines
 horizontally scale behind a shared Gateway and optional AI daemon.
 
@@ -19,7 +19,7 @@ In practice the Helm chart’s audience is **EAP and upstream evaluation /
 single-site installs**, not a multi-replica engine farm. The split topology
 forces:
 
-- Cross-pod Service DNS for Primary → Abbenay and Primary → Gateway reporting
+- Cross-pod Service DNS for Engine → Abbenay and Engine → Gateway reporting
 - Abbenay C2 / DR-029 TLS or `--insecure` on non-loopback binds (APME #400,
   Abbenay #63 / #65, APME PR #492 CA Secret seeding)
 - Chart and ops complexity (multiple Deployments, Services, NetworkPolicies,
@@ -57,23 +57,25 @@ model we are not delivering via this chart.
 | 16. Helm for K8s/OCP; Podman local | Consistent — Helm method unchanged |
 
 This ADR **amends** ADR-054’s Helm workload topology and the Helm-specific
-reading of ADR-012 / ADR-029 “independent Gateway scaling.” It does **not**
-change Podman, bootc, or the daemon.
+reading of ADR-012 / ADR-029 “independent Gateway scaling.” Podman uses the
+same Engine→Abbenay Unix socket. bootc and the CLI daemon are unchanged.
 
 ## Decision
 
 **The APME Helm chart uses a Simple (all-in-one) topology: one Deployment whose
 pod co-locates the engine stack, Gateway, UI, and optional Abbenay, communicating
-over `127.0.0.1` (ADR-005).**
+over `127.0.0.1` (ADR-005) except Engine→Abbenay gRPC, which uses a Unix socket.**
 
 1. **Single workload** — Prefer one Deployment (name may remain `engine` or
-   become `apme`; implementation detail). Containers: Primary, validators,
+   become `apme`; implementation detail). Containers: Engine, validators,
    Galaxy Proxy, Gateway, UI nginx, optional Abbenay (and optional OTel
    collector per ADR-067).
-2. **Localhost addresses** — `APME_ABBENAY_ADDR`, reporting sink, and other
-   in-stack clients use `127.0.0.1:<port>`, matching Podman. Abbenay binds
-   `--grpc-host 127.0.0.1` (plaintext loopback; no `--grpc-tls` / CA Secret for
-   the chart path).
+2. **Localhost addresses** — reporting sink and other in-stack clients use
+   `127.0.0.1:<port>`, matching Podman. Engine→Abbenay gRPC uses a Unix socket
+   on a shared `emptyDir` (`APME_ABBENAY_ADDR=unix:///tmp/abbenay-run/abbenay/daemon.sock`)
+   because `abbenay-client` ≥ 2026.8.7 rejects consumer tokens on plaintext TCP.
+   Abbenay still binds `--grpc-host 127.0.0.1` as leftover TCP (no token);
+   Helm probes connect to the Unix socket.
 3. **Single replica** — Chart defaults and validation: `replicas: 1`. HPA for
    this Deployment is disabled or rejected. Multi-replica requires a future ADR
    that reintroduces a split (or otherwise solves Gateway SQLite + session
@@ -160,7 +162,8 @@ EAP AI remediation.
 
 ### Neutral
 
-- bootc / Podman / CLI daemon paths unchanged in intent (already co-located).
+- bootc / CLI daemon paths unchanged in intent (already co-located).
+  Podman matches Helm for Engine→Abbenay (Unix socket).
 - ADR-034 multi-pod Gateway registration remains future work if multi-engine
   returns.
 - Portal vs standalone UI values files unchanged in purpose.
@@ -170,15 +173,17 @@ EAP AI remediation.
 - Collapse `gateway-deployment.yaml`, `ui-deployment.yaml`, and
   `abbenay-deployment.yaml` into the primary workload template (or equivalent
   single Deployment). Adjust Services accordingly.
-- Set Abbenay `--grpc-host 127.0.0.1`; Primary `APME_ABBENAY_ADDR=127.0.0.1:50057`
-  (or configured port). Drop Helm `abbenay.grpc.tls` / CA Secret requirements
-  for the default path.
+- Set Abbenay `--grpc-host 127.0.0.1`; Engine
+  `APME_ABBENAY_ADDR=unix:///tmp/abbenay-run/abbenay/daemon.sock` (shared
+  `emptyDir`). Drop Helm `abbenay.grpc.tls` / CA Secret requirements for the
+  default path.
 - Wire `APME_REPORTING_ENDPOINT=127.0.0.1:50060` (same as daemon / Podman).
 - Fail Helm render if `replicas > 1` or HPA enabled for the Simple Deployment.
 - Update `docs/guides/DEPLOYMENT.md`, chart README/NOTES, and
   `.sdlc/context/architecture.md` Scaling section.
 - Align or simplify APME #400 / PR #492: keep client TLS factory for non-Helm
-  remote Abbenay if needed; chart path is loopback plaintext.
+  remote Abbenay if needed; chart Engine gRPC is a Unix socket, TCP loopback
+  remains for in-container probes.
 - Follow-up: Abbenay #65 (cert reuse) remains useful for non-Simple remote
   clients, not required for this chart topology.
 
@@ -206,3 +211,4 @@ EAP AI remediation.
 | Date | Author | Change |
 |------|--------|--------|
 | 2026-08-03 | APME Team | Accepted: Helm Simple all-in-one for EAP/upstream |
+| 2026-08-24 | APME Team | Engine→Abbenay gRPC uses a shared Unix socket; leftover TCP `:50057`; Helm probes the socket |

@@ -445,11 +445,11 @@ class TestSarifCliFlag:
                 return_value=iter([upload_chunk]),
             ),
             patch(
-                "apme_engine.cli.check.resolve_primary",
+                "apme_engine.cli.check.resolve_engine",
                 return_value=(channel, "localhost:50051"),
             ),
             patch(
-                "apme_engine.cli.check.primary_pb2_grpc.PrimaryStub",
+                "apme_engine.cli.check.engine_pb2_grpc.EngineStub",
                 return_value=stub,
             ),
             patch(

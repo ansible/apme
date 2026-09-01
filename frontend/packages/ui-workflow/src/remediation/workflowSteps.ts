@@ -34,7 +34,11 @@ export interface WorkflowLatch {
   pastFindings: boolean;
   pastTier1Review: boolean;
   pastTier1Applied: boolean;
+  /** Gate 1 had no tier1 proposals — engine skips straight to AI triage. */
+  tier1GateSkipped: boolean;
   pastAiEscalation: boolean;
+  /** Gate 2 review screen was reached (awaiting_approval with AI proposals). */
+  seenGate2Review: boolean;
   pastAiReview: boolean;
   pastAiApplied: boolean;
 }
@@ -44,21 +48,35 @@ export function emptyWorkflowLatch(): WorkflowLatch {
     pastFindings: false,
     pastTier1Review: false,
     pastTier1Applied: false,
+    tier1GateSkipped: false,
     pastAiEscalation: false,
+    seenGate2Review: false,
     pastAiReview: false,
     pastAiApplied: false,
   };
 }
 
-export function workflowStepDefs(includeAi: boolean): WorkflowStepDef[] {
+export interface WorkflowStepDefOptions {
+  /** Omit tier1 steps when Gate 1 never ran (AI-only findings). */
+  skipTier1?: boolean;
+}
+
+export function workflowStepDefs(
+  includeAi: boolean,
+  options: WorkflowStepDefOptions = {},
+): WorkflowStepDef[] {
   const steps: WorkflowStepDef[] = [
     { id: 'scan', label: 'Scan' },
     { id: 'findings', label: 'Review findings' },
   ];
   if (includeAi) {
+    if (!options.skipTier1) {
+      steps.push(
+        { id: 'tier1_proposals', label: 'Rule-based fix proposals' },
+        { id: 'tier1_applied', label: 'Rule-based fix applied' },
+      );
+    }
     steps.push(
-      { id: 'tier1_proposals', label: 'Rule-based fix proposals' },
-      { id: 'tier1_applied', label: 'Rule-based fix applied' },
       { id: 'ai_escalation', label: 'AI escalation' },
       { id: 'ai_proposals', label: 'AI proposals' },
       { id: 'ai_applied', label: 'AI applied' },
@@ -101,7 +119,10 @@ function isTerminalSuccess(status: string): boolean {
 
 function isAiGate(state: ProjectOperationState): boolean {
   const proposals = state.proposals ?? [];
-  return proposals.length > 0 && isAiRemediationProposal(proposals[0]!);
+  if (proposals.length === 0) return false;
+  if (proposals.some((p) => isAiRemediationProposal(p))) return true;
+  // Gate 2 may bundle post-AI deterministic cleanup at tier=2.
+  return proposals.some((p) => (p.tier ?? 0) >= 2);
 }
 
 /** Advance latch from the latest operation state. */
@@ -120,37 +141,41 @@ export function updateWorkflowLatch(
 
   if (status === 'awaiting_ai_triage') {
     next.pastFindings = true;
-    next.pastTier1Review = true;
-    next.pastTier1Applied = true;
     next.pastAiEscalation = true;
+    if (next.pastTier1Review && !next.tier1GateSkipped) {
+      next.pastTier1Applied = true;
+    }
   }
 
   if (status === 'awaiting_approval') {
     next.pastFindings = true;
     if (aiGate) {
-      next.pastTier1Review = true;
-      next.pastTier1Applied = true;
+      if (next.pastTier1Review && !next.tier1GateSkipped) {
+        next.pastTier1Applied = true;
+      }
       next.pastAiEscalation = true;
-      next.pastAiReview = true;
+      // Latch review reached; pastAiReview/pastAiApplied set only after approve.
+      next.seenGate2Review = true;
     } else {
       next.pastTier1Review = true;
+      next.tier1GateSkipped = false;
     }
   }
 
   if (status === 'applying') {
     next.pastFindings = true;
-    if (next.pastAiReview) {
-      // Applying after Gate 2 approve.
+    if (next.seenGate2Review) {
+      // Applying after Gate 2 approve — show AI applied, not AI proposals.
+      next.pastAiReview = true;
       next.pastAiApplied = true;
     } else if (next.pastAiEscalation) {
       // AI running after escalate-ai — stay on AI escalation.
-    } else if (next.pastTier1Review || next.pastTier1Applied) {
+    } else if (next.pastTier1Review) {
       next.pastTier1Applied = true;
       // Do not mark pastAiEscalation — wait for awaiting_ai_triage.
-    } else {
-      // Auto-apply / empty Gate 1: skipped proposal review.
-      next.pastTier1Review = true;
-      next.pastTier1Applied = true;
+    } else if (!next.tier1GateSkipped) {
+      // Gate 1 produced no tier1 proposals — skip straight to AI triage.
+      next.tier1GateSkipped = true;
     }
   }
 
@@ -159,9 +184,28 @@ export function updateWorkflowLatch(
     next.pastTier1Review = true;
     next.pastTier1Applied = true;
     if (includeAi) {
-      next.pastAiEscalation = true;
-      next.pastAiReview = true;
-      next.pastAiApplied = true;
+      const aiProposed = state.result?.ai_proposed ?? 0;
+      const aiAccepted = state.result?.ai_accepted ?? 0;
+      const aiDeclined = state.result?.ai_declined ?? 0;
+      const remediated = state.result?.remediated_count ?? 0;
+      const hadTriage = (state.ai_triage_candidates?.length ?? 0) > 0;
+      if (next.pastAiEscalation || hadTriage || aiProposed > 0 || aiAccepted > 0) {
+        next.pastAiEscalation = true;
+      }
+      if (
+        next.seenGate2Review ||
+        aiProposed > 0 ||
+        aiAccepted > 0 ||
+        aiDeclined > 0
+      ) {
+        next.seenGate2Review = true;
+      }
+      if (next.seenGate2Review || next.pastAiReview || aiProposed > 0) {
+        next.pastAiReview = true;
+      }
+      if (next.pastAiApplied || aiAccepted > 0 || (next.seenGate2Review && remediated > 0)) {
+        next.pastAiApplied = true;
+      }
     }
   }
 
@@ -178,7 +222,7 @@ export function updateWorkflowLatch(
 /** Last meaningful step from latch (for failed / expired). */
 function stepFromLatch(latch: WorkflowLatch, includeAi: boolean): WorkflowStepId {
   if (includeAi && latch.pastAiApplied) return 'ai_applied';
-  if (includeAi && latch.pastAiReview) return 'ai_proposals';
+  if (includeAi && (latch.pastAiReview || latch.seenGate2Review)) return 'ai_proposals';
   if (includeAi && latch.pastAiEscalation) return 'ai_escalation';
   if (latch.pastTier1Applied) return includeAi ? 'tier1_applied' : 'apply_findings';
   if (latch.pastTier1Review) return includeAi ? 'tier1_proposals' : 'apply_findings';
@@ -187,6 +231,11 @@ function stepFromLatch(latch: WorkflowLatch, includeAi: boolean): WorkflowStepId
 }
 
 export interface WorkflowStepOptions {
+  /**
+   * User acknowledged the AI applied step (Gate 2 fixes landed).
+   * When false after Gate 2, ``completed`` lands on AI applied before Commit.
+   */
+  aiApplyFinished?: boolean;
   /**
    * User finished or skipped the Commit step (or PR already exists).
    * When false and patches remain, ``completed`` lands on Commit.
@@ -203,6 +252,7 @@ export function resolveCurrentWorkflowStep(
 ): WorkflowStepId {
   const status = state.status;
   const commitFinished = options.commitFinished === true || Boolean(state.pr_url);
+  const aiApplyFinished = options.aiApplyFinished === true;
 
   if (status === 'pr_submitted') {
     return 'complete';
@@ -213,6 +263,14 @@ export function resolveCurrentWorkflowStep(
   }
 
   if (status === 'completed') {
+    if (
+      includeAi &&
+      latch.seenGate2Review &&
+      !aiApplyFinished &&
+      needsCommitStep(state)
+    ) {
+      return 'ai_applied';
+    }
     if (!commitFinished && needsCommitStep(state)) {
       return 'commit';
     }
@@ -237,8 +295,15 @@ export function resolveCurrentWorkflowStep(
   }
 
   if (status === 'applying') {
-    if (latch.pastAiReview) {
+    if (latch.pastAiApplied) {
       return includeAi ? 'ai_applied' : 'apply_findings';
+    }
+    // Gate 2 proposals still in state after approve — stay on AI applied, not review.
+    if (includeAi && latch.seenGate2Review) {
+      return 'ai_applied';
+    }
+    if (includeAi && isAiGate(state)) {
+      return 'ai_proposals';
     }
     if (includeAi && latch.pastAiEscalation) {
       return 'ai_escalation';

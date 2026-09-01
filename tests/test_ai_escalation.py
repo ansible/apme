@@ -4,9 +4,15 @@ from __future__ import annotations
 
 import json
 import os
+import sys
+import types
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
+from apme.v1.engine_pb2 import FixOptions
+from apme_engine.daemon.engine_server import EngineServicer
 from apme_engine.remediation.abbenay_provider import (
     _build_node_prompt,
     _build_validation_prompt,
@@ -15,6 +21,7 @@ from apme_engine.remediation.abbenay_provider import (
     _load_ai_prompts,
     _load_best_practices,
     discover_abbenay,
+    make_abbenay_client,
 )
 from apme_engine.remediation.ai_context import AINodeContext
 from apme_engine.remediation.ai_provider import (
@@ -125,6 +132,132 @@ class TestDiscoverAbbenay:
         ):
             result = discover_abbenay()
 
+        assert result is None
+
+
+class TestMakeAbbenayClient:
+    """Tests for unix:// vs host:port client construction."""
+
+    def test_unix_addr_uses_socket_path_kwarg(self) -> None:
+        """unix:// URIs are passed as a bare socket_path, not a positional URI."""
+
+        class _Client:
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                self.args = args
+                self.kwargs = kwargs
+
+        stub = types.ModuleType("abbenay_grpc")
+        stub.AbbenayClient = _Client  # type: ignore[attr-defined]
+        with patch.dict(sys.modules, {"abbenay_grpc": stub}):
+            client = make_abbenay_client("unix:///tmp/abbenay-run/abbenay/daemon.sock")
+
+        assert isinstance(client, _Client)
+        assert client.args == ()
+        assert client.kwargs == {"socket_path": "/tmp/abbenay-run/abbenay/daemon.sock"}
+
+    def test_tcp_addr_uses_host_port(self) -> None:
+        """host:port URIs use host and port kwargs."""
+
+        class _Client:
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                self.args = args
+                self.kwargs = kwargs
+
+        stub = types.ModuleType("abbenay_grpc")
+        stub.AbbenayClient = _Client  # type: ignore[attr-defined]
+        with patch.dict(sys.modules, {"abbenay_grpc": stub}):
+            client = make_abbenay_client("127.0.0.1:50057")
+
+        assert isinstance(client, _Client)
+        assert client.args == ()
+        assert client.kwargs == {"host": "127.0.0.1", "port": 50057}
+
+    def test_port_only_addr_defaults_localhost(self) -> None:
+        """``:port`` is localhost, matching the old ListAIModels shorthand."""
+
+        class _Client:
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                self.args = args
+                self.kwargs = kwargs
+
+        stub = types.ModuleType("abbenay_grpc")
+        stub.AbbenayClient = _Client  # type: ignore[attr-defined]
+        with patch.dict(sys.modules, {"abbenay_grpc": stub}):
+            client = make_abbenay_client(":50057")
+
+        assert isinstance(client, _Client)
+        assert client.kwargs == {"host": "localhost", "port": 50057}
+
+    def test_unbracketed_ipv6_is_host_only(self) -> None:
+        """Bare IPv6 is not split on colons."""
+
+        class _Client:
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                self.args = args
+                self.kwargs = kwargs
+
+        stub = types.ModuleType("abbenay_grpc")
+        stub.AbbenayClient = _Client  # type: ignore[attr-defined]
+        with patch.dict(sys.modules, {"abbenay_grpc": stub}):
+            client = make_abbenay_client("::1")
+
+        assert isinstance(client, _Client)
+        assert client.kwargs == {"host": "::1"}
+
+    def test_bracketed_ipv6_with_port(self) -> None:
+        """``[ipv6]:port`` splits host and port."""
+
+        class _Client:
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                self.args = args
+                self.kwargs = kwargs
+
+        stub = types.ModuleType("abbenay_grpc")
+        stub.AbbenayClient = _Client  # type: ignore[attr-defined]
+        with patch.dict(sys.modules, {"abbenay_grpc": stub}):
+            client = make_abbenay_client("[::1]:50057")
+
+        assert isinstance(client, _Client)
+        assert client.kwargs == {"host": "::1", "port": 50057}
+
+    def test_invalid_port_raises_value_error(self) -> None:
+        """Empty or non-numeric ports raise ValueError instead of crashing later."""
+
+        class _Client:
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                self.args = args
+                self.kwargs = kwargs
+
+        stub = types.ModuleType("abbenay_grpc")
+        stub.AbbenayClient = _Client  # type: ignore[attr-defined]
+        with patch.dict(sys.modules, {"abbenay_grpc": stub}):
+            with pytest.raises(ValueError, match="invalid Abbenay port"):
+                make_abbenay_client("[::1]:")
+            with pytest.raises(ValueError, match="invalid Abbenay port"):
+                make_abbenay_client("[::1]:abc")
+            with pytest.raises(ValueError, match="invalid Abbenay port"):
+                make_abbenay_client("127.0.0.1:abc")
+
+
+class TestResolveAiProvider:
+    """Invalid APME_ABBENAY_ADDR must not crash FixSession setup."""
+
+    def test_invalid_tcp_addr_returns_none(self) -> None:
+        """ValueError from a bad port degrades to no AI provider."""
+
+        class _Client:
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                self.args = args
+                self.kwargs = kwargs
+
+        stub = types.ModuleType("abbenay_grpc")
+        stub.AbbenayClient = _Client  # type: ignore[attr-defined]
+        opts = FixOptions(enable_ai=True, ai_model="openai/gpt-4o")
+        with (
+            patch.dict(sys.modules, {"abbenay_grpc": stub}),
+            patch.dict(os.environ, {"APME_ABBENAY_ADDR": "[::1]:abc"}),
+        ):
+            result = EngineServicer._resolve_ai_provider(opts)
         assert result is None
 
 

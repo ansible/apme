@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from pathlib import Path
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 
 from apme_gateway.app import create_app
-from apme_gateway.db import close_db, get_session, init_db
+from apme_gateway.db import get_session
 from apme_gateway.db.models import Project, Proposal, ProposalRuleAnalytics, Scan, Session, Violation
 from apme_gateway.proposals.draft import (
     abandon_project_drafts,
@@ -22,20 +21,7 @@ from apme_gateway.proposals.draft import (
 from apme_gateway.proposals.flush import flush_proposals_for_project, replace_scan_proposals
 from apme_gateway.proposals.grouping import GroupedProposal
 
-
-@pytest.fixture(autouse=True)  # type: ignore[untyped-decorator]
-async def _db(tmp_path: Path) -> AsyncIterator[None]:
-    """Initialise a fresh DB per test.
-
-    Args:
-        tmp_path: Pytest-provided temporary directory.
-
-    Yields:
-        None: Test runs between setup and teardown.
-    """
-    await init_db(str(tmp_path / "test.db"))
-    yield
-    await close_db()
+pytestmark = pytest.mark.usefixtures("gateway_db")
 
 
 @pytest.fixture  # type: ignore[untyped-decorator]
@@ -380,7 +366,7 @@ async def test_gate_commit_preserves_analytics_across_replace() -> None:
         assert prop.status == "approved"
 
         # Seeded stub has line_start=0; archival group must match that key
-        # (primary.Proposal has no path — bridge is file+rule+line_start).
+        # (engine.Proposal has no path — bridge is file+rule+line_start).
         await replace_scan_proposals(
             db,
             scan_id=scan_id,

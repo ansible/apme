@@ -6,7 +6,7 @@ The provided text outlines the architecture of a remediation engine, a specialis
 
 ## Overview
 
-The remediation engine is a separate service that consumes scan violations and produces file patches. It is **not** the formatter. The formatter is a blind pre-pass that normalizes YAML style; the remediation engine is a violation-driven transform pipeline that fixes detected issues.
+The remediation engine is an in-process Engine component (ADR-009) that consumes scan violations and produces file patches. It is **not** the formatter. The formatter is a blind pre-pass that normalizes YAML style; the remediation engine is a violation-driven transform pipeline that fixes detected issues.
 
 ```
 ┌──────────┐     ┌─────────────┐     ┌──────────┐     ┌──────────────────┐     ┌──────────┐
@@ -88,9 +88,9 @@ Phase 6: Report
 
 | Component | Location | Why |
 |-----------|----------|-----|
-| Formatter | CLI (in-process) or Primary (`Format` RPC) | No scan needed; operates on raw files |
-| Scan | Primary service (gRPC) or CLI (in-process) | Already implemented |
-| Remediation Engine | Primary service (`FixSession` RPC) | Needs access to scan results and file content; can call Abbenay |
+| Formatter | CLI (in-process) or Engine (`Format` RPC) | No scan needed; operates on raw files |
+| Scan | Engine service (`FixSession` gRPC) | Sole client scan path; unary `Scan`/`ScanStream` removed (ADR-039) |
+| Remediation Engine | Engine service (`FixSession` RPC) | Needs access to scan results and file content; can call Abbenay |
 | Transform Registry | `src/apme_engine/remediation/transforms/` | Pure functions, no container needed |
 | AI Escalation | Abbenay daemon (gRPC, :50057) | Separate container, optional |
 
@@ -433,10 +433,10 @@ class AINodeProposal:
 
 User-facing **check** and **remediate** both run through **`FixSession`** (bidirectional stream, ADR-039). There is no separate unary Fix or Scan RPC — `FixSession` is the sole client path.
 
-### Primary Service (Implemented)
+### Engine Service (Implemented)
 
 ```protobuf
-service Primary {
+service Engine {
   rpc Format(FormatRequest) returns (FormatResponse);
   rpc FormatStream(stream ScanChunk) returns (FormatResponse);
   rpc Health(HealthRequest) returns (HealthResponse);
@@ -466,7 +466,7 @@ The Abbenay service receives violation context (rule_id, message, node content, 
 ┌──────────────────────────────── apme-pod ────────────────────────────────────┐
 │                                                                              │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐      │
-│  │ Primary  │  │  Native  │  │   OPA    │  │ Ansible  │  │ Gitleaks │      │
+│  │ Engine  │  │  Native  │  │   OPA    │  │ Ansible  │  │ Gitleaks │      │
 │  │  :50051  │  │  :50055  │  │  :50054  │  │  :50053  │  │  :50056  │      │
 │  │          │  │          │  │          │  │          │  │          │      │
 │  │ engine + │  │ GraphRule │  │ OPA bin  │  │ ansible- │  │ gitleaks │      │
@@ -492,7 +492,7 @@ The Abbenay service receives violation context (rule_id, message, node content, 
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-The remediation engine lives inside **Primary**. It operates on the same `ContentGraph` built by the scan pipeline and runs the transform → rescan convergence loop entirely in memory. AI escalation is a gRPC call to the optional Abbenay container.
+The remediation engine lives inside **Engine**. It operates on the same `ContentGraph` built by the scan pipeline and runs the transform → rescan convergence loop entirely in memory. AI escalation is a gRPC call to the optional Abbenay container.
 
 ---
 

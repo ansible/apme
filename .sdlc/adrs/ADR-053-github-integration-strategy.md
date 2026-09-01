@@ -10,9 +10,10 @@ Accepted
 
 ## Context
 
-APME is a multi-service system: Primary orchestrator, Native/OPA/Ansible/Gitleaks
-validators, Galaxy Proxy, Collection Health, and Dependency Audit — all
-communicating via gRPC. The CLI delegates to this full stack. Running only the
+APME is a multi-service system: Engine orchestrator, Native/OPA/Ansible/Gitleaks
+validators, Galaxy Proxy (PEP 503 HTTP on :8765), Collection Health, and
+Dependency Audit — Engine and validators communicate via gRPC; Galaxy Proxy is
+the HTTP exception. The CLI delegates to this full stack. Running only the
 pip-installed `apme-engine` in CI misses Gitleaks secret detection, collection
 health analysis, dependency auditing, and Gateway persistence.
 
@@ -68,13 +69,13 @@ health, and dependency auditing.
 ```yaml
 - uses: ansible/apme@v1
   with:
-    primary-address: ${{ secrets.APME_PRIMARY_ADDRESS }}
+    engine-address: ${{ secrets.APME_ENGINE_ADDRESS }}
     target: .
 ```
 
 The Action:
 1. Installs the CLI via `uv pip install`
-2. Points `APME_PRIMARY_ADDRESS` at the hosted Primary
+2. Points `APME_ENGINE_ADDRESS` at the hosted Engine
 3. Runs `apme check` against the remote deployment
 4. Generates SARIF and uploads to Code Scanning
 5. Optionally posts a PR summary comment
@@ -121,7 +122,7 @@ embedding a pod spec in the Action is not justified.
 
 **Cons**: Misses Gitleaks (requires external binary), collection health,
 dependency audit, and Gateway persistence. The daemon starts only
-Primary + Native + OPA + Ansible — not the full stack. Users get
+Engine + Native + OPA + Ansible + Galaxy Proxy — not the full stack. Users get
 an incomplete scan compared to their production deployment.
 
 **Why not chosen**: An incomplete scan creates false confidence. The whole
@@ -155,7 +156,7 @@ Security tab. More complex to implement. Most tools use SARIF now.
 - **Requires a running APME deployment** — organizations must deploy APME
   (via Helm, bootc, or Podman) before CI integration works. This is a
   prerequisite, not a limitation for production users.
-- **Network connectivity** — runners must reach the APME Primary gRPC endpoint.
+- **Network connectivity** — runners must reach the APME Engine gRPC endpoint.
   Self-hosted runners or VPN-connected runners handle this for private
   deployments.
 - **GitHub Advanced Security for private repos** — SARIF upload on private repos
@@ -178,7 +179,7 @@ function converting violation dicts to SARIF 2.1.0 JSON. Tested independently.
 
 1. `actions/checkout` — check out the repo
 2. `astral-sh/setup-uv` + `uv pip install --system apme-engine`
-3. Run `apme check` with `APME_PRIMARY_ADDRESS` set to the hosted instance:
+3. Run `apme check` with `APME_ENGINE_ADDRESS` set to the hosted instance:
    - default to `apme check --json` when PR comments or artifacts are enabled
    - derive SARIF from the JSON output when SARIF upload/annotations are needed
    - use `apme check --sarif` directly only when PR comments and artifacts are disabled

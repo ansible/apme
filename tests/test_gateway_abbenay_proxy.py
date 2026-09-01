@@ -83,6 +83,39 @@ async def test_proxy_get_config_rewrites_path_and_injects_bearer(
 
 
 @pytest.mark.asyncio  # type: ignore[untyped-decorator]
+async def test_proxy_async_client_disables_redirect_following(app_client: AsyncClient) -> None:
+    """Abbenay admin proxy must not follow upstream redirects or forward tokens twice.
+
+    Args:
+        app_client: Async HTTP test client.
+    """
+    captured: dict[str, object] = {}
+
+    class _CapturingAsyncClient:
+        def __init__(self, **kwargs: object) -> None:
+            captured.update(kwargs)
+
+        async def __aenter__(self) -> _CapturingAsyncClient:
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+        async def request(self, *args: object, **kwargs: object) -> httpx.Response:
+            response = MagicMock(spec=httpx.Response)
+            response.status_code = 200
+            response.content = b'{"ok":true}'
+            response.headers = httpx.Headers({"content-type": "application/json"})
+            return response
+
+    with patch("apme_gateway.api.abbenay_proxy.httpx.AsyncClient", _CapturingAsyncClient):
+        resp = await app_client.get("/api/v1/ai/config")
+
+    assert resp.status_code == 200
+    assert captured.get("follow_redirects") is False
+
+
+@pytest.mark.asyncio  # type: ignore[untyped-decorator]
 async def test_proxy_post_provider_configure(app_client: AsyncClient) -> None:
     """POST /api/v1/ai/provider/x/configure maps to Abbenay provider path.
 
@@ -152,13 +185,13 @@ async def test_get_ai_models_not_shadowed_by_proxy(
     app_client: AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """GET /api/v1/ai/models still uses Primary ListAIModels, not Abbenay proxy.
+    """GET /api/v1/ai/models still uses Engine ListAIModels, not Abbenay proxy.
 
     Args:
         app_client: Async HTTP test client.
         monkeypatch: Pytest monkeypatch fixture.
     """
-    monkeypatch.setenv("APME_PRIMARY_ADDRESS", "127.0.0.1:59999")
+    monkeypatch.setenv("APME_ENGINE_ADDRESS", "127.0.0.1:59999")
     client = _mock_upstream(content=b'[{"id":"should-not-appear"}]')
     with patch("apme_gateway.api.abbenay_proxy.httpx.AsyncClient", return_value=client):
         resp = await app_client.get("/api/v1/ai/models")
@@ -170,7 +203,7 @@ async def test_get_ai_models_not_shadowed_by_proxy(
 
 @pytest.mark.asyncio  # type: ignore[untyped-decorator]
 async def test_post_ai_models_not_proxied(app_client: AsyncClient) -> None:
-    """POST /api/v1/ai/models is rejected (models reserved for Primary GET).
+    """POST /api/v1/ai/models is rejected (models reserved for Engine GET).
 
     Args:
         app_client: Async HTTP test client.
@@ -343,6 +376,66 @@ async def test_missing_token_returns_503(
 
 
 @pytest.mark.asyncio  # type: ignore[untyped-decorator]
+async def test_non_loopback_http_url_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Cleartext HTTP to a non-loopback Abbenay URL is rejected.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+    monkeypatch.setenv("APME_ABBENAY_HTTP_URL", "http://abbenay.example:8787")
+    monkeypatch.setenv("APME_ABBENAY_HTTP_TOKEN", "admin-http-token")
+    transport = ASGITransport(app=create_app())
+    client = _mock_upstream()
+    with patch("apme_gateway.api.abbenay_proxy.httpx.AsyncClient", return_value=client):
+        async with AsyncClient(transport=transport, base_url="http://test") as http:
+            resp = await http.get("/api/v1/ai/config")
+
+    assert resp.status_code == 503
+    assert "https" in resp.text.lower()
+    client.request.assert_not_awaited()
+
+
+@pytest.mark.asyncio  # type: ignore[untyped-decorator]
+async def test_missing_host_http_url_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Abbenay base URL without a host is rejected.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+    monkeypatch.setenv("APME_ABBENAY_HTTP_URL", "https://")
+    monkeypatch.setenv("APME_ABBENAY_HTTP_TOKEN", "admin-http-token")
+    transport = ASGITransport(app=create_app())
+    client = _mock_upstream()
+    with patch("apme_gateway.api.abbenay_proxy.httpx.AsyncClient", return_value=client):
+        async with AsyncClient(transport=transport, base_url="http://test") as http:
+            resp = await http.get("/api/v1/ai/config")
+
+    assert resp.status_code == 503
+    assert "host" in resp.text.lower()
+    client.request.assert_not_awaited()
+
+
+@pytest.mark.asyncio  # type: ignore[untyped-decorator]
+async def test_malformed_bracket_host_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Malformed IPv6 bracket hosts raise ValueError and are rejected.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+    monkeypatch.setenv("APME_ABBENAY_HTTP_URL", "http://[::1")
+    monkeypatch.setenv("APME_ABBENAY_HTTP_TOKEN", "admin-http-token")
+    transport = ASGITransport(app=create_app())
+    client = _mock_upstream()
+    with patch("apme_gateway.api.abbenay_proxy.httpx.AsyncClient", return_value=client):
+        async with AsyncClient(transport=transport, base_url="http://test") as http:
+            resp = await http.get("/api/v1/ai/config")
+
+    assert resp.status_code == 503
+    assert "valid url" in resp.text.lower() or "host" in resp.text.lower()
+    client.request.assert_not_awaited()
+
+
+@pytest.mark.asyncio  # type: ignore[untyped-decorator]
 async def test_set_cookie_not_forwarded(app_client: AsyncClient) -> None:
     """Upstream Set-Cookie must not be returned to Gateway clients.
 
@@ -362,3 +455,11 @@ async def test_set_cookie_not_forwarded(app_client: AsyncClient) -> None:
     assert resp.status_code == 200
     assert "set-cookie" not in {k.lower() for k in resp.headers}
     assert "content-encoding" not in {k.lower() for k in resp.headers}
+
+
+def test_abbenay_http_url_error_rejects_invalid_port() -> None:
+    """Invalid port strings are rejected before httpx can raise InvalidURL."""
+    from apme_gateway.api.abbenay_proxy import _abbenay_http_url_error
+
+    assert _abbenay_http_url_error("http://127.0.0.1:bad") is not None
+    assert _abbenay_http_url_error("http://127.0.0.1:65536") is not None

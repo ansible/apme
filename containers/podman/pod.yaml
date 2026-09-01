@@ -1,8 +1,8 @@
-# Podman pod: Primary, Native, OPA, Ansible, Gitleaks, Collection Health,
+# Podman pod: Engine, Native, OPA, Ansible, Gitleaks, Collection Health,
 # Dep Audit, Galaxy Proxy, Gateway, UI, Abbenay, OTel Collector.
 # All validators implement the unified Validator gRPC service (validate.proto).
 # Galaxy Proxy serves collections as Python wheels via PEP 503 (ADR-031).
-# Session venvs are built by Primary (read-write) and shared with validators
+# Session venvs are built by Engine (read-write) and shared with validators
 # (read-only) via the sessions volume.
 # OTel Collector receives OTLP from sibling containers and exposes Prometheus
 # metrics on :8889 for an external Prometheus scrape.
@@ -18,10 +18,10 @@ metadata:
 spec:
   hostname: apme-pod
   containers:
-    - name: primary
-      image: apme-primary:latest
+    - name: engine
+      image: apme-engine:latest
       env:
-        - name: APME_PRIMARY_LISTEN
+        - name: APME_ENGINE_LISTEN
           value: "0.0.0.0:50051"
         - name: NATIVE_GRPC_ADDRESS
           value: "127.0.0.1:50055"
@@ -40,7 +40,7 @@ spec:
         - name: APME_REPORTING_ENDPOINT
           value: "127.0.0.1:50060"
         - name: APME_ABBENAY_ADDR
-          value: "127.0.0.1:50057"
+          value: "unix:///tmp/abbenay-run/abbenay/daemon.sock"
         - name: APME_ABBENAY_TOKEN
           value: "apme-dev-token"
         - name: APME_AI_MODEL
@@ -48,7 +48,7 @@ spec:
         - name: OTEL_EXPORTER_OTLP_ENDPOINT
           value: "http://127.0.0.1:4318"
         - name: OTEL_SERVICE_NAME
-          value: "apme-primary"
+          value: "apme-engine"
         - name: OTEL_RESOURCE_ATTRIBUTES
           value: "service.namespace=apme,service.instance.id=apme-pod"
         - name: OTEL_METRIC_EXPORT_INTERVAL
@@ -59,6 +59,8 @@ spec:
       volumeMounts:
         - name: sessions
           mountPath: /sessions
+        - name: abbenay-run
+          mountPath: /tmp/abbenay-run
     - name: native
       image: apme-native:latest
       env:
@@ -184,6 +186,8 @@ spec:
           value: "http://127.0.0.1:8787"
         - name: APME_ABBENAY_HTTP_TOKEN
           value: "apme-dev-token"
+        - name: APME_ABBENAY_ADDR
+          value: "unix:///tmp/abbenay-run/abbenay/daemon.sock"
         - name: COLLECTION_HEALTH_GRPC_ADDRESS
           value: "127.0.0.1:50058"
         - name: DEP_AUDIT_GRPC_ADDRESS
@@ -210,19 +214,21 @@ spec:
       volumeMounts:
         - name: gateway-data
           mountPath: /data
+        - name: abbenay-run
+          mountPath: /tmp/abbenay-run
     - name: ui
       image: apme-ui:latest
       ports:
         - containerPort: 8081
           hostPort: 8081
     - name: abbenay
-      image: ghcr.io/redhat-developer/abbenay:v2026.8.6
-      # ADR-070: HTTP + gRPC on loopback (pod-shared netns). No hostPort for
-      # Abbenay — matches Helm Simple and avoids plaintext host exposure.
+      image: ghcr.io/redhat-developer/abbenay:v2026.8.7
+      # Local Podman: publish HTTP admin UI on host :8787. gRPC stays loopback
+      # (Unix socket for Engine). Helm Simple remains loopback-only (ADR-070).
       args:
         - "web"
         - "--host"
-        - "127.0.0.1"
+        - "0.0.0.0"
         - "--port"
         - "8787"
         - "--grpc-host"
@@ -230,6 +236,9 @@ spec:
         - "--grpc-port"
         - "50057"
       env:
+        # Local dev only: skip Abbenay web UI login (HTTP :8787). Do not use on exposed hosts.
+        - name: ABBENAY_HTTP_AUTH
+          value: "0"
         - name: OPENROUTER_API_KEY
           value: "${OPENROUTER_API_KEY}"
         - name: VERTEX_ANTHROPIC_API_KEY
@@ -243,11 +252,16 @@ spec:
         - name: XDG_CONFIG_HOME
           value: "/home/abbenay/.config"
       ports:
+        - containerPort: 8787
+          hostPort: 8787
+          hostIP: 127.0.0.1
         - containerPort: 50057
-          # no hostPort
+          # no hostPort — Engine uses unix socket, not TCP
       volumeMounts:
         - name: abbenay-config
           mountPath: /home/abbenay/.config/abbenay
+        - name: abbenay-run
+          mountPath: /tmp/abbenay-run
     - name: galaxy-proxy
       image: apme-galaxy-proxy:latest
       env:
@@ -291,6 +305,8 @@ spec:
       hostPath:
         path: ${APME_ROOT}/containers/abbenay/config
         type: Directory
+    - name: abbenay-run
+      emptyDir: {}
     - name: otel-config
       hostPath:
         path: ${APME_ROOT}/containers/otel-collector/config.yaml

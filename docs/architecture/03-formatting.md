@@ -4,33 +4,37 @@
 
 ## Purpose
 
-Before scanning, the Primary normalizes all YAML files to a consistent format.
+Before scanning, the Engine normalizes all YAML files to a consistent format.
 This ensures that formatting differences do not produce false-positive
 violations. A second format pass verifies idempotency.
+
+Check and remediate run formatting inside the `FixSession` pipeline. Standalone
+`apme format` uses the `Format`/`FormatStream` utility RPCs (approved exceptions
+per ADR-039).
 
 ## Sequence
 
 ```mermaid
 sequenceDiagram
-    participant Primary as PrimaryServicer
+    participant Engine as EngineServicer
     participant Formatter as format_content()
     participant FS as Temp Directory
 
-    Primary->>Primary: progress("Formatting N file(s)...")
-    Primary->>Formatter: _format_files(all_files)
-    Formatter-->>Primary: FileDiff[] (changed files)
+    Engine->>Engine: progress("Formatting N file(s)...")
+    Engine->>Formatter: _format_files(all_files)
+    Formatter-->>Engine: FileDiff[] (changed files)
 
     alt Files changed
-        Primary->>FS: Write formatted content
-        Primary->>Primary: Update working_files
-        Primary-->>CLI: progress("Formatted N file(s)")
+        Engine->>FS: Write formatted content
+        Engine->>Engine: Update working_files
+        Engine-->>CLI: progress("Formatted N file(s)")
     end
 
-    Primary->>Formatter: _format_files(formatted_files)
-    Formatter-->>Primary: FileDiff[] (idempotency check)
+    Engine->>Formatter: _format_files(formatted_files)
+    Formatter-->>Engine: FileDiff[] (idempotency check)
 
     alt Not idempotent
-        Primary-->>CLI: progress(WARNING: not idempotent)
+        Engine-->>CLI: progress(WARNING: not idempotent)
     end
 ```
 
@@ -78,7 +82,7 @@ replay.
 ## Standalone Format Command
 
 `apme format` uses a separate code path — the `Format` (unary) and
-`FormatStream` (streaming) RPCs, defined in `primary.proto`. These bypass the
+`FormatStream` (streaming) RPCs, defined in `engine.proto`. These bypass the
 full `FixSession` pipeline and return `FormatResponse` with diffs directly.
 
 The CLI's `format_cmd.py` handles:
@@ -90,7 +94,7 @@ The CLI's `format_cmd.py` handles:
 
 | File | Key functions |
 |------|---------------|
-| `src/apme_engine/daemon/primary_server.py` | `_format_files()`, `_session_process()` (Phase 1-2) |
+| `src/apme_engine/daemon/engine_server.py` | `_format_files()`, `_session_process()` (Phase 1-2) |
 | `src/apme_engine/formatter.py` | `format_content()` |
 | `src/apme_engine/cli/format_cmd.py` | `run_format()` |
 

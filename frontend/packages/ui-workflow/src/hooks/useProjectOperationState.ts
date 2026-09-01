@@ -349,19 +349,28 @@ export function applyOperationSseEvent(
           error_code?: string;
           operation_budget_seconds?: number;
         };
-        setState((prev) =>
-          prev
-            ? {
-                ...prev,
-                status: data.status as ProjectOperationStatus,
-                ...(data.error ? { error: data.error } : {}),
-                ...(data.error_code ? { error_code: data.error_code } : {}),
-                ...(data.operation_budget_seconds
-                  ? { operation_budget_seconds: data.operation_budget_seconds }
-                  : {}),
-              }
-            : prev,
-        );
+        setState((prev) => {
+          if (!prev) return prev;
+          const newStatus = data.status as ProjectOperationStatus;
+          // Ignore stale APPLYING while Gate 1/2 proposals await review.
+          // approval_ack drives applying + clears proposals after user clicks Next.
+          if (
+            prev.status === "awaiting_approval" &&
+            newStatus === "applying" &&
+            (prev.proposals?.length ?? 0) > 0
+          ) {
+            return prev;
+          }
+          return {
+            ...prev,
+            status: newStatus,
+            ...(data.error ? { error: data.error } : {}),
+            ...(data.error_code ? { error_code: data.error_code } : {}),
+            ...(data.operation_budget_seconds
+              ? { operation_budget_seconds: data.operation_budget_seconds }
+              : {}),
+          };
+        });
         break;
       }
       case "progress": {
@@ -375,9 +384,20 @@ export function applyOperationSseEvent(
       }
       case "proposals": {
         const data = JSON.parse(ev.data) as { proposals: Proposal[] };
-        setState((prev) =>
-          prev ? { ...prev, proposals: data.proposals } : prev,
-        );
+        // Gateway always transitions to awaiting_approval before broadcasting
+        // proposals. Set status here too so a missed/out-of-order status_changed
+        // cannot leave the UI on applying/progress and skip Gate 2 review.
+        setState((prev) => {
+          if (!prev) return prev;
+          if (TERMINAL_STATUSES.has(prev.status)) {
+            return prev;
+          }
+          return {
+            ...prev,
+            status: "awaiting_approval",
+            proposals: data.proposals,
+          };
+        });
         break;
       }
       case "findings": {
@@ -439,13 +459,13 @@ export function applyOperationSseEvent(
         break;
       }
       case "approval_ack": {
-        // Do not force status to "applying" — two-gate interactive flow may
-        // return to awaiting_approval; status_changed owns transitions.
         const data = JSON.parse(ev.data) as { applied_count: number };
         setState((prev) =>
           prev
             ? {
                 ...prev,
+                status: "applying",
+                proposals: undefined,
                 result: prev.result
                   ? { ...prev.result, ai_accepted: data.applied_count }
                   : prev.result,
@@ -483,6 +503,8 @@ export function useProjectOperationState(
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
   const connectGenRef = useRef(0);
+  /** Bumped on clear/cleanup so in-flight poll() results cannot update stale opState. */
+  const pollGenRef = useRef(0);
   /** Latest operation status for reconnect gating (SSE ends on terminal). */
   const statusRef = useRef<ProjectOperationStatus | null>(null);
   const errorBackoffRef = useRef(0);
@@ -500,6 +522,7 @@ export function useProjectOperationState(
   );
 
   const cleanup = useCallback(() => {
+    pollGenRef.current += 1;
     connectGenRef.current += 1;
     if (abortRef.current) {
       abortRef.current.abort();
@@ -592,10 +615,11 @@ export function useProjectOperationState(
         }
         return;
       }
+      const pollGen = pollGenRef.current;
       try {
         const s = await fetchProjectOperationState(projectId);
-        // Never update React state after unmount — force only bypasses enabled.
-        if (!mountedRef.current) return;
+        // Never update React state after unmount or after clear/cleanup invalidated this poll.
+        if (!mountedRef.current || pollGen !== pollGenRef.current) return;
         if (!s) {
           setStateTracked(null);
           return;
@@ -636,9 +660,23 @@ export function useProjectOperationState(
   }, [poll]);
 
   const clear = useCallback(() => {
+    pollGenRef.current += 1;
     cleanup();
     setStateTracked(null);
   }, [cleanup, setStateTracked]);
 
-  return { state, connected, refresh, clear };
+  /** Optimistic transition after POST approve — operation SSE has no approval_ack event. */
+  const applyLocalApprovalAck = useCallback(() => {
+    setStateTracked((prev) =>
+      prev
+        ? {
+            ...prev,
+            status: "applying",
+            proposals: undefined,
+          }
+        : prev,
+    );
+  }, [setStateTracked]);
+
+  return { state, connected, refresh, clear, applyLocalApprovalAck };
 }

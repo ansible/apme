@@ -19,7 +19,7 @@
  *   cancelled       → null (no panel)
  */
 
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   Button,
   Card,
@@ -33,7 +33,14 @@ import type {
   ProjectOperationStatus,
 } from '../hooks/useProjectOperationState';
 import type { OperationProgress, OperationResult } from '../types/operation';
-import { needsCommitStep } from '../remediation';
+import { needsCommitStep, resolveProposalReviewGate } from '../remediation';
+import {
+  emptyWorkflowLatch,
+  shouldIncludeAiSteps,
+  updateWorkflowLatch,
+  type WorkflowLatch,
+} from '../remediation/workflowSteps';
+import { AiAppliedPanel } from './AiAppliedPanel';
 import { OperationProgressPanel } from './OperationProgressPanel';
 import {
   ProposalReviewPanel,
@@ -76,6 +83,11 @@ const RUNNING_STATUSES = new Set<ProjectOperationStatus>([
   'applying',
 ]);
 
+/** Show proposal review UI whenever engine is paused for user approval. */
+function shouldShowProposalReview(state: ProjectOperationState): boolean {
+  return state.status === 'awaiting_approval';
+}
+
 function mapStatus(s: ProjectOperationStatus): import('../types/operation').OperationStatus {
   const mapping: Partial<Record<ProjectOperationStatus, string>> = {
     queued: 'connecting',
@@ -90,14 +102,15 @@ function withStepper(
   state: ProjectOperationState,
   enableAi: boolean,
   body: ReactNode,
-  commitFinished = false,
+  options: { commitFinished?: boolean; aiApplyFinished?: boolean } = {},
 ): ReactNode {
   return (
     <div>
       <OperationWorkflowStepper
         state={state}
         enableAi={enableAi}
-        commitFinished={commitFinished}
+        commitFinished={options.commitFinished}
+        aiApplyFinished={options.aiApplyFinished}
       />
       {body}
     </div>
@@ -124,14 +137,19 @@ export function OperationPanel({
   const [escalating, setEscalating] = useState(false);
   const [escalateError, setEscalateError] = useState<string | null>(null);
   const [commitFinished, setCommitFinished] = useState(false);
+  const [aiApplyFinished, setAiApplyFinished] = useState(false);
   const [localPrUrl, setLocalPrUrl] = useState<string | null>(null);
+  const latchRef = useRef<WorkflowLatch>(emptyWorkflowLatch());
+  const opIdRef = useRef(state?.operation_id);
 
   useEffect(() => {
     setCommitFinished(false);
+    setAiApplyFinished(false);
     setPrError(null);
     setBeginError(null);
     setEscalateError(null);
     setLocalPrUrl(null);
+    latchRef.current = emptyWorkflowLatch();
   }, [state?.operation_id]);
 
   useEffect(() => {
@@ -214,6 +232,65 @@ export function OperationPanel({
   }
 
   const status = state.status;
+  const includeAi = shouldIncludeAiSteps(enableAi, state);
+  if (opIdRef.current !== state.operation_id) {
+    opIdRef.current = state.operation_id;
+    latchRef.current = emptyWorkflowLatch();
+  }
+  latchRef.current = updateWorkflowLatch(latchRef.current, state, includeAi);
+  const stepperOpts = { commitFinished, aiApplyFinished };
+
+  if (shouldShowProposalReview(state)) {
+    if (!state.proposals) {
+      return withStepper(
+        state,
+        enableAi,
+        <Card style={{ marginBottom: 16 }}>
+          <CardBody style={{ textAlign: 'center', padding: '32px 24px' }}>
+            <Spinner size="lg" />
+            <div style={{ marginTop: 12, fontSize: 16 }}>Loading proposals...</div>
+            <Button variant="link" onClick={handleCancel} style={{ marginTop: 8 }}>
+              Cancel
+            </Button>
+          </CardBody>
+        </Card>,
+      );
+    }
+    const proposals = state.proposals.map((p) => ({
+      id: p.id,
+      rule_id: p.rule_id,
+      file: p.file,
+      tier: p.tier,
+      confidence: p.confidence,
+      explanation: p.explanation,
+      diff_hunk: p.diff_hunk,
+      status: p.status,
+      suggestion: p.suggestion,
+      line_start: p.line_start,
+      path: p.path,
+      node_type: p.node_type,
+      source: p.source,
+      before_text: p.before_text,
+      after_text: p.after_text,
+    }));
+    return withStepper(
+      state,
+      enableAi,
+      <ProposalReviewPanel
+        proposals={proposals}
+        reviewGate={resolveProposalReviewGate(proposals, {
+          enableAi,
+          pastAiEscalation: (state.ai_triage_candidates?.length ?? 0) > 0,
+        })}
+        pastAiEscalation={(state.ai_triage_candidates?.length ?? 0) > 0}
+        onApprove={handleApprove}
+        onDraftUpdate={onDraftUpdate}
+        feedbackEnabled={feedbackEnabled ?? false}
+        scanId={state.scan_id}
+        onCancel={handleCancel}
+      />,
+    );
+  }
 
   if (RUNNING_STATUSES.has(status)) {
     if (status === 'queued') {
@@ -301,54 +378,6 @@ export function OperationPanel({
     );
   }
 
-  if (status === 'awaiting_approval') {
-    // status_changed can arrive before the proposals payload.
-    if (!state.proposals) {
-      return withStepper(
-        state,
-        enableAi,
-        <Card style={{ marginBottom: 16 }}>
-          <CardBody style={{ textAlign: 'center', padding: '32px 24px' }}>
-            <Spinner size="lg" />
-            <div style={{ marginTop: 12, fontSize: 16 }}>Loading proposals...</div>
-            <Button variant="link" onClick={handleCancel} style={{ marginTop: 8 }}>
-              Cancel
-            </Button>
-          </CardBody>
-        </Card>,
-      );
-    }
-    const proposals = state.proposals.map((p) => ({
-      id: p.id,
-      rule_id: p.rule_id,
-      file: p.file,
-      tier: p.tier,
-      confidence: p.confidence,
-      explanation: p.explanation,
-      diff_hunk: p.diff_hunk,
-      status: p.status,
-      suggestion: p.suggestion,
-      line_start: p.line_start,
-      path: p.path,
-      node_type: p.node_type,
-      source: p.source,
-      before_text: p.before_text,
-      after_text: p.after_text,
-    }));
-    return withStepper(
-      state,
-      enableAi,
-      <ProposalReviewPanel
-        proposals={proposals}
-        onApprove={handleApprove}
-        onDraftUpdate={onDraftUpdate}
-        feedbackEnabled={feedbackEnabled ?? false}
-        scanId={state.scan_id}
-        onCancel={handleCancel}
-      />,
-    );
-  }
-
   if (status === 'completed' || status === 'submitting_pr' || status === 'pr_submitted') {
     const resultData: OperationResult | null = state.result
       ? {
@@ -363,10 +392,32 @@ export function OperationPanel({
         }
       : null;
 
+    const showAiAppliedAck =
+      status === 'completed' &&
+      includeAi &&
+      !aiApplyFinished &&
+      needsCommitStep(state) &&
+      latchRef.current.seenGate2Review;
+
+    if (showAiAppliedAck) {
+      return withStepper(
+        state,
+        enableAi,
+        <AiAppliedPanel
+          aiAccepted={state.result?.ai_accepted ?? 0}
+          remediatedCount={state.result?.remediated_count ?? 0}
+          onContinue={() => setAiApplyFinished(true)}
+          onCancel={handleCancel}
+        />,
+        stepperOpts,
+      );
+    }
+
     const showCommit =
       (status === 'completed' || status === 'submitting_pr') &&
       !commitFinished &&
-      needsCommitStep(state);
+      needsCommitStep(state) &&
+      (!includeAi || !latchRef.current.seenGate2Review || aiApplyFinished);
 
     if (showCommit && resultData) {
       return withStepper(
@@ -382,7 +433,7 @@ export function OperationPanel({
           error={prError}
           prUrl={state.pr_url || localPrUrl}
         />,
-        false,
+        stepperOpts,
       );
     }
 
@@ -399,7 +450,7 @@ export function OperationPanel({
             </Button>
           </CardBody>
         </Card>,
-        true,
+        { ...stepperOpts, commitFinished: true },
       );
     }
 
@@ -426,7 +477,7 @@ export function OperationPanel({
         scanId={state.scan_id}
         onViewDetails={onViewDetails}
       />,
-      true,
+      { ...stepperOpts, commitFinished: true },
     );
   }
 

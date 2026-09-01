@@ -5,11 +5,11 @@ package apme.v1;
 import "apme/v1/common.proto";
 import "google/protobuf/struct.proto";
 
-// Primary is the orchestrator daemon and sole API surface for all clients.
-// Clients send file bytes in, receive processed bytes out. The Primary
+// Engine is the orchestrator daemon and sole API surface for all clients.
+// Clients send file bytes in, receive processed bytes out. The Engine
 // delegates internally to validators and remediation — clients never need
 // to know the internal service topology.
-service Primary {
+service Engine {
   rpc Format(FormatRequest) returns (FormatResponse);
   rpc FormatStream(stream ScanChunk) returns (FormatResponse);
   rpc Health(HealthRequest) returns (HealthResponse);
@@ -48,7 +48,7 @@ message ScanOptions {
   repeated RuleConfig rule_configs = 6;         // per-rule overrides (ADR-041)
   bool rule_configs_complete = 7;    // true = rule_configs is the full catalog (Gateway);
                                      // false = partial overrides only (CLI).
-                                     // When true, Primary performs bidirectional audit and
+                                     // When true, Engine performs bidirectional audit and
                                      // hard-fails if any known rule is missing (ADR-041).
   bool skip_collection_health = 8;   // disable collection health validator (ADR-051)
   bool skip_dep_audit = 9;           // disable Python CVE audit validator (ADR-051)

@@ -210,7 +210,7 @@ async def initiate_operation(project_id: str, body: OperateRequest) -> OperateRe
             project_id=proj.id,
             repo_url=proj.repo_url,
             branch=proj.branch,
-            primary_address=cfg.primary_address,
+            engine_address=cfg.engine_address,
             remediate=scan_type == "remediate",
             options=body.options,
             scan_id=scan_id,
@@ -252,7 +252,7 @@ async def approve_proposals(project_id: str, body: ApproveRequest) -> dict[str, 
     Gate-commits Gateway working-set rows (omit = decline) and rolls
     analytics when claimable, then resolves the operation's
     ``approval_future`` so the background gRPC task can send the approval
-    to Primary. ``review_status`` is stamped when violation ids are already
+    to Engine. ``review_status`` is stamped when violation ids are already
     linked; otherwise FixCompleted stamps after the id bridge. Request /
     response shape is unchanged (ADR-060).
 
@@ -278,7 +278,7 @@ async def approve_proposals(project_id: str, body: ApproveRequest) -> dict[str, 
     if state.approval_future is None or state.approval_future.done():
         raise HTTPException(status_code=409, detail="Approval already submitted")
 
-    # Gate commit: mirror omit=reject + analytics before waking Primary.
+    # Gate commit: mirror omit=reject + analytics before waking Engine.
     # review_status often waits until FixCompleted (stubs lack violation_ids).
     # Scope to this round's offered ids so a later gate does not rewrite prior
     # decisions on the same scan.
@@ -708,9 +708,34 @@ async def submit_operation(
             )
         raise HTTPException(status_code=502, detail="SCM provider error") from exc
 
-    if pr_url:
+    try:
         async with get_session() as db:
-            await q.set_scan_pr_url(db, scan_id, pr_url)
+            record = await q.record_scan_scm_publish(
+                db,
+                scan_id,
+                branch_name=branch_name,
+                commit_sha=commit_sha,
+                pr_url=pr_url,
+            )
+    except Exception:
+        logger.exception("Failed to persist SCM publish metadata for scan %s", scan_id)
+        if state:
+            get_operation_registry().transition(
+                state.operation_id,
+                OperationStatus.COMPLETED,
+                error="Failed to persist SCM publish metadata",
+            )
+        raise HTTPException(status_code=500, detail="Failed to persist SCM publish metadata") from None
+    if not record.found:
+        if state:
+            get_operation_registry().transition(
+                state.operation_id,
+                OperationStatus.COMPLETED,
+                error="Activity not found",
+            )
+        raise HTTPException(status_code=404, detail="Activity not found")
+    pr_url = record.pr_url
+    if pr_url:
         if state:
             get_operation_registry().set_pr_url(state.operation_id, pr_url)
     elif state:
@@ -928,7 +953,7 @@ async def finalize_operation_scan(
     """Link a completed operation to its persisted scan row and store patches.
 
     The engine commits the scan via ``ReportFixCompleted`` asynchronously. If
-    the gateway tries to insert ``scan_patches`` before that row exists, SQLite
+    the gateway tries to insert ``scan_patches`` before that row exists, PostgreSQL
     raises a foreign-key error. Live proposal stubs may create an early Scan
     row (ADR-062 Phase 2); poll until ``ReportFixCompleted`` has replaced the
     placeholder session id (not ``op-*``) or timeout.
@@ -989,7 +1014,7 @@ async def _drive_operation(
     project_id: str,
     repo_url: str,
     branch: str,
-    primary_address: str,
+    engine_address: str,
     remediate: bool,
     options: dict[str, Any],
     scan_id: str,
@@ -997,7 +1022,7 @@ async def _drive_operation(
     scm_token: str | None = None,
     scm_provider: str | None = None,
 ) -> None:
-    """Background task that clones the repo and drives Primary's FixSession.
+    """Background task that clones the repo and drives Engine's FixSession.
 
     Updates the ``OperationRegistry`` state throughout. Runs independently
     of any browser connection.
@@ -1007,7 +1032,7 @@ async def _drive_operation(
         project_id: Owning project UUID.
         repo_url: SCM clone URL.
         branch: Branch to clone.
-        primary_address: ``host:port`` for Primary gRPC.
+        engine_address: ``host:port`` for Engine gRPC.
         remediate: Whether this is a remediation.
         options: Client-supplied options.
         scan_id: Engine scan identifier.
@@ -1333,7 +1358,7 @@ async def _drive_operation(
             project_id=project_id,
             repo_url=repo_url,
             branch=branch,
-            primary_address=primary_address,
+            engine_address=engine_address,
             remediate=remediate,
             ansible_version=str(options.get("ansible_version", "")),
             collection_specs=specs,

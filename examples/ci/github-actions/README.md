@@ -16,11 +16,15 @@ running pod). No image pulls, no pod startup — just the CLI calling your
 centralized instance.
 
 ```yaml
-- uses: ansible/apme@v1
+- uses: ansible/apme@8629999da689ef4cd7e0f65a86129dd06627b77e # unreleased dev (PR #500)
   with:
-    primary-address: ${{ secrets.APME_PRIMARY_ADDRESS }}
+    engine-address: ${{ secrets.APME_ENGINE_ADDRESS }}
     target: .
 ```
+
+Pin to an immutable commit SHA. The example above is an unreleased development
+revision from PR #500; replace it with a published release SHA once available
+(see issue #501 for the `v1` action tag).
 
 **Trade-off:** ~10s total. Requires network connectivity from the runner to your
 APME deployment and a running instance.
@@ -44,9 +48,9 @@ jobs:
       pull-requests: write
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
-      - uses: ansible/apme@v1
+      - uses: ansible/apme@8629999da689ef4cd7e0f65a86129dd06627b77e # unreleased dev (PR #500)
         with:
-          primary-address: ${{ secrets.APME_PRIMARY_ADDRESS }}
+          engine-address: ${{ secrets.APME_ENGINE_ADDRESS }}
 ```
 
 This will:
@@ -61,7 +65,7 @@ This will:
 
 - A running APME deployment accessible from your GitHub Actions runners
   (deployed via Helm, bootc VM, or Podman pod)
-- `APME_PRIMARY_ADDRESS` secret set to your Primary gRPC endpoint (host:port)
+- `APME_ENGINE_ADDRESS` secret set to your Engine gRPC endpoint (host:port)
 
 ### Action Inputs
 
@@ -71,7 +75,7 @@ This will:
 | `ansible-version` | | ansible-core version to validate against |
 | `collections` | | Space-separated collection specs |
 | `args` | | Additional arguments passed to `apme check` |
-| `primary-address` | | **Required.** Primary gRPC address (host:port) |
+| `engine-address` | | **Required.** Engine gRPC address (host:port) |
 | `sarif` | `true` | Upload SARIF for Code Scanning annotations |
 | `upload-artifact` | `false` | Upload JSON results as a workflow artifact |
 | `comment` | `true` | Post a PR summary comment |
@@ -127,46 +131,51 @@ To make APME a required check before merging:
 ### Scan a specific directory
 
 ```yaml
-- uses: ansible/apme@v1
+- uses: ansible/apme@8629999da689ef4cd7e0f65a86129dd06627b77e # unreleased dev (PR #500)
   with:
-    primary-address: ${{ secrets.APME_PRIMARY_ADDRESS }}
+    engine-address: ${{ secrets.APME_ENGINE_ADDRESS }}
     target: playbooks/
 ```
 
 ### Target specific ansible-core version
 
 ```yaml
-- uses: ansible/apme@v1
+- uses: ansible/apme@8629999da689ef4cd7e0f65a86129dd06627b77e # unreleased dev (PR #500)
   with:
-    primary-address: ${{ secrets.APME_PRIMARY_ADDRESS }}
+    engine-address: ${{ secrets.APME_ENGINE_ADDRESS }}
     ansible-version: "2.18"
 ```
 
 ### Non-blocking scan (continue on violations)
 
 ```yaml
-- uses: ansible/apme@v1
+- uses: ansible/apme@8629999da689ef4cd7e0f65a86129dd06627b77e # unreleased dev (PR #500)
   id: scan
   continue-on-error: true
   with:
-    primary-address: ${{ secrets.APME_PRIMARY_ADDRESS }}
+    engine-address: ${{ secrets.APME_ENGINE_ADDRESS }}
 - run: echo "Found ${{ steps.scan.outputs.violation-count }} violations"
 ```
 
 ### Self-hosted runners with internal APME
 
 ```yaml
-- uses: ansible/apme@v1
+- uses: ansible/apme@8629999da689ef4cd7e0f65a86129dd06627b77e # unreleased dev (PR #500)
   with:
-    primary-address: apme-engine.internal.svc:50051
+    engine-address: apme-engine.internal.svc:50051
 ```
 
 ### Manual SARIF upload (without the Action)
 
 ```yaml
-- run: apme check . --sarif > apme.sarif || true
+- run: |
+    set +e
+    apme check . --sarif > apme.sarif
+    ec=$?
+    set -e
+    if [ "$ec" -eq 2 ]; then exit "$ec"; fi
   env:
-    APME_PRIMARY_ADDRESS: ${{ secrets.APME_PRIMARY_ADDRESS }}
+    APME_ENGINE_ADDRESS: ${{ secrets.APME_ENGINE_ADDRESS }}
 - uses: github/codeql-action/upload-sarif@v3
   with:
     sarif_file: apme.sarif
@@ -186,5 +195,5 @@ To make APME a required check before merging:
 - **Runner:** Any runner with Python 3.10+ (e.g. `ubuntu-24.04`).
 - **Permissions:** `security-events: write` for SARIF, `pull-requests: write`
   for PR comments.
-- **Network:** Connectivity from the runner to your APME Primary gRPC endpoint.
-- **Secret:** `APME_PRIMARY_ADDRESS` set to `host:port` of your APME deployment.
+- **Network:** Connectivity from the runner to your APME Engine gRPC endpoint.
+- **Secret:** `APME_ENGINE_ADDRESS` set to `host:port` of your APME deployment.

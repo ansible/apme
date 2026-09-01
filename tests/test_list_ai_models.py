@@ -1,4 +1,4 @@
-"""Tests for the ListAIModels gRPC RPC on PrimaryServicer."""
+"""Tests for the ListAIModels gRPC RPC on EngineServicer."""
 
 from __future__ import annotations
 
@@ -9,8 +9,8 @@ import types
 from dataclasses import dataclass
 from unittest.mock import MagicMock, patch
 
-from apme.v1.primary_pb2 import ListAIModelsRequest
-from apme_engine.daemon.primary_server import PrimaryServicer
+from apme.v1.engine_pb2 import ListAIModelsRequest
+from apme_engine.daemon.engine_server import EngineServicer
 
 
 @dataclass
@@ -36,10 +36,17 @@ class _FakeAbbenayClient:
     """Stand-in for AbbenayClient with a canned model list.
 
     Args:
-        **_kwargs: Ignored; matches AbbenayClient constructor signature.
+        *args: Positional constructor args (must stay empty for unix://).
+        **kwargs: Keyword constructor args; ``socket_path`` / ``host`` / ``port``.
+
+    Attributes:
+        last_init: Most recent constructor ``args`` / ``kwargs``.
     """
 
-    def __init__(self, **_kwargs: object) -> None:
+    last_init: dict[str, object] = {}
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        type(self).last_init = {"args": args, "kwargs": kwargs}
         self._models: list[_FakeModel] = []
 
     async def connect(self) -> None:
@@ -67,12 +74,12 @@ def _make_stub_module(client_cls: type | None = None) -> types.ModuleType:
 
 
 # ---------------------------------------------------------------------------
-# Primary.ListAIModels
+# Engine.ListAIModels
 # ---------------------------------------------------------------------------
 
 
-class TestPrimaryListAIModels:
-    """Test the ListAIModels gRPC method on PrimaryServicer."""
+class TestEngineListAIModels:
+    """Test the ListAIModels gRPC method on EngineServicer."""
 
     def test_returns_models_from_abbenay(self) -> None:
         """ListAIModels returns models when Abbenay is reachable."""
@@ -82,8 +89,8 @@ class TestPrimaryListAIModels:
         ]
 
         class _ClientWithModels(_FakeAbbenayClient):
-            def __init__(self, **_kw: object) -> None:
-                super().__init__()
+            def __init__(self, *args: object, **kw: object) -> None:
+                super().__init__(*args, **kw)
                 self._models = models
 
         stub_mod = _make_stub_module(_ClientWithModels)
@@ -92,19 +99,45 @@ class TestPrimaryListAIModels:
             patch.dict(os.environ, {"APME_ABBENAY_ADDR": "127.0.0.1:50057"}),
             patch.dict(sys.modules, {"abbenay_grpc": stub_mod}),
         ):
-            servicer = PrimaryServicer()
+            servicer = EngineServicer()
             ctx = MagicMock()
             resp = asyncio.run(servicer.ListAIModels(ListAIModelsRequest(), ctx))
 
         assert len(resp.models) == 2
         assert resp.models[0].id == "openai/gpt-4o"
         assert resp.models[1].provider == "anthropic"
+        assert _ClientWithModels.last_init["args"] == ()
+        assert _ClientWithModels.last_init["kwargs"] == {"host": "127.0.0.1", "port": 50057}
+
+    def test_unix_addr_passes_bare_socket_path(self) -> None:
+        """ListAIModels strips unix:// so AbbenayClient does not double-prefix."""
+        models = [_FakeModel(id="openai/gpt-4o", provider="openai", name="gpt-4o")]
+
+        class _ClientWithModels(_FakeAbbenayClient):
+            def __init__(self, *args: object, **kw: object) -> None:
+                super().__init__(*args, **kw)
+                self._models = models
+
+        stub_mod = _make_stub_module(_ClientWithModels)
+        sock = "/tmp/abbenay-run/abbenay/daemon.sock"
+
+        with (
+            patch.dict(os.environ, {"APME_ABBENAY_ADDR": f"unix://{sock}"}),
+            patch.dict(sys.modules, {"abbenay_grpc": stub_mod}),
+        ):
+            servicer = EngineServicer()
+            ctx = MagicMock()
+            resp = asyncio.run(servicer.ListAIModels(ListAIModelsRequest(), ctx))
+
+        assert len(resp.models) == 1
+        assert _ClientWithModels.last_init["args"] == ()
+        assert _ClientWithModels.last_init["kwargs"] == {"socket_path": sock}
 
     def test_returns_empty_when_no_addr(self) -> None:
         """ListAIModels returns empty list when APME_ABBENAY_ADDR is not set."""
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("APME_ABBENAY_ADDR", None)
-            servicer = PrimaryServicer()
+            servicer = EngineServicer()
             ctx = MagicMock()
             resp = asyncio.run(servicer.ListAIModels(ListAIModelsRequest(), ctx))
 
@@ -123,7 +156,7 @@ class TestPrimaryListAIModels:
             patch.dict(os.environ, {"APME_ABBENAY_ADDR": "127.0.0.1:50057"}),
             patch.dict(sys.modules, {"abbenay_grpc": stub_mod}),
         ):
-            servicer = PrimaryServicer()
+            servicer = EngineServicer()
             ctx = MagicMock()
             resp = asyncio.run(servicer.ListAIModels(ListAIModelsRequest(), ctx))
 
@@ -135,7 +168,7 @@ class TestPrimaryListAIModels:
             patch.dict(os.environ, {"APME_ABBENAY_ADDR": "127.0.0.1:50057"}),
             patch.dict(sys.modules, {"abbenay_grpc": None}),
         ):
-            servicer = PrimaryServicer()
+            servicer = EngineServicer()
             ctx = MagicMock()
             resp = asyncio.run(servicer.ListAIModels(ListAIModelsRequest(), ctx))
 

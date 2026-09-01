@@ -89,12 +89,12 @@ message File {
   bytes content = 2;
 }
 
-// Health check (used by Primary and all validators).
+// Health check (used by Engine and all validators).
 message HealthRequest {}
 
 message HealthResponse {
   string status = 1;  // "ok" or error description
-  repeated ServiceHealth downstream = 2;  // Primary populates with downstream service status
+  repeated ServiceHealth downstream = 2;  // Engine populates with downstream service status
 }
 
 message ServiceHealth {
@@ -175,12 +175,13 @@ enum LogLevel {
 }
 
 // Structured log entry transported via gRPC (ADR-033).
-// Used by validators (in ValidateResponse.logs), Primary (in
-// ScanResponse.logs / FormatResponse.logs), and FixSession
-// (as SessionEvent.progress).
+// Used by validators (in ValidateResponse.logs), Engine (in
+// FormatResponse.logs), and FixSession (as SessionEvent.progress).
+// Scan/remediate progress uses FixSession only — unary Scan/ScanStream
+// and ScanResponse were removed (ADR-039).
 message ProgressUpdate {
   string message = 1;
-  string phase = 2;       // subsystem: "primary", "native", "opa", "engine", "venv", etc.
+  string phase = 2;       // subsystem: "engine", "native", "opa", "venv", etc.
   float progress = 3;     // 0.0-1.0, optional progress fraction
   LogLevel level = 4;
   // ADR-068: optional operation budget and AI counters during graph-ai phase.

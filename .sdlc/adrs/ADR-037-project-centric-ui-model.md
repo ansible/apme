@@ -72,7 +72,7 @@ per-operation parameters specified when the user triggers a check or remediate.
 
 Each check or remediate request triggers a fresh `git clone --depth 1` of the project's
 repo into a temporary directory. The gateway chunks the cloned files and opens
-`FixSession` against Primary for both modes (check vs remediate determined by session options; ADR-039 — `ScanStream` removed). The temporary
+`FixSession` against Engine for both modes (check vs remediate determined by session options; ADR-039 — `ScanStream` removed). The temporary
 directory is cleaned up after the operation completes. This ensures checks always
 run against the current repo state, avoids stale persistent clones, and
 eliminates clone lifecycle management (no `clone_status` state machine, no sync
@@ -86,7 +86,7 @@ The gateway's project operation driver handles both modes:
 2. Derive `session_id = sha256(project.id)[:16]` (deterministic, ensures venv
    reuse across operations on the same project)
 3. Chunk files via `yield_scan_chunks()`
-4. Open `FixSession` to Primary (check-only vs remediate per request options / `fix_options`)
+4. Open `FixSession` to Engine (check-only vs remediate per request options / `fix_options`)
 5. Stream progress to the UI via WebSocket
 6. Persist results (violations, diagnostics, proposals) to DB under the project
 7. Clean up temp directory
@@ -227,7 +227,7 @@ Tag sessions and scans with a project name.
   natively via per-operation options
 - **Cross-project dashboard** enables portfolio-level visibility: health scores,
   trends, staleness, rankings
-- **Engine is unmodified** — all changes are in the gateway and frontend. Primary,
+- **Engine is unmodified** — all changes are in the gateway and frontend. Engine,
   validators, FixSession protocol, venv session manager, reporting sink are
   unchanged.
 - **Playground preserves quick scanning** — ad-hoc file upload without project
@@ -243,7 +243,7 @@ Tag sessions and scans with a project name.
 
 ### Neutral
 
-- CLI is unaffected — continues working as before via direct Primary connection
+- CLI is unaffected — continues working as before via direct Engine connection
 - Engine sessions, venvs, FixSession protocol all unchanged
 - Reporting servicer continues to work for CLI-initiated scans
   (`project_id = null`)

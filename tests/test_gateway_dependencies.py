@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -11,7 +10,7 @@ from httpx import ASGITransport, AsyncClient
 
 from apme.v1 import common_pb2, reporting_pb2
 from apme_gateway.app import create_app
-from apme_gateway.db import close_db, get_session, init_db
+from apme_gateway.db import get_session
 from apme_gateway.db import queries as q
 from apme_gateway.db.models import (
     Project,
@@ -23,20 +22,7 @@ from apme_gateway.db.models import (
 )
 from apme_gateway.grpc_reporting.servicer import ReportingServicer
 
-
-@pytest.fixture(autouse=True)  # type: ignore[untyped-decorator]
-async def _db(tmp_path: Path) -> AsyncIterator[None]:
-    """Initialise a fresh DB per test.
-
-    Args:
-        tmp_path: Pytest-provided temporary directory.
-
-    Yields:
-        None: Test runs between setup and teardown.
-    """
-    await init_db(str(tmp_path / "test.db"))
-    yield
-    await close_db()
+pytestmark = pytest.mark.usefixtures("gateway_db")
 
 
 @pytest.fixture  # type: ignore[untyped-decorator]
@@ -193,6 +179,7 @@ async def test_report_fix_deduplicates_duplicate_python_packages() -> None:
         source="cli",
         manifest=manifest,
     )
+
     await servicer.ReportFixCompleted(event, _mock_context())
 
     async with get_session() as db:

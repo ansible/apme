@@ -29,7 +29,6 @@ _GRAPH_RULE_KNOWN_FAILURES: dict[str, str] = {
     "L093": "requires role ancestry with default_variables/role_variables populated",
     "M028": "first_found is a lookup plugin; terms live inside Jinja2 expressions",
     "R117": "role metadata rule; requires ROLE graph node with play DEPENDENCY edge",
-    "R402": "informational listing rule (no GraphRule equivalent yet)",
     "L074": "role name check requires ROLE graph node; single-file harness has no role directory",
     "L080": "requires file_path under roles/; single-file harness uses a temp path",
     "L081": "checks file basename pattern; single-file harness uses a generated temp filename",
@@ -46,6 +45,8 @@ _GRAPH_RULE_KNOWN_FAILURES: dict[str, str] = {
     "M017": "example uses action: mapping form that ARI engine normalizes into module key",
     "M021": "example uses empty args: that ARI engine strips before graph",
     "M023": "example uses lookup plugin syntax not evaluated by graph rules",
+    "R402": "disabled-by-default audit rule; not in default load_graph_rules() set",
+    "R404": "disabled-by-default debug rule; not in default load_graph_rules() set",
 }
 
 
@@ -144,7 +145,7 @@ def _run_graph_rules_on_graph(graph: ContentGraph) -> list[dict[str, object]]:
         List of violation dicts.
     """
     rules_dir = str(_native_rules_dir())
-    rules = load_graph_rules(rules_dir=rules_dir)
+    rules, _ = load_graph_rules(rules_dir=rules_dir)
     report = graph_scan(graph, rules)
     return cast(list[dict[str, object]], graph_report_to_violations(report))
 

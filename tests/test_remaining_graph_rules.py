@@ -1,17 +1,19 @@
 """Unit and integration tests for Phase 2J+K GraphRules.
 
-Covers L056, R401, collection metadata rules (L087, L088, L096, L103–L105),
-and plugin/schema rules (L089, L090, L095).
+Covers L056, R401, R402, R404, collection metadata rules (L087, L088,
+L096, L103-L105), and plugin/schema rules (L089, L090, L095).
 """
 
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
 
 import pytest
 
 from apme_engine.engine.graph_builder import GraphBuilder
 from apme_engine.engine.models import YAMLDict
+from apme_engine.graph.audit_metadata import sanitize_audit_metadata_value
 from apme_engine.graph.content_graph import (
     ContentGraph,
     ContentNode,
@@ -40,7 +42,15 @@ from apme_engine.graph.rules.M030_broken_conditional_expressions_graph import (
     BrokenConditionalExpressionsGraphRule,
 )
 from apme_engine.graph.rules.R401_list_all_inbound_src_graph import ListAllInboundSrcGraphRule
+from apme_engine.graph.rules.R402_list_all_used_variables_graph import ListAllUsedVariablesGraphRule
+from apme_engine.graph.rules.R404_show_variables_graph import (
+    ShowVariablesGraphRule,
+    _redact_sensitive_keys,
+    _serialize_value,
+    _should_redact_value,
+)
 from apme_engine.graph.scanner import scan
+from apme_engine.graph.sensitivity import REDACTED, value_looks_sensitive
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -346,7 +356,7 @@ def _make_collection(
 
 
 # ===========================================================================
-# Collection graph rules (L087, L088, L096, L103–L105)
+# Collection graph rules (L087, L088, L096, L103-L105)
 # ===========================================================================
 
 
@@ -1698,3 +1708,1150 @@ class TestBrokenConditionalExpressionsGraphRule:
             pytest.skip("jinja2 is installed; cannot test HAS_JINJA=False path")
         g, nid = _make_task()
         assert not rule.match(g, nid)
+
+
+# ===========================================================================
+# R402 — ListAllUsedVariables
+# ===========================================================================
+
+
+def _make_play_with_tasks(
+    *,
+    play_vars: YAMLDict | None = None,
+    play_no_log: bool | None = None,
+    tasks: list[dict[str, object]] | None = None,
+) -> tuple[ContentGraph, str]:
+    """Build a playbook → play → tasks graph with play-level variables.
+
+    Args:
+        play_vars: Play-level ``vars:`` mapping.
+        play_no_log: Play-level ``no_log`` setting.
+        tasks: List of dicts with keys ``module``, ``module_options``,
+            ``when_expr``, ``name``, ``variables``, and ``no_log``.
+
+    Returns:
+        Tuple of ``(graph, play_node_id)``.
+    """
+    g = ContentGraph()
+    pb = ContentNode(
+        identity=NodeIdentity(path="site.yml", node_type=NodeType.PLAYBOOK),
+        file_path="site.yml",
+        scope=NodeScope.OWNED,
+    )
+    play = ContentNode(
+        identity=NodeIdentity(path="site.yml/plays[0]", node_type=NodeType.PLAY),
+        file_path="site.yml",
+        variables=dict(play_vars or {}),
+        no_log=play_no_log,
+        scope=NodeScope.OWNED,
+    )
+    g.add_node(pb)
+    g.add_node(play)
+    g.add_edge(pb.node_id, play.node_id, EdgeType.CONTAINS)
+
+    for i, t in enumerate(tasks or []):
+        mo = t.get("module_options", {})
+        task = ContentNode(
+            identity=NodeIdentity(
+                path=f"site.yml/plays[0]/tasks[{i}]",
+                node_type=NodeType.TASK,
+            ),
+            file_path="site.yml",
+            line_start=10 + i * 5,
+            module=str(t.get("module", "debug")),
+            module_options=dict(mo) if isinstance(mo, dict) else {},
+            name=str(t.get("name", "")),
+            when_expr=cast("str | list[str] | None", t.get("when_expr")),
+            variables=(
+                cast(YAMLDict, dict(cast(dict[str, object], t["variables"])))
+                if isinstance(t.get("variables"), dict)
+                else {}
+            ),
+            no_log=cast("bool | None", t.get("no_log")),
+            scope=NodeScope.OWNED,
+        )
+        g.add_node(task)
+        g.add_edge(play.node_id, task.node_id, EdgeType.CONTAINS)
+
+    return g, play.node_id
+
+
+class TestR402ListAllUsedVariablesGraphRule:
+    """Tests for R402 ListAllUsedVariablesGraphRule."""
+
+    @pytest.fixture  # type: ignore[untyped-decorator]
+    def rule(self) -> ListAllUsedVariablesGraphRule:
+        """Create a rule instance (enabled for testing).
+
+        Returns:
+            A ListAllUsedVariablesGraphRule with enabled=True.
+        """
+        return ListAllUsedVariablesGraphRule(enabled=True)
+
+    def test_disabled_by_default(self) -> None:
+        """R402 is disabled by default."""
+        rule = ListAllUsedVariablesGraphRule()
+        assert rule.rule_id == "R402"
+        assert rule.enabled is False
+
+    def test_match_play_node(self, rule: ListAllUsedVariablesGraphRule) -> None:
+        """Matches PLAY nodes only.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, play_id = _make_play_with_tasks()
+        assert rule.match(g, play_id)
+
+    def test_no_match_task_node(self, rule: ListAllUsedVariablesGraphRule) -> None:
+        """Does not match TASK nodes.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, nid = _make_task()
+        assert not rule.match(g, nid)
+
+    def test_no_jinja_refs_verdict_false(self, rule: ListAllUsedVariablesGraphRule) -> None:
+        """Play with no Jinja references reports verdict=False.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, play_id = _make_play_with_tasks(
+            tasks=[{"module": "ansible.builtin.command", "module_options": {"cmd": "whoami"}}],
+        )
+        result = rule.process(g, play_id)
+        assert result is not None
+        assert result.verdict is False
+
+    def test_jinja_refs_collected(self, rule: ListAllUsedVariablesGraphRule) -> None:
+        """Play with Jinja variable references reports them.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, play_id = _make_play_with_tasks(
+            play_vars={"http_port": 8080},
+            tasks=[
+                {
+                    "module": "ansible.builtin.debug",
+                    "module_options": {"msg": "Port is {{ http_port }}"},
+                },
+            ],
+        )
+        result = rule.process(g, play_id)
+        assert result is not None
+        assert result.verdict is True
+        assert result.detail is not None
+        var_list = cast(list[dict[str, object]], result.detail["variables_used"])
+        names = [v["name"] for v in var_list]
+        assert "http_port" in names
+
+    def test_compound_jinja_expression_refs(self, rule: ListAllUsedVariablesGraphRule) -> None:
+        """Compound Jinja expressions yield each root variable reference.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, play_id = _make_play_with_tasks(
+            tasks=[
+                {
+                    "module": "ansible.builtin.debug",
+                    "module_options": {"msg": "{{ primary_host ~ ':' ~ db_port }}"},
+                },
+            ],
+        )
+        result = rule.process(g, play_id)
+        assert result is not None
+        assert result.detail is not None
+        names = [v["name"] for v in cast(list[dict[str, object]], result.detail["variables_used"])]
+        assert "primary_host" in names
+        assert "db_port" in names
+
+    def test_jinja_default_filter_argument_refs(self, rule: ListAllUsedVariablesGraphRule) -> None:
+        """Jinja filter arguments such as default(fallback) are collected.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, play_id = _make_play_with_tasks(
+            play_vars={"primary": "host-a"},
+            tasks=[
+                {
+                    "module": "ansible.builtin.debug",
+                    "module_options": {"msg": "{{ primary | default(fallback) }}"},
+                },
+            ],
+        )
+        result = rule.process(g, play_id)
+        assert result is not None
+        assert result.detail is not None
+        names = {v["name"] for v in cast(list[dict[str, object]], result.detail["variables_used"])}
+        assert "primary" in names
+        assert "fallback" in names
+
+    def test_multiline_jinja_expression_refs(self, rule: ListAllUsedVariablesGraphRule) -> None:
+        """Multiline Jinja expressions are parsed for variable references.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, play_id = _make_play_with_tasks(
+            play_vars={"host_a": "a", "host_b": "b"},
+            tasks=[
+                {
+                    "module": "ansible.builtin.debug",
+                    "module_options": {"msg": "{{ host_a\n  ~ host_b }}"},
+                },
+            ],
+        )
+        result = rule.process(g, play_id)
+        assert result is not None
+        assert result.detail is not None
+        names = {v["name"] for v in cast(list[dict[str, object]], result.detail["variables_used"])}
+        assert "host_a" in names
+        assert "host_b" in names
+
+    def test_provenance_resolved(self, rule: ListAllUsedVariablesGraphRule) -> None:
+        """Variable provenance is resolved (play source for play vars).
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, play_id = _make_play_with_tasks(
+            play_vars={"my_var": "val"},
+            tasks=[
+                {
+                    "module": "ansible.builtin.debug",
+                    "module_options": {"msg": "{{ my_var }}"},
+                },
+            ],
+        )
+        result = rule.process(g, play_id)
+        assert result is not None
+        assert result.detail is not None
+        var_list = cast(list[dict[str, object]], result.detail["variables_used"])
+        var_map = {v["name"]: v["source"] for v in var_list}
+        assert var_map["my_var"] == "play"
+
+    def test_external_var_source(self, rule: ListAllUsedVariablesGraphRule) -> None:
+        """Variable not resolvable in scope shows ``external`` source.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, play_id = _make_play_with_tasks(
+            tasks=[
+                {
+                    "module": "ansible.builtin.debug",
+                    "module_options": {"msg": "{{ unresolvable_var }}"},
+                },
+            ],
+        )
+        result = rule.process(g, play_id)
+        assert result is not None
+        assert result.detail is not None
+        var_list = cast(list[dict[str, object]], result.detail["variables_used"])
+        var_map = {v["name"]: v["source"] for v in var_list}
+        assert var_map["unresolvable_var"] == "external"
+
+    def test_bare_when_refs_extracted(self, rule: ListAllUsedVariablesGraphRule) -> None:
+        """Bare ``when`` expression variable references are collected.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, play_id = _make_play_with_tasks(
+            play_vars={"should_run": True},
+            tasks=[
+                {
+                    "module": "ansible.builtin.command",
+                    "module_options": {"cmd": "echo ok"},
+                    "when_expr": "should_run",
+                },
+            ],
+        )
+        result = rule.process(g, play_id)
+        assert result is not None
+        assert result.verdict is True
+        assert result.detail is not None
+        names = [v["name"] for v in cast(list[dict[str, object]], result.detail["variables_used"])]
+        assert "should_run" in names
+
+    def test_missing_node_returns_none(self, rule: ListAllUsedVariablesGraphRule) -> None:
+        """Process on a missing node returns None.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g = ContentGraph()
+        assert rule.process(g, "nonexistent") is None
+
+    def test_runtime_vars_resolved_via_task(self, rule: ListAllUsedVariablesGraphRule) -> None:
+        """Runtime vars (register/set_fact) are resolved via per-task provenance.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, play_id = _make_play_with_tasks(
+            tasks=[
+                {
+                    "module": "ansible.builtin.command",
+                    "module_options": {"cmd": "whoami"},
+                },
+                {
+                    "module": "ansible.builtin.debug",
+                    "module_options": {"msg": "{{ cmd_result }}"},
+                },
+            ],
+        )
+        producer = next(n for n in g.nodes(NodeType.TASK) if n.module == "ansible.builtin.command")
+        producer.register = "cmd_result"
+        consumer = next(n for n in g.nodes(NodeType.TASK) if n.module == "ansible.builtin.debug")
+        g.add_edge(producer.node_id, consumer.node_id, EdgeType.DATA_FLOW)
+
+        result = rule.process(g, play_id)
+        assert result is not None
+        assert result.verdict is True
+        assert result.detail is not None
+        var_list = cast(list[dict[str, object]], result.detail["variables_used"])
+        var_map = {v["name"]: v["source"] for v in var_list}
+        assert var_map.get("cmd_result") == "runtime"
+
+    def test_provenance_per_task_not_overwritten(self, rule: ListAllUsedVariablesGraphRule) -> None:
+        """Each task keeps its own provenance for the same variable name.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, play_id = _make_play_with_tasks(
+            play_vars={"shared_flag": True},
+            tasks=[
+                {
+                    "module": "ansible.builtin.debug",
+                    "module_options": {"msg": "{{ shared_flag }}"},
+                },
+                {
+                    "module": "ansible.builtin.set_fact",
+                    "module_options": {"shared_flag": False},
+                },
+                {
+                    "module": "ansible.builtin.debug",
+                    "module_options": {"msg": "{{ shared_flag }}"},
+                },
+            ],
+        )
+        tasks = sorted(g.nodes(NodeType.TASK), key=lambda n: n.line_start or 0)
+        tasks[1].set_facts = {"shared_flag": False}
+        g.add_edge(tasks[1].node_id, tasks[2].node_id, EdgeType.DATA_FLOW)
+
+        result = rule.process(g, play_id)
+        assert result is not None
+        assert result.detail is not None
+        var_list = cast(list[dict[str, object]], result.detail["variables_used"])
+        entries = [(v["name"], v["source"], v["task"]) for v in var_list if v["name"] == "shared_flag"]
+        assert len(entries) == 2
+        sources = {src for _, src, _ in entries}
+        assert "play" in sources
+        assert "runtime" in sources
+
+    def test_scope_is_play(self) -> None:
+        """R402 has scope=RuleScope.PLAY."""
+        from apme_engine.engine.models import RuleScope
+
+        rule = ListAllUsedVariablesGraphRule()
+        assert rule.scope == RuleScope.PLAY
+
+    def test_sensitive_var_name_redacted(self, rule: ListAllUsedVariablesGraphRule) -> None:
+        """Sensitive Jinja ref names are redacted in variables_used.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, play_id = _make_play_with_tasks(
+            play_vars={"db_password": "x"},
+            tasks=[
+                {
+                    "module": "ansible.builtin.debug",
+                    "module_options": {"msg": "{{ db_password }}"},
+                },
+            ],
+        )
+        result = rule.process(g, play_id)
+        assert result is not None
+        assert result.detail is not None
+        var_list = cast(list[dict[str, object]], result.detail["variables_used"])
+        assert any(v["name"] == "[REDACTED]" for v in var_list)
+
+    def test_loop_and_task_vars_collected(self, rule: ListAllUsedVariablesGraphRule) -> None:
+        """Loop expressions and task-level vars contribute references.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, play_id = _make_play_with_tasks(
+            play_vars={"item_name": "host"},
+            tasks=[
+                {
+                    "module": "ansible.builtin.debug",
+                    "module_options": {"msg": "{{ item_name }}"},
+                    "variables": {"local_flag": "{{ item_name }}"},
+                },
+            ],
+        )
+        task_node = next(n for n in g.nodes(NodeType.TASK))
+        task_node.loop = "{{ item_name }}"
+        result = rule.process(g, play_id)
+        assert result is not None
+        assert result.detail is not None
+        var_list = cast(list[dict[str, object]], result.detail["variables_used"])
+        names = {v["name"] for v in var_list}
+        assert "item_name" in names
+
+    def test_no_log_redacts_benign_variable_names(self, rule: ListAllUsedVariablesGraphRule) -> None:
+        """Play/task no_log redacts even benign variable names in variables_used.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, play_id = _make_play_with_tasks(
+            play_vars={"app_name": "myapp"},
+            play_no_log=True,
+            tasks=[
+                {
+                    "module": "ansible.builtin.debug",
+                    "module_options": {"msg": "{{ app_name }}"},
+                },
+            ],
+        )
+        result = rule.process(g, play_id)
+        assert result is not None
+        assert result.detail is not None
+        var_list = cast(list[dict[str, object]], result.detail["variables_used"])
+        assert [v["name"] for v in var_list] == ["[REDACTED]"]
+
+    def test_no_log_redacts_included_task_refs(self, rule: ListAllUsedVariablesGraphRule) -> None:
+        """Play-level no_log redacts variable names in include_tasks descendants.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g = ContentGraph()
+        play = ContentNode(
+            identity=NodeIdentity(path="site.yml/plays[0]", node_type=NodeType.PLAY),
+            file_path="site.yml",
+            no_log=True,
+            scope=NodeScope.OWNED,
+        )
+        include_task = ContentNode(
+            identity=NodeIdentity(path="site.yml/plays[0]/tasks[0]", node_type=NodeType.TASK),
+            file_path="site.yml",
+            module="ansible.builtin.include_tasks",
+            module_options={"file": "included.yml"},
+            scope=NodeScope.OWNED,
+        )
+        included_task = ContentNode(
+            identity=NodeIdentity(path="included.yml/tasks[0]", node_type=NodeType.TASK),
+            file_path="included.yml",
+            module="ansible.builtin.debug",
+            module_options={"msg": "{{ internal_name }}"},
+            scope=NodeScope.OWNED,
+        )
+        g.add_node(play)
+        g.add_node(include_task)
+        g.add_node(included_task)
+        g.add_edge(play.node_id, include_task.node_id, EdgeType.CONTAINS)
+        g.add_edge(include_task.node_id, included_task.node_id, EdgeType.INCLUDE)
+
+        result = rule.process(g, play.node_id)
+        assert result is not None
+        assert result.detail is not None
+        var_list = cast(list[dict[str, object]], result.detail["variables_used"])
+        assert [v["name"] for v in var_list] == ["[REDACTED]"]
+
+    def test_no_log_respects_play_context_for_shared_include(
+        self,
+        rule: ListAllUsedVariablesGraphRule,
+    ) -> None:
+        """Shared include_tasks files honor each play's no_log setting independently.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g = ContentGraph()
+        play_redacted = ContentNode(
+            identity=NodeIdentity(path="site.yml/plays[0]", node_type=NodeType.PLAY),
+            file_path="site.yml",
+            no_log=True,
+            scope=NodeScope.OWNED,
+        )
+        play_visible = ContentNode(
+            identity=NodeIdentity(path="site.yml/plays[1]", node_type=NodeType.PLAY),
+            file_path="site.yml",
+            no_log=False,
+            scope=NodeScope.OWNED,
+        )
+        include_redacted = ContentNode(
+            identity=NodeIdentity(path="site.yml/plays[0]/tasks[0]", node_type=NodeType.TASK),
+            file_path="site.yml",
+            module="ansible.builtin.include_tasks",
+            module_options={"file": "shared.yml"},
+            scope=NodeScope.OWNED,
+        )
+        include_visible = ContentNode(
+            identity=NodeIdentity(path="site.yml/plays[1]/tasks[0]", node_type=NodeType.TASK),
+            file_path="site.yml",
+            module="ansible.builtin.include_tasks",
+            module_options={"file": "shared.yml"},
+            scope=NodeScope.OWNED,
+        )
+        shared_task = ContentNode(
+            identity=NodeIdentity(path="shared.yml/tasks[0]", node_type=NodeType.TASK),
+            file_path="shared.yml",
+            module="ansible.builtin.debug",
+            module_options={"msg": "{{ internal_name }}"},
+            scope=NodeScope.OWNED,
+        )
+        for node in (play_redacted, play_visible, include_redacted, include_visible, shared_task):
+            g.add_node(node)
+        g.add_edge(play_redacted.node_id, include_redacted.node_id, EdgeType.CONTAINS)
+        g.add_edge(play_visible.node_id, include_visible.node_id, EdgeType.CONTAINS)
+        g.add_edge(include_redacted.node_id, shared_task.node_id, EdgeType.INCLUDE)
+        g.add_edge(include_visible.node_id, shared_task.node_id, EdgeType.INCLUDE)
+
+        redacted_result = rule.process(g, play_redacted.node_id)
+        visible_result = rule.process(g, play_visible.node_id)
+        assert redacted_result is not None and redacted_result.detail is not None
+        assert visible_result is not None and visible_result.detail is not None
+        redacted_names = [v["name"] for v in cast(list[dict[str, object]], redacted_result.detail["variables_used"])]
+        visible_names = [v["name"] for v in cast(list[dict[str, object]], visible_result.detail["variables_used"])]
+        assert redacted_names == ["[REDACTED]"]
+        assert visible_names == ["internal_name"]
+
+    def test_no_log_dual_include_same_play_redacts_shared_task(
+        self,
+        rule: ListAllUsedVariablesGraphRule,
+    ) -> None:
+        """Shared task included twice in one play redacts when any path has no_log.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g = ContentGraph()
+        play = ContentNode(
+            identity=NodeIdentity(path="site.yml/plays[0]", node_type=NodeType.PLAY),
+            file_path="site.yml",
+            scope=NodeScope.OWNED,
+        )
+        include_open = ContentNode(
+            identity=NodeIdentity(path="site.yml/plays[0]/tasks[0]", node_type=NodeType.TASK),
+            file_path="site.yml",
+            module="ansible.builtin.include_tasks",
+            module_options={"file": "shared.yml"},
+            no_log=False,
+            scope=NodeScope.OWNED,
+        )
+        include_redacted = ContentNode(
+            identity=NodeIdentity(path="site.yml/plays[0]/tasks[1]", node_type=NodeType.TASK),
+            file_path="site.yml",
+            module="ansible.builtin.include_tasks",
+            module_options={"file": "shared.yml"},
+            no_log=True,
+            scope=NodeScope.OWNED,
+        )
+        shared_task = ContentNode(
+            identity=NodeIdentity(path="shared.yml/tasks[0]", node_type=NodeType.TASK),
+            file_path="shared.yml",
+            module="ansible.builtin.debug",
+            module_options={"msg": "{{ internal_name }}"},
+            scope=NodeScope.OWNED,
+        )
+        for node in (play, include_open, include_redacted, shared_task):
+            g.add_node(node)
+        g.add_edge(play.node_id, include_open.node_id, EdgeType.CONTAINS)
+        g.add_edge(play.node_id, include_redacted.node_id, EdgeType.CONTAINS)
+        g.add_edge(include_open.node_id, shared_task.node_id, EdgeType.INCLUDE)
+        g.add_edge(include_redacted.node_id, shared_task.node_id, EdgeType.INCLUDE)
+
+        result = rule.process(g, play.node_id)
+        assert result is not None
+        assert result.detail is not None
+        names = [v["name"] for v in cast(list[dict[str, object]], result.detail["variables_used"])]
+        assert names == ["[REDACTED]"]
+
+    def test_dotted_sensitive_path_redacted(self, rule: ListAllUsedVariablesGraphRule) -> None:
+        """Dotted Jinja paths with sensitive segments redact the root identifier.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, play_id = _make_play_with_tasks(
+            play_vars={"vault": {"db_password": "secret"}},
+            tasks=[
+                {
+                    "module": "ansible.builtin.debug",
+                    "module_options": {"msg": "{{ vault.db_password }}"},
+                },
+            ],
+        )
+        result = rule.process(g, play_id)
+        assert result is not None
+        assert result.detail is not None
+        names = [v["name"] for v in cast(list[dict[str, object]], result.detail["variables_used"])]
+        assert names == ["[REDACTED]"]
+
+    def test_bare_when_sensitive_dotted_path_redacted(self, rule: ListAllUsedVariablesGraphRule) -> None:
+        """Sensitive dotted paths in bare when expressions redact the root identifier.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, play_id = _make_play_with_tasks(
+            play_vars={"vault": {"db_password": "secret"}},
+            tasks=[
+                {
+                    "module": "ansible.builtin.command",
+                    "module_options": {"cmd": "echo ok"},
+                    "when_expr": "vault.db_password is defined",
+                },
+            ],
+        )
+        result = rule.process(g, play_id)
+        assert result is not None
+        assert result.detail is not None
+        names = [v["name"] for v in cast(list[dict[str, object]], result.detail["variables_used"])]
+        assert names == ["[REDACTED]"]
+
+    def test_parenthesized_sensitive_jinja_redacted(self, rule: ListAllUsedVariablesGraphRule) -> None:
+        """Parenthesized Jinja expressions with sensitive dotted paths are redacted.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, play_id = _make_play_with_tasks(
+            play_vars={"vault": {"db_password": "secret"}},
+            tasks=[
+                {
+                    "module": "ansible.builtin.debug",
+                    "module_options": {"msg": "{{ (vault.db_password) }}"},
+                },
+            ],
+        )
+        result = rule.process(g, play_id)
+        assert result is not None
+        assert result.detail is not None
+        names = [v["name"] for v in cast(list[dict[str, object]], result.detail["variables_used"])]
+        assert names == ["[REDACTED]"]
+
+    def test_changed_when_register_source_is_runtime(self, rule: ListAllUsedVariablesGraphRule) -> None:
+        """Post-task register references in changed_when resolve as runtime.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, play_id = _make_play_with_tasks(
+            tasks=[
+                {
+                    "module": "ansible.builtin.command",
+                    "module_options": {"cmd": "whoami"},
+                },
+            ],
+        )
+        task = next(n for n in g.nodes(NodeType.TASK) if n.module == "ansible.builtin.command")
+        task.register = "command_result"
+        task.changed_when = "command_result.rc == 0"
+
+        result = rule.process(g, play_id)
+        assert result is not None
+        assert result.detail is not None
+        var_list = cast(list[dict[str, object]], result.detail["variables_used"])
+        var_map = {v["name"]: v["source"] for v in var_list}
+        assert var_map.get("command_result") == "runtime"
+
+    def test_truncates_large_variable_lists(self, rule: ListAllUsedVariablesGraphRule) -> None:
+        """R402 caps reported references at 500 entries.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        play_vars = {f"var_{i}": i for i in range(501)}
+        refs = " ".join(f"{{{{ var_{i} }}}}" for i in range(501))
+        g, play_id = _make_play_with_tasks(
+            play_vars=cast(YAMLDict, play_vars),
+            tasks=[{"module": "ansible.builtin.debug", "module_options": {"msg": refs}}],
+        )
+        result = rule.process(g, play_id)
+        assert result is not None
+        assert result.detail is not None
+        var_list = cast(list[dict[str, object]], result.detail["variables_used"])
+        assert len(var_list) == 500
+        assert "(truncated)" in cast(str, result.detail["message"])
+
+    def test_includes_variables_from_include_tasks(self, rule: ListAllUsedVariablesGraphRule) -> None:
+        """R402 collects refs from tasks reached via INCLUDE edges (include_tasks).
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g = ContentGraph()
+        play = ContentNode(
+            identity=NodeIdentity(path="site.yml/plays[0]", node_type=NodeType.PLAY),
+            file_path="site.yml",
+            scope=NodeScope.OWNED,
+        )
+        include_task = ContentNode(
+            identity=NodeIdentity(path="site.yml/plays[0]/tasks[0]", node_type=NodeType.TASK),
+            file_path="site.yml",
+            module="ansible.builtin.include_tasks",
+            module_options={"file": "included.yml"},
+            scope=NodeScope.OWNED,
+        )
+        included_task = ContentNode(
+            identity=NodeIdentity(path="included.yml/tasks[0]", node_type=NodeType.TASK),
+            file_path="included.yml",
+            module="ansible.builtin.debug",
+            module_options={"msg": "{{ included_var }}"},
+            scope=NodeScope.OWNED,
+        )
+        g.add_node(play)
+        g.add_node(include_task)
+        g.add_node(included_task)
+        g.add_edge(play.node_id, include_task.node_id, EdgeType.CONTAINS)
+        g.add_edge(include_task.node_id, included_task.node_id, EdgeType.INCLUDE)
+
+        result = rule.process(g, play.node_id)
+        assert result is not None
+        assert result.detail is not None
+        var_list = cast(list[dict[str, object]], result.detail["variables_used"])
+        names = {v["name"] for v in var_list}
+        assert "included_var" in names
+
+    def test_via_scanner(self) -> None:
+        """R402 fires through the graph scanner when enabled."""
+        g, _ = _make_play_with_tasks(
+            play_vars={"port": 80},
+            tasks=[
+                {
+                    "module": "ansible.builtin.debug",
+                    "module_options": {"msg": "{{ port }}"},
+                },
+            ],
+        )
+        report = scan(g, [ListAllUsedVariablesGraphRule(enabled=True)])
+        violations = [rr for nr in report.node_results for rr in nr.rule_results if rr.verdict]
+        assert len(violations) == 1
+
+    def test_ignores_data_flow_descendants_outside_play(self, rule: ListAllUsedVariablesGraphRule) -> None:
+        """R402 does not follow DATA_FLOW edges into other plays.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g = ContentGraph()
+        play_a = ContentNode(
+            identity=NodeIdentity(path="site.yml/plays[0]", node_type=NodeType.PLAY),
+            file_path="site.yml",
+            scope=NodeScope.OWNED,
+        )
+        play_b = ContentNode(
+            identity=NodeIdentity(path="site.yml/plays[1]", node_type=NodeType.PLAY),
+            file_path="site.yml",
+            scope=NodeScope.OWNED,
+        )
+        register_task = ContentNode(
+            identity=NodeIdentity(path="site.yml/plays[0]/tasks[0]", node_type=NodeType.TASK),
+            file_path="site.yml",
+            module="ansible.builtin.command",
+            module_options={"cmd": "echo hi"},
+            scope=NodeScope.OWNED,
+        )
+        consumer_task = ContentNode(
+            identity=NodeIdentity(path="site.yml/plays[1]/tasks[0]", node_type=NodeType.TASK),
+            file_path="site.yml",
+            module="ansible.builtin.debug",
+            module_options={"msg": "{{ registered_var }}"},
+            scope=NodeScope.OWNED,
+        )
+        g.add_node(play_a)
+        g.add_node(play_b)
+        g.add_node(register_task)
+        g.add_node(consumer_task)
+        g.add_edge(play_a.node_id, register_task.node_id, EdgeType.CONTAINS)
+        g.add_edge(play_b.node_id, consumer_task.node_id, EdgeType.CONTAINS)
+        g.add_edge(register_task.node_id, consumer_task.node_id, EdgeType.DATA_FLOW)
+
+        result = rule.process(g, play_a.node_id)
+        assert result is not None
+        assert result.verdict is False
+
+
+# ===========================================================================
+# R404 — ShowVariables
+# ===========================================================================
+
+
+class TestR404ShowVariablesGraphRule:
+    """Tests for R404 ShowVariablesGraphRule."""
+
+    @pytest.fixture  # type: ignore[untyped-decorator]
+    def rule(self) -> ShowVariablesGraphRule:
+        """Create a rule instance (enabled for testing).
+
+        Returns:
+            A ShowVariablesGraphRule with enabled=True.
+        """
+        return ShowVariablesGraphRule(enabled=True)
+
+    def test_disabled_by_default(self) -> None:
+        """R404 is disabled by default."""
+        rule = ShowVariablesGraphRule()
+        assert rule.rule_id == "R404"
+        assert rule.enabled is False
+
+    def test_match_task_node(self, rule: ShowVariablesGraphRule) -> None:
+        """Matches TASK nodes.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, nid = _make_task()
+        assert rule.match(g, nid)
+
+    def test_no_match_play_node(self, rule: ShowVariablesGraphRule) -> None:
+        """Does not match PLAY nodes.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, play_id = _make_play_with_tasks()
+        assert not rule.match(g, play_id)
+
+    def test_no_variables_verdict_false(self, rule: ShowVariablesGraphRule) -> None:
+        """Task with no variables in scope returns verdict=False.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, nid = _make_task(module="ansible.builtin.command", module_options={"cmd": "whoami"})
+        result = rule.process(g, nid)
+        assert result is not None
+        assert result.verdict is False
+
+    def test_variables_reported(self, rule: ShowVariablesGraphRule) -> None:
+        """Task with play variables in scope reports them.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, play_id = _make_play_with_tasks(
+            play_vars={"server_port": 443},
+            tasks=[{"module": "ansible.builtin.debug", "module_options": {"msg": "test"}}],
+        )
+        play_node = g.get_node(play_id)
+        assert play_node is not None
+        task_ids = [n.node_id for n in g.nodes(NodeType.TASK)]
+        assert len(task_ids) == 1
+        result = rule.process(g, task_ids[0])
+        assert result is not None
+        assert result.verdict is True
+        assert result.detail is not None
+        var_list = cast(list[dict[str, object]], result.detail["variable_set"])
+        names = [v["name"] for v in var_list]
+        assert "server_port" in names
+
+    def test_value_field_present(self, rule: ShowVariablesGraphRule) -> None:
+        """Variable entries include a redacted ``value`` field.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, _ = _make_play_with_tasks(
+            play_vars={"app_name": "myapp"},
+            tasks=[{"module": "ansible.builtin.debug", "module_options": {"msg": "test"}}],
+        )
+        task_ids = [n.node_id for n in g.nodes(NodeType.TASK)]
+        result = rule.process(g, task_ids[0])
+        assert result is not None
+        assert result.detail is not None
+        var_list = cast(list[dict[str, object]], result.detail["variable_set"])
+        var_map: dict[object, dict[str, object]] = {v["name"]: v for v in var_list}
+        assert "app_name" in var_map
+        assert var_map["app_name"]["value"] == REDACTED
+        assert var_map["app_name"]["source"] == "play"
+
+    def test_dict_value_serialized(self, rule: ShowVariablesGraphRule) -> None:
+        """Dict variable values preserve structure while redacting leaf scalars.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, _ = _make_play_with_tasks(
+            play_vars={"config": {"key": "val", "num": 42}},
+            tasks=[{"module": "ansible.builtin.debug", "module_options": {"msg": "test"}}],
+        )
+        task_ids = [n.node_id for n in g.nodes(NodeType.TASK)]
+        result = rule.process(g, task_ids[0])
+        assert result is not None
+        assert result.detail is not None
+        var_list = cast(list[dict[str, object]], result.detail["variable_set"])
+        var_map: dict[object, dict[str, object]] = {v["name"]: v for v in var_list}
+        assert "config" in var_map
+        assert var_map["config"]["value"] == {"key": REDACTED, "num": REDACTED}
+
+    def test_sensitive_var_value_redacted(self, rule: ShowVariablesGraphRule) -> None:
+        """Sensitive variable names have values redacted in output.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, _ = _make_play_with_tasks(
+            play_vars={"db_password": "s3cr3t"},
+            tasks=[{"module": "ansible.builtin.debug", "module_options": {"msg": "test"}}],
+        )
+        task_ids = [n.node_id for n in g.nodes(NodeType.TASK)]
+        result = rule.process(g, task_ids[0])
+        assert result is not None
+        assert result.detail is not None
+        var_list = cast(list[dict[str, object]], result.detail["variable_set"])
+        redacted = [v for v in var_list if v["value"] == REDACTED]
+        assert any(v["name"] == REDACTED for v in redacted)
+
+    def test_ansible_ssh_pass_value_redacted(self, rule: ShowVariablesGraphRule) -> None:
+        """``ansible_ssh_pass`` name is redacted via the ``pass`` sensitive segment.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, _ = _make_play_with_tasks(
+            play_vars={"ansible_ssh_pass": "s3cr3t"},
+            tasks=[{"module": "ansible.builtin.debug", "module_options": {"msg": "test"}}],
+        )
+        task_ids = [n.node_id for n in g.nodes(NodeType.TASK)]
+        result = rule.process(g, task_ids[0])
+        assert result is not None
+        assert result.detail is not None
+        var_list = cast(list[dict[str, object]], result.detail["variable_set"])
+        assert any(v["name"] == REDACTED for v in var_list)
+
+    def test_misnamed_scalar_secret_redacted(self, rule: ShowVariablesGraphRule) -> None:
+        """Cleartext credentials in generically named vars are detected and redacted.
+
+        Args:
+            rule: Rule instance under test (unused; kept for fixture symmetry).
+        """
+        secret = "mysql://user:secret@db.example.com/prod"  # noqa: S105
+        assert value_looks_sensitive(secret)
+        sanitized = sanitize_audit_metadata_value(
+            "variable_set",
+            [{"name": "connection_string", "value": secret, "source": "play"}],
+        )
+        assert isinstance(sanitized, list)
+        entry = sanitized[0]
+        assert isinstance(entry, dict)
+        assert entry["value"] == REDACTED
+
+    def test_opaque_token_under_benign_name_redacted(self, rule: ShowVariablesGraphRule) -> None:
+        """Known opaque token prefixes redact generically named variables.
+
+        Args:
+            rule: Rule instance under test (unused; kept for fixture symmetry).
+        """
+        token = "sk-live-abc123xyz"  # noqa: S105
+        assert value_looks_sensitive(token)
+        sanitized = sanitize_audit_metadata_value(
+            "variable_set",
+            [{"name": "session_token", "value": token, "source": "play"}],
+        )
+        assert isinstance(sanitized, list)
+        entry = sanitized[0]
+        assert isinstance(entry, dict)
+        assert entry["value"] == REDACTED
+
+    def test_vault_ciphertext_redacted(self, rule: ShowVariablesGraphRule) -> None:
+        """Ansible Vault ciphertext scalars are redacted in variable_set.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        vault_blob = "$ANSIBLE_VAULT;1.1;AES256;deadbeef\n53616c74"
+        g, _ = _make_play_with_tasks(
+            play_vars={"app_config": vault_blob},
+            tasks=[{"module": "ansible.builtin.debug", "module_options": {"msg": "test"}}],
+        )
+        task_ids = [n.node_id for n in g.nodes(NodeType.TASK)]
+        result = rule.process(g, task_ids[0])
+        assert result is not None
+        assert result.detail is not None
+        var_list = cast(list[dict[str, object]], result.detail["variable_set"])
+        var_map = {v["name"]: v for v in var_list}
+        assert var_map["app_config"]["value"] == REDACTED
+
+    def test_nested_sensitive_dict_keys_redacted(self, rule: ShowVariablesGraphRule) -> None:
+        """Nested dict keys matching sensitive patterns are redacted.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, _ = _make_play_with_tasks(
+            play_vars={"db_config": {"host": "prod-db", "password": "s3cr3t"}},
+            tasks=[{"module": "ansible.builtin.debug", "module_options": {"msg": "test"}}],
+        )
+        task_ids = [n.node_id for n in g.nodes(NodeType.TASK)]
+        result = rule.process(g, task_ids[0])
+        assert result is not None
+        assert result.detail is not None
+        var_list = cast(list[dict[str, object]], result.detail["variable_set"])
+        var_map = {v["name"]: v for v in var_list}
+        parsed = var_map["db_config"]["value"]
+        assert isinstance(parsed, dict)
+        assert parsed["host"] == REDACTED
+        assert parsed["password"] == REDACTED
+
+    def test_nested_scalar_secret_under_benign_key_redacted(self, rule: ShowVariablesGraphRule) -> None:
+        """Credential-like scalars nested under benign dict keys are redacted.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, _ = _make_play_with_tasks(
+            play_vars={
+                "db_config": {"endpoint": "mysql://user:secret@db.example.com/prod"},
+            },
+            tasks=[{"module": "ansible.builtin.debug", "module_options": {"msg": "test"}}],
+        )
+        task_ids = [n.node_id for n in g.nodes(NodeType.TASK)]
+        result = rule.process(g, task_ids[0])
+        assert result is not None
+        assert result.detail is not None
+        var_list = cast(list[dict[str, object]], result.detail["variable_set"])
+        var_map = {v["name"]: v for v in var_list}
+        parsed = var_map["db_config"]["value"]
+        assert isinstance(parsed, dict)
+        assert parsed["endpoint"] == REDACTED
+
+    def test_serialize_value_redacts_none_under_no_log(self) -> None:
+        """Redaction applies even when the underlying value is None."""
+        assert _serialize_value(None, redact=True) == REDACTED
+
+    def test_serialize_value_list_json(self) -> None:
+        """List values preserve structure while redacting scalar elements."""
+        assert _serialize_value([1, 2], redact=False) == [REDACTED, REDACTED]
+
+    def test_serialize_value_redacts_dict_without_json_leak(self) -> None:
+        """Redact=True returns placeholder without serializing nested content."""
+        assert _serialize_value({"password": "secret"}, redact=True) == REDACTED  # noqa: S105
+
+    def test_no_log_scope_redacts_values(self, rule: ShowVariablesGraphRule) -> None:
+        """Variables under an effective no_log scope have values redacted.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, _ = _make_play_with_tasks(
+            play_vars={"app_name": "myapp"},
+            play_no_log=True,
+            tasks=[{"module": "ansible.builtin.debug", "module_options": {"msg": "test"}}],
+        )
+        task_ids = [n.node_id for n in g.nodes(NodeType.TASK)]
+        result = rule.process(g, task_ids[0])
+        assert result is not None
+        assert result.detail is not None
+        var_list = cast(list[dict[str, object]], result.detail["variable_set"])
+        var_map = {v["name"]: v for v in var_list}
+        assert var_map["app_name"]["value"] == REDACTED
+
+    def test_should_redact_when_defining_task_has_no_log(self) -> None:
+        """Variables defined under a prior task's no_log are redacted on later tasks."""
+        from apme_engine.graph.variable_provenance import ProvenanceSource, VariableProvenance
+
+        g, _ = _make_play_with_tasks(
+            tasks=[
+                {
+                    "module": "ansible.builtin.set_fact",
+                    "module_options": {"cached_value": "opaque-data"},
+                    "no_log": True,
+                },
+                {"module": "ansible.builtin.debug", "module_options": {"msg": "done"}},
+            ],
+        )
+        task_ids = [n.node_id for n in g.nodes(NodeType.TASK)]
+        prov = VariableProvenance(
+            name="cached_value",
+            value="opaque-data",
+            source=ProvenanceSource.LOCAL,
+            defining_node_id=task_ids[0],
+        )
+        assert _should_redact_value(g, task_ids[1], prov) is True
+
+    def test_no_log_false_overrides_play_true_still_redacts_values(self, rule: ShowVariablesGraphRule) -> None:
+        """Task no_log: false still emits redacted values for audit safety.
+
+        Play-defined variables remain redacted when the play sets no_log: true,
+        and the rule now redacts scalar values even outside ``no_log``.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, _ = _make_play_with_tasks(
+            play_vars={"app_name": "myapp"},
+            play_no_log=True,
+            tasks=[
+                {
+                    "module": "ansible.builtin.debug",
+                    "module_options": {"msg": "test"},
+                    "no_log": False,
+                },
+            ],
+        )
+        task_ids = [n.node_id for n in g.nodes(NodeType.TASK)]
+        result = rule.process(g, task_ids[0])
+        assert result is not None
+        assert result.detail is not None
+        var_list = cast(list[dict[str, object]], result.detail["variable_set"])
+        var_map = {v["name"]: v for v in var_list}
+        assert var_map["app_name"]["value"] == REDACTED
+
+    def test_truncates_large_variable_sets(self, rule: ShowVariablesGraphRule) -> None:
+        """R404 caps reported variable_set entries at 500 entries.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        play_vars = {f"var_{i}": i for i in range(501)}
+        g, _ = _make_play_with_tasks(
+            play_vars=cast(YAMLDict, play_vars),
+            tasks=[{"module": "ansible.builtin.debug", "module_options": {"msg": "test"}}],
+        )
+        task_ids = [n.node_id for n in g.nodes(NodeType.TASK)]
+        result = rule.process(g, task_ids[0])
+        assert result is not None
+        assert result.detail is not None
+        var_list = cast(list[dict[str, object]], result.detail["variable_set"])
+        assert len(var_list) == 500
+        assert "(truncated)" in cast(str, result.detail["message"])
+
+    def test_redact_sensitive_keys_depth_limit(self) -> None:
+        """Deeply nested structures redact subtrees once depth exceeds the cap."""
+        nested: dict[str, object] = {"child": {"inner": "value"}}
+        redacted = _redact_sensitive_keys(nested, _max_depth=1)
+        assert redacted == {"child": {"inner": REDACTED}}
+
+    def test_missing_node_returns_none(self, rule: ShowVariablesGraphRule) -> None:
+        """Process on a missing node returns None.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g = ContentGraph()
+        assert rule.process(g, "nonexistent") is None
+
+    def test_via_scanner(self) -> None:
+        """R404 fires through the graph scanner when enabled."""
+        g, _ = _make_play_with_tasks(
+            play_vars={"flag": True},
+            tasks=[{"module": "ansible.builtin.debug", "module_options": {"msg": "test"}}],
+        )
+        report = scan(g, [ShowVariablesGraphRule(enabled=True)])
+        findings = [rr for nr in report.node_results for rr in nr.rule_results if rr.verdict]
+        assert len(findings) == 1

@@ -89,7 +89,7 @@ class ProgressEntry:
 
 @dataclass
 class Proposal:
-    """AI remediation proposal from Primary.
+    """AI remediation proposal from Engine.
 
     Attributes:
         id: Unique proposal identifier.
@@ -180,7 +180,7 @@ class OperationState:
         error_code: Machine-readable failure code when status is ``failed`` (ADR-068).
         operation_budget_seconds: Creation-time operation budget from ``SessionCreated`` (ADR-068).
         clone_commit: HEAD SHA of the cloned repository.
-        grpc_task: The background asyncio.Task driving Primary.
+        grpc_task: The background asyncio.Task driving Engine.
         approval_future: Resolved by ``POST /approve``.
         begin_remediate_future: Resolved by ``POST /begin-remediate`` (ADR-064).
         escalate_ai_future: Resolved by ``POST /escalate-ai`` with target dicts.

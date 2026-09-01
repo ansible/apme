@@ -13,22 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from apme_gateway.db import close_db, init_db
-
-
-@pytest.fixture(autouse=True)  # type: ignore[untyped-decorator]
-async def _db(tmp_path: Path) -> AsyncIterator[None]:
-    """Initialise a fresh DB per test.
-
-    Args:
-        tmp_path: Pytest-provided temporary directory.
-
-    Yields:
-        None: Test runs between setup and teardown.
-    """
-    await init_db(str(tmp_path / "test.db"))
-    yield
-    await close_db()
+pytestmark = pytest.mark.usefixtures("gateway_db")
 
 
 # ── Mock helpers ────────────────────────────────────────────────────
@@ -65,7 +50,7 @@ def _make_created_event(session_id: str = "sess-1", ttl_seconds: int = 1800) -> 
     return _make_session_event("created", session_id=session_id, ttl_seconds=ttl_seconds)
 
 
-def _make_progress_event(phase: str = "primary", message: str = "test", level: int = 2) -> MagicMock:
+def _make_progress_event(phase: str = "engine", message: str = "test", level: int = 2) -> MagicMock:
     """Build a mock ``progress`` SessionEvent.
 
     Args:
@@ -200,7 +185,7 @@ class MockWebSocket:
 async def test_session_streams_progress_and_result() -> None:
     """WS session receives progress and result events from FixSession."""
     created = _make_created_event("sess-ws", 1800)
-    progress = _make_progress_event("primary", "Scan: start", 2)
+    progress = _make_progress_event("engine", "Scan: start", 2)
     result = _make_result_event()
     closed = _make_closed_event()
     mock_stream = _mock_fix_stream(created, progress, result, closed)
@@ -216,7 +201,7 @@ async def test_session_streams_progress_and_result() -> None:
 
     with (
         patch("apme_gateway.session_client.grpc.aio.insecure_channel") as mock_ch_fn,
-        patch("apme_gateway.session_client.primary_pb2_grpc.PrimaryStub") as mock_stub_cls,
+        patch("apme_gateway.session_client.engine_pb2_grpc.EngineStub") as mock_stub_cls,
     ):
         mock_ch = AsyncMock()
         mock_ch_fn.return_value = mock_ch
@@ -262,7 +247,7 @@ async def test_session_grpc_error_yields_error_event() -> None:
 
     with (
         patch("apme_gateway.session_client.grpc.aio.insecure_channel") as mock_ch_fn,
-        patch("apme_gateway.session_client.primary_pb2_grpc.PrimaryStub") as mock_stub_cls,
+        patch("apme_gateway.session_client.engine_pb2_grpc.EngineStub") as mock_stub_cls,
     ):
         mock_ch = AsyncMock()
         mock_ch_fn.return_value = mock_ch
@@ -334,7 +319,7 @@ async def test_session_temp_dir_cleaned_up() -> None:
 
     with (
         patch("apme_gateway.session_client.grpc.aio.insecure_channel") as mock_ch_fn,
-        patch("apme_gateway.session_client.primary_pb2_grpc.PrimaryStub") as mock_stub_cls,
+        patch("apme_gateway.session_client.engine_pb2_grpc.EngineStub") as mock_stub_cls,
         patch("apme_gateway.session_client.tempfile.mkdtemp", side_effect=tracking_mkdtemp),
     ):
         mock_ch = AsyncMock()
@@ -387,7 +372,7 @@ async def test_session_proposals_forwarded() -> None:
 
     with (
         patch("apme_gateway.session_client.grpc.aio.insecure_channel") as mock_ch_fn,
-        patch("apme_gateway.session_client.primary_pb2_grpc.PrimaryStub") as mock_stub_cls,
+        patch("apme_gateway.session_client.engine_pb2_grpc.EngineStub") as mock_stub_cls,
     ):
         mock_ch = AsyncMock()
         mock_ch_fn.return_value = mock_ch

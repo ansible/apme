@@ -22,6 +22,11 @@ APME's remediation engine needs LLM integration for Tier 2 (AI-proposable) viola
 
 ## Decision
 
+> **Superseded (2026-04):** The graph-native `propose_node_fix()` contract in
+> [Implementation Update](#implementation-update-2026-04) below is normative.
+> The `propose_fix()` / `AIProposal` sketch in this section documents the
+> original decision only.
+
 **Define `AIProvider` as a Python `typing.Protocol` with a single async method `propose_fix()`. The engine depends only on this protocol. Concrete implementations live in separate modules.**
 
 ```python
@@ -101,7 +106,7 @@ The `AIProvider` protocol has been updated to graph-native:
 - **`AIProposal`** and **`AIPatch`** are replaced by **`AINodeFix`** (single-node fix) and **`AINodeProposal`** (result with before/after YAML)
 - **`AINodeContext`** (in `ai_context.py`) bundles the node's YAML, violations, parent context, sibling snippets, and best-practice guidance from the `ContentGraph`
 - Engine wiring: `GraphRemediationEngine.__init__(ai_provider: AIProvider | None = None)`
-- Primary resolves the provider via `_resolve_ai_provider()` with graceful degradation (returns `None` when prerequisites are missing: no daemon address, no model, or no `abbenay_grpc` install); if the daemon is unreachable at runtime, `propose_node_fix()` raises and the graph engine catches/skips
+- `EngineServicer._resolve_ai_provider()` resolves the provider with graceful degradation (returns `None` when prerequisites are missing: no daemon address, no model, or no `abbenay_grpc` install) and passes the result to `GraphRemediationEngine` as the `ai_provider` constructor argument; if the daemon is unreachable at runtime, `propose_node_fix()` raises and the graph engine catches/skips
 
 ## Implementation Notes
 

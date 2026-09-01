@@ -11,8 +11,8 @@ from collections.abc import Iterator
 
 import grpc
 
-from apme.v1 import primary_pb2_grpc
-from apme.v1.primary_pb2 import (
+from apme.v1 import engine_pb2_grpc
+from apme.v1.engine_pb2 import (
     AiEscalateRequest,
     ApprovalRequest,
     CloseRequest,
@@ -20,7 +20,6 @@ from apme.v1.primary_pb2 import (
     FixReport,
     SessionCommand,
 )
-from apme_engine.cli._convert import violation_proto_to_dict
 from apme_engine.cli._exit_codes import EXIT_ERROR, EXIT_VIOLATIONS
 from apme_engine.cli._galaxy_config import discover_galaxy_servers
 from apme_engine.cli._models import ViolationDict
@@ -28,7 +27,7 @@ from apme_engine.cli._project_root import derive_session_id, discover_project_ro
 from apme_engine.cli._rules_yml import load_rule_configs_from_project
 from apme_engine.cli._suppressions import apply_suppressions, load_suppressions
 from apme_engine.cli.ansi import dim, red, yellow
-from apme_engine.cli.discovery import resolve_primary
+from apme_engine.cli.discovery import resolve_engine
 from apme_engine.cli.output import (
     deduplicate_violations,
     render_check_results,
@@ -36,6 +35,7 @@ from apme_engine.cli.output import (
 )
 from apme_engine.cli.sarif import violations_to_sarif
 from apme_engine.daemon.chunked_fs import yield_scan_chunks
+from apme_engine.daemon.violation_convert import violation_proto_to_dict
 from apme_engine.remediation.partition import count_by_remediation_class, count_by_resolution
 
 _SAFE_SESSION_RE = __import__("re").compile(r"^[A-Za-z0-9_\-]+$")
@@ -95,7 +95,7 @@ def _apply_dep_scan_flags(args: argparse.Namespace) -> tuple[bool, bool]:
     Returns the resolved skip booleans *and* strips the corresponding
     env vars so a freshly-forked daemon does not start unwanted validators.
     The booleans are also forwarded on ``ScanOptions`` so that an
-    already-running Primary respects the flags at request scope.
+    already-running Engine respects the flags at request scope.
 
     Args:
         args: Parsed CLI arguments with dep-scan flags.
@@ -176,8 +176,8 @@ def run_check(args: argparse.Namespace) -> None:
                 return
             yield cmd
 
-    channel, _ = resolve_primary(args)
-    stub = primary_pb2_grpc.PrimaryStub(channel)  # type: ignore[no-untyped-call]
+    channel, _ = resolve_engine(args)
+    stub = engine_pb2_grpc.EngineStub(channel)  # type: ignore[no-untyped-call]
 
     tier1_report: FixReport | None = None
     violations: list[ViolationDict] = []

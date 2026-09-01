@@ -24,7 +24,7 @@ def test_volume_permission_script_is_executable_bash() -> None:
     content = CHECK_SH.read_text(encoding="utf-8")
     assert content.startswith("#!/usr/bin/env bash")
     assert "set -euo pipefail" in content
-    assert "apme-primary:latest" in content
+    assert "apme-engine:latest" in content
     assert "/sessions" in content
     assert "apme-gateway:latest" in content
     assert "/data" in content
@@ -39,7 +39,7 @@ def test_volume_permission_script_is_executable_bash() -> None:
 )
 def test_volume_permission_script_runs_when_images_exist() -> None:
     """Run the volume check when service images are already built."""
-    required = ("apme-primary:latest", "apme-gateway:latest", "apme-galaxy-proxy:latest")
+    required = ("apme-engine:latest", "apme-gateway:latest", "apme-galaxy-proxy:latest")
     missing = [
         image for image in required if subprocess.run(["podman", "image", "exists", image], check=False).returncode != 0
     ]

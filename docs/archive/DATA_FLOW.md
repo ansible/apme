@@ -27,14 +27,14 @@ User runs:  apme check /path/to/project
 │       collection_specs, galaxy_servers — ADR-045,               │
 │       rule_configs — ADR-041)                                   │
 │                                                                 │
-│  gRPC: Primary.FixSession(stream SessionCommand) — ADR-039      │
+│  gRPC: Engine.FixSession(stream SessionCommand) — ADR-039      │
 │        Each SessionCommand carries upload=ScanChunk until       │
 │        last chunk; check mode (no FixOptions / remediate).      │
 │        ScanStream RPC removed; FixSession is the CLI stream.     │
 └───────────────────────────────────────────────────────┘       │
                                                                 ▼
 ┌──────────────────────────────────────────────────────────────────┐
-│  Primary (daemon/primary_server.py)                              │
+│  Engine (daemon/engine_server.py)                              │
 │                                                                  │
 │  4. _write_chunked_fs(): write request.files to temp dir         │
 │                                                                  │
@@ -210,25 +210,25 @@ Serializes the tree into a flat JSON structure consumable by OPA and other paylo
 
 ## Serialization boundaries
 
-### CLI → Primary (gRPC)
+### CLI → Engine (gRPC)
 
-Files are sent as protobuf `File` messages (path + content bytes) inside streamed **`ScanChunk`** payloads on **`FixSession`** (check and remediate). This is the "chunked filesystem" pattern — the CLI reads all text files from the project and sends them over the wire so the Primary doesn't need filesystem access. **`ScanStream`** was removed (ADR-039); **`FixSession`** is the single streaming RPC for those flows.
+Files are sent as protobuf `File` messages (path + content bytes) inside streamed **`ScanChunk`** payloads on **`FixSession`** (check and remediate). This is the "chunked filesystem" pattern — the CLI reads all text files from the project and sends them over the wire so the Engine doesn't need filesystem access. **`ScanStream`** was removed (ADR-039); **`FixSession`** is the single streaming RPC for those flows.
 
-### Primary → Validators (gRPC)
+### Engine → Validators (gRPC)
 
 Two serialization formats in one `ValidateRequest`:
 
 1. **`hierarchy_payload`** — `json.dumps()` → bytes. The complete hierarchy as JSON. Used by OPA (Rego operates on JSON) and Ansible (for reference).
 
-2. **`scandata`** — `jsonpickle.encode()` → bytes. The full `SingleScan` object including trees, contexts, specs, and annotations. Used by Native (needs the in-memory Python object model). jsonpickle preserves Python types for round-trip `decode()`.
+2. **`content_graph_data`** — JSON (`ContentGraph.to_dict(slim=True)`) → bytes. The Engine serializes `scandata.content_graph` for Native graph rules and other validators that need node identity. The legacy `scandata` field remains in the proto for backward compatibility but is no longer populated by Engine.
 
-### Validators → Primary (gRPC)
+### Validators → Engine (gRPC)
 
 Each validator returns `ValidateResponse` containing:
 - Protobuf `Violation` messages
 - `ValidatorDiagnostics` with per-rule timing, violation counts, and validator-specific metadata
 
-Primary converts violations to dicts, merges, deduplicates, and converts back to proto. It also aggregates all `ValidatorDiagnostics` with engine phase timing into a `ScanDiagnostics` message on the `ScanResponse`.
+Engine converts violations to dicts, merges, deduplicates, and converts back to proto. It also aggregates all `ValidatorDiagnostics` with engine phase timing into a `ScanDiagnostics` message carried on `FixCompletedEvent` (and the `SessionEvent` stream) from `FixSession` — the unary `Scan` / `ScanResponse` RPCs were removed (ADR-039).
 
 ### Diagnostics flow
 
@@ -240,9 +240,9 @@ OPA     → ValidatorDiagnostics (opa_query_ms, per-rule violation counts)
 Ansible → ValidatorDiagnostics (per-phase: syntax, introspect, argspec; venv_build_ms)
 Gitleaks→ ValidatorDiagnostics (subprocess_ms, files_written)
                               ↓
-Primary aggregates → ScanDiagnostics
+Engine aggregates → ScanDiagnostics
                               ↓
-ScanResponse.diagnostics → CLI (-v / -vv) or JSON consumer
+FixCompletedEvent / SessionEvent stream → CLI (-v / -vv) or JSON consumer
 ```
 
 ## Violation shape
@@ -267,12 +267,18 @@ The `rule_id` prefix convention:
 - `native:` → native Python rule
 - No prefix → Ansible/Modernize rule (M001–M004, L057–L059)
 
-## Event reporting (Primary → Gateway → UI)
+## Event reporting (Engine → Gateway → UI)
 
-After every **check** or **remediate** run, the Primary pushes a `FixCompletedEvent` to the Gateway's gRPC Reporting service (if `APME_REPORTING_ENDPOINT` is configured). The Gateway persists the event to SQLite and the UI reads it via the REST API.
+After every **check** or **remediate** run, the Engine emits a
+`FixCompletedEvent` through the ADR-020 `GrpcReportingSink` when
+`APME_REPORTING_ENDPOINT` is configured. This health-gated gRPC sink uses
+bounded awaited delivery (one-second timeout when the Reporting endpoint is
+known-down) and is the documented exception to the “Engine never queries out”
+invariant: it does not block the scan path indefinitely. The Gateway persists
+the event to SQLite and the UI reads it via the REST API.
 
-```
-Primary (check/remediate completes)
+```text
+Engine (check/remediate completes)
     │
     │  await emit_fix_completed(FixCompletedEvent)
     │    ↓
@@ -294,16 +300,16 @@ UI (React SPA on :8081)
 
 Event emission uses ``await`` so delivery completes before the operation returns to the client. When the Reporting endpoint is known-down, a fast-fail timeout (1 s) prevents blocking the check/remediate path.
 
-## Rule catalog registration (Primary → Gateway, ADR-041)
+## Rule catalog registration (Engine → Gateway, ADR-041)
 
-At startup, the authority Primary collects rule definitions from all built-in
+At startup, the authority Engine collects rule definitions from all built-in
 validators (native via `load_graph_rules()`, OPA/Ansible via `.md` frontmatter,
 Gitleaks as a `SEC:*` placeholder) and pushes the full catalog to the Gateway
 via `RegisterRules`. The Gateway reconciles the `rules` table — adding new rules,
 removing absent ones, and updating changed metadata.
 
-```
-Primary startup
+```text
+Engine startup
     │
     │  collect_all_rules() → [RuleDefinition, ...]
     │  RegisterRulesRequest(pod_id, is_authority=True, rules)
@@ -323,7 +329,7 @@ Gateway (grpc_reporting/servicer.py)
 When the Gateway initiates a scan (UI or API), it loads rule overrides from the
 `rule_overrides` table, resolves effective configuration (default + override),
 and injects `RuleConfig` protos into `ScanOptions.rule_configs` on the first
-`ScanChunk`. The Primary validates rule IDs against its known set (hard fail on
+`ScanChunk`. The Engine validates rule IDs against its known set (hard fail on
 unknown) and applies the configs after validator fan-out.
 
 For CLI-initiated scans, `rule_configs` are parsed from `.apme/rules.yml` in
@@ -339,7 +345,7 @@ all configured servers and injects them into the gRPC request:
 - `ScanOptions.galaxy_servers` on the first `ScanChunk`
 - `FixOptions.galaxy_servers` on the first chunk (remediate mode)
 
-The Primary writes these into a session-scoped temporary `ansible.cfg` so that
+The Engine writes these into a session-scoped temporary `ansible.cfg` so that
 `ansible-galaxy collection download` can authenticate against private Galaxy /
 Automation Hub instances without any per-project configuration.
 
@@ -354,10 +360,10 @@ documented follow-up requirement.
 
 When running without the Podman pod, the CLI connects to a local daemon via `ensure_daemon()`:
 
-1. If `APME_PRIMARY_ADDRESS` is set, the CLI connects to that address directly
+1. If `APME_ENGINE_ADDRESS` is set, the CLI connects to that address directly
 2. If a daemon is already running (`~/.apme-data/daemon.json`), the CLI reuses it
 3. Otherwise, the CLI auto-starts a background daemon (`apme daemon start`)
 
-The local daemon runs the Primary, Native, OPA, and Ansible validators as localhost gRPC servers, and the Galaxy Proxy as a localhost HTTP (uvicorn) server, all within a single background process. These five services are all required — Galaxy Proxy is the sole collection installation path for session venvs. The CLI always talks to the Primary service over gRPC; it never runs the engine in-process or communicates with Galaxy Proxy directly.
+The local daemon runs the Engine, Native, OPA, and Ansible validators as localhost gRPC servers, and the Galaxy Proxy as a localhost HTTP (uvicorn) server, all within a single background process. These five services are all required — Galaxy Proxy is the sole collection installation path for session venvs. The CLI always talks to the Engine service over gRPC; it never runs the engine in-process or communicates with Galaxy Proxy directly.
 
-Gitleaks is the only optional service (requires the `gitleaks` binary). Pass `include_optional=True` to `start_daemon()` to enable it.
+Gitleaks, Collection Health, and Dep Audit are optional services (they require external binaries or venv-dependent scanning). Pass `include_optional=True` to `start_daemon()` to enable them.

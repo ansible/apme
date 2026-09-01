@@ -35,7 +35,8 @@ _RULE_SCOPE_NAMES: dict[str, str] = {
     "COLLECTION": "collection",
 }
 AI_PROPOSABLE_SCOPES = frozenset({"task", "block"})
-CROSS_FILE_RULES = frozenset({"R111", "R112"})
+# Keep in sync with apme_engine.remediation.partition.CROSS_FILE_RULES.
+CROSS_FILE_RULES = frozenset({"R111", "R112", "L006", "L080"})
 
 GRAPH_RULES_DIR = REPO_ROOT / "src" / "apme_engine" / "graph" / "rules"
 NATIVE_DIR = REPO_ROOT / "src" / "apme_engine" / "validators" / "native" / "rules"
@@ -215,7 +216,7 @@ def tier3_breakdown_reason(meta: RuleMetadata) -> str:
     if meta.severity == "info":
         return "info severity"
     if meta.rule_id in CROSS_FILE_RULES:
-        return "cross-file (R111/R112)"
+        return "cross-file / data-flow context"
     scope_labels = {
         "playbook": "playbook scope",
         "collection": "collection scope",
@@ -238,7 +239,7 @@ def classify_remediation_tier(
     if severity == Severity.INFO:
         return "manual", "Info severity — informational, no auto-fix"
     if rule_id in CROSS_FILE_RULES:
-        return "manual", "Cross-file context required (R111/R112)"
+        return "manual", "Project-level context required (cross-file or data-flow consumers)"
     if scope not in AI_PROPOSABLE_SCOPES:
         return "manual", f"Scope '{scope}' — play/role/collection not AI-proposable"
     return "ai", "Task/block scope — AI can propose fix (Tier 2)"

@@ -2,30 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
-from pathlib import Path
-
 import pytest
 
-from apme_gateway.db import close_db, get_session, init_db
+from apme_gateway.db import get_session
 from apme_gateway.db import queries as q
 from apme_gateway.db.models import Proposal, Scan, ScanLog, Session, Violation
 
-
-@pytest.fixture(autouse=True)  # type: ignore[untyped-decorator]
-async def _db(tmp_path: Path) -> AsyncIterator[None]:
-    """Initialise a fresh DB per test.
-
-    Args:
-        tmp_path: Pytest-provided temporary directory.
-
-    Yields:
-        None: Test runs between setup and teardown.
-    """
-    db_path = str(tmp_path / "test.db")
-    await init_db(db_path)
-    yield
-    await close_db()
+pytestmark = pytest.mark.usefixtures("gateway_db")
 
 
 async def _seed_session(session_id: str = "abc123", project_path: str = "/proj") -> None:

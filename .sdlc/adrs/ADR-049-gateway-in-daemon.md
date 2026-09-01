@@ -11,7 +11,7 @@ Accepted
 ## Context
 
 ADR-024 established the local daemon pattern: `ensure_daemon()` auto-starts
-Primary + validators as localhost gRPC servers, giving standalone users the
+Engine + validators as localhost gRPC servers, giving standalone users the
 same architecture as the pod without requiring containers. The daemon already
 runs five gRPC servers and a uvicorn app (Galaxy Proxy) in a single async
 event loop.
@@ -28,7 +28,7 @@ UX that `apme check` and `apme remediate` provide via auto-daemon-start.
 
 As more CLI subcommands migrate to Gateway REST (health, session list, etc.
 per ADR-024), this gap widens. Without the Gateway in the daemon, there is
-pressure to duplicate Gateway endpoints as gRPC RPCs on Primary, recreating
+pressure to duplicate Gateway endpoints as gRPC RPCs on Engine, recreating
 the dual-code-path problem ADR-024 was designed to eliminate.
 
 ### Forces
@@ -50,19 +50,19 @@ The daemon's `_run_daemon()` function gains two additional services:
 1. **Gateway HTTP** (uvicorn/FastAPI) on port 8080 — serves the REST API
    (`/api/v1/projects/...`, `/api/v1/.../sbom`, etc.)
 2. **Gateway gRPC** (ReportingServicer) on port 50060 — receives
-   `FixCompletedEvent` from the co-located Primary
+   `FixCompletedEvent` from the co-located Engine
 
 The Gateway database defaults to `~/.apme-data/gateway.db` (SQLite, same
 engine as the pod Gateway per ADR-029).
 
-The `DaemonState` dataclass and `daemon.json` state file gain a
-`gateway_http` field so CLI commands can discover the Gateway URL without
-hardcoding a port.
+The `DaemonState` dataclass and `daemon.json` state file record Gateway
+endpoints under the `services` map (for example `services.gateway_http`) so
+CLI commands can discover the Gateway URL without hardcoding a port.
 
-Primary's `GrpcReportingSink` is wired to the co-located Gateway via
-`APME_REPORTING_ADDRESS=127.0.0.1:50060`, set as an env var in
+Engine's `GrpcReportingSink` is wired to the co-located Gateway via
+`APME_REPORTING_ENDPOINT=127.0.0.1:50060`, set as an env var in
 `_run_daemon()` (same pattern as `NATIVE_GRPC_ADDRESS`, `OPA_GRPC_ADDRESS`,
-etc.).
+etc.). `event_emitter.start_sinks()` reads only `APME_REPORTING_ENDPOINT`.
 
 ## Alternatives Considered
 
@@ -79,7 +79,7 @@ the full pod.
 **Cons**:
 - `apme sbom` and future REST-backed commands don't "just work" standalone
 - Breaks UX consistency from ADR-024
-- Pressures duplicate gRPC endpoints on Primary
+- Pressures duplicate gRPC endpoints on Engine
 
 **Why not chosen**: Undermines the CLI→REST migration path and creates
 two-tier CLI experience.
@@ -110,8 +110,8 @@ to the existing Galaxy Proxy pattern.
 - **CLI→REST migration enabled.** Future commands (health, session list) can
   move to Gateway REST without UX regression.
 - **Single code path.** Gateway REST API is the same in daemon and pod. No
-  duplicate gRPC endpoints needed on Primary.
-- **Scan data auto-populates.** `FixCompletedEvent` flows from Primary to
+  duplicate gRPC endpoints needed on Engine.
+- **Scan data auto-populates.** `FixCompletedEvent` flows from Engine to
   co-located Gateway — SBOM data is available immediately after a scan.
 - **Follows established precedent.** Same `asyncio.create_task(server.serve())`
   pattern as Galaxy Proxy.
@@ -140,7 +140,7 @@ to the existing Galaxy Proxy pattern.
 Add to `_DEFAULT_PORTS`:
 ```python
 _DEFAULT_PORTS = {
-    "primary": 50051,
+    "engine": 50051,
     "native": 50055,
     "opa": 50054,
     "ansible": 50053,
@@ -150,9 +150,11 @@ _DEFAULT_PORTS = {
 }
 ```
 
-Add to `_run_daemon()` (after Galaxy Proxy, before Primary):
+Add to `_run_daemon()` (after Galaxy Proxy, before Engine):
 ```python
 if "gateway_grpc" in services:
+    import grpc
+    from apme.v1 import reporting_pb2_grpc
     from apme_gateway.db import init_db
     from apme_gateway.app import create_app as create_gateway_app
     from apme_gateway.grpc_reporting.servicer import ReportingServicer
@@ -170,20 +172,31 @@ if "gateway_grpc" in services:
     gw_server = uvicorn.Server(gw_config)
     asyncio.create_task(gw_server.serve())
 
-    # Gateway gRPC (ReportingServicer)
-    # Can be co-hosted on Primary's server or on separate port
-    os.environ["APME_REPORTING_ADDRESS"] = services["gateway_grpc"]
+    # Gateway gRPC (ReportingServicer) — required for FixCompletedEvent delivery
+    reporting_server = grpc.aio.server()
+    reporting_pb2_grpc.add_ReportingServicer_to_server(
+        ReportingServicer(), reporting_server
+    )
+    # Loopback-only: plaintext Reporting must not listen on all interfaces.
+    reporting_server.add_insecure_port(
+        f"127.0.0.1:{services['gateway_grpc'].rsplit(':', 1)[-1]}"
+    )
+    await reporting_server.start()
+
+    # Must be APME_REPORTING_ENDPOINT — start_sinks() ignores ADDRESS
+    os.environ["APME_REPORTING_ENDPOINT"] = services["gateway_grpc"]
 
     sys.stderr.write(f"  Gateway HTTP on http://{services['gateway_http']}\n")
     sys.stderr.write(f"  Gateway gRPC on {services['gateway_grpc']}\n")
 ```
 
+On daemon shutdown, stop the Reporting gRPC server (`await reporting_server.stop(grace=…)`) alongside the uvicorn Gateway HTTP task.
 Add `gateway_http` to `DaemonState`:
 ```python
 @dataclass
 class DaemonState:
     pid: int
-    primary: str
+    engine: str
     version: str
     started_at: str
     services: dict[str, str] = field(default_factory=dict)

@@ -2,30 +2,17 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator
-from pathlib import Path
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 from apme_gateway.app import create_app
-from apme_gateway.db import close_db, get_session, init_db
+from apme_gateway.db import get_session
 from apme_gateway.db.models import Proposal, Scan, ScanLog, Session, Violation
 
-
-@pytest.fixture(autouse=True)  # type: ignore[untyped-decorator]
-async def _db(tmp_path: Path) -> AsyncIterator[None]:
-    """Initialise a fresh DB per test.
-
-    Args:
-        tmp_path: Pytest-provided temporary directory.
-
-    Yields:
-        None: Test runs between setup and teardown.
-    """
-    await init_db(str(tmp_path / "test.db"))
-    yield
-    await close_db()
+pytestmark = pytest.mark.usefixtures("gateway_db")
 
 
 @pytest.fixture  # type: ignore[untyped-decorator]
@@ -178,6 +165,10 @@ async def test_list_scans(client: AsyncClient) -> None:
     assert resp.status_code == 200
     body = resp.json()
     assert body["total"] == 1
+    item = body["items"][0]
+    assert item["pr_url"] is None
+    assert item["branch_name"] is None
+    assert item["commit_sha"] is None
 
 
 async def test_list_scans_filter_session(client: AsyncClient) -> None:
@@ -209,6 +200,73 @@ async def test_get_scan_detail_with_children(client: AsyncClient) -> None:
     assert len(body["proposals"]) == 1
     assert body["proposals"][0]["status"] == "approved"
     assert len(body["logs"]) == 1
+
+
+async def test_get_scan_detail_resanitizes_audit_metadata(client: AsyncClient) -> None:
+    """Activity detail re-sanitizes persisted audit metadata on read.
+
+    Args:
+        client: Async HTTP test client.
+    """
+    await _seed(add_violation=False)
+    async with get_session() as db:
+        db.add(
+            Violation(
+                scan_id="scan-1",
+                rule_id="R404",
+                level="info",
+                message="audit",
+                file="a.yml",
+                line=5,
+                audit_metadata=json.dumps(
+                    {"variable_set": [{"name": "db_password", "value": "s3cret", "source": "play"}]}
+                ),
+            )
+        )
+        await db.commit()
+
+    resp = await client.get("/api/v1/activity/scan-1")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body["violations"]) == 1
+    audit = body["violations"][0]["audit_metadata"]
+    assert audit is not None
+    assert audit["variable_set"][0]["name"] == "[REDACTED]"
+    assert audit["variable_set"][0]["value"] == "[REDACTED]"
+
+
+async def test_get_scan_detail_logs_malformed_audit_metadata(
+    client: AsyncClient,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Malformed persisted audit_metadata is dropped with a warning.
+
+    Args:
+        client: Async HTTP test client.
+        caplog: Pytest log capture fixture.
+    """
+    await _seed(add_violation=False)
+    async with get_session() as db:
+        db.add(
+            Violation(
+                scan_id="scan-1",
+                rule_id="R404",
+                level="info",
+                message="audit",
+                file="a.yml",
+                line=5,
+                audit_metadata="not-json",
+            )
+        )
+        await db.commit()
+
+    with caplog.at_level("WARNING"):
+        resp = await client.get("/api/v1/activity/scan-1")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["violations"][0]["audit_metadata"] is None
+    assert any("Failed to parse audit_metadata JSON" in rec.message for rec in caplog.records)
 
 
 async def test_get_scan_not_found(client: AsyncClient) -> None:

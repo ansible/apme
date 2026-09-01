@@ -16,7 +16,7 @@ Several pieces of infrastructure are already in place but underutilized:
 
 - **Rich Gateway REST API** — endpoints like `/violations/top`, `/stats/remediation-rates`, `/stats/ai-acceptance`, and per-project `/trend` are implemented in the Gateway but have no corresponding UI. The API surface covers fleet-level aggregates, per-project trends, violation frequency, dependency analysis, and AI proposal metrics.
 - **PatternFly React Charts** — `@patternfly/react-charts` (Victory/D3) is a declared frontend dependency but is unused in any APME page. The vendored Ansible UI Framework includes chart components, but the APME dashboard renders only metric cards and tables.
-- **Abbenay AI service** — the existing AI service ([ADR-025](ADR-025-ai-provider-protocol.md)) is available in the pod on `:50057`, accessible through Primary. It is currently scoped to Tier 2 remediation, but its chat interface (`AbbenayClient.chat()`) is a general-purpose LLM completion API.
+- **Abbenay AI service** — the existing AI service ([ADR-025](ADR-025-ai-provider-protocol.md)) is available in the pod on `:50057`, accessible through Engine via `AbbenayProvider`. It is currently scoped to Tier 2 remediation, but the provider's Abbenay chat path is a general-purpose LLM completion API.
 - **Rule catalog** — [ADR-041](ADR-041-rule-catalog-override-architecture.md) (proposed) will give the Gateway a `rules` table with rule descriptions, categories, severities, and sources — the metadata needed to explain violations in human terms.
 
 The question is how to connect these: let a user type a natural language question and get a meaningful, visual report assembled from data the system already has.
@@ -45,6 +45,12 @@ This suggests a separation: the LLM decides *what to show* (a plan), and the exi
 ## Decision
 
 **We will implement AI-assisted report generation using a report-spec architecture where the LLM generates a structured JSON plan and pre-built frontend components execute it against live API data.**
+
+**Client path note (ADR-039):** `FixSession` is the sole client path for check and
+remediate. The proposed `Inference` RPC below is a **utility exception** in the
+same category as `Format`/`FormatStream`, `Health`, and `ListAIModels` — not a
+scan/remediate substitute. Gateway report generation calls `Engine.Inference()`
+for LLM completion only.
 
 ### 1. The LLM is a planner, not a renderer
 
@@ -82,9 +88,9 @@ The LLM receives a user's natural language query and returns a **report spec** �
 
 Each section references a Gateway API endpoint and specifies which fields to use. The frontend has pre-built components for each visualization type that call the specified endpoint and render the data.
 
-### 2. Primary as generic inference proxy
+### 2. Engine as generic inference proxy
 
-A new `Inference` RPC on Primary provides a domain-agnostic LLM completion interface:
+A new `Inference` RPC on Engine provides a domain-agnostic LLM completion interface:
 
 ```protobuf
 rpc Inference(InferenceRequest) returns (InferenceResponse);
@@ -108,11 +114,11 @@ message InferenceResponse {
 }
 ```
 
-The Gateway constructs the full prompt (API catalog, visualization types, report schema, user query), calls `Primary.Inference()`, and parses the JSON response. Primary proxies to Abbenay via `AbbenayClient.chat()` and returns the raw text. Primary does not know about report schemas, visualization types, or Gateway endpoints — it is a transparent LLM bridge.
+The Gateway constructs the full prompt (API catalog, visualization types, report schema, user query), calls `Engine.Inference()`, and parses the JSON response. Engine routes the completion through the existing `AIProvider` / `AbbenayProvider` boundary ([ADR-025](ADR-025-ai-provider-protocol.md)) and returns the raw text. Engine does not know about report schemas, visualization types, or Gateway endpoints — it is a transparent LLM bridge.
 
 This preserves:
-- **Single Abbenay entry point** — Primary is the only service with `abbenay_grpc`. No new AI client dependencies in the Gateway.
-- **Clean dependency direction** — Gateway depends on Primary, not the reverse. Primary does not query the Gateway.
+- **Single Abbenay entry point** — `abbenay_provider.py` remains the sole `abbenay_grpc` coupling point. No new AI client dependencies in the Gateway.
+- **Clean dependency direction** — Gateway depends on Engine, not the reverse. Engine does not query the Gateway.
 - **Reusability** — the `Inference` RPC is generic and available for future LLM features beyond report generation.
 
 ### 3. Dynamic data fetching, not baked-in data
@@ -204,7 +210,7 @@ The component set is extensible — adding a new visualization means adding a Re
 
 ### Alternative 2: Gateway calls Abbenay directly
 
-**Description**: The Gateway imports `abbenay_grpc` and calls the Abbenay daemon directly for LLM inference, bypassing Primary.
+**Description**: The Gateway imports `abbenay_grpc` and calls the Abbenay daemon directly for LLM inference, bypassing Engine.
 
 **Pros**:
 - Shortest code path — no proxy hop
@@ -212,7 +218,7 @@ The component set is extensible — adding a new visualization means adding a Re
 
 **Cons**:
 - Creates a second Abbenay client in the system. Two services managing connection state, auth tokens, and address discovery.
-- Breaks the single-entry-point pattern. `ListAIModels` already goes through Primary.
+- Breaks the single-entry-point pattern. `ListAIModels` already goes through Engine.
 - Adds `abbenay_grpc` (and its transitive dependencies) to the Gateway.
 - If Abbenay addressing or auth changes, two services need updating.
 
@@ -250,11 +256,11 @@ The component set is extensible — adding a new visualization means adding a Re
 - **Testable** — each visualization component is a standard React component with unit tests. The report spec JSON schema can be validated before rendering.
 - **Extensible** — adding a new visualization type requires one React component and one line in the system prompt. No LLM retraining, no framework changes, no proto regeneration.
 - **No new dependencies** — uses Abbenay (existing), PatternFly Charts (existing dependency), Gateway API (existing). The only new code is the `Inference` RPC, the Gateway endpoint, the system prompt, and the frontend `ReportViewer` component.
-- **Reusable inference RPC** — the generic `Primary.Inference()` is available for future LLM features (e.g., natural language search, violation explanation, content authoring guidance) without adding new RPCs per feature.
+- **Reusable inference RPC** — the generic `Engine.Inference()` is available for future LLM features (e.g., natural language search, violation explanation, content authoring guidance) without adding new RPCs per feature.
 
 ### Negative
 
-- **New proto RPC** — the `Inference` RPC on Primary requires proto definition, regeneration, and coordinated deployment.
+- **New proto RPC** — the `Inference` RPC on Engine requires proto definition, regeneration, and coordinated deployment.
 - **Prompt maintenance** — the curated API catalog in the system prompt must be updated when data endpoints change. Mitigated by startup validation against the OpenAPI spec.
 - **Limited to pre-built visualizations** — the LLM cannot invent new chart types. It selects from the fixed component library. Mitigated: the library covers the standard set (bar, line, pie, donut, table, heatmap), and new types can be added without LLM changes.
 - **Abbenay required** — report generation depends on the Abbenay daemon being available. The feature gracefully degrades (no reports, existing dashboard unaffected) but cannot function without an LLM backend.
@@ -263,23 +269,23 @@ The component set is extensible — adding a new visualization means adding a Re
 ### Neutral
 
 - Existing dashboard and project views are unaffected. Report generation is a new page, not a modification of existing pages.
-- The `Inference` RPC does not change the AI provider protocol ([ADR-025](ADR-025-ai-provider-protocol.md)). `AbbenayProvider` is unchanged — Primary calls `AbbenayClient.chat()` from the new RPC handler just as the remediation path does.
+- The `Inference` RPC does not change the AI provider protocol ([ADR-025](ADR-025-ai-provider-protocol.md)). `AbbenayProvider` remains the sole `abbenay_grpc` integration — the new RPC handler reuses that provider boundary rather than importing `AbbenayClient` in the Engine servicer.
 - The report spec schema is a Gateway-side concern. It is not defined in proto — it is a JSON contract between the Gateway and the frontend.
 
 ## Implementation Notes
 
 ### Phase 1: Inference RPC
 
-1. Define `InferenceRequest`, `InferenceResponse`, and `InferencePolicy` messages in `primary.proto`
-2. Add `Inference` RPC to the `Primary` service
-3. Implement the handler in `primary_server.py` — construct `AbbenayClient.chat()` call from request fields, collect streaming chunks, return complete text
+1. Define `InferenceRequest`, `InferenceResponse`, and `InferencePolicy` messages in `engine.proto`
+2. Add `Inference` RPC to the `Engine` service
+3. Implement the handler in `engine_server.py` — resolve `AbbenayProvider` (same path as remediation), map request fields into a completion call, collect streaming chunks, return complete text
 4. Gate on Abbenay availability (return `UNAVAILABLE` if Abbenay is not configured or not healthy)
 
 ### Phase 2: Gateway report endpoint
 
 1. Add `POST /api/v1/reports/generate` endpoint to the Gateway router
 2. Build the system prompt: visualization type catalog, curated API catalog, report spec JSON schema, selection rules
-3. Call `Primary.Inference()` with the system prompt and user query
+3. Call `Engine.Inference()` with the system prompt and user query
 4. Parse the JSON response into a validated `ReportSpec` (Pydantic model)
 5. Return the spec to the frontend
 6. Add startup validation: compare curated API catalog against `app.openapi()` and log mismatches
@@ -317,7 +323,7 @@ Add Gateway endpoints to support queries that existing endpoints cannot answer:
 
 ## Related Decisions
 
-- [ADR-020](ADR-020-reporting-service.md): Reporting service — the Gateway's gRPC ingestion path; `Inference` follows the same pattern of Primary → Gateway communication
+- [ADR-020](ADR-020-reporting-service.md): Reporting service — the Gateway's gRPC ingestion path; Reporting uses Engine → Gateway; `Inference` uses Gateway → Engine
 - [ADR-025](ADR-025-ai-provider-protocol.md): AI provider protocol — `AbbenayProvider` is reused by the `Inference` RPC handler; no changes to the provider abstraction
 - [ADR-029](ADR-029-web-gateway-architecture.md): Web Gateway architecture — the report endpoint is a new REST route on the existing Gateway
 - [ADR-038](ADR-038-public-data-api.md): Public data API — the data endpoints consumed by report specs
@@ -326,7 +332,7 @@ Add Gateway endpoints to support queries that existing endpoints cannot answer:
 ## References
 
 - [RedHat-UX/next-gen-ui-agent](https://github.com/RedHat-UX/next-gen-ui-agent): Evaluated for integration; informed the component selection pattern
-- `proto/apme/v1/primary.proto` — `Inference` RPC definition
+- `proto/apme/v1/engine.proto` — `Inference` RPC definition
 - `src/apme_engine/remediation/abbenay_provider.py` — existing `AbbenayClient.chat()` usage pattern
 - `src/apme_gateway/api/router.py` — Gateway REST router (report endpoint location)
 - `frontend/src/services/api.ts` — Frontend API client (report generation call)

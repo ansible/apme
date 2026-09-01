@@ -78,9 +78,9 @@ Phase 6: Report
 
 | Component | Location | Why |
 |-----------|----------|-----|
-| Formatter | CLI (in-process) or Primary (`Format` RPC) | No scan needed; operates on raw files |
-| Engine check (internal scan) | Primary service (gRPC) / `FixSession` | Already implemented |
-| Remediation Engine | Primary service (`FixSession` RPC) | Needs access to scan results and file content; can call AIProvider |
+| Formatter | CLI (in-process) or Engine (`Format` RPC) | No scan needed; operates on raw files |
+| Engine check (internal scan) | Engine service (gRPC) / `FixSession` | Already implemented |
+| Remediation Engine | Engine service (`FixSession` RPC) | Needs access to scan results and file content; can call AIProvider |
 | Transform Registry | `src/apme_engine/remediation/transforms/` | Pure functions, no container needed |
 | AI Escalation | Abbenay daemon (gRPC) | Separate process/container, optional, enabled via `--ai` |
 
@@ -149,6 +149,13 @@ def is_finding_resolvable(violation: dict, registry: TransformRegistry) -> bool:
 This is intentionally simple. A violation is resolvable if and only if the transform registry has a function for that rule ID. No heuristics, no guessing.
 
 Violations that fail this check proceed to AI escalation (Tier 2) if an AIProvider is available (via `--ai`), otherwise they are reported as manual review (Tier 3).
+
+A small set of **task-scoped** rules still route to Tier 3
+(`CROSS_FILE_RULES` in `partition.py`): R111/R112 (need role/taskfile
+inventory) and L006/L080 (need every consumer of a register or `set_fact`
+rewritten). Node-local AI would rename the producer and leave readers on
+the old name or the old result shape. These wait for project-level
+remediation (ADR-027).
 
 ### Rule Metadata
 
@@ -456,12 +463,12 @@ A concurrent `asyncio` task sends a generic `ProgressUpdate(phase="heartbeat", m
 
 ## gRPC Contract
 
-### `FixSession` RPC on Primary (ADR-028, ADR-039)
+### `FixSession` RPC on Engine (ADR-028, ADR-039)
 
 **Check** and **remediate** are user-facing actions; the engine uses **`FixSession`** internally for both (check mode without remediate options; remediate mode with `FixOptions`). The remediate pipeline uses **bidirectional streaming** (`FixSession`) for real-time progress, interactive proposal review, and session resume:
 
 ```protobuf
-service Primary {
+service Engine {
   rpc Format(FormatRequest) returns (FormatResponse);
   rpc FormatStream(stream ScanChunk) returns (FormatResponse);
   rpc Health(HealthRequest) returns (HealthResponse);
@@ -519,7 +526,7 @@ AI escalation uses the `AIProvider` protocol (ADR-025) with `AbbenayProvider` as
 ┌────────────────────────────── apme-pod ──────────────────────────────────┐
 │                                                                          │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  │
-│  │ Primary  │  │  Native  │  │   OPA    │  │ Ansible  │  │ Gitleaks │  │
+│  │ Engine  │  │  Native  │  │   OPA    │  │ Ansible  │  │ Gitleaks │  │
 │  │  :50051  │  │  :50055  │  │  :50054  │  │  :50053  │  │  :50056  │  │
 │  │          │  │          │  │          │  │          │  │          │  │
 │  │ engine + │  │ Python   │  │ OPA bin  │  │ ansible- │  │ gitleaks │  │
@@ -540,7 +547,7 @@ AI escalation uses the `AIProvider` protocol (ADR-025) with `AbbenayProvider` as
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
-The remediation engine lives inside Primary. It reuses Primary's existing scan pipeline and adds the transform → re-check convergence loop. AI escalation is a gRPC call to the optional Abbenay daemon via the `AIProvider` protocol (ADR-025). See [DESIGN_AI_ESCALATION.md](DESIGN_AI_ESCALATION.md) for the full AI integration design.
+The remediation engine lives inside Engine. It reuses Engine's existing scan pipeline and adds the transform → re-check convergence loop. AI escalation is a gRPC call to the optional Abbenay daemon via the `AIProvider` protocol (ADR-025). See [DESIGN_AI_ESCALATION.md](DESIGN_AI_ESCALATION.md) for the full AI integration design.
 
 ## CLI Integration
 
@@ -584,7 +591,7 @@ Phase 6: Summary
 1. **Transform Registry + partition** — the data structures and registry pattern (done)
 2. **First transforms** — L021, L007, M001, M006, M008, M009, L046, and more (done — 20+ transforms)
 3. **Convergence loop** — check (internal scan) → transform → re-check loop with oscillation detection (done)
-4. **`FixSession` RPC** — bidirectional streaming gRPC contract on Primary (done — ADR-028)
+4. **`FixSession` RPC** — bidirectional streaming gRPC contract on Engine (done — ADR-028)
 5. **CLI `remediate` integration** — interactive review, `--apply`, `--check`, `--auto-approve` (done)
 6. **AI escalation** — `AIProvider` protocol + `AbbenayProvider` + graph-native AI convergence (done — Phase 3)
 7. **Web UI remediation queue** — accept/reject AI proposals (Phase 4)

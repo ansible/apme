@@ -37,11 +37,12 @@ each violation to one of three tiers:
 |------|----------|---------|
 | **Tier 1** | Registry has a deterministic transform | L007, L013, M001 |
 | **Tier 2** | Scope is `task` or `block`, not cross-file, `ai_proposable=True` | L011 (complex naming) |
-| **Tier 3** | Play/role/collection scope, cross-file rules, or `info` severity | R111, R112, play-level |
+| **Tier 3** | Play/role/collection scope, cross-file / data-flow rules, or `info` severity | R111, R112, L006, L080, play-level |
 
-The routing uses scope metadata (ADR-026) rather than hardcoded rule lists.
-Cross-file rules (R111, R112) are always Tier 3 because their fix requires
-role/taskfile inventory context.
+The routing uses scope metadata (ADR-026) for normal routing. The explicit
+`CROSS_FILE_RULES` exceptions (R111, R112, L006, L080) are always Tier 3
+because a node-local fix would change the producer without rewriting
+readers (role inventory, register consumers, or `set_fact` references).
 
 ## TransformRegistry
 
@@ -117,7 +118,7 @@ The rescan uses multiple strategies depending on the validator:
 | Gitleaks | Slim graph data from dirty node YAML |
 
 All validator rescans are dispatched via `_rescan_bridge()` in
-`primary_server.py`, which uses `asyncio.gather()` for parallel execution
+`engine_server.py`, which uses `asyncio.gather()` for parallel execution
 over gRPC.
 
 ### Auto-Approval
@@ -171,7 +172,7 @@ supporting both the approval flow and step-by-step diff generation.
 | `src/apme_engine/remediation/registry.py` | `TransformRegistry`, `NodeTransformFn` |
 | `src/apme_engine/remediation/transforms/` | Built-in transform implementations |
 | `src/apme_engine/engine/content_graph.py` | `ContentGraph.apply_transform()`, `ContentNode` |
-| `src/apme_engine/daemon/primary_server.py` | `_session_graph_remediate()`, `_rescan_bridge()` |
+| `src/apme_engine/daemon/engine_server.py` | `_session_graph_remediate()`, `_rescan_bridge()` |
 
 ## Related ADRs
 

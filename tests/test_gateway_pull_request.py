@@ -6,7 +6,6 @@ import asyncio
 import ssl
 import time
 from collections.abc import AsyncIterator
-from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -14,30 +13,16 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from apme_gateway.app import create_app
-from apme_gateway.db import close_db, get_session, init_db
+from apme_gateway.db import get_session
 from apme_gateway.db.models import PatchedFile, Project, Scan, Session
+from apme_gateway.db.queries import ScmPublishRecord
 from apme_gateway.operation_registry import get_operation_registry
 from apme_gateway.operation_types import OperationResult, OperationStatus
 from apme_gateway.scm.base import PullRequestResult, detect_provider
 from apme_gateway.scm.github import GitHubProvider, _custom_ca_bundle, _http_verify, _parse_owner_repo
 from apme_gateway.scm.registry import get_provider
 
-
-@pytest.fixture(autouse=True)  # type: ignore[untyped-decorator]
-async def _db(tmp_path: Path) -> AsyncIterator[None]:
-    """Initialise a fresh DB and clear operation registry per test.
-
-    Args:
-        tmp_path: Pytest-provided temporary directory.
-
-    Yields:
-        None: Test runs between setup and teardown.
-    """
-    await init_db(str(tmp_path / "test.db"))
-    yield
-    registry = get_operation_registry()
-    await registry.shutdown()
-    await close_db()
+pytestmark = pytest.mark.usefixtures("gateway_db")
 
 
 @pytest.fixture  # type: ignore[untyped-decorator]
@@ -641,6 +626,122 @@ class TestScanPrUrl:
             ok = await set_scan_pr_url(db, "nonexistent", "https://example.com")
         assert ok is False
 
+    async def test_record_scm_publish(self) -> None:
+        """Branch, commit SHA, and PR URL are recorded on a scan row."""
+        from apme_gateway.db.queries import get_scan, record_scan_scm_publish
+
+        async with get_session() as db:
+            db.add(Session(session_id="s1", project_path="/p", first_seen="t0", last_seen="t1"))
+            db.add(
+                Scan(
+                    scan_id="sc1",
+                    session_id="s1",
+                    project_path="/p",
+                    created_at="2026-01-01T00:00:00Z",
+                )
+            )
+            await db.commit()
+
+        async with get_session() as db:
+            record = await record_scan_scm_publish(
+                db,
+                "sc1",
+                branch_name="apme/remediate-sc1",
+                commit_sha="abc123def",
+                pr_url="https://github.com/org/repo/pull/42",
+            )
+        assert record.found is True
+        assert record.pr_url == "https://github.com/org/repo/pull/42"
+
+        async with get_session() as db:
+            scan = await get_scan(db, "sc1")
+        assert scan is not None
+        assert scan.branch_name == "apme/remediate-sc1"
+        assert scan.commit_sha == "abc123def"
+        assert scan.pr_url == "https://github.com/org/repo/pull/42"
+
+    async def test_record_scm_publish_branch_only(self) -> None:
+        """Branch-only publish stamps branch and SHA without a PR URL."""
+        from apme_gateway.db.queries import get_scan, record_scan_scm_publish
+
+        async with get_session() as db:
+            db.add(Session(session_id="s1", project_path="/p", first_seen="t0", last_seen="t1"))
+            db.add(
+                Scan(
+                    scan_id="sc1",
+                    session_id="s1",
+                    project_path="/p",
+                    created_at="2026-01-01T00:00:00Z",
+                )
+            )
+            await db.commit()
+
+        async with get_session() as db:
+            record = await record_scan_scm_publish(
+                db,
+                "sc1",
+                branch_name="apme/remediate-sc1",
+                commit_sha="deadbeef",
+            )
+        assert record.found is True
+        assert record.pr_url is None
+
+        async with get_session() as db:
+            scan = await get_scan(db, "sc1")
+        assert scan is not None
+        assert scan.branch_name == "apme/remediate-sc1"
+        assert scan.commit_sha == "deadbeef"
+        assert scan.pr_url is None
+
+    async def test_record_scm_publish_does_not_overwrite_pr_url(self) -> None:
+        """A later publish updates branch/SHA but does not replace an existing PR URL."""
+        from apme_gateway.db.queries import get_scan, record_scan_scm_publish
+
+        async with get_session() as db:
+            db.add(Session(session_id="s1", project_path="/p", first_seen="t0", last_seen="t1"))
+            db.add(
+                Scan(
+                    scan_id="sc1",
+                    session_id="s1",
+                    project_path="/p",
+                    created_at="2026-01-01T00:00:00Z",
+                    pr_url="https://github.com/org/repo/pull/1",
+                )
+            )
+            await db.commit()
+
+        async with get_session() as db:
+            record = await record_scan_scm_publish(
+                db,
+                "sc1",
+                branch_name="apme/remediate-sc1",
+                commit_sha="newsha",
+                pr_url="https://github.com/org/repo/pull/2",
+            )
+        assert record.found is True
+        assert record.pr_url == "https://github.com/org/repo/pull/1"
+
+        async with get_session() as db:
+            scan = await get_scan(db, "sc1")
+        assert scan is not None
+        assert scan.branch_name == "apme/remediate-sc1"
+        assert scan.commit_sha == "newsha"
+        assert scan.pr_url == "https://github.com/org/repo/pull/1"
+
+    async def test_record_scm_publish_not_found(self) -> None:
+        """record_scan_scm_publish reports not found for a missing scan."""
+        from apme_gateway.db.queries import record_scan_scm_publish
+
+        async with get_session() as db:
+            record = await record_scan_scm_publish(
+                db,
+                "nonexistent",
+                branch_name="apme/remediate-x",
+                commit_sha="abc",
+            )
+        assert record.found is False
+        assert record.pr_url is None
+
 
 class TestProjectScmFields:
     """Tests for SCM-related project fields (ADR-050)."""
@@ -742,6 +843,20 @@ class TestSubmitEndpoint:
         assert data["provider"] == "github"
         assert data["branch_name"].startswith("apme/remediate-")
 
+        listed = await client.get("/api/v1/activity")
+        assert listed.status_code == 200
+        item = listed.json()["items"][0]
+        assert item["pr_url"] == "https://github.com/org/repo/pull/99"
+        assert item["branch_name"] == data["branch_name"]
+        assert item["commit_sha"] == "abc123def"
+
+        detail = await client.get("/api/v1/activity/scan-1")
+        assert detail.status_code == 200
+        body = detail.json()
+        assert body["pr_url"] == "https://github.com/org/repo/pull/99"
+        assert body["branch_name"] == data["branch_name"]
+        assert body["commit_sha"] == "abc123def"
+
     async def test_push_only_without_pr(self, client: AsyncClient) -> None:
         """Submit with create_pr=false pushes but does not open a PR.
 
@@ -774,6 +889,123 @@ class TestSubmitEndpoint:
         mock_provider.push_files.assert_called_once()
         assert mock_provider.push_files.call_args.kwargs.get("parent_commit_sha") == "parent_sha"
         mock_provider.create_pull_request.assert_not_called()
+
+        listed = await client.get("/api/v1/activity")
+        assert listed.status_code == 200
+        item = listed.json()["items"][0]
+        assert item["pr_url"] is None
+        assert item["branch_name"] == data["branch_name"]
+        assert item["commit_sha"] == "deadbeef"
+
+        detail = await client.get("/api/v1/activity/scan-1")
+        assert detail.status_code == 200
+        body = detail.json()
+        assert body["pr_url"] is None
+        assert body["branch_name"] == data["branch_name"]
+        assert body["commit_sha"] == "deadbeef"
+
+    async def test_persist_miss_restores_completed(self, client: AsyncClient) -> None:
+        """Live submit restores COMPLETED if the scan row is gone after push.
+
+        Args:
+            client: Async test client.
+        """
+        await _seed_project_with_remediation(scm_token="ghp_test123")
+        _setup_completed_operation()
+
+        with (
+            patch("apme_gateway.scm.get_provider") as mock_get,
+            patch("apme_gateway.config.load_config") as mock_cfg,
+            patch(
+                "apme_gateway.api.operation_router.q.record_scan_scm_publish",
+                new_callable=AsyncMock,
+                return_value=ScmPublishRecord(found=False),
+            ),
+        ):
+            mock_provider = AsyncMock()
+            mock_provider.create_branch = AsyncMock(return_value="parent_sha")
+            mock_provider.push_files = AsyncMock(return_value="abc123def")
+            mock_provider.create_pull_request = AsyncMock(return_value=_MOCK_PR_RESULT)
+            mock_get.return_value = mock_provider
+            mock_cfg.return_value.scm_token = ""
+            mock_cfg.return_value.github_api_url = "https://api.github.com"
+
+            resp = await client.post("/api/v1/projects/proj-1/operation/submit")
+
+        assert resp.status_code == 404
+        op = get_operation_registry().get_by_project("proj-1")
+        assert op is not None
+        assert op.status == OperationStatus.COMPLETED
+        assert op.error == "Activity not found"
+
+    async def test_persist_exception_restores_completed(self, client: AsyncClient) -> None:
+        """Live submit restores COMPLETED if persist raises after push.
+
+        Args:
+            client: Async test client.
+        """
+        await _seed_project_with_remediation(scm_token="ghp_test123")
+        _setup_completed_operation()
+
+        with (
+            patch("apme_gateway.scm.get_provider") as mock_get,
+            patch("apme_gateway.config.load_config") as mock_cfg,
+            patch(
+                "apme_gateway.api.operation_router.q.record_scan_scm_publish",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("db down"),
+            ),
+        ):
+            mock_provider = AsyncMock()
+            mock_provider.create_branch = AsyncMock(return_value="parent_sha")
+            mock_provider.push_files = AsyncMock(return_value="abc123def")
+            mock_provider.create_pull_request = AsyncMock(return_value=_MOCK_PR_RESULT)
+            mock_get.return_value = mock_provider
+            mock_cfg.return_value.scm_token = ""
+            mock_cfg.return_value.github_api_url = "https://api.github.com"
+
+            resp = await client.post("/api/v1/projects/proj-1/operation/submit")
+
+        assert resp.status_code == 500
+        op = get_operation_registry().get_by_project("proj-1")
+        assert op is not None
+        assert op.status == OperationStatus.COMPLETED
+        assert op.error == "Failed to persist SCM publish metadata"
+
+    async def test_submit_uses_persisted_pr_url(self, client: AsyncClient) -> None:
+        """Submit response and registry use the PR URL stored on the scan.
+
+        Args:
+            client: Async test client.
+        """
+        await _seed_project_with_remediation(scm_token="ghp_test123")
+        _setup_completed_operation()
+        stored = "https://github.com/org/repo/pull/1"
+
+        with (
+            patch("apme_gateway.scm.get_provider") as mock_get,
+            patch("apme_gateway.config.load_config") as mock_cfg,
+            patch(
+                "apme_gateway.api.operation_router.q.record_scan_scm_publish",
+                new_callable=AsyncMock,
+                return_value=ScmPublishRecord(found=True, pr_url=stored),
+            ),
+        ):
+            mock_provider = AsyncMock()
+            mock_provider.create_branch = AsyncMock(return_value="parent_sha")
+            mock_provider.push_files = AsyncMock(return_value="abc123def")
+            mock_provider.create_pull_request = AsyncMock(return_value=_MOCK_PR_RESULT)
+            mock_get.return_value = mock_provider
+            mock_cfg.return_value.scm_token = ""
+            mock_cfg.return_value.github_api_url = "https://api.github.com"
+
+            resp = await client.post("/api/v1/projects/proj-1/operation/submit")
+
+        assert resp.status_code == 200
+        assert resp.json()["pr_url"] == stored
+        op = get_operation_registry().get_by_project("proj-1")
+        assert op is not None
+        assert op.pr_url == stored
 
     async def test_no_operation(self, client: AsyncClient) -> None:
         """Return 404 when no operation exists for the project.

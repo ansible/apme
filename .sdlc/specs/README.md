@@ -26,6 +26,9 @@ Specs answer "What does this feature do?" They provide:
 | REQ-014 | Policy Permissive Mode | PHASE-003 | Draft |
 | REQ-015 | Detect Debug Sensitive Variables | PHASE-001 | Implemented |
 | REQ-016 | Phase 2 SCM Providers (GitLab + Bitbucket) | PHASE-003 | In Progress |
+| REQ-017 | Python Import Deprecations | PHASE-001 | Draft |
+| REQ-018 | Python AST Validator | PHASE-002 | Draft |
+| REQ-019 | Scan Attestation | Unassigned | Draft |
 
 ## Directory Structure
 
@@ -49,7 +52,10 @@ specs/
 ├── REQ-013-opa-policy-inputs/
 ├── REQ-014-policy-permissive-mode/
 ├── REQ-015-debug-sensitive-vars/
-└── REQ-016-scm-providers-phase2/
+├── REQ-016-scm-providers-phase2/
+├── REQ-017-python-import-deprecations/
+├── REQ-018-python-ast-validator/
+└── REQ-019-scan-attestation/
 ```
 
 ## Phase Relationship
@@ -59,10 +65,12 @@ Requirements are grouped by delivery phase:
 ```
 PHASE-001: CLI Scanner (In Progress)
 ├── REQ-001: Core Scanning Engine (In Progress)
-└── REQ-015: Detect Debug Sensitive Variables (Implemented)
+├── REQ-015: Detect Debug Sensitive Variables (Implemented)
+└── REQ-017: Python Import Deprecations (Draft)
 
 PHASE-002: Rewrite Engine (Implemented)
-└── REQ-002: Automated Remediation (Implemented)
+├── REQ-002: Automated Remediation (Implemented)
+└── REQ-018: Python AST Validator (Draft)
 
 PHASE-003: Enterprise Dashboard (In Progress)
 ├── REQ-003: Security & Compliance (Draft)
@@ -77,6 +85,9 @@ PHASE-003: Enterprise Dashboard (In Progress)
 
 PHASE-004: AI Remediation (Implemented)
 └── DR-005: AI-Assisted Remediation (Decided)
+
+Unassigned
+└── REQ-019: Scan Attestation (Draft)
 ```
 
 See [phases/README.md](../phases/README.md) for phase details.

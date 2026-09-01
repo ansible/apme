@@ -1,15 +1,20 @@
 {{- /* ADR-069: Simple all-in-one — single Deployment, replicas must be 1 */ -}}
 {{- if ne (int .Values.engine.replicas) 1 }}
-{{- fail "ADR-069 Simple topology: engine.replicas must be 1 (Gateway SQLite and Abbenay share this pod). Multi-replica requires a future topology ADR." }}
+{{- fail "ADR-069 Simple topology: engine.replicas must be 1 (Gateway PostgreSQL and Abbenay share this pod). Multi-replica requires a future topology ADR." }}
 {{- end }}
 {{- if ne (int .Values.gateway.replicas) 1 }}
-{{- fail "ADR-069 Simple topology: gateway.replicas must be 1 (Gateway is a sidecar; SQLite is not multi-replica)." }}
+{{- fail "ADR-069 Simple topology: gateway.replicas must be 1 (Gateway is a sidecar; PostgreSQL is not multi-replica)." }}
 {{- end }}
 {{- if and .Values.ui.enabled (ne (int .Values.ui.replicas) 1) }}
 {{- fail "ADR-069 Simple topology: ui.replicas must be 1 (UI is a sidecar in the Simple pod)." }}
 {{- end }}
 {{- if .Values.autoscaling.enabled }}
 {{- fail "ADR-069 Simple topology: autoscaling.enabled must be false (HPA is not supported while Gateway/Abbenay share the pod)." }}
+{{- end }}
+{{- if .Values.gateway.database.url }}
+{{- if not (hasPrefix "postgresql+asyncpg://" .Values.gateway.database.url) }}
+{{- fail "gateway.database.url must use the async driver postgresql+asyncpg:// (plain postgresql:// is not supported by create_async_engine)" }}
+{{- end }}
 {{- end }}
 {{- if .Values.abbenay.enabled }}
 {{- include "apme.abbenay.validateLegacyKeys" . -}}
@@ -105,9 +110,9 @@ spec:
         {{- end }}
       {{- end }}
       containers:
-        # -- Primary orchestrator
-        - name: primary
-          image: {{ include "apme.image" (dict "registry" .Values.image.registry "name" "primary" "tag" .Values.image.tag "fallbackTag" .Chart.AppVersion) }}
+        # -- Engine orchestrator
+        - name: engine
+          image: {{ include "apme.image" (dict "registry" .Values.image.registry "name" "engine" "tag" .Values.image.tag "fallbackTag" .Chart.AppVersion) }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           {{- with .Values.securityContext }}
           securityContext:
@@ -116,8 +121,10 @@ spec:
           env:
             - name: UV_CACHE_DIR
               value: /tmp/uv-cache
-            - name: APME_PRIMARY_LISTEN
+            - name: APME_ENGINE_LISTEN
               value: "0.0.0.0:50051"
+            - name: APME_ENGINE_MAX_RPCS
+              value: {{ .Values.engine.maxConcurrentRpcs | default 16 | quote }}
             - name: NATIVE_GRPC_ADDRESS
               value: "127.0.0.1:50055"
             - name: OPA_GRPC_ADDRESS
@@ -141,8 +148,9 @@ spec:
             - name: APME_REPORTING_ENDPOINT
               value: "127.0.0.1:50060"
             {{- if .Values.abbenay.enabled }}
+            # abbenay-client >= 2026.8.7 rejects consumer tokens on plaintext TCP.
             - name: APME_ABBENAY_ADDR
-              value: "127.0.0.1:50057"
+              value: "unix:///tmp/abbenay-run/abbenay/daemon.sock"
             - name: APME_ABBENAY_TOKEN
               valueFrom:
                 secretKeyRef:
@@ -170,8 +178,12 @@ spec:
           volumeMounts:
             - name: sessions
               mountPath: /sessions
+            {{- if .Values.abbenay.enabled }}
+            - name: abbenay-run
+              mountPath: /tmp/abbenay-run
+            {{- end }}
           resources:
-            {{- toYaml .Values.engine.resources.primary | nindent 12 }}
+            {{- toYaml (.Values.engine.resources.engine | default dict) | nindent 12 }}
 
         # -- Native validator
         - name: native
@@ -370,10 +382,21 @@ spec:
             {{- toYaml . | nindent 12 }}
           {{- end }}
           env:
-            - name: APME_PRIMARY_ADDRESS
+            - name: APME_ENGINE_ADDRESS
               value: "127.0.0.1:50051"
+            {{- if .Values.gateway.database.existingSecret.name }}
+            - name: APME_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.gateway.database.existingSecret.name }}
+                  key: {{ .Values.gateway.database.existingSecret.key }}
+            {{- else if .Values.gateway.database.url }}
+            - name: APME_DATABASE_URL
+              value: {{ .Values.gateway.database.url | quote }}
+            {{- else }}
             - name: APME_DB_PATH
               value: /data/apme.db
+            {{- end }}
             - name: APME_GATEWAY_GRPC_LISTEN
               value: "0.0.0.0:50060"
             - name: APME_GATEWAY_HTTP_HOST
@@ -389,6 +412,9 @@ spec:
                 secretKeyRef:
                   name: {{ $fullname }}-secrets
                   key: abbenay-token
+            # Same unix ADDR as Engine so /health probes the socket, not leftover TCP.
+            - name: APME_ABBENAY_ADDR
+              value: "unix:///tmp/abbenay-run/abbenay/daemon.sock"
             {{- end }}
             {{- if .Values.collectionHealth.enabled }}
             - name: COLLECTION_HEALTH_GRPC_ADDRESS
@@ -431,6 +457,10 @@ spec:
           volumeMounts:
             - name: gateway-data
               mountPath: /data
+            {{- if .Values.abbenay.enabled }}
+            - name: abbenay-run
+              mountPath: /tmp/abbenay-run
+            {{- end }}
           resources:
             {{- toYaml .Values.gateway.resources | nindent 12 }}
 
@@ -482,7 +512,7 @@ spec:
           securityContext:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-          # ADR-070: HTTP admin + gRPC on loopback (no Service/hostPort 8787).
+          # ADR-070: gRPC for Engine + HTTP admin on loopback (no Service/hostPort 8787).
           args:
             - "web"
             - "--host"
@@ -551,14 +581,14 @@ spec:
             - name: abbenay-grpc
               containerPort: 50057
               protocol: TCP
-          # Bind is 127.0.0.1 — kubelet tcpSocket to the pod IP cannot reach it.
-          # Probe localhost inside the container instead (Abbenay image includes node).
+          # Engine/Gateway AI uses the Unix socket; TCP :50057 is leftover.
+          # Ready when the socket accepts connections (not merely exists).
           readinessProbe:
             exec:
               command:
                 - node
                 - -e
-                - "require('net').createConnection(50057,'127.0.0.1').on('connect',function(c){c.end();process.exit(0)}).on('error',function(){process.exit(1)})"
+                - "const s=require('net').createConnection('/tmp/abbenay-run/abbenay/daemon.sock');s.on('connect',function(){s.end();process.exit(0)}).on('error',function(){process.exit(1)})"
             initialDelaySeconds: 5
             periodSeconds: 10
           livenessProbe:
@@ -566,7 +596,7 @@ spec:
               command:
                 - node
                 - -e
-                - "require('net').createConnection(50057,'127.0.0.1').on('connect',function(c){c.end();process.exit(0)}).on('error',function(){process.exit(1)})"
+                - "const s=require('net').createConnection('/tmp/abbenay-run/abbenay/daemon.sock');s.on('connect',function(){s.end();process.exit(0)}).on('error',function(){process.exit(1)})"
             initialDelaySeconds: 15
             periodSeconds: 30
           resources:
@@ -574,6 +604,8 @@ spec:
           volumeMounts:
             - name: abbenay-config
               mountPath: /etc/abbenay-config
+            - name: abbenay-run
+              mountPath: /tmp/abbenay-run
             {{- if and $hasVertexADC $hasGcpCreds }}
             - name: gcp-credentials
               mountPath: /var/run/secrets/gcp
@@ -610,6 +642,8 @@ spec:
           {{- else }}
           emptyDir: {}
           {{- end }}
+        - name: abbenay-run
+          emptyDir: {}
         {{- if and $hasVertexADC $hasGcpCreds }}
         - name: gcp-credentials
           secret:

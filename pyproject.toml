@@ -35,11 +35,12 @@ dependencies = [
 [project.optional-dependencies]
 ai = [
     # Pin to the same CalVer as the Abbenay daemon image (deploy pins).
-    "abbenay-client==2026.8.6",
+    "abbenay-client==2026.8.7",
 ]
 gateway = [
     "sqlalchemy>=2.0",
     "aiosqlite>=0.20",
+    "asyncpg>=0.30",
     "python-multipart>=0.0.31",
 ]
 dev = [
@@ -86,7 +87,7 @@ fail_under = 50
 
 [project.scripts]
 apme = "apme_engine.cli:main"
-apme-primary = "apme_engine.daemon.primary_main:main"
+apme-engine = "apme_engine.daemon.engine_main:main"
 apme-ansible-validator = "apme_engine.daemon.ansible_validator_main:main"
 apme-native-validator = "apme_engine.daemon.native_validator_main:main"
 apme-opa-validator = "apme_engine.daemon.opa_validator_main:main"
@@ -160,6 +161,8 @@ module = [
     "sqlalchemy.*",
     "aiosqlite",
     "aiosqlite.*",
+    "asyncpg",
+    "asyncpg.*",
     "pydantic",
     "pydantic.*",
     "playwright",
@@ -186,7 +189,7 @@ disallow_any_explicit = false
 [[tool.mypy.overrides]]
 module = [
     "apme.v1.common_pb2_grpc",
-    "apme.v1.primary_pb2_grpc",
+    "apme.v1.engine_pb2_grpc",
     "apme.v1.validate_pb2_grpc",
     "apme.v1.reporting_pb2_grpc",
 ]

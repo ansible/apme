@@ -2,31 +2,47 @@
 rule_id: R402
 validator: native
 description: Report variables used at end of sequence.
-scope: task
-status: planned
-status_reason: >
-  Informational/reporting rule requiring deeper graph analysis to enumerate
-  all variables referenced across a task sequence. Planned for future
-  implementation using VariableProvenanceResolver.
+scope: play
+status: implemented
 ---
 
 ## List used variables (R402)
 
 Report variables used at end of sequence. This is an **informational/audit
-rule** that would enumerate all variables referenced across a task sequence
-for visibility and documentation purposes.
+rule** that enumerates all variables visible in scope across all tasks within
+a play. It uses `VariableProvenanceResolver` to resolve variable definitions
+and their origins (local, play, role, etc.).
 
-### Status
+Severity: **INFO** — this rule does not flag violations. It reports variable
+usage data for audit and documentation purposes.
 
-**Planned** — no `_graph.py` implementation yet. This rule requires
-`VariableProvenanceResolver` to enumerate all variable references across the
-full task sequence and report them as an informational finding. It does not
-flag violations — it reports data for audit purposes.
+Traversal follows only structural ``CONTAINS`` edges plus dynamic
+``include_tasks`` / ``import_tasks`` links. It does **not** follow
+``DATA_FLOW`` or ``NOTIFY`` edges, so tasks in other plays that consume a
+registered fact are excluded from the play-level report. Inherited
+``no_log`` from enclosing plays and include/import ancestors is honored when
+redacting variable names in included tasks.
+
+### Example: report produced
+
+```yaml
+- name: Example play
+  hosts: localhost
+  connection: local
+  vars:
+    http_port: 8080
+  tasks:
+    - name: Show port
+      ansible.builtin.debug:
+        msg: "Port is {{ http_port }}"
+```
+
+Disabled by default. Opt in via ``rule_id_list`` when loading graph rules.
 
 ### Example: pass
 
 ```yaml
-- name: Example play
+- name: No variables play
   hosts: localhost
   connection: local
   tasks:

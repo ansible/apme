@@ -1,6 +1,6 @@
 """ContentGraph — DAG-backed model for Ansible content (ADR-044, ADR-059).
 
-Shared graph data structure used by both the engine (Primary) and the
+Shared graph data structure used by both the Engine and the
 native validator.  This module has **no** dependency on
 ``apme_engine.engine`` — the dependency arrow points from engine → graph.
 
@@ -1422,6 +1422,126 @@ class ContentGraph:
             if parent_node is not None:
                 result.append(parent_node)
             current = parent_id
+        return result
+
+    def play_scoped_node_ids(self, play_id: str) -> set[str]:
+        """Return node IDs reachable from a play via structural/include edges.
+
+        Traverses ``CONTAINS``, ``INCLUDE``, and ``IMPORT`` edges starting
+        from ``play_id``.  Used to disambiguate shared included task files
+        that are linked from multiple plays.
+
+        Args:
+            play_id: Play node whose scoped subtree is collected.
+
+        Returns:
+            ``play_id`` and all descendant node IDs in the play scope.
+        """
+        result: set[str] = set()
+        seen: set[str] = set()
+        stack = [play_id]
+        while stack:
+            current = stack.pop()
+            if current in seen:
+                continue
+            seen.add(current)
+            result.add(current)
+            for edge_type in (EdgeType.CONTAINS, EdgeType.INCLUDE, EdgeType.IMPORT):
+                for target, _attrs in self.edges_from(current, edge_type):
+                    stack.append(target)
+        return result
+
+    def positional_ancestors(
+        self,
+        node_id: str,
+        *,
+        play_context_id: str | None = None,
+        play_scope: set[str] | None = None,
+    ) -> list[ContentNode]:
+        """Return ancestor nodes via CONTAINS, INCLUDE, or IMPORT edges.
+
+        Like :meth:`ancestors`, walks parent-first toward the root, but also
+        follows include/import links so included task files inherit play-level
+        settings such as ``no_log``.
+
+        When ``play_context_id`` is set, disambiguates shared included tasks
+        by following only parents within that play's scoped subtree.
+
+        Args:
+            node_id: Node whose positional ancestor chain is walked upward.
+            play_context_id: Optional play node id used to select the include
+                path for shared task files.
+            play_scope: Optional precomputed scope for ``play_context_id``.
+
+        Returns:
+            Ancestor ``ContentNode`` instances from immediate parent toward root.
+        """
+        result: list[ContentNode] = []
+        visited: set[str] = set()
+        current = node_id
+        if play_scope is None and play_context_id is not None:
+            play_scope = self.play_scoped_node_ids(play_context_id)
+        positional = frozenset(
+            {
+                EdgeType.CONTAINS.value,
+                EdgeType.INCLUDE.value,
+                EdgeType.IMPORT.value,
+            }
+        )
+        while True:
+            parents = sorted(
+                src for src, _, data in self.g.in_edges(current, data=True) if data.get("edge_type") in positional
+            )
+            if play_scope is not None:
+                scoped_parents = [parent for parent in parents if parent in play_scope]
+                if not scoped_parents:
+                    break
+                parents = scoped_parents
+            if not parents:
+                break
+            parent_id = parents[0]
+            if parent_id in visited:
+                break
+            visited.add(parent_id)
+            parent_node = self.get_node(parent_id)
+            if parent_node is not None:
+                result.append(parent_node)
+            current = parent_id
+        return result
+
+    def positional_ancestor_ids(self, node_id: str) -> set[str]:
+        """Return ancestor node IDs via CONTAINS, INCLUDE, or IMPORT edges.
+
+        Unlike :meth:`ancestors`, this walks all positional parent edges
+        (not only ``CONTAINS``), so included/imported task files link back
+        to the enclosing play or include task.
+
+        Args:
+            node_id: Node whose positional ancestors are collected.
+
+        Returns:
+            Ancestor node IDs reachable through positional edges.
+        """
+        result: set[str] = set()
+        seen: set[str] = set()
+        stack = [node_id]
+        positional = frozenset(
+            {
+                EdgeType.CONTAINS.value,
+                EdgeType.INCLUDE.value,
+                EdgeType.IMPORT.value,
+            }
+        )
+        while stack:
+            current = stack.pop()
+            for src, _, data in self.g.in_edges(current, data=True):
+                if data.get("edge_type") not in positional:
+                    continue
+                if src in seen:
+                    continue
+                seen.add(src)
+                result.add(src)
+                stack.append(src)
         return result
 
     def children(self, node_id: str) -> list[ContentNode]:

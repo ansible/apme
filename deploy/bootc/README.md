@@ -12,7 +12,7 @@ The bootc image builds on **RHEL 10 image mode** (`rhel10/rhel-bootc`, ADR-061) 
 - **Persistent storage** under `/var/lib/apme/` for sessions, Gateway DB, and
   proxy cache
 - **Firewall rules** for ports 8080 (Gateway REST), 8081 (UI), and 50051
-  (Primary gRPC)
+  (Engine gRPC)
 
 All containers run in a single Podman pod (`apme-pod`), matching the reference
 topology from `containers/podman/pod.yaml` and preserving ADR-005 localhost
@@ -119,7 +119,8 @@ sudo systemctl restart apme-pod.service
 ### Container Images
 
 The shipped quadlet files use fixed image references (e.g.
-`ghcr.io/ansible/apme-primary:latest`). To use different images or tags,
+`ghcr.io/ansible/apme-engine:2026.7.3`). Prefer a digest pin in production
+(`ghcr.io/ansible/apme-engine@sha256:…`). To use different images or tags,
 edit the quadlet files under `/usr/share/containers/systemd/` and run
 `systemctl daemon-reload && systemctl restart apme-pod.service`.
 
@@ -143,7 +144,7 @@ The quadlet files generate systemd units. Standard systemd commands work:
 systemctl status apme-pod.service
 
 # View logs for a specific service
-journalctl -u apme-primary.service -f
+journalctl -u apme-engine.service -f
 
 # Restart the entire pod
 systemctl restart apme-pod.service
@@ -171,7 +172,7 @@ Back up `/var/lib/apme/gateway/` to preserve scan history across upgrades.
 |------|---------|----------|
 | 8080 | Gateway REST API | HTTP |
 | 8081 | UI (dashboard) | HTTP |
-| 50051 | Primary gRPC | gRPC |
+| 50051 | Engine gRPC | gRPC |
 
 Access the UI at `http://<vm-ip>:8081` and the API at `http://<vm-ip>:8080`.
 
@@ -185,7 +186,7 @@ deploy/bootc/
 ├── apme.env.example                  # Runtime configuration → /etc/apme/env/apme.env
 └── quadlet/
     ├── apme.pod                      # Pod definition (ports, dependencies)
-    ├── apme-primary.container        # Primary orchestrator
+    ├── apme-engine.container        # Engine orchestrator
     ├── apme-native.container         # Native validator
     ├── apme-opa.container            # OPA validator
     ├── apme-ansible.container        # Ansible validator
@@ -210,7 +211,9 @@ podman images | grep apme
 If images are missing, pull them:
 
 ```bash
-podman pull ghcr.io/ansible/apme-primary:latest
+podman pull ghcr.io/ansible/apme-engine:2026.7.3
+# Or pin an immutable digest:
+# podman pull ghcr.io/ansible/apme-engine@sha256:<digest>
 # ... repeat for each service
 ```
 

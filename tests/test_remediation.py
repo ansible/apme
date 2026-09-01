@@ -239,6 +239,27 @@ class TestPartition:
         assert counts[RemediationClass.AI_CANDIDATE.value] == 1
         assert counts[RemediationClass.MANUAL_REVIEW.value] == 1
 
+    def test_count_by_remediation_class_skips_audit_debug_rules(self) -> None:
+        """Disabled-by-default audit rules do not inflate remediation totals."""
+        violations: list[ViolationDict] = [
+            {"rule_id": "L021", "remediation_class": RemediationClass.AI_CANDIDATE},
+            {"rule_id": "R402", "remediation_class": RemediationClass.MANUAL_REVIEW},
+            {"rule_id": "R404", "remediation_class": RemediationClass.MANUAL_REVIEW},
+        ]
+        counts = count_by_remediation_class(violations)
+        assert counts[RemediationClass.AI_CANDIDATE.value] == 1
+        assert counts[RemediationClass.MANUAL_REVIEW.value] == 0
+
+    def test_count_by_resolution_skips_audit_debug_rules(self) -> None:
+        """Disabled-by-default audit rules do not inflate resolution totals."""
+        violations: list[ViolationDict] = [
+            {"rule_id": "L021", "remediation_resolution": RemediationResolution.UNRESOLVED},
+            {"rule_id": "R404", "remediation_resolution": RemediationResolution.INFORMATIONAL},
+        ]
+        counts = count_by_resolution(violations)
+        assert counts[RemediationResolution.UNRESOLVED.value] == 1
+        assert RemediationResolution.INFORMATIONAL.value not in counts
+
     def test_count_by_resolution(self) -> None:
         """Verifies count_by_resolution returns correct counts."""
         violations: list[ViolationDict] = [
@@ -325,16 +346,43 @@ class TestPartition:
         assert len(t2) == 1
 
     def test_partition_cross_file_rules_still_tier3(self) -> None:
-        """Verifies R111/R112 still route to tier3 with NEEDS_CROSS_FILE."""
+        """Verifies cross-file and data-flow rules route to tier3."""
         reg = TransformRegistry()
         violations: list[ViolationDict] = [
             {"rule_id": "R111", "scope": RuleScope.TASK},
             {"rule_id": "R112", "scope": "task"},
+            {"rule_id": "L006", "scope": RuleScope.TASK},
+            {"rule_id": "L080", "scope": "task"},
         ]
         t1, t2, t3 = partition_violations(violations, reg)
+        assert len(t1) == 0
+        assert len(t2) == 0
+        assert len(t3) == 4
+        for v in t3:
+            assert v["remediation_resolution"] == RemediationResolution.NEEDS_CROSS_FILE
+
+    def test_cross_file_rules_beat_registry(self) -> None:
+        """Verifies L006/L080 stay Tier 3 even if a transform is registered."""
+        reg = TransformRegistry()
+        reg.register("L006", node=lambda t, v: False)
+        reg.register("L080", node=lambda t, v: False)
+        violations: list[ViolationDict] = [
+            {"rule_id": "L006", "scope": RuleScope.TASK},
+            {"rule_id": "L080", "scope": "task"},
+        ]
+        assert is_finding_resolvable(violations[0], reg) is False
+        assert is_finding_resolvable(violations[1], reg) is False
+        t1, t2, t3 = partition_violations(violations, reg)
+        assert t1 == []
+        assert t2 == []
         assert len(t3) == 2
         for v in t3:
             assert v["remediation_resolution"] == RemediationResolution.NEEDS_CROSS_FILE
+
+    def test_classify_data_flow_rules_manual_review(self) -> None:
+        """Verifies L006/L080 classify as manual-review despite task scope."""
+        assert classify_violation({"rule_id": "L006", "scope": RuleScope.TASK}) == RemediationClass.MANUAL_REVIEW
+        assert classify_violation({"rule_id": "L080", "scope": "task"}) == RemediationClass.MANUAL_REVIEW
 
     def test_partition_missing_scope_defaults_to_task(self) -> None:
         """Verifies violations without scope default to task (AI proposable)."""
@@ -537,6 +585,128 @@ class TestL007ShellToCommand:
         result = _apply_node(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
         assert result.applied is True
         assert "ansible.builtin.command" in result.content
+
+    def test_converts_argv_without_shell_features(self) -> None:
+        """Verifies argv-only shell without pipes is converted to command."""
+        content = textwrap.dedent("""\
+        - name: Simple argv
+          ansible.builtin.shell:
+            argv:
+              - whoami
+        """)
+        result = _apply_node(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
+        assert result.applied is True
+        assert "ansible.builtin.command" in result.content
+
+    def test_no_change_when_argv_has_pipe(self) -> None:
+        """Verifies argv containing a pipe is not converted to command."""
+        content = textwrap.dedent("""\
+        - name: Piped argv
+          ansible.builtin.shell:
+            argv:
+              - cat
+              - /proc/meminfo
+              - "|"
+              - grep
+              - MemTotal
+        """)
+        result = _apply_node(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
+        assert result.applied is False
+
+    def test_no_change_when_command_uninspectable(self) -> None:
+        """Verifies shell without cmd or argv is left unchanged."""
+        content = textwrap.dedent("""\
+        - name: Only chdir
+          ansible.builtin.shell:
+            chdir: /tmp
+        """)
+        result = _apply_node(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
+        assert result.applied is False
+
+    def test_converts_when_pipe_is_jinja_filter(self) -> None:
+        """Verifies Jinja |quote is not treated as a shell pipe."""
+        content = textwrap.dedent("""\
+        - name: Cat quoted path
+          ansible.builtin.shell: "cat {{ myfile | quote }}"
+        """)
+        result = _apply_node(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
+        assert result.applied is True
+        assert "ansible.builtin.command" in result.content
+
+    def test_no_change_when_background_ampersand(self) -> None:
+        """Verifies standalone & is treated as a shell feature."""
+        content = textwrap.dedent("""\
+        - name: Background sleep
+          ansible.builtin.shell:
+            cmd: sleep 10 &
+        """)
+        result = _apply_node(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
+        assert result.applied is False
+
+    def test_no_change_when_argv_has_ampersand(self) -> None:
+        """Verifies argv containing & is not converted to command."""
+        content = textwrap.dedent("""\
+        - name: Background argv
+          ansible.builtin.shell:
+            argv:
+              - sleep
+              - "10"
+              - "&"
+        """)
+        result = _apply_node(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
+        assert result.applied is False
+
+    def test_no_change_when_shell_variable(self) -> None:
+        """Verifies $VAR expansion is treated as a shell feature."""
+        content = textwrap.dedent("""\
+        - name: Echo home
+          ansible.builtin.shell: "echo $HOME"
+        """)
+        result = _apply_node(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
+        assert result.applied is False
+
+    def test_no_change_when_command_is_only_jinja(self) -> None:
+        """Verifies a whole-command Jinja expression is not converted."""
+        content = textwrap.dedent("""\
+        - name: Dynamic command
+          ansible.builtin.shell: "{{ command }}"
+        """)
+        result = _apply_node(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
+        assert result.applied is False
+
+    def test_no_change_when_jinja_command_has_trailing_tab(self) -> None:
+        """Verifies Jinja plus trailing whitespace is still uninspectable."""
+        content = '- name: Dynamic command\n  ansible.builtin.shell: "{{ command }}\t"\n'
+        result = _apply_node(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
+        assert result.applied is False
+
+    def test_no_change_when_jinja_has_dict_literal(self) -> None:
+        """Verifies a Jinja dict literal is stripped, not treated as inspectable."""
+        content = textwrap.dedent("""\
+        - name: Dynamic mapping
+          ansible.builtin.shell: "{{ {'k': 'v'} }}"
+        """)
+        result = _apply_node(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
+        assert result.applied is False
+
+    def test_converts_when_jinja_dict_is_an_argument(self) -> None:
+        """Verifies Jinja dict-plus-filter is stripped so cat remains convertible."""
+        content = textwrap.dedent("""\
+        - name: Cat quoted mapping
+          ansible.builtin.shell: "cat {{ {'path': item} | quote }}"
+        """)
+        result = _apply_node(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
+        assert result.applied is True
+        assert "ansible.builtin.command" in result.content
+
+    def test_no_change_when_bracket_glob(self) -> None:
+        """Verifies [ab] glob classes are treated as shell features."""
+        content = textwrap.dedent("""\
+        - name: Cat glob
+          ansible.builtin.shell: cat /tmp/[ab].txt
+        """)
+        result = _apply_node(fix_shell_to_command, content, {"rule_id": "L007", "line": 1})
+        assert result.applied is False
 
 
 # ---------------------------------------------------------------------------

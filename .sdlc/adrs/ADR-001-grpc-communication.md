@@ -10,7 +10,7 @@ Implemented
 
 ## Context
 
-APME is a multi-service system. The Primary orchestrator fans out to multiple validator backends, each in its own container. We needed a protocol for this inter-service communication.
+APME is a multi-service system. The Engine orchestrator fans out to multiple validator backends, each in its own container. We needed a protocol for this inter-service communication.
 
 ## Options Considered
 
@@ -22,7 +22,7 @@ APME is a multi-service system. The Primary orchestrator fans out to multiple va
 
 ## Decision
 
-**Use gRPC for all inter-service communication** (Primary ↔ Validators, CLI ↔ Primary).
+**Use gRPC for all inter-service communication** (Engine ↔ Validators, CLI ↔ Engine).
 
 HTTP/REST is used only for:
 - Galaxy Proxy (PEP 503 simple repository API, :8765)
@@ -34,7 +34,7 @@ server on :8181 is unused by application code.
 
 ## Rationale
 
-- Typed `.proto` contracts generate client and server stubs — adding a validator means implementing one RPC
+- Typed `.proto` contracts generate client and server stubs — adding a validator means implementing both `Validate` and `Health` RPCs
 - Binary encoding is efficient for the hierarchy payload (large nested JSON structures)
 - Bidirectional streaming is available if needed for future large-project scanning
 - The penalty (proto compilation step) is minor and automated via `scripts/gen_grpc.sh`
@@ -58,7 +58,7 @@ server on :8181 is unused by application code.
 
 - Proto files live in `proto/` directory
 - Generate stubs via `scripts/gen_grpc.sh`
-- All validators implement the same `Validate()` RPC interface
+- All validators implement the same `Validate()` and `Health()` RPC interface
 
 ## Related Decisions
 

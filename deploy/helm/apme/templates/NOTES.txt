@@ -1,7 +1,7 @@
 APME has been installed (Helm Simple / ADR-069 — one co-located pod).
 
 Components in the Simple pod:
-  - Engine (Primary + Native + OPA + Ansible + Galaxy Proxy)
+  - Engine + Native + OPA + Ansible + Galaxy Proxy
 {{- if .Values.gitleaks.enabled }}
   - Gitleaks validator
 {{- end }}

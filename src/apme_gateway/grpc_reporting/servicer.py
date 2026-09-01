@@ -1,4 +1,4 @@
-"""Reporting gRPC servicer — persists fix events to SQLite.
+"""Reporting gRPC servicer — persists fix events to the configured database.
 
 Engine pods push ``FixCompletedEvent`` messages to this servicer via gRPC
 (ADR-020 push model).  Each event is decomposed into ORM rows and committed
@@ -18,6 +18,7 @@ from sqlalchemy import select as sa_select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apme.v1 import reporting_pb2, reporting_pb2_grpc
+from apme_engine.graph.audit_metadata import build_audit_metadata_blob
 from apme_engine.graph.severity import severity_from_proto, severity_to_label
 from apme_gateway.db import get_session
 from apme_gateway.db.models import (
@@ -74,7 +75,7 @@ def _diagnostics_to_json(diag: object) -> str | None:
 
 
 class ReportingServicer(reporting_pb2_grpc.ReportingServicer):
-    """Concrete Reporting servicer that persists events to SQLite."""
+    """Concrete Reporting servicer that persists events to the configured database."""
 
     async def ReportFixCompleted(  # noqa: N802
         self,
@@ -157,10 +158,10 @@ class ReportingServicer(reporting_pb2_grpc.ReportingServicer):
         request: reporting_pb2.RegisterRulesRequest,
         context: grpc.aio.ServicerContext,  # type: ignore[type-arg]
     ) -> reporting_pb2.RegisterRulesResponse:
-        """Reconcile the rule catalog from a Primary registration (ADR-041).
+        """Reconcile the rule catalog from an Engine registration (ADR-041).
 
         Args:
-            request: Full rule set from the registering Primary.
+            request: Full rule set from the registering Engine.
             context: gRPC servicer context.
 
         Returns:
@@ -205,7 +206,7 @@ async def _reconcile_rules(
 
     Args:
         db: Active async database session.
-        incoming: Proto RuleDefinition messages from the registering Primary.
+        incoming: Proto RuleDefinition messages from the registering Engine.
 
     Returns:
         Tuple of (added, removed, unchanged) counts.
@@ -314,6 +315,7 @@ def _add_violations(db: AsyncSession, scan_id: str, violations: Sequence[object]
             line_val = v.line  # type: ignore[attr-defined]
         elif oneof == "line_range":
             line_val = v.line_range.start  # type: ignore[attr-defined]
+        audit_blob = build_audit_metadata_blob(dict(v.metadata))  # type: ignore[attr-defined]
         db.add(
             Violation(
                 scan_id=scan_id,
@@ -335,6 +337,7 @@ def _add_violations(db: AsyncSession, scan_id: str, violations: Sequence[object]
                 ai_reason=v.metadata.get("ai_reason", ""),  # type: ignore[attr-defined]
                 ai_suggestion=v.metadata.get("ai_suggestion", ""),  # type: ignore[attr-defined]
                 review_status=None,
+                audit_metadata=audit_blob,
             )
         )
 

@@ -11,7 +11,7 @@ Accepted (Helm workload topology amended by [ADR-069](ADR-069-helm-simple-all-in
 ## Context
 
 APME's reference deployment is a single Podman pod (`containers/podman/pod.yaml`)
-with 11 containers sharing localhost networking. This works well for development
+with 12 containers sharing localhost networking. This works well for development
 and single-node evaluation but does not address production deployment:
 
 - **Kubernetes** is the standard for multi-node, scaled, and managed deployments.
@@ -26,19 +26,21 @@ and single-node evaluation but does not address production deployment:
 ### Decision Drivers
 
 - ADR-012 (scale pods not services) defines the scaling unit: the full engine
-  stack (Primary + validators + Galaxy Proxy) replicates as a unit.
+  stack (Engine + validators + Galaxy Proxy) replicates as a unit.
 - ADR-005 (no service discovery) uses `127.0.0.1:<port>` for intra-pod
   communication. This works identically in Kubernetes pods (containers in the
   same pod share localhost).
 - The Helm chart’s shipping audience is **EAP and upstream** Simple installs
   (see ADR-069), not a multi-replica engine farm with an independently scaled
   Gateway.
-- The 11 containers in the pod naturally co-locate for Simple installs:
-  - **Engine stack** (8 containers): Primary, Native, OPA, Ansible, Gitleaks,
+- The 12 containers in the reference pod naturally co-locate for Simple installs:
+  - **Engine stack** (8 containers): Engine, Native, OPA, Ansible, Gitleaks,
     Collection Health, Dep Audit, Galaxy Proxy
   - **Gateway** (1 container): REST + Reporting + SQLite
   - **Frontend** (1 container): UI nginx (optional via portal profile)
   - **Abbenay** (1 container): Optional AI provider
+  - **Observability** (1 container): OpenTelemetry Collector sidecar (ADR-067;
+    included in reference `pod.yaml`, optional in minimal profiles)
 
 ## Decision
 
@@ -59,27 +61,29 @@ shape as the Podman pod).
 
 | K8s Resource | Containers | Scaling |
 |-------------|------------|---------|
-| Deployment (Simple / all-in-one) | primary, native, opa, ansible, gitleaks*, collection-health*, dep-audit*, galaxy-proxy, gateway, ui*, abbenay*, otel-collector* | **replicas: 1** (HPA off; see ADR-069) |
+| Deployment (Simple / all-in-one) | engine, native, opa, ansible, gitleaks*, collection-health*, dep-audit*, galaxy-proxy, gateway, ui*, abbenay*, otel-collector* | **replicas: 1** (HPA off; see ADR-069) |
 
 \* optional via chart values / profiles
 
 #### Networking
 
-All in-stack containers communicate via `127.0.0.1:<port>` — identical to the
-Podman pod (ADR-005). External access uses Service + Ingress:
+In-stack containers communicate via `127.0.0.1:<port>` (ADR-005), except
+Engine→Abbenay gRPC which uses a shared Unix socket when a consumer token
+is set (`abbenay-client` ≥ 2026.8.7 rejects tokens on plaintext TCP).
+External access uses Service + Ingress:
 
 | From | To | Address |
 |------|-----|---------|
-| Containers (intra-pod) | Each other | `127.0.0.1:<port>` |
+| Containers (intra-pod) | Each other | `127.0.0.1:<port>` (Engine→Abbenay gRPC: Unix socket; see below) |
 | UI (browser) / external API | Gateway REST | Ingress → Service `:8080` |
-| Primary | Gateway Reporting | `127.0.0.1:50060` |
-| Primary | Abbenay | `127.0.0.1:50057` (loopback; no TLS) |
+| Engine | Gateway Reporting | `127.0.0.1:50060` |
+| Engine | Abbenay | Unix socket `unix:///tmp/abbenay-run/abbenay/daemon.sock` (token + `abbenay-client` ≥ 2026.8.7); leftover TCP `127.0.0.1:50057` |
 
 #### Storage
 
 | PVC | Access Mode | Used By | Purpose |
 |-----|-------------|---------|---------|
-| `sessions` | ReadWriteOnce | Simple pod | Session venvs (Primary rw, validators ro) |
+| `sessions` | ReadWriteOnce | Simple pod | Session venvs (Engine rw, validators ro) |
 | `gateway-data` | ReadWriteOnce | Simple pod (Gateway) | SQLite database |
 | `proxy-cache` | ReadWriteOnce | Simple pod | Galaxy Proxy wheel cache |
 
@@ -122,7 +126,7 @@ environment files, and integrate natively with systemd.
 | File | Type | Purpose |
 |------|------|---------|
 | `apme.pod` | Pod | Defines the pod and published ports |
-| `apme-primary.container` | Container | Primary orchestrator |
+| `apme-engine.container` | Container | Engine orchestrator |
 | `apme-native.container` | Container | Native validator |
 | `apme-opa.container` | Container | OPA validator |
 | `apme-ansible.container` | Container | Ansible validator |
@@ -239,3 +243,4 @@ not the default.
 |------|--------|--------|
 | 2026-04-10 | APME Team | Initial acceptance (Helm + bootc) |
 | 2026-08-03 | APME Team | Helm topology amended by ADR-069 (Simple all-in-one) |
+| 2026-08-24 | APME Team | Engine→Abbenay uses a shared Unix socket (token on plaintext TCP rejected) |

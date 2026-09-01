@@ -75,7 +75,10 @@ module** surrounding each changed hunk — not just the hunk itself:
   before writing new code. If you add a `.pyi` field, read the other
   `.pyi` files for conventions. If you write a test, read the sibling
   tests for mock patterns. If you add an env var check, read how
-  existing env var checks handle the missing case.
+  existing env var checks handle the missing case. If you add a UI
+  control for an action the product already has (same label, href, or
+  table-cell pattern), reuse that component rather than a parallel
+  HTML primitive.
 
 **Artifact-type sweep.** Before answering the questions below, list
 every distinct artifact type in the diff (e.g., Python, proto, Rego,
@@ -85,7 +88,7 @@ type — not just Python. If a question feels inapplicable to an
 artifact type, translate it:
 
 - "caller" in proto means any service or CLI that invokes an RPC
-  (e.g., Primary calling `Validator.Validate`, CLI calling
+  (e.g., Engine calling `Validator.Validate`, CLI calling
   `FixSession`)
 - "type signature" in Rego means a rule's expected input/output
   shape (e.g., `input.hierarchy` must contain certain keys)
@@ -117,7 +120,9 @@ artifact type, translate it:
    where the signature implies it won't? Does it have side effects
    (logging, I/O, global state) that its name or signature doesn't
    advertise? Does it behave differently from sibling functions in
-   the same module?
+   the same module? When a helper opens a channel, socket, or other
+   closeable resource, does every return path (success and failure)
+   close it — typically via `finally` — or can a failed RPC leak it?
 
 4. **Is everything still true after this change?** Diff comments and
    docstrings against the code they describe. Did you rename something
@@ -127,7 +132,13 @@ artifact type, translate it:
    intentional filter or exception (e.g. stamp only compatible
    members of a mixed group), update any ADR/doc that still says
    "all" / "every" — prose that overclaims is drift even if the
-   code is correct.
+   code is correct. When one ADR cites another coupling or inventory
+   rule (sole import site, core vs optional validators, required
+   services), confirm the citing ADR does not invent a second path
+   that contradicts it. When docs name protobuf fields on
+   `SessionEvent` / `SessionResult` / reporting events, verify the
+   field exists on that message in the active `.proto` — aggregated
+   types defined elsewhere do not imply they are streamed.
 
 5. **Are dependencies and versions pinned to intent?** Check every
    version range, action tag, and base image. Does each one express
@@ -179,6 +190,25 @@ artifact type, translate it:
    an empty-but-not-falsy value. Trace it through the code path.
    If it fails silently, sends a vacuous request, or produces a
    return value that violates the declared type, that's a finding.
+   When a check treats a character as a metacharacter (shell `|`,
+   glob `*`, YAML `&`), construct an input where that character is
+   a token in a *different* grammar in the same string — Jinja
+   filters (`{{ x | quote }}`), URLs, or quoted YAML. Strip or
+   parse the inner language before applying the outer check.
+   The strip pattern must allow nested tokens of the inner language
+   (Jinja dicts ``{{ {'k': 'v'} }}`` — ``[^{}]*`` fails). Leftover
+   delimiters after the strip (``{{``) are still uninspectable.
+   Glob character classes (``[ab]``) are shell features like ``*``.
+   If a transform inspects ``cmd`` and ``argv``, the detector must
+   inspect those same sources — ``not mo["cmd"]`` is not "safe".
+   After stripping, also construct the whole-string-is-inner-language
+   case (`{{ command }}`): empty remainder is uninspectable, not
+   proven-safe. When the same predicate exists in two languages
+   (Rego helper vs Python transform), construct whitespace that one
+   trim would drop and the other would keep (`\t` vs `" "` cutset)
+   — "empty" must mean the same thing on both sides. After the
+   emptiness check uses ``trim_space``, tokenize/split on that
+   string with the same whitespace class, not ``split(trim(x, " "), " ")``.
    Also construct _temporal_ failures: what happens when an async
    dependency never responds, times out, or responds after the
    consumer has moved on? What happens when `asyncio.gather()`
@@ -326,6 +356,31 @@ sibling helpers (``resolve`` + ``is_relative_to`` / reject ``..``),
 and short-circuiting ``a() or b()`` / ``a() and b()`` when both calls
 have required side effects (e.g. promote ledger status after approving
 progression — evaluate both unconditionally).
+When adding a new error return after a status-machine transition
+(``SUBMITTING_PR``, ``APPLYING``, etc.), construct the failure *after*
+that transition — both explicit raises *and* exceptions from helpers
+called in that window (DB commit, flush, RPC). Require the same
+restore-to-terminal path as sibling error handlers in the same
+function; a 404/409/422/500 that skips ``transition(COMPLETED)`` leaves
+live operations stuck in the in-flight status. Match existing
+SCM/token/provider error paths before introducing a new raise —
+including the same transition extras (``error=``) sibling failure
+handlers pass, so SSE subscribers see why the in-flight status ended.
+When a parser treats ``:`` as host/port, construct the edge cases that
+break ``rpartition(":")``: empty host (``:port``), unbracketed IPv6
+(``::1``), ``[ipv6]:port``, and malformed ports (``[::1]:``,
+``host:abc``). If a caller claims graceful degrade and only catches
+``ImportError``, also construct a parse ``ValueError`` through that
+caller. Do not treat “contains a colon” as proof of TCP.
+Treat structured health/status bodies as contracts: reject
+substring/`"ok" in body` checks when the peer emits JSON with a
+``status`` field — require exact equality (``status == "ok"``).
+``{"status":"not ok"}`` must not pass a contains-ok test.
+When a snippet is embedded in a templated config (tox ``commands =``,
+GitHub ``run:``), construct interpolator collisions: unescaped
+``{...}`` that tox substitutes before Python runs. For
+``next(glob(...))``, construct the empty-match path and require an
+explicit error instead of ``StopIteration``.
 
 Do NOT discuss architecture philosophy. Rank findings
 critical/high/medium/low.
@@ -341,8 +396,21 @@ critical/high/medium/low.
 **Lens — consistency & drift:** Assume Pass 1 caught obvious bugs. Hunt for:
 - Docstring/ADR/comment vs code drift (especially "all"/"every" claims
   vs filtered implementation)
+- Rename/migration incompleteness: when an identifier is renamed in the
+  diff, scan the same affected docs, tests, Helm keys, and state-file
+  contracts for leftover old names in *current* guidance (historical
+  notes OK only when explicitly marked). Prefer a compatibility alias
+  or an explicit breaking-change note for persisted/public keys.
 - Dual input shapes that normalize differently (ORM vs dict, dataclass
   vs mapping, servicer vs flush path)
+- Dual implementations of the same predicate (Rego helper vs Python
+  transform) that disagree on empty/whitespace (`trim(..., " ")` vs
+  `str.strip()` / `trim_space`). After one path uses ``trim_space``,
+  later tokenize/split on the **same string** must use that whitespace
+  class — ``split(trim(cmd, " "), " ")`` will miss tabs/CRs the
+  emptiness check already treats as blank. They must also inspect the
+  **same input shapes** (``cmd`` vs ``argv`` vs ``_raw_params`` vs
+  missing).
 - Overlay fields that drift (tier/source/gate/status→review must stay
   aligned for all pre-group sources). When a column documents
   "empty means fall back to X" (e.g. ``stamp_rule_ids_json`` →
@@ -354,17 +422,28 @@ critical/high/medium/low.
   OpenAPI shape is unchanged — prefer log+ignore / intersection
   unless an ADR explicitly hardens the contract.
 - Cross-artifact parity (proto RPC ↔ daemon servicer; rule IDs ADR-008;
-  _DEFAULT_PORTS ↔ started services)
+  _DEFAULT_PORTS ↔ started services; Helm template ↔ Podman
+  ``pod.yaml`` for the same in-pod env/volume/probe wiring — if Helm
+  mounts a shared socket for Gateway health, Podman Gateway must too)
 - Test gaps for behaviors the code/docs claim
 - Silent no-ops, dead branches, wrong defaults
 - **Dependencies pinned to intent** — version ranges, GitHub Action
   tags, base images, pip/uv specs (not tighter, not looser);
   checkout `persist-credentials: false` when write-scoped tokens
-  must not remain in local Git config for later steps
+  must not remain in local Git config for later steps.
+  Tool versions in workflow YAML vs the repo-managed source
+  (``requires-python``, ``frontend/package.json`` ``engines.node``):
+  prefer ``node-version-file`` over a hard-coded number. Extra setup
+  actions need an explicit lean-ci exception next to the job.
 - **Dead weight** — unused imports/params; paid-for-but-wasteful work:
   double JSON parse, list.pop(0)/insert(0,…) vs deque, len(list(seq)),
   O(P×V) nested scans that should be O(P+V)
 - Pydantic/schema mutable defaults (`=[]`) vs sibling Field(default_factory=list)
+- UI controls that duplicate an existing product action with a
+  different primitive (raw ``<a>`` vs PatternFly ``Button
+  variant="link" component="a"`` already used for the same "View PR"
+  / table-cell link). Match the sibling component, including
+  ``isInline`` in table cells.
 
 Explain briefly why a Pass-1-style review would miss each finding.
 ```
@@ -425,6 +504,15 @@ Compare ADR/doc claims to what shipped. Label each finding
 **Lens — break it / rethink it:** Be creatively adversarial:
 - Weird but realistic scenarios that corrupt durable state, double-count
   analytics, or bypass filters
+- **Overloaded tokens** — a character that is a metacharacter in one
+  grammar (shell `|`, glob `*`) is an operator in another (Jinja
+  `|quote`) in the same string. Strip or parse the inner language
+  before applying the outer check. After stripping, an empty remainder
+  is uninspectable, not proven-safe — treat it as the conservative
+  case (keep shell / skip substitution), not as "no features found".
+  "Empty" must use the same whitespace definition in every
+  implementation of the check (`trim_space` / `str.strip()`, not a
+  space-only cutset).
 - **Information exposure** — logs, errors, user-facing strings,
   persisted diffs/explanations: credentials, secrets, user content,
   internal paths? Capability grants, CORS origins, container caps —
@@ -432,7 +520,8 @@ Compare ADR/doc claims to what shipped. Label each finding
 - Multi-tenant / empty project_id / confused or hostile clients against
   additive API fields
 - Time travel: clock skew, flush-then-rebuild inconsistency, partial
-  claim failures
+  claim failures; tests that encode absolute calendar timestamps for
+  "stale" / "within window" checks instead of `now() ± offset`
 - If you deleted 50% of this design, what still ships the goal?
 
 Return: (1) adversarial findings that could be real bugs,

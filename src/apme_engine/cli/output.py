@@ -7,7 +7,7 @@ from collections.abc import Iterable
 from typing import cast
 
 from apme.v1.common_pb2 import ProgressUpdate
-from apme.v1.primary_pb2 import ScanDiagnostics
+from apme.v1.engine_pb2 import ScanDiagnostics
 from apme_engine.cli._models import ViolationDict, YAMLDict
 from apme_engine.cli.ansi import (
     TREE_LAST,

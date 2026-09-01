@@ -41,6 +41,8 @@ class ActivitySummary(BaseModel):  # type: ignore[misc]
         manual_review: Count of tier-3 manual violations.
         remediated_count: Total applied (Tier 1 + AI accepted).
         pr_url: URL of the PR created from this activity (ADR-050), if any.
+        branch_name: Head branch pushed during SCM submit (ADR-050), if any.
+        commit_sha: SHA of the commit pushed during SCM submit (ADR-050), if any.
     """
 
     scan_id: str
@@ -59,6 +61,8 @@ class ActivitySummary(BaseModel):  # type: ignore[misc]
     manual_review: int
     remediated_count: int = 0
     pr_url: str | None = None
+    branch_name: str | None = None
+    commit_sha: str | None = None
 
 
 class ViolationDetail(BaseModel):  # type: ignore[misc]
@@ -83,6 +87,7 @@ class ViolationDetail(BaseModel):  # type: ignore[misc]
         node_type: ContentGraph NodeType value (task, block, play, …).
         ai_reason: Why the AI could not fix this violation (ai_abstained only).
         ai_suggestion: Manual remediation guidance from the AI (ai_abstained only).
+        audit_metadata: Parsed audit rule payloads when present.
         suppressed: True if this violation matches an active suppression (ADR-055).
         review_status: Human/gate decision (ADR-062); null if never reviewed.
     """
@@ -105,6 +110,7 @@ class ViolationDetail(BaseModel):  # type: ignore[misc]
     node_type: str = ""
     ai_reason: str = ""
     ai_suggestion: str = ""
+    audit_metadata: dict[str, object] | None = None
     suppressed: bool = False
     review_status: str | None = None
 
@@ -207,6 +213,8 @@ class ActivityDetail(BaseModel):  # type: ignore[misc]
         manual_review: Count of tier-3 manual violations.
         remediated_count: Total applied (Tier 1 + AI accepted).
         pr_url: URL of the PR created from this activity (ADR-050), if any.
+        branch_name: Head branch pushed during SCM submit (ADR-050), if any.
+        commit_sha: SHA of the commit pushed during SCM submit (ADR-050), if any.
         diagnostics_json: Raw diagnostics JSON string.
         violations: List of violation rows.
         proposals: List of proposal rows.
@@ -230,6 +238,8 @@ class ActivityDetail(BaseModel):  # type: ignore[misc]
     manual_review: int
     remediated_count: int = 0
     pr_url: str | None = None
+    branch_name: str | None = None
+    commit_sha: str | None = None
     diagnostics_json: str | None
     violations: list[ViolationDetail]
     proposals: list[ProposalDetail]
@@ -675,7 +685,8 @@ class SubmitResponse(BaseModel):  # type: ignore[misc]
     Attributes:
         branch_name: Name of the head branch that was created.
         commit_sha: SHA of the commit pushed to the branch.
-        pr_url: Web URL of the PR, or ``None`` if ``create_pr`` was false.
+        pr_url: PR URL stored on the activity after persist (existing
+            or newly recorded), or ``None`` if none is stored.
         provider: SCM provider that was used (e.g. ``github``).
     """
 

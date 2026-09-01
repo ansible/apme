@@ -71,4 +71,4 @@ async def validate(self, request):
 
 - ADR-007: Async gRPC servers (enables concurrent venv creation)
 - ADR-022: Session-scoped venvs with lifecycle management (replaces ephemeral model)
-- ADR-031: Unified collection cache — session-scoped venvs owned by Primary, shared read-only with validators
+- ADR-031: Unified collection cache — session-scoped venvs owned by Engine, shared read-only with validators

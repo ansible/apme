@@ -1,6 +1,6 @@
 """Ansible validator daemon: async gRPC adapter using session-scoped venvs.
 
-The Primary orchestrator owns venv lifecycle (creation, collection install,
+The Engine orchestrator owns venv lifecycle (creation, collection install,
 reaping).  This validator receives a ready-to-use ``venv_path`` in every
 ``ValidateRequest`` and runs Ansible rules against it read-only.
 """
@@ -64,14 +64,14 @@ def _run_ansible_validate(
     venv_path: str,
     content_graph_data: bytes = b"",
 ) -> _AnsibleResult:
-    """Run Ansible validation against a session-scoped venv provided by Primary.
+    """Run Ansible validation against a session-scoped venv provided by Engine.
 
     Args:
         files: List of File protos to validate.
         raw_version: Ansible core version string.
         hierarchy_payload: Parsed hierarchy payload for context.
         req_id: Request ID for logging.
-        venv_path: Session venv path from Primary (read-only).
+        venv_path: Session venv path from Engine (read-only).
         content_graph_data: Serialized ContentGraph for L057 node resolution.
 
     Returns:
@@ -86,7 +86,7 @@ def _run_ansible_validate(
         if venv_root is None:
             logger.warning("Ansible: no venv_path provided, skipping (req=%s)", req_id)
             err_viol = infra_violation(
-                "No session venv provided by Primary orchestrator",
+                "No session venv provided by Engine orchestrator",
                 rule_id=RULE_MISSING_VENV,
             )
             return _AnsibleResult(
@@ -120,7 +120,7 @@ def _run_ansible_validate(
 
 
 class AnsibleValidatorServicer(validate_pb2_grpc.ValidatorServicer):
-    """Async gRPC adapter: runs AnsibleValidator against a session venv from Primary."""
+    """Async gRPC adapter: runs AnsibleValidator against a session venv from Engine."""
 
     async def Validate(self, request: ValidateRequest, context: grpc.aio.ServicerContext) -> ValidateResponse:  # type: ignore[type-arg]
         """Handle Validate RPC: run AnsibleValidator against session venv.

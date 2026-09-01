@@ -1,4 +1,4 @@
-"""Backend discovery: find or auto-start the Primary gRPC service."""
+"""Backend discovery: find or auto-start the Engine gRPC service."""
 
 import sys
 
@@ -8,11 +8,11 @@ from apme_engine.cli._exit_codes import EXIT_ERROR
 from apme_engine.daemon.launcher import ensure_daemon
 
 
-def resolve_primary(args: object = None) -> tuple[grpc.Channel, str]:
-    """Resolve the Primary address and return an open gRPC channel.
+def resolve_engine(args: object = None) -> tuple[grpc.Channel, str]:
+    """Resolve the Engine address and return an open gRPC channel.
 
     Uses the three-tier discovery from ``ensure_daemon()``:
-    1. ``APME_PRIMARY_ADDRESS`` env var
+    1. ``APME_ENGINE_ADDRESS`` env var
     2. Running daemon (``~/.apme-data/daemon.json``)
     3. Auto-start daemon
 
@@ -20,7 +20,7 @@ def resolve_primary(args: object = None) -> tuple[grpc.Channel, str]:
         args: CLI namespace (reserved for future use).
 
     Returns:
-        Tuple of (gRPC channel, primary address string).
+        Tuple of (gRPC channel, engine address string).
     """
     try:
         addr = ensure_daemon()

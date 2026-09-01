@@ -2,7 +2,7 @@
 
 Read endpoints serve persisted check/remediate activity.  Write operations happen via the
 gRPC Reporting servicer (engine push model, ADR-020).  The ``WS /ws/session``
-endpoint bridges the browser to Primary's FixSession gRPC stream for the
+endpoint bridges the browser to Engine's FixSession gRPC stream for the
 playground check + remediate lifecycle (ADR-029).  Project operations use the
 REST + SSE endpoints in ``operation_router.py`` (ADR-052).
 """
@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import os
 import uuid
@@ -22,6 +23,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
+from apme_engine.graph.audit_metadata import sanitize_audit_metadata_value
 from apme_engine.graph.severity import severity_from_proto, severity_to_label
 from apme_gateway.api.schemas import (
     ActiveOperationSummary,
@@ -146,7 +148,7 @@ def _require_scm_provider_for_repo(repo_url: str, scm_provider: str | None) -> N
 
 
 _UPSTREAM_SERVICES: list[tuple[str, str, str]] = [
-    ("Primary Orchestrator", "APME_PRIMARY_ADDRESS", "127.0.0.1:50051"),
+    ("Engine", "APME_ENGINE_ADDRESS", "127.0.0.1:50051"),
     ("Native Validator", "NATIVE_GRPC_ADDRESS", "127.0.0.1:50055"),
     ("OPA Validator", "OPA_GRPC_ADDRESS", "127.0.0.1:50054"),
     ("Ansible Validator", "ANSIBLE_GRPC_ADDRESS", "127.0.0.1:50053"),
@@ -154,7 +156,7 @@ _UPSTREAM_SERVICES: list[tuple[str, str, str]] = [
     ("Collection Health", "COLLECTION_HEALTH_GRPC_ADDRESS", "127.0.0.1:50058"),
     ("Dep Audit", "DEP_AUDIT_GRPC_ADDRESS", "127.0.0.1:50059"),
     ("Galaxy Proxy", "APME_GALAXY_PROXY_URL", "http://127.0.0.1:8765"),
-    ("Abbenay AI", "APME_ABBENAY_ADDR", "127.0.0.1:50057"),
+    ("Abbenay AI", "APME_ABBENAY_ADDR", "unix:///tmp/abbenay-run/abbenay/daemon.sock"),
 ]
 
 
@@ -165,7 +167,7 @@ async def _probe_grpc(address: str) -> bool:
     responds with ``UNIMPLEMENTED`` (reachable but no health service).
 
     Args:
-        address: ``host:port`` of the gRPC service.
+        address: ``host:port`` or ``unix:///path/to.sock`` of the gRPC service.
 
     Returns:
         True if the service is reachable.
@@ -260,10 +262,10 @@ async def health() -> HealthStatus:
 
 @router.get("/ai/models")  # type: ignore[untyped-decorator]
 async def list_ai_models() -> list[AiModelInfo]:
-    """Return AI models available from the Abbenay daemon via Primary.
+    """Return AI models available from the Abbenay daemon via Engine.
 
-    Calls the Primary's ``ListAIModels`` gRPC method and translates the
-    response to JSON.  Returns an empty list when Primary or Abbenay is
+    Calls the Engine's ``ListAIModels`` gRPC method and translates the
+    response to JSON.  Returns an empty list when Engine or Abbenay is
     unreachable (graceful degradation).
 
     Returns:
@@ -271,19 +273,19 @@ async def list_ai_models() -> list[AiModelInfo]:
     """
     import grpc.aio  # noqa: PLC0415
 
-    from apme.v1 import primary_pb2, primary_pb2_grpc  # noqa: PLC0415
+    from apme.v1 import engine_pb2, engine_pb2_grpc  # noqa: PLC0415
 
-    primary_addr = os.environ.get("APME_PRIMARY_ADDRESS", "").strip() or "127.0.0.1:50051"
-    channel = grpc.aio.insecure_channel(primary_addr)
+    engine_addr = os.environ.get("APME_ENGINE_ADDRESS", "").strip() or "127.0.0.1:50051"
+    channel = grpc.aio.insecure_channel(engine_addr)
     try:
-        stub = primary_pb2_grpc.PrimaryStub(channel)  # type: ignore[no-untyped-call]
-        resp = await stub.ListAIModels(primary_pb2.ListAIModelsRequest(), timeout=5)
+        stub = engine_pb2_grpc.EngineStub(channel)  # type: ignore[no-untyped-call]
+        resp = await stub.ListAIModels(engine_pb2.ListAIModelsRequest(), timeout=5)
         models = [AiModelInfo(id=m.id, provider=m.provider, name=m.name) for m in resp.models]
         if not models:
-            logger.warning("ListAIModels returned 0 models from Primary at %s", primary_addr)
+            logger.warning("ListAIModels returned 0 models from Engine at %s", engine_addr)
         return models
     except Exception:
-        logger.warning("Failed to fetch AI models from Primary at %s", primary_addr, exc_info=True)
+        logger.warning("Failed to fetch AI models from Engine at %s", engine_addr, exc_info=True)
         return []
     finally:
         await channel.close(grace=None)
@@ -1471,6 +1473,20 @@ def _to_violation_detail(
     if not suppressed and rule_only_hashes:
         fp_rule = _violation_fingerprint(v.rule_id, "", mode="rule_only")  # type: ignore[attr-defined]
         suppressed = fp_rule in rule_only_hashes
+    audit_metadata: dict[str, object] | None = None
+    raw_audit = getattr(v, "audit_metadata", "") or ""
+    if raw_audit:
+        try:
+            parsed_audit = json.loads(raw_audit)
+            if isinstance(parsed_audit, dict):
+                audit_metadata = {key: sanitize_audit_metadata_value(key, value) for key, value in parsed_audit.items()}
+        except json.JSONDecodeError:
+            logger.warning(
+                "Failed to parse audit_metadata JSON for violation id=%s rule_id=%s",
+                getattr(v, "id", None),
+                getattr(v, "rule_id", None),
+            )
+            audit_metadata = None
     return ViolationDetail(
         id=v.id,  # type: ignore[attr-defined]
         rule_id=v.rule_id,  # type: ignore[attr-defined]
@@ -1490,6 +1506,7 @@ def _to_violation_detail(
         node_type=getattr(v, "node_type", "") or "",
         ai_reason=v.ai_reason,  # type: ignore[attr-defined]
         ai_suggestion=v.ai_suggestion,  # type: ignore[attr-defined]
+        audit_metadata=audit_metadata,
         suppressed=suppressed,
         review_status=getattr(v, "review_status", None),
     )
@@ -1567,6 +1584,8 @@ async def get_activity_detail(activity_id: str) -> ActivityDetail:
         manual_review=scan.manual_review,
         remediated_count=scan.fixed_count if scan.scan_type == "remediate" else 0,
         pr_url=scan.pr_url,
+        branch_name=scan.branch_name,
+        commit_sha=scan.commit_sha,
         diagnostics_json=scan.diagnostics_json,
         violations=[_to_violation_detail(v, suppressed_hashes, rule_only_hashes) for v in scan.violations],
         proposals=_proposals_for_activity(scan),
@@ -1714,6 +1733,8 @@ def _to_activity_summary(scan: Scan) -> ActivitySummary:
         manual_review=scan.manual_review,
         remediated_count=scan.fixed_count if scan.scan_type == "remediate" else 0,
         pr_url=scan.pr_url,
+        branch_name=scan.branch_name,
+        commit_sha=scan.commit_sha,
     )
 
 
@@ -2232,7 +2253,7 @@ async def project_operate_ws(
 
     The client sends ``{"action": "check"|"remediate", "options": {...}}`` (or
     ``{"remediate": true}``) to start an operation.  The gateway clones the repo,
-    drives Primary ``FixSession`` via gRPC, and streams progress back over the WebSocket.
+    drives Engine ``FixSession`` via gRPC, and streams progress back over the WebSocket.
 
     Args:
         websocket: Incoming WebSocket connection.
@@ -2434,7 +2455,7 @@ async def project_operate_ws(
                     project_id=proj.id,
                     repo_url=proj.repo_url,
                     branch=proj.branch,
-                    primary_address=cfg.primary_address,
+                    engine_address=cfg.engine_address,
                     remediate=True,
                     ansible_version=str(options.get("ansible_version", "")),
                     collection_specs=specs,
@@ -2481,7 +2502,7 @@ async def project_operate_ws(
                 project_id=proj.id,
                 repo_url=proj.repo_url,
                 branch=proj.branch,
-                primary_address=cfg.primary_address,
+                engine_address=cfg.engine_address,
                 remediate=False,
                 ansible_version=str(options.get("ansible_version", "")),
                 collection_specs=specs,
@@ -2709,7 +2730,7 @@ async def session_ws(
     resume: str | None = None,
     scan_id: str | None = None,
 ) -> None:
-    """Bidirectional WebSocket bridge to Primary's FixSession gRPC stream.
+    """Bidirectional WebSocket bridge to Engine's FixSession gRPC stream.
 
     Handles the full check + remediate lifecycle: file upload, real-time progress,
     Tier 1 auto-fix results, AI proposal delivery, interactive approval,
@@ -2731,7 +2752,7 @@ async def session_ws(
     cfg = load_config()
     await handle_session(
         websocket,
-        cfg.primary_address,
+        cfg.engine_address,
         resume_session_id=resume,
         resume_scan_id=scan_id if resume else None,
     )

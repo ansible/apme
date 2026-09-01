@@ -101,4 +101,85 @@ describe("AssessFindingsPanel rule filter", () => {
       screen.getByLabelText("Selected rule filters"),
     ).toHaveTextContent("L050");
   });
+
+  it("resolveRuleHref renders rule definition links instead of filter chips", () => {
+    render(
+      <AssessFindingsPanel
+        findings={findings}
+        resolveRuleHref={(bareId) =>
+          bareId === "L050"
+            ? "/self-service/repositories/quality-settings?rule=L050"
+            : undefined
+        }
+      />,
+    );
+
+    const l050Links = screen.getAllByRole("link", {
+      name: "View rule definition: L050",
+    });
+    expect(l050Links).toHaveLength(2);
+    for (const link of l050Links) {
+      expect(link).toHaveAttribute(
+        "href",
+        "/self-service/repositories/quality-settings?rule=L050",
+      );
+    }
+    expect(
+      screen.queryByRole("button", { name: "L050" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("ruleHrefTarget=_blank opens rule definition links in a new tab", async () => {
+    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+    const user = userEvent.setup();
+    render(
+      <AssessFindingsPanel
+        findings={findings}
+        resolveRuleHref={(bareId) =>
+          bareId === "L050"
+            ? "/self-service/repositories/quality-settings?rule=L050"
+            : undefined
+        }
+        ruleHrefTarget="_blank"
+      />,
+    );
+
+    const l050Links = screen.getAllByRole("link", {
+      name: "View rule definition in new tab: L050",
+    });
+    expect(l050Links).toHaveLength(2);
+    for (const link of l050Links) {
+      expect(link).toHaveAttribute("target", "_blank");
+      expect(link).toHaveAttribute("rel", "noopener noreferrer");
+    }
+
+    await user.click(l050Links[0]!);
+    expect(openSpy).toHaveBeenCalledWith(
+      "/self-service/repositories/quality-settings?rule=L050",
+      "_blank",
+      "noopener,noreferrer",
+    );
+    openSpy.mockRestore();
+  });
+
+  it("resolveRuleHref keeps filter chips for rules without a catalog href", async () => {
+    const user = userEvent.setup();
+    render(
+      <AssessFindingsPanel
+        findings={findings}
+        resolveRuleHref={(bareId) =>
+          bareId === "L050"
+            ? "/self-service/repositories/quality-settings?rule=L050"
+            : undefined
+        }
+      />,
+    );
+
+    const m001Buttons = screen.getAllByRole("button", { name: "M001" });
+    expect(m001Buttons.length).toBeGreaterThan(0);
+    await user.click(m001Buttons[0]!);
+    expect(
+      screen.getByLabelText("Selected rule filters"),
+    ).toHaveTextContent("M001");
+  });
 });

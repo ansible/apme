@@ -16,6 +16,7 @@ class ValidateRequest:
     venv_path: str
     content_graph_data: bytes
     dirty_node_ids: list[str]
+    graph_rule_opt_in: list[str]
     def __init__(
         self,
         *,
@@ -23,6 +24,7 @@ class ValidateRequest:
         venv_path: str = "",
         content_graph_data: bytes = b"",
         dirty_node_ids: Iterable[str] | None = ...,
+        graph_rule_opt_in: Iterable[str] | None = ...,
         **kwargs: object,
     ) -> None: ...
     def HasField(self, field_name: str) -> bool: ...

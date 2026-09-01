@@ -28,7 +28,6 @@ import {
   descendantProposalIds,
   filterByRuleKeepingNodeContext,
   fixTypeLabelColor,
-  isAiRemediationProposal,
   nodeTypeLabel,
   nodeTypeLabelColor,
   normalizeFindingNodeType,
@@ -37,7 +36,9 @@ import {
   proposalHasVisibleDiff,
   proposalNodeTitle,
   proposalsGateKey,
+  resolveProposalReviewGate,
   type FindingNodeType,
+  type ProposalReviewGate,
 } from '../remediation';
 import { RuleFilterInput } from './RuleFilterInput';
 
@@ -126,6 +127,10 @@ export interface ProposalDraftUpdate {
 
 export interface ProposalReviewPanelProps {
   proposals: OperationProposal[];
+  /** Gate 1 rule-based vs Gate 2 AI — prefer explicit signal from operation state. */
+  reviewGate?: ProposalReviewGate;
+  /** Operation had AI escalation triage before this review step. */
+  pastAiEscalation?: boolean;
   onApprove: (ids: string[]) => void;
   /** Optional optimistic draft decision sync (PATCH /operation/proposals). */
   onDraftUpdate?: (updates: ProposalDraftUpdate[]) => void;
@@ -163,6 +168,8 @@ function decisionToDraft(d: NodeDecision): ProposalDraftUpdate['status'] {
 
 export function ProposalReviewPanel({
   proposals,
+  reviewGate: reviewGateProp,
+  pastAiEscalation = false,
   onApprove,
   onDraftUpdate,
   feedbackEnabled,
@@ -184,7 +191,9 @@ export function ProposalReviewPanel({
   );
 
   const gateKey = proposalsGateKey(proposals);
-  const isAiGate = proposed.length > 0 && isAiRemediationProposal(proposed[0]!);
+  const isAiGate =
+    (reviewGateProp ??
+      resolveProposalReviewGate(proposals, { pastAiEscalation })) === 'ai';
 
   const [decisions, setDecisions] = useState<Map<string, NodeDecision>>(
     () => new Map(),
@@ -448,7 +457,8 @@ export function ProposalReviewPanel({
       label: 'Next',
       summary,
       onNext: () => onApprove(acceptedIds),
-      isDisabled: actionable.length === 0,
+      // No actionable diffs (e.g. only "Declined by AI") — still allow continue.
+      isDisabled: false,
     };
   }, [
     acceptedIds,
@@ -765,10 +775,29 @@ export function ProposalReviewPanel({
         ]}
       />
       <div style={{ marginTop: 8, fontSize: 13, opacity: 0.7 }}>
-        Every location starts undecided. Next stays disabled until you Accept or
-        Decline each one. Decided rows collapse. Accept remaining / Decline
-        remaining only apply to currently visible rows — widen filters to decide
-        the rest, or Clear to reset and expand again.
+        {actionable.length > 0 ? (
+          pendingCount > 0 ? (
+            <>
+              Every location starts undecided. Next stays disabled until you Accept
+              or Decline each one. Decided rows collapse. Accept remaining /
+              Decline remaining only apply to currently visible rows — widen
+              filters to decide the rest, or Clear to reset and expand again.
+            </>
+          ) : (
+            <>
+              All visible fixes are decided. Next to continue with your accepted
+              changes.
+            </>
+          )
+        ) : declined.length > 0 ? (
+          <>
+            AI could not propose fixes for the remaining violations. Review the
+            declined items below, then Next to continue without applying AI
+            changes.
+          </>
+        ) : (
+          <>No fixes to review. Next to continue.</>
+        )}
         {explanationOnly.length > 0
           ? ` ${explanationOnly.length} explanation-only proposal${
               explanationOnly.length !== 1 ? 's' : ''

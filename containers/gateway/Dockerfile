@@ -1,7 +1,7 @@
 # Gateway: gRPC Reporting receiver + FastAPI REST API.
-# Persists scan/fix events to SQLite (ADR-020 / ADR-029).
+# Persists scan/fix events to the configured database (ADR-020 / ADR-029).
 # Project operations require git for on-demand cloning (ADR-037).
-# Mount /data for SQLite persistence across restarts.
+# Mount /data for SQLite persistence across restarts when using the default backend.
 ARG BASE_IMAGE=localhost/apme-base:latest
 FROM $BASE_IMAGE
 

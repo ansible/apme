@@ -1,1 +1,1 @@
-"""Daemon services: Primary and validators (Native, OPA, Ansible, Gitleaks) as gRPC servers."""
+"""Daemon services: Engine and validators (Native, OPA, Ansible, Gitleaks) as gRPC servers."""

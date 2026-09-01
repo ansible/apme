@@ -105,7 +105,7 @@ src/
 ├── apme/v1/                    # Generated proto stubs (NEVER edit by hand)
 ├── apme_engine/                # Core product
 │   ├── cli/                    # argparse-based CLI (check, remediate, format, daemon, health-check)
-│   ├── daemon/                 # gRPC servers: primary, native, opa, ansible, gitleaks, etc.
+│   ├── daemon/                 # gRPC servers: engine, native, opa, ansible, gitleaks, etc.
 │   │   └── sinks/             # Event sinks (grpc_reporting)
 │   ├── engine/                 # Project loader: parser, models, content_graph, scanner
 │   ├── remediation/            # Convergence engine, transform registry

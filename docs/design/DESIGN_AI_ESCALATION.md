@@ -368,16 +368,17 @@ The best practices YAML can be updated manually or via automation:
 
 ### Auto-Discovery
 
-When `--ai` is set, Primary auto-discovers the Abbenay daemon:
+When `--ai` is set, Engine auto-discovers the Abbenay daemon:
 
-1. Check `$XDG_RUNTIME_DIR/abbenay/daemon.sock` (Linux standard)
-2. Fall back to `/run/user/<uid>/abbenay/daemon.sock`
-3. Fall back to `/tmp/abbenay/daemon.sock`
-4. Override with `APME_ABBENAY_ADDR` env var
+1. Override with `APME_ABBENAY_ADDR` (Helm/Podman set
+   `unix:///tmp/abbenay-run/abbenay/daemon.sock` when a token is set)
+2. Else `$XDG_RUNTIME_DIR/abbenay/daemon.sock` (Linux standard)
+3. Fall back to `/run/user/<uid>/abbenay/daemon.sock`
+4. Fall back to `/tmp/abbenay/daemon.sock`
 
 ### Preflight Health Check
 
-Before entering the remediation loop, `_resolve_ai_provider` in Primary checks prerequisites:
+Before entering the remediation loop, `_resolve_ai_provider` in Engine checks prerequisites:
 
 ```python
 if not fix_opts or not fix_opts.enable_ai:
@@ -406,7 +407,7 @@ The `apme health-check` subcommand checks all engine services:
 ```
 $ apme health-check
 
-  primary  (localhost:50051)  ok   12ms
+  engine  (localhost:50051)  ok   12ms
   native   (localhost:50055)  ok    8ms
   opa      (localhost:50054)  ok   15ms
   ansible  (localhost:50053)  ok   22ms
@@ -497,7 +498,7 @@ When `--auto-approve` is set, all proposals are accepted without prompting — n
 
 ### Communication
 
-The `abbenay-client` Python package (import: `abbenay_grpc`) runs in-process with the engine (no separate container for the client). It connects to the Abbenay daemon via Unix socket (local) or TCP (remote/container).
+The `abbenay-client` Python package (import: `abbenay_grpc`) runs in-process with the engine (no separate container for the client). It connects to the Abbenay daemon via Unix socket (local, and Helm/Podman when a consumer token is set) or TCP (remote, or tokenless plaintext). `abbenay-client` ≥ 2026.8.7 rejects tokens on plaintext TCP.
 
 ### Inline Policy
 
@@ -544,12 +545,12 @@ Future MCP integration (when implemented) would allow the LLM to autonomously ca
 ## Optional Dependency
 
 `abbenay-client` is an optional dependency, published on PyPI. Pin it to
-the same CalVer as the Abbenay daemon image (currently `v2026.8.6`):
+the same CalVer as the Abbenay daemon image (currently `v2026.8.7`):
 
 ```toml
 [project.optional-dependencies]
 ai = [
-    "abbenay-client==2026.8.6",
+    "abbenay-client==2026.8.7",
 ]
 ```
 
@@ -594,33 +595,32 @@ Install with: uv sync --extra ai
 Pre-built multi-arch Abbenay images (amd64 + arm64) are available on GHCR:
 
 ```bash
-podman pull ghcr.io/redhat-developer/abbenay:v2026.8.6
+podman pull ghcr.io/redhat-developer/abbenay:v2026.8.7
 ```
 
 | Tag | Meaning |
 |-----|---------|
 | `:main` | Latest merged code |
 | `:sha-<short>` | Specific commit |
-| `:v2026.8.6` | Release (`v` prefix; APME pin) |
+| `:v2026.8.7` | Release (`v` prefix; APME pin) |
 | `:latest` | Latest stable release |
 
 ```
 +--------------------------- apme-pod ----------------------------+
 |                                                                   |
 |  +----------+  +----------+  +----------+  +----------+         |
-|  | Primary  |  |  Native  |  |   OPA    |  | Ansible  |  ...    |
+|  | Engine  |  |  Native  |  |   OPA    |  | Ansible  |  ...    |
 |  |  :50051  |  |  :50055  |  |  :50054  |  |  :50053  |         |
 |  | engine + |  |          |  |          |  |          |         |
 |  | remediat |  |          |  |          |  |          |         |
 |  | + AI esc |  |          |  |          |  |          |         |
 |  +----+-----+  +----------+  +----------+  +----------+         |
 |       |                                                           |
-|       | gRPC (optional, only when --ai)                           |
+|       | gRPC unix socket when a token is set; TCP :50057 for probes |
 |       v                                                           |
 |  +----------+                                                     |
 |  | Abbenay  |  AI daemon -- manages LLM providers                |
-|  |  :50057  |  GHCR image or binary                               |
-|  +----------+                                                     |
+|  +----------+  GHCR image or binary                               |
 |                                                                   |
 |  +--------------------------------------------+                  |
 |  |       Galaxy Proxy :8765 (PEP 503)         |                  |

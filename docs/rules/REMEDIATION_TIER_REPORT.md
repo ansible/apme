@@ -15,21 +15,21 @@ Analysis of default remediation routing for all rules. Regenerate with:
 
 ### Promotion potential
 
-- **27** Tier 2 rules could likely move to Tier 1 (mechanical transforms)
-- **8** Tier 3 rules have mechanical fixes blocked by scope
-- **69 - 27 = 42** Tier 2 rules should stay AI (judgment/security)
+- **26** Tier 2 rules could likely move to Tier 1 (mechanical transforms)
+- **9** Tier 3 rules have mechanical fixes blocked by scope
+- **69 - 26 = 43** Tier 2 rules should stay AI (judgment/security)
 
 ### Tier 3 breakdown
 
 | Reason | Count |
 |--------|-------|
 | info severity | 19 |
-| cross-file (R111/R112) | 2 |
+| cross-file / data-flow context | 4 |
 | playbook scope | 11 |
 | collection scope | 10 |
 | role scope | 10 |
 | play scope | 7 |
-| inventory scope | 4 |
+| inventory scope | 2 |
 
 ## Tier 1 — Auto (25 rules)
 
@@ -78,7 +78,6 @@ Analysis of default remediation routing for all rules. Regenerate with:
 | L064 | low | task | Replace meta end_play with end_host |
 | L076 | low | task | Rewrite ansible_* to ansible_facts[] |
 | L078 | low | task | Convert dot to bracket notation in Jinja |
-| L080 | low | task | Prefix internal vars with underscore |
 | L091 | low | task | Add \| bool filter to bare when vars |
 | L092 | low | task | Remove loop var from task name |
 | L110 | high | task | Add no_log to debug task |
@@ -102,7 +101,6 @@ Analysis of default remediation routing for all rules. Regenerate with:
 | A001 | medium | task | Task/block scope — AI can propose fix (Tier 2) |
 | A002 | high | task | Task/block scope — AI can propose fix (Tier 2) |
 | L004 | high | task | Task/block scope — AI can propose fix (Tier 2) |
-| L006 | low | task | Task/block scope — AI can propose fix (Tier 2) |
 | L014 | low | task | Task/block scope — AI can propose fix (Tier 2) |
 | L017 | low | task | Task/block scope — AI can propose fix (Tier 2) |
 | L030 | low | task | Task/block scope — AI can propose fix (Tier 2) |
@@ -111,6 +109,7 @@ Analysis of default remediation routing for all rules. Regenerate with:
 | L033 | low | task | Task/block scope — AI can propose fix (Tier 2) |
 | L035 | low | task | Task/block scope — AI can propose fix (Tier 2) |
 | L036 | low | task | Task/block scope — AI can propose fix (Tier 2) |
+| L039 | medium | task | Task/block scope — AI can propose fix (Tier 2) |
 | L041 | low | task | Task/block scope — AI can propose fix (Tier 2) |
 | L044 | low | task | Task/block scope — AI can propose fix (Tier 2) |
 | L045 | low | task | Task/block scope — AI can propose fix (Tier 2) |
@@ -130,6 +129,7 @@ Analysis of default remediation routing for all rules. Regenerate with:
 | P001 | error | task | Task/block scope — AI can propose fix (Tier 2) |
 | P002 | error | task | Task/block scope — AI can propose fix (Tier 2) |
 | P003 | error | task | Task/block scope — AI can propose fix (Tier 2) |
+| P004 | error | task | Task/block scope — AI can propose fix (Tier 2) |
 | R101 | medium | task | Task/block scope — AI can propose fix (Tier 2) |
 | R103 | medium | task | Task/block scope — AI can propose fix (Tier 2) |
 | R104 | medium | task | Task/block scope — AI can propose fix (Tier 2) |
@@ -147,6 +147,7 @@ Analysis of default remediation routing for all rules. Regenerate with:
 | Rule ID | Validator | Severity | Scope | Auto candidate? | Reason |
 |---------|-----------|----------|-------|-----------------|--------|
 | L003 | OPA | low | play | Add play name | Scope 'play' — play/role/collection not AI-proposable |
+| L006 | OPA | low | task | — | Project-level context required (cross-file or data-flow consumers) |
 | L016 | OPA | info | task | — | Info severity — informational, no auto-fix |
 | L019 | OPA | low | playbook | — | Scope 'playbook' — play/role/collection not AI-proposable |
 | L023 | OPA | info | play | — | Info severity — informational, no auto-fix |
@@ -154,7 +155,6 @@ Analysis of default remediation routing for all rules. Regenerate with:
 | L034 | Native | low | inventory | — | Scope 'inventory' — play/role/collection not AI-proposable |
 | L037 | Native | medium | collection | — | Scope 'collection' — play/role/collection not AI-proposable |
 | L038 | Native | medium | role | — | Scope 'role' — play/role/collection not AI-proposable |
-| L039 | Native | medium | inventory | — | Scope 'inventory' — play/role/collection not AI-proposable |
 | L040 | Native | info | playbook | Replace tabs with spaces | Info severity — informational, no auto-fix |
 | L042 | Native | info | play | — | Info severity — informational, no auto-fix |
 | L052 | Native | low | role | — | Scope 'role' — play/role/collection not AI-proposable |
@@ -177,6 +177,7 @@ Analysis of default remediation routing for all rules. Regenerate with:
 | L075 | Native | low | role | — | Scope 'role' — play/role/collection not AI-proposable |
 | L077 | Native | low | role | — | Scope 'role' — play/role/collection not AI-proposable |
 | L079 | Native | low | role | — | Scope 'role' — play/role/collection not AI-proposable |
+| L080 | Native | low | task | Prefix internal vars with underscore | Project-level context required (cross-file or data-flow consumers) |
 | L081 | Native | low | playbook | — | Scope 'playbook' — play/role/collection not AI-proposable |
 | L086 | Native | low | play | — | Scope 'play' — play/role/collection not AI-proposable |
 | L087 | Native | low | collection | — | Scope 'collection' — play/role/collection not AI-proposable |
@@ -199,13 +200,12 @@ Analysis of default remediation routing for all rules. Regenerate with:
 | M011 | OPA | high | collection | — | Scope 'collection' — play/role/collection not AI-proposable |
 | M025 | OPA | high | play | — | Scope 'play' — play/role/collection not AI-proposable |
 | M029 | Native | medium | playbook | — | Scope 'playbook' — play/role/collection not AI-proposable |
-| P004 | Native | error | inventory | — | Scope 'inventory' — play/role/collection not AI-proposable |
 | R108 | Native | medium | play | — | Scope 'play' — play/role/collection not AI-proposable |
-| R111 | Native | medium | task | — | Cross-file context required (R111/R112) |
-| R112 | Native | medium | task | — | Cross-file context required (R111/R112) |
+| R111 | Native | medium | task | — | Project-level context required (cross-file or data-flow consumers) |
+| R112 | Native | medium | task | — | Project-level context required (cross-file or data-flow consumers) |
 | R117 | Native | info | role | — | Info severity — informational, no auto-fix |
 | R118 | OPA | info | task | — | Info severity — informational, no auto-fix |
 | R401 | Native | info | playbook | — | Info severity — informational, no auto-fix |
-| R402 | Native | info | task | — | Info severity — informational, no auto-fix |
+| R402 | Native | info | play | — | Info severity — informational, no auto-fix |
 | R404 | Native | info | task | — | Info severity — informational, no auto-fix |
 | R501 | Native | info | collection | — | Info severity — informational, no auto-fix |

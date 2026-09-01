@@ -13,15 +13,15 @@ Implemented
 ### The original design intent
 
 ADR-001 established gRPC as the protocol for all inter-service communication.
-ADR-004 placed the Primary as the orchestrator inside a Podman pod, with the
-CLI as a thin on-the-fly container that calls Primary over gRPC. The
+ADR-004 placed the Engine as the orchestrator inside a Podman pod, with the
+CLI as a thin on-the-fly container that calls Engine over gRPC. The
 architecture diagram in CLAUDE.md shows the CLI outside the pod, talking to
-Primary on :50051.
+Engine on :50051.
 
 ### What actually happened
 
 The CLI grew into a **fat client** that embeds the entire engine. When
-`APME_PRIMARY_ADDRESS` is not set (standalone mode), the CLI runs the ARI
+`APME_ENGINE_ADDRESS` is not set (standalone mode), the CLI runs the ARI
 engine, all validators (OPA, Native, Ansible), the YAML formatter
 (`ruamel.yaml` round-trip with 824 lines of customization), and the full
 remediation convergence loop — all in-process. The gRPC path is used only for
@@ -37,10 +37,10 @@ path, and the local fallback accumulated until the CLI became a monolith
 1. **No reuse.** The orchestration logic (format → idempotency check →
    scan → remediate convergence loop) lives inside `cli.py`. A web UI,
    VS Code extension, or CI integration would need to reimplement it.
-   The Primary — which should be the single orchestrator — only knows
+   The Engine — which should be the single orchestrator — only knows
    how to scan and format, not remediate.
 
-2. **Dual code paths.** Every subcommand has `if primary_addr:` / `else:`
+2. **Dual code paths.** Every subcommand has `if engine_addr:` / `else:`
    branching. The two paths have subtly different behavior (e.g., the gRPC
    scan path silently dropped `collection_specs` until PR #34 fixed it).
    Bugs in one path don't surface in the other.
@@ -65,16 +65,18 @@ path, and the local fallback accumulated until the CLI became a monolith
 ## Decision
 
 **Refactor the CLI to a thin gRPC presentation layer. Add a local daemon mode
-that runs the Primary + validators as localhost gRPC servers, giving standalone
+that runs the Engine + validators as localhost gRPC servers, giving standalone
 users the same architecture as the pod without requiring containers.**
 
-The CLI will always speak gRPC. The backend is either:
+The CLI always speaks gRPC to Engine for orchestration. Operations that consume
+persisted data may use the Gateway REST API as described below (for example
+`apme sbom`). The Engine backend is either:
 
-1. A **Podman pod** (production, CI) — discovered via `APME_PRIMARY_ADDRESS`
+1. A **Podman pod** (production, CI) — discovered via `APME_ENGINE_ADDRESS`
 2. A **local daemon** (development) — auto-started on first use
 
 The CLI will no longer embed engine, validator, formatter, or remediation
-logic. All orchestration moves to the Primary via new gRPC RPCs.
+logic. All orchestration moves to the Engine via new gRPC RPCs.
 
 ## Alternatives Considered
 
@@ -98,7 +100,7 @@ The web UI would force a reckoning regardless.
 
 ### Alternative 2: Subprocess spawning (no daemon persistence)
 
-**Description**: The CLI spawns Primary + validators as background processes
+**Description**: The CLI spawns Engine + validators as background processes
 for each invocation, tears them down on exit.
 
 **Pros**:
@@ -135,13 +137,13 @@ does not enable multi-client reuse.
 
 ### Positive
 
-- **Single orchestrator.** The Primary owns all orchestration logic (scan,
+- **Single orchestrator.** The Engine owns all orchestration logic (scan,
   format, remediate). Any gRPC client (CLI, web UI, CI) gets the same
   capabilities.
 - **One code path.** The CLI always speaks gRPC — no dual branching, no
   subtle divergence between local and pod modes.
 - **Web UI enablement.** A web UI becomes a second gRPC client to the same
-  Primary. No reimplementation of the convergence loop needed.
+  Engine. No reimplementation of the convergence loop needed.
 - **Thin CLI is Rust-rewritable.** Once the CLI is pure gRPC client + file
   I/O + output rendering, it could be rewritten in Rust for fast startup
   and single-binary distribution.
@@ -168,12 +170,12 @@ does not enable multi-client reuse.
 
 ## Implementation Notes
 
-### New gRPC RPCs on Primary
+### New gRPC RPCs on Engine
 
-Added to `proto/apme/v1/primary.proto`:
+Added to `proto/apme/v1/engine.proto`:
 
 ```protobuf
-service Primary {
+service Engine {
   // ... existing RPCs ...
   rpc FormatStream(stream ScanChunk) returns (FormatResponse);
   rpc FixSession(stream SessionCommand) returns (stream SessionEvent);
@@ -195,10 +197,15 @@ fix workflow design.
 
 New module `src/apme_engine/daemon/launcher.py`:
 
-- `start_daemon()` — fork a background process that starts Primary + Native
-  + OPA validators as async gRPC servers on localhost. Write PID and ports
-  to `~/.apme-data/daemon.json`. Optional services (Ansible, Gitleaks, Cache)
-  start lazily on first use.
+- `start_daemon()` — fork a background process that starts Engine, Native,
+  OPA, Ansible, and Galaxy Proxy on localhost. Engine and validators use async
+  gRPC; Galaxy Proxy intentionally uses uvicorn/HTTP (PEP 503 — documented
+  HTTP exception to gRPC-only inter-service traffic). Gateway HTTP and
+  Reporting gRPC co-location in the local daemon is specified by ADR-049 but
+  not yet implemented in `launcher.py` (integration tests and `apme sbom` start
+  Gateway separately today). Write PID and ports to `~/.apme-data/daemon.json`.
+  Optional services (`gitleaks`, `collection_health`, `dep_audit`) start when
+  `include_optional=True`.
 - `stop_daemon()` — read PID from state file, SIGTERM, remove state file.
 - `daemon_status()` — check PID liveness, return port info and uptime.
 - `ensure_daemon()` — called by CLI before each command: check for running
@@ -209,17 +216,27 @@ State file (`~/.apme-data/daemon.json`):
 ```json
 {
   "pid": 12345,
-  "primary": "127.0.0.1:50051",
+  "engine": "127.0.0.1:50051",
   "version": "0.1.0",
-  "started_at": "2026-03-18T16:30:00Z"
+  "started_at": "2026-03-18T16:30:00Z",
+  "services": {
+    "engine": "127.0.0.1:50051",
+    "native": "127.0.0.1:50055",
+    "opa": "127.0.0.1:50054",
+    "ansible": "127.0.0.1:50053",
+    "galaxy_proxy": "127.0.0.1:8765"
+  }
 }
 ```
 
+`services` is the discovery map written by `start_daemon()` (Engine-core
+endpoints). When ADR-049 embedding lands, `gateway_http` and `gateway_grpc`
+entries will be added for CLI Gateway discovery.
 Version field enables auto-restart when the installed package is updated.
 
 ### Backend discovery order
 
-1. `APME_PRIMARY_ADDRESS` env var — explicit, wins always (pod, CI)
+1. `APME_ENGINE_ADDRESS` env var — explicit, wins always (pod, CI)
 2. `~/.apme-data/daemon.json` exists and PID is alive — reuse running daemon
 3. Nothing found — auto-start daemon, wait for health, then proceed
 
@@ -235,10 +252,10 @@ Version field enables auto-restart when the installed package is updated.
 | `daemon`       | N/A (local process management)        | start / stop / status            |
 
 The `session` subcommand (ADR-022) becomes a gRPC pass-through to the
-Primary service (which owns session-scoped venvs via `VenvSessionManager`)
+Engine service (which owns session-scoped venvs via `VenvSessionManager`)
 rather than managing venvs locally. The CLI's
 `session list/info/delete/reap` commands remain available but delegate to
-the Primary over gRPC instead of directly manipulating `~/.apme-data/`.
+the Engine over gRPC instead of directly manipulating `~/.apme-data/`.
 
 ### Phased rollout (completed)
 
@@ -250,7 +267,7 @@ Wired all subcommands through gRPC.
 
 **Phase B — Add FixSession + FormatStream.** Added `FormatStream` (unary
 response from streamed chunks) and `FixSession` (bidirectional stream per
-ADR-028) proto definitions, implemented in `primary_server.py`.
+ADR-028) proto definitions, implemented in `engine_server.py`.
 
 **Phase C — Split cli.py.** Broke the monolith into `src/apme_engine/cli/`
 package: `parser.py`, `check.py`, `remediate.py`, `format_cmd.py`, `output.py`,
@@ -292,14 +309,14 @@ no longer imported by the CLI.
 - ADR-007: Async gRPC servers — the daemon reuses the existing async server
   implementations
 - ADR-009: Separate remediation engine — `FixSession` moves the remediation
-  convergence loop into the Primary, where it belongs
+  convergence loop into the Engine, where it belongs
 - ADR-011: YAML formatter pre-pass — `FixSession` runs the formatter as
   Phase 1 server-side, matching the current `fix` pipeline
 - ADR-028: Session-based fix workflow — `FixSession` bidirectional streaming
   RPC supersedes the originally proposed one-shot `FixStream`
 - ADR-022: Session-scoped venvs — `session` CLI commands become gRPC
-  pass-throughs to the Ansible validator; venv lifecycle management
-  remains per ADR-022 but moves server-side
+  pass-throughs to Engine (which owns venv lifecycle via `VenvSessionManager`);
+  the Ansible validator remains a read-only consumer of session venvs
 
 ## Addendum
 
@@ -307,14 +324,14 @@ no longer imported by the CLI.
 
 ## Future Direction: CLI → Gateway REST
 
-ADR-024 made the CLI a thin gRPC client to the Primary. As the Gateway
+ADR-024 made the CLI a thin gRPC client to the Engine. As the Gateway
 matures (ADR-029, ADR-038, ADR-040), it is becoming the natural API surface
 for the system — it owns persistence, context enrichment, and the public
 REST API.
 
 For CLI operations that **consume persisted data** rather than orchestrating
 engine work, the Gateway REST API is a better fit than direct gRPC to
-Primary:
+Engine:
 
 | Operation | Current path | Future path |
 |-----------|-------------|-------------|
@@ -323,7 +340,7 @@ Primary:
 | `session list/info` | (not implemented) | CLI → Gateway REST (persisted session data) |
 
 Streaming operations (`check`, `remediate`) that require real-time progress
-and bidirectional interaction stay on gRPC to Primary (via `FixSession`).
+and bidirectional interaction stay on gRPC to Engine (via `FixSession`).
 The Gateway may eventually proxy these over WebSocket for browser clients,
 but the CLI's gRPC path remains efficient for interactive terminal use.
 

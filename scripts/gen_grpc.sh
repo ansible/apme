@@ -9,7 +9,7 @@ PROTO_ROOT="$ROOT/proto"
 PY_OUT="$ROOT/src"
 PROTOS=(
   apme/v1/common.proto
-  apme/v1/primary.proto
+  apme/v1/engine.proto
   apme/v1/validate.proto
   apme/v1/reporting.proto
 )

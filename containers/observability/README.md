@@ -47,15 +47,15 @@ samples arrive.
 
 | OTel name | Prometheus (typical) | Source |
 |-----------|----------------------|--------|
-| `apme.scan.duration` | `apme_scan_duration_seconds` | Primary |
-| `apme.scan.phase.duration` | `apme_scan_phase_duration_seconds` | Primary |
-| `apme.validator.duration` | `apme_validator_duration_seconds` | Primary (from ADR-013) |
-| `apme.scan.completed` | `apme_scan_completed_total` | Primary |
+| `apme.scan.duration` | `apme_scan_duration_seconds` | Engine |
+| `apme.scan.phase.duration` | `apme_scan_phase_duration_seconds` | Engine |
+| `apme.validator.duration` | `apme_validator_duration_seconds` | Engine (from ADR-013) |
+| `apme.scan.completed` | `apme_scan_completed_total` | Engine |
 | `apme.grpc.server.duration` | `apme_grpc_server_duration_seconds` | Validators (`Validate` / `Health`) |
 | `apme.grpc.server.completed` | `apme_grpc_server_completed_total` | Validators |
 | `apme.http.server.duration` | `apme_http_server_duration_seconds` | Gateway, Galaxy Proxy |
-| `apme.venv.acquire.duration` | `apme_venv_acquire_duration_seconds` | Primary (`outcome=warm`, `incremental`, or `create`) |
-| `apme.venv.acquire.completed` | `apme_venv_acquire_completed_total` | Primary |
+| `apme.venv.acquire.duration` | `apme_venv_acquire_duration_seconds` | Engine (`outcome=warm`, `incremental`, or `create`) |
+| `apme.venv.acquire.completed` | `apme_venv_acquire_completed_total` | Engine |
 | `apme.galaxy.fetch.duration` | `apme_galaxy_fetch_duration_seconds` | Galaxy Proxy (`operation=download` or `version_lookup`) |
 | `apme.galaxy.fetch.completed` | `apme_galaxy_fetch_completed_total` | Galaxy Proxy |
 | `apme.galaxy.wheel.serve.duration` | `apme_galaxy_wheel_serve_duration_seconds` | Galaxy Proxy (`outcome=hit` or `miss`) |

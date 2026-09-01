@@ -19,7 +19,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from apme.v1.common_pb2 import ProgressUpdate
-from apme.v1.primary_pb2 import (
+from apme.v1.engine_pb2 import (
     FileDiff,
     FilePatch,
     FixOptions,
@@ -40,7 +40,7 @@ _REAP_INTERVAL = 60  # seconds
 
 @dataclass
 class SessionState:
-    """Ephemeral per-session state held on the Primary.
+    """Ephemeral per-session state held on the Engine.
 
     Attributes:
         session_id: Unique session identifier.
@@ -49,6 +49,8 @@ class SessionState:
         tier1_patches: Applied Tier 1 patches.
         format_diffs: Format diffs from the formatting phase.
         proposals: Pending AI proposals keyed by proposal ID.
+        review_declined_proposals: Declined-only review rows (display/replay;
+            not applied via ApprovalRequest).
         current_tier: Current remediation tier (1, 2, or 3).
         report: Remediation report from the engine.
         temp_dir: Temporary directory for materialized files.
@@ -120,6 +122,7 @@ class SessionState:
     tier1_patches: list[FilePatch] = field(default_factory=list)
     format_diffs: list[FileDiff] = field(default_factory=list)
     proposals: dict[str, Proposal] = field(default_factory=dict)
+    review_declined_proposals: dict[str, Proposal] = field(default_factory=dict)
     current_tier: int = 1
     report: FixReport | None = None
     temp_dir: Path | None = None
@@ -161,7 +164,7 @@ class SessionState:
     progress_logs: list[ProgressUpdate] = field(default_factory=list)
 
     # Session-scoped ansible.cfg for Galaxy auth (ADR-045).
-    # Written by Primary from proto galaxy_servers; cleaned up with temp_dir.
+    # Written by Engine from proto galaxy_servers; cleaned up with temp_dir.
     galaxy_cfg_path: Path | None = None
 
     # Manifest data captured from the first scan pass (ADR-040)

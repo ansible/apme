@@ -41,7 +41,7 @@ RUN chown apme:apme /etc/apme/env/apme.env
 # Podman quadlet (.container, .pod) files go into the system generator directory.
 # systemd reads these and generates unit files automatically.
 COPY deploy/bootc/quadlet/apme.pod /usr/share/containers/systemd/apme.pod
-COPY deploy/bootc/quadlet/apme-primary.container /usr/share/containers/systemd/apme-primary.container
+COPY deploy/bootc/quadlet/apme-engine.container /usr/share/containers/systemd/apme-engine.container
 COPY deploy/bootc/quadlet/apme-native.container /usr/share/containers/systemd/apme-native.container
 COPY deploy/bootc/quadlet/apme-opa.container /usr/share/containers/systemd/apme-opa.container
 COPY deploy/bootc/quadlet/apme-ansible.container /usr/share/containers/systemd/apme-ansible.container

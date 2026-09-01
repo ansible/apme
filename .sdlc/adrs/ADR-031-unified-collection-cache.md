@@ -175,8 +175,8 @@ Concretely:
 ### Phase 2: Galaxy proxy integration — COMPLETE
 - **Proxy repo** (`ansible-collection-proxy`): Multi-Galaxy URL support, Containerfile
 - **APME venv builder**: `build_venv` uses `uv pip install --extra-index-url` when `APME_GALAXY_PROXY_URL` is set; falls back to symlink path otherwise
-- **Primary orchestrator**: `_ensure_collections_cached` skips CacheMaintainer pre-pull when proxy is active (on-demand via pip)
-- **Pod topology**: Galaxy proxy container added to `pod.yaml`, env var wired to ansible + primary containers
+- **Engine orchestrator**: `_ensure_collections_cached` skips CacheMaintainer pre-pull when proxy is active (on-demand via pip)
+- **Pod topology**: Galaxy proxy container added to `pod.yaml`, env var wired to ansible + engine containers
 
 ### Phase 3: Session-scoped venvs as shared assets — COMPLETE
 
@@ -184,13 +184,13 @@ Sessions are long-lived containers identified by a client-provided `session_id`.
 
 #### Architecture: single writer, many readers
 
-The **Primary orchestrator** is the sole venv authority. It calls `VenvSessionManager.acquire()` (which may install collections) **before** fanning out to validators. Validators mount the sessions volume **read-only** — they receive a `venv_path` in `ValidateRequest` and use it as-is. This eliminates concurrent validator writes and corruption risk.
+The **Engine orchestrator** is the sole venv authority. It calls `VenvSessionManager.acquire()` (which may install collections) **before** fanning out to validators. Validators mount the sessions volume **read-only** — they receive a `venv_path` in `ValidateRequest` and use it as-is. This eliminates concurrent validator writes and corruption risk.
 
-```
-Client → ScanRequest(session_id) → Primary
-    Primary → VenvSessionManager.acquire(session_id, core_version, specs) → sessions volume (read-write)
-    Primary → ValidateRequest(venv_path=...) → Ansible Validator (sessions volume read-only)
-    Primary → run_scan(dependency_dir=venv_site_packages) → ARI Engine (reads from session venv)
+```text
+Client → FixSession(session_id) → Engine
+    Engine → VenvSessionManager.acquire(session_id, core_version, specs) → sessions volume (read-write)
+    Engine → ValidateRequest(venv_path=...) → Ansible Validator (sessions volume read-only)
+    Engine → run_scan(dependency_dir=venv_site_packages) → ARI Engine (reads from session venv)
 ```
 
 #### Storage layout
@@ -217,10 +217,10 @@ $SESSIONS_ROOT/
 
 - **Proto**: `session_id` added to `ScanRequest`, `ScanResponse`, `ScanOptions`, `FixOptions`; `session_id` + `venv_path` added to `ValidateRequest`
 - **VenvSessionManager**: Refactored from flat `sessions/<sid>/venv/` to multi-version `sessions/<sid>/<version>/venv/` layout. `acquire()` does incremental installs. `reap_expired()` operates per core-version venv. Public helpers `create_base_venv()` and `install_collections_incremental()` in `venv_manager/session.py`.
-- **Primary**: Creates `VenvSessionManager` singleton. Checks for warm session before ARI scan (passes `dependency_dir`). Calls `acquire()` after collection discovery for incremental install. Sets `venv_path` on `ValidateRequest`.
-- **Ansible validator**: Requires `venv_path` from Primary (read-only consumer). Returns `R901` error when no venv is provided.
+- **Engine**: Creates `VenvSessionManager` singleton. Checks for warm session before ARI scan (passes `dependency_dir`). Calls `acquire()` after collection discovery for incremental install. Sets `venv_path` on `ValidateRequest`.
+- **Ansible validator**: Requires `venv_path` from Engine (read-only consumer). Returns `R901` error when no venv is provided.
 - **ARI scanner**: `run_scan()` receives `dependency_dir` pointing to the session venv's site-packages. The `install_dependencies` parameter and the entire ARI dependency download pipeline have been removed (see Phase 4). ARI never downloads collections — the session manager is the sole authority.
-- **Pod topology**: `sessions` volume added — read-write for Primary, read-only for Ansible validator.
+- **Pod topology**: `sessions` volume added — read-write for Engine, read-only for Ansible validator.
 
 #### Future work
 

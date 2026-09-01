@@ -3,14 +3,14 @@ syntax = "proto3";
 package apme.v1;
 
 import "apme/v1/common.proto";
-import "apme/v1/primary.proto";
+import "apme/v1/engine.proto";
 
 // Reporting receives fix events from engine pods (ADR-020).
 // The gateway implements this service; engine pods are gRPC clients.
 service Reporting {
   rpc ReportFixCompleted(FixCompletedEvent) returns (ReportAck);
 
-  // Rule catalog registration (ADR-041).  The authority Primary pushes
+  // Rule catalog registration (ADR-041).  The authority Engine pushes
   // its full rule set on startup; the Gateway reconciles its catalog.
   rpc RegisterRules(RegisterRulesRequest) returns (RegisterRulesResponse);
 }
@@ -47,7 +47,7 @@ message ReportAck {}
 // Rule catalog registration (ADR-041)
 // ---------------------------------------------------------------------------
 
-// Metadata for a single rule, sent by Primary during registration.
+// Metadata for a single rule, sent by Engine during registration.
 message RuleDefinition {
   string rule_id = 1;
   Severity default_severity = 2;
@@ -61,7 +61,7 @@ message RuleDefinition {
 
 message RegisterRulesRequest {
   string pod_id = 1;            // hostname or explicit pod identifier
-  bool is_authority = 2;        // only the authority Primary's registration is accepted
+  bool is_authority = 2;        // only the authority Engine's registration is accepted
   repeated RuleDefinition rules = 3;
 }
 

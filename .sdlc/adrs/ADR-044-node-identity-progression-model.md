@@ -187,7 +187,7 @@ This preserves ARI's valuable parsing logic while decoupling APME from ARI's sta
 
 ### Negative
 
-- Large implementation effort spanning engine, remediation, and primary server
+- Large implementation effort spanning engine, remediation, and engine server
 - ARI becomes an internal service with an adapter, adding indirection
 - Migration must be carefully staged to avoid breaking the existing pipeline
 - Additional memory for storing node progressions (bounded by pass count × node count)
@@ -195,7 +195,7 @@ This preserves ARI's valuable parsing logic while decoupling APME from ARI's sta
 ### Neutral
 
 - ARI's parsing and hierarchy-building code is unchanged — only its consumption model changes
-- The gRPC contract between Primary and validators is unaffected (validators still receive `ValidateRequest`)
+- The gRPC contract between Engine and validators is unaffected (validators still receive `ValidateRequest`)
 - The `Violation` proto gains a stable `node_id` field but remains backward-compatible
 
 ## Implementation Notes

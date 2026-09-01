@@ -4,7 +4,7 @@
 
 ## Purpose
 
-After the engine produces a `ContentGraph` and hierarchy payload, the Primary
+After the engine produces a `ContentGraph` and hierarchy payload, the Engine
 fans out validation requests to all configured validators in parallel. Each
 validator applies its rules and returns violations. Results are merged,
 deduplicated, and optionally filtered by rule configs.
@@ -13,7 +13,7 @@ deduplicated, and optionally filtered by rule configs.
 
 ```mermaid
 sequenceDiagram
-    participant Primary as PrimaryServicer
+    participant Engine as EngineServicer
     participant Native as Native :50055
     participant OPA as OPA :50054
     participant Ansible as Ansible :50053
@@ -21,28 +21,28 @@ sequenceDiagram
     participant CollHealth as Collection Health :50058
     participant DepAudit as Dep Audit :50059
 
-    Primary->>Primary: Serialize ContentGraph (slim JSON)
-    Primary->>Primary: Build ValidateRequest
+    Engine->>Engine: Serialize ContentGraph (slim JSON)
+    Engine->>Engine: Build ValidateRequest
 
     par asyncio.gather
-        Primary->>Native: Validate(hierarchy, graph, files)
-        Primary->>OPA: Validate(hierarchy)
-        Primary->>Ansible: Validate(hierarchy, venv_path)
-        Primary->>Gitleaks: Validate(graph)
-        Primary->>CollHealth: Validate(venv_path)
-        Primary->>DepAudit: Validate(venv_path)
+        Engine->>Native: Validate(hierarchy, graph, files)
+        Engine->>OPA: Validate(hierarchy)
+        Engine->>Ansible: Validate(hierarchy, venv_path)
+        Engine->>Gitleaks: Validate(graph)
+        Engine->>CollHealth: Validate(venv_path)
+        Engine->>DepAudit: Validate(venv_path)
     end
 
-    Native-->>Primary: ValidatorResult (violations, diagnostics)
-    OPA-->>Primary: ValidatorResult
-    Ansible-->>Primary: ValidatorResult
-    Gitleaks-->>Primary: ValidatorResult
-    CollHealth-->>Primary: ValidatorResult (collection findings)
-    DepAudit-->>Primary: ValidatorResult (Python CVEs)
+    Native-->>Engine: ValidatorResult (violations, diagnostics)
+    OPA-->>Engine: ValidatorResult
+    Ansible-->>Engine: ValidatorResult
+    Gitleaks-->>Engine: ValidatorResult
+    CollHealth-->>Engine: ValidatorResult (collection findings)
+    DepAudit-->>Engine: ValidatorResult (Python CVEs)
 
-    Primary->>Primary: Merge + deduplicate violations
-    Primary->>Primary: Apply rule_configs (ADR-041)
-    Primary->>Primary: Attach source snippets
+    Engine->>Engine: Merge + deduplicate violations
+    Engine->>Engine: Apply rule_configs (ADR-041)
+    Engine->>Engine: Attach source snippets
 ```
 
 ## Unified Validator Contract
@@ -145,7 +145,7 @@ Optional — skipped if `DEP_AUDIT_GRPC_ADDRESS` is unset or
 
 ## Fan-out Mechanics
 
-`_scan_pipeline()` in `primary_server.py` uses `asyncio.gather()` with
+`_scan_pipeline()` in `engine_server.py` uses `asyncio.gather()` with
 `return_exceptions=True` for graceful degradation:
 
 - Each validator call is wrapped in `_call_validator()` which opens an async
@@ -184,7 +184,7 @@ Displayed with `apme check -v` (summary) or `-vv` (per-rule breakdown).
 
 | File | Key types/functions |
 |------|---------------------|
-| `src/apme_engine/daemon/primary_server.py` | `_scan_pipeline()` step 4, `_call_validator()`, `VALIDATOR_ENV_VARS` |
+| `src/apme_engine/daemon/engine_server.py` | `_scan_pipeline()` step 4, `_call_validator()`, `VALIDATOR_ENV_VARS` |
 | `src/apme_engine/validators/base.py` | `Validator` protocol, `ScanContext` |
 | `proto/apme/v1/validate.proto` | `Validator` service, `ValidateRequest`, `ValidateResponse` |
 | `src/apme_engine/validators/native/` | Native graph rule implementations |

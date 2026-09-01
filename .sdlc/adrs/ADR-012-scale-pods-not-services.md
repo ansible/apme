@@ -36,12 +36,14 @@ It does **not** prescribe the deployment tool. For deployment method guidance:
 **Scale pods, not services within a pod.**
 
 Each pod is a self-contained stack:
-- Primary (+ session venv manager)
+- Engine (+ session venv manager)
 - Native validator
 - OPA validator
 - Ansible validator
-- Gitleaks validator
 - Galaxy Proxy
+- Gitleaks validator (optional)
+- Collection Health validator (optional)
+- Dep Audit validator (optional)
 
 To increase throughput, run more pods behind a load balancer.
 

@@ -340,7 +340,7 @@ After Phase 2 (all rules ported), Phase 3 adds:
      `ContentGraph.apply_transform()`, dirty-node tracking, 46 tests
    - [ ] **PR 3 (IN PROGRESS)**: Graph-aware convergence loop —
      `rescan_dirty()`, `GraphRemediationEngine`, `splice_modifications()`,
-     17 unit tests; primary server integration deferred
+     17 unit tests; engine server integration deferred
 2. **PropertyOrigin consumed by rules**: Already-ported inherited-property
    rules (R108, L047, L045, etc.) use PropertyOrigin to attribute violations
    to the defining scope (play) rather than every inheriting child task.

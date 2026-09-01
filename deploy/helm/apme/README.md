@@ -158,7 +158,7 @@ Deployments:
 | Before | After (this chart) |
 |--------|--------------------|
 | 4 Deployments | 1 Deployment (`*-engine`) |
-| Abbenay Service DNS | Abbenay on `127.0.0.1` only (Service removed) |
+| Abbenay Service DNS | No Abbenay Service; HTTP admin on `127.0.0.1:8787`; Engine gRPC via Unix socket |
 | Optional engine HPA | HPA / `replicas > 1` fail render |
 | Gateway/UI Services | Same names; selectors target the Simple pod |
 
@@ -169,10 +169,10 @@ Gateway DB and Abbenay down together.
 
 ```
 ┌──────────── Simple pod (replicas: 1) — ADR-069 ────────────┐
-│  Primary  Native  OPA  Ansible  Gitleaks*                  │
+│  Engine  Native  OPA  Ansible  Gitleaks*                  │
 │  Collection-Health*  Dep-Audit*  Galaxy-Proxy              │
 │  Gateway  UI*  Abbenay*                                    │
-│  (all via 127.0.0.1; Abbenay binds loopback, no TLS)       │
+│  (localhost / Unix socket; Abbenay binds loopback, no TLS) │
 └────────────────────────────────────────────────────────────┘
 ```
 
@@ -180,19 +180,21 @@ Gateway DB and Abbenay down together.
   (`-engine`, `-gateway`, `-ui`) select this pod for Ingress/port-forward.
 - **UI** (optional): nginx SPA; `ui.enabled: false` via `values-portal.yaml`
   for portal / Backstage (ADR-030 Option B).
-- **Abbenay** (optional): AI provider gRPC on `127.0.0.1:50057` plus HTTP
-  admin on `127.0.0.1:8787` (no Service / hostPort). Gateway reverse-proxies
+- **Abbenay** (optional): AI provider gRPC via Unix socket
+  (`unix:///tmp/abbenay-run/abbenay/daemon.sock`) plus HTTP admin on
+  `127.0.0.1:8787` (no Service / hostPort). TCP `127.0.0.1:50057` is leftover
+  bind; Helm probes connect to the Unix socket. Gateway reverse-proxies
   **allowlisted** admin paths under `/api/v1/ai/` → Abbenay `/api/` (config,
   engines, providers, provider configure/delete; not chat/sessions/OpenAI-compat) —
   see [ADR-070](../../../.sdlc/adrs/ADR-070-gateway-abbenay-admin-proxy.md).
-  `GET /api/v1/ai/models` remains Primary `ListAIModels`.
+  `GET /api/v1/ai/models` remains Engine `ListAIModels`.
 
 ## Key values
 
 | Value | Default | Description |
 |-------|---------|-------------|
 | `image.registry` | `quay.io/ansible` | Container registry |
-| `image.tag` | `2026.8.6` | Image tag (GitHub release `v2026.8.6`; Quay omits the `v`) |
+| `image.tag` | `2026.8.6` | APME image tag (GitHub release `v2026.8.6`; stays here until the next APME release) |
 | `engine.replicas` | `1` | Must be `1` (ADR-069) |
 | `gitleaks.enabled` | `true` | Enable Gitleaks validator |
 | `collectionHealth.enabled` | `true` | Enable Collection Health validator |
@@ -202,7 +204,7 @@ Gateway DB and Abbenay down together.
 | `ui.replicas` | `1` | Must be `1` when UI enabled |
 | `abbenay.enabled` | `false` | Enable AI provider sidecar |
 | `abbenay.token` | `""` | Abbenay gRPC + HTTP admin token (required when `abbenay.enabled=true`) |
-| `abbenay.image` | `ghcr.io/redhat-developer/abbenay:v2026.8.6` | Abbenay image |
+| `abbenay.image` | `ghcr.io/redhat-developer/abbenay:v2026.8.7` | Abbenay daemon image (independent of `image.tag`) |
 | `abbenay.providers` | `{}` | LLM provider map (see [ABBENAY_AI.md](../../../docs/guides/ABBENAY_AI.md)) |
 | `abbenay.aiModel` | `""` | Default AI model ID |
 | `ingress.enabled` | `false` | Create Kubernetes Ingress |
@@ -332,10 +334,14 @@ securityContext:
   runAsUser: 1001
 ```
 
-`fsGroup` ensures PVC mounts for `/sessions`, `/data`, `/cache`, and
-Abbenay `/etc/abbenay-config` are writable by the application UID. Local
-Podman uses the same PVC definitions in
-`containers/podman/pvc.yaml` (with `volume.podman.io/uid` annotations).
+`fsGroup` ensures PVC mounts for `/sessions`, `/data`, `/cache`,
+Abbenay `/etc/abbenay-config`, and the shared `abbenay-run` emptyDir are
+group-accessible. Engine, Gateway, and Abbenay must share the same UID
+(UBI and the Abbenay image both default to 1001; OpenShift injects one
+UID for the pod). Do not set a different `runAsUser` on only one of
+those containers — the gRPC socket is created mode `0600`. Local Podman
+uses the same PVC definitions in `containers/podman/pvc.yaml` (with
+`volume.podman.io/uid` annotations).
 
 ## Uninstall
 

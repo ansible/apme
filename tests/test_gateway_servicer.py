@@ -2,31 +2,16 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from apme.v1 import common_pb2, reporting_pb2
-from apme_gateway.db import close_db, get_session, init_db
+from apme_gateway.db import get_session
 from apme_gateway.db import queries as q
 from apme_gateway.grpc_reporting.servicer import ReportingServicer
 
-
-@pytest.fixture(autouse=True)  # type: ignore[untyped-decorator]
-async def _db(tmp_path: Path) -> AsyncIterator[None]:
-    """Initialise a fresh DB per test.
-
-    Args:
-        tmp_path: Pytest-provided temporary directory.
-
-    Yields:
-        None: Test runs between setup and teardown.
-    """
-    await init_db(str(tmp_path / "test.db"))
-    yield
-    await close_db()
+pytestmark = pytest.mark.usefixtures("gateway_db")
 
 
 def _mock_context() -> MagicMock:
@@ -100,6 +85,67 @@ async def test_report_fix_with_violations() -> None:
     assert scan is not None
     assert len(scan.violations) == 1
     assert scan.violations[0].rule_id == "L001"
+
+
+async def test_report_fix_persists_structured_audit_metadata() -> None:
+    """Audit metadata JSON strings are decoded once before Gateway persistence."""
+    import json
+
+    servicer = ReportingServicer()
+    payload = [{"name": "my_var", "source": "play", "task": "tasks[0]"}]
+    viol = common_pb2.Violation(
+        rule_id="R402",
+        severity=common_pb2.SEVERITY_INFO,
+        message="audit",
+        file="a.yml",
+        line=1,
+        metadata={"variables_used": json.dumps(payload)},
+    )
+    event = reporting_pb2.FixCompletedEvent(
+        scan_id="audit-scan",
+        session_id="sess-1",
+        project_path="/p",
+        remaining_violations=[viol],
+    )
+    await servicer.ReportFixCompleted(event, _mock_context())
+
+    async with get_session() as db:
+        scan = await q.get_scan(db, "audit-scan")
+    assert scan is not None
+    assert len(scan.violations) == 1
+    stored = json.loads(scan.violations[0].audit_metadata)
+    assert stored["variables_used"] == payload
+
+
+async def test_report_fix_resanitizes_variable_set_before_persistence() -> None:
+    """Gateway persistence scrubs cleartext values from audit metadata blobs."""
+    import json
+
+    servicer = ReportingServicer()
+    payload = [{"name": "db_password", "value": "s3cret", "source": "play"}]
+    viol = common_pb2.Violation(
+        rule_id="R404",
+        severity=common_pb2.SEVERITY_INFO,
+        message="audit",
+        file="a.yml",
+        line=1,
+        metadata={"variable_set": json.dumps(payload)},
+    )
+    event = reporting_pb2.FixCompletedEvent(
+        scan_id="audit-r404",
+        session_id="sess-1",
+        project_path="/p",
+        remaining_violations=[viol],
+    )
+    await servicer.ReportFixCompleted(event, _mock_context())
+
+    async with get_session() as db:
+        scan = await q.get_scan(db, "audit-r404")
+    assert scan is not None
+    assert len(scan.violations) == 1
+    stored = json.loads(scan.violations[0].audit_metadata)
+    assert stored["variable_set"][0]["name"] == "[REDACTED]"
+    assert stored["variable_set"][0]["value"] == "[REDACTED]"
 
 
 async def test_report_fix_with_logs() -> None:

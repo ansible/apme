@@ -7,10 +7,17 @@ Vercel AI SDK.
 ## Gateway admin proxy (ADR-070)
 
 In the Simple in-pod topology (ADR-069 / ADR-070), Abbenay serves HTTP admin
-and gRPC on loopback (`--host 127.0.0.1 --port 8787` and
-`--grpc-host 127.0.0.1 --grpc-port 50057`; image ≥ v2026.8.0). No cluster
-Service or hostPort — Helm Simple and Podman share a netns, so Primary/
-Gateway reach Abbenay at `127.0.0.1`. The Gateway reverse-proxies an
+on `:8787` and gRPC on loopback (`--grpc-host 127.0.0.1 --grpc-port 50057`;
+image ≥ v2026.8.0). Helm has no cluster Service or hostPort. Local Podman
+(`tox -e up`) publishes HTTP on host port 8787 with `hostIP: 127.0.0.1` so the
+Abbenay UI is reachable at `http://127.0.0.1:8787`; gRPC stays loopback.
+`pod.yaml` sets `ABBENAY_HTTP_AUTH=0` so the dashboard loads without a Bearer
+token (local dev only — do not disable HTTP auth when exposing Abbenay beyond
+your machine). Gateway HTTP admin still uses `127.0.0.1:8787` (shared netns).
+Engine
+gRPC uses a shared Unix socket (`APME_ABBENAY_ADDR=unix:///tmp/abbenay-run/abbenay/daemon.sock`)
+because `abbenay-client` ≥ 2026.8.7 rejects consumer tokens on plaintext TCP.
+The Gateway reverse-proxies an
 **allowlisted** admin surface:
 
 | Gateway | Abbenay |
@@ -23,10 +30,13 @@ Gateway reach Abbenay at `127.0.0.1`. The Gateway reverse-proxies an
 | `GET/POST /api/v1/ai/secrets` | `/api/secrets` |
 | `DELETE /api/v1/ai/secrets/{key}` | `/api/secrets/{key}` |
 
-`GET /api/v1/ai/models` remains Primary → Abbenay gRPC (`ListAIModels`). Chat
+`GET /api/v1/ai/models` remains Engine → Abbenay gRPC (`ListAIModels`). Chat
 is **not** proxied. Set `APME_ABBENAY_HTTP_URL` (default
-`http://127.0.0.1:8787`) and `APME_ABBENAY_HTTP_TOKEN` on the Gateway (same
-secret as `ABBENAY_API_TOKEN` / `abbenay.token` in Helm).
+`http://127.0.0.1:8787` for loopback-only Simple topology) and
+`APME_ABBENAY_HTTP_TOKEN` on the Gateway (same secret as `ABBENAY_API_TOKEN` /
+`abbenay.token` in Helm). Cleartext HTTP is allowed only for loopback hosts
+(`127.0.0.1`, `localhost`, `::1`); any non-loopback URL must use HTTPS, and the
+Gateway proxy keeps TLS certificate validation enabled.
 
 ### Memory secret store (Abbenay >= v2026.8.5)
 
@@ -463,5 +473,6 @@ https://us-east5-aiplatform.googleapis.com/v1/projects/your-project/locations/us
 | `undefined` in Vertex API URL | Missing `gcp.project` or `gcp.location` | Set both in values |
 | `PERMISSION_DENIED` | SA lacks `roles/aiplatform.user` | Grant role to the service account |
 | Pod stuck in `ContainerCreating` | Credentials Secret missing | Create Secret or use workload identity |
-| `apme-engine: connection refused` on port 50057 | Abbenay not running | Check `abbenay.enabled: true` and pod logs |
+| Engine AI chat fails with token-on-plaintext-TCP | Token sent on plaintext TCP (`abbenay-client` ≥ 2026.8.7) | Use the Unix socket ADDR (Helm/Podman default) or TLS |
+| `apme-engine: connection refused` on Abbenay | Abbenay not running or socket not shared | Check `abbenay.enabled: true`, `abbenay-run` volume, and pod logs |
 | `401 Unauthorized` on OpenRouter/Anthropic | Wrong or expired API key | Rotate key in Secret |

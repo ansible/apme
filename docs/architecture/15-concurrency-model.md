@@ -20,20 +20,25 @@ requests even when long-running work is in progress.
 
 | Service | Concurrency strategy | `maximum_concurrent_rpcs` |
 |---------|---------------------|--------------------------|
-| Primary | `asyncio.gather()` fan-out to validators; engine scan via `run_in_executor()` | 16 |
+| Engine | `asyncio.gather()` fan-out to validators; engine scan via `run_in_executor()` | 16 |
 | Native | CPU-bound graph rules via `run_in_executor()` | 32 |
 | OPA | Blocking `opa eval` subprocess via `run_in_executor()` | 32 |
 | Ansible | Blocking venv build + ansible subprocess via `run_in_executor()` | 8 |
 | Gitleaks | Blocking gitleaks subprocess via `run_in_executor()` | 16 |
+| Collection Health | Blocking collection metadata scan via `run_in_executor()` | 4 |
+| Dep Audit | Blocking dependency audit via `run_in_executor()` | 8 |
 | Gateway | Fully async (aiosqlite, grpc.aio); FastAPI + uvicorn event loop | — |
 
-Each service's `maximum_concurrent_rpcs` is configurable via environment
-variable (e.g., `APME_PRIMARY_MAX_RPCS=16`). The defaults balance
-throughput against resource consumption on a single pod.
+Services with a documented numeric limit expose `maximum_concurrent_rpcs` via
+environment variable (e.g., `APME_ENGINE_MAX_RPCS=16`). Helm Simple sets
+Engine's limit from `engine.maxConcurrentRpcs` in the chart values. Gateway
+uses the FastAPI/uvicorn event loop without a gRPC `maximum_concurrent_rpcs`
+knob. The defaults balance throughput against resource consumption on a single
+pod.
 
-## Primary Orchestrator
+## Engine
 
-The Primary is the most complex concurrency case. A single `FixSession`
+The Engine is the most complex concurrency case. A single `FixSession`
 RPC handles:
 
 1. **File upload** — async stream of `ScanChunk` messages (I/O-bound,
@@ -114,7 +119,7 @@ Both share the same `asyncio` event loop via `asyncio.gather()` in the
 main entry point. Database access uses `aiosqlite` through SQLAlchemy's
 async session — no blocking I/O on the event loop.
 
-WebSocket endpoints that bridge to Primary's `FixSession` use
+WebSocket endpoints that bridge to Engine's `FixSession` use
 `asyncio.create_task()` to run the gRPC stream reader and WebSocket
 command reader concurrently within a single connection handler.
 
@@ -135,7 +140,7 @@ Every scan request carries a `request_id` (derived from
 `ScanChunk.scan_id`) that propagates through the entire system:
 
 ```
-CLI → Primary (scan_id) → ValidateRequest.request_id → each validator logs [req=xxx]
+CLI → Engine (scan_id) → ValidateRequest.request_id → each validator logs [req=xxx]
                                                       → ValidateResponse.request_id (echo)
 ```
 
@@ -148,7 +153,7 @@ processed simultaneously.
 
 | File | Concurrency role |
 |------|-----------------|
-| `src/apme_engine/daemon/primary_server.py` | `FixSession` handler, `asyncio.gather()` fan-out |
+| `src/apme_engine/daemon/engine_server.py` | `FixSession` handler, `asyncio.gather()` fan-out |
 | `src/apme_engine/daemon/native_validator_server.py` | `run_in_executor()` for graph rules |
 | `src/apme_engine/daemon/opa_validator_server.py` | `run_in_executor()` for `opa eval` subprocess |
 | `src/apme_engine/daemon/ansible_validator_server.py` | `run_in_executor()` for ansible subprocess |

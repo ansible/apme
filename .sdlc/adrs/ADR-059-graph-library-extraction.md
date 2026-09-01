@@ -12,7 +12,7 @@ Accepted
 
 The native validator and engine share code through direct imports across
 `apme_engine.engine` and `apme_engine.validators.native.rules`. During
-remediation, Primary bypasses the native validator gRPC boundary and runs
+remediation, Engine bypasses the native validator gRPC boundary and runs
 graph rules in-process. This coupling is invisible in the package structure,
 prevents independent performance measurement, and maintains two execution
 paths for the same analysis code.
@@ -36,7 +36,7 @@ paths for the same analysis code.
 1. No enforceable boundary between the ARI parsing pipeline (engine) and the
    graph analysis layer (shared by engine and native validator).
 2. Impossible to independently measure native validator performance when the
-   same code runs both in-process (Primary remediation) and via gRPC.
+   same code runs both in-process (Engine remediation) and via gRPC.
 3. The package structure does not reflect the logical architecture.
 
 ## Decision
@@ -108,7 +108,7 @@ actively confuses new contributors and AI agents. Doesn't enable independent
 performance measurement.
 
 **Why not chosen**: The current layout has already caused coupling issues
-(Primary running native rules in-process during remediation).
+(Engine running native rules in-process during remediation).
 
 ## Consequences
 

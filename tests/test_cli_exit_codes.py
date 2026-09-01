@@ -116,10 +116,10 @@ class TestCheckExitCodes:
             ),
             patch("apme_engine.cli.check.yield_scan_chunks", return_value=iter([])),
             patch(
-                "apme_engine.cli.check.resolve_primary",
+                "apme_engine.cli.check.resolve_engine",
                 return_value=(mock_channel, "localhost:50051"),
             ),
-            patch("apme_engine.cli.check.primary_pb2_grpc.PrimaryStub") as mock_stub_cls,
+            patch("apme_engine.cli.check.engine_pb2_grpc.EngineStub") as mock_stub_cls,
             pytest.raises(SystemExit) as exc_info,
         ):
             mock_stub_cls.return_value.FixSession.side_effect = _FakeRpcError()
@@ -149,9 +149,9 @@ class TestDiscoveryExitCodes:
             ),
             pytest.raises(SystemExit) as exc_info,
         ):
-            from apme_engine.cli.discovery import resolve_primary
+            from apme_engine.cli.discovery import resolve_engine
 
-            resolve_primary()
+            resolve_engine()
         assert exc_info.value.code == EXIT_ERROR
 
 

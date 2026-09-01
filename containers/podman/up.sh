@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Start the APME pod (Primary, Native, Ansible, OPA, Gitleaks, Galaxy Proxy). Run from repo root.
+# Start the APME pod (Engine, Native, OPA, Ansible, Gitleaks, Galaxy Proxy,
+# Collection Health, Dep Audit, Gateway, UI, Abbenay; optional OTel Collector).
+# Run from repo root.
 # CLI is not part of the pod; use run-cli.sh to run a scan with CWD mounted.
 #
 # Cache host path: default is XDG cache (${XDG_CACHE_HOME:-$HOME/.cache}/apme).
@@ -210,6 +212,54 @@ with open(path, "rb"):
 ' "$container_uid" "$path"
 }
 
+# Grant execute-only (traversal) ACL to a mapped UID on each ancestor directory
+# between $HOME and the given path that lacks world-execute or an existing ACL
+# for that UID.  Prevents EACCES on mode-700 home directories (#528).
+# Only grants 'x' — never read or write — to minimise exposure.
+_grant_ancestor_traversal() {
+  local mapped_uid="$1"
+  local target_path="$2"
+  local home_real
+  home_real=$(cd "$HOME" && pwd -P)
+  target_path=$(realpath -m "$target_path")
+  # If the target is outside $HOME, the container accesses it via a Podman
+  # volume mount — no host-filesystem traversal ACLs are needed.
+  if [[ "$target_path" != "$home_real" && "$target_path" != "$home_real"/* ]]; then
+    return 0
+  fi
+  local current
+  current=$(dirname "$target_path")
+  local -a ancestors=()
+  # Walk up from the target's parent to (and including) $HOME.
+  while [[ "$current" != "/" && "$current" != "$home_real" ]]; do
+    ancestors=("$current" "${ancestors[@]}")
+    current=$(dirname "$current")
+  done
+  # Include $HOME itself at the front.
+  if [[ "$current" == "$home_real" ]]; then
+    ancestors=("$home_real" "${ancestors[@]}")
+  fi
+  for dir in "${ancestors[@]}"; do
+    # Skip if world-executable — traversal already possible.
+    local perms
+    perms=$(stat -c '%a' "$dir" 2>/dev/null) || continue
+    if (( (8#$perms & 8#001) != 0 )); then
+      continue
+    fi
+    # Skip if the mapped UID already has effective execute via ACL.
+    # -e: effective perms (ACL mask); -n: numeric UID so name lookup cannot miss.
+    if getfacl -enp "$dir" 2>/dev/null | grep -q "^user:${mapped_uid}:.*x"; then
+      continue
+    fi
+    setfacl -m "u:${mapped_uid}:x" "$dir" || {
+      echo "WARNING: could not grant traversal ACL on $dir for UID $mapped_uid" >&2
+      return 1
+    }
+    # Record for later revocation by down.sh --wipe.
+    echo "$dir" >> "${APME_TRAVERSAL_STATE_FILE:-/dev/null}"
+  done
+}
+
 # Make Abbenay cache config usable by the host user and container UID 1001.
 # Rootless: keep host ownership; grant a POSIX ACL to the subordinate UID so
 # the next tox -e up can still chmod/seed and developers can edit config.yaml.
@@ -252,6 +302,11 @@ _ensure_abbenay_config_access() {
       echo "ERROR: could not resolve subordinate UID for container UID $cuid" >&2
       return 1
     }
+    # Grant execute-only traversal on ancestor directories between $HOME and the
+    # config path so the subordinate UID can reach the target.  Without this,
+    # hosts with mode 700 on $HOME or $HOME/.cache block access at the first
+    # path component (see #528).
+    _grant_ancestor_traversal "$mapped" "$path" || return 1
     setfacl -m "u:${mapped}:rwx" "$path" || return 1
     setfacl -d -m "u:${mapped}:rwx" "$path" || return 1
     if [[ -f "$path/config.yaml" ]]; then
@@ -364,6 +419,7 @@ _relabel_podman_volumes() {
 
 # Default: XDG cache dir (persists across reboots); override with APME_CACHE_HOST_PATH
 CACHE_PATH="${APME_CACHE_HOST_PATH:-${XDG_CACHE_HOME:-$HOME/.cache}/apme}"
+APME_TRAVERSAL_STATE_FILE="$CACHE_PATH/.traversal-acls"
 
 if [[ "$CACHE_PATH" != /* ]]; then
   echo "ERROR: APME_CACHE_HOST_PATH must be an absolute path (got: $CACHE_PATH)" >&2
@@ -376,6 +432,8 @@ if [[ "$CACHE_PATH" == *$'\n'* ]]; then
 fi
 
 mkdir -p "$CACHE_PATH"
+# Reset traversal state for this run; down.sh --wipe reads this to undo ACLs.
+: > "$APME_TRAVERSAL_STATE_FILE"
 
 # Load Abbenay secrets (.env) if present.
 ABBENAY_ENV="$ROOT/containers/abbenay/.env"
@@ -444,9 +502,11 @@ mount = '$CA_MOUNT_PATH'
 ca_path_yaml = json.dumps(ca_path)
 mount_yaml = json.dumps(mount)
 abbenay_env_marker = '        - name: XDG_RUNTIME_DIR'
-# Writable config dir has no readOnly; anchor on mountPath before galaxy-proxy.
+# Writable config dir has no readOnly; shared runtime dir precedes galaxy-proxy.
 abbenay_vol_marker = (
     '          mountPath: /home/abbenay/.config/abbenay\n'
+    '        - name: abbenay-run\n'
+    '          mountPath: /tmp/abbenay-run\n'
     '    - name: galaxy-proxy'
 )
 gateway_env_marker = '        - name: APME_FEEDBACK_GITHUB_TOKEN'
@@ -471,6 +531,8 @@ yaml = yaml.replace(
 yaml = yaml.replace(
     abbenay_vol_marker,
     '          mountPath: /home/abbenay/.config/abbenay\n'
+    '        - name: abbenay-run\n'
+    '          mountPath: /tmp/abbenay-run\n'
     '        - name: abbenay-ca-bundle\n'
     '          mountPath: ' + mount_yaml + '\n'
     '          readOnly: true\n'
@@ -686,6 +748,7 @@ _relabel_podman_volumes
 echo "$POD_YAML" | podman play kube -
 
 echo "Pod apme-pod started (volumes: apme-sessions, apme-gateway-data, apme-proxy-cache). Run a scan: containers/podman/run-cli.sh"
+echo "Abbenay UI: http://127.0.0.1:8787 (localhost only; HTTP auth disabled for dev)"
 echo "OTel Prometheus metrics: http://localhost:8889/metrics (companion stack: containers/observability/up.sh)"
 
 if [[ -n "$APME_FEEDBACK_GITHUB_REPO" && -n "$APME_FEEDBACK_GITHUB_TOKEN" ]]; then

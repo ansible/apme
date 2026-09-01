@@ -12,15 +12,22 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from apme_engine.engine.models import ViolationDict
 from apme_engine.engine.models import RemediationClass, RemediationResolution, RuleScope
+from apme_engine.graph.scanner import DISABLED_BY_DEFAULT_GRAPH_RULE_IDS
 from apme_engine.remediation.registry import TransformRegistry
 
 AI_PROPOSABLE_SCOPES: frozenset[str] = frozenset({RuleScope.TASK, RuleScope.BLOCK})
 
-# Task-scoped rules whose remediation requires cross-file context.
+# Task-scoped rules whose remediation is unsafe at a single node.
+# Node-local AI would change the producer (module, set_fact key, register
+# shape) without rewriting readers — often silently, because the old name
+# remains defined as a role default. These need project-level context
+# (ADR-027) or a complete usage index before they can be auto-fixed.
 CROSS_FILE_RULES: frozenset[str] = frozenset(
     {
         "R111",  # parameterized role import — needs role inventory
         "R112",  # parameterized task import — needs taskfile inventory
+        "L006",  # command→module (e.g. cat→slurp) changes register result shape
+        "L080",  # __ prefix on set_fact keys — consumers keep the old name
     }
 )
 
@@ -69,14 +76,20 @@ def normalize_rule_id(rule_id: str) -> str:
 def is_finding_resolvable(violation: ViolationDict, registry: TransformRegistry) -> bool:
     """Return True if the violation has a registered deterministic transform (Tier 1).
 
+    Cross-file / data-flow rules are never Tier 1, even if a caller registers
+    a node-local transform. Those rewrites are unsafe without project context.
+
     Args:
         violation: Violation dict with rule_id.
         registry: Transform registry to check for rule.
 
     Returns:
-        True if rule_id has a registered transform.
+        True if rule_id has a registered transform and is not cross-file.
     """
-    return normalize_rule_id(str(violation.get("rule_id", ""))) in registry
+    bare_id = normalize_rule_id(str(violation.get("rule_id", "")))
+    if bare_id in CROSS_FILE_RULES:
+        return False
+    return bare_id in registry
 
 
 def partition_violations(
@@ -86,6 +99,7 @@ def partition_violations(
     """Split violations into (tier1_fixable, tier2_ai, tier3_manual).
 
     Routing uses scope metadata (ADR-026) instead of hardcoded rule lists:
+    - Cross-file / data-flow rules (``CROSS_FILE_RULES``) are always Tier 3.
     - Tier 1: deterministic transform exists in registry.
     - Tier 2: scope is AI-proposable (task/block) and no cross-file constraint.
     - Tier 3: scope is not AI-proposable, or cross-file context required.
@@ -108,11 +122,11 @@ def partition_violations(
             v["remediation_resolution"] = RemediationResolution.INFORMATIONAL
             tier3.append(v)
             continue
-        if is_finding_resolvable(v, registry):
-            tier1.append(v)
-        elif bare_id in CROSS_FILE_RULES:
+        if bare_id in CROSS_FILE_RULES:
             v["remediation_resolution"] = RemediationResolution.NEEDS_CROSS_FILE
             tier3.append(v)
+        elif is_finding_resolvable(v, registry):
+            tier1.append(v)
         elif _get_scope(v) not in AI_PROPOSABLE_SCOPES:
             v["remediation_resolution"] = RemediationResolution.MANUAL
             tier3.append(v)
@@ -190,6 +204,10 @@ def _to_str_value(val: object, default: str) -> str:
 def count_by_remediation_class(violations: list[ViolationDict]) -> dict[str, int]:
     """Count violations by remediation class.
 
+    Disabled-by-default audit/debug graph rules (for example R402/R404) are
+    excluded so opt-in informational findings do not inflate user-facing
+    remediation totals.
+
     Args:
         violations: List of violations with remediation_class field.
 
@@ -199,6 +217,9 @@ def count_by_remediation_class(violations: list[ViolationDict]) -> dict[str, int
     counts: dict[str, int] = {rc.value: 0 for rc in RemediationClass}
     default = RemediationClass.AI_CANDIDATE.value
     for v in violations:
+        bare_id = normalize_rule_id(str(v.get("rule_id", "")))
+        if bare_id in DISABLED_BY_DEFAULT_GRAPH_RULE_IDS:
+            continue
         rc = _to_str_value(v.get("remediation_class"), default)
         if rc in counts:
             counts[rc] += 1
@@ -227,6 +248,9 @@ def is_ai_reviewable(violation: ViolationDict) -> bool:
 def count_by_resolution(violations: list[ViolationDict]) -> dict[str, int]:
     """Count violations by remediation resolution.
 
+    Disabled-by-default audit/debug graph rules (for example R402/R404) are
+    excluded so opt-in informational findings do not inflate user-facing totals.
+
     Args:
         violations: List of violations with remediation_resolution field.
 
@@ -236,6 +260,9 @@ def count_by_resolution(violations: list[ViolationDict]) -> dict[str, int]:
     default = RemediationResolution.UNRESOLVED.value
     counts: dict[str, int] = {}
     for v in violations:
+        bare_id = normalize_rule_id(str(v.get("rule_id", "")))
+        if bare_id in DISABLED_BY_DEFAULT_GRAPH_RULE_IDS:
+            continue
         res = _to_str_value(v.get("remediation_resolution"), default)
         counts[res] = counts.get(res, 0) + 1
     return counts

@@ -33,6 +33,7 @@ import type { ActivitySummary, DepHealthSummary, ProjectDependencies, ProjectDet
 import { GraphVisualization } from '../components/GraphVisualization';
 import { TrendChart } from '../components/TrendChart';
 import { timeAgo } from '../services/format';
+import { PublishedCell } from '../components/PublishedCell';
 import { useFeedbackEnabled } from '../hooks/useFeedbackEnabled';
 import {
   CheckOptionsForm,
@@ -118,6 +119,7 @@ export function ProjectDetailPage() {
     attachOp,
     opState,
     isRunning,
+    isCancelling,
     operationActive,
     sessionTabVisible,
     startScan: handleScan,
@@ -315,7 +317,11 @@ export function ProjectDetailPage() {
                   <CardBody>
                     <Flex alignItems={{ default: 'alignItemsCenter' }} justifyContent={{ default: 'justifyContentSpaceBetween' }}>
                       <FlexItem>
-                        {operationActive ? 'Live session in progress' : 'Starting session…'}
+                        {isCancelling
+                          ? 'Stopping session…'
+                          : operationActive
+                            ? 'Live session in progress'
+                            : 'Starting session…'}
                         {opState?.status ? (
                           <span style={{ opacity: 0.7, marginLeft: 8 }}>({opState.status})</span>
                         ) : null}
@@ -423,9 +429,11 @@ export function ProjectDetailPage() {
               title={
                 <TabTitleText>
                   Session
-                  {opState?.status
-                    ? ` · ${opState.status.replace(/_/g, ' ')}`
-                    : ' · starting'}
+                  {isCancelling
+                    ? ' · stopping'
+                    : opState?.status
+                      ? ` · ${opState.status.replace(/_/g, ' ')}`
+                      : ' · starting'}
                 </TabTitleText>
               }
             >
@@ -481,6 +489,7 @@ export function ProjectDetailPage() {
                       <th role="columnheader">AI Declined</th>
                       <th role="columnheader">AI Accepted</th>
                       <th role="columnheader">Manual</th>
+                      <th role="columnheader">Published</th>
                       <th role="columnheader">Time</th>
                       <th role="columnheader">
                         <span className="pf-v6-screen-reader">Actions</span>
@@ -529,6 +538,13 @@ export function ProjectDetailPage() {
                         <td role="cell">{scan.ai_declined ?? 0}</td>
                         <td role="cell"><span className="apme-count-success">{scan.ai_accepted ?? 0}</span></td>
                         <td role="cell"><span className="apme-count-warning">{scan.manual_review}</span></td>
+                        <td role="cell">
+                          <PublishedCell
+                            pr_url={scan.pr_url}
+                            branch_name={scan.branch_name}
+                            commit_sha={scan.commit_sha}
+                          />
+                        </td>
                         <td role="cell" style={{ opacity: 0.7 }}>{timeAgo(scan.created_at)}</td>
                         <td role="cell" onClick={(e) => e.stopPropagation()}>
                           {isResumable ? (

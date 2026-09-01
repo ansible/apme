@@ -61,11 +61,11 @@ prep_dir "${PROBE_ROOT}/sessions"
 prep_dir "${PROBE_ROOT}/data"
 prep_dir "${PROBE_ROOT}/cache"
 
-check_write apme-primary:latest /sessions "${PROBE_ROOT}/sessions"
+check_write apme-engine:latest /sessions "${PROBE_ROOT}/sessions"
 check_write apme-gateway:latest /data "${PROBE_ROOT}/data"
 check_write apme-galaxy-proxy:latest /cache "${PROBE_ROOT}/cache"
 
-check_app_readable apme-primary:latest /app/src/apme_engine/__init__.py
+check_app_readable apme-engine:latest /app/src/apme_engine/__init__.py
 check_app_readable apme-gateway:latest /app/src/apme_gateway/__init__.py
 check_app_readable apme-galaxy-proxy:latest /app/src/galaxy_proxy/__init__.py
 check_app_readable apme-opa:latest /entrypoint.sh
