@@ -129,6 +129,39 @@ describe("AssessFindingsPanel rule filter", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("ruleHrefTarget=_blank opens rule definition links in a new tab", async () => {
+    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+    const user = userEvent.setup();
+    render(
+      <AssessFindingsPanel
+        findings={findings}
+        resolveRuleHref={(bareId) =>
+          bareId === "L050"
+            ? "/self-service/repositories/quality-settings?rule=L050"
+            : undefined
+        }
+        ruleHrefTarget="_blank"
+      />,
+    );
+
+    const l050Links = screen.getAllByRole("link", {
+      name: "View rule definition in new tab: L050",
+    });
+    expect(l050Links).toHaveLength(2);
+    for (const link of l050Links) {
+      expect(link).toHaveAttribute("target", "_blank");
+      expect(link).toHaveAttribute("rel", "noopener noreferrer");
+    }
+
+    await user.click(l050Links[0]!);
+    expect(openSpy).toHaveBeenCalledWith(
+      "/self-service/repositories/quality-settings?rule=L050",
+      "_blank",
+      "noopener,noreferrer",
+    );
+    openSpy.mockRestore();
+  });
+
   it("resolveRuleHref keeps filter chips for rules without a catalog href", async () => {
     const user = userEvent.setup();
     render(
