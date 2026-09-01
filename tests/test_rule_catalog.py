@@ -27,8 +27,6 @@ from apme_gateway.db import get_session
 from apme_gateway.db import queries as q
 from apme_gateway.grpc_reporting.servicer import ReportingServicer
 
-pytestmark = pytest.mark.usefixtures("gateway_db")
-
 
 @pytest.mark.parametrize(  # type: ignore[untyped-decorator]
     ("rule_id", "expected_category"),
@@ -385,6 +383,32 @@ class TestGetRuleGuidance:
         assert rule_ids == sorted(rule_ids), "rule IDs must be sorted"
         assert "R114" in rule_ids, "R114 defines ai_prompt and must be listed"
 
+    def test_get_rule_guidance_preserves_sec_wildcard_id(self) -> None:
+        """A colon-bearing ``SEC:*`` rule ID must not be mangled by prefix stripping.
+
+        ``SEC:*`` has no doc frontmatter (Gitleaks is a dynamic external
+        binary, see ``_collect_gitleaks_rules``), so this must resolve to
+        ``None`` rather than being corrupted into looking up ``"*"``.
+
+        Returns:
+            None: Assert-only test.
+        """
+        assert get_rule_guidance("SEC:*") is None
+
+    def test_get_rule_guidance_preserves_concrete_sec_id(self) -> None:
+        """A concrete ``SEC:<id>`` rule ID keeps its colon intact for lookup.
+
+        Naively splitting on the last ``:`` would turn
+        ``SEC:generic-api-key`` into ``generic-api-key`` before lookup,
+        which can never match a real rule_id. Guard against that
+        regression: the bare id passed to the guidance map must retain
+        the ``SEC:`` prefix.
+
+        Returns:
+            None: Assert-only test.
+        """
+        assert get_rule_guidance("SEC:generic-api-key") == _load_rule_guidance_map().get("SEC:generic-api-key")
+
 
 class TestGetRuleDocumentation:
     """Tests for the public ``get_rule_documentation`` full-docs API."""
@@ -434,6 +458,14 @@ class TestGetRuleDocumentation:
         """
         assert get_rule_documentation("native:R114") == get_rule_documentation("R114")
 
+    def test_get_rule_documentation_preserves_sec_wildcard_id(self) -> None:
+        """``SEC:*`` must not be mangled into ``"*"`` before doc lookup.
+
+        Returns:
+            None: Assert-only test.
+        """
+        assert get_rule_documentation("SEC:*") is None
+
 
 def _grpc_context() -> AsyncMock:
     """Build an async mock gRPC servicer context.
@@ -465,6 +497,7 @@ def _sample_rule(rule_id: str) -> reporting_pb2.RuleDefinition:
 
 
 @pytest.mark.asyncio  # type: ignore[untyped-decorator]
+@pytest.mark.usefixtures("gateway_db")  # type: ignore[untyped-decorator]
 async def test_register_rules_rejects_non_authority() -> None:
     """``RegisterRules`` with ``is_authority=False`` is rejected without persistence.
 
@@ -487,6 +520,7 @@ async def test_register_rules_rejects_non_authority() -> None:
 
 
 @pytest.mark.asyncio  # type: ignore[untyped-decorator]
+@pytest.mark.usefixtures("gateway_db")  # type: ignore[untyped-decorator]
 async def test_register_rules_adds_new_rules() -> None:
     """Authority ``RegisterRules`` inserts new catalog rows.
 
@@ -512,6 +546,7 @@ async def test_register_rules_adds_new_rules() -> None:
 
 
 @pytest.mark.asyncio  # type: ignore[untyped-decorator]
+@pytest.mark.usefixtures("gateway_db")  # type: ignore[untyped-decorator]
 async def test_register_rules_reconcile_removes_absent_rules() -> None:
     """A second full registration drops rules missing from the incoming set.
 

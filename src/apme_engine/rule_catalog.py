@@ -17,12 +17,14 @@ from __future__ import annotations
 import functools
 import logging
 import re
+from collections.abc import Iterable
 from pathlib import Path
 
 import yaml
 
 from apme.v1 import common_pb2, reporting_pb2
 from apme_engine.engine.models import RuleScope
+from apme_engine.fingerprint import canonicalize_rule_id
 from apme_engine.graph.severity import get_severity, severity_to_proto
 from apme_engine.version_defaults import get_version_spec_str
 
@@ -193,21 +195,29 @@ def _collect_from_frontmatter(
     return defs
 
 
-@functools.lru_cache(maxsize=1)
-def _load_rule_guidance_map() -> dict[str, str]:
-    """Load ``ai_prompt`` remediation guidance from rule doc frontmatter.
+def _parse_ai_prompt_map(rule_dirs: Iterable[Path]) -> dict[str, str]:
+    """Parse ``ai_prompt`` frontmatter across a set of rule-doc directories.
 
-    Walks the native, OPA, and Ansible rule-doc directories, parsing YAML
-    frontmatter with ``yaml.safe_load`` (multiline-safe, unlike the
-    lightweight regex used by ``_parse_frontmatter``). The result is
-    cached for the process lifetime.
+    This is the single shared implementation for collecting AI-remediation
+    guidance from rule markdown frontmatter. Both :func:`_load_rule_guidance_map`
+    (this module's public API) and ``AbbenayProvider`` (AI-assisted
+    remediation) call this function so the two never drift apart.
+
+    Precedence is **first-write-wins**: if the same ``rule_id`` is declared
+    in more than one directory, the entry from the directory earliest in
+    ``rule_dirs`` is kept. Callers should pass directories in
+    native -> OPA -> Ansible order to match :func:`_index_rule_doc_files`.
+
+    Args:
+        rule_dirs: Directories to search, in precedence order (first wins).
 
     Returns:
         Mapping of rule_id to stripped ``ai_prompt`` text, for rules that
         define one.
     """
     guidance: dict[str, str] = {}
-    for rule_dir in (_GRAPH_RULES_DIR, _OPA_BUNDLE_DIR, _ANSIBLE_RULES_DIR):
+    for rule_dir in rule_dirs:
+        rule_dir = Path(rule_dir)
         if not rule_dir.is_dir():
             continue
         for md_path in sorted(rule_dir.glob("*.md")):
@@ -224,9 +234,26 @@ def _load_rule_guidance_map() -> dict[str, str]:
                 continue
             rule_id = fm.get("rule_id", "")
             ai_prompt = fm.get("ai_prompt", "")
-            if rule_id and ai_prompt:
+            if rule_id and ai_prompt and str(rule_id) not in guidance:
                 guidance[str(rule_id)] = str(ai_prompt).strip()
     return guidance
+
+
+@functools.lru_cache(maxsize=1)
+def _load_rule_guidance_map() -> dict[str, str]:
+    """Load ``ai_prompt`` remediation guidance from rule doc frontmatter.
+
+    Walks the native, OPA, and Ansible rule-doc directories (in that
+    precedence order, first-write-wins — see :func:`_parse_ai_prompt_map`)
+    parsing YAML frontmatter with ``yaml.safe_load`` (multiline-safe,
+    unlike the lightweight regex used by ``_parse_frontmatter``). The
+    result is cached for the process lifetime.
+
+    Returns:
+        Mapping of rule_id to stripped ``ai_prompt`` text, for rules that
+        define one.
+    """
+    return _parse_ai_prompt_map((_GRAPH_RULES_DIR, _OPA_BUNDLE_DIR, _ANSIBLE_RULES_DIR))
 
 
 def get_rule_guidance(rule_id: str) -> str | None:
@@ -238,9 +265,13 @@ def get_rule_guidance(rule_id: str) -> str | None:
     into private modules or parsing rule markdown files directly.
 
     Args:
-        rule_id: Rule identifier, e.g. ``"R114"`` or ``"L026"``. A
-            validator-prefixed form such as ``"opa:P001"`` is also
-            accepted; the prefix before the last ``:`` is stripped.
+        rule_id: Rule identifier, e.g. ``"R114"``, ``"L026"``, or
+            ``"SEC:generic-api-key"``. A legacy validator-prefixed form
+            such as ``"native:R114"`` is also accepted; only the known
+            ``native:``/``opa:``/``ansible:``/``gitleaks:`` prefixes are
+            stripped (see :func:`apme_engine.fingerprint.canonicalize_rule_id`)
+            so IDs whose colon is part of the ID itself (e.g. ``SEC:*``)
+            are preserved as-is.
 
     Returns:
         The rule's ``ai_prompt`` guidance text if the rule defines one,
@@ -251,7 +282,7 @@ def get_rule_guidance(rule_id: str) -> str | None:
         >>> guidance = get_rule_guidance("R114")
         >>> print(guidance)
     """
-    bare_id = rule_id.split(":")[-1] if ":" in rule_id else rule_id
+    bare_id = canonicalize_rule_id(rule_id)
     return _load_rule_guidance_map().get(bare_id)
 
 
@@ -300,9 +331,13 @@ def get_rule_documentation(rule_id: str) -> str | None:
     minus the YAML frontmatter block itself.
 
     Args:
-        rule_id: Rule identifier, e.g. ``"R114"`` or ``"L026"``. A
-            validator-prefixed form such as ``"opa:P001"`` is also
-            accepted; the prefix before the last ``:`` is stripped.
+        rule_id: Rule identifier, e.g. ``"R114"``, ``"L026"``, or
+            ``"SEC:generic-api-key"``. A legacy validator-prefixed form
+            such as ``"native:R114"`` is also accepted; only the known
+            ``native:``/``opa:``/``ansible:``/``gitleaks:`` prefixes are
+            stripped (see :func:`apme_engine.fingerprint.canonicalize_rule_id`)
+            so IDs whose colon is part of the ID itself (e.g. ``SEC:*``)
+            are preserved as-is.
 
     Returns:
         The markdown body text (frontmatter stripped) if the rule has a
@@ -312,7 +347,7 @@ def get_rule_documentation(rule_id: str) -> str | None:
         >>> from apme_engine.rule_catalog import get_rule_documentation
         >>> print(get_rule_documentation("R114"))
     """
-    bare_id = rule_id.split(":")[-1] if ":" in rule_id else rule_id
+    bare_id = canonicalize_rule_id(rule_id)
     md_path = _index_rule_doc_files().get(bare_id)
     if md_path is None:
         return None
