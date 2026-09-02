@@ -15,6 +15,7 @@ import {
 } from '@patternfly/react-core';
 import { ExternalLinkAltIcon } from '@patternfly/react-icons';
 import { WorkflowNextBar } from './WorkflowNextBar';
+import { toPrFilesDiffUrl } from '../utils/prDiffUrl';
 
 export interface CommitSubmitOptions {
   create_pr?: boolean;
@@ -168,7 +169,7 @@ export function CommitChangesPanel({
                 <Button
                   variant="secondary"
                   component="a"
-                  href={prUrl}
+                  href={toPrFilesDiffUrl(prUrl)}
                   target="_blank"
                   rel="noopener noreferrer"
                   icon={<ExternalLinkAltIcon />}

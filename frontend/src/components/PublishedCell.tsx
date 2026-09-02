@@ -1,5 +1,6 @@
 import { Button } from '@patternfly/react-core';
 import { ExternalLinkAltIcon } from '@patternfly/react-icons';
+import { toPrFilesDiffUrl } from '@apme/ui-workflow';
 
 interface PublishedCellProps {
   pr_url?: string | null;
@@ -19,7 +20,7 @@ export function PublishedCell({ pr_url, branch_name, commit_sha }: PublishedCell
         variant="link"
         isInline
         component="a"
-        href={pr_url}
+        href={toPrFilesDiffUrl(pr_url)}
         target="_blank"
         rel="noopener noreferrer"
         icon={<ExternalLinkAltIcon />}

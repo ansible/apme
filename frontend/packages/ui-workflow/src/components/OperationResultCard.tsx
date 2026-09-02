@@ -10,6 +10,7 @@ import {
 } from '@patternfly/react-core';
 import { ExternalLinkAltIcon } from '@patternfly/react-icons';
 import type { OperationResult } from '../types/operation';
+import { toPrFilesDiffUrl } from '../utils/prDiffUrl';
 
 export interface OperationResultCardProps {
   result: OperationResult;
@@ -111,7 +112,7 @@ export function OperationResultCard({
               <Button
                 variant="secondary"
                 component="a"
-                href={prUrl}
+                href={toPrFilesDiffUrl(prUrl)}
                 target="_blank"
                 rel="noopener noreferrer"
                 icon={<ExternalLinkAltIcon />}
