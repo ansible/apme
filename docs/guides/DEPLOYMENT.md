@@ -202,7 +202,7 @@ proxy gRPC requests to it.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `APME_DATABASE_URL` | *(required)* | SQLAlchemy URL for PostgreSQL. Loopback example: `postgresql+asyncpg://user:pass@127.0.0.1:5432/apme`. Remote hosts require TLS (`?sslmode=require` minimum; use `sslmode=verify-full` when validating server certificates against a CA). |
+| `APME_DATABASE_URL` | *(required)* | SQLAlchemy URL for PostgreSQL. Loopback example: `postgresql+asyncpg://user:pass@127.0.0.1:5432/apme`. Remote production hosts require TLS with certificate verification (`?sslmode=verify-full` and a configured CA). `sslmode=require` encrypts traffic but does not validate the server certificate. |
 | `APME_GATEWAY_GRPC_LISTEN` | `0.0.0.0:50060` | gRPC Reporting service listen address |
 | `APME_GATEWAY_HTTP_HOST` | `0.0.0.0` | REST API bind host |
 | `APME_GATEWAY_HTTP_PORT` | `8080` | REST API bind port |
@@ -474,11 +474,12 @@ PVC names (`*-sessions`, `*-postgres-data`, `*-proxy-cache`) replace the legacy
 ### PostgreSQL (required)
 
 The Gateway requires `APME_DATABASE_URL` (`postgresql+asyncpg://...`). Remote
-hosts must include TLS query parameters (for example
-`?sslmode=require` or `?sslmode=verify-full` when validating certificates).
+production hosts must use TLS with certificate verification (for example
+`?sslmode=verify-full` with a configured CA). `sslmode=require` encrypts traffic
+but does not validate the server certificate.
 Set `gateway.database.existingSecret.name` and `gateway.database.existingSecret.key`
 to reference a Kubernetes Secret containing the full SQLAlchemy URL (for example
-`postgresql+asyncpg://user:pass@host:5432/apme?sslmode=require`). The chart injects it via
+`postgresql+asyncpg://user:pass@host:5432/apme?sslmode=verify-full`). The chart injects it via
 `valueFrom.secretKeyRef` so credentials are not rendered in the Deployment
 manifest. For non-production installs you may set `gateway.database.url` directly
 instead of a Secret.

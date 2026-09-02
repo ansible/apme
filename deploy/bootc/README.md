@@ -178,12 +178,16 @@ Podman upgrades rename the database PVC from `apme-gateway-data` to
 
 Before upgrading:
 
-1. Export any scan history you need to retain (REST API export or copy the legacy
-   SQLite file from the old `apme-gateway-data` volume at `apme.db`).
-2. Run `tox -e down` and back up the `apme-gateway-data` Podman volume if you
-   may need the legacy database later (`tox -e wipe` removes both
-   `apme-postgres-data` and `apme-gateway-data`).
-3. After `tox -e up`, the Gateway starts with an empty PostgreSQL database.
+1. Export any scan history you need to retain via the REST API export
+   (preferred).
+2. To preserve the legacy SQLite file, run `tox -e down` to stop the Gateway
+   before copying `apme.db` from the `apme-gateway-data` volume (filesystem
+   copies of an active database can omit WAL or journal data). Alternatively,
+   use SQLite's online backup API while the Gateway is running.
+3. Back up the `apme-gateway-data` Podman volume if you may need the legacy
+   database later (`tox -e wipe` removes both `apme-postgres-data` and
+   `apme-gateway-data`).
+4. After `tox -e up`, the Gateway starts with an empty PostgreSQL database.
    Re-import data manually if required.
 
 #### bootc VM deployments
