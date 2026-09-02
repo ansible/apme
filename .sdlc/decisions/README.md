@@ -118,7 +118,7 @@ Decision Requests (DRs) provide a formal mechanism for:
 | [DR-001](closed/decided/DR-001-version-specific-analysis.md) | Version-Specific Analysis | All options: default + single + matrix | 2026-03-16 |
 | [DR-006](closed/decided/DR-006-success-metrics.md) | Success Metrics Baselines | Establish baselines now | 2026-03-16 |
 | [DR-010](closed/decided/DR-010-version-coverage.md) | Ansible Version Coverage | Start minimal (2.18-2.20), expand on demand | 2026-03-16 |
-| [DR-008](closed/decided/DR-008-data-persistence.md) | Scan Result Persistence | Resolved by ADR-029 (SQLite in web gateway) | 2026-03-19 |
+| [DR-008](closed/decided/DR-008-data-persistence.md) | Scan Result Persistence | Resolved by ADR-029 (PostgreSQL in web gateway) | 2026-03-19 |
 | [DR-005](closed/decided/DR-005-ai-remediation.md) | AI-Assisted Remediation | Option C (Hybrid) — Abbenay AI with provider abstraction (ADR-025) | 2026-03-25 |
 | [DR-016](closed/decided/DR-016-gateway-in-daemon.md) | Embed Gateway in Local Daemon | Embed Gateway in daemon (Galaxy Proxy precedent) | 2026-04-01 |
 | [DR-021](closed/decided/DR-021-l039-ai-remediation-guidance.md) | L039 AI Remediation Guidance | Option A — ai_prompt with noqa-when-trusted | 2026-08-24 |

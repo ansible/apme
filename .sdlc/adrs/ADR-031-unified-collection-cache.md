@@ -45,7 +45,7 @@ By converting Galaxy tarballs to Python wheels **at the edge** (a proxy boundary
 - The scanner's dependency resolution (tree building) is the critical path — it needs module/role/taskfile definitions to resolve `import_role`, `include_tasks`, FQCN lookups, and action groups.
 - The native validator's P-rules (P001–P004, currently excluded from native runs in daemon mode) need `argument_specs` and `action_groups` that come from RAMClient today.
 - Performance: the scanner currently re-scans every dependency on every request because the parsed data isn't cached persistently.
-- The web gateway (ADR-029) will add a persistence layer (SQLite V1) — a fourth potential store for scan-derived data.
+- The web gateway (ADR-029) will add a persistence layer (PostgreSQL) — a fourth potential store for scan-derived data.
 - **Standards alignment**: the engine should not contain custom logic for a proprietary packaging format when standard equivalents exist. Containing the Galaxy format at the boundary reduces maintenance burden and lets us leverage the Python ecosystem's caching and resolution tooling.
 
 ## Decision
@@ -68,7 +68,7 @@ Concretely:
 
 6. **CacheMaintainer simplifies**: Galaxy collection management moves to the proxy. CacheMaintainer retains GitHub org cloning (`CloneOrg` RPC) for source-based collections not available on Galaxy.
 
-7. **Persistent parsed metadata** (future): A metadata cache (initially filesystem-backed JSON, later migrated to the web gateway's SQLite) stores parsed `Findings`-equivalent data — module definitions, role specs, taskfile structures, action groups — so the scanner doesn't re-parse unchanged collections.
+7. **Persistent parsed metadata** (future): A metadata cache (initially filesystem-backed JSON, later migrated to the web gateway's PostgreSQL) stores parsed `Findings`-equivalent data — module definitions, role specs, taskfile structures, action groups — so the scanner doesn't re-parse unchanged collections.
 
 8. **Venv as a resolution oracle** (future): For P-rules that need `argument_specs` or FQCN resolution, the native validator can query the Ansible validator's venv (via subprocess or a thin gRPC call) rather than maintaining a parallel parsed copy.
 
@@ -122,7 +122,7 @@ Concretely:
 
 **Why not chosen**: Performance characteristics are wrong for the scanner's hot loop. Better suited as a targeted optimization for P-rules (small number of lookups).
 
-### Alternative 4: Merge all caching into the web gateway's SQLite
+### Alternative 4: Merge all caching into the web gateway's PostgreSQL
 
 **Description**: Skip the filesystem metadata layer entirely and persist parsed collection data in the web gateway's database from the start.
 
@@ -248,7 +248,7 @@ With Phase 3's session-scoped venvs, the daemon path no longer needs ARI's colle
 - Re-enable P001–P004 in daemon mode (currently excluded because they require `ram_client` with populated data)
 
 ### Phase 6: Web gateway migration (future, ADR-029)
-- Migrate the filesystem metadata layer to SQLite/PostgreSQL
+- Migrate the filesystem metadata layer to PostgreSQL
 - RAMClient becomes a DB-backed read-through cache
 
 ## Related Decisions

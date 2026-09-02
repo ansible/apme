@@ -36,7 +36,7 @@ and single-node evaluation but does not address production deployment:
 - The 12 containers in the reference pod naturally co-locate for Simple installs:
   - **Engine stack** (8 containers): Engine, Native, OPA, Ansible, Gitleaks,
     Collection Health, Dep Audit, Galaxy Proxy
-  - **Gateway** (1 container): REST + Reporting + SQLite
+  - **Gateway** (1 container): REST + Reporting + PostgreSQL
   - **Frontend** (1 container): UI nginx (optional via portal profile)
   - **Abbenay** (1 container): Optional AI provider
   - **Observability** (1 container): OpenTelemetry Collector sidecar (ADR-067;
@@ -84,7 +84,7 @@ External access uses Service + Ingress:
 | PVC | Access Mode | Used By | Purpose |
 |-----|-------------|---------|---------|
 | `sessions` | ReadWriteOnce | Simple pod | Session venvs (Engine rw, validators ro) |
-| `gateway-data` | ReadWriteOnce | Simple pod (Gateway) | SQLite database |
+| `postgres-data` | ReadWriteOnce | Simple pod (PostgreSQL) | PostgreSQL database |
 | `proxy-cache` | ReadWriteOnce | Simple pod | Galaxy Proxy wheel cache |
 
 ReadWriteOnce is sufficient for the Simple single-replica topology (ADR-069).

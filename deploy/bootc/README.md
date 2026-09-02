@@ -161,7 +161,7 @@ systemctl disable apme-pod.service
 | Path | Purpose | Backup? |
 |------|---------|---------|
 | `/var/lib/apme/sessions/` | Session venvs (ephemeral, rebuilt on scan) | No |
-| `/var/lib/apme/gateway/` | Gateway SQLite database (scan history) | Yes |
+| `/var/lib/apme/postgres/` | Gateway PostgreSQL data directory (scan history) | Yes |
 | `/var/lib/apme/proxy-cache/` | Galaxy Proxy wheel cache | No |
 
 Back up `/var/lib/apme/gateway/` to preserve scan history across upgrades.

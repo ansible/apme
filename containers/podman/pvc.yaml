@@ -19,7 +19,7 @@ spec:
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: apme-gateway-data
+  name: apme-postgres-data
   annotations:
     volume.podman.io/uid: "1001"
     volume.podman.io/gid: "0"

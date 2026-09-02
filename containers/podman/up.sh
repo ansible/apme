@@ -362,7 +362,7 @@ _ensure_volume_owned_by_container_uid() {
 # SELinux repair of an existing volume.
 _relabel_podman_volumes() {
   local vol mountpoint
-  for vol in apme-sessions apme-gateway-data apme-proxy-cache; do
+  for vol in apme-sessions apme-postgres-data apme-proxy-cache; do
     if ! podman volume exists "$vol" 2>/dev/null; then
       continue
     fi
@@ -510,7 +510,7 @@ abbenay_vol_marker = (
     '    - name: galaxy-proxy'
 )
 gateway_env_marker = '        - name: APME_FEEDBACK_GITHUB_TOKEN'
-gateway_vol_marker = '      volumeMounts:\n        - name: gateway-data'
+gateway_vol_marker = '      volumeMounts:\n        - name: abbenay-run'
 galaxy_marker = '    - name: galaxy-proxy\n      image: apme-galaxy-proxy:latest'
 galaxy_vol_marker = '      volumeMounts:\n        - name: proxy-cache'
 if (
@@ -556,7 +556,7 @@ yaml = yaml.replace(
     '        - name: gateway-ca-bundle\n'
     '          mountPath: ' + mount_yaml + '\n'
     '          readOnly: true\n'
-    '        - name: gateway-data')
+    '        - name: abbenay-run')
 # Galaxy Proxy: add env section + CA env vars
 yaml = yaml.replace(
     galaxy_marker,
@@ -747,7 +747,7 @@ podman kube play containers/podman/pvc.yaml
 _relabel_podman_volumes
 echo "$POD_YAML" | podman play kube -
 
-echo "Pod apme-pod started (volumes: apme-sessions, apme-gateway-data, apme-proxy-cache). Run a scan: containers/podman/run-cli.sh"
+echo "Pod apme-pod started (volumes: apme-sessions, apme-postgres-data, apme-proxy-cache). Run a scan: containers/podman/run-cli.sh"
 echo "Abbenay UI: http://127.0.0.1:8787 (localhost only; HTTP auth disabled for dev)"
 echo "OTel Prometheus metrics: http://localhost:8889/metrics (companion stack: containers/observability/up.sh)"
 

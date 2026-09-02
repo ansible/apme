@@ -268,7 +268,7 @@ path, not a replacement.
 ## References
 
 - [design-dashboard.md](/.sdlc/context/design-dashboard.md) — PatternFly
-  components, views, SQLite schema
+  components, views, PostgreSQL schema
 - [docs/archive/mockups/](/docs/archive/mockups/) — HTML mockups and Figma
 - [Red Hat self-service automation portal](https://www.redhat.com/en/technologies/management/ansible/self-service-automation)
   — AAP's Backstage-based portal

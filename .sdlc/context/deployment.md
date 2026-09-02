@@ -55,7 +55,7 @@ This builds eleven images:
 | `apme-collection-health:latest` | `containers/collection-health/Dockerfile` | Installed collection health scanner |
 | `apme-dep-audit:latest` | `containers/dep-audit/Dockerfile` | Python CVE scanner (pip-audit) |
 | `apme-galaxy-proxy:latest` | `containers/galaxy-proxy/Dockerfile` | PEP 503 proxy: Galaxy tarballs → Python wheels |
-| `apme-gateway:latest` | `containers/gateway/Dockerfile` | REST/gRPC gateway + SQLite persistence |
+| `apme-gateway:latest` | `containers/gateway/Dockerfile` | REST/gRPC gateway + PostgreSQL persistence |
 | `apme-ui:latest` | `containers/ui/Dockerfile` | React SPA dashboard (nginx) |
 | `apme-cli:latest` | `containers/cli/Dockerfile` | CLI client |
 

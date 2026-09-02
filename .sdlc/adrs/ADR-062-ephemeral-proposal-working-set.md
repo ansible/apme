@@ -29,7 +29,7 @@ Gateway `proposals` while a remediate working set is actionable, and
 Gateway `proposal_id` (`prop-{gate}-{hash}`) is the archival / activity
 identity — Phase 2 defines the id bridge for Option C.
 
-If we keep full proposal diffs forever, SQLite grows without bound. If we
+If we keep full proposal diffs forever, PostgreSQL grows without bound. If we
 key checkboxes on `violations.id`, we fight node-level `approve_node()`
 and coupled multi-rule fixes. If we treat PR/push as “approved,” we lose
 rule-efficacy signal for fixes that were accepted but never published.
@@ -233,7 +233,7 @@ match.
   Gateway status `awaiting_ai_triage`, SSE `ai_triage`,
   `POST .../operation/escalate-ai`. SPA step label **AI escalation**.
   Per-location Include/Skip in v1; empty allow-list skips AI.
-- SQLite: extend `_migrate_*` pattern in `apme_gateway.db` (no Alembic).
+- PostgreSQL: extend `_migrate_*` pattern in `apme_gateway.db` (no Alembic).
 - Non-interactive Tier 1 auto-apply sets `review_status=deterministic_approved`
   when fixed violations are persisted.
 - Abandon safeguard keys on `proposals.draft=1` only so non-interactive

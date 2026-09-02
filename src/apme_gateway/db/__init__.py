@@ -2,61 +2,28 @@
 
 from __future__ import annotations
 
-from sqlalchemy import event, inspect, text
+from sqlalchemy import inspect, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
 from apme_gateway.db.dialect import in_clause_chunk_size
 from apme_gateway.db.models import Base
-from apme_gateway.db.url import is_database_url, is_sqlite_url, resolve_database_url, sqlite_url_from_path
+from apme_gateway.db.url import resolve_database_url
 
 _engine: AsyncEngine | None = None
 _session_factory: async_sessionmaker[AsyncSession] | None = None
 _database_url: str | None = None
 
 
-def _set_sqlite_pragma(
-    dbapi_connection: object,
-    _connection_record: object,
-) -> None:
-    """Enable SQLite foreign key enforcement on every new connection.
-
-    Args:
-        dbapi_connection: Raw DBAPI connection from the pool.
-        _connection_record: SQLAlchemy connection record (unused).
-    """
-    cursor = dbapi_connection.cursor()  # type: ignore[attr-defined]
-    cursor.execute("PRAGMA foreign_keys=ON")
-    cursor.close()
-
-
-def _normalize_init_target(database_url_or_path: str) -> str:
-    """Accept either a SQLAlchemy URL or a SQLite filesystem path.
-
-    Args:
-        database_url_or_path: URL or SQLite file path.
-
-    Returns:
-        SQLAlchemy async database URL.
-    """
-    if is_database_url(database_url_or_path):
-        return database_url_or_path
-    return sqlite_url_from_path(database_url_or_path)
-
-
-async def init_db(database_url_or_path: str) -> None:
+async def init_db(database_url: str) -> None:
     """Create the async engine, run DDL, and configure the session factory.
 
     Args:
-        database_url_or_path: SQLAlchemy database URL (``postgresql+asyncpg://...``,
-            ``sqlite+aiosqlite:///...``) or a SQLite filesystem path for backward
-            compatibility with tests and ``APME_DB_PATH``.
+        database_url: SQLAlchemy database URL (``postgresql+asyncpg://...``).
     """
     global _engine, _session_factory, _database_url  # noqa: PLW0603
-    url = _normalize_init_target(database_url_or_path)
+    url = resolve_database_url(database_url=database_url)
     _database_url = url
     _engine = create_async_engine(url, echo=False)
-    if is_sqlite_url(url):
-        event.listen(_engine.sync_engine, "connect", _set_sqlite_pragma)
     _session_factory = async_sessionmaker(_engine, expire_on_commit=False)
     async with _engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -65,17 +32,16 @@ async def init_db(database_url_or_path: str) -> None:
         await conn.run_sync(_migrate_scans_table)
 
 
-async def init_db_from_config(*, database_url: str | None = None, db_path: str | None = None) -> str:
+async def init_db_from_config(*, database_url: str | None = None) -> str:
     """Initialize the database from gateway configuration values.
 
     Args:
         database_url: Optional explicit SQLAlchemy URL.
-        db_path: Optional SQLite path when no URL is configured.
 
     Returns:
         Resolved database URL used for the engine.
     """
-    url = resolve_database_url(database_url=database_url, db_path=db_path)
+    url = resolve_database_url(database_url=database_url)
     await init_db(url)
     return url
 
@@ -117,10 +83,10 @@ def get_in_clause_chunk_size() -> int:
     """Return the safe ``IN`` clause chunk size for the active database.
 
     Returns:
-        Chunk size for the current engine dialect, or SQLite default before init.
+        Chunk size for the current engine dialect, or PostgreSQL default before init.
     """
     if _engine is None:
-        return 900
+        return 30_000
     return in_clause_chunk_size(_engine.sync_engine)
 
 

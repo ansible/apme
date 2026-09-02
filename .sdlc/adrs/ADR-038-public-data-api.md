@@ -10,7 +10,7 @@ Accepted
 
 ## Context
 
-APME is the source of truth for static analysis data about Ansible content — violations, health scores, deprecation status, remediation guidance. The Gateway (ADR-029) already persists scan results in SQLite and serves them via REST endpoints under `/api/v1`. However, this API was designed as a backend-for-frontend (BFF) for the APME dashboard UI, not as a public interface for platform consumers.
+APME is the source of truth for static analysis data about Ansible content — violations, health scores, deprecation status, remediation guidance. The Gateway (ADR-029) already persists scan results in PostgreSQL and serves them via REST endpoints under `/api/v1`. However, this API was designed as a backend-for-frontend (BFF) for the APME dashboard UI, not as a public interface for platform consumers.
 
 Customer RFE [AAPRFE-1607](https://redhat.atlassian.net/browse/AAPRFE-1607) and PR #102/#107 discussions revealed a broader architectural question: how do platform components — AAP Controller, Automation Analytics, CI/CD systems — consume APME's project quality data?
 
@@ -36,7 +36,7 @@ The Gateway (ADR-029, ADR-037) provides:
 
 - **Project model** with `repo_url`, `branch`, `health_score` (0–100)
 - **REST endpoints**: project read (list/detail), scans per project, violations per project, trends, dashboard summary, rankings
-- **SQLite persistence** with violation details, proposals, scan logs
+- **PostgreSQL persistence** with violation details, proposals, scan logs
 - **Health score computation** from violation severity/counts
 - **Pluggable event sinks** (ADR-020) for scan completion notifications
 

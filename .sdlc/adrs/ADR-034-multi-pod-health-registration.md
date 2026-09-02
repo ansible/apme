@@ -143,14 +143,14 @@ No new connections, no new dependencies. The heartbeat uses the same gRPC channe
 
 ### Alternative 3: Shared database polling
 
-**Description**: Pods write their status to a shared database (the gateway's SQLite or a separate Redis). Gateway reads the table on health queries.
+**Description**: Pods write their status to a shared database (the gateway's PostgreSQL or a separate Redis). Gateway reads the table on health queries.
 
 **Pros**:
 - Durable registration survives gateway restarts
 - Simple query model
 
 **Cons**:
-- SQLite doesn't support concurrent writes from multiple pods (file locking)
+- A shared embedded database doesn't support concurrent writes from multiple pods (file locking)
 - Adds a database dependency to the engine (violates ADR-020's "engine never imports a database client")
 - Redis adds infrastructure
 

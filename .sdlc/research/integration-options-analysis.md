@@ -257,7 +257,7 @@ ADR-030 defines: Same Gateway API, but rendered in RHDH context.
 ADR-020 defines best-effort event delivery:
 
 ```
-Engine → ScanCompleted event → Reporting Service → Gateway SQLite
+Engine → ScanCompleted event → Reporting Service → Gateway PostgreSQL
                                                  → (Future: Prometheus, Elasticsearch)
 ```
 
@@ -285,7 +285,7 @@ Aligns with ADR-038 "Chuck Wagon Principle": APME serves data, consumers come ge
 
 | Phase | Scope | Metrics Path |
 |-------|-------|--------------|
-| **V1 (Current)** | APME Dashboard shows health, trends, rankings | Gateway SQLite |
+| **V1 (Current)** | APME Dashboard shows health, trends, rankings | Gateway PostgreSQL |
 | **AAP (future)** | Controller queries APME during project sync | Via Controller → AA |
 | **Future** | Prometheus exporter, Grafana templates, ROI calculator | Multiple sinks |
 
@@ -296,7 +296,7 @@ Aligns with ADR-038 "Chuck Wagon Principle": APME serves data, consumers come ge
 | Option | Persona | Complexity | Metrics Path | Status |
 |--------|---------|------------|--------------|--------|
 | **1. Standalone CLI** | Developer | Low | Local only | Ready |
-| **2. Containerized Pod** | Team/CI | Medium | Gateway SQLite | Ready |
+| **2. Containerized Pod** | Team/CI | Medium | Gateway PostgreSQL | Ready |
 | **3. CI/CD Gate** | DevOps | Low | CI artifacts | Ready |
 | **4a. AAP Pre-flight** | Admin | Medium | Via Controller | DR-015 open |
 | **4b. AAP Policy Augment** | Architect | High | Via Controller | DR-015 open |

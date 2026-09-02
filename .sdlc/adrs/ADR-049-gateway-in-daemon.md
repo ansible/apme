@@ -37,11 +37,11 @@ the dual-code-path problem ADR-024 was designed to eliminate.
 - The CLI→REST migration path (ADR-024) requires the Gateway to be reachable
 - Galaxy Proxy already proves the uvicorn-in-daemon pattern works
 - The daemon should remain a single background process (not multiple PIDs)
-- Gateway persistence (SQLite) must work in both daemon and pod modes
+- Gateway persistence (PostgreSQL) must work in both daemon and pod modes
 
 ## Decision
 
-**Embed the Gateway (HTTP server + gRPC ReportingServicer + SQLite
+**Embed the Gateway (HTTP server + gRPC ReportingServicer + PostgreSQL
 persistence) in the local daemon process**, following the same pattern used
 for Galaxy Proxy.
 
@@ -52,7 +52,7 @@ The daemon's `_run_daemon()` function gains two additional services:
 2. **Gateway gRPC** (ReportingServicer) on port 50060 — receives
    `FixCompletedEvent` from the co-located Engine
 
-The Gateway database defaults to `~/.apme-data/gateway.db` (SQLite, same
+The Gateway database defaults to `~/.apme-data/PostgreSQL URL, same
 engine as the pod Gateway per ADR-029).
 
 The `DaemonState` dataclass and `daemon.json` state file record Gateway
@@ -131,7 +131,7 @@ to the existing Galaxy Proxy pattern.
 - The pod deployment is unchanged — Gateway continues to run as a separate
   container in the Podman pod. The daemon simply co-locates what the pod
   runs as separate containers.
-- SQLite remains the database engine in both modes (per ADR-029).
+- PostgreSQL remains the database engine in both modes (per ADR-029).
 
 ## Implementation Notes
 
@@ -224,10 +224,10 @@ start" and add it to the daemon service list.
 
 - ADR-024: Thin CLI with Local Daemon Mode — establishes daemon pattern,
   documents CLI→REST future direction
-- ADR-029: SQLite in Web Gateway — Gateway persistence design
+- ADR-029: PostgreSQL in Web Gateway — Gateway persistence design
 - ADR-040: Scan Metadata Enrichment — `apme sbom` is PR 3 of this ADR
 - ADR-004: Podman Pod Deployment — pod topology (unchanged)
-- DR-008: Scan Result Persistence — decided: SQLite in Gateway
+- DR-008: Scan Result Persistence — decided: PostgreSQL in Gateway
 - DR-016: Embed Gateway in Local Daemon — this ADR documents that decision
 
 ---

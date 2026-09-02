@@ -9,7 +9,8 @@ from sqlalchemy.engine import make_url
 
 _INVALID_URL_MSG = "APME_DATABASE_URL must be a SQLAlchemy URL"
 _EXPLICIT_URL_MSG = "database_url must be a SQLAlchemy URL"
-_SUPPORTED_ASYNC_DRIVERS = frozenset({"postgresql+asyncpg", "sqlite+aiosqlite"})
+_MISSING_URL_MSG = "APME_DATABASE_URL is required (postgresql+asyncpg://user:pass@host:5432/dbname)"
+_SUPPORTED_ASYNC_DRIVERS = frozenset({"postgresql+asyncpg"})
 _SENSITIVE_QUERY_KEYS = frozenset({"password", "passwd", "pass", "secret", "token", "api_key", "access_token"})
 
 
@@ -17,7 +18,7 @@ def is_database_url(target: str) -> bool:
     """Return True when *target* looks like a SQLAlchemy database URL.
 
     Args:
-        target: Filesystem path or database URL.
+        target: Database URL.
 
     Returns:
         True if the value contains a URL scheme.
@@ -49,41 +50,26 @@ def _validate_async_database_url(url: str, *, error_msg: str) -> str:
     return url
 
 
-def sqlite_url_from_path(db_path: str) -> str:
-    """Build a SQLAlchemy async SQLite URL from a filesystem path.
+def resolve_database_url(*, database_url: str | None = None) -> str:
+    """Resolve the SQLAlchemy URL from explicit config or environment.
 
-    Args:
-        db_path: Path to the SQLite database file.
-
-    Returns:
-        ``sqlite+aiosqlite:///{db_path}`` URL.
-    """
-    return f"sqlite+aiosqlite:///{db_path}"
-
-
-def resolve_database_url(*, database_url: str | None = None, db_path: str | None = None) -> str:
-    """Resolve the SQLAlchemy URL from explicit config or environment defaults.
-
-    ``APME_DATABASE_URL`` takes precedence when *database_url* is not passed.
-    Otherwise falls back to ``APME_DB_PATH`` (or */data/apme.db*) as SQLite.
+    ``APME_DATABASE_URL`` is required when *database_url* is not passed.
 
     Args:
         database_url: Optional explicit SQLAlchemy URL (e.g. ``postgresql+asyncpg://...``).
-        db_path: Optional SQLite file path when no URL is configured.
 
     Returns:
         SQLAlchemy async database URL.
 
     Raises:
-        ValueError: When a configured database URL is not a valid SQLAlchemy URL.
+        ValueError: When no database URL is configured or the URL is invalid.
     """  # noqa: DOC502
     if database_url:
         return _validate_async_database_url(database_url, error_msg=_EXPLICIT_URL_MSG)
     env_url = os.environ.get("APME_DATABASE_URL", "").strip()
     if env_url:
         return _validate_async_database_url(env_url, error_msg=_INVALID_URL_MSG)
-    path = db_path if db_path is not None else os.environ.get("APME_DB_PATH", "/data/apme.db")
-    return sqlite_url_from_path(path)
+    raise ValueError(_MISSING_URL_MSG)
 
 
 def _redact_query_credentials(query: str) -> str:
@@ -130,38 +116,3 @@ def sanitize_database_url(url: str) -> str:
     if netloc == parts.netloc and query == parts.query:
         return url
     return urlunsplit((parts.scheme, netloc, parts.path, query, parts.fragment))
-
-
-def is_sqlite_url(url: str) -> bool:
-    """Return True when *url* targets SQLite.
-
-    Args:
-        url: SQLAlchemy database URL.
-
-    Returns:
-        True for ``sqlite`` dialect URLs.
-    """
-    if not is_database_url(url):
-        return True
-    return urlsplit(url).scheme.startswith("sqlite")
-
-
-def sqlite_parent_dir(url: str) -> str | None:
-    """Return the parent directory for a file-backed SQLite URL.
-
-    Args:
-        url: Resolved SQLAlchemy database URL.
-
-    Returns:
-        Parent directory path, or ``None`` for in-memory SQLite or non-SQLite URLs.
-    """
-    if not is_sqlite_url(url) or not is_database_url(url):
-        return None
-    try:
-        db_path = make_url(url).database
-    except Exception:
-        return None
-    if not db_path or db_path == ":memory:":
-        return None
-    parent = os.path.dirname(db_path)
-    return parent or None

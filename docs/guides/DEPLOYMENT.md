@@ -55,7 +55,7 @@ This builds a shared base image, eleven service images, and pulls one official i
 | `apme-collection-health:latest` | `containers/collection-health/Dockerfile` | Installed collection health scanner |
 | `apme-dep-audit:latest` | `containers/dep-audit/Dockerfile` | Python CVE scanner (pip-audit) |
 | `apme-galaxy-proxy:latest` | `containers/galaxy-proxy/Dockerfile` | PEP 503 proxy: Galaxy tarballs → Python wheels |
-| `apme-gateway:latest` | `containers/gateway/Dockerfile` | REST API + gRPC Reporting service (SQLite or PostgreSQL) |
+| `apme-gateway:latest` | `containers/gateway/Dockerfile` | REST API + gRPC Reporting service (PostgreSQL) |
 | `apme-ui:latest` | `containers/ui/Dockerfile` | React SPA served by nginx (proxies API to Gateway) |
 | `apme-cli:latest` | `containers/cli/Dockerfile` | CLI client |
 | `ghcr.io/redhat-developer/abbenay:v2026.8.7` | [Official image](https://github.com/redhat-developer/abbenay/pkgs/container/abbenay) (pulled) | Abbenay AI daemon (LLM gateway for Tier 2 remediation) |
@@ -202,8 +202,7 @@ proxy gRPC requests to it.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `APME_DATABASE_URL` | *(unset)* | Optional SQLAlchemy URL for PostgreSQL (e.g. `postgresql+asyncpg://user:pass@host:5432/apme`). When set, takes precedence over SQLite. |
-| `APME_DB_PATH` | `/data/apme.db` | Path to the SQLite database when `APME_DATABASE_URL` is unset (stores activity, sessions, rule catalog, and rule overrides) |
+| `APME_DATABASE_URL` | *(required)* | SQLAlchemy URL for PostgreSQL (e.g. `postgresql+asyncpg://user:pass@host:5432/apme`) |
 | `APME_GATEWAY_GRPC_LISTEN` | `0.0.0.0:50060` | gRPC Reporting service listen address |
 | `APME_GATEWAY_HTTP_HOST` | `0.0.0.0` | REST API bind host |
 | `APME_GATEWAY_HTTP_PORT` | `8080` | REST API bind port |

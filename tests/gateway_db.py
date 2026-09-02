@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 import re
 from collections.abc import AsyncIterator
-from pathlib import Path
 from urllib.parse import urlparse, urlunparse
 
 import pytest
@@ -14,6 +13,7 @@ from apme_gateway.db import close_db, init_db, reset_db
 from apme_gateway.operation_registry import get_operation_registry
 
 _WORKER_NAME_RE = re.compile(r"^(master|gw\d+)$")
+_DEFAULT_TEST_DATABASE_URL = "postgresql+asyncpg://apme:apme@localhost:5432/apme_test"
 
 
 def _validated_worker_suffix() -> str:
@@ -32,15 +32,15 @@ def _validated_worker_suffix() -> str:
     return worker.replace("-", "_")
 
 
-def base_test_database_url() -> str | None:
-    """Return the configured PostgreSQL URL for optional smoke tests.
+def base_test_database_url() -> str:
+    """Return the configured PostgreSQL URL for gateway tests.
 
     Returns:
-        Base PostgreSQL connection URL when ``APME_TEST_DATABASE_URL`` is set,
-        otherwise ``None``.
+        Base PostgreSQL connection URL from ``APME_TEST_DATABASE_URL``, or the
+        local default when unset.
     """
     url = os.environ.get("APME_TEST_DATABASE_URL", "").strip()
-    return url or None
+    return url or _DEFAULT_TEST_DATABASE_URL
 
 
 def worker_database_name() -> str:
@@ -57,15 +57,8 @@ def test_database_url() -> str:
 
     Returns:
         Worker-specific PostgreSQL connection URL.
-
-    Raises:
-        RuntimeError: When ``APME_TEST_DATABASE_URL`` is not configured.
     """
-    base_url = base_test_database_url()
-    if not base_url:
-        msg = "APME_TEST_DATABASE_URL is not configured"
-        raise RuntimeError(msg)
-    parsed = urlparse(base_url)
+    parsed = urlparse(base_test_database_url())
     return urlunparse(parsed._replace(path=f"/{worker_database_name()}"))
 
 
@@ -74,16 +67,10 @@ async def ensure_worker_database() -> str:
 
     Returns:
         Worker-specific PostgreSQL connection URL.
-
-    Raises:
-        RuntimeError: When ``APME_TEST_DATABASE_URL`` is not configured.
     """
     import asyncpg
 
     base_url = base_test_database_url()
-    if not base_url:
-        msg = "APME_TEST_DATABASE_URL is not configured"
-        raise RuntimeError(msg)
     parsed = urlparse(base_url.replace("postgresql+asyncpg://", "postgresql://"))
     db_name = worker_database_name()
     conn = await asyncpg.connect(
@@ -103,17 +90,15 @@ async def ensure_worker_database() -> str:
 
 
 @pytest.fixture  # type: ignore[untyped-decorator]
-async def gateway_db(tmp_path: Path) -> AsyncIterator[None]:
-    """Initialise a fresh SQLite schema per test.
-
-    Args:
-        tmp_path: Pytest-provided temporary directory.
+async def gateway_db() -> AsyncIterator[None]:
+    """Initialise a fresh PostgreSQL schema per test.
 
     Yields:
         None: Test runs between setup and teardown.
     """
+    url = await ensure_worker_database()
     await close_db()
-    await init_db(str(tmp_path / "test.db"))
+    await init_db(url)
     await reset_db()
     yield
     registry = get_operation_registry()
