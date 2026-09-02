@@ -196,10 +196,10 @@ remediation_proposals
 
 | Deployment | Backend | Rationale |
 |------------|---------|-----------|
-| Single pod (dev/small team) | PostgreSQL | Zero-config, file-based, sufficient for thousands of activity records |
+| Single pod (dev/small team) | PostgreSQL sidecar | Dedicated `postgres-data` volume; sufficient for thousands of activity records |
 | Multi-pod / enterprise | PostgreSQL | Shared state across pods, concurrent writers, full-text search |
 
-The gateway uses SQLAlchemy with async support (`asyncpg` for PostgreSQL, PostgreSQL only). The backend is selected by environment variable (`APME_DB_URL`).
+The gateway uses SQLAlchemy with asyncpg. Persistence requires `APME_DATABASE_URL` (`postgresql+asyncpg://...`).
 
 ---
 

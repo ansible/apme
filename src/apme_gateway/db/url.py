@@ -12,6 +12,44 @@ _EXPLICIT_URL_MSG = "database_url must be a SQLAlchemy URL"
 _MISSING_URL_MSG = "APME_DATABASE_URL is required (postgresql+asyncpg://user:pass@host:5432/dbname)"
 _SUPPORTED_ASYNC_DRIVERS = frozenset({"postgresql+asyncpg"})
 _SENSITIVE_QUERY_KEYS = frozenset({"password", "passwd", "pass", "secret", "token", "api_key", "access_token"})
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+_SECURE_SSLMODES = frozenset({"require", "verify-ca", "verify-full"})
+_SECURE_SSL_VALUES = frozenset({"1", "true", "require", "yes"})
+_REMOTE_TLS_REQUIRED_MSG = "APME_DATABASE_URL must use TLS (sslmode=require or ssl=true) for non-loopback hosts"
+
+
+def _is_loopback_host(host: str | None) -> bool:
+    """Return True when *host* is a loopback address.
+
+    Args:
+        host: PostgreSQL hostname from the database URL.
+
+    Returns:
+        True for localhost and loopback IP literals.
+    """
+    if not host:
+        return False
+    return host.lower().strip("[]") in _LOOPBACK_HOSTS
+
+
+def _require_secure_transport(url: str) -> None:
+    """Require TLS for remote PostgreSQL URLs.
+
+    Args:
+        url: Validated SQLAlchemy database URL.
+
+    Raises:
+        ValueError: When a remote host omits TLS configuration.
+    """
+    parsed = make_url(url)
+    if _is_loopback_host(parsed.host):
+        return
+    query = dict(parsed.query)
+    sslmode = str(query.get("sslmode", "")).lower()
+    ssl = str(query.get("ssl", "")).lower()
+    if sslmode in _SECURE_SSLMODES or ssl in _SECURE_SSL_VALUES:
+        return
+    raise ValueError(_REMOTE_TLS_REQUIRED_MSG)
 
 
 def is_database_url(target: str) -> bool:
@@ -65,10 +103,14 @@ def resolve_database_url(*, database_url: str | None = None) -> str:
         ValueError: When no database URL is configured or the URL is invalid.
     """  # noqa: DOC502
     if database_url:
-        return _validate_async_database_url(database_url, error_msg=_EXPLICIT_URL_MSG)
+        validated = _validate_async_database_url(database_url, error_msg=_EXPLICIT_URL_MSG)
+        _require_secure_transport(validated)
+        return validated
     env_url = os.environ.get("APME_DATABASE_URL", "").strip()
     if env_url:
-        return _validate_async_database_url(env_url, error_msg=_INVALID_URL_MSG)
+        validated = _validate_async_database_url(env_url, error_msg=_INVALID_URL_MSG)
+        _require_secure_transport(validated)
+        return validated
     raise ValueError(_MISSING_URL_MSG)
 
 

@@ -33,10 +33,11 @@ and single-node evaluation but does not address production deployment:
 - The Helm chart’s shipping audience is **EAP and upstream** Simple installs
   (see ADR-069), not a multi-replica engine farm with an independently scaled
   Gateway.
-- The 12 containers in the reference pod naturally co-locate for Simple installs:
+- The 13 containers in the reference pod naturally co-locate for Simple installs:
   - **Engine stack** (8 containers): Engine, Native, OPA, Ansible, Gitleaks,
     Collection Health, Dep Audit, Galaxy Proxy
-  - **Gateway** (1 container): REST + Reporting + PostgreSQL
+  - **PostgreSQL** (1 container): `postgres:16` sidecar with `postgres-data` PVC
+  - **Gateway** (1 container): REST + Reporting (connects via `APME_DATABASE_URL`)
   - **Frontend** (1 container): UI nginx (optional via portal profile)
   - **Abbenay** (1 container): Optional AI provider
   - **Observability** (1 container): OpenTelemetry Collector sidecar (ADR-067;

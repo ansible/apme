@@ -361,7 +361,12 @@ _ensure_volume_owned_by_container_uid() {
 # apme-sessions trees). Set APME_SELINUX_FULL_RELABEL=1 for a one-time recursive
 # SELinux repair of an existing volume.
 _relabel_podman_volumes() {
-  local vol mountpoint
+  local vol mountpoint uid_gid
+  declare -A vol_owners=(
+    [apme-sessions]="1001:0"
+    [apme-postgres-data]="999:999"
+    [apme-proxy-cache]="1001:0"
+  )
   for vol in apme-sessions apme-postgres-data apme-proxy-cache; do
     if ! podman volume exists "$vol" 2>/dev/null; then
       continue
@@ -370,8 +375,9 @@ _relabel_podman_volumes() {
     if [[ -z "$mountpoint" || ! -d "$mountpoint" ]]; then
       continue
     fi
-    if ! _ensure_volume_owned_by_container_uid 1001:0 "$mountpoint"; then
-      echo "ERROR: could not chown volume $vol ($mountpoint) to 1001:0" >&2
+    uid_gid="${vol_owners[$vol]}"
+    if ! _ensure_volume_owned_by_container_uid "$uid_gid" "$mountpoint"; then
+      echo "ERROR: could not chown volume $vol ($mountpoint) to $uid_gid" >&2
       return 1
     fi
     local mode

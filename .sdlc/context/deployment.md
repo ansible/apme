@@ -173,7 +173,7 @@ app passwords may be stored as `username:app_password` in the SCM token field.
 | Name | Host Path | Container Mount | Services | Access |
 |------|-----------|-----------------|----------|--------|
 | `sessions` | `$CACHE/sessions` | `/sessions` | Engine, Ansible | rw (engine), ro (ansible) |
-| `gateway-data` | `$CACHE/gateway` | `/data` | Gateway | rw |
+| `postgres-data` | Podman volume `apme-postgres-data` | `/var/lib/postgresql/data` | PostgreSQL | rw |
 | `proxy-cache` | `$CACHE/proxy` | `/cache` | Galaxy Proxy | rw |
 | `workspace` | CWD (CLI only) | `/workspace` | CLI | rw |
 | `abbenay-run` | emptyDir | `/tmp/abbenay-run` | Engine, Gateway, Abbenay | rw |

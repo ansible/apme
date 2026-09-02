@@ -21,8 +21,8 @@ kind: PersistentVolumeClaim
 metadata:
   name: apme-postgres-data
   annotations:
-    volume.podman.io/uid: "1001"
-    volume.podman.io/gid: "0"
+    volume.podman.io/uid: "999"
+    volume.podman.io/gid: "999"
 spec:
   accessModes:
     - ReadWriteOnce

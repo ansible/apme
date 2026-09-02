@@ -287,23 +287,21 @@ remediation_proposals
 
 ### Storage Location
 
-The PostgreSQL database is stored in a mounted volume:
+PostgreSQL data is stored in a dedicated persistent volume mounted on the
+`postgres` sidecar (`/var/lib/postgresql/data`). The Gateway connects via
+`APME_DATABASE_URL`:
 
 ```yaml
-volumes:
-  - name: apme-data
-    hostPath:
-      path: ~/.apme/data
-      type: DirectoryOrCreate
-
 containers:
-  - name: standalone-ui
+  - name: postgres
+    image: postgres:16
     volumeMounts:
-      - name: apme-data
-        mountPath: /data
+      - name: postgres-data
+        mountPath: /var/lib/postgresql/data
+  - name: gateway
     env:
       - name: APME_DATABASE_URL
-        value: /data/apme.db
+        value: "postgresql+asyncpg://apme:apme@127.0.0.1:5432/apme"
 ```
 
 ---

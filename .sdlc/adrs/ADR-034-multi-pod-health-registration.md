@@ -150,9 +150,9 @@ No new connections, no new dependencies. The heartbeat uses the same gRPC channe
 - Simple query model
 
 **Cons**:
-- A shared embedded database doesn't support concurrent writes from multiple pods (file locking)
-- Adds a database dependency to the engine (violates ADR-020's "engine never imports a database client")
-- Redis adds infrastructure
+- Shared-state coordination: pods must reach the same PostgreSQL or Redis instance
+- Adds infrastructure dependency to the engine pod (violates ADR-020's "engine never imports a database client")
+- Redis adds another service to operate when chosen over PostgreSQL
 
 **Why not chosen**: Violates the engine's stateless design principle (ADR-020) and introduces shared-state coordination.
 

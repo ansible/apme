@@ -200,14 +200,14 @@ In all cases the gateway owns the entire file → chunk → gRPC pipeline.
 The gateway owns all persistence for V1. This is consistent with ADR-020's
 principle that persistence belongs in the presentation layer, not the engine.
 
-**PostgreSQL** — zero external infrastructure. The database file lives in a
-mounted volume (`/data/apme.db`). Schema per
+**PostgreSQL** — required via `APME_DATABASE_URL`
+(`postgresql+asyncpg://...`). Podman and bootc provision a `postgres:16`
+sidecar with a dedicated persistent volume (`postgres-data` /
+`apme-postgres-data`). Schema per
 [design-dashboard.md](/.sdlc/context/design-dashboard.md).
 
-**PostgreSQL upgrade path** — for enterprise deployments requiring concurrent
-multi-user access. Switchable via `APME_DATABASE_URL` environment variable.
-The gateway uses an async ORM (e.g., SQLAlchemy + asyncpg) that
-supports both backends.
+The gateway uses SQLAlchemy + asyncpg only; SQLite and file-path database
+configuration are not supported.
 
 **Extraction path** — if the reporting layer needs to serve non-web clients
 (Grafana, CI systems), the persistence + query logic can be extracted into a

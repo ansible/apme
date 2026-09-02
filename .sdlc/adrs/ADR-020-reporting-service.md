@@ -136,8 +136,8 @@ The reporting service chooses its own persistence technology. Candidates to eval
 
 | Option | Strengths | Considerations |
 |--------|-----------|----------------|
-| PostgreSQL | Battle-tested, concurrent writes, rich query language | Adds infrastructure; justified if multi-user dashboard access is needed |
-| PostgreSQL + Alembic | Zero-infrastructure, proven migration tooling | Single-writer; may suffice if only one reporting pod runs |
+| PostgreSQL | Battle-tested, concurrent writes, rich query language | Requires a PostgreSQL server (sidecar in Podman/bootc; external or chart-managed in Helm) |
+| PostgreSQL + Alembic | Proven schema migration tooling (gateway default) | Same server requirement; single-writer per Gateway instance in Simple topology |
 | DuckDB | Columnar, excellent for analytics/dashboards, embedded | Newer ecosystem |
 
 ### 4. Type safety and governance

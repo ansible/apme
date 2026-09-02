@@ -164,7 +164,24 @@ systemctl disable apme-pod.service
 | `/var/lib/apme/postgres/` | Gateway PostgreSQL data directory (scan history) | Yes |
 | `/var/lib/apme/proxy-cache/` | Galaxy Proxy wheel cache | No |
 
-Back up `/var/lib/apme/gateway/` to preserve scan history across upgrades.
+Back up `/var/lib/apme/postgres/` to preserve scan history across upgrades.
+
+### Upgrading from SQLite (pre-PostgreSQL-only Gateway)
+
+Gateway persistence now requires PostgreSQL. Podman upgrades rename the database
+PVC from `apme-gateway-data` to `apme-postgres-data` and start a `postgres:16`
+sidecar. **Existing SQLite scan history is not migrated automatically.**
+
+Before upgrading:
+
+1. Export any scan history you need to retain (REST API export or copy the legacy
+   SQLite file from the old `apme-gateway-data` volume at `apme.db`).
+2. Run `tox -e down` and back up the `apme-gateway-data` Podman volume if you
+   may need the legacy database later.
+3. After `tox -e up`, the Gateway starts with an empty PostgreSQL database.
+   Re-import data manually if required.
+
+Automated SQLite-to-PostgreSQL migration tooling is tracked separately on GitHub.
 
 ## Exposed Ports
 

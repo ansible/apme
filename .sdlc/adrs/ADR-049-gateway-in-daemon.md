@@ -52,8 +52,10 @@ The daemon's `_run_daemon()` function gains two additional services:
 2. **Gateway gRPC** (ReportingServicer) on port 50060 — receives
    `FixCompletedEvent` from the co-located Engine
 
-The Gateway database defaults to `~/.apme-data/PostgreSQL URL, same
-engine as the pod Gateway per ADR-029).
+The Gateway requires `APME_DATABASE_URL` (`postgresql+asyncpg://...`) — the
+same PostgreSQL contract as the pod Gateway per ADR-029. Local daemon mode
+must provision or connect to a PostgreSQL instance (for example a local
+`postgres` container or host service); file-backed SQLite is not supported.
 
 The `DaemonState` dataclass and `daemon.json` state file record Gateway
 endpoints under the `services` map (for example `services.gateway_http`) so
@@ -159,8 +161,8 @@ if "gateway_grpc" in services:
     from apme_gateway.app import create_app as create_gateway_app
     from apme_gateway.grpc_reporting.servicer import ReportingServicer
 
-    gw_db_path = str(_DATA_DIR / "gateway.db")
-    await init_db(gw_db_path)
+    gw_db_url = os.environ["APME_DATABASE_URL"]  # postgresql+asyncpg://...
+    await init_db_from_config(database_url=gw_db_url)
 
     # Gateway HTTP (uvicorn)
     gw_app = create_gateway_app()

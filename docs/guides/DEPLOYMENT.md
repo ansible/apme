@@ -260,10 +260,19 @@ The Settings page (`/settings`) provides a model picker that queries available A
 |------|-----------|-----------------|----------|--------|
 | `sessions` | `apme-sessions/` | `/sessions` | Engine (rw), Ansible, Collection Health, Dep Audit (ro) | rw / ro |
 | `proxy-cache` | `<cache>/proxy/` | `/cache` | Galaxy Proxy | rw |
-| `gateway-data` | `<cache>/gateway/` | `/data` | Gateway | rw |
+| `postgres-data` | Podman volume `apme-postgres-data` | `/var/lib/postgresql/data` | PostgreSQL | rw |
 | `abbenay-config` | `<cache>/abbenay/config/` | `/home/abbenay/.config/abbenay` | Abbenay | rw |
 | `abbenay-run` | emptyDir | `/tmp/abbenay-run` | Engine + Gateway + Abbenay | rw |
 | `workspace` | CWD (CLI only) | `/workspace` | CLI | rw |
+
+#### Upgrading from SQLite (pre-PostgreSQL-only Gateway)
+
+Podman upgrades rename the database PVC from `apme-gateway-data` to
+`apme-postgres-data` and provision a `postgres:16` sidecar. Existing SQLite scan
+history in the legacy volume is **not** migrated automatically. Back up
+`apme.db` from the old `apme-gateway-data` volume before upgrading if you need
+to retain history. See [bootc README](/deploy/bootc/README.md#persistent-data)
+for the same guidance on VM deployments.
 
 #### Observability (Podman pod only)
 
@@ -439,7 +448,7 @@ localhost (ADR-005). Multi-replica engine HPA is not offered by this chart.
 
 - One Deployment: Engine + validators + Galaxy Proxy + Gateway + UI + optional Abbenay (localhost)
 - `replicas: 1` for both engine and gateway (HPA and `autoscaling.enabled` are
-  unsupported for SQLite and PostgreSQL in the Simple chart)
+  unsupported for PostgreSQL in the Simple chart)
 - Ingress/Route support (OpenShift Routes included)
 - NetworkPolicy for Ingress → Gateway/UI HTTP ports only
 - PVCs for sessions, Gateway DB, and Galaxy Proxy cache
@@ -459,23 +468,22 @@ allowed engine HPA. Upgrading to this chart:
 - Keeps ClusterIP Service names `*-gateway` and `*-ui` (they now select the
   Simple pod)
 
-PVC names (`*-sessions`, `*-gateway-data`, `*-proxy-cache`) are unchanged.
+PVC names (`*-sessions`, `*-postgres-data`, `*-proxy-cache`) replace the legacy
+`*-gateway-data` claim for PostgreSQL storage.
 
-### PostgreSQL (optional)
+### PostgreSQL (required)
 
-> **Migration warning:** Changing the backend does not migrate existing SQLite
-> data. Back up the SQLite database and perform a separate migration before
-> switching an existing installation to PostgreSQL. Activity, sessions, rules,
-> and overrides remain on the SQLite PVC while PostgreSQL starts with an empty
-> database.
+The Gateway requires `APME_DATABASE_URL` (`postgresql+asyncpg://...`). Set
+`gateway.database.existingSecret.name` and `gateway.database.existingSecret.key`
+to reference a Kubernetes Secret containing the full SQLAlchemy URL (for example
+`postgresql+asyncpg://user:pass@host:5432/apme`). The chart injects it via
+`valueFrom.secretKeyRef` so credentials are not rendered in the Deployment
+manifest. For non-production installs you may set `gateway.database.url` directly
+instead of a Secret.
 
-By default the Gateway uses SQLite on the `gateway-data` PVC (`APME_DB_PATH=/data/apme.db`).
-For PostgreSQL, set `gateway.database.existingSecret.name` and
-`gateway.database.existingSecret.key` to reference a Kubernetes Secret containing
-the full SQLAlchemy URL (for example `postgresql+asyncpg://user:pass@host:5432/apme`).
-The chart injects it via `valueFrom.secretKeyRef` so credentials are not rendered
-in the Deployment manifest. For non-production installs you may set
-`gateway.database.url` directly instead of a Secret.
+> **Migration warning:** Upgrading from a pre-PostgreSQL chart that stored SQLite
+> on `*-gateway-data` does not migrate existing scan history. Back up the legacy
+> SQLite file and perform a separate import before cutover.
 
 ### Quick start
 

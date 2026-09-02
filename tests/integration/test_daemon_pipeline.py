@@ -340,18 +340,20 @@ def _poll_db(
 
     dsn = database_url.replace("postgresql+asyncpg://", "postgresql://")
 
-    async def _fetch() -> list[tuple[object, ...]]:
-        conn = await asyncpg.connect(dsn)
+    async def _fetch(remaining: float) -> list[tuple[object, ...]]:
+        conn = await asyncio.wait_for(asyncpg.connect(dsn, timeout=remaining), timeout=remaining)
         try:
-            records = await conn.fetch(query, *params)
+            fetch_remaining = max(deadline - time.monotonic(), 0.1)
+            records = await asyncio.wait_for(conn.fetch(query, *params), timeout=fetch_remaining)
             return [tuple(record.values()) for record in records]
         finally:
             await conn.close()
 
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
+        remaining = deadline - time.monotonic()
         try:
-            rows = asyncio.run(_fetch())
+            rows = asyncio.run(_fetch(remaining))
             if rows:
                 return rows
         except Exception:

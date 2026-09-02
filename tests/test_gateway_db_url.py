@@ -14,9 +14,9 @@ from apme_gateway.db.url import (
 def test_resolve_database_url_prefers_explicit_url() -> None:
     """Explicit database_url wins over environment."""
     url = resolve_database_url(
-        database_url="postgresql+asyncpg://user:pass@db:5432/apme",
+        database_url="postgresql+asyncpg://user:pass@127.0.0.1:5432/apme",
     )
-    assert url == "postgresql+asyncpg://user:pass@db:5432/apme"
+    assert url == "postgresql+asyncpg://user:pass@127.0.0.1:5432/apme"
 
 
 def test_resolve_database_url_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -74,6 +74,34 @@ def test_resolve_database_url_rejects_malformed_env_url(monkeypatch: pytest.Monk
     monkeypatch.setenv("APME_DATABASE_URL", "not-a-url")
     with pytest.raises(ValueError, match="APME_DATABASE_URL must be a SQLAlchemy URL"):
         resolve_database_url()
+
+
+def test_resolve_database_url_rejects_remote_without_tls() -> None:
+    """Remote PostgreSQL URLs must declare TLS."""
+    with pytest.raises(ValueError, match="must use TLS"):
+        resolve_database_url(database_url="postgresql+asyncpg://user:pass@db.example.com:5432/apme")
+
+
+def test_resolve_database_url_allows_loopback_without_tls() -> None:
+    """Loopback PostgreSQL URLs do not require explicit TLS."""
+    url = resolve_database_url(database_url="postgresql+asyncpg://apme:apme@127.0.0.1:5432/apme")
+    assert url == "postgresql+asyncpg://apme:apme@127.0.0.1:5432/apme"
+
+
+def test_resolve_database_url_allows_remote_with_sslmode_require() -> None:
+    """Remote PostgreSQL URLs accept sslmode=require."""
+    url = resolve_database_url(
+        database_url="postgresql+asyncpg://user:pass@db.example.com:5432/apme?sslmode=require",
+    )
+    assert "sslmode=require" in url
+
+
+def test_resolve_database_url_allows_remote_with_ssl_true() -> None:
+    """Remote PostgreSQL URLs accept ssl=true."""
+    url = resolve_database_url(
+        database_url="postgresql+asyncpg://user:pass@db.example.com:5432/apme?ssl=true",
+    )
+    assert "ssl=true" in url
 
 
 def test_sanitize_database_url_redacts_password() -> None:

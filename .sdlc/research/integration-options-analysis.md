@@ -70,9 +70,10 @@ apme daemon status                  # Check daemon health
 **Persona**: CI pipeline, shared validation service, team server
 
 **How it works**:
-- Full pod with 12 containers (Engine, Native, OPA, Ansible, Gitleaks,
-  Collection Health, Dep Audit, Galaxy Proxy, Gateway, UI, Abbenay,
-  OTel Collector)
+- Full pod with 13 containers (Engine, Native, OPA, Ansible, Gitleaks,
+  Collection Health, Dep Audit, Galaxy Proxy, PostgreSQL, Gateway, UI, Abbenay,
+  OTel Collector). PostgreSQL runs as a sidecar; Gateway receives
+  `APME_DATABASE_URL` pointing at `127.0.0.1:5432`.
 - CLI connects via `APME_ENGINE_ADDRESS` env var
 - Gateway provides REST API + persistence
 

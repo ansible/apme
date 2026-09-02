@@ -166,6 +166,7 @@ def _start_infrastructure() -> None:
     # --- Gateway (gRPC reporting + REST API) ---
     gateway_grpc_port = _free_port()
     gateway_http_port = _free_port()
+    from apme_gateway.db.url import sanitize_database_url
     from tests.gateway_db import base_test_database_url
 
     gateway_database_url = base_test_database_url()
@@ -203,7 +204,7 @@ def _start_infrastructure() -> None:
         "Gateway ready gRPC=%d HTTP=%d DB=%s (pid %d)",
         gateway_grpc_port,
         gateway_http_port,
-        gateway_database_url,
+        sanitize_database_url(gateway_database_url),
         gateway_proc.pid,
     )
 

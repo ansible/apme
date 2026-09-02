@@ -297,7 +297,7 @@ The wrapper adds **Ansible-aware filtering**:
 engine unit. The **Helm chart** (EAP / upstream) ships a **Simple all-in-one**
 pod (ADR-069): engine + Gateway + UI + optional Abbenay on localhost — same
 shape as Podman. Multi-replica engine HPA is out of chart scope while Gateway
-SQLite shares that pod.
+PostgreSQL is co-located in that pod.
 
 ```text
   Ingress / Service :8080

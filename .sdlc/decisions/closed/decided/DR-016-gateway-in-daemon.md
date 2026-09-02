@@ -44,7 +44,7 @@ As more CLI subcommands migrate to Gateway REST (health, session list, etc.), th
 
 ### Option A: Embed Gateway in Daemon
 
-**Description**: Add the Gateway's HTTP server (uvicorn/FastAPI) and gRPC ReportingServicer to the daemon's `_run_daemon()` async event loop, following the same pattern as Galaxy Proxy. The Gateway DB defaults to `~/.apme-data/gateway.db`. The daemon state file gains a `gateway_http` address entry.
+**Description**: Add the Gateway's HTTP server (uvicorn/FastAPI) and gRPC ReportingServicer to the daemon's `_run_daemon()` async event loop, following the same pattern as Galaxy Proxy. The Gateway requires `APME_DATABASE_URL` (`postgresql+asyncpg://...`); the daemon must provision or connect to PostgreSQL. The daemon state file gains a `gateway_http` address entry.
 
 **Pros**:
 - `apme sbom` "just works" — same auto-start UX as all other commands
@@ -138,7 +138,7 @@ today.
 - [ ] Create ADR documenting Gateway-in-daemon architecture
 - [ ] Add Gateway HTTP + gRPC to `_run_daemon()` in `launcher.py`
 - [ ] Add `gateway_http` address to `DaemonState` and `daemon.json`
-- [ ] Default Gateway DB to `~/.apme-data/gateway.db`
+- [ ] Provision PostgreSQL for the embedded Gateway (`APME_DATABASE_URL`)
 - [ ] Set `APME_REPORTING_ADDRESS` to local Gateway gRPC port in daemon
 - [ ] Add port 8080 (HTTP) and 50060 (gRPC) to `_DEFAULT_PORTS`
 - [ ] Update CLAUDE.md to reflect Gateway is now part of daemon

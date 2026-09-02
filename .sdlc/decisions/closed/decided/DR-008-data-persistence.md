@@ -80,18 +80,16 @@ apme check . --json > results/$(date +%Y%m%d).json
 
 ### Option B: PostgreSQL (Superseded original SQLite choice)
 
-**Description**: Add PostgreSQL database to the Gateway container (Engine remains stateless per ADR-020/ADR-029). Scan results persisted automatically.
+**Description**: Add PostgreSQL database to the Gateway (Engine remains stateless per ADR-020/ADR-029). Podman and bootc provision a `postgres:16` sidecar; the Gateway connects via `APME_DATABASE_URL` (`postgresql+asyncpg://...`). Scan results persisted automatically.
 
 **Pros**:
-- Zero additional infrastructure
-- ACID transactions
+- ACID transactions with concurrent writers (PostgreSQL)
 - SQL query capability
-- Backups = copy file
+- Backups via `pg_dump`, `pg_basebackup`, or coordinated volume snapshots
 
 **Cons**:
-- Single-node only
-- Concurrent write limitations
-- Schema migrations needed
+- Requires a PostgreSQL server (sidecar or external)
+- Schema migrations needed (Alembic)
 
 **Effort**: Medium
 
@@ -188,8 +186,8 @@ If dashboard is required for v1, then **Option B** (PostgreSQL) is the right bal
 **Resolution (2026-03-19)**: Persistence approach decided in
 [ADR-029: Web Gateway Architecture](/.sdlc/adrs/ADR-029-web-gateway-architecture.md).
 The web gateway owns persistence as a presentation concern (consistent with
-ADR-020). **PostgreSQL** (zero infrastructure, embedded in gateway container),
-with PostgreSQL as a documented upgrade path for enterprise deployments. The
+ADR-020). **PostgreSQL** via `APME_DATABASE_URL` (`postgresql+asyncpg://...`),
+provisioned as a sidecar in Podman/bootc or supplied externally in Helm. The
 engine remains stateless — persistence lives entirely in the gateway/reporting
 layer.
 

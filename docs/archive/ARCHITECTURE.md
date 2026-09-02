@@ -28,11 +28,17 @@ All gRPC servers use **`grpc.aio`** (fully async). Blocking work (engine scan, s
 │  └──────────────────────────────────────────┘                         │
 │                                                                       │
 │  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐     │
-│  │ Gateway :8080    │  │ UI :8081 (nginx) │  │ Abbenay :50057   │     │
-│  │ REST API +       │◄─┤ React SPA        │  │ AI inference     │     │
-│  │ gRPC Reporting   │  │ /api/ → Gateway  │  │ gateway          │     │
-│  │ :50060 (PostgreSQL)  │  │                  │  │ (optional)       │     │
+│  │ PostgreSQL :5432 │  │ Gateway :8080    │  │ UI :8081 (nginx) │     │
+│  │ sidecar          │──►│ REST API +       │◄─┤ React SPA        │     │
+│  │ postgres-data vol│  │ gRPC Reporting   │  │ /api/ → Gateway  │     │
+│  │                  │  │ :50060           │  │                  │     │
 │  └──────────────────┘  └──────────────────┘  └──────────────────┘     │
+│  ┌──────────────────┐                                                   │
+│  │ Abbenay :50057   │                                                   │
+│  │ AI inference     │                                                   │
+│  │ gateway          │                                                   │
+│  │ (optional)       │                                                   │
+│  └──────────────────┘                                                   │
 └───────────────────────────────────────────────────────────────────────┘
 
      ┌──────────┐
