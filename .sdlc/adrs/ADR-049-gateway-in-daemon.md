@@ -157,7 +157,7 @@ Add to `_run_daemon()` (after Galaxy Proxy, before Engine):
 if "gateway_grpc" in services:
     import grpc
     from apme.v1 import reporting_pb2_grpc
-    from apme_gateway.db import init_db
+    from apme_gateway.db import init_db_from_config
     from apme_gateway.app import create_app as create_gateway_app
     from apme_gateway.grpc_reporting.servicer import ReportingServicer
 

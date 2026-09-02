@@ -168,18 +168,34 @@ Back up `/var/lib/apme/postgres/` to preserve scan history across upgrades.
 
 ### Upgrading from SQLite (pre-PostgreSQL-only Gateway)
 
-Gateway persistence now requires PostgreSQL. Podman upgrades rename the database
-PVC from `apme-gateway-data` to `apme-postgres-data` and start a `postgres:16`
-sidecar. **Existing SQLite scan history is not migrated automatically.**
+Gateway persistence now requires PostgreSQL. **Existing SQLite scan history is
+not migrated automatically.**
+
+#### Podman / local development (`tox -e up`)
+
+Podman upgrades rename the database PVC from `apme-gateway-data` to
+`apme-postgres-data` and start a `postgres:16` sidecar.
 
 Before upgrading:
 
 1. Export any scan history you need to retain (REST API export or copy the legacy
    SQLite file from the old `apme-gateway-data` volume at `apme.db`).
 2. Run `tox -e down` and back up the `apme-gateway-data` Podman volume if you
-   may need the legacy database later.
+   may need the legacy database later (`tox -e wipe` removes both
+   `apme-postgres-data` and `apme-gateway-data`).
 3. After `tox -e up`, the Gateway starts with an empty PostgreSQL database.
    Re-import data manually if required.
+
+#### bootc VM deployments
+
+bootc images do not ship `tox` or Podman volume names. Before upgrading:
+
+1. Export any scan history you need to retain (REST API export).
+2. Stop the pod: `sudo systemctl stop apme-pod.service`.
+3. Back up the legacy SQLite file if present at `/var/lib/apme/gateway/apme.db`
+   (pre-PostgreSQL installs) and `/var/lib/apme/postgres/` after cutover.
+4. Update `APME_DATABASE_URL` in `/etc/apme/env/apme.env` if the PostgreSQL
+   endpoint changed, then restart: `sudo systemctl start apme-pod.service`.
 
 Automated SQLite-to-PostgreSQL migration tooling is tracked separately on GitHub.
 

@@ -258,7 +258,7 @@ ADR-030 defines: Same Gateway API, but rendered in RHDH context.
 ADR-020 defines best-effort event delivery:
 
 ```
-Engine → ScanCompleted event → Reporting Service → Gateway PostgreSQL
+Engine → FixCompletedEvent → Reporting Service → Gateway PostgreSQL
                                                  → (Future: Prometheus, Elasticsearch)
 ```
 

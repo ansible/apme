@@ -146,10 +146,10 @@ apme check . --json > results/$(date +%Y%m%d).json
 **Option E** (defer) for v1 with **Option A** (file-based) as interim.
 
 If dashboard is required for v1, then **Option B** (PostgreSQL) is the right balance:
-- Zero external deps
-- Embedded in existing container
+- Requires a PostgreSQL server (sidecar in pod or external managed service)
+- Configured through ``APME_DATABASE_URL`` (`postgresql+asyncpg://...`)
 - Sufficient for single-org use case
-- Can migrate to PostgreSQL later if needed
+- Supports concurrent writes via PostgreSQL connection pooling
 
 ---
 

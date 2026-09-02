@@ -36,8 +36,11 @@ The presentation layer adds two components to the pod:
 │  │            API Gateway :8080                   │                │
 │  │  FastAPI (async) — REST + WebSocket            │                │
 │  │  gRPC client → Engine.FixSession (check/remediate), Format     │                │
-│  │  PostgreSQL for activity history                         │                │
 │  └────┬──────────────────────────────────────────┘                │
+│       │                                                           │
+│  ┌────┴────────────┐                                              │
+│  │ PostgreSQL :5432 │  (sidecar — persistent volume)              │
+│  └──────────────────┘                                              │
 │       │                                                           │
 └───────┼───────────────────────────────────────────────────────────┘
         │ HTTP/WS

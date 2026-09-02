@@ -321,8 +321,10 @@ dashboard's core value proposition.
 
 - **New container** — adds one container to the deployment topology (outside the
   engine pod).
-- **PostgreSQL connection pooling** — concurrent writes are serialized.
-  Acceptable for single-user V1; PostgreSQL upgrade path documented.
+- **PostgreSQL connection pooling** — SQLAlchemy's default async queue pool
+  allows concurrent connections up to ``pool_size`` + ``max_overflow``; write
+  concurrency is bounded by pool limits and PostgreSQL row-level lock waits,
+  not a single serialized connection.
 - **Gateway becomes a critical path** — if the gateway is down, the web UI is
   unavailable. The CLI continues to work independently (it talks to Engine
   directly).
@@ -344,7 +346,9 @@ The gateway runs as its own container, deployed alongside (but outside) the
 engine pod. It needs:
 
 - Network access to Engine's gRPC port (50051)
-- A PostgreSQL service (`/data`)
+- Network access to PostgreSQL configured through ``APME_DATABASE_URL``
+  (separate sidecar or external service; database volumes mount on PostgreSQL,
+  not Gateway)
 - Optional: mounted volume for local project scanning (`/workspace`)
 
 ### Dependencies (subject to ADR-019 governance)

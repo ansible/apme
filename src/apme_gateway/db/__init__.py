@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from sqlalchemy import inspect, text
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
 from apme_gateway.db.dialect import in_clause_chunk_size
@@ -12,24 +15,46 @@ from apme_gateway.db.url import resolve_database_url
 _engine: AsyncEngine | None = None
 _session_factory: async_sessionmaker[AsyncSession] | None = None
 _database_url: str | None = None
+_DB_INIT_MAX_ATTEMPTS = 30
+_DB_INIT_RETRY_DELAY_S = 1.0
 
 
 async def init_db(database_url: str) -> None:
     """Create the async engine, run DDL, and configure the session factory.
 
+    Retries transient connection failures while PostgreSQL starts (for example
+    during pod bring-up).
+
     Args:
         database_url: SQLAlchemy database URL (``postgresql+asyncpg://...``).
+
+    Raises:
+        OperationalError: When the database is unreachable after all retries.
+        OSError: When a connection attempt fails after all retries.
     """
     global _engine, _session_factory, _database_url  # noqa: PLW0603
     url = resolve_database_url(database_url=database_url)
     _database_url = url
-    _engine = create_async_engine(url, echo=False)
-    _session_factory = async_sessionmaker(_engine, expire_on_commit=False)
-    async with _engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-        await conn.run_sync(_migrate_violations_table)
-        await conn.run_sync(_migrate_proposals_table)
-        await conn.run_sync(_migrate_scans_table)
+    for attempt in range(1, _DB_INIT_MAX_ATTEMPTS + 1):
+        engine: AsyncEngine | None = None
+        try:
+            engine = create_async_engine(url, echo=False)
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+                await conn.run_sync(_migrate_violations_table)
+                await conn.run_sync(_migrate_proposals_table)
+                await conn.run_sync(_migrate_scans_table)
+        except (OperationalError, OSError):
+            if engine is not None:
+                await engine.dispose()
+            if attempt < _DB_INIT_MAX_ATTEMPTS:
+                await asyncio.sleep(_DB_INIT_RETRY_DELAY_S)
+                continue
+            raise
+        else:
+            _engine = engine
+            _session_factory = async_sessionmaker(_engine, expire_on_commit=False)
+            return
 
 
 async def init_db_from_config(*, database_url: str | None = None) -> str:

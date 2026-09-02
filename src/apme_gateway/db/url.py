@@ -18,6 +18,7 @@ _SECURE_SSL_VALUES = frozenset({"1", "true", "require", "yes"})
 _REMOTE_TLS_REQUIRED_MSG = "APME_DATABASE_URL must use TLS (sslmode=require or ssl=true) for non-loopback hosts"
 _UNSUPPORTED_SSLMODE_MSG = "Unsupported sslmode in APME_DATABASE_URL"
 _UNSUPPORTED_SSL_MSG = "Unsupported ssl parameter in APME_DATABASE_URL"
+_CONFLICTING_TLS_MSG = "Conflicting TLS parameters in APME_DATABASE_URL"
 _SSLMODE_TO_ASYNCPG = {
     "disable": "disable",
     "allow": "allow",
@@ -84,6 +85,8 @@ def _normalize_asyncpg_ssl_query(query: dict[str, str]) -> dict[str, str]:
             raise ValueError(_UNSUPPORTED_SSL_MSG)
         if ssl_value is None:
             ssl_value = mapped_ssl
+        elif ssl_value != mapped_ssl:
+            raise ValueError(_CONFLICTING_TLS_MSG)
     if ssl_value is not None:
         normalized["ssl"] = ssl_value
     return normalized

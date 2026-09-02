@@ -182,6 +182,12 @@ spec:
           value: "apme"
       ports:
         - containerPort: 5432
+      readinessProbe:
+        exec:
+          command: ["pg_isready", "-U", "apme", "-d", "apme"]
+        initialDelaySeconds: 2
+        periodSeconds: 2
+        failureThreshold: 30
       volumeMounts:
         - name: postgres-data
           mountPath: /var/lib/postgresql/data

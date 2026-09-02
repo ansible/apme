@@ -143,6 +143,14 @@ def test_resolve_database_url_asyncpg_connect_args_accept_ssl_true() -> None:
     assert connect_args.get("ssl") != "true"
 
 
+def test_resolve_database_url_rejects_conflicting_tls_parameters() -> None:
+    """Conflicting sslmode and ssl query parameters are rejected."""
+    with pytest.raises(ValueError, match="Conflicting TLS parameters"):
+        resolve_database_url(
+            database_url="postgresql+asyncpg://user:pass@db.example.com:5432/apme?sslmode=disable&ssl=true",
+        )
+
+
 def test_sanitize_database_url_redacts_password() -> None:
     """Logged URLs must not include credentials."""
     raw = "postgresql+asyncpg://apme:secret@postgres:5432/apme"
