@@ -17,8 +17,6 @@ export interface OperationResultCardProps {
   isRemediate?: boolean;
   onDismiss?: () => void;
   actions?: ReactNode;
-  onCreatePR?: () => void;
-  prCreating?: boolean;
   prUrl?: string | null;
   prError?: string | null;
   scanId?: string;
@@ -50,8 +48,6 @@ export function OperationResultCard({
   isRemediate,
   onDismiss,
   actions,
-  onCreatePR,
-  prCreating,
   prUrl,
   prError,
   scanId,
@@ -59,8 +55,6 @@ export function OperationResultCard({
 }: OperationResultCardProps) {
   const wasRemediate = isRemediate ?? result.remediated_count != null;
   const hasAi = (result.ai_proposed ?? 0) > 0 || (result.ai_declined ?? 0) > 0 || (result.ai_accepted ?? 0) > 0;
-  // Caller decides eligibility (e.g. patches or remediated_count via needsCommitStep).
-  const showCreatePR = Boolean(onCreatePR) && !prUrl;
 
   return (
     <Card style={{ marginBottom: 16, borderLeft: '4px solid var(--pf-t--global--color--status--success--default)' }}>
@@ -119,18 +113,6 @@ export function OperationResultCard({
                 iconPosition="end"
               >
                 View Pull Request
-              </Button>
-            </FlexItem>
-          )}
-          {showCreatePR && (
-            <FlexItem>
-              <Button
-                variant="secondary"
-                onClick={onCreatePR}
-                isLoading={prCreating}
-                isDisabled={prCreating}
-              >
-                {prCreating ? 'Creating PR...' : 'Create PR'}
               </Button>
             </FlexItem>
           )}
