@@ -224,7 +224,7 @@ spec:
     - name: abbenay
       image: ghcr.io/redhat-developer/abbenay:v2026.8.7
       # Local Podman: publish HTTP admin UI on host :8787. gRPC stays loopback
-      # (Unix socket for Engine). Helm Simple remains loopback-only (ADR-070).
+      # (Unix socket for Engine). Operator deployment remains loopback-only (ADR-070).
       args:
         - "web"
         - "--host"

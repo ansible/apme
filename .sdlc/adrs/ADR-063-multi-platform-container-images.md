@@ -10,7 +10,7 @@ Implemented
 
 ## Context
 
-APME publishes container images to GHCR (and optionally Quay) for Helm,
+APME publishes container images to GHCR (and optionally Quay) for the operator,
 bootc, and external consumers. CI historically built on a single
 `ubuntu-latest` (amd64) runner with Docker Buildx and **no** `platforms`
 matrix, so published tags were effectively **linux/amd64 only**.
@@ -32,7 +32,7 @@ also multi-arch. The gap is APME-built images only.
 ### Decision Drivers
 
 - **Meet users where they are**: amd64 servers and arm64 developer/demo clusters
-  must pull the same Helm tags.
+  must pull the same image tags.
 - **Stable consumer contract**: same image names and tags; nodes select the
   matching platform from a manifest list (no chart or values change).
 - **Reliable CI**: prefer native per-arch builds over QEMU cross-compilation for
@@ -46,7 +46,7 @@ also multi-arch. The gap is APME-built images only.
 
 - **Registries stay the same**: `ghcr.io/<owner>/apme-*` and optional
   `quay.io/<ns>/apme-*`.
-- **Helm remains tag-based** (ADR-054); no digest pinning required for this ADR.
+- **Operator remains tag-based** (ADR-054); no digest pinning required for this ADR.
 - **Local `tox -e build`** builds the host architecture only (developer laptop
   path). CI is the multi-arch guarantee.
 - **bootc VM images** are out of scope (separate host/arch concern).
@@ -99,7 +99,7 @@ native builds for reliability.
 
 ### Alternative 2: Separate `-arm64` image names or a second chart
 
-**Description**: Publish `apme-gateway-arm64` (or a second Helm chart) instead
+**Description**: Publish `apme-gateway-arm64` (or a second operator bundle) instead
 of multi-arch tags.
 
 **Pros**:
@@ -107,10 +107,10 @@ of multi-arch tags.
 
 **Cons**:
 - Shifts arch selection onto every consumer
-- Helm values / docs fork forever
+- Operator values / docs fork forever
 - Violates "same tags, meet users where they are"
 
-**Why not chosen**: Manifest lists keep the Helm contract unchanged.
+**Why not chosen**: Manifest lists keep the operator image contract unchanged.
 
 ### Alternative 3: amd64-only publish; document local rebuild for arm
 
@@ -120,7 +120,7 @@ of multi-arch tags.
 - Lowest CI cost
 
 **Cons**:
-- Blocks Helm-from-registry demos on arm64
+- Blocks operator-from-registry demos on arm64
 - High friction for EAP / Apple Silicon users
 
 **Why not chosen**: Unacceptable for the supported deployment story.
@@ -129,7 +129,7 @@ of multi-arch tags.
 
 ### Positive
 
-- `helm install` with a published tag works on amd64 and arm64 nodes.
+- Operator install with a published tag works on amd64 and arm64 nodes.
 - Apple Silicon and arm64 cluster demos no longer require a full local rebuild.
 - ADR-061's multi-arch base choice is completed by a publish contract.
 - Intentional removal of a platform requires an explicit ADR change.
@@ -169,7 +169,7 @@ of multi-arch tags.
 
 - [ADR-015](ADR-015-github-actions-prek.md): Action pinning / CI hygiene
 - [ADR-047](ADR-047-tox-developer-orchestration.md): tox / lean CI orchestration
-- [ADR-054](ADR-054-production-deployment.md): Helm / bootc production paths
+- [ADR-054](ADR-054-production-deployment.md): Operator / bootc production paths
 - [ADR-061](ADR-061-ubi-container-bases.md): UBI10 bases (multi-arch capable)
 
 ## References

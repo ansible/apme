@@ -86,7 +86,7 @@ one needs to change, write an ADR first.
     because they require external binaries or venv-dependent scanning;
     they start when `include_optional=True`. UI and Abbenay are pod-level /
     enterprise services the CLI daemon does not start. The Gateway is
-    co-located in Helm Simple / Podman (ADR-069 / ADR-004); ADR-049 plans
+    co-located in operator / Podman deployments (ADR-004); ADR-049 plans
     Gateway embedding in the local daemon as future work.
 
 13. **Transforms are semantically trusted; the engine owns state and syntax**
@@ -123,23 +123,24 @@ one needs to change, write an ADR first.
     `uvx --with tox-uv tox -e <env>`. See `.agents/skills/tox/SKILL.md` for
     the full environment reference.
 
-16. **Helm for Kubernetes/OpenShift; Podman for local dev only** (ADR-004,
+16. **Operator for Kubernetes/OpenShift; Podman for local dev only** (ADR-004,
     ADR-054). **Never use Podman, `podman play kube`, or raw pod YAML to deploy
-    on Kubernetes or OpenShift.** The Helm chart at `deploy/helm/apme/` is the
-    only supported method for K8s/OCP deployment. Podman pods (`tox -e up`) are
-    for developer laptops and non-Kubernetes Linux servers. bootc VM images are
-    for production single-node deployments without K8s. If the user asks to
-    deploy on OCP, OpenShift, Kubernetes, or K8s — use the Helm chart.
+    on Kubernetes or OpenShift.** The [APME Operator](https://github.com/ansible/apme-operator)
+    in `ansible/apme-operator` is the supported method for K8s/OCP deployment.
+    Podman pods (`tox -e up`) are for developer laptops and non-Kubernetes Linux
+    servers. bootc VM images are for production single-node deployments without
+    K8s. If the user asks to deploy on OCP, OpenShift, Kubernetes, or K8s — use
+    the operator.
 
     | Target | Method |
     |--------|--------|
     | Developer laptop / Linux server (no K8s) | Podman pod (`tox -e up`) |
-    | **Kubernetes / OpenShift** | **Helm chart** Simple all-in-one (`deploy/helm/apme/`, ADR-069) |
+    | **Kubernetes / OpenShift** | **APME Operator** ([ansible/apme-operator](https://github.com/ansible/apme-operator)) |
     | Production single-node VM | bootc image |
 
-    Helm EAP/upstream topology co-locates engine + Gateway + UI + optional
-    Abbenay in one pod on localhost (`replicas: 1`). Do not introduce split
-    Gateway/Abbenay Deployments without a new ADR.
+    The operator co-locates engine + Gateway + UI + optional Abbenay in one pod
+    on localhost. Do not introduce split Gateway/Abbenay Deployments in this
+    repo without a new ADR — operator topology changes belong in apme-operator.
 
 17. **REST API is a versioned public contract** (ADR-060). The Gateway
     REST API under `/api/v1` is consumed by external teams (Backstage
@@ -306,8 +307,8 @@ one needs to change, write an ADR first.
 - Create AAP pre-flight checks (document `apme check` / `apme remediate`)
 - Galaxy Proxy PEP 503 implementation (ADR-031)
 - Container definitions and pod configuration
-- Helm chart for Kubernetes/OpenShift (`deploy/helm/apme/`)
 - bootc VM image definitions (`deploy/bootc/`)
+- Document Kubernetes/OpenShift deployment via [apme-operator](https://github.com/ansible/apme-operator)
 - Write integration documentation and example configurations
 
 **Constraints**:
@@ -315,7 +316,7 @@ one needs to change, write an ADR first.
 - Must include clear documentation
 - Must handle common edge cases
 - HTTP endpoints are limited to Galaxy Proxy (PEP 503), Gateway REST, and UI (nginx)
-- **Kubernetes/OpenShift deployments must use the Helm chart** (`deploy/helm/apme/`), never Podman (invariant 16)
+- **Kubernetes/OpenShift deployments must use the APME Operator** ([ansible/apme-operator](https://github.com/ansible/apme-operator)), never Podman (invariant 16)
 
 ---
 

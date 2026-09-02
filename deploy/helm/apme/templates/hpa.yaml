@@ -1,3 +1,0 @@
-{{- if .Values.autoscaling.enabled }}
-{{- fail "ADR-069 Simple topology: autoscaling.enabled must be false (HPA is not supported while Gateway/Abbenay share the pod)." }}
-{{- end }}

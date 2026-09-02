@@ -9,10 +9,10 @@ APME is a multi-container gRPC microservice system. The Engine runs the scan pip
 | Target | Method | Reference |
 |--------|--------|-----------|
 | Developer laptop / Linux server (no K8s) | Podman pod (`tox -e up`) | [ADR-004](/.sdlc/adrs/ADR-004-podman-pod-deployment.md) |
-| **Kubernetes / OpenShift** | **Helm chart** (`deploy/helm/apme/`) | [ADR-054](/.sdlc/adrs/ADR-054-production-deployment.md) |
+| **Kubernetes / OpenShift** | **APME Operator** | [ADR-054](/.sdlc/adrs/ADR-054-production-deployment.md), [apme-operator](https://github.com/ansible/apme-operator) |
 | Production single-node VM | bootc image | [ADR-054](/.sdlc/adrs/ADR-054-production-deployment.md) |
 
-> Do NOT use Podman on Kubernetes/OpenShift. Use the Helm chart.
+> Do NOT use Podman on Kubernetes/OpenShift. Use the [APME Operator](https://github.com/ansible/apme-operator).
 
 **Key principles:**
 - Validator fan-out and engine orchestration use **gRPC**; Galaxy Proxy is HTTP (PEP 503); Gateway exposes REST (:8080) for external consumers
@@ -24,8 +24,8 @@ APME is a multi-container gRPC microservice system. The Engine runs the scan pip
 ## Container Topology (Podman — local dev)
 
 This diagram shows the **Podman pod** (local development). All services share one
-pod and communicate via localhost. Helm Simple (ADR-069) uses the same
-co-located shape on Kubernetes/OpenShift — see the [Scaling](#scaling) section.
+pod and communicate via localhost. The [APME Operator](https://github.com/ansible/apme-operator)
+uses the same co-located shape on Kubernetes/OpenShift — see the [Scaling](#scaling) section.
 
 ```
 ┌──────────────────────────────────── apme-pod ──────────────────────────────────┐
@@ -294,41 +294,38 @@ The wrapper adds **Ansible-aware filtering**:
 ## Scaling
 
 **Scale pods, not services within a pod** (ADR-012) defines the conceptual
-engine unit. The **Helm chart** (EAP / upstream) ships a **Simple all-in-one**
-pod (ADR-069): engine + Gateway + UI + optional Abbenay on localhost — same
-shape as Podman. Multi-replica engine HPA is out of chart scope while Gateway
-SQLite shares that pod.
+engine unit. The **APME Operator** deploys an **all-in-one** pod: engine +
+Gateway + UI + optional Abbenay on localhost — same shape as Podman.
 
 ```text
   Ingress / Service :8080
             │
             ▼
-  ┌──────────────── apme Simple pod (replicas: 1) ────────────────┐
+  ┌──────────────── apme pod (operator-managed) ──────────────────┐
   │  Engine + validators + Galaxy Proxy + Gateway + UI + Abbenay*  │
   │  localhost TCP (ADR-005); Engine/Gateway→Abbenay unix socket   │
   │  unix:///tmp/abbenay-run/abbenay/daemon.sock (abbenay-run vol) │
   └─────────────────────────────────────────────────────────────────┘
 ```
 
-### Kubernetes Topology (Helm — ADR-069)
+### Kubernetes Topology (operator)
 
-On Kubernetes/OpenShift the chart deploys **one** Deployment (Simple / all-in-one):
+On Kubernetes/OpenShift the operator reconciles **one** Deployment (all-in-one):
 
 | Deployment | Containers (sidecars) | Scaling |
 |-----------|----------------------|---------|
-| **Simple (all-in-one)** | Engine, Native, OPA, Ansible, Gitleaks*, Coll Health*, Dep Audit*, Galaxy Proxy, Gateway, UI*, Abbenay*, OTel* | **replicas: 1** (HPA off) |
+| **All-in-one** | Engine, Native, OPA, Ansible, Gitleaks*, Coll Health*, Dep Audit*, Galaxy Proxy, Gateway, UI*, Abbenay*, OTel* | Operator-managed (single-replica default) |
 
-*\* = conditionally included via chart values / profiles*
+*\* = conditionally included via operator configuration*
 
 Key K8s behavior:
-- **Single replica**: Chart validation rejects `replicas > 1` / HPA for this topology
-- **Localhost**: Engine/Gateway → Abbenay Unix socket (`unix:///tmp/abbenay-run/abbenay/daemon.sock`; required when a consumer token is set); reporting → `127.0.0.1:50060`. Abbenay still binds gRPC on `127.0.0.1:50057` as leftover TCP (no TLS for the chart path). Helm probes connect to the Unix socket.
-- **PodDisruptionBudget**: Protects the Simple Deployment during node drains
+- **Localhost**: Engine/Gateway → Abbenay Unix socket (`unix:///tmp/abbenay-run/abbenay/daemon.sock`; required when a consumer token is set); reporting → `127.0.0.1:50060`. Abbenay still binds gRPC on `127.0.0.1:50057` as leftover TCP.
+- **PodDisruptionBudget**: Protects the Deployment during node drains (when configured)
 - **NetworkPolicy**: Optional default-deny with allow rules for Ingress → Gateway/UI
 
 ### Podman Pod (local dev)
 
-Same co-located shape as Helm Simple: Gateway, UI, and Abbenay share the pod
+Same co-located shape as the operator deployment: Gateway, UI, and Abbenay share the pod
 (`tox -e up`). Most traffic is localhost TCP; Engine→Abbenay gRPC uses the
 shared Unix socket described above.
 

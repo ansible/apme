@@ -203,7 +203,7 @@ token exchange, API root normalization) from the proxy.  Replace with
   **Local daemon:** Engine forwards `GalaxyServerDef` values and collection
   specs to Galaxy Proxy over gRPC; the proxy materializes a temporary
   `ansible.cfg` per download. `SessionState.galaxy_cfg_path` may set
-  `ANSIBLE_CONFIG` for the in-process proxy. **Pod/Helm:** Gateway provisions
+  `ANSIBLE_CONFIG` for the in-process proxy. **Pod/operator:** Gateway provisions
   credentials via `POST /admin/galaxy-config`; Engine still forwards collection
   specs to Galaxy Proxy over gRPC (no Engine-owned credential file). No
   Engine-side Galaxy download fallback.

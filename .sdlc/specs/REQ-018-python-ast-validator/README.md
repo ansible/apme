@@ -238,7 +238,7 @@ Follow the same pattern as Collection Health (`:50058`) and Dep Audit (`:50059`)
 2. `src/apme_engine/daemon/launcher.py` — add port `50062`, env var mapping, and `serve()` call
 3. `pyproject.toml` — add `apme-python-ast-validator` console script
 4. `containers/podman/pod.yaml` — add `python-ast` container; set `PYTHON_AST_GRPC_ADDRESS` on Engine
-5. `deploy/helm/apme/templates/engine-deployment.yaml` — add env vars (mirror dep-audit pattern)
+5. `ansible/apme-operator` engine deployment manifest — add env vars (mirror dep-audit pattern)
 6. `src/apme_gateway/api/router.py` — add health-check entry for Python AST validator
 
 ### Health and failure behavior

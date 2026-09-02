@@ -6,9 +6,10 @@ Vercel AI SDK.
 
 ## Gateway admin proxy (ADR-070)
 
-In the Simple in-pod topology (ADR-069 / ADR-070), Abbenay serves HTTP admin
+In the Simple in-pod topology (ADR-070), Abbenay serves HTTP admin
 on `:8787` and gRPC on loopback (`--grpc-host 127.0.0.1 --grpc-port 50057`;
-image ≥ v2026.8.0). Helm has no cluster Service or hostPort. Local Podman
+image ≥ v2026.8.0). The operator deployment has no cluster Service or hostPort.
+Local Podman
 (`tox -e up`) publishes HTTP on host port 8787 with `hostIP: 127.0.0.1` so the
 Abbenay UI is reachable at `http://127.0.0.1:8787`; gRPC stays loopback.
 `pod.yaml` sets `ABBENAY_HTTP_AUTH=0` so the dashboard loads without a Bearer
@@ -34,7 +35,7 @@ The Gateway reverse-proxies an
 is **not** proxied. Set `APME_ABBENAY_HTTP_URL` (default
 `http://127.0.0.1:8787` for loopback-only Simple topology) and
 `APME_ABBENAY_HTTP_TOKEN` on the Gateway (same secret as `ABBENAY_API_TOKEN` /
-`abbenay.token` in Helm). Cleartext HTTP is allowed only for loopback hosts
+the operator/Podman consumer token). Cleartext HTTP is allowed only for loopback hosts
 (`127.0.0.1`, `localhost`, `::1`); any non-loopback URL must use HTTPS, and the
 Gateway proxy keeps TLS certificate validation enabled.
 
@@ -42,8 +43,8 @@ Gateway proxy keeps TLS certificate validation enabled.
 
 Abbenay supports a process-lifetime in-memory secret store for containerized
 environments where a system keychain is unavailable. Secrets (API keys) can be
-injected at runtime via the Gateway proxy instead of requiring env vars or Helm
-Secrets at deploy time.
+injected at runtime via the Gateway proxy instead of requiring deploy-time
+Secrets at install time.
 
 **Inject a secret at runtime:**
 
@@ -61,7 +62,7 @@ curl http://gateway:8080/api/v1/ai/secrets
 
 The response lists engine API-key slots (name, engine, `hasValue`, and
 `secretStore` when a registry backend holds the value). It does **not**
-return secret values. Helm env-injected keys typically show
+return secret values. Deploy-time env-injected keys typically show
 `hasValue: false` here because env is not a registry backend. Custom keys
 that are not an engine's default env var name are not listed.
 
@@ -77,7 +78,7 @@ After injecting a secret, configure a provider to use it via
 `POST /api/v1/ai/provider/{id}/configure` with `secretName` and
 `secretStore: memory`. Memory-stored secrets do not survive Abbenay or pod
 restarts. For keys that must survive a restart, use the file store below,
-or Helm Secrets / env vars (`secret_store: env`).
+or Kubernetes Secrets / env vars (`secret_store: env`).
 
 ### File secret store (Abbenay >= v2026.8.6)
 
@@ -93,8 +94,8 @@ Gateway reverse-proxies the JSON body unchanged and does **not** store keys
 
 | Deploy | Volume | Survives |
 |--------|--------|----------|
-| **Helm (default)** | `emptyDir` | Abbenay **container** restart; lost on **pod** recycle (reschedule, drain, Helm `Recreate` upgrade) |
-| **Helm PVC** | `persistence.abbenay.enabled=true` | Pod recycle / upgrade (PVC may hold plaintext `secrets.json`) |
+| **Operator (default)** | `emptyDir` | Abbenay **container** restart; lost on **pod** recycle (reschedule, drain, upgrade) |
+| **Operator PVC** | Persistent volume for Abbenay config | Pod recycle / upgrade (PVC may hold plaintext `secrets.json`) |
 | **Podman (Linux)** | RW cache `${XDG_CACHE_HOME:-$HOME/.cache}/apme/abbenay/config/` | `tox -e down` / container restart. `tox -e wipe` deletes `secrets.json`. |
 | **Podman (macOS)** | Same hostPath; virtiofs | File store unsupported until [#562](https://github.com/ansible/apme/issues/562). Use env or memory. |
 
@@ -107,10 +108,10 @@ curl -X POST http://gateway:8080/api/v1/ai/secrets \
 ```
 
 Then configure the provider with `secretName` and `secretStore: file` via
-`POST /api/v1/ai/provider/{id}/configure`. File-store keys and Helm env
-keys (`secret_store: env` in the seed ConfigMap) are **separate** backends:
+`POST /api/v1/ai/provider/{id}/configure`. File-store keys and deploy-time env
+keys (`secret_store: env` in the seed config) are **separate** backends:
 injecting `secretStore: file` does not override an env-backed provider until
-you reconfigure `secretStore`. Deploy-time Helm Secrets / env are unchanged.
+you reconfigure `secretStore`. Deploy-time Secrets / env are unchanged.
 
 **Remove a file-store secret:**
 
@@ -137,21 +138,10 @@ the first write, the runtime file is the source of truth.
 
 | Deploy | Seed | Writable volume | Notes |
 |--------|------|-----------------|-------|
-| **Helm** | ConfigMap `*-abbenay-config` (from `abbenay.providers`) | `emptyDir` by default; optional PVC via `persistence.abbenay.enabled=true` | Init `init-abbenay-config` copies seed only if `config.yaml` is absent. Mount: `/etc/abbenay-config`. The same volume holds file-store `secrets.json` (Abbenay ≥ v2026.8.6). |
+| **Operator** | ConfigMap or CR spec (provider config) | `emptyDir` by default; optional PVC | Init copies seed only if `config.yaml` is absent. The same volume holds file-store `secrets.json` (Abbenay ≥ v2026.8.6). See [apme-operator](https://github.com/ansible/apme-operator). |
 | **Podman** | `containers/abbenay/config/` (or legacy `config.yaml` / `.example`) on first `tox -e up` | Cache dir `${XDG_CACHE_HOME:-$HOME/.cache}/apme/abbenay/config/` → `/home/abbenay/.config/abbenay` | `up.sh` seeds into the cache path (mode `0700`/`0600`). Rootful chowns the cache copy to UID 1001; rootless Linux keeps host ownership and grants UID 1001 a POSIX ACL. macOS virtiofs cannot grant UID 1001 access to `secrets.json` without world-opening it — file store unsupported until [#562](https://github.com/ansible/apme/issues/562). The repo tree is never chowned. `tox -e wipe` deletes `secrets.json`. |
 
-Helm PVC knobs (`persistence.abbenay.*`):
-
-```yaml
-persistence:
-  abbenay:
-    enabled: true    # false = emptyDir (lost on pod restart)
-    size: 100Mi
-    storageClass: ""
-    accessMode: ReadWriteOnce
-```
-
-See [ADR-070](../../.sdlc/adrs/ADR-070-gateway-abbenay-admin-proxy.md) §6 (config durability) and §7 (secrets remain Abbenay SoT).
+See [ADR-070](../../.sdlc/adrs/ADR-070-gateway-abbenay-admin-proxy.md) §6 (config durability) and §7 (secrets remain Abbenay SoT). For operator PVC and persistence options, see [apme-operator](https://github.com/ansible/apme-operator).
 
 ---
 
@@ -441,15 +431,8 @@ for different SDKs and will be ignored.
 
 ## Install / Upgrade
 
-```bash
-helm repo add apme https://ansible.github.io/apme
-helm repo update
-helm upgrade --install apme apme/apme \
-  -n apme --create-namespace \
-  -f values.yaml
-```
-
-From a local clone: `helm upgrade --install apme deploy/helm/apme/ …`.
+Kubernetes and OpenShift installs use the [APME Operator](https://github.com/ansible/apme-operator).
+Follow the operator repository for install, upgrade, and Abbenay provider configuration.
 
 ## Verify
 
@@ -473,6 +456,6 @@ https://us-east5-aiplatform.googleapis.com/v1/projects/your-project/locations/us
 | `undefined` in Vertex API URL | Missing `gcp.project` or `gcp.location` | Set both in values |
 | `PERMISSION_DENIED` | SA lacks `roles/aiplatform.user` | Grant role to the service account |
 | Pod stuck in `ContainerCreating` | Credentials Secret missing | Create Secret or use workload identity |
-| Engine AI chat fails with token-on-plaintext-TCP | Token sent on plaintext TCP (`abbenay-client` ≥ 2026.8.7) | Use the Unix socket ADDR (Helm/Podman default) or TLS |
+| Engine AI chat fails with token-on-plaintext-TCP | Token sent on plaintext TCP (`abbenay-client` ≥ 2026.8.7) | Use the Unix socket ADDR (operator/Podman default) or TLS |
 | `apme-engine: connection refused` on Abbenay | Abbenay not running or socket not shared | Check `abbenay.enabled: true`, `abbenay-run` volume, and pod logs |
 | `401 Unauthorized` on OpenRouter/Anthropic | Wrong or expired API key | Rotate key in Secret |

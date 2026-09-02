@@ -1,6 +1,6 @@
-# Podman named volumes for local development (same PVC shape as deploy/helm/apme).
-# Applied by containers/podman/up.sh before pod.yaml. Ignored by Kubernetes when
-# using the Helm chart, which defines its own PVCs in templates/pvc.yaml.
+# Podman named volumes for local development (same PVC shape as the operator deployment).
+# Applied by containers/podman/up.sh before pod.yaml. For Kubernetes/OpenShift,
+# use the APME Operator (ansible/apme-operator), which defines its own PVCs.
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim

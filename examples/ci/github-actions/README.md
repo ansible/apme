@@ -64,7 +64,7 @@ This will:
 ### Prerequisites
 
 - A running APME deployment accessible from your GitHub Actions runners
-  (deployed via Helm, bootc VM, or Podman pod)
+  (deployed via APME operator, bootc VM, or Podman pod)
 - `APME_ENGINE_ADDRESS` secret set to your Engine gRPC endpoint (host:port)
 
 ### Action Inputs
