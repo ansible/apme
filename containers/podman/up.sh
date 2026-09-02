@@ -362,11 +362,6 @@ _ensure_volume_owned_by_container_uid() {
 # SELinux repair of an existing volume.
 _relabel_podman_volumes() {
   local vol mountpoint uid_gid
-  declare -A vol_owners=(
-    [apme-sessions]="1001:0"
-    [apme-postgres-data]="999:999"
-    [apme-proxy-cache]="1001:0"
-  )
   for vol in apme-sessions apme-postgres-data apme-proxy-cache; do
     if ! podman volume exists "$vol" 2>/dev/null; then
       continue
@@ -375,7 +370,12 @@ _relabel_podman_volumes() {
     if [[ -z "$mountpoint" || ! -d "$mountpoint" ]]; then
       continue
     fi
-    uid_gid="${vol_owners[$vol]}"
+    case "$vol" in
+      apme-sessions) uid_gid="1001:0" ;;
+      apme-postgres-data) uid_gid="999:999" ;;
+      apme-proxy-cache) uid_gid="1001:0" ;;
+      *) continue ;;
+    esac
     if ! _ensure_volume_owned_by_container_uid "$uid_gid" "$mountpoint"; then
       echo "ERROR: could not chown volume $vol ($mountpoint) to $uid_gid" >&2
       return 1

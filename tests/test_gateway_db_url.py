@@ -89,19 +89,58 @@ def test_resolve_database_url_allows_loopback_without_tls() -> None:
 
 
 def test_resolve_database_url_allows_remote_with_sslmode_require() -> None:
-    """Remote PostgreSQL URLs accept sslmode=require."""
+    """Remote PostgreSQL URLs map sslmode=require to asyncpg ssl=require."""
     url = resolve_database_url(
         database_url="postgresql+asyncpg://user:pass@db.example.com:5432/apme?sslmode=require",
     )
-    assert "sslmode=require" in url
+    assert "ssl=require" in url
+    assert "sslmode=" not in url
 
 
 def test_resolve_database_url_allows_remote_with_ssl_true() -> None:
-    """Remote PostgreSQL URLs accept ssl=true."""
+    """Remote PostgreSQL URLs map ssl=true to asyncpg ssl=require."""
     url = resolve_database_url(
         database_url="postgresql+asyncpg://user:pass@db.example.com:5432/apme?ssl=true",
     )
-    assert "ssl=true" in url
+    assert "ssl=require" in url
+    assert "ssl=true" not in url
+
+
+def test_resolve_database_url_maps_sslmode_verify_full() -> None:
+    """Remote PostgreSQL URLs preserve verify-full as asyncpg ssl mode."""
+    url = resolve_database_url(
+        database_url="postgresql+asyncpg://user:pass@db.example.com:5432/apme?sslmode=verify-full",
+    )
+    assert "ssl=verify-full" in url
+    assert "sslmode=" not in url
+
+
+def test_resolve_database_url_asyncpg_connect_args_accept_sslmode_require() -> None:
+    """Resolved URLs must not pass unsupported sslmode to asyncpg.connect."""
+    from sqlalchemy.dialects.postgresql.asyncpg import PGDialect_asyncpg
+    from sqlalchemy.engine import make_url
+
+    url = resolve_database_url(
+        database_url="postgresql+asyncpg://user:pass@db.example.com:5432/apme?sslmode=require",
+    )
+    dialect = PGDialect_asyncpg()
+    _, connect_args = dialect.create_connect_args(make_url(url))
+    assert connect_args.get("ssl") == "require"
+    assert "sslmode" not in connect_args
+
+
+def test_resolve_database_url_asyncpg_connect_args_accept_ssl_true() -> None:
+    """Resolved URLs must map boolean ssl=true to asyncpg ssl=require."""
+    from sqlalchemy.dialects.postgresql.asyncpg import PGDialect_asyncpg
+    from sqlalchemy.engine import make_url
+
+    url = resolve_database_url(
+        database_url="postgresql+asyncpg://user:pass@db.example.com:5432/apme?ssl=true",
+    )
+    dialect = PGDialect_asyncpg()
+    _, connect_args = dialect.create_connect_args(make_url(url))
+    assert connect_args.get("ssl") == "require"
+    assert connect_args.get("ssl") != "true"
 
 
 def test_sanitize_database_url_redacts_password() -> None:

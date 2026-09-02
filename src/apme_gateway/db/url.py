@@ -16,6 +16,26 @@ _LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 _SECURE_SSLMODES = frozenset({"require", "verify-ca", "verify-full"})
 _SECURE_SSL_VALUES = frozenset({"1", "true", "require", "yes"})
 _REMOTE_TLS_REQUIRED_MSG = "APME_DATABASE_URL must use TLS (sslmode=require or ssl=true) for non-loopback hosts"
+_UNSUPPORTED_SSLMODE_MSG = "Unsupported sslmode in APME_DATABASE_URL"
+_UNSUPPORTED_SSL_MSG = "Unsupported ssl parameter in APME_DATABASE_URL"
+_SSLMODE_TO_ASYNCPG = {
+    "disable": "disable",
+    "allow": "allow",
+    "prefer": "prefer",
+    "require": "require",
+    "verify-ca": "verify-ca",
+    "verify-full": "verify-full",
+}
+_BOOLEAN_SSL_TO_ASYNCPG = {
+    "1": "require",
+    "true": "require",
+    "yes": "require",
+    "require": "require",
+    "0": "disable",
+    "false": "disable",
+    "no": "disable",
+    "disable": "disable",
+}
 
 
 def _is_loopback_host(host: str | None) -> bool:
@@ -30,6 +50,62 @@ def _is_loopback_host(host: str | None) -> bool:
     if not host:
         return False
     return host.lower().strip("[]") in _LOOPBACK_HOSTS
+
+
+def _normalize_asyncpg_ssl_query(query: dict[str, str]) -> dict[str, str]:
+    """Map libpq-style sslmode/ssl query params to asyncpg-compatible ssl values.
+
+    Args:
+        query: URL query parameters from a SQLAlchemy database URL.
+
+    Returns:
+        Query parameters with ``sslmode`` removed and ``ssl`` set for asyncpg.
+
+    Raises:
+        ValueError: When sslmode or ssl values are unsupported.
+    """
+    if "sslmode" not in query and "ssl" not in query:
+        return query
+    normalized = dict(query)
+    ssl_value: str | None = None
+    if "sslmode" in normalized:
+        mode = str(normalized.pop("sslmode")).lower()
+        mapped = _SSLMODE_TO_ASYNCPG.get(mode)
+        if mapped is None:
+            raise ValueError(_UNSUPPORTED_SSLMODE_MSG)
+        ssl_value = mapped
+    if "ssl" in normalized:
+        raw_ssl = str(normalized.pop("ssl")).lower()
+        if raw_ssl in _BOOLEAN_SSL_TO_ASYNCPG:
+            mapped_ssl = _BOOLEAN_SSL_TO_ASYNCPG[raw_ssl]
+        elif raw_ssl in _SSLMODE_TO_ASYNCPG.values():
+            mapped_ssl = raw_ssl
+        else:
+            raise ValueError(_UNSUPPORTED_SSL_MSG)
+        if ssl_value is None:
+            ssl_value = mapped_ssl
+    if ssl_value is not None:
+        normalized["ssl"] = ssl_value
+    return normalized
+
+
+def _normalize_database_url(url: str) -> str:
+    """Return *url* with asyncpg-compatible SSL query parameters.
+
+    Args:
+        url: Validated SQLAlchemy database URL.
+
+    Returns:
+        URL with libpq ``sslmode`` and boolean ``ssl`` values mapped for asyncpg.
+    """
+    parsed = make_url(url)
+    query = dict(parsed.query)
+    if not query:
+        return url
+    normalized_query = _normalize_asyncpg_ssl_query(query)
+    if normalized_query == query:
+        return url
+    return str(parsed.set(query=normalized_query))
 
 
 def _require_secure_transport(url: str) -> None:
@@ -105,12 +181,12 @@ def resolve_database_url(*, database_url: str | None = None) -> str:
     if database_url:
         validated = _validate_async_database_url(database_url, error_msg=_EXPLICIT_URL_MSG)
         _require_secure_transport(validated)
-        return validated
+        return _normalize_database_url(validated)
     env_url = os.environ.get("APME_DATABASE_URL", "").strip()
     if env_url:
         validated = _validate_async_database_url(env_url, error_msg=_INVALID_URL_MSG)
         _require_secure_transport(validated)
-        return validated
+        return _normalize_database_url(validated)
     raise ValueError(_MISSING_URL_MSG)
 
 
