@@ -30,8 +30,9 @@ requests even when long-running work is in progress.
 | Gateway | Fully async (aiosqlite, grpc.aio); FastAPI + uvicorn event loop | — |
 
 Services with a documented numeric limit expose `maximum_concurrent_rpcs` via
-environment variable (e.g., `APME_ENGINE_MAX_RPCS=16`). The operator sets
-Engine's limit from `engine.maxConcurrentRpcs` in the chart values. Gateway
+environment variable (e.g., `APME_ENGINE_MAX_RPCS=16`). The
+[APME Operator](https://github.com/ansible/apme-operator) sets Engine's limit
+via `APME_ENGINE_MAX_RPCS` (default `16` in the reconciled manifest). Gateway
 uses the FastAPI/uvicorn event loop without a gRPC `maximum_concurrent_rpcs`
 knob. The defaults balance throughput against resource consumption on a single
 pod.

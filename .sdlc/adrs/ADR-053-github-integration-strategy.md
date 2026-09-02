@@ -64,7 +64,10 @@ tab and adds inline annotations on PR diffs with zero custom code.
 The Action connects to an existing APME deployment (Kubernetes via operator,
 VM via bootc, or any running pod). This gives the exact same validation as a
 production deployment: all validators, Gitleaks secret scanning, collection
-health, and dependency auditing.
+health, and dependency auditing. Set `APME_ENGINE_ADDRESS` to the Engine gRPC
+endpoint reachable from the runner (operator default:
+`<name>-engine.<namespace>.svc:50051`; plaintext gRPC with no app-level auth —
+see ADR-054 §Hosted CI Engine access).
 
 ```yaml
 - uses: ansible/apme@v1

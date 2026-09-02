@@ -288,7 +288,8 @@ Gateway stays a proxy. Default operator `emptyDir` is still ephemeral — enable
   `APME_ABBENAY_HTTP_TOKEN` (or shared secret with Abbenay `server.api_token_env`).
 - **Deploy**: operator sidecar + Podman — `abbenay web --host 127.0.0.1
   --port 8787 --grpc-host 127.0.0.1 --grpc-port 50057` (image ≥ v2026.8.0);
-  no Service/hostPort for HTTP or gRPC; chart README notes ADR-070. Both
+  no Service/hostPort for HTTP or gRPC; see
+  [apme-operator](https://github.com/ansible/apme-operator) and ADR-070. Both
   topologies bind Abbenay to loopback (pod-shared netns).
 - **Conflict**: `GET /api/v1/ai/models` remains Engine-backed; proxy excludes
   `models` for all methods. Register main router before the proxy mount.

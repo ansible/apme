@@ -71,8 +71,32 @@ External access uses Service + Ingress/Route:
 |------|-----|---------|
 | Containers (intra-pod) | Each other | `127.0.0.1:<port>` (Engine→Abbenay gRPC: Unix socket) |
 | UI (browser) / external API | Gateway REST | Ingress/Route → Service `:8080` |
+| Hosted CI / in-cluster clients | Engine gRPC | ClusterIP `<name>-engine.<namespace>.svc:50051` (see below) |
 | Engine | Gateway Reporting | `127.0.0.1:50060` |
 | Engine | Abbenay | Unix socket `unix:///tmp/abbenay-run/abbenay/daemon.sock` |
+| Gateway | Abbenay admin | HTTP `127.0.0.1:8787` (ADR-070; loopback only) |
+
+#### Hosted CI Engine access
+
+The operator reconciles a ClusterIP Service `<Apme.metadata.name>-engine` on
+port `50051` (plaintext gRPC; Engine binds with `add_insecure_port`). Gateway
+REST is the only product edge exposed via Route/Ingress. When NetworkPolicy is
+enabled, ingress is permitted to Gateway `:8080` and UI `:8081` only — not
+Engine `:50051`.
+
+Hosted GitHub Actions set `APME_ENGINE_ADDRESS` to a `host:port` the runner can
+reach:
+
+- **In-cluster or VPN-connected runners:** `<name>-engine.<namespace>.svc:50051`
+- **bootc VM / Podman:** host-accessible `:50051` (see [DEPLOYMENT.md](../../docs/guides/DEPLOYMENT.md))
+- **GitHub-hosted runners on the public internet:** require VPN, peering, or a
+  self-hosted runner with cluster network access; the operator does not expose
+  Engine gRPC on Route/Ingress in v1
+
+Engine gRPC has no transport TLS or application-level auth — restrict
+reachability with firewall rules and NetworkPolicy. See
+[apme-operator](https://github.com/ansible/apme-operator) for Service and
+exposure details.
 
 #### Storage
 

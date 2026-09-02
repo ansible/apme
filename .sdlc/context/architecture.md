@@ -303,7 +303,8 @@ Gateway + UI + optional Abbenay on localhost — same shape as Podman.
             ▼
   ┌──────────────── apme pod (operator-managed) ──────────────────┐
   │  Engine + validators + Galaxy Proxy + Gateway + UI + Abbenay*  │
-  │  localhost TCP (ADR-005); Engine/Gateway→Abbenay unix socket   │
+  │  localhost TCP (ADR-005); Engine→Abbenay gRPC Unix socket;    │
+  │  Gateway→Abbenay admin HTTP 127.0.0.1:8787 (ADR-070)           │
   │  unix:///tmp/abbenay-run/abbenay/daemon.sock (abbenay-run vol) │
   └─────────────────────────────────────────────────────────────────┘
 ```
@@ -319,7 +320,7 @@ On Kubernetes/OpenShift the operator reconciles **one** Deployment (all-in-one):
 *\* = conditionally included via operator configuration*
 
 Key K8s behavior:
-- **Localhost**: Engine/Gateway → Abbenay Unix socket (`unix:///tmp/abbenay-run/abbenay/daemon.sock`; required when a consumer token is set); reporting → `127.0.0.1:50060`. Abbenay still binds gRPC on `127.0.0.1:50057` as leftover TCP.
+- **Localhost**: Engine → Abbenay gRPC Unix socket (`unix:///tmp/abbenay-run/abbenay/daemon.sock`; required when a consumer token is set); Gateway → Abbenay admin HTTP `127.0.0.1:8787` (ADR-070); reporting → `127.0.0.1:50060`. Abbenay still binds gRPC on `127.0.0.1:50057` as leftover TCP.
 - **PodDisruptionBudget**: Protects the Deployment during node drains (when configured)
 - **NetworkPolicy**: Optional default-deny with allow rules for Ingress → Gateway/UI
 
