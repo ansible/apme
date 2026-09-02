@@ -99,3 +99,5 @@ export {
 } from './shared/severity';
 
 export { DiffView, textsFromUnifiedDiff, CurrentYamlView } from './components/DiffView';
+
+export { toPrFilesDiffUrl } from './utils/prDiffUrl';

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { PageLayout, PageHeader } from '@ansible/ansible-ui-framework';
-import { AssessFindingsPanel } from '@apme/ui-workflow';
+import { AssessFindingsPanel, toPrFilesDiffUrl } from '@apme/ui-workflow';
 import { PipelineLogOutput } from '../components/PipelineLogOutput';
 import {
   DependencyHealthOutput,
@@ -171,7 +171,7 @@ export function ActivityDetailPage() {
                 <Button
                   variant="link"
                   component="a"
-                  href={detail.pr_url}
+                  href={toPrFilesDiffUrl(detail.pr_url)}
                   target="_blank"
                   rel="noopener noreferrer"
                   icon={<ExternalLinkAltIcon />}
