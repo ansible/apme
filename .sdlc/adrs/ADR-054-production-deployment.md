@@ -81,8 +81,10 @@ External access uses Service + Ingress/Route:
 The operator reconciles a ClusterIP Service `<Apme.metadata.name>-engine` on
 port `50051` (plaintext gRPC; Engine binds with `add_insecure_port`). Gateway
 REST is the only product edge exposed via Route/Ingress. When NetworkPolicy is
-enabled, ingress is permitted to Gateway `:8080` and UI `:8081` only — not
-Engine `:50051`.
+enabled, Gateway `:8080` and UI `:8081` accept ingress from the edge; Engine
+`:50051` stays off Route/Ingress but must permit ingress from approved hosted
+CI runners and in-cluster clients (for example via NetworkPolicy peer labels or
+named runner namespaces).
 
 Hosted GitHub Actions set `APME_ENGINE_ADDRESS` to a `host:port` the runner can
 reach:
