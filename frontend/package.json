@@ -45,7 +45,7 @@
     "@types/dagre": "^0.7.52",
     "@types/debounce": "^1.2.4",
     "@types/get-value": "^3.0.5",
-    "@types/luxon": "^3.7.2",
+    "@types/luxon": "^3.7.3",
     "@types/node": "^26.1.2",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
