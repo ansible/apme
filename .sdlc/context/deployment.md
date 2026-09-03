@@ -72,7 +72,7 @@ after that ADR; older release tags stay amd64-only until rebuilt. Local
 tox -e up
 ```
 
-This runs `podman play kube containers/podman/pod.yaml`, which starts the pod `apme-pod` with all service containers (Engine, Native, OPA, Ansible, Gitleaks, Collection Health, Dep Audit, Galaxy Proxy, Gateway, UI, Abbenay). A sessions directory and gateway data directory are created for session-scoped venvs and persistent activity data.
+This runs `podman play kube containers/podman/pod.yaml`, which starts the pod `apme-pod` with all service containers (Engine, Native, OPA, Ansible, Gitleaks, Collection Health, Dep Audit, Galaxy Proxy, PostgreSQL, Gateway, UI, Abbenay). A sessions directory is created for session-scoped venvs, and the Podman volume `apme-postgres-data` is provisioned for PostgreSQL persistence (`APME_DATABASE_URL` points at the in-pod sidecar).
 
 ### Run CLI Commands
 
@@ -93,7 +93,7 @@ The **`remediate`** command uses a **bidirectional streaming RPC** (`FixSession`
 
 ```bash
 tox -e down                             # stop pod only
-tox -e wipe                             # stop pod and delete DB, sessions, Abbenay secrets.json
+tox -e wipe                             # stop pod and delete apme-postgres-data, sessions, Abbenay secrets.json
 ```
 
 ### Health Check
@@ -272,7 +272,7 @@ See `PODMAN_OPA_ISSUES.md` for common Podman rootless issues:
 tox -e up                               # build + start
 tox -e cli                              # run a scan (check .)
 tox -e down                             # stop
-tox -e wipe                             # stop + wipe DB/sessions/Abbenay secrets.json
+tox -e wipe                             # stop + wipe apme-postgres-data/sessions/Abbenay secrets.json
 ```
 
 ### Port Map
