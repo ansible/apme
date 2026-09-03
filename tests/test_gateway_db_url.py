@@ -104,13 +104,12 @@ def test_resolve_database_url_rejects_remote_with_ssl_true() -> None:
         )
 
 
-def test_resolve_database_url_allows_remote_with_sslmode_verify_ca() -> None:
-    """Remote PostgreSQL URLs map sslmode=verify-ca to asyncpg ssl=verify-ca."""
-    url = resolve_database_url(
-        database_url="postgresql+asyncpg://user:pass@db.example.com:5432/apme?sslmode=verify-ca",
-    )
-    assert "ssl=verify-ca" in url
-    assert "sslmode=" not in url
+def test_resolve_database_url_rejects_remote_with_sslmode_verify_ca() -> None:
+    """Remote PostgreSQL URLs reject verify-ca because hostname is not validated."""
+    with pytest.raises(ValueError, match="certificate-validated TLS"):
+        resolve_database_url(
+            database_url="postgresql+asyncpg://user:pass@db.example.com:5432/apme?sslmode=verify-ca",
+        )
 
 
 def test_resolve_database_url_maps_sslmode_verify_full() -> None:
@@ -136,18 +135,16 @@ def test_resolve_database_url_asyncpg_connect_args_accept_sslmode_verify_full() 
     assert "sslmode" not in connect_args
 
 
-def test_resolve_database_url_asyncpg_connect_args_accept_ssl_verify_ca() -> None:
-    """Resolved URLs must map sslmode=verify-ca for asyncpg.connect."""
-    from sqlalchemy.dialects.postgresql.asyncpg import PGDialect_asyncpg
-    from sqlalchemy.engine import make_url
+def test_asyncpg_ssl_connect_arg_maps_sslmode_verify_full() -> None:
+    """Worker provisioning helpers preserve verify-full for asyncpg.connect."""
+    from apme_gateway.db.url import asyncpg_ssl_connect_arg
 
-    url = resolve_database_url(
-        database_url="postgresql+asyncpg://user:pass@db.example.com:5432/apme?sslmode=verify-ca",
+    assert (
+        asyncpg_ssl_connect_arg(
+            "postgresql+asyncpg://user:pass@db.example.com:5432/apme?sslmode=verify-full",
+        )
+        == "verify-full"
     )
-    dialect = PGDialect_asyncpg()
-    _, connect_args = dialect.create_connect_args(make_url(url))
-    assert connect_args.get("ssl") == "verify-ca"
-    assert "sslmode" not in connect_args
 
 
 def test_resolve_database_url_rejects_conflicting_tls_parameters() -> None:

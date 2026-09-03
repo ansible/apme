@@ -10,6 +10,7 @@ from urllib.parse import urlparse, urlunparse
 import pytest
 
 from apme_gateway.db import close_db, init_db, reset_db
+from apme_gateway.db.url import asyncpg_ssl_connect_arg
 from apme_gateway.operation_registry import get_operation_registry
 
 _WORKER_NAME_RE = re.compile(r"^(master|gw\d+)$")
@@ -73,13 +74,17 @@ async def ensure_worker_database() -> str:
     base_url = base_test_database_url()
     parsed = urlparse(base_url.replace("postgresql+asyncpg://", "postgresql://"))
     db_name = worker_database_name()
-    conn = await asyncpg.connect(
-        user=parsed.username or "apme",
-        password=parsed.password or "apme",
-        host=parsed.hostname or "localhost",
-        port=parsed.port or 5432,
-        database="postgres",
-    )
+    connect_kwargs: dict[str, object] = {
+        "user": parsed.username or "apme",
+        "password": parsed.password or "apme",
+        "host": parsed.hostname or "localhost",
+        "port": parsed.port or 5432,
+        "database": "postgres",
+    }
+    ssl_arg = asyncpg_ssl_connect_arg(base_url)
+    if ssl_arg is not None:
+        connect_kwargs["ssl"] = ssl_arg
+    conn = await asyncpg.connect(**connect_kwargs)
     try:
         exists = await conn.fetchval("SELECT 1 FROM pg_database WHERE datname = $1", db_name)
         if not exists:

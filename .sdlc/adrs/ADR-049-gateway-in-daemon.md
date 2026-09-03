@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted (daemon launcher implementation pending)
 
 ## Date
 
@@ -45,7 +45,13 @@ the dual-code-path problem ADR-024 was designed to eliminate.
 persistence) in the local daemon process**, following the same pattern used
 for Galaxy Proxy.
 
-The daemon's `_run_daemon()` function gains two additional services:
+> **Implementation status:** This decision is accepted but not yet implemented.
+> `start_daemon()` and `_run_daemon()` still start only Engine, validators, and
+> Galaxy Proxy. Commands such as `apme sbom` require a running pod Gateway or an
+> external Gateway reachable at `APME_GATEWAY_URL` until the launcher changes
+> below land.
+
+The daemon's `_run_daemon()` function will gain two additional services:
 
 1. **Gateway HTTP** (uvicorn/FastAPI) on port 8080 — serves the REST API
    (`/api/v1/projects/...`, `/api/v1/.../sbom`, etc.)

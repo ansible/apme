@@ -13,10 +13,9 @@ _MISSING_URL_MSG = "APME_DATABASE_URL is required (postgresql+asyncpg://user:pas
 _SUPPORTED_ASYNC_DRIVERS = frozenset({"postgresql+asyncpg"})
 _SENSITIVE_QUERY_KEYS = frozenset({"password", "passwd", "pass", "secret", "token", "api_key", "access_token"})
 _LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
-_CERT_VALIDATED_SSLMODES = frozenset({"verify-ca", "verify-full"})
+_CERT_VALIDATED_SSLMODES = frozenset({"verify-full"})
 _REMOTE_TLS_REQUIRED_MSG = (
-    "APME_DATABASE_URL must use certificate-validated TLS "
-    "(sslmode=verify-full or sslmode=verify-ca) for non-loopback hosts"
+    "APME_DATABASE_URL must use certificate-validated TLS (sslmode=verify-full) for non-loopback hosts"
 )
 _UNSUPPORTED_SSLMODE_MSG = "Unsupported sslmode in APME_DATABASE_URL"
 _UNSUPPORTED_SSL_MSG = "Unsupported ssl parameter in APME_DATABASE_URL"
@@ -167,6 +166,23 @@ def _validate_async_database_url(url: str, *, error_msg: str) -> str:
     if parsed.drivername not in _SUPPORTED_ASYNC_DRIVERS:
         raise ValueError(error_msg)
     return url
+
+
+def asyncpg_ssl_connect_arg(url: str) -> str | None:
+    """Return the asyncpg ``ssl`` connect argument from a database URL.
+
+    Args:
+        url: SQLAlchemy database URL (``postgresql+asyncpg://...``).
+
+    Returns:
+        Normalized asyncpg ``ssl`` mode when present in the URL query string.
+    """
+    parsed = make_url(url)
+    query = dict(parsed.query)
+    if not query:
+        return None
+    normalized = _normalize_asyncpg_ssl_query(query)
+    return normalized.get("ssl")
 
 
 def resolve_database_url(*, database_url: str | None = None) -> str:
