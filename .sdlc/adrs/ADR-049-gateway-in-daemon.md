@@ -113,8 +113,11 @@ to the existing Galaxy Proxy pattern.
 
 ### Positive
 
-- **"Just works" UX preserved.** `apme sbom` auto-starts the daemon (which
-  now includes Gateway), matching the experience of all other commands.
+- **"Just works" UX preserved (when implemented).** Once the launcher embeds
+  Gateway, `apme sbom` will auto-start the daemon with REST and Reporting
+  endpoints, matching the experience of other commands. Until then, REST-backed
+  commands require a Podman pod Gateway or an external Gateway at
+  `APME_GATEWAY_URL`.
 - **CLI→REST migration enabled.** Future commands (health, session list) can
   move to Gateway REST without UX regression.
 - **Single code path.** Gateway REST API is the same in daemon and pod. No

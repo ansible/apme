@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from sqlalchemy.engine import make_url
+from sqlalchemy.engine import URL, make_url
 
 _INVALID_URL_MSG = "APME_DATABASE_URL must be a SQLAlchemy URL"
 _EXPLICIT_URL_MSG = "database_url must be a SQLAlchemy URL"
@@ -17,6 +17,7 @@ _CERT_VALIDATED_SSLMODES = frozenset({"verify-full"})
 _REMOTE_TLS_REQUIRED_MSG = (
     "APME_DATABASE_URL must use certificate-validated TLS (sslmode=verify-full) for non-loopback hosts"
 )
+_HOST_QUERY_OVERRIDE_MSG = "APME_DATABASE_URL must not use a host query parameter to override the authority host"
 _UNSUPPORTED_SSLMODE_MSG = "Unsupported sslmode in APME_DATABASE_URL"
 _UNSUPPORTED_SSL_MSG = "Unsupported ssl parameter in APME_DATABASE_URL"
 _CONFLICTING_TLS_MSG = "Conflicting TLS parameters in APME_DATABASE_URL"
@@ -112,6 +113,20 @@ def _normalize_database_url(url: str) -> str:
     return str(parsed.set(query=normalized_query))
 
 
+def _reject_host_query_override(parsed: URL) -> None:
+    """Reject libpq-style host query overrides that bypass TLS validation.
+
+    Args:
+        parsed: SQLAlchemy URL object from ``make_url``.
+
+    Raises:
+        ValueError: When the query string overrides the authority host.
+    """
+    query = dict(parsed.query)
+    if query.get("host"):
+        raise ValueError(_HOST_QUERY_OVERRIDE_MSG)
+
+
 def _require_secure_transport(url: str) -> None:
     """Require TLS for remote PostgreSQL URLs.
 
@@ -122,6 +137,7 @@ def _require_secure_transport(url: str) -> None:
         ValueError: When a remote host omits TLS configuration.
     """
     parsed = make_url(url)
+    _reject_host_query_override(parsed)
     if _is_loopback_host(parsed.host):
         return
     query = dict(parsed.query)

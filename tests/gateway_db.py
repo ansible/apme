@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import re
 from collections.abc import AsyncIterator
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import unquote, urlparse, urlunparse
 
 import pytest
 
@@ -77,7 +77,7 @@ async def ensure_worker_database() -> str:
     db_name = worker_database_name()
     connect_kwargs: dict[str, object] = {
         "user": parsed.username or "apme",
-        "password": parsed.password or "apme",
+        "password": unquote(parsed.password) if parsed.password is not None else "apme",
         "host": parsed.hostname or "localhost",
         "port": parsed.port or 5432,
         "database": "postgres",

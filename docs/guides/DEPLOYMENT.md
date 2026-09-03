@@ -337,9 +337,11 @@ it as the `--index-strategy` argument to `uv pip install`.
 
 For development and testing without the Podman pod, the CLI can start a
 local daemon that runs Engine, Native, OPA, and Ansible as localhost gRPC
-servers, Galaxy Proxy as an HTTP service, and Gateway HTTP plus Reporting
-gRPC per ADR-049. Optional validators (Gitleaks, Collection Health, Dep Audit)
-start only when `include_optional=True`.
+servers and Galaxy Proxy as an HTTP service. Gateway HTTP plus Reporting gRPC
+co-location is planned (ADR-049) but not implemented in `launcher.py` yet —
+use the Podman pod or an external Gateway at `APME_GATEWAY_URL` for REST-backed
+commands such as `apme sbom`. Optional validators (Gitleaks, Collection Health,
+Dep Audit) start only when `include_optional=True`.
 
 ```bash
 # Install tox + project (one-time)
@@ -358,7 +360,7 @@ apme remediate .
 apme daemon stop
 ```
 
-**Daemon mode** starts a local Engine with Native, OPA, and Ansible validators as in-process gRPC servers, Galaxy Proxy as an HTTP service (uvicorn), and Gateway HTTP plus Reporting gRPC (ADR-049). Optional validators (Gitleaks, Collection Health, Dep Audit) start only when `include_optional=True`. The OPA validator gRPC server is always started; policy evaluation uses Podman by default or a local `opa` binary when `OPA_USE_PODMAN=0`. OPA infrastructure failures surface as validator R902 errors so `check` and `remediate` cannot return silently incomplete results.
+**Daemon mode** starts a local Engine with Native, OPA, and Ansible validators as in-process gRPC servers and Galaxy Proxy as an HTTP service (uvicorn). Gateway HTTP plus Reporting gRPC co-location is planned (ADR-049) but not started by `launcher.py` yet — REST-backed commands need a Podman pod Gateway or `APME_GATEWAY_URL`. Optional validators (Gitleaks, Collection Health, Dep Audit) start only when `include_optional=True`. The OPA validator gRPC server is always started; policy evaluation uses Podman by default or a local `opa` binary when `OPA_USE_PODMAN=0`. OPA infrastructure failures surface as validator R902 errors so `check` and `remediate` cannot return silently incomplete results.
 
 ## Troubleshooting
 
@@ -454,7 +456,8 @@ localhost (ADR-005). Multi-replica engine HPA is not offered by this chart.
   unsupported for PostgreSQL in the Simple chart)
 - Ingress/Route support (OpenShift Routes included)
 - NetworkPolicy for Ingress → Gateway/UI HTTP ports only
-- PVCs for sessions, Gateway DB, and Galaxy Proxy cache
+- PVCs for sessions, legacy `*-gateway-data` rollback storage, and Galaxy Proxy cache
+- External PostgreSQL required via `gateway.database.url` or `gateway.database.existingSecret`
 - OpenShift Developer Catalog via `HelmChartRepository` pointing at the Pages URL
 
 ### Breaking change from pre-ADR-069 split chart

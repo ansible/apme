@@ -76,6 +76,14 @@ def test_resolve_database_url_rejects_malformed_env_url(monkeypatch: pytest.Monk
         resolve_database_url()
 
 
+def test_resolve_database_url_rejects_host_query_override() -> None:
+    """Libpq host query overrides must not bypass TLS validation."""
+    with pytest.raises(ValueError, match="host query parameter"):
+        resolve_database_url(
+            database_url=("postgresql+asyncpg://user:pass@127.0.0.1:5432/apme?host=db.example.com&sslmode=verify-full"),
+        )
+
+
 def test_resolve_database_url_rejects_remote_without_tls() -> None:
     """Remote PostgreSQL URLs must declare certificate-validated TLS."""
     with pytest.raises(ValueError, match="certificate-validated TLS"):
@@ -184,6 +192,32 @@ def test_sanitize_database_url_redacts_query_password() -> None:
     """Query-string credentials must not appear in logged URLs."""
     raw = "postgresql+asyncpg://db/apme?password=secret"
     assert sanitize_database_url(raw) == "postgresql+asyncpg://db/apme?password=[REDACTED]"
+
+
+@pytest.mark.asyncio  # type: ignore[untyped-decorator]
+async def test_ensure_worker_database_decodes_percent_encoded_password(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Worker provisioning must percent-decode passwords from database URLs.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+    from unittest.mock import AsyncMock
+
+    from tests import gateway_db
+
+    connect_mock = AsyncMock()
+    connect_mock.fetchval.return_value = True
+    monkeypatch.setattr("asyncpg.connect", connect_mock)
+    monkeypatch.setenv(
+        "APME_TEST_DATABASE_URL",
+        "postgresql+asyncpg://apme:p%40ss@127.0.0.1:5432/apme_test",
+    )
+
+    await gateway_db.ensure_worker_database()
+    assert connect_mock.await_args is not None
+    assert connect_mock.await_args.kwargs["password"] == "p@ss"
 
 
 def test_is_database_url() -> None:
