@@ -315,7 +315,7 @@ On Kubernetes/OpenShift the operator reconciles **one** Deployment (all-in-one):
 
 | Deployment | Containers (sidecars) | Scaling |
 |-----------|----------------------|---------|
-| **All-in-one** | Engine, Native, OPA, Ansible, Gitleaks*, Coll Health*, Dep Audit*, Galaxy Proxy, Gateway, UI*, Abbenay* | Operator-managed (single-replica default) |
+| **All-in-one** | Engine, Native, OPA, Ansible, Gitleaks*, Coll Health*, Dep Audit*, Galaxy Proxy, Gateway, UI*, Abbenay* | Single-replica only (multi-replica is future topology — ADR-012) |
 
 *\* = conditionally included via operator configuration. Operator v1 does not
 ship an in-pod OpenTelemetry Collector; set `OTEL_EXPORTER_OTLP_ENDPOINT` on

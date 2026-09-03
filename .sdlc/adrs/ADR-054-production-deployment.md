@@ -56,7 +56,7 @@ engine sidecars + Gateway + UI + optional Abbenay on localhost (ADR-005).
 
 | K8s Resource | Containers | Scaling |
 |-------------|------------|---------|
-| Deployment (all-in-one) | engine, native, opa, ansible, gitleaks*, collection-health*, dep-audit*, galaxy-proxy, gateway, ui*, abbenay* | Operator-managed (single-replica default) |
+| Deployment (all-in-one) | engine, native, opa, ansible, gitleaks*, collection-health*, dep-audit*, galaxy-proxy, gateway, ui*, abbenay* | Single-replica only (multi-replica is future topology — ADR-012) |
 
 \* optional via operator configuration. Operator v1 does not ship an in-pod
 OpenTelemetry Collector; configure `OTEL_EXPORTER_OTLP_ENDPOINT` on workloads
