@@ -95,8 +95,10 @@ reach:
   self-hosted runner with cluster network access; the operator does not expose
   Engine gRPC on Route/Ingress in v1
 
-Engine gRPC has no transport TLS or application-level auth — restrict
-reachability with firewall rules and NetworkPolicy. See
+Engine gRPC has no transport TLS or application-level auth in operator v1 —
+restrict reachability with firewall rules and NetworkPolicy. Crossing untrusted
+networks requires VPN, peering, or an equivalent encrypted overlay; do not
+expose plaintext Engine gRPC on the public internet. See
 [apme-operator](https://github.com/ansible/apme-operator) for Service and
 exposure details.
 

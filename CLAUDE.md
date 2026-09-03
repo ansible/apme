@@ -80,7 +80,7 @@ Full workflow: [workflow.md](/.sdlc/context/workflow.md) | Getting started: [get
 - **Use gRPC** — all inter-service communication
 - **Async servers** — grpc.aio, not synchronous
 - **Rule IDs** — L/M/R/P/SEC convention per ADR-008
-- **Engine-core services are required** — Engine, Native, OPA, Ansible, and Galaxy Proxy are all required for both the CLI daemon and pod. Their deps are core, not optional extras. Gitleaks, Collection Health, and Dep Audit are optional (`_OPTIONAL_SERVICES`; start with `include_optional=True`). UI, Abbenay, and Gateway are pod-level/enterprise services the CLI daemon does not start. Gateway is co-located in operator / Podman deployments (ADR-004); ADR-049 plans Gateway embedding in the local daemon.
+- **Engine-core services are required** — Engine, Native, OPA, Ansible, and Galaxy Proxy are all required for both the CLI daemon and pod. Their deps are core, not optional extras. Gitleaks, Collection Health, and Dep Audit are optional (`_OPTIONAL_SERVICES`; start with `include_optional=True`). UI, Abbenay, and Gateway are pod-level/enterprise services the CLI daemon does not start. Gateway is co-located in operator deployments (ADR-054) and Podman deployments (ADR-004); ADR-049 plans Gateway embedding in the local daemon.
 - Do NOT modify files outside task scope
 - Do NOT add features not in requirements
 - Ask for clarification if specs are ambiguous

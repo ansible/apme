@@ -34,7 +34,7 @@ also multi-arch. The gap is APME-built images only.
 - **Meet users where they are**: amd64 servers and arm64 developer/demo clusters
   must pull the same image tags.
 - **Stable consumer contract**: same image names and tags; nodes select the
-  matching platform from a manifest list (no chart or values change).
+  matching platform from a manifest list (no operator image-reference change).
 - **Reliable CI**: prefer native per-arch builds over QEMU cross-compilation for
   heavy images (`apme-base` `uv sync`, `apme-ansible` prewarm).
 - **Org precedent**: [ansible-dev-tools](https://github.com/ansible/ansible-dev-tools)
@@ -146,7 +146,7 @@ of multi-arch tags.
 
 - Local `tox -e build` / Podman remains single-arch (host native).
 - Abbenay and bootc unchanged by this ADR.
-- Chart `values.yaml` image names and tag semantics unchanged.
+- Operator image names and tag semantics unchanged.
 
 ## Implementation Notes
 
@@ -161,7 +161,7 @@ of multi-arch tags.
 - Verification: merge CI fails unless each published consumer tag lists both
   `linux/amd64` and `linux/arm64`. After the first post-merge release, confirm
   with `docker buildx imagetools inspect` on arm and amd64 pull/smoke.
-- Tags published **before** this ADR remain single-arch until rebuilt; chart
+- Tags published **before** this ADR remain single-arch until rebuilt; operator
   defaults and older release tags are not retroactively multi-arch.
 - Pin Actions to commit SHAs with `# vN` comments (ADR-015).
 

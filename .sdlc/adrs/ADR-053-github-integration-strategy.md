@@ -66,10 +66,15 @@ VM via bootc, or any running pod). It runs whatever validators that deployment
 enables — the same engine stack as production, not a fixed validator set.
 Gitleaks, Collection Health, and Dependency Audit are optional (ADR-054);
 hosted CI results reflect the deployed configuration. Set `APME_ENGINE_ADDRESS`
-to the Engine gRPC
-endpoint reachable from the runner (operator default:
-`<name>-engine.<namespace>.svc:50051`; plaintext gRPC with no app-level auth —
-see ADR-054 §Hosted CI Engine access).
+to the Engine gRPC endpoint reachable from the runner within an authenticated
+network boundary (operator default:
+`<name>-engine.<namespace>.svc:50051`). Access must use in-cluster runners,
+VPN, peering, or an equivalent encrypted overlay — not the public internet.
+Engine is not exposed on Route/Ingress; restrict reachability with
+NetworkPolicy (see ADR-054 §Hosted CI Engine access). Operator v1 uses
+plaintext in-cluster gRPC with no application-level auth; crossing untrusted
+networks requires an encrypted tunnel or VPN until native Engine TLS is
+available.
 
 ```yaml
 - uses: ansible/apme@v1

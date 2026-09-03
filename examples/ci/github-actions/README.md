@@ -70,7 +70,7 @@ This will:
   `<name>-engine.<namespace>.svc:50051` (ClusterIP; plaintext gRPC). The
   operator exposes Gateway REST on Route/Ingress only; Engine `:50051` is not
   on the public edge (use in-cluster runners, VPN, or bootc/Podman host access).
-  See [ADR-054](../../.sdlc/adrs/ADR-054-production-deployment.md) §Hosted CI
+  See [ADR-054](../../../.sdlc/adrs/ADR-054-production-deployment.md) §Hosted CI
   Engine access.
 
 ### Action Inputs

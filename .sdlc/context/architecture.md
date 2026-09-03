@@ -323,6 +323,8 @@ Key K8s behavior:
 - **Localhost**: Engine → Abbenay gRPC Unix socket (`unix:///tmp/abbenay-run/abbenay/daemon.sock`; required when a consumer token is set); Gateway → Abbenay admin HTTP `127.0.0.1:8787` (ADR-070); reporting → `127.0.0.1:50060`. Abbenay still binds gRPC on `127.0.0.1:50057` as leftover TCP.
 - **PodDisruptionBudget**: Protects the Deployment during node drains (when configured)
 - **NetworkPolicy**: Optional default-deny with allow rules for Ingress → Gateway/UI
+  and narrowly scoped Engine `:50051` ingress from approved hosted CI runners and
+  in-cluster clients (Engine stays off Route/Ingress; see ADR-054 §Hosted CI Engine access)
 
 ### Podman Pod (local dev)
 

@@ -86,7 +86,8 @@ one needs to change, write an ADR first.
     because they require external binaries or venv-dependent scanning;
     they start when `include_optional=True`. UI and Abbenay are pod-level /
     enterprise services the CLI daemon does not start. The Gateway is
-    co-located in operator / Podman deployments (ADR-004); ADR-049 plans
+    co-located in operator deployments (ADR-054) and Podman deployments
+    (ADR-004); ADR-049 plans
     Gateway embedding in the local daemon as future work.
 
 13. **Transforms are semantically trusted; the engine owns state and syntax**
