@@ -43,7 +43,7 @@ From the repo root:
 tox -e build
 ```
 
-This builds a shared base image, eleven service images, and pulls one official image:
+This builds a shared base image, eleven service images, and pulls two official images:
 
 | Image | Source | Purpose |
 |-------|--------|---------|
@@ -58,6 +58,7 @@ This builds a shared base image, eleven service images, and pulls one official i
 | `apme-gateway:latest` | `containers/gateway/Dockerfile` | REST API + gRPC Reporting service (PostgreSQL) |
 | `apme-ui:latest` | `containers/ui/Dockerfile` | React SPA served by nginx (proxies API to Gateway) |
 | `apme-cli:latest` | `containers/cli/Dockerfile` | CLI client |
+| `postgres:16` | [Official image](https://hub.docker.com/_/postgres) (pulled) | PostgreSQL sidecar for Gateway persistence (`tox -e up`; preload for offline use) |
 | `ghcr.io/redhat-developer/abbenay:v2026.8.7` | [Official image](https://github.com/redhat-developer/abbenay/pkgs/container/abbenay) (pulled) | Abbenay AI daemon (LLM gateway for Tier 2 remediation) |
 
 ### Configure Abbenay AI (optional)

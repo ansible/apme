@@ -49,7 +49,7 @@ Configuration is environment-variable driven:
 |----------|---------|---------|
 | `APME_GATEWAY_GRPC_LISTEN` | `0.0.0.0:50060` | gRPC bind address |
 | `APME_GATEWAY_HTTP_PORT` | `8080` | HTTP bind port |
-| `APME_DATABASE_URL` | *(required)* | PostgreSQL SQLAlchemy URL (`postgresql+asyncpg://...`) |
+| `APME_DATABASE_URL` | *(required)* | PostgreSQL SQLAlchemy URL (`postgresql+asyncpg://...`). Loopback hosts (`127.0.0.1`, `localhost`, `::1`) may omit TLS. Non-loopback hosts require certificate-validated TLS (`?sslmode=verify-full` with a configured CA); see [DEPLOYMENT.md](../guides/DEPLOYMENT.md). |
 
 ## gRPC Reporting Servicer
 

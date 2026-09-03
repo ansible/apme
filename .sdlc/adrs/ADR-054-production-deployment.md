@@ -85,8 +85,12 @@ External access uses Service + Ingress:
 | PVC | Access Mode | Used By | Purpose |
 |-----|-------------|---------|---------|
 | `sessions` | ReadWriteOnce | Simple pod | Session venvs (Engine rw, validators ro) |
-| `postgres-data` | ReadWriteOnce | Simple pod (PostgreSQL) | PostgreSQL database |
 | `proxy-cache` | ReadWriteOnce | Simple pod | Galaxy Proxy wheel cache |
+
+PostgreSQL persistence is external to the Helm chart: operators supply
+`gateway.database.url` or `gateway.database.existingSecret` (see
+`deploy/helm/apme/README.md`). The reference Podman pod and bootc quadlet
+deploy a `postgres:16` sidecar with a `postgres-data` PVC instead.
 
 ReadWriteOnce is sufficient for the Simple single-replica topology (ADR-069).
 If a future multi-replica topology returns, shared Galaxy Proxy cache may need
