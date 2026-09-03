@@ -454,9 +454,6 @@ export function OperationPanel({
       );
     }
 
-    const canStillCommit =
-      needsCommitStep(state) && !(state.pr_url || localPrUrl);
-
     return withStepper(
       state,
       enableAi,
@@ -464,14 +461,6 @@ export function OperationPanel({
         result={resultData}
         isRemediate={state.scan_type === 'remediate' || (resultData.remediated_count ?? 0) > 0}
         onDismiss={onDismiss}
-        onCreatePR={
-          canStillCommit
-            ? () => {
-                handleSubmit({ create_pr: true }).catch(() => {});
-              }
-            : undefined
-        }
-        prCreating={prCreating || status === 'submitting_pr'}
         prUrl={state.pr_url || localPrUrl}
         prError={prError}
         scanId={state.scan_id}
