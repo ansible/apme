@@ -125,6 +125,9 @@ assert_fail_message() {
   fi
 }
 
+# Gateway persistence requires APME_DATABASE_URL (postgresql+asyncpg).
+HELM_TEST_DB_SET=(--set 'gateway.database.url=postgresql+asyncpg://apme:apme@postgres:5432/apme')
+
 engine_container_block() {
   awk '
     /- name: engine$/ {grab=1}
@@ -135,6 +138,7 @@ engine_container_block() {
 
 echo "==> helm template assertions (ADR-069 Simple)"
 RENDER="$("${HELM_BIN}" template test-release "${CHART_DIR}" \
+  "${HELM_TEST_DB_SET[@]}" \
   --set abbenay.enabled=true \
   --set abbenay.token=test-token \
   --set abbenay.providers.openrouter.engine=openrouter \
@@ -169,10 +173,13 @@ assert_template_contains "abbenay XDG_RUNTIME_DIR" "${RENDER}" "value: /tmp/abbe
 assert_template_contains "abbenay probe connects to unix socket" "${RENDER}" "createConnection('/tmp/abbenay-run/abbenay/daemon.sock')"
 assert_template_contains "abbenay probe ends captured socket" "${RENDER}" "s.on('connect',function(){s.end();process.exit(0)})"
 assert_template_contains "gateway engine addr localhost" "${RENDER}" 'value: "127.0.0.1:50051"'
+assert_template_contains "gateway database url" "${RENDER}" 'name: APME_DATABASE_URL'
+assert_template_lacks "no sqlite db path" "${RENDER}" 'name: APME_DB_PATH'
 assert_template_contains "gateway Service" "${RENDER}" "name: test-release-apme-gateway"
 assert_template_contains "engine Deployment" "${RENDER}" "name: test-release-apme-engine"
 
 ENGINE_OVERRIDE_RENDER="$("${HELM_BIN}" template test-release "${CHART_DIR}" \
+  "${HELM_TEST_DB_SET[@]}" \
   --set engine.resources.engine.limits.memory=4Gi \
   --set engine.resources.engine.limits.cpu=4)"
 # Scope assertions to the engine container block so sibling containers with the
@@ -186,11 +193,13 @@ assert_template_contains "engine max concurrent RPCs" "${ENGINE_OVERRIDE_RENDER}
   'name: APME_ENGINE_MAX_RPCS'
 
 PORTAL_RENDER="$("${HELM_BIN}" template test-release "${CHART_DIR}" \
+  "${HELM_TEST_DB_SET[@]}" \
   -f "${CHART_DIR}/values-portal.yaml")"
 assert_template_lacks "portal: no ui container" "${PORTAL_RENDER}" $'- name: ui\n'
 assert_template_contains "portal: gateway present" "${PORTAL_RENDER}" $'- name: gateway\n'
 
 REPLICAS_ERR="$("${HELM_BIN}" template test-release "${CHART_DIR}" \
+  "${HELM_TEST_DB_SET[@]}" \
   --set engine.replicas=2 2>&1 >/dev/null)" && {
   echo "FAIL: expected helm template to fail when engine.replicas=2" >&2
   exit 1
@@ -198,6 +207,7 @@ REPLICAS_ERR="$("${HELM_BIN}" template test-release "${CHART_DIR}" \
 assert_fail_message "replicas>1" "${REPLICAS_ERR}" "engine.replicas must be 1"
 
 HPA_ERR="$("${HELM_BIN}" template test-release "${CHART_DIR}" \
+  "${HELM_TEST_DB_SET[@]}" \
   --set autoscaling.enabled=true 2>&1 >/dev/null)" && {
   echo "FAIL: expected helm template to fail when autoscaling.enabled=true" >&2
   exit 1
@@ -205,12 +215,19 @@ HPA_ERR="$("${HELM_BIN}" template test-release "${CHART_DIR}" \
 assert_fail_message "HPA rejected" "${HPA_ERR}" "autoscaling.enabled must be false"
 
 ROUTE_HOST_ERR="$("${HELM_BIN}" template test-release "${CHART_DIR}" \
+  "${HELM_TEST_DB_SET[@]}" \
   --set route.enabled=true \
   --api-versions route.openshift.io/v1 2>&1 >/dev/null)" && {
   echo "FAIL: expected helm template to fail when route.enabled=true without route.host (ui enabled)" >&2
   exit 1
 }
 assert_fail_message "route.host required" "${ROUTE_HOST_ERR}" "route.host is required"
+
+DB_ERR="$("${HELM_BIN}" template test-release "${CHART_DIR}" 2>&1 >/dev/null)" && {
+  echo "FAIL: expected helm template to fail without gateway.database.url" >&2
+  exit 1
+}
+assert_fail_message "database url required" "${DB_ERR}" "gateway.database.url or gateway.database.existingSecret.name is required"
 
 # Confirm Service selectors + no Abbenay Service / extra Deployments
 RENDER_FILE="$(mktemp)"
