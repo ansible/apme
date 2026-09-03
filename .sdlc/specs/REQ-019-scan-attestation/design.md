@@ -55,8 +55,10 @@ on Gateway only (engine containers never mount signing keys):
 - **Operator (Kubernetes/OpenShift):** mount a Kubernetes Secret read-only into
   the Gateway container (for example `/etc/apme/secrets/signing-key.pem`) and set
   `APME_SIGNING_KEY` to that in-container path.
-- **Podman pod (`tox -e up`):** bind-mount the PEM into the `gateway` container
-  and set `APME_SIGNING_KEY` to the mounted path (same grammar as operator).
+- **Podman pod (`tox -e up`):** bind-mount the PEM **read-only** into the
+  `gateway` container (for example host `/path/to/signing-key.pem` →
+  `/etc/apme/secrets/signing-key.pem` with `:ro` or `readOnly: true`) and set
+  `APME_SIGNING_KEY` to that in-container path.
 - **bootc VM:** place the PEM under `/etc/apme/secrets/` (or another host path
   mounted read-only into `apme-gateway`), set `APME_SIGNING_KEY` in
   `/etc/apme/env/apme.env`, and restart the Gateway quadlet.
@@ -80,9 +82,9 @@ mounted read-only into the Gateway container (e.g.,
 `APME_SIGNING_KEY`. Keys are never mounted into engine containers.
 
 **Podman and bootc:** provision the same `APME_SIGNING_KEY` path grammar on
-Gateway via a host bind-mount (Podman `pod.yaml` gateway volume) or bootc
-`/etc/apme/env/apme.env` plus a read-only quadlet volume — see Offline /
-air-gapped mode above.
+Gateway via a **read-only** host bind-mount (Podman `pod.yaml` gateway volume
+with `:ro` / `readOnly: true`) or bootc `/etc/apme/env/apme.env` plus a
+read-only quadlet volume — see Offline / air-gapped mode above.
 
 Each keyed signer has a stable **key ID** (`keyid` in the envelope) derived from the public key fingerprint (see contract wire-format section for exact algorithm). Gateway persists the public key material in a verifier **trust set** keyed by `keyid`.
 

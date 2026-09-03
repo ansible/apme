@@ -34,8 +34,12 @@ The Gateway reverse-proxies an
 `GET /api/v1/ai/models` remains Engine → Abbenay gRPC (`ListAIModels`). Chat
 is **not** proxied. Set `APME_ABBENAY_HTTP_URL` (default
 `http://127.0.0.1:8787` for loopback-only Simple topology) and
-`APME_ABBENAY_HTTP_TOKEN` on the Gateway (same secret as `ABBENAY_API_TOKEN` /
-the operator/Podman consumer token). Cleartext HTTP is allowed only for loopback hosts
+`APME_ABBENAY_HTTP_TOKEN` on the Gateway — must match Abbenay's HTTP server
+token (`ABBENAY_API_TOKEN` / `server.api_token_env`). This is separate from
+`APME_ABBENAY_TOKEN`, the Engine's `abbenay-client` consumer token (sent as
+`x-abbenay-token` on gRPC). The two values may match only when configured
+identically (the Podman dev pod uses the same value for convenience). Cleartext
+HTTP is allowed only for loopback hosts
 (`127.0.0.1`, `localhost`, `::1`); any non-loopback URL must use HTTPS, and the
 Gateway proxy keeps TLS certificate validation enabled.
 

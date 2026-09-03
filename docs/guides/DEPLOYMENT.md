@@ -12,10 +12,12 @@ APME supports multiple deployment methods depending on your environment and need
 > **Deploying on Kubernetes or OpenShift?** Use the [APME Operator](https://github.com/ansible/apme-operator)
 > in the `ansible/apme-operator` repository. Do not use Podman on K8s/OCP.
 
-Full deployment methods (Podman, bootc, operator) run the complete engine stack
-(Engine + all validators + Galaxy Proxy). The CLI daemon runs Engine plus core
-validators (Native, OPA, Ansible) + Galaxy Proxy. Optional validators
-(Gitleaks, Collection Health, Dep Audit) are not started unless
+All full deployments run the core engine stack (Engine, Native, OPA, Ansible,
+Galaxy Proxy). **Podman** and **bootc** reference manifests also start optional
+validators (Gitleaks, Collection Health, Dep Audit) by default. **Operator**
+deployments run core validators plus Gitleaks, Collection Health, and Dep Audit
+only when enabled in the custom resource (ADR-054). The **CLI daemon** runs
+Engine plus core validators; optional validators are not started unless
 `include_optional=True`. Gateway HTTP/Reporting gRPC co-location in the local
 daemon is planned (ADR-049) but not implemented in `launcher.py` yet — use the
 Podman pod or start Gateway separately for REST-backed commands such as
