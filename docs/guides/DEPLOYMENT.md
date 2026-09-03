@@ -471,8 +471,10 @@ allowed engine HPA. Upgrading to this chart:
 - Keeps ClusterIP Service names `*-gateway` and `*-ui` (they now select the
   Simple pod)
 
-PVC names (`*-sessions`, `*-postgres-data`, `*-proxy-cache`) replace the legacy
-`*-gateway-data` claim for PostgreSQL storage.
+PVC names (`*-sessions`, `*-gateway-data`, `*-proxy-cache`) are unchanged. The
+`*-gateway-data` claim is retained for pre-PostgreSQL rollback only; Gateway
+persistence uses external PostgreSQL via `gateway.database.url` or
+`gateway.database.existingSecret`.
 
 ### PostgreSQL (required)
 

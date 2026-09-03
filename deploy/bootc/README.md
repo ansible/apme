@@ -171,10 +171,13 @@ systemctl disable apme-pod.service
 | Path | Purpose | Backup? |
 |------|---------|---------|
 | `/var/lib/apme/sessions/` | Session venvs (ephemeral, rebuilt on scan) | No |
-| `/var/lib/apme/postgres/` | Gateway PostgreSQL data directory (scan history) | Yes |
+| `/var/lib/apme/gateway/` | Legacy Gateway mount (pre-PostgreSQL SQLite file) | Rollback only |
 | `/var/lib/apme/proxy-cache/` | Galaxy Proxy wheel cache | No |
 
-Back up `/var/lib/apme/postgres/` to preserve scan history across upgrades.
+Gateway scan history lives in the **external PostgreSQL** service configured by
+`APME_DATABASE_URL` — bootc does not mount a local PostgreSQL data directory.
+Back up that database with your PostgreSQL provider's tooling (for example
+`pg_dump` against the DSN in `/etc/apme/env/apme.env`).
 
 ### Upgrading from SQLite (pre-PostgreSQL-only Gateway)
 
@@ -201,9 +204,10 @@ bootc images do not ship `tox` or Podman volume names. Before upgrading:
 
 1. Stop the pod: `sudo systemctl stop apme-pod.service`.
 2. Archive the legacy SQLite file if present at `/var/lib/apme/gateway/apme.db`
-   (pre-PostgreSQL installs) and `/var/lib/apme/postgres/` after cutover for
-   rollback only.
-3. Update `APME_DATABASE_URL` in `/etc/apme/env/apme.env` if the PostgreSQL
+   (pre-PostgreSQL installs) for rollback only.
+3. Back up the external PostgreSQL database referenced by `APME_DATABASE_URL`
+   before cutover (see above).
+4. Update `APME_DATABASE_URL` in `/etc/apme/env/apme.env` if the PostgreSQL
    endpoint changed, then restart: `sudo systemctl start apme-pod.service`.
 
 Automated SQLite-to-PostgreSQL migration tooling is tracked in ansible/apme#627.

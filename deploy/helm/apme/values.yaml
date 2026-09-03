@@ -111,8 +111,15 @@ gateway:
   # Retained for compatibility; must be 1 (Gateway is not a separate Deployment).
   replicas: 1
   # ``database.url`` or ``database.existingSecret`` is required. Gateway persistence
-  # uses ``APME_DATABASE_URL`` (``postgresql+asyncpg://...``). URLs must use the
-  # async driver (plain ``postgresql://`` is rejected).
+  # uses ``APME_DATABASE_URL`` (``postgresql+asyncpg://...``) against an external
+  # PostgreSQL service — the chart does not deploy PostgreSQL or create a
+  # ``*-postgres-data`` PVC. Remote production hosts must use certificate-validated
+  # TLS (``?sslmode=verify-full`` with a configured CA).
+  #
+  # PostgreSQL cutover: upgrading from a chart that stored SQLite on
+  # ``*-gateway-data`` does not migrate scan history. The external PostgreSQL
+  # database starts empty; the legacy ``*-gateway-data`` PVC is retained and
+  # mounted for pre-cutover rollback only.
   database:
     url: ""
     existingSecret:

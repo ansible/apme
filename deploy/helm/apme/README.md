@@ -214,7 +214,7 @@ Gateway DB and Abbenay down together.
 | `networkPolicy.enabled` | `false` | Enable NetworkPolicy |
 | `podDisruptionBudget.enabled` | `false` | Enable PDB |
 | `persistence.sessions.size` | `10Gi` | Session venv PVC size |
-| `persistence.gateway.size` | `5Gi` | Gateway DB PVC size |
+| `persistence.gateway.size` | `5Gi` | Legacy `*-gateway-data` PVC (pre-PostgreSQL rollback only; Gateway uses external PostgreSQL) |
 | `persistence.abbenay.enabled` | `false` | When `true` (and `abbenay.enabled`), PVC for Abbenay runtime config and file-store secrets (`secrets.json`); otherwise `emptyDir` |
 | `persistence.abbenay.size` | `100Mi` | Abbenay config PVC size (seed-once from ConfigMap; runtime SoT after configure; also holds `secrets.json` for `secretStore: file`) |
 

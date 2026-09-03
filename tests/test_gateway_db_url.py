@@ -147,6 +147,25 @@ def test_asyncpg_ssl_connect_arg_maps_sslmode_verify_full() -> None:
     )
 
 
+@pytest.mark.asyncio  # type: ignore[untyped-decorator]
+async def test_ensure_worker_database_rejects_remote_without_tls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Remote APME_TEST_DATABASE_URL must declare certificate-validated TLS.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+    from tests.gateway_db import ensure_worker_database
+
+    monkeypatch.setenv(
+        "APME_TEST_DATABASE_URL",
+        "postgresql+asyncpg://user:pass@db.example.com:5432/apme",
+    )
+    with pytest.raises(ValueError, match="certificate-validated TLS"):
+        await ensure_worker_database()
+
+
 def test_resolve_database_url_rejects_conflicting_tls_parameters() -> None:
     """Conflicting sslmode and ssl query parameters are rejected."""
     with pytest.raises(ValueError, match="Conflicting TLS parameters"):

@@ -10,7 +10,7 @@ from urllib.parse import urlparse, urlunparse
 import pytest
 
 from apme_gateway.db import close_db, init_db, reset_db
-from apme_gateway.db.url import asyncpg_ssl_connect_arg
+from apme_gateway.db.url import _require_secure_transport, asyncpg_ssl_connect_arg
 from apme_gateway.operation_registry import get_operation_registry
 
 _WORKER_NAME_RE = re.compile(r"^(master|gw\d+)$")
@@ -72,6 +72,7 @@ async def ensure_worker_database() -> str:
     import asyncpg
 
     base_url = base_test_database_url()
+    _require_secure_transport(base_url)
     parsed = urlparse(base_url.replace("postgresql+asyncpg://", "postgresql://"))
     db_name = worker_database_name()
     connect_kwargs: dict[str, object] = {
