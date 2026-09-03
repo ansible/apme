@@ -167,9 +167,11 @@ strictly simpler and safer than fan-out from every container.
 - Local dashboards: `containers/observability/up.sh` (Prometheus + Grafana
   on loopback).
 - OTLP forward-out from the sidecar: https://github.com/ansible/apme/issues/457
-- Operator: engine Deployment should co-locate the collector with the engine
-  stack (ADR-054); do not require Gateway/UI Deployments to emit unless
-  they gain independent metrics needs.
+- Operator: v1 does not ship an in-pod collector (ADR-054). Configure
+  `OTEL_EXPORTER_OTLP_ENDPOINT` on workloads for an external/platform
+  collector. Co-locating a collector with the engine stack is future operator
+  work; Gateway/UI Deployments do not need independent metrics emission unless
+  that changes.
 
 ## Acceptance Criteria
 

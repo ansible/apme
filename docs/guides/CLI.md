@@ -235,7 +235,7 @@ production use or full feature access, use a [deployment method](DEPLOYMENT.md).
 | Python CVE audit | Not available (daemon does not start optional validators) | Yes |
 | SBOM generation | Requires Gateway | Yes |
 | Atomic upgrades / rollback | No | Yes (bootc) |
-| Horizontal scaling | No | Yes (operator) |
+| Horizontal scaling | No | No (current operator; future topology — ADR-012) |
 
 ### When to use the CLI
 

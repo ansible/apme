@@ -20,7 +20,8 @@ validators (Native, OPA, Ansible) + Galaxy Proxy. Optional validators
 daemon is planned (ADR-049) but not implemented in `launcher.py` yet — use the
 Podman pod or start Gateway separately for REST-backed commands such as
 `apme sbom`. The difference from full deployment is lifecycle management and
-additional pod-level services (Gateway, UI, Abbenay AI, OTel Collector).
+additional pod-level services (Gateway, UI, Abbenay AI; the Podman pod also
+ships an in-pod OTel Collector — operator v1 uses an external collector instead).
 
 ---
 
