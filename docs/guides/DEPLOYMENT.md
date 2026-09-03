@@ -268,10 +268,13 @@ The Settings page (`/settings`) provides a model picker that queries available A
 #### Upgrading from SQLite (pre-PostgreSQL-only Gateway)
 
 Podman upgrades rename the database PVC from `apme-gateway-data` to
-`apme-postgres-data` and provision a `postgres:16` sidecar. Existing SQLite scan
-history in the legacy volume is **not** migrated automatically. Back up
-`apme.db` from the old `apme-gateway-data` volume before upgrading if you need
-to retain history. See [bootc README](/deploy/bootc/README.md#persistent-data)
+`apme-postgres-data` and provision a `postgres:16` sidecar. **SQLite scan
+history retention is unsupported** — the Gateway provides no export/import path
+and this repository ships no SQLite-to-PostgreSQL migration tool. Before
+upgrading, archive the legacy `apme-gateway-data` volume if you need a
+pre-cutover rollback hold point (`tox -e down` before copying `apme.db` so
+filesystem copies include WAL/journal data). After `tox -e up`, the Gateway
+starts with an empty PostgreSQL database. See [bootc README](/deploy/bootc/README.md#upgrading-from-sqlite-pre-postgresql-only-gateway)
 for the same guidance on VM deployments.
 
 #### Observability (Podman pod only)
@@ -485,8 +488,8 @@ manifest. For non-production installs you may set `gateway.database.url` directl
 instead of a Secret.
 
 > **Migration warning:** Upgrading from a pre-PostgreSQL chart that stored SQLite
-> on `*-gateway-data` does not migrate existing scan history. Back up the legacy
-> SQLite file and perform a separate import before cutover.
+> on `*-gateway-data` does not migrate existing scan history. **History retention
+> is unsupported.** Archive the legacy `*-gateway-data` PVC for rollback only.
 
 ### Quick start
 

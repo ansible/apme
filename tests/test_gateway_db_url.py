@@ -77,8 +77,8 @@ def test_resolve_database_url_rejects_malformed_env_url(monkeypatch: pytest.Monk
 
 
 def test_resolve_database_url_rejects_remote_without_tls() -> None:
-    """Remote PostgreSQL URLs must declare TLS."""
-    with pytest.raises(ValueError, match="must use TLS"):
+    """Remote PostgreSQL URLs must declare certificate-validated TLS."""
+    with pytest.raises(ValueError, match="certificate-validated TLS"):
         resolve_database_url(database_url="postgresql+asyncpg://user:pass@db.example.com:5432/apme")
 
 
@@ -88,22 +88,29 @@ def test_resolve_database_url_allows_loopback_without_tls() -> None:
     assert url == "postgresql+asyncpg://apme:apme@127.0.0.1:5432/apme"
 
 
-def test_resolve_database_url_allows_remote_with_sslmode_require() -> None:
-    """Remote PostgreSQL URLs map sslmode=require to asyncpg ssl=require."""
+def test_resolve_database_url_rejects_remote_with_sslmode_require() -> None:
+    """Remote PostgreSQL URLs must use certificate-validated TLS."""
+    with pytest.raises(ValueError, match="certificate-validated TLS"):
+        resolve_database_url(
+            database_url="postgresql+asyncpg://user:pass@db.example.com:5432/apme?sslmode=require",
+        )
+
+
+def test_resolve_database_url_rejects_remote_with_ssl_true() -> None:
+    """Remote PostgreSQL URLs reject boolean ssl=true (maps to unvalidated TLS)."""
+    with pytest.raises(ValueError, match="certificate-validated TLS"):
+        resolve_database_url(
+            database_url="postgresql+asyncpg://user:pass@db.example.com:5432/apme?ssl=true",
+        )
+
+
+def test_resolve_database_url_allows_remote_with_sslmode_verify_ca() -> None:
+    """Remote PostgreSQL URLs map sslmode=verify-ca to asyncpg ssl=verify-ca."""
     url = resolve_database_url(
-        database_url="postgresql+asyncpg://user:pass@db.example.com:5432/apme?sslmode=require",
+        database_url="postgresql+asyncpg://user:pass@db.example.com:5432/apme?sslmode=verify-ca",
     )
-    assert "ssl=require" in url
+    assert "ssl=verify-ca" in url
     assert "sslmode=" not in url
-
-
-def test_resolve_database_url_allows_remote_with_ssl_true() -> None:
-    """Remote PostgreSQL URLs map ssl=true to asyncpg ssl=require."""
-    url = resolve_database_url(
-        database_url="postgresql+asyncpg://user:pass@db.example.com:5432/apme?ssl=true",
-    )
-    assert "ssl=require" in url
-    assert "ssl=true" not in url
 
 
 def test_resolve_database_url_maps_sslmode_verify_full() -> None:
@@ -115,39 +122,39 @@ def test_resolve_database_url_maps_sslmode_verify_full() -> None:
     assert "sslmode=" not in url
 
 
-def test_resolve_database_url_asyncpg_connect_args_accept_sslmode_require() -> None:
+def test_resolve_database_url_asyncpg_connect_args_accept_sslmode_verify_full() -> None:
     """Resolved URLs must not pass unsupported sslmode to asyncpg.connect."""
     from sqlalchemy.dialects.postgresql.asyncpg import PGDialect_asyncpg
     from sqlalchemy.engine import make_url
 
     url = resolve_database_url(
-        database_url="postgresql+asyncpg://user:pass@db.example.com:5432/apme?sslmode=require",
+        database_url="postgresql+asyncpg://user:pass@db.example.com:5432/apme?sslmode=verify-full",
     )
     dialect = PGDialect_asyncpg()
     _, connect_args = dialect.create_connect_args(make_url(url))
-    assert connect_args.get("ssl") == "require"
+    assert connect_args.get("ssl") == "verify-full"
     assert "sslmode" not in connect_args
 
 
-def test_resolve_database_url_asyncpg_connect_args_accept_ssl_true() -> None:
-    """Resolved URLs must map boolean ssl=true to asyncpg ssl=require."""
+def test_resolve_database_url_asyncpg_connect_args_accept_ssl_verify_ca() -> None:
+    """Resolved URLs must map sslmode=verify-ca for asyncpg.connect."""
     from sqlalchemy.dialects.postgresql.asyncpg import PGDialect_asyncpg
     from sqlalchemy.engine import make_url
 
     url = resolve_database_url(
-        database_url="postgresql+asyncpg://user:pass@db.example.com:5432/apme?ssl=true",
+        database_url="postgresql+asyncpg://user:pass@db.example.com:5432/apme?sslmode=verify-ca",
     )
     dialect = PGDialect_asyncpg()
     _, connect_args = dialect.create_connect_args(make_url(url))
-    assert connect_args.get("ssl") == "require"
-    assert connect_args.get("ssl") != "true"
+    assert connect_args.get("ssl") == "verify-ca"
+    assert "sslmode" not in connect_args
 
 
 def test_resolve_database_url_rejects_conflicting_tls_parameters() -> None:
     """Conflicting sslmode and ssl query parameters are rejected."""
     with pytest.raises(ValueError, match="Conflicting TLS parameters"):
         resolve_database_url(
-            database_url="postgresql+asyncpg://user:pass@db.example.com:5432/apme?sslmode=disable&ssl=true",
+            database_url="postgresql+asyncpg://user:pass@db.example.com:5432/apme?sslmode=verify-full&ssl=disable",
         )
 
 

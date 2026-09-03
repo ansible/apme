@@ -309,7 +309,7 @@ Gateway API at `/api`.
 
 The chart is **Simple / single-replica** (ADR-069). Setting
 `engine.replicas > 1` or `autoscaling.enabled: true` fails Helm render.
-Multi-replica engine farms need a future topology ADR (Gateway SQLite and
+Multi-replica engine farms need a future topology ADR (external PostgreSQL and
 Abbenay cannot share a scaled pod without redesign).
 
 ## OpenShift compatibility

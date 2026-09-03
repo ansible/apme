@@ -296,8 +296,9 @@ The wrapper adds **Ansible-aware filtering**:
 **Scale pods, not services within a pod** (ADR-012) defines the conceptual
 engine unit. The **Helm chart** (EAP / upstream) ships a **Simple all-in-one**
 pod (ADR-069): engine + Gateway + UI + optional Abbenay on localhost — same
-shape as Podman. Multi-replica engine HPA is out of chart scope while Gateway
-PostgreSQL is co-located in that pod.
+shape as Podman. PostgreSQL is **external** to the chart (configured via
+`gateway.database.url` or `gateway.database.existingSecret`); multi-replica
+engine HPA is out of chart scope.
 
 ```text
   Ingress / Service :8080

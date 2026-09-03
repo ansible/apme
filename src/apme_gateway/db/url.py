@@ -13,9 +13,11 @@ _MISSING_URL_MSG = "APME_DATABASE_URL is required (postgresql+asyncpg://user:pas
 _SUPPORTED_ASYNC_DRIVERS = frozenset({"postgresql+asyncpg"})
 _SENSITIVE_QUERY_KEYS = frozenset({"password", "passwd", "pass", "secret", "token", "api_key", "access_token"})
 _LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
-_SECURE_SSLMODES = frozenset({"require", "verify-ca", "verify-full"})
-_SECURE_SSL_VALUES = frozenset({"1", "true", "require", "yes"})
-_REMOTE_TLS_REQUIRED_MSG = "APME_DATABASE_URL must use TLS (sslmode=require or ssl=true) for non-loopback hosts"
+_CERT_VALIDATED_SSLMODES = frozenset({"verify-ca", "verify-full"})
+_REMOTE_TLS_REQUIRED_MSG = (
+    "APME_DATABASE_URL must use certificate-validated TLS "
+    "(sslmode=verify-full or sslmode=verify-ca) for non-loopback hosts"
+)
 _UNSUPPORTED_SSLMODE_MSG = "Unsupported sslmode in APME_DATABASE_URL"
 _UNSUPPORTED_SSL_MSG = "Unsupported ssl parameter in APME_DATABASE_URL"
 _CONFLICTING_TLS_MSG = "Conflicting TLS parameters in APME_DATABASE_URL"
@@ -126,7 +128,7 @@ def _require_secure_transport(url: str) -> None:
     query = dict(parsed.query)
     sslmode = str(query.get("sslmode", "")).lower()
     ssl = str(query.get("ssl", "")).lower()
-    if sslmode in _SECURE_SSLMODES or ssl in _SECURE_SSL_VALUES:
+    if sslmode in _CERT_VALIDATED_SSLMODES or ssl in _CERT_VALIDATED_SSLMODES:
         return
     raise ValueError(_REMOTE_TLS_REQUIRED_MSG)
 
