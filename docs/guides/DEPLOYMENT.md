@@ -274,7 +274,7 @@ and this repository ships no SQLite-to-PostgreSQL migration tool. Before
 upgrading, archive the legacy `apme-gateway-data` volume if you need a
 pre-cutover rollback hold point (`tox -e down` before copying `apme.db` so
 filesystem copies include WAL/journal data). After `tox -e up`, the Gateway
-starts with an empty PostgreSQL database. See [bootc README](/deploy/bootc/README.md#upgrading-from-sqlite-pre-postgresql-only-gateway)
+starts with an empty PostgreSQL database. See [bootc README](../../deploy/bootc/README.md#upgrading-from-sqlite-pre-postgresql-only-gateway)
 for the same guidance on VM deployments.
 
 #### Observability (Podman pod only)

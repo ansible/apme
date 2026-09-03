@@ -207,8 +207,10 @@ bootc images do not ship `tox` or Podman volume names. Before upgrading:
    (pre-PostgreSQL installs) for rollback only.
 3. Back up the external PostgreSQL database referenced by `APME_DATABASE_URL`
    before cutover (see above).
-4. Update `APME_DATABASE_URL` in `/etc/apme/env/apme.env` if the PostgreSQL
-   endpoint changed, then restart: `sudo systemctl start apme-pod.service`.
+4. Set `APME_DATABASE_URL` in `/etc/apme/env/apme.env` to a valid
+   `postgresql+asyncpg://...` URL pointing at your external PostgreSQL service.
+   Pre-PostgreSQL installs may not have this variable; the Gateway will not
+   start without it. Then restart: `sudo systemctl start apme-pod.service`.
 
 Automated SQLite-to-PostgreSQL migration tooling is tracked in ansible/apme#627.
 

@@ -12,6 +12,7 @@ Run with::
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import socket
@@ -167,9 +168,9 @@ def _start_infrastructure() -> None:
     gateway_grpc_port = _free_port()
     gateway_http_port = _free_port()
     from apme_gateway.db.url import sanitize_database_url
-    from tests.gateway_db import base_test_database_url
+    from tests.gateway_db import ensure_worker_database
 
-    gateway_database_url = base_test_database_url()
+    gateway_database_url = asyncio.run(ensure_worker_database())
     engine_addr = "127.0.0.1:50051"
     gateway_env = {
         **os.environ,

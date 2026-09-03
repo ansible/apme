@@ -295,6 +295,13 @@ PostgreSQL data is stored in a dedicated persistent volume mounted on the
 containers:
   - name: postgres
     image: postgres:16
+    env:
+      - name: POSTGRES_USER
+        value: "apme"
+      - name: POSTGRES_PASSWORD
+        value: "apme"
+      - name: POSTGRES_DB
+        value: "apme"
     volumeMounts:
       - name: postgres-data
         mountPath: /var/lib/postgresql/data
@@ -303,6 +310,9 @@ containers:
       - name: APME_DATABASE_URL
         value: "postgresql+asyncpg://apme:apme@127.0.0.1:5432/apme"
 ```
+
+See [`containers/podman/pod.yaml`](../../containers/podman/pod.yaml) for the
+reference Podman sidecar definition.
 
 ---
 
