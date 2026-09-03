@@ -329,9 +329,10 @@ it as the `--index-strategy` argument to `uv pip install`.
 
 For development and testing without the Podman pod, the CLI can start a
 local daemon that runs Engine, Native, OPA, and Ansible as localhost gRPC
-servers, Galaxy Proxy as an HTTP service, and Gateway HTTP plus Reporting
-gRPC per ADR-049. Optional validators (Gitleaks, Collection Health, Dep Audit)
-start only when `include_optional=True`.
+servers and Galaxy Proxy as an HTTP service. Optional validators (Gitleaks,
+Collection Health, Dep Audit) start only when `include_optional=True`.
+Gateway HTTP and Reporting gRPC are not started by `launcher.py` (ADR-049 is
+planned); run Gateway separately for REST-backed commands such as `apme sbom`.
 
 ```bash
 # Install tox + project (one-time)
@@ -350,7 +351,7 @@ apme remediate .
 apme daemon stop
 ```
 
-**Daemon mode** starts a local Engine with Native, OPA, and Ansible validators as in-process gRPC servers, Galaxy Proxy as an HTTP service (uvicorn), and Gateway HTTP plus Reporting gRPC (ADR-049). Optional validators (Gitleaks, Collection Health, Dep Audit) start only when `include_optional=True`. The OPA validator gRPC server is always started; policy evaluation uses Podman by default or a local `opa` binary when `OPA_USE_PODMAN=0`. OPA infrastructure failures surface as validator R902 errors so `check` and `remediate` cannot return silently incomplete results.
+**Daemon mode** starts a local Engine with Native, OPA, and Ansible validators as in-process gRPC servers and Galaxy Proxy as an HTTP service (uvicorn). Optional validators (Gitleaks, Collection Health, Dep Audit) start only when `include_optional=True`. Gateway HTTP and Reporting gRPC are not started by `launcher.py` (ADR-049 is planned). The OPA validator gRPC server is always started; policy evaluation uses Podman by default or a local `opa` binary when `OPA_USE_PODMAN=0`. OPA infrastructure failures surface as validator R902 errors so `check` and `remediate` cannot return silently incomplete results.
 
 ## Troubleshooting
 

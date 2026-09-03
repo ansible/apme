@@ -286,11 +286,13 @@ Gateway stays a proxy. Default operator `emptyDir` is still ephemeral — enable
   Reject unknown paths (including `chat`) and encoded `..` traversal.
 - **Env**: e.g. `APME_ABBENAY_HTTP_URL` default `http://127.0.0.1:8787`;  
   `APME_ABBENAY_HTTP_TOKEN` (or shared secret with Abbenay `server.api_token_env`).
-- **Deploy**: operator sidecar + Podman — `abbenay web --host 127.0.0.1
-  --port 8787 --grpc-host 127.0.0.1 --grpc-port 50057` (image ≥ v2026.8.0);
-  no Service/hostPort for HTTP or gRPC; see
-  [apme-operator](https://github.com/ansible/apme-operator) and ADR-070. Both
-  topologies bind Abbenay to loopback (pod-shared netns).
+- **Deploy** (image ≥ v2026.8.0; no Service/hostPort for HTTP or gRPC):
+  - **Operator**: `abbenay web --host 127.0.0.1 --port 8787 --grpc-host
+    127.0.0.1 --grpc-port 50057` — see
+    [apme-operator](https://github.com/ansible/apme-operator).
+  - **Podman**: `abbenay web --host 0.0.0.0 --port 8787 --grpc-host 127.0.0.1
+    --grpc-port 50057` with `hostIP: 127.0.0.1` hostPort so the host can reach
+    the listener while the published port stays localhost-only.
 - **Conflict**: `GET /api/v1/ai/models` remains Engine-backed; proxy excludes
   `models` for all methods. Register main router before the proxy mount.
 - **OpenAPI**: proxy routes `include_in_schema=False` (Abbenay owns schemas);
