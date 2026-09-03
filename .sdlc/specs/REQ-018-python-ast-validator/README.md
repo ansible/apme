@@ -238,8 +238,18 @@ Follow the same pattern as Collection Health (`:50058`) and Dep Audit (`:50059`)
 2. `src/apme_engine/daemon/launcher.py` — add port `50062`, env var mapping, and `serve()` call
 3. `pyproject.toml` — add `apme-python-ast-validator` console script
 4. `containers/podman/pod.yaml` — add `python-ast` container; set `PYTHON_AST_GRPC_ADDRESS` on Engine
-5. `ansible/apme-operator` engine deployment manifest — add env vars (mirror dep-audit pattern)
+5. [`ansible/apme-operator`](https://github.com/ansible/apme-operator)
+   `internal/manifests/containers/containers.go` — add optional `python-ast`
+   sidecar and `PYTHON_AST_GRPC_ADDRESS=127.0.0.1:50062` on Engine (mirror the
+   `DepAudit` / `DEP_AUDIT_GRPC_ADDRESS` pattern). Tracked upstream in
+   [ansible/apme-operator#25](https://github.com/ansible/apme-operator/issues/25).
 6. `src/apme_gateway/api/router.py` — add health-check entry for Python AST validator
+
+**Operator acceptance check** (after upstream operator change merges): deploy via
+the operator with Python AST enabled; confirm Engine env includes
+`PYTHON_AST_GRPC_ADDRESS=127.0.0.1:50062`; run `apme check` against a project
+containing a deprecated callback plugin method (for example `def v2_on_any`) and
+verify Python AST rule findings appear in the scan output.
 
 ### Health and failure behavior
 

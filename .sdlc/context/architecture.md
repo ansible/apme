@@ -315,9 +315,11 @@ On Kubernetes/OpenShift the operator reconciles **one** Deployment (all-in-one):
 
 | Deployment | Containers (sidecars) | Scaling |
 |-----------|----------------------|---------|
-| **All-in-one** | Engine, Native, OPA, Ansible, Gitleaks*, Coll Health*, Dep Audit*, Galaxy Proxy, Gateway, UI*, Abbenay*, OTel* | Operator-managed (single-replica default) |
+| **All-in-one** | Engine, Native, OPA, Ansible, Gitleaks*, Coll Health*, Dep Audit*, Galaxy Proxy, Gateway, UI*, Abbenay* | Operator-managed (single-replica default) |
 
-*\* = conditionally included via operator configuration*
+*\* = conditionally included via operator configuration. Operator v1 does not
+ship an in-pod OpenTelemetry Collector; set `OTEL_EXPORTER_OTLP_ENDPOINT` on
+workloads to an external collector (see `containers/observability/README.md`).*
 
 Key K8s behavior:
 - **Localhost**: Engine → Abbenay gRPC Unix socket (`unix:///tmp/abbenay-run/abbenay/daemon.sock`; required when a consumer token is set); Gateway → Abbenay admin HTTP `127.0.0.1:8787` (ADR-070); reporting → `127.0.0.1:50060`. Abbenay still binds gRPC on `127.0.0.1:50057` as leftover TCP.

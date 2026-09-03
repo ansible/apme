@@ -45,7 +45,9 @@ Each pod is a self-contained stack:
 - Collection Health validator (optional)
 - Dep Audit validator (optional)
 
-To increase throughput, run more pods behind a load balancer.
+Future topology: once shared Gateway state is defined (see Implementation
+Notes), increase throughput by running more pods behind a load balancer. The
+current operator deployment must remain **single-replica** until that ADR lands.
 
 ## Rationale
 

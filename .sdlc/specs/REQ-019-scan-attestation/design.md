@@ -48,7 +48,18 @@ Gateway owns Subject Digest computation against an **immutable snapshot** it sta
 
 ### Offline / air-gapped mode
 
-Keyless Sigstore signing requires outbound OIDC, Fulcio, and Rekor access. Air-gapped deployments **must** configure keyed signing via `APME_SIGNING_KEY` (Kubernetes Secret mount).
+Keyless Sigstore signing requires outbound OIDC, Fulcio, and Rekor access.
+Air-gapped deployments **must** configure keyed signing via `APME_SIGNING_KEY`
+on Gateway only (engine containers never mount signing keys):
+
+- **Operator (Kubernetes/OpenShift):** mount a Kubernetes Secret read-only into
+  the Gateway container (for example `/etc/apme/secrets/signing-key.pem`) and set
+  `APME_SIGNING_KEY` to that in-container path.
+- **Podman pod (`tox -e up`):** bind-mount the PEM into the `gateway` container
+  and set `APME_SIGNING_KEY` to the mounted path (same grammar as operator).
+- **bootc VM:** place the PEM under `/etc/apme/secrets/` (or another host path
+  mounted read-only into `apme-gateway`), set `APME_SIGNING_KEY` in
+  `/etc/apme/env/apme.env`, and restart the Gateway quadlet.
 
 Verification when `APME_SIGSTORE_OFFLINE=true`:
 - **Keyed attestations**: verify signature against the configured trust-set public keys only; Rekor checks are skipped.
@@ -61,9 +72,17 @@ Live Rekor/Fulcio fetch for incomplete envelopes is allowed **only** when `APME_
 - Fulcio signing certificates are short-lived. For attestations within the retention window, `EXPIRED_CERTIFICATE` checks use the authenticated Rekor `integratedTime` (or bundled SET timestamp), **not** the verifier's current clock.
 - Gateway persists the Sigstore `trustedRoot` version used at signing alongside `verificationMaterial`. Retired Fulcio roots remain available for verification until all attestations signed under that root pass the retention window (default: 90 days).
 
-### Key management (operator)
+### Key management
 
-Signing keys live in a Kubernetes Secret mounted read-only into the Gateway container (e.g., `/etc/apme/secrets/signing-key.pem`). Gateway reads the path from `APME_SIGNING_KEY`. Keys are never mounted into engine containers.
+**Operator (Kubernetes/OpenShift):** signing keys live in a Kubernetes Secret
+mounted read-only into the Gateway container (e.g.,
+`/etc/apme/secrets/signing-key.pem`). Gateway reads the path from
+`APME_SIGNING_KEY`. Keys are never mounted into engine containers.
+
+**Podman and bootc:** provision the same `APME_SIGNING_KEY` path grammar on
+Gateway via a host bind-mount (Podman `pod.yaml` gateway volume) or bootc
+`/etc/apme/env/apme.env` plus a read-only quadlet volume — see Offline /
+air-gapped mode above.
 
 Each keyed signer has a stable **key ID** (`keyid` in the envelope) derived from the public key fingerprint (see contract wire-format section for exact algorithm). Gateway persists the public key material in a verifier **trust set** keyed by `keyid`.
 
