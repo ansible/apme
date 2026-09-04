@@ -286,7 +286,7 @@ Gateway stays a proxy. Default operator `emptyDir` is still ephemeral — enable
   Reject unknown paths (including `chat`) and encoded `..` traversal.
 - **Env**: e.g. `APME_ABBENAY_HTTP_URL` default `http://127.0.0.1:8787`;  
   `APME_ABBENAY_HTTP_TOKEN` (or shared secret with Abbenay `server.api_token_env`).
-- **Deploy** (image ≥ v2026.8.0; no Service/hostPort for HTTP or gRPC):
+- **Deploy** (image ≥ v2026.8.0; Operator has no Service/hostPort for HTTP or gRPC):
   - **Operator**: `abbenay web --host 127.0.0.1 --port 8787 --grpc-host
     127.0.0.1 --grpc-port 50057` — see
     [apme-operator](https://github.com/ansible/apme-operator).
