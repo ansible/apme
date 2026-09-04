@@ -490,8 +490,8 @@ Set `gateway.database.existingSecret.name` and `gateway.database.existingSecret.
 to reference a Kubernetes Secret containing the full SQLAlchemy URL (for example
 `postgresql+asyncpg://user:pass@host:5432/apme?sslmode=verify-full`). The chart injects it via
 `valueFrom.secretKeyRef` so credentials are not rendered in the Deployment
-manifest. For non-production installs you may set `gateway.database.url` directly
-instead of a Secret.
+manifest. For non-production installs you may set `gateway.database.url` to a
+credential-free URL (no `user:pass@` authority) instead of a Secret.
 
 > **Migration warning:** Upgrading from a pre-PostgreSQL chart that stored SQLite
 > on `*-gateway-data` does not migrate existing scan history. **History retention
@@ -503,6 +503,16 @@ Install flavors use named values files under `deploy/helm/apme/`
 (`values-standalone.yaml`, `values-portal.yaml`). Chart defaults keep the
 standalone UI enabled; portal installs pass `-f values-portal.yaml`.
 
+Create a Secret with the Gateway database URL before installing (replace host,
+credentials, and TLS parameters for your PostgreSQL service):
+
+```bash
+kubectl create namespace apme --dry-run=client -o yaml | kubectl apply -f -
+kubectl create secret generic apme-database \
+  --namespace apme \
+  --from-literal=database-url='postgresql+asyncpg://apme:CHANGE_ME@postgres.example:5432/apme?sslmode=verify-full'
+```
+
 #### Standalone UI (default)
 
 ```bash
@@ -510,6 +520,7 @@ helm repo add apme https://ansible.github.io/apme
 helm repo update
 helm install apme apme/apme \
   --namespace apme --create-namespace \
+  --set gateway.database.existingSecret.name=apme-database \
   --set route.enabled=true \
   --set route.host=apme.apps.ocp.example.com
 ```
@@ -525,6 +536,7 @@ helm repo update
 helm install apme apme/apme \
   --namespace apme --create-namespace \
   -f https://ansible.github.io/apme/values-portal.yaml \
+  --set gateway.database.existingSecret.name=apme-database \
   --set route.enabled=true
 ```
 

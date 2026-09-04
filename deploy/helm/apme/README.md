@@ -24,11 +24,21 @@ GitHub Pages:
 
 ### CLI
 
+Create a Secret with the Gateway database URL before installing:
+
+```bash
+kubectl create namespace apme --dry-run=client -o yaml | kubectl apply -f -
+kubectl create secret generic apme-database \
+  --namespace apme \
+  --from-literal=database-url='postgresql+asyncpg://apme:CHANGE_ME@postgres.example:5432/apme?sslmode=verify-full'
+```
+
 ```bash
 helm repo add apme https://ansible.github.io/apme
 helm repo update
 helm install apme apme/apme \
   --namespace apme --create-namespace \
+  --set gateway.database.existingSecret.name=apme-database \
   --set route.enabled=true \
   --set route.host=apme.apps.ocp.example.com
 ```
@@ -100,6 +110,12 @@ default so a bare `helm install` is not a footgun for SPA evaluators.
 | Standalone SPA | [`values-standalone.yaml`](values-standalone.yaml) | on | Bundled PatternFly UI (default) |
 | Portal / backend | [`values-portal.yaml`](values-portal.yaml) | off | Automation portal / Backstage / Gateway API only |
 
+Gateway persistence requires external PostgreSQL. Create a Secret with the full
+`postgresql+asyncpg://...` URL (see CLI example above), then pass
+`--set gateway.database.existingSecret.name=apme-database` on every install.
+For non-production eval only, you may set a credential-free `gateway.database.url`
+instead (no `user:pass@` in the authority).
+
 ### Standalone UI (default)
 
 ```bash
@@ -108,6 +124,7 @@ helm repo update
 helm install apme apme/apme \
   --namespace apme --create-namespace \
   -f https://ansible.github.io/apme/values-standalone.yaml \
+  --set gateway.database.existingSecret.name=apme-database \
   --set route.enabled=true \
   --set route.host=apme.apps.ocp.example.com
 ```
@@ -128,21 +145,25 @@ helm repo update
 helm install apme apme/apme \
   --namespace apme --create-namespace \
   -f https://ansible.github.io/apme/values-portal.yaml \
+  --set gateway.database.existingSecret.name=apme-database \
   --set route.enabled=true   # OpenShift
 ```
 
 ### From a local clone (contributors)
 
 ```bash
-# Standalone (chart default)
-helm install apme ./deploy/helm/apme/
+# Standalone (chart default) — credential-free URL for local eval
+helm install apme ./deploy/helm/apme/ \
+  --set 'gateway.database.url=postgresql+asyncpg://127.0.0.1:5432/apme'
 
 # Portal / backend-only
 helm install apme ./deploy/helm/apme/ \
-  -f ./deploy/helm/apme/values-portal.yaml
+  -f ./deploy/helm/apme/values-portal.yaml \
+  --set 'gateway.database.url=postgresql+asyncpg://127.0.0.1:5432/apme'
 
 # With AI enabled (OpenRouter provider)
 helm install apme ./deploy/helm/apme/ \
+  --set 'gateway.database.url=postgresql+asyncpg://127.0.0.1:5432/apme' \
   --set abbenay.enabled=true \
   --set abbenay.token=$APME_ABBENAY_TOKEN \
   --set-json 'abbenay.providers={"openrouter":{"engine":"openrouter","apiKey":"'$OPENROUTER_API_KEY'","models":{"anthropic/claude-sonnet-4-6":{}}}}'
@@ -269,6 +290,7 @@ and expose only the Gateway:
 ```bash
 helm install apme apme/apme \
   -f https://ansible.github.io/apme/values-portal.yaml \
+  --set gateway.database.existingSecret.name=apme-database \
   --set route.enabled=true \
   --set route.host=apme-api.apps.ocp.example.com
 ```

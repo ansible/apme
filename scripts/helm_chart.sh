@@ -126,7 +126,8 @@ assert_fail_message() {
 }
 
 # Gateway persistence requires APME_DATABASE_URL (postgresql+asyncpg).
-HELM_TEST_DB_SET=(--set 'gateway.database.url=postgresql+asyncpg://apme:apme@postgres:5432/apme')
+# Credential-free URL for template tests; credential-bearing URLs must use existingSecret.
+HELM_TEST_DB_SET=(--set 'gateway.database.url=postgresql+asyncpg://127.0.0.1:5432/apme')
 
 engine_container_block() {
   awk '
@@ -228,6 +229,19 @@ DB_ERR="$("${HELM_BIN}" template test-release "${CHART_DIR}" 2>&1 >/dev/null)" &
   exit 1
 }
 assert_fail_message "database url required" "${DB_ERR}" "gateway.database.url or gateway.database.existingSecret.name is required"
+
+DB_CREDENTIALS_ERR="$("${HELM_BIN}" template test-release "${CHART_DIR}" \
+  --set 'gateway.database.url=postgresql+asyncpg://apme:apme@postgres:5432/apme' 2>&1 >/dev/null)" && {
+  echo "FAIL: expected helm template to fail when gateway.database.url contains credentials" >&2
+  exit 1
+}
+assert_fail_message "database credentials rejected" "${DB_CREDENTIALS_ERR}" "must not contain credentials"
+
+DB_SECRET_RENDER="$("${HELM_BIN}" template test-release "${CHART_DIR}" \
+  --set gateway.database.existingSecret.name=apme-database)"
+assert_template_contains "gateway database secret ref" "${DB_SECRET_RENDER}" 'name: apme-database'
+assert_template_contains "gateway database secret key" "${DB_SECRET_RENDER}" 'key: database-url'
+assert_template_lacks "gateway database secret not inline" "${DB_SECRET_RENDER}" 'value: "postgresql+asyncpg://apme:apme@'
 
 # Confirm Service selectors + no Abbenay Service / extra Deployments
 RENDER_FILE="$(mktemp)"

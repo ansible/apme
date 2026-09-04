@@ -18,6 +18,10 @@
 {{- if not (hasPrefix "postgresql+asyncpg://" .Values.gateway.database.url) }}
 {{- fail "gateway.database.url must use the async driver postgresql+asyncpg:// (plain postgresql:// is not supported by create_async_engine)" }}
 {{- end }}
+{{- $dbAuthority := trimPrefix "postgresql+asyncpg://" .Values.gateway.database.url }}
+{{- if contains "@" $dbAuthority }}
+{{- fail "gateway.database.url must not contain credentials; use gateway.database.existingSecret for credential-bearing URLs" }}
+{{- end }}
 {{- end }}
 {{- if .Values.abbenay.enabled }}
 {{- include "apme.abbenay.validateLegacyKeys" . -}}
