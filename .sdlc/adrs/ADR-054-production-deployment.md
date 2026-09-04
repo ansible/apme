@@ -89,8 +89,11 @@ External access uses Service + Ingress:
 
 PostgreSQL persistence is external to the Helm chart: operators supply
 `gateway.database.url` or `gateway.database.existingSecret` (see
-`deploy/helm/apme/README.md`). The reference Podman pod and bootc quadlet
-deploy a `postgres:16` sidecar with a `postgres-data` PVC instead.
+`deploy/helm/apme/README.md`). The reference Podman pod deploys a `postgres:16`
+sidecar with a `postgres-data` PVC (`apme-postgres-data`). bootc requires an
+externally provisioned PostgreSQL service via `APME_DATABASE_URL`; its quadlets
+define no PostgreSQL container or data volume, so operators must provision and
+back up that database separately.
 
 ReadWriteOnce is sufficient for the Simple single-replica topology (ADR-069).
 If a future multi-replica topology returns, shared Galaxy Proxy cache may need

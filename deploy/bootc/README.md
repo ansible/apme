@@ -176,8 +176,15 @@ systemctl disable apme-pod.service
 
 Gateway scan history lives in the **external PostgreSQL** service configured by
 `APME_DATABASE_URL` — bootc does not mount a local PostgreSQL data directory.
-Back up that database with your PostgreSQL provider's tooling (for example
-`pg_dump` against the DSN in `/etc/apme/env/apme.env`).
+Back up that database with your PostgreSQL provider's tooling. `pg_dump` uses
+libpq URIs (`postgresql://`), not SQLAlchemy's `postgresql+asyncpg://` scheme.
+Convert the DSN from `/etc/apme/env/apme.env` while preserving host,
+credentials, database, and TLS query parameters:
+
+```bash
+libpq_url="$(grep '^APME_DATABASE_URL=' /etc/apme/env/apme.env | cut -d= -f2- | sed 's#^postgresql+asyncpg://#postgresql://#')"
+pg_dump --dbname="$libpq_url" -F c -f apme-gateway.dump
+```
 
 ### Upgrading from SQLite (pre-PostgreSQL-only Gateway)
 

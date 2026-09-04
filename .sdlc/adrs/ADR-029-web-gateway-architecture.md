@@ -201,10 +201,18 @@ The gateway owns all persistence for V1. This is consistent with ADR-020's
 principle that persistence belongs in the presentation layer, not the engine.
 
 **PostgreSQL** — required via `APME_DATABASE_URL`
-(`postgresql+asyncpg://...`). Podman and bootc provision a `postgres:16`
-sidecar with a dedicated persistent volume (`postgres-data` /
-`apme-postgres-data`). Schema per
+(`postgresql+asyncpg://...`). Schema per
 [design-dashboard.md](/.sdlc/context/design-dashboard.md).
+
+**Podman** (`tox -e up`) provisions a `postgres:16` sidecar with a dedicated
+persistent volume (`apme-postgres-data`).
+
+**bootc** ships no PostgreSQL quadlet or PVC. Operators set `APME_DATABASE_URL`
+in `/etc/apme/env/apme.env` and must provision, secure, and back up an external
+PostgreSQL service.
+
+**Helm** likewise requires an externally provisioned PostgreSQL database via
+`gateway.database.url` or `gateway.database.existingSecret`.
 
 The gateway uses SQLAlchemy + asyncpg only; SQLite and file-path database
 configuration are not supported.
