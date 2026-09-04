@@ -38,9 +38,20 @@ Suppress rules on specific tasks using `# noqa`:
   ansible.builtin.shell: rm -rf /tmp/*
 ```
 
+This works for **native graph rules** (applied during rule evaluation) and for
+**OPA task-scoped findings** (applied by the engine after validator fan-out,
+using the node's `yaml_lines` from the ContentGraph when the finding's `path`
+is that node's id — e.g. `# noqa: L068` on a `lineinfile` task). Put the
+comment on the same task/node that owns the finding (typically the `name:`
+line or the module key line).
+
+Findings without a graph node `path`, or on nodes without `yaml_lines`
+(for example some file-level or playbook-scoped hits), are not suppressed
+by `# noqa`.
+
 **Note:** `enforced: true` affects `.apme/suppressions.yml` fingerprint
-suppressions during CLI suppression processing. Native graph-rule `# noqa`
-comments are parsed earlier during scan-time evaluation, so this setting does
+suppressions during CLI suppression processing. Inline `# noqa` comments are
+honored at scan time for native and OPA task findings, so this setting does
 not currently override those inline suppressions.
 
 Fingerprint suppressions live in `.apme/suppressions.yml`. The CLI can manage

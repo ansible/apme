@@ -20,10 +20,7 @@ import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, TypeVar
-
-if TYPE_CHECKING:
-    from apme_engine.graph.content_graph import ContentGraph
+from typing import TypeVar
 
 import grpc
 import grpc.aio
@@ -89,7 +86,8 @@ from apme_engine.daemon.fs_utils import write_chunked_fs as _write_chunked_fs
 from apme_engine.daemon.session import ResourceExhaustedError, SessionState, SessionStore
 from apme_engine.daemon.violation_convert import violation_dict_to_proto, violation_proto_to_dict
 from apme_engine.engine.models import RemediationClass, ViolationDict
-from apme_engine.graph.scanner import graph_rule_opt_in_from_rule_configs
+from apme_engine.graph.content_graph import ContentGraph
+from apme_engine.graph.scanner import filter_noqa_violations, graph_rule_opt_in_from_rule_configs
 from apme_engine.log_bridge import attach_collector
 from apme_engine.remediation.graph_engine import FilePatch as SplicedFilePatch
 from apme_engine.runner import run_scan
@@ -1189,6 +1187,17 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
 
             parts = " ".join(f"{n.title()}={counts.get(n, 0)}" for n in VALIDATOR_ENV_VARS)
             logger.info("Fan-out: done (%.0fms) %s Total=%d (req=%s)", fan_out_ms, parts, len(violations), scan_id)
+
+        before_noqa = len(violations)
+        violations = filter_noqa_violations(
+            violations, content_graph if isinstance(content_graph, ContentGraph) else None
+        )
+        if len(violations) < before_noqa:
+            logger.info(
+                "Fan-out: dropped %d violation(s) via # noqa (req=%s)",
+                before_noqa - len(violations),
+                scan_id,
+            )
 
         violations = _deduplicate_violations(_sort_violations(violations))
         if rule_configs:
@@ -2325,7 +2334,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                         raise RequiredValidatorDependencyError(msg)
                     all_violations.extend(result.violations)
 
-            return all_violations
+            return filter_noqa_violations(all_violations, g)
 
         ai_provider = self._resolve_ai_provider(session.fix_options)
         assess_pause = bool(session.fix_options and session.fix_options.assess_pause)
