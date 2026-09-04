@@ -124,7 +124,8 @@ one needs to change, write an ADR first.
     `uvx --with tox-uv tox -e <env>`. See `.agents/skills/tox/SKILL.md` for
     the full environment reference.
 
-16. **Operator for Kubernetes/OpenShift; Podman for local dev only** (ADR-004,
+16. **Operator for Kubernetes/OpenShift; Podman for local and non-Kubernetes
+    deployments** (ADR-004,
     ADR-054). **Never use Podman, `podman play kube`, or raw pod YAML to deploy
     on Kubernetes or OpenShift.** The [APME Operator](https://github.com/ansible/apme-operator)
     in `ansible/apme-operator` is the supported method for K8s/OCP deployment.

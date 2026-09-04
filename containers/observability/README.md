@@ -71,8 +71,8 @@ Apps export OTLP only when `OTEL_EXPORTER_OTLP_ENDPOINT` is set (pod.yaml sets
 
 ## Operator note
 
-The APME Operator co-locates Gateway / UI / Abbenay with the engine in one
-pod — the same shape as Podman. The reference Podman pod (`pod.yaml`) ships an
+The APME Operator co-locates Gateway and UI with the engine in one pod
+(optional Abbenay) — the same shape as Podman. The reference Podman pod (`pod.yaml`) ships an
 in-pod OpenTelemetry Collector sidecar (ADR-067) for localhost OTLP export.
 Operator v1 does not include the collector yet; set `OTEL_EXPORTER_OTLP_ENDPOINT`
 on workloads to point at your platform collector, or follow
