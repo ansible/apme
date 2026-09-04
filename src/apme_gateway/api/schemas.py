@@ -381,11 +381,13 @@ class HealthStatus(BaseModel):  # type: ignore[misc]
     Attributes:
         status: Overall health (ok or degraded).
         database: Database connectivity status.
+        database_type: Human-readable database engine name (e.g. PostgreSQL, SQLite).
         components: Health status of each upstream service.
     """
 
     status: str
     database: str
+    database_type: str = "unknown"
     components: list[ComponentHealth] = Field(default_factory=list)
 
 
