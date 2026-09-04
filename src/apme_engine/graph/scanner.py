@@ -227,7 +227,10 @@ def parse_noqa(yaml_lines: str) -> frozenset[str]:
 
     Supports both single-rule (``# noqa: R108``) and multi-rule
     (``# noqa: R108, L030``) forms.  Rule IDs are normalized to
-    uppercase with whitespace stripped.
+    uppercase.  Only the first whitespace-delimited token of each
+    comma-separated entry is treated as a rule ID, so trailing
+    justification text (``# noqa: L068 intentional``, ``# noqa: L068 lola``,
+    or ``# noqa: R114 - why trusted``) does not poison the ID.
 
     Strips simple single- and double-quoted strings before matching
     so that ``# noqa:`` inside typical quoted scalars is ignored.
@@ -244,8 +247,9 @@ def parse_noqa(yaml_lines: str) -> frozenset[str]:
     for line in yaml_lines.splitlines():
         stripped = _QUOTED_RE.sub("", line)
         for match in _NOQA_RE.finditer(stripped):
-            for rule_id in match.group(1).split(","):
-                rid = rule_id.strip().upper()
+            for part in match.group(1).split(","):
+                token = part.strip().split(None, 1)[0] if part.strip() else ""
+                rid = token.upper()
                 if rid:
                     suppressed.add(rid)
     return frozenset(suppressed)

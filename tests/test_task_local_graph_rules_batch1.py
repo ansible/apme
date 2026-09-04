@@ -904,6 +904,19 @@ class TestNoqaSuppression:
         result = parse_noqa("  become: true  # noqa: R108, R103\n")
         assert result == frozenset({"R108", "R103"})
 
+    def test_parse_noqa_ignores_trailing_justification(self) -> None:
+        """Trailing words after a rule ID are not part of the ID.
+
+        Regression for reporter content like ``# noqa: L068 lola`` and the
+        documented ``# noqa: R114 - why trusted`` justification form.
+        """
+        from apme_engine.graph.scanner import parse_noqa
+
+        assert parse_noqa("- name: X  # noqa: L068 lola\n") == frozenset({"L068"})
+        assert parse_noqa("- name: X  #noqa: L068 lola\n") == frozenset({"L068"})
+        assert parse_noqa("- name: X  # noqa: R114 - why trusted\n") == frozenset({"R114"})
+        assert parse_noqa("- name: X  # noqa: L068, R108 intentional\n") == frozenset({"L068", "R108"})
+
     def test_filter_noqa_violations_drops_opa_l068(self) -> None:
         """Engine-side filter drops OPA L068 when the task has ``# noqa: L068``."""
         from apme_engine.graph.scanner import filter_noqa_violations
