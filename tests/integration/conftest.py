@@ -131,7 +131,12 @@ def pytest_sessionfinish(session: pytest.Session) -> None:
 
 
 def _start_infrastructure() -> None:
-    """Start galaxy proxy, gateway, then fork the daemon with all validators."""
+    """Start galaxy proxy, gateway, then fork the daemon with all validators.
+
+    Raises:
+        Exception: Re-raised when worker database provisioning fails after
+            cleaning up the already-started Galaxy proxy.
+    """
     global INFRASTRUCTURE  # noqa: PLW0603
 
     from apme_engine.daemon.launcher import start_daemon
@@ -170,7 +175,13 @@ def _start_infrastructure() -> None:
     from apme_gateway.db.url import sanitize_database_url
     from tests.gateway_db import ensure_worker_database
 
-    gateway_database_url = asyncio.run(ensure_worker_database())
+    try:
+        gateway_database_url = asyncio.run(ensure_worker_database())
+    except Exception:
+        proxy_proc.terminate()
+        proxy_proc.wait(timeout=5)
+        proxy_stderr_fh.close()
+        raise
     engine_addr = "127.0.0.1:50051"
     gateway_env = {
         **os.environ,

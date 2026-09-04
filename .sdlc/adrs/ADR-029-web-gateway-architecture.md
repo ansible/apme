@@ -201,8 +201,9 @@ The gateway owns all persistence for V1. This is consistent with ADR-020's
 principle that persistence belongs in the presentation layer, not the engine.
 
 **PostgreSQL** — required via `APME_DATABASE_URL`
-(`postgresql+asyncpg://...`). Schema per
-[design-dashboard.md](/.sdlc/context/design-dashboard.md).
+(`postgresql+asyncpg://...`). Remote hosts require certificate-validated TLS
+(`?sslmode=verify-full` with a configured CA); loopback connections may omit
+TLS. Schema per [design-dashboard.md](/.sdlc/context/design-dashboard.md).
 
 **Podman** (`tox -e up`) provisions a `postgres:16` sidecar with a dedicated
 persistent volume (`apme-postgres-data`).
@@ -356,7 +357,8 @@ engine pod. It needs:
 - Network access to Engine's gRPC port (50051)
 - Network access to PostgreSQL configured through ``APME_DATABASE_URL``
   (separate sidecar or external service; database volumes mount on PostgreSQL,
-  not Gateway)
+  not Gateway). Remote hosts require certificate-validated TLS
+  (`?sslmode=verify-full` with a configured CA).
 - Optional: mounted volume for local project scanning (`/workspace`)
 
 ### Dependencies (subject to ADR-019 governance)

@@ -11,7 +11,7 @@ Accepted (Helm workload topology amended by [ADR-069](ADR-069-helm-simple-all-in
 ## Context
 
 APME's reference deployment is a single Podman pod (`containers/podman/pod.yaml`)
-with 12 containers sharing localhost networking. This works well for development
+with 13 containers sharing localhost networking. This works well for development
 and single-node evaluation but does not address production deployment:
 
 - **Kubernetes** is the standard for multi-node, scaled, and managed deployments.
@@ -89,11 +89,12 @@ External access uses Service + Ingress:
 
 PostgreSQL persistence is external to the Helm chart: operators supply
 `gateway.database.url` or `gateway.database.existingSecret` (see
-`deploy/helm/apme/README.md`). The reference Podman pod deploys a `postgres:16`
-sidecar with a `postgres-data` PVC (`apme-postgres-data`). bootc requires an
-externally provisioned PostgreSQL service via `APME_DATABASE_URL`; its quadlets
-define no PostgreSQL container or data volume, so operators must provision and
-back up that database separately.
+`deploy/helm/apme/README.md`). Remote database hosts require
+certificate-validated TLS (`?sslmode=verify-full` with a configured CA). The
+reference Podman pod deploys a `postgres:16` sidecar with a `postgres-data` PVC
+(`apme-postgres-data`). bootc requires an externally provisioned PostgreSQL
+service via `APME_DATABASE_URL`; its quadlets define no PostgreSQL container or
+data volume, so operators must provision and back up that database separately.
 
 ReadWriteOnce is sufficient for the Simple single-replica topology (ADR-069).
 If a future multi-replica topology returns, shared Galaxy Proxy cache may need
