@@ -11,9 +11,13 @@ from __future__ import annotations
 
 import os
 from collections.abc import AsyncIterator
+from unittest.mock import AsyncMock, patch
 
 import pytest
+from httpx import ASGITransport, AsyncClient
 
+from apme_gateway.api.schemas import ComponentHealth
+from apme_gateway.app import create_app
 from apme_gateway.db import close_db, get_session, init_db, reset_db
 from apme_gateway.db import queries as q
 from apme_gateway.db.models import Session
@@ -48,3 +52,21 @@ async def test_postgresql_list_sessions_round_trip() -> None:
         sessions = await q.list_sessions(db)
     assert len(sessions) == 1
     assert sessions[0].session_id == "pg-sess"
+
+
+async def test_postgresql_health_reports_database_type() -> None:
+    """Health endpoint reports PostgreSQL when backed by PostgreSQL."""
+    app = create_app()
+    transport = ASGITransport(app=app)
+    mock_component = ComponentHealth(name="mock", status="ok", address="127.0.0.1:0")
+    with patch(
+        "apme_gateway.api.router._check_component",
+        new_callable=AsyncMock,
+        return_value=mock_component,
+    ):
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/api/v1/health")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["database"] == "ok"
+    assert body["database_type"] == "PostgreSQL"
