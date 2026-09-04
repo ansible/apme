@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from sqlalchemy import select
 
-from apme.v1 import common_pb2, reporting_pb2
+from apme.v1 import common_pb2, engine_pb2, reporting_pb2
 from apme_gateway.db import get_session
 from apme_gateway.db import queries as q
+from apme_gateway.db.models import Notification, Project, Scan, Session
 from apme_gateway.grpc_reporting.servicer import ReportingServicer
 
 pytestmark = pytest.mark.usefixtures("gateway_db")
@@ -240,3 +242,140 @@ async def test_report_fix_with_summary() -> None:
     assert scan.auto_fixable == 3
     assert scan.ai_candidate == 4
     assert scan.manual_review == 3
+
+
+async def test_report_fix_creates_scan_complete_notification() -> None:
+    """Successful persistence also writes a scan_complete notification."""
+    servicer = ReportingServicer()
+    event = reporting_pb2.FixCompletedEvent(
+        scan_id="scan-notif",
+        session_id="sess-notif",
+        project_path="/proj",
+        source="cli",
+        summary=common_pb2.ScanSummary(total=4, auto_fixable=1, ai_candidate=1, manual_review=2),
+        report=engine_pb2.FixReport(fixed=4),
+    )
+    ctx = _mock_context()
+    await servicer.ReportFixCompleted(event, ctx)
+
+    async with get_session() as db:
+        rows = list(
+            (await db.execute(select(Notification).where(Notification.scan_id == "scan-notif"))).scalars().all()
+        )
+    assert len(rows) == 1
+    assert rows[0].type == "scan_complete"
+    assert "4 findings resolved" in rows[0].message
+    ctx.abort.assert_not_awaited()
+
+
+async def test_report_fix_notification_uses_project_name() -> None:
+    """Stub scans with a project FK resolve the display name by project id."""
+    async with get_session() as db:
+        db.add(
+            Project(
+                id="proj-ui",
+                name="Playground App",
+                repo_url="https://github.com/test/playground.git",
+                branch="main",
+                created_at="2026-09-04T00:00:00Z",
+                health_score=50,
+            )
+        )
+        db.add(
+            Session(
+                session_id="sess-ui",
+                project_path="/tmp/playground",
+                first_seen="t0",
+                last_seen="t1",
+            )
+        )
+        db.add(
+            Scan(
+                scan_id="scan-ui",
+                session_id="sess-ui",
+                project_id="proj-ui",
+                project_path="/tmp/playground",
+                source="gateway",
+                trigger="ui",
+                created_at="2026-09-04T00:00:00Z",
+                scan_type="remediate",
+                total_violations=0,
+            )
+        )
+        await db.commit()
+
+    servicer = ReportingServicer()
+    event = reporting_pb2.FixCompletedEvent(
+        scan_id="scan-ui",
+        session_id="sess-ui",
+        project_path="/tmp/playground",
+        source="gateway",
+        summary=common_pb2.ScanSummary(total=3, auto_fixable=1, ai_candidate=1, manual_review=1),
+        report=engine_pb2.FixReport(fixed=2),
+    )
+    ctx = _mock_context()
+    await servicer.ReportFixCompleted(event, ctx)
+
+    async with get_session() as db:
+        rows = list((await db.execute(select(Notification).where(Notification.scan_id == "scan-ui"))).scalars().all())
+        scan = await q.get_scan(db, "scan-ui")
+    assert len(rows) == 1
+    assert "Playground App" in rows[0].message
+    assert rows[0].title == "Remediation Complete"
+    assert rows[0].project_id == "proj-ui"
+    assert scan is not None
+    ctx.abort.assert_not_awaited()
+
+
+async def test_report_fix_notification_session_failure_does_not_abort() -> None:
+    """Opening the notification session must not be reported as persistence failure."""
+    servicer = ReportingServicer()
+    event = reporting_pb2.FixCompletedEvent(
+        scan_id="scan-sess-fail",
+        session_id="sess-sess-fail",
+        project_path="/proj",
+        source="cli",
+    )
+    ctx = _mock_context()
+    real_get_session = get_session
+    persist_calls = 0
+
+    def _flaky_session() -> object:
+        nonlocal persist_calls
+        persist_calls += 1
+        if persist_calls == 1:
+            return real_get_session()
+        msg = "notification session unavailable"
+        raise RuntimeError(msg)
+
+    with patch("apme_gateway.grpc_reporting.servicer.get_session", side_effect=_flaky_session):
+        result = await servicer.ReportFixCompleted(event, ctx)
+
+    assert isinstance(result, reporting_pb2.ReportAck)
+    ctx.abort.assert_not_awaited()
+    async with get_session() as db:
+        scan = await q.get_scan(db, "scan-sess-fail")
+    assert scan is not None
+
+
+async def test_report_fix_notification_failure_does_not_abort() -> None:
+    """Notification errors must not be reported as persistence failures."""
+    servicer = ReportingServicer()
+    event = reporting_pb2.FixCompletedEvent(
+        scan_id="scan-notif-fail",
+        session_id="sess-notif-fail",
+        project_path="/proj",
+        source="cli",
+    )
+    ctx = _mock_context()
+    with patch(
+        "apme_gateway.notifications.generate_notifications",
+        side_effect=RuntimeError("simulated notification failure"),
+    ):
+        result = await servicer.ReportFixCompleted(event, ctx)
+
+    assert isinstance(result, reporting_pb2.ReportAck)
+    ctx.abort.assert_not_awaited()
+    async with get_session() as db:
+        scan = await q.get_scan(db, "scan-notif-fail")
+    assert scan is not None

@@ -59,7 +59,8 @@ implements two RPCs defined in `proto/apme/v1/reporting.proto`:
 ### ReportFixCompleted
 
 Receives a `FixCompletedEvent` from the engine after a scan/fix session
-completes. Decomposes the event into ORM rows in a single transaction:
+completes. Decomposes the event into ORM rows and commits them, then
+generates notifications in a separate best-effort session:
 
 ```mermaid
 flowchart TD
@@ -72,12 +73,21 @@ flowchart TD
     Scan --> M[Add ScanManifest + collections + packages]
     Scan --> G[Add ScanGraph row]
     V & P & L & Pa & M & G --> Commit[db.commit]
+    Commit --> Notif[Reload scan and generate notifications]
 ```
 
 Each child record is linked to the `Scan` via `scan_id`. Violations are
 stored for both `remaining_violations` and `fixed_violations` from the
 event. The manifest includes collection and Python package rows with
 deduplication on FQCN.
+
+Notification generation runs **after** commit, as a best-effort step in
+a separate session. Display names are resolved by loading `Project` by
+id (never `Scan.project` lazy-load). Failures are logged and do not
+abort the RPC or surface as a persistence error to the engine. Existing
+notification types for the same `scan_id` are skipped, except an
+unattributed `scan_complete` is replaced after the scan is linked to a
+project.
 
 ### RegisterRules
 
