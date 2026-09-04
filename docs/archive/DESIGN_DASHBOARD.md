@@ -36,8 +36,11 @@ The presentation layer adds two components to the pod:
 │  │            API Gateway :8080                   │                │
 │  │  FastAPI (async) — REST + WebSocket            │                │
 │  │  gRPC client → Engine.FixSession (check/remediate), Format     │                │
-│  │  SQLite/PostgreSQL for activity history                         │                │
 │  └────┬──────────────────────────────────────────┘                │
+│       │                                                           │
+│  ┌────┴────────────┐                                              │
+│  │ PostgreSQL :5432 │  (sidecar — persistent volume)              │
+│  └──────────────────┘                                              │
 │       │                                                           │
 └───────┼───────────────────────────────────────────────────────────┘
         │ HTTP/WS
@@ -196,10 +199,10 @@ remediation_proposals
 
 | Deployment | Backend | Rationale |
 |------------|---------|-----------|
-| Single pod (dev/small team) | SQLite | Zero-config, file-based, sufficient for thousands of activity records |
+| Single pod (dev/small team) | PostgreSQL sidecar | Dedicated `postgres-data` volume; sufficient for thousands of activity records |
 | Multi-pod / enterprise | PostgreSQL | Shared state across pods, concurrent writers, full-text search |
 
-The gateway uses SQLAlchemy with async support (`asyncpg` for PostgreSQL, `aiosqlite` for SQLite). The backend is selected by environment variable (`APME_DB_URL`).
+The gateway uses SQLAlchemy with asyncpg. Persistence requires `APME_DATABASE_URL` (`postgresql+asyncpg://...`).
 
 ---
 
@@ -268,7 +271,7 @@ Phase 4 starts with a single role (all authenticated users can do everything). R
 2. **`WS /api/v1/ws/session`** — unified check + remediate session over WebSocket
 3. **`GET /api/v1/activity`** — list stored activity with pagination and filtering
 4. **`GET /api/v1/activity/{id}`** — return violations + diagnostics
-5. **Persistence** — SQLite backend with SQLAlchemy async
+5. **Persistence** — PostgreSQL backend with SQLAlchemy async
 6. **Health endpoint** — aggregate health from all backend services
 7. **Dockerfile + pod YAML update** — add gateway container on port 8080
 

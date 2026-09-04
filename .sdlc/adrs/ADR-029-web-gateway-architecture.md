@@ -50,7 +50,7 @@ translates HTTP/WebSocket to gRPC, and owns scan result persistence.**
 The gateway is the combined presentation + reporting service for V1. It serves
 the frontend SPA, exposes a REST API for stateless operations, maintains a
 WebSocket-to-FixSession bridge for HITL remediation, and persists scan results
-in SQLite. The engine pods are unmodified.
+in PostgreSQL. The engine pods are unmodified.
 
 ### CLI Capability Split
 
@@ -67,12 +67,12 @@ interaction).
 | `Health` gRPC | Client call | Gateway call | — |
 | Write patched files | Client writes to disk | Gateway writes to disk | — |
 | Progress rendering | Terminal (stdout) | WebSocket relay | UI progress timeline |
-| Violation display | Terminal table | REST API + SQLite | Filterable table |
+| Violation display | Terminal table | REST API + PostgreSQL | Filterable table |
 | HITL review (proposals) | Interactive terminal | WebSocket relay | Diff viewer with approve/reject |
 | Approval decisions | Keyboard input | WebSocket relay | Accept/Reject buttons |
 | Diagnostics (`-v`/`-vv`) | Terminal | REST API | Charts, cards |
 | `--json` output | stdout | REST JSON response | — |
-| Activity history | None (stateless) | SQLite persistence | Browse/search |
+| Activity history | None (stateless) | PostgreSQL persistence | Browse/search |
 
 ### Architecture
 
@@ -93,7 +93,7 @@ interaction).
 │  │  ├── WebSocket ↔ FixSession bidi gRPC bridge                      │        │
 │  │  ├── gRPC client → Engine (FixSession, FormatStream, Health)     │        │
 │  │  ├── File discovery + chunking (mounted vol or SCM clone)         │        │
-│  │  └── SQLite persistence (scan history, violations, proposals)     │        │
+│  │  └── PostgreSQL persistence (scan history, violations, proposals)     │        │
 │  └───────────────────────────────────────────────────────────────────┘        │
 │                                                                                │
 │  ┌─────────────────────────────────────────────────────────────────────┐      │
@@ -200,14 +200,23 @@ In all cases the gateway owns the entire file → chunk → gRPC pipeline.
 The gateway owns all persistence for V1. This is consistent with ADR-020's
 principle that persistence belongs in the presentation layer, not the engine.
 
-**SQLite for V1** — zero external infrastructure. The database file lives in a
-mounted volume (`/data/apme.db`). Schema per
-[design-dashboard.md](/.sdlc/context/design-dashboard.md).
+**PostgreSQL** — required via `APME_DATABASE_URL`
+(`postgresql+asyncpg://...`). Remote hosts require certificate-validated TLS
+(`?sslmode=verify-full` with a configured CA); loopback connections may omit
+TLS. Schema per [design-dashboard.md](/.sdlc/context/design-dashboard.md).
 
-**PostgreSQL upgrade path** — for enterprise deployments requiring concurrent
-multi-user access. Switchable via `APME_DATABASE_URL` environment variable.
-The gateway uses an async ORM (e.g., SQLAlchemy + aiosqlite/asyncpg) that
-supports both backends.
+**Podman** (`tox -e up`) provisions a `postgres:16` sidecar with a dedicated
+persistent volume (`apme-postgres-data`).
+
+**bootc** ships no PostgreSQL quadlet or PVC. Operators set `APME_DATABASE_URL`
+in `/etc/apme/env/apme.env` and must provision, secure, and back up an external
+PostgreSQL service.
+
+**Helm** likewise requires an externally provisioned PostgreSQL database via
+`gateway.database.url` or `gateway.database.existingSecret`.
+
+The gateway uses SQLAlchemy + asyncpg only; SQLite and file-path database
+configuration are not supported.
 
 **Extraction path** — if the reporting layer needs to serve non-web clients
 (Grafana, CI systems), the persistence + query logic can be extracted into a
@@ -226,7 +235,7 @@ session management. The gateway exposes a stateless API.
 
 ### REST + WebSocket API
 
-Read operations are REST endpoints backed by SQLite. The check + remediate lifecycle
+Read operations are REST endpoints backed by PostgreSQL. The check + remediate lifecycle
 runs over a single WebSocket connection:
 
 ```
@@ -321,8 +330,10 @@ dashboard's core value proposition.
 
 - **New container** — adds one container to the deployment topology (outside the
   engine pod).
-- **SQLite single-writer limitation** — concurrent writes are serialized.
-  Acceptable for single-user V1; PostgreSQL upgrade path documented.
+- **PostgreSQL connection pooling** — SQLAlchemy's default async queue pool
+  allows concurrent connections up to ``pool_size`` + ``max_overflow``; write
+  concurrency is bounded by pool limits and PostgreSQL row-level lock waits,
+  not a single serialized connection.
 - **Gateway becomes a critical path** — if the gateway is down, the web UI is
   unavailable. The CLI continues to work independently (it talks to Engine
   directly).
@@ -344,19 +355,22 @@ The gateway runs as its own container, deployed alongside (but outside) the
 engine pod. It needs:
 
 - Network access to Engine's gRPC port (50051)
-- A mounted volume for SQLite (`/data`)
+- Network access to PostgreSQL configured through ``APME_DATABASE_URL``
+  (separate sidecar or external service; database volumes mount on PostgreSQL,
+  not Gateway). Remote hosts require certificate-validated TLS
+  (`?sslmode=verify-full` with a configured CA).
 - Optional: mounted volume for local project scanning (`/workspace`)
 
 ### Dependencies (subject to ADR-019 governance)
 
 - `fastapi` + `uvicorn` — async HTTP/WebSocket server
 - `grpcio` + `grpcio-tools` — gRPC client
-- `sqlalchemy` + `aiosqlite` — async SQLite ORM
+- `sqlalchemy` + `asyncpg` — async PostgreSQL ORM
 - `apme.v1` proto stubs (shared with CLI)
 
 ### Phased Implementation
 
-- **Phase 4a**: Gateway backend — REST API, gRPC client, SQLite, health
+- **Phase 4a**: Gateway backend — REST API, gRPC client, PostgreSQL, health
 - **Phase 4b**: WebSocket-to-FixSession bridge
 - **Phase 4c**: Frontend SPA (see ADR-030 for framework decision)
 - **Phase 4d**: Enterprise mode (AAP Gateway integration)
@@ -372,7 +386,7 @@ engine pod. It needs:
 - ADR-028: Session-based fix workflow (WebSocket-to-FixSession 1:1 mapping)
 - ADR-030: Frontend deployment model (standalone vs. Backstage)
 - DR-003: Dashboard architecture (resolved by this ADR)
-- DR-008: Data persistence (resolved by this ADR — SQLite in gateway)
+- DR-008: Data persistence (resolved by this ADR — PostgreSQL in gateway)
 
 ## Addendum
 
@@ -381,7 +395,7 @@ engine pod. It needs:
 ## References
 
 - [design-dashboard.md](/.sdlc/context/design-dashboard.md) — Detailed UI
-  design, SQLite schema, REST API, PatternFly components
+  design, PostgreSQL schema, REST API, PatternFly components
 - [FastAPI WebSocket](https://fastapi.tiangolo.com/advanced/websockets/)
 - [gRPC Python async](https://grpc.github.io/grpc/python/grpc_asyncio.html)
 

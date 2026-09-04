@@ -70,9 +70,11 @@ apme daemon status                  # Check daemon health
 **Persona**: CI pipeline, shared validation service, team server
 
 **How it works**:
-- Full pod with 12 containers (Engine, Native, OPA, Ansible, Gitleaks,
-  Collection Health, Dep Audit, Galaxy Proxy, Gateway, UI, Abbenay,
-  OTel Collector)
+- Full pod with 13 containers (Engine, Native, OPA, Ansible, Gitleaks,
+  Collection Health, Dep Audit, Galaxy Proxy, PostgreSQL, Gateway, UI, Abbenay,
+  OTel Collector). PostgreSQL runs as a sidecar; Gateway receives
+  `APME_DATABASE_URL` (for example
+  `postgresql+asyncpg://apme:apme@127.0.0.1:5432/apme`).
 - CLI connects via `APME_ENGINE_ADDRESS` env var
 - Gateway provides REST API + persistence
 
@@ -257,7 +259,7 @@ ADR-030 defines: Same Gateway API, but rendered in RHDH context.
 ADR-020 defines best-effort event delivery:
 
 ```
-Engine → ScanCompleted event → Reporting Service → Gateway SQLite
+Engine → FixCompletedEvent → Reporting Service → Gateway PostgreSQL
                                                  → (Future: Prometheus, Elasticsearch)
 ```
 
@@ -285,7 +287,7 @@ Aligns with ADR-038 "Chuck Wagon Principle": APME serves data, consumers come ge
 
 | Phase | Scope | Metrics Path |
 |-------|-------|--------------|
-| **V1 (Current)** | APME Dashboard shows health, trends, rankings | Gateway SQLite |
+| **V1 (Current)** | APME Dashboard shows health, trends, rankings | Gateway PostgreSQL |
 | **AAP (future)** | Controller queries APME during project sync | Via Controller → AA |
 | **Future** | Prometheus exporter, Grafana templates, ROI calculator | Multiple sinks |
 
@@ -296,7 +298,7 @@ Aligns with ADR-038 "Chuck Wagon Principle": APME serves data, consumers come ge
 | Option | Persona | Complexity | Metrics Path | Status |
 |--------|---------|------------|--------------|--------|
 | **1. Standalone CLI** | Developer | Low | Local only | Ready |
-| **2. Containerized Pod** | Team/CI | Medium | Gateway SQLite | Ready |
+| **2. Containerized Pod** | Team/CI | Medium | Gateway PostgreSQL | Ready |
 | **3. CI/CD Gate** | DevOps | Low | CI artifacts | Ready |
 | **4a. AAP Pre-flight** | Admin | Medium | Via Controller | DR-015 open |
 | **4b. AAP Policy Augment** | Architect | High | Via Controller | DR-015 open |

@@ -12,6 +12,7 @@ Run with::
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import socket
@@ -31,7 +32,7 @@ _ENV_KEYS = (
     "APME_ENGINE_ADDRESS",
     "APME_GALAXY_PROXY_URL",
     "APME_REPORTING_ENDPOINT",
-    "APME_DB_PATH",
+    "APME_DATABASE_URL",
     "OPA_USE_PODMAN",
 )
 
@@ -45,7 +46,7 @@ class Infrastructure:
         data_dir: Temporary directory used for daemon state isolation.
         proxy_process: Galaxy proxy subprocess (terminated on teardown).
         gateway_process: Gateway subprocess (terminated on teardown).
-        gateway_db_path: Path to the gateway SQLite database file.
+        gateway_database_url: PostgreSQL URL for the gateway database.
         gateway_http_url: Base URL for the gateway REST API.
         original_env: Snapshot of env vars before daemon start.
     """
@@ -54,7 +55,7 @@ class Infrastructure:
     data_dir: str = ""
     proxy_process: subprocess.Popen[bytes] | None = None
     gateway_process: subprocess.Popen[bytes] | None = None
-    gateway_db_path: str = ""
+    gateway_database_url: str = ""
     gateway_http_url: str = ""
     original_env: dict[str, str | None] = field(default_factory=dict)
 
@@ -130,7 +131,12 @@ def pytest_sessionfinish(session: pytest.Session) -> None:
 
 
 def _start_infrastructure() -> None:
-    """Start galaxy proxy, gateway, then fork the daemon with all validators."""
+    """Start galaxy proxy, gateway, then fork the daemon with all validators.
+
+    Raises:
+        Exception: Re-raised when worker database provisioning fails after
+            cleaning up the already-started Galaxy proxy.
+    """
     global INFRASTRUCTURE  # noqa: PLW0603
 
     from apme_engine.daemon.launcher import start_daemon
@@ -166,12 +172,21 @@ def _start_infrastructure() -> None:
     # --- Gateway (gRPC reporting + REST API) ---
     gateway_grpc_port = _free_port()
     gateway_http_port = _free_port()
-    gateway_db_path = str(Path(data_dir) / "gateway.db")
+    from apme_gateway.db.url import sanitize_database_url
+    from tests.gateway_db import ensure_worker_database
+
+    try:
+        gateway_database_url = asyncio.run(ensure_worker_database())
+    except Exception:
+        proxy_proc.terminate()
+        proxy_proc.wait(timeout=5)
+        proxy_stderr_fh.close()
+        raise
     engine_addr = "127.0.0.1:50051"
     gateway_env = {
         **os.environ,
         "APME_ENGINE_ADDRESS": engine_addr,
-        "APME_DB_PATH": gateway_db_path,
+        "APME_DATABASE_URL": gateway_database_url,
         "APME_GATEWAY_GRPC_LISTEN": f"127.0.0.1:{gateway_grpc_port}",
         "APME_GATEWAY_HTTP_HOST": "127.0.0.1",
         "APME_GATEWAY_HTTP_PORT": str(gateway_http_port),
@@ -201,12 +216,12 @@ def _start_infrastructure() -> None:
         "Gateway ready gRPC=%d HTTP=%d DB=%s (pid %d)",
         gateway_grpc_port,
         gateway_http_port,
-        gateway_db_path,
+        sanitize_database_url(gateway_database_url),
         gateway_proc.pid,
     )
 
     os.environ["APME_REPORTING_ENDPOINT"] = f"127.0.0.1:{gateway_grpc_port}"
-    os.environ["APME_DB_PATH"] = gateway_db_path
+    os.environ["APME_DATABASE_URL"] = gateway_database_url
 
     LOGGER.warning("Starting APME daemon (data_dir=%s)", data_dir)
 
@@ -229,7 +244,7 @@ def _start_infrastructure() -> None:
         data_dir=data_dir,
         proxy_process=proxy_proc,
         gateway_process=gateway_proc,
-        gateway_db_path=gateway_db_path,
+        gateway_database_url=gateway_database_url,
         gateway_http_url=f"http://127.0.0.1:{gateway_http_port}",
         original_env=original_env,
     )

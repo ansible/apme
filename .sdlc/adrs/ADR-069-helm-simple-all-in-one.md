@@ -35,8 +35,8 @@ model we are not delivering via this chart.
   invariant 16; ADR-054). This ADR changes **topology inside** that path, not
   the deployment method.
 - ADR-012 still defines the conceptual scaling unit (engine stack). The chart
-  simply does **not** offer multi-replica engine scaling while Gateway SQLite
-  and Abbenay share the pod.
+  simply does **not** offer multi-replica engine scaling while the Gateway uses
+  external PostgreSQL and Abbenay shares the pod.
 - ADR-005 localhost networking is the preferred intra-stack transport.
 - Abbenay auth remains consumer tokens (`x-abbenay-token`); TLS peer trust is
   unnecessary when Abbenay binds loopback in the same pod.
@@ -78,7 +78,7 @@ over `127.0.0.1` (ADR-005) except Engine→Abbenay gRPC, which uses a Unix socke
    Helm probes connect to the Unix socket.
 3. **Single replica** — Chart defaults and validation: `replicas: 1`. HPA for
    this Deployment is disabled or rejected. Multi-replica requires a future ADR
-   that reintroduces a split (or otherwise solves Gateway SQLite + session
+   that reintroduces a split (or otherwise solves external PostgreSQL + session
    affinity).
 4. **Services / Ingress** — Expose Gateway REST (and UI if standalone) via
    Service + Ingress as today; in-cluster clients that previously targeted
@@ -154,7 +154,8 @@ EAP AI remediation.
 
 ### Negative
 
-- No independent engine HPA while Gateway SQLite shares the pod.
+- No independent engine HPA while the Gateway depends on external PostgreSQL
+  and Abbenay shares the pod.
 - Larger scheduling footprint (one pod requests sum of all containers).
 - Engine pod restart takes Gateway DB and Abbenay down together.
 - Chart templates and tests must be reworked (breaking change vs current

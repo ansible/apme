@@ -44,7 +44,7 @@ As more CLI subcommands migrate to Gateway REST (health, session list, etc.), th
 
 ### Option A: Embed Gateway in Daemon
 
-**Description**: Add the Gateway's HTTP server (uvicorn/FastAPI) and gRPC ReportingServicer to the daemon's `_run_daemon()` async event loop, following the same pattern as Galaxy Proxy. The Gateway DB defaults to `~/.apme-data/gateway.db`. The daemon state file gains a `gateway_http` address entry.
+**Description**: Add the Gateway's HTTP server (uvicorn/FastAPI) and gRPC ReportingServicer to the daemon's `_run_daemon()` async event loop, following the same pattern as Galaxy Proxy. The Gateway requires `APME_DATABASE_URL` (`postgresql+asyncpg://...`); the daemon must provision or connect to PostgreSQL. The daemon state file gains a `gateway_http` address entry.
 
 **Pros**:
 - `apme sbom` "just works" — same auto-start UX as all other commands
@@ -56,7 +56,7 @@ As more CLI subcommands migrate to Gateway REST (health, session list, etc.), th
 **Cons**:
 - Adds `apme_gateway` as a daemon import (SQLAlchemy, Alembic, FastAPI dependencies)
 - Increases daemon memory footprint
-- Gateway in daemon uses SQLite; pod Gateway also uses SQLite but could diverge to PostgreSQL later — need to ensure compatibility
+- Gateway in daemon and pod Gateway both use PostgreSQL
 - Port 8080 added to daemon port set — potential conflicts
 
 **Effort**: Medium
@@ -109,10 +109,10 @@ today.
 ## Related Artifacts
 
 - ADR-024: Thin CLI with Local Daemon Mode — establishes daemon pattern, documents CLI→REST future direction
-- ADR-029: SQLite in Web Gateway — Gateway persistence design
+- ADR-029: PostgreSQL in Web Gateway — Gateway persistence design
 - ADR-040: Scan Metadata Enrichment — `apme sbom` is PR 3 of this ADR
 - ADR-004: Podman Pod Deployment — pod topology
-- DR-008: Scan Result Persistence — decided: SQLite in Gateway
+- DR-008: Scan Result Persistence — decided: PostgreSQL in Gateway
 
 ---
 
@@ -138,7 +138,7 @@ today.
 - [ ] Create ADR documenting Gateway-in-daemon architecture
 - [ ] Add Gateway HTTP + gRPC to `_run_daemon()` in `launcher.py`
 - [ ] Add `gateway_http` address to `DaemonState` and `daemon.json`
-- [ ] Default Gateway DB to `~/.apme-data/gateway.db`
+- [ ] Provision PostgreSQL for the embedded Gateway (`APME_DATABASE_URL`)
 - [ ] Set `APME_REPORTING_ADDRESS` to local Gateway gRPC port in daemon
 - [ ] Add port 8080 (HTTP) and 50060 (gRPC) to `_DEFAULT_PORTS`
 - [ ] Update CLAUDE.md to reflect Gateway is now part of daemon

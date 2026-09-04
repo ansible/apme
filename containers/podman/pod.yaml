@@ -171,11 +171,31 @@ spec:
         - name: sessions
           mountPath: /sessions
           readOnly: true
+    - name: postgres
+      image: docker.io/library/postgres:16
+      env:
+        - name: POSTGRES_USER
+          value: "apme"
+        - name: POSTGRES_PASSWORD
+          value: "apme"
+        - name: POSTGRES_DB
+          value: "apme"
+      ports:
+        - containerPort: 5432
+      readinessProbe:
+        exec:
+          command: ["pg_isready", "-U", "apme", "-d", "apme"]
+        initialDelaySeconds: 2
+        periodSeconds: 2
+        failureThreshold: 30
+      volumeMounts:
+        - name: postgres-data
+          mountPath: /var/lib/postgresql/data
     - name: gateway
       image: apme-gateway:latest
       env:
-        - name: APME_DB_PATH
-          value: "/data/apme.db"
+        - name: APME_DATABASE_URL
+          value: "postgresql+asyncpg://apme:apme@127.0.0.1:5432/apme"
         - name: APME_GATEWAY_GRPC_LISTEN
           value: "0.0.0.0:50060"
         - name: APME_GATEWAY_HTTP_HOST
@@ -212,8 +232,6 @@ spec:
         - containerPort: 8080
           hostPort: 8080
       volumeMounts:
-        - name: gateway-data
-          mountPath: /data
         - name: abbenay-run
           mountPath: /tmp/abbenay-run
     - name: ui
@@ -292,9 +310,9 @@ spec:
           mountPath: /etc/otelcol/config.yaml
           readOnly: true
   volumes:
-    - name: gateway-data
+    - name: postgres-data
       persistentVolumeClaim:
-        claimName: apme-gateway-data
+        claimName: apme-postgres-data
     - name: sessions
       persistentVolumeClaim:
         claimName: apme-sessions

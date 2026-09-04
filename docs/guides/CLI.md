@@ -229,7 +229,7 @@ production use or full feature access, use a [deployment method](DEPLOYMENT.md).
 | Secret scanning (Gitleaks) | Not available (daemon does not start gitleaks validator) | Built-in |
 | AI-assisted remediation | Requires Abbenay daemon | Built-in (pod) |
 | Web UI dashboard | No | Yes |
-| Persistent scan history | No | Yes (Gateway + SQLite) |
+| Persistent scan history | No | Yes (Gateway + PostgreSQL) |
 | Multi-user / shared service | No (single-user) | Yes |
 | Collection Health scanning | Not available (daemon does not start optional validators) | Yes |
 | Python CVE audit | Not available (daemon does not start optional validators) | Yes |

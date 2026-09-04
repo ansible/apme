@@ -75,7 +75,7 @@ co-located shape on Kubernetes/OpenShift — see the [Scaling](#scaling) section
 | **Collection Health** | apme-collection-health | 50058 | Scans installed Ansible collections for quality issues (deprecated modules, missing argument specs, FQCN violations). Findings cached by FQCN+version |
 | **Dep Audit** | apme-dep-audit | 50059 | Python dependency auditor via pip-audit. Checks packages in session venvs against CVE databases |
 | **Galaxy Proxy** | apme-galaxy-proxy | 8765 | PEP 503 simple repository API that converts Galaxy collection tarballs to pip-installable Python wheels. Caching is the proxy's concern — the engine has zero cache management code |
-| **Gateway** | apme-gateway | 50060 (gRPC), 8080 (HTTP) | REST API + gRPC Reporting service + SQLAlchemy/SQLite persistence. Receives engine events via `GrpcReportingSink`; serves scan history, project management, and rule catalog to UI and external consumers (ADR-029, ADR-038) |
+| **Gateway** | apme-gateway | 50060 (gRPC), 8080 (HTTP) | REST API + gRPC Reporting service + SQLAlchemy/PostgreSQL persistence. Receives engine events via `GrpcReportingSink`; serves scan history, project management, and rule catalog to UI and external consumers (ADR-029, ADR-038) |
 | **UI** | apme-ui | 8081 | nginx-served React/PatternFly SPA. Consumes Gateway REST API. No direct engine communication (ADR-030, ADR-037) |
 | **Abbenay** | abbenay | 50057 | AI provider for Tier 2 remediation. Receives fix requests from Engine, queries LLM providers, returns proposed patches |
 | **CLI** | apme-cli | — | Ephemeral. Reads project files, chunks uploads, drives **`FixSession`** for user **check** and **remediate** (ADR-039). Run with `--pod apme-pod` and CWD mounted |
@@ -296,8 +296,12 @@ The wrapper adds **Ansible-aware filtering**:
 **Scale pods, not services within a pod** (ADR-012) defines the conceptual
 engine unit. The **Helm chart** (EAP / upstream) ships a **Simple all-in-one**
 pod (ADR-069): engine + Gateway + UI + optional Abbenay on localhost — same
-shape as Podman. Multi-replica engine HPA is out of chart scope while Gateway
-SQLite shares that pod.
+shape as Podman. PostgreSQL is **external** to the chart (configured via
+`gateway.database.url` or `gateway.database.existingSecret` as
+`APME_DATABASE_URL`). Remote production hosts must use certificate-validated TLS
+(`?sslmode=verify-full` with a configured CA in the URL or cluster trust store);
+`sslmode=require` is rejected at Gateway startup. Multi-replica engine HPA is
+out of chart scope.
 
 ```text
   Ingress / Service :8080

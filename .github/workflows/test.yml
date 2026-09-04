@@ -15,10 +15,25 @@ permissions:
 env:
   FORCE_COLOR: 1
   PY_COLORS: 1
+  APME_TEST_DATABASE_URL: postgresql+asyncpg://apme:apme@localhost:5432/apme_test
 
 jobs:
   test:
     runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: apme
+          POSTGRES_PASSWORD: apme
+          POSTGRES_DB: apme_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U apme -d apme_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
@@ -33,6 +48,20 @@ jobs:
 
   integration:
     runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: apme
+          POSTGRES_PASSWORD: apme
+          POSTGRES_DB: apme_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U apme -d apme_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
@@ -57,6 +86,20 @@ jobs:
 
   ui:
     runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: apme
+          POSTGRES_PASSWORD: apme
+          POSTGRES_DB: apme_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U apme -d apme_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
@@ -81,14 +124,14 @@ jobs:
           npx serve frontend/dist -l 8081 -s &
           sleep 3
         env:
-          APME_DB_PATH: /tmp/apme-ui-test.db
+          APME_DATABASE_URL: postgresql+asyncpg://apme:apme@localhost:5432/apme_test
           APME_GATEWAY_GRPC_LISTEN: 127.0.0.1:50060
           APME_GATEWAY_HTTP_HOST: 127.0.0.1
           APME_GATEWAY_HTTP_PORT: 8080
       - run: uvx --with tox-uv tox -e ui
         env:
           APME_UI_URL: http://localhost:8081
-          APME_DB_PATH: /tmp/apme-ui-test.db
+          APME_DATABASE_URL: postgresql+asyncpg://apme:apme@localhost:5432/apme_test
           APME_GATEWAY_HTTP_HOST: 127.0.0.1
           APME_GATEWAY_HTTP_PORT: 8080
 

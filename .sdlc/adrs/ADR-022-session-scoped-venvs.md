@@ -73,7 +73,7 @@ Use `tempfile.mkdtemp()` for every request, deleting when done. UV cache makes c
 
 **Rejected**: Wasteful for repeated scans in the same session. Named sessions for VS Code extension integration require persistence.
 
-### Alternative 3: External Cache Manager (Redis/SQLite)
+### Alternative 3: External Cache Manager (Redis/PostgreSQL)
 
 Use an external store to coordinate venv access across processes.
 

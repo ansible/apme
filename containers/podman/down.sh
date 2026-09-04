@@ -68,7 +68,7 @@ podman pod rm  apme-pod 2>/dev/null || true
 echo "Pod stopped."
 
 if [[ "${1:-}" == "--wipe" ]]; then
-  for vol in apme-sessions apme-gateway-data apme-proxy-cache; do
+  for vol in apme-sessions apme-postgres-data apme-gateway-data apme-proxy-cache; do
     if podman volume exists "$vol" 2>/dev/null; then
       podman volume rm "$vol"
       echo "Removed volume: $vol"

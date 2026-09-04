@@ -6,7 +6,7 @@ intentionally omitted from ``requirements.yml``; L058/L059 can only fire
 if the collection was auto-discovered from FQCNs and installed.
 
 Also proves the ADR-020 reporting pipeline: scan events emitted by the engine
-are persisted to the gateway's SQLite database and served by the REST API.
+are persisted to the gateway's PostgreSQL database and served by the REST API.
 
 Run with::
 
@@ -15,9 +15,9 @@ Run with::
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
-import sqlite3
 import subprocess
 import sys
 import time
@@ -315,36 +315,48 @@ def test_remediation_idempotent(infrastructure: object, tmp_path: Path) -> None:
 
 
 def _poll_db(
-    db_path: str,
+    database_url: str,
     query: str,
     params: tuple[object, ...] = (),
     *,
     timeout: float = 10.0,
 ) -> list[tuple[object, ...]]:
-    """Poll SQLite until the query returns rows, or timeout.
+    """Poll PostgreSQL until the query returns rows, or timeout.
 
     Event emission is fire-and-forget (``asyncio.create_task``) so there is
     a small window between the CLI returning and the gateway committing the
     row.  This helper retries until data appears.
 
     Args:
-        db_path: Filesystem path to the SQLite database.
-        query: SQL SELECT statement to execute.
+        database_url: SQLAlchemy PostgreSQL URL for the gateway database.
+        query: SQL SELECT statement to execute (``$1``-style placeholders).
         params: Optional bind parameters for the query.
         timeout: Maximum seconds to wait for a non-empty result.
 
     Returns:
         List of row tuples from the query.
     """
+    import asyncpg
+
+    dsn = database_url.replace("postgresql+asyncpg://", "postgresql://")
+
+    async def _fetch(remaining: float) -> list[tuple[object, ...]]:
+        conn = await asyncio.wait_for(asyncpg.connect(dsn, timeout=remaining), timeout=remaining)
+        try:
+            fetch_remaining = max(deadline - time.monotonic(), 0.1)
+            records = await asyncio.wait_for(conn.fetch(query, *params), timeout=fetch_remaining)
+            return [tuple(record.values()) for record in records]
+        finally:
+            await conn.close()
+
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
+        remaining = deadline - time.monotonic()
         try:
-            conn = sqlite3.connect(db_path)
-            rows = conn.execute(query, params).fetchall()
-            conn.close()
+            rows = asyncio.run(_fetch(remaining))
             if rows:
                 return rows
-        except sqlite3.OperationalError:
+        except Exception:
             pass
         time.sleep(0.5)
     return []
@@ -380,7 +392,7 @@ def test_scan_persisted_to_gateway(scan_data: YAMLDict, infrastructure: object) 
 
     The engine emits a FixCompletedEvent after ``check`` (FixSession).  This test
     proves the full pipeline by matching the scan the CLI received against
-    what the gateway persisted to SQLite and exposes via REST:
+    what the gateway persisted to PostgreSQL and exposes via REST:
 
     1. scan_id matches between CLI JSON and the DB scans row.
     2. Remediation summary counts (auto_fixable, ai_candidate, manual_review)
@@ -396,10 +408,10 @@ def test_scan_persisted_to_gateway(scan_data: YAMLDict, infrastructure: object) 
 
     Args:
         scan_data: Parsed scan JSON from the terrible-playbook scan.
-        infrastructure: Daemon infrastructure (provides gateway_db_path, gateway_http_url).
+        infrastructure: Daemon infrastructure (provides gateway_database_url, gateway_http_url).
     """
-    db_path = getattr(infrastructure, "gateway_db_path", "")
-    assert db_path, "gateway_db_path not set on Infrastructure — gateway may not have started"
+    database_url = getattr(infrastructure, "gateway_database_url", "")
+    assert database_url, "gateway_database_url not set on Infrastructure — gateway may not have started"
     http_url = getattr(infrastructure, "gateway_http_url", "")
     assert http_url, "gateway_http_url not set on Infrastructure"
 
@@ -408,10 +420,10 @@ def test_scan_persisted_to_gateway(scan_data: YAMLDict, infrastructure: object) 
 
     # -- 1. Scan row exists and scan_id matches -------------------------
     scans = _poll_db(
-        db_path,
+        database_url,
         "SELECT scan_id, session_id, scan_type, total_violations, "
         "auto_fixable, ai_candidate, manual_review "
-        "FROM scans WHERE scan_id = ?",
+        "FROM scans WHERE scan_id = $1",
         (cli_scan_id,),
     )
     assert scans, (
@@ -440,8 +452,8 @@ def test_scan_persisted_to_gateway(scan_data: YAMLDict, infrastructure: object) 
     cli_rule_ids = {str(v.get("rule_id", "")) for v in cli_violations}
 
     db_violations = _poll_db(
-        db_path,
-        "SELECT rule_id FROM violations WHERE scan_id = ?",
+        database_url,
+        "SELECT rule_id FROM violations WHERE scan_id = $1",
         (cli_scan_id,),
     )
     db_rule_ids = {str(row[0]) for row in db_violations}
@@ -461,8 +473,8 @@ def test_scan_persisted_to_gateway(scan_data: YAMLDict, infrastructure: object) 
     # -- 4. Session row exists with correct project path ----------------
     assert db_session_id, f"session_id on scan row should be non-empty, got {db_session_id!r}"
     sessions = _poll_db(
-        db_path,
-        "SELECT session_id, project_path FROM sessions WHERE session_id = ?",
+        database_url,
+        "SELECT session_id, project_path FROM sessions WHERE session_id = $1",
         (str(db_session_id),),
     )
     assert sessions, f"No session row for session_id {db_session_id!r} linked to scan {cli_scan_id}"
@@ -471,8 +483,8 @@ def test_scan_persisted_to_gateway(scan_data: YAMLDict, infrastructure: object) 
 
     # -- 5. Pipeline logs were persisted --------------------------------
     logs = _poll_db(
-        db_path,
-        "SELECT message, phase FROM scan_logs WHERE scan_id = ?",
+        database_url,
+        "SELECT message, phase FROM scan_logs WHERE scan_id = $1",
         (cli_scan_id,),
     )
     assert logs, f"No pipeline logs persisted for scan_id {cli_scan_id}"

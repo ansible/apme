@@ -100,7 +100,7 @@ REST POST calls. SSE provides:
 
 Operations are ephemeral (minutes, not hours). If the Gateway restarts, the
 Engine gRPC stream dies too, so there is nothing to recover. The completed scan
-is already persisted to SQLite via the reporting sink. In-memory storage keeps
+is already persisted to PostgreSQL via the reporting sink. In-memory storage keeps
 the implementation simple and avoids schema changes for transient state.
 
 ## Consequences

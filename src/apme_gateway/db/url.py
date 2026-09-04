@@ -5,19 +5,154 @@ from __future__ import annotations
 import os
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from sqlalchemy.engine import make_url
+from sqlalchemy.engine import URL, make_url
 
 _INVALID_URL_MSG = "APME_DATABASE_URL must be a SQLAlchemy URL"
 _EXPLICIT_URL_MSG = "database_url must be a SQLAlchemy URL"
-_SUPPORTED_ASYNC_DRIVERS = frozenset({"postgresql+asyncpg", "sqlite+aiosqlite"})
+_MISSING_URL_MSG = "APME_DATABASE_URL is required (postgresql+asyncpg://user:pass@host:5432/dbname)"
+_SUPPORTED_ASYNC_DRIVERS = frozenset({"postgresql+asyncpg"})
 _SENSITIVE_QUERY_KEYS = frozenset({"password", "passwd", "pass", "secret", "token", "api_key", "access_token"})
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+_CERT_VALIDATED_SSLMODES = frozenset({"verify-full"})
+_REMOTE_TLS_REQUIRED_MSG = (
+    "APME_DATABASE_URL must use certificate-validated TLS (sslmode=verify-full) for non-loopback hosts"
+)
+_HOST_QUERY_OVERRIDE_MSG = "APME_DATABASE_URL must not use a host query parameter to override the authority host"
+_UNSUPPORTED_SSLMODE_MSG = "Unsupported sslmode in APME_DATABASE_URL"
+_UNSUPPORTED_SSL_MSG = "Unsupported ssl parameter in APME_DATABASE_URL"
+_CONFLICTING_TLS_MSG = "Conflicting TLS parameters in APME_DATABASE_URL"
+_SSLMODE_TO_ASYNCPG = {
+    "disable": "disable",
+    "allow": "allow",
+    "prefer": "prefer",
+    "require": "require",
+    "verify-ca": "verify-ca",
+    "verify-full": "verify-full",
+}
+_BOOLEAN_SSL_TO_ASYNCPG = {
+    "1": "require",
+    "true": "require",
+    "yes": "require",
+    "require": "require",
+    "0": "disable",
+    "false": "disable",
+    "no": "disable",
+    "disable": "disable",
+}
+
+
+def _is_loopback_host(host: str | None) -> bool:
+    """Return True when *host* is a loopback address.
+
+    Args:
+        host: PostgreSQL hostname from the database URL.
+
+    Returns:
+        True for localhost and loopback IP literals.
+    """
+    if not host:
+        return False
+    return host.lower().strip("[]") in _LOOPBACK_HOSTS
+
+
+def _normalize_asyncpg_ssl_query(query: dict[str, str]) -> dict[str, str]:
+    """Map libpq-style sslmode/ssl query params to asyncpg-compatible ssl values.
+
+    Args:
+        query: URL query parameters from a SQLAlchemy database URL.
+
+    Returns:
+        Query parameters with ``sslmode`` removed and ``ssl`` set for asyncpg.
+
+    Raises:
+        ValueError: When sslmode or ssl values are unsupported.
+    """
+    if "sslmode" not in query and "ssl" not in query:
+        return query
+    normalized = dict(query)
+    ssl_value: str | None = None
+    if "sslmode" in normalized:
+        mode = str(normalized.pop("sslmode")).lower()
+        mapped = _SSLMODE_TO_ASYNCPG.get(mode)
+        if mapped is None:
+            raise ValueError(_UNSUPPORTED_SSLMODE_MSG)
+        ssl_value = mapped
+    if "ssl" in normalized:
+        raw_ssl = str(normalized.pop("ssl")).lower()
+        if raw_ssl in _BOOLEAN_SSL_TO_ASYNCPG:
+            mapped_ssl = _BOOLEAN_SSL_TO_ASYNCPG[raw_ssl]
+        elif raw_ssl in _SSLMODE_TO_ASYNCPG.values():
+            mapped_ssl = raw_ssl
+        else:
+            raise ValueError(_UNSUPPORTED_SSL_MSG)
+        if ssl_value is None:
+            ssl_value = mapped_ssl
+        elif ssl_value != mapped_ssl:
+            raise ValueError(_CONFLICTING_TLS_MSG)
+    if ssl_value is not None:
+        normalized["ssl"] = ssl_value
+    return normalized
+
+
+def _normalize_database_url(url: str) -> str:
+    """Return *url* with asyncpg-compatible SSL query parameters.
+
+    Args:
+        url: Validated SQLAlchemy database URL.
+
+    Returns:
+        URL with libpq ``sslmode`` and boolean ``ssl`` values mapped for asyncpg.
+    """
+    parsed = make_url(url)
+    query = dict(parsed.query)
+    if not query:
+        return url
+    normalized_query = _normalize_asyncpg_ssl_query(query)
+    if normalized_query == query:
+        return url
+    return str(parsed.set(query=normalized_query))
+
+
+def _reject_host_query_override(parsed: URL) -> None:
+    """Reject libpq-style host query overrides that bypass TLS validation.
+
+    Args:
+        parsed: SQLAlchemy URL object from ``make_url``.
+
+    Raises:
+        ValueError: When the query string overrides the authority host.
+    """
+    query = dict(parsed.query)
+    if query.get("host"):
+        raise ValueError(_HOST_QUERY_OVERRIDE_MSG)
+
+
+def _require_secure_transport(url: str) -> None:
+    """Require TLS for remote PostgreSQL URLs.
+
+    Args:
+        url: Validated SQLAlchemy database URL.
+
+    Raises:
+        ValueError: When a remote host omits TLS configuration.
+    """
+    parsed = make_url(url)
+    _reject_host_query_override(parsed)
+    if _is_loopback_host(parsed.host):
+        return
+    query = dict(parsed.query)
+    sslmode = str(query.get("sslmode", "")).lower()
+    ssl = str(query.get("ssl", "")).lower()
+    if sslmode in _CERT_VALIDATED_SSLMODES or ssl in _CERT_VALIDATED_SSLMODES:
+        return
+    raise ValueError(_REMOTE_TLS_REQUIRED_MSG)
 
 
 def is_database_url(target: str) -> bool:
     """Return True when *target* looks like a SQLAlchemy database URL.
 
     Args:
-        target: Filesystem path or database URL.
+        target: Database URL.
 
     Returns:
         True if the value contains a URL scheme.
@@ -49,41 +184,47 @@ def _validate_async_database_url(url: str, *, error_msg: str) -> str:
     return url
 
 
-def sqlite_url_from_path(db_path: str) -> str:
-    """Build a SQLAlchemy async SQLite URL from a filesystem path.
+def asyncpg_ssl_connect_arg(url: str) -> str | None:
+    """Return the asyncpg ``ssl`` connect argument from a database URL.
 
     Args:
-        db_path: Path to the SQLite database file.
+        url: SQLAlchemy database URL (``postgresql+asyncpg://...``).
 
     Returns:
-        ``sqlite+aiosqlite:///{db_path}`` URL.
+        Normalized asyncpg ``ssl`` mode when present in the URL query string.
     """
-    return f"sqlite+aiosqlite:///{db_path}"
+    parsed = make_url(url)
+    query = dict(parsed.query)
+    if not query:
+        return None
+    normalized = _normalize_asyncpg_ssl_query(query)
+    return normalized.get("ssl")
 
 
-def resolve_database_url(*, database_url: str | None = None, db_path: str | None = None) -> str:
-    """Resolve the SQLAlchemy URL from explicit config or environment defaults.
+def resolve_database_url(*, database_url: str | None = None) -> str:
+    """Resolve the SQLAlchemy URL from explicit config or environment.
 
-    ``APME_DATABASE_URL`` takes precedence when *database_url* is not passed.
-    Otherwise falls back to ``APME_DB_PATH`` (or */data/apme.db*) as SQLite.
+    ``APME_DATABASE_URL`` is required when *database_url* is not passed.
 
     Args:
         database_url: Optional explicit SQLAlchemy URL (e.g. ``postgresql+asyncpg://...``).
-        db_path: Optional SQLite file path when no URL is configured.
 
     Returns:
         SQLAlchemy async database URL.
 
     Raises:
-        ValueError: When a configured database URL is not a valid SQLAlchemy URL.
+        ValueError: When no database URL is configured or the URL is invalid.
     """  # noqa: DOC502
     if database_url:
-        return _validate_async_database_url(database_url, error_msg=_EXPLICIT_URL_MSG)
+        validated = _validate_async_database_url(database_url, error_msg=_EXPLICIT_URL_MSG)
+        _require_secure_transport(validated)
+        return _normalize_database_url(validated)
     env_url = os.environ.get("APME_DATABASE_URL", "").strip()
     if env_url:
-        return _validate_async_database_url(env_url, error_msg=_INVALID_URL_MSG)
-    path = db_path if db_path is not None else os.environ.get("APME_DB_PATH", "/data/apme.db")
-    return sqlite_url_from_path(path)
+        validated = _validate_async_database_url(env_url, error_msg=_INVALID_URL_MSG)
+        _require_secure_transport(validated)
+        return _normalize_database_url(validated)
+    raise ValueError(_MISSING_URL_MSG)
 
 
 def _redact_query_credentials(query: str) -> str:
@@ -130,38 +271,3 @@ def sanitize_database_url(url: str) -> str:
     if netloc == parts.netloc and query == parts.query:
         return url
     return urlunsplit((parts.scheme, netloc, parts.path, query, parts.fragment))
-
-
-def is_sqlite_url(url: str) -> bool:
-    """Return True when *url* targets SQLite.
-
-    Args:
-        url: SQLAlchemy database URL.
-
-    Returns:
-        True for ``sqlite`` dialect URLs.
-    """
-    if not is_database_url(url):
-        return True
-    return urlsplit(url).scheme.startswith("sqlite")
-
-
-def sqlite_parent_dir(url: str) -> str | None:
-    """Return the parent directory for a file-backed SQLite URL.
-
-    Args:
-        url: Resolved SQLAlchemy database URL.
-
-    Returns:
-        Parent directory path, or ``None`` for in-memory SQLite or non-SQLite URLs.
-    """
-    if not is_sqlite_url(url) or not is_database_url(url):
-        return None
-    try:
-        db_path = make_url(url).database
-    except Exception:
-        return None
-    if not db_path or db_path == ":memory:":
-        return None
-    parent = os.path.dirname(db_path)
-    return parent or None

@@ -33,7 +33,7 @@ Currently scans are stateless — results are returned to the CLI and not persis
 
 At the time this DR was raised, the CLI-only path was stateless: the CLI sent
 files, Engine scanned them, and results returned to the CLI with no persistence.
-ADR-029 (Gateway + SQLite) and ADR-049 (planned Gateway in the local daemon)
+ADR-029 (Gateway + PostgreSQL) and ADR-049 (planned Gateway in the local daemon)
 provide persistence at the Gateway edge; Engine remains stateless per ADR-020
 (session-scoped `SessionState` is ephemeral, not durable).
 
@@ -74,7 +74,7 @@ This is a significant architectural addition.
 
 **Effort**: Low
 
-### Option B: Dashboard with SQLite/PostgreSQL Backend
+### Option B: Dashboard with PostgreSQL Backend
 
 **Description**: Add a `ScanResultStore` service that persists scan results to a database. Dashboard queries the database.
 
@@ -167,7 +167,7 @@ If dashboard is a v1 requirement, then **Option A** (Streamlit + JSON files) is 
 
 **Resolution (2026-03-19)**: Dashboard architecture is now defined in
 [ADR-029: Web Gateway Architecture](/.sdlc/adrs/ADR-029-web-gateway-architecture.md)
-(Python/FastAPI gateway, cross-pod deployment, SQLite persistence, WebSocket-to-FixSession
+(Python/FastAPI gateway, cross-pod deployment, PostgreSQL persistence, WebSocket-to-FixSession
 HITL bridge) and [ADR-030: Frontend Deployment Model](/.sdlc/adrs/ADR-030-frontend-deployment-model.md)
 (standalone PatternFly/React SPA with Backstage plugin as enterprise path).
 

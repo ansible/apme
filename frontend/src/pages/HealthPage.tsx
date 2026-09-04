@@ -58,7 +58,7 @@ export function HealthPage() {
               </tr>
               <tr role="row">
                 <td role="cell">Database</td>
-                <td role="cell" style={{ opacity: 0.7 }}>SQLite</td>
+                <td role="cell" style={{ opacity: 0.7 }}>PostgreSQL</td>
                 <td role="cell">
                   <Label color={isOk(health.database) ? 'green' : 'red'} isCompact>
                     {health.database}

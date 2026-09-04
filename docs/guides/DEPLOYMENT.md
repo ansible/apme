@@ -43,7 +43,7 @@ From the repo root:
 tox -e build
 ```
 
-This builds a shared base image, eleven service images, and pulls one official image:
+This builds a shared base image, eleven service images, and pulls two official images:
 
 | Image | Source | Purpose |
 |-------|--------|---------|
@@ -55,9 +55,10 @@ This builds a shared base image, eleven service images, and pulls one official i
 | `apme-collection-health:latest` | `containers/collection-health/Dockerfile` | Installed collection health scanner |
 | `apme-dep-audit:latest` | `containers/dep-audit/Dockerfile` | Python CVE scanner (pip-audit) |
 | `apme-galaxy-proxy:latest` | `containers/galaxy-proxy/Dockerfile` | PEP 503 proxy: Galaxy tarballs → Python wheels |
-| `apme-gateway:latest` | `containers/gateway/Dockerfile` | REST API + gRPC Reporting service (SQLite or PostgreSQL) |
+| `apme-gateway:latest` | `containers/gateway/Dockerfile` | REST API + gRPC Reporting service (PostgreSQL) |
 | `apme-ui:latest` | `containers/ui/Dockerfile` | React SPA served by nginx (proxies API to Gateway) |
 | `apme-cli:latest` | `containers/cli/Dockerfile` | CLI client |
+| `postgres:16` | [Official image](https://hub.docker.com/_/postgres) (pulled) | PostgreSQL sidecar for Gateway persistence (`tox -e up`; preload for offline use) |
 | `ghcr.io/redhat-developer/abbenay:v2026.8.7` | [Official image](https://github.com/redhat-developer/abbenay/pkgs/container/abbenay) (pulled) | Abbenay AI daemon (LLM gateway for Tier 2 remediation) |
 
 ### Configure Abbenay AI (optional)
@@ -202,8 +203,7 @@ proxy gRPC requests to it.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `APME_DATABASE_URL` | *(unset)* | Optional SQLAlchemy URL for PostgreSQL (e.g. `postgresql+asyncpg://user:pass@host:5432/apme`). When set, takes precedence over SQLite. |
-| `APME_DB_PATH` | `/data/apme.db` | Path to the SQLite database when `APME_DATABASE_URL` is unset (stores activity, sessions, rule catalog, and rule overrides) |
+| `APME_DATABASE_URL` | *(required)* | SQLAlchemy URL for PostgreSQL. Loopback example: `postgresql+asyncpg://user:pass@127.0.0.1:5432/apme`. Remote production hosts require TLS with certificate verification (`?sslmode=verify-full` and a configured CA). `sslmode=require` encrypts traffic but does not validate the server certificate. |
 | `APME_GATEWAY_GRPC_LISTEN` | `0.0.0.0:50060` | gRPC Reporting service listen address |
 | `APME_GATEWAY_HTTP_HOST` | `0.0.0.0` | REST API bind host |
 | `APME_GATEWAY_HTTP_PORT` | `8080` | REST API bind port |
@@ -261,10 +261,22 @@ The Settings page (`/settings`) provides a model picker that queries available A
 |------|-----------|-----------------|----------|--------|
 | `sessions` | `apme-sessions/` | `/sessions` | Engine (rw), Ansible, Collection Health, Dep Audit (ro) | rw / ro |
 | `proxy-cache` | `<cache>/proxy/` | `/cache` | Galaxy Proxy | rw |
-| `gateway-data` | `<cache>/gateway/` | `/data` | Gateway | rw |
+| `postgres-data` | Podman volume `apme-postgres-data` | `/var/lib/postgresql/data` | PostgreSQL | rw |
 | `abbenay-config` | `<cache>/abbenay/config/` | `/home/abbenay/.config/abbenay` | Abbenay | rw |
 | `abbenay-run` | emptyDir | `/tmp/abbenay-run` | Engine + Gateway + Abbenay | rw |
 | `workspace` | CWD (CLI only) | `/workspace` | CLI | rw |
+
+#### Upgrading from SQLite (pre-PostgreSQL-only Gateway)
+
+Podman upgrades rename the database PVC from `apme-gateway-data` to
+`apme-postgres-data` and provision a `postgres:16` sidecar. **SQLite scan
+history retention is unsupported** — the Gateway provides no export/import path
+and this repository ships no SQLite-to-PostgreSQL migration tool. Before
+upgrading, archive the legacy `apme-gateway-data` volume if you need a
+pre-cutover rollback hold point (`tox -e down` before copying `apme.db` so
+filesystem copies include WAL/journal data). After `tox -e up`, the Gateway
+starts with an empty PostgreSQL database. See [bootc README](../../deploy/bootc/README.md#upgrading-from-sqlite-pre-postgresql-only-gateway)
+for the same guidance on VM deployments.
 
 #### Observability (Podman pod only)
 
@@ -326,9 +338,11 @@ it as the `--index-strategy` argument to `uv pip install`.
 
 For development and testing without the Podman pod, the CLI can start a
 local daemon that runs Engine, Native, OPA, and Ansible as localhost gRPC
-servers, Galaxy Proxy as an HTTP service, and Gateway HTTP plus Reporting
-gRPC per ADR-049. Optional validators (Gitleaks, Collection Health, Dep Audit)
-start only when `include_optional=True`.
+servers and Galaxy Proxy as an HTTP service. Gateway HTTP plus Reporting gRPC
+co-location is planned (ADR-049) but not implemented in `launcher.py` yet —
+use the Podman pod or an external Gateway at `APME_GATEWAY_URL` for REST-backed
+commands such as `apme sbom`. Optional validators (Gitleaks, Collection Health,
+Dep Audit) start only when `include_optional=True`.
 
 ```bash
 # Install tox + project (one-time)
@@ -347,7 +361,7 @@ apme remediate .
 apme daemon stop
 ```
 
-**Daemon mode** starts a local Engine with Native, OPA, and Ansible validators as in-process gRPC servers, Galaxy Proxy as an HTTP service (uvicorn), and Gateway HTTP plus Reporting gRPC (ADR-049). Optional validators (Gitleaks, Collection Health, Dep Audit) start only when `include_optional=True`. The OPA validator gRPC server is always started; policy evaluation uses Podman by default or a local `opa` binary when `OPA_USE_PODMAN=0`. OPA infrastructure failures surface as validator R902 errors so `check` and `remediate` cannot return silently incomplete results.
+**Daemon mode** starts a local Engine with Native, OPA, and Ansible validators as in-process gRPC servers and Galaxy Proxy as an HTTP service (uvicorn). Gateway HTTP plus Reporting gRPC co-location is planned (ADR-049) but not started by `launcher.py` yet — REST-backed commands need a Podman pod Gateway or `APME_GATEWAY_URL`. Optional validators (Gitleaks, Collection Health, Dep Audit) start only when `include_optional=True`. The OPA validator gRPC server is always started; policy evaluation uses Podman by default or a local `opa` binary when `OPA_USE_PODMAN=0`. OPA infrastructure failures surface as validator R902 errors so `check` and `remediate` cannot return silently incomplete results.
 
 ## Troubleshooting
 
@@ -440,10 +454,11 @@ localhost (ADR-005). Multi-replica engine HPA is not offered by this chart.
 
 - One Deployment: Engine + validators + Galaxy Proxy + Gateway + UI + optional Abbenay (localhost)
 - `replicas: 1` for both engine and gateway (HPA and `autoscaling.enabled` are
-  unsupported for SQLite and PostgreSQL in the Simple chart)
+  unsupported for PostgreSQL in the Simple chart)
 - Ingress/Route support (OpenShift Routes included)
 - NetworkPolicy for Ingress → Gateway/UI HTTP ports only
-- PVCs for sessions, Gateway DB, and Galaxy Proxy cache
+- PVCs for sessions, legacy `*-gateway-data` rollback storage, and Galaxy Proxy cache
+- External PostgreSQL required via `gateway.database.url` or `gateway.database.existingSecret`
 - OpenShift Developer Catalog via `HelmChartRepository` pointing at the Pages URL
 
 ### Breaking change from pre-ADR-069 split chart
@@ -460,29 +475,43 @@ allowed engine HPA. Upgrading to this chart:
 - Keeps ClusterIP Service names `*-gateway` and `*-ui` (they now select the
   Simple pod)
 
-PVC names (`*-sessions`, `*-gateway-data`, `*-proxy-cache`) are unchanged.
+PVC names (`*-sessions`, `*-gateway-data`, `*-proxy-cache`) are unchanged. The
+`*-gateway-data` claim is retained for pre-PostgreSQL rollback only; Gateway
+persistence uses external PostgreSQL via `gateway.database.url` or
+`gateway.database.existingSecret`.
 
-### PostgreSQL (optional)
+### PostgreSQL (required)
 
-> **Migration warning:** Changing the backend does not migrate existing SQLite
-> data. Back up the SQLite database and perform a separate migration before
-> switching an existing installation to PostgreSQL. Activity, sessions, rules,
-> and overrides remain on the SQLite PVC while PostgreSQL starts with an empty
-> database.
+The Gateway requires `APME_DATABASE_URL` (`postgresql+asyncpg://...`). Remote
+production hosts must use TLS with certificate verification (for example
+`?sslmode=verify-full` with a configured CA). `sslmode=require` encrypts traffic
+but does not validate the server certificate.
+Set `gateway.database.existingSecret.name` and `gateway.database.existingSecret.key`
+to reference a Kubernetes Secret containing the full SQLAlchemy URL (for example
+`postgresql+asyncpg://user:pass@host:5432/apme?sslmode=verify-full`). The chart injects it via
+`valueFrom.secretKeyRef` so credentials are not rendered in the Deployment
+manifest. For non-production installs you may set `gateway.database.url` to a
+credential-free URL (no `user:pass@` authority) instead of a Secret.
 
-By default the Gateway uses SQLite on the `gateway-data` PVC (`APME_DB_PATH=/data/apme.db`).
-For PostgreSQL, set `gateway.database.existingSecret.name` and
-`gateway.database.existingSecret.key` to reference a Kubernetes Secret containing
-the full SQLAlchemy URL (for example `postgresql+asyncpg://user:pass@host:5432/apme`).
-The chart injects it via `valueFrom.secretKeyRef` so credentials are not rendered
-in the Deployment manifest. For non-production installs you may set
-`gateway.database.url` directly instead of a Secret.
+> **Migration warning:** Upgrading from a pre-PostgreSQL chart that stored SQLite
+> on `*-gateway-data` does not migrate existing scan history. **History retention
+> is unsupported.** Archive the legacy `*-gateway-data` PVC for rollback only.
 
 ### Quick start
 
 Install flavors use named values files under `deploy/helm/apme/`
 (`values-standalone.yaml`, `values-portal.yaml`). Chart defaults keep the
 standalone UI enabled; portal installs pass `-f values-portal.yaml`.
+
+Create a Secret with the Gateway database URL before installing (replace host,
+credentials, and TLS parameters for your PostgreSQL service):
+
+```bash
+kubectl create namespace apme --dry-run=client -o yaml | kubectl apply -f -
+kubectl create secret generic apme-database \
+  --namespace apme \
+  --from-literal=database-url='postgresql+asyncpg://apme:CHANGE_ME@postgres.example:5432/apme?sslmode=verify-full'
+```
 
 #### Standalone UI (default)
 
@@ -491,6 +520,7 @@ helm repo add apme https://ansible.github.io/apme
 helm repo update
 helm install apme apme/apme \
   --namespace apme --create-namespace \
+  --set gateway.database.existingSecret.name=apme-database \
   --set route.enabled=true \
   --set route.host=apme.apps.ocp.example.com
 ```
@@ -506,6 +536,7 @@ helm repo update
 helm install apme apme/apme \
   --namespace apme --create-namespace \
   -f https://ansible.github.io/apme/values-portal.yaml \
+  --set gateway.database.existingSecret.name=apme-database \
   --set route.enabled=true
 ```
 

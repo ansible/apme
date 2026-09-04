@@ -143,7 +143,7 @@ with open(path, "w") as f:
 | Package | Purpose |
 |---------|---------|
 | `sqlalchemy>=2.0` | ORM for scan history persistence |
-| `aiosqlite>=0.20` | Async SQLite driver |
+| `asyncpg>=0.30` | Async PostgreSQL driver |
 | `python-multipart>=0.0.31` | File upload handling |
 
 ---

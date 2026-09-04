@@ -70,11 +70,14 @@ To increase throughput, run more pods behind a load balancer.
 
 ### Scaling on Kubernetes / OpenShift (Helm chart)
 
-The **conceptual** scaling unit remains the engine stack (this ADR). The
-shipping Helm chart for EAP / upstream is **Simple all-in-one**
-([ADR-069](ADR-069-helm-simple-all-in-one.md)): one pod with engine + Gateway +
-UI + optional Abbenay, `replicas: 1`, HPA disabled. Multi-replica engine HPA
-requires a future topology ADR (Gateway SQLite cannot share a scaled pod).
+The **conceptual** scaling unit remains the engine stack (this ADR).
+Production Kubernetes/OpenShift installs use the Helm chart at
+`deploy/helm/apme/` (ADR-054, ADR-069). The planned
+[APME Operator](https://github.com/ansible/apme-operator) will reconcile the
+same **all-in-one** topology by driving that chart—it is not an alternate
+deployment model (engine + Gateway + UI + optional Abbenay on localhost).
+Multi-replica engine scaling requires a future topology ADR (Gateway PostgreSQL
+cannot share a scaled pod).
 
 See [ADR-054](ADR-054-production-deployment.md) (amended by ADR-069) for the
 chart shape.

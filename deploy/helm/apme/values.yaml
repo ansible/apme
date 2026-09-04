@@ -106,14 +106,22 @@ collectionHealth:
 depAudit:
   enabled: true
 
-# -- Gateway sidecar (REST + gRPC reporting + SQLite) — ADR-069 Simple pod
+# -- Gateway sidecar (REST + gRPC reporting + PostgreSQL) — ADR-069 Simple pod
 gateway:
   # Retained for compatibility; must be 1 (Gateway is not a separate Deployment).
   replicas: 1
-  # When ``database.url`` or ``database.existingSecret`` is set, Gateway uses
-  # PostgreSQL (``APME_DATABASE_URL``) instead of the default SQLite file on
-  # the gateway-data volume. URLs must use the async driver
-  # ``postgresql+asyncpg://`` (plain ``postgresql://`` is rejected).
+  # ``database.url`` or ``database.existingSecret`` is required. Gateway persistence
+  # uses ``APME_DATABASE_URL`` (``postgresql+asyncpg://...``) against an external
+  # PostgreSQL service — the chart does not deploy PostgreSQL or create a
+  # ``*-postgres-data`` PVC. Credential-bearing URLs must use ``existingSecret``;
+  # ``database.url`` accepts credential-free values only (no ``user:pass@``).
+  # Remote production hosts must use certificate-validated TLS
+  # (``?sslmode=verify-full`` with a configured CA).
+  #
+  # PostgreSQL cutover: upgrading from a chart that stored SQLite on
+  # ``*-gateway-data`` does not migrate scan history. The external PostgreSQL
+  # database starts empty; the legacy ``*-gateway-data`` PVC is retained and
+  # mounted for pre-cutover rollback only.
   database:
     url: ""
     existingSecret:

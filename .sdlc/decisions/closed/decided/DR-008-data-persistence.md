@@ -44,7 +44,7 @@ A dashboard implies:
 
 This may require:
 - New service (ResultStore)
-- Database (SQLite, PostgreSQL, ClickHouse)
+- Database (PostgreSQL, ClickHouse)
 - Schema design
 - Migration strategy
 
@@ -78,20 +78,18 @@ apme check . --json > results/$(date +%Y%m%d).json
 
 **Effort**: None (current state)
 
-### Option B: SQLite (Embedded)
+### Option B: PostgreSQL (Superseded original SQLite choice)
 
-**Description**: Add SQLite database to the Gateway container (Engine remains stateless per ADR-020/ADR-029). Scan results persisted automatically.
+**Description**: Add PostgreSQL database to the Gateway (Engine remains stateless per ADR-020/ADR-029). Podman provisions a `postgres:16` sidecar; bootc and Helm require an external PostgreSQL service. The Gateway connects via `APME_DATABASE_URL` (`postgresql+asyncpg://...`). Scan results persisted automatically.
 
 **Pros**:
-- Zero additional infrastructure
-- ACID transactions
+- ACID transactions with concurrent writers (PostgreSQL)
 - SQL query capability
-- Backups = copy file
+- Backups via `pg_dump`, `pg_basebackup`, or coordinated volume snapshots
 
 **Cons**:
-- Single-node only
-- Concurrent write limitations
-- Schema migrations needed
+- Requires a PostgreSQL server (sidecar or external)
+- Schema migrations needed (Alembic)
 
 **Effort**: Medium
 
@@ -147,11 +145,11 @@ apme check . --json > results/$(date +%Y%m%d).json
 
 **Option E** (defer) for v1 with **Option A** (file-based) as interim.
 
-If dashboard is required for v1, then **Option B** (SQLite) is the right balance:
-- Zero external deps
-- Embedded in existing container
+If dashboard is required for v1, then **Option B** (PostgreSQL) is the right balance:
+- Requires a PostgreSQL server (Podman sidecar or external managed service for bootc/Helm)
+- Configured through ``APME_DATABASE_URL`` (`postgresql+asyncpg://...`)
 - Sufficient for single-org use case
-- Can migrate to PostgreSQL later if needed
+- Supports concurrent writes via PostgreSQL connection pooling
 
 ---
 
@@ -188,12 +186,12 @@ If dashboard is required for v1, then **Option B** (SQLite) is the right balance
 **Resolution (2026-03-19)**: Persistence approach decided in
 [ADR-029: Web Gateway Architecture](/.sdlc/adrs/ADR-029-web-gateway-architecture.md).
 The web gateway owns persistence as a presentation concern (consistent with
-ADR-020). **SQLite for V1** (zero infrastructure, embedded in gateway container),
-with PostgreSQL as a documented upgrade path for enterprise deployments. The
+ADR-020). **PostgreSQL** via `APME_DATABASE_URL` (`postgresql+asyncpg://...`),
+provisioned as a sidecar in Podman or supplied externally for bootc and Helm. The
 engine remains stateless — persistence lives entirely in the gateway/reporting
 layer.
 
 **Action Items**:
 - [x] Ensure CLI JSON output is well-structured for future persistence
 - [x] Re-open this DR when dashboard is prioritized → resolved by ADR-029
-- [x] Evaluate SQLite vs PostgreSQL based on v2 requirements → ADR-029 documents both
+- [x] Evaluate PostgreSQL deployment options based on v2 requirements → ADR-029 documents PostgreSQL

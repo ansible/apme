@@ -275,7 +275,7 @@ After every **check** or **remediate** run, the Engine emits a
 bounded awaited delivery (one-second timeout when the Reporting endpoint is
 known-down) and is the documented exception to the “Engine never queries out”
 invariant: it does not block the scan path indefinitely. The Gateway persists
-the event to SQLite and the UI reads it via the REST API.
+the event to PostgreSQL and the UI reads it via the REST API.
 
 ```text
 Engine (check/remediate completes)
@@ -289,7 +289,7 @@ Engine (check/remediate completes)
     ▼
 Gateway (grpc_reporting/servicer.py)
     │  Upsert session row
-    │  Insert activity row + violations + logs + ContentGraph → SQLite
+    │  Insert activity row + violations + logs + ContentGraph → PostgreSQL
     │
     ▼
 UI (React SPA on :8081)
@@ -338,7 +338,7 @@ the project root.
 ## Galaxy server injection (Gateway → Engine, ADR-045)
 
 The Gateway stores global Galaxy server definitions (name, URL, token, auth URL)
-in its SQLite database.  When initiating any project operation (check or
+in its PostgreSQL database.  When initiating any project operation (check or
 remediate) via the WebSocket endpoints or playground session, the Gateway loads
 all configured servers and injects them into the gRPC request:
 
