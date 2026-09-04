@@ -1024,7 +1024,7 @@
         "type": "object"
       },
       "HealthStatus": {
-        "description": "Gateway health response.\n\nAttributes:\n    status: Overall health (ok or degraded).\n    database: Database connectivity status.\n    components: Health status of each upstream service.",
+        "description": "Gateway health response.\n\nAttributes:\n    status: Overall health (ok or degraded).\n    database: Database connectivity status.\n    database_type: Human-readable database engine name (e.g. PostgreSQL, SQLite).\n    components: Health status of each upstream service.",
         "properties": {
           "components": {
             "items": {
@@ -1035,6 +1035,11 @@
           },
           "database": {
             "title": "Database",
+            "type": "string"
+          },
+          "database_type": {
+            "default": "unknown",
+            "title": "Database Type",
             "type": "string"
           },
           "status": {

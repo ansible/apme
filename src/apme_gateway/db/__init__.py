@@ -113,6 +113,22 @@ def get_engine() -> AsyncEngine:
     return _engine
 
 
+def get_database_type() -> str:
+    """Return a human-readable label for the active database engine.
+
+    Returns:
+        ``PostgreSQL``, ``SQLite``, or ``unknown`` when the engine is not ready.
+    """
+    if _engine is None:
+        return "unknown"
+    dialect = str(_engine.dialect.name)
+    if dialect == "postgresql":
+        return "PostgreSQL"
+    if dialect == "sqlite":
+        return "SQLite"
+    return dialect.capitalize()
+
+
 def get_in_clause_chunk_size() -> int:
     """Return the safe ``IN`` clause chunk size for the active database.
 
