@@ -35,11 +35,11 @@ Full pod inventory (including optional validators and observability): see
 | Target environment | Method | Reference |
 |--------------------|--------|-----------|
 | Developer laptop / Linux server (no K8s) | Podman pod (`tox -e up`) | [ADR-004](/.sdlc/adrs/ADR-004-podman-pod-deployment.md) |
-| **Kubernetes / OpenShift** | **Helm chart** (`helm install`) | [ADR-054](/.sdlc/adrs/ADR-054-production-deployment.md), [deploy/helm/apme/](/deploy/helm/apme/) |
+| **Kubernetes / OpenShift** | **APME Operator** | [ADR-054](/.sdlc/adrs/ADR-054-production-deployment.md), [apme-operator](https://github.com/ansible/apme-operator) |
 | Production single-node VM | bootc image | [ADR-054](/.sdlc/adrs/ADR-054-production-deployment.md) |
 | Quick evaluation / CI | CLI daemon (`apme daemon start`) | [CLI Guide](/docs/guides/CLI.md) |
 
-> **Never use Podman on Kubernetes or OpenShift.** Always use the Helm chart at `deploy/helm/apme/`.
+> **Never use Podman on Kubernetes or OpenShift.** Always use the [APME Operator](https://github.com/ansible/apme-operator).
 
 ## Key ADRs
 
@@ -51,8 +51,7 @@ Full pod inventory (including optional validators and observability): see
 | [ADR-007](/.sdlc/adrs/ADR-007-async-grpc-servers.md) | Async gRPC (grpc.aio) for all servers |
 | [ADR-008](/.sdlc/adrs/ADR-008-rule-id-conventions.md) | Rule IDs: L=Lint, M=Modernize, R=Risk, P=Policy, SEC=Secrets |
 | [ADR-009](/.sdlc/adrs/ADR-009-remediation-engine.md) | Validators are read-only; remediation is separate |
-| [ADR-054](/.sdlc/adrs/ADR-054-production-deployment.md) | **Helm chart for K8s/OCP**, bootc for VM |
-| [ADR-069](/.sdlc/adrs/ADR-069-helm-simple-all-in-one.md) | Helm **Simple** all-in-one pod (EAP/upstream; localhost; replicas=1) |
+| [ADR-054](/.sdlc/adrs/ADR-054-production-deployment.md) | **Operator for K8s/OCP**, bootc for VM |
 | [ADR-060](/.sdlc/adrs/ADR-060-rest-api-versioning-contract.md) | REST API is a versioned public contract — no breaking changes without version bump |
 | [ADR-063](/.sdlc/adrs/ADR-063-multi-platform-container-images.md) | Published images are multi-arch (`linux/amd64` + `linux/arm64`) |
 
@@ -81,7 +80,7 @@ Full workflow: [workflow.md](/.sdlc/context/workflow.md) | Getting started: [get
 - **Use gRPC** — all inter-service communication
 - **Async servers** — grpc.aio, not synchronous
 - **Rule IDs** — L/M/R/P/SEC convention per ADR-008
-- **Engine-core services are required** — Engine, Native, OPA, Ansible, and Galaxy Proxy are all required for both the CLI daemon and pod. Their deps are core, not optional extras. Gitleaks, Collection Health, and Dep Audit are optional (`_OPTIONAL_SERVICES`; start with `include_optional=True`). UI, Abbenay, and Gateway are pod-level/enterprise services the CLI daemon does not start. Gateway is co-located in Helm Simple / Podman (ADR-069 / ADR-004); ADR-049 plans Gateway embedding in the local daemon.
+- **Engine-core services are required** — Engine, Native, OPA, Ansible, and Galaxy Proxy are all required for both the CLI daemon and pod. Their deps are core, not optional extras. Gitleaks, Collection Health, and Dep Audit are optional (`_OPTIONAL_SERVICES`; start with `include_optional=True`). UI, Abbenay, and Gateway are pod-level/enterprise services the CLI daemon does not start. Gateway is co-located in operator deployments (ADR-054) and Podman deployments (ADR-004); ADR-049 plans Gateway embedding in the local daemon.
 - Do NOT modify files outside task scope
 - Do NOT add features not in requirements
 - Ask for clarification if specs are ambiguous
@@ -117,7 +116,7 @@ Rebuild required after modifying: `src/**/*.py`, `proto/**/*.proto`, `pyproject.
 ## References
 
 - [architecture.md](/.sdlc/context/architecture.md) — Container topology, ports, concurrency
-- [deployment.md](/.sdlc/context/deployment.md) — Deployment methods (Podman, Helm, bootc)
+- [deployment.md](/.sdlc/context/deployment.md) — Deployment methods (Podman, operator, bootc)
 - [conventions.md](/.sdlc/context/conventions.md) — Coding standards
 - [SECURITY.md](/SECURITY.md) — Security policy
 - [SOP.md](/SOP.md) — Consolidated standard operating procedures

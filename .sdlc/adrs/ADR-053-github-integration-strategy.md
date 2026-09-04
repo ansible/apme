@@ -61,10 +61,20 @@ tab and adds inline annotations on PR diffs with zero custom code.
 
 ### 2. Action Mode: Hosted
 
-The Action connects to an existing APME deployment (Kubernetes via Helm chart,
-VM via bootc, or any running pod). This gives the exact same validation as a
-production deployment: all validators, Gitleaks secret scanning, collection
-health, and dependency auditing.
+The Action connects to an existing APME deployment (Kubernetes via operator,
+VM via bootc, or any running pod). It runs whatever validators that deployment
+enables — the same engine stack as production, not a fixed validator set.
+Gitleaks, Collection Health, and Dependency Audit are optional (ADR-054);
+hosted CI results reflect the deployed configuration. Set `APME_ENGINE_ADDRESS`
+to the Engine gRPC endpoint reachable from the runner within an authenticated
+network boundary (operator default:
+`<name>-engine.<namespace>.svc:50051`). Access must use in-cluster runners,
+VPN, peering, or an equivalent encrypted overlay — not the public internet.
+Engine is not exposed on Route/Ingress; restrict reachability with
+NetworkPolicy (see ADR-054 §Hosted CI Engine access). Operator v1 uses
+plaintext in-cluster gRPC with no application-level auth; crossing untrusted
+networks requires an encrypted tunnel or VPN until native Engine TLS is
+available.
 
 ```yaml
 - uses: ansible/apme@v1
@@ -110,7 +120,7 @@ container orchestration complexity (pod YAML, health waits, cleanup). GitHub
 Actions Docker layer caching mitigates pulls but not pod startup.
 
 **Why not chosen**: Organizations using APME seriously enough for CI integration
-will have a running deployment (Helm, bootc, Podman pod). The hosted approach
+will have a running deployment (operator, bootc, Podman pod). The hosted approach
 is simpler, faster, and reuses that investment. The maintenance burden of
 embedding a pod spec in the Action is not justified.
 
@@ -154,7 +164,7 @@ Security tab. More complex to implement. Most tools use SARIF now.
 ### Negative
 
 - **Requires a running APME deployment** — organizations must deploy APME
-  (via Helm, bootc, or Podman) before CI integration works. This is a
+  (via operator, bootc, or Podman) before CI integration works. This is a
   prerequisite, not a limitation for production users.
 - **Network connectivity** — runners must reach the APME Engine gRPC endpoint.
   Self-hosted runners or VPN-connected runners handle this for private
@@ -195,4 +205,4 @@ function converting violation dicts to SARIF 2.1.0 JSON. Tested independently.
 - ADR-038: Public Data API (hosted mode queries the same API)
 - ADR-047: tox as sole orchestration
 - ADR-050: Post-remediation PR creation
-- ADR-054: Production deployment (Helm + bootc for hosted APME)
+- ADR-054: Production deployment (operator + bootc for hosted APME)

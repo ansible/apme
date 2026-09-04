@@ -22,7 +22,7 @@ APME provides:
 3. **YAML formatting**: Comment-preserving normalization (indentation, key ordering, Jinja spacing)
 4. **Web UI**: React dashboard for project management, live operations, and cross-project analytics
 5. **CI/CD integration**: JSON, SARIF output; pre-commit hooks; GitHub Actions workflows
-6. **Multiple deployment targets**: CLI (pip install), Podman pod, bootc VM, Helm chart
+6. **Multiple deployment targets**: CLI (pip install), Podman pod, bootc VM, APME operator
 
 ## Scope
 
@@ -38,7 +38,7 @@ APME provides:
 - YAML formatting with comment preservation
 - Web dashboard with persistent scan history
 - CI/CD integration (JSON, SARIF, pre-commit, GitHub Actions)
-- Multiple deployment methods (CLI, Podman, bootc, Helm)
+- Multiple deployment methods (CLI, Podman, bootc, operator)
 
 ### Out of Scope
 
@@ -58,7 +58,7 @@ APME provides:
 ## Architecture
 
 APME runs as a set of cooperating containers. In **Podman**, **bootc**, and
-**Kubernetes** (Helm Simple / ADR-069), the stack co-locates on localhost in one
+**Kubernetes** (APME operator), the stack co-locates on localhost in one
 pod (engine + Gateway + UI + optional Abbenay). The CLI can also run as a
 standalone daemon for quick evaluation.
 

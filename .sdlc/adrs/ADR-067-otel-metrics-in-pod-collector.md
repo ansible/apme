@@ -137,7 +137,7 @@ strictly simpler and safer than fan-out from every container.
 
 ### Negative
 
-- One more container in the reference pod and (eventually) Helm engine
+- One more container in the reference pod and (eventually) operator engine
   Deployment.
 - Operators must understand OTLP vs Prometheus scrape roles.
 - Label cardinality discipline is mandatory (bucket coarse attributes;
@@ -167,9 +167,11 @@ strictly simpler and safer than fan-out from every container.
 - Local dashboards: `containers/observability/up.sh` (Prometheus + Grafana
   on loopback).
 - OTLP forward-out from the sidecar: https://github.com/ansible/apme/issues/457
-- Helm: engine Deployment should co-locate the collector with the engine
-  stack (ADR-054); do not require Gateway/UI Deployments to emit unless
-  they gain independent metrics needs.
+- Operator: v1 does not ship an in-pod collector (ADR-054). Configure
+  `OTEL_EXPORTER_OTLP_ENDPOINT` on workloads for an external/platform
+  collector. Co-locating a collector with the engine stack is future operator
+  work; Gateway/UI Deployments do not need independent metrics emission unless
+  that changes.
 
 ## Acceptance Criteria
 
@@ -217,7 +219,7 @@ curl -sf http://127.0.0.1:8889/metrics | head
 - ADR-012: Scale pods, not services (collector scales with the engine unit)
 - ADR-013: Structured diagnostics in gRPC (complementary; not superseded)
 - ADR-033: Centralized log bridge (logs path; metrics use OTel instead)
-- ADR-054: Production Helm/bootc deployment (collector belongs with engine)
+- ADR-054: Production operator/bootc deployment (collector belongs with engine)
 
 ## References
 

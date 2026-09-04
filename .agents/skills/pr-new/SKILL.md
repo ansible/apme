@@ -397,7 +397,7 @@ critical/high/medium/low.
 - Docstring/ADR/comment vs code drift (especially "all"/"every" claims
   vs filtered implementation)
 - Rename/migration incompleteness: when an identifier is renamed in the
-  diff, scan the same affected docs, tests, Helm keys, and state-file
+  diff, scan the same affected docs, tests, operator manifests, and state-file
   contracts for leftover old names in *current* guidance (historical
   notes OK only when explicitly marked). Prefer a compatibility alias
   or an explicit breaking-change note for persisted/public keys.
@@ -422,8 +422,8 @@ critical/high/medium/low.
   OpenAPI shape is unchanged — prefer log+ignore / intersection
   unless an ADR explicitly hardens the contract.
 - Cross-artifact parity (proto RPC ↔ daemon servicer; rule IDs ADR-008;
-  _DEFAULT_PORTS ↔ started services; Helm template ↔ Podman
-  ``pod.yaml`` for the same in-pod env/volume/probe wiring — if Helm
+  _DEFAULT_PORTS ↔ started services; operator manifests ↔ Podman
+  ``pod.yaml`` for the same in-pod env/volume/probe wiring — if the operator
   mounts a shared socket for Gateway health, Podman Gateway must too)
 - Test gaps for behaviors the code/docs claim
 - Silent no-ops, dead branches, wrong defaults

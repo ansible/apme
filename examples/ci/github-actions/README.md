@@ -64,8 +64,17 @@ This will:
 ### Prerequisites
 
 - A running APME deployment accessible from your GitHub Actions runners
-  (deployed via Helm, bootc VM, or Podman pod)
-- `APME_ENGINE_ADDRESS` secret set to your Engine gRPC endpoint (host:port)
+  (deployed via APME operator, bootc VM, or Podman pod)
+- `APME_ENGINE_ADDRESS` secret set to the Engine gRPC endpoint (`host:port`)
+  reachable from the runner within an authenticated network boundary — for
+  operator installs, typically `<name>-engine.<namespace>.svc:50051`
+  (ClusterIP; plaintext gRPC on trusted in-cluster networks only). Remote
+  runners must use VPN, peering, or equivalent encrypted overlay; do not expose
+  plaintext Engine gRPC on the public internet. The operator exposes Gateway
+  REST on Route/Ingress only; Engine `:50051` is not on the public edge (use
+  in-cluster runners, VPN, or bootc/Podman host access). See
+  [ADR-054](../../../.sdlc/adrs/ADR-054-production-deployment.md) §Hosted CI
+  Engine access.
 
 ### Action Inputs
 
