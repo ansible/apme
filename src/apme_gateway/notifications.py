@@ -19,10 +19,10 @@ import logging
 from collections.abc import AsyncGenerator
 from typing import Any
 
+from sqlalchemy import select as sa_select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm.exc import DetachedInstanceError
 
-from apme_gateway.db.models import Notification, Scan, Violation
+from apme_gateway.db.models import Notification, Project, Scan, Violation
 from apme_gateway.db.queries import insert_notification
 
 logger = logging.getLogger(__name__)
@@ -132,6 +132,56 @@ def _notif_to_payload(n: Notification) -> dict[str, Any]:
 _HEALTH_DROP_THRESHOLD = 10
 
 
+async def _scan_display_name(db: AsyncSession, scan: Scan) -> str:
+    """Return a user-facing name without lazy-loading ``Scan.project``.
+
+    ``AsyncSession`` cannot implicit-IO a relationship (asyncpg raises
+    ``MissingGreenlet``). Look the project up by primary key instead.
+
+    Args:
+        db: Active async session.
+        scan: Persisted scan row.
+
+    Returns:
+        Project name when ``project_id`` resolves, otherwise ``project_path``.
+    """
+    path = scan.project_path
+    fallback = path if isinstance(path, str) else ""
+    if not scan.project_id:
+        return fallback
+    project = await db.get(Project, scan.project_id)
+    if project is None:
+        return fallback
+    name = project.name
+    return name if isinstance(name, str) and name else fallback
+
+
+async def _should_write_notification(
+    db: AsyncSession,
+    existing: Notification | None,
+    scan: Scan,
+) -> bool:
+    """Return True when a notification of this type should be inserted.
+
+    An unattributed row (no ``project_id``) is deleted and replaced when
+    the scan has since been linked to a project.
+
+    Args:
+        db: Active async session.
+        existing: Prior notification of the same type, if any.
+        scan: Scan being notified.
+
+    Returns:
+        True if the caller should insert a new row.
+    """
+    if existing is None:
+        return True
+    if scan.project_id and not existing.project_id:
+        await db.delete(existing)
+        return True
+    return False
+
+
 async def generate_notifications(
     db: AsyncSession,
     scan: Scan,
@@ -145,6 +195,13 @@ async def generate_notifications(
     The caller is responsible for committing the transaction and then
     calling :func:`broadcast_notifications` with the returned payloads.
 
+    Display names use ``Project`` loaded by primary key, never the
+    ``Scan.project`` relationship (async lazy-load is unsafe). Types
+    already stored for this ``scan_id`` are skipped, except an
+    unattributed ``scan_complete`` (no ``project_id``) is replaced once
+    the scan is linked to a project so the operate path can correct
+    title and display name.
+
     Args:
         db: Active async database session (caller commits).
         scan: The persisted Scan ORM row.
@@ -157,41 +214,43 @@ async def generate_notifications(
     """
     payloads: list[dict[str, Any]] = []
 
-    display_name = scan.project_path
-    try:
-        if scan.project is not None:
-            display_name = scan.project.name
-    except DetachedInstanceError:
-        pass
+    display_name = await _scan_display_name(db, scan)
+    existing_by_type: dict[str, Notification] = {}
+    if scan.scan_id:
+        existing_rows = (
+            (await db.execute(sa_select(Notification).where(Notification.scan_id == scan.scan_id))).scalars().all()
+        )
+        existing_by_type = {row.type: row for row in existing_rows}
 
-    # -- Scan complete notification (always) --------------------------------
+    # -- Scan complete notification -----------------------------------------
 
-    if scan.scan_type == "remediate":
-        remaining = max(scan.total_violations - scan.fixed_count, 0)
-        title = "Remediation Complete"
-        msg = f"{display_name}: {scan.fixed_count} findings resolved, {remaining} remaining"
-        variant = "success" if scan.fixed_count > 0 else "info"
-    else:
-        title = "Check Complete"
-        msg = f"{display_name}: {scan.total_violations} violations found"
-        variant = "success" if scan.total_violations == 0 else "info"
+    if await _should_write_notification(db, existing_by_type.get("scan_complete"), scan):
+        if scan.scan_type == "remediate":
+            remaining = max(scan.total_violations - scan.fixed_count, 0)
+            title = "Remediation Complete"
+            msg = f"{display_name}: {scan.fixed_count} findings resolved, {remaining} remaining"
+            variant = "success" if scan.fixed_count > 0 else "info"
+        else:
+            title = "Check Complete"
+            msg = f"{display_name}: {scan.total_violations} violations found"
+            variant = "success" if scan.total_violations == 0 else "info"
 
-    notif = await insert_notification(
-        db,
-        type="scan_complete",
-        title=title,
-        message=msg,
-        variant=variant,
-        project_id=scan.project_id,
-        scan_id=scan.scan_id,
-        link=f"/activity/{scan.scan_id}",
-    )
-    payloads.append(_notif_to_payload(notif))
+        notif = await insert_notification(
+            db,
+            type="scan_complete",
+            title=title,
+            message=msg,
+            variant=variant,
+            project_id=scan.project_id,
+            scan_id=scan.scan_id,
+            link=f"/activity/{scan.scan_id}",
+        )
+        payloads.append(_notif_to_payload(notif))
 
     # -- Secrets detected (Gitleaks SEC:* violations) -----------------------
 
     sec_violations = [v for v in violations if v.rule_id.startswith("SEC:")]
-    if sec_violations:
+    if sec_violations and await _should_write_notification(db, existing_by_type.get("secrets_detected"), scan):
         sec_files = sorted({v.file for v in sec_violations if v.file})
         if sec_files:
             file_list = ", ".join(sec_files[:5])
@@ -216,7 +275,8 @@ async def generate_notifications(
     # -- Health score drop --------------------------------------------------
 
     if (
-        old_health_score is not None
+        existing_by_type.get("health_changed") is None
+        and old_health_score is not None
         and new_health_score is not None
         and old_health_score - new_health_score >= _HEALTH_DROP_THRESHOLD
     ):

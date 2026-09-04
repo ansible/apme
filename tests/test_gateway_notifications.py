@@ -9,7 +9,7 @@ from httpx import ASGITransport, AsyncClient
 
 from apme_gateway.app import create_app
 from apme_gateway.db import get_session
-from apme_gateway.db.models import Scan, Session, Violation
+from apme_gateway.db.models import Notification, Project, Scan, Session, Violation
 from apme_gateway.notifications import (
     _broadcast,
     broadcast_notifications,
@@ -85,7 +85,7 @@ class TestGenerateNotifications:
     """Tests for generate_notifications()."""
 
     async def test_scan_complete_notification_created(self) -> None:
-        """A scan_complete notification is always generated."""
+        """A scan_complete notification is generated when none exists yet."""
         await _seed_session_and_scan()
         async with get_session() as db:
             from sqlalchemy import select
@@ -204,6 +204,82 @@ class TestGenerateNotifications:
             await db.commit()
 
         assert len(payloads) == 1  # only scan_complete
+
+    async def test_project_id_lookup_uses_project_name(self) -> None:
+        """Project display name is loaded by primary key, not the relationship."""
+        async with get_session() as db:
+            db.add(
+                Project(
+                    id="proj-n1",
+                    name="Named Project",
+                    repo_url="https://github.com/test/named.git",
+                    branch="main",
+                    created_at="2026-09-04T00:00:00Z",
+                    health_score=80,
+                )
+            )
+            await db.commit()
+        await _seed_session_and_scan(project_id="proj-n1")
+        async with get_session() as db:
+            from sqlalchemy import select
+
+            scan = (await db.execute(select(Scan).where(Scan.scan_id == "scan-1"))).scalar_one()
+            payloads = await generate_notifications(db, scan, [])
+            await db.commit()
+
+        assert "Named Project:" in payloads[0]["message"]
+
+    async def test_skips_types_already_stored_for_scan(self) -> None:
+        """A second call for the same scan_id does not duplicate scan_complete."""
+        await _seed_session_and_scan()
+        async with get_session() as db:
+            from sqlalchemy import select
+
+            scan = (await db.execute(select(Scan).where(Scan.scan_id == "scan-1"))).scalar_one()
+            first = await generate_notifications(db, scan, [])
+            await db.commit()
+            second = await generate_notifications(db, scan, [])
+            await db.commit()
+
+        assert len(first) == 1
+        assert first[0]["type"] == "scan_complete"
+        assert second == []
+
+    async def test_replaces_unattributed_scan_complete_after_project_link(self) -> None:
+        """Operate-path generate after link_scan_to_project replaces the CLI copy."""
+        async with get_session() as db:
+            db.add(
+                Project(
+                    id="proj-n3",
+                    name="Linked Project",
+                    repo_url="https://github.com/test/linked.git",
+                    branch="main",
+                    created_at="2026-09-04T00:00:00Z",
+                    health_score=80,
+                )
+            )
+            await db.commit()
+        await _seed_session_and_scan(scan_type="check", total_violations=4)
+        async with get_session() as db:
+            from sqlalchemy import select
+
+            scan = (await db.execute(select(Scan).where(Scan.scan_id == "scan-1"))).scalar_one()
+            first = await generate_notifications(db, scan, [])
+            await db.commit()
+            scan.project_id = "proj-n3"
+            scan.scan_type = "check"
+            second = await generate_notifications(db, scan, [])
+            await db.commit()
+            rows = list(
+                (await db.execute(select(Notification).where(Notification.scan_id == "scan-1"))).scalars().all()
+            )
+
+        assert first[0]["message"].startswith("/proj:")
+        assert len(second) == 1
+        assert "Linked Project:" in second[0]["message"]
+        assert second[0]["title"] == "Check Complete"
+        assert len(rows) == 1
+        assert rows[0].project_id == "proj-n3"
 
 
 # ---------------------------------------------------------------------------
