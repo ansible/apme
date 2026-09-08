@@ -602,7 +602,7 @@ fi
 # Optional: GCP service account / ADC JSON for direct Vertex AI (vertex-anthropic engine).
 # Set ABBENAY_GCP_CREDENTIALS to the absolute host path of the credentials file and
 # GOOGLE_VERTEX_PROJECT (plus optional GOOGLE_VERTEX_LOCATION) in containers/abbenay/.env.
-# See docs/guides/ABBENAY_AI.md — mirrors the Helm chart mount at
+# See docs/guides/ABBENAY_AI.md — mirrors the operator deployment mount at
 # /var/run/secrets/gcp/service-account-key.json.
 if [[ -n "$ABBENAY_GCP_CREDENTIALS" ]]; then
   if [[ "$ABBENAY_GCP_CREDENTIALS" != /* ]]; then

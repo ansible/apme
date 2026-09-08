@@ -12,7 +12,7 @@ Accepted
 
 Portal and other Gateway clients need to **configure** Abbenay (providers,
 models, API keys) at runtime — not only select a model for remediation.
-Today APME ships Abbenay with **deploy-time** `config.yaml` + env/Helm secrets
+Today APME ships Abbenay with **deploy-time** `config.yaml` + env/Kubernetes secrets
 and exposes only **gRPC** (`:50057`) for Engine inference (`list_models` /
 `chat`). There is no Gateway path for Abbenay admin.
 
@@ -22,7 +22,7 @@ its web/serve surface is running. APME does not start that HTTP listener today.
 
 Constraints and drivers:
 
-- **ADR-069 Simple topology** — Helm EAP/upstream co-locates engine + Gateway +
+- **Simple topology** — The operator, Podman, and bootc co-locate engine + Gateway +
   optional Abbenay in one pod on localhost. Podman and bootc likewise share the
   network namespace. Loopback is the natural admin hop.
 - **ADR-046** rejected Gateway → Abbenay for **LLM inference** (Engine remains
@@ -45,7 +45,7 @@ Constraints and drivers:
 | 2. gRPC between backend services | Consistent — admin uses Abbenay’s existing HTTP API; inference stays gRPC via Engine |
 | 5. Stateless engine / persistence at Gateway | Consistent — Abbenay remains config and secrets SoT; Gateway does not persist Abbenay config or provider keys |
 | 11. Engine never queries out | Consistent — Gateway (not engine) reaches Abbenay admin |
-| 16. Helm Simple / Podman localhost | Consistent with ADR-069 |
+| 16. Operator / Podman localhost | Consistent |
 | 17. REST versioning (ADR-060) | Additive `/api/v1/ai/*` proxy mount |
 
 **Amends ADR-046** Alternative 2 notes: rejection applies to **inference**, not
@@ -54,7 +54,7 @@ to Gateway HTTP reverse-proxy of Abbenay **admin**.
 ## Decision
 
 **1. Simple model: Abbenay is in the APME pod.**  
-For EAP/upstream Helm (ADR-069), Podman, and aligned local daemon layouts,
+For operator, Podman, and aligned local daemon layouts,
 Abbenay is co-located with Gateway. Admin traffic uses localhost.
 
 **2. Gateway reverse-proxies an allowlisted Abbenay HTTP admin API.**  
@@ -72,7 +72,7 @@ Allowlist: `GET/POST /config`, `GET /engines`, `GET /providers`,
 **3. Enable Abbenay HTTP on loopback when Abbenay is enabled.**  
 In addition to gRPC `:50057` (Engine), start Abbenay’s HTTP admin surface on
 **`127.0.0.1:8787`** (default Abbenay port). Do not publish a cluster Service
-or hostPort for 8787 in the Simple chart.
+or hostPort for 8787 in the operator deployment.
 
 **4. Auth rewrite at the Gateway.**  
 Outbound to Abbenay, Gateway injects Abbenay’s HTTP Bearer token
@@ -87,12 +87,12 @@ Gateway. Elevating Abbenay admin onto that edge is intentional for Simple
 EAP; operators must not expose Gateway `:8080` without an outer auth layer.
 
 **Caller trust (Simple):** Path allowlisting alone does not authenticate the
-caller. That is intentional under ADR-048 / ADR-069: every container in the
-Simple pod (Helm and Podman) shares one network namespace and is treated as a
+caller. That is intentional under ADR-048: every container in the
+Simple pod (operator and Podman) shares one network namespace and is treated as a
 trusted co-tenant of the product runtime. Evidence:
 
-- **Helm Simple** (`deploy/helm/apme/`): Engine, Gateway, UI, optional
-  Abbenay, and validators co-locate in one Pod (`replicas: 1`); Abbenay HTTP
+- **Operator** ([ansible/apme-operator](https://github.com/ansible/apme-operator)): Engine, Gateway, UI, optional
+  Abbenay, and validators co-locate in one Pod; Abbenay HTTP
   has no Service or hostPort; only in-pod processes reach `127.0.0.1:8787`
   or Gateway `:8080` without an outer Ingress/NetworkPolicy edge.
 - **Podman** (`containers/podman/pod.yaml`): same shared-netns all-in-one
@@ -100,7 +100,7 @@ trusted co-tenant of the product runtime. Evidence:
   `hostIP: 127.0.0.1` only (`http://127.0.0.1:8787`) with
   `ABBENAY_HTTP_AUTH=0` for passwordless dashboard access on localhost.
   Gateway `:8080` remains the sole published product REST edge for non-local
-  access. Helm Simple has no hostPort for 8787.
+  access. The operator deployment has no hostPort for 8787.
 
 A compromised sidecar that can already talk to Gateway can hit
 `/api/v1/ai/*` and trigger the Gateway→Abbenay token rewrite — the same
@@ -112,8 +112,8 @@ only with a new ADR that changes ADR-048.
 `http://127.0.0.1:8787`. Loopback is not transport confidentiality against a
 compromised co-located process; it is a binding constraint so the token never
 crosses a pod boundary. Deployment evidence: no cluster Service/hostPort for
-8787 in Helm; Podman may use `hostIP: 127.0.0.1` hostPort for localhost dev UI
-only. Abbenay `--host 127.0.0.1` in Helm; Podman dev uses `--host 0.0.0.0` with
+8787 in the operator deployment; Podman may use `hostIP: 127.0.0.1` hostPort for localhost dev UI
+only. Abbenay `--host 127.0.0.1` in operator/K8s; Podman dev uses `--host 0.0.0.0` with
 localhost-only host binding. Gateway default
 `APME_ABBENAY_HTTP_URL=http://127.0.0.1:8787`. Hardened hops (HTTPS+mTLS or a
 permission-protected Unix socket) require a separate ADR; they are not part of
@@ -128,11 +128,9 @@ path and rejects other methods on `models`.
 Deploy-time providers seed a writable Abbenay config directory; runtime HTTP
 admin writes persist there as the source of truth after first configure:
 
-- **Helm**: ConfigMap (`*-abbenay-config`) is mounted read-only as a seed.
-  Init container `init-abbenay-config` copies `config.yaml` into the writable
+- **Operator**: ConfigMap or CR seed is mounted read-only. Init copies seed into the writable
   volume **once** (only if the file is absent). Default volume is `emptyDir`
-  (pod lifetime). Optional PVC via `persistence.abbenay.enabled=true` survives
-  restarts. Abbenay mounts the writable dir at `/etc/abbenay-config`.
+  (pod lifetime). Optional PVC survives restarts. Abbenay mounts the writable dir at `/etc/abbenay-config`.
 - **Podman**: Writable hostPath is
   `${XDG_CACHE_HOME:-$HOME/.cache}/apme/abbenay/config/` (override via
   `APME_CACHE_HOST_PATH`), mounted at `/home/abbenay/.config/abbenay`.
@@ -142,7 +140,7 @@ admin writes persist there as the source of truth after first configure:
   (rootful: chown; rootless: POSIX ACL so the host user can still edit). The
   git checkout is never chowned.
 
-After the first successful configure, the writable file is SoT — Helm value /
+After the first successful configure, the writable file is SoT — operator CR /
 ConfigMap changes do not overwrite an existing runtime config.
 
 **7. Secrets source of truth remains Abbenay (not Gateway).**  
@@ -158,16 +156,15 @@ not chmod `secrets.json`. File store on Darwin hostPath is unsupported until
 use env or memory. File-store keys survive a restart
 **only** when that volume is durable:
 
-- **Helm**: `persistence.abbenay.enabled=true` (PVC). The chart default is
+- **Operator**: optional PVC for Abbenay config. Default is
   `emptyDir` — file-store keys then last for the **pod** lifetime only
-  (survive Abbenay container restart; lost on pod recycle, drain, and Helm
-  upgrade with `Recreate`).
+  (survive Abbenay container restart; lost on pod recycle, drain, and upgrade).
 - **Podman (Linux)**: RW host cache (survives `tox -e down`; `tox -e wipe`
   removes `secrets.json`). **macOS**: file store on the virtiofs hostPath is
   unsupported until [#562](https://github.com/ansible/apme/issues/562); use
   env or memory.
 
-The process-lifetime `memory` store remains available. Deploy-time Helm
+The process-lifetime `memory` store remains available. Deploy-time Kubernetes
 Secrets / env (`secret_store: env`) are unchanged. DELETE must pass
 `?secretStore=` (Abbenay defaults omitted store to **keychain**).
 
@@ -177,8 +174,8 @@ push-into-Abbenay-memory
 ADR's "Abbenay remains config SoT" (invariant 5) and makes Gateway a
 secrets vault it is not designed to be. This amendment does **not**
 implement #560's Portal CRUD / push-before-scan UX; operators who need
-runtime keys to survive a Helm pod recycle must enable the Abbenay PVC
-(or keep using env / Helm Secrets).
+runtime keys to survive a pod recycle must enable the Abbenay PVC
+(or keep using env / Kubernetes Secrets).
 
 **We will use an allowlisted HTTP reverse-proxy on the Gateway for in-pod
 Abbenay admin, not a catch-all façade and not Gateway→Abbenay gRPC for chat.**
@@ -220,7 +217,7 @@ Abbenay is a shared platform service (separate ADR).
 
 ### Alternative 3: Keep deploy-time-only Abbenay config (status quo)
 
-**Description**: Operators edit Helm values / `config.yaml` and redeploy; no
+**Description**: Operators edit operator CR / `config.yaml` and redeploy; no
 runtime admin API.
 
 **Pros**:
@@ -249,8 +246,8 @@ Abbenay `secretStore: memory` before AI-enabled scans (proposed in
 - Memory store is still ephemeral in Abbenay; durability is only in Gateway
 
 **Why not chosen**: Durable keys belong in Abbenay's file store on a
-**durable** config volume (Helm PVC / Podman cache), not in Gateway SQLite.
-Gateway stays a proxy. Default Helm `emptyDir` is still ephemeral — enable
+**durable** config volume (operator PVC / Podman cache), not in Gateway SQLite.
+Gateway stays a proxy. Default operator `emptyDir` is still ephemeral — enable
 `persistence.abbenay.enabled` when file-store keys must survive pod recycle.
 
 ## Consequences
@@ -289,17 +286,20 @@ Gateway stays a proxy. Default Helm `emptyDir` is still ephemeral — enable
   Reject unknown paths (including `chat`) and encoded `..` traversal.
 - **Env**: e.g. `APME_ABBENAY_HTTP_URL` default `http://127.0.0.1:8787`;  
   `APME_ABBENAY_HTTP_TOKEN` (or shared secret with Abbenay `server.api_token_env`).
-- **Deploy**: Helm Simple sidecar + Podman — `abbenay web --host 127.0.0.1
-  --port 8787 --grpc-host 127.0.0.1 --grpc-port 50057` (image ≥ v2026.8.0);
-  no Service/hostPort for HTTP or gRPC; chart README notes ADR-070. Both
-  topologies bind Abbenay to loopback (pod-shared netns).
+- **Deploy** (image ≥ v2026.8.0; Operator has no Service/hostPort for HTTP or gRPC):
+  - **Operator**: `abbenay web --host 127.0.0.1 --port 8787 --grpc-host
+    127.0.0.1 --grpc-port 50057` — see
+    [apme-operator](https://github.com/ansible/apme-operator).
+  - **Podman**: `abbenay web --host 0.0.0.0 --port 8787 --grpc-host 127.0.0.1
+    --grpc-port 50057` with `hostIP: 127.0.0.1` hostPort so the host can reach
+    the listener while the published port stays localhost-only.
 - **Conflict**: `GET /api/v1/ai/models` remains Engine-backed; proxy excludes
   `models` for all methods. Register main router before the proxy mount.
 - **OpenAPI**: proxy routes `include_in_schema=False` (Abbenay owns schemas);
   Gateway `info.description` references ADR-070.
 - **Tests**: path rewrite, Bearer inject, Cookie strip, 502, models/chat not
   proxied, traversal rejected, missing token 503, Set-Cookie stripped; secrets
-  GET/POST/DELETE proxy tests; helm asserts ordered
+  GET/POST/DELETE proxy tests; operator manifest asserts ordered
   `--host`/`127.0.0.1`/`--port`/`8787` and Gateway HTTP URL.
 - **Portal UI**: out of scope for the first implementation PR; catalog proxy +
   Quality settings follow in a later change.
@@ -309,7 +309,7 @@ Gateway stays a proxy. Default Helm `emptyDir` is still ephemeral — enable
   (`${XDG_CACHE_HOME:-$HOME/.cache}/apme/abbenay/config/`); seed-once;
   runtime SoT after first configure.
 - **Secrets durability** (Abbenay ≥ v2026.8.6): `secretStore: "file"` writes
-  `<configDir>/secrets.json` on that same volume. Durable only with Helm
+  `<configDir>/secrets.json` on that same volume. Durable only with operator
   `persistence.abbenay.enabled=true` or the Podman RW cache. Gateway does
   not parse `secretStore`. Do not persist provider keys in Gateway SQLite.
   DELETE requires `?secretStore=` (Abbenay defaults to keychain).
@@ -322,7 +322,7 @@ Gateway stays a proxy. Default Helm `emptyDir` is still ephemeral — enable
   not call Abbenay for **chat/inference**; admin HTTP proxy is allowed
 - [ADR-048](ADR-048-pod-internal-admin-endpoints.md): Network isolation for
   pod-internal admin surfaces
-- [ADR-054](ADR-054-production-deployment.md) / [ADR-069](ADR-069-helm-simple-all-in-one.md):
+- [ADR-054](ADR-054-production-deployment.md) (ADR-069 superseded):
   Simple all-in-one localhost topology
 - [ADR-060](ADR-060-rest-api-versioning-contract.md): Additive `/api/v1` routes
 
@@ -341,6 +341,6 @@ Gateway stays a proxy. Default Helm `emptyDir` is still ephemeral — enable
 | 2026-08-03 | cidrblock | Accepted — Simple in-pod Abbenay; Gateway HTTP admin proxy |
 | 2026-08-03 | bthornto | Amended allowlist: added `GET /engines` for read-only engine discovery |
 | 2026-08-03 | bthornto | §6 Config durability implemented (#498): seed→RW emptyDir/PVC; Podman RW config dir |
-| 2026-08-04 | bthornto | §4: document Simple caller-trust + loopback token threat model (Helm/Podman evidence) |
+| 2026-08-04 | bthornto | §4: document Simple caller-trust + loopback token threat model (operator/Podman evidence) |
 | 2026-08-13 | bthornto | Amended allowlist: added `GET/POST /secrets`, `DELETE /secrets/{key}` for Abbenay ≥ v2026.8.5 memory secret store |
-| 2026-08-14 | bthornto | §7 secrets remain Abbenay SoT: file store (`secretStore: "file"`, ≥ v2026.8.6) on a durable config volume (Helm PVC / Podman cache); Gateway stays proxy-only (rejects Gateway DB SoT, #560) |
+| 2026-08-14 | bthornto | §7 secrets remain Abbenay SoT: file store (`secretStore: "file"`, ≥ v2026.8.6) on a durable config volume (operator PVC / Podman cache); Gateway stays proxy-only (rejects Gateway DB SoT, #560) |

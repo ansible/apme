@@ -54,7 +54,7 @@ flowchart LR
 ```
 
 CLI daemon mode starts only the core stack (Engine, Native, OPA, Ansible, Galaxy
-Proxy). Gitleaks, Collection Health, and Dep Audit require the Podman/Helm pod
+Proxy). Gitleaks, Collection Health, and Dep Audit require the Podman/operator pod
 or `include_optional=True` on the daemon.
 
 ### Target state after ADR-042 (sketch)

@@ -1,8 +1,8 @@
-# ADR-054: Production Deployment — Helm Chart and bootc VM Image
+# ADR-054: Production Deployment — Kubernetes Operator and bootc VM Image
 
 ## Status
 
-Accepted (Helm workload topology amended by [ADR-069](ADR-069-helm-simple-all-in-one.md))
+Accepted (revised 2026-09-02: Helm chart removed; Kubernetes deployment via [apme-operator](https://github.com/ansible/apme-operator))
 
 ## Date
 
@@ -15,9 +15,9 @@ with 12 containers sharing localhost networking. This works well for development
 and single-node evaluation but does not address production deployment:
 
 - **Kubernetes** is the standard for multi-node, scaled, and managed deployments.
-  No Helm chart or K8s manifests exist. ADR-004 chose K8s-shaped YAML
-  intentionally as a stepping stone but the pod.yaml uses `hostPath` volumes
-  and `hostPort` mappings that do not translate to production K8s.
+  ADR-004 chose K8s-shaped YAML intentionally as a stepping stone but the
+  pod.yaml uses `hostPath` volumes and `hostPort` mappings that do not translate
+  directly to production K8s.
 - **VM-based deployment** is required for air-gapped, edge, and compliance
   environments. bootc (image-based Linux) provides atomic, reproducible OS
   images that ship applications alongside the OS, enabling consistent VM
@@ -30,10 +30,7 @@ and single-node evaluation but does not address production deployment:
 - ADR-005 (no service discovery) uses `127.0.0.1:<port>` for intra-pod
   communication. This works identically in Kubernetes pods (containers in the
   same pod share localhost).
-- The Helm chart’s shipping audience is **EAP and upstream** Simple installs
-  (see ADR-069), not a multi-replica engine farm with an independently scaled
-  Gateway.
-- The 12 containers in the reference pod naturally co-locate for Simple installs:
+- The 12 containers in the reference pod naturally co-locate for single-site installs:
   - **Engine stack** (8 containers): Engine, Native, OPA, Ansible, Gitleaks,
     Collection Health, Dep Audit, Galaxy Proxy
   - **Gateway** (1 container): REST + Reporting + SQLite
@@ -44,72 +41,83 @@ and single-node evaluation but does not address production deployment:
 
 ## Decision
 
-**APME will provide a Helm chart for Kubernetes deployment and bootc image
+**APME will provide Kubernetes deployment via the APME Operator
+([ansible/apme-operator](https://github.com/ansible/apme-operator)) and bootc image
 definitions with systemd quadlet files for VM deployment.**
 
-### 1. Helm Chart (`deploy/helm/apme/`)
+### 1. Kubernetes — APME Operator
 
-> **Topology (ADR-069):** The chart uses a **Simple all-in-one** Deployment —
-> engine sidecars + Gateway + UI + optional Abbenay in one pod, localhost
-> networking (ADR-005), `replicas: 1`. Split Gateway/UI/Abbenay Deployments from
-> the original ADR-054 text are **superseded for Helm** by ADR-069.
-
-The chart preserves ADR-005's localhost networking for the full stack (same
-shape as the Podman pod).
+Kubernetes and OpenShift deployments are owned by the **APME Operator** repository
+(`ansible/apme-operator`), not this repo. The operator reconciles custom resources
+into the same **all-in-one** pod topology as the Podman reference deployment:
+engine sidecars + Gateway + UI + optional Abbenay on localhost (ADR-005).
 
 #### Workload topology
 
 | K8s Resource | Containers | Scaling |
 |-------------|------------|---------|
-| Deployment (Simple / all-in-one) | engine, native, opa, ansible, gitleaks*, collection-health*, dep-audit*, galaxy-proxy, gateway, ui*, abbenay*, otel-collector* | **replicas: 1** (HPA off; see ADR-069) |
+| Deployment (all-in-one) | engine, native, opa, ansible, gitleaks*, collection-health*, dep-audit*, galaxy-proxy, gateway, ui*, abbenay* | Single-replica only (multi-replica is future topology — ADR-012) |
 
-\* optional via chart values / profiles
+\* optional via operator configuration. Operator v1 does not ship an in-pod
+OpenTelemetry Collector; configure `OTEL_EXPORTER_OTLP_ENDPOINT` on workloads
+for an external collector (see `containers/observability/README.md`).
 
 #### Networking
 
 In-stack containers communicate via `127.0.0.1:<port>` (ADR-005), except
 Engine→Abbenay gRPC which uses a shared Unix socket when a consumer token
 is set (`abbenay-client` ≥ 2026.8.7 rejects tokens on plaintext TCP).
-External access uses Service + Ingress:
+External access uses Service + Ingress/Route:
 
 | From | To | Address |
 |------|-----|---------|
-| Containers (intra-pod) | Each other | `127.0.0.1:<port>` (Engine→Abbenay gRPC: Unix socket; see below) |
-| UI (browser) / external API | Gateway REST | Ingress → Service `:8080` |
+| Containers (intra-pod) | Each other | `127.0.0.1:<port>` (Engine→Abbenay gRPC: Unix socket) |
+| UI (browser) / external API | Gateway REST | Ingress/Route → Service `:8080` |
+| Hosted CI / in-cluster clients | Engine gRPC | ClusterIP `<name>-engine.<namespace>.svc:50051` (see below) |
 | Engine | Gateway Reporting | `127.0.0.1:50060` |
-| Engine | Abbenay | Unix socket `unix:///tmp/abbenay-run/abbenay/daemon.sock` (token + `abbenay-client` ≥ 2026.8.7); leftover TCP `127.0.0.1:50057` |
+| Engine | Abbenay | Unix socket `unix:///tmp/abbenay-run/abbenay/daemon.sock` |
+| Gateway | Abbenay admin | HTTP `127.0.0.1:8787` (ADR-070; loopback only) |
+
+#### Hosted CI Engine access
+
+The operator reconciles a ClusterIP Service `<Apme.metadata.name>-engine` on
+port `50051` (plaintext gRPC; Engine binds with `add_insecure_port`). Gateway
+REST is the only product edge exposed via Route/Ingress. When NetworkPolicy is
+enabled, Gateway `:8080` and UI `:8081` accept ingress from the edge; Engine
+`:50051` stays off Route/Ingress but must permit ingress from approved hosted
+CI runners and in-cluster clients (for example via NetworkPolicy peer labels or
+named runner namespaces).
+
+Hosted GitHub Actions set `APME_ENGINE_ADDRESS` to a `host:port` the runner can
+reach:
+
+- **In-cluster or VPN-connected runners:** `<name>-engine.<namespace>.svc:50051`
+- **bootc VM / Podman:** host-accessible `:50051` (see [DEPLOYMENT.md](../../docs/guides/DEPLOYMENT.md))
+- **GitHub-hosted runners on the public internet:** require VPN, peering, or a
+  self-hosted runner with cluster network access; the operator does not expose
+  Engine gRPC on Route/Ingress in v1
+
+Engine gRPC has no transport TLS or application-level auth in operator v1 —
+restrict reachability with firewall rules and NetworkPolicy. Crossing untrusted
+networks requires VPN, peering, or an equivalent encrypted overlay; do not
+expose plaintext Engine gRPC on the public internet. See
+[apme-operator](https://github.com/ansible/apme-operator) for Service and
+exposure details.
 
 #### Storage
 
 | PVC | Access Mode | Used By | Purpose |
 |-----|-------------|---------|---------|
-| `sessions` | ReadWriteOnce | Simple pod | Session venvs (Engine rw, validators ro) |
-| `gateway-data` | ReadWriteOnce | Simple pod (Gateway) | SQLite database |
-| `proxy-cache` | ReadWriteOnce | Simple pod | Galaxy Proxy wheel cache |
-
-ReadWriteOnce is sufficient for the Simple single-replica topology (ADR-069).
-If a future multi-replica topology returns, shared Galaxy Proxy cache may need
-ReadWriteMany (per ADR-012's Galaxy Proxy Exception).
+| `sessions` | ReadWriteOnce | APME pod | Session venvs (Engine rw, validators ro) |
+| `gateway-data` | ReadWriteOnce | APME pod (Gateway) | SQLite database |
+| `proxy-cache` | ReadWriteOnce | APME pod | Galaxy Proxy wheel cache |
 
 #### Secrets
 
 SCM tokens, API keys, and Abbenay credentials are managed via Kubernetes
-Secrets. The chart currently supports native Kubernetes `Secret` resources
-and inline values rendered into those secrets. Support for
-external-secrets-operator `ExternalSecret` resources is not yet implemented.
+Secrets through the operator's CRD and reconciliation logic.
 
-#### Chart distribution (HTTP repository)
-
-Chart **source** lives in-repo at `deploy/helm/apme/`. Packaged releases are
-published to a classic Helm HTTP repository on GitHub Pages
-(`https://ansible.github.io/apme`) via chart-releaser
-(`.github/workflows/helm-charts.yml`). That URL is what OpenShift
-`HelmChartRepository` / Developer Catalog and `helm repo add` consume.
-OCI chart refs are out of scope for the OpenShift console path.
-
-On release tags `vYYYY.M.P` (CalVer), container CI publishes matching image
-tags (without the leading `v`). `Chart.appVersion` must stay aligned with
-that tag so Catalog installs with an empty `image.tag` pull real images.
+**Install documentation:** [https://github.com/ansible/apme-operator](https://github.com/ansible/apme-operator)
 
 ### 2. bootc VM Image (`deploy/bootc/`)
 
@@ -159,81 +167,72 @@ Significantly more complex networking and debugging.
 **Why not chosen**: ADR-012 explicitly decided against this. The sidecar model
 preserves localhost semantics and scales the stack as a unit.
 
-### Alternative 2: Kustomize Instead of Helm
+### Alternative 2: In-repo Helm Chart
 
-**Description**: Use Kustomize overlays on the existing pod.yaml.
+**Description**: Ship a Helm chart at `deploy/helm/apme/` for K8s/OCP installs.
 
-**Pros**: No template engine, native kubectl support.
+**Pros**: Familiar packaging; parameterization via values files.
 
-**Cons**: pod.yaml uses `hostPath` and `hostPort` which require significant
-patching. Kustomize cannot add new resources (Services, Ingress, PVCs)
-as cleanly as Helm templates. No parameterization for image tags,
-replicas, or feature toggles (Gitleaks, Abbenay).
+**Cons**: Duplicates deployment logic that belongs in a dedicated operator;
+chart maintenance diverged from production reconciliation needs.
 
-**Why not chosen**: Helm's parameterization is essential for the variability
-in APME's deployment (optional components, multiple scaling targets,
-secret injection). Kustomize is better for simpler resource overlays.
+**Why not chosen**: Kubernetes deployment is consolidated in
+[ansible/apme-operator](https://github.com/ansible/apme-operator). The in-repo
+Helm chart was removed (2026-09-02). See superseded [ADR-069](ADR-069-helm-simple-all-in-one.md).
 
 ### Alternative 3: k3s Embedded in bootc
 
-**Description**: Ship k3s inside the bootc image and deploy the Helm chart.
+**Description**: Ship k3s inside the bootc image and deploy via the operator.
 
-**Pros**: Uses the same Helm chart for both K8s and VM deployments.
+**Pros**: Uses the same operator for both K8s and VM-with-k3s deployments.
 
 **Cons**: k3s adds ~100MB and a control plane to the VM image. Overkill for
 single-node deployments. Podman + quadlets are simpler and lighter for
 the VM use case.
 
 **Why not chosen**: Quadlets are the recommended systemd integration for
-Podman. They are simpler, lighter, and a better fit for single-node VM
-deployments. The k3s path remains available for users who want it but is
-not the default.
+Podman on single-node VMs.
 
 ## Consequences
 
 ### Positive
 
-- **Standard K8s deployment**: `helm repo add apme https://ansible.github.io/apme`
-  then `helm install apme apme/apme` (or path install from `deploy/helm/apme`)
-  gives an EAP/upstream-ready deployment with proper Services, PVCs, and Ingress.
-  OpenShift can add the same URL as a Helm chart repository for Developer Catalog.
-- **Preserves architecture**: Simple all-in-one pod keeps ADR-005 (localhost);
-  ADR-012’s engine unit remains the conceptual scale boundary (multi-replica
-  not offered by the chart — ADR-069).
+- **Standard K8s deployment**: Install the operator and create an APME custom
+  resource for a production-ready deployment with Services, PVCs, and Ingress.
+- **Preserves architecture**: All-in-one pod keeps ADR-005 (localhost); ADR-012’s
+  engine unit remains the conceptual scale boundary.
 - **Reproducible VMs**: bootc images are atomic and reproducible. `bootc switch`
   enables zero-downtime upgrades.
-- **Aligned topologies**: Helm Simple, Podman pod, and bootc/quadlet all
+- **Aligned topologies**: Operator, Podman pod, and bootc/quadlet all
   co-locate the stack on localhost for single-site installs.
-- **Helm install profiles**: One chart; portal vs standalone expressed as named
-  values files (`values-portal.yaml`, `values-standalone.yaml`) rather than a
-  second chart or a breaking default flip (ADR-030 Options A and B).
+- **Separation of concerns**: Application code (this repo) vs cluster lifecycle
+  (apme-operator repo).
 
 ### Negative
 
-- **Maintenance surface**: Helm chart and bootc definitions must be kept in sync
-  with container images and pod topology changes.
-- **Testing gap**: Helm chart requires a K8s cluster to test. bootc requires
+- **Cross-repo coordination**: Operator releases must track container image tags
+  published from this repo.
+- **Testing gap**: Operator requires a K8s cluster to test. bootc requires
   `bootc-image-builder` which needs a Linux host with specific capabilities.
 - **PVC storage classes**: Users must have appropriate StorageClasses configured.
-  The chart uses the cluster default.
 
 ### Neutral
 
 - The existing Podman pod workflow is unchanged. `tox -e up` continues to work
   for development.
-- Container images are unchanged — the same GHCR images are used by Helm, bootc,
-  and Podman.
+- Container images are unchanged — the same GHCR images are used by the operator,
+  bootc, and Podman.
 
 ## Related Decisions
 
 - ADR-004: Podman pod deployment (reference deployment, K8s-shaped YAML)
 - ADR-005: No service discovery (localhost within pod)
 - ADR-012: Scale pods, not services (engine stack is the scaling unit)
-- ADR-029: Web Gateway architecture (Gateway role; chart co-locates per ADR-069)
+- ADR-029: Web Gateway architecture (Gateway role)
 - ADR-034: Multi-pod health registration (Gateway aggregation)
 - ADR-035: Secret externalization (token management)
 - ADR-063: Multi-platform container image publish (amd64 + arm64)
-- ADR-069: Helm Simple all-in-one topology (amends this ADR’s Helm shape)
+- ADR-069: Helm Simple all-in-one topology (**superseded** — Helm removed)
 
 ---
 
@@ -243,4 +242,5 @@ not the default.
 |------|--------|--------|
 | 2026-04-10 | APME Team | Initial acceptance (Helm + bootc) |
 | 2026-08-03 | APME Team | Helm topology amended by ADR-069 (Simple all-in-one) |
-| 2026-08-24 | APME Team | Engine→Abbenay uses a shared Unix socket (token on plaintext TCP rejected) |
+| 2026-08-24 | APME Team | Engine→Abbenay uses a shared Unix socket |
+| 2026-09-02 | APME Team | Helm chart removed; K8s/OCP via apme-operator |

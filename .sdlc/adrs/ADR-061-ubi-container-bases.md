@@ -21,7 +21,7 @@ images use heterogeneous upstream bases:
 - **UI**: `node:22-alpine` build stage + `nginx:1-alpine` serve stage
 - **bootc host VM image**: `quay.io/centos-bootc/centos-bootc:stream10`
 
-APME targets Red Hat ecosystems for production deployment (Helm on
+APME targets Red Hat ecosystems for production deployment (operator on
 OpenShift/Kubernetes per ADR-054, bootc VM images, Quay/GHCR publishing).
 Using Universal Base Image (UBI) aligns application containers with RHEL 10 /
 OpenShift platform expectations, simplifies security scanning and compliance
@@ -176,7 +176,7 @@ implementation (ADR → Python stack → UI/bootc).
 
 - OPA/Gitleaks final images change OS base but retain upstream binary copy
   pattern.
-- Helm chart values unchanged; same image names and tags published to GHCR/Quay.
+- Operator image references unchanged; same image names and tags published to GHCR/Quay.
 - Container CI later gained a structural multi-arch publish path
   ([ADR-063](ADR-063-multi-platform-container-images.md)); the UBI migration
   itself did not require that reshape.
@@ -211,7 +211,7 @@ RUN microdnf install -y git && microdnf clean all
 - Build: `ubi10/nodejs-24-minimal` — `npm ci && npm run build`
 - Serve: `ubi10/nginx-126` — install `gettext` for `envsubst` via `dnf` (full App Stream image, not minimal); retain existing
   nginx config template and entrypoint.
-- Do not remove Helm emptyDir/initContainer nginx workarounds until OCP
+- Do not remove operator emptyDir/initContainer nginx workarounds until OCP
   restricted SCC testing confirms they are unnecessary.
 
 ### bootc
@@ -235,14 +235,14 @@ FROM ${BOOTC_BASE_IMAGE}
 | PR | Files |
 |----|-------|
 | PR 2 | `docs/guides/DEPLOYMENT.md`, `docs/architecture/17-scaling-and-deployment.md`, `.sdlc/context/architecture.md`, `SECURITY.md` |
-| PR 3 | bootc README, remaining deployment/architecture references, `deploy/helm/apme/README.md` |
+| PR 3 | bootc README, remaining deployment/architecture references, apme-operator docs |
 
 ## Related Decisions
 
 - [ADR-004](ADR-004-podman-pod-deployment.md): Podman pod local deployment
 - [ADR-010](ADR-010-gitleaks-validator.md): Gitleaks multi-stage binary copy
 - [ADR-037](ADR-037-project-centric-ui-model.md): Gateway requires `git`
-- [ADR-054](ADR-054-production-deployment.md): Helm and bootc production paths
+- [ADR-054](ADR-054-production-deployment.md): Operator and bootc production paths
 - [ADR-063](ADR-063-multi-platform-container-images.md): Multi-platform image publish
 
 ## References

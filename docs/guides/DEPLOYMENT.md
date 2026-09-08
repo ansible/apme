@@ -5,23 +5,25 @@ APME supports multiple deployment methods depending on your environment and need
 | Target environment | Method | Details |
 |--------------------|--------|---------|
 | Developer laptop / Linux server (no K8s) | **Podman pod** | [Below](#podman-pod) |
-| **Kubernetes / OpenShift** | **Helm chart** | [Helm section](#helm--kubernetes) / [full guide](../../deploy/helm/apme/README.md) |
+| **Kubernetes / OpenShift** | **APME Operator** | [Kubernetes section](#kubernetes--openshift) / [apme-operator](https://github.com/ansible/apme-operator) |
 | Production single-node VM | **bootc VM** | [bootc section](#bootc-vm) / [full guide](../../deploy/bootc/README.md) |
 | Quick evaluation / CI | **CLI daemon** | [CLI Guide](CLI.md) |
 
-> **Deploying on Kubernetes or OpenShift?** Use the published Helm chart
-> (`helm repo add apme https://ansible.github.io/apme`) or the source chart at
-> `deploy/helm/apme/`. Do not use Podman on K8s/OCP.
+> **Deploying on Kubernetes or OpenShift?** Use the [APME Operator](https://github.com/ansible/apme-operator)
+> in the `ansible/apme-operator` repository. Do not use Podman on K8s/OCP.
 
-Full deployment methods (Podman, bootc, Helm) run the complete engine stack
-(Engine + all validators + Galaxy Proxy). The CLI daemon runs Engine plus core
-validators (Native, OPA, Ansible) + Galaxy Proxy. Optional validators
-(Gitleaks, Collection Health, Dep Audit) are not started unless
+All full deployments run the core engine stack (Engine, Native, OPA, Ansible,
+Galaxy Proxy). **Podman** and **bootc** reference manifests also start optional
+validators (Gitleaks, Collection Health, Dep Audit) by default. **Operator**
+deployments run core validators plus Gitleaks, Collection Health, and Dep Audit
+only when enabled in the custom resource (ADR-054). The **CLI daemon** runs
+Engine plus core validators; optional validators are not started unless
 `include_optional=True`. Gateway HTTP/Reporting gRPC co-location in the local
 daemon is planned (ADR-049) but not implemented in `launcher.py` yet — use the
 Podman pod or start Gateway separately for REST-backed commands such as
 `apme sbom`. The difference from full deployment is lifecycle management and
-additional pod-level services (Gateway, UI, Abbenay AI, OTel Collector).
+additional pod-level services (Gateway, UI, Abbenay AI; the Podman pod also
+ships an in-pod OTel Collector — operator v1 uses an external collector instead).
 
 ---
 
@@ -150,7 +152,7 @@ Proxy, Gateway HTTP, Gateway Reporting gRPC) plus optional validators
 | `COLLECTION_HEALTH_GRPC_ADDRESS` | — | Collection Health validator address (e.g., `127.0.0.1:50058`) |
 | `DEP_AUDIT_GRPC_ADDRESS` | — | Dep Audit validator address (e.g., `127.0.0.1:50059`) |
 | `APME_REPORTING_ENDPOINT` | — | Gateway gRPC Reporting address (e.g., `127.0.0.1:50060`). Events are pushed after each check or remediate run. |
-| `APME_ABBENAY_ADDR` | — | Abbenay AI daemon address. Helm/Podman default is `unix:///tmp/abbenay-run/abbenay/daemon.sock` (required when a consumer token is set; `abbenay-client` ≥ 2026.8.7 rejects tokens on plaintext TCP). Also accepts `host:port`. |
+| `APME_ABBENAY_ADDR` | — | Abbenay AI daemon address. Podman default is `unix:///tmp/abbenay-run/abbenay/daemon.sock` (required when a consumer token is set; `abbenay-client` ≥ 2026.8.7 rejects tokens on plaintext TCP). Also accepts `host:port`. |
 | `APME_ABBENAY_TOKEN` | — | Consumer token for Abbenay authentication. Must match a token in Abbenay's `config.yaml`. |
 | `APME_AI_MODEL` | — | Default AI model ID (e.g., `anthropic/claude-sonnet-4`). Overridden by UI Settings or CLI `--model`. |
 | `APME_RULE_AUTHORITY` | `true` | Set to `true` on exactly one Engine in multi-pod deployments. Only the authority registers the rule catalog to the Gateway (ADR-041). |
@@ -244,10 +246,11 @@ place; `tox -e wipe` deletes it. To add providers or models, edit the cache
 **Local Podman dev UI:** `tox -e up` publishes Abbenay HTTP admin on
 `http://127.0.0.1:8787` (`hostPort` with `hostIP: 127.0.0.1` only — not LAN).
 `pod.yaml` sets `ABBENAY_HTTP_AUTH=0` so the dashboard loads without a Bearer
-token on that localhost bind. Helm Simple stays loopback-only with no hostPort
-(ADR-070). gRPC for Engine/Gateway remains the shared Unix socket.
+token on that localhost bind. The operator deployment keeps Abbenay HTTP/gRPC on
+loopback within the pod (ADR-070). gRPC for Engine/Gateway remains the shared
+Unix socket.
 
-The Abbenay daemon still binds leftover gRPC TCP on `127.0.0.1:50057`. Engine AI RPCs, Gateway `/health`, and Helm probes use `APME_ABBENAY_ADDR=unix:///tmp/abbenay-run/abbenay/daemon.sock` (shared `emptyDir`) because `abbenay-client` ≥ 2026.8.7 rejects consumer tokens on plaintext TCP.
+The Abbenay daemon still binds leftover gRPC TCP on `127.0.0.1:50057`. Engine AI RPCs, Gateway `/health`, and health probes use `APME_ABBENAY_ADDR=unix:///tmp/abbenay-run/abbenay/daemon.sock` (shared `emptyDir`) because `abbenay-client` ≥ 2026.8.7 rejects consumer tokens on plaintext TCP.
 
 #### UI
 
@@ -270,7 +273,7 @@ The Settings page (`/settings`) provides a model picker that queries available A
 
 The reference Podman pod also runs an **OpenTelemetry Collector** (ADR-067) that
 receives OTLP on `:4318` and exposes Prometheus metrics on `:8889`. This is not
-included in the Helm chart deployment.
+included in the operator deployment by default.
 
 ## OPA container details
 
@@ -326,9 +329,10 @@ it as the `--index-strategy` argument to `uv pip install`.
 
 For development and testing without the Podman pod, the CLI can start a
 local daemon that runs Engine, Native, OPA, and Ansible as localhost gRPC
-servers, Galaxy Proxy as an HTTP service, and Gateway HTTP plus Reporting
-gRPC per ADR-049. Optional validators (Gitleaks, Collection Health, Dep Audit)
-start only when `include_optional=True`.
+servers and Galaxy Proxy as an HTTP service. Optional validators (Gitleaks,
+Collection Health, Dep Audit) start only when `include_optional=True`.
+Gateway HTTP and Reporting gRPC are not started by `launcher.py` (ADR-049 is
+planned); run Gateway separately for REST-backed commands such as `apme sbom`.
 
 ```bash
 # Install tox + project (one-time)
@@ -347,7 +351,7 @@ apme remediate .
 apme daemon stop
 ```
 
-**Daemon mode** starts a local Engine with Native, OPA, and Ansible validators as in-process gRPC servers, Galaxy Proxy as an HTTP service (uvicorn), and Gateway HTTP plus Reporting gRPC (ADR-049). Optional validators (Gitleaks, Collection Health, Dep Audit) start only when `include_optional=True`. The OPA validator gRPC server is always started; policy evaluation uses Podman by default or a local `opa` binary when `OPA_USE_PODMAN=0`. OPA infrastructure failures surface as validator R902 errors so `check` and `remediate` cannot return silently incomplete results.
+**Daemon mode** starts a local Engine with Native, OPA, and Ansible validators as in-process gRPC servers and Galaxy Proxy as an HTTP service (uvicorn). Optional validators (Gitleaks, Collection Health, Dep Audit) start only when `include_optional=True`. Gateway HTTP and Reporting gRPC are not started by `launcher.py` (ADR-049 is planned). The OPA validator gRPC server is always started; policy evaluation uses Podman by default or a local `opa` binary when `OPA_USE_PODMAN=0`. OPA infrastructure failures surface as validator R902 errors so `check` and `remediate` cannot return silently incomplete results.
 
 ## Troubleshooting
 
@@ -379,9 +383,9 @@ See [PODMAN_OPA_ISSUES.md](PODMAN_OPA_ISSUES.md) for common Podman rootless issu
 
 - [CLI Guide](CLI.md) — CLI installation, commands, and limitations
 - [bootc full guide](../../deploy/bootc/README.md) — Complete bootc VM documentation
-- [Helm chart full guide](../../deploy/helm/apme/README.md) — Complete Helm documentation
+- [APME Operator](https://github.com/ansible/apme-operator) — Kubernetes/OpenShift deployment
 - [ADR-006](../../.sdlc/adrs/ADR-006-ephemeral-venvs.md) — Ephemeral venvs for Ansible (superseded by ADR-022/ADR-031)
-- [ADR-054](../../.sdlc/adrs/ADR-054-production-deployment.md) — Production Deployment (Helm + bootc)
+- [ADR-054](../../.sdlc/adrs/ADR-054-production-deployment.md) — Production Deployment (operator + bootc)
 
 ---
 
@@ -428,129 +432,40 @@ configuration, service management, and troubleshooting.
 
 ---
 
-## Helm / Kubernetes
+## Kubernetes / OpenShift
 
-Deploy APME on Kubernetes or OpenShift using the published Helm chart
-repository (`https://ansible.github.io/apme`) or the source chart at
-`deploy/helm/apme/`. The chart is a **Simple all-in-one** install (ADR-069):
-one pod co-locates the engine stack with Gateway, UI, and optional Abbenay on
-localhost (ADR-005). Multi-replica engine HPA is not offered by this chart.
+Deploy APME on Kubernetes or OpenShift using the **APME Operator** in the
+[`ansible/apme-operator`](https://github.com/ansible/apme-operator) repository.
+The operator manages APME custom resources and reconciles the full service
+stack (engine, validators, Galaxy Proxy, Gateway, UI, and optional Abbenay)
+using the same localhost co-located pod model as the Podman reference deployment
+(ADR-005, ADR-012).
 
-**Highlights (ADR-069 Simple / EAP / upstream):**
+**Highlights:**
 
-- One Deployment: Engine + validators + Galaxy Proxy + Gateway + UI + optional Abbenay (localhost)
-- `replicas: 1` for both engine and gateway (HPA and `autoscaling.enabled` are
-  unsupported for SQLite and PostgreSQL in the Simple chart)
-- Ingress/Route support (OpenShift Routes included)
-- NetworkPolicy for Ingress → Gateway/UI HTTP ports only
-- PVCs for sessions, Gateway DB, and Galaxy Proxy cache
-- OpenShift Developer Catalog via `HelmChartRepository` pointing at the Pages URL
-
-### Breaking change from pre-ADR-069 split chart
-
-Earlier chart versions deployed separate Gateway / UI / Abbenay Deployments and
-allowed engine HPA. Upgrading to this chart:
-
-- Collapses those workloads into the `*-engine` Deployment (old Deployments are
-  removed on upgrade)
-- Binds Abbenay HTTP/gRPC TCP to `127.0.0.1` and **removes** the `*-abbenay`
-  Service — in-cluster clients must not use `<release>-abbenay:50057`. Engine
-  AI gRPC uses `unix:///tmp/abbenay-run/abbenay/daemon.sock`
-- Rejects `engine.replicas > 1` and `autoscaling.enabled=true`
-- Keeps ClusterIP Service names `*-gateway` and `*-ui` (they now select the
-  Simple pod)
-
-PVC names (`*-sessions`, `*-gateway-data`, `*-proxy-cache`) are unchanged.
-
-### PostgreSQL (optional)
-
-> **Migration warning:** Changing the backend does not migrate existing SQLite
-> data. Back up the SQLite database and perform a separate migration before
-> switching an existing installation to PostgreSQL. Activity, sessions, rules,
-> and overrides remain on the SQLite PVC while PostgreSQL starts with an empty
-> database.
-
-By default the Gateway uses SQLite on the `gateway-data` PVC (`APME_DB_PATH=/data/apme.db`).
-For PostgreSQL, set `gateway.database.existingSecret.name` and
-`gateway.database.existingSecret.key` to reference a Kubernetes Secret containing
-the full SQLAlchemy URL (for example `postgresql+asyncpg://user:pass@host:5432/apme`).
-The chart injects it via `valueFrom.secretKeyRef` so credentials are not rendered
-in the Deployment manifest. For non-production installs you may set
-`gateway.database.url` directly instead of a Secret.
+- Operator-managed lifecycle (install, upgrade, reconcile)
+- All-in-one pod topology: engine stack + Gateway + UI + optional Abbenay on localhost
+- Ingress/Route support for external REST and UI access
+- PVCs for sessions, Gateway database, and Galaxy Proxy cache
+- Published container images are multi-arch (`linux/amd64` + `linux/arm64`) per ADR-063
 
 ### Quick start
 
-Install flavors use named values files under `deploy/helm/apme/`
-(`values-standalone.yaml`, `values-portal.yaml`). Chart defaults keep the
-standalone UI enabled; portal installs pass `-f values-portal.yaml`.
+See the operator repository for installation prerequisites, CRD definitions,
+and example manifests:
 
-#### Standalone UI (default)
+- Repository: [https://github.com/ansible/apme-operator](https://github.com/ansible/apme-operator)
+- Install the operator (OLM or manual — follow the operator README)
+- Create an `APME` (or equivalent) custom resource with your desired configuration
 
-```bash
-helm repo add apme https://ansible.github.io/apme
-helm repo update
-helm install apme apme/apme \
-  --namespace apme --create-namespace \
-  --set route.enabled=true \
-  --set route.host=apme.apps.ocp.example.com
-```
+For Abbenay AI provider setup, secrets, and troubleshooting on Kubernetes, see
+[ABBENAY_AI.md](ABBENAY_AI.md) (Podman/operator sections) and the operator
+documentation.
 
-Replace `route.host` with a hostname under your cluster OpenShift ingress
-domain. It is required whenever Routes are enabled with the standalone UI.
-
-#### Portal / backend-only
-
-```bash
-helm repo add apme https://ansible.github.io/apme
-helm repo update
-helm install apme apme/apme \
-  --namespace apme --create-namespace \
-  -f https://ansible.github.io/apme/values-portal.yaml \
-  --set route.enabled=true
-```
-
-#### From a local clone (contributors / unreleased SHA builds)
-
-```bash
-# Portal profile from the clone
-helm install apme ./deploy/helm/apme/ \
-  -f ./deploy/helm/apme/values-portal.yaml \
-  --set image.tag=sha-7cb2464
-
-# Standalone + AI (OpenRouter)
-helm install apme ./deploy/helm/apme/ \
-  --set image.tag=sha-7cb2464 \
-  --set abbenay.enabled=true \
-  --set abbenay.token=$APME_ABBENAY_TOKEN \
-  --set-json 'abbenay.providers={"openrouter":{"engine":"openrouter","apiKey":"'$OPENROUTER_API_KEY'","models":{"anthropic/claude-sonnet-4-6":{}}}}'
-```
-
-### OpenShift UI
-
-Add chart repository URL `https://ansible.github.io/apme` (Developer → Helm),
-or apply a `HelmChartRepository` / `ProjectHelmChartRepository` CR — see
-[deploy/helm/apme/README.md](../../deploy/helm/apme/README.md).
+### Container images
 
 Application images published by CI after
 [ADR-063](../../.sdlc/adrs/ADR-063-multi-platform-container-images.md) are
 **multi-arch** (`linux/amd64` and `linux/arm64`) under the same registry tags.
-Older release tags remain amd64-only until rebuilt. Helm does not need
-arch-specific values; the node pulls the matching platform. Prefer a post-ADR
-SHA or release tag (and Quay only when that publish included Quay credentials).
-
-### Key values
-
-| Value | Description |
-|-------|-------------|
-| `image.tag` | Image tag (default `2026.8.6` / `Chart.appVersion`; override with SHA like `sha-b7d1683`) |
-| `engine.replicas` | Engine pod replicas (default: 1) |
-| `abbenay.enabled` | Enable AI provider (default: false) |
-| `abbenay.token` | Abbenay service token (required when `abbenay.enabled=true`) |
-| `abbenay.providers` | LLM provider map (see [ABBENAY_AI.md](ABBENAY_AI.md)) |
-| `ui.enabled` | Deploy standalone UI (default: `true`; use `values-portal.yaml` for portal) |
-| `ingress.enabled` | Create Ingress resource (default: false) |
-| `route.enabled` | Create OpenShift Route (default: false) |
-| `route.host` | Shared Route hostname; required when `route.enabled` and `ui.enabled` |
-
-See [deploy/helm/apme/README.md](../../deploy/helm/apme/README.md) for the
-full values reference and architecture details.
+The operator references these images; pin tags explicitly for production
+environments.

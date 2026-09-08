@@ -12,17 +12,18 @@ Implemented
 
 **This ADR covers local development and single-node (non-Kubernetes) deployments
 only.** For Kubernetes and OpenShift deployments, see
-[ADR-054](ADR-054-production-deployment.md) which specifies the Helm chart.
+[ADR-054](ADR-054-production-deployment.md) which specifies the APME Operator.
 
 | Environment | Deployment method | ADR |
 |-------------|-------------------|-----|
 | Developer laptop / workstation | Podman pod (`tox -e up`) | **This ADR** |
 | Linux server without Kubernetes | Podman pod or bootc VM | **This ADR**, [ADR-054](ADR-054-production-deployment.md) |
-| Kubernetes / OpenShift | **Helm chart** (`deploy/helm/apme/`) | [ADR-054](ADR-054-production-deployment.md) |
+| Kubernetes / OpenShift | **APME Operator** | [ADR-054](ADR-054-production-deployment.md) |
 
 > **If you are deploying on Kubernetes or OpenShift, stop here and follow
-> [ADR-054](ADR-054-production-deployment.md).** Do not use `podman play kube`
-> or raw pod YAML on K8s/OCP — use `helm install`.
+> [ADR-054](ADR-054-production-deployment.md) and the
+> [apme-operator](https://github.com/ansible/apme-operator) repository.** Do not use `podman play kube`
+> or raw pod YAML on K8s/OCP.
 
 ## Context
 
@@ -54,7 +55,7 @@ We needed a deployment model for **local development and single-node evaluation*
 
 - All backend services share `localhost` within the pod
 - The CLI runs on-the-fly outside the pod with a CWD volume mount
-- For Kubernetes/OpenShift production deployments, a Helm chart is provided
+- For Kubernetes/OpenShift production deployments, the APME Operator is provided
   separately (see [ADR-054](ADR-054-production-deployment.md))
 
 ## Rationale
@@ -77,7 +78,7 @@ We needed a deployment model for **local development and single-node evaluation*
 ### Negative
 - Less tooling maturity than Docker
 - Team needs Podman familiarity
-- Not suitable for Kubernetes/OpenShift — use the Helm chart (ADR-054) instead
+- Not suitable for Kubernetes/OpenShift — use the APME Operator (ADR-054) instead
 
 ## Implementation Notes
 
@@ -91,4 +92,4 @@ We needed a deployment model for **local development and single-node evaluation*
 - ADR-005: No etcd/service discovery
 - ADR-012: Scale pods, not services
 - ADR-048: Pod-internal admin endpoints rely on network isolation — depends on shared-localhost assumption established here
-- **ADR-054: Production Deployment — Helm chart for Kubernetes/OpenShift, bootc for VM**
+- **ADR-054: Production Deployment — APME Operator for Kubernetes/OpenShift, bootc for VM**

@@ -3,7 +3,7 @@
 > **Canonical user-facing guide:** [docs/guides/DEPLOYMENT.md](/docs/guides/DEPLOYMENT.md)
 >
 > This file provides AI-agent context. For the most complete and current
-> deployment instructions (including bootc VM and Helm chart), see the
+> deployment instructions (including bootc VM and Kubernetes operator), see the
 > canonical guide linked above.
 
 ## Deployment Method Selection
@@ -15,15 +15,13 @@
 |--------------------|-------------------|------|-------|
 | Developer laptop / workstation | Podman pod | `tox -e up` | [Below](#podman-pod) |
 | Linux server **without** Kubernetes | Podman pod or bootc VM | `tox -e up` or bootc | [Below](#podman-pod), [deploy/bootc/README.md](/deploy/bootc/README.md) |
-| **Kubernetes / OpenShift** | **Helm chart** | `helm repo add` / `helm install` | [deploy/helm/apme/README.md](/deploy/helm/apme/README.md) |
+| **Kubernetes / OpenShift** | **APME Operator** | Operator install + CR | [apme-operator](https://github.com/ansible/apme-operator) |
 | Quick evaluation / CI | CLI daemon | `apme daemon start` | [CLI Guide](/docs/guides/CLI.md) |
 
 **Key rule:** If the target has `kubectl` / `oc` access to a cluster, **always
-use the Helm chart** (`https://ansible.github.io/apme` or
-`deploy/helm/apme/`). Podman pods are for local development and
-non-Kubernetes Linux servers only. Helm chart defaults keep the standalone UI
-on; portal / backend-only installs use `-f values-portal.yaml` (see
-[deploy/helm/apme/README.md](/deploy/helm/apme/README.md)).
+use the [APME Operator](https://github.com/ansible/apme-operator)** in the
+`ansible/apme-operator` repository. Podman pods are for local development and
+non-Kubernetes Linux servers only.
 
 ## Podman Pod
 
@@ -106,6 +104,17 @@ Reports status of configured backend services (Engine, Native, OPA, Ansible, Gal
 
 ---
 
+## Kubernetes / OpenShift
+
+Production Kubernetes and OpenShift deployments use the **APME Operator** in
+[`ansible/apme-operator`](https://github.com/ansible/apme-operator). The
+operator reconciles the same co-located pod topology as the Podman reference
+deployment (engine stack + Gateway + UI + optional Abbenay on localhost).
+
+See the operator repository for install steps, CRDs, and configuration.
+
+---
+
 ## Container Configuration
 
 ### Environment Variables
@@ -121,7 +130,7 @@ Reports status of configured backend services (Engine, Native, OPA, Ansible, Gal
 | `GITLEAKS_GRPC_ADDRESS` | — | Gitleaks validator address (e.g., `127.0.0.1:50056`) |
 | `COLLECTION_HEALTH_GRPC_ADDRESS` | — | Collection Health validator address (e.g., `127.0.0.1:50058`) |
 | `DEP_AUDIT_GRPC_ADDRESS` | — | Dep Audit validator address (e.g., `127.0.0.1:50059`) |
-| `APME_ABBENAY_ADDR` | — | Abbenay AI daemon address (`unix://…` in Helm/Podman when a consumer token is set) |
+| `APME_ABBENAY_ADDR` | — | Abbenay AI daemon address (`unix://…` in Podman/operator when a consumer token is set) |
 | `APME_REPORTING_ENDPOINT` | — | Gateway gRPC Reporting address (e.g., `127.0.0.1:50060`) |
 
 > Required Engine-core services (Engine, Native, OPA, Ansible, Galaxy Proxy) must be available. Optional validators (Gitleaks, Collection Health, Dep Audit) may be unset and are skipped during fan-out.
@@ -297,9 +306,10 @@ tox -e wipe                             # stop + wipe DB/sessions/Abbenay secret
 ## Related Documents
 
 - [Architecture series](/docs/architecture/) — Container topology and service contracts
-- [Architecture series](/docs/architecture/) — Request lifecycle and serialization
+- [APME Operator](https://github.com/ansible/apme-operator) — Kubernetes/OpenShift deployment
 - [ADR-004](/.sdlc/adrs/ADR-004-podman-pod-deployment.md) — Podman pod decision
 - [ADR-006](/.sdlc/adrs/ADR-006-ephemeral-venvs.md) — Ephemeral venvs for Ansible (superseded by ADR-022/ADR-031)
 - [ADR-024](/.sdlc/adrs/ADR-024-thin-cli-daemon-mode.md) — Thin CLI with local daemon mode
 - [ADR-028](/.sdlc/adrs/ADR-028-session-based-fix-workflow.md) — Session-based fix workflow (FixSession bidi stream)
 - [ADR-039](/.sdlc/adrs/ADR-039-unified-operation-stream.md) — Unified check/remediate via `FixSession`; `ScanStream` removed
+- [ADR-054](/.sdlc/adrs/ADR-054-production-deployment.md) — Production deployment (operator + bootc)

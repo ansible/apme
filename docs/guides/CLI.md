@@ -26,8 +26,8 @@ pip install apme-engine@git+https://github.com/ansible/apme.git@main
 ```
 
 Replace the tag with any [release version](https://github.com/ansible/apme/releases).
-CLI git tags and Helm chart `appVersion` are independent channels — a newer
-CLI release does not imply the Helm repo has published matching images yet.
+CLI git tags and container image tags are independent channels — a newer
+CLI release does not imply matching operator/image versions are published yet.
 
 ### Requirements
 
@@ -221,7 +221,7 @@ See [examples/ci/](../../examples/ci/) for complete workflow examples.
 The CLI daemon is designed for quick evaluation and CI pipelines. For
 production use or full feature access, use a [deployment method](DEPLOYMENT.md).
 
-| Capability | CLI (daemon) | Podman / bootc / Helm |
+| Capability | CLI (daemon) | Podman / bootc / operator |
 |------------|:------------:|:---------------------:|
 | Check (scan for violations) | Yes | Yes |
 | Remediate (Tier 1 transforms) | Yes | Yes |
@@ -235,7 +235,7 @@ production use or full feature access, use a [deployment method](DEPLOYMENT.md).
 | Python CVE audit | Not available (daemon does not start optional validators) | Yes |
 | SBOM generation | Requires Gateway | Yes |
 | Atomic upgrades / rollback | No | Yes (bootc) |
-| Horizontal scaling | No | Yes (Helm) |
+| Horizontal scaling | No | No (current operator; future topology — ADR-012) |
 
 ### When to use the CLI
 
@@ -250,7 +250,7 @@ production use or full feature access, use a [deployment method](DEPLOYMENT.md).
 - You want persistent scan history and analytics
 - You need AI-assisted remediation without managing Abbenay separately
 - You're running APME as a shared service for multiple teams
-- You want atomic upgrades and production reliability (bootc/Helm)
+- You want atomic upgrades and production reliability (bootc/operator)
 
 ## Configuration
 
@@ -276,7 +276,7 @@ See [Rule Configuration](RULE_CONFIGURATION.md) for the full reference.
 
 ## Related
 
-- [Deployment Guide](DEPLOYMENT.md) — Podman pod, bootc VM, Helm chart
+- [Deployment Guide](DEPLOYMENT.md) — Podman pod, bootc VM, APME operator
 - [Development Guide](DEVELOPMENT.md) — Contributing, tox environments, testing
 - [Rule Catalog](../rules/RULE_CATALOG.md) — Complete rule listing
 - [Architecture](../architecture/) — Pipeline design and service contracts

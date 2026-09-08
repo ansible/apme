@@ -101,7 +101,7 @@ Validator fan-out uses gRPC; Galaxy Proxy is HTTP (PEP 503). The engine parses c
 | **CLI** (`pip install`) | Quick evaluation, CI pipelines, single-user | [CLI Guide](docs/guides/CLI.md) |
 | **Podman pod** | Development, full feature set (UI, AI, persistence) | [Deployment Guide](docs/guides/DEPLOYMENT.md) |
 | **bootc VM** | Production single-node, atomic upgrades, systemd lifecycle | [bootc Guide](deploy/bootc/README.md) |
-| **Helm chart** | Kubernetes / OpenShift production | [Helm Guide](deploy/helm/apme/README.md) (`helm repo add apme https://ansible.github.io/apme`) |
+| **APME Operator** | Kubernetes / OpenShift production | [apme-operator](https://github.com/ansible/apme-operator) |
 
 ### Try it now
 
@@ -110,11 +110,9 @@ pip install apme-engine@git+https://github.com/ansible/apme.git@v2026.8.2
 apme check /path/to/your/project
 ```
 
-CLI package tags (PyPI / git tags such as `v2026.8.2`) and Helm chart
-`appVersion` / image tags are **independent release channels** — the latest
-CLI tag may be newer than the chart published at
-`https://ansible.github.io/apme`. Pin each channel explicitly for your
-environment; see the [Helm Guide](deploy/helm/apme/README.md) for chart versions.
+CLI package tags (PyPI / git tags such as `v2026.8.2`) and container image
+tags are **independent release channels** — pin each channel explicitly for your
+environment. Kubernetes deployments use the [APME Operator](https://github.com/ansible/apme-operator).
 
 The CLI automatically starts a local daemon with core validators (Native, OPA, Ansible) and Galaxy Proxy — no full pod required. The OPA validator gRPC server is always started; policy evaluation uses Podman by default (`OPA_USE_PODMAN=1`) or a local `opa` binary when `OPA_USE_PODMAN=0`. Optional validators (Gitleaks, Collection Health, Dep Audit) are not started by
 default; pass `include_optional=True` to `start_daemon()` (or
@@ -147,7 +145,7 @@ src/apme_engine/
 src/apme_gateway/       API gateway (FastAPI, REST/WebSocket, SQLite)
 src/galaxy_proxy/       Galaxy → PEP 503 wheel proxy
 frontend/               React operator UI (Vite + TypeScript)
-deploy/                 Helm chart + bootc VM image
+deploy/                 bootc VM image definitions
 containers/             Containerfiles + Podman pod config
 docs/                   Architecture, design, guides, rule reference
 ```
@@ -157,9 +155,9 @@ docs/                   Architecture, design, guides, rule reference
 | Document | Description |
 |----------|-------------|
 | [CLI Guide](docs/guides/CLI.md) | Installation, commands, daemon mode, CI usage, limitations |
-| [Deployment Guide](docs/guides/DEPLOYMENT.md) | Podman, bootc, Helm, and CLI daemon deployment |
+| [Deployment Guide](docs/guides/DEPLOYMENT.md) | Podman, bootc, operator, and CLI daemon deployment |
 | [bootc Deployment](deploy/bootc/README.md) | Atomic VM image with systemd quadlets |
-| [Helm Chart](deploy/helm/apme/README.md) | Kubernetes/OpenShift deployment |
+| [APME Operator](https://github.com/ansible/apme-operator) | Kubernetes/OpenShift deployment |
 | [Architecture series](docs/architecture/) | Pipeline walkthrough, container topology, gRPC contracts, scaling |
 | [Design docs](docs/design/) | Remediation engine, AI escalation, validator abstraction |
 | [Rule reference](docs/rules/) | Rule catalog, ID mapping, ansible-lint coverage |

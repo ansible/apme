@@ -58,7 +58,6 @@ environment that developers run locally.
 | `tox -e ui` | Playwright UI tests | `test.yml` |
 | `tox -e ui-workflow-pack` | Pack `@apme/ui-workflow` release tarball | `test.yml` |
 | `tox -e grpc` | Regenerate gRPC stubs | manual |
-| `tox -e helm` | Lint + package Helm chart | `helm-charts.yml` |
 | `tox -e build` | Build container images | `container-images.yml` (GHCR) |
 | `tox -e up` | Start the APME pod | manual |
 | `tox -e down` | Stop the APME pod | manual |
@@ -68,7 +67,7 @@ Install: `uv tool install tox --with tox-uv`
 
 ## Workflow structure
 
-CI has six workflows in `.github/workflows/`:
+CI has five workflows in `.github/workflows/`:
 
 - **prek.yml**: Runs `prek` (ruff lint, ruff format, mypy strict, pydoclint,
   uv-lock). Quality gate for code style and type safety.
@@ -80,10 +79,6 @@ CI has six workflows in `.github/workflows/`:
   (`linux/amd64` + `linux/arm64`, ADR-063) to GHCR on `main`, version tags, and
   `workflow_dispatch`, then merges manifests via
   `containers/ci/merge-manifests.sh` (image list: `containers/ci/images.txt`).
-- **helm-charts.yml**: Lints/packages the Helm chart (`tox -e helm`) and
-  publishes to GitHub Pages via chart-releaser when `deploy/helm/apme/**`
-  changes on `main`. Also publishes values profiles
-  (`tox -e helm-pages-profiles`) to `https://ansible.github.io/apme/`.
 - **deprecation-scrape.yml**: Monthly cron scraping ansible-core for deprecation
   gaps.
 - **pr-feedback.yml**: Labels PRs with failing checks or merge conflicts.
