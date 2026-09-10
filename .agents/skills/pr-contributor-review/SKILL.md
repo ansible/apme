@@ -4,13 +4,14 @@ description: >
   Review and help prepare a contributor's pull request (upstream or fork).
   Use when the user asks to review a PR, get a contributor PR ready, update a
   contributor's branch, or ensure a PR meets project standards before merge.
-  Follow this skill so contributor PRs are reviewed consistently and avoid
-  rework (lint/test failures, outdated base, weak description).
+  Prefer reviewing hosted CI results over reproducing the full test suite
+  locally. Follow this skill so contributor PRs are reviewed consistently and
+  avoid rework (failed CI, outdated base, weak description).
 argument-hint: "<PR number or URL>"
 user-invocable: true
 metadata:
   author: APME Team
-  version: 1.0.0
+  version: 1.1.0
 ---
 
 # Review Contributor PR
@@ -23,7 +24,8 @@ own PR (use `pr-new` for that).
 ## Goals
 
 - PR is **up to date with upstream main** (no merge conflicts, clean rebase).
-- **Quality gates pass**: `tox -e lint` and `tox -e unit` on the full tree.
+- **Hosted quality gates pass**: required CI checks for the latest PR head are
+  green, or any non-green/unavailable check is understood and reported.
 - **PR description** follows the project template (Summary, Changes, Test plan)
   so reviewers and history have clear context.
 - Avoid pushing to the contributor's branch with failing CI or an outdated base.
@@ -54,23 +56,37 @@ fixes or improving the PR):
   before pushing. That way the PR stays mergeable and CI runs against the
   latest main.
 
-### 3. Run quality gates before pushing
+### 3. Review hosted CI checks
 
-Run tox quality gates on the **entire** tree, not only the changed files:
+Review checks for the **latest PR head**, rather than rerunning the full
+quality gates locally. This is faster, avoids duplicating CI work, and keeps
+the review focused on the contributor's actual execution environment.
 
 ```bash
-tox -e lint
-tox -e unit
+gh pr checks <N> --repo ansible/apme
 ```
 
-Fix any failures (line length, untyped decorators, docstring sections, format,
-test regressions) before pushing to the contributor's branch.
+For deeper investigation, inspect failed workflow/job logs with
+`gh run view <run-id> --repo ansible/apme --log-failed`, or use the GitHub web
+UI. Confirm that checks correspond to the current head SHA, not an older
+commit.
 
-Do **not** run `ruff`, `mypy`, `pytest`, or `prek` directly — always use tox
-(ADR-047). See the `/tox` skill for the full environment reference.
+Do not run `tox -e lint` or `tox -e unit` locally by default for a contributor
+review. Only run local quality gates when the user explicitly requests local
+validation, the relevant CI check is unavailable, or a failure cannot be
+diagnosed from hosted logs. If local validation is needed, use tox and never
+invoke `ruff`, `mypy`, `pytest`, or `prek` directly (ADR-047).
 
-Do **not** push to the contributor's branch if tox fails; fix in a new commit
-and then push so CI stays green.
+If CI is still running, report validation as pending rather than claiming the
+PR is ready. If CI is absent or does not cover the required quality gates,
+report that limitation explicitly.
+
+See the `/tox` skill for the full environment reference when local validation
+is warranted.
+
+Do not push to the contributor's branch while required hosted checks are
+failing; if you push a fix, wait for the new checks on that head and review
+them before proceeding.
 
 ### 4. PR description quality
 
@@ -96,7 +112,7 @@ and then push so CI stays green.
 - Before pushing:
 
   1. Rebase onto `upstream/main` so the PR is up to date.
-  2. Ensure `tox -e lint` and `tox -e unit` pass (see §3).
+  2. Ensure hosted CI checks pass on the rebased/new head (see §3).
   3. Use `--force-with-lease` when pushing a rebased branch:
      `git push <remote> <local-branch>:<their-branch> --force-with-lease`.
 
@@ -150,10 +166,12 @@ When reviewing or preparing a contributor PR:
 
 - [ ] Fetched PR and know base/head and remotes.
 - [ ] Branch is up to date with upstream main (rebase if needed before push).
-- [ ] `tox -e lint` and `tox -e unit` pass.
+- [ ] Required hosted CI checks pass for the latest PR head; failures and
+  unavailable checks are explicitly reported.
 - [ ] PR description has Summary, Changes, and Test plan (pr-new style).
-- [ ] If pushing to their branch: rebase onto upstream main, tox green, then
-      `git push <remote> <local>:<their-branch> --force-with-lease`.
+- [ ] If pushing to their branch: rebase onto upstream main, push with
+  `git push <remote> <local>:<their-branch> --force-with-lease`, then wait for
+  and review hosted CI on the new head.
 - [ ] If you addressed a review comment: follow the `pr-address-feedback` skill
       to reply on the thread with explanation + commit SHA and resolve it.
 
