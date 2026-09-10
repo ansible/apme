@@ -45,13 +45,23 @@ remote/branch you will push to if you make changes (e.g. `djdanielsson:branch`).
 
 ### 2. Check if the branch is up to date with upstream
 
-- Fetch `upstream main` (or the base branch).
-- Verify that the PR head contains the current base tip (for example, with
-  `git merge-base --is-ancestor upstream/main <head-sha>` after fetching).
-  Also confirm the PR is reported as mergeable by GitHub and inspect the
-  commit range for an unintended merge-based update when a clean rebase is
-  required. If upstream has newer commits, the contributor's branch should be
-  rebased (or merged) onto `upstream/main` before merge.
+- Fetch the PR's actual base branch from the upstream remote, not necessarily
+  `main`.
+- Ensure the PR head commit is available locally before checking ancestry. For
+  example, fetch the reported head SHA (or use the GitHub API comparison
+  endpoint as a fallback), then run
+  `git merge-base --is-ancestor <upstream-base-ref> <head-sha>` using the PR's
+  actual base ref.
+- Confirm the PR is reported as mergeable by GitHub and inspect the commit
+  range for an unintended merge-based update when a clean rebase is required.
+  If upstream has newer commits, the contributor's branch should be rebased
+  onto the actual upstream base branch, or updated by fast-forward only, before
+  merge. Do not merge the base branch into the contributor branch where the
+  repository requires linear history.
+
+GitHub's REST `mergeable` value can temporarily be `null` while GitHub computes
+it. Retry the metadata request a bounded number of times. If it remains
+`null`, report mergeability as pending and do not assess the PR as ready.
 
 If you are going to push changes to the contributor's branch (e.g. adding
 fixes or improving the PR):
