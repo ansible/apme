@@ -23,7 +23,7 @@ own PR (use `pr-new` for that).
 
 ## Goals
 
-- PR is **up to date with upstream main** (no merge conflicts, clean rebase).
+- PR is **up to date with its upstream base branch** (no merge conflicts, clean rebase).
 - **Hosted quality gates pass**: every applicable required CI check for the
   latest PR head is green. Missing, pending, or failing checks block a
   merge-ready assessment unless a maintainer explicitly grants an exception.
@@ -63,12 +63,12 @@ GitHub's REST `mergeable` value can temporarily be `null` while GitHub computes
 it. Retry the metadata request a bounded number of times. If it remains
 `null`, report mergeability as pending and do not assess the PR as ready.
 
-If you are going to push changes to the contributor's branch (e.g. adding
-fixes or improving the PR):
+- If you are going to push changes to the contributor's branch (e.g. adding
+  fixes or improving the PR):
 
-- Rebase the **local** branch that mirrors their PR onto `upstream/main`
-  before pushing. That way the PR stays mergeable and CI runs against the
-  latest main.
+- Rebase the **local** branch that mirrors their PR onto the resolved upstream
+  base ref before pushing. That way the PR stays mergeable and CI runs against
+  the latest base branch.
 
 ### 3. Review hosted CI checks
 
@@ -133,7 +133,7 @@ before proceeding.
 
 - Before pushing:
 
-  1. Rebase onto `upstream/main` so the PR is up to date.
+  1. Rebase onto the resolved upstream base ref so the PR is up to date.
   2. Push the rebased or corrected head, then wait for and review its hosted
      CI checks (see §3).
   3. Use `--force-with-lease` when pushing a rebased branch:
@@ -188,12 +188,12 @@ Include the issue URL in the PR comment thread so reviewers can verify tracking.
 When reviewing or preparing a contributor PR:
 
 - [ ] Fetched PR and know base/head and remotes.
-- [ ] Branch is up to date with upstream main (rebase if needed before push).
+- [ ] Branch is up to date with the PR's upstream base branch (rebase if needed before push).
 - [ ] Every applicable required hosted CI check passes for the latest PR head;
   missing, pending, and failing checks block a ready assessment unless an
   explicit maintainer exception is recorded.
 - [ ] PR description has Summary, Changes, and Test plan (pr-new style).
-- [ ] If pushing to their branch: rebase onto upstream main, push with
+- [ ] If pushing to their branch: rebase onto the resolved upstream base ref, push with
   `git push <remote> <local>:<their-branch> --force-with-lease`, then wait for
   and review hosted CI on the new head.
 - [ ] If you addressed a review comment: follow the `pr-address-feedback` skill
