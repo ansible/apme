@@ -24,8 +24,9 @@ own PR (use `pr-new` for that).
 ## Goals
 
 - PR is **up to date with upstream main** (no merge conflicts, clean rebase).
-- **Hosted quality gates pass**: required CI checks for the latest PR head are
-  green, or any non-green/unavailable check is understood and reported.
+- **Hosted quality gates pass**: every applicable required CI check for the
+  latest PR head is green. Missing, pending, or failing checks block a
+  merge-ready assessment unless a maintainer explicitly grants an exception.
 - **PR description** follows the project template (Summary, Changes, Test plan)
   so reviewers and history have clear context.
 - Avoid pushing to the contributor's branch with failing CI or an outdated base.
@@ -45,9 +46,12 @@ remote/branch you will push to if you make changes (e.g. `djdanielsson:branch`).
 ### 2. Check if the branch is up to date with upstream
 
 - Fetch `upstream main` (or the base branch).
-- Compare base ref of the PR to current `upstream/main`. If upstream has
-  newer commits, the contributor's branch should be rebased (or merged) onto
-  `upstream/main` before merge.
+- Verify that the PR head contains the current base tip (for example, with
+  `git merge-base --is-ancestor upstream/main <head-sha>` after fetching).
+  Also confirm the PR is reported as mergeable by GitHub and inspect the
+  commit range for an unintended merge-based update when a clean rebase is
+  required. If upstream has newer commits, the contributor's branch should be
+  rebased (or merged) onto `upstream/main` before merge.
 
 If you are going to push changes to the contributor's branch (e.g. adding
 fixes or improving the PR):
@@ -58,9 +62,14 @@ fixes or improving the PR):
 
 ### 3. Review hosted CI checks
 
-Review checks for the **latest PR head**, rather than rerunning the full
-quality gates locally. This is faster, avoids duplicating CI work, and keeps
-the review focused on the contributor's actual execution environment.
+Review every applicable required workflow and check for the **latest PR head**,
+rather than rerunning the full quality gates locally. Include path-triggered
+checks and repository gates such as lint, unit, integration, UI, AI, OpenAPI,
+and Helm checks when the changed files require them. Compare the result with
+branch-protection requirements and workflow path filters; `gh pr checks` alone
+cannot show a check that was never scheduled. This is faster, avoids
+duplicating CI work, and keeps the review focused on the contributor's actual
+execution environment.
 
 ```bash
 gh pr checks <N> --repo ansible/apme
@@ -71,22 +80,25 @@ For deeper investigation, inspect failed workflow/job logs with
 UI. Confirm that checks correspond to the current head SHA, not an older
 commit.
 
-Do not run `tox -e lint` or `tox -e unit` locally by default for a contributor
-review. Only run local quality gates when the user explicitly requests local
-validation, the relevant CI check is unavailable, or a failure cannot be
-diagnosed from hosted logs. If local validation is needed, use tox and never
+Do not rerun `tox -e lint` or `tox -e unit` locally by default when the
+corresponding hosted checks are complete and green. Run local quality gates
+when the user explicitly requests local validation, the relevant CI check is
+unavailable or inconclusive, or a failure cannot be diagnosed from hosted
+logs. This review-specific optimization does not relax the repository's
+tox-only quality-gate policy. If local validation is needed, use tox and never
 invoke `ruff`, `mypy`, `pytest`, or `prek` directly (ADR-047).
 
 If CI is still running, report validation as pending rather than claiming the
-PR is ready. If CI is absent or does not cover the required quality gates,
-report that limitation explicitly.
+PR is ready. If CI is absent or does not cover an applicable required quality
+gate, report that limitation and do not claim the PR is ready.
 
 See the `/tox` skill for the full environment reference when local validation
 is warranted.
 
-Do not push to the contributor's branch while required hosted checks are
-failing; if you push a fix, wait for the new checks on that head and review
-them before proceeding.
+Do not push unrelated changes to the contributor's branch while required
+hosted checks are failing. If the user has authorized a corrective push,
+explain the failure, push the fix, and wait for the new checks on that head
+before proceeding.
 
 ### 4. PR description quality
 
@@ -112,7 +124,8 @@ them before proceeding.
 - Before pushing:
 
   1. Rebase onto `upstream/main` so the PR is up to date.
-  2. Ensure hosted CI checks pass on the rebased/new head (see §3).
+  2. Push the rebased or corrected head, then wait for and review its hosted
+     CI checks (see §3).
   3. Use `--force-with-lease` when pushing a rebased branch:
      `git push <remote> <local-branch>:<their-branch> --force-with-lease`.
 
@@ -127,11 +140,11 @@ full procedure (finding thread IDs / Node IDs and using the GraphQL-based thread
 
 ### 5b. Track all deferred work as issues
 
-When reviewing a contributor PR, any suggestion that work should happen in a
-follow-up PR — whether from you, the contributor, or another reviewer — **MUST**
-be captured as a GitHub issue immediately. Do not leave "TODO for later" or
-"out of scope, will address separately" without creating an issue. Untracked
-follow-ups are invisible debt.
+When reviewing a contributor PR, any concrete work that is intentionally
+deferred to a follow-up PR — whether from you, the contributor, or another
+reviewer — **MUST** be captured as a GitHub issue immediately. Do not leave
+"TODO for later" or "out of scope, will address separately" without creating
+an issue. Untracked follow-ups are invisible debt.
 
 ```bash
 gh issue create --repo ansible/apme \
@@ -166,8 +179,9 @@ When reviewing or preparing a contributor PR:
 
 - [ ] Fetched PR and know base/head and remotes.
 - [ ] Branch is up to date with upstream main (rebase if needed before push).
-- [ ] Required hosted CI checks pass for the latest PR head; failures and
-  unavailable checks are explicitly reported.
+- [ ] Every applicable required hosted CI check passes for the latest PR head;
+  missing, pending, and failing checks block a ready assessment unless an
+  explicit maintainer exception is recorded.
 - [ ] PR description has Summary, Changes, and Test plan (pr-new style).
 - [ ] If pushing to their branch: rebase onto upstream main, push with
   `git push <remote> <local>:<their-branch> --force-with-lease`, then wait for
