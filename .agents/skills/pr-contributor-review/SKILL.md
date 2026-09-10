@@ -99,8 +99,10 @@ tox-only quality-gate policy. If local validation is needed, use tox and never
 invoke `ruff`, `mypy`, `pytest`, or `prek` directly (ADR-047).
 
 If CI is still running, report validation as pending rather than claiming the
-PR is ready. If CI is absent or does not cover an applicable required quality
-gate, report that limitation and do not claim the PR is ready.
+PR is ready, unless an explicit maintainer exception is recorded. If CI is
+absent or does not cover an applicable required quality gate, report that
+limitation and do not claim the PR is ready unless an explicit maintainer
+exception is recorded.
 
 See the `/tox` skill for the full environment reference when local validation
 is warranted.
