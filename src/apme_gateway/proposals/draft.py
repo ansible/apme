@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from collections import defaultdict
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from datetime import UTC
 from typing import Any
 
 from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from apme_gateway.db import get_in_clause_chunk_size
 from apme_gateway.db.models import Proposal, Scan
 from apme_gateway.proposals.flush import fetch_violations_by_ids, upsert_analytics_increment
 from apme_gateway.proposals.grouping import (
@@ -19,6 +22,9 @@ from apme_gateway.proposals.grouping import (
     SOURCE_AI,
     SOURCE_AI_CANDIDATE,
     SOURCE_DETERMINISTIC,
+    _coerce_violation_ids,
+    _safe_float,
+    _to_int,
     analytics_increments,
     parse_json_list,
     review_status_for_proposal,
@@ -244,6 +250,101 @@ async def ensure_scan_row(
     return scan
 
 
+@dataclass
+class StubPayload:
+    """Normalized live proposal payload for upsert matching.
+
+    Attributes:
+        raw: Original proposal mapping.
+        engine_id: Engine proposal id (match key).
+        file: Target file path.
+        rule_id: Raw rule id string as received.
+        primary_rule: Primary/display rule (never the coupled CSV).
+        rule_parts: Parsed rule id tuple.
+        path: Node identity path.
+        tier: Numeric remediation tier.
+        source: Proposal source string.
+        gate: Archival gate label.
+        status: Normalized status string.
+        archival_id: Archival-style proposal id (second match key).
+        line_start: First line of the node/finding (0 when unknown).
+        line_end: Last line of the node/finding (0 when unknown).
+    """
+
+    raw: Mapping[str, Any]
+    engine_id: str
+    file: str
+    rule_id: str
+    primary_rule: str
+    rule_parts: tuple[str, ...]
+    path: str
+    tier: int
+    source: str
+    gate: str
+    status: str
+    archival_id: str
+    line_start: int
+    line_end: int
+
+
+def _prepare_stub_payload(raw: Mapping[str, Any]) -> StubPayload | None:
+    """Normalize one live proposal mapping for upsert matching.
+
+    Args:
+        raw: Proposal mapping with id/file/rule_id/tier/status/source/….
+
+    Returns:
+        Normalized payload including the match keys, or ``None`` when the
+        mapping carries no engine proposal id.
+    """
+    engine_id = str(raw.get("id") or raw.get("engine_proposal_id") or "").strip()
+    if not engine_id:
+        return None
+    file_ = str(raw.get("file") or "")
+    rule_id = str(raw.get("rule_id") or "")
+    path = str(raw.get("path") or "")
+    tier = _to_int(raw.get("tier"), 0)
+    source = str(raw.get("source") or (SOURCE_AI if tier >= 2 else SOURCE_DETERMINISTIC))
+    gate = str(raw.get("gate") or "") or _gate_for_source(source, tier)
+    rule_parts = tuple(p.strip() for p in rule_id.split(",") if p.strip()) or ((rule_id,) if rule_id else ())
+    # Proposal.rule_id is the primary/display rule — never the coupled CSV.
+    primary_rule = rule_parts[0] if rule_parts else ""
+    return StubPayload(
+        raw=raw,
+        engine_id=engine_id,
+        file=file_,
+        rule_id=rule_id,
+        primary_rule=primary_rule,
+        rule_parts=rule_parts,
+        path=path,
+        tier=tier,
+        source=source,
+        gate=gate,
+        status=_normalize_status(str(raw.get("status") or "pending")),
+        archival_id=_archival_proposal_id(
+            file=file_,
+            path=path,
+            gate=gate,
+            rule_id=primary_rule or rule_id,
+            engine_id=engine_id,
+        ),
+        line_start=_to_int(raw.get("line_start"), 0),
+        line_end=_to_int(raw.get("line_end"), 0),
+    )
+
+
+def _preload_per_query_limit(chunk: int) -> int:
+    """Max proposals per preload SELECT while reserving one bind for scan_id.
+
+    Args:
+        chunk: SQLite IN-clause bind limit from ``get_in_clause_chunk_size``.
+
+    Returns:
+        Maximum proposals per preload batch (``(chunk - 1) // 2``).
+    """
+    return max(1, (chunk - 1) // 2)
+
+
 async def upsert_live_proposal_stubs(
     db: AsyncSession,
     *,
@@ -266,34 +367,106 @@ async def upsert_live_proposal_stubs(
         Upserted ORM Proposal rows.
     """
     await ensure_scan_row(db, scan_id=scan_id, project_id=project_id, scan_type="remediate")
-    out: list[Proposal] = []
-    for raw in proposals:
-        engine_id = str(raw.get("id") or raw.get("engine_proposal_id") or "").strip()
-        if not engine_id:
-            continue
-        file_ = str(raw.get("file") or "")
-        rule_id = str(raw.get("rule_id") or "")
-        path = str(raw.get("path") or "")
-        tier = int(raw.get("tier") or 0)
-        source = str(raw.get("source") or (SOURCE_AI if tier >= 2 else SOURCE_DETERMINISTIC))
-        gate = str(raw.get("gate") or "") or _gate_for_source(source, tier)
-        status = _normalize_status(str(raw.get("status") or "pending"))
-        rule_parts = tuple(p.strip() for p in rule_id.split(",") if p.strip()) or ((rule_id,) if rule_id else ())
-        # Proposal.rule_id is the primary/display rule — never the coupled CSV.
-        primary_rule = rule_parts[0] if rule_parts else ""
-        stamp_rules = rule_parts
-        archival_id = _archival_proposal_id(
-            file=file_, path=path, gate=gate, rule_id=primary_rule or rule_id, engine_id=engine_id
-        )
+    prepared = [item for item in (_prepare_stub_payload(raw) for raw in proposals) if item is not None]
 
-        existing = (
-            await db.execute(
-                select(Proposal).where(
-                    Proposal.scan_id == scan_id,
-                    or_(Proposal.engine_proposal_id == engine_id, Proposal.proposal_id == archival_id),
+    # Preloaded queries instead of a SELECT per proposal: match the same
+    # (engine_proposal_id, proposal_id) pairs the loop used to fetch singly.
+    # Each query binds 2N ids plus 1 for scan_id ==, so per_query*2 + 1 <=
+    # chunk (e.g. 449*2 + 1 = 899 <= 900; 450*2 + 1 = 901 would exceed).
+    by_engine: dict[str, Proposal] = {}
+    by_archival: dict[str, Proposal] = {}
+    discarded: set[int] = set()
+    if prepared:
+        chunk = get_in_clause_chunk_size()
+        per_query = _preload_per_query_limit(chunk)
+        for start in range(0, len(prepared), per_query):
+            batch = prepared[start : start + per_query]
+            engine_ids = [item.engine_id for item in batch]
+            archival_ids = [item.archival_id for item in batch]
+            rows = (
+                (
+                    await db.execute(
+                        select(Proposal).where(
+                            Proposal.scan_id == scan_id,
+                            or_(
+                                Proposal.engine_proposal_id.in_(engine_ids),
+                                Proposal.proposal_id.in_(archival_ids),
+                            ),
+                        )
+                    )
                 )
+                .scalars()
+                .all()
             )
-        ).scalar_one_or_none()
+            engine_groups: defaultdict[str, list[Proposal]] = defaultdict(list)
+            archival_groups: defaultdict[str, list[Proposal]] = defaultdict(list)
+            for row in rows:
+                if row.engine_proposal_id:
+                    engine_groups[str(row.engine_proposal_id)].append(row)
+                archival_groups[str(row.proposal_id)].append(row)
+
+            for engine_id, dupes in engine_groups.items():
+                if len(dupes) > 1:
+                    keep = max(dupes, key=lambda row: row.id)
+                    for dup in dupes:
+                        if dup is not keep:
+                            await db.delete(dup)
+                            discarded.add(dup.id)
+                    logger.warning(
+                        "Reconciled %s duplicate live proposals for engine id %s on scan %s",
+                        len(dupes) - 1,
+                        engine_id,
+                        scan_id[:12],
+                    )
+                    by_engine[engine_id] = keep
+                else:
+                    by_engine[engine_id] = dupes[0]
+
+            for archival_id, dupes in archival_groups.items():
+                if len(dupes) > 1:
+                    keep = max(dupes, key=lambda row: row.id)
+                    for dup in dupes:
+                        if dup is not keep:
+                            await db.delete(dup)
+                            discarded.add(dup.id)
+                    logger.warning(
+                        "Reconciled %s duplicate live proposals for archival id %s on scan %s",
+                        len(dupes) - 1,
+                        archival_id,
+                        scan_id[:12],
+                    )
+                    by_archival[archival_id] = keep
+                else:
+                    by_archival[archival_id] = dupes[0]
+
+        if discarded:
+            by_engine = {k: v for k, v in by_engine.items() if v.id not in discarded}
+            by_archival = {k: v for k, v in by_archival.items() if v.id not in discarded}
+
+    out: list[Proposal] = []
+    for item in prepared:
+        raw = item.raw
+        engine_id = item.engine_id
+        file_ = item.file
+        primary_rule = item.primary_rule
+        rule_parts = item.rule_parts
+        path = item.path
+        tier = item.tier
+        source = item.source
+        gate = item.gate
+        status = item.status
+        archival_id = item.archival_id
+
+        # Engine-id hits win. An archival-id hit is only a match when it
+        # belongs to the same engine proposal (or has no engine id yet) —
+        # otherwise two live proposals would silently merge into one row.
+        existing = by_engine.get(engine_id)
+        if existing is None:
+            archival_hit = by_archival.get(archival_id)
+            if archival_hit is not None:
+                hit_engine = (archival_hit.engine_proposal_id or "").strip()
+                if not hit_engine or hit_engine == engine_id:
+                    existing = archival_hit
         if existing is None:
             existing = Proposal(
                 scan_id=scan_id,
@@ -301,7 +474,7 @@ async def upsert_live_proposal_stubs(
                 rule_id=primary_rule,
                 file=file_,
                 tier=tier,
-                confidence=float(raw.get("confidence") or 0.0),
+                confidence=_safe_float(raw.get("confidence"), 0.0),
                 status=status,
                 path=path,
                 node_type=str(raw.get("node_type") or ""),
@@ -309,22 +482,26 @@ async def upsert_live_proposal_stubs(
                 gate=gate,
                 rule_ids_json=serialize_rule_ids(rule_parts),
                 violation_ids_json="[]",
-                line_start=int(raw.get("line_start") or 0),
+                line_start=item.line_start,
+                line_end=item.line_end,
                 diff_hunk=str(raw.get("diff_hunk") or ""),
                 explanation=str(raw.get("explanation") or ""),
                 suggestion=str(raw.get("suggestion") or ""),
                 analytics_flushed=0,
                 engine_proposal_id=engine_id,
                 draft=0,
-                stamp_rule_ids_json=serialize_rule_ids(stamp_rules),
+                stamp_rule_ids_json=serialize_rule_ids(rule_parts),
             )
             db.add(existing)
+            # Seed the maps so a duplicate engine id later in the same
+            # batch updates this row instead of inserting a second one.
+            by_engine.setdefault(engine_id, existing)
+            by_archival.setdefault(archival_id, existing)
         else:
             existing.engine_proposal_id = engine_id
             existing.file = file_ or existing.file
             if primary_rule:
                 existing.rule_id = primary_rule
-            existing.tier = tier or existing.tier
             existing.path = path or existing.path
             nt = str(raw.get("node_type") or "")
             if nt:
@@ -334,13 +511,24 @@ async def upsert_live_proposal_stubs(
             existing.diff_hunk = str(raw.get("diff_hunk") or existing.diff_hunk)
             existing.explanation = str(raw.get("explanation") or existing.explanation)
             existing.suggestion = str(raw.get("suggestion") or existing.suggestion)
-            existing.line_start = int(raw.get("line_start") or existing.line_start)
-            existing.confidence = float(raw.get("confidence") or existing.confidence)
-            if "tier" in raw and raw.get("tier") is not None:
-                existing.tier = int(raw["tier"])
+            # Explicit 0 clears stale spans/scores; None/missing/"" preserves.
+            # Truthiness would treat numeric 0 as missing but string "0" as
+            # explicit, so test identity and blank strings instead.
+            raw_line_start = raw.get("line_start") if "line_start" in raw else None
+            if raw_line_start is not None and not (isinstance(raw_line_start, str) and not raw_line_start.strip()):
+                existing.line_start = _to_int(raw_line_start, existing.line_start)
+            raw_line_end = raw.get("line_end") if "line_end" in raw else None
+            if raw_line_end is not None and not (isinstance(raw_line_end, str) and not raw_line_end.strip()):
+                existing.line_end = _to_int(raw_line_end, existing.line_end)
+            raw_confidence = raw.get("confidence") if "confidence" in raw else None
+            if raw_confidence is not None and not (isinstance(raw_confidence, str) and not raw_confidence.strip()):
+                existing.confidence = _safe_float(raw_confidence, existing.confidence)
+            raw_tier = raw.get("tier") if "tier" in raw else None
+            if raw_tier is not None and not (isinstance(raw_tier, str) and not raw_tier.strip()):
+                existing.tier = _to_int(raw_tier, existing.tier)
             if rule_parts:
                 existing.rule_ids_json = serialize_rule_ids(rule_parts)
-                existing.stamp_rule_ids_json = serialize_rule_ids(stamp_rules)
+                existing.stamp_rule_ids_json = serialize_rule_ids(rule_parts)
             # Do not clobber an in-progress draft status from a re-emit.
             if not existing.draft:
                 existing.status = status
@@ -487,7 +675,7 @@ async def commit_gate_decisions(
             rule_ids_json=prop.rule_ids_json,
         )
         v_ids = parse_json_list(prop.violation_ids_json)
-        int_ids = [int(v) for v in v_ids if str(v).isdigit() or isinstance(v, int)]
+        int_ids = _coerce_violation_ids(v_ids)
         if not int_ids:
             continue
         for violation in await fetch_violations_by_ids(db, int_ids):

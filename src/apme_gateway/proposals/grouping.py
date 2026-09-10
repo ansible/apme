@@ -8,10 +8,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
+import math
 from collections import deque
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 # Proto RemediationClass numeric values (apme.v1.common).
 _RC_AUTO_FIXABLE = 1
@@ -61,6 +65,7 @@ class GroupedProposal:
         stamp_rule_ids: When non-empty, only these rule ids may receive
             ``review_status`` stamps (set from matched outcome rule list).
         node_type: ContentGraph NodeType value (task, block, play, …).
+        line_end: Last line of the finding/node (0 when unknown).
     """
 
     proposal_id: str
@@ -83,6 +88,7 @@ class GroupedProposal:
     coupled: bool = False
     stamp_rule_ids: tuple[str, ...] = ()
     node_type: str = ""
+    line_end: int = 0
 
 
 @dataclass
@@ -98,6 +104,163 @@ class _Bucket:
     key: str = ""
 
 
+def _to_int(value: object, default: int = 0) -> int:
+    """Coerce JSON-ish line values to int, mapping unknowns to default.
+
+    Clamps results at ``>= 0`` since line numbers and tiers are never
+    negative.
+
+    Args:
+        value: Raw line value (int, float, numeric string, bool, None, …).
+        default: Fallback when coercion fails.
+
+    Returns:
+        Coerced integer clamped at ``>= 0``, or clamped ``default``.
+    """
+    fallback = max(0, default)
+    if isinstance(value, bool):
+        logger.debug("Falling back line/tier value %r to %r", value, fallback)
+        return fallback
+    if isinstance(value, int):
+        if value < 0:
+            logger.debug("Clamping negative line/tier value %r to 0", value)
+            return 0
+        return value
+    if isinstance(value, float):
+        if value.is_integer():
+            coerced = int(value)
+            if coerced < 0:
+                logger.debug("Clamping negative line/tier value %r to 0", value)
+                return 0
+            return coerced
+        logger.debug("Falling back line/tier value %r to %r", value, fallback)
+        return fallback
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            logger.debug("Falling back line/tier value %r to %r", value, fallback)
+            return fallback
+        try:
+            coerced_str = int(text)
+            if coerced_str < 0:
+                logger.debug("Clamping negative line/tier value %r to 0", value)
+                return 0
+            return coerced_str
+        except ValueError:
+            try:
+                parsed = float(text)
+            except ValueError:
+                logger.debug("Falling back line/tier value %r to %r", value, fallback)
+                return fallback
+            if parsed.is_integer():
+                coerced_float = int(parsed)
+                if coerced_float < 0:
+                    logger.debug("Clamping negative line/tier value %r to 0", value)
+                    return 0
+                return coerced_float
+            logger.debug("Falling back line/tier value %r to %r", value, fallback)
+            return fallback
+    if value is None:
+        logger.debug("Falling back line/tier value %r to %r", value, fallback)
+        return fallback
+    logger.debug("Falling back line/tier value %r to %r", value, fallback)
+    return fallback
+
+
+def _parse_violation_id(value: object) -> int | None:
+    """Parse a violation primary key, rejecting bools and non-integral values.
+
+    Reuses :func:`_to_int` validation so ``True`` maps to invalid (not 1)
+    and ``12.9``/``"12.5"`` map to invalid (not truncated to 12), unlike
+    raw ``int()``. Failures return ``None`` instead of a default so callers
+    skip invalid ids rather than inventing id 0.
+
+    Args:
+        value: Raw id value (int, float, numeric string, bool, None, …).
+
+    Returns:
+        Positive integer id, or ``None`` when invalid or non-positive.
+    """
+    coerced = _to_int(value)
+    return coerced if coerced > 0 else None
+
+
+def _coerce_violation_ids(values: Sequence[object]) -> list[int]:
+    """Filter raw violation id values down to valid positive PKs.
+
+    Args:
+        values: Raw id values from JSON columns or duck-typed objects.
+
+    Returns:
+        Sorted list of valid positive integer ids.
+    """
+    return sorted(parsed for v in values if (parsed := _parse_violation_id(v)) is not None)
+
+
+def _safe_float(value: object, default: float = 0.0) -> float:
+    """Coerce JSON-ish confidence values to float, clamped to 0..1.
+
+    Mirrors the draft stub coercion semantics so outcome overlays tolerate
+    numeric strings without raising.
+
+    Args:
+        value: Raw confidence value (int, float, numeric string, bool, None, …).
+        default: Fallback when coercion fails.
+
+    Returns:
+        Coerced float in ``[0.0, 1.0]``, or clamped ``default``.
+    """
+    clamped_default = min(1.0, max(0.0, default))
+    if isinstance(value, bool):
+        logger.debug("Falling back confidence value %r to %r", value, clamped_default)
+        return clamped_default
+    if isinstance(value, int):
+        coerced_int = float(value)
+        if coerced_int < 0.0:
+            logger.debug("Clamping confidence value %r to 0.0", value)
+            return 0.0
+        if coerced_int > 1.0:
+            logger.debug("Clamping confidence value %r to 1.0", value)
+            return 1.0
+        return coerced_int
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            logger.debug("Falling back confidence value %r to %r", value, clamped_default)
+            return clamped_default
+        if value < 0.0:
+            logger.debug("Clamping confidence value %r to 0.0", value)
+            return 0.0
+        if value > 1.0:
+            logger.debug("Clamping confidence value %r to 1.0", value)
+            return 1.0
+        return value
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            logger.debug("Falling back confidence value %r to %r", value, clamped_default)
+            return clamped_default
+        try:
+            coerced_str = float(text)
+        except ValueError:
+            logger.debug("Falling back confidence value %r to %r", value, clamped_default)
+            return clamped_default
+        if not math.isfinite(coerced_str):
+            logger.debug("Falling back confidence value %r to %r", value, clamped_default)
+            return clamped_default
+        if coerced_str < 0.0:
+            logger.debug("Clamping confidence value %r to 0.0", value)
+            return 0.0
+        if coerced_str > 1.0:
+            logger.debug("Clamping confidence value %r to 1.0", value)
+            return 1.0
+        return coerced_str
+    if value is None:
+        logger.debug("Falling back confidence value %r to %r", value, clamped_default)
+        return clamped_default
+    logger.debug("Falling back confidence value %r to %r", value, clamped_default)
+    return clamped_default
+
+
 def _as_mapping(v: object) -> Mapping[str, Any]:
     """Normalize ORM / dict / object with attributes into a mapping view.
 
@@ -108,15 +271,21 @@ def _as_mapping(v: object) -> Mapping[str, Any]:
         Mapping of grouping fields.
     """
     if isinstance(v, Mapping):
-        return v
+        coerced = dict(v)
+        for field in ("line", "node_line_start", "line_end", "node_line_end", "remediation_class"):
+            if field in coerced:
+                coerced[field] = _to_int(coerced[field])
+        return coerced
     return {
         "id": getattr(v, "id", None),
         "rule_id": getattr(v, "rule_id", "") or "",
         "file": getattr(v, "file", "") or "",
         "path": getattr(v, "path", "") or "",
-        "line": getattr(v, "line", None),
-        "node_line_start": getattr(v, "node_line_start", 0) or 0,
-        "remediation_class": getattr(v, "remediation_class", 0) or 0,
+        "line": _to_int(getattr(v, "line", None)),
+        "node_line_start": _to_int(getattr(v, "node_line_start", 0)),
+        "line_end": _to_int(getattr(v, "line_end", 0)),
+        "node_line_end": _to_int(getattr(v, "node_line_end", 0)),
+        "remediation_class": _to_int(getattr(v, "remediation_class", 0)),
         "original_yaml": getattr(v, "original_yaml", "") or "",
         "fixed_yaml": getattr(v, "fixed_yaml", "") or "",
         "node_type": getattr(v, "node_type", "") or "",
@@ -133,7 +302,7 @@ def _class_lane(item: Mapping[str, Any]) -> str:
     Returns:
         ``tier1``, ``ai``, or ``other``.
     """
-    rem_class = int(item.get("remediation_class") or 0)
+    rem_class = _to_int(item.get("remediation_class"))
     if rem_class == _RC_AI_CANDIDATE:
         return "ai"
     if rem_class == _RC_AUTO_FIXABLE or str(item.get("fixed_yaml") or "").strip():
@@ -173,7 +342,7 @@ def _classify(items: Sequence[Mapping[str, Any]]) -> tuple[str, str, int]:
     Returns:
         ``(source, gate, tier)``.
     """
-    classes = {int(i.get("remediation_class") or 0) for i in items}
+    classes = {_to_int(i.get("remediation_class")) for i in items}
     has_fixed = any(str(i.get("fixed_yaml") or "").strip() for i in items)
     # Prefer remediation_class over fixed_yaml so an AI-candidate row with
     # leftover fixed text is not mislabeled as Tier 1 deterministic.
@@ -274,21 +443,7 @@ def group_violations(
         rule_ids = tuple(sorted({str(i.get("rule_id") or "") for i in items if i.get("rule_id")}))
         if not rule_ids:
             rule_ids = ("",)
-        violation_ids = tuple(
-            sorted(int(i["id"]) for i in items if isinstance(i.get("id"), int) or str(i.get("id", "")).isdigit())
-        )
-        # Re-parse ids that came as numeric strings from JSON-ish sources.
-        if not violation_ids:
-            parsed: list[int] = []
-            for i in items:
-                raw_id = i.get("id")
-                if raw_id is None:
-                    continue
-                try:
-                    parsed.append(int(raw_id))
-                except (TypeError, ValueError):
-                    continue
-            violation_ids = tuple(sorted(parsed))
+        violation_ids = tuple(_coerce_violation_ids([i.get("id") for i in items]))
 
         source, gate, tier = _classify(items)
         # Keys are path:{path}:lane:{lane} or singleton:…
@@ -297,16 +452,27 @@ def group_violations(
             rest = key[len("path:") :]
             path = rest.rsplit(":lane:", 1)[0] if ":lane:" in rest else rest
         file_path = str(items[0].get("file") or "")
+        # Select span from the SAME item so start/end cannot mismatch across
+        # grouped rows. Prefer the first nonzero node span, else the first
+        # int-like line with its same-item end. Keep line_end=0 unknown.
+        # Violations predate line_end storage, so grouped historical rows
+        # keep 0 until violation storage also carries it; live items that
+        # already carry line_end preserve it here.
         line_start = 0
+        line_end = 0
         for i in items:
-            nls = i.get("node_line_start")
-            if isinstance(nls, int) and nls:
-                line_start = nls
+            node_start = _to_int(i.get("node_line_start"))
+            if node_start:
+                line_start = node_start
+                line_end = _to_int(i.get("line_end")) or _to_int(i.get("node_line_end"))
                 break
-            line = i.get("line")
-            if isinstance(line, int):
-                line_start = line
-                break
+        else:
+            for i in items:
+                coerced_line = _to_int(i.get("line"))
+                if coerced_line:
+                    line_start = coerced_line
+                    line_end = _to_int(i.get("line_end")) or _to_int(i.get("node_line_end"))
+                    break
 
         original = next((str(i.get("original_yaml") or "") for i in items if i.get("original_yaml")), "")
         fixed = next((str(i.get("fixed_yaml") or "") for i in items if i.get("fixed_yaml")), "")
@@ -343,6 +509,7 @@ def group_violations(
                 file=file_path,
                 path=path,
                 line_start=line_start,
+                line_end=line_end,
                 tier=tier,
                 source=source,
                 gate=gate,
@@ -417,8 +584,11 @@ def merge_outcomes(
         status = str(getattr(outcome, "status", "") or prop.status)
         if status == "rejected":
             status = "declined"
-        confidence = float(getattr(outcome, "confidence", prop.confidence) or 0.0)
-        tier = int(getattr(outcome, "tier", prop.tier) or prop.tier)
+        # Defensive coercion: outcomes may carry JSON-ish strings ("12", "0.9",
+        # "12.0"). _safe_float/_to_int fall back to the grouped value instead
+        # of raising and aborting the whole merge.
+        confidence = _safe_float(getattr(outcome, "confidence", prop.confidence), prop.confidence)
+        tier = _to_int(getattr(outcome, "tier", prop.tier), prop.tier)
         source = prop.source
         gate = prop.gate
         # Outcome tier wins: keep source/gate aligned with tier so analytics
@@ -446,6 +616,7 @@ def merge_outcomes(
                 file=prop.file,
                 path=prop.path,
                 line_start=prop.line_start,
+                line_end=_to_int(getattr(outcome, "line_end", prop.line_end), prop.line_end) or prop.line_end,
                 tier=tier or prop.tier,
                 source=source,
                 gate=gate,
@@ -522,7 +693,7 @@ def analytics_increments(proposal: GroupedProposal | Mapping[str, Any]) -> list[
             rule_ids = [str(proposal["rule_id"])]
         source = str(proposal.get("source") or SOURCE_OUTCOME)
         gate = str(proposal.get("gate") or "")
-        tier = int(proposal.get("tier") or 0)
+        tier = _to_int(proposal.get("tier"))
         coupled = bool(proposal.get("coupled")) or len(rule_ids) > 1
 
     # Normalize analytics source to deterministic|ai for both input shapes.
@@ -613,8 +784,12 @@ def violation_accepts_review_status(
     Returns:
         Whether this violation is compatible with the proposal source.
     """
-    fixed = str(getattr(violation, "fixed_yaml", "") or "").strip()
-    rem_class = int(getattr(violation, "remediation_class", 0) or 0)
+    if isinstance(violation, Mapping):
+        fixed = str(violation.get("fixed_yaml", "") or "").strip()
+        rem_class = _to_int(violation.get("remediation_class"))
+    else:
+        fixed = str(getattr(violation, "fixed_yaml", "") or "").strip()
+        rem_class = _to_int(getattr(violation, "remediation_class", 0))
     is_ai_source = source in {SOURCE_AI, SOURCE_AI_CANDIDATE}
     accepted, declined = decision_delta(decision or "")
     if is_ai_source:

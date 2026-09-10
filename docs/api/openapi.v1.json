@@ -1596,7 +1596,7 @@
         "type": "object"
       },
       "ProposalDetail": {
-        "description": "Proposal row (ephemeral working set or historically rebuilt; ADR-062).\n\nAttributes:\n    id: Auto-increment ID (0 when rebuilt in memory).\n    proposal_id: Gateway-stable proposal id within the scan.\n    rule_id: Primary rule that triggered the proposal.\n    file: File the proposal targets.\n    tier: Proposal tier (1 deterministic, 2+ AI).\n    confidence: AI confidence score.\n    status: approved, rejected, declined, or pending.\n    path: Node identity path (optional additive).\n    node_type: ContentGraph NodeType value (task, block, play, \u2026).\n    source: deterministic, ai, ai-candidate, or outcome (optional additive).\n    gate: tier1 or ai (optional additive).\n    rule_ids: All rule ids on this approval unit (optional additive).\n    violation_ids: Linked violation PKs (optional additive).\n    line_start: First line of the node/finding (optional additive).\n    diff_hunk: Unified diff when available (optional additive).\n    explanation: AI explanation when available (optional additive).\n    suggestion: Manual suggestion when available (optional additive).\n    engine_proposal_id: Live engine proposal id when bridged (optional).\n    draft: True while optimistic UI edits are not yet gate-committed.",
+        "description": "Proposal row (ephemeral working set or historically rebuilt; ADR-062).\n\nAttributes:\n    id: Auto-increment ID (0 when rebuilt in memory).\n    proposal_id: Gateway-stable proposal id within the scan.\n    rule_id: Primary rule that triggered the proposal.\n    file: File the proposal targets.\n    tier: Proposal tier (1 deterministic, 2+ AI).\n    confidence: AI confidence score.\n    status: proposed, approved, rejected, declined, or pending.\n    path: Node identity path (optional additive).\n    node_type: ContentGraph NodeType value (task, block, play, \u2026).\n    source: deterministic, ai, ai-candidate, or outcome (optional additive).\n    gate: tier1 or ai (optional additive).\n    rule_ids: All rule ids on this approval unit (optional additive).\n    violation_ids: Linked violation PKs (optional additive).\n    line_start: First line of the node/finding, 0 when unknown (optional additive).\n    line_end: Last line of the node/finding, 0 when unknown (optional additive).\n    diff_hunk: Unified diff when available (optional additive).\n    explanation: AI explanation when available (optional additive).\n    suggestion: Manual suggestion when available (optional additive).\n    engine_proposal_id: Live engine proposal id when bridged (optional).\n    draft: True while optimistic UI edits are not yet gate-committed.",
         "properties": {
           "confidence": {
             "title": "Confidence",
@@ -1641,8 +1641,15 @@
             "title": "Id",
             "type": "integer"
           },
+          "line_end": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Line End",
+            "type": "integer"
+          },
           "line_start": {
             "default": 0,
+            "minimum": 0.0,
             "title": "Line Start",
             "type": "integer"
           },

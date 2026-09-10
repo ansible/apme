@@ -8,14 +8,18 @@ Alternate (version pin only): ``pip install apme-engine[ai]``.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import functools
 import json
 import logging
 import os
+import random
 from importlib.resources import files as pkg_files
 from pathlib import Path
 
+import grpc
+import grpc.aio
 import yaml
 
 from apme_engine.fingerprint import canonicalize_rule_id
@@ -29,6 +33,32 @@ from apme_engine.remediation.ai_provider import (
 from apme_engine.rule_catalog import _parse_ai_prompt_map
 
 logger = logging.getLogger(__name__)
+
+#: Base delay before the single chat reconnect retry (single retry, so no exponential growth).
+_CHAT_RETRY_BASE_S = 2.0
+#: Added jitter upper bound so concurrent AI nodes do not retry in lockstep.
+_CHAT_RETRY_JITTER_S = 1.0
+#: Client-side bound for one streaming chat attempt.
+_CHAT_ATTEMPT_TIMEOUT_S = 300.0
+
+#: gRPC codes that may heal on reconnect and are safe to retry once.
+#: INTERNAL covers the most common blip (an HTTP/2 RST_STREAM surfacing
+#: as INTERNAL). DEADLINE_EXCEEDED stays retryable because each chat
+#: attempt carries its own client-side 300s bound
+#: (``_CHAT_ATTEMPT_TIMEOUT_S``): one slow call deserves one retry, unlike
+#: whole-scan retries where DEADLINE_EXCEEDED means the server budget
+#: expired and retrying would double load. RESOURCE_EXHAUSTED (quota)
+#: must fail fast — a retry cannot free quota. All other non-transient
+#: codes (UNAUTHENTICATED, PERMISSION_DENIED, NOT_FOUND,
+#: INVALID_ARGUMENT, ...) fail fast without reconnect.
+_CHAT_TRANSIENT_CODES: frozenset[grpc.StatusCode] = frozenset(
+    {
+        grpc.StatusCode.UNAVAILABLE,
+        grpc.StatusCode.INTERNAL,
+        grpc.StatusCode.UNKNOWN,
+        grpc.StatusCode.DEADLINE_EXCEEDED,
+    }
+)
 
 _BEST_PRACTICES: dict[str, list[str]] | None = None
 
@@ -784,6 +814,11 @@ class AbbenayProvider:
     ) -> str:
         """Call chat, reconnecting once on connection failure.
 
+        The single retry waits out a base delay plus jitter so an
+        Abbenay flap is not amplified by every AI node reconnecting at
+        once, and each attempt is bounded by a client-side timeout so a
+        hung chat stream cannot block the caller indefinitely.
+
         Args:
             model: Model identifier.
             prompt: User prompt text.
@@ -793,27 +828,99 @@ class AbbenayProvider:
             Concatenated response text from the model.
 
         Raises:
-            Exception: If the chat call fails after one reconnect retry.
+            TimeoutError: If a chat attempt exceeds the client-side bound
+                (a slow stream, not a disconnect — never retried).
+            OSError: If the reconnect retry also fails with a transport
+                error (covers builtin ``ConnectionError``).
+            grpc.aio.AioRpcError: If the retry attempt RPC fails with a
+                transient code, or immediately on the first attempt with a
+                permanent code (RESOURCE_EXHAUSTED, UNAUTHENTICATED,
+                PERMISSION_DENIED, NOT_FOUND, INVALID_ARGUMENT, and all
+                other non-transient codes fail fast without reconnect).
+            AssertionError: If the retry loop exhausts without returning
+                (unreachable defense-in-depth).
+            Exception: If the chat call fails for permanent
+                (non-connection) errors — auth, quota, not-found,
+                validation — which fail fast without retry.
         """
         for attempt in range(2):
+            if attempt > 0:
+                # Single retry, so the delay is constant (base + jitter) —
+                # no exponential factor: the loop runs at most twice, so an
+                # exponential term would always be 1 here.
+                await asyncio.sleep(_CHAT_RETRY_BASE_S + random.uniform(0, _CHAT_RETRY_JITTER_S))
             try:
-                response_text = ""
-                async for chunk in self._client.chat(  # type: ignore[attr-defined]
-                    model=model,
-                    message=prompt,
-                    policy=policy,
-                    token=self._token,
-                ):
-                    if hasattr(chunk, "text") and chunk.text:
-                        response_text += chunk.text
-                return response_text
-            except Exception:
-                if attempt == 0:
-                    logger.debug("Chat failed, reconnecting to Abbenay and retrying")
-                    await self.reconnect()
-                else:
+                return await asyncio.wait_for(
+                    self._consume_chat(model, prompt, policy),
+                    timeout=_CHAT_ATTEMPT_TIMEOUT_S,
+                )
+            except TimeoutError:
+                # A slow-but-healthy stream tripping the attempt bound is not
+                # a disconnect — retrying would burn the single attempt on
+                # the same slow call. This must stay before the transient
+                # handler: builtin TimeoutError subclasses OSError.
+                raise
+            except grpc.aio.AioRpcError as exc:
+                # Only transient gRPC codes may heal on reconnect. Permanent
+                # codes (auth, not-found, invalid-argument, ...) fail fast
+                # without reconnect.
+                if exc.code() not in _CHAT_TRANSIENT_CODES:
                     raise
-        return ""  # unreachable but satisfies mypy
+                if attempt > 0:
+                    raise
+                logger.debug("Chat transient gRPC failure, reconnecting to Abbenay and retrying")
+                # A failed reconnect must not mask the original error or
+                # consume the remaining attempt: suppress it and retry the
+                # chat anyway.
+                with contextlib.suppress(Exception):
+                    await self.reconnect()
+            # This path is purely gRPC: _consume_chat streams
+            # AbbenayClient.chat (abbenay_grpc, unix-socket or TCP) and
+            # reconnect rebuilds that same client — no httpx client exists
+            # here (the only HTTP/httpx Abbenay usage is the Gateway's
+            # admin proxy, a different service and path). Socket-level
+            # dial failures surface as OSError and may heal on reconnect.
+            except OSError:
+                if attempt > 0:
+                    raise
+                logger.debug("Chat connection failed, reconnecting to Abbenay and retrying")
+                # A failed reconnect must not mask the original error or
+                # consume the remaining attempt: suppress it and retry the
+                # chat anyway.
+                with contextlib.suppress(Exception):
+                    await self.reconnect()
+            except Exception:
+                # Permanent failures (auth, not-found/invalid-model,
+                # validation) will not heal on reconnect — fail fast.
+                raise
+        raise AssertionError("unreachable: chat retry loop exhausted")
+
+    async def _consume_chat(
+        self,
+        model: str,
+        prompt: str,
+        policy: dict[str, object],
+    ) -> str:
+        """Stream one chat response into concatenated text.
+
+        Args:
+            model: Model identifier.
+            prompt: User prompt text.
+            policy: Sampling/output policy dict.
+
+        Returns:
+            Concatenated response text from the model.
+        """
+        response_text = ""
+        async for chunk in self._client.chat(  # type: ignore[attr-defined]
+            model=model,
+            message=prompt,
+            policy=policy,
+            token=self._token,
+        ):
+            if hasattr(chunk, "text") and chunk.text:
+                response_text += chunk.text
+        return response_text
 
     async def propose_node_fix(
         self,

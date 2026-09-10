@@ -395,6 +395,140 @@ async def test_session_proposals_forwarded() -> None:
 
 
 @pytest.mark.asyncio  # type: ignore[untyped-decorator]
+async def test_session_proposals_include_node_type() -> None:
+    """WS proposals payload includes node_type like REST/SSE/registry."""
+    created = _make_created_event()
+    proposals = _make_proposals_event(
+        [
+            {
+                "id": "p1",
+                "file": "tasks/main.yml",
+                "rule_id": "L042",
+                "line_start": 10,
+                "line_end": 15,
+                "before_text": "old",
+                "after_text": "new",
+                "diff_hunk": "- old\n+ new",
+                "confidence": 0.85,
+                "explanation": "Use FQCN",
+                "tier": 2,
+                "status": "proposed",
+                "source": "ai",
+                "suggestion": "",
+                "path": "play.tasks[0]",
+                "node_type": "task",
+            },
+        ]
+    )
+    result = _make_result_event()
+    closed = _make_closed_event()
+    mock_stream = _mock_fix_stream(created, proposals, result, closed)
+
+    file_content = base64.b64encode(b"---\n- hosts: all\n").decode()
+    ws = MockWebSocket(
+        [
+            {"type": "start", "options": {"enable_ai": True}},
+            {"type": "file", "path": "tasks/main.yml", "content": file_content},
+            {"type": "files_done"},
+        ]
+    )
+
+    with (
+        patch("apme_gateway.session_client.grpc.aio.insecure_channel") as mock_ch_fn,
+        patch("apme_gateway.session_client.engine_pb2_grpc.EngineStub") as mock_stub_cls,
+    ):
+        mock_ch = AsyncMock()
+        mock_ch_fn.return_value = mock_ch
+        mock_stub = MagicMock()
+        mock_stub.FixSession.return_value = mock_stream
+        mock_stub_cls.return_value = mock_stub
+
+        from apme_gateway.session_client import handle_session
+
+        await handle_session(ws, "localhost:50051")
+
+    proposal_msgs = [m for m in ws.sent if m["type"] == "proposals"]
+    assert len(proposal_msgs) == 1
+    raw = proposal_msgs[0]["proposals"]
+    assert isinstance(raw, list)
+    proposals_list = raw
+    assert len(proposals_list) == 1
+    assert proposals_list[0]["node_type"] == "task"
+
+
+@pytest.mark.asyncio  # type: ignore[untyped-decorator]
+async def test_ai_triage_bridge_forwards_remediation_fields() -> None:
+    """WS ai_triage payload carries the same remediation fields as SSE."""
+    from apme_gateway.session_client import _forward_events
+
+    cand = MagicMock()
+    cand.rule_id = "L021"
+    cand.severity = 3
+    cand.message = "Use FQCN"
+    cand.file = "tasks/main.yml"
+    cand.path = "play.tasks[0]"
+    cand.node_type = "task"
+    cand.remediation_class = 1
+    cand.source = "native"
+    cand.original_yaml = "- debug: {msg: hi}"
+    cand.fixed_yaml = "- ansible.builtin.debug: {msg: hi}"
+    cand.co_fixes = ["L042"]
+    cand.node_line_start = 12
+
+    bare = MagicMock()
+    bare.rule_id = "L042"
+    bare.severity = 2
+    bare.message = "Advisory"
+    bare.file = "roles/x/tasks/main.yml"
+    bare.path = "play.tasks[1]"
+    bare.node_type = "task"
+    bare.remediation_class = 0
+    bare.source = "native"
+    bare.original_yaml = ""
+    bare.fixed_yaml = ""
+    bare.co_fixes = []
+    bare.node_line_start = 0
+
+    event = MagicMock()
+    event.WhichOneof.return_value = "ai_triage"
+    event.ai_triage.status = 4
+    event.ai_triage.ttl_seconds = 300
+    event.ai_triage.candidates = [cand, bare]
+
+    async def _stream() -> AsyncIterator[MagicMock]:
+        yield event
+
+    ws = MockWebSocket([])
+    done = asyncio.Event()
+    await _forward_events(_stream(), ws, "scan-1", done)
+
+    triage_msgs = [m for m in ws.sent if m["type"] == "ai_triage"]
+    assert len(triage_msgs) == 1
+    candidates = triage_msgs[0]["candidates"]
+    assert isinstance(candidates, list)
+    assert len(candidates) == 2
+    first = candidates[0]
+    assert first["rule_id"] == "L021"
+    assert first["severity"] == "medium"
+    assert first["message"] == "Use FQCN"
+    assert first["file"] == "tasks/main.yml"
+    assert first["path"] == "play.tasks[0]"
+    assert first["node_type"] == "task"
+    assert first["source"] == "native"
+    assert first["remediation_class"] == 1
+    assert first["original_yaml"] == "- debug: {msg: hi}"
+    assert first["fixed_yaml"] == "- ansible.builtin.debug: {msg: hi}"
+    assert first["co_fixes"] == ["L042"]
+    assert first["node_line_start"] == 12
+    second = candidates[1]
+    assert second["remediation_class"] == 0
+    assert second["original_yaml"] == ""
+    assert second["fixed_yaml"] == ""
+    assert second["co_fixes"] == []
+    assert second["node_line_start"] is None
+
+
+@pytest.mark.asyncio  # type: ignore[untyped-decorator]
 async def test_path_traversal_rejected() -> None:
     """Files with ``..`` in the path are rejected."""
     from apme_gateway.session_client import _sanitize_path
