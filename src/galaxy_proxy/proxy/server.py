@@ -84,6 +84,7 @@ def create_app(
     ansible_cfg_path: Path | None = None,
     galaxy_servers: list[GalaxyServerConfig] | None = None,
     ansible_galaxy_bin: str | None = None,
+    download_timeout: float = 900.0,
 ) -> FastAPI:
     """Create and configure the proxy FastAPI application.
 
@@ -105,6 +106,14 @@ def create_app(
         ansible_cfg_path: Path to an existing ``ansible.cfg`` for Galaxy auth.
         galaxy_servers: Ordered list of Galaxy server configs (ansible.cfg-style).
         ansible_galaxy_bin: Override path to the ``ansible-galaxy`` binary.
+        download_timeout: Seconds to wait for a single ``ansible-galaxy
+            collection download`` subprocess before giving up. A single
+            collection version against a slow/remote Galaxy server (e.g.
+            the public ``galaxy.ansible.com``) can legitimately take 1-2
+            minutes on its own; when multiple configured servers must be
+            tried in sequence before one succeeds, that multiplies
+            quickly. Default of 900s leaves real headroom over the
+            observed ~120s single-server, single-collection case.
 
     Returns:
         Configured FastAPI application instance.
@@ -132,6 +141,7 @@ def create_app(
     app.state.galaxy_servers = list(galaxy_servers) if galaxy_servers else []
     app.state.ansible_cfg_path = ansible_cfg_path
     app.state.ansible_galaxy_bin = ansible_galaxy_bin
+    app.state.download_timeout = download_timeout
 
     def _get_galaxy_config() -> tuple[Path | None, list[GalaxyServerConfig] | None, str | None]:
         """Read current Galaxy config from app state.
@@ -285,6 +295,7 @@ def create_app(
                             ansible_cfg_path=cfg_path,
                             galaxy_servers=servers_cfg,
                             ansible_galaxy_bin=galaxy_bin,
+                            timeout=app.state.download_timeout,
                         )
                         cache.put_wheel(whl_name, whl_data)
                         logger.info("On-demand download for %s.%s: %s", namespace, name, whl_name)
@@ -412,6 +423,7 @@ def create_app(
                     ansible_cfg_path=cfg_path,
                     galaxy_servers=servers,
                     ansible_galaxy_bin=galaxy_bin,
+                    timeout=app.state.download_timeout,
                 )
             except Exception as exc:
                 logger.exception("Failed to download/convert %s.%s %s", ns, coll_name, version)
@@ -623,6 +635,20 @@ async def _fetch_galaxy_versions(
     return []
 
 
+def _versions_list_url(base_url: str, namespace: str, name: str) -> str:
+    """Build the HTTP URL for listing collection versions on a Galaxy server.
+
+    Portal / PAH content servers (``.../api/galaxy/content/<repo>``) use the
+    v3 content API (``.../v3/collections/<ns>/<name>/versions/``).  Classic
+    Galaxy and Automation Hub plugin roots use the published index path.
+    """
+    base = base_url.rstrip("/")
+    if "/api/galaxy/content/" in urlsplit(base).path:
+        return f"{base}/v3/collections/{namespace}/{name}/versions/"
+    normalized = _normalize_galaxy_url(base_url)
+    return f"{normalized}{_GALAXY_VERSIONS_PATH}/{namespace}/{name}/versions/"
+
+
 def _normalize_galaxy_url(raw_url: str) -> str:
     """Strip ansible.cfg-style ``/api/...`` suffixes from the URL path.
 
@@ -670,8 +696,8 @@ async def _fetch_versions_from(
         the caller can fall through to the next server.
     """
     versions: list[str] = []
+    url = _versions_list_url(base_url, namespace, name)
     normalized = _normalize_galaxy_url(base_url)
-    url = f"{normalized}{_GALAXY_VERSIONS_PATH}/{namespace}/{name}/versions/"
     params: dict[str, str | int] = {"limit": 100, "offset": 0}
     headers: dict[str, str] = {}
     if token:
@@ -749,6 +775,7 @@ async def _download_and_convert(
     ansible_cfg_path: Path | None = None,
     galaxy_servers: list[GalaxyServerConfig] | None = None,
     ansible_galaxy_bin: str | None = None,
+    timeout: float = 300.0,
 ) -> tuple[str, bytes]:
     """Download a single collection tarball and convert to a wheel.
 
@@ -762,6 +789,8 @@ async def _download_and_convert(
         ansible_cfg_path: Path to an existing ``ansible.cfg``.
         galaxy_servers: Galaxy server configs for temp ansible.cfg.
         ansible_galaxy_bin: Override path to ``ansible-galaxy``.
+        timeout: Subprocess timeout in seconds, forwarded to
+            :func:`download_collections`.
 
     Returns:
         Tuple of ``(wheel_filename, wheel_bytes)``.
@@ -780,6 +809,7 @@ async def _download_and_convert(
             ansible_cfg_path=ansible_cfg_path,
             servers=galaxy_servers,
             ansible_galaxy_bin=ansible_galaxy_bin,
+            timeout=timeout,
         )
 
         if result.failed_specs:
