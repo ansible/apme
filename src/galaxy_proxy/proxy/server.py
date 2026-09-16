@@ -158,6 +158,9 @@ def create_app(
 
         Returns:
             Downstream HTTP response.
+
+        Raises:
+            Exception: Re-raises an unhandled downstream request exception.
         """
         started = time.perf_counter()
         try:
@@ -165,8 +168,7 @@ def create_app(
         except Exception as exc:
             duration_ms = (time.perf_counter() - started) * 1000
             logger.error(
-                "server_response method=%s path=%s status=500 duration_ms=%.1f "
-                "size_bytes=unknown error_type=%s",
+                "server_response method=%s path=%s status=500 duration_ms=%.1f size_bytes=unknown error_type=%s",
                 request.method,
                 request.url.path,
                 duration_ms,

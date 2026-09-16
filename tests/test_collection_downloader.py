@@ -12,10 +12,10 @@ import pytest
 from galaxy_proxy.collection_downloader import (
     DownloadResult,
     GalaxyServerConfig,
-    _safe_server_label,
     _compute_failed_specs,
     _find_tarballs,
     _inject_galaxy_env,
+    _safe_server_label,
     _spec_fqcn,
     convert_tarballs_in_dir,
     download_collections,
@@ -32,7 +32,12 @@ from galaxy_proxy.collection_downloader import (
     ],
 )
 def test_safe_server_label_redacts_url_details(raw_url: str, expected: str) -> None:
-    """Operational labels expose only a parsed hostname or a safe fallback."""
+    """Operational labels expose only a parsed hostname or a safe fallback.
+
+    Args:
+        raw_url: Untrusted server URL to sanitize.
+        expected: Expected safe hostname label.
+    """
     assert _safe_server_label(raw_url) == expected
 
 
@@ -279,7 +284,12 @@ class TestDownloadCollections:
         tmp_path: Path,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """Subprocess diagnostics remain available to callers but out of logs."""
+        """Subprocess diagnostics remain available to callers but out of logs.
+
+        Args:
+            tmp_path: Temporary directory for the download attempt.
+            caplog: Captured log records.
+        """
         mock_process = AsyncMock()
         mock_process.returncode = 1
         mock_process.communicate = AsyncMock(return_value=(b"", b"token=secret-value"))

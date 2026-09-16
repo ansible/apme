@@ -21,7 +21,12 @@ from galaxy_proxy.cli import _setup_logging, log_level_from_environment
     ],
 )
 def test_log_level_from_environment(configured: str | None, expected: int) -> None:
-    """Supported values are normalized and the default is INFO."""
+    """Supported values are normalized and the default is INFO.
+
+    Args:
+        configured: Optional LOG_LEVEL environment value.
+        expected: Expected logging level.
+    """
     environment = {} if configured is None else {"LOG_LEVEL": configured}
     with patch.dict("os.environ", environment, clear=True):
         assert log_level_from_environment() == expected
@@ -49,7 +54,13 @@ def test_verbose_flags_can_increase_configured_verbosity(
     verbose: int,
     expected: int,
 ) -> None:
-    """CLI verbosity flags can make the configured level more verbose."""
+    """CLI verbosity flags can make the configured level more verbose.
+
+    Args:
+        configured: Configured LOG_LEVEL value.
+        verbose: Number of verbose flags.
+        expected: Expected resulting logging level.
+    """
     with (
         patch.dict("os.environ", {"LOG_LEVEL": configured}, clear=True),
         patch("galaxy_proxy.cli.logging.basicConfig") as basic_config,

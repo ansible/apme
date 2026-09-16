@@ -22,7 +22,12 @@ from galaxy_proxy.proxy.server import _safe_server_label, create_app
     ],
 )
 def test_safe_server_label_redacts_url_details(raw_url: str, expected: str) -> None:
-    """Operational labels expose only a parsed hostname or a safe fallback."""
+    """Operational labels expose only a parsed hostname or a safe fallback.
+
+    Args:
+        raw_url: Untrusted server URL to sanitize.
+        expected: Expected safe hostname label.
+    """
     assert _safe_server_label(raw_url) == expected
 
 
@@ -30,10 +35,15 @@ def test_response_middleware_logs_unhandled_failures(
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Unhandled request failures emit a status and duration event."""
+    """Unhandled request failures emit a status and duration event.
+
+    Args:
+        tmp_path: Temporary directory for the proxy cache.
+        caplog: Captured log records.
+    """
     application = create_app(cache_dir=tmp_path / "cache", enable_passthrough=False)
 
-    @application.get("/test-unhandled-failure")
+    @application.get("/test-unhandled-failure")  # type: ignore[untyped-decorator]
     async def _fail() -> None:
         raise RuntimeError("sensitive failure detail")
 
