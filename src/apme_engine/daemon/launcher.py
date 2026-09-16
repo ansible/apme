@@ -11,6 +11,7 @@ import asyncio
 import contextlib
 import fcntl
 import json
+import logging
 import os
 import signal
 import socket
@@ -394,14 +395,17 @@ async def _run_daemon(services: dict[str, str]) -> None:
 
         import uvicorn  # noqa: PLC0415
 
+        from galaxy_proxy.cli import _setup_logging  # noqa: PLC0415
         from galaxy_proxy.proxy.server import create_app  # noqa: PLC0415
+
+        log_level = _setup_logging(0)
 
         proxy_app = create_app()
         config = uvicorn.Config(
             proxy_app,
             host=proxy_host or "127.0.0.1",
             port=int(proxy_port_s),
-            log_level="warning",
+            log_level=logging.getLevelName(log_level).lower(),
         )
         proxy_server = uvicorn.Server(config)
         asyncio.create_task(proxy_server.serve())

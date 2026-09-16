@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, Response
 from packaging.version import InvalidVersion, Version
 from pydantic import BaseModel
@@ -44,6 +44,25 @@ from galaxy_proxy.proxy.cache import ProxyCache
 from galaxy_proxy.proxy.passthrough import PyPIPassthrough
 
 logger = logging.getLogger(__name__)
+
+
+def _safe_server_label(raw_url: str) -> str:
+    """Return an upstream URL label without query, fragment, or credentials.
+
+    Args:
+        raw_url: Upstream server URL.
+
+    Returns:
+        Sanitized host and port label.
+    """
+    parsed = urlsplit(raw_url)
+    if not parsed.hostname:
+        return "unknown"
+    try:
+        return f"{parsed.hostname}:{parsed.port}" if parsed.port else parsed.hostname
+    except ValueError:
+        return "unknown"
+
 
 _GALAXY_API_URL = "https://galaxy.ansible.com"
 _GALAXY_VERSIONS_PATH = "/api/v3/plugin/ansible/content/published/collections/index"
@@ -128,6 +147,44 @@ def create_app(
             await passthrough.close()
 
     app = FastAPI(title="Ansible Collection Proxy", version="0.2.0", lifespan=lifespan)
+
+    @app.middleware("http")  # type: ignore[untyped-decorator]
+    async def log_response(request: Request, call_next: Any) -> Response:
+        """Log the status, duration, and response size for each HTTP request.
+
+        Args:
+            request: Incoming HTTP request.
+            call_next: Downstream ASGI request handler.
+
+        Returns:
+            Downstream HTTP response.
+        """
+        started = time.perf_counter()
+        try:
+            response = await call_next(request)
+        except Exception as exc:
+            duration_ms = (time.perf_counter() - started) * 1000
+            logger.error(
+                "server_response method=%s path=%s status=500 duration_ms=%.1f "
+                "size_bytes=unknown error_type=%s",
+                request.method,
+                request.url.path,
+                duration_ms,
+                type(exc).__name__,
+            )
+            raise
+        else:
+            duration_ms = (time.perf_counter() - started) * 1000
+            size = response.headers.get("content-length", "unknown")
+            logger.info(
+                "server_response method=%s path=%s status=%d duration_ms=%.1f size_bytes=%s",
+                request.method,
+                request.url.path,
+                response.status_code,
+                duration_ms,
+                size,
+            )
+            return response
 
     app.state.galaxy_servers = list(galaxy_servers) if galaxy_servers else []
     app.state.ansible_cfg_path = ansible_cfg_path
@@ -233,6 +290,7 @@ def create_app(
         normalized = normalize_pep503(package_name)
 
         if not is_collection_package(normalized):
+            logger.info("package_requested package=%s type=pypi endpoint=project", normalized)
             if passthrough is None:
                 raise HTTPException(
                     status_code=404,
@@ -240,6 +298,8 @@ def create_app(
                 )
             html, status = await passthrough.fetch_project_page(normalized)
             return HTMLResponse(content=html, status_code=status)
+
+        logger.info("collection_requested package=%s type=collection endpoint=project", normalized)
 
         try:
             namespace, name = python_to_fqcn(normalized)
@@ -255,6 +315,9 @@ def create_app(
         meta = cache.get_metadata(namespace, name)
         if meta is not None:
             versions = meta.versions
+            logger.info("metadata_cache_hit collection=%s.%s versions=%d", namespace, name, len(versions))
+        else:
+            logger.info("metadata_cache_miss collection=%s.%s", namespace, name)
 
         if versions is None:
             cfg_path, servers_cfg, _ = _get_galaxy_config()
@@ -362,7 +425,8 @@ def create_app(
 
         cached = cache.get_wheel(filename)
         if cached:
-            logger.info("Cache hit: %s", filename)
+            logger.info("collection_requested collection=%s endpoint=wheel", filename)
+            logger.info("wheel_cache_hit filename=%s size_bytes=%d", filename, len(cached))
             _record_serve("hit")
             return Response(
                 content=cached,
@@ -384,6 +448,12 @@ def create_app(
         if len(parts) < 5:
             raise HTTPException(status_code=404, detail=f"Invalid wheel filename: {filename}")
         version = parts[1]
+        logger.info(
+            "collection_requested collection=%s.%s version=%s endpoint=wheel",
+            ns,
+            coll_name,
+            version,
+        )
 
         lock_key = f"{ns}.{coll_name}:{version}"
         lock = _download_locks.get(lock_key)
@@ -392,7 +462,7 @@ def create_app(
         async with lock:
             cached = cache.get_wheel(filename)
             if cached:
-                logger.info("Cache hit after lock: %s", filename)
+                logger.info("wheel_cache_hit_after_lock filename=%s size_bytes=%d", filename, len(cached))
                 _record_serve("hit")
                 return Response(
                     content=cached,
@@ -400,13 +470,7 @@ def create_app(
                     headers={"Content-Disposition": f"attachment; filename={filename}"},
                 )
 
-            logger.info(
-                "Cache miss: %s — downloading %s.%s %s via ansible-galaxy",
-                filename,
-                ns,
-                coll_name,
-                version,
-            )
+            logger.info("wheel_cache_miss filename=%s", filename)
 
             try:
                 cfg_path, servers, galaxy_bin = _get_galaxy_config()
@@ -419,18 +483,20 @@ def create_app(
                     ansible_galaxy_bin=galaxy_bin,
                 )
             except Exception as exc:
-                logger.exception("Failed to download/convert %s.%s %s", ns, coll_name, version)
+                logger.error(
+                    "Failed to download/convert %s.%s %s error_type=%s",
+                    ns,
+                    coll_name,
+                    version,
+                    type(exc).__name__,
+                )
                 _record_serve("miss", status="error")
                 raise HTTPException(
                     status_code=502,
-                    detail=(
-                        f"Failed to download/convert {ns}.{coll_name} {version} via ansible-galaxy"
-                        + (f": {exc}" if str(exc) else "")
-                    ),
+                    detail=f"Failed to download/convert {ns}.{coll_name} {version} via ansible-galaxy",
                 ) from exc
 
             cache.put_wheel(whl_name, whl_data)
-            logger.info("Converted and cached: %s (%d bytes)", whl_name, len(whl_data))
 
         _record_serve("miss")
         return Response(
@@ -614,11 +680,17 @@ async def _fetch_galaxy_versions(
     base_urls.append((_GALAXY_API_URL, None))
 
     for base_url, token in base_urls:
+        logger.info(
+            "galaxy_backend_call operation=version_lookup collection=%s.%s server=%s",
+            namespace,
+            name,
+            _safe_server_label(base_url),
+        )
         versions = await _fetch_versions_from(namespace, name, base_url, token=token)
         if versions is not None:
             return sorted(set(versions), key=_galaxy_version_sort_key)
 
-    tried = [u for u, _ in base_urls]
+    tried = [_safe_server_label(url) for url, _ in base_urls]
     logger.warning(
         "All Galaxy servers failed for %s.%s (tried: %s)",
         namespace,
@@ -649,9 +721,13 @@ def _normalize_galaxy_url(raw_url: str) -> str:
 
     parts = urlsplit(raw_url)
     path = parts.path.rstrip("/")
-    idx = path.find("/api")
-    if idx != -1:
-        path = path[:idx]
+    segments = path.split("/")
+    try:
+        api_index = segments.index("api")
+    except ValueError:
+        api_index = -1
+    if api_index != -1:
+        path = "/".join(segments[:api_index])
     return urlunsplit((parts.scheme, parts.netloc, path, "", ""))
 
 
@@ -694,6 +770,13 @@ async def _fetch_versions_from(
                 try:
                     while True:
                         resp = await client.get(url, params=params)
+                        logger.info(
+                            "galaxy_backend_response operation=version_lookup collection=%s.%s server=%s status=%d",
+                            namespace,
+                            name,
+                            server_host,
+                            resp.status_code,
+                        )
                         resp.raise_for_status()
                         payload = resp.json()
                         for entry in payload.get("data", []):
@@ -710,13 +793,13 @@ async def _fetch_versions_from(
                     params["offset"] = 0
                     await asyncio.sleep(0.5 * (attempt + 1))
         return versions
-    except (httpx.HTTPError, KeyError, ValueError) as exc:
+    except (httpx.HTTPError, KeyError, TypeError, AttributeError, ValueError) as exc:
         logger.debug(
             "Version fetch from %s failed for %s.%s: %s",
-            base_url,
+            _safe_server_label(base_url),
             namespace,
             name,
-            exc,
+            type(exc).__name__,
         )
         return None
     finally:
@@ -784,10 +867,17 @@ async def _download_and_convert(
         RuntimeError: If download or conversion fails.
     """
     spec = f"{namespace}.{name}:{version}" if version else f"{namespace}.{name}"
+    started = time.perf_counter()
+    logger.info(
+        "galaxy_backend_call operation=download collection=%s version=%s server=configured",
+        spec,
+        version or "latest",
+    )
 
     with tempfile.TemporaryDirectory(prefix="apme-galaxy-dl-") as tmp:
         download_dir = Path(tmp)
 
+        download_started = time.perf_counter()
         result = await download_collections(
             [spec],
             download_dir,
@@ -797,7 +887,7 @@ async def _download_and_convert(
         )
 
         if result.failed_specs:
-            msg = f"Failed to download {spec}: {result.stderr}"
+            msg = f"Failed to download {spec}"
             raise RuntimeError(msg)
 
         if not result.tarball_paths:
@@ -806,5 +896,30 @@ async def _download_and_convert(
 
         tarball_path = result.tarball_paths[0]
         tarball_data = await asyncio.to_thread(tarball_path.read_bytes)
+        download_duration_ms = (time.perf_counter() - download_started) * 1000
+        logger.info(
+            "galaxy_backend_response operation=download collection=%s version=%s "
+            "status=200 duration_ms=%.1f size_bytes=%d",
+            spec,
+            version or "latest",
+            download_duration_ms,
+            len(tarball_data),
+        )
+
+        conversion_started = time.perf_counter()
         whl_name, whl_data = await asyncio.to_thread(tarball_to_wheel, tarball_data)
+        conversion_duration_ms = (time.perf_counter() - conversion_started) * 1000
+        total_duration_ms = (time.perf_counter() - started) * 1000
+        logger.info(
+            "collection_download_complete collection=%s version=%s "
+            "download_duration_ms=%.1f conversion_duration_ms=%.1f "
+            "total_duration_ms=%.1f tarball_size_bytes=%d wheel_size_bytes=%d",
+            spec,
+            version or "latest",
+            download_duration_ms,
+            conversion_duration_ms,
+            total_duration_ms,
+            len(tarball_data),
+            len(whl_data),
+        )
         return whl_name, whl_data

@@ -30,6 +30,15 @@ The pod creates:
 - **Sessions directory** — session-scoped venvs are stored under `/sessions` in the pod. The Engine writes here (rw); the Ansible validator reads it (ro).
 - OPA Rego bundle is **copied into the image** at build time from `src/apme_engine/validators/opa/bundle` (no runtime volume mount).
 
+The local Abbenay UI prefers `http://127.0.0.1:8787`. If that host port is
+already occupied, `tox -e up` selects an available port in the range
+`8787-8887` and prints the actual UI URL after startup. Abbenay still listens
+on port `8787` inside the pod, so the Gateway's in-pod proxy is unchanged.
+Use `APME_ABBENAY_HOST_PORT=<port> tox -e up` to request an exact host port;
+startup fails if that port is invalid or unavailable. The printed URL is the
+authoritative host URL. This behavior applies to the local Podman pod only;
+Helm deployments keep Abbenay loopback-only inside the Kubernetes pod.
+
 ## Run CLI commands (on-the-fly container)
 
 From **any directory** you want to work with:

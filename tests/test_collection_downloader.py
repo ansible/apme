@@ -12,6 +12,7 @@ import pytest
 from galaxy_proxy.collection_downloader import (
     DownloadResult,
     GalaxyServerConfig,
+    _safe_server_label,
     _compute_failed_specs,
     _find_tarballs,
     _inject_galaxy_env,
@@ -20,6 +21,19 @@ from galaxy_proxy.collection_downloader import (
     download_collections,
     write_temp_ansible_cfg,
 )
+
+
+@pytest.mark.parametrize(  # type: ignore[untyped-decorator]
+    ("raw_url", "expected"),
+    [
+        ("https://user:secret@hub.example.com:8443/api/?token=secret", "hub.example.com:8443"),
+        ("not-a-url-with-secret", "unknown"),
+        ("https://hub.example.com:not-a-port/api/", "unknown"),
+    ],
+)
+def test_safe_server_label_redacts_url_details(raw_url: str, expected: str) -> None:
+    """Operational labels expose only a parsed hostname or a safe fallback."""
+    assert _safe_server_label(raw_url) == expected
 
 
 class TestGalaxyServerConfig:
@@ -258,6 +272,29 @@ class TestDownloadCollections:
         assert len(result.tarball_paths) == 1
         assert result.tarball_paths[0].name == "community-general-9.0.0.tar.gz"
         assert result.failed_specs == []
+
+    @pytest.mark.asyncio  # type: ignore[untyped-decorator]
+    async def test_failed_download_does_not_log_subprocess_output(
+        self,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Subprocess diagnostics remain available to callers but out of logs."""
+        mock_process = AsyncMock()
+        mock_process.returncode = 1
+        mock_process.communicate = AsyncMock(return_value=(b"", b"token=secret-value"))
+
+        with (
+            caplog.at_level("WARNING", logger="galaxy_proxy.collection_downloader"),
+            patch(
+                "galaxy_proxy.collection_downloader.asyncio.create_subprocess_exec",
+                return_value=mock_process,
+            ),
+        ):
+            result = await download_collections(["community.general"], tmp_path / "downloads")
+
+        assert result.stderr == "token=secret-value"
+        assert "secret-value" not in caplog.text
 
     @pytest.mark.asyncio  # type: ignore[untyped-decorator]
     async def test_binary_not_found(self, tmp_path: Path) -> None:
