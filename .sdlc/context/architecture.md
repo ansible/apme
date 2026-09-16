@@ -296,9 +296,10 @@ The wrapper adds **Ansible-aware filtering**:
 **Scale pods, not services within a pod** (ADR-012) defines the conceptual
 engine unit. The **Helm chart** (EAP / upstream) ships a **Simple all-in-one**
 pod (ADR-069): engine + Gateway + UI + optional Abbenay on localhost — same
-shape as Podman. PostgreSQL is **external** to the chart (configured via
-`gateway.database.url` or `gateway.database.existingSecret` as
-`APME_DATABASE_URL`). Remote production hosts must use certificate-validated TLS
+shape as Podman. The EAP Simple chart includes a PostgreSQL 16 sidecar and
+persistent `*-postgres-data` PVC by default. External PostgreSQL is an explicit
+override: disable the sidecar and configure `gateway.database.url` or
+`gateway.database.existingSecret` as `APME_DATABASE_URL`. Remote production hosts must use certificate-validated TLS
 (`?sslmode=verify-full` with a configured CA in the URL or cluster trust store);
 `sslmode=require` is rejected at Gateway startup. Multi-replica engine HPA is
 out of chart scope.

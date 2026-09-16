@@ -106,22 +106,34 @@ collectionHealth:
 depAudit:
   enabled: true
 
+# -- PostgreSQL sidecar — ADR-069 Simple pod
+postgres:
+  enabled: true
+  image: docker.io/library/postgres:16
+  database: apme
+  username: apme
+  # Leave empty so the image uses its own postgres user. The chart-wide
+  # securityContext is intended for the UBI-based APME containers; set this
+  # separately only when the PostgreSQL image is rebuilt for a fixed UID.
+  securityContext: {}
+  # Leave empty to generate a random password. The chart-owned Secret is kept
+  # across upgrades and uninstall; set explicitly for declarative GitOps
+  # rendering or when an operator-managed credential is required.
+  password: ""
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
 # -- Gateway sidecar (REST + gRPC reporting + PostgreSQL) — ADR-069 Simple pod
 gateway:
   # Retained for compatibility; must be 1 (Gateway is not a separate Deployment).
   replicas: 1
-  # ``database.url`` or ``database.existingSecret`` is required. Gateway persistence
-  # uses ``APME_DATABASE_URL`` (``postgresql+asyncpg://...``) against an external
-  # PostgreSQL service — the chart does not deploy PostgreSQL or create a
-  # ``*-postgres-data`` PVC. Credential-bearing URLs must use ``existingSecret``;
-  # ``database.url`` accepts credential-free values only (no ``user:pass@``).
-  # Remote production hosts must use certificate-validated TLS
-  # (``?sslmode=verify-full`` with a configured CA).
-  #
-  # PostgreSQL cutover: upgrading from a chart that stored SQLite on
-  # ``*-gateway-data`` does not migrate scan history. The external PostgreSQL
-  # database starts empty; the legacy ``*-gateway-data`` PVC is retained and
-  # mounted for pre-cutover rollback only.
+  # By default Gateway uses the in-pod PostgreSQL sidecar. Set database.url or
+  # database.existingSecret only for an explicit external PostgreSQL override.
   database:
     url: ""
     existingSecret:
@@ -270,6 +282,10 @@ persistence:
     storageClass: ""
     accessMode: ReadWriteOnce
   gateway:
+    size: 5Gi
+    storageClass: ""
+    accessMode: ReadWriteOnce
+  postgres:
     size: 5Gi
     storageClass: ""
     accessMode: ReadWriteOnce

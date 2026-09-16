@@ -12,6 +12,9 @@ Components in the Simple pod:
   - Dependency Audit validator
 {{- end }}
   - Gateway (REST API + gRPC reporting)
+{{- if .Values.postgres.enabled }}
+  - PostgreSQL (persistent database)
+{{- end }}
 {{- if .Values.ui.enabled }}
   - UI (React SPA)
 {{- end }}
@@ -58,6 +61,12 @@ so that /api is routed to the Gateway Service.
 Access the Gateway API directly via port-forward:
   kubectl port-forward svc/{{ include "apme.fullname" . }}-gateway 8080:8080
   curl http://localhost:8080/api/v1/dashboard/summary
+{{- end }}
+
+{{- if .Values.postgres.enabled }}
+PostgreSQL data is stored in PVC {{ include "apme.fullname" . }}-postgres-data.
+The PVC and database are deleted by default when the release is uninstalled;
+back up the database or use an external PostgreSQL service before uninstalling.
 {{- end }}
 
 {{- if not .Values.image.tag }}
