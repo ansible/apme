@@ -583,6 +583,7 @@ kubectl create secret generic openrouter-credentials \
   --dry-run=client -o yaml | kubectl apply -f -
 printf '%s' "$APME_ABBENAY_TOKEN" > "$abbenay_token_file"
 helm install apme ./deploy/helm/apme/ \
+  --namespace apme --create-namespace \
   --set image.tag=sha-7cb2464 \
   --set abbenay.enabled=true \
   --set-file abbenay.token="$abbenay_token_file" \

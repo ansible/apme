@@ -55,6 +55,9 @@ ingress domain (for example `apme.apps.<cluster-domain>`) before installing —
 
 Defaults pull from `quay.io/ansible` with image tag `2026.9.2` (`Chart.appVersion`).
 For unreleased SHA builds, set `--set image.tag=sha-<commit>`.
+The default `2026.9.2` APME image predates the `abbenay-client==2026.8.9`
+refresh; when enabling Abbenay before the next APME release, set `image.tag` to
+an image built from this change.
 
 > **Observability:** The reference Podman pod includes an OpenTelemetry Collector
 > (ADR-067) on ports `:4318` (OTLP) and `:8889` (Prometheus). The Helm chart does
@@ -188,6 +191,7 @@ kubectl create secret generic openrouter-credentials \
   --dry-run=client -o yaml | kubectl apply -f -
 printf '%s' "$APME_ABBENAY_TOKEN" > "$abbenay_token_file"
 helm install apme ./deploy/helm/apme/ \
+  --namespace apme --create-namespace \
   --set abbenay.enabled=true \
   --set-file abbenay.token="$abbenay_token_file" \
   --set-json 'abbenay.providers={"openrouter":{"engine":"openrouter","apiKeySecret":{"name":"openrouter-credentials","key":"api-key"},"models":{"anthropic/claude-sonnet-4-6":{}}}}'

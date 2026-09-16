@@ -200,10 +200,10 @@ ui:
 # See docs/guides/ABBENAY_AI.md for GCP-specific setup.
 abbenay:
   enabled: false
-  # Daemon image (CalVer with v prefix). Independent of APME image.tag
-  # (still 2026.9.2 until the next APME release). Engine source pins
-  # abbenay-client==2026.8.9; published :2026.9.2 engine images ship
-  # a matching abbenay-client that already speaks unix://.
+  # Daemon image (CalVer with v prefix). Independent of APME image.tag.
+  # The default APME 2026.9.2 image predates this client refresh; use an
+  # APME image built from this change (via image.tag) until the next release
+  # publishes an image containing abbenay-client==2026.8.9.
   image: ghcr.io/redhat-developer/abbenay:v2026.8.9
   # -- Token APME uses to authenticate with Abbenay (required when enabled)
   token: ""
