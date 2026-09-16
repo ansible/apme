@@ -283,6 +283,8 @@ spec:
     - name: galaxy-proxy
       image: apme-galaxy-proxy:latest
       env:
+        - name: LOG_LEVEL
+          value: "INFO"
         - name: OTEL_EXPORTER_OTLP_ENDPOINT
           value: "http://127.0.0.1:4318"
         - name: OTEL_SERVICE_NAME

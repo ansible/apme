@@ -5,6 +5,7 @@ After=apme-pod.service
 [Container]
 Image=ghcr.io/ansible/apme-galaxy-proxy:latest
 Pod=apme.pod
+Environment=LOG_LEVEL=INFO
 Volume=/var/lib/apme/proxy-cache:/cache:rw,z
 
 [Install]

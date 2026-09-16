@@ -198,6 +198,13 @@ proxy gRPC requests to it.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `APME_GALAXY_PROXY_URL` | `http://127.0.0.1:8765` | Galaxy proxy base URL |
+| `LOG_LEVEL` | `INFO` | Galaxy Proxy logging level: `DEBUG`, `INFO`, `WARNING`, `ERROR`, or `CRITICAL`. Invalid values fail startup. |
+
+At `INFO` level, Galaxy Proxy logs collection requests, metadata and wheel
+cache hits/misses, sanitized upstream Galaxy operations and responses, HTTP
+response status, download duration, and download size. Tokens, authorization
+headers, and response bodies are not logged. Set `LOG_LEVEL=DEBUG` while
+diagnosing Galaxy or Automation Hub connectivity.
 
 #### Gateway
 

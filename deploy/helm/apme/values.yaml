@@ -30,6 +30,9 @@ engine:
   replicas: 1
   # Max concurrent Engine FixSession/Health RPCs (APME_ENGINE_MAX_RPCS).
   maxConcurrentRpcs: 16
+  galaxyProxy:
+    # -- Galaxy Proxy log level: DEBUG, INFO, WARNING, ERROR, or CRITICAL.
+    logLevel: INFO
   # Recreate avoids RWO PVC conflicts during single-replica rolling updates.
   strategy:
     type: Recreate

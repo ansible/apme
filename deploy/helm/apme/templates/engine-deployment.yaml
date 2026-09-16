@@ -371,6 +371,9 @@ spec:
         - name: galaxy-proxy
           image: {{ include "apme.image" (dict "registry" .Values.image.registry "name" "galaxy-proxy" "tag" .Values.image.tag "fallbackTag" .Chart.AppVersion) }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: LOG_LEVEL
+              value: {{ .Values.engine.galaxyProxy.logLevel | quote }}
           {{- with .Values.securityContext }}
           securityContext:
             {{- toYaml . | nindent 12 }}

@@ -10,7 +10,52 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from galaxy_proxy.proxy.server import create_app
+from galaxy_proxy.proxy.server import _safe_server_label, create_app
+
+
+@pytest.mark.parametrize(  # type: ignore[untyped-decorator]
+    ("raw_url", "expected"),
+    [
+        ("https://user:secret@hub.example.com:8443/api/?token=secret", "hub.example.com:8443"),
+        ("not-a-url-with-secret", "unknown"),
+        ("https://hub.example.com:not-a-port/api/", "unknown"),
+    ],
+)
+def test_safe_server_label_redacts_url_details(raw_url: str, expected: str) -> None:
+    """Operational labels expose only a parsed hostname or a safe fallback.
+
+    Args:
+        raw_url: Untrusted server URL to sanitize.
+        expected: Expected safe hostname label.
+    """
+    assert _safe_server_label(raw_url) == expected
+
+
+def test_response_middleware_logs_unhandled_failures(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Unhandled request failures emit a status and duration event.
+
+    Args:
+        tmp_path: Temporary directory for the proxy cache.
+        caplog: Captured log records.
+    """
+    application = create_app(cache_dir=tmp_path / "cache", enable_passthrough=False)
+
+    @application.get("/test-unhandled-failure")  # type: ignore[untyped-decorator]
+    async def _fail() -> None:
+        raise RuntimeError("sensitive failure detail")
+
+    with (
+        caplog.at_level("ERROR", logger="galaxy_proxy.proxy.server"),
+        TestClient(application, raise_server_exceptions=False) as client,
+    ):
+        response = client.get("/test-unhandled-failure")
+
+    assert response.status_code == 500
+    assert "server_response method=GET path=/test-unhandled-failure status=500" in caplog.text
+    assert "sensitive failure detail" not in caplog.text
 
 
 @pytest.fixture()  # type: ignore[untyped-decorator]
@@ -216,11 +261,12 @@ class TestServeWheel:
         resp = app.get("/wheels/../etc/passwd.whl")
         assert resp.status_code == 404
 
-    def test_cache_miss_downloads_and_converts(self, tmp_path: Path) -> None:
+    def test_cache_miss_downloads_and_converts(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
         """Cache miss triggers ansible-galaxy download and conversion.
 
         Args:
             tmp_path: Pytest-provided temporary directory.
+            caplog: Pytest log capture fixture.
         """
         from galaxy_proxy.collection_downloader import DownloadResult
 
@@ -236,6 +282,7 @@ class TestServeWheel:
         whl_data = b"PK\x03\x04converted-wheel"
 
         with (
+            caplog.at_level("INFO", logger="galaxy_proxy.proxy.server"),
             TestClient(application) as client,
             patch("galaxy_proxy.proxy.server.download_collections", mock_download),
             patch(
@@ -247,6 +294,17 @@ class TestServeWheel:
 
         assert resp.status_code == 200
         assert resp.content == whl_data
+        completion = ""
+        for record in caplog.records:
+            if "collection_download_complete" in record.message:
+                completion = record.message
+                break
+        assert completion
+        assert "download_duration_ms=" in completion
+        assert "conversion_duration_ms=" in completion
+        assert "total_duration_ms=" in completion
+        assert "tarball_size_bytes=0" in completion
+        assert f"wheel_size_bytes={len(whl_data)}" in completion
 
     def test_cache_miss_download_failure(self, tmp_path: Path) -> None:
         """Download failure returns 502.
@@ -273,6 +331,7 @@ class TestServeWheel:
             resp = client.get("/wheels/ansible_collection_ansible_posix-1.5.4-py3-none-any.whl")
 
         assert resp.status_code == 502
+        assert "Galaxy server unreachable" not in resp.text
 
     def test_unparseable_namespace(self, app: TestClient) -> None:
         """Wheel with unparseable namespace/name returns 404.

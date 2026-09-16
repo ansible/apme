@@ -472,6 +472,60 @@ APME_FEEDBACK_ENABLED="${APME_FEEDBACK_ENABLED:-true}"
 APME_FEEDBACK_GITHUB_REPO="${APME_FEEDBACK_GITHUB_REPO:-}"
 APME_FEEDBACK_GITHUB_TOKEN="${APME_FEEDBACK_GITHUB_TOKEN:-}"
 
+# Select the host-side port for the local Abbenay UI. Abbenay itself continues
+# to listen on 8787 inside the shared pod network namespace; only the host
+# mapping changes when the preferred port is already occupied.
+_select_abbenay_host_port() {
+  local requested="${APME_ABBENAY_HOST_PORT:-}"
+  if [[ -n "$requested" ]]; then
+    if [[ ! "$requested" =~ ^[0-9]+$ ]] || (( requested < 1 || requested > 65535 )); then
+      echo "ERROR: APME_ABBENAY_HOST_PORT must be a TCP port from 1 to 65535 (got: $requested)" >&2
+      return 1
+    fi
+    if ! python3 - "$requested" <<'PY'
+import socket
+import sys
+
+port = int(sys.argv[1])
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        sock.bind(("127.0.0.1", port))
+    except OSError:
+        raise SystemExit(1)
+PY
+    then
+      echo "ERROR: requested Abbenay UI host port $requested is unavailable" >&2
+      return 1
+    fi
+    echo "$requested"
+    return 0
+  fi
+
+  local port
+  for port in $(seq 8787 8887); do
+    if python3 - "$port" <<'PY'
+import socket
+import sys
+
+port = int(sys.argv[1])
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        sock.bind(("127.0.0.1", port))
+    except OSError:
+        raise SystemExit(1)
+PY
+    then
+      echo "$port"
+      return 0
+    fi
+  done
+
+  echo "ERROR: no available Abbenay UI host port in the range 8787-8887" >&2
+  return 1
+}
+
 # Optional: CA bundle for outbound HTTPS clients that need an internal or
 # self-signed trust anchor. Set ABBENAY_CA_BUNDLE to the absolute path of a
 # PEM CA bundle file.
@@ -502,12 +556,46 @@ if podman pod exists apme-pod 2>/dev/null; then
   podman pod rm apme-pod 2>/dev/null || true
 fi
 
+if ! APME_ABBENAY_HOST_PORT=$(_select_abbenay_host_port); then
+  exit 1
+fi
+export APME_ABBENAY_HOST_PORT
+if [[ "$APME_ABBENAY_HOST_PORT" == "8787" ]]; then
+  echo "Abbenay UI host port: 8787"
+else
+  echo "Abbenay UI host port 8787 is occupied; using $APME_ABBENAY_HOST_PORT"
+fi
+
 # Pod YAML cannot use env vars; we inject values via envsubst.
 export OPENROUTER_API_KEY VERTEX_ANTHROPIC_API_KEY APME_AI_MODEL APME_ROOT="$ROOT"
 export APME_FEEDBACK_ENABLED APME_FEEDBACK_GITHUB_REPO APME_FEEDBACK_GITHUB_TOKEN
 
 POD_YAML=$(envsubst '$OPENROUTER_API_KEY $VERTEX_ANTHROPIC_API_KEY $APME_AI_MODEL $APME_ROOT $APME_FEEDBACK_ENABLED $APME_FEEDBACK_GITHUB_REPO $APME_FEEDBACK_GITHUB_TOKEN' \
   < containers/podman/pod.yaml)
+
+# Keep the in-pod Abbenay port at 8787 and change only its localhost hostPort.
+if ! POD_YAML=$(APME_ABBENAY_HOST_PORT="$APME_ABBENAY_HOST_PORT" python3 -c '
+import os
+import sys
+
+yaml = sys.stdin.read()
+port = os.environ["APME_ABBENAY_HOST_PORT"]
+marker = "    - name: abbenay\n"
+start = yaml.index(marker)
+end = yaml.find("\n    - name:", start + len(marker))
+if end == -1:
+    end = len(yaml)
+block = yaml[start:end]
+old = "          hostPort: 8787"
+if block.count(old) != 1:
+    print("ERROR: expected exactly one Abbenay hostPort: 8787 entry", file=sys.stderr)
+    sys.exit(1)
+block = block.replace(old, "          hostPort: " + port, 1)
+print(yaml[:start] + block + yaml[end:], end="")
+' <<< "$POD_YAML"); then
+  echo "ERROR: could not patch the Abbenay host port in the rendered pod YAML" >&2
+  exit 1
+fi
 
 # When a CA bundle is provided, inject the standard CA env vars and mounts for
 # the containers that make outbound HTTPS requests (gateway, abbenay, galaxy-proxy).
@@ -767,7 +855,7 @@ _relabel_podman_volumes
 echo "$POD_YAML" | podman play kube -
 
 echo "Pod apme-pod started (volumes: apme-sessions, apme-postgres-data, apme-proxy-cache). Run a scan: containers/podman/run-cli.sh"
-echo "Abbenay UI: http://127.0.0.1:8787 (localhost only; HTTP auth disabled for dev)"
+echo "Abbenay UI: http://127.0.0.1:$APME_ABBENAY_HOST_PORT (localhost only; HTTP auth disabled for dev)"
 echo "OTel Prometheus metrics: http://localhost:8889/metrics (companion stack: containers/observability/up.sh)"
 
 if [[ -n "$APME_FEEDBACK_GITHUB_REPO" && -n "$APME_FEEDBACK_GITHUB_TOKEN" ]]; then

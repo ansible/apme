@@ -226,6 +226,7 @@ Gateway DB and Abbenay down together.
 | `image.registry` | `quay.io/ansible` | Container registry |
 | `image.tag` | `2026.9.2` | APME image tag (GitHub release `v2026.9.2`; stays here until the next APME release) |
 | `engine.replicas` | `1` | Must be `1` (ADR-069) |
+| `engine.galaxyProxy.logLevel` | `INFO` | Galaxy Proxy log level (`DEBUG`, `INFO`, `WARNING`, `ERROR`, or `CRITICAL`) |
 | `gitleaks.enabled` | `true` | Enable Gitleaks validator |
 | `collectionHealth.enabled` | `true` | Enable Collection Health validator |
 | `depAudit.enabled` | `true` | Enable Dependency Audit validator |
