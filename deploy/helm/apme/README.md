@@ -171,11 +171,26 @@ helm install apme ./deploy/helm/apme/
 helm install apme ./deploy/helm/apme/ \
   -f ./deploy/helm/apme/values-portal.yaml
 
-# With AI enabled (OpenRouter provider)
+# With AI enabled (OpenRouter provider). Create the provider Secret out of
+# band, and pass the Abbenay token through a protected temporary file so
+# credentials are not exposed in shell history or process arguments.
+set -eu
+set -o pipefail
+umask 077
+test -n "${OPENROUTER_API_KEY:-}" && test -n "${APME_ABBENAY_TOKEN:-}"
+openrouter_key_file=$(mktemp)
+abbenay_token_file=$(mktemp)
+trap 'rm -f "$openrouter_key_file" "$abbenay_token_file"' EXIT
+printf '%s' "$OPENROUTER_API_KEY" > "$openrouter_key_file"
+kubectl create secret generic openrouter-credentials \
+  --namespace apme \
+  --from-file=api-key="$openrouter_key_file" \
+  --dry-run=client -o yaml | kubectl apply -f -
+printf '%s' "$APME_ABBENAY_TOKEN" > "$abbenay_token_file"
 helm install apme ./deploy/helm/apme/ \
   --set abbenay.enabled=true \
-  --set abbenay.token=$APME_ABBENAY_TOKEN \
-  --set-json 'abbenay.providers={"openrouter":{"engine":"openrouter","apiKey":"'$OPENROUTER_API_KEY'","models":{"anthropic/claude-sonnet-4-6":{}}}}'
+  --set-file abbenay.token="$abbenay_token_file" \
+  --set-json 'abbenay.providers={"openrouter":{"engine":"openrouter","apiKeySecret":{"name":"openrouter-credentials","key":"api-key"},"models":{"anthropic/claude-sonnet-4-6":{}}}}'
 ```
 
 Lint and package locally with `tox -e helm` (writes `dist/charts/*.tgz`).
@@ -235,7 +250,7 @@ Gateway DB and Abbenay down together.
 | `ui.replicas` | `1` | Must be `1` when UI enabled |
 | `abbenay.enabled` | `false` | Enable AI provider sidecar |
 | `abbenay.token` | `""` | Abbenay gRPC + HTTP admin token (required when `abbenay.enabled=true`) |
-| `abbenay.image` | `ghcr.io/redhat-developer/abbenay:v2026.8.7` | Abbenay daemon image (independent of `image.tag`) |
+| `abbenay.image` | `ghcr.io/redhat-developer/abbenay:v2026.8.9` | Abbenay daemon image (independent of `image.tag`) |
 | `abbenay.providers` | `{}` | LLM provider map (see [ABBENAY_AI.md](../../../docs/guides/ABBENAY_AI.md)) |
 | `abbenay.aiModel` | `""` | Default AI model ID |
 | `ingress.enabled` | `false` | Create Kubernetes Ingress |

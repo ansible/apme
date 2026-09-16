@@ -59,7 +59,7 @@ This builds a shared base image, eleven service images, and pulls two official i
 | `apme-ui:latest` | `containers/ui/Dockerfile` | React SPA served by nginx (proxies API to Gateway) |
 | `apme-cli:latest` | `containers/cli/Dockerfile` | CLI client |
 | `postgres:16` | [Official image](https://hub.docker.com/_/postgres) (pulled) | PostgreSQL sidecar for Gateway persistence (`tox -e up`; preload for offline use) |
-| `ghcr.io/redhat-developer/abbenay:v2026.8.7` | [Official image](https://github.com/redhat-developer/abbenay/pkgs/container/abbenay) (pulled) | Abbenay AI daemon (LLM gateway for Tier 2 remediation) |
+| `ghcr.io/redhat-developer/abbenay:v2026.8.9` | [Official image](https://github.com/redhat-developer/abbenay/pkgs/container/abbenay) (pulled) | Abbenay AI daemon (LLM gateway for Tier 2 remediation) |
 
 ### Configure Abbenay AI (optional)
 
@@ -567,12 +567,26 @@ helm install apme ./deploy/helm/apme/ \
   -f ./deploy/helm/apme/values-portal.yaml \
   --set image.tag=sha-7cb2464
 
-# Standalone + AI (OpenRouter)
+# Standalone + AI (OpenRouter). Use a Kubernetes Secret for the provider key
+# and a protected temporary file for the Abbenay token.
+set -eu
+set -o pipefail
+umask 077
+test -n "${OPENROUTER_API_KEY:-}" && test -n "${APME_ABBENAY_TOKEN:-}"
+openrouter_key_file=$(mktemp)
+abbenay_token_file=$(mktemp)
+trap 'rm -f "$openrouter_key_file" "$abbenay_token_file"' EXIT
+printf '%s' "$OPENROUTER_API_KEY" > "$openrouter_key_file"
+kubectl create secret generic openrouter-credentials \
+  --namespace apme \
+  --from-file=api-key="$openrouter_key_file" \
+  --dry-run=client -o yaml | kubectl apply -f -
+printf '%s' "$APME_ABBENAY_TOKEN" > "$abbenay_token_file"
 helm install apme ./deploy/helm/apme/ \
   --set image.tag=sha-7cb2464 \
   --set abbenay.enabled=true \
-  --set abbenay.token=$APME_ABBENAY_TOKEN \
-  --set-json 'abbenay.providers={"openrouter":{"engine":"openrouter","apiKey":"'$OPENROUTER_API_KEY'","models":{"anthropic/claude-sonnet-4-6":{}}}}'
+  --set-file abbenay.token="$abbenay_token_file" \
+  --set-json 'abbenay.providers={"openrouter":{"engine":"openrouter","apiKeySecret":{"name":"openrouter-credentials","key":"api-key"},"models":{"anthropic/claude-sonnet-4-6":{}}}}'
 ```
 
 ### OpenShift UI

@@ -202,9 +202,9 @@ abbenay:
   enabled: false
   # Daemon image (CalVer with v prefix). Independent of APME image.tag
   # (still 2026.9.2 until the next APME release). Engine source pins
-  # abbenay-client==2026.8.7; published :2026.9.2 engine images ship
+  # abbenay-client==2026.8.9; published :2026.9.2 engine images ship
   # a matching abbenay-client that already speaks unix://.
-  image: ghcr.io/redhat-developer/abbenay:v2026.8.7
+  image: ghcr.io/redhat-developer/abbenay:v2026.8.9
   # -- Token APME uses to authenticate with Abbenay (required when enabled)
   token: ""
   # -- Override the default model APME selects (e.g. "vertex-claude/claude-sonnet-4-6")

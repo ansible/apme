@@ -20,15 +20,15 @@ constraints = [
 
 [[package]]
 name = "abbenay-client"
-version = "2026.8.7"
+version = "2026.8.9"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "grpcio" },
     { name = "protobuf" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/11/7d/8eefa040f05fe8d96a0c26def4f9ee70c170a39d0879a82aa2c0210f428e/abbenay_client-2026.8.7.tar.gz", hash = "sha256:94f5a26307162d862961cdf4e3bb5e505be1ff74b303f38dbfbe97dba51ebe2a", size = 37119, upload-time = "2026-08-24T20:36:59.082Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/88/71/554397b9d34c24c8840b2e803a991b5351b9db4328135c2491ffcf66d50e/abbenay_client-2026.8.9.tar.gz", hash = "sha256:7be743974fa7fe87a6bf31cbc132f6d0c3f70b0bf123f39c9bd7688e82d571b0", size = 37121, upload-time = "2026-09-16T20:26:17.605Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ec/63/2403f1322b77570d9dcf2b05564a9f184dd6c11774c6605906aba28b1dd6/abbenay_client-2026.8.7-py3-none-any.whl", hash = "sha256:a3969143d0794edb03e38ce7c5161dbf44f361ed4aa1f74289c2c060580b00de", size = 38948, upload-time = "2026-08-24T20:36:57.642Z" },
+    { url = "https://files.pythonhosted.org/packages/26/04/0563e8f8797c58e5e726e5a6159e5b23f9d2211edb289e1e5d3443300c09/abbenay_client-2026.8.9-py3-none-any.whl", hash = "sha256:76fcdfcc13e8c6d53f4b3c06df628acdc2ee5715f6325ed4f16e689b73b1abfe", size = 38944, upload-time = "2026-09-16T20:26:16.303Z" },
 ]
 
 [[package]]
@@ -294,7 +294,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "abbenay-client", marker = "extra == 'ai'", specifier = "==2026.8.7" },
+    { name = "abbenay-client", marker = "extra == 'ai'", specifier = "==2026.8.9" },
     { name = "ansible-core", specifier = ">=2.20.7" },
     { name = "asyncpg", marker = "extra == 'gateway'", specifier = ">=0.30" },
     { name = "fastapi", specifier = ">=0.100" },
