@@ -357,7 +357,7 @@ manifest lists under the same tags after ADR-063 (rebuild release tags to pick
 that up).
 
 - The APME containers use explicit security values for vanilla Kubernetes; OpenShift
-  SCCs may override the assigned UID/GID. PostgreSQL has its own compatible context.
+  SCCs may assign the UID/GID. PostgreSQL has its own compatible context.
 - The UI container mounts emptyDir volumes for nginx writable paths
 - No privilege escalation is required
 
@@ -381,10 +381,12 @@ those containers — the gRPC socket is created mode `0600`. Local Podman
 uses the same PVC definitions in `containers/podman/pvc.yaml` (with
 `volume.podman.io/uid` annotations).
 
-The PostgreSQL sidecar does not inherit the chart-wide `securityContext`; it
-uses a non-root context and the pod filesystem group for fresh PVC permissions.
-OpenShift SCCs may override the assigned UID/GID. If PostgreSQL is rebuilt with
-a fixed UID, configure `postgres.securityContext` separately.
+The PostgreSQL sidecar does not inherit the chart-wide `securityContext`; it uses
+a non-root context. On vanilla Kubernetes, set `podSecurityContext.fsGroup: 999`
+when the storage class requires an explicit group for a fresh PostgreSQL PVC.
+OpenShift SCCs assign an allowed group instead of using a hard-coded value. If
+PostgreSQL is rebuilt with a fixed UID, configure `postgres.securityContext`
+separately.
 
 ## Uninstall
 

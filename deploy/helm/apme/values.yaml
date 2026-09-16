@@ -363,10 +363,10 @@ serviceAccount:
 podAnnotations: {}
 
 # -- Pod-level security context.
-# The PostgreSQL sidecar relies on the filesystem group for a fresh PVC. OCP
-# restricted-v2 may override this with its assigned supplemental group.
-podSecurityContext:
-  fsGroup: 999
+# Leave the filesystem group unset by default so OpenShift SCCs can assign an
+# allowed supplemental group. Vanilla Kubernetes operators can set fsGroup to
+# the PostgreSQL image's group when their storage class requires it.
+podSecurityContext: {}
 
 # -- Container-level security context.
 # Defaults to empty so OCP restricted-v2 SCC can inject its own UID/GID range.

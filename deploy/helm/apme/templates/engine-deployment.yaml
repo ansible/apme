@@ -167,7 +167,7 @@ spec:
             - name: APME_ABBENAY_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: {{ $fullname }}-postgres-secrets
+                  name: {{ $fullname }}-secrets
                   key: abbenay-token
             {{- if .Values.abbenay.aiModel }}
             - name: APME_AI_MODEL
@@ -405,7 +405,7 @@ spec:
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ $fullname }}-secrets
+                  name: {{ $fullname }}-postgres-secrets
                   key: postgres-password
           readinessProbe:
             exec:
