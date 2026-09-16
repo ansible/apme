@@ -39,7 +39,8 @@ A new contributor must discover 5+ tools and 10+ commands, documented inconsiste
 |-------------|-------------|----------|
 | `lint` | `prek run --all-files` | Quality gate |
 | `unit` | `pytest` with coverage | Test |
-| `integration` | `pytest tests/integration/` | Test |
+| `integration` | `pytest tests/integration/` against externally managed PostgreSQL | Test |
+| `integration-local` | Disposable PostgreSQL container + `tox -e integration` | Test |
 | `ai` | `pytest` with AI extras | Test |
 | `ui` | `pytest -m ui` (Playwright) | Test |
 | `grpc` | `scripts/gen_grpc.sh` | Code generation |
@@ -53,6 +54,7 @@ A new contributor must discover 5+ tools and 10+ commands, documented inconsiste
 
 - **prek (ADR-014)**: Remains the git hook runner. `tox -e lint` delegates to `prek run --all-files`. The single source of truth for hook configuration stays in `.pre-commit-config.yaml`.
 - **Shell scripts**: Pod lifecycle scripts stay as-is under `containers/podman/`. tox environments are thin wrappers via `allowlist_externals = bash`. The scripts remain directly callable, but tox is the documented primary path.
+- **Integration database**: Integration tests do not start PostgreSQL themselves. CI provisions PostgreSQL as a GitHub Actions service container. Local developers can use `tox -e integration-local`, which starts a disposable PostgreSQL container and delegates to `tox -e integration`. This keeps infrastructure lifecycle outside test code while preserving a repeatable tox entry point.
 - **CI (ADR-015)**: Test workflows call `uvx --with tox-uv tox -e <env>` instead of bespoke `uv sync` + `uv run pytest` sequences. The `prek.yml` lint workflow continues to use `j178/prek-action` directly for its built-in caching; `tox -e lint` is the local equivalent. Every CI check has a corresponding tox environment.
 
 ## Rationale

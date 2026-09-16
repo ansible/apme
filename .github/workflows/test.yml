@@ -75,6 +75,18 @@ jobs:
           echo "${OPA_SHA256}  /tmp/opa_linux_amd64_static" | sha256sum --check -
           sudo install -m 755 /tmp/opa_linux_amd64_static /usr/local/bin/opa
           opa version
+      - name: Verify PostgreSQL reachability
+        run: |
+          for attempt in {1..30}; do
+            if (echo > /dev/tcp/127.0.0.1/5432) >/dev/null 2>&1; then
+              echo "PostgreSQL is reachable on 127.0.0.1:5432"
+              exit 0
+            fi
+            echo "Waiting for PostgreSQL (attempt ${attempt}/30)..."
+            sleep 2
+          done
+          echo "PostgreSQL was not reachable on 127.0.0.1:5432" >&2
+          exit 1
       - run: uvx --with tox-uv tox -e integration
         env:
           OPA_USE_PODMAN: "0"
