@@ -9,8 +9,9 @@ Vercel AI SDK.
 In the Simple in-pod topology (ADR-069 / ADR-070), Abbenay serves HTTP admin
 on `:8787` and gRPC on loopback (`--grpc-host 127.0.0.1 --grpc-port 50057`;
 image ≥ v2026.8.0). Helm has no cluster Service or hostPort. Local Podman
-(`tox -e up`) publishes HTTP on host port 8787 with `hostIP: 127.0.0.1` so the
-Abbenay UI is reachable at `http://127.0.0.1:8787`; gRPC stays loopback.
+(`tox -e up`) publishes HTTP on host port 8787 by default, with `hostIP:
+127.0.0.1`; if 8787 is occupied, `up.sh` selects a free port from 8787–8887
+and prints the authoritative URL. gRPC stays loopback.
 `pod.yaml` sets `ABBENAY_HTTP_AUTH=0` so the dashboard loads without a Bearer
 token (local dev only — do not disable HTTP auth when exposing Abbenay beyond
 your machine). Gateway HTTP admin still uses `127.0.0.1:8787` (shared netns).

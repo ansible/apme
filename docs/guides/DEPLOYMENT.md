@@ -72,14 +72,15 @@ cp containers/abbenay/.env.example containers/abbenay/.env
 
 The `.env` file is gitignored. Abbenay config is **seeded** from
 `containers/abbenay/config/` (or legacy `config.yaml` /
-`config.yaml.example`) into
-`${XDG_CACHE_HOME:-$HOME/.cache}/apme/abbenay/config/` (override with
-`APME_CACHE_HOST_PATH`). That cache directory is the RW hostPath mount
-(`0700` / `0600`). Rootful Podman chowns the cache copy to UID 1001; rootless
-keeps host ownership and grants UID 1001 a POSIX ACL so you can still edit the
-file. The git checkout is never chowned. Edit the cache `config.yaml` (or use
-the Gateway admin proxy) to change providers/models — runtime configure writes
-persist across container restarts.
+`config.yaml.example`) into `${XDG_CONFIG_HOME:-$HOME/.config}/abbenay/`.
+An existing legacy config under `${XDG_CACHE_HOME:-$HOME/.cache}/apme` (or
+`APME_CACHE_HOST_PATH`) is migrated there once. That user config directory is
+the writable hostPath mount (`0700` / `0600`). Rootful Podman chowns it to UID
+1001; rootless keeps host ownership and grants UID 1001 a POSIX ACL so you can
+still edit the files. The git checkout is never chowned. Edit
+`${XDG_CONFIG_HOME:-$HOME/.config}/abbenay/config.yaml` (or use the Gateway
+admin proxy) to change providers/models — runtime configure writes persist
+across container restarts.
 
 If `.env` is missing or the key is empty, the Abbenay container starts but model queries return empty results. AI remediation gracefully degrades — Tier 1 deterministic fixes still work.
 
@@ -120,7 +121,7 @@ The `remediate` command uses a bidirectional streaming RPC (`FixSession`, ADR-02
 
 ```bash
 tox -e down
-tox -e wipe    # also delete database, session cache, and Abbenay secrets.json
+tox -e wipe    # also delete database and session cache; preserve Abbenay config/secrets
 ```
 
 ### Health check

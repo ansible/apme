@@ -39,6 +39,12 @@ startup fails if that port is invalid or unavailable. The printed URL is the
 authoritative host URL. This behavior applies to the local Podman pod only;
 Helm deployments keep Abbenay loopback-only inside the Kubernetes pod.
 
+`tox -e up` mounts the writable Abbenay configuration directory from
+`${XDG_CONFIG_HOME:-~/.config}/abbenay` and prints the effective `config.yaml`
+path at the end of startup. This file is the runtime source of truth for
+provider configuration; an existing legacy cache config is migrated there once
+when the user config does not yet exist.
+
 ## Run CLI commands (on-the-fly container)
 
 From **any directory** you want to work with:
@@ -77,7 +83,7 @@ The health check probes the Engine and each validator directly via **gRPC** (not
 
 ```bash
 tox -e down             # stop
-tox -e wipe             # stop + wipe DB, session cache, and Abbenay secrets.json
+tox -e wipe             # stop + wipe DB and session cache; preserve Abbenay config/secrets
 
 # Or directly
 podman pod stop apme-pod

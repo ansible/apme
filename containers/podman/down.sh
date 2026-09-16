@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
-# Stop the APME pod and optionally wipe local state (Gateway DB, sessions,
-# Abbenay secrets.json).
+# Stop the APME pod and optionally wipe local state (Gateway DB and sessions).
 #
 # Usage:
 #   ./down.sh          # stop pod only
-#   ./down.sh --wipe   # stop pod, delete gateway DB/sessions, and Abbenay secrets.json
+#   ./down.sh --wipe   # stop pod, delete gateway DB and sessions (not Abbenay config)
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
@@ -103,14 +102,6 @@ if [[ "${1:-}" == "--wipe" ]]; then
     echo "Wiped session cache: $SESSIONS_DIR"
   else
     echo "No session cache found at $SESSIONS_DIR"
-  fi
-
-  ABBENAY_SECRETS="$CACHE_PATH/abbenay/config/secrets.json"
-  if [[ -f "$ABBENAY_SECRETS" ]]; then
-    rm -f "$ABBENAY_SECRETS"
-    echo "Wiped Abbenay file-store secrets: $ABBENAY_SECRETS"
-  else
-    echo "No Abbenay secrets.json found at $ABBENAY_SECRETS"
   fi
 
   # Revoke traversal ACLs granted on $HOME ancestors for rootless Abbenay
