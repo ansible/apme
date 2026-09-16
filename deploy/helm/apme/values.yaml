@@ -112,14 +112,17 @@ postgres:
   image: docker.io/library/postgres:16
   database: apme
   username: apme
-  # Leave empty so the image uses its own postgres user. The chart-wide
-  # securityContext is intended for the UBI-based APME containers; set this
-  # separately only when the PostgreSQL image is rebuilt for a fixed UID.
-  securityContext: {}
+  # The chart-wide securityContext is intended for the UBI-based APME containers;
+  # configure this separately for a custom PostgreSQL image or SCC policy.
   # Leave empty to generate a random password. The chart-owned Secret is kept
   # across upgrades and uninstall; set explicitly for declarative GitOps
   # rendering or when an operator-managed credential is required.
   password: ""
+  # Keep this compatible with a fresh Kubernetes PVC; OpenShift SCCs may override
+  # these values with an assigned UID.
+  securityContext:
+    runAsNonRoot: true
+    allowPrivilegeEscalation: false
   resources:
     requests:
       cpu: 100m
@@ -360,9 +363,10 @@ serviceAccount:
 podAnnotations: {}
 
 # -- Pod-level security context.
-# Defaults to empty so OCP restricted-v2 SCC can inject its own UID/GID range.
-# For vanilla Kubernetes set: podSecurityContext: { fsGroup: 1001 }
-podSecurityContext: {}
+# The PostgreSQL sidecar relies on the filesystem group for a fresh PVC. OCP
+# restricted-v2 may override this with its assigned supplemental group.
+podSecurityContext:
+  fsGroup: 999
 
 # -- Container-level security context.
 # Defaults to empty so OCP restricted-v2 SCC can inject its own UID/GID range.

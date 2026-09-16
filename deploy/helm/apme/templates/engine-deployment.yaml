@@ -167,7 +167,7 @@ spec:
             - name: APME_ABBENAY_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: {{ $fullname }}-secrets
+                  name: {{ $fullname }}-postgres-secrets
                   key: abbenay-token
             {{- if .Values.abbenay.aiModel }}
             - name: APME_AI_MODEL
@@ -428,6 +428,16 @@ spec:
                 - {{ .Values.postgres.database | quote }}
             initialDelaySeconds: 30
             periodSeconds: 10
+          startupProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - {{ .Values.postgres.username | quote }}
+                - -d
+                - {{ .Values.postgres.database | quote }}
+            periodSeconds: 5
+            failureThreshold: 60
           volumeMounts:
             - name: postgres-data
               mountPath: /var/lib/postgresql/data
@@ -457,7 +467,7 @@ spec:
             - name: APME_DATABASE_URL
               valueFrom:
                 secretKeyRef:
-                  name: {{ $fullname }}-secrets
+                  name: {{ $fullname }}-postgres-secrets
                   key: database-url
             {{- end }}
             - name: APME_GATEWAY_GRPC_LISTEN

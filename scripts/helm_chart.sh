@@ -232,6 +232,13 @@ DB_ERR="$(${HELM_BIN} template test-release "${CHART_DIR}" \
 }
 assert_fail_message "database configuration required" "${DB_ERR}" "postgres.enabled or gateway.database.url or gateway.database.existingSecret.name is required"
 
+MUTUAL_DB_ERR=$("${HELM_BIN}" template apme "${CHART_DIR}" \
+  --set gateway.database.url=postgresql+asyncpg://postgres.example:5432/apme 2>&1 >/dev/null) && {
+  echo "Expected postgres.enabled plus an external database URL to fail" >&2
+  exit 1
+}
+assert_fail_message "in-pod and external database are mutually exclusive" "${MUTUAL_DB_ERR}" "disable postgres.enabled when configuring an external gateway database"
+
 DB_CREDENTIALS_ERR="$("${HELM_BIN}" template test-release "${CHART_DIR}" \
   --set postgres.enabled=false \
   --set 'gateway.database.url=postgresql+asyncpg://apme:apme@postgres:5432/apme' 2>&1 >/dev/null)" && {

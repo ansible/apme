@@ -356,7 +356,8 @@ bases (ADR-061). CI publishes **multi-arch** (`linux/amd64` + `linux/arm64`)
 manifest lists under the same tags after ADR-063 (rebuild release tags to pick
 that up).
 
-- `podSecurityContext` and `securityContext` default to empty (OCP injects UID/GID)
+- The APME containers use explicit security values for vanilla Kubernetes; OpenShift
+  SCCs may override the assigned UID/GID. PostgreSQL has its own compatible context.
 - The UI container mounts emptyDir volumes for nginx writable paths
 - No privilege escalation is required
 
@@ -381,10 +382,9 @@ uses the same PVC definitions in `containers/podman/pvc.yaml` (with
 `volume.podman.io/uid` annotations).
 
 The PostgreSQL sidecar does not inherit the chart-wide `securityContext`; it
-uses the upstream image's `postgres` user by default. If PostgreSQL is rebuilt
-with a fixed UID, configure `postgres.securityContext` separately. Do not set
-the chart-wide `runAsUser: 1001` on PostgreSQL unless the image supports that
-UID.
+uses a non-root context and the pod filesystem group for fresh PVC permissions.
+OpenShift SCCs may override the assigned UID/GID. If PostgreSQL is rebuilt with
+a fixed UID, configure `postgres.securityContext` separately.
 
 ## Uninstall
 

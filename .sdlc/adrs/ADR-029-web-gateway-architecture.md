@@ -212,8 +212,10 @@ persistent volume (`apme-postgres-data`).
 in `/etc/apme/env/apme.env` and must provision, secure, and back up an external
 PostgreSQL service.
 
-**Helm** likewise requires an externally provisioned PostgreSQL database via
-`gateway.database.url` or `gateway.database.existingSecret`.
+**Helm Simple** provisions a `postgres:16` sidecar with a dedicated persistent
+volume by default. Operators may disable it and provide an externally
+provisioned PostgreSQL database via `gateway.database.url` or
+`gateway.database.existingSecret`.
 
 The gateway uses SQLAlchemy + asyncpg only; SQLite and file-path database
 configuration are not supported.
