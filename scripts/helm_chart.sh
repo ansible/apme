@@ -125,9 +125,8 @@ assert_fail_message() {
   fi
 }
 
-# Gateway persistence requires APME_DATABASE_URL (postgresql+asyncpg).
-# Credential-free URL for template tests; credential-bearing URLs must use existingSecret.
-HELM_TEST_DB_SET=(--set 'gateway.database.url=postgresql+asyncpg://127.0.0.1:5432/apme')
+# The Simple chart includes an in-pod PostgreSQL sidecar by default.
+HELM_TEST_DB_SET=(--set postgres.enabled=true)
 
 engine_container_block() {
   awk '
@@ -175,6 +174,8 @@ assert_template_contains "abbenay probe connects to unix socket" "${RENDER}" "cr
 assert_template_contains "abbenay probe ends captured socket" "${RENDER}" "s.on('connect',function(){s.end();process.exit(0)})"
 assert_template_contains "gateway engine addr localhost" "${RENDER}" 'value: "127.0.0.1:50051"'
 assert_template_contains "gateway database url" "${RENDER}" 'name: APME_DATABASE_URL'
+assert_template_contains "postgres sidecar" "${RENDER}" $'- name: postgres\n'
+assert_template_contains "postgres data PVC" "${RENDER}" 'name: test-release-apme-postgres-data'
 assert_template_lacks "no sqlite db path" "${RENDER}" 'name: APME_DB_PATH'
 assert_template_contains "gateway Service" "${RENDER}" "name: test-release-apme-gateway"
 assert_template_contains "engine Deployment" "${RENDER}" "name: test-release-apme-engine"
@@ -224,13 +225,22 @@ ROUTE_HOST_ERR="$("${HELM_BIN}" template test-release "${CHART_DIR}" \
 }
 assert_fail_message "route.host required" "${ROUTE_HOST_ERR}" "route.host is required"
 
-DB_ERR="$("${HELM_BIN}" template test-release "${CHART_DIR}" 2>&1 >/dev/null)" && {
-  echo "FAIL: expected helm template to fail without gateway.database.url" >&2
+DB_ERR="$(${HELM_BIN} template test-release "${CHART_DIR}" \
+  --set postgres.enabled=false 2>&1 >/dev/null)" && {
+  echo "FAIL: expected helm template to fail without PostgreSQL or an external database" >&2
   exit 1
 }
-assert_fail_message "database url required" "${DB_ERR}" "gateway.database.url or gateway.database.existingSecret.name is required"
+assert_fail_message "database configuration required" "${DB_ERR}" "postgres.enabled or gateway.database.url or gateway.database.existingSecret.name is required"
+
+MUTUAL_DB_ERR=$("${HELM_BIN}" template apme "${CHART_DIR}" \
+  --set gateway.database.url=postgresql+asyncpg://postgres.example:5432/apme 2>&1 >/dev/null) && {
+  echo "Expected postgres.enabled plus an external database URL to fail" >&2
+  exit 1
+}
+assert_fail_message "in-pod and external database are mutually exclusive" "${MUTUAL_DB_ERR}" "disable postgres.enabled when configuring an external gateway database"
 
 DB_CREDENTIALS_ERR="$("${HELM_BIN}" template test-release "${CHART_DIR}" \
+  --set postgres.enabled=false \
   --set 'gateway.database.url=postgresql+asyncpg://apme:apme@postgres:5432/apme' 2>&1 >/dev/null)" && {
   echo "FAIL: expected helm template to fail when gateway.database.url contains credentials" >&2
   exit 1
@@ -238,10 +248,35 @@ DB_CREDENTIALS_ERR="$("${HELM_BIN}" template test-release "${CHART_DIR}" \
 assert_fail_message "database credentials rejected" "${DB_CREDENTIALS_ERR}" "must not contain credentials"
 
 DB_SECRET_RENDER="$("${HELM_BIN}" template test-release "${CHART_DIR}" \
+  --set postgres.enabled=false \
   --set gateway.database.existingSecret.name=apme-database)"
 assert_template_contains "gateway database secret ref" "${DB_SECRET_RENDER}" 'name: apme-database'
 assert_template_contains "gateway database secret key" "${DB_SECRET_RENDER}" 'key: database-url'
 assert_template_lacks "gateway database secret not inline" "${DB_SECRET_RENDER}" 'value: "postgresql+asyncpg://apme:apme@'
+
+DB_SECRET_KEY_ERR="$(${HELM_BIN} template test-release "${CHART_DIR}" \
+  --set postgres.enabled=false \
+  --set gateway.database.existingSecret.name=apme-database \
+  --set gateway.database.existingSecret.key='' 2>&1 >/dev/null)" && {
+  echo "FAIL: expected helm template to fail when external database Secret key is empty" >&2
+  exit 1
+}
+assert_fail_message "database Secret key required" "${DB_SECRET_KEY_ERR}" \
+  "gateway.database.existingSecret.key is required"
+
+POSTGRES_POLICY_ERR="$(${HELM_BIN} template test-release "${CHART_DIR}" \
+  --set platform=kubernetes 2>&1 >/dev/null)" && {
+  echo "FAIL: expected Helm to require an explicit PostgreSQL root-init acknowledgement" >&2
+  exit 1
+}
+assert_fail_message "PostgreSQL policy acknowledgement" "${POSTGRES_POLICY_ERR}" \
+  "postgres.allowRootInit must be true"
+
+KUBERNETES_RENDER="$(${HELM_BIN} template test-release "${CHART_DIR}" \
+  --set platform=kubernetes \
+  --set postgres.allowRootInit=true)"
+assert_template_contains "Kubernetes PostgreSQL policy acknowledgement" \
+  "${KUBERNETES_RENDER}" "fsGroup: 999"
 
 # Confirm Service selectors + no Abbenay Service / extra Deployments
 RENDER_FILE="$(mktemp)"

@@ -86,8 +86,10 @@ External access uses Service + Ingress:
 |-----|-------------|---------|---------|
 | `sessions` | ReadWriteOnce | Simple pod | Session venvs (Engine rw, validators ro) |
 | `proxy-cache` | ReadWriteOnce | Simple pod | Galaxy Proxy wheel cache |
+| `postgres-data` | ReadWriteOnce | Helm Simple / Podman | PostgreSQL database data |
 
-PostgreSQL persistence is external to the Helm chart: operators supply
+Helm Simple and Podman provision PostgreSQL in the all-in-one pod by default.
+Operators may disable the Helm sidecar and supply
 `gateway.database.url` or `gateway.database.existingSecret` (see
 `deploy/helm/apme/README.md`). Remote database hosts require
 certificate-validated TLS (`?sslmode=verify-full` with a configured CA). The

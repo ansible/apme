@@ -458,7 +458,9 @@ localhost (ADR-005). Multi-replica engine HPA is not offered by this chart.
 - Ingress/Route support (OpenShift Routes included)
 - NetworkPolicy for Ingress → Gateway/UI HTTP ports only
 - PVCs for sessions, legacy `*-gateway-data` rollback storage, and Galaxy Proxy cache
-- External PostgreSQL required via `gateway.database.url` or `gateway.database.existingSecret`
+- PostgreSQL included by default; external PostgreSQL is optional via
+  `postgres.enabled=false` and `gateway.database.url` or
+  `gateway.database.existingSecret`
 - OpenShift Developer Catalog via `HelmChartRepository` pointing at the Pages URL
 
 ### Breaking change from pre-ADR-069 split chart
@@ -475,14 +477,17 @@ allowed engine HPA. Upgrading to this chart:
 - Keeps ClusterIP Service names `*-gateway` and `*-ui` (they now select the
   Simple pod)
 
-PVC names (`*-sessions`, `*-gateway-data`, `*-proxy-cache`) are unchanged. The
-`*-gateway-data` claim is retained for pre-PostgreSQL rollback only; Gateway
-persistence uses external PostgreSQL via `gateway.database.url` or
-`gateway.database.existingSecret`.
+The existing PVC names (`*-sessions`, `*-gateway-data`, `*-proxy-cache`) are
+unchanged. This release introduces the `*-postgres-data` claim for the default
+in-pod database; the legacy `*-gateway-data` claim is retained for
+pre-PostgreSQL rollback only.
 
-### PostgreSQL (required)
+### PostgreSQL (included by default)
 
-The Gateway requires `APME_DATABASE_URL` (`postgresql+asyncpg://...`). Remote
+The Helm Simple chart includes PostgreSQL by default and sets
+`APME_DATABASE_URL` automatically. To use an external database, set
+`postgres.enabled=false` and provide `APME_DATABASE_URL` through
+`gateway.database.existingSecret` or `gateway.database.url`. Remote
 production hosts must use TLS with certificate verification (for example
 `?sslmode=verify-full` with a configured CA). `sslmode=require` encrypts traffic
 but does not validate the server certificate.
@@ -511,7 +516,7 @@ protected file so it is not exposed in shell history or process arguments:
 kubectl create namespace apme --dry-run=client -o yaml | kubectl apply -f -
 umask 077
 tmpfile=$(mktemp)
-printf '%s\n' 'postgresql+asyncpg://apme:CHANGE_ME@postgres.example:5432/apme?sslmode=verify-full' > "$tmpfile"
+printf '%s' 'postgresql+asyncpg://apme:CHANGE_ME@postgres.example:5432/apme?sslmode=verify-full' > "$tmpfile"
 kubectl create secret generic apme-database \
   --namespace apme \
   --from-file=database-url="$tmpfile"
@@ -525,6 +530,7 @@ helm repo add apme https://ansible.github.io/apme
 helm repo update
 helm install apme apme/apme \
   --namespace apme --create-namespace \
+  --set postgres.enabled=false \
   --set gateway.database.existingSecret.name=apme-database \
   --set route.enabled=true \
   --set route.host=apme.apps.ocp.example.com
@@ -541,6 +547,7 @@ helm repo update
 helm install apme apme/apme \
   --namespace apme --create-namespace \
   -f https://ansible.github.io/apme/values-portal.yaml \
+  --set postgres.enabled=false \
   --set gateway.database.existingSecret.name=apme-database \
   --set route.enabled=true
 ```
@@ -578,7 +585,7 @@ SHA or release tag (and Quay only when that publish included Quay credentials).
 
 | Value | Description |
 |-------|-------------|
-| `image.tag` | Image tag (default `2026.8.6` / `Chart.appVersion`; override with SHA like `sha-b7d1683`) |
+| `image.tag` | Image tag (default `2026.9.2` / `Chart.appVersion`; override with SHA like `sha-b7d1683`) |
 | `engine.replicas` | Engine pod replicas (default: 1) |
 | `abbenay.enabled` | Enable AI provider (default: false) |
 | `abbenay.token` | Abbenay service token (required when `abbenay.enabled=true`) |

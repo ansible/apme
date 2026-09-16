@@ -29,6 +29,28 @@ spec:
   resources:
     requests:
       storage: {{ .Values.persistence.gateway.size }}
+{{- $postgresPvcName := printf "%s-postgres-data" (include "apme.fullname" .) }}
+{{- if or .Values.postgres.enabled (lookup "v1" "PersistentVolumeClaim" .Release.Namespace $postgresPvcName) }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $postgresPvcName }}
+  annotations:
+    helm.sh/resource-policy: keep
+  labels:
+    {{- include "apme.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+spec:
+  accessModes:
+    - {{ .Values.persistence.postgres.accessMode }}
+  {{- if .Values.persistence.postgres.storageClass }}
+  storageClassName: {{ .Values.persistence.postgres.storageClass | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.postgres.size }}
+{{- end }}
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim

@@ -75,6 +75,8 @@ jobs:
           echo "${OPA_SHA256}  /tmp/opa_linux_amd64_static" | sha256sum --check -
           sudo install -m 755 /tmp/opa_linux_amd64_static /usr/local/bin/opa
           opa version
+      - name: Verify PostgreSQL reachability
+        run: uvx --with tox-uv tox -e postgres-check
       - run: uvx --with tox-uv tox -e integration
         env:
           OPA_USE_PODMAN: "0"

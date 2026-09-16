@@ -36,7 +36,7 @@ model we are not delivering via this chart.
   the deployment method.
 - ADR-012 still defines the conceptual scaling unit (engine stack). The chart
   simply does **not** offer multi-replica engine scaling while the Gateway uses
-  external PostgreSQL and Abbenay shares the pod.
+  in-pod PostgreSQL and Abbenay shares the pod.
 - ADR-005 localhost networking is the preferred intra-stack transport.
 - Abbenay auth remains consumer tokens (`x-abbenay-token`); TLS peer trust is
   unnecessary when Abbenay binds loopback in the same pod.
@@ -63,13 +63,14 @@ same Engine→Abbenay Unix socket. bootc and the CLI daemon are unchanged.
 ## Decision
 
 **The APME Helm chart uses a Simple (all-in-one) topology: one Deployment whose
-pod co-locates the engine stack, Gateway, UI, and optional Abbenay, communicating
+pod co-locates the engine stack, PostgreSQL, Gateway, UI, and optional Abbenay, communicating
 over `127.0.0.1` (ADR-005) except Engine→Abbenay gRPC, which uses a Unix socket.**
 
 1. **Single workload** — Prefer one Deployment (name may remain `engine` or
    become `apme`; implementation detail). Containers: Engine, validators,
-   Galaxy Proxy, Gateway, UI nginx, optional Abbenay (and optional OTel
-   collector per ADR-067).
+  Galaxy Proxy, PostgreSQL, Gateway, UI nginx, optional Abbenay (and optional
+  OTel collector per ADR-067). PostgreSQL is persistent and owned by the EAP
+  Simple release; an external database remains an explicit advanced override.
 2. **Localhost addresses** — reporting sink and other in-stack clients use
    `127.0.0.1:<port>`, matching Podman. Engine→Abbenay gRPC uses a Unix socket
    on a shared `emptyDir` (`APME_ABBENAY_ADDR=unix:///tmp/abbenay-run/abbenay/daemon.sock`)
@@ -78,7 +79,7 @@ over `127.0.0.1` (ADR-005) except Engine→Abbenay gRPC, which uses a Unix socke
    Helm probes connect to the Unix socket.
 3. **Single replica** — Chart defaults and validation: `replicas: 1`. HPA for
    this Deployment is disabled or rejected. Multi-replica requires a future ADR
-   that reintroduces a split (or otherwise solves external PostgreSQL + session
+  that reintroduces a split (or otherwise solves database + session
    affinity).
 4. **Services / Ingress** — Expose Gateway REST (and UI if standalone) via
    Service + Ingress as today; in-cluster clients that previously targeted
@@ -154,10 +155,10 @@ EAP AI remediation.
 
 ### Negative
 
-- No independent engine HPA while the Gateway depends on external PostgreSQL
+- No independent engine HPA while the Gateway depends on in-pod PostgreSQL
   and Abbenay shares the pod.
 - Larger scheduling footprint (one pod requests sum of all containers).
-- Engine pod restart takes Gateway DB and Abbenay down together.
+- Engine pod restart takes Gateway, PostgreSQL, and Abbenay down together.
 - Chart templates and tests must be reworked (breaking change vs current
   split chart for existing installs).
 
@@ -187,6 +188,8 @@ EAP AI remediation.
   remains for in-container probes.
 - Follow-up: Abbenay #65 (cert reuse) remains useful for non-Simple remote
   clients, not required for this chart topology.
+- Add PostgreSQL 16 as a sidecar with a `*-postgres-data` PVC and wire Gateway
+  to the generated in-pod `APME_DATABASE_URL` Secret by default.
 
 ## Related Decisions
 
@@ -213,3 +216,4 @@ EAP AI remediation.
 |------|--------|--------|
 | 2026-08-03 | APME Team | Accepted: Helm Simple all-in-one for EAP/upstream |
 | 2026-08-24 | APME Team | Engine→Abbenay gRPC uses a shared Unix socket; leftover TCP `:50057`; Helm probes the socket |
+| 2026-09-16 | APME Team | EAP Simple Helm owns a PostgreSQL sidecar and persistent database PVC; external PostgreSQL is an explicit override |

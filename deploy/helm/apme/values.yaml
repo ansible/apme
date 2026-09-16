@@ -20,6 +20,10 @@ imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""
 
+# -- Cluster platform. Set to kubernetes for the vanilla Kubernetes fsGroup
+# default, or openshift to let the SCC assign the pod group dynamically.
+platform: ""
+
 # -- Simple pod: Engine + validators + Galaxy Proxy (+ Gateway/UI/Abbenay sidecars)
 engine:
   # ADR-069: must be 1. Chart fails render if set higher.
@@ -106,22 +110,41 @@ collectionHealth:
 depAudit:
   enabled: true
 
+# -- PostgreSQL sidecar — ADR-069 Simple pod
+postgres:
+  enabled: true
+  image: docker.io/library/postgres:16
+  # The official image initializes a fresh data directory as root, then drops
+  # privileges to UID 999. Set this explicitly with platform: kubernetes and
+  # grant the namespace an admission-policy exception for this sidecar. Use a
+  # non-root-compatible image instead for Restricted Pod Security.
+  allowRootInit: false
+  database: apme
+  username: apme
+  # The chart-wide securityContext is intended for the UBI-based APME containers;
+  # configure this separately for a custom PostgreSQL image or SCC policy.
+  # Leave empty to generate a random password. The chart-owned Secret is kept
+  # across upgrades and uninstall; set explicitly for declarative GitOps
+  # rendering or when an operator-managed credential is required.
+  password: ""
+  # The official PostgreSQL image must start as root so its entrypoint can
+  # initialize and chown a fresh PVC before dropping to UID 999. OpenShift
+  # SCCs may still apply their own container security settings.
+  securityContext: {}
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
 # -- Gateway sidecar (REST + gRPC reporting + PostgreSQL) — ADR-069 Simple pod
 gateway:
   # Retained for compatibility; must be 1 (Gateway is not a separate Deployment).
   replicas: 1
-  # ``database.url`` or ``database.existingSecret`` is required. Gateway persistence
-  # uses ``APME_DATABASE_URL`` (``postgresql+asyncpg://...``) against an external
-  # PostgreSQL service — the chart does not deploy PostgreSQL or create a
-  # ``*-postgres-data`` PVC. Credential-bearing URLs must use ``existingSecret``;
-  # ``database.url`` accepts credential-free values only (no ``user:pass@``).
-  # Remote production hosts must use certificate-validated TLS
-  # (``?sslmode=verify-full`` with a configured CA).
-  #
-  # PostgreSQL cutover: upgrading from a chart that stored SQLite on
-  # ``*-gateway-data`` does not migrate scan history. The external PostgreSQL
-  # database starts empty; the legacy ``*-gateway-data`` PVC is retained and
-  # mounted for pre-cutover rollback only.
+  # By default Gateway uses the in-pod PostgreSQL sidecar. Set database.url or
+  # database.existingSecret only for an explicit external PostgreSQL override.
   database:
     url: ""
     existingSecret:
@@ -273,6 +296,10 @@ persistence:
     size: 5Gi
     storageClass: ""
     accessMode: ReadWriteOnce
+  postgres:
+    size: 5Gi
+    storageClass: ""
+    accessMode: ReadWriteOnce
   proxyCache:
     size: 10Gi
     storageClass: ""
@@ -343,10 +370,10 @@ serviceAccount:
 
 podAnnotations: {}
 
-# -- Pod-level security context.
-# Defaults to empty so OCP restricted-v2 SCC can inject its own UID/GID range.
-# For vanilla Kubernetes set: podSecurityContext: { fsGroup: 1001 }
-podSecurityContext: {}
+# -- Pod-level security context. Applied only when platform is kubernetes.
+# OpenShift deployments omit this value so restricted-v2 SCC can assign a group.
+podSecurityContext:
+  fsGroup: 999
 
 # -- Container-level security context.
 # Defaults to empty so OCP restricted-v2 SCC can inject its own UID/GID range.
