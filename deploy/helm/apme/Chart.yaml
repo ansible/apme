@@ -3,7 +3,7 @@ name: apme
 description: Ansible Policy & Modernization Engine — policy enforcement and modernization for Ansible content
 type: application
 # Chart semver — bump whenever the packaged chart changes (templates, values, deps).
-version: 0.1.6
+version: 0.1.7
 # Must match image.tag in values.yaml (CalVer release tag without leading "v",
 # e.g. git tag v2026.9.2 → image tag 2026.9.2). Empty image.tag falls back to
 # this field via the apme.image helper.
