@@ -673,9 +673,6 @@ async def _fetch_versions_from(
     Returns:
         List of version strings on success, or ``None`` on failure so
         the caller can fall through to the next server.
-
-    Raises:
-        httpx.HTTPError: If all retry attempts fail with an HTTP error.
     """
     versions: list[str] = []
     normalized = _normalize_galaxy_url(base_url)
@@ -708,7 +705,7 @@ async def _fetch_versions_from(
                     return versions
                 except httpx.HTTPError:
                     if attempt == 2:
-                        raise
+                        return None
                     versions.clear()
                     params["offset"] = 0
                     await asyncio.sleep(0.5 * (attempt + 1))
