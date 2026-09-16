@@ -114,6 +114,11 @@ depAudit:
 postgres:
   enabled: true
   image: docker.io/library/postgres:16
+  # The official image initializes a fresh data directory as root, then drops
+  # privileges to UID 999. Set this explicitly with platform: kubernetes and
+  # grant the namespace an admission-policy exception for this sidecar. Use a
+  # non-root-compatible image instead for Restricted Pod Security.
+  allowRootInit: false
   database: apme
   username: apme
   # The chart-wide securityContext is intended for the UBI-based APME containers;

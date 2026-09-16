@@ -381,13 +381,22 @@ those containers — the gRPC socket is created mode `0600`. Local Podman
 uses the same PVC definitions in `containers/podman/pvc.yaml` (with
 `volume.podman.io/uid` annotations).
 
-The PostgreSQL sidecar does not inherit the chart-wide `securityContext`; the
-official image starts with its own entrypoint initialization and then drops
-privileges. Set `platform: kubernetes` for the vanilla-Kubernetes
-`podSecurityContext.fsGroup: 999` default, providing writable group ownership
-for a fresh PostgreSQL PVC. Set `platform: openshift` on OpenShift so the chart
-omits the hard-coded group and lets the SCC assign it. If PostgreSQL is rebuilt
-with a fixed UID, configure `postgres.securityContext` separately.
+The PostgreSQL sidecar does not inherit the chart-wide `securityContext`. The
+default `docker.io/library/postgres:16` image starts its entrypoint as root so
+it can initialize and chown a fresh PVC, then drops privileges to UID 999. It
+therefore cannot satisfy the Kubernetes Restricted Pod Security Standard as-is.
+For vanilla Kubernetes, set `platform: kubernetes` and explicitly acknowledge
+the required admission-policy exception with
+`--set postgres.allowRootInit=true`; the namespace or policy must permit this
+bootstrap container to start as root. Helm rejects that platform/image
+combination unless the acknowledgement is explicit. For Restricted Pod
+Security, use a PostgreSQL image and initialization strategy that supports
+`runAsNonRoot: true`, then configure `postgres.securityContext` accordingly.
+
+Set `platform: kubernetes` to apply the `podSecurityContext.fsGroup: 999`
+default for the official image. Set `platform: openshift` on OpenShift so the
+chart omits the hard-coded group and lets the SCC assign it. If PostgreSQL is
+rebuilt with a fixed UID, configure `postgres.securityContext` separately.
 
 The PostgreSQL PVC is retained when PostgreSQL is disabled, so switching to an
 external database does not delete the in-pod data before migration. Delete the
@@ -423,8 +432,10 @@ STATUS:.status.phase,\
 CLAIM:.spec.claimRef.namespace/.spec.claimRef.name
 
 # Delete retained PostgreSQL resources only after migration/backup verification.
-kubectl delete pvc <release>-postgres-data
-kubectl delete secret <release>-postgres-secrets
+# <fullname> is the rendered apme.fullname (affected by nameOverride or
+# fullnameOverride), not necessarily the Helm release name.
+kubectl delete pvc <fullname>-postgres-data
+kubectl delete secret <fullname>-postgres-secrets
 
 # After wiping/destroying a Retain volume in the storage provider:
 # kubectl delete pv <pv-name>

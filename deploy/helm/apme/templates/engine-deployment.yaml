@@ -17,6 +17,9 @@
 {{- if and .Values.postgres.enabled (or .Values.gateway.database.url .Values.gateway.database.existingSecret.name) }}
 {{- fail "disable postgres.enabled when configuring an external gateway database" }}
 {{- end }}
+{{- if and .Values.postgres.enabled (eq .Values.platform "kubernetes") (eq .Values.postgres.image "docker.io/library/postgres:16") (not .Values.postgres.allowRootInit) }}
+{{- fail "postgres.allowRootInit must be true for platform: kubernetes with the official PostgreSQL image; use a non-root-compatible image for Restricted Pod Security" }}
+{{- end }}
 {{- if and .Values.gateway.database.existingSecret.name (not .Values.gateway.database.existingSecret.key) }}
 {{- fail "gateway.database.existingSecret.key is required when gateway.database.existingSecret.name is set" }}
 {{- end }}

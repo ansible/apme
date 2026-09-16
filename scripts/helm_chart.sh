@@ -264,6 +264,20 @@ DB_SECRET_KEY_ERR="$(${HELM_BIN} template test-release "${CHART_DIR}" \
 assert_fail_message "database Secret key required" "${DB_SECRET_KEY_ERR}" \
   "gateway.database.existingSecret.key is required"
 
+POSTGRES_POLICY_ERR="$(${HELM_BIN} template test-release "${CHART_DIR}" \
+  --set platform=kubernetes 2>&1 >/dev/null)" && {
+  echo "FAIL: expected Helm to require an explicit PostgreSQL root-init acknowledgement" >&2
+  exit 1
+}
+assert_fail_message "PostgreSQL policy acknowledgement" "${POSTGRES_POLICY_ERR}" \
+  "postgres.allowRootInit must be true"
+
+KUBERNETES_RENDER="$(${HELM_BIN} template test-release "${CHART_DIR}" \
+  --set platform=kubernetes \
+  --set postgres.allowRootInit=true)"
+assert_template_contains "Kubernetes PostgreSQL policy acknowledgement" \
+  "${KUBERNETES_RENDER}" "fsGroup: 999"
+
 # Confirm Service selectors + no Abbenay Service / extra Deployments
 RENDER_FILE="$(mktemp)"
 trap 'rm -f "${RENDER_FILE}"' EXIT
