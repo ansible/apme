@@ -40,5 +40,17 @@ for attempt in {1..30}; do
   sleep 2
 done
 
-export APME_TEST_DATABASE_URL="${APME_TEST_DATABASE_URL:-postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@127.0.0.1:${POSTGRES_PORT}/${POSTGRES_DB}}"
+if [[ -z "${APME_TEST_DATABASE_URL:-}" ]]; then
+  export APME_TEST_DATABASE_URL="$(POSTGRES_USER="$POSTGRES_USER" POSTGRES_PASSWORD="$POSTGRES_PASSWORD" POSTGRES_DB="$POSTGRES_DB" POSTGRES_PORT="$POSTGRES_PORT" uv run --no-project python - <<'PY'
+from os import environ
+from urllib.parse import quote
+
+user = quote(environ["POSTGRES_USER"], safe="")
+password = quote(environ["POSTGRES_PASSWORD"], safe="")
+database = quote(environ["POSTGRES_DB"], safe="")
+port = environ["POSTGRES_PORT"]
+print(f"postgresql+asyncpg://{user}:{password}@127.0.0.1:{port}/{database}")
+PY
+)"
+fi
 tox -e integration -- "$@"

@@ -381,8 +381,9 @@ those containers — the gRPC socket is created mode `0600`. Local Podman
 uses the same PVC definitions in `containers/podman/pvc.yaml` (with
 `volume.podman.io/uid` annotations).
 
-The PostgreSQL sidecar does not inherit the chart-wide `securityContext`; it uses a
-non-root context. The default `platform: kubernetes` configuration sets
+The PostgreSQL sidecar does not inherit the chart-wide `securityContext`; the
+official image starts with its own entrypoint initialization and then drops
+privileges. The default `platform: kubernetes` configuration sets
 `podSecurityContext.fsGroup: 999`, providing writable group ownership for a
 fresh PostgreSQL PVC. Set `platform: openshift` on OpenShift so the chart omits
 the hard-coded group and lets the SCC assign it. If PostgreSQL is rebuilt with a

@@ -121,11 +121,10 @@ postgres:
   # across upgrades and uninstall; set explicitly for declarative GitOps
   # rendering or when an operator-managed credential is required.
   password: ""
-  # Keep this compatible with a fresh Kubernetes PVC; OpenShift SCCs may override
-  # these values with an assigned UID.
-  securityContext:
-    runAsNonRoot: true
-    allowPrivilegeEscalation: false
+  # The official PostgreSQL image must start as root so its entrypoint can
+  # initialize and chown a fresh PVC before dropping to UID 999. OpenShift
+  # SCCs may still apply their own container security settings.
+  securityContext: {}
   resources:
     requests:
       cpu: 100m
