@@ -20,8 +20,9 @@ imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""
 
-# -- Cluster platform. OpenShift SCCs assign the pod group dynamically.
-platform: kubernetes
+# -- Cluster platform. Set to kubernetes for the vanilla Kubernetes fsGroup
+# default, or openshift to let the SCC assign the pod group dynamically.
+platform: ""
 
 # -- Simple pod: Engine + validators + Galaxy Proxy (+ Gateway/UI/Abbenay sidecars)
 engine:
@@ -364,9 +365,8 @@ serviceAccount:
 
 podAnnotations: {}
 
-# -- Pod-level security context. The PostgreSQL image and its PVC use group 999
-# by default on vanilla Kubernetes. OpenShift deployments omit this value so
-# restricted-v2 SCC can assign an allowed supplemental group.
+# -- Pod-level security context. Applied only when platform is kubernetes.
+# OpenShift deployments omit this value so restricted-v2 SCC can assign a group.
 podSecurityContext:
   fsGroup: 999
 

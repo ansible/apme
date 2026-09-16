@@ -15,13 +15,16 @@ if ! command -v podman >/dev/null 2>&1; then
 fi
 
 cleanup() {
-  podman rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+  if [[ "$(podman container inspect --format '{{ index .Config.Labels "apme.integration.postgres" }}' "$CONTAINER_NAME" 2>/dev/null || true)" == "true" ]]; then
+    podman rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+  fi
 }
 trap cleanup EXIT
 
 cleanup
 podman run --detach \
   --name "$CONTAINER_NAME" \
+  --label apme.integration.postgres=true \
   --publish "${POSTGRES_PORT}:5432" \
   --env "POSTGRES_USER=${POSTGRES_USER}" \
   --env "POSTGRES_PASSWORD=${POSTGRES_PASSWORD}" \

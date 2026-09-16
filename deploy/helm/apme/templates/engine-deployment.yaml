@@ -79,7 +79,7 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       serviceAccountName: {{ include "apme.serviceAccountName" . }}
-      {{- if ne .Values.platform "openshift" }}
+      {{- if eq .Values.platform "kubernetes" }}
       {{- with .Values.podSecurityContext }}
       securityContext:
         {{- toYaml . | nindent 8 }}

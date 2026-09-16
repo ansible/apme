@@ -383,11 +383,11 @@ uses the same PVC definitions in `containers/podman/pvc.yaml` (with
 
 The PostgreSQL sidecar does not inherit the chart-wide `securityContext`; the
 official image starts with its own entrypoint initialization and then drops
-privileges. The default `platform: kubernetes` configuration sets
-`podSecurityContext.fsGroup: 999`, providing writable group ownership for a
-fresh PostgreSQL PVC. Set `platform: openshift` on OpenShift so the chart omits
-the hard-coded group and lets the SCC assign it. If PostgreSQL is rebuilt with a
-fixed UID, configure `postgres.securityContext` separately.
+privileges. Set `platform: kubernetes` for the vanilla-Kubernetes
+`podSecurityContext.fsGroup: 999` default, providing writable group ownership
+for a fresh PostgreSQL PVC. Set `platform: openshift` on OpenShift so the chart
+omits the hard-coded group and lets the SCC assign it. If PostgreSQL is rebuilt
+with a fixed UID, configure `postgres.securityContext` separately.
 
 The PostgreSQL PVC is retained when PostgreSQL is disabled, so switching to an
 external database does not delete the in-pod data before migration. Delete the
@@ -399,12 +399,14 @@ retained PVC explicitly after verifying that the data is no longer needed.
 helm uninstall apme
 ```
 
-Helm 3 deletes chart-managed PVCs. The `kubectl delete pvc` command below is
-only needed if a claim was left behind (failed uninstall, or a PVC created
-outside the chart).
+The PostgreSQL PVC and bootstrap Secret are intentionally retained by Helm's
+`helm.sh/resource-policy: keep` annotation. This protects database data and
+credentials during uninstall and database-mode migration. Delete them
+explicitly, only after verifying that the data and credential are no longer
+needed. Other chart-managed PVCs are deleted by Helm 3 during uninstall.
 
 If the StorageClass reclaim policy is **Delete**, the CSI driver typically
-removes the backing volume when the PVC is gone.
+removes the backing volume when a retained PVC is explicitly deleted.
 
 If the reclaim policy is **Retain**, uninstall (and deleting the PVC) does
 **not** erase the disk. A PV in `Released` phase can still hold plaintext
@@ -420,8 +422,9 @@ RECLAIM:.spec.persistentVolumeReclaimPolicy,\
 STATUS:.status.phase,\
 CLAIM:.spec.claimRef.namespace/.spec.claimRef.name
 
-# Leftover chart PVCs (usually none after a clean helm uninstall)
-kubectl delete pvc -l app.kubernetes.io/instance=apme
+# Delete retained PostgreSQL resources only after migration/backup verification.
+kubectl delete pvc <release>-postgres-data
+kubectl delete secret <release>-postgres-secrets
 
 # After wiping/destroying a Retain volume in the storage provider:
 # kubectl delete pv <pv-name>
