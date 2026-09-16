@@ -126,8 +126,8 @@ class TestProjectPage:
         assert resp.status_code == 200
         assert "<a href" not in resp.text
 
-    def test_empty_versions_cached_throttles_galaxy_calls(self, tmp_path: Path) -> None:
-        """Empty version list (negative result) is cached and prevents repeated Galaxy calls.
+    def test_empty_versions_are_not_cached(self, tmp_path: Path) -> None:
+        """Empty version results are retried instead of being cached as failures.
 
         Args:
             tmp_path: Pytest-provided temporary directory.
@@ -149,7 +149,7 @@ class TestProjectPage:
             resp2 = client.get("/simple/ansible-collection-ansible-posix/")
             assert resp2.status_code == 200
 
-        assert mock_versions.call_count == 1
+        assert mock_versions.call_count == 2
 
     def test_collection_with_cached_wheel(self, tmp_path: Path) -> None:
         """Collection with cached wheel lists it in the project page.

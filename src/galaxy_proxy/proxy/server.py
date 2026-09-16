@@ -265,7 +265,12 @@ def create_app(
                 name,
                 servers=servers_cfg,
             )
-            cache.put_metadata(namespace, name, galaxy_versions)
+            # Do not persist an empty result.  An empty response can mean that
+            # Galaxy was temporarily unreachable (for example, during CI
+            # startup), and caching that negative result makes the collection
+            # unavailable for the entire metadata TTL.
+            if galaxy_versions:
+                cache.put_metadata(namespace, name, galaxy_versions)
             versions = galaxy_versions
 
         if not versions and not cached_wheel_set:
@@ -685,16 +690,25 @@ async def _fetch_versions_from(
             follow_redirects=True,
             headers=headers,
         ) as client:
-            while True:
-                resp = await client.get(url, params=params)
-                resp.raise_for_status()
-                payload = resp.json()
-                for entry in payload.get("data", []):
-                    versions.append(entry["version"])
-                if not payload.get("links", {}).get("next"):
-                    break
-                params["offset"] = int(params["offset"]) + int(params["limit"])
-        status = "ok"
+            for attempt in range(3):
+                try:
+                    while True:
+                        resp = await client.get(url, params=params)
+                        resp.raise_for_status()
+                        payload = resp.json()
+                        for entry in payload.get("data", []):
+                            versions.append(entry["version"])
+                        if not payload.get("links", {}).get("next"):
+                            break
+                        params["offset"] = int(params["offset"]) + int(params["limit"])
+                    status = "ok"
+                    return versions
+                except httpx.HTTPError:
+                    if attempt == 2:
+                        raise
+                    versions.clear()
+                    params["offset"] = 0
+                    await asyncio.sleep(0.5 * (attempt + 1))
         return versions
     except (httpx.HTTPError, KeyError, ValueError) as exc:
         logger.debug(
