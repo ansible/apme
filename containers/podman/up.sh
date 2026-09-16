@@ -4,7 +4,7 @@
 # Run from repo root.
 # CLI is not part of the pod; use run-cli.sh to run a scan with CWD mounted.
 #
-# Cache host path: default is XDG cache (${XDG_CACHE_HOME:-$HOME/.cache}/apme).
+# Runtime data host path: default is XDG cache (${XDG_CACHE_HOME:-$HOME/.cache}/apme).
 # Override: APME_CACHE_HOST_PATH=/my/cache ./up.sh
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -560,6 +560,8 @@ if ! APME_ABBENAY_HOST_PORT=$(_select_abbenay_host_port); then
   exit 1
 fi
 export APME_ABBENAY_HOST_PORT
+ABBENAY_CORS_ORIGINS="http://127.0.0.1:$APME_ABBENAY_HOST_PORT"
+export ABBENAY_CORS_ORIGINS
 if [[ "$APME_ABBENAY_HOST_PORT" == "8787" ]]; then
   echo "Abbenay UI host port: 8787"
 else
@@ -570,7 +572,7 @@ fi
 export OPENROUTER_API_KEY VERTEX_ANTHROPIC_API_KEY APME_AI_MODEL APME_ROOT="$ROOT"
 export APME_FEEDBACK_ENABLED APME_FEEDBACK_GITHUB_REPO APME_FEEDBACK_GITHUB_TOKEN
 
-POD_YAML=$(envsubst '$OPENROUTER_API_KEY $VERTEX_ANTHROPIC_API_KEY $APME_AI_MODEL $APME_ROOT $APME_FEEDBACK_ENABLED $APME_FEEDBACK_GITHUB_REPO $APME_FEEDBACK_GITHUB_TOKEN' \
+POD_YAML=$(envsubst '$OPENROUTER_API_KEY $VERTEX_ANTHROPIC_API_KEY $APME_AI_MODEL $APME_ROOT $APME_FEEDBACK_ENABLED $APME_FEEDBACK_GITHUB_REPO $APME_FEEDBACK_GITHUB_TOKEN $ABBENAY_CORS_ORIGINS' \
   < containers/podman/pod.yaml)
 
 # Keep the in-pod Abbenay port at 8787 and change only its localhost hostPort.
@@ -789,47 +791,77 @@ fi
 # The hostPath Directory mount replaces the old read-only File mount so that
 # runtime admin writes (POST /api/v1/ai/provider/.../configure) survive restarts.
 # Never chown the git checkout: rootless Podman maps UID 1001 to a subordinate
-# host UID and would lock the developer out of containers/abbenay/config.
-# Runtime config always lives under CACHE_PATH (mode 0700/0600; credentials).
+# host UID and would lock the developer out of the repository.
+# Runtime config lives under the user's XDG config directory (mode 0700/0600;
+# credentials). The cache location is retained as a one-time migration source.
 # Rootless: host keeps ownership; container UID 1001 gets a POSIX ACL.
-# Rootful: chown the cache copy to 1001:1001.
+# Rootful: chown the user config directory to 1001:1001.
 ABBENAY_CONFIG_SEED="$ROOT/containers/abbenay/config"
 ABBENAY_CONFIG_REPO_PATH="$ABBENAY_CONFIG_SEED"
-ABBENAY_CONFIG_DIR="$CACHE_PATH/abbenay/config"
+XDG_CONFIG_BASE="${XDG_CONFIG_HOME:-$HOME/.config}"
+if [[ "$XDG_CONFIG_BASE" != /* || "$XDG_CONFIG_BASE" == *$'\n'* ]]; then
+  echo "ERROR: XDG_CONFIG_HOME must be an absolute path without newlines" >&2
+  exit 1
+fi
+ABBENAY_CONFIG_DIR="$XDG_CONFIG_BASE/abbenay"
+ABBENAY_CONFIG_FILE="$ABBENAY_CONFIG_DIR/config.yaml"
+ABBENAY_LEGACY_CONFIG_DIR="$CACHE_PATH/abbenay/config"
 if ! command -v podman >/dev/null 2>&1; then
   echo "ERROR: podman is required to set Abbenay config ownership (UID 1001)" >&2
   exit 1
 fi
-# Migrate prior exclusive subordinate-UID ownership before host chmod/seed.
-if [[ -d "$ABBENAY_CONFIG_DIR" ]] && [[ ! -w "$ABBENAY_CONFIG_DIR" ]]; then
+# Restore access before reading either the current config or the legacy source.
+if [[ -d "$ABBENAY_CONFIG_DIR" ]]; then
   if ! _ensure_abbenay_config_access "$ABBENAY_CONFIG_DIR"; then
-    echo "ERROR: could not restore host access to Abbenay config cache $ABBENAY_CONFIG_DIR" >&2
+    echo "ERROR: could not restore host access to Abbenay config $ABBENAY_CONFIG_DIR" >&2
+    exit 1
+  fi
+fi
+if [[ -d "$ABBENAY_LEGACY_CONFIG_DIR" \
+  && "$ABBENAY_LEGACY_CONFIG_DIR" != "$ABBENAY_CONFIG_DIR" ]]; then
+  if ! _ensure_abbenay_config_access "$ABBENAY_LEGACY_CONFIG_DIR"; then
+    echo "ERROR: could not restore host access to legacy Abbenay config $ABBENAY_LEGACY_CONFIG_DIR" >&2
     exit 1
   fi
 fi
 mkdir -p "$ABBENAY_CONFIG_DIR"
 chmod 0700 "$ABBENAY_CONFIG_DIR"
-if [[ ! -f "$ABBENAY_CONFIG_DIR/config.yaml" ]]; then
+if [[ "$ABBENAY_LEGACY_CONFIG_DIR" != "$ABBENAY_CONFIG_DIR" ]]; then
+  if [[ ! -f "$ABBENAY_CONFIG_FILE" && -f "$ABBENAY_LEGACY_CONFIG_DIR/config.yaml" ]]; then
+    cp "$ABBENAY_LEGACY_CONFIG_DIR/config.yaml" "$ABBENAY_CONFIG_FILE"
+    echo "Migrated Abbenay config to $ABBENAY_CONFIG_DIR"
+  fi
+  if [[ ! -f "$ABBENAY_CONFIG_DIR/secrets.json" \
+    && -f "$ABBENAY_LEGACY_CONFIG_DIR/secrets.json" ]]; then
+    cp "$ABBENAY_LEGACY_CONFIG_DIR/secrets.json" "$ABBENAY_CONFIG_DIR/secrets.json"
+    echo "Migrated Abbenay secrets to $ABBENAY_CONFIG_DIR"
+  fi
+fi
+if [[ ! -f "$ABBENAY_CONFIG_FILE" ]]; then
   if [[ -f "$ABBENAY_CONFIG_SEED/config.yaml" ]]; then
-    cp "$ABBENAY_CONFIG_SEED/config.yaml" "$ABBENAY_CONFIG_DIR/config.yaml"
+    cp "$ABBENAY_CONFIG_SEED/config.yaml" "$ABBENAY_CONFIG_FILE"
     echo "Seeded Abbenay config from containers/abbenay/config/config.yaml"
   elif [[ -f "$ROOT/containers/abbenay/config.yaml" ]]; then
-    cp "$ROOT/containers/abbenay/config.yaml" "$ABBENAY_CONFIG_DIR/config.yaml"
+    cp "$ROOT/containers/abbenay/config.yaml" "$ABBENAY_CONFIG_FILE"
     echo "Seeded Abbenay config from containers/abbenay/config.yaml (legacy location)"
   elif [[ -f "$ROOT/containers/abbenay/config.yaml.example" ]]; then
-    cp "$ROOT/containers/abbenay/config.yaml.example" "$ABBENAY_CONFIG_DIR/config.yaml"
+    cp "$ROOT/containers/abbenay/config.yaml.example" "$ABBENAY_CONFIG_FILE"
     echo "Seeded Abbenay config from containers/abbenay/config.yaml.example"
   fi
 fi
-if [[ -f "$ABBENAY_CONFIG_DIR/config.yaml" ]]; then
-  chmod 0600 "$ABBENAY_CONFIG_DIR/config.yaml"
+if [[ -f "$ABBENAY_CONFIG_FILE" ]]; then
+  chmod 0600 "$ABBENAY_CONFIG_FILE"
+fi
+if [[ -f "$ABBENAY_CONFIG_DIR/secrets.json" ]]; then
+  chmod 0600 "$ABBENAY_CONFIG_DIR/secrets.json"
 fi
 _relabel_host_path_for_podman "$ABBENAY_CONFIG_DIR"
 if ! _ensure_abbenay_config_access "$ABBENAY_CONFIG_DIR"; then
   echo "ERROR: could not grant Abbenay container UID 1001 access to $ABBENAY_CONFIG_DIR" >&2
   exit 1
 fi
-# POD_YAML still has the repo hostPath from envsubst; always mount the cache copy.
+# POD_YAML still has the repo hostPath from envsubst; always mount the writable
+# user config directory.
 if ! POD_YAML=$(ABBENAY_CONFIG_REPO_PATH="$ABBENAY_CONFIG_REPO_PATH" \
   ABBENAY_CONFIG_DIR="$ABBENAY_CONFIG_DIR" python3 -c '
 import os, sys
@@ -855,7 +887,9 @@ _relabel_podman_volumes
 echo "$POD_YAML" | podman play kube -
 
 echo "Pod apme-pod started (volumes: apme-sessions, apme-postgres-data, apme-proxy-cache). Run a scan: containers/podman/run-cli.sh"
+echo "APME UI: http://127.0.0.1:8081"
 echo "Abbenay UI: http://127.0.0.1:$APME_ABBENAY_HOST_PORT (localhost only; HTTP auth disabled for dev)"
+echo "Abbenay config: $ABBENAY_CONFIG_FILE"
 echo "OTel Prometheus metrics: http://localhost:8889/metrics (companion stack: containers/observability/up.sh)"
 
 if [[ -n "$APME_FEEDBACK_GITHUB_REPO" && -n "$APME_FEEDBACK_GITHUB_TOKEN" ]]; then

@@ -257,6 +257,8 @@ spec:
         # Local dev only: skip Abbenay web UI login (HTTP :8787). Do not use on exposed hosts.
         - name: ABBENAY_HTTP_AUTH
           value: "0"
+        - name: ABBENAY_CORS_ORIGINS
+          value: "${ABBENAY_CORS_ORIGINS}"
         - name: OPENROUTER_API_KEY
           value: "${OPENROUTER_API_KEY}"
         - name: VERTEX_ANTHROPIC_API_KEY
