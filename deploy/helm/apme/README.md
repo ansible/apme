@@ -381,12 +381,16 @@ those containers — the gRPC socket is created mode `0600`. Local Podman
 uses the same PVC definitions in `containers/podman/pvc.yaml` (with
 `volume.podman.io/uid` annotations).
 
-The PostgreSQL sidecar does not inherit the chart-wide `securityContext`; it uses
-a non-root context. On vanilla Kubernetes, set `podSecurityContext.fsGroup: 999`
-when the storage class requires an explicit group for a fresh PostgreSQL PVC.
-OpenShift SCCs assign an allowed group instead of using a hard-coded value. If
-PostgreSQL is rebuilt with a fixed UID, configure `postgres.securityContext`
-separately.
+The PostgreSQL sidecar does not inherit the chart-wide `securityContext`; it uses a
+non-root context. The default `platform: kubernetes` configuration sets
+`podSecurityContext.fsGroup: 999`, providing writable group ownership for a
+fresh PostgreSQL PVC. Set `platform: openshift` on OpenShift so the chart omits
+the hard-coded group and lets the SCC assign it. If PostgreSQL is rebuilt with a
+fixed UID, configure `postgres.securityContext` separately.
+
+The PostgreSQL PVC is retained when PostgreSQL is disabled, so switching to an
+external database does not delete the in-pod data before migration. Delete the
+retained PVC explicitly after verifying that the data is no longer needed.
 
 ## Uninstall
 

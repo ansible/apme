@@ -29,12 +29,15 @@ spec:
   resources:
     requests:
       storage: {{ .Values.persistence.gateway.size }}
-{{- if .Values.postgres.enabled }}
+{{- $postgresPvcName := printf "%s-postgres-data" (include "apme.fullname" .) }}
+{{- if or .Values.postgres.enabled (lookup "v1" "PersistentVolumeClaim" .Release.Namespace $postgresPvcName) }}
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: {{ include "apme.fullname" . }}-postgres-data
+  name: {{ $postgresPvcName }}
+  annotations:
+    helm.sh/resource-policy: keep
   labels:
     {{- include "apme.labels" . | nindent 4 }}
     app.kubernetes.io/component: postgres
