@@ -234,9 +234,9 @@ diagnosing Galaxy or Automation Hub connectivity.
 | `CURL_CA_BUNDLE` | — | Shared CA bundle for curl/libcurl consumers in the gateway and Galaxy Proxy |
 | `GIT_SSL_CAINFO` | — | Shared CA bundle for `git ls-remote`, `git clone`, and `ansible-galaxy` git fetches |
 
-Abbenay uses `${XDG_CACHE_HOME:-$HOME/.cache}/apme/abbenay/config/` as a
+Abbenay uses `${XDG_CONFIG_HOME:-$HOME/.config}/abbenay/` as a
 **writable** hostPath mount (`abbenay-config` → `/home/abbenay/.config/abbenay`).
-`up.sh` seeds that cache dir from `containers/abbenay/config/` (or legacy
+`up.sh` seeds that user config dir from `containers/abbenay/config/` (or legacy
 files) and never chowns the git checkout. The config defines LLM providers and
 models. Deploy-time API keys are injected from environment variables — never
 committed to the config file. Runtime file-store keys (Abbenay ≥ v2026.8.6,
@@ -245,8 +245,8 @@ directory (treat as secret material). On macOS, virtiofs cannot give
 container UID 1001 access to `secrets.json` without world-opening it; file
 store is unsupported there until [#562](https://github.com/ansible/apme/issues/562)
 (use env or memory). `tox -e down` leaves that file in
-place; `tox -e wipe` deletes it. To add providers or models, edit the cache
-`config.yaml` or POST via the Gateway admin proxy
+place; `tox -e wipe` preserves it. To add providers or models, edit the user
+config `config.yaml` or POST via the Gateway admin proxy
 (`/api/v1/ai/provider/{id}/configure`); writes survive Abbenay restarts.
 
 **Local Podman dev UI:** `tox -e up` publishes Abbenay HTTP admin on
@@ -586,7 +586,7 @@ kubectl create secret generic openrouter-credentials \
 printf '%s' "$APME_ABBENAY_TOKEN" > "$abbenay_token_file"
 helm install apme ./deploy/helm/apme/ \
   --namespace apme --create-namespace \
-  --set image.tag=sha-192169a0 \
+  --set image.tag=2026.9.2 \
   --set abbenay.enabled=true \
   --set-file abbenay.token="$abbenay_token_file" \
   --set-json 'abbenay.providers={"openrouter":{"engine":"openrouter","apiKeySecret":{"name":"openrouter-credentials","key":"api-key"},"models":{"anthropic/claude-sonnet-4-6":{}}}}'

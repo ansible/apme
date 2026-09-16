@@ -798,29 +798,44 @@ fi
 # Rootful: chown the user config directory to 1001:1001.
 ABBENAY_CONFIG_SEED="$ROOT/containers/abbenay/config"
 ABBENAY_CONFIG_REPO_PATH="$ABBENAY_CONFIG_SEED"
-ABBENAY_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/abbenay"
+XDG_CONFIG_BASE="${XDG_CONFIG_HOME:-$HOME/.config}"
+if [[ "$XDG_CONFIG_BASE" != /* || "$XDG_CONFIG_BASE" == *$'\n'* ]]; then
+  echo "ERROR: XDG_CONFIG_HOME must be an absolute path without newlines" >&2
+  exit 1
+fi
+ABBENAY_CONFIG_DIR="$XDG_CONFIG_BASE/abbenay"
 ABBENAY_CONFIG_FILE="$ABBENAY_CONFIG_DIR/config.yaml"
 ABBENAY_LEGACY_CONFIG_DIR="$CACHE_PATH/abbenay/config"
 if ! command -v podman >/dev/null 2>&1; then
   echo "ERROR: podman is required to set Abbenay config ownership (UID 1001)" >&2
   exit 1
 fi
-# Migrate prior exclusive subordinate-UID ownership before host chmod/seed.
-if [[ -d "$ABBENAY_CONFIG_DIR" ]] && [[ ! -w "$ABBENAY_CONFIG_DIR" ]]; then
+# Restore access before reading either the current config or the legacy source.
+if [[ -d "$ABBENAY_CONFIG_DIR" ]]; then
   if ! _ensure_abbenay_config_access "$ABBENAY_CONFIG_DIR"; then
     echo "ERROR: could not restore host access to Abbenay config $ABBENAY_CONFIG_DIR" >&2
     exit 1
   fi
 fi
+if [[ -d "$ABBENAY_LEGACY_CONFIG_DIR" \
+  && "$ABBENAY_LEGACY_CONFIG_DIR" != "$ABBENAY_CONFIG_DIR" ]]; then
+  if ! _ensure_abbenay_config_access "$ABBENAY_LEGACY_CONFIG_DIR"; then
+    echo "ERROR: could not restore host access to legacy Abbenay config $ABBENAY_LEGACY_CONFIG_DIR" >&2
+    exit 1
+  fi
+fi
 mkdir -p "$ABBENAY_CONFIG_DIR"
 chmod 0700 "$ABBENAY_CONFIG_DIR"
-if [[ ! -f "$ABBENAY_CONFIG_FILE" && -f "$ABBENAY_LEGACY_CONFIG_DIR/config.yaml" \
-  && "$ABBENAY_LEGACY_CONFIG_DIR" != "$ABBENAY_CONFIG_DIR" ]]; then
-  cp "$ABBENAY_LEGACY_CONFIG_DIR/config.yaml" "$ABBENAY_CONFIG_FILE"
-  if [[ -f "$ABBENAY_LEGACY_CONFIG_DIR/secrets.json" ]]; then
-    cp "$ABBENAY_LEGACY_CONFIG_DIR/secrets.json" "$ABBENAY_CONFIG_DIR/secrets.json"
+if [[ "$ABBENAY_LEGACY_CONFIG_DIR" != "$ABBENAY_CONFIG_DIR" ]]; then
+  if [[ ! -f "$ABBENAY_CONFIG_FILE" && -f "$ABBENAY_LEGACY_CONFIG_DIR/config.yaml" ]]; then
+    cp "$ABBENAY_LEGACY_CONFIG_DIR/config.yaml" "$ABBENAY_CONFIG_FILE"
+    echo "Migrated Abbenay config to $ABBENAY_CONFIG_DIR"
   fi
-  echo "Migrated Abbenay config to $ABBENAY_CONFIG_DIR"
+  if [[ ! -f "$ABBENAY_CONFIG_DIR/secrets.json" \
+    && -f "$ABBENAY_LEGACY_CONFIG_DIR/secrets.json" ]]; then
+    cp "$ABBENAY_LEGACY_CONFIG_DIR/secrets.json" "$ABBENAY_CONFIG_DIR/secrets.json"
+    echo "Migrated Abbenay secrets to $ABBENAY_CONFIG_DIR"
+  fi
 fi
 if [[ ! -f "$ABBENAY_CONFIG_FILE" ]]; then
   if [[ -f "$ABBENAY_CONFIG_SEED/config.yaml" ]]; then
