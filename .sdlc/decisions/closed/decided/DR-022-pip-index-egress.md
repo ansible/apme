@@ -96,7 +96,7 @@ this DR records the choice for formal review and follow-up ADR/REQ.
 - Engine install flag change (`--index-url` vs `--extra-index-url`) needs
   careful index-strategy defaults (`first-match` vs `unsafe-best-match`
   once PyPI is no longer a sibling index).
-- Token storage plaintext in SQLite inherits ADR-045 follow-up (encryption).
+- Token storage plaintext in the Gateway DB inherits ADR-045 follow-up (encryption).
 
 **Effort**: Medium
 

@@ -46,8 +46,8 @@ installs fail naturally.
 - Engine must not import Gateway or read the Gateway DB.
 - Gateway → Proxy admin HTTP remains pod-internal (ADR-048).
 - New Gateway REST endpoints must be additive under `/api/v1` (ADR-060).
-- Credential storage in SQLite may remain plaintext initially (same follow-up
-  as ADR-045 token encryption).
+- Credential storage in the Gateway DB may remain plaintext initially (same
+  follow-up as ADR-045 token encryption).
 - No dedicated air-gap feature flag.
 
 ## Decision
@@ -143,7 +143,7 @@ closed unless private indexes are configured.
   auth headers, caching) correctly.
 - Index-strategy defaults change once PyPI is no longer a sibling Engine
   index — revisit `APME_UV_INDEX_STRATEGY` / `unsafe-best-match` guidance.
-- Plaintext tokens in SQLite inherit the ADR-045 encryption follow-up.
+- Plaintext tokens in the Gateway DB inherit the ADR-045 encryption follow-up.
 
 ### Neutral
 
