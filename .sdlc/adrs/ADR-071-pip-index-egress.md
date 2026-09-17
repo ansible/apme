@@ -44,12 +44,18 @@ installs fail naturally.
 ### Constraints
 
 - Engine must not import Gateway or read the Gateway DB.
+- Pip-index admin sync requires Gateway co-located in the same pod as
+  Galaxy Proxy (ADR-048, ADR-069 Simple all-in-one). ADR-029's cross-pod
+  Gateway placement has no route to pod-local proxy admin endpoints
+  (`127.0.0.1:8765`); split or external Gateway topologies are
+  **unsupported** for `/admin/pip-indexes` until a future ADR defines
+  cross-pod admin routing, authentication, and encryption.
 - Gateway → Proxy admin traffic remains unauthenticated HTTP on the pod
   localhost network (ADR-048), including credential-bearing pushes to
   `/admin/galaxy-config` and `/admin/pip-indexes`. Cleartext in-transit
-  within the pod is an accepted trade-off under the current topology;
-  TLS/mTLS or shared-secret auth is required before any topology change
-  that exposes those endpoints beyond localhost (ADR-048). At-rest
+  within the pod is an accepted trade-off under the current co-located
+  topology; TLS/mTLS or shared-secret auth is required before any topology
+  change that exposes those endpoints beyond localhost (ADR-048). At-rest
   credential encryption follows the ADR-045 follow-up.
 - New Gateway REST endpoints must be additive under `/api/v1` (ADR-060).
 - Credential storage in the Gateway DB may remain plaintext initially (same
@@ -79,13 +85,18 @@ Specifically:
    `--extra-index-url` against an implicit public PyPI). Collections and
    Python packages both resolve through the proxy.
 2. **Multiple upstream indexes** — Gateway persists an ordered list of pip
-   indexes (name, URL, optional auth). On startup and after CRUD, Gateway
-   pushes the list to Galaxy Proxy (new admin endpoint, e.g.
-   `POST /admin/pip-indexes`) and requires an acknowledgment. Failed or
-   unavailable pushes are retried with backoff. Gateway tracks
+   indexes (name, URL, optional auth). On startup and after CRUD, the
+   co-located Gateway pushes the list to Galaxy Proxy (new admin endpoint,
+   e.g. `POST /admin/pip-indexes`) and requires an acknowledgment. Failed
+   or unavailable pushes are retried with backoff. Gateway tracks
    **unsynchronized** state separately from an **explicitly empty**
-   configuration; only the latter uses public PyPI passthrough. Proxy
-   restarts trigger re-push on the next successful health/retry cycle.
+   synchronized configuration; only the latter uses public PyPI passthrough.
+   While Gateway holds a **non-empty** desired list that is
+   **unsynchronized**, Galaxy Proxy serves only the last **acknowledged**
+   non-empty list if one exists; otherwise Proxy reports not ready and
+   Engine venv installs fail closed — public PyPI passthrough is prohibited
+   in this interval. Proxy restarts trigger re-push on the next successful
+   health/retry cycle.
 3. **Proxy passthrough** — For non-collection packages, the proxy queries
    configured upstreams in **first-hit** order (try each upstream in
    priority order; use the first successful Simple API response; do not
@@ -177,8 +188,9 @@ closed unless private indexes are configured.
 - Empty pip-index config preserves today's public PyPI behavior via proxy
   passthrough (behaviorally similar for online defaults; path differs).
 - Unsynchronized proxy state is visible in health/readiness until the proxy
-  acknowledges the latest push; operators are not misled into thinking
-  private indexes are active when the proxy fell back silently.
+  acknowledges the latest push; non-empty unsynchronized intervals fail
+  closed or serve the last acknowledged private list — never silent PyPI
+  fallback.
 - Collection download path (ansible-galaxy via ADR-045) is unchanged;
   only Python-package passthrough and Engine install flags change.
 
@@ -204,7 +216,8 @@ closed unless private indexes are configured.
 - Update `docs/guides/DEPLOYMENT.md` index-strategy section after the
   sibling-index model is gone.
 - Helm / Podman: no new air-gap flag; document configuring pip indexes via
-  Gateway API / UI when implemented.
+  Gateway API / UI when implemented. Co-located Gateway is required (ADR-069
+  Simple all-in-one); split Gateway topologies defer pip-index sync.
 - Follow-up REQ/TASK for implementation (not in DR-022 action scope).
 
 ## Related Decisions
@@ -232,3 +245,4 @@ closed unless private indexes are configured.
 | 2026-09-17 | Agent | HTTPS for credentialed upstreams; recoverable sync; first-hit merge policy |
 | 2026-09-17 | Agent | Document credential-bearing admin sync inherits ADR-048 pod-local HTTP |
 | 2026-09-17 | Agent | Define credentialed pip upstream redirect handling (same-origin HTTPS) |
+| 2026-09-17 | Agent | Scope admin sync to co-located Gateway; define unsynchronized fail-safe |
