@@ -749,6 +749,25 @@ class TestVersionDiscoveryWithServers:
         assert "/api/api/" not in captured_urls[0]
         assert "/api/v3/plugin/ansible/" in captured_urls[0]
 
+    def test_galaxy_versions_index_path_aap_and_hub_urls(self) -> None:
+        """AAP mock and Automation Hub URLs select the /api/galaxy/v3 index path."""
+        from galaxy_proxy.proxy.server import (
+            _GALAXY_VERSIONS_PATH,
+            _GALAXY_VERSIONS_PATH_AAP,
+            _galaxy_versions_index_path,
+        )
+
+        assert (
+            _galaxy_versions_index_path(
+                "http://host.containers.internal:8099/api/galaxy/content/community/",
+            )
+            == _GALAXY_VERSIONS_PATH_AAP
+        )
+        assert (
+            _galaxy_versions_index_path("https://console.redhat.com/api/automation-hub/") == _GALAXY_VERSIONS_PATH_AAP
+        )
+        assert _galaxy_versions_index_path("https://galaxy.ansible.com") == _GALAXY_VERSIONS_PATH
+
     def test_fetch_versions_from_uses_api_galaxy_prefix_for_aap_mock(self) -> None:
         """PAH/aap-mock URLs must use /api/galaxy/v3/... not bare /api/v3/...."""
         import asyncio

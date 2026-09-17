@@ -66,9 +66,7 @@ def _safe_server_label(raw_url: str) -> str:
 
 _GALAXY_API_URL = "https://galaxy.ansible.com"
 _GALAXY_VERSIONS_PATH = "/api/v3/plugin/ansible/content/published/collections/index"
-_GALAXY_VERSIONS_PATH_AAP = (
-    "/api/galaxy/v3/plugin/ansible/content/published/collections/index"
-)
+_GALAXY_VERSIONS_PATH_AAP = "/api/galaxy/v3/plugin/ansible/content/published/collections/index"
 
 
 class _GalaxyServerPayload(BaseModel):  # type: ignore[misc]
@@ -705,11 +703,27 @@ async def _fetch_galaxy_versions(
     return []
 
 
+def _uses_aap_galaxy_plugin_api(raw_url: str) -> bool:
+    """Return whether the server URL uses AAP-style Galaxy plugin API paths.
+
+    Console Automation Hub, private Hub, and aap-mock register plugin APIs under
+    ``/api/galaxy/v3/`` or ``/api/automation-hub/`` (not bare ``/api/v3/``).
+
+    Args:
+        raw_url: Server URL as configured on the gateway (before normalization).
+
+    Returns:
+        True when version index requests should use ``_GALAXY_VERSIONS_PATH_AAP``.
+    """
+    lowered = raw_url.lower()
+    if "/api/galaxy/" in lowered or "/api/automation-hub/" in lowered:
+        return True
+    stripped = lowered.rstrip("/")
+    return stripped.endswith("/api/galaxy") or stripped.endswith("/api/automation-hub")
+
+
 def _galaxy_versions_index_path(raw_url: str) -> str:
     """Return the collection versions API path prefix for a configured server.
-
-    Automation Hub / aap-mock expose Galaxy plugin APIs under ``/api/galaxy/v3/``.
-    Public Galaxy uses ``/api/v3/`` at the host root.
 
     Args:
         raw_url: Server URL as configured on the gateway (before normalization).
@@ -717,8 +731,7 @@ def _galaxy_versions_index_path(raw_url: str) -> str:
     Returns:
         Path prefix ending at ``.../collections/index`` (no trailing slash).
     """
-    lowered = raw_url.lower()
-    if "/api/galaxy/" in lowered or lowered.rstrip("/").endswith("/api/galaxy"):
+    if _uses_aap_galaxy_plugin_api(raw_url):
         return _GALAXY_VERSIONS_PATH_AAP
     return _GALAXY_VERSIONS_PATH
 
