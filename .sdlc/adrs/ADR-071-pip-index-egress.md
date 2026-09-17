@@ -58,6 +58,12 @@ installs fail naturally.
   and the proxy admin endpoint reject credentialed `http://` URLs. Unauthenticated
   `http://` upstreams are allowed only for explicitly trusted-local targets
   (e.g. loopback); credentials are prohibited on those exceptions.
+- Credentialed pip upstream passthrough must not leak credentials across
+  redirects: follow redirects only while scheme stays `https://` and origin
+  is unchanged from the configured upstream URL; strip credentials before any
+  scheme or origin change and fail closed rather than send them cross-origin.
+  Unauthenticated pip upstreams may retain today's redirect behavior. Galaxy
+  collection download redirects remain unchanged (ADR-031/045).
 - No dedicated air-gap feature flag.
 
 ## Decision
@@ -84,6 +90,8 @@ Specifically:
    configured upstreams in **first-hit** order (try each upstream in
    priority order; use the first successful Simple API response; do not
    merge listings across upstreams) and applies credentials per upstream.
+   Credentialed upstream requests follow the redirect constraint above;
+   Galaxy collection download redirects are out of scope and unchanged.
    Empty list → keep today's default passthrough to `https://pypi.org`.
 4. **Runtime application** — Proxy applies upstream config in-process for
    HTTP passthrough and injects env where subprocesses need credentials
@@ -186,7 +194,10 @@ closed unless private indexes are configured.
   allow unauthenticated `http://` only for trusted-local targets.
 - Galaxy Proxy: admin endpoint to replace in-memory upstream list;
   first-hit multi-index passthrough for `/simple/{pkg}/` (ordered try per
-  upstream priority; no cross-upstream merge).
+  upstream priority; no cross-upstream merge). For credentialed upstreams,
+  enforce same-origin HTTPS redirect handling per the Constraints section;
+  do not reuse `PyPIPassthrough`'s unconditional `follow_redirects=True`
+  for authenticated requests.
 - Engine `venv_manager.session._run_pip_install`: switch to `--index-url`
   pointing at `APME_GALAXY_PROXY_URL/simple/`; drop reliance on implicit
   public PyPI as primary index.
@@ -220,3 +231,4 @@ closed unless private indexes are configured.
 | 2026-09-16 | User / agent | Initial proposal from DR-022 |
 | 2026-09-17 | Agent | HTTPS for credentialed upstreams; recoverable sync; first-hit merge policy |
 | 2026-09-17 | Agent | Document credential-bearing admin sync inherits ADR-048 pod-local HTTP |
+| 2026-09-17 | Agent | Define credentialed pip upstream redirect handling (same-origin HTTPS) |
