@@ -65,8 +65,7 @@ def _safe_server_label(raw_url: str) -> str:
 
 
 _GALAXY_API_URL = "https://galaxy.ansible.com"
-_GALAXY_VERSIONS_PATH = "/api/v3/plugin/ansible/content/published/collections/index"
-_GALAXY_VERSIONS_PATH_AAP = "/api/galaxy/v3/plugin/ansible/content/published/collections/index"
+_DEFAULT_CONTENT_REPO = "published"
 
 
 class _GalaxyServerPayload(BaseModel):  # type: ignore[misc]
@@ -713,7 +712,7 @@ def _uses_aap_galaxy_plugin_api(raw_url: str) -> bool:
         raw_url: Server URL as configured on the gateway (before normalization).
 
     Returns:
-        True when version index requests should use ``_GALAXY_VERSIONS_PATH_AAP``.
+        True when version index requests should use ``/api/galaxy/v3/...`` paths.
     """
     lowered = raw_url.lower()
     if "/api/galaxy/" in lowered or "/api/automation-hub/" in lowered:
@@ -722,8 +721,39 @@ def _uses_aap_galaxy_plugin_api(raw_url: str) -> bool:
     return stripped.endswith("/api/galaxy") or stripped.endswith("/api/automation-hub")
 
 
+def _extract_content_repo_from_url(raw_url: str) -> str:
+    """Extract the content repository name from a Hub-style server URL.
+
+    Automation Hub and Private Automation Hub organize collections into content
+    repositories: ``rh-certified``, ``validated``, ``community``, ``published``.
+    Server URLs often include the repository in the path, e.g.::
+
+        https://aap.example.com/api/galaxy/content/validated/
+        https://hub.example.com/api/automation-hub/content/rh-certified/
+
+    This function extracts the repository name so version lookups query the
+    correct repository instead of always defaulting to ``published``.
+
+    Args:
+        raw_url: Server URL as configured on the gateway.
+
+    Returns:
+        Content repository name (e.g. ``validated``, ``rh-certified``), or
+        ``published`` when no specific repository is found in the URL.
+    """
+    # Match /content/{repo}/ in common Hub URL patterns
+    match = re.search(r"/content/([^/]+)(?:/|$)", raw_url, re.IGNORECASE)
+    if match:
+        return match.group(1)
+    return _DEFAULT_CONTENT_REPO
+
+
 def _galaxy_versions_index_path(raw_url: str) -> str:
     """Return the collection versions API path prefix for a configured server.
+
+    Dynamically constructs the path using the content repository extracted from
+    the server URL.  This ensures version lookups work correctly for collections
+    in ``validated``, ``rh-certified``, or other non-default repositories.
 
     Args:
         raw_url: Server URL as configured on the gateway (before normalization).
@@ -731,9 +761,10 @@ def _galaxy_versions_index_path(raw_url: str) -> str:
     Returns:
         Path prefix ending at ``.../collections/index`` (no trailing slash).
     """
+    repo = _extract_content_repo_from_url(raw_url)
     if _uses_aap_galaxy_plugin_api(raw_url):
-        return _GALAXY_VERSIONS_PATH_AAP
-    return _GALAXY_VERSIONS_PATH
+        return f"/api/galaxy/v3/plugin/ansible/content/{repo}/collections/index"
+    return f"/api/v3/plugin/ansible/content/{repo}/collections/index"
 
 
 def _normalize_galaxy_url(raw_url: str) -> str:

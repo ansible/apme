@@ -749,24 +749,59 @@ class TestVersionDiscoveryWithServers:
         assert "/api/api/" not in captured_urls[0]
         assert "/api/v3/plugin/ansible/" in captured_urls[0]
 
-    def test_galaxy_versions_index_path_aap_and_hub_urls(self) -> None:
-        """AAP mock and Automation Hub URLs select the /api/galaxy/v3 index path."""
-        from galaxy_proxy.proxy.server import (
-            _GALAXY_VERSIONS_PATH,
-            _GALAXY_VERSIONS_PATH_AAP,
-            _galaxy_versions_index_path,
+    def test_extract_content_repo_from_url(self) -> None:
+        """Content repository is correctly extracted from Hub-style URLs."""
+        from galaxy_proxy.proxy.server import _extract_content_repo_from_url
+
+        # Validated content repository
+        assert _extract_content_repo_from_url("https://aap.example.com/api/galaxy/content/validated/") == "validated"
+
+        # Certified content repository
+        assert (
+            _extract_content_repo_from_url("https://aap.example.com/api/galaxy/content/rh-certified/") == "rh-certified"
         )
 
+        # Community content repository
         assert (
-            _galaxy_versions_index_path(
-                "http://host.containers.internal:8099/api/galaxy/content/community/",
-            )
-            == _GALAXY_VERSIONS_PATH_AAP
+            _extract_content_repo_from_url("http://host.containers.internal:8099/api/galaxy/content/community/")
+            == "community"
         )
+
+        # Published content repository (explicit)
         assert (
-            _galaxy_versions_index_path("https://console.redhat.com/api/automation-hub/") == _GALAXY_VERSIONS_PATH_AAP
+            _extract_content_repo_from_url("https://hub.example.com/api/automation-hub/content/published/")
+            == "published"
         )
-        assert _galaxy_versions_index_path("https://galaxy.ansible.com") == _GALAXY_VERSIONS_PATH
+
+        # No content repo in URL → default to published
+        assert _extract_content_repo_from_url("https://galaxy.ansible.com") == "published"
+
+        # No content repo, just /api/galaxy/ → default to published
+        assert _extract_content_repo_from_url("https://console.redhat.com/api/automation-hub/") == "published"
+
+    def test_galaxy_versions_index_path_aap_and_hub_urls(self) -> None:
+        """AAP mock and Automation Hub URLs select correct path with extracted repo."""
+        from galaxy_proxy.proxy.server import _galaxy_versions_index_path
+
+        # AAP-style URL with community repo → /api/galaxy/v3/.../content/community/...
+        path = _galaxy_versions_index_path("http://host.containers.internal:8099/api/galaxy/content/community/")
+        assert path == "/api/galaxy/v3/plugin/ansible/content/community/collections/index"
+
+        # AAP-style URL with validated repo → /api/galaxy/v3/.../content/validated/...
+        path = _galaxy_versions_index_path("https://aap.example.com/api/galaxy/content/validated/")
+        assert path == "/api/galaxy/v3/plugin/ansible/content/validated/collections/index"
+
+        # Automation Hub URL without explicit repo → default to published
+        path = _galaxy_versions_index_path("https://console.redhat.com/api/automation-hub/")
+        assert path == "/api/galaxy/v3/plugin/ansible/content/published/collections/index"
+
+        # Public Galaxy (no AAP prefix) → /api/v3/.../content/published/...
+        path = _galaxy_versions_index_path("https://galaxy.ansible.com")
+        assert path == "/api/v3/plugin/ansible/content/published/collections/index"
+
+        # rh-certified repository
+        path = _galaxy_versions_index_path("https://hub.example.com/api/galaxy/content/rh-certified/")
+        assert path == "/api/galaxy/v3/plugin/ansible/content/rh-certified/collections/index"
 
     def test_fetch_versions_from_uses_api_galaxy_prefix_for_aap_mock(self) -> None:
         """PAH/aap-mock URLs must use /api/galaxy/v3/... not bare /api/v3/...."""
