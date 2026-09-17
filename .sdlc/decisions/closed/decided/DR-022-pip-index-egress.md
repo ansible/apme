@@ -67,12 +67,12 @@ this DR records the choice for formal review and follow-up ADR/REQ.
 - Add a Gateway DB table (and REST CRUD) for ordered pip indexes
   (URL, optional auth, priority/order), mirroring `galaxy_servers`.
 - On startup and after CRUD, Gateway pushes the list to Galaxy Proxy
-  (new `/admin/pip-indexes` or extended admin payload), same fire-and-forget
-  sync as `_galaxy_proxy_sync`.
-- Proxy applies upstreams at runtime: multi-index passthrough for
-  non-collection `/simple/{pkg}/` (ordered try / merge policy TBD in ADR);
-  inject credentials via env where subprocesses need them (same idea as
-  `_inject_galaxy_env`).
+  (new `/admin/pip-indexes` or extended admin payload) with acknowledgment,
+  retry/backoff, and unsynchronized vs empty-config tracking (ADR-071).
+- Proxy applies upstreams at runtime: first-hit multi-index passthrough for
+  non-collection `/simple/{pkg}/` (ordered try per ADR-071; no cross-upstream
+  merge); inject credentials via env where subprocesses need them (same idea
+  as `_inject_galaxy_env`).
 - Engine `uv pip install` uses **only**
   `--index-url http://galaxy-proxy:8765/simple/` (Galaxy Proxy is primary
   index, not merely `--extra-index-url`). Collections and Python deps both
@@ -210,7 +210,7 @@ Engine uses the proxy as its only pip index; no air-gap mode — defaults
 attempt public PyPI via passthrough and fail naturally if unreachable.
 
 **Action Items**:
-- [x] Draft ADR for pip-index egress topology — [ADR-071](../../adrs/ADR-071-pip-index-egress.md)
+- [x] Draft ADR for pip-index egress topology — [ADR-071](../../../adrs/ADR-071-pip-index-egress.md)
 
 ---
 

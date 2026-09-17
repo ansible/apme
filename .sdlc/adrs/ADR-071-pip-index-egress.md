@@ -48,6 +48,10 @@ installs fail naturally.
 - New Gateway REST endpoints must be additive under `/api/v1` (ADR-060).
 - Credential storage in the Gateway DB may remain plaintext initially (same
   follow-up as ADR-045 token encryption).
+- Upstream URLs that include credentials must use `https://`. Gateway CRUD
+  and the proxy admin endpoint reject credentialed `http://` URLs. Unauthenticated
+  `http://` upstreams are allowed only for explicitly trusted-local targets
+  (e.g. loopback); credentials are prohibited on those exceptions.
 - No dedicated air-gap feature flag.
 
 ## Decision
@@ -65,14 +69,23 @@ Specifically:
 2. **Multiple upstream indexes** — Gateway persists an ordered list of pip
    indexes (name, URL, optional auth). On startup and after CRUD, Gateway
    pushes the list to Galaxy Proxy (new admin endpoint, e.g.
-   `POST /admin/pip-indexes`), fire-and-forget like `_galaxy_proxy_sync`.
+   `POST /admin/pip-indexes`) and requires an acknowledgment. Failed or
+   unavailable pushes are retried with backoff. Gateway tracks
+   **unsynchronized** state separately from an **explicitly empty**
+   configuration; only the latter uses public PyPI passthrough. Proxy
+   restarts trigger re-push on the next successful health/retry cycle.
 3. **Proxy passthrough** — For non-collection packages, the proxy queries
-   configured upstreams in order (and applies credentials). Empty list →
-   keep today's default passthrough to `https://pypi.org`.
+   configured upstreams in **first-hit** order (try each upstream in
+   priority order; use the first successful Simple API response; do not
+   merge listings across upstreams) and applies credentials per upstream.
+   Empty list → keep today's default passthrough to `https://pypi.org`.
 4. **Runtime application** — Proxy applies upstream config in-process for
    HTTP passthrough and injects env where subprocesses need credentials
    (same idea as `_inject_galaxy_env` for Galaxy).
-5. **No air-gap mode** — Do not add `APME_AIRGAP` (or equivalent). Operators
+5. **Transport security** — Enforce the HTTPS constraint above in Gateway
+   CRUD validation and the proxy admin endpoint before persisting or
+   applying upstream config.
+6. **No air-gap mode** — Do not add `APME_AIRGAP` (or equivalent). Operators
    who need isolation configure private indexes and private Galaxy/AH only;
    unreachable defaults simply fail installs.
 
@@ -149,6 +162,9 @@ closed unless private indexes are configured.
 
 - Empty pip-index config preserves today's public PyPI behavior via proxy
   passthrough (behaviorally similar for online defaults; path differs).
+- Unsynchronized proxy state is visible in health/readiness until the proxy
+  acknowledges the latest push; operators are not misled into thinking
+  private indexes are active when the proxy fell back silently.
 - Collection download path (ansible-galaxy via ADR-045) is unchanged;
   only Python-package passthrough and Engine install flags change.
 
@@ -157,10 +173,13 @@ closed unless private indexes are configured.
 - Gateway: table + REST CRUD analogous to `galaxy_servers` (ordered
   `priority`/`position` field). Additive `/api/v1` routes only (ADR-060).
 - Gateway: extend `_galaxy_proxy_sync` (or sibling module) to push pip
-  indexes on startup and after CRUD.
+  indexes on startup and after CRUD with acknowledgment, retry/backoff,
+  and unsynchronized vs empty-config tracking.
+- Gateway / proxy validation: reject credentialed `http://` upstream URLs;
+  allow unauthenticated `http://` only for trusted-local targets.
 - Galaxy Proxy: admin endpoint to replace in-memory upstream list;
-  multi-index passthrough for `/simple/{pkg}/` (ordered try; document
-  merge vs first-hit in implementation TASK).
+  first-hit multi-index passthrough for `/simple/{pkg}/` (ordered try per
+  upstream priority; no cross-upstream merge).
 - Engine `venv_manager.session._run_pip_install`: switch to `--index-url`
   pointing at `APME_GALAXY_PROXY_URL/simple/`; drop reliance on implicit
   public PyPI as primary index.
@@ -192,3 +211,4 @@ closed unless private indexes are configured.
 | Date | Author | Change |
 |------|--------|--------|
 | 2026-09-16 | User / agent | Initial proposal from DR-022 |
+| 2026-09-17 | Agent | HTTPS for credentialed upstreams; recoverable sync; first-hit merge policy |
