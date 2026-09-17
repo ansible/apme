@@ -77,8 +77,9 @@ this DR records the choice for formal review and follow-up ADR/REQ.
   `--index-url http://galaxy-proxy:8765/simple/` (Galaxy Proxy is primary
   index, not merely `--extra-index-url`). Collections and Python deps both
   resolve through the proxy.
-- Empty / unset index list → proxy keeps today's default passthrough to
-  `https://pypi.org`. No `APME_AIRGAP=1` (or equivalent) flag.
+- Unset index list normalizes to explicit empty desired configuration;
+  public PyPI passthrough via proxy requires synchronized acknowledgment
+  (ADR-071 state transitions). No `APME_AIRGAP=1` (or equivalent) flag.
 
 **Pros**:
 

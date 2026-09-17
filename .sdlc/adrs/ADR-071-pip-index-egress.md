@@ -82,28 +82,50 @@ Specifically:
 
 1. **Engine install path** — `uv pip install` / `pip install` uses
    `--index-url http://<galaxy-proxy>/simple/` only (not
-   `--extra-index-url` against an implicit public PyPI). Collections and
-   Python packages both resolve through the proxy.
+   `--extra-index-url` against an implicit public PyPI). Run each tool in
+   an isolated environment that ignores inherited package-index settings
+   (`PIP_INDEX_URL`, `PIP_EXTRA_INDEX_URL`, `UV_INDEX_URL`,
+   `UV_EXTRA_INDEX_URL`, user/site `pip.conf`, and uv config files) —
+   e.g. `uv pip --isolated` and `pip install --isolated`, or an equivalent
+   controlled subprocess environment. Collections and Python packages both
+   resolve through the proxy.
 2. **Multiple upstream indexes** — Gateway persists an ordered list of pip
-   indexes (name, URL, optional auth). On startup and after CRUD, the
-   co-located Gateway pushes the list to Galaxy Proxy (new admin endpoint,
-   e.g. `POST /admin/pip-indexes`) and requires an acknowledgment. Failed
-   or unavailable pushes are retried with backoff. Gateway tracks
-   **unsynchronized** state separately from an **explicitly empty**
-   synchronized configuration; only the latter uses public PyPI passthrough.
-   While Gateway holds a **non-empty** desired list that is
-   **unsynchronized**, Galaxy Proxy serves only the last **acknowledged**
-   non-empty list if one exists; otherwise Proxy reports not ready and
-   Engine venv installs fail closed — public PyPI passthrough is prohibited
-   in this interval. Proxy restarts trigger re-push on the next successful
-   health/retry cycle.
+   indexes (name, URL, optional auth). An unset DB (no rows) normalizes to
+   an **explicit empty** desired configuration on startup. On startup and
+   after CRUD, the co-located Gateway pushes the list to Galaxy Proxy with
+   a monotonically increasing **revision** (new admin endpoint, e.g.
+   `POST /admin/pip-indexes`) and requires an acknowledgment that echoes
+   the same revision. Failed or unavailable pushes are retried with
+   backoff. Both Gateway and Proxy ignore stale pushes and stale
+   acknowledgments (revision less than the latest applied) so a retried
+   older update cannot overwrite a newer synchronized configuration.
+   Gateway tracks **unsynchronized** state separately from a
+   **synchronized** configuration (empty or non-empty):
+   - **Synchronized empty** (explicit empty list acknowledged): public
+     PyPI passthrough via proxy (today's default).
+   - **Unsynchronized empty** (desired empty list pending acknowledgment,
+     including startup before the first push completes): Proxy serves the
+     last acknowledged configuration until the empty push is acknowledged;
+     public PyPI passthrough is permitted only after that acknowledgment
+     (or when the last acknowledged configuration was already empty).
+   - **Unsynchronized non-empty** (desired private list pending
+     acknowledgment): Proxy serves only the last **acknowledged** non-empty
+     list if one exists; otherwise Proxy reports not ready and Engine venv
+     installs fail closed — public PyPI passthrough is prohibited in this
+     interval.
+   Proxy restarts trigger re-push on the next successful health/retry
+   cycle.
 3. **Proxy passthrough** — For non-collection packages, the proxy queries
    configured upstreams in **first-hit** order (try each upstream in
    priority order; use the first successful Simple API response; do not
    merge listings across upstreams) and applies credentials per upstream.
-   Credentialed upstream requests follow the redirect constraint above;
-   Galaxy collection download redirects are out of scope and unchanged.
-   Empty list → keep today's default passthrough to `https://pypi.org`.
+   Distribution artifact URLs in upstream Simple API HTML must remain
+   routed through Galaxy Proxy — rewrite absolute links to a proxy download
+   route and/or fetch-and-stream artifacts through the proxy — so Engine
+   never downloads wheels directly from upstream hosts. Credentialed
+   upstream requests follow the redirect constraint above; Galaxy collection
+   download redirects are out of scope and unchanged. Synchronized empty
+   list → default passthrough to `https://pypi.org`.
 4. **Runtime application** — Proxy applies upstream config in-process for
    HTTP passthrough and injects env where subprocesses need credentials
    (same idea as `_inject_galaxy_env` for Galaxy).
@@ -185,8 +207,9 @@ closed unless private indexes are configured.
 
 ### Neutral
 
-- Empty pip-index config preserves today's public PyPI behavior via proxy
-  passthrough (behaviorally similar for online defaults; path differs).
+- Unset and explicit-empty configurations normalize to the same desired
+  empty state; public PyPI passthrough requires synchronized acknowledgment
+  (behaviorally similar for steady-state online defaults; path differs).
 - Unsynchronized proxy state is visible in health/readiness until the proxy
   acknowledges the latest push; non-empty unsynchronized intervals fail
   closed or serve the last acknowledged private list — never silent PyPI
@@ -199,20 +222,26 @@ closed unless private indexes are configured.
 - Gateway: table + REST CRUD analogous to `galaxy_servers` (ordered
   `priority`/`position` field). Additive `/api/v1` routes only (ADR-060).
 - Gateway: extend `_galaxy_proxy_sync` (or sibling module) to push pip
-  indexes on startup and after CRUD with acknowledgment, retry/backoff,
-  and unsynchronized vs empty-config tracking. Credential payloads use the
-  same pod-local HTTP admin channel as Galaxy server tokens (ADR-048).
+  indexes on startup and after CRUD with monotonic revision, acknowledgment
+  (echoing revision), retry/backoff, stale-update rejection, and
+  unsynchronized vs synchronized state tracking. Normalize unset DB to
+  explicit empty on startup. Credential payloads use the same pod-local
+  HTTP admin channel as Galaxy server tokens (ADR-048).
 - Gateway / proxy validation: reject credentialed `http://` upstream URLs;
   allow unauthenticated `http://` only for trusted-local targets.
-- Galaxy Proxy: admin endpoint to replace in-memory upstream list;
-  first-hit multi-index passthrough for `/simple/{pkg}/` (ordered try per
-  upstream priority; no cross-upstream merge). For credentialed upstreams,
-  enforce same-origin HTTPS redirect handling per the Constraints section;
-  do not reuse `PyPIPassthrough`'s unconditional `follow_redirects=True`
-  for authenticated requests.
+- Galaxy Proxy: admin endpoint to replace in-memory upstream list with
+  revision tracking; reject stale pushes/acks. First-hit multi-index
+  passthrough for `/simple/{pkg}/` (ordered try per upstream priority; no
+  cross-upstream merge). Rewrite distribution artifact links or
+  fetch-and-stream downloads so Engine traffic stays proxy-routed. For
+  credentialed upstreams, enforce same-origin HTTPS redirect handling per
+  the Constraints section; do not reuse `PyPIPassthrough`'s unconditional
+  `follow_redirects=True` for authenticated requests.
 - Engine `venv_manager.session._run_pip_install`: switch to `--index-url`
-  pointing at `APME_GALAXY_PROXY_URL/simple/`; drop reliance on implicit
-  public PyPI as primary index.
+  pointing at `APME_GALAXY_PROXY_URL/simple/` with pip/uv isolated mode (or
+  equivalent) so inherited index env/config cannot add package sources;
+  drop reliance on implicit public PyPI as primary index. Tests must cover
+  the isolation requirement, not just command flags.
 - Update `docs/guides/DEPLOYMENT.md` index-strategy section after the
   sibling-index model is gone.
 - Helm / Podman: no new air-gap flag; document configuring pip indexes via
@@ -246,3 +275,4 @@ closed unless private indexes are configured.
 | 2026-09-17 | Agent | Document credential-bearing admin sync inherits ADR-048 pod-local HTTP |
 | 2026-09-17 | Agent | Define credentialed pip upstream redirect handling (same-origin HTTPS) |
 | 2026-09-17 | Agent | Scope admin sync to co-located Gateway; define unsynchronized fail-safe |
+| 2026-09-17 | Agent | Pip/uv isolation, sync revisions, empty/unset states, artifact routing |
