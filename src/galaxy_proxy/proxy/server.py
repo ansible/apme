@@ -741,8 +741,10 @@ def _extract_content_repo_from_url(raw_url: str) -> str:
         Content repository name (e.g. ``validated``, ``rh-certified``), or
         ``published`` when no specific repository is found in the URL.
     """
-    # Match /content/{repo}/ in common Hub URL patterns
-    match = re.search(r"/content/([^/]+)(?:/|$)", raw_url, re.IGNORECASE)
+    # Parse URL and match only the path component to exclude query strings
+    # and fragments (e.g., /content/validated?source=x or /content/validated#x)
+    path = urlsplit(raw_url).path
+    match = re.search(r"/content/([^/]+)(?:/|$)", path, re.IGNORECASE)
     if match:
         return match.group(1)
     return _DEFAULT_CONTENT_REPO

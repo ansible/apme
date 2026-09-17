@@ -779,6 +779,18 @@ class TestVersionDiscoveryWithServers:
         # No content repo, just /api/galaxy/ → default to published
         assert _extract_content_repo_from_url("https://console.redhat.com/api/automation-hub/") == "published"
 
+        # URL with query string should still extract repo correctly
+        assert (
+            _extract_content_repo_from_url("https://aap.example.com/api/galaxy/content/validated?source=x")
+            == "validated"
+        )
+
+        # URL with fragment should still extract repo correctly
+        assert (
+            _extract_content_repo_from_url("https://aap.example.com/api/galaxy/content/rh-certified#section")
+            == "rh-certified"
+        )
+
     def test_galaxy_versions_index_path_aap_and_hub_urls(self) -> None:
         """AAP mock and Automation Hub URLs select correct path with extracted repo."""
         from galaxy_proxy.proxy.server import _galaxy_versions_index_path
