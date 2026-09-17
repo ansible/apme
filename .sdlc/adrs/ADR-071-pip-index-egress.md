@@ -44,7 +44,13 @@ installs fail naturally.
 ### Constraints
 
 - Engine must not import Gateway or read the Gateway DB.
-- Gateway → Proxy admin HTTP remains pod-internal (ADR-048).
+- Gateway → Proxy admin traffic remains unauthenticated HTTP on the pod
+  localhost network (ADR-048), including credential-bearing pushes to
+  `/admin/galaxy-config` and `/admin/pip-indexes`. Cleartext in-transit
+  within the pod is an accepted trade-off under the current topology;
+  TLS/mTLS or shared-secret auth is required before any topology change
+  that exposes those endpoints beyond localhost (ADR-048). At-rest
+  credential encryption follows the ADR-045 follow-up.
 - New Gateway REST endpoints must be additive under `/api/v1` (ADR-060).
 - Credential storage in the Gateway DB may remain plaintext initially (same
   follow-up as ADR-045 token encryption).
@@ -174,7 +180,8 @@ closed unless private indexes are configured.
   `priority`/`position` field). Additive `/api/v1` routes only (ADR-060).
 - Gateway: extend `_galaxy_proxy_sync` (or sibling module) to push pip
   indexes on startup and after CRUD with acknowledgment, retry/backoff,
-  and unsynchronized vs empty-config tracking.
+  and unsynchronized vs empty-config tracking. Credential payloads use the
+  same pod-local HTTP admin channel as Galaxy server tokens (ADR-048).
 - Gateway / proxy validation: reject credentialed `http://` upstream URLs;
   allow unauthenticated `http://` only for trusted-local targets.
 - Galaxy Proxy: admin endpoint to replace in-memory upstream list;
@@ -212,3 +219,4 @@ closed unless private indexes are configured.
 |------|--------|--------|
 | 2026-09-16 | User / agent | Initial proposal from DR-022 |
 | 2026-09-17 | Agent | HTTPS for credentialed upstreams; recoverable sync; first-hit merge policy |
+| 2026-09-17 | Agent | Document credential-bearing admin sync inherits ADR-048 pod-local HTTP |
