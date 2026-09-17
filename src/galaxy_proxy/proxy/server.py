@@ -66,6 +66,9 @@ def _safe_server_label(raw_url: str) -> str:
 
 _GALAXY_API_URL = "https://galaxy.ansible.com"
 _GALAXY_VERSIONS_PATH = "/api/v3/plugin/ansible/content/published/collections/index"
+_GALAXY_VERSIONS_PATH_AAP = (
+    "/api/galaxy/v3/plugin/ansible/content/published/collections/index"
+)
 
 
 class _GalaxyServerPayload(BaseModel):  # type: ignore[misc]
@@ -702,6 +705,24 @@ async def _fetch_galaxy_versions(
     return []
 
 
+def _galaxy_versions_index_path(raw_url: str) -> str:
+    """Return the collection versions API path prefix for a configured server.
+
+    Automation Hub / aap-mock expose Galaxy plugin APIs under ``/api/galaxy/v3/``.
+    Public Galaxy uses ``/api/v3/`` at the host root.
+
+    Args:
+        raw_url: Server URL as configured on the gateway (before normalization).
+
+    Returns:
+        Path prefix ending at ``.../collections/index`` (no trailing slash).
+    """
+    lowered = raw_url.lower()
+    if "/api/galaxy/" in lowered or lowered.rstrip("/").endswith("/api/galaxy"):
+        return _GALAXY_VERSIONS_PATH_AAP
+    return _GALAXY_VERSIONS_PATH
+
+
 def _normalize_galaxy_url(raw_url: str) -> str:
     """Strip ansible.cfg-style ``/api/...`` suffixes from the URL path.
 
@@ -754,7 +775,8 @@ async def _fetch_versions_from(
     """
     versions: list[str] = []
     normalized = _normalize_galaxy_url(base_url)
-    url = f"{normalized}{_GALAXY_VERSIONS_PATH}/{namespace}/{name}/versions/"
+    versions_path = _galaxy_versions_index_path(base_url)
+    url = f"{normalized}{versions_path}/{namespace}/{name}/versions/"
     params: dict[str, str | int] = {"limit": 100, "offset": 0}
     headers: dict[str, str] = {}
     if token:
@@ -779,6 +801,8 @@ async def _fetch_versions_from(
                             server_host,
                             resp.status_code,
                         )
+                        if resp.status_code in {401, 403, 404, 501}:
+                            return None
                         resp.raise_for_status()
                         payload = resp.json()
                         for entry in payload.get("data", []):
