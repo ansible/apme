@@ -25,8 +25,8 @@ LIST_SUBJECTS=""
 GHCR_REGISTRY="${GHCR_REGISTRY:-ghcr.io}"
 QUAY_REGISTRY="${QUAY_REGISTRY:-quay.io}"
 ENGINE="${CONTAINER_ENGINE:-docker}"
-# Cap concurrent registry ops (sign + SBOM per image/tag).
-SUPPLY_CHAIN_PARALLELISM="${SUPPLY_CHAIN_PARALLELISM:-4}"
+# Sequential by default: parallel cosign invocations race on TUF metadata cache.
+SUPPLY_CHAIN_PARALLELISM="${SUPPLY_CHAIN_PARALLELISM:-1}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 IMAGES_FILE="${IMAGES_FILE:-${SCRIPT_DIR}/images.txt}"

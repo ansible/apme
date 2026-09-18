@@ -22,6 +22,12 @@ def test_supply_chain_parallel_allowlist_includes_dispatch_function() -> None:
     assert "process_image_tag|process_ref)" in content.replace(" ", "")
 
 
+def test_supply_chain_default_parallelism_is_sequential() -> None:
+    """Parallel cosign sign/attest races on the shared TUF metadata cache."""
+    content = SUPPLY_CHAIN_SH.read_text(encoding="utf-8")
+    assert 'SUPPLY_CHAIN_PARALLELISM="${SUPPLY_CHAIN_PARALLELISM:-1}"' in content
+
+
 def test_install_syft_verifies_checksum_before_install() -> None:
     """Syft install must pin a release and verify against committed checksums."""
     install_sh = REPO_ROOT / "containers" / "ci" / "install-syft.sh"
@@ -131,6 +137,7 @@ def test_container_workflow_computes_owner_locally_in_supply_chain() -> None:
     assert sign_step["env"]["OWNER_LC"] == "${{ steps.owner.outputs.lc }}"
     assert sign_step["env"]["QUAY_ENABLED"] == "${{ steps.quay-check.outputs.enabled }}"
     assert sign_step["env"]["QUAY_NS"] == "${{ steps.quay-check.outputs.ns }}"
+    assert sign_step["env"]["SUPPLY_CHAIN_PARALLELISM"] == "1"
 
 
 def test_container_workflow_quay_namespace_is_repo_variable() -> None:

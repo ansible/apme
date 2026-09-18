@@ -287,6 +287,8 @@ jobs:
           OWNER_LC: ${{ steps.owner.outputs.lc }}
           QUAY_ENABLED: ${{ steps.quay-check.outputs.enabled }}
           QUAY_NS: ${{ steps.quay-check.outputs.ns }}
+          # Cosign TUF metadata races when multiple sign/attest processes run in parallel.
+          SUPPLY_CHAIN_PARALLELISM: "1"
         run: |
           args=(
             --owner "$OWNER_LC"
