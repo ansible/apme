@@ -891,8 +891,9 @@ class TestVersionDiscoveryWithServers:
 
         assert result == ["2.0.0"]
         assert len(captured_urls) == 1
-        assert "/api/galaxy/v3/plugin/ansible/content/validated/collections/index/cloud/aws_ops/versions/" in (
-            captured_urls[0]
+        assert (
+            "/api/galaxy/v3/plugin/ansible/content/validated/collections/index/cloud/aws_ops/versions/"
+            in (captured_urls[0])
         )
         assert "/content/published/" not in captured_urls[0]
 
