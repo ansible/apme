@@ -853,6 +853,48 @@ class TestVersionDiscoveryWithServers:
         assert len(captured_urls) == 1
         assert "/api/galaxy/v3/plugin/ansible/" in captured_urls[0]
         assert "/api/v3/plugin/ansible/" not in captured_urls[0]
+        assert "/content/community/" in captured_urls[0]
+
+    def test_fetch_versions_from_uses_validated_content_repo_in_index_path(self) -> None:
+        """Validated Hub server URLs must hit .../content/validated/... version index."""
+        import asyncio
+
+        from galaxy_proxy.proxy.server import _fetch_versions_from
+
+        captured_urls: list[str] = []
+
+        def _capture_client(**kwargs: object) -> unittest.mock.MagicMock:
+            mock_resp = unittest.mock.MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.json.return_value = {"data": [{"version": "2.0.0"}], "links": {}}
+            mock_resp.raise_for_status.return_value = None
+
+            async def _get(url: str, **kw: object) -> unittest.mock.MagicMock:
+                captured_urls.append(url)
+                return mock_resp
+
+            client = unittest.mock.MagicMock()
+            client.get = _get
+            client.__aenter__ = AsyncMock(return_value=client)
+            client.__aexit__ = AsyncMock(return_value=False)
+            return client
+
+        with patch("galaxy_proxy.proxy.server.httpx.AsyncClient", side_effect=_capture_client):
+            result = asyncio.run(
+                _fetch_versions_from(
+                    "cloud",
+                    "aws_ops",
+                    "https://aap.example.com/api/galaxy/content/validated/",
+                    token="tok",
+                ),
+            )
+
+        assert result == ["2.0.0"]
+        assert len(captured_urls) == 1
+        assert "/api/galaxy/v3/plugin/ansible/content/validated/collections/index/cloud/aws_ops/versions/" in (
+            captured_urls[0]
+        )
+        assert "/content/published/" not in captured_urls[0]
 
     def test_version_discovery_with_api_url_through_project_page(self, tmp_path: Path) -> None:
         """Version discovery handles configured server URLs that include /api/.
