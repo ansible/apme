@@ -24,12 +24,13 @@ Existing endpoint. Extended query parameters:
 from persisted `R200` rows. **Phase 3** may trigger OSV backfill only for components that
 need it (Dep Audit skipped / missing structured CVE / missing `cvss_score` / audit-coverage
 not `completed_clean` with complete audit data; `findings_present` with missing CVE
-rows or `cvss_score` remains eligible). On OSV timeout, rate-limit failure, or
-in-flight backfill saturation during
-lazy backfill, Gateway returns inventory + persisted `R200` findings with
-`apme:advisory_status=error` on affected components — the HTTP request must not fail solely
-because OSV is slow or unavailable (CLI `apme sbom --vulns` must not exit on enrichment
-timeout alone).
+rows or `cvss_score` remains eligible). On in-flight backfill saturation, Gateway
+returns inventory + persisted `R200` findings with `apme:advisory_status=pending`
+on eligible components whose backfill was queued or skipped (transitions to
+`checked`/`none`/`error` when deferred work completes). On timeout, rate-limit
+failure, or unreachable OSV, set `apme:advisory_status=error` on affected
+components — the HTTP request must not fail solely because OSV is slow or
+unavailable (CLI `apme sbom --vulns` must not exit on enrichment timeout alone).
 
 Example vulnerability entry (normative shape):
 
@@ -202,7 +203,7 @@ Existing `apme:source` property retained. New optional properties:
 
 | Property | Values | Meaning |
 |----------|--------|---------|
-| `apme:advisory_status` | `not_applicable`, `excluded`, `checked`, `none`, `error` | Mutually exclusive: `not_applicable` = Galaxy (no feed); `excluded` = private-index PyPI (not queried); `checked` = public PyPI evaluated, ≥1 advisory; `none` = public PyPI evaluated, zero advisories; `error` = evaluation failed |
+| `apme:advisory_status` | `not_applicable`, `excluded`, `not_evaluated`, `pending`, `checked`, `none`, `error` | Mutually exclusive: `not_applicable` = Galaxy (no feed); `excluded` = private-index PyPI (not queried); `not_evaluated` = public PyPI before evaluation or inventory-only export; `pending` = backfill queued/in-flight (transitions on completion); `checked` = evaluated, ≥1 advisory; `none` = evaluated, zero advisories; `error` = evaluation failed (timeout, rate limit, unreachable OSV) |
 | `apme:enriched_at` | ISO 8601 | Last OSV check timestamp (PyPI components) |
 
 Galaxy collection components always use `apme:advisory_status=not_applicable` (ADR-072

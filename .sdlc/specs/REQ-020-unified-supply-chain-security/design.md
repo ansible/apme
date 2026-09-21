@@ -73,9 +73,12 @@ Initial scope:
 
 ### Gateway: `osv_enricher.py` (new)
 
-- Input: list of PyPI `(purl, name, version)` from latest manifest, filtered by Phase 3
-  backfill eligibility (Dep Audit skipped, missing structured CVE, missing `cvss_score`,
-  or incomplete `findings_present` data; `completed_clean` with complete audit is skipped)
+- Input: list of PyPI `(purl, name, version)` from the manifest for the selected
+  `scan_id` (explicit request parameter or latest completed scan when omitted),
+  filtered by Phase 3 backfill eligibility (Dep Audit skipped, missing structured
+  CVE, missing `cvss_score`, or incomplete `findings_present` data;
+  `completed_clean` with complete audit is skipped). Never enrich from a different
+  scan's manifest than the SBOM export target.
 - Resolves OSV endpoint from Gateway configuration (`OSV_ENDPOINT`, default
   `https://api.osv.dev`); air-gapped deployments point to a private mirror
 - Calls OSV batch API (`POST {OSV_ENDPOINT}/v1/querybatch`) **only** for eligible PyPI
@@ -83,7 +86,9 @@ Initial scope:
 - Excludes private-index packages unless explicitly opted in; emit
   `apme:advisory_status=excluded` (ADR-072)
 - Shared in-flight backfill limit (default 1 concurrent OSV batch per project);
-  saturated requests return inventory + `R200` without blocking
+  saturated requests return inventory + `R200` without blocking, set
+  `apme:advisory_status=pending` on queued/skipped eligible components, and
+  transition to `checked`/`none`/`error` when deferred backfill completes
 - Does **not** query Galaxy `pkg:generic` collections (ADR-072 Option A)
 - Configurable per-request timeout and rate-limit controls; on timeout/rate-limit
   failure, set `apme:advisory_status=error` and return partial results (no 503)
@@ -99,8 +104,9 @@ export.
 ### Gateway: `sbom.py` (extend)
 
 - Parse `dependency_tree` into `dependencies[].dependsOn` (uv pip tree format)
-- Emit `apme:advisory_status` on every CycloneDX component; derive supply-chain
-  summary counts from these per-component values
+- Emit `apme:advisory_status` on every CycloneDX component; inventory-only exports
+  default public PyPI to `not_evaluated`; derive supply-chain summary counts from
+  these per-component values
 - Normalize `include`: `vex` implies `vulnerabilities` before serialization
 - Add `vulnerabilities[]` when normalized `include` contains `vulnerabilities`
 - Merge pip-audit (`R200`) + OSV enrichment rows (PyPI)

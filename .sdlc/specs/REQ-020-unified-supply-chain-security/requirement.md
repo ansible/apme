@@ -104,11 +104,16 @@ alongside content violations.
   is missing or expired (ADR-072 Phase 3)
 - **THEN** only those eligible components may be batch-queried against OSV; components
   with `completed_clean` coverage and no data gaps are not re-queried
-- **AND** PyPI components evaluated with one or more advisories use
-  `apme:advisory_status=checked`; zero advisories use `none`; Galaxy collections use
-  `apme:advisory_status=not_applicable` without an OSV call
-- **AND** enrichment failures set `apme:advisory_status=error`; export still returns
-  inventory + persisted `R200` vulns when present (no 503 solely for OSV failure)
+- **AND** inventory-only exports (no `include=vulnerabilities`) set public PyPI
+  components to `apme:advisory_status=not_evaluated`; evaluated components with
+  one or more advisories use `checked`; zero advisories use `none`; Galaxy
+  collections use `apme:advisory_status=not_applicable` without an OSV call
+- **AND** concurrency saturation sets eligible components to `pending` immediately;
+  successful deferred backfill transitions them to `checked` or `none` and persists
+  enrichment rows; failures retain or transition to `error`
+- **AND** enrichment failures (timeout, rate limit, unreachable OSV) set
+  `apme:advisory_status=error`; export still returns inventory + persisted `R200`
+  vulns when present (no 503 solely for OSV failure)
 - **AND** audit-coverage status (`completed_clean`, `findings_present`, `skipped`,
   `failed`) is persisted per PyPI component so clean audits are not re-queried
 
@@ -135,6 +140,8 @@ alongside content violations.
 - **THEN** existing `/api/v1/projects/{id}/sbom` response shape without `include`
   remains backward compatible (inventory-only default)
 - **AND** OpenAPI spec is updated (`tox -e openapi`)
+- **AND** `project_id` path parameter accepts a project UUID or unique display name
+  (existing Gateway `resolve_project` behavior; unchanged for SBOM clients)
 
 ## Inputs / Outputs
 
@@ -142,7 +149,7 @@ alongside content violations.
 
 | Name | Type | Description | Required |
 |------|------|-------------|----------|
-| `project_id` | UUID | Gateway project identifier | Yes |
+| `project_id` | UUID or string | Gateway project UUID or unique display name (same as existing SBOM route via `resolve_project`) | Yes |
 | `scan_id` | UUID | Specific scan (default: latest completed) | No |
 | `include` | query string | `vulnerabilities`, `vex` (comma-separated) | No |
 | Scan manifest | internal | Collections, Python packages, dependency tree (ADR-040) | Yes |
@@ -182,7 +189,7 @@ alongside content violations.
 | No Gateway / daemon-only mode | `apme sbom` documents Gateway requirement (existing); inline `R200` + CWE via SARIF still available via `apme check` |
 | Dep Audit disabled (`--skip-python-audit`) | SBOM inventory still generated; Python CVE from lazy OSV enrichment when `--vulns` requested |
 | Galaxy collection PURL | Listed in SBOM; `apme:advisory_status=not_applicable` (no collection CVE feed) |
-| OSV API unreachable | Enrichment skipped; SBOM inventory + pip-audit findings still exported; log warning |
+| OSV API unreachable | Set `apme:advisory_status=error` on affected eligible components; SBOM inventory + pip-audit findings still exported; log warning (no 503) |
 | Air-gapped deployment | OSV mirror / pip-audit cache documented; enrichment uses configured cache endpoint |
 | Duplicate advisory from pip-audit and OSV | Dedupe by `(purl, advisory_id)`; prefer pip-audit fields when both present |
 | OSV advisory without CVE alias (GHSA/PYSEC only) | Persist with `advisory_id` = OSV/GHSA/PYSEC id; `cve_id` null; include in SBOM |
@@ -266,4 +273,4 @@ alongside content violations.
 | 2026-09-21 | Agent | Initial draft from supply chain architecture discussion |
 | 2026-09-21 | Agent | Align with ADR-071: lazy enrichment, engine CWE catalog, VEX analysis, honest collection CVE scope |
 | 2026-09-21 | Agent | Collection CVE: Option A — defer indefinitely |
-| 2026-09-21 | Agent | PR #689 review: advisory_id model, audit coverage, eligibility filtering, ADR-072 renumber |
+| 2026-09-21 | Agent | PR #689 round 3: advisory status lifecycle, project_id display name, OSV unreachable error status |
