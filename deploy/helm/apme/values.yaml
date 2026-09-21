@@ -10,10 +10,10 @@ image:
   registry: quay.io/ansible
   # -- Image tag for all APME containers.
   # Pinned default shipped with this chart (must match Chart.yaml
-  # appVersion). Corresponds to GitHub release v2026.9.2; Quay/GHCR
+  # appVersion). Corresponds to GitHub release v2026.9.3; Quay/GHCR
   # release tags omit the leading "v". Override with a SHA tag
   # (e.g. "sha-b7d1683") for unreleased builds.
-  tag: "2026.9.2"
+  tag: "2026.9.3"
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []
@@ -201,9 +201,8 @@ ui:
 abbenay:
   enabled: false
   # Daemon image (CalVer with v prefix). Independent of APME image.tag.
-  # The default APME 2026.9.2 image predates this client refresh; use an
-  # APME image built from this change (via image.tag) until the next release
-  # publishes an image containing abbenay-client==2026.8.9.
+  # Engine source pins abbenay-client==2026.8.9; published :2026.9.3 engine
+  # images ship a matching client that speaks unix:// to this daemon.
   image: ghcr.io/redhat-developer/abbenay:v2026.8.9
   # -- Token APME uses to authenticate with Abbenay (required when enabled)
   token: ""

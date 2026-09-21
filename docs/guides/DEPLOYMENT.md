@@ -586,7 +586,7 @@ kubectl create secret generic openrouter-credentials \
 printf '%s' "$APME_ABBENAY_TOKEN" > "$abbenay_token_file"
 helm install apme ./deploy/helm/apme/ \
   --namespace apme --create-namespace \
-  --set image.tag=2026.9.2 \
+  --set image.tag=2026.9.3 \
   --set abbenay.enabled=true \
   --set-file abbenay.token="$abbenay_token_file" \
   --set-json 'abbenay.providers={"openrouter":{"engine":"openrouter","apiKeySecret":{"name":"openrouter-credentials","key":"api-key"},"models":{"anthropic/claude-sonnet-4-6":{}}}}'
@@ -609,7 +609,7 @@ SHA or release tag (and Quay only when that publish included Quay credentials).
 
 | Value | Description |
 |-------|-------------|
-| `image.tag` | Image tag (default `2026.9.2` / `Chart.appVersion`; override with SHA like `sha-b7d1683`) |
+| `image.tag` | Image tag (default `2026.9.3` / `Chart.appVersion`; override with SHA like `sha-b7d1683`) |
 | `engine.replicas` | Engine pod replicas (default: 1) |
 | `abbenay.enabled` | Enable AI provider (default: false) |
 | `abbenay.token` | Abbenay service token (required when `abbenay.enabled=true`) |
