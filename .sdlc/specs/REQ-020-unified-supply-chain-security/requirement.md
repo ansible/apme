@@ -119,10 +119,14 @@ alongside content violations.
 
 ### AC-6: VEX from suppressions
 
-- **GIVEN** an active suppression (ADR-055) for a dependency CVE finding
+- **GIVEN** an active suppression (ADR-055) for a dependency advisory finding keyed by
+  `(affected_purl, advisory_id)` with structured `vex_state` / `vex_justification`
+  (and `evidence` when required per contract mapping table)
 - **WHEN** SBOM is requested with `?include=vex` (implies `include=vulnerabilities`; Phase 4)
-- **THEN** suppressed CVEs appear in `vulnerabilities[]` with CycloneDX
-  `analysis.state` / `justification` / `detail` derived from suppression metadata
+- **THEN** suppressed advisories appear in `vulnerabilities[]` with CycloneDX
+  `analysis.state` / `justification` / `detail` derived from the structured fields
+- **AND** free-form `reason` alone does not produce `not_affected` or non-exploitability
+  justifications
 - **AND** no separate sibling VEX document is required in v1
 
 ### AC-7: Supply chain summary API
@@ -131,7 +135,8 @@ alongside content violations.
 - **WHEN** a consumer requests `GET /api/v1/projects/{id}/supply-chain`
 - **THEN** the response summarizes component counts, CVE counts by severity, CWE
   categories present, and last enrichment timestamp (null if enrichment has not run)
-- **AND** the response references the SBOM endpoint for full CycloneDX export
+- **AND** the response references the SBOM endpoint for full CycloneDX export, including
+  the summarized `scan_id` in `sbom_url`
 
 ### AC-8: REST API versioning
 
@@ -274,3 +279,4 @@ alongside content violations.
 | 2026-09-21 | Agent | Align with ADR-071: lazy enrichment, engine CWE catalog, VEX analysis, honest collection CVE scope |
 | 2026-09-21 | Agent | Collection CVE: Option A — defer indefinitely |
 | 2026-09-21 | Agent | PR #689 round 3: advisory status lifecycle, project_id display name, OSV unreachable error status |
+| 2026-09-21 | Agent | PR #689 round 4: VEX suppression mapping, sbom_url scan_id binding, advisory identity rules |

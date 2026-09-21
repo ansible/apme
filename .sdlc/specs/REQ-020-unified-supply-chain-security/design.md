@@ -169,7 +169,7 @@ export.
 
 | Task | Description |
 |------|-------------|
-| VEX via `vulnerabilities[].analysis` (CVE-keyed suppressions) | sbom.py |
+| VEX via `vulnerabilities[].analysis` (advisory_id-keyed suppressions) | sbom.py |
 | Roles/modules in SBOM when ADR-044 manifest fields land | sbom.py |
 
 Collection CVE feed is out of scope (ADR-072 Option A). Revisit only via a new ADR.

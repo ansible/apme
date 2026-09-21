@@ -60,9 +60,31 @@ Example vulnerability entry (normative shape):
 ```
 
 **With `include=vex`**: implies `include=vulnerabilities`. For suppressed dependency
-CVEs keyed by `(affected_purl, cve_id)` (Phase 4; ADR-055 fingerprints alone are
+advisories keyed by `(affected_purl, advisory_id)` (Phase 4; ADR-055 fingerprints alone are
 insufficient for `R200`), include matching entries in `vulnerabilities[]` with CycloneDX
-`analysis` (v1 — no sibling VEX document):
+`analysis` (v1 — no sibling VEX document).
+
+Suppression records for VEX export MUST include structured CycloneDX fields in addition to
+the ADR-055 fingerprint. Free-form `reason` text alone MUST NOT map to
+`analysis.state=not_affected` or any `justification` implying non-exploitability.
+
+| Suppression `vex_state` | Required `vex_justification` | `evidence` required | CycloneDX output |
+|---------------------------|------------------------------|---------------------|------------------|
+| `false_positive` | _(omit)_ | No | `state=false_positive` |
+| `not_affected` | `code_not_present` | No | `state=not_affected`, `justification=code_not_present` |
+| `not_affected` | `requires_configuration` | Yes | `state=not_affected`, `justification=requires_configuration` |
+| `not_affected` | `requires_dependency` | Yes | `state=not_affected`, `justification=requires_dependency` |
+| `not_affected` | `requires_environment` | Yes | `state=not_affected`, `justification=requires_environment` |
+| `not_affected` | `code_not_reachable` | Yes | `state=not_affected`, `justification=code_not_reachable` |
+| `not_affected` | `protected_by_mitigating_control` | Yes | `state=not_affected`, `justification=protected_by_mitigating_control` |
+| `resolved` | _(omit)_ | No | `state=resolved` |
+
+When `evidence` is required, the suppression record MUST include a non-empty `evidence`
+field; Gateway concatenates `reason` and `evidence` into `analysis.detail`. Suppressions
+missing required `vex_state`, `vex_justification`, or `evidence` are ignored for VEX export
+(the vulnerability appears without `analysis`).
+
+Example vulnerability entry with VEX analysis (normative shape):
 
 ```json
 {
@@ -71,13 +93,13 @@ insufficient for `R200`), include matching entries in `vulnerabilities[]` with C
   "analysis": {
     "state": "not_affected",
     "justification": "code_not_reachable",
-    "detail": "Suppressed via ADR-055 fingerprint; reason from suppression metadata"
+    "detail": "Accepted risk: template path not used in production. Evidence: jinja2 only referenced in dev inventory group vars."
   }
 }
 ```
 
-Exact `state` / `justification` enum mapping from suppression metadata is defined in the
-implementation TASK; values must be valid CycloneDX 1.5 analysis enums.
+`id` uses canonical `advisory_id` (see Advisory identity below). All `state` and
+`justification` values MUST be valid CycloneDX 1.5 analysis enums.
 
 ### `GET /projects/{project_id}/supply-chain` (new)
 
@@ -106,9 +128,12 @@ Summary posture for dashboards and CI gates.
   "weaknesses": [
     { "cwe_id": 798, "name": "Use of Hard-coded Credentials", "occurrence_count": 2 }
   ],
-  "sbom_url": "/api/v1/projects/{project_id}/sbom?include=vulnerabilities,vex"
+  "sbom_url": "/api/v1/projects/{project_id}/sbom?scan_id={scan_id}&include=vulnerabilities,vex"
 }
 ```
+
+`sbom_url` MUST include the response `scan_id` so the linked SBOM matches the summarized
+scan even if a newer scan completes before the link is followed.
 
 `enriched_at` is `null` until lazy enrichment has run at least once for that scan.
 
@@ -151,6 +176,25 @@ from `src/apme_engine/data/rule_cwe_map.yaml` when the rule is mapped.
 | `affected_purl` | `pkg:pypi/jinja2@3.1.2` | Dep Audit |
 | `dep_fix_versions` | `3.1.3,3.1.4` | pip-audit |
 | `cwe_ids` | `798,1336` | engine rule map or OSV |
+
+### Advisory identity
+
+Normative rules for correlating advisories across Dep Audit, OSV, CycloneDX, and VEX:
+
+1. **Canonical key**: `advisory_id` is the deduplication key for persistence,
+   CycloneDX `vulnerabilities[].id`, and VEX matching `(affected_purl, advisory_id)`.
+2. **Alias precedence**: When a CVE alias exists, `advisory_id` = `CVE-*`. Otherwise
+   `advisory_id` = the OSV ecosystem id (`PYSEC-*`, `GHSA-*`, or OSV id). Store all
+   known aliases in `cve_id` and `osv_id` when present.
+3. **Alias normalization**: When pip-audit and OSV report the same advisory under
+   different identifiers, merge to one row keyed by canonical `advisory_id`; prefer
+   pip-audit field values when both sources agree.
+4. **PYSEC-only advisories**: `advisory_id` = `PYSEC-*` (or GHSA/OSV id), `cve_id`
+   = null. VEX suppressions MUST key on `(affected_purl, advisory_id)` so PYSEC-only
+   advisories remain matchable without a CVE alias.
+5. **CycloneDX `source`**: When `osv_id` is present, `source.name` = `"OSV"` and
+   `source.url` references the OSV record; when only CVE is known, `source.name` may
+   be `"NVD"` or the originating scanner.
 
 ## SARIF (CLI `apme check --sarif`)
 
