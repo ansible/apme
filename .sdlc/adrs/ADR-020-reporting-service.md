@@ -18,7 +18,7 @@ Two architectural observations shape this decision:
 
 1. **Persistence is a presentation concern, not an engine concern.** The engine's job is scanning. The dashboard's job is storing and displaying trends. These are different responsibilities owned by different services.
 
-2. **APME scales by running multiple engine pods (ADR-012).** Each pod has its own isolated filesystem. Embedded storage (SQLite, local files) in the engine pod cannot serve a shared dashboard — there is no single source of truth. Persistence must live in a service that aggregates results from all engine pods.
+2. **APME scales by running multiple engine pods (ADR-012).** Each pod has its own isolated filesystem. Embedded storage (local files) in the engine pod cannot serve a shared dashboard — there is no single source of truth. Persistence must live in a service that aggregates results from all engine pods.
 
 ## Options Considered
 
@@ -136,8 +136,8 @@ The reporting service chooses its own persistence technology. Candidates to eval
 
 | Option | Strengths | Considerations |
 |--------|-----------|----------------|
-| PostgreSQL | Battle-tested, concurrent writes, rich query language | Adds infrastructure; justified if multi-user dashboard access is needed |
-| SQLite + Alembic | Zero-infrastructure, proven migration tooling | Single-writer; may suffice if only one reporting pod runs |
+| PostgreSQL | Battle-tested, concurrent writes, rich query language | Requires a PostgreSQL server (sidecar in Podman; external in bootc/Helm) |
+| PostgreSQL + Alembic | Proven schema migration tooling | Same server requirement; single-writer per Gateway instance in Simple topology |
 | DuckDB | Columnar, excellent for analytics/dashboards, embedded | Newer ecosystem |
 
 ### 4. Type safety and governance

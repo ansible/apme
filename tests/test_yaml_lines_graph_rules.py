@@ -369,6 +369,110 @@ class TestL098YamlKeyDuplicatesGraphRule:
         assert result is not None
         assert result.verdict is False
 
+    def test_pass_repeated_keys_in_sequence_items(self, rule: YamlKeyDuplicatesGraphRule) -> None:
+        """Repeated keys in separate list mappings are not duplicates.
+
+        Args:
+            rule: Rule instance under test.
+
+        Returns:
+            None.
+        """
+        g, tid = _make_task(yaml_lines=("loop:\n  - key: first\n    value: one\n  - key: second\n    value: two\n"))
+        result = rule.process(g, tid)
+        assert result is not None
+        assert result.verdict is False
+
+    def test_violation_repeated_key_in_same_sequence_item(self, rule: YamlKeyDuplicatesGraphRule) -> None:
+        """Repeated keys within one list mapping remain violations.
+
+        Args:
+            rule: Rule instance under test.
+
+        Returns:
+            None.
+        """
+        g, tid = _make_task(yaml_lines=("loop:\n  - key: first\n    value: one\n    value: two\n"))
+        result = rule.process(g, tid)
+        assert result is not None
+        assert result.verdict is True
+        assert result.detail is not None
+        assert "value" in str(result.detail.get("duplicates", []))
+
+    def test_violation_repeated_key_in_inline_sequence_mapping(self, rule: YamlKeyDuplicatesGraphRule) -> None:
+        """Repeated keys in inline and nested sequence mappings remain violations.
+
+        Args:
+            rule: Rule instance under test.
+
+        Returns:
+            None.
+        """
+        g, tid = _make_task(yaml_lines="- key: first\n  key: second\n")
+        result = rule.process(g, tid)
+        assert result is not None
+        assert result.verdict is True
+        assert result.detail is not None
+        assert "key" in str(result.detail.get("duplicates", []))
+
+    def test_pass_repeated_keys_in_expanded_sequence_items(self, rule: YamlKeyDuplicatesGraphRule) -> None:
+        """Repeated keys in expanded list mappings are not duplicates.
+
+        Args:
+            rule: Rule instance under test.
+
+        Returns:
+            None.
+        """
+        g, tid = _make_task(yaml_lines=("loop:\n  -\n    key: first\n  -\n    key: second\n"))
+        result = rule.process(g, tid)
+        assert result is not None
+        assert result.verdict is False
+
+    def test_pass_key_starting_with_hyphen(self, rule: YamlKeyDuplicatesGraphRule) -> None:
+        """A mapping key beginning with a hyphen is not a sequence item.
+
+        Args:
+            rule: Rule instance under test.
+
+        Returns:
+            None.
+        """
+        g, tid = _make_task(yaml_lines="-foo: first\nfoo: second\n")
+        result = rule.process(g, tid)
+        assert result is not None
+        assert result.verdict is False
+
+    def test_violation_duplicate_key_after_indentless_sequence(self, rule: YamlKeyDuplicatesGraphRule) -> None:
+        """Duplicate keys after an indentless sequence item are still violations.
+
+        Args:
+            rule: Rule instance under test.
+
+        Returns:
+            None.
+        """
+        g, tid = _make_task(yaml_lines="key: first\nitems:\n- value\nkey: second\n")
+        result = rule.process(g, tid)
+        assert result is not None
+        assert result.verdict is True
+        assert result.detail is not None
+        assert "key" in str(result.detail.get("duplicates", []))
+
+    def test_pass_repeated_keys_in_sibling_sequences(self, rule: YamlKeyDuplicatesGraphRule) -> None:
+        """Repeated keys in sibling sequences at the same indent are not duplicates.
+
+        Args:
+            rule: Rule instance under test.
+
+        Returns:
+            None.
+        """
+        g, tid = _make_task(yaml_lines="a:\n- key: first\nb:\n- key: second\n")
+        result = rule.process(g, tid)
+        assert result is not None
+        assert result.verdict is False
+
 
 # ---------------------------------------------------------------------------
 # L099 — YamlQuotedStrings

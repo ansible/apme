@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from sqlalchemy import select
 
-from apme.v1 import common_pb2, reporting_pb2
+from apme.v1 import common_pb2, engine_pb2, reporting_pb2
 from apme_gateway.db import get_session
 from apme_gateway.db import queries as q
-from apme_gateway.grpc_reporting.servicer import ReportingServicer
+from apme_gateway.db.models import Notification, Project, Scan, Session
+from apme_gateway.grpc_reporting.servicer import ReportingServicer, drain_notification_tasks
 
 pytestmark = pytest.mark.usefixtures("gateway_db")
 
@@ -240,3 +242,212 @@ async def test_report_fix_with_summary() -> None:
     assert scan.auto_fixable == 3
     assert scan.ai_candidate == 4
     assert scan.manual_review == 3
+
+
+async def test_report_fix_creates_scan_complete_notification() -> None:
+    """Successful persistence also writes a scan_complete notification."""
+    servicer = ReportingServicer()
+    event = reporting_pb2.FixCompletedEvent(
+        scan_id="scan-notif",
+        session_id="sess-notif",
+        project_path="/proj",
+        source="cli",
+        summary=common_pb2.ScanSummary(total=4, auto_fixable=1, ai_candidate=1, manual_review=2),
+        report=engine_pb2.FixReport(fixed=4),
+    )
+    ctx = _mock_context()
+    await servicer.ReportFixCompleted(event, ctx)
+    await drain_notification_tasks()
+
+    async with get_session() as db:
+        rows = list(
+            (await db.execute(select(Notification).where(Notification.scan_id == "scan-notif"))).scalars().all()
+        )
+    assert len(rows) == 1
+    assert rows[0].type == "scan_complete"
+    assert "4 findings resolved" in rows[0].message
+    ctx.abort.assert_not_awaited()
+
+
+async def test_report_fix_notification_uses_project_name() -> None:
+    """Stub scans with a project FK resolve the display name by project id."""
+    async with get_session() as db:
+        db.add(
+            Project(
+                id="proj-ui",
+                name="Playground App",
+                repo_url="https://github.com/test/playground.git",
+                branch="main",
+                created_at="2026-09-04T00:00:00Z",
+                health_score=50,
+            )
+        )
+        db.add(
+            Session(
+                session_id="sess-ui",
+                project_path="/tmp/playground",
+                first_seen="t0",
+                last_seen="t1",
+            )
+        )
+        db.add(
+            Scan(
+                scan_id="scan-ui",
+                session_id="sess-ui",
+                project_id="proj-ui",
+                project_path="/tmp/playground",
+                source="gateway",
+                trigger="ui",
+                created_at="2026-09-04T00:00:00Z",
+                scan_type="remediate",
+                total_violations=0,
+            )
+        )
+        await db.commit()
+
+    servicer = ReportingServicer()
+    event = reporting_pb2.FixCompletedEvent(
+        scan_id="scan-ui",
+        session_id="sess-ui",
+        project_path="/tmp/playground",
+        source="gateway",
+        summary=common_pb2.ScanSummary(total=3, auto_fixable=1, ai_candidate=1, manual_review=1),
+        report=engine_pb2.FixReport(fixed=2),
+    )
+    ctx = _mock_context()
+    await servicer.ReportFixCompleted(event, ctx)
+    await drain_notification_tasks()
+
+    async with get_session() as db:
+        rows = list((await db.execute(select(Notification).where(Notification.scan_id == "scan-ui"))).scalars().all())
+        scan = await q.get_scan(db, "scan-ui")
+    assert len(rows) == 1
+    assert "Playground App" in rows[0].message
+    assert rows[0].title == "Remediation Complete"
+    assert rows[0].project_id == "proj-ui"
+    assert scan is not None
+    ctx.abort.assert_not_awaited()
+
+
+async def test_report_fix_notification_session_failure_does_not_abort() -> None:
+    """Opening the notification session must not be reported as persistence failure."""
+    servicer = ReportingServicer()
+    event = reporting_pb2.FixCompletedEvent(
+        scan_id="scan-sess-fail",
+        session_id="sess-sess-fail",
+        project_path="/proj",
+        source="cli",
+    )
+    ctx = _mock_context()
+    real_get_session = get_session
+    persist_calls = 0
+
+    def _flaky_session() -> object:
+        nonlocal persist_calls
+        persist_calls += 1
+        if persist_calls == 1:
+            return real_get_session()
+        msg = "notification session unavailable"
+        raise RuntimeError(msg)
+
+    with patch("apme_gateway.grpc_reporting.servicer.get_session", side_effect=_flaky_session):
+        result = await servicer.ReportFixCompleted(event, ctx)
+        await drain_notification_tasks()
+
+    assert isinstance(result, reporting_pb2.ReportAck)
+    ctx.abort.assert_not_awaited()
+    async with get_session() as db:
+        scan = await q.get_scan(db, "scan-sess-fail")
+    assert scan is not None
+
+
+async def test_report_fix_notification_failure_does_not_abort() -> None:
+    """Notification errors must not be reported as persistence failures."""
+    servicer = ReportingServicer()
+    event = reporting_pb2.FixCompletedEvent(
+        scan_id="scan-notif-fail",
+        session_id="sess-notif-fail",
+        project_path="/proj",
+        source="cli",
+    )
+    ctx = _mock_context()
+    with patch(
+        "apme_gateway.notifications.generate_notifications",
+        side_effect=RuntimeError("simulated notification failure"),
+    ):
+        result = await servicer.ReportFixCompleted(event, ctx)
+        await drain_notification_tasks()
+
+    assert isinstance(result, reporting_pb2.ReportAck)
+    ctx.abort.assert_not_awaited()
+    async with get_session() as db:
+        scan = await q.get_scan(db, "scan-notif-fail")
+    assert scan is not None
+
+
+async def test_notification_uses_persisted_violations_after_replay() -> None:
+    """Deferred notifications follow the latest committed violations, not a stale request.
+
+    An earlier ReportFixCompleted with SEC:* can leave a scheduled task pending while
+    a replay commits a non-SEC set. Generation must query the DB so it does not emit
+    a false secrets_detected notification.
+    """
+    from apme_gateway.db.models import Violation as ViolationModel
+    from apme_gateway.grpc_reporting.servicer import _generate_scan_notifications
+
+    servicer = ReportingServicer()
+    sec = common_pb2.Violation(
+        rule_id="SEC:aws-access-key",
+        severity=common_pb2.SEVERITY_CRITICAL,
+        message="secret",
+        file="creds.yml",
+        line=1,
+    )
+    lint = common_pb2.Violation(
+        rule_id="L001",
+        severity=common_pb2.SEVERITY_ERROR,
+        message="bad task",
+        file="a.yml",
+        line=10,
+    )
+    ctx = _mock_context()
+    with patch("apme_gateway.grpc_reporting.servicer._schedule_scan_notifications"):
+        await servicer.ReportFixCompleted(
+            reporting_pb2.FixCompletedEvent(
+                scan_id="scan-replay-sec",
+                session_id="sess-replay-sec",
+                project_path="/proj",
+                source="cli",
+                remaining_violations=[sec],
+                summary=common_pb2.ScanSummary(total=1, auto_fixable=0, ai_candidate=0, manual_review=1),
+            ),
+            ctx,
+        )
+        await servicer.ReportFixCompleted(
+            reporting_pb2.FixCompletedEvent(
+                scan_id="scan-replay-sec",
+                session_id="sess-replay-sec",
+                project_path="/proj",
+                source="cli",
+                remaining_violations=[lint],
+                summary=common_pb2.ScanSummary(total=1, auto_fixable=1, ai_candidate=0, manual_review=0),
+            ),
+            ctx,
+        )
+
+    async with get_session() as db:
+        await _generate_scan_notifications(db, "scan-replay-sec")
+
+    async with get_session() as db:
+        rows = list(
+            (await db.execute(select(Notification).where(Notification.scan_id == "scan-replay-sec"))).scalars().all()
+        )
+        violations = list(
+            (await db.execute(select(ViolationModel).where(ViolationModel.scan_id == "scan-replay-sec")))
+            .scalars()
+            .all()
+        )
+
+    assert [v.rule_id for v in violations] == ["L001"]
+    assert {r.type for r in rows} == {"scan_complete"}
+    ctx.abort.assert_not_awaited()

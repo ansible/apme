@@ -18,8 +18,27 @@ import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlsplit
 
 logger = logging.getLogger(__name__)
+
+
+def _safe_server_label(raw_url: str) -> str:
+    """Return an upstream server label without credentials or URL details.
+
+    Args:
+        raw_url: Upstream server URL.
+
+    Returns:
+        Host and port label suitable for operational logs.
+    """
+    parsed = urlsplit(raw_url)
+    if not parsed.hostname:
+        return "unknown"
+    try:
+        return f"{parsed.hostname}:{parsed.port}" if parsed.port else parsed.hostname
+    except ValueError:
+        return "unknown"
 
 
 @dataclass
@@ -240,6 +259,11 @@ async def download_collections(
     download_dir.mkdir(parents=True, exist_ok=True)
 
     galaxy_bin = ansible_galaxy_bin or _default_ansible_galaxy_bin()
+    logger.info(
+        "galaxy_backend_call operation=download servers=%s collections=%s",
+        ",".join(f"{server.name}@{_safe_server_label(server.url)}" for server in servers or []),
+        ",".join(collection_specs),
+    )
 
     normalized_specs = []
     for spec in collection_specs:
@@ -308,9 +332,8 @@ async def download_collections(
 
         if process.returncode != 0:
             logger.warning(
-                "ansible-galaxy collection download failed (rc=%d): %s",
+                "ansible-galaxy collection download failed (rc=%d)",
                 process.returncode,
-                stderr_text or stdout_text,
             )
             failed = _compute_failed_specs(collection_specs, tarballs)
             return DownloadResult(
@@ -319,11 +342,7 @@ async def download_collections(
                 stderr=stderr_text or stdout_text,
             )
 
-        logger.info(
-            "Downloaded %d tarball(s) for %d collection(s)",
-            len(tarballs),
-            len(collection_specs),
-        )
+        logger.info("galaxy_backend_response operation=download status=200 tarballs=%d", len(tarballs))
         status = "ok"
         return DownloadResult(tarball_paths=tarballs, stderr=stderr_text)
 
@@ -350,6 +369,14 @@ async def download_collections(
             stderr=f"ansible-galaxy binary not found: {galaxy_bin}",
         )
     finally:
+        logger.info(
+            "galaxy_download_result collections=%d tarballs=%d status=%s duration_ms=%.1f size_bytes=%d",
+            len(collection_specs),
+            len(_find_tarballs(download_dir)),
+            status,
+            (time.perf_counter() - started) * 1000,
+            sum(path.stat().st_size for path in _find_tarballs(download_dir) if path.is_file()),
+        )
         if temp_cfg_dir is not None:
             shutil.rmtree(temp_cfg_dir, ignore_errors=True)
         try:

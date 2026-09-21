@@ -38,11 +38,17 @@ convention — there is no service discovery, no message queue.
 │  └──────────────────────────────────────────┘                         │
 │                                                                       │
 │  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐     │
-│  │ Gateway :8080    │  │ UI :8081 (nginx) │  │ Abbenay :50057   │     │
-│  │ REST API +       │◄─┤ React SPA        │  │ AI inference     │     │
-│  │ gRPC Reporting   │  │ /api/ → Gateway  │  │ gateway          │     │
-│  │ :50060 (SQLite)  │  │                  │  │ (optional)       │     │
+│  │ PostgreSQL :5432 │  │ Gateway :8080    │  │ UI :8081 (nginx) │     │
+│  │ sidecar          │──►│ REST API +       │◄─┤ React SPA        │     │
+│  │ postgres-data vol│  │ gRPC Reporting   │  │ /api/ → Gateway  │     │
+│  │                  │  │ :50060           │  │                  │     │
 │  └──────────────────┘  └──────────────────┘  └──────────────────┘     │
+│  ┌──────────────────┐                                                   │
+│  │ Abbenay :50057   │                                                   │
+│  │ AI inference     │                                                   │
+│  │ gateway          │                                                   │
+│  │ (optional)       │                                                   │
+│  └──────────────────┘                                                   │
 └───────────────────────────────────────────────────────────────────────┘
 
      ┌──────────┐
@@ -177,7 +183,7 @@ network.
 | `apme-collection-health` | Python 3.12 UBI10 | Collection health validator server |
 | `apme-dep-audit` | Python 3.12 UBI10 + pip-audit | Python CVE scanner server |
 | `apme-galaxy-proxy` | Python 3.12 UBI10 | PEP 503 proxy server |
-| `apme-gateway` | Python 3.12 UBI10 | FastAPI + gRPC Reporting + SQLite |
+| `apme-gateway` | Python 3.12 UBI10 | FastAPI + gRPC Reporting |
 | `apme-ui` | nginx UBI10 | React SPA static files |
 | `apme-abbenay` | Python 3.12 slim | AI inference gateway (external image) |
 | `apme-cli` | Python 3.12 UBI10 | CLI tools only |

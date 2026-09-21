@@ -487,3 +487,48 @@ async def test_fetch_remote_head_cache_separates_auth_and_unauth() -> None:
         # Should make a new request, not return cached unauthenticated result
         assert sha2 == fake_sha_auth
         assert mock_run.call_count == 2
+
+
+@pytest.mark.asyncio  # type: ignore[untyped-decorator]
+async def test_fetch_remote_head_rejects_invalid_branch() -> None:
+    """Invalid branch names resolve to None without spawning git."""
+    _REMOTE_HEAD_CACHE.clear()
+    with patch("apme_gateway.scan.driver.subprocess.run") as mock_run:
+        assert await fetch_remote_head("https://github.com/o/r.git", "../escape") is None
+    mock_run.assert_not_called()
+
+
+@pytest.mark.asyncio  # type: ignore[untyped-decorator]
+async def test_clone_repo_rejects_traversal_branch() -> None:
+    """clone_repo validates branch names with the shared validator."""
+    with tempfile.TemporaryDirectory() as td, pytest.raises(ValueError, match="Invalid branch name"):
+        await clone_repo("https://github.com/o/r.git", "a/b/../../c", td + "/repo")
+
+
+@pytest.mark.asyncio  # type: ignore[untyped-decorator]
+async def test_clone_repo_branch_error_surfaces_rule_reason() -> None:
+    """Branch validation errors keep the ref-rule reason via message and cause."""
+    with tempfile.TemporaryDirectory() as td, pytest.raises(ValueError) as exc_info:
+        await clone_repo("https://github.com/o/r.git", "a/b/../../c", td + "/repo")
+    assert "Invalid branch name" in str(exc_info.value)
+    assert ".." in str(exc_info.value)
+    assert isinstance(exc_info.value.__cause__, ValueError)
+
+
+@pytest.mark.asyncio  # type: ignore[untyped-decorator]
+async def test_fetch_remote_head_rejects_none_branch() -> None:
+    """None branch returns None without spawning git or querying refs/heads/None."""
+    _REMOTE_HEAD_CACHE.clear()
+    with patch("apme_gateway.scan.driver.subprocess.run") as mock_run:
+        assert await fetch_remote_head("https://github.com/o/r.git", None) is None  # type: ignore[arg-type]
+        assert await fetch_remote_head("https://github.com/o/r.git", 123) is None  # type: ignore[arg-type]
+    mock_run.assert_not_called()
+
+
+@pytest.mark.asyncio  # type: ignore[untyped-decorator]
+async def test_clone_repo_rejects_none_branch() -> None:
+    """None or non-str branch raises before the shared validator."""
+    with tempfile.TemporaryDirectory() as td, pytest.raises(ValueError, match="Invalid branch name"):
+        await clone_repo("https://github.com/o/r.git", None, td + "/repo")  # type: ignore[arg-type]
+    with tempfile.TemporaryDirectory() as td, pytest.raises(ValueError, match="Invalid branch name"):
+        await clone_repo("https://github.com/o/r.git", 123, td + "/repo")  # type: ignore[arg-type]

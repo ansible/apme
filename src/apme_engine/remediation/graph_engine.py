@@ -705,8 +705,15 @@ class GraphRemediationEngine:
         for idx, r in enumerate(results):
             if isinstance(r, BaseException):
                 failed_node_ids.add(node_id_list[idx])
-                logger.error(
-                    "AI proposal failed for %s",
+                # Soft providers (e.g. Abbenay) already log a clean warning and
+                # return None; this path covers unexpected provider raises.
+                logger.warning(
+                    "AI proposal failed for %s: %s",
+                    node_id_list[idx],
+                    r,
+                )
+                logger.debug(
+                    "AI proposal failed for %s (detail)",
                     node_id_list[idx],
                     exc_info=(type(r), r, r.__traceback__),
                 )

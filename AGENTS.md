@@ -38,7 +38,7 @@ one needs to change, write an ADR first.
 
 5. **Stateless engine, persistence at the edge** (ADR-020, ADR-029). The engine
    pod has zero database code. Persistence lives in the Gateway (SQLAlchemy +
-   SQLite). The `GrpcReportingSink` is best-effort and health-gated — the scan
+   PostgreSQL). The `GrpcReportingSink` is best-effort and health-gated — the scan
    path never blocks on reporting.
 
 6. **Scale pods, not individual services** (ADR-012). The engine runtime is a
@@ -277,7 +277,7 @@ one needs to change, write an ADR first.
 
 **Capabilities**:
 - FastAPI REST endpoints for scan management and reporting
-- SQLAlchemy + aiosqlite persistence
+- SQLAlchemy + asyncpg persistence
 - `ReportingServicer` (gRPC server for engine events, ADR-020)
 - React/PatternFly UI for project management and scan results
 

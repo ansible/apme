@@ -171,11 +171,31 @@ spec:
         - name: sessions
           mountPath: /sessions
           readOnly: true
+    - name: postgres
+      image: docker.io/library/postgres:16
+      env:
+        - name: POSTGRES_USER
+          value: "apme"
+        - name: POSTGRES_PASSWORD
+          value: "apme"
+        - name: POSTGRES_DB
+          value: "apme"
+      ports:
+        - containerPort: 5432
+      readinessProbe:
+        exec:
+          command: ["pg_isready", "-U", "apme", "-d", "apme"]
+        initialDelaySeconds: 2
+        periodSeconds: 2
+        failureThreshold: 30
+      volumeMounts:
+        - name: postgres-data
+          mountPath: /var/lib/postgresql/data
     - name: gateway
       image: apme-gateway:latest
       env:
-        - name: APME_DB_PATH
-          value: "/data/apme.db"
+        - name: APME_DATABASE_URL
+          value: "postgresql+asyncpg://apme:apme@127.0.0.1:5432/apme"
         - name: APME_GATEWAY_GRPC_LISTEN
           value: "0.0.0.0:50060"
         - name: APME_GATEWAY_HTTP_HOST
@@ -212,8 +232,6 @@ spec:
         - containerPort: 8080
           hostPort: 8080
       volumeMounts:
-        - name: gateway-data
-          mountPath: /data
         - name: abbenay-run
           mountPath: /tmp/abbenay-run
     - name: ui
@@ -222,7 +240,7 @@ spec:
         - containerPort: 8081
           hostPort: 8081
     - name: abbenay
-      image: ghcr.io/redhat-developer/abbenay:v2026.8.7
+      image: ghcr.io/redhat-developer/abbenay:v2026.8.9
       # Local Podman: publish HTTP admin UI on host :8787. gRPC stays loopback
       # (Unix socket for Engine). Operator deployment remains loopback-only (ADR-070).
       args:
@@ -239,6 +257,8 @@ spec:
         # Local dev only: skip Abbenay web UI login (HTTP :8787). Do not use on exposed hosts.
         - name: ABBENAY_HTTP_AUTH
           value: "0"
+        - name: ABBENAY_CORS_ORIGINS
+          value: "${ABBENAY_CORS_ORIGINS}"
         - name: OPENROUTER_API_KEY
           value: "${OPENROUTER_API_KEY}"
         - name: VERTEX_ANTHROPIC_API_KEY
@@ -265,6 +285,8 @@ spec:
     - name: galaxy-proxy
       image: apme-galaxy-proxy:latest
       env:
+        - name: LOG_LEVEL
+          value: "INFO"
         - name: OTEL_EXPORTER_OTLP_ENDPOINT
           value: "http://127.0.0.1:4318"
         - name: OTEL_SERVICE_NAME
@@ -292,9 +314,9 @@ spec:
           mountPath: /etc/otelcol/config.yaml
           readOnly: true
   volumes:
-    - name: gateway-data
+    - name: postgres-data
       persistentVolumeClaim:
-        claimName: apme-gateway-data
+        claimName: apme-postgres-data
     - name: sessions
       persistentVolumeClaim:
         claimName: apme-sessions

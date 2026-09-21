@@ -101,6 +101,7 @@ async def test_health(client: AsyncClient) -> None:
     body = resp.json()
     assert body["status"] == "ok"
     assert body["database"] == "ok"
+    assert body["database_type"] == "PostgreSQL"
 
 
 async def test_list_sessions_empty(client: AsyncClient) -> None:

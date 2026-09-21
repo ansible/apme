@@ -27,7 +27,7 @@ requests even when long-running work is in progress.
 | Gitleaks | Blocking gitleaks subprocess via `run_in_executor()` | 16 |
 | Collection Health | Blocking collection metadata scan via `run_in_executor()` | 4 |
 | Dep Audit | Blocking dependency audit via `run_in_executor()` | 8 |
-| Gateway | Fully async (aiosqlite, grpc.aio); FastAPI + uvicorn event loop | — |
+| Gateway | Fully async (asyncpg, grpc.aio); FastAPI + uvicorn event loop | — |
 
 Services with a documented numeric limit expose `maximum_concurrent_rpcs` via
 environment variable (e.g., `APME_ENGINE_MAX_RPCS=16`). The
@@ -117,7 +117,7 @@ The Gateway uses two async servers concurrently:
 - **HTTP** (FastAPI + uvicorn) — serves REST API and WebSocket endpoints
 
 Both share the same `asyncio` event loop via `asyncio.gather()` in the
-main entry point. Database access uses `aiosqlite` through SQLAlchemy's
+main entry point. Database access uses `asyncpg` through SQLAlchemy's
 async session — no blocking I/O on the event loop.
 
 WebSocket endpoints that bridge to Engine's `FixSession` use

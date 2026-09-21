@@ -2,11 +2,14 @@
 
 Engine pods push ``FixCompletedEvent`` messages to this servicer via gRPC
 (ADR-020 push model).  Each event is decomposed into ORM rows and committed
-in a single transaction.
+in a persistence transaction. Notification rows are scheduled afterwards as
+fire-and-forget background tasks (separate sessions) so notification latency
+and failures cannot delay or fail the RPC acknowledgement (ADR-029).
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from collections.abc import Sequence
@@ -43,6 +46,9 @@ from apme_gateway.proposals.grouping import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Strong refs so fire-and-forget notification tasks are not GC'd mid-flight.
+_pending_notification_tasks: set[asyncio.Task[None]] = set()
 
 
 def _now_iso() -> str:
@@ -83,6 +89,10 @@ class ReportingServicer(reporting_pb2_grpc.ReportingServicer):
         context: grpc.aio.ServicerContext,  # type: ignore[type-arg]
     ) -> reporting_pb2.ReportAck:
         """Persist a completed remediate (fix) event.
+
+        Scan rows are committed first. Notification generation is scheduled as
+        a fire-and-forget background task so this RPC returns immediately after
+        a successful persist (ADR-029).
 
         Args:
             request: The remediate completion event from an engine pod.
@@ -146,11 +156,13 @@ class ReportingServicer(reporting_pb2_grpc.ReportingServicer):
                 _add_manifest(db, request.scan_id, request.manifest)
                 _add_graph(db, request.scan_id, request.content_graph_json)
                 await db.commit()
-
-                await _generate_scan_notifications(db, scan, request)
         except Exception:
             logger.exception("Failed to persist remediate event %s", request.scan_id)
             await context.abort(grpc.StatusCode.INTERNAL, "Persistence failure")
+            return reporting_pb2.ReportAck()
+
+        # Acknowledge immediately; notifications run out-of-band.
+        _schedule_scan_notifications(request.scan_id)
         return reporting_pb2.ReportAck()
 
     async def RegisterRules(  # noqa: N802
@@ -571,21 +583,62 @@ def _add_graph(db: AsyncSession, scan_id: str, content_graph_json: str) -> None:
     )
 
 
+def _schedule_scan_notifications(scan_id: str) -> None:
+    """Schedule best-effort notification generation off the RPC critical path.
+
+    Opens its own session, logs failures, and never propagates to the caller.
+    Strong references keep the task alive until completion. Violations are
+    read from the database (not the gRPC request) so a deferred task always
+    sees the latest committed set after an idempotent replay.
+
+    Args:
+        scan_id: Persisted scan UUID to notify for.
+    """
+
+    async def _run() -> None:
+        try:
+            async with get_session() as db:
+                await _generate_scan_notifications(db, scan_id)
+        except Exception:
+            logger.warning(
+                "Notification generation failed for scan %s",
+                scan_id,
+                exc_info=True,
+            )
+
+    task = asyncio.create_task(_run(), name=f"scan-notifications-{scan_id}")
+    _pending_notification_tasks.add(task)
+    task.add_done_callback(_pending_notification_tasks.discard)
+
+
+async def drain_notification_tasks() -> None:
+    """Await outstanding notification tasks (test helper).
+
+    Returns:
+        None. Exceptions from tasks are swallowed (they are already logged).
+    """
+    pending = list(_pending_notification_tasks)
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+
+
 async def _generate_scan_notifications(
     db: AsyncSession,
-    scan: Scan,
-    request: reporting_pb2.FixCompletedEvent,
+    scan_id: str,
 ) -> None:
     """Create notifications from a persisted scan event (best-effort).
 
-    Builds lightweight Violation-like objects from the proto data for the
-    notification generator to inspect, then delegates to
-    :func:`apme_gateway.notifications.generate_notifications`.
+    Reloads the scan and its ``Violation`` rows by primary key so deferred
+    tasks reflect the latest committed set (not a stale gRPC request after
+    replay). Display names are resolved by ``generate_notifications`` via
+    ``Project`` lookup by id, never ``Scan.project`` lazy-load. Failures are
+    logged and never propagated to the RPC caller. An unattributed
+    ``scan_complete`` is replaced once the scan is linked to a project so
+    the operate path can correct title and display name.
 
     Args:
-        db: Active async database session.
-        scan: The committed Scan ORM row.
-        request: Original gRPC event (for violation proto access).
+        db: Active async database session (post-persistence).
+        scan_id: Persisted scan UUID.
     """
     try:
         from apme_gateway.notifications import (  # noqa: PLC0415
@@ -593,20 +646,18 @@ async def _generate_scan_notifications(
             generate_notifications,
         )
 
-        all_protos = list(request.remaining_violations) + list(request.fixed_violations)
-        stub_violations = [
-            Violation(
-                scan_id=scan.scan_id,
-                rule_id=v.rule_id,
-                level="",
-                message="",
-                file=v.file,
-            )
-            for v in all_protos
-        ]
-        payloads = await generate_notifications(db, scan, stub_violations)
+        scan = (await db.execute(sa_select(Scan).where(Scan.scan_id == scan_id))).scalar_one_or_none()
+        if scan is None:
+            logger.warning("Notification generation skipped: scan %s not found", scan_id)
+            return
+
+        violations = list((await db.execute(sa_select(Violation).where(Violation.scan_id == scan_id))).scalars().all())
+        payloads = await generate_notifications(db, scan, violations)
         await db.commit()
         broadcast_notifications(payloads)
     except Exception:
-        await db.rollback()
-        logger.warning("Notification generation failed for scan %s", scan.scan_id, exc_info=True)
+        try:
+            await db.rollback()
+        except Exception:
+            logger.debug("Rollback after notification failure also failed", exc_info=True)
+        logger.warning("Notification generation failed for scan %s", scan_id, exc_info=True)

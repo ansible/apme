@@ -147,6 +147,7 @@ export interface ComponentHealth {
 export interface HealthStatus {
   status: string;
   database: string;
+  database_type: string;
   components: ComponentHealth[];
 }
 

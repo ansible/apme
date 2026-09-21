@@ -6,6 +6,7 @@ import json
 import os
 import sys
 import types
+from collections.abc import AsyncIterator
 from pathlib import Path
 from unittest.mock import patch
 
@@ -14,9 +15,11 @@ import pytest
 from apme.v1.engine_pb2 import FixOptions
 from apme_engine.daemon.engine_server import EngineServicer
 from apme_engine.remediation.abbenay_provider import (
+    AbbenayProvider,
     _build_node_prompt,
     _build_validation_prompt,
     _extract_json_object,
+    _format_abbenay_error,
     _get_best_practices_for_rules,
     _load_ai_prompts,
     _load_best_practices,
@@ -524,3 +527,75 @@ class TestLoadAiPrompts:
             prompt = _build_node_prompt(ctx)
         assert "Rule-Specific Guidance" not in prompt
         _load_ai_prompts.cache_clear()
+
+
+# ---------------------------------------------------------------------------
+# Abbenay failure surfacing (no ERROR traceback spam)
+# ---------------------------------------------------------------------------
+
+
+class TestAbbenayFailureSurfacing:
+    """Abbenay transport/provider failures should log cleanly and soft-fail."""
+
+    def test_format_preserves_server_error_message(self) -> None:
+        """Upstream Abbenay INTERNAL errors keep their readable message."""
+        exc = RuntimeError(
+            "Server error [INTERNAL]: text part 8461dfbd-25e7-4f6f-aff4-795c35e148b0 not found",
+        )
+        assert _format_abbenay_error(exc).startswith("Server error [INTERNAL]:")
+
+    async def test_propose_node_fix_soft_fails_without_raising(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Chat failures return None with a warning, not a traceback ERROR.
+
+        Args:
+            caplog: Pytest log-capture fixture.
+        """
+
+        class _Client:
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                pass
+
+            async def connect(self) -> None:
+                return None
+
+            async def chat(self, **kwargs: object) -> AsyncIterator[object]:
+                raise RuntimeError(
+                    "Server error [INTERNAL]: text part abc-123 not found",
+                )
+                if False:  # pragma: no cover — mark as async generator
+                    yield None
+
+        stub = types.ModuleType("abbenay_grpc")
+        stub.AbbenayClient = _Client  # type: ignore[attr-defined]
+        ctx = AINodeContext(
+            node_id="playbook.yml/plays[0]/tasks[2]",
+            node_type="task",
+            file_path="playbook.yml",
+            yaml_lines="- name: bad\n  apt:\n    name: curl",
+            violations=[
+                {"rule_id": "L026", "message": "wrong module"},
+                {"rule_id": "M001", "message": "use FQCN"},
+            ],
+        )
+
+        with (
+            patch.dict(sys.modules, {"abbenay_grpc": stub}),
+            caplog.at_level("WARNING", logger="apme_engine.remediation.abbenay_provider"),
+        ):
+            provider = AbbenayProvider(
+                "unix:///tmp/abbenay-run/abbenay/daemon.sock",
+                model="openai/gpt-oss-120b",
+            )
+            result = await provider.propose_node_fix(ctx)
+
+        assert result is None
+        assert any(
+            "Could not get a valid AI response from Abbenay" in r.message
+            and "text part abc-123 not found" in r.message
+            and r.exc_info is None
+            for r in caplog.records
+        )
+        assert not any(r.levelname == "ERROR" for r in caplog.records)

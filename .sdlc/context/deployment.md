@@ -53,7 +53,7 @@ This builds eleven images:
 | `apme-collection-health:latest` | `containers/collection-health/Dockerfile` | Installed collection health scanner |
 | `apme-dep-audit:latest` | `containers/dep-audit/Dockerfile` | Python CVE scanner (pip-audit) |
 | `apme-galaxy-proxy:latest` | `containers/galaxy-proxy/Dockerfile` | PEP 503 proxy: Galaxy tarballs → Python wheels |
-| `apme-gateway:latest` | `containers/gateway/Dockerfile` | REST/gRPC gateway + SQLite persistence |
+| `apme-gateway:latest` | `containers/gateway/Dockerfile` | REST/gRPC gateway + PostgreSQL persistence |
 | `apme-ui:latest` | `containers/ui/Dockerfile` | React SPA dashboard (nginx) |
 | `apme-cli:latest` | `containers/cli/Dockerfile` | CLI client |
 
@@ -70,7 +70,7 @@ after that ADR; older release tags stay amd64-only until rebuilt. Local
 tox -e up
 ```
 
-This runs `podman play kube containers/podman/pod.yaml`, which starts the pod `apme-pod` with all service containers (Engine, Native, OPA, Ansible, Gitleaks, Collection Health, Dep Audit, Galaxy Proxy, Gateway, UI, Abbenay). A sessions directory and gateway data directory are created for session-scoped venvs and persistent activity data.
+This runs `podman play kube containers/podman/pod.yaml`, which starts the pod `apme-pod` with all service containers (Engine, Native, OPA, Ansible, Gitleaks, Collection Health, Dep Audit, Galaxy Proxy, PostgreSQL, Gateway, UI, Abbenay). A sessions directory is created for session-scoped venvs, and the Podman volume `apme-postgres-data` is provisioned for PostgreSQL persistence (`APME_DATABASE_URL` points at the in-pod sidecar).
 
 ### Run CLI Commands
 
@@ -91,7 +91,7 @@ The **`remediate`** command uses a **bidirectional streaming RPC** (`FixSession`
 
 ```bash
 tox -e down                             # stop pod only
-tox -e wipe                             # stop pod and delete DB, sessions, Abbenay secrets.json
+tox -e wipe                             # stop pod and delete apme-postgres-data, sessions, Abbenay secrets.json
 ```
 
 ### Health Check
@@ -182,7 +182,7 @@ app passwords may be stored as `username:app_password` in the SCM token field.
 | Name | Host Path | Container Mount | Services | Access |
 |------|-----------|-----------------|----------|--------|
 | `sessions` | `$CACHE/sessions` | `/sessions` | Engine, Ansible | rw (engine), ro (ansible) |
-| `gateway-data` | `$CACHE/gateway` | `/data` | Gateway | rw |
+| `postgres-data` | Podman volume `apme-postgres-data` | `/var/lib/postgresql/data` | PostgreSQL | rw |
 | `proxy-cache` | `$CACHE/proxy` | `/cache` | Galaxy Proxy | rw |
 | `workspace` | CWD (CLI only) | `/workspace` | CLI | rw |
 | `abbenay-run` | emptyDir | `/tmp/abbenay-run` | Engine, Gateway, Abbenay | rw |
@@ -281,7 +281,7 @@ See `PODMAN_OPA_ISSUES.md` for common Podman rootless issues:
 tox -e up                               # build + start
 tox -e cli                              # run a scan (check .)
 tox -e down                             # stop
-tox -e wipe                             # stop + wipe DB/sessions/Abbenay secrets.json
+tox -e wipe                             # stop + wipe apme-postgres-data/sessions/Abbenay secrets.json
 ```
 
 ### Port Map

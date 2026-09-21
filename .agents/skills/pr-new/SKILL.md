@@ -214,6 +214,12 @@ artifact type, translate it:
    consumer has moved on? What happens when `asyncio.gather()`
    returns a mix of results and exceptions — does every caller
    handle `return_exceptions=True` correctly?
+   When the change schedules fire-and-forget tasks (notifications,
+   broadcasts, cleanup), construct the fixture/lifecycle race: does
+   teardown dispose shared resources (DB engine, clients) while a
+   pending task still needs them? Drain or cancel outstanding work
+   before closing those resources — mid-test awaits alone do not
+   cover paths that never assert on the side effect.
    For persistence and aggregation helpers, also construct:
    - **Concurrent writers** — two sessions calling the same
      select-then-insert / claim path before either commits (lost
@@ -344,7 +350,7 @@ Also construct at least one realistic failure per public entry point:
 empty-but-not-falsy values, post-filter field combinations, async
 dependency never responds / asyncio.gather(return_exceptions=True)
 mix, concurrent select-then-insert, non-unique dict keys, mixed members
-of a group stamped with one decision, unbounded SQL IN vs SQLite
+of a group stamped with one decision, unbounded SQL IN clause size
 limits (prefer ``col.in_(select(...))`` over materializing large id
 lists into bound parameters; chunk at ~900 when a Python list is
 unavoidable; when checking membership of a *small* candidate set
@@ -483,7 +489,7 @@ fix-now vs follow-up issue. Be skeptical.
 - Dependency direction (gateway vs engine; no inverted imports)
 - Where state lives and failure modes (concurrency, restart,
   multi-instance, partial flush/claim)
-- Scaling: algorithmic cost, SQLite parameter limits, fan-out under load
+- Scaling: algorithmic cost, PostgreSQL parameter limits, fan-out under load
 - Whether schemas/analytics support the views claimed in ADR/docs
 - Frontend/API contract readiness for the stated UX
 - Migration/backfill for existing deployments

@@ -4,7 +4,7 @@
 # Run from repo root.
 # CLI is not part of the pod; use run-cli.sh to run a scan with CWD mounted.
 #
-# Cache host path: default is XDG cache (${XDG_CACHE_HOME:-$HOME/.cache}/apme).
+# Runtime data host path: default is XDG cache (${XDG_CACHE_HOME:-$HOME/.cache}/apme).
 # Override: APME_CACHE_HOST_PATH=/my/cache ./up.sh
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -334,12 +334,17 @@ _ensure_abbenay_config_access() {
 
 # Recursive chown only when the mountpoint needs migration or lacks a marker.
 # Large session/gateway volumes must not be walked on every tox -e up.
+# PostgreSQL PGDATA must stay marker-free — any file in the data directory
+# makes the official postgres entrypoint skip initdb.
 _ensure_volume_owned_by_container_uid() {
   local uid_gid="$1"
   local uid="${uid_gid%%:*}"
   local path="$2"
-  if _owned_by_container_uid "$uid" "$path" && _chown_marker_exists "$path"; then
-    return 0
+  local write_marker="${3:-1}"
+  if _owned_by_container_uid "$uid" "$path"; then
+    if [[ "$write_marker" == "0" ]] || _chown_marker_exists "$path"; then
+      return 0
+    fi
   fi
   if ! _chown_for_container_uid "$uid_gid" "$path"; then
     return 1
@@ -347,8 +352,10 @@ _ensure_volume_owned_by_container_uid() {
   if ! _owned_by_container_uid "$uid" "$path"; then
     return 1
   fi
-  if ! _write_chown_marker "$path"; then
-    return 1
+  if [[ "$write_marker" != "0" ]]; then
+    if ! _write_chown_marker "$path"; then
+      return 1
+    fi
   fi
 }
 
@@ -361,8 +368,8 @@ _ensure_volume_owned_by_container_uid() {
 # apme-sessions trees). Set APME_SELINUX_FULL_RELABEL=1 for a one-time recursive
 # SELinux repair of an existing volume.
 _relabel_podman_volumes() {
-  local vol mountpoint
-  for vol in apme-sessions apme-gateway-data apme-proxy-cache; do
+  local vol mountpoint uid_gid
+  for vol in apme-sessions apme-postgres-data apme-proxy-cache; do
     if ! podman volume exists "$vol" 2>/dev/null; then
       continue
     fi
@@ -370,8 +377,16 @@ _relabel_podman_volumes() {
     if [[ -z "$mountpoint" || ! -d "$mountpoint" ]]; then
       continue
     fi
-    if ! _ensure_volume_owned_by_container_uid 1001:0 "$mountpoint"; then
-      echo "ERROR: could not chown volume $vol ($mountpoint) to 1001:0" >&2
+    local write_marker=1
+    local write_selinux_marker=1
+    case "$vol" in
+      apme-sessions) uid_gid="1001:0" ;;
+      apme-postgres-data) uid_gid="999:999"; write_marker=0; write_selinux_marker=0 ;;
+      apme-proxy-cache) uid_gid="1001:0" ;;
+      *) continue ;;
+    esac
+    if ! _ensure_volume_owned_by_container_uid "$uid_gid" "$mountpoint" "$write_marker"; then
+      echo "ERROR: could not chown volume $vol ($mountpoint) to $uid_gid" >&2
       return 1
     fi
     local mode
@@ -391,13 +406,15 @@ _relabel_podman_volumes() {
         echo "ERROR: could not recursively relabel volume $vol ($mountpoint) for SELinux" >&2
         return 1
       fi
-      if ! _write_selinux_marker "$mountpoint"; then
-        echo "ERROR: could not write SELinux repair marker for volume $vol ($mountpoint)" >&2
-        return 1
+      if [[ "$write_selinux_marker" != "0" ]]; then
+        if ! _write_selinux_marker "$mountpoint"; then
+          echo "ERROR: could not write SELinux repair marker for volume $vol ($mountpoint)" >&2
+          return 1
+        fi
       fi
       continue
     fi
-    if _selinux_mountpoint_ok "$mountpoint" && _selinux_marker_exists "$mountpoint"; then
+    if [[ "$write_selinux_marker" != "0" ]] && _selinux_mountpoint_ok "$mountpoint" && _selinux_marker_exists "$mountpoint"; then
       continue
     fi
     if ! _selinux_mountpoint_ok "$mountpoint"; then
@@ -410,9 +427,11 @@ _relabel_podman_volumes() {
       echo "ERROR: could not recursively relabel volume $vol ($mountpoint) for SELinux" >&2
       return 1
     fi
-    if ! _write_selinux_marker "$mountpoint"; then
-      echo "ERROR: could not write SELinux repair marker for volume $vol ($mountpoint)" >&2
-      return 1
+    if [[ "$write_selinux_marker" != "0" ]]; then
+      if ! _write_selinux_marker "$mountpoint"; then
+        echo "ERROR: could not write SELinux repair marker for volume $vol ($mountpoint)" >&2
+        return 1
+      fi
     fi
   done
 }
@@ -453,6 +472,60 @@ APME_FEEDBACK_ENABLED="${APME_FEEDBACK_ENABLED:-true}"
 APME_FEEDBACK_GITHUB_REPO="${APME_FEEDBACK_GITHUB_REPO:-}"
 APME_FEEDBACK_GITHUB_TOKEN="${APME_FEEDBACK_GITHUB_TOKEN:-}"
 
+# Select the host-side port for the local Abbenay UI. Abbenay itself continues
+# to listen on 8787 inside the shared pod network namespace; only the host
+# mapping changes when the preferred port is already occupied.
+_select_abbenay_host_port() {
+  local requested="${APME_ABBENAY_HOST_PORT:-}"
+  if [[ -n "$requested" ]]; then
+    if [[ ! "$requested" =~ ^[0-9]+$ ]] || (( requested < 1 || requested > 65535 )); then
+      echo "ERROR: APME_ABBENAY_HOST_PORT must be a TCP port from 1 to 65535 (got: $requested)" >&2
+      return 1
+    fi
+    if ! python3 - "$requested" <<'PY'
+import socket
+import sys
+
+port = int(sys.argv[1])
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        sock.bind(("127.0.0.1", port))
+    except OSError:
+        raise SystemExit(1)
+PY
+    then
+      echo "ERROR: requested Abbenay UI host port $requested is unavailable" >&2
+      return 1
+    fi
+    echo "$requested"
+    return 0
+  fi
+
+  local port
+  for port in $(seq 8787 8887); do
+    if python3 - "$port" <<'PY'
+import socket
+import sys
+
+port = int(sys.argv[1])
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        sock.bind(("127.0.0.1", port))
+    except OSError:
+        raise SystemExit(1)
+PY
+    then
+      echo "$port"
+      return 0
+    fi
+  done
+
+  echo "ERROR: no available Abbenay UI host port in the range 8787-8887" >&2
+  return 1
+}
+
 # Optional: CA bundle for outbound HTTPS clients that need an internal or
 # self-signed trust anchor. Set ABBENAY_CA_BUNDLE to the absolute path of a
 # PEM CA bundle file.
@@ -483,12 +556,48 @@ if podman pod exists apme-pod 2>/dev/null; then
   podman pod rm apme-pod 2>/dev/null || true
 fi
 
+if ! APME_ABBENAY_HOST_PORT=$(_select_abbenay_host_port); then
+  exit 1
+fi
+export APME_ABBENAY_HOST_PORT
+ABBENAY_CORS_ORIGINS="http://127.0.0.1:$APME_ABBENAY_HOST_PORT"
+export ABBENAY_CORS_ORIGINS
+if [[ "$APME_ABBENAY_HOST_PORT" == "8787" ]]; then
+  echo "Abbenay UI host port: 8787"
+else
+  echo "Abbenay UI host port 8787 is occupied; using $APME_ABBENAY_HOST_PORT"
+fi
+
 # Pod YAML cannot use env vars; we inject values via envsubst.
 export OPENROUTER_API_KEY VERTEX_ANTHROPIC_API_KEY APME_AI_MODEL APME_ROOT="$ROOT"
 export APME_FEEDBACK_ENABLED APME_FEEDBACK_GITHUB_REPO APME_FEEDBACK_GITHUB_TOKEN
 
-POD_YAML=$(envsubst '$OPENROUTER_API_KEY $VERTEX_ANTHROPIC_API_KEY $APME_AI_MODEL $APME_ROOT $APME_FEEDBACK_ENABLED $APME_FEEDBACK_GITHUB_REPO $APME_FEEDBACK_GITHUB_TOKEN' \
+POD_YAML=$(envsubst '$OPENROUTER_API_KEY $VERTEX_ANTHROPIC_API_KEY $APME_AI_MODEL $APME_ROOT $APME_FEEDBACK_ENABLED $APME_FEEDBACK_GITHUB_REPO $APME_FEEDBACK_GITHUB_TOKEN $ABBENAY_CORS_ORIGINS' \
   < containers/podman/pod.yaml)
+
+# Keep the in-pod Abbenay port at 8787 and change only its localhost hostPort.
+if ! POD_YAML=$(APME_ABBENAY_HOST_PORT="$APME_ABBENAY_HOST_PORT" python3 -c '
+import os
+import sys
+
+yaml = sys.stdin.read()
+port = os.environ["APME_ABBENAY_HOST_PORT"]
+marker = "    - name: abbenay\n"
+start = yaml.index(marker)
+end = yaml.find("\n    - name:", start + len(marker))
+if end == -1:
+    end = len(yaml)
+block = yaml[start:end]
+old = "          hostPort: 8787"
+if block.count(old) != 1:
+    print("ERROR: expected exactly one Abbenay hostPort: 8787 entry", file=sys.stderr)
+    sys.exit(1)
+block = block.replace(old, "          hostPort: " + port, 1)
+print(yaml[:start] + block + yaml[end:], end="")
+' <<< "$POD_YAML"); then
+  echo "ERROR: could not patch the Abbenay host port in the rendered pod YAML" >&2
+  exit 1
+fi
 
 # When a CA bundle is provided, inject the standard CA env vars and mounts for
 # the containers that make outbound HTTPS requests (gateway, abbenay, galaxy-proxy).
@@ -510,7 +619,7 @@ abbenay_vol_marker = (
     '    - name: galaxy-proxy'
 )
 gateway_env_marker = '        - name: APME_FEEDBACK_GITHUB_TOKEN'
-gateway_vol_marker = '      volumeMounts:\n        - name: gateway-data'
+gateway_vol_marker = '      volumeMounts:\n        - name: abbenay-run'
 galaxy_marker = '    - name: galaxy-proxy\n      image: apme-galaxy-proxy:latest'
 galaxy_vol_marker = '      volumeMounts:\n        - name: proxy-cache'
 if (
@@ -556,7 +665,7 @@ yaml = yaml.replace(
     '        - name: gateway-ca-bundle\n'
     '          mountPath: ' + mount_yaml + '\n'
     '          readOnly: true\n'
-    '        - name: gateway-data')
+    '        - name: abbenay-run')
 # Galaxy Proxy: add env section + CA env vars
 yaml = yaml.replace(
     galaxy_marker,
@@ -682,47 +791,77 @@ fi
 # The hostPath Directory mount replaces the old read-only File mount so that
 # runtime admin writes (POST /api/v1/ai/provider/.../configure) survive restarts.
 # Never chown the git checkout: rootless Podman maps UID 1001 to a subordinate
-# host UID and would lock the developer out of containers/abbenay/config.
-# Runtime config always lives under CACHE_PATH (mode 0700/0600; credentials).
+# host UID and would lock the developer out of the repository.
+# Runtime config lives under the user's XDG config directory (mode 0700/0600;
+# credentials). The cache location is retained as a one-time migration source.
 # Rootless: host keeps ownership; container UID 1001 gets a POSIX ACL.
-# Rootful: chown the cache copy to 1001:1001.
+# Rootful: chown the user config directory to 1001:1001.
 ABBENAY_CONFIG_SEED="$ROOT/containers/abbenay/config"
 ABBENAY_CONFIG_REPO_PATH="$ABBENAY_CONFIG_SEED"
-ABBENAY_CONFIG_DIR="$CACHE_PATH/abbenay/config"
+XDG_CONFIG_BASE="${XDG_CONFIG_HOME:-$HOME/.config}"
+if [[ "$XDG_CONFIG_BASE" != /* || "$XDG_CONFIG_BASE" == *$'\n'* ]]; then
+  echo "ERROR: XDG_CONFIG_HOME must be an absolute path without newlines" >&2
+  exit 1
+fi
+ABBENAY_CONFIG_DIR="$XDG_CONFIG_BASE/abbenay"
+ABBENAY_CONFIG_FILE="$ABBENAY_CONFIG_DIR/config.yaml"
+ABBENAY_LEGACY_CONFIG_DIR="$CACHE_PATH/abbenay/config"
 if ! command -v podman >/dev/null 2>&1; then
   echo "ERROR: podman is required to set Abbenay config ownership (UID 1001)" >&2
   exit 1
 fi
-# Migrate prior exclusive subordinate-UID ownership before host chmod/seed.
-if [[ -d "$ABBENAY_CONFIG_DIR" ]] && [[ ! -w "$ABBENAY_CONFIG_DIR" ]]; then
+# Restore access before reading either the current config or the legacy source.
+if [[ -d "$ABBENAY_CONFIG_DIR" ]]; then
   if ! _ensure_abbenay_config_access "$ABBENAY_CONFIG_DIR"; then
-    echo "ERROR: could not restore host access to Abbenay config cache $ABBENAY_CONFIG_DIR" >&2
+    echo "ERROR: could not restore host access to Abbenay config $ABBENAY_CONFIG_DIR" >&2
+    exit 1
+  fi
+fi
+if [[ -d "$ABBENAY_LEGACY_CONFIG_DIR" \
+  && "$ABBENAY_LEGACY_CONFIG_DIR" != "$ABBENAY_CONFIG_DIR" ]]; then
+  if ! _ensure_abbenay_config_access "$ABBENAY_LEGACY_CONFIG_DIR"; then
+    echo "ERROR: could not restore host access to legacy Abbenay config $ABBENAY_LEGACY_CONFIG_DIR" >&2
     exit 1
   fi
 fi
 mkdir -p "$ABBENAY_CONFIG_DIR"
 chmod 0700 "$ABBENAY_CONFIG_DIR"
-if [[ ! -f "$ABBENAY_CONFIG_DIR/config.yaml" ]]; then
+if [[ "$ABBENAY_LEGACY_CONFIG_DIR" != "$ABBENAY_CONFIG_DIR" ]]; then
+  if [[ ! -f "$ABBENAY_CONFIG_FILE" && -f "$ABBENAY_LEGACY_CONFIG_DIR/config.yaml" ]]; then
+    cp "$ABBENAY_LEGACY_CONFIG_DIR/config.yaml" "$ABBENAY_CONFIG_FILE"
+    echo "Migrated Abbenay config to $ABBENAY_CONFIG_DIR"
+  fi
+  if [[ ! -f "$ABBENAY_CONFIG_DIR/secrets.json" \
+    && -f "$ABBENAY_LEGACY_CONFIG_DIR/secrets.json" ]]; then
+    cp "$ABBENAY_LEGACY_CONFIG_DIR/secrets.json" "$ABBENAY_CONFIG_DIR/secrets.json"
+    echo "Migrated Abbenay secrets to $ABBENAY_CONFIG_DIR"
+  fi
+fi
+if [[ ! -f "$ABBENAY_CONFIG_FILE" ]]; then
   if [[ -f "$ABBENAY_CONFIG_SEED/config.yaml" ]]; then
-    cp "$ABBENAY_CONFIG_SEED/config.yaml" "$ABBENAY_CONFIG_DIR/config.yaml"
+    cp "$ABBENAY_CONFIG_SEED/config.yaml" "$ABBENAY_CONFIG_FILE"
     echo "Seeded Abbenay config from containers/abbenay/config/config.yaml"
   elif [[ -f "$ROOT/containers/abbenay/config.yaml" ]]; then
-    cp "$ROOT/containers/abbenay/config.yaml" "$ABBENAY_CONFIG_DIR/config.yaml"
+    cp "$ROOT/containers/abbenay/config.yaml" "$ABBENAY_CONFIG_FILE"
     echo "Seeded Abbenay config from containers/abbenay/config.yaml (legacy location)"
   elif [[ -f "$ROOT/containers/abbenay/config.yaml.example" ]]; then
-    cp "$ROOT/containers/abbenay/config.yaml.example" "$ABBENAY_CONFIG_DIR/config.yaml"
+    cp "$ROOT/containers/abbenay/config.yaml.example" "$ABBENAY_CONFIG_FILE"
     echo "Seeded Abbenay config from containers/abbenay/config.yaml.example"
   fi
 fi
-if [[ -f "$ABBENAY_CONFIG_DIR/config.yaml" ]]; then
-  chmod 0600 "$ABBENAY_CONFIG_DIR/config.yaml"
+if [[ -f "$ABBENAY_CONFIG_FILE" ]]; then
+  chmod 0600 "$ABBENAY_CONFIG_FILE"
+fi
+if [[ -f "$ABBENAY_CONFIG_DIR/secrets.json" ]]; then
+  chmod 0600 "$ABBENAY_CONFIG_DIR/secrets.json"
 fi
 _relabel_host_path_for_podman "$ABBENAY_CONFIG_DIR"
 if ! _ensure_abbenay_config_access "$ABBENAY_CONFIG_DIR"; then
   echo "ERROR: could not grant Abbenay container UID 1001 access to $ABBENAY_CONFIG_DIR" >&2
   exit 1
 fi
-# POD_YAML still has the repo hostPath from envsubst; always mount the cache copy.
+# POD_YAML still has the repo hostPath from envsubst; always mount the writable
+# user config directory.
 if ! POD_YAML=$(ABBENAY_CONFIG_REPO_PATH="$ABBENAY_CONFIG_REPO_PATH" \
   ABBENAY_CONFIG_DIR="$ABBENAY_CONFIG_DIR" python3 -c '
 import os, sys
@@ -747,8 +886,10 @@ podman kube play containers/podman/pvc.yaml
 _relabel_podman_volumes
 echo "$POD_YAML" | podman play kube -
 
-echo "Pod apme-pod started (volumes: apme-sessions, apme-gateway-data, apme-proxy-cache). Run a scan: containers/podman/run-cli.sh"
-echo "Abbenay UI: http://127.0.0.1:8787 (localhost only; HTTP auth disabled for dev)"
+echo "Pod apme-pod started (volumes: apme-sessions, apme-postgres-data, apme-proxy-cache). Run a scan: containers/podman/run-cli.sh"
+echo "APME UI: http://127.0.0.1:8081"
+echo "Abbenay UI: http://127.0.0.1:$APME_ABBENAY_HOST_PORT (localhost only; HTTP auth disabled for dev)"
+echo "Abbenay config: $ABBENAY_CONFIG_FILE"
 echo "OTel Prometheus metrics: http://localhost:8889/metrics (companion stack: containers/observability/up.sh)"
 
 if [[ -n "$APME_FEEDBACK_GITHUB_REPO" && -n "$APME_FEEDBACK_GITHUB_TOKEN" ]]; then

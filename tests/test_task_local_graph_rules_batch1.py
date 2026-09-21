@@ -903,3 +903,97 @@ class TestNoqaSuppression:
 
         result = parse_noqa("  become: true  # noqa: R108, R103\n")
         assert result == frozenset({"R108", "R103"})
+
+    def test_parse_noqa_ignores_trailing_justification(self) -> None:
+        """Trailing words after a rule ID are not part of the ID.
+
+        Regression for reporter content like ``# noqa: L068 lola`` and the
+        documented ``# noqa: R114 - why trusted`` justification form.
+        """
+        from apme_engine.graph.scanner import parse_noqa
+
+        assert parse_noqa("- name: X  # noqa: L068 lola\n") == frozenset({"L068"})
+        assert parse_noqa("- name: X  #noqa: L068 lola\n") == frozenset({"L068"})
+        assert parse_noqa("- name: X  # noqa: R114 - why trusted\n") == frozenset({"R114"})
+        assert parse_noqa("- name: X  # noqa: L068, R108 intentional\n") == frozenset({"L068", "R108"})
+
+    def test_filter_noqa_violations_drops_opa_l068(self) -> None:
+        """Engine-side filter drops OPA L068 when the task has ``# noqa: L068``."""
+        from apme_engine.graph.scanner import filter_noqa_violations
+        from apme_engine.graph.types import ViolationDict
+
+        g, tid = _make_task(module="ansible.builtin.lineinfile")
+        node = g.get_node(tid)
+        assert node is not None
+        node.yaml_lines = (
+            "- name: Disable SSH root login  # noqa: L068\n"
+            "  ansible.builtin.lineinfile:\n"
+            "    path: /etc/ssh/sshd_config\n"
+            "    regexp: ^#?PermitRootLogin\n"
+            "    line: PermitRootLogin no\n"
+        )
+
+        violations: list[ViolationDict] = [
+            {
+                "rule_id": "L068",
+                "severity": "info",
+                "message": "Avoid lineinfile; prefer template, ini_file, or blockinfile",
+                "file": "site.yml",
+                "line": 10,
+                "path": tid,
+            },
+            {
+                "rule_id": "L026",
+                "severity": "medium",
+                "message": "Use FQCN",
+                "file": "site.yml",
+                "line": 10,
+                "path": tid,
+            },
+        ]
+
+        kept = filter_noqa_violations(violations, g)
+        assert [v["rule_id"] for v in kept] == ["L026"]
+
+    def test_filter_noqa_violations_noop_without_graph(self) -> None:
+        """Without a ContentGraph, all violations are retained."""
+        from apme_engine.graph.scanner import filter_noqa_violations
+        from apme_engine.graph.types import ViolationDict
+
+        violations: list[ViolationDict] = [
+            {
+                "rule_id": "L068",
+                "severity": "info",
+                "message": "Avoid lineinfile",
+                "file": "site.yml",
+                "line": 1,
+                "path": "missing",
+            },
+        ]
+        assert filter_noqa_violations(violations, None) == violations
+
+    def test_filter_noqa_violations_keeps_when_no_comment(self) -> None:
+        """Violations are kept when the node YAML has no matching noqa."""
+        from apme_engine.graph.scanner import filter_noqa_violations
+        from apme_engine.graph.types import ViolationDict
+
+        g, tid = _make_task(module="ansible.builtin.lineinfile")
+        node = g.get_node(tid)
+        assert node is not None
+        node.yaml_lines = (
+            "- name: Disable SSH root login\n"
+            "  ansible.builtin.lineinfile:\n"
+            "    path: /etc/ssh/sshd_config\n"
+            "    line: PermitRootLogin no\n"
+        )
+        violations: list[ViolationDict] = [
+            {
+                "rule_id": "L068",
+                "severity": "info",
+                "message": "Avoid lineinfile",
+                "file": "site.yml",
+                "line": 10,
+                "path": tid,
+            },
+        ]
+        assert filter_noqa_violations(violations, g) == violations

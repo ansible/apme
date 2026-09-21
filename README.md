@@ -142,7 +142,7 @@ src/apme_engine/
   ├── daemon/           gRPC server implementations
   ├── remediation/      Tier 1 transforms + AI escalation
   └── venv_manager/     Session-scoped venv lifecycle
-src/apme_gateway/       API gateway (FastAPI, REST/WebSocket, SQLite)
+src/apme_gateway/       API gateway (FastAPI, REST/WebSocket, PostgreSQL)
 src/galaxy_proxy/       Galaxy → PEP 503 wheel proxy
 frontend/               React operator UI (Vite + TypeScript)
 deploy/                 bootc VM image definitions

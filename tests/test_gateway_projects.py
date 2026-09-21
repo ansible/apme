@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from unittest.mock import patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from pydantic import ValidationError
 
+from apme_gateway.api.schemas import CreateProjectRequest, UpdateProjectRequest
 from apme_gateway.app import create_app
 from apme_gateway.db import get_session
 from apme_gateway.db.models import Project, Scan, Session, Violation
@@ -484,3 +487,24 @@ async def test_create_duplicate_name_rejected(client: AsyncClient) -> None:
     resp2 = await client.post("/api/v1/projects", json=payload)
     assert resp2.status_code == 409
     assert "already exists" in resp2.json()["detail"]
+
+
+def test_project_branch_fields_expose_max_length() -> None:
+    """Project branch fields document the 100-char boundary for OpenAPI."""
+    create_schema = CreateProjectRequest.model_json_schema()["properties"]["branch"]
+    update_schema = UpdateProjectRequest.model_json_schema()["properties"]["branch"]
+    assert create_schema.get("maxLength") == 100
+    assert "1-100 chars" in (create_schema.get("description") or "")
+    branch_anyof = update_schema.get("anyOf", [])
+    assert any(option.get("maxLength") == 100 for option in branch_anyof)
+    assert "1-100 chars" in (update_schema.get("description") or "")
+
+
+def test_create_project_branch_validator_rejects_none_result() -> None:
+    """None-result guard raises ValueError (surfaces as 422, survives -O)."""
+    with patch("apme_gateway.scm.urls.validate_branch_name", return_value=None), pytest.raises(ValidationError):
+        CreateProjectRequest(
+            name="None Guard",
+            repo_url="https://github.com/org/repo.git",
+            branch="main",
+        )

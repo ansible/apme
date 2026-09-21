@@ -185,3 +185,35 @@ def test_up_sh_maps_rootless_acl_from_uid_map() -> None:
 
     assert "_container_uid_can_read() {" in script
     assert '_container_uid_can_read "$cuid" "$path/config.yaml"' in script
+
+
+def test_up_sh_selects_abbenay_host_port_preserves_internal_port() -> None:
+    """The host mapping is dynamic while Abbenay and Gateway stay on 8787."""
+    script = UP_SH.read_text(encoding="utf-8")
+
+    assert "_select_abbenay_host_port()" in script
+    assert "seq 8787 8887" in script
+    assert 'requested="${APME_ABBENAY_HOST_PORT:-}"' in script
+    assert "APME_ABBENAY_HOST_PORT=$(_select_abbenay_host_port)" in script
+    assert 'old = "          hostPort: 8787"' in script
+    assert '"          hostPort: " + port' in script
+
+    pod_yaml = POD_YAML.read_text(encoding="utf-8")
+    abbenay_start = pod_yaml.index("    - name: abbenay\n")
+    abbenay_end = pod_yaml.index("\n    - name:", abbenay_start + 1)
+    abbenay_block = pod_yaml[abbenay_start:abbenay_end]
+    assert '        - "8787"' in abbenay_block
+    assert "          hostPort: 8787" in abbenay_block
+    assert 'value: "http://127.0.0.1:8787"' in pod_yaml
+
+
+def test_up_sh_rejects_unavailable_explicit_abbenay_port() -> None:
+    """An explicit host-port override is deterministic rather than fallback-based."""
+    script = UP_SH.read_text(encoding="utf-8")
+
+    helper_start = script.index("_select_abbenay_host_port() {")
+    helper_end = script.index("\n}\n", helper_start) + 3
+    helper = script[helper_start:helper_end]
+    assert "APME_ABBENAY_HOST_PORT must be a TCP port" in helper
+    assert "requested Abbenay UI host port" in helper
+    assert "no available Abbenay UI host port in the range 8787-8887" in helper

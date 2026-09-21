@@ -9,9 +9,9 @@ Vercel AI SDK.
 In the Simple in-pod topology (ADR-070), Abbenay serves HTTP admin
 on `:8787` and gRPC on loopback (`--grpc-host 127.0.0.1 --grpc-port 50057`;
 image ≥ v2026.8.0). The operator deployment has no cluster Service or hostPort.
-Local Podman
-(`tox -e up`) publishes HTTP on host port 8787 with `hostIP: 127.0.0.1` so the
-Abbenay UI is reachable at `http://127.0.0.1:8787`; gRPC stays loopback.
+Local Podman (`tox -e up`) publishes HTTP on host port 8787 by default, with
+`hostIP: 127.0.0.1`; if 8787 is occupied, `up.sh` selects a free port from
+8787–8887 and prints the authoritative URL. gRPC stays loopback.
 `pod.yaml` sets `ABBENAY_HTTP_AUTH=0` so the dashboard loads without a Bearer
 token (local dev only — do not disable HTTP auth when exposing Abbenay beyond
 your machine). Gateway HTTP admin still uses `127.0.0.1:8787` (shared netns).
@@ -100,7 +100,7 @@ Gateway reverse-proxies the JSON body unchanged and does **not** store keys
 |--------|--------|----------|
 | **Operator (default)** | `emptyDir` | Abbenay **container** restart; lost on **pod** recycle (reschedule, drain, upgrade) |
 | **Operator PVC** | Persistent volume for Abbenay config | Pod recycle / upgrade (PVC may hold plaintext `secrets.json`) |
-| **Podman (Linux)** | RW cache `${XDG_CACHE_HOME:-$HOME/.cache}/apme/abbenay/config/` | `tox -e down` / container restart. `tox -e wipe` deletes `secrets.json`. |
+| **Podman (Linux)** | RW config `${XDG_CONFIG_HOME:-$HOME/.config}/abbenay/` | `tox -e down` / container restart / `tox -e wipe`; `secrets.json` is preserved. |
 | **Podman (macOS)** | Same hostPath; virtiofs | File store unsupported until [#562](https://github.com/ansible/apme/issues/562). Use env or memory. |
 
 **Inject a secret into the file store:**
@@ -143,7 +143,7 @@ the first write, the runtime file is the source of truth.
 | Deploy | Seed | Writable volume | Notes |
 |--------|------|-----------------|-------|
 | **Operator** | ConfigMap or CR spec (provider config) | `emptyDir` by default; optional PVC | Init copies seed only if `config.yaml` is absent. The same volume holds file-store `secrets.json` (Abbenay ≥ v2026.8.6). See [apme-operator](https://github.com/ansible/apme-operator). |
-| **Podman** | `containers/abbenay/config/` (or legacy `config.yaml` / `.example`) on first `tox -e up` | Cache dir `${XDG_CACHE_HOME:-$HOME/.cache}/apme/abbenay/config/` → `/home/abbenay/.config/abbenay` | `up.sh` seeds into the cache path (mode `0700`/`0600`). Rootful chowns the cache copy to UID 1001; rootless Linux keeps host ownership and grants UID 1001 a POSIX ACL. macOS virtiofs cannot grant UID 1001 access to `secrets.json` without world-opening it — file store unsupported until [#562](https://github.com/ansible/apme/issues/562). The repo tree is never chowned. `tox -e wipe` deletes `secrets.json`. |
+| **Podman** | `containers/abbenay/config/` (or legacy `config.yaml` / `.example`) on first `tox -e up` | Config dir `${XDG_CONFIG_HOME:-$HOME/.config}/abbenay/` → `/home/abbenay/.config/abbenay` | `up.sh` seeds into the user config path (mode `0700`/`0600`) and migrates the legacy cache path once. Rootful chowns the cache copy to UID 1001; rootless Linux keeps host ownership and grants UID 1001 a POSIX ACL. macOS virtiofs cannot grant UID 1001 access to `secrets.json` without world-opening it — file store unsupported until [#562](https://github.com/ansible/apme/issues/562). The repo tree is never chowned. `tox -e wipe` preserves `config.yaml` and `secrets.json`. |
 
 See [ADR-070](../../.sdlc/adrs/ADR-070-gateway-abbenay-admin-proxy.md) §6 (config durability) and §7 (secrets remain Abbenay SoT). For operator PVC and persistence options, see [apme-operator](https://github.com/ansible/apme-operator).
 

@@ -545,12 +545,12 @@ Future MCP integration (when implemented) would allow the LLM to autonomously ca
 ## Optional Dependency
 
 `abbenay-client` is an optional dependency, published on PyPI. Pin it to
-the same CalVer as the Abbenay daemon image (currently `v2026.8.7`):
+the same CalVer as the Abbenay daemon image (currently `v2026.8.9`):
 
 ```toml
 [project.optional-dependencies]
 ai = [
-    "abbenay-client==2026.8.7",
+    "abbenay-client==2026.8.9",
 ]
 ```
 
@@ -595,14 +595,14 @@ Install with: uv sync --extra ai
 Pre-built multi-arch Abbenay images (amd64 + arm64) are available on GHCR:
 
 ```bash
-podman pull ghcr.io/redhat-developer/abbenay:v2026.8.7
+podman pull ghcr.io/redhat-developer/abbenay:v2026.8.9
 ```
 
 | Tag | Meaning |
 |-----|---------|
 | `:main` | Latest merged code |
 | `:sha-<short>` | Specific commit |
-| `:v2026.8.7` | Release (`v` prefix; APME pin) |
+| `:v2026.8.9` | Release (`v` prefix; APME pin) |
 | `:latest` | Latest stable release |
 
 ```

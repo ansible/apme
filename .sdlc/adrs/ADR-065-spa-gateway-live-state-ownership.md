@@ -23,7 +23,7 @@ Two gaps appeared in the written record:
    state renderer” with “no local state machine.” In practice the SPA derives a
    fine-grained workflow latch and holds attach/form UI state that is not (and
    should not be) in the registry.
-2. **No ownership table** for what lives in Gateway memory vs SQLite vs the
+2. **No ownership table** for what lives in Gateway memory vs PostgreSQL vs the
    browser — so portals and future clients cannot tell what they must
    reimplement vs what they can ignore.
 
@@ -41,7 +41,7 @@ Forces in tension:
 Constraints:
 
 - ADR-060: additive `/api/v1` only for contract changes.
-- ADR-029 / invariant 5: durable persistence at the Gateway edge (SQLite), not
+- ADR-029 / invariant 5: durable persistence at the Gateway edge (PostgreSQL), not
   in the engine.
 - ADR-052: in-memory registry remains the live progress fan-out.
 - Do not invent a second authoritative phase machine in the SPA that can
@@ -50,7 +50,7 @@ Constraints:
 ## Decision
 
 **We will keep the Gateway `OperationRegistry` as the sole authoritative store
-for in-flight operation lifecycle and payloads, treat SQLite/Activity as
+for in-flight operation lifecycle and payloads, treat PostgreSQL/Activity as
 durable completed-run truth, and allow the SPA only non-authoritative
 presentation state (derived workflow tracking, explicit attach, local form
 options). This ADR amends ADR-052’s “no local state machine” wording: no
@@ -61,7 +61,7 @@ options). This ADR amends ADR-052’s “no local state machine” wording: no
 | Store | Owns | Lifetime | Resume / multi-client |
 |-------|------|----------|------------------------|
 | Gateway `OperationRegistry` | Coarse `status`, `findings`, live `proposals`, `result`, progress log, SSE | Minutes; TTL after terminal | Any client via `GET …/operation` + SSE |
-| SQLite (scans, violations, analytics) | Completed activity, `review_status`, proposal analytics; historical rebuild | Durable | Read-only history; not live attach |
+| PostgreSQL (scans, violations, analytics) | Completed activity, `review_status`, proposal analytics; historical rebuild | Durable | Read-only history; not live attach |
 | SPA (browser) | Attach flag, Scan options, `WorkflowLatch` / stepper derivation, panel filters | Tab / component lifetime | Rebuilt from registry snapshot; latch resets on new `operation_id` |
 
 ### Gateway owns (authoritative)
@@ -142,7 +142,7 @@ stays the shared contract.
 
 **Why not chosen**: Explicitly rejected by ADR-052; still wrong for portals.
 
-### Alternative 3: Only SQLite as live-op store
+### Alternative 3: Only PostgreSQL as live-op store
 
 **Description**: Write every phase transition and proposal blob to the DB.
 

@@ -5,7 +5,7 @@
 ## Purpose
 
 The Gateway is the persistence and REST API layer for APME. It receives
-scan/fix events from the engine via gRPC, stores them in SQLite, and
+scan/fix events from the engine via gRPC, stores them in PostgreSQL, and
 serves a read-oriented REST API for dashboards and the React UI. It also
 bridges WebSocket connections from the browser to Engine's `FixSession`
 gRPC stream, enabling the UI to run check/remediate operations directly.
@@ -20,7 +20,7 @@ flowchart LR
         direction TB
         GRPC["gRPC Reporting\n:50060"]
         HTTP["FastAPI + Uvicorn\n:8080"]
-        DB[(SQLite)]
+        DB[(PostgreSQL)]
     end
 
     Engine -->|FixCompletedEvent| GRPC
@@ -37,7 +37,7 @@ flowchart LR
 
 `src/apme_gateway/main.py` orchestrates both servers:
 
-1. Initialize the SQLite database (`init_db`)
+1. Initialize the PostgreSQL database (`init_db`)
 2. Launch gRPC Reporting server and FastAPI/Uvicorn HTTP server
    concurrently via `asyncio.gather()`
 3. Wait for `SIGINT`/`SIGTERM` via a shared `asyncio.Event`
@@ -49,7 +49,7 @@ Configuration is environment-variable driven:
 |----------|---------|---------|
 | `APME_GATEWAY_GRPC_LISTEN` | `0.0.0.0:50060` | gRPC bind address |
 | `APME_GATEWAY_HTTP_PORT` | `8080` | HTTP bind port |
-| `APME_DB_PATH` | `/data/apme.db` | SQLite database path |
+| `APME_DATABASE_URL` | *(required)* | PostgreSQL SQLAlchemy URL (`postgresql+asyncpg://...`). Loopback hosts (`127.0.0.1`, `localhost`, `::1`) may omit TLS. Non-loopback hosts require certificate-validated TLS (`?sslmode=verify-full` with a configured CA); see [DEPLOYMENT.md](../guides/DEPLOYMENT.md). |
 
 ## gRPC Reporting Servicer
 
@@ -59,7 +59,8 @@ implements two RPCs defined in `proto/apme/v1/reporting.proto`:
 ### ReportFixCompleted
 
 Receives a `FixCompletedEvent` from the engine after a scan/fix session
-completes. Decomposes the event into ORM rows in a single transaction:
+completes. Decomposes the event into ORM rows and commits them, then
+generates notifications in a separate best-effort session:
 
 ```mermaid
 flowchart TD
@@ -72,12 +73,21 @@ flowchart TD
     Scan --> M[Add ScanManifest + collections + packages]
     Scan --> G[Add ScanGraph row]
     V & P & L & Pa & M & G --> Commit[db.commit]
+    Commit --> Notif[Reload scan and generate notifications]
 ```
 
 Each child record is linked to the `Scan` via `scan_id`. Violations are
 stored for both `remaining_violations` and `fixed_violations` from the
 event. The manifest includes collection and Python package rows with
 deduplication on FQCN.
+
+Notification generation runs **after** commit, as a best-effort step in
+a separate session. Display names are resolved by loading `Project` by
+id (never `Scan.project` lazy-load). Failures are logged and do not
+abort the RPC or surface as a persistence error to the engine. Existing
+notification types for the same `scan_id` are skipped, except an
+unattributed `scan_complete` is replaced after the scan is linked to a
+project.
 
 ### RegisterRules
 
@@ -139,12 +149,12 @@ GalaxyServer (ADR-045)
 | `galaxy_servers` | Global Galaxy/Automation Hub server definitions (ADR-045) |
 
 All timestamps are stored as ISO 8601 strings. The database uses
-aiosqlite for async access via SQLAlchemy's async session factory.
+asyncpg for async access via SQLAlchemy's async session factory.
 
 ## REST API
 
 `src/apme_gateway/api/router.py` defines the FastAPI router under
-`/api/v1`. All read endpoints query the SQLite database; write operations
+`/api/v1`. All read endpoints query the PostgreSQL database; write operations
 originate from the gRPC Reporting servicer (push model) or project CRUD.
 
 A machine-readable OpenAPI 3 baseline for `/api/v1` is checked in at
@@ -280,7 +290,7 @@ servicer receives the `FixCompletedEvent`.
 sequenceDiagram
     participant Engine as Engine Pod
     participant GW as Gateway
-    participant DB as SQLite
+    participant DB as PostgreSQL
     participant UI as React SPA
 
     Engine->>GW: ReportFixCompleted(FixCompletedEvent)

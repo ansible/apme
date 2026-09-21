@@ -13,16 +13,44 @@ if TYPE_CHECKING:
     from galaxy_proxy.collection_downloader import GalaxyServerConfig
 
 
-def _setup_logging(verbose: int) -> None:
-    level = logging.WARNING
-    if verbose == 1:
-        level = logging.INFO
-    elif verbose >= 2:
-        level = logging.DEBUG
+_LOG_LEVELS = {
+    "DEBUG": logging.DEBUG,
+    "INFO": logging.INFO,
+    "WARNING": logging.WARNING,
+    "ERROR": logging.ERROR,
+    "CRITICAL": logging.CRITICAL,
+}
+
+
+def log_level_from_environment() -> int:
+    """Return the configured proxy log level from ``LOG_LEVEL``.
+
+    Raises:
+        ValueError: If ``LOG_LEVEL`` is not a supported standard level.
+
+    Returns:
+        Numeric logging level accepted by the standard logging module.
+    """
+    raw_level = os.environ.get("LOG_LEVEL", "INFO").strip().upper()
+    try:
+        return _LOG_LEVELS[raw_level]
+    except KeyError as exc:
+        supported = ", ".join(_LOG_LEVELS)
+        raise ValueError(f"LOG_LEVEL must be one of {supported} (got {raw_level!r})") from exc
+
+
+def _setup_logging(verbose: int) -> int:
+    level = log_level_from_environment()
+    if verbose >= 2:
+        level = min(level, logging.DEBUG)
+    elif verbose == 1:
+        level = min(level, logging.INFO)
     logging.basicConfig(
         level=level,
         format="%(levelname)s: %(message)s",
     )
+    logging.getLogger().setLevel(level)
+    return level
 
 
 def _parse_galaxy_server(raw: str) -> GalaxyServerConfig:
@@ -92,7 +120,10 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("-v", "--verbose", action="count", default=0, help="Increase logging verbosity.")
 
     args = parser.parse_args(argv)
-    _setup_logging(args.verbose)
+    try:
+        log_level = _setup_logging(args.verbose)
+    except ValueError as exc:
+        parser.error(str(exc))
 
     if args.ansible_cfg and args.galaxy_servers:
         parser.error("--ansible-cfg and --galaxy-server are mutually exclusive")
@@ -141,7 +172,7 @@ def main(argv: list[str] | None = None) -> None:
     sys.stderr.flush()
 
     try:
-        uvicorn.run(app, host=host, port=port, log_level="info" if args.verbose else "warning")
+        uvicorn.run(app, host=host, port=port, log_level=logging.getLevelName(log_level).lower())
     finally:
         shutdown_otel()
 

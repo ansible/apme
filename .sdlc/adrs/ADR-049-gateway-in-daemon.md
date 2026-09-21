@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted (daemon launcher implementation pending)
 
 ## Date
 
@@ -37,23 +37,31 @@ the dual-code-path problem ADR-024 was designed to eliminate.
 - The CLI→REST migration path (ADR-024) requires the Gateway to be reachable
 - Galaxy Proxy already proves the uvicorn-in-daemon pattern works
 - The daemon should remain a single background process (not multiple PIDs)
-- Gateway persistence (SQLite) must work in both daemon and pod modes
+- Gateway persistence (PostgreSQL) must work in both daemon and pod modes
 
 ## Decision
 
-**Embed the Gateway (HTTP server + gRPC ReportingServicer + SQLite
+**Embed the Gateway (HTTP server + gRPC ReportingServicer + PostgreSQL
 persistence) in the local daemon process**, following the same pattern used
 for Galaxy Proxy.
 
-The daemon's `_run_daemon()` function gains two additional services:
+> **Implementation status:** This decision is accepted but not yet implemented.
+> `start_daemon()` and `_run_daemon()` still start only Engine, validators, and
+> Galaxy Proxy. Commands such as `apme sbom` require a running pod Gateway or an
+> external Gateway reachable at `APME_GATEWAY_URL` until the launcher changes
+> below land.
+
+The daemon's `_run_daemon()` function will gain two additional services:
 
 1. **Gateway HTTP** (uvicorn/FastAPI) on port 8080 — serves the REST API
    (`/api/v1/projects/...`, `/api/v1/.../sbom`, etc.)
 2. **Gateway gRPC** (ReportingServicer) on port 50060 — receives
    `FixCompletedEvent` from the co-located Engine
 
-The Gateway database defaults to `~/.apme-data/gateway.db` (SQLite, same
-engine as the pod Gateway per ADR-029).
+The Gateway requires `APME_DATABASE_URL` (`postgresql+asyncpg://...`) — the
+same PostgreSQL contract as the pod Gateway per ADR-029. Local daemon mode
+must provision or connect to a PostgreSQL instance (for example a local
+`postgres` container or host service); file-backed SQLite is not supported.
 
 The `DaemonState` dataclass and `daemon.json` state file record Gateway
 endpoints under the `services` map (for example `services.gateway_http`) so
@@ -105,8 +113,11 @@ to the existing Galaxy Proxy pattern.
 
 ### Positive
 
-- **"Just works" UX preserved.** `apme sbom` auto-starts the daemon (which
-  now includes Gateway), matching the experience of all other commands.
+- **"Just works" UX preserved (when implemented).** Once the launcher embeds
+  Gateway, `apme sbom` will auto-start the daemon with REST and Reporting
+  endpoints, matching the experience of other commands. Until then, REST-backed
+  commands require a Podman pod Gateway or an external Gateway at
+  `APME_GATEWAY_URL`.
 - **CLI→REST migration enabled.** Future commands (health, session list) can
   move to Gateway REST without UX regression.
 - **Single code path.** Gateway REST API is the same in daemon and pod. No
@@ -131,7 +142,7 @@ to the existing Galaxy Proxy pattern.
 - The pod deployment is unchanged — Gateway continues to run as a separate
   container in the Podman pod. The daemon simply co-locates what the pod
   runs as separate containers.
-- SQLite remains the database engine in both modes (per ADR-029).
+- PostgreSQL remains the database engine in both modes (per ADR-029).
 
 ## Implementation Notes
 
@@ -155,12 +166,12 @@ Add to `_run_daemon()` (after Galaxy Proxy, before Engine):
 if "gateway_grpc" in services:
     import grpc
     from apme.v1 import reporting_pb2_grpc
-    from apme_gateway.db import init_db
+    from apme_gateway.db import init_db_from_config
     from apme_gateway.app import create_app as create_gateway_app
     from apme_gateway.grpc_reporting.servicer import ReportingServicer
 
-    gw_db_path = str(_DATA_DIR / "gateway.db")
-    await init_db(gw_db_path)
+    gw_db_url = os.environ["APME_DATABASE_URL"]  # postgresql+asyncpg://...
+    await init_db_from_config(database_url=gw_db_url)
 
     # Gateway HTTP (uvicorn)
     gw_app = create_gateway_app()
@@ -224,10 +235,10 @@ start" and add it to the daemon service list.
 
 - ADR-024: Thin CLI with Local Daemon Mode — establishes daemon pattern,
   documents CLI→REST future direction
-- ADR-029: SQLite in Web Gateway — Gateway persistence design
+- ADR-029: PostgreSQL in Web Gateway — Gateway persistence design
 - ADR-040: Scan Metadata Enrichment — `apme sbom` is PR 3 of this ADR
 - ADR-004: Podman Pod Deployment — pod topology (unchanged)
-- DR-008: Scan Result Persistence — decided: SQLite in Gateway
+- DR-008: Scan Result Persistence — decided: PostgreSQL in Gateway
 - DR-016: Embed Gateway in Local Daemon — this ADR documents that decision
 
 ---

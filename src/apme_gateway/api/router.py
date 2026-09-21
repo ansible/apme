@@ -68,7 +68,7 @@ from apme_gateway.api.schemas import (
     UpdateProjectRequest,
     ViolationDetail,
 )
-from apme_gateway.db import get_session
+from apme_gateway.db import get_database_type, get_session
 from apme_gateway.db import queries as q
 from apme_gateway.db.models import GalaxyServer, Project, Rule, RuleOverride, Scan, ScanManifest
 
@@ -256,6 +256,7 @@ async def health() -> HealthStatus:
     return HealthStatus(
         status="ok" if all_ok else "degraded",
         database="ok" if db_ok else "unavailable",
+        database_type=get_database_type(),
         components=component_list,
     )
 

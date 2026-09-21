@@ -4,13 +4,14 @@ description: >
   Review and help prepare a contributor's pull request (upstream or fork).
   Use when the user asks to review a PR, get a contributor PR ready, update a
   contributor's branch, or ensure a PR meets project standards before merge.
-  Follow this skill so contributor PRs are reviewed consistently and avoid
-  rework (lint/test failures, outdated base, weak description).
+  Prefer reviewing hosted CI results over reproducing the full test suite
+  locally. Follow this skill so contributor PRs are reviewed consistently and
+  avoid rework (failed CI, outdated base, weak description).
 argument-hint: "<PR number or URL>"
 user-invocable: true
 metadata:
   author: APME Team
-  version: 1.0.0
+  version: 1.1.0
 ---
 
 # Review Contributor PR
@@ -22,8 +23,10 @@ own PR (use `pr-new` for that).
 
 ## Goals
 
-- PR is **up to date with upstream main** (no merge conflicts, clean rebase).
-- **Quality gates pass**: `tox -e lint` and `tox -e unit` on the full tree.
+- PR is **up to date with its upstream base branch** (no merge conflicts, clean rebase).
+- **Hosted quality gates pass**: every applicable required CI check for the
+  latest PR head is green. Missing, pending, or failing checks block a
+  merge-ready assessment unless a maintainer explicitly grants an exception.
 - **PR description** follows the project template (Summary, Changes, Test plan)
   so reviewers and history have clear context.
 - Avoid pushing to the contributor's branch with failing CI or an outdated base.
@@ -42,35 +45,72 @@ remote/branch you will push to if you make changes (e.g. `djdanielsson:branch`).
 
 ### 2. Check if the branch is up to date with upstream
 
-- Fetch `upstream main` (or the base branch).
-- Compare base ref of the PR to current `upstream/main`. If upstream has
-  newer commits, the contributor's branch should be rebased (or merged) onto
-  `upstream/main` before merge.
+- Fetch the PR's actual base branch from the upstream remote, not necessarily
+  `main`.
+- Ensure the PR head commit is available locally before checking ancestry. For
+  example, fetch the reported head SHA (or use the GitHub API comparison
+  endpoint as a fallback), then run
+  `git merge-base --is-ancestor <upstream-base-ref> <head-sha>` using the PR's
+  actual base ref.
+- Confirm the PR is reported as mergeable by GitHub and inspect the commit
+  range for an unintended merge-based update when a clean rebase is required.
+  If upstream has newer commits, the contributor's branch should be rebased
+  onto the actual upstream base branch, or updated by fast-forward only, before
+  merge. Do not merge the base branch into the contributor branch where the
+  repository requires linear history.
 
-If you are going to push changes to the contributor's branch (e.g. adding
-fixes or improving the PR):
+GitHub's REST `mergeable` value can temporarily be `null` while GitHub computes
+it. Retry the metadata request a bounded number of times. If it remains
+`null`, report mergeability as pending and do not assess the PR as ready.
 
-- Rebase the **local** branch that mirrors their PR onto `upstream/main`
-  before pushing. That way the PR stays mergeable and CI runs against the
-  latest main.
+- If you are going to push changes to the contributor's branch (e.g. adding
+  fixes or improving the PR):
 
-### 3. Run quality gates before pushing
+- Rebase the **local** branch that mirrors their PR onto the resolved upstream
+  base ref before pushing. That way the PR stays mergeable and CI runs against
+  the latest base branch.
 
-Run tox quality gates on the **entire** tree, not only the changed files:
+### 3. Review hosted CI checks
+
+Review every applicable required workflow and check for the **latest PR head**,
+rather than rerunning the full quality gates locally. Include path-triggered
+checks and repository gates such as lint, unit, integration, UI, AI, OpenAPI,
+and Helm checks when the changed files require them. Compare the result with
+branch-protection requirements and workflow path filters; `gh pr checks` alone
+cannot show a check that was never scheduled. This is faster, avoids
+duplicating CI work, and keeps the review focused on the contributor's actual
+execution environment.
 
 ```bash
-tox -e lint
-tox -e unit
+gh pr checks <N> --repo ansible/apme
 ```
 
-Fix any failures (line length, untyped decorators, docstring sections, format,
-test regressions) before pushing to the contributor's branch.
+For deeper investigation, inspect failed workflow/job logs with
+`gh run view <run-id> --repo ansible/apme --log-failed`, or use the GitHub web
+UI. Confirm that checks correspond to the current head SHA, not an older
+commit.
 
-Do **not** run `ruff`, `mypy`, `pytest`, or `prek` directly — always use tox
-(ADR-047). See the `/tox` skill for the full environment reference.
+Do not rerun `tox -e lint` or `tox -e unit` locally by default when the
+corresponding hosted checks are complete and green. Run local quality gates
+when the user explicitly requests local validation, the relevant CI check is
+unavailable or inconclusive, or a failure cannot be diagnosed from hosted
+logs. This review-specific optimization does not relax the repository's
+tox-only quality-gate policy. If local validation is needed, use tox and never
+invoke `ruff`, `mypy`, `pytest`, or `prek` directly (ADR-047).
 
-Do **not** push to the contributor's branch if tox fails; fix in a new commit
-and then push so CI stays green.
+If CI is still running, report validation as pending rather than claiming the
+PR is ready, unless an explicit maintainer exception is recorded. If CI is
+absent or does not cover an applicable required quality gate, report that
+limitation and do not claim the PR is ready unless an explicit maintainer
+exception is recorded.
+
+See the `/tox` skill for the full environment reference when local validation
+is warranted.
+
+Do not push unrelated changes to the contributor's branch while required
+hosted checks are failing. If the user has authorized a corrective push,
+explain the failure, push the fix, and wait for the new checks on that head
+before proceeding.
 
 ### 4. PR description quality
 
@@ -95,8 +135,9 @@ and then push so CI stays green.
 
 - Before pushing:
 
-  1. Rebase onto `upstream/main` so the PR is up to date.
-  2. Ensure `tox -e lint` and `tox -e unit` pass (see §3).
+  1. Rebase onto the resolved upstream base ref so the PR is up to date.
+  2. Push the rebased or corrected head, then wait for and review its hosted
+     CI checks (see §3).
   3. Use `--force-with-lease` when pushing a rebased branch:
      `git push <remote> <local-branch>:<their-branch> --force-with-lease`.
 
@@ -111,11 +152,11 @@ full procedure (finding thread IDs / Node IDs and using the GraphQL-based thread
 
 ### 5b. Track all deferred work as issues
 
-When reviewing a contributor PR, any suggestion that work should happen in a
-follow-up PR — whether from you, the contributor, or another reviewer — **MUST**
-be captured as a GitHub issue immediately. Do not leave "TODO for later" or
-"out of scope, will address separately" without creating an issue. Untracked
-follow-ups are invisible debt.
+When reviewing a contributor PR, any concrete work that is intentionally
+deferred to a follow-up PR — whether from you, the contributor, or another
+reviewer — **MUST** be captured as a GitHub issue immediately. Do not leave
+"TODO for later" or "out of scope, will address separately" without creating
+an issue. Untracked follow-ups are invisible debt.
 
 ```bash
 gh issue create --repo ansible/apme \
@@ -149,11 +190,14 @@ Include the issue URL in the PR comment thread so reviewers can verify tracking.
 When reviewing or preparing a contributor PR:
 
 - [ ] Fetched PR and know base/head and remotes.
-- [ ] Branch is up to date with upstream main (rebase if needed before push).
-- [ ] `tox -e lint` and `tox -e unit` pass.
+- [ ] Branch is up to date with the PR's upstream base branch (rebase if needed before push).
+- [ ] Every applicable required hosted CI check passes for the latest PR head;
+  missing, pending, and failing checks block a ready assessment unless an
+  explicit maintainer exception is recorded.
 - [ ] PR description has Summary, Changes, and Test plan (pr-new style).
-- [ ] If pushing to their branch: rebase onto upstream main, tox green, then
-      `git push <remote> <local>:<their-branch> --force-with-lease`.
+- [ ] If pushing to their branch: rebase onto the resolved upstream base ref, push with
+  `git push <remote> <local>:<their-branch> --force-with-lease`, then wait for
+  and review hosted CI on the new head.
 - [ ] If you addressed a review comment: follow the `pr-address-feedback` skill
       to reply on the thread with explanation + commit SHA and resolve it.
 

@@ -11,7 +11,7 @@ Accepted (revised 2026-09-02: Helm chart removed; Kubernetes deployment via [apm
 ## Context
 
 APME's reference deployment is a single Podman pod (`containers/podman/pod.yaml`)
-with 12 containers sharing localhost networking. This works well for development
+with 13 containers sharing localhost networking. This works well for development
 and single-node evaluation but does not address production deployment:
 
 - **Kubernetes** is the standard for multi-node, scaled, and managed deployments.
@@ -30,10 +30,11 @@ and single-node evaluation but does not address production deployment:
 - ADR-005 (no service discovery) uses `127.0.0.1:<port>` for intra-pod
   communication. This works identically in Kubernetes pods (containers in the
   same pod share localhost).
-- The 12 containers in the reference pod naturally co-locate for single-site installs:
+- The 13 containers in the reference pod naturally co-locate for single-site installs:
   - **Engine stack** (8 containers): Engine, Native, OPA, Ansible, Gitleaks,
     Collection Health, Dep Audit, Galaxy Proxy
-  - **Gateway** (1 container): REST + Reporting + SQLite
+  - **PostgreSQL** (1 container): `postgres:16` sidecar with `postgres-data` PVC
+  - **Gateway** (1 container): REST + Reporting (connects via `APME_DATABASE_URL`)
   - **Frontend** (1 container): UI nginx (optional via portal profile)
   - **Abbenay** (1 container): Optional AI provider
   - **Observability** (1 container): OpenTelemetry Collector sidecar (ADR-067;
@@ -109,8 +110,21 @@ exposure details.
 | PVC | Access Mode | Used By | Purpose |
 |-----|-------------|---------|---------|
 | `sessions` | ReadWriteOnce | APME pod | Session venvs (Engine rw, validators ro) |
-| `gateway-data` | ReadWriteOnce | APME pod (Gateway) | SQLite database |
 | `proxy-cache` | ReadWriteOnce | APME pod | Galaxy Proxy wheel cache |
+| `postgres-data` | ReadWriteOnce | Operator / Podman | PostgreSQL database data |
+
+The operator and reference Podman pod provision PostgreSQL in the all-in-one
+topology by default. External PostgreSQL is configured through the operator CR
+or `APME_DATABASE_URL`. Remote database hosts require certificate-validated TLS
+(`?sslmode=verify-full` with a configured CA). The reference Podman pod deploys
+a `postgres:16` sidecar with a `postgres-data` PVC (`apme-postgres-data`).
+bootc requires an externally provisioned PostgreSQL service via
+`APME_DATABASE_URL`; its quadlets define no PostgreSQL container or data volume,
+so operators must provision and back up that database separately.
+
+ReadWriteOnce is sufficient for the single-replica operator topology. If a
+future multi-replica topology returns, shared Galaxy Proxy cache may need
+ReadWriteMany (per ADR-012's Galaxy Proxy Exception).
 
 #### Secrets
 

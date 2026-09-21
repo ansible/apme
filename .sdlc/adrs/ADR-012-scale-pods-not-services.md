@@ -75,7 +75,7 @@ current operator deployment must remain **single-replica** until that ADR lands.
 The **conceptual** scaling unit remains the engine stack (this ADR). The
 [APME Operator](https://github.com/ansible/apme-operator) deploys an
 **all-in-one** pod: engine + Gateway + UI + optional Abbenay on localhost.
-Multi-replica engine scaling requires a future topology ADR (Gateway SQLite
+Multi-replica engine scaling requires a future topology ADR (Gateway PostgreSQL
 cannot share a scaled pod).
 
 See [ADR-054](ADR-054-production-deployment.md) for the operator deployment path.

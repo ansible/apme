@@ -168,7 +168,7 @@ The process-lifetime `memory` store remains available. Deploy-time Kubernetes
 Secrets / env (`secret_store: env`) are unchanged. DELETE must pass
 `?secretStore=` (Abbenay defaults omitted store to **keychain**).
 
-Rejected: a Gateway `ai_providers` SQLite table as source of truth with
+Rejected: a Gateway `ai_providers` database table as source of truth with
 push-into-Abbenay-memory
 ([#560](https://github.com/ansible/apme/pull/560)). That inverts this
 ADR's "Abbenay remains config SoT" (invariant 5) and makes Gateway a
@@ -229,7 +229,7 @@ runtime admin API.
 
 **Why not chosen**: Product needs runtime admin through the Gateway edge.
 
-### Alternative 4: Gateway SQLite as secrets SoT, push to Abbenay memory
+### Alternative 4: Gateway database as secrets SoT, push to Abbenay memory
 
 **Description**: Persist providers and API keys in Gateway DB; push into
 Abbenay `secretStore: memory` before AI-enabled scans (proposed in
@@ -240,13 +240,13 @@ Abbenay `secretStore: memory` before AI-enabled scans (proposed in
 - Portal CRUD can live next to other Gateway settings
 
 **Cons**:
-- Gateway becomes a secrets vault (SQLite is not designed for that)
+- Gateway becomes a secrets vault (the Gateway database is not designed for that)
 - Two sources of truth; push-before-scan races and restart windows
 - Breaks "Abbenay remains config SoT" (this ADR / invariant 5)
 - Memory store is still ephemeral in Abbenay; durability is only in Gateway
 
 **Why not chosen**: Durable keys belong in Abbenay's file store on a
-**durable** config volume (operator PVC / Podman cache), not in Gateway SQLite.
+**durable** config volume (operator PVC / Podman cache), not in the Gateway database.
 Gateway stays a proxy. Default operator `emptyDir` is still ephemeral — enable
 `persistence.abbenay.enabled` when file-store keys must survive pod recycle.
 
@@ -311,7 +311,7 @@ Gateway stays a proxy. Default operator `emptyDir` is still ephemeral — enable
 - **Secrets durability** (Abbenay ≥ v2026.8.6): `secretStore: "file"` writes
   `<configDir>/secrets.json` on that same volume. Durable only with operator
   `persistence.abbenay.enabled=true` or the Podman RW cache. Gateway does
-  not parse `secretStore`. Do not persist provider keys in Gateway SQLite.
+  not parse `secretStore`. Do not persist provider keys in the Gateway database.
   DELETE requires `?secretStore=` (Abbenay defaults to keychain).
 
 ## Related Decisions

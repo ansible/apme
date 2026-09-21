@@ -32,6 +32,36 @@ logger = logging.getLogger(__name__)
 
 _BEST_PRACTICES: dict[str, list[str]] | None = None
 
+
+def _format_abbenay_error(exc: BaseException) -> str:
+    """Return a short, user-facing description of an Abbenay failure.
+
+    Args:
+        exc: Exception raised by the Abbenay client or stream adapter.
+
+    Returns:
+        A concise error string suitable for WARNING logs.
+    """
+    msg = str(exc).strip() or type(exc).__name__
+    # Abbenay wraps upstream stream/provider failures as "Server error [CODE]: ..."
+    if msg.startswith("Server error"):
+        return msg
+    return f"{type(exc).__name__}: {msg}"
+
+
+def _log_abbenay_failure(summary: str, exc: BaseException) -> None:
+    """Log an Abbenay failure without dumping a Python traceback at ERROR.
+
+    Tracebacks stay at DEBUG for operators who need them.
+
+    Args:
+        summary: One-line description of what failed.
+        exc: Exception raised by the Abbenay client or stream adapter.
+    """
+    logger.warning("%s: %s", summary, _format_abbenay_error(exc))
+    logger.debug("%s (detail)", summary, exc_info=exc)
+
+
 RULE_CATEGORY_MAP: dict[str, str] = {
     "M001": "fqcn",
     "M002": "fqcn",
@@ -737,8 +767,8 @@ class AbbenayProvider:
             await self._client.connect()  # type: ignore[attr-defined]
             result: bool = await self._client.health_check()  # type: ignore[attr-defined]
             return result
-        except Exception:
-            logger.exception("Abbenay health check failed")
+        except Exception as exc:
+            _log_abbenay_failure("Abbenay health check failed", exc)
             return False
 
     async def reconnect(self) -> None:
@@ -798,10 +828,9 @@ class AbbenayProvider:
             model: Optional model override.
 
         Returns:
-            ``AINodeFix`` with corrected YAML, or ``None`` on failure.
-
-        Raises:
-            Exception: If the Abbenay API call fails (e.g. network, credits).
+            ``AINodeFix`` with corrected YAML, or ``None`` when Abbenay
+            cannot return a usable response (transport/provider/stream
+            errors are logged and treated as a soft skip).
         """
         prompt = _build_node_prompt(context)
         effective_model = model or self._model
@@ -823,15 +852,20 @@ class AbbenayProvider:
                 prompt,
                 policy,
             )
-        except Exception:
-            logger.exception(
-                "Abbenay node call failed for %d violations on %s",
-                len(context.violations),
-                context.node_id,
+        except Exception as exc:
+            _log_abbenay_failure(
+                "Could not get a valid AI response from Abbenay for "
+                f"{context.node_id} ({len(context.violations)} violation(s))",
+                exc,
             )
-            raise
+            return None
 
         if not response_text.strip():
+            logger.warning(
+                "Abbenay returned an empty response for %s (%d violation(s))",
+                context.node_id,
+                len(context.violations),
+            )
             return None
 
         logger.debug(
@@ -884,15 +918,19 @@ class AbbenayProvider:
                 prompt,
                 policy,
             )
-        except Exception:
-            logger.exception(
-                "Abbenay validation call failed for %s on %s",
-                rule_id,
-                context.node_id,
+        except Exception as exc:
+            _log_abbenay_failure(
+                f"Could not get a valid validation response from Abbenay for {rule_id} on {context.node_id}",
+                exc,
             )
             return None
 
         if not response_text.strip():
+            logger.warning(
+                "Abbenay returned an empty validation response for %s on %s",
+                rule_id,
+                context.node_id,
+            )
             return None
 
         logger.debug(

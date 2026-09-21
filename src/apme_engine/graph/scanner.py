@@ -8,7 +8,9 @@ Also provides ``graph_report_to_violations`` for converting results to
 the ``ViolationDict`` format expected by the gRPC response path.
 
 Supports inline ``# noqa: <rule_id>`` comments in YAML to suppress
-specific rules on a per-task basis.
+specific rules on a per-task basis.  Native rules skip noqa'd IDs during
+``scan()``; ``filter_noqa_violations()`` applies the same comments to
+merged validator findings (e.g. OPA) in the engine after fan-out.
 """
 
 from __future__ import annotations
@@ -225,7 +227,10 @@ def parse_noqa(yaml_lines: str) -> frozenset[str]:
 
     Supports both single-rule (``# noqa: R108``) and multi-rule
     (``# noqa: R108, L030``) forms.  Rule IDs are normalized to
-    uppercase with whitespace stripped.
+    uppercase.  Only the first whitespace-delimited token of each
+    comma-separated entry is treated as a rule ID, so trailing
+    justification text (``# noqa: L068 intentional``, ``# noqa: L068 lola``,
+    or ``# noqa: R114 - why trusted``) does not poison the ID.
 
     Strips simple single- and double-quoted strings before matching
     so that ``# noqa:`` inside typical quoted scalars is ignored.
@@ -242,11 +247,65 @@ def parse_noqa(yaml_lines: str) -> frozenset[str]:
     for line in yaml_lines.splitlines():
         stripped = _QUOTED_RE.sub("", line)
         for match in _NOQA_RE.finditer(stripped):
-            for rule_id in match.group(1).split(","):
-                rid = rule_id.strip().upper()
+            for part in match.group(1).split(","):
+                token = part.strip().split(None, 1)[0] if part.strip() else ""
+                rid = token.upper()
                 if rid:
                     suppressed.add(rid)
     return frozenset(suppressed)
+
+
+def filter_noqa_violations(
+    violations: Sequence[ViolationDict],
+    graph: ContentGraph | None,
+) -> list[ViolationDict]:
+    """Drop violations suppressed by ``# noqa:`` on their graph node.
+
+    Used by the engine after validator fan-out so inline noqa comments
+    work for findings that carry a ContentGraph ``path`` (node id) with
+    non-empty ``yaml_lines`` — notably OPA task-scoped rules such as
+    L068.  Native rules already skip noqa'd IDs at match time; filtering
+    again here is a no-op for those findings.
+
+    Lookup is by violation ``path`` (ContentGraph ``node_id``).  When
+    *graph* is ``None``, or a violation has no matching node / empty
+    ``yaml_lines`` / empty ``path``, the violation is kept (fail-open).
+
+    Args:
+        violations: Merged violation dicts from one or more validators.
+        graph: ContentGraph with ``yaml_lines`` on nodes, or ``None``.
+
+    Returns:
+        Violations whose rule ID is not listed in a matching noqa.
+    """
+    if graph is None or not violations:
+        return list(violations)
+
+    kept: list[ViolationDict] = []
+    dropped = 0
+    noqa_by_path: dict[str, frozenset[str]] = {}
+    for violation in violations:
+        path = str(violation.get("path") or "").strip()
+        rule_id = str(violation.get("rule_id") or "").strip().upper()
+        if not path or not rule_id:
+            kept.append(violation)
+            continue
+        node = graph.get_node(path)
+        if node is None or not node.yaml_lines:
+            kept.append(violation)
+            continue
+        suppressed = noqa_by_path.get(path)
+        if suppressed is None:
+            suppressed = parse_noqa(node.yaml_lines)
+            noqa_by_path[path] = suppressed
+        if rule_id in suppressed:
+            dropped += 1
+            continue
+        kept.append(violation)
+
+    if dropped:
+        logger.debug("Filtered %d violation(s) via # noqa on ContentGraph nodes", dropped)
+    return kept
 
 
 def _reset_rule_scan_state(rules: list[GraphRule]) -> None:

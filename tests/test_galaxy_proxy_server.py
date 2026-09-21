@@ -10,7 +10,52 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from galaxy_proxy.proxy.server import create_app
+from galaxy_proxy.proxy.server import _safe_server_label, create_app
+
+
+@pytest.mark.parametrize(  # type: ignore[untyped-decorator]
+    ("raw_url", "expected"),
+    [
+        ("https://user:secret@hub.example.com:8443/api/?token=secret", "hub.example.com:8443"),
+        ("not-a-url-with-secret", "unknown"),
+        ("https://hub.example.com:not-a-port/api/", "unknown"),
+    ],
+)
+def test_safe_server_label_redacts_url_details(raw_url: str, expected: str) -> None:
+    """Operational labels expose only a parsed hostname or a safe fallback.
+
+    Args:
+        raw_url: Untrusted server URL to sanitize.
+        expected: Expected safe hostname label.
+    """
+    assert _safe_server_label(raw_url) == expected
+
+
+def test_response_middleware_logs_unhandled_failures(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Unhandled request failures emit a status and duration event.
+
+    Args:
+        tmp_path: Temporary directory for the proxy cache.
+        caplog: Captured log records.
+    """
+    application = create_app(cache_dir=tmp_path / "cache", enable_passthrough=False)
+
+    @application.get("/test-unhandled-failure")  # type: ignore[untyped-decorator]
+    async def _fail() -> None:
+        raise RuntimeError("sensitive failure detail")
+
+    with (
+        caplog.at_level("ERROR", logger="galaxy_proxy.proxy.server"),
+        TestClient(application, raise_server_exceptions=False) as client,
+    ):
+        response = client.get("/test-unhandled-failure")
+
+    assert response.status_code == 500
+    assert "server_response method=GET path=/test-unhandled-failure status=500" in caplog.text
+    assert "sensitive failure detail" not in caplog.text
 
 
 @pytest.fixture()  # type: ignore[untyped-decorator]
@@ -126,8 +171,8 @@ class TestProjectPage:
         assert resp.status_code == 200
         assert "<a href" not in resp.text
 
-    def test_empty_versions_cached_throttles_galaxy_calls(self, tmp_path: Path) -> None:
-        """Empty version list (negative result) is cached and prevents repeated Galaxy calls.
+    def test_empty_versions_are_not_cached(self, tmp_path: Path) -> None:
+        """Empty version results are retried instead of being cached as failures.
 
         Args:
             tmp_path: Pytest-provided temporary directory.
@@ -149,7 +194,7 @@ class TestProjectPage:
             resp2 = client.get("/simple/ansible-collection-ansible-posix/")
             assert resp2.status_code == 200
 
-        assert mock_versions.call_count == 1
+        assert mock_versions.call_count == 2
 
     def test_collection_with_cached_wheel(self, tmp_path: Path) -> None:
         """Collection with cached wheel lists it in the project page.
@@ -216,11 +261,12 @@ class TestServeWheel:
         resp = app.get("/wheels/../etc/passwd.whl")
         assert resp.status_code == 404
 
-    def test_cache_miss_downloads_and_converts(self, tmp_path: Path) -> None:
+    def test_cache_miss_downloads_and_converts(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
         """Cache miss triggers ansible-galaxy download and conversion.
 
         Args:
             tmp_path: Pytest-provided temporary directory.
+            caplog: Pytest log capture fixture.
         """
         from galaxy_proxy.collection_downloader import DownloadResult
 
@@ -236,6 +282,7 @@ class TestServeWheel:
         whl_data = b"PK\x03\x04converted-wheel"
 
         with (
+            caplog.at_level("INFO", logger="galaxy_proxy.proxy.server"),
             TestClient(application) as client,
             patch("galaxy_proxy.proxy.server.download_collections", mock_download),
             patch(
@@ -247,6 +294,17 @@ class TestServeWheel:
 
         assert resp.status_code == 200
         assert resp.content == whl_data
+        completion = ""
+        for record in caplog.records:
+            if "collection_download_complete" in record.message:
+                completion = record.message
+                break
+        assert completion
+        assert "download_duration_ms=" in completion
+        assert "conversion_duration_ms=" in completion
+        assert "total_duration_ms=" in completion
+        assert "tarball_size_bytes=0" in completion
+        assert f"wheel_size_bytes={len(whl_data)}" in completion
 
     def test_cache_miss_download_failure(self, tmp_path: Path) -> None:
         """Download failure returns 502.
@@ -273,6 +331,7 @@ class TestServeWheel:
             resp = client.get("/wheels/ansible_collection_ansible_posix-1.5.4-py3-none-any.whl")
 
         assert resp.status_code == 502
+        assert "Galaxy server unreachable" not in resp.text
 
     def test_unparseable_namespace(self, app: TestClient) -> None:
         """Wheel with unparseable namespace/name returns 404.
@@ -689,6 +748,64 @@ class TestVersionDiscoveryWithServers:
         assert len(captured_urls) == 1
         assert "/api/api/" not in captured_urls[0]
         assert "/api/v3/plugin/ansible/" in captured_urls[0]
+
+    def test_galaxy_versions_index_path_aap_and_hub_urls(self) -> None:
+        """AAP mock and Automation Hub URLs select the /api/galaxy/v3 index path."""
+        from galaxy_proxy.proxy.server import (
+            _GALAXY_VERSIONS_PATH,
+            _GALAXY_VERSIONS_PATH_AAP,
+            _galaxy_versions_index_path,
+        )
+
+        assert (
+            _galaxy_versions_index_path(
+                "http://host.containers.internal:8099/api/galaxy/content/community/",
+            )
+            == _GALAXY_VERSIONS_PATH_AAP
+        )
+        assert (
+            _galaxy_versions_index_path("https://console.redhat.com/api/automation-hub/") == _GALAXY_VERSIONS_PATH_AAP
+        )
+        assert _galaxy_versions_index_path("https://galaxy.ansible.com") == _GALAXY_VERSIONS_PATH
+
+    def test_fetch_versions_from_uses_api_galaxy_prefix_for_aap_mock(self) -> None:
+        """PAH/aap-mock URLs must use /api/galaxy/v3/... not bare /api/v3/...."""
+        import asyncio
+
+        from galaxy_proxy.proxy.server import _fetch_versions_from
+
+        captured_urls: list[str] = []
+
+        def _capture_client(**kwargs: object) -> unittest.mock.MagicMock:
+            mock_resp = unittest.mock.MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.json.return_value = {"data": [{"version": "1.0.0"}], "links": {}}
+            mock_resp.raise_for_status.return_value = None
+
+            async def _get(url: str, **kw: object) -> unittest.mock.MagicMock:
+                captured_urls.append(url)
+                return mock_resp
+
+            client = unittest.mock.MagicMock()
+            client.get = _get
+            client.__aenter__ = AsyncMock(return_value=client)
+            client.__aexit__ = AsyncMock(return_value=False)
+            return client
+
+        with patch("galaxy_proxy.proxy.server.httpx.AsyncClient", side_effect=_capture_client):
+            result = asyncio.run(
+                _fetch_versions_from(
+                    "ansible",
+                    "utils",
+                    "http://host.containers.internal:8099/api/galaxy/content/community/",
+                    token="tok",
+                ),
+            )
+
+        assert result == ["1.0.0"]
+        assert len(captured_urls) == 1
+        assert "/api/galaxy/v3/plugin/ansible/" in captured_urls[0]
+        assert "/api/v3/plugin/ansible/" not in captured_urls[0]
 
     def test_version_discovery_with_api_url_through_project_page(self, tmp_path: Path) -> None:
         """Version discovery handles configured server URLs that include /api/.
