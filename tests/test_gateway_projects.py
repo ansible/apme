@@ -1013,6 +1013,8 @@ async def test_update_project_warns_on_normalized_url_pop(
         assert updated is not None
         assert updated.normalized_repo_url == normalize_repo_url("https://github.com/org/new.git")
         assert any("normalized_repo_url" in record.message for record in caplog.records)
+
+
 def test_project_branch_fields_expose_max_length() -> None:
     """Project branch fields document the 100-char boundary for OpenAPI."""
     create_schema = CreateProjectRequest.model_json_schema()["properties"]["branch"]
