@@ -75,12 +75,15 @@ Initial scope:
 
 - Input: list of PyPI `(purl, name, version)` from latest manifest, filtered by Phase 3
   backfill eligibility (Dep Audit skipped, missing structured CVE, missing `cvss_score`,
-  or audit-coverage not `completed_clean` / `findings_present`)
+  or incomplete `findings_present` data; `completed_clean` with complete audit is skipped)
 - Resolves OSV endpoint from Gateway configuration (`OSV_ENDPOINT`, default
   `https://api.osv.dev`); air-gapped deployments point to a private mirror
 - Calls OSV batch API (`POST {OSV_ENDPOINT}/v1/querybatch`) **only** for eligible PyPI
   components when cache miss/expired on `include=vulnerabilities` (Phase 3)
-- Excludes private-index packages unless explicitly opted in (ADR-072)
+- Excludes private-index packages unless explicitly opted in; emit
+  `apme:advisory_status=excluded` (ADR-072)
+- Shared in-flight backfill limit (default 1 concurrent OSV batch per project);
+  saturated requests return inventory + `R200` without blocking
 - Does **not** query Galaxy `pkg:generic` collections (ADR-072 Option A)
 - Configurable per-request timeout and rate-limit controls; on timeout/rate-limit
   failure, set `apme:advisory_status=error` and return partial results (no 503)

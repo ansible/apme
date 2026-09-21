@@ -62,8 +62,10 @@ alongside content violations.
 - **WHEN** a consumer requests `GET /api/v1/projects/{id}/sbom?include=vulnerabilities`
   or `apme sbom PROJECT_ID --vulns`
 - **THEN** the CycloneDX document includes a `vulnerabilities` array
-- **AND** each entry references affected component `bom-ref` / PURL, CVE ID, severity
-  (from CVSS when available), and fix versions when known
+- **AND** each entry references affected component `bom-ref` / PURL, canonical
+  `advisory_id` (CVE when present, otherwise OSV/GHSA/PYSEC id), optional `cve_id`
+  when a CVE alias exists, severity (from CVSS when available), and fix versions
+  when known
 - **AND** findings are deduplicated by `(affected_purl, advisory_id)` where `advisory_id`
   is the canonical identifier (CVE when present, otherwise OSV/GHSA/PYSEC id)
 - **AND** Galaxy collection components use `apme:advisory_status=not_applicable` and are
@@ -95,11 +97,13 @@ alongside content violations.
 ### AC-5: Gateway OSV backfill (Phase 3; optional)
 
 - **GIVEN** a scan where Dep Audit was skipped, structured CVE rows are missing, or
-  `cvss_score` is absent for a PyPI component, and audit-coverage status is not
-  `completed_clean` or `findings_present`
+  `cvss_score` is absent for a PyPI component — including `findings_present`
+  coverage with incomplete structured data — and audit-coverage is not
+  `completed_clean` with a complete audit (no missing CVE rows or scores)
 - **WHEN** a consumer requests SBOM with `include=vulnerabilities` and backfill cache
   is missing or expired (ADR-072 Phase 3)
-- **THEN** only those eligible components may be batch-queried against OSV
+- **THEN** only those eligible components may be batch-queried against OSV; components
+  with `completed_clean` coverage and no data gaps are not re-queried
 - **AND** PyPI components evaluated with one or more advisories use
   `apme:advisory_status=checked`; zero advisories use `none`; Galaxy collections use
   `apme:advisory_status=not_applicable` without an OSV call
@@ -164,9 +168,10 @@ alongside content violations.
 2. Gateway persists manifest, violations, and structured CVE records.
 3. User runs `apme sbom PROJECT_ID --vulns` or calls REST with `include=vulnerabilities`.
 4. Gateway filters PyPI components by Phase 3 backfill eligibility (skipped audit,
-   missing structured CVE, missing `cvss_score`, or non-`completed_clean` coverage),
-   then lazily runs OSV batch enrichment only for eligible components on cache
-   miss/expired.
+   missing structured CVE, missing `cvss_score`, or incomplete `findings_present`
+   data); `completed_clean` components with complete audit data are skipped. Eligible
+   components are batch-enriched on cache miss/expired, subject to the shared
+   in-flight OSV backfill limit.
 5. Gateway assembles CycloneDX: components + dependency graph + vulnerabilities + CWE links.
 6. Enterprise tool ingests SBOM; CI gates on critical CVE count.
 
@@ -181,7 +186,7 @@ alongside content violations.
 | Air-gapped deployment | OSV mirror / pip-audit cache documented; enrichment uses configured cache endpoint |
 | Duplicate advisory from pip-audit and OSV | Dedupe by `(purl, advisory_id)`; prefer pip-audit fields when both present |
 | OSV advisory without CVE alias (GHSA/PYSEC only) | Persist with `advisory_id` = OSV/GHSA/PYSEC id; `cve_id` null; include in SBOM |
-| Private PyPI package (internal index) | Excluded from OSV batch unless opted in; `apme:advisory_status=not_applicable` |
+| Private PyPI package (internal index) | Excluded from OSV batch unless opted in; `apme:advisory_status=excluded` |
 | No CVSS in pip-audit JSON | Keep documented severity fallback; prefer OSV score when enrichment provides one |
 
 ### Error Conditions

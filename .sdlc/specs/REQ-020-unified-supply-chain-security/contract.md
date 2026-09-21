@@ -23,7 +23,9 @@ Existing endpoint. Extended query parameters:
 [CycloneDX 1.5 schema](https://cyclonedx.org/docs/1.5/json/). **Phase 2** sources entries
 from persisted `R200` rows. **Phase 3** may trigger OSV backfill only for components that
 need it (Dep Audit skipped / missing structured CVE / missing `cvss_score` / audit-coverage
-not `completed_clean` or `findings_present`). On OSV timeout or rate-limit failure during
+not `completed_clean` with complete audit data; `findings_present` with missing CVE
+rows or `cvss_score` remains eligible). On OSV timeout, rate-limit failure, or
+in-flight backfill saturation during
 lazy backfill, Gateway returns inventory + persisted `R200` findings with
 `apme:advisory_status=error` on affected components — the HTTP request must not fail solely
 because OSV is slow or unavailable (CLI `apme sbom --vulns` must not exit on enrichment
@@ -200,7 +202,7 @@ Existing `apme:source` property retained. New optional properties:
 
 | Property | Values | Meaning |
 |----------|--------|---------|
-| `apme:advisory_status` | `not_applicable`, `checked`, `none`, `error` | Mutually exclusive: `not_applicable` = Galaxy/private-index (no feed); `checked` = PyPI evaluated, ≥1 advisory; `none` = PyPI evaluated, zero advisories; `error` = evaluation failed |
+| `apme:advisory_status` | `not_applicable`, `excluded`, `checked`, `none`, `error` | Mutually exclusive: `not_applicable` = Galaxy (no feed); `excluded` = private-index PyPI (not queried); `checked` = public PyPI evaluated, ≥1 advisory; `none` = public PyPI evaluated, zero advisories; `error` = evaluation failed |
 | `apme:enriched_at` | ISO 8601 | Last OSV check timestamp (PyPI components) |
 
 Galaxy collection components always use `apme:advisory_status=not_applicable` (ADR-072
