@@ -92,6 +92,7 @@ Decisions under consideration — not yet accepted or implemented.
 | [ADR-042](ADR-042-third-party-plugin-services.md) | Third-Party Plugin Services | 2026-03-20 |
 | [ADR-046](ADR-046-ai-assisted-report-generation.md) | AI-Assisted Report Generation | 2026-03-30 |
 | [ADR-058](ADR-058-collection-dependency-suggestion.md) | Collection Dependency Suggestion for Unresolved Modules (R501) | 2026-06-23 |
+| [ADR-071](ADR-071-pip-index-egress.md) | Pip Index Egress via Galaxy Proxy | 2026-09-16 |
 
 ## Superseded
 
@@ -105,7 +106,7 @@ Decisions replaced by newer ADRs.
 ## Creating New ADRs
 
 1. Copy the template from `../templates/adr.md`
-2. Use the next available number (currently ADR-071)
+2. Use the next available number (currently ADR-072)
 3. Include:
    - Status (Proposed → Accepted → Implemented)
    - Date
