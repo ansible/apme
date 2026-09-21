@@ -48,7 +48,7 @@ tox is the single entry point for all developer tasks. Every CI check has a corr
 | Environment | What it runs | Category |
 |-------------|-------------|----------|
 | `tox -e lint` | `prek run --all-files` (ruff, mypy, pydoclint, uv-lock) | Quality gate |
-| `tox -e unit` | `pytest` with coverage (`--cov-fail-under=36`) | Test |
+| `tox -e unit` | `pytest` with coverage (`--cov-fail-under=70`) | Test |
 | `tox -e integration` | `pytest tests/integration/` (requires OPA binary) | Test |
 | `tox -e ai` | `pytest` with AI extras (abbenay) | Test |
 | `tox -e ui` | `pytest -m ui` (Playwright, requires running gateway + UI) | Test |
@@ -414,7 +414,7 @@ podman run --rm \
 
 ### Coverage target
 
-Coverage is configured at 50% (`fail_under = 50` in `pyproject.toml`). CI and tox run with `--cov-fail-under=36` as a lower floor; the pyproject.toml target is the ratchet goal. Ratchet up as tests are added. Rule files under `validators/*/rules/` are excluded from coverage measurement (they have colocated tests instead).
+Coverage is configured at 70% (`fail_under = 70` in `pyproject.toml`). CI and tox enforce `--cov-fail-under=70` as the gate on `src/apme_engine`. Ratchet up as tests are added (80+ once the pending review-fix and validation PRs land with their tests). Rule files under `validators/*/rules/` are excluded from coverage measurement (they have colocated tests instead). The gate measures `src/apme_engine` only — gateway (`src/apme_gateway`) and galaxy-proxy coverage is untracked follow-up work.
 
 ## Pod lifecycle
 

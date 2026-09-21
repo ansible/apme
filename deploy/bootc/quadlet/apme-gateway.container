@@ -6,13 +6,11 @@ After=apme-pod.service
 Image=ghcr.io/ansible/apme-gateway:latest
 Pod=apme.pod
 EnvironmentFile=/etc/apme/env/apme.env
-Environment=APME_DB_PATH=/data/apme.db
 Environment=APME_GATEWAY_GRPC_LISTEN=0.0.0.0:50060
 Environment=APME_GATEWAY_HTTP_HOST=0.0.0.0
 Environment=APME_GATEWAY_HTTP_PORT=8080
 Environment=COLLECTION_HEALTH_GRPC_ADDRESS=127.0.0.1:50058
 Environment=DEP_AUDIT_GRPC_ADDRESS=127.0.0.1:50059
-Volume=/var/lib/apme/gateway:/data:rw,z
 
 [Install]
 WantedBy=apme-pod.service

@@ -2,6 +2,7 @@
 Description=APME Pod — Ansible Policy & Modernization Engine
 After=network-online.target
 Wants=network-online.target
+ConditionPathExists=/etc/apme/env/apme.env
 
 [Pod]
 PodName=apme-pod

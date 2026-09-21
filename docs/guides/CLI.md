@@ -16,10 +16,10 @@ not succeed with silently missing OPA findings.
 
 ```bash
 # Install a specific release (recommended)
-pip install apme-engine@git+https://github.com/ansible/apme.git@v2026.8.2
+pip install apme-engine@git+https://github.com/ansible/apme.git@v2026.9.3
 
 # Install with AI escalation support (requires Abbenay daemon)
-pip install "apme-engine[ai] @ git+https://github.com/ansible/apme.git@v2026.8.2"
+pip install "apme-engine[ai] @ git+https://github.com/ansible/apme.git@v2026.9.3"
 
 # Install the latest development version (main branch)
 pip install apme-engine@git+https://github.com/ansible/apme.git@main
@@ -191,7 +191,7 @@ repos:
 
 ```yaml
 - name: Install APME
-  run: pip install apme-engine@git+https://github.com/ansible/apme.git@v2026.8.2
+  run: pip install apme-engine@git+https://github.com/ansible/apme.git@v2026.9.3
 
 - name: Run APME check
   run: apme check --sarif . > results.sarif
@@ -229,7 +229,7 @@ production use or full feature access, use a [deployment method](DEPLOYMENT.md).
 | Secret scanning (Gitleaks) | Not available (daemon does not start gitleaks validator) | Built-in |
 | AI-assisted remediation | Requires Abbenay daemon | Built-in (pod) |
 | Web UI dashboard | No | Yes |
-| Persistent scan history | No | Yes (Gateway + SQLite) |
+| Persistent scan history | No | Yes (Gateway + PostgreSQL) |
 | Multi-user / shared service | No (single-user) | Yes |
 | Collection Health scanning | Not available (daemon does not start optional validators) | Yes |
 | Python CVE audit | Not available (daemon does not start optional validators) | Yes |

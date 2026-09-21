@@ -11,9 +11,7 @@ class GatewayConfig:
     """Immutable gateway configuration.
 
     Attributes:
-        db_path: Path to the SQLite database file (used when ``database_url`` is unset).
-        database_url: Optional SQLAlchemy URL (``postgresql+asyncpg://...``). When set,
-            takes precedence over ``db_path``.
+        database_url: SQLAlchemy URL (``postgresql+asyncpg://...``) for persistence.
         grpc_listen: Address for the gRPC Reporting service.
         http_host: Host for the FastAPI HTTP server.
         http_port: Port for the FastAPI HTTP server.
@@ -27,7 +25,6 @@ class GatewayConfig:
         bitbucket_api_url: Bitbucket API base URL (ADR-050 Phase 2). Default Cloud 2.0 API.
     """
 
-    db_path: str = field(default_factory=lambda: os.environ.get("APME_DB_PATH", "/data/apme.db"))
     database_url: str | None = field(
         default_factory=lambda: os.environ.get("APME_DATABASE_URL", "").strip() or None,
     )

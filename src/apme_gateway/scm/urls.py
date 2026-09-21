@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from urllib.parse import urlparse
 
 DEFAULT_GITHUB_API_URL = "https://api.github.com"
@@ -224,3 +225,59 @@ def split_user_pass_token(token: str) -> tuple[str, str] | None:
     if not user or not secret:
         return None
     return user, secret
+
+
+_BRANCH_NAME_RE = re.compile(r"[A-Za-z0-9._/\-]+")
+_BRANCH_MAX_LENGTH = 100
+
+
+def validate_branch_name(value: str | None) -> str | None:
+    """Validate a branch name for SCM ref creation (shared helper).
+
+    Single source of truth for every branch-name entry point
+    (``SubmitRequest.branch_name``, project create/update ``branch``,
+    :func:`apme_gateway.scan.driver.clone_repo`). Enforces the API
+    character allowlist plus ``git check-ref-format`` component rules so
+    invalid refs fail fast with a 400-class error instead of surfacing as
+    a late git failure.
+
+    Args:
+        value: Candidate branch name (``None`` selects the auto-generated
+            default and passes through).
+
+    Returns:
+        The validated branch name unchanged.
+
+    Raises:
+        ValueError: If the name is blank, too long, is the reserved ``HEAD``,
+            contains ``..``, uses characters outside the allowlist, or
+            violates ref-format component rules (leading/trailing ``/``,
+            empty components, trailing ``.``, a ``.lock`` suffix on any
+            ``/``-separated component, ``@{`` sequence, or a leading ``-``).
+    """
+    if value is None:
+        return None
+    if not value.strip() or len(value) > _BRANCH_MAX_LENGTH or ".." in value:
+        msg = f"branch_name must be 1-{_BRANCH_MAX_LENGTH} chars without '..'"
+        raise ValueError(msg)
+    if not _BRANCH_NAME_RE.fullmatch(value):
+        msg = "branch_name may only contain letters, digits, '.', '_', '/', and '-'"
+        raise ValueError(msg)
+    # ``git check-ref-format`` rejects a ``.lock`` suffix on *any* path
+    # component (e.g. ``a.lock/b``), not just a trailing suffix, and
+    # reserves the bare name ``HEAD`` — both pass a whole-string check
+    # but fail late in git, so test per component here.
+    if (
+        value == "HEAD"
+        or value.startswith("/")
+        or value.endswith("/")
+        or value.endswith(".")
+        or "//" in value
+        or "@{" in value
+        or value.startswith("-")
+        or any(comp.startswith(".") for comp in value.split("/"))
+        or any(comp.endswith(".lock") for comp in value.split("/"))
+    ):
+        msg = "branch_name is not a valid git ref name"
+        raise ValueError(msg)
+    return value

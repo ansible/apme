@@ -1,7 +1,7 @@
 # APME Helm Chart
 
 Deploy APME on Kubernetes or OpenShift for **EAP / upstream** installs.
-[ADR-069](../../../.sdlc/adrs/ADR-069-helm-simple-all-in-one.md) defines a
+**[ADR-069](../../../.sdlc/adrs/ADR-069-helm-simple-all-in-one.md)** defines a
 **Simple all-in-one** Deployment: engine + Gateway + UI + optional Abbenay in
 one pod on localhost ([ADR-005](../../../.sdlc/adrs/ADR-005-no-service-discovery.md)).
 `replicas` must be `1`.
@@ -24,11 +24,27 @@ GitHub Pages:
 
 ### CLI
 
+Create a Secret with the Gateway database URL before installing (write the URL to
+a protected file so it is not exposed in shell history or process arguments):
+
+```bash
+kubectl create namespace apme --dry-run=client -o yaml | kubectl apply -f -
+umask 077
+tmpfile=$(mktemp)
+printf '%s' 'postgresql+asyncpg://apme:CHANGE_ME@postgres.example:5432/apme?sslmode=verify-full' > "$tmpfile"
+kubectl create secret generic apme-database \
+  --namespace apme \
+  --from-file=database-url="$tmpfile"
+rm -f "$tmpfile"
+```
+
 ```bash
 helm repo add apme https://ansible.github.io/apme
 helm repo update
 helm install apme apme/apme \
   --namespace apme --create-namespace \
+  --set postgres.enabled=false \
+  --set gateway.database.existingSecret.name=apme-database \
   --set route.enabled=true \
   --set route.host=apme.apps.ocp.example.com
 ```
@@ -37,7 +53,7 @@ Replace `route.host` with a hostname under your cluster's OpenShift
 ingress domain (for example `apme.apps.<cluster-domain>`) before installing —
 `example.com` will not resolve.
 
-Defaults pull from `quay.io/ansible` with image tag `2026.8.6` (`Chart.appVersion`).
+Defaults pull from `quay.io/ansible` with image tag `2026.9.3` (`Chart.appVersion`).
 For unreleased SHA builds, set `--set image.tag=sha-<commit>`.
 
 > **Observability:** The reference Podman pod includes an OpenTelemetry Collector
@@ -82,7 +98,7 @@ spec:
 - Helm 3.x
 - Access to `quay.io/ansible` (default pull registry) or a mirror. CI always
   publishes to `ghcr.io/ansible` and publishes to Quay when credentials are set
-- Default image tag is pinned to `2026.8.6` (GitHub release `v2026.8.6`; must
+- Default image tag is pinned to `2026.9.3` (GitHub release `v2026.9.3`; must
   match Chart.appVersion). Override with `--set image.tag=…` for another
   release or a SHA build (e.g. `sha-b7d1683`)
 - Cluster nodes on `linux/amd64` or `linux/arm64`. Tags published by CI after
@@ -99,6 +115,16 @@ default so a bare `helm install` is not a footgun for SPA evaluators.
 |---------|------|----|----------|
 | Standalone SPA | [`values-standalone.yaml`](values-standalone.yaml) | on | Bundled PatternFly UI (default) |
 | Portal / backend | [`values-portal.yaml`](values-portal.yaml) | off | Automation portal / Backstage / Gateway API only |
+
+The EAP Simple chart includes a PostgreSQL 16 sidecar and a persistent
+`*-postgres-data` PVC by default. The chart creates a database password Secret
+automatically and retains it across upgrades and uninstall; Gateway connects
+to PostgreSQL over pod localhost. Set `postgres.password` explicitly when
+rendering declaratively without cluster lookups (for example, offline GitOps
+diffs).
+For production installations, disable the sidecar and configure an external
+PostgreSQL URL through `gateway.database.existingSecret` instead. External
+database examples must also set `postgres.enabled=false`.
 
 ### Standalone UI (default)
 
@@ -133,19 +159,41 @@ helm install apme apme/apme \
 
 ### From a local clone (contributors)
 
+The default local-clone install includes PostgreSQL in the Simple pod. To use an
+external database, set `postgres.enabled=false` and provide
+`gateway.database.existingSecret.name`.
+
 ```bash
-# Standalone (chart default)
+# Standalone (chart default) — includes PostgreSQL
 helm install apme ./deploy/helm/apme/
 
 # Portal / backend-only
 helm install apme ./deploy/helm/apme/ \
   -f ./deploy/helm/apme/values-portal.yaml
 
-# With AI enabled (OpenRouter provider)
+# With AI enabled (OpenRouter provider). Create the provider Secret out of
+# band, and pass the Abbenay token through a protected temporary file so
+# credentials are not exposed in shell history or process arguments.
+set -eu
+set -o pipefail
+umask 077
+test -n "${OPENROUTER_API_KEY:-}" && test -n "${APME_ABBENAY_TOKEN:-}"
+openrouter_key_file=$(mktemp)
+abbenay_token_file=$(mktemp)
+trap 'rm -f "$openrouter_key_file" "$abbenay_token_file"' EXIT
+kubectl create namespace apme --dry-run=client -o yaml | kubectl apply -f -
+printf '%s' "$OPENROUTER_API_KEY" > "$openrouter_key_file"
+kubectl create secret generic openrouter-credentials \
+  --namespace apme \
+  --from-file=api-key="$openrouter_key_file" \
+  --dry-run=client -o yaml | kubectl apply -f -
+printf '%s' "$APME_ABBENAY_TOKEN" > "$abbenay_token_file"
 helm install apme ./deploy/helm/apme/ \
+  --namespace apme --create-namespace \
+  --set image.tag=2026.9.3 \
   --set abbenay.enabled=true \
-  --set abbenay.token=$APME_ABBENAY_TOKEN \
-  --set-json 'abbenay.providers={"openrouter":{"engine":"openrouter","apiKey":"'$OPENROUTER_API_KEY'","models":{"anthropic/claude-sonnet-4-6":{}}}}'
+  --set-file abbenay.token="$abbenay_token_file" \
+  --set-json 'abbenay.providers={"openrouter":{"engine":"openrouter","apiKeySecret":{"name":"openrouter-credentials","key":"api-key"},"models":{"anthropic/claude-sonnet-4-6":{}}}}'
 ```
 
 Lint and package locally with `tox -e helm` (writes `dist/charts/*.tgz`).
@@ -194,8 +242,9 @@ Gateway DB and Abbenay down together.
 | Value | Default | Description |
 |-------|---------|-------------|
 | `image.registry` | `quay.io/ansible` | Container registry |
-| `image.tag` | `2026.8.6` | APME image tag (GitHub release `v2026.8.6`; stays here until the next APME release) |
+| `image.tag` | `2026.9.3` | APME image tag (GitHub release `v2026.9.3`; stays here until the next APME release) |
 | `engine.replicas` | `1` | Must be `1` (ADR-069) |
+| `engine.galaxyProxy.logLevel` | `INFO` | Galaxy Proxy log level (`DEBUG`, `INFO`, `WARNING`, `ERROR`, or `CRITICAL`) |
 | `gitleaks.enabled` | `true` | Enable Gitleaks validator |
 | `collectionHealth.enabled` | `true` | Enable Collection Health validator |
 | `depAudit.enabled` | `true` | Enable Dependency Audit validator |
@@ -204,7 +253,7 @@ Gateway DB and Abbenay down together.
 | `ui.replicas` | `1` | Must be `1` when UI enabled |
 | `abbenay.enabled` | `false` | Enable AI provider sidecar |
 | `abbenay.token` | `""` | Abbenay gRPC + HTTP admin token (required when `abbenay.enabled=true`) |
-| `abbenay.image` | `ghcr.io/redhat-developer/abbenay:v2026.8.7` | Abbenay daemon image (independent of `image.tag`) |
+| `abbenay.image` | `ghcr.io/redhat-developer/abbenay:v2026.8.9` | Abbenay daemon image (independent of `image.tag`) |
 | `abbenay.providers` | `{}` | LLM provider map (see [ABBENAY_AI.md](../../../docs/guides/ABBENAY_AI.md)) |
 | `abbenay.aiModel` | `""` | Default AI model ID |
 | `ingress.enabled` | `false` | Create Kubernetes Ingress |
@@ -214,7 +263,11 @@ Gateway DB and Abbenay down together.
 | `networkPolicy.enabled` | `false` | Enable NetworkPolicy |
 | `podDisruptionBudget.enabled` | `false` | Enable PDB |
 | `persistence.sessions.size` | `10Gi` | Session venv PVC size |
-| `persistence.gateway.size` | `5Gi` | Gateway DB PVC size |
+| `postgres.enabled` | `true` | Include the PostgreSQL sidecar and persistent database PVC |
+| `postgres.image` | `docker.io/library/postgres:16` | PostgreSQL image |
+| `postgres.password` | `""` | Empty generates a random retained password; set explicitly for declarative GitOps |
+| `persistence.postgres.size` | `5Gi` | PostgreSQL data PVC size |
+| `persistence.gateway.size` | `5Gi` | Legacy `*-gateway-data` PVC retained for rollback compatibility |
 | `persistence.abbenay.enabled` | `false` | When `true` (and `abbenay.enabled`), PVC for Abbenay runtime config and file-store secrets (`secrets.json`); otherwise `emptyDir` |
 | `persistence.abbenay.size` | `100Mi` | Abbenay config PVC size (seed-once from ConfigMap; runtime SoT after configure; also holds `secrets.json` for `secretStore: file`) |
 
@@ -269,6 +322,8 @@ and expose only the Gateway:
 ```bash
 helm install apme apme/apme \
   -f https://ansible.github.io/apme/values-portal.yaml \
+  --set postgres.enabled=false \
+  --set gateway.database.existingSecret.name=apme-database \
   --set route.enabled=true \
   --set route.host=apme-api.apps.ocp.example.com
 ```
@@ -309,7 +364,7 @@ Gateway API at `/api`.
 
 The chart is **Simple / single-replica** (ADR-069). Setting
 `engine.replicas > 1` or `autoscaling.enabled: true` fails Helm render.
-Multi-replica engine farms need a future topology ADR (Gateway SQLite and
+Multi-replica engine farms need a future topology ADR (external PostgreSQL and
 Abbenay cannot share a scaled pod without redesign).
 
 ## OpenShift compatibility
@@ -320,11 +375,13 @@ bases (ADR-061). CI publishes **multi-arch** (`linux/amd64` + `linux/arm64`)
 manifest lists under the same tags after ADR-063 (rebuild release tags to pick
 that up).
 
-- `podSecurityContext` and `securityContext` default to empty (OCP injects UID/GID)
+- The APME containers use explicit security values for vanilla Kubernetes; OpenShift
+  SCCs may assign the UID/GID. PostgreSQL has its own compatible context.
 - The UI container mounts emptyDir volumes for nginx writable paths
 - No privilege escalation is required
 
-For vanilla Kubernetes, set explicit security contexts (UBI images run as UID 1001):
+For vanilla Kubernetes, set explicit security contexts for the UBI-based APME
+containers (which run as UID 1001):
 
 ```yaml
 podSecurityContext:
@@ -343,18 +400,41 @@ those containers — the gRPC socket is created mode `0600`. Local Podman
 uses the same PVC definitions in `containers/podman/pvc.yaml` (with
 `volume.podman.io/uid` annotations).
 
+The PostgreSQL sidecar does not inherit the chart-wide `securityContext`. The
+default `docker.io/library/postgres:16` image starts its entrypoint as root so
+it can initialize and chown a fresh PVC, then drops privileges to UID 999. It
+therefore cannot satisfy the Kubernetes Restricted Pod Security Standard as-is.
+For vanilla Kubernetes, set `platform: kubernetes` and explicitly acknowledge
+the required admission-policy exception with
+`--set postgres.allowRootInit=true`; the namespace or policy must permit this
+bootstrap container to start as root. Helm rejects that platform/image
+combination unless the acknowledgement is explicit. For Restricted Pod
+Security, use a PostgreSQL image and initialization strategy that supports
+`runAsNonRoot: true`, then configure `postgres.securityContext` accordingly.
+
+Set `platform: kubernetes` to apply the `podSecurityContext.fsGroup: 999`
+default for the official image. Set `platform: openshift` on OpenShift so the
+chart omits the hard-coded group and lets the SCC assign it. If PostgreSQL is
+rebuilt with a fixed UID, configure `postgres.securityContext` separately.
+
+The PostgreSQL PVC is retained when PostgreSQL is disabled, so switching to an
+external database does not delete the in-pod data before migration. Delete the
+retained PVC explicitly after verifying that the data is no longer needed.
+
 ## Uninstall
 
 ```bash
 helm uninstall apme
 ```
 
-Helm 3 deletes chart-managed PVCs. The `kubectl delete pvc` command below is
-only needed if a claim was left behind (failed uninstall, or a PVC created
-outside the chart).
+The PostgreSQL PVC and bootstrap Secret are intentionally retained by Helm's
+`helm.sh/resource-policy: keep` annotation. This protects database data and
+credentials during uninstall and database-mode migration. Delete them
+explicitly, only after verifying that the data and credential are no longer
+needed. Other chart-managed PVCs are deleted by Helm 3 during uninstall.
 
 If the StorageClass reclaim policy is **Delete**, the CSI driver typically
-removes the backing volume when the PVC is gone.
+removes the backing volume when a retained PVC is explicitly deleted.
 
 If the reclaim policy is **Retain**, uninstall (and deleting the PVC) does
 **not** erase the disk. A PV in `Released` phase can still hold plaintext
@@ -370,8 +450,11 @@ RECLAIM:.spec.persistentVolumeReclaimPolicy,\
 STATUS:.status.phase,\
 CLAIM:.spec.claimRef.namespace/.spec.claimRef.name
 
-# Leftover chart PVCs (usually none after a clean helm uninstall)
-kubectl delete pvc -l app.kubernetes.io/instance=apme
+# Delete retained PostgreSQL resources only after migration/backup verification.
+# <fullname> is the rendered apme.fullname (affected by nameOverride or
+# fullnameOverride), not necessarily the Helm release name.
+kubectl delete pvc <fullname>-postgres-data
+kubectl delete secret <fullname>-postgres-secrets
 
 # After wiping/destroying a Retain volume in the storage provider:
 # kubectl delete pv <pv-name>

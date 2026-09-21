@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from sqlalchemy import event, inspect, text
 from sqlalchemy.engine import Connection
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
 from apme_gateway.db.dialect import in_clause_chunk_size
@@ -14,6 +17,8 @@ from apme_gateway.scm.repo_url import normalize_repo_url
 _engine: AsyncEngine | None = None
 _session_factory: async_sessionmaker[AsyncSession] | None = None
 _database_url: str | None = None
+_DB_INIT_MAX_ATTEMPTS = 30
+_DB_INIT_RETRY_DELAY_S = 1.0
 
 
 def _set_sqlite_pragma(
@@ -48,24 +53,44 @@ def _normalize_init_target(database_url_or_path: str) -> str:
 async def init_db(database_url_or_path: str) -> None:
     """Create the async engine, run DDL, and configure the session factory.
 
+    Retries transient connection failures while PostgreSQL starts (for example
+    during pod bring-up).
+
     Args:
         database_url_or_path: SQLAlchemy database URL (``postgresql+asyncpg://...``,
             ``sqlite+aiosqlite:///...``) or a SQLite filesystem path for backward
             compatibility with tests and ``APME_DB_PATH``.
+
+    Raises:
+        OperationalError: When the database is unreachable after all retries.
+        OSError: When a connection attempt fails after all retries.
     """
     global _engine, _session_factory, _database_url  # noqa: PLW0603
     url = _normalize_init_target(database_url_or_path)
     _database_url = url
-    _engine = create_async_engine(url, echo=False)
-    if is_sqlite_url(url):
-        event.listen(_engine.sync_engine, "connect", _set_sqlite_pragma)
-    _session_factory = async_sessionmaker(_engine, expire_on_commit=False)
-    async with _engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-        await conn.run_sync(_migrate_violations_table)
-        await conn.run_sync(_migrate_proposals_table)
-        await conn.run_sync(_migrate_scans_table)
-        await conn.run_sync(_migrate_projects_table)
+    for attempt in range(1, _DB_INIT_MAX_ATTEMPTS + 1):
+        engine: AsyncEngine | None = None
+        try:
+            engine = create_async_engine(url, echo=False)
+            if is_sqlite_url(url):
+                event.listen(engine.sync_engine, "connect", _set_sqlite_pragma)
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+                await conn.run_sync(_migrate_violations_table)
+                await conn.run_sync(_migrate_proposals_table)
+                await conn.run_sync(_migrate_scans_table)
+                await conn.run_sync(_migrate_projects_table)
+        except (OperationalError, OSError):
+            if engine is not None:
+                await engine.dispose()
+            if attempt < _DB_INIT_MAX_ATTEMPTS:
+                await asyncio.sleep(_DB_INIT_RETRY_DELAY_S)
+                continue
+            raise
+        else:
+            _engine = engine
+            _session_factory = async_sessionmaker(_engine, expire_on_commit=False)
+            return
 
 
 async def init_db_from_config(*, database_url: str | None = None, db_path: str | None = None) -> str:
@@ -137,10 +162,10 @@ def get_in_clause_chunk_size() -> int:
     """Return the safe ``IN`` clause chunk size for the active database.
 
     Returns:
-        Chunk size for the current engine dialect, or SQLite default before init.
+        Chunk size for the current engine dialect, or PostgreSQL default before init.
     """
     if _engine is None:
-        return 900
+        return 30_000
     return in_clause_chunk_size(_engine.sync_engine)
 
 

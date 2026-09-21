@@ -14,7 +14,7 @@ This document outlines the architecture for adding a web-based presentation laye
 
 | Tier | Use Case | Authentication | Persistence | Development Priority |
 |------|----------|----------------|-------------|---------------------|
-| **Standalone UI** | Individual developers, small teams, local dev | None (single-user) | SQLite (local) | **Phase 4 — Initial focus** |
+| **Standalone UI** | Individual developers, small teams, local dev | None (single-user) | PostgreSQL | **Phase 4 — Initial focus** |
 | **Enterprise Integration** | AAP deployments, multi-user, SSO | AAP Gateway (existing) | AAP database | Future — integrates with AAP |
 
 ### Design Principle
@@ -55,7 +55,7 @@ in the presentation layer (ADR-020).
 │  ├── gRPC client ──────────┘                                      │
 │  ├── File discovery + chunking (mounted vol or SCM clone)         │
 │  ├── WebSocket ↔ FixSession bidi gRPC bridge (ADR-028)            │
-│  └── SQLite persistence (activity history, violations, proposals)   │
+│  └── PostgreSQL persistence (activity history, violations, proposals)   │
 │                                                                    │
 │  Static SPA (PatternFly/React — standalone mode; see ADR-030)     │
 └───────────────────────────┬────────────────────────────────────────┘
@@ -76,7 +76,7 @@ one pod for the stream's lifetime). See ADR-029 for details.
 |--------|---------------|
 | **Users** | Single user (the developer running the pod) |
 | **Authentication** | None — assumes trusted local access |
-| **Persistence** | SQLite file in a mounted volume |
+| **Persistence** | PostgreSQL database |
 | **Deployment** | Container in the APME pod |
 | **State** | Local activity history, remediation queue |
 
@@ -253,7 +253,7 @@ For multi-user or network-exposed deployments, use enterprise mode behind AAP Ga
 
 ## Persistence (Standalone)
 
-### SQLite Schema
+### PostgreSQL Schema
 
 ```sql
 scans
@@ -287,24 +287,32 @@ remediation_proposals
 
 ### Storage Location
 
-The SQLite database is stored in a mounted volume:
+PostgreSQL data is stored in a dedicated persistent volume mounted on the
+`postgres` sidecar (`/var/lib/postgresql/data`). The Gateway connects via
+`APME_DATABASE_URL`:
 
 ```yaml
-volumes:
-  - name: apme-data
-    hostPath:
-      path: ~/.apme/data
-      type: DirectoryOrCreate
-
 containers:
-  - name: standalone-ui
-    volumeMounts:
-      - name: apme-data
-        mountPath: /data
+  - name: postgres
+    image: postgres:16
     env:
-      - name: APME_DB_PATH
-        value: /data/apme.db
+      - name: POSTGRES_USER
+        value: "apme"
+      - name: POSTGRES_PASSWORD
+        value: "apme"
+      - name: POSTGRES_DB
+        value: "apme"
+    volumeMounts:
+      - name: postgres-data
+        mountPath: /var/lib/postgresql/data
+  - name: gateway
+    env:
+      - name: APME_DATABASE_URL
+        value: "postgresql+asyncpg://apme:apme@127.0.0.1:5432/apme"
 ```
+
+See [`containers/podman/pod.yaml`](../../containers/podman/pod.yaml) for the
+reference Podman sidecar definition.
 
 ---
 
@@ -364,7 +372,7 @@ containers:
 ### Phase 4a: Standalone UI Backend
 
 1. **FastAPI app** — REST API + WebSocket with gRPC client to Engine
-2. **SQLite persistence** — activity history, violations, proposals
+2. **PostgreSQL persistence** — activity history, violations, proposals
 3. **WS /api/v1/ws/session** — unified check + remediate session over WebSocket (`FixSession`)
 4. **GET /api/v1/activity** — list with pagination/filtering
 5. **Health endpoint** — aggregate backend health

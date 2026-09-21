@@ -468,16 +468,48 @@ class CreateProjectRequest(BaseModel):  # type: ignore[misc]
     Attributes:
         name: Display label.
         repo_url: HTTPS clone URL.
-        branch: Branch to clone (default main).
+        branch: Branch to clone (default main). 1-100 chars; letters,
+            digits, '.', '_', '/', '-'; must satisfy git check-ref-format
+            component rules. Invalid names fail with 422.
         scm_token: Per-project SCM token for PR creation (ADR-050).
         scm_provider: Explicit SCM provider type (ADR-050). Auto-detected if omitted.
     """
 
     name: str
     repo_url: str
-    branch: str = "main"
+    branch: str = Field(
+        default="main",
+        max_length=100,
+        description=(
+            "Branch to clone (default main). 1-100 chars; "
+            "letters, digits, '.', '_', '/', '-'; must satisfy git "
+            "check-ref-format component rules. Invalid names fail with 422."
+        ),
+    )
     scm_token: str | None = None
     scm_provider: str | None = None
+
+    @field_validator("branch")  # type: ignore[untyped-decorator]
+    @classmethod
+    def _validate_branch(cls, v: str) -> str:
+        """Reject traversal and git-invalid branch names with a 422.
+
+        Args:
+            v: Candidate branch name.
+
+        Returns:
+            The validated branch name unchanged.
+
+        Raises:
+            ValueError: If the name fails git ref-format validation.
+        """
+        from apme_gateway.scm.urls import validate_branch_name  # noqa: PLC0415
+
+        validated = validate_branch_name(v)
+        if validated is None:
+            msg = "branch name validation returned None"
+            raise ValueError(msg)
+        return validated
 
 
 class UpdateProjectRequest(BaseModel):  # type: ignore[misc]
@@ -493,9 +525,32 @@ class UpdateProjectRequest(BaseModel):  # type: ignore[misc]
 
     name: str | None = None
     repo_url: str | None = None
-    branch: str | None = None
+    branch: str | None = Field(
+        default=None,
+        max_length=100,
+        description=(
+            "New branch to clone. 1-100 chars; "
+            "letters, digits, '.', '_', '/', '-'; must satisfy git "
+            "check-ref-format component rules. Invalid names fail with 422."
+        ),
+    )
     scm_token: str | None = None
     scm_provider: str | None = None
+
+    @field_validator("branch")  # type: ignore[untyped-decorator]
+    @classmethod
+    def _validate_branch(cls, v: str | None) -> str | None:
+        """Reject traversal and git-invalid branch names with a 422.
+
+        Args:
+            v: Candidate branch name (``None`` leaves the field unchanged).
+
+        Returns:
+            The validated branch name unchanged.
+        """
+        from apme_gateway.scm.urls import validate_branch_name  # noqa: PLC0415
+
+        return validate_branch_name(v)
 
 
 # ── Dependency manifest schemas (ADR-040) ────────────────────────────
@@ -676,11 +731,39 @@ class SubmitRequest(BaseModel):  # type: ignore[misc]
     """
 
     activity_id: str | None = None
-    branch_name: str | None = None
+    branch_name: str | None = Field(
+        default=None,
+        max_length=100,
+        description=(
+            "Name for the new branch (default auto-generated). 1-100 chars; "
+            "letters, digits, '.', '_', '/', '-'; must satisfy git "
+            "check-ref-format component rules. Invalid names fail with 422."
+        ),
+    )
     create_pr: bool = True
     title: str | None = None
     body: str | None = None
     scm_token: str | None = None
+
+    @field_validator("branch_name")  # type: ignore[untyped-decorator]
+    @classmethod
+    def _validate_branch_name(cls, v: str | None) -> str | None:
+        """Ensure an explicit branch name is safe for SCM ref creation.
+
+        Shared rules live in :func:`apme_gateway.scm.urls.validate_branch_name`
+        so REST validation and ``clone_repo`` agree; invalid names raise
+        ``ValueError`` from that helper and surface as 422.
+
+        Args:
+            v: The branch name value to validate (``None`` selects the
+                auto-generated default).
+
+        Returns:
+            The validated branch name unchanged.
+        """
+        from apme_gateway.scm.urls import validate_branch_name  # noqa: PLC0415
+
+        return validate_branch_name(v)
 
 
 class SubmitResponse(BaseModel):  # type: ignore[misc]

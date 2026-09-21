@@ -30,6 +30,21 @@ The pod creates:
 - **Sessions directory** — session-scoped venvs are stored under `/sessions` in the pod. The Engine writes here (rw); the Ansible validator reads it (ro).
 - OPA Rego bundle is **copied into the image** at build time from `src/apme_engine/validators/opa/bundle` (no runtime volume mount).
 
+The local Abbenay UI prefers `http://127.0.0.1:8787`. If that host port is
+already occupied, `tox -e up` selects an available port in the range
+`8787-8887` and prints the actual UI URL after startup. Abbenay still listens
+on port `8787` inside the pod, so the Gateway's in-pod proxy is unchanged.
+Use `APME_ABBENAY_HOST_PORT=<port> tox -e up` to request an exact host port;
+startup fails if that port is invalid or unavailable. The printed URL is the
+authoritative host URL. This behavior applies to the local Podman pod only;
+Helm deployments keep Abbenay loopback-only inside the Kubernetes pod.
+
+`tox -e up` mounts the writable Abbenay configuration directory from
+`${XDG_CONFIG_HOME:-~/.config}/abbenay` and prints the effective `config.yaml`
+path at the end of startup. This file is the runtime source of truth for
+provider configuration; an existing legacy cache config is migrated there once
+when the user config does not yet exist.
+
 ## Run CLI commands (on-the-fly container)
 
 From **any directory** you want to work with:
@@ -68,7 +83,7 @@ The health check probes the Engine and each validator directly via **gRPC** (not
 
 ```bash
 tox -e down             # stop
-tox -e wipe             # stop + wipe DB, session cache, and Abbenay secrets.json
+tox -e wipe             # stop + wipe DB and session cache; preserve Abbenay config/secrets
 
 # Or directly
 podman pod stop apme-pod

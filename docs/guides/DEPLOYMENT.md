@@ -43,7 +43,7 @@ From the repo root:
 tox -e build
 ```
 
-This builds a shared base image, eleven service images, and pulls one official image:
+This builds a shared base image, eleven service images, and pulls two official images:
 
 | Image | Source | Purpose |
 |-------|--------|---------|
@@ -55,10 +55,11 @@ This builds a shared base image, eleven service images, and pulls one official i
 | `apme-collection-health:latest` | `containers/collection-health/Dockerfile` | Installed collection health scanner |
 | `apme-dep-audit:latest` | `containers/dep-audit/Dockerfile` | Python CVE scanner (pip-audit) |
 | `apme-galaxy-proxy:latest` | `containers/galaxy-proxy/Dockerfile` | PEP 503 proxy: Galaxy tarballs → Python wheels |
-| `apme-gateway:latest` | `containers/gateway/Dockerfile` | REST API + gRPC Reporting service (SQLite or PostgreSQL) |
+| `apme-gateway:latest` | `containers/gateway/Dockerfile` | REST API + gRPC Reporting service (PostgreSQL) |
 | `apme-ui:latest` | `containers/ui/Dockerfile` | React SPA served by nginx (proxies API to Gateway) |
 | `apme-cli:latest` | `containers/cli/Dockerfile` | CLI client |
-| `ghcr.io/redhat-developer/abbenay:v2026.8.7` | [Official image](https://github.com/redhat-developer/abbenay/pkgs/container/abbenay) (pulled) | Abbenay AI daemon (LLM gateway for Tier 2 remediation) |
+| `postgres:16` | [Official image](https://hub.docker.com/_/postgres) (pulled) | PostgreSQL sidecar for Gateway persistence (`tox -e up`; preload for offline use) |
+| `ghcr.io/redhat-developer/abbenay:v2026.8.9` | [Official image](https://github.com/redhat-developer/abbenay/pkgs/container/abbenay) (pulled) | Abbenay AI daemon (LLM gateway for Tier 2 remediation) |
 
 ### Configure Abbenay AI (optional)
 
@@ -71,14 +72,15 @@ cp containers/abbenay/.env.example containers/abbenay/.env
 
 The `.env` file is gitignored. Abbenay config is **seeded** from
 `containers/abbenay/config/` (or legacy `config.yaml` /
-`config.yaml.example`) into
-`${XDG_CACHE_HOME:-$HOME/.cache}/apme/abbenay/config/` (override with
-`APME_CACHE_HOST_PATH`). That cache directory is the RW hostPath mount
-(`0700` / `0600`). Rootful Podman chowns the cache copy to UID 1001; rootless
-keeps host ownership and grants UID 1001 a POSIX ACL so you can still edit the
-file. The git checkout is never chowned. Edit the cache `config.yaml` (or use
-the Gateway admin proxy) to change providers/models — runtime configure writes
-persist across container restarts.
+`config.yaml.example`) into `${XDG_CONFIG_HOME:-$HOME/.config}/abbenay/`.
+An existing legacy config under `${XDG_CACHE_HOME:-$HOME/.cache}/apme` (or
+`APME_CACHE_HOST_PATH`) is migrated there once. That user config directory is
+the writable hostPath mount (`0700` / `0600`). Rootful Podman chowns it to UID
+1001; rootless keeps host ownership and grants UID 1001 a POSIX ACL so you can
+still edit the files. The git checkout is never chowned. Edit
+`${XDG_CONFIG_HOME:-$HOME/.config}/abbenay/config.yaml` (or use the Gateway
+admin proxy) to change providers/models — runtime configure writes persist
+across container restarts.
 
 If `.env` is missing or the key is empty, the Abbenay container starts but model queries return empty results. AI remediation gracefully degrades — Tier 1 deterministic fixes still work.
 
@@ -119,7 +121,7 @@ The `remediate` command uses a bidirectional streaming RPC (`FixSession`, ADR-02
 
 ```bash
 tox -e down
-tox -e wipe    # also delete database, session cache, and Abbenay secrets.json
+tox -e wipe    # also delete database and session cache; preserve Abbenay config/secrets
 ```
 
 ### Health check
@@ -197,13 +199,19 @@ proxy gRPC requests to it.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `APME_GALAXY_PROXY_URL` | `http://127.0.0.1:8765` | Galaxy proxy base URL |
+| `LOG_LEVEL` | `INFO` | Galaxy Proxy logging level: `DEBUG`, `INFO`, `WARNING`, `ERROR`, or `CRITICAL`. Invalid values fail startup. |
+
+At `INFO` level, Galaxy Proxy logs collection requests, metadata and wheel
+cache hits/misses, sanitized upstream Galaxy operations and responses, HTTP
+response status, download duration, and download size. Tokens, authorization
+headers, and response bodies are not logged. Set `LOG_LEVEL=DEBUG` while
+diagnosing Galaxy or Automation Hub connectivity.
 
 #### Gateway
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `APME_DATABASE_URL` | *(unset)* | Optional SQLAlchemy URL for PostgreSQL (e.g. `postgresql+asyncpg://user:pass@host:5432/apme`). When set, takes precedence over SQLite. |
-| `APME_DB_PATH` | `/data/apme.db` | Path to the SQLite database when `APME_DATABASE_URL` is unset (stores activity, sessions, rule catalog, and rule overrides) |
+| `APME_DATABASE_URL` | *(required)* | SQLAlchemy URL for PostgreSQL. Loopback example: `postgresql+asyncpg://user:pass@127.0.0.1:5432/apme`. Remote production hosts require TLS with certificate verification (`?sslmode=verify-full` and a configured CA). `sslmode=require` encrypts traffic but does not validate the server certificate. |
 | `APME_GATEWAY_GRPC_LISTEN` | `0.0.0.0:50060` | gRPC Reporting service listen address |
 | `APME_GATEWAY_HTTP_HOST` | `0.0.0.0` | REST API bind host |
 | `APME_GATEWAY_HTTP_PORT` | `8080` | REST API bind port |
@@ -226,9 +234,9 @@ proxy gRPC requests to it.
 | `CURL_CA_BUNDLE` | — | Shared CA bundle for curl/libcurl consumers in the gateway and Galaxy Proxy |
 | `GIT_SSL_CAINFO` | — | Shared CA bundle for `git ls-remote`, `git clone`, and `ansible-galaxy` git fetches |
 
-Abbenay uses `${XDG_CACHE_HOME:-$HOME/.cache}/apme/abbenay/config/` as a
+Abbenay uses `${XDG_CONFIG_HOME:-$HOME/.config}/abbenay/` as a
 **writable** hostPath mount (`abbenay-config` → `/home/abbenay/.config/abbenay`).
-`up.sh` seeds that cache dir from `containers/abbenay/config/` (or legacy
+`up.sh` seeds that user config dir from `containers/abbenay/config/` (or legacy
 files) and never chowns the git checkout. The config defines LLM providers and
 models. Deploy-time API keys are injected from environment variables — never
 committed to the config file. Runtime file-store keys (Abbenay ≥ v2026.8.6,
@@ -237,8 +245,8 @@ directory (treat as secret material). On macOS, virtiofs cannot give
 container UID 1001 access to `secrets.json` without world-opening it; file
 store is unsupported there until [#562](https://github.com/ansible/apme/issues/562)
 (use env or memory). `tox -e down` leaves that file in
-place; `tox -e wipe` deletes it. To add providers or models, edit the cache
-`config.yaml` or POST via the Gateway admin proxy
+place; `tox -e wipe` preserves it. To add providers or models, edit the user
+config `config.yaml` or POST via the Gateway admin proxy
 (`/api/v1/ai/provider/{id}/configure`); writes survive Abbenay restarts.
 
 **Local Podman dev UI:** `tox -e up` publishes Abbenay HTTP admin on
@@ -261,10 +269,22 @@ The Settings page (`/settings`) provides a model picker that queries available A
 |------|-----------|-----------------|----------|--------|
 | `sessions` | `apme-sessions/` | `/sessions` | Engine (rw), Ansible, Collection Health, Dep Audit (ro) | rw / ro |
 | `proxy-cache` | `<cache>/proxy/` | `/cache` | Galaxy Proxy | rw |
-| `gateway-data` | `<cache>/gateway/` | `/data` | Gateway | rw |
+| `postgres-data` | Podman volume `apme-postgres-data` | `/var/lib/postgresql/data` | PostgreSQL | rw |
 | `abbenay-config` | `<cache>/abbenay/config/` | `/home/abbenay/.config/abbenay` | Abbenay | rw |
 | `abbenay-run` | emptyDir | `/tmp/abbenay-run` | Engine + Gateway + Abbenay | rw |
 | `workspace` | CWD (CLI only) | `/workspace` | CLI | rw |
+
+#### Upgrading from SQLite (pre-PostgreSQL-only Gateway)
+
+Podman upgrades rename the database PVC from `apme-gateway-data` to
+`apme-postgres-data` and provision a `postgres:16` sidecar. **SQLite scan
+history retention is unsupported** — the Gateway provides no export/import path
+and this repository ships no SQLite-to-PostgreSQL migration tool. Before
+upgrading, archive the legacy `apme-gateway-data` volume if you need a
+pre-cutover rollback hold point (`tox -e down` before copying `apme.db` so
+filesystem copies include WAL/journal data). After `tox -e up`, the Gateway
+starts with an empty PostgreSQL database. See [bootc README](../../deploy/bootc/README.md#upgrading-from-sqlite-pre-postgresql-only-gateway)
+for the same guidance on VM deployments.
 
 #### Observability (Podman pod only)
 
@@ -326,9 +346,11 @@ it as the `--index-strategy` argument to `uv pip install`.
 
 For development and testing without the Podman pod, the CLI can start a
 local daemon that runs Engine, Native, OPA, and Ansible as localhost gRPC
-servers, Galaxy Proxy as an HTTP service, and Gateway HTTP plus Reporting
-gRPC per ADR-049. Optional validators (Gitleaks, Collection Health, Dep Audit)
-start only when `include_optional=True`.
+servers and Galaxy Proxy as an HTTP service. Gateway HTTP plus Reporting gRPC
+co-location is planned (ADR-049) but not implemented in `launcher.py` yet —
+use the Podman pod or an external Gateway at `APME_GATEWAY_URL` for REST-backed
+commands such as `apme sbom`. Optional validators (Gitleaks, Collection Health,
+Dep Audit) start only when `include_optional=True`.
 
 ```bash
 # Install tox + project (one-time)
@@ -347,7 +369,7 @@ apme remediate .
 apme daemon stop
 ```
 
-**Daemon mode** starts a local Engine with Native, OPA, and Ansible validators as in-process gRPC servers, Galaxy Proxy as an HTTP service (uvicorn), and Gateway HTTP plus Reporting gRPC (ADR-049). Optional validators (Gitleaks, Collection Health, Dep Audit) start only when `include_optional=True`. The OPA validator gRPC server is always started; policy evaluation uses Podman by default or a local `opa` binary when `OPA_USE_PODMAN=0`. OPA infrastructure failures surface as validator R902 errors so `check` and `remediate` cannot return silently incomplete results.
+**Daemon mode** starts a local Engine with Native, OPA, and Ansible validators as in-process gRPC servers and Galaxy Proxy as an HTTP service (uvicorn). Gateway HTTP plus Reporting gRPC co-location is planned (ADR-049) but not started by `launcher.py` yet — REST-backed commands need a Podman pod Gateway or `APME_GATEWAY_URL`. Optional validators (Gitleaks, Collection Health, Dep Audit) start only when `include_optional=True`. The OPA validator gRPC server is always started; policy evaluation uses Podman by default or a local `opa` binary when `OPA_USE_PODMAN=0`. OPA infrastructure failures surface as validator R902 errors so `check` and `remediate` cannot return silently incomplete results.
 
 ## Troubleshooting
 
@@ -440,10 +462,13 @@ localhost (ADR-005). Multi-replica engine HPA is not offered by this chart.
 
 - One Deployment: Engine + validators + Galaxy Proxy + Gateway + UI + optional Abbenay (localhost)
 - `replicas: 1` for both engine and gateway (HPA and `autoscaling.enabled` are
-  unsupported for SQLite and PostgreSQL in the Simple chart)
+  unsupported for PostgreSQL in the Simple chart)
 - Ingress/Route support (OpenShift Routes included)
 - NetworkPolicy for Ingress → Gateway/UI HTTP ports only
-- PVCs for sessions, Gateway DB, and Galaxy Proxy cache
+- PVCs for sessions, legacy `*-gateway-data` rollback storage, and Galaxy Proxy cache
+- PostgreSQL included by default; external PostgreSQL is optional via
+  `postgres.enabled=false` and `gateway.database.url` or
+  `gateway.database.existingSecret`
 - OpenShift Developer Catalog via `HelmChartRepository` pointing at the Pages URL
 
 ### Breaking change from pre-ADR-069 split chart
@@ -460,29 +485,51 @@ allowed engine HPA. Upgrading to this chart:
 - Keeps ClusterIP Service names `*-gateway` and `*-ui` (they now select the
   Simple pod)
 
-PVC names (`*-sessions`, `*-gateway-data`, `*-proxy-cache`) are unchanged.
+The existing PVC names (`*-sessions`, `*-gateway-data`, `*-proxy-cache`) are
+unchanged. This release introduces the `*-postgres-data` claim for the default
+in-pod database; the legacy `*-gateway-data` claim is retained for
+pre-PostgreSQL rollback only.
 
-### PostgreSQL (optional)
+### PostgreSQL (included by default)
 
-> **Migration warning:** Changing the backend does not migrate existing SQLite
-> data. Back up the SQLite database and perform a separate migration before
-> switching an existing installation to PostgreSQL. Activity, sessions, rules,
-> and overrides remain on the SQLite PVC while PostgreSQL starts with an empty
-> database.
+The Helm Simple chart includes PostgreSQL by default and sets
+`APME_DATABASE_URL` automatically. To use an external database, set
+`postgres.enabled=false` and provide `APME_DATABASE_URL` through
+`gateway.database.existingSecret` or `gateway.database.url`. Remote
+production hosts must use TLS with certificate verification (for example
+`?sslmode=verify-full` with a configured CA). `sslmode=require` encrypts traffic
+but does not validate the server certificate.
+Set `gateway.database.existingSecret.name` and `gateway.database.existingSecret.key`
+to reference a Kubernetes Secret containing the full SQLAlchemy URL (for example
+`postgresql+asyncpg://user:pass@host:5432/apme?sslmode=verify-full`). The chart injects it via
+`valueFrom.secretKeyRef` so credentials are not rendered in the Deployment
+manifest. For non-production installs you may set `gateway.database.url` to a
+credential-free URL (no `user:pass@` authority) instead of a Secret.
 
-By default the Gateway uses SQLite on the `gateway-data` PVC (`APME_DB_PATH=/data/apme.db`).
-For PostgreSQL, set `gateway.database.existingSecret.name` and
-`gateway.database.existingSecret.key` to reference a Kubernetes Secret containing
-the full SQLAlchemy URL (for example `postgresql+asyncpg://user:pass@host:5432/apme`).
-The chart injects it via `valueFrom.secretKeyRef` so credentials are not rendered
-in the Deployment manifest. For non-production installs you may set
-`gateway.database.url` directly instead of a Secret.
+> **Migration warning:** Upgrading from a pre-PostgreSQL chart that stored SQLite
+> on `*-gateway-data` does not migrate existing scan history. **History retention
+> is unsupported.** Archive the legacy `*-gateway-data` PVC for rollback only.
 
 ### Quick start
 
 Install flavors use named values files under `deploy/helm/apme/`
 (`values-standalone.yaml`, `values-portal.yaml`). Chart defaults keep the
 standalone UI enabled; portal installs pass `-f values-portal.yaml`.
+
+Create a Secret with the Gateway database URL before installing (replace host,
+credentials, and TLS parameters for your PostgreSQL service). Write the URL to a
+protected file so it is not exposed in shell history or process arguments:
+
+```bash
+kubectl create namespace apme --dry-run=client -o yaml | kubectl apply -f -
+umask 077
+tmpfile=$(mktemp)
+printf '%s' 'postgresql+asyncpg://apme:CHANGE_ME@postgres.example:5432/apme?sslmode=verify-full' > "$tmpfile"
+kubectl create secret generic apme-database \
+  --namespace apme \
+  --from-file=database-url="$tmpfile"
+rm -f "$tmpfile"
+```
 
 #### Standalone UI (default)
 
@@ -491,6 +538,8 @@ helm repo add apme https://ansible.github.io/apme
 helm repo update
 helm install apme apme/apme \
   --namespace apme --create-namespace \
+  --set postgres.enabled=false \
+  --set gateway.database.existingSecret.name=apme-database \
   --set route.enabled=true \
   --set route.host=apme.apps.ocp.example.com
 ```
@@ -506,6 +555,8 @@ helm repo update
 helm install apme apme/apme \
   --namespace apme --create-namespace \
   -f https://ansible.github.io/apme/values-portal.yaml \
+  --set postgres.enabled=false \
+  --set gateway.database.existingSecret.name=apme-database \
   --set route.enabled=true
 ```
 
@@ -517,12 +568,28 @@ helm install apme ./deploy/helm/apme/ \
   -f ./deploy/helm/apme/values-portal.yaml \
   --set image.tag=sha-7cb2464
 
-# Standalone + AI (OpenRouter)
+# Standalone + AI (OpenRouter). Use a Kubernetes Secret for the provider key
+# and a protected temporary file for the Abbenay token.
+set -eu
+set -o pipefail
+umask 077
+test -n "${OPENROUTER_API_KEY:-}" && test -n "${APME_ABBENAY_TOKEN:-}"
+openrouter_key_file=$(mktemp)
+abbenay_token_file=$(mktemp)
+trap 'rm -f "$openrouter_key_file" "$abbenay_token_file"' EXIT
+kubectl create namespace apme --dry-run=client -o yaml | kubectl apply -f -
+printf '%s' "$OPENROUTER_API_KEY" > "$openrouter_key_file"
+kubectl create secret generic openrouter-credentials \
+  --namespace apme \
+  --from-file=api-key="$openrouter_key_file" \
+  --dry-run=client -o yaml | kubectl apply -f -
+printf '%s' "$APME_ABBENAY_TOKEN" > "$abbenay_token_file"
 helm install apme ./deploy/helm/apme/ \
-  --set image.tag=sha-7cb2464 \
+  --namespace apme --create-namespace \
+  --set image.tag=2026.9.3 \
   --set abbenay.enabled=true \
-  --set abbenay.token=$APME_ABBENAY_TOKEN \
-  --set-json 'abbenay.providers={"openrouter":{"engine":"openrouter","apiKey":"'$OPENROUTER_API_KEY'","models":{"anthropic/claude-sonnet-4-6":{}}}}'
+  --set-file abbenay.token="$abbenay_token_file" \
+  --set-json 'abbenay.providers={"openrouter":{"engine":"openrouter","apiKeySecret":{"name":"openrouter-credentials","key":"api-key"},"models":{"anthropic/claude-sonnet-4-6":{}}}}'
 ```
 
 ### OpenShift UI
@@ -542,7 +609,7 @@ SHA or release tag (and Quay only when that publish included Quay credentials).
 
 | Value | Description |
 |-------|-------------|
-| `image.tag` | Image tag (default `2026.8.6` / `Chart.appVersion`; override with SHA like `sha-b7d1683`) |
+| `image.tag` | Image tag (default `2026.9.3` / `Chart.appVersion`; override with SHA like `sha-b7d1683`) |
 | `engine.replicas` | Engine pod replicas (default: 1) |
 | `abbenay.enabled` | Enable AI provider (default: false) |
 | `abbenay.token` | Abbenay service token (required when `abbenay.enabled=true`) |

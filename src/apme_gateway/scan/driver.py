@@ -480,6 +480,14 @@ async def fetch_remote_head(
     repo_url = _strip_url_userinfo(repo_url)
     if not any(repo_url.startswith(scheme) for scheme in _ALLOWED_SCHEMES):
         return None
+    if not isinstance(branch, str):
+        return None
+    from apme_gateway.scm.urls import validate_branch_name  # noqa: PLC0415
+
+    try:
+        validate_branch_name(branch)
+    except ValueError:
+        return None
 
     # Key authenticated lookups on a credential hash: two tokens with
     # different access must not share one entry.
@@ -585,7 +593,8 @@ async def clone_repo(
         scm_provider: Optional explicit SCM provider for auth username selection.
 
     Raises:
-        ValueError: If *repo_url* uses a disallowed scheme.
+        ValueError: If *repo_url* uses a disallowed scheme or *branch* is
+            not a valid git ref name.
         RuntimeError: If ``git clone`` fails or times out.
     """
     url_userpass = _url_embedded_userpass(repo_url) if not scm_token else None
@@ -594,9 +603,17 @@ async def clone_repo(
         msg = f"Only https:// clone URLs are allowed, got: {repo_url[:60]}"
         raise ValueError(msg)
 
-    if not branch.replace("-", "").replace("_", "").replace("/", "").replace(".", "").isalnum():
-        msg = f"Invalid branch name: {branch[:60]}"
+    if not isinstance(branch, str):
+        msg = f"Invalid branch name: {branch!r}"
         raise ValueError(msg)
+
+    from apme_gateway.scm.urls import validate_branch_name  # noqa: PLC0415
+
+    try:
+        validate_branch_name(branch)
+    except ValueError as exc:
+        msg = f"Invalid branch name: {branch[:60]}: {exc}"
+        raise ValueError(msg) from exc
 
     # Pass the token via a per-origin http.extraHeader env entry so it never
     # appears in argv; pre-existing GIT_CONFIG_* entries are preserved.

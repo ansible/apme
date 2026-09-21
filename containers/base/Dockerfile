@@ -26,9 +26,12 @@ RUN --mount=type=cache,target=/tmp/uv-cache \
 # Normalize modes after COPY: some hosts/filesystems (e.g. virtiofs) present
 # git-tracked 0644 files as 0600, which breaks non-root UID 1001 at runtime.
 COPY . /app
+# uv 0.10.x on UBI minimal: isolated editable build may not see setuptools;
+# install build deps into .venv then sync the project (ADR-061 base image).
 RUN --mount=type=cache,target=/tmp/uv-cache \
     chmod -R a+rX /app \
-    && uv sync --frozen --no-dev --extra ai --extra gateway
+    && uv pip install --python .venv/bin/python 'setuptools>=61' wheel \
+    && UV_NO_BUILD_ISOLATION=1 uv sync --frozen --no-dev --extra ai --extra gateway
 
 ENV PATH="/app/.venv/bin:$PATH"
 

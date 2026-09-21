@@ -650,10 +650,12 @@
         "type": "object"
       },
       "CreateProjectRequest": {
-        "description": "Request body for creating a project.\n\nAttributes:\n    name: Display label.\n    repo_url: HTTPS clone URL.\n    branch: Branch to clone (default main).\n    scm_token: Per-project SCM token for PR creation (ADR-050).\n    scm_provider: Explicit SCM provider type (ADR-050). Auto-detected if omitted.",
+        "description": "Request body for creating a project.\n\nAttributes:\n    name: Display label.\n    repo_url: HTTPS clone URL.\n    branch: Branch to clone (default main). 1-100 chars; letters,\n        digits, '.', '_', '/', '-'; must satisfy git check-ref-format\n        component rules. Invalid names fail with 422.\n    scm_token: Per-project SCM token for PR creation (ADR-050).\n    scm_provider: Explicit SCM provider type (ADR-050). Auto-detected if omitted.",
         "properties": {
           "branch": {
             "default": "main",
+            "description": "Branch to clone (default main). 1-100 chars; letters, digits, '.', '_', '/', '-'; must satisfy git check-ref-format component rules. Invalid names fail with 422.",
+            "maxLength": 100,
             "title": "Branch",
             "type": "string"
           },
@@ -2258,12 +2260,14 @@
           "branch_name": {
             "anyOf": [
               {
+                "maxLength": 100,
                 "type": "string"
               },
               {
                 "type": "null"
               }
             ],
+            "description": "Name for the new branch (default auto-generated). 1-100 chars; letters, digits, '.', '_', '/', '-'; must satisfy git check-ref-format component rules. Invalid names fail with 422.",
             "title": "Branch Name"
           },
           "create_pr": {
@@ -2491,12 +2495,14 @@
           "branch": {
             "anyOf": [
               {
+                "maxLength": 100,
                 "type": "string"
               },
               {
                 "type": "null"
               }
             ],
+            "description": "New branch to clone. 1-100 chars; letters, digits, '.', '_', '/', '-'; must satisfy git check-ref-format component rules. Invalid names fail with 422.",
             "title": "Branch"
           },
           "name": {

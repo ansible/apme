@@ -32,10 +32,11 @@ RUN mkdir -p /var/lib/apme/sessions \
              /var/lib/apme/proxy-cache && \
     chown -R apme:apme /var/lib/apme
 
-# Drop configuration directory (0600: may contain API keys at runtime)
-RUN mkdir -p /etc/apme/env
-COPY --chmod=0600 deploy/bootc/apme.env.example /etc/apme/env/apme.env
-RUN chown apme:apme /etc/apme/env/apme.env
+# Drop configuration directory (0600: may contain API keys at runtime).
+# Operators must create /etc/apme/env/apme.env before first boot — see README.
+RUN mkdir -p /etc/apme/env && chown apme:apme /etc/apme/env && chmod 0700 /etc/apme/env
+RUN mkdir -p /usr/share/apme
+COPY deploy/bootc/apme.env.example /usr/share/apme/apme.env.example
 
 # Install quadlet files for systemd service management.
 # Podman quadlet (.container, .pod) files go into the system generator directory.

@@ -15,13 +15,28 @@ permissions:
 env:
   FORCE_COLOR: 1
   PY_COLORS: 1
+  APME_TEST_DATABASE_URL: postgresql+asyncpg://apme:apme@localhost:5432/apme_test
 
 jobs:
   test:
     runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: apme
+          POSTGRES_PASSWORD: apme
+          POSTGRES_DB: apme_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U apme -d apme_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
       - run: uvx --with tox-uv tox -e unit
       - name: Fail if git reports dirty
         run: |
@@ -33,9 +48,23 @@ jobs:
 
   integration:
     runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: apme
+          POSTGRES_PASSWORD: apme
+          POSTGRES_DB: apme_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U apme -d apme_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
       - name: Install OPA binary
         env:
           OPA_VERSION: "1.17.1"
@@ -46,6 +75,8 @@ jobs:
           echo "${OPA_SHA256}  /tmp/opa_linux_amd64_static" | sha256sum --check -
           sudo install -m 755 /tmp/opa_linux_amd64_static /usr/local/bin/opa
           opa version
+      - name: Verify PostgreSQL reachability
+        run: uvx --with tox-uv tox -e postgres-check
       - run: uvx --with tox-uv tox -e integration
         env:
           OPA_USE_PODMAN: "0"
@@ -57,9 +88,23 @@ jobs:
 
   ui:
     runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: apme
+          POSTGRES_PASSWORD: apme
+          POSTGRES_DB: apme_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U apme -d apme_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: frontend/package.json
@@ -81,14 +126,14 @@ jobs:
           npx serve frontend/dist -l 8081 -s &
           sleep 3
         env:
-          APME_DB_PATH: /tmp/apme-ui-test.db
+          APME_DATABASE_URL: postgresql+asyncpg://apme:apme@localhost:5432/apme_test
           APME_GATEWAY_GRPC_LISTEN: 127.0.0.1:50060
           APME_GATEWAY_HTTP_HOST: 127.0.0.1
           APME_GATEWAY_HTTP_PORT: 8080
       - run: uvx --with tox-uv tox -e ui
         env:
           APME_UI_URL: http://localhost:8081
-          APME_DB_PATH: /tmp/apme-ui-test.db
+          APME_DATABASE_URL: postgresql+asyncpg://apme:apme@localhost:5432/apme_test
           APME_GATEWAY_HTTP_HOST: 127.0.0.1
           APME_GATEWAY_HTTP_PORT: 8080
 
@@ -96,14 +141,14 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
       - run: uvx --with tox-uv tox -e ai
 
   ui-workflow-pack:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
       # npm pack: same setup-node exception as the ui job; version from engines.node
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:

@@ -35,11 +35,10 @@ dependencies = [
 [project.optional-dependencies]
 ai = [
     # Pin to the same CalVer as the Abbenay daemon image (deploy pins).
-    "abbenay-client==2026.8.7",
+    "abbenay-client==2026.8.9",
 ]
 gateway = [
     "sqlalchemy>=2.0",
-    "aiosqlite>=0.20",
     "asyncpg>=0.30",
     "python-multipart>=0.0.31",
 ]
@@ -83,7 +82,7 @@ exclude_lines = [
     "raise NotImplementedError",
 ]
 show_missing = true
-fail_under = 50
+fail_under = 70
 
 [project.scripts]
 apme = "apme_engine.cli:main"
@@ -159,8 +158,6 @@ module = [
     "uvicorn.*",
     "sqlalchemy",
     "sqlalchemy.*",
-    "aiosqlite",
-    "aiosqlite.*",
     "asyncpg",
     "asyncpg.*",
     "pydantic",

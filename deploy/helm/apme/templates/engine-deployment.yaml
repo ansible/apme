@@ -1,9 +1,9 @@
 {{- /* ADR-069: Simple all-in-one — single Deployment, replicas must be 1 */ -}}
 {{- if ne (int .Values.engine.replicas) 1 }}
-{{- fail "ADR-069 Simple topology: engine.replicas must be 1 (Gateway PostgreSQL and Abbenay share this pod). Multi-replica requires a future topology ADR." }}
+{{- fail "ADR-069 Simple topology: engine.replicas must be 1 (Gateway uses in-pod PostgreSQL; Abbenay shares this pod). Multi-replica requires a future topology ADR." }}
 {{- end }}
 {{- if ne (int .Values.gateway.replicas) 1 }}
-{{- fail "ADR-069 Simple topology: gateway.replicas must be 1 (Gateway is a sidecar; PostgreSQL is not multi-replica)." }}
+{{- fail "ADR-069 Simple topology: gateway.replicas must be 1 (Gateway is a sidecar in the Simple pod)." }}
 {{- end }}
 {{- if and .Values.ui.enabled (ne (int .Values.ui.replicas) 1) }}
 {{- fail "ADR-069 Simple topology: ui.replicas must be 1 (UI is a sidecar in the Simple pod)." }}
@@ -11,9 +11,25 @@
 {{- if .Values.autoscaling.enabled }}
 {{- fail "ADR-069 Simple topology: autoscaling.enabled must be false (HPA is not supported while Gateway/Abbenay share the pod)." }}
 {{- end }}
+{{- if and (not .Values.postgres.enabled) (not .Values.gateway.database.url) (not .Values.gateway.database.existingSecret.name) }}
+{{- fail "postgres.enabled or gateway.database.url or gateway.database.existingSecret.name is required (Gateway persistence requires APME_DATABASE_URL)" }}
+{{- end }}
+{{- if and .Values.postgres.enabled (or .Values.gateway.database.url .Values.gateway.database.existingSecret.name) }}
+{{- fail "disable postgres.enabled when configuring an external gateway database" }}
+{{- end }}
+{{- if and .Values.postgres.enabled (eq .Values.platform "kubernetes") (eq .Values.postgres.image "docker.io/library/postgres:16") (not .Values.postgres.allowRootInit) }}
+{{- fail "postgres.allowRootInit must be true for platform: kubernetes with the official PostgreSQL image; use a non-root-compatible image for Restricted Pod Security" }}
+{{- end }}
+{{- if and .Values.gateway.database.existingSecret.name (not .Values.gateway.database.existingSecret.key) }}
+{{- fail "gateway.database.existingSecret.key is required when gateway.database.existingSecret.name is set" }}
+{{- end }}
 {{- if .Values.gateway.database.url }}
 {{- if not (hasPrefix "postgresql+asyncpg://" .Values.gateway.database.url) }}
 {{- fail "gateway.database.url must use the async driver postgresql+asyncpg:// (plain postgresql:// is not supported by create_async_engine)" }}
+{{- end }}
+{{- $dbAuthority := trimPrefix "postgresql+asyncpg://" .Values.gateway.database.url }}
+{{- if contains "@" $dbAuthority }}
+{{- fail "gateway.database.url must not contain credentials; use gateway.database.existingSecret for credential-bearing URLs" }}
 {{- end }}
 {{- end }}
 {{- if .Values.abbenay.enabled }}
@@ -66,9 +82,11 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       serviceAccountName: {{ include "apme.serviceAccountName" . }}
+      {{- if eq .Values.platform "kubernetes" }}
       {{- with .Values.podSecurityContext }}
       securityContext:
         {{- toYaml . | nindent 8 }}
+      {{- end }}
       {{- end }}
       {{- if or .Values.ui.enabled .Values.abbenay.enabled }}
       initContainers:
@@ -353,6 +371,9 @@ spec:
         - name: galaxy-proxy
           image: {{ include "apme.image" (dict "registry" .Values.image.registry "name" "galaxy-proxy" "tag" .Values.image.tag "fallbackTag" .Chart.AppVersion) }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: LOG_LEVEL
+              value: {{ .Values.engine.galaxyProxy.logLevel | quote }}
           {{- with .Values.securityContext }}
           securityContext:
             {{- toYaml . | nindent 12 }}
@@ -373,7 +394,64 @@ spec:
           resources:
             {{- toYaml .Values.engine.resources.galaxyProxy | nindent 12 }}
 
-        # -- Gateway (REST + gRPC reporting + SQLite)
+        # -- Gateway (REST + gRPC reporting + PostgreSQL)
+        {{- if .Values.postgres.enabled }}
+        - name: postgres
+          image: {{ .Values.postgres.image }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- with .Values.postgres.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          env:
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+            - name: POSTGRES_DB
+              value: {{ .Values.postgres.database | quote }}
+            - name: POSTGRES_USER
+              value: {{ .Values.postgres.username | quote }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $fullname }}-postgres-secrets
+                  key: postgres-password
+          readinessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - {{ .Values.postgres.username | quote }}
+                - -d
+                - {{ .Values.postgres.database | quote }}
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - {{ .Values.postgres.username | quote }}
+                - -d
+                - {{ .Values.postgres.database | quote }}
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          startupProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - {{ .Values.postgres.username | quote }}
+                - -d
+                - {{ .Values.postgres.database | quote }}
+            periodSeconds: 5
+            failureThreshold: 60
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+          resources:
+            {{- toYaml .Values.postgres.resources | nindent 12 }}
+        {{- end }}
         - name: gateway
           image: {{ include "apme.image" (dict "registry" .Values.image.registry "name" "gateway" "tag" .Values.image.tag "fallbackTag" .Chart.AppVersion) }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
@@ -393,9 +471,12 @@ spec:
             {{- else if .Values.gateway.database.url }}
             - name: APME_DATABASE_URL
               value: {{ .Values.gateway.database.url | quote }}
-            {{- else }}
-            - name: APME_DB_PATH
-              value: /data/apme.db
+            {{- else if .Values.postgres.enabled }}
+            - name: APME_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $fullname }}-postgres-secrets
+                  key: database-url
             {{- end }}
             - name: APME_GATEWAY_GRPC_LISTEN
               value: "0.0.0.0:50060"
@@ -623,6 +704,11 @@ spec:
         - name: gateway-data
           persistentVolumeClaim:
             claimName: {{ $fullname }}-gateway-data
+        {{- if .Values.postgres.enabled }}
+        - name: postgres-data
+          persistentVolumeClaim:
+            claimName: {{ $fullname }}-postgres-data
+        {{- end }}
         {{- if .Values.ui.enabled }}
         - name: nginx-cache
           emptyDir: {}
