@@ -114,7 +114,7 @@ This separates concerns: the engine scans content, the Gateway stores data and s
 1. Service queries Gateway: `GET /api/v1/collections` (returns all known collection+version pairs)
 2. For each unscanned collection+version:
    a. Resolve and retrieve the collection artifact via the Galaxy Proxy's PEP 503 simple index (e.g., install via `uv pip install` against `/simple/` or fetch the wheel/tarball from the index)
-   b. Submit to Engine via gRPC `Scan` RPC (same API the CLI uses)
+   b. Submit to Engine via gRPC `FixSession` (same API the CLI uses per ADR-039)
    c. Receive violations, compute health score
    d. `POST` health assessment back to Gateway
 3. Gateway correlates collection health to projects that use it
@@ -171,9 +171,22 @@ This separates concerns: the engine scans content, the Gateway stores data and s
 
 - [ ] Should the sidecar use gRPC or REST to communicate with the Gateway? (REST aligns with ADR-038; gRPC aligns with ADR-001)
 - [ ] Should collection health factor into the project health score (ADR-037), or be a separate metric?
-- [ ] What vulnerability database should be the default? (OSV.dev is free and comprehensive)
+- [x] What vulnerability database should be the default? → OSV via pip-audit (ADR-051) + Gateway lazy OSV (ADR-072 / REQ-020)
 - [ ] Should the service support on-demand scans (triggered by webhook on new collection version)?
-- [ ] Should SBOM generation (DR-002) be a feature of this service or a separate concern?
+- [x] Should SBOM generation (DR-002) be a feature of this service or a separate concern? → **Separate: REQ-020 / ADR-072**
+
+## Relationship to ADR-051 and REQ-020
+
+**Scan-path dependency health** (Collection Health + Dep Audit / `R200`) is implemented
+inline per [ADR-051](../../adrs/ADR-051-dependency-health-scanning.md). This REQ's
+original **sidecar** remains the design for **cross-project / periodic** aggregation;
+it is not required for per-scan CVE detection.
+
+**SBOM + CVE/CWE export and lazy Gateway OSV enrichment** are owned by
+[REQ-020](../REQ-020-unified-supply-chain-security/requirement.md) and
+[ADR-072](../../adrs/ADR-072-unified-supply-chain-sbom-cve-cwe.md). REQ-020 does not
+reintroduce the sidecar. Cross-project `/dep-health` views can consume the same
+persisted vulnerability tables.
 
 ## References
 
@@ -181,7 +194,9 @@ This separates concerns: the engine scans content, the Gateway stores data and s
 - ADR-038: Public Data API (Gateway API contract)
 - ADR-020: Reporting service (event delivery)
 - ADR-029: Web Gateway architecture
-- DR-002: SBOM generation (deferred; related)
+- ADR-051: Dependency Health Scanning (inline validators)
+- ADR-072 / REQ-020: Unified supply chain SBOM/CVE/CWE export
+- DR-002: SBOM generation (format decided via ADR-072)
 - PR #93: Original REQ-010 proposal
 
 ---
@@ -191,3 +206,4 @@ This separates concerns: the engine scans content, the Gateway stores data and s
 | Date | Author | Change |
 |------|--------|--------|
 | 2026-03-25 | Brad (cidrblock) | Initial draft, replacing original REQ-010 (PR #93) |
+| 2026-09-21 | Agent | Clarify ADR-051 inline path vs sidecar; point SBOM/CVE export to REQ-020 |
