@@ -933,13 +933,10 @@ async def _download_and_convert(
         # Galaxy wasn't already in the server list.
         if result.failed_specs and galaxy_servers:
             public_galaxy_host = "galaxy.ansible.com"
-            has_public_galaxy = any(
-                public_galaxy_host in (srv.url or "") for srv in galaxy_servers
-            )
+            has_public_galaxy = any(public_galaxy_host in (srv.url or "") for srv in galaxy_servers)
             if not has_public_galaxy:
                 logger.info(
-                    "galaxy_backend_fallback collection=%s reason=configured_servers_failed "
-                    "fallback=public_galaxy",
+                    "galaxy_backend_fallback collection=%s reason=configured_servers_failed fallback=public_galaxy",
                     spec,
                 )
                 # Clear directory and retry without configured servers (uses default Galaxy)
@@ -951,6 +948,7 @@ async def _download_and_convert(
                     ansible_cfg_path=None,
                     servers=None,
                     ansible_galaxy_bin=ansible_galaxy_bin,
+                    use_public_galaxy_defaults=True,
                 )
 
         if result.failed_specs:

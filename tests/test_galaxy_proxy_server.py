@@ -856,6 +856,7 @@ class TestDownloadFallback:
 
         call_count = 0
         captured_servers: list[list[GalaxyServerConfig] | None] = []
+        captured_public_defaults: list[bool] = []
 
         async def mock_download_collections(
             specs: list[str],
@@ -864,10 +865,12 @@ class TestDownloadFallback:
             ansible_cfg_path: Path | None = None,
             servers: list[GalaxyServerConfig] | None = None,
             ansible_galaxy_bin: str | None = None,
+            use_public_galaxy_defaults: bool = False,
         ) -> DownloadResult:
             nonlocal call_count
             call_count += 1
             captured_servers.append(servers)
+            captured_public_defaults.append(use_public_galaxy_defaults)
 
             if call_count == 1:
                 # First call (with configured servers) fails
@@ -896,6 +899,7 @@ class TestDownloadFallback:
         assert call_count == 2, "Should have called download twice (initial + fallback)"
         assert captured_servers[0] == pah_servers, "First call should use configured servers"
         assert captured_servers[1] is None, "Second call should use no servers (public Galaxy)"
+        assert captured_public_defaults == [False, True]
         assert whl_name == "ansible_collection_ansible_posix-1.0.0-py3-none-any.whl"
 
     def test_download_no_fallback_when_public_galaxy_already_in_servers(self) -> None:
@@ -918,6 +922,7 @@ class TestDownloadFallback:
             ansible_cfg_path: Path | None = None,
             servers: list[GalaxyServerConfig] | None = None,
             ansible_galaxy_bin: str | None = None,
+            use_public_galaxy_defaults: bool = False,
         ) -> DownloadResult:
             nonlocal call_count
             call_count += 1
@@ -933,9 +938,7 @@ class TestDownloadFallback:
             patch("galaxy_proxy.proxy.server.download_collections", side_effect=mock_download_collections),
             pytest.raises(RuntimeError, match="Failed to download"),
         ):
-            asyncio.run(
-                _download_and_convert("ansible", "posix", "1.0.0", galaxy_servers=servers_with_public)
-            )
+            asyncio.run(_download_and_convert("ansible", "posix", "1.0.0", galaxy_servers=servers_with_public))
 
         assert call_count == 1, "Should only call download once (no fallback when public Galaxy already tried)"
 
@@ -959,6 +962,7 @@ class TestDownloadFallback:
             ansible_cfg_path: Path | None = None,
             servers: list[GalaxyServerConfig] | None = None,
             ansible_galaxy_bin: str | None = None,
+            use_public_galaxy_defaults: bool = False,
         ) -> DownloadResult:
             nonlocal call_count
             call_count += 1
@@ -968,9 +972,7 @@ class TestDownloadFallback:
             patch("galaxy_proxy.proxy.server.download_collections", side_effect=mock_download_collections),
             pytest.raises(RuntimeError, match="Failed to download"),
         ):
-            asyncio.run(
-                _download_and_convert("ansible", "posix", "1.0.0", galaxy_servers=None)
-            )
+            asyncio.run(_download_and_convert("ansible", "posix", "1.0.0", galaxy_servers=None))
 
         assert call_count == 1, "Should only call download once (no fallback when no servers configured)"
 

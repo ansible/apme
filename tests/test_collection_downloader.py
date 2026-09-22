@@ -434,6 +434,47 @@ class TestDownloadCollections:
         assert "ANSIBLE_CONFIG" not in captured_env
 
     @pytest.mark.asyncio  # type: ignore[untyped-decorator]
+    async def test_public_galaxy_defaults_strips_inherited_env(self, tmp_path: Path) -> None:
+        """Public Galaxy fallback strips pod-level Galaxy env before subprocess.
+
+        Args:
+            tmp_path: Pytest-provided temporary directory.
+        """
+        download_dir = tmp_path / "dl"
+        captured_env: dict[str, str] = {}
+
+        mock_process = AsyncMock()
+        mock_process.returncode = 0
+        mock_process.communicate = AsyncMock(return_value=(b"OK", b""))
+
+        async def capture_exec(*_args: object, **kwargs: object) -> AsyncMock:
+            download_dir.mkdir(parents=True, exist_ok=True)
+            env = kwargs.get("env")
+            if isinstance(env, dict):
+                captured_env.update(env)
+            return mock_process
+
+        inherited = {
+            "ANSIBLE_CONFIG": "/etc/ansible/ansible.cfg",
+            "ANSIBLE_GALAXY_SERVER_LIST": "portal_hub_community",
+            "ANSIBLE_GALAXY_SERVER_PORTAL_HUB_COMMUNITY_URL": "http://pah.example.com/",
+        }
+        with (
+            patch("galaxy_proxy.collection_downloader.asyncio.create_subprocess_exec", side_effect=capture_exec),
+            patch.dict(os.environ, inherited, clear=False),
+        ):
+            await download_collections(
+                ["a.b"],
+                download_dir,
+                use_public_galaxy_defaults=True,
+            )
+
+        assert "ANSIBLE_CONFIG" not in captured_env
+        assert "ANSIBLE_GALAXY_SERVER_LIST" not in captured_env
+        assert not any(key.startswith("ANSIBLE_GALAXY_SERVER_") for key in captured_env)
+        assert captured_env.get("ANSIBLE_GALAXY_IGNORE") == "true"
+
+    @pytest.mark.asyncio  # type: ignore[untyped-decorator]
     async def test_uses_temp_ansible_cfg_for_non_env_safe_server_names(self, tmp_path: Path) -> None:
         """Falls back to ``ANSIBLE_CONFIG`` when server names are not env-safe.
 

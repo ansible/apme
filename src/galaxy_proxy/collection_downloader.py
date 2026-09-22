@@ -194,6 +194,22 @@ def _inject_galaxy_env(env: dict[str, str], servers: list[GalaxyServerConfig]) -
             env[f"{prefix}AUTH_URL"] = s.auth_url
 
 
+def _clear_inherited_galaxy_env(env: dict[str, str]) -> None:
+    """Remove inherited Galaxy server configuration from a subprocess env.
+
+    Used when falling back to public ``galaxy.ansible.com`` so pod-level
+    ``ANSIBLE_CONFIG`` and ``ANSIBLE_GALAXY_SERVER_*`` variables do not
+    re-apply the same Hub servers that already failed.
+
+    Args:
+        env: Mutable environment dict for ``ansible-galaxy``.
+    """
+    env.pop("ANSIBLE_CONFIG", None)
+    for key in list(env):
+        if key == "ANSIBLE_GALAXY_SERVER_LIST" or key.startswith("ANSIBLE_GALAXY_SERVER_"):
+            env.pop(key, None)
+
+
 def _default_ansible_galaxy_bin() -> str:
     """Resolve the best ``ansible-galaxy`` executable for this process.
 
@@ -224,6 +240,7 @@ async def download_collections(
     servers: list[GalaxyServerConfig] | None = None,
     ansible_galaxy_bin: str | None = None,
     timeout: float = 300.0,
+    use_public_galaxy_defaults: bool = False,
 ) -> DownloadResult:
     """Download collection tarballs via ``ansible-galaxy collection download``.
 
@@ -234,6 +251,10 @@ async def download_collections(
     ``ansible-galaxy`` inherits the container's environment (which may
     already have Galaxy server env vars set via pod configuration).
 
+    When ``use_public_galaxy_defaults`` is true, inherited ``ANSIBLE_CONFIG``
+    and ``ANSIBLE_GALAXY_SERVER_*`` variables are stripped so the subprocess
+    uses public ``galaxy.ansible.com`` discovery only.
+
     Args:
         collection_specs: Galaxy collection specifiers
             (e.g. ``["community.general:>=9.0", "ansible.posix"]``).
@@ -242,15 +263,22 @@ async def download_collections(
         servers: Galaxy server configs (injected as env vars).
         ansible_galaxy_bin: Override for the ``ansible-galaxy`` binary path.
         timeout: Subprocess timeout in seconds.
+        use_public_galaxy_defaults: Strip inherited Galaxy env/config before
+            invoking ``ansible-galaxy`` (public Galaxy fallback).
 
     Returns:
         DownloadResult with paths to downloaded tarballs and any failures.
 
     Raises:
-        ValueError: When both ``ansible_cfg_path`` and ``servers`` are provided.
+        ValueError: When both ``ansible_cfg_path`` and ``servers`` are provided,
+            or when ``use_public_galaxy_defaults`` is set with either argument.
     """
     if ansible_cfg_path and servers:
         msg = "ansible_cfg_path and servers are mutually exclusive"
+        raise ValueError(msg)
+
+    if use_public_galaxy_defaults and (ansible_cfg_path or servers):
+        msg = "use_public_galaxy_defaults requires ansible_cfg_path and servers to be unset"
         raise ValueError(msg)
 
     if not collection_specs:
@@ -290,6 +318,8 @@ async def download_collections(
     status = "error"
 
     try:
+        if use_public_galaxy_defaults:
+            _clear_inherited_galaxy_env(env)
         # Temporary lab default for Hub/self-signed TLS. Env vars outrank INI, so
         # only inject when the caller did not supply ansible.cfg (their
         # galaxy.ignore_certs must win). Track flipping the default: #526.
