@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted (SARIF export and hosted action.yml shipped; `@v1` publish pending)
 
 ## Date
 
@@ -196,3 +196,10 @@ function converting violation dicts to SARIF 2.1.0 JSON. Tested independently.
 - ADR-047: tox as sole orchestration
 - ADR-050: Post-remediation PR creation
 - ADR-054: Production deployment (Helm + bootc for hosted APME)
+
+## Revision History
+
+| Date | Author | Change |
+|------|--------|--------|
+| 2026-04-10 | APME Team | Accepted — SARIF export and hosted GitHub Action strategy |
+| 2026-09-22 | Agent | Status clarified — `apme check --sarif`, `action.yml`, and SARIF upload shipped; `@v1` publish still pending |

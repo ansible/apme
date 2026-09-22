@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Implemented
 
 ## Date
 
@@ -201,3 +201,4 @@ Rules without version sensitivity (L, R, P, SEC, A categories) get an empty `ans
 | Date | Author | Change |
 |------|--------|--------|
 | 2026-07-07 | APME Team | Initial proposal |
+| 2026-09-22 | Agent | Status → Implemented — `version_defaults.py`, proto `ansible_core_version`, and violation injection shipped |

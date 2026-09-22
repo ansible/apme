@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted (single-pod topology enforced; multi-replica scaling and operator deferred)
 
 ## Date
 
@@ -118,3 +118,4 @@ If a shared wheel cache is needed:
 |------|--------|--------|
 | 2026-02 | APME Team | Initial acceptance |
 | 2026-08-03 | APME Team | Helm notes amended for ADR-069 Simple (no multi-replica chart path) |
+| 2026-09-22 | Agent | Status clarified — Podman pod and Helm Simple enforce scale-as-unit; horizontal multi-replica path not implemented |

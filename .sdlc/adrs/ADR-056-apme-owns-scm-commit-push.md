@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Implemented
 
 ## Date
 
@@ -306,3 +306,4 @@ After acceptance, this ADR introduces a new architectural invariant for
 |------|--------|--------|
 | 2026-07-06 | B. Thornton | Initial proposal |
 | 2026-07-08 | Brad Thornton | Accepted — Gateway SCM submit, GitHub provider, and diff-only responses implemented; explicit commit author and bundle export remain |
+| 2026-09-22 | Agent | Status → Implemented — Gateway-owned SCM commit/push via `/operation/submit`; public file-bundle export intentionally not provided |

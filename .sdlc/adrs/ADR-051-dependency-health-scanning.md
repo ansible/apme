@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted (collection_health and dep_audit validators shipped; M004 collection rules and `--rescan-deps` CLI flag pending)
 
 ## Date
 
@@ -434,3 +434,4 @@ Flags:
 | Date | Author | Change |
 |------|--------|--------|
 | 2026-04-07 | Roger Lopez | Initial proposal |
+| 2026-09-22 | Agent | Status clarified — optional validators, daemon wiring, and pip-audit/OSV scanning shipped; deferred M004 and CLI rescan flags remain |

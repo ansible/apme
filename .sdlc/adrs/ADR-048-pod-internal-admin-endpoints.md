@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Implemented
 
 ## Date
 
@@ -157,3 +157,4 @@ could invalidate it.
 | Date | Author | Change |
 |------|--------|--------|
 | 2026-04-01 | APME Team | Initial proposal — accepted |
+| 2026-09-22 | Agent | Status → Implemented — pod-internal admin endpoints rely on network isolation as designed; no auth layer required until topology changes |

@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted (operation registry and SSE implemented; legacy WebSocket removal pending)
 
 ## Date
 
@@ -164,3 +164,4 @@ the implementation simple and avoids schema changes for transient state.
 | 2026-04-14 | APME Team | Initial proposal |
 | 2026-07-08 | Brad Thornton | Accepted — operation registry, SSE router, state machine, and frontend hooks implemented; legacy WebSocket removal remains |
 | 2026-07-20 | Brad Thornton | Clarified SPA may hold non-authoritative derived UI state; see ADR-065 |
+| 2026-09-22 | Agent | Status clarified — `OperationRegistry` and SSE shipped; `WS /projects/{id}/ws/operate` still present |

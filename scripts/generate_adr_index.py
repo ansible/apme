@@ -43,6 +43,10 @@ def _normalize_status(raw: str) -> str:
     low = raw.lower().strip()
     if "superseded" in low:
         return "Superseded"
+    if low == "implemented" or low.startswith("implemented "):
+        return "Implemented"
+    if low.startswith("accepted"):
+        return "Accepted"
     if "implemented" in low:
         return "Implemented"
     if "accepted" in low:
