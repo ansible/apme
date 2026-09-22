@@ -839,6 +839,142 @@ class TestVersionDiscoveryWithServers:
             assert servers[0].token == "tok"
 
 
+class TestDownloadFallback:
+    """Tests for download fallback to public Galaxy when configured servers fail."""
+
+    def test_download_falls_back_to_public_galaxy_when_configured_servers_fail(self) -> None:
+        """Download retries with public Galaxy when PAH servers fail.
+
+        When portal_hub_* servers are configured but fail to download a collection,
+        the download should fall back to galaxy.ansible.com if it wasn't already
+        in the server list.
+        """
+        import asyncio
+
+        from galaxy_proxy.collection_downloader import DownloadResult, GalaxyServerConfig
+        from galaxy_proxy.proxy.server import _download_and_convert
+
+        call_count = 0
+        captured_servers: list[list[GalaxyServerConfig] | None] = []
+
+        async def mock_download_collections(
+            specs: list[str],
+            download_dir: Path,
+            *,
+            ansible_cfg_path: Path | None = None,
+            servers: list[GalaxyServerConfig] | None = None,
+            ansible_galaxy_bin: str | None = None,
+        ) -> DownloadResult:
+            nonlocal call_count
+            call_count += 1
+            captured_servers.append(servers)
+
+            if call_count == 1:
+                # First call (with configured servers) fails
+                return DownloadResult(failed_specs=specs)
+            # Second call (fallback to public Galaxy) succeeds
+            tarball = download_dir / "ansible-posix-1.0.0.tar.gz"
+            tarball.write_bytes(b"fake tarball content")
+            return DownloadResult(tarball_paths=[tarball])
+
+        def mock_tarball_to_wheel(data: bytes) -> tuple[str, bytes]:
+            return ("ansible_collection_ansible_posix-1.0.0-py3-none-any.whl", b"fake wheel")
+
+        pah_servers = [
+            GalaxyServerConfig(name="portal_hub_community", url="http://pah.example.com/api/galaxy/content/community/"),
+            GalaxyServerConfig(name="portal_hub_validated", url="http://pah.example.com/api/galaxy/content/validated/"),
+        ]
+
+        with (
+            patch("galaxy_proxy.proxy.server.download_collections", side_effect=mock_download_collections),
+            patch("galaxy_proxy.proxy.server.tarball_to_wheel", side_effect=mock_tarball_to_wheel),
+        ):
+            whl_name, whl_data = asyncio.run(
+                _download_and_convert("ansible", "posix", "1.0.0", galaxy_servers=pah_servers)
+            )
+
+        assert call_count == 2, "Should have called download twice (initial + fallback)"
+        assert captured_servers[0] == pah_servers, "First call should use configured servers"
+        assert captured_servers[1] is None, "Second call should use no servers (public Galaxy)"
+        assert whl_name == "ansible_collection_ansible_posix-1.0.0-py3-none-any.whl"
+
+    def test_download_no_fallback_when_public_galaxy_already_in_servers(self) -> None:
+        """No fallback retry when galaxy.ansible.com is already in the server list.
+
+        If the server list already includes public Galaxy and download still fails,
+        there's no point retrying - just fail immediately.
+        """
+        import asyncio
+
+        from galaxy_proxy.collection_downloader import DownloadResult, GalaxyServerConfig
+        from galaxy_proxy.proxy.server import _download_and_convert
+
+        call_count = 0
+
+        async def mock_download_collections(
+            specs: list[str],
+            download_dir: Path,
+            *,
+            ansible_cfg_path: Path | None = None,
+            servers: list[GalaxyServerConfig] | None = None,
+            ansible_galaxy_bin: str | None = None,
+        ) -> DownloadResult:
+            nonlocal call_count
+            call_count += 1
+            return DownloadResult(failed_specs=specs)
+
+        # Server list includes public Galaxy
+        servers_with_public = [
+            GalaxyServerConfig(name="portal_hub_community", url="http://pah.example.com/api/galaxy/content/community/"),
+            GalaxyServerConfig(name="public_galaxy", url="https://galaxy.ansible.com/"),
+        ]
+
+        with (
+            patch("galaxy_proxy.proxy.server.download_collections", side_effect=mock_download_collections),
+            pytest.raises(RuntimeError, match="Failed to download"),
+        ):
+            asyncio.run(
+                _download_and_convert("ansible", "posix", "1.0.0", galaxy_servers=servers_with_public)
+            )
+
+        assert call_count == 1, "Should only call download once (no fallback when public Galaxy already tried)"
+
+    def test_download_no_fallback_when_no_servers_configured(self) -> None:
+        """No fallback when no servers are configured (already using default Galaxy).
+
+        If no servers are configured, the download already uses ansible-galaxy's
+        default discovery. No need for fallback logic.
+        """
+        import asyncio
+
+        from galaxy_proxy.collection_downloader import DownloadResult, GalaxyServerConfig
+        from galaxy_proxy.proxy.server import _download_and_convert
+
+        call_count = 0
+
+        async def mock_download_collections(
+            specs: list[str],
+            download_dir: Path,
+            *,
+            ansible_cfg_path: Path | None = None,
+            servers: list[GalaxyServerConfig] | None = None,
+            ansible_galaxy_bin: str | None = None,
+        ) -> DownloadResult:
+            nonlocal call_count
+            call_count += 1
+            return DownloadResult(failed_specs=specs)
+
+        with (
+            patch("galaxy_proxy.proxy.server.download_collections", side_effect=mock_download_collections),
+            pytest.raises(RuntimeError, match="Failed to download"),
+        ):
+            asyncio.run(
+                _download_and_convert("ansible", "posix", "1.0.0", galaxy_servers=None)
+            )
+
+        assert call_count == 1, "Should only call download once (no fallback when no servers configured)"
+
+
 class TestConvertTarballs:
     """Tests for POST /convert-tarballs endpoint."""
 

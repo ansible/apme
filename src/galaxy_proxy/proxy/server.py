@@ -891,6 +891,10 @@ async def _download_and_convert(
     When *version* is empty, ``ansible-galaxy`` downloads the latest
     available version.
 
+    If configured Galaxy servers fail and public Galaxy (galaxy.ansible.com)
+    was not in the server list, the download is retried using default Galaxy
+    discovery (fallback behavior matching version lookup).
+
     Args:
         namespace: Collection namespace.
         name: Collection name.
@@ -924,6 +928,30 @@ async def _download_and_convert(
             servers=galaxy_servers,
             ansible_galaxy_bin=ansible_galaxy_bin,
         )
+
+        # Fallback to public Galaxy if configured servers failed and public
+        # Galaxy wasn't already in the server list.
+        if result.failed_specs and galaxy_servers:
+            public_galaxy_host = "galaxy.ansible.com"
+            has_public_galaxy = any(
+                public_galaxy_host in (srv.url or "") for srv in galaxy_servers
+            )
+            if not has_public_galaxy:
+                logger.info(
+                    "galaxy_backend_fallback collection=%s reason=configured_servers_failed "
+                    "fallback=public_galaxy",
+                    spec,
+                )
+                # Clear directory and retry without configured servers (uses default Galaxy)
+                for old_file in download_dir.iterdir():
+                    old_file.unlink(missing_ok=True)
+                result = await download_collections(
+                    [spec],
+                    download_dir,
+                    ansible_cfg_path=None,
+                    servers=None,
+                    ansible_galaxy_bin=ansible_galaxy_bin,
+                )
 
         if result.failed_specs:
             msg = f"Failed to download {spec}"
