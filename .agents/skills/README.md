@@ -9,6 +9,7 @@ Agent skills for development workflow and spec-driven development.
 | Skill | Purpose | Arguments |
 |-------|---------|-----------|
 | `pr-new` | Prepare and submit a pull request | `[branch-name] [--title 'PR title']` |
+| `pr-traceability` | Verify ADR/issue links and ADR status updates for a PR | `[PR number or branch]` |
 | `pr-address-feedback` | Handle PR review feedback | `<PR number>` |
 | `pr-contributor-review` | Review and prepare a contributor's PR (upstream/fork) | `<PR number or URL>` |
 
@@ -44,6 +45,8 @@ skills/
 ├── resources/              # Shared resources
 │   └── status-values.md
 ├── pr-new/                 # PR lifecycle
+│   └── SKILL.md
+├── pr-traceability/
 │   └── SKILL.md
 ├── pr-address-feedback/
 │   └── SKILL.md

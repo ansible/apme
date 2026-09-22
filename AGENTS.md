@@ -395,6 +395,7 @@ anything else**. If a matching skill exists, read it and follow its instructions
 | `/phase-new` | Create project phase |
 | `/pr-contributor-review` | Review external contributor PRs |
 | `/pr-new` | Create and submit pull requests (includes self-review + cold subagent review) |
+| `/pr-traceability` | Verify ADR updates and GitHub issue links for a PR |
 | `/pr-address-feedback` | Handle PR review feedback (includes automated reviewer learning loop) |
 | `/prd-import` | Import product requirements |
 | `/req-new` | Create requirement spec |
