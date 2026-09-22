@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (severity defaults and catalog assignment implemented; Phase 5 service_affecting and R2xx rules pending)
+Partially Implemented (Phase 5 service_affecting and R2xx rules pending)
 
 ## Date
 
@@ -399,3 +399,4 @@ Third-party plugins ([ADR-042](ADR-042-third-party-plugin-services.md)) provide 
 | 2026-03-26 | APME Team | Initial proposal |
 | 2026-03-30 | APME Team | Added §7 service-affecting action flag (orthogonal to severity) with R2xx rule definitions; changed `very_high` → `SEVERITY_HIGH` mapping (was `SEVERITY_ERROR`) |
 | 2026-09-22 | Agent | Status clarified — Phases 1–4 shipped (`severity.py`, catalog, docs); Phase 5 `service_affecting` not yet in code |
+| 2026-09-22 | Agent | Status → Partially Implemented — severity defaults and catalog assignment shipped |

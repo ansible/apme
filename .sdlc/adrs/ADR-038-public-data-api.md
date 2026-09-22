@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (pull API, project lookup, and dashboard implemented; webhooks and token auth pending)
+Partially Implemented (webhooks and token auth pending)
 
 ## Date
 
@@ -261,3 +261,4 @@ The CLI `--json` output currently drops the violation `metadata` map (rule-speci
 | 2026-03-25 | Brad Thornton | Initial proposal from PR #102/#107 review discussion |
 | 2026-07-08 | Brad Thornton | Accepted — pull API, project lookup, and dashboard endpoints implemented; webhooks and token auth remain |
 | 2026-09-22 | Agent | Status clarified — codebase audit confirms pull API shipped; webhooks and token auth still pending |
+| 2026-09-22 | Agent | Status → Partially Implemented — pull API, lookup, and dashboard shipped |

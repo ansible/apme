@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (CLI suppress, fingerprint lib, Gateway CRUD, and UI implemented; rule_module mode and export/import remain)
+Partially Implemented (rule_module mode and export/import remain)
 
 ## Date
 
@@ -289,3 +289,4 @@ Suppressed violations are always available for audit. The default display hides 
 | 2026-05-21 | David (djdanielsson) | Address review: YAML-aware normalization for block scalars, rule_id canonicalization, explicit delimiter in all modes |
 | 2026-07-08 | Brad Thornton | Accepted — CLI suppress, fingerprint lib, Gateway CRUD, and UI implemented; rule_module mode and export/import remain |
 | 2026-09-22 | Agent | Status clarified — codebase audit confirms Phases 1–3 shipped; Phase 4 export/import and rule_module mode remain |
+| 2026-09-22 | Agent | Status → Partially Implemented — CLI suppress, fingerprint lib, Gateway CRUD, and UI shipped |

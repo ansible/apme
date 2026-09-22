@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (SARIF export and hosted action.yml shipped; `@v1` publish pending)
+Partially Implemented (`@v1` publish pending)
 
 ## Date
 
@@ -203,3 +203,4 @@ function converting violation dicts to SARIF 2.1.0 JSON. Tested independently.
 |------|--------|--------|
 | 2026-04-10 | APME Team | Accepted — SARIF export and hosted GitHub Action strategy |
 | 2026-09-22 | Agent | Status clarified — `apme check --sarif`, `action.yml`, and SARIF upload shipped; `@v1` publish still pending |
+| 2026-09-22 | Agent | Status → Partially Implemented — SARIF export and hosted action.yml shipped |

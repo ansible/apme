@@ -62,23 +62,30 @@ Decisions that are fully reflected in the codebase.
 | [ADR-069](ADR-069-helm-simple-all-in-one.md) | Helm Chart Simple All-in-One Topology (EAP / Upstream) | 2026-08-03 |
 | [ADR-070](ADR-070-gateway-abbenay-admin-proxy.md) | Gateway HTTP Proxy to In-Pod Abbenay Admin (Simple Model) | 2026-08-03 |
 
-## Accepted
+## Partially Implemented
 
-Decisions that have been accepted but are not yet fully implemented.
+Decisions with substantial code shipped; ADR-defined scope still incomplete.
 
 | ADR | Title | Date |
 |-----|-------|------|
-| [ADR-012](ADR-012-scale-pods-not-services.md) | Scale Pods, Not Services Within a Pod (Accepted (single-pod topology enforced; multi-replica scaling and operator deferred)) | 2026-02 |
-| [ADR-038](ADR-038-public-data-api.md) | Public Data API for Platform Consumers (Accepted (pull API, project lookup, and dashboard implemented; webhooks and token auth pending)) | 2026-03-25 |
-| [ADR-043](ADR-043-default-severity-assignment.md) | Default Severity Assignment for Rule Catalog (Accepted (severity defaults and catalog assignment implemented; Phase 5 service_affecting and R2xx rules pending)) | 2026-03-26 |
+| [ADR-012](ADR-012-scale-pods-not-services.md) | Scale Pods, Not Services Within a Pod (Partially Implemented (multi-replica scaling and operator deferred)) | 2026-02 |
+| [ADR-038](ADR-038-public-data-api.md) | Public Data API for Platform Consumers (Partially Implemented (webhooks and token auth pending)) | 2026-03-25 |
+| [ADR-043](ADR-043-default-severity-assignment.md) | Default Severity Assignment for Rule Catalog (Partially Implemented (Phase 5 service_affecting and R2xx rules pending)) | 2026-03-26 |
+| [ADR-050](ADR-050-post-remediation-pr-creation.md) | Post-Remediation PR Creation via Gateway SCM Integration (Partially Implemented (scm_token encryption at rest pending)) | 2026-04-07 (revised 2026-07-06) |
+| [ADR-051](ADR-051-dependency-health-scanning.md) | Dependency Health Scanning (Partially Implemented (M004 collection rules and `--rescan-deps` CLI flag pending)) | 2026-04-07 |
+| [ADR-052](ADR-052-project-operation-sse-architecture.md) | Project Operation SSE Architecture (Partially Implemented (legacy WebSocket removal pending)) | 2026-04-14 |
+| [ADR-053](ADR-053-github-integration-strategy.md) | GitHub Integration Strategy (Partially Implemented (`@v1` publish pending)) | 2026-04-10 |
+| [ADR-054](ADR-054-production-deployment.md) | Production Deployment — Helm Chart and bootc VM Image (Partially Implemented (ExternalSecret integration pending)) | 2026-04-10 |
+| [ADR-055](ADR-055-violation-fingerprint-suppression.md) | Content-Based Violation Fingerprinting and Suppression (Partially Implemented (rule_module mode and export/import remain)) | 2026-05-21 |
+| [ADR-060](ADR-060-rest-api-versioning-contract.md) | REST API Versioning Contract (Partially Implemented (deprecation middleware and break-diff CI pending)) | 2026-07-08 |
+
+## Accepted
+
+Decisions that have been accepted but not yet started in code.
+
+| ADR | Title | Date |
+|-----|-------|------|
 | [ADR-049](ADR-049-gateway-in-daemon.md) | Gateway Embedded in Local Daemon (Accepted (daemon launcher implementation pending)) | 2026-04-01 |
-| [ADR-050](ADR-050-post-remediation-pr-creation.md) | Post-Remediation PR Creation via Gateway SCM Integration (Accepted (PR creation and multi-provider SCM shipped; scm_token encryption at rest pending)) | 2026-04-07 (revised 2026-07-06) |
-| [ADR-051](ADR-051-dependency-health-scanning.md) | Dependency Health Scanning (Accepted (collection_health and dep_audit validators shipped; M004 collection rules and `--rescan-deps` CLI flag pending)) | 2026-04-07 |
-| [ADR-052](ADR-052-project-operation-sse-architecture.md) | Project Operation SSE Architecture (Accepted (operation registry and SSE implemented; legacy WebSocket removal pending)) | 2026-04-14 |
-| [ADR-053](ADR-053-github-integration-strategy.md) | GitHub Integration Strategy (Accepted (SARIF export and hosted action.yml shipped; `@v1` publish pending)) | 2026-04-10 |
-| [ADR-054](ADR-054-production-deployment.md) | Production Deployment — Helm Chart and bootc VM Image (Accepted (Helm chart and bootc shipped; ExternalSecret integration pending)) | 2026-04-10 |
-| [ADR-055](ADR-055-violation-fingerprint-suppression.md) | Content-Based Violation Fingerprinting and Suppression (Accepted (CLI suppress, fingerprint lib, Gateway CRUD, and UI implemented; rule_module mode and export/import remain)) | 2026-05-21 |
-| [ADR-060](ADR-060-rest-api-versioning-contract.md) | REST API Versioning Contract (Accepted (OpenAPI baseline and versioning contract shipped; deprecation middleware and break-diff CI pending)) | 2026-07-08 |
 
 ## Proposed
 
@@ -108,7 +115,7 @@ Decisions replaced by newer ADRs.
 1. Copy the template from `../templates/adr.md`
 2. Use the next available number (currently ADR-072)
 3. Include:
-   - Status (Proposed → Accepted → Implemented)
+   - Status (Proposed → Accepted → Partially Implemented → Implemented)
    - Date
    - Context
    - Options Considered

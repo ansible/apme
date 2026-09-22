@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (PR creation and multi-provider SCM shipped; scm_token encryption at rest pending)
+Partially Implemented (scm_token encryption at rest pending)
 
 ## Date
 
@@ -424,3 +424,4 @@ globally via `APME_GITHUB_API_URL`.
 | 2026-08-12 | AI Agent | Clarify scm_token is plaintext at rest today; `APME_SECRET_KEY` encryption deferred to follow-up |
 | 2026-08-31 | AI Agent | Persist `branch_name` and `commit_sha` on the scan row; return them with `pr_url` on activity list/detail |
 | 2026-09-22 | Agent | Status clarified — `/operation/submit` with `create_pr` and GitHub/GitLab/Bitbucket providers shipped; `APME_SECRET_KEY` encryption deferred |
+| 2026-09-22 | Agent | Status → Partially Implemented — PR creation and multi-provider SCM shipped |
