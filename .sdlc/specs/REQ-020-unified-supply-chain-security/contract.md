@@ -174,8 +174,18 @@ from `src/apme_engine/data/rule_cwe_map.yaml` when the rule is mapped.
 | `osv_id` | `PYSEC-2024-229` | Dep Audit, OSV |
 | `cvss_score` | `5.4` | OSV / pip-audit when present |
 | `affected_purl` | `pkg:pypi/jinja2@3.1.2` | Dep Audit |
-| `dep_fix_versions` | `3.1.3,3.1.4` | pip-audit |
-| `cwe_ids` | `798,1336` | engine rule map or OSV |
+| `dep_package` | `jinja2` | Dep Audit (`auditor.py` package name) |
+| `dep_installed_version` | `3.1.2` | Dep Audit (`auditor.py` installed version) |
+| `dep_fix_versions` | `3.1.3,3.1.4` | pip-audit (OSV fallback when pip-audit omits fix versions) |
+| `cwe_ids` | `798,1336` | engine rule map or OSV (violation metadata / SARIF only) |
+
+`ScanPythonPackage.name` and `ScanPythonPackage.version` are separate inventory fields;
+they do not satisfy AC-4's `dep_package` / `dep_installed_version` metadata contract.
+
+CycloneDX `vulnerabilities[].cwes` MUST use CWE IDs from OSV/CVE advisory data only.
+Content-rule CWE values (`SEC:*`, `R*` from `rule_cwe_map.yaml`) remain in
+`Violation.metadata.cwe_ids` and SARIF `taxa` — Gateway MUST NOT copy them into
+CycloneDX vulnerability `cwes` when assembling from persisted metadata.
 
 ### Advisory identity
 
@@ -187,8 +197,13 @@ Normative rules for correlating advisories across Dep Audit, OSV, CycloneDX, and
    `advisory_id` = the OSV ecosystem id (`PYSEC-*`, `GHSA-*`, or OSV id). Store all
    known aliases in `cve_id` and `osv_id` when present.
 3. **Alias normalization**: When pip-audit and OSV report the same advisory under
-   different identifiers, merge to one row keyed by canonical `advisory_id`; prefer
-   pip-audit field values when both sources agree.
+   different identifiers, merge to one row keyed by canonical `advisory_id`. When
+   both sources provide different values for the same field, use the pip-audit
+   value. If pip-audit provides no `cvss_score`, use the OSV score when present
+   and derive `severity` using ADR-051; when neither source provides a score, use
+   the documented fallback severity. For `dep_fix_versions`, use pip-audit when
+   present; when pip-audit omits fix versions, use OSV fix versions when available;
+   otherwise omit the field.
 4. **PYSEC-only advisories**: `advisory_id` = `PYSEC-*` (or GHSA/OSV id), `cve_id`
    = null. VEX suppressions MUST key on `(affected_purl, advisory_id)` so PYSEC-only
    advisories remain matchable without a CVE alias.
