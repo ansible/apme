@@ -2,7 +2,7 @@
 
 ## Status
 
-Partially Implemented (global collection and Python-package catalog endpoints pending)
+Partially Implemented (global collection and Python-package catalog endpoints and collection-to-project routes pending)
 
 ## Date
 

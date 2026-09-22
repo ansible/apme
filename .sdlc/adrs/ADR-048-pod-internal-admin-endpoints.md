@@ -20,10 +20,11 @@ mTLS, or middleware guard.  This was flagged during code review as a
 potential security concern: anyone with network access to the proxy
 could overwrite credentials and redirect downloads.
 
-However, in the current deployment topology (ADR-004, ADR-005) **all
-engine services share a single pod's localhost network**.  The Galaxy
-Proxy listens on `127.0.0.1:8765` and is not exposed outside the pod.
-The only caller is the co-located Gateway, also inside the pod.
+The intended deployment topology (ADR-004, ADR-005) places all engine
+services in a single pod. However, the current deployment starts the
+Galaxy Proxy on `0.0.0.0:8765` and Podman publishes `hostPort: 8765`,
+so the localhost-only boundary is not yet in place. The primary caller
+is the co-located Gateway, also inside the pod.
 
 Adding authentication for pod-internal HTTP endpoints would introduce
 complexity (secret rotation, env-var plumbing, failure modes) with no
@@ -53,12 +54,16 @@ or exposed on a routable network.
 
 **Pod-internal admin endpoints (e.g. `POST /admin/galaxy-config`) do
 not require authentication while all communicating services share a
-single pod's localhost network.**
+single pod's localhost network and admin surfaces bind only to
+loopback.**
 
-If the deployment topology changes such that an admin endpoint becomes
-reachable from outside its pod — for example, Galaxy Proxy extraction
-to a shared service (ADR-012) or multi-pod routing (ADR-034) — then
-authentication **must** be added before that change ships.
+Before this ADR can be **Implemented**, the Galaxy Proxy must bind to
+`127.0.0.1` (not `0.0.0.0`) and Podman must not publish `hostPort`
+8765. If the deployment topology changes such that an admin endpoint
+becomes reachable from outside its pod — for example, Galaxy Proxy
+extraction to a shared service (ADR-012) or multi-pod routing
+(ADR-034) — then authentication **must** be added before that change
+ships.
 
 Acceptable mechanisms at that point include:
 - Shared-secret header validated against an env var
