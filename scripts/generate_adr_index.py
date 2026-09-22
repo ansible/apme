@@ -49,12 +49,10 @@ def _normalize_status(raw: str) -> str:
         return "Partially Implemented"
     if low == "implemented" or low.startswith("implemented "):
         return "Implemented"
-    if low.startswith("accepted"):
+    if low == "accepted" or low.startswith("accepted ") or low.startswith("accepted ("):
         return "Accepted"
     if "implemented" in low:
         return "Implemented"
-    if "accepted" in low:
-        return "Accepted"
     return "Proposed"
 
 

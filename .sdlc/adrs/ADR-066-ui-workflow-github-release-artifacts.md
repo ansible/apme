@@ -151,4 +151,4 @@ enough and the UI package tracks them naturally.
 |------|--------|
 | 2026-07-23 | Initial — GitHub Release tarball publish for `@apme/ui-workflow` |
 | 2026-07-31 | Consolidated into main APME release; removed separate `ui-workflow-v*` tag convention |
-| 2026-09-22 | Agent | Status → Implemented — `ui-workflow-release.yml` and `tox -e ui-workflow-pack` publish `@apme/ui-workflow` with main release |
+| 2026-09-22 | Agent: Status → Implemented — `ui-workflow-release.yml` and `tox -e ui-workflow-pack` publish `@apme/ui-workflow` with main release |

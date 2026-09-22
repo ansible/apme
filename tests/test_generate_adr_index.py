@@ -22,6 +22,11 @@ def test_normalize_status_accepted_with_implemented_in_detail() -> None:
     assert _normalize_status("Accepted (daemon launcher implementation pending)") == "Accepted"
 
 
+def test_normalize_status_acceptedness_does_not_match() -> None:
+    """Substring 'accepted' inside unrelated words must not bucket as Accepted."""
+    assert _normalize_status("Acceptedness review pending") == "Proposed"
+
+
 def test_normalize_status_canonical_values() -> None:
     """Canonical single-word statuses map to expected buckets."""
     assert _normalize_status("Implemented") == "Implemented"

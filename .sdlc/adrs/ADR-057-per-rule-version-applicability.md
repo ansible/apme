@@ -2,7 +2,7 @@
 
 ## Status
 
-Implemented
+Partially Implemented (Gateway rule-catalog persistence and REST exposure pending)
 
 ## Date
 
@@ -202,3 +202,4 @@ Rules without version sensitivity (L, R, P, SEC, A categories) get an empty `ans
 |------|--------|--------|
 | 2026-07-07 | APME Team | Initial proposal |
 | 2026-09-22 | Agent | Status → Implemented — `version_defaults.py`, proto `ansible_core_version`, and violation injection shipped |
+| 2026-09-22 | Agent | Status → Partially Implemented — engine proto and violation metadata shipped; Gateway reconciliation does not persist or expose `ansible_core_version` |

@@ -2,7 +2,7 @@
 
 ## Status
 
-Implemented
+Partially Implemented (localhost-only Galaxy Proxy binding and removal of hostPort exposure pending)
 
 ## Date
 
@@ -158,3 +158,4 @@ could invalidate it.
 |------|--------|--------|
 | 2026-04-01 | APME Team | Initial proposal — accepted |
 | 2026-09-22 | Agent | Status → Implemented — pod-internal admin endpoints rely on network isolation as designed; no auth layer required until topology changes |
+| 2026-09-22 | Agent | Status → Partially Implemented — Galaxy Proxy still binds `0.0.0.0` and Podman publishes `hostPort` 8765; localhost-only binding required before Implemented |
