@@ -111,7 +111,8 @@ export.
 - Add `vulnerabilities[]` when normalized `include` contains `vulnerabilities`
 - Merge pip-audit (`R200`) + OSV enrichment rows (PyPI)
 - When normalized `include` contains `vex`, set `vulnerabilities[].analysis` from
-  ADR-055 suppressions
+  ADR-055 suppressions matching `(affected_purl, advisory_id)` with scope `global` or
+  `project:<current_project_uuid>` (`scan_id` selects rows; scope follows `project_id`)
 - Attach `cwes` on vulnerability entries from OSV/CVE data only (not content-rule CWE)
 
 ### Dep Audit: `auditor.py` (fix)

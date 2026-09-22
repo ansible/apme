@@ -131,6 +131,8 @@ alongside content violations.
   `reason` and `evidence` fields
 - **AND** free-form `reason` alone does not produce `not_affected` or non-exploitability
   justifications
+- **AND** only `global` and `project:<project_uuid>` suppressions for the request's
+  resolved `project_id` apply; suppressions scoped to other projects are ignored
 - **AND** no separate sibling VEX document is required in v1
 
 ### AC-7: Supply chain summary API
@@ -286,3 +288,4 @@ alongside content violations.
 | 2026-09-21 | Agent | PR #689 round 3: advisory status lifecycle, project_id display name, OSV unreachable error status |
 | 2026-09-21 | Agent | PR #689 round 4: VEX suppression mapping, sbom_url scan_id binding, advisory identity rules |
 | 2026-09-21 | Agent | PR #689 round 5: AC-6 conditional vex_justification, analysis.detail mapping, AC-7 sbom_url include params |
+| 2026-09-22 | Agent | PR #689 round 7: ADR-055 scope filtering for VEX suppression lookups |

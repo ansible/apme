@@ -64,6 +64,14 @@ advisories keyed by `(affected_purl, advisory_id)` (Phase 4; ADR-055 fingerprint
 insufficient for `R200`), include matching entries in `vulnerabilities[]` with CycloneDX
 `analysis` (v1 — no sibling VEX document).
 
+VEX suppression lookups MUST apply ADR-055 scopes. A suppression matches when
+`(affected_purl, advisory_id)` equals the vulnerability entry **and** either
+`scope = 'global'` or `scope = 'project:<project_uuid>'` where `<project_uuid>` is the
+resolved UUID of `{project_id}` from the request path. Suppressions scoped to other
+projects MUST NOT apply. `scan_id` selects vulnerability rows and manifest source for
+the export; it does not widen or narrow suppression scope beyond the request's
+`project_id`.
+
 Suppression records for VEX export MUST include structured CycloneDX fields in addition to
 the ADR-055 fingerprint. Free-form `reason` text alone MUST NOT map to
 `analysis.state=not_affected` or any `justification` implying non-exploitability.
@@ -192,7 +200,8 @@ CycloneDX vulnerability `cwes` when assembling from persisted metadata.
 Normative rules for correlating advisories across Dep Audit, OSV, CycloneDX, and VEX:
 
 1. **Canonical key**: `advisory_id` is the deduplication key for persistence,
-   CycloneDX `vulnerabilities[].id`, and VEX matching `(affected_purl, advisory_id)`.
+   CycloneDX `vulnerabilities[].id`, and VEX matching `(affected_purl, advisory_id)`
+   within ADR-055 `global` or matching `project:<project_uuid>` scope.
 2. **Alias precedence**: When a CVE alias exists, `advisory_id` = `CVE-*`. Otherwise
    `advisory_id` = the OSV ecosystem id (`PYSEC-*`, `GHSA-*`, or OSV id). Store all
    known aliases in `cve_id` and `osv_id` when present.
