@@ -25,9 +25,13 @@ from persisted `R200` rows. **Phase 3** may trigger OSV backfill only for compon
 need it (Dep Audit skipped / missing structured CVE / missing `cvss_score` / audit-coverage
 not `completed_clean` with complete audit data; `findings_present` with missing CVE
 rows or `cvss_score` remains eligible). On in-flight backfill saturation, Gateway
-returns inventory + persisted `R200` findings with `apme:advisory_status=pending`
-on eligible components whose backfill was queued or skipped (transitions to
-`checked`/`none`/`error` when deferred work completes). On timeout, rate-limit
+returns inventory + persisted `R200` findings immediately. Set
+`apme:advisory_status=pending` only on eligible components for which durable
+deferred backfill work was enqueued (transitions to `checked`/`none`/`error` when
+that work completes). Components skipped solely because the concurrency limit was
+saturated and no deferred job was enqueued remain `not_evaluated`; the next
+`include=vulnerabilities` request retries when a slot is available. On timeout,
+rate-limit
 failure, or unreachable OSV, set `apme:advisory_status=error` on affected
 components — the HTTP request must not fail solely because OSV is slow or
 unavailable (CLI `apme sbom --vulns` must not exit on enrichment timeout alone).
@@ -206,13 +210,14 @@ Normative rules for correlating advisories across Dep Audit, OSV, CycloneDX, and
    `advisory_id` = the OSV ecosystem id (`PYSEC-*`, `GHSA-*`, or OSV id). Store all
    known aliases in `cve_id` and `osv_id` when present.
 3. **Alias normalization**: When pip-audit and OSV report the same advisory under
-   different identifiers, merge to one row keyed by canonical `advisory_id`. When
-   both sources provide different values for the same field, use the pip-audit
-   value. If pip-audit provides no `cvss_score`, use the OSV score when present
-   and derive `severity` using ADR-051; when neither source provides a score, use
-   the documented fallback severity. For `dep_fix_versions`, use pip-audit when
-   present; when pip-audit omits fix versions, use OSV fix versions when available;
-   otherwise omit the field.
+   different identifiers, merge to one row keyed by canonical `advisory_id` via
+   upsert on `UNIQUE (scan_id, purl, advisory_id)` — never defer this merge to
+   `sbom.py` export. When both sources provide different values for the same
+   field, use the pip-audit value. If pip-audit provides no `cvss_score`, use the
+   OSV score when present and derive `severity` using ADR-051; when neither source
+   provides a score, use the documented fallback severity. For `dep_fix_versions`,
+   use pip-audit when present; when pip-audit omits fix versions, use OSV fix
+   versions when available; otherwise omit the field.
 4. **PYSEC-only advisories**: `advisory_id` = `PYSEC-*` (or GHSA/OSV id), `cve_id`
    = null. VEX suppressions MUST key on `(affected_purl, advisory_id)` so PYSEC-only
    advisories remain matchable without a CVE alias.
@@ -271,7 +276,7 @@ Existing `apme:source` property retained. New optional properties:
 
 | Property | Values | Meaning |
 |----------|--------|---------|
-| `apme:advisory_status` | `not_applicable`, `excluded`, `not_evaluated`, `pending`, `checked`, `none`, `error` | Mutually exclusive: `not_applicable` = Galaxy (no feed); `excluded` = private-index PyPI (not queried); `not_evaluated` = public PyPI before evaluation or inventory-only export; `pending` = backfill queued/in-flight (transitions on completion); `checked` = evaluated, ≥1 advisory; `none` = evaluated, zero advisories; `error` = evaluation failed (timeout, rate limit, unreachable OSV) |
+| `apme:advisory_status` | `not_applicable`, `excluded`, `not_evaluated`, `pending`, `checked`, `none`, `error` | Mutually exclusive: `not_applicable` = Galaxy (no feed); `excluded` = private-index PyPI (not queried); `not_evaluated` = public PyPI before evaluation, inventory-only export, or saturation skip without enqueued deferred work (retry on next `include=vulnerabilities`); `pending` = durable deferred backfill enqueued/in-flight (transitions on completion); `checked` = evaluated, ≥1 advisory; `none` = evaluated, zero advisories; `error` = evaluation failed (timeout, rate limit, unreachable OSV) |
 | `apme:enriched_at` | ISO 8601 | Last OSV check timestamp (PyPI components) |
 
 Galaxy collection components always use `apme:advisory_status=not_applicable` (ADR-072

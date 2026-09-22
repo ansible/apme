@@ -108,9 +108,11 @@ alongside content violations.
   components to `apme:advisory_status=not_evaluated`; evaluated components with
   one or more advisories use `checked`; zero advisories use `none`; Galaxy
   collections use `apme:advisory_status=not_applicable` without an OSV call
-- **AND** concurrency saturation sets eligible components to `pending` immediately;
-  successful deferred backfill transitions them to `checked` or `none` and persists
-  enrichment rows; failures retain or transition to `error`
+- **AND** concurrency saturation enqueues durable deferred backfill only when a slot
+  is available; enqueued components use `pending` immediately and transition to
+  `checked` or `none` on success (persisting enrichment rows) or `error` on failure;
+  saturation skips without enqueue keep `not_evaluated` for retry on the next
+  `include=vulnerabilities` request
 - **AND** enrichment failures (timeout, rate limit, unreachable OSV) set
   `apme:advisory_status=error`; export still returns inventory + persisted `R200`
   vulns when present (no 503 solely for OSV failure)

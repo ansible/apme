@@ -86,20 +86,25 @@ Initial scope:
 - Excludes private-index packages unless explicitly opted in; emit
   `apme:advisory_status=excluded` (ADR-072)
 - Shared in-flight backfill limit (default 1 concurrent OSV batch per project);
-  saturated requests return inventory + `R200` without blocking, set
-  `apme:advisory_status=pending` on queued/skipped eligible components, and
-  transition to `checked`/`none`/`error` when deferred backfill completes
+  saturated requests return inventory + `R200` without blocking. Set
+  `apme:advisory_status=pending` only when durable deferred backfill work is
+  enqueued; saturation skips without enqueue keep `not_evaluated` for retry on
+  the next `include=vulnerabilities` request. Enqueued work transitions to
+  `checked`/`none`/`error` when deferred backfill completes
 - Does **not** query Galaxy `pkg:generic` collections (ADR-072 Option A)
 - Configurable per-request timeout and rate-limit controls; on timeout/rate-limit
   failure, set `apme:advisory_status=error` and return partial results (no 503)
-- Output: `SupplyChainVulnerability` rows keyed by `scan_id` + `purl` + `advisory_id`
-  where `advisory_id` is canonical (CVE when present, otherwise OSV/GHSA/PYSEC id);
-  `cve_id` nullable
-- Idempotent; TTL cache (e.g. 24h) per `(purl, version)` to limit API calls
+- Output: upsert `supply_chain_vulnerabilities` rows keyed by `scan_id` + `purl` +
+  `advisory_id` where `advisory_id` is canonical (CVE when present, otherwise
+  OSV/GHSA/PYSEC id); `cve_id` nullable. On `UNIQUE (scan_id, purl, advisory_id)`
+  conflict with an existing `pip_audit` row, merge field values per contract
+  Advisory identity §3 (pip-audit wins per field when present; OSV fills gaps);
+  set `source` to `pip_audit` when either source contributed
+- Idempotent; TTL cache (e.g. 24h) per `(osv_endpoint, purl, version)` to limit API calls
 
 **Value vs Dep Audit:** inline `R200` gates CI during `check`; Gateway OSV supports SBOM
-assembly, severity backfill, and coverage when Dep Audit was skipped. Deduplicate on
-export.
+assembly, severity backfill, and coverage when Dep Audit was skipped. Cross-source
+deduplication happens at persistence (upsert), not during `sbom.py` export.
 
 ### Gateway: `sbom.py` (extend)
 
@@ -109,7 +114,8 @@ export.
   these per-component values
 - Normalize `include`: `vex` implies `vulnerabilities` before serialization
 - Add `vulnerabilities[]` when normalized `include` contains `vulnerabilities`
-- Merge pip-audit (`R200`) + OSV enrichment rows (PyPI)
+- Serialize persisted `supply_chain_vulnerabilities` rows (already merged across
+  `pip_audit` and `osv_enrichment` sources at upsert time)
 - When normalized `include` contains `vex`, set `vulnerabilities[].analysis` from
   ADR-055 suppressions matching `(affected_purl, advisory_id)` with scope `global` or
   `project:<current_project_uuid>` (`scan_id` selects rows; scope follows `project_id`)
@@ -121,6 +127,9 @@ export.
 - When no score: documented fallback severity (today's behavior), not fabricated CVSS
 - Populate metadata keys: `advisory_id` (canonical), nullable `cve_id`, `osv_id`,
   `cvss_score`, `affected_purl`, `dep_fix_versions`, `cwe_ids` (from OSV when present)
+- Upsert `supply_chain_vulnerabilities` on scan completion (`source=pip_audit`);
+  on conflict with an existing `osv_enrichment` row, merge per contract Advisory
+  identity §3
 - Persist audit-coverage status per PyPI component on scan completion
 
 ### CLI: `sbom_cmd.py` / `sarif.py` (extend)
@@ -204,9 +213,9 @@ CREATE TABLE supply_chain_vulnerabilities (
     severity TEXT,
     fix_versions TEXT,
     cwe_ids TEXT,                  -- JSON array
-    source TEXT NOT NULL,          -- 'pip_audit' | 'osv_enrichment'
+    source TEXT NOT NULL,          -- 'pip_audit' | 'osv_enrichment' (primary writer)
     created_at TIMESTAMPTZ DEFAULT now(),
-    UNIQUE (scan_id, purl, advisory_id)
+    UNIQUE (scan_id, purl, advisory_id)  -- upsert merges pip_audit + osv_enrichment
 );
 ```
 
