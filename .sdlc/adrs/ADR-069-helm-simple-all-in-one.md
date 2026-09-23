@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Superseded by [ADR-054](ADR-054-production-deployment.md) (2026-09-02: in-repo Helm chart removed; use [apme-operator](https://github.com/ansible/apme-operator))
 
 ## Date
 

@@ -19,10 +19,10 @@ It does **not** prescribe the deployment tool. For deployment method guidance:
 |-------------|-------------------|-----|
 | Developer laptop / workstation | Podman pod (`tox -e up`) | [ADR-004](ADR-004-podman-pod-deployment.md) |
 | Linux server without Kubernetes | Podman pod or bootc VM | [ADR-004](ADR-004-podman-pod-deployment.md), [ADR-054](ADR-054-production-deployment.md) |
-| **Kubernetes / OpenShift** | **Helm chart** (`deploy/helm/apme/`) | [ADR-054](ADR-054-production-deployment.md) |
+| **Kubernetes / OpenShift** | **APME Operator** | [ADR-054](ADR-054-production-deployment.md) |
 
-> **If you are scaling on Kubernetes or OpenShift, use the Helm chart
-> (`deploy/helm/apme/`).** Do not use `podman play kube` on K8s/OCP.
+> **If you are scaling on Kubernetes or OpenShift, use the
+> [APME Operator](https://github.com/ansible/apme-operator).** Do not use `podman play kube` on K8s/OCP.
 
 ## Options Considered
 
@@ -45,7 +45,9 @@ Each pod is a self-contained stack:
 - Collection Health validator (optional)
 - Dep Audit validator (optional)
 
-To increase throughput, run more pods behind a load balancer.
+Future topology: once shared Gateway state is defined (see Implementation
+Notes), increase throughput by running more pods behind a load balancer. The
+current operator deployment must remain **single-replica** until that ADR lands.
 
 ## Rationale
 
@@ -68,19 +70,15 @@ To increase throughput, run more pods behind a load balancer.
 
 ## Implementation Notes
 
-### Scaling on Kubernetes / OpenShift (Helm chart)
+### Scaling on Kubernetes / OpenShift (operator)
 
-The **conceptual** scaling unit remains the engine stack (this ADR).
-Production Kubernetes/OpenShift installs use the Helm chart at
-`deploy/helm/apme/` (ADR-054, ADR-069). The planned
-[APME Operator](https://github.com/ansible/apme-operator) will reconcile the
-same **all-in-one** topology by driving that chart—it is not an alternate
-deployment model (engine + Gateway + UI + optional Abbenay on localhost).
+The **conceptual** scaling unit remains the engine stack (this ADR). The
+[APME Operator](https://github.com/ansible/apme-operator) deploys an
+**all-in-one** pod: engine + Gateway + UI + optional Abbenay on localhost.
 Multi-replica engine scaling requires a future topology ADR (Gateway PostgreSQL
 cannot share a scaled pod).
 
-See [ADR-054](ADR-054-production-deployment.md) (amended by ADR-069) for the
-chart shape.
+See [ADR-054](ADR-054-production-deployment.md) for the operator deployment path.
 
 ### Scaling with Podman (local dev / single-node)
 
@@ -107,8 +105,8 @@ If a shared wheel cache is needed:
 - ADR-004: Podman pod deployment (local dev and single-node)
 - ADR-005: No service discovery
 - ADR-048: Pod-internal admin endpoints rely on network isolation — if Galaxy Proxy is extracted (see "Galaxy Proxy Exception" above), auth must be added per ADR-048
-- **ADR-054: Production Deployment — Helm chart for Kubernetes/OpenShift**
-- **ADR-069: Helm Simple all-in-one (EAP/upstream chart topology)**
+- **ADR-054: Production Deployment — APME Operator for Kubernetes/OpenShift**
+- **ADR-069: Helm Simple all-in-one** (superseded — in-repo Helm chart removed)
 
 ---
 
@@ -117,4 +115,4 @@ If a shared wheel cache is needed:
 | Date | Author | Change |
 |------|--------|--------|
 | 2026-02 | APME Team | Initial acceptance |
-| 2026-08-03 | APME Team | Helm notes amended for ADR-069 Simple (no multi-replica chart path) |
+| 2026-08-03 | APME Team | Operator notes replace Helm chart (ADR-069 superseded) |

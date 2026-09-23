@@ -30,7 +30,7 @@ new env vars, and note Phase 2 completion in ADR-050.
 |------|--------|---------|
 | `frontend/src/pages/ProjectsPage.tsx` | Modify | Provider select + copy |
 | `frontend/src/pages/ProjectDetailPage.tsx` | Modify | Provider select + copy |
-| Docs / Helm env examples | Modify | New env vars |
+| Docs / operator env examples | Modify | New env vars |
 | `.sdlc/adrs/ADR-050-...md` | Modify | Revision note |
 
 ## Verification

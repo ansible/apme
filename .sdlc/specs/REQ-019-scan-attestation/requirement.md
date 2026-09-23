@@ -115,7 +115,7 @@ Regulated enterprises require verifiable evidence that policy validation occurre
 **Then** use the provided key for signing; CLI and Primary never load private key material
 
 **Sigstore trust policy** (applies to keyless signing and verification):
-- **OIDC issuer**: configurable allowlist of issuers that may appear on Gateway signing certificates (defaults are environment-specific; production Helm documents the issuer for the Gateway service account / workload identity). Reject signatures whose certificate OIDC issuer is not allowlisted.
+- **OIDC issuer**: configurable allowlist of issuers that may appear on Gateway signing certificates (defaults are environment-specific; production operator deployment documents the issuer for the Gateway service account / workload identity). Reject signatures whose certificate OIDC issuer is not allowlisted.
 - **Issuer-to-identity mapping**: each allowed OIDC issuer must have a **non-empty** configured identity pattern (regex or glob on certificate `subject` / OIDC `sub`) that matches the **Gateway signing identity** (for example a Kubernetes service account subject). Reject verification when an allowlisted issuer has no matching identity policy configured. Wildcards that trust every workload from an issuer (e.g., `*`) are forbidden.
 - **Audience**: certificate OIDC audience must match configured value (default: `sigstore`).
 - **Fulcio roots**: verify against bundled Sigstore public root certificates; roots are versioned and updatable via Gateway configuration.
