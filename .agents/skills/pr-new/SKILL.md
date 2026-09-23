@@ -681,10 +681,10 @@ gh pr create --repo upstream-owner/repo --title "conventional commit style title
 
 ## Related issues
 - Closes #NNN — <why>
-- Refs #NNN — <partial / context> (omit section if truly none; say so)
+- Refs #NNN — <partial / context> (or `None — <why no related issue applies>`)
 
 ## Related ADRs
-- ADR-NNN — <status change or "reviewed, no change"> (omit section if none)
+- ADR-NNN — <status change or "reviewed, no change"> (or `None — <why no related ADR applies>`)
 
 ## Quality of life
 - List any non-functional improvements bundled in this PR: skill updates,
