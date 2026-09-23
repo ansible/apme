@@ -108,10 +108,10 @@ alongside content violations.
   components to `apme:advisory_status=not_evaluated`; evaluated components with
   one or more advisories use `checked`; zero advisories use `none`; Galaxy
   collections use `apme:advisory_status=not_applicable` without an OSV call
-- **AND** concurrency saturation enqueues durable deferred backfill only when a slot
-  is available; enqueued components use `pending` immediately and transition to
-  `checked` or `none` on success (persisting enrichment rows) or `error` on failure;
-  saturation skips without enqueue keep `not_evaluated` for retry on the next
+- **AND** under concurrency saturation, set `pending` only for eligible components
+  for which durable deferred backfill was enqueued; those components transition to
+  `checked` or `none` on success (persisting enrichment rows) or `error` on failure.
+  Components skipped without enqueue remain `not_evaluated` for retry on the next
   `include=vulnerabilities` request
 - **AND** enrichment failures (timeout, rate limit, unreachable OSV) set
   `apme:advisory_status=error`; export still returns inventory + persisted `R200`
@@ -231,7 +231,7 @@ alongside content violations.
 - ADR-055: Violation Suppression (VEX mapping)
 - ADR-060: REST API Versioning Contract
 - ADR-072: Unified Supply Chain SBOM/CVE/CWE Architecture
-- Architectural compatibility: Verified (no invariant conflicts; see design.md)
+- Architectural compatibility: Verified (no invariant conflicts; see [design.md](design.md))
 
 ### External
 
@@ -291,3 +291,4 @@ alongside content violations.
 | 2026-09-21 | Agent | PR #689 round 4: VEX suppression mapping, sbom_url scan_id binding, advisory identity rules |
 | 2026-09-21 | Agent | PR #689 round 5: AC-6 conditional vex_justification, analysis.detail mapping, AC-7 sbom_url include params |
 | 2026-09-22 | Agent | PR #689 round 7: ADR-055 scope filtering for VEX suppression lookups |
+| 2026-09-23 | Agent | PR #689 round 8: AC-5 pending keyed on durable enqueue; design.md self-link |
