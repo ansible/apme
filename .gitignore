@@ -8,8 +8,10 @@ __pycache__/
 *.egg
 dist/
 build/
-.venv/
-venv/
+# uv may create .venv as a symlink; pattern without trailing slash
+# matches directories, files, AND symlinks.
+.venv
+venv
 env/
 .env
 *.pem
