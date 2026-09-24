@@ -53,7 +53,7 @@ Replace `route.host` with a hostname under your cluster's OpenShift
 ingress domain (for example `apme.apps.<cluster-domain>`) before installing —
 `example.com` will not resolve.
 
-Defaults pull from `quay.io/ansible` with image tag `2026.9.3` (`Chart.appVersion`).
+Defaults pull from `quay.io/ansible` with image tag `2026.9.4` (`Chart.appVersion`).
 For unreleased SHA builds, set `--set image.tag=sha-<commit>`.
 
 > **Observability:** The reference Podman pod includes an OpenTelemetry Collector
@@ -98,7 +98,7 @@ spec:
 - Helm 3.x
 - Access to `quay.io/ansible` (default pull registry) or a mirror. CI always
   publishes to `ghcr.io/ansible` and publishes to Quay when credentials are set
-- Default image tag is pinned to `2026.9.3` (GitHub release `v2026.9.3`; must
+- Default image tag is pinned to `2026.9.4` (GitHub release `v2026.9.4`; must
   match Chart.appVersion). Override with `--set image.tag=…` for another
   release or a SHA build (e.g. `sha-b7d1683`)
 - Cluster nodes on `linux/amd64` or `linux/arm64`. Tags published by CI after
@@ -190,7 +190,7 @@ kubectl create secret generic openrouter-credentials \
 printf '%s' "$APME_ABBENAY_TOKEN" > "$abbenay_token_file"
 helm install apme ./deploy/helm/apme/ \
   --namespace apme --create-namespace \
-  --set image.tag=2026.9.3 \
+  --set image.tag=2026.9.4 \
   --set abbenay.enabled=true \
   --set-file abbenay.token="$abbenay_token_file" \
   --set-json 'abbenay.providers={"openrouter":{"engine":"openrouter","apiKeySecret":{"name":"openrouter-credentials","key":"api-key"},"models":{"anthropic/claude-sonnet-4-6":{}}}}'
@@ -242,7 +242,7 @@ Gateway DB and Abbenay down together.
 | Value | Default | Description |
 |-------|---------|-------------|
 | `image.registry` | `quay.io/ansible` | Container registry |
-| `image.tag` | `2026.9.3` | APME image tag (GitHub release `v2026.9.3`; stays here until the next APME release) |
+| `image.tag` | `2026.9.4` | APME image tag (GitHub release `v2026.9.4`; stays here until the next APME release) |
 | `engine.replicas` | `1` | Must be `1` (ADR-069) |
 | `engine.galaxyProxy.logLevel` | `INFO` | Galaxy Proxy log level (`DEBUG`, `INFO`, `WARNING`, `ERROR`, or `CRITICAL`) |
 | `gitleaks.enabled` | `true` | Enable Gitleaks validator |
