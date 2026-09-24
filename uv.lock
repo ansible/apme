@@ -14,7 +14,7 @@ constraints = [
     { name = "pip", specifier = ">=26.1" },
     { name = "pygments", specifier = ">=2.20.0" },
     { name = "requests", specifier = ">=2.33.0" },
-    { name = "setuptools", specifier = ">=83.0.0" },
+    { name = "setuptools", specifier = ">=83.0.0,<84" },
     { name = "urllib3", specifier = ">=2.7.0" },
 ]
 
