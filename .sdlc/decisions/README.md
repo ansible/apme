@@ -110,6 +110,7 @@ Decision Requests (DRs) provide a formal mechanism for:
 
 | DR | Title | Decision | Date |
 |----|-------|----------|------|
+| [DR-022](closed/decided/DR-022-pip-index-egress.md) | Pip Index Egress via Galaxy Proxy | Option A — Gateway DB indexes; Galaxy Proxy sole pip egress (ADR-071) | 2026-09-16 |
 | [DR-011](closed/decided/DR-011-repository-location.md) | Repository Location and Visibility | GitHub public (ansible/apme) | 2026-03-12 |
 | [DR-012](closed/decided/DR-012-test-dr-process.md) | Just Testing the DR Process | Keep Current Approach | 2026-03-11 |
 | [DR-009](closed/decided/DR-009-licensing-model.md) | Licensing Model (OSS vs Open Core) | Apache 2.0 (Fully Open Source) | 2026-03-16 |

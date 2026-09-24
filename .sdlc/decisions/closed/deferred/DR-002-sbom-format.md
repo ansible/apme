@@ -161,7 +161,21 @@ No CVE lookup — let users feed SBOM into their existing vuln scanners (Snyk, G
 
 **Revisit**: When security/compliance features are prioritized (REQ-003)
 
+**Update (2026-09-21)**: Proposed resolution via [REQ-020](../../../specs/REQ-020-unified-supply-chain-security/requirement.md)
+and proposed [ADR-072](../../../adrs/ADR-072-unified-supply-chain-sbom-cve-cwe.md) (pending
+acceptance):
+- **Format**: CycloneDX 1.5 (proposed)
+- **Scope**: Collections + Python packages + ansible-core; dependency graph from manifest
+- **CVE**: DR-002 Option B — Gateway **lazy** OSV enrichment (PyPI) + pip-audit inline;
+  optional `?include=vulnerabilities` on SBOM export. Galaxy collection CVE **deferred
+  indefinitely** (ADR-072 Option A); collections listed with `apme:advisory_status=not_applicable`.
+- **CWE**: Engine-shipped rule catalog + OSV metadata; SARIF and CycloneDX export
+- **VEX**: CycloneDX `vulnerabilities[].analysis` from ADR-055 suppressions
+- **SPDX**: Deferred
+
 **Action Items**:
-- [ ] Re-open when REQ-003 is in scope
+- [x] Re-open when REQ-003 is in scope → REQ-020 created
 - [ ] Validate CycloneDX recommendation with enterprise users
-- [ ] Evaluate OSV API for CVE correlation
+- [x] Evaluate OSV API for CVE correlation → ADR-072 proposes lazy OSV batch (PyPI)
+- [x] Decide Galaxy collection advisory feed → Option A (defer indefinitely)
+- [ ] Close DR-002 when REQ-020 Phase 3 ships (PyPI CVE export + optional OSV backfill)
