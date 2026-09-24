@@ -41,7 +41,7 @@ decisions. This document covers component layout and phased implementation.
 │  Enrich:  osv_enricher.py — lazy OSV batch for PyPI PURLs             │
 │           (on first sbom?include=vulnerabilities)                     │
 │  Export:  sbom.py — CycloneDX components + deps + vulnerabilities     │
-│           + vulnerabilities[].analysis for VEX (ADR-055)              │
+│           + vulnerabilities[].analysis for VEX (advisory suppressions) │
 │           supply_chain summary REST                                   │
 └─────────────────────────────────────────────────────────────────────┘
 ```
@@ -117,8 +117,11 @@ deduplication happens at persistence (upsert), not during `sbom.py` export.
 - Serialize persisted `supply_chain_vulnerabilities` rows (already merged across
   `pip_audit` and `osv_enrichment` sources at upsert time)
 - When normalized `include` contains `vex`, set `vulnerabilities[].analysis` from
-  ADR-055 suppressions matching `(affected_purl, advisory_id)` with scope `global` or
-  `project:<current_project_uuid>` (`scan_id` selects rows; scope follows `project_id`)
+  **supply-chain advisory suppressions** (Gateway table
+  `supply_chain_advisory_suppressions`) matching `(affected_purl, advisory_id)` with
+  scope `global` or `project:<current_project_uuid>` (`scan_id` selects vulnerability
+  rows; scope follows `project_id`). Do **not** read ADR-055 content-violation
+  fingerprint suppressions for VEX export
 - Attach `cwes` on vulnerability entries from OSV/CVE data only (not content-rule CWE)
 
 ### Dep Audit: `auditor.py` (fix)
@@ -145,6 +148,15 @@ deduplication happens at persistence (upsert), not during `sbom.py` export.
 - Link to download full CycloneDX
 
 ## Phased Implementation
+
+Implementation tasks live under [`tasks/`](tasks/):
+
+| Task | Phase | Focus |
+|------|-------|-------|
+| [TASK-001](tasks/TASK-001-sbom-graph-structured-cve.md) | 1 | SBOM graph + structured CVE foundation |
+| [TASK-002](tasks/TASK-002-cve-sbom-cwe-catalog.md) | 2 | CVE in SBOM (`R200`) + CWE catalog |
+| [TASK-003](tasks/TASK-003-osv-backfill-summary.md) | 3 | OSV backfill + supply-chain summary |
+| [TASK-004](tasks/TASK-004-vex-advisory-suppressions.md) | 4 | Supply-chain VEX + roles/modules |
 
 ### Phase 1 — Foundation (SBOM graph + structured CVE)
 
@@ -179,8 +191,13 @@ deduplication happens at persistence (upsert), not during `sbom.py` export.
 
 | Task | Description |
 |------|-------------|
-| VEX via `vulnerabilities[].analysis` (advisory_id-keyed suppressions) | sbom.py |
+| Persist `supply_chain_advisory_suppressions` + VEX via `vulnerabilities[].analysis` | Gateway DB + sbom.py |
 | Roles/modules in SBOM when ADR-044 manifest fields land | sbom.py |
+
+VEX suppressions are keyed by `(affected_purl, advisory_id)` with scopes `global` /
+`project:<project_uuid>` and structured `vex_state` / `vex_justification` / `evidence`
+fields (see [contract.md](contract.md)). This store is **independent** of ADR-055
+content-violation fingerprint suppressions.
 
 Collection CVE feed is out of scope (ADR-072 Option A). Revisit only via a new ADR.
 
@@ -217,6 +234,21 @@ CREATE TABLE supply_chain_vulnerabilities (
     created_at TIMESTAMPTZ DEFAULT now(),
     UNIQUE (scan_id, purl, advisory_id)  -- upsert merges pip_audit + osv_enrichment
 );
+
+-- Phase 4: supply-chain VEX suppressions (NOT ADR-055 content fingerprints)
+
+CREATE TABLE supply_chain_advisory_suppressions (
+    id UUID PRIMARY KEY,
+    affected_purl TEXT NOT NULL,
+    advisory_id TEXT NOT NULL,     -- canonical advisory id (CVE or OSV/GHSA/PYSEC)
+    scope TEXT NOT NULL,           -- 'global' | 'project:<project_uuid>'
+    vex_state TEXT NOT NULL,       -- false_positive | not_affected | resolved
+    vex_justification TEXT,        -- required when vex_state=not_affected
+    reason TEXT,
+    evidence TEXT,                 -- required for some not_affected justifications
+    created_at TIMESTAMPTZ DEFAULT now(),
+    UNIQUE (affected_purl, advisory_id, scope)
+);
 ```
 
 Final schema in [contract.md](contract.md).
@@ -242,5 +274,4 @@ Final schema in [contract.md](contract.md).
 - [ADR-072: Unified Supply Chain SBOM/CVE/CWE](../../adrs/ADR-072-unified-supply-chain-sbom-cve-cwe.md)
 - [ADR-040: Scan Metadata Enrichment](../../adrs/ADR-040-scan-metadata-enrichment.md)
 - [ADR-051: Dependency Health Scanning](../../adrs/ADR-051-dependency-health-scanning.md)
-- [ADR-055: Violation Suppression](../../adrs/ADR-055-violation-fingerprint-suppression.md)
 - [ADR-060: REST API Versioning](../../adrs/ADR-060-rest-api-versioning-contract.md)

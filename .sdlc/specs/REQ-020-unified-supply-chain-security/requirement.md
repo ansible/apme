@@ -5,7 +5,7 @@
 - **Phase**: PHASE-003 - Enterprise Dashboard
 - **Status**: Draft
 - **Created**: 2026-09-21
-- **Prerequisites**: ADR-040, ADR-051, ADR-055, ADR-060; ADR-072 pending acceptance
+- **Prerequisites**: ADR-040, ADR-051, ADR-060; ADR-072 pending acceptance
 - **Related**: REQ-003 (Security & Compliance — SBOM AC delivered here), REQ-010 (Dependency Health Assessment — export/enrichment layer; sidecar not reintroduced), DR-002 (SBOM Format)
 
 ## Purpose
@@ -119,9 +119,10 @@ alongside content violations.
 - **AND** audit-coverage status (`completed_clean`, `findings_present`, `skipped`,
   `failed`) is persisted per PyPI component so clean audits are not re-queried
 
-### AC-6: VEX from suppressions
+### AC-6: VEX from supply-chain advisory suppressions
 
-- **GIVEN** an active suppression (ADR-055) for a dependency advisory finding keyed by
+- **GIVEN** an active **supply-chain advisory suppression** (REQ-020 / ADR-072 Phase 4;
+  **not** an ADR-055 content-violation fingerprint suppression) keyed by
   `(affected_purl, advisory_id)` with structured `vex_state`; `vex_justification` is
   required when `vex_state=not_affected` and omitted for `false_positive` and `resolved`
   (per contract mapping table); `evidence` is required when the mapping table marks it
@@ -133,8 +134,10 @@ alongside content violations.
   `reason` and `evidence` fields
 - **AND** free-form `reason` alone does not produce `not_affected` or non-exploitability
   justifications
-- **AND** only `global` and `project:<project_uuid>` suppressions for the request's
-  resolved `project_id` apply; suppressions scoped to other projects are ignored
+- **AND** only `global` and `project:<project_uuid>` scopes for the request's resolved
+  `project_id` apply; suppressions scoped to other projects are ignored
+- **AND** ADR-055 content-violation fingerprint suppressions MUST NOT contribute to
+  CycloneDX `vulnerabilities[].analysis`
 - **AND** no separate sibling VEX document is required in v1
 
 ### AC-7: Supply chain summary API
@@ -228,9 +231,9 @@ alongside content violations.
   lazy enrichment on persisted results — does **not** reintroduce the sidecar)
 - ADR-040: Scan Metadata Enrichment
 - ADR-051: Dependency Health Scanning (Dep Audit, `R200`)
-- ADR-055: Violation Suppression (VEX mapping)
 - ADR-060: REST API Versioning Contract
-- ADR-072: Unified Supply Chain SBOM/CVE/CWE Architecture
+- ADR-072: Unified Supply Chain SBOM/CVE/CWE Architecture (includes Phase 4 VEX
+  advisory-suppression model; separate from ADR-055 content-violation fingerprints)
 - Architectural compatibility: Verified (no invariant conflicts; see [design.md](design.md))
 
 ### External
@@ -290,5 +293,6 @@ alongside content violations.
 | 2026-09-21 | Agent | PR #689 round 3: advisory status lifecycle, project_id display name, OSV unreachable error status |
 | 2026-09-21 | Agent | PR #689 round 4: VEX suppression mapping, sbom_url scan_id binding, advisory identity rules |
 | 2026-09-21 | Agent | PR #689 round 5: AC-6 conditional vex_justification, analysis.detail mapping, AC-7 sbom_url include params |
-| 2026-09-22 | Agent | PR #689 round 7: ADR-055 scope filtering for VEX suppression lookups |
+| 2026-09-22 | Agent | PR #689 round 7: VEX suppression scope filtering (`global` / `project:<uuid>`) |
 | 2026-09-23 | Agent | PR #689 round 8: AC-5 pending keyed on durable enqueue; design.md self-link |
+| 2026-09-24 | Agent | PR #689: dissociate from ADR-055; define supply-chain VEX suppressions in REQ-020/ADR-072; add TASK-001–004 |
