@@ -29,6 +29,7 @@ Specs answer "What does this feature do?" They provide:
 | REQ-017 | Python Import Deprecations | PHASE-001 | Draft |
 | REQ-018 | Python AST Validator | PHASE-002 | Draft |
 | REQ-019 | Scan Attestation | Unassigned | Draft |
+| REQ-020 | Unified Supply Chain Security (SBOM, CVE, CWE) | PHASE-003 | Draft |
 
 ## Directory Structure
 
@@ -55,7 +56,8 @@ specs/
 ├── REQ-016-scm-providers-phase2/
 ├── REQ-017-python-import-deprecations/
 ├── REQ-018-python-ast-validator/
-└── REQ-019-scan-attestation/
+├── REQ-019-scan-attestation/
+└── REQ-020-unified-supply-chain-security/
 ```
 
 ## Phase Relationship
@@ -81,7 +83,8 @@ PHASE-003: Enterprise Dashboard (In Progress)
 ├── REQ-012: EDA Rulebook Validation (Draft)
 ├── REQ-013: Extended OPA Policy Inputs (Draft)
 ├── REQ-014: Policy Permissive Mode (Draft)
-└── REQ-016: Phase 2 SCM Providers (In Progress)
+├── REQ-016: Phase 2 SCM Providers (In Progress)
+└── REQ-020: Unified Supply Chain Security (Draft)
 
 PHASE-004: AI Remediation (Implemented)
 └── DR-005: AI-Assisted Remediation (Decided)
