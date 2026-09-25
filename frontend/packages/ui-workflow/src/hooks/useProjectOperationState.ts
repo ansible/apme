@@ -70,6 +70,8 @@ export interface Proposal {
   status?: "proposed" | "declined" | "pending" | "approved" | "rejected";
   suggestion?: string;
   line_start?: number;
+  /** 1-based end line of the proposal span; 0/undefined = unknown (same guard as line_start). */
+  line_end?: number;
   path?: string;
   /** ContentGraph NodeType (task, block, play, …); empty when not graph-backed. */
   node_type?: string;

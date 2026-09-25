@@ -2101,3 +2101,170 @@ class TestFixSessionRPC:
         with pytest.raises(_AbortSignal):
             async for _event in servicer.FixSession(stream, ctx):  # type: ignore[arg-type]
                 pass
+
+    async def test_resume_stream_end_preserves_session(self) -> None:
+        """Disconnecting a resumed stream without close keeps the session alive."""
+        from apme_engine.daemon.engine_server import EngineServicer
+
+        servicer = EngineServicer()
+        store = servicer._get_session_store()
+
+        session = store.create()
+        session.report = FixReport(passes=1, fixed=0)
+        session.status = 1
+        session.proposals = {
+            "t2-0000": Proposal(id="t2-0000", file="test.yml", rule_id="L001"),
+        }
+
+        stream = AsyncCommandStream()
+        ctx = FakeGrpcContext()
+        stream.send(
+            SessionCommand(
+                resume=ResumeRequest(session_id=session.session_id),
+            )
+        )
+
+        async for event in servicer.FixSession(stream, ctx):  # type: ignore[arg-type]
+            if event.WhichOneof("event") == "proposals":
+                stream.close()
+                break
+
+        assert store.get(session.session_id) is session
+
+    async def test_upload_stream_end_preserves_session(self) -> None:
+        """Disconnecting an upload stream without close keeps the session for resume."""
+        from apme_engine.daemon.engine_server import EngineServicer
+
+        servicer = EngineServicer()
+        store = servicer._get_session_store()
+        before = store.count
+
+        stream = AsyncCommandStream()
+        ctx = FakeGrpcContext()
+        stream.send(
+            SessionCommand(
+                upload=ScanChunk(scan_id="test-persist", last=True),
+            )
+        )
+
+        session_id = None
+        with patch.object(
+            EngineServicer,
+            "_session_process",
+            _mock_session_process_with_proposals,
+        ):
+            async for event in servicer.FixSession(stream, ctx):  # type: ignore[arg-type]
+                oneof = event.WhichOneof("event")
+                if oneof == "created" and session_id is None:
+                    session_id = event.created.session_id
+                elif oneof == "proposals":
+                    stream.close()
+                    break
+
+        assert session_id is not None
+        assert store.count == before + 1
+        assert store.get(session_id) is not None
+
+    async def test_client_cancel_removes_created_session(self) -> None:
+        """Client cancellation removes only sessions created by this stream.
+
+        A CancelledError from the request stream bypasses the explicit
+        close path; created sessions must still be removed so repeated
+        client retries cannot exhaust _MAX_SESSIONS.
+        """
+        from apme_engine.daemon.engine_server import EngineServicer
+
+        servicer = EngineServicer()
+        store = servicer._get_session_store()
+        before = store.count
+
+        class _CancellingStream:
+            """Yield one upload, then raise CancelledError like a dead client."""
+
+            def __init__(self) -> None:
+                """Initialize with the first command not yet delivered."""
+                self._sent_first = False
+
+            def __aiter__(self) -> _CancellingStream:
+                """Return self as async iterator.
+
+                Returns:
+                    Self.
+                """
+                return self
+
+            async def __anext__(self) -> SessionCommand:
+                """Deliver the upload once, then simulate client cancel.
+
+                Returns:
+                    The initial upload command.
+
+                Raises:
+                    asyncio.CancelledError: On every call after the first.
+                """
+                if not self._sent_first:
+                    self._sent_first = True
+                    return SessionCommand(
+                        upload=ScanChunk(scan_id="test-cancel", last=False),
+                    )
+                raise asyncio.CancelledError
+
+        ctx = FakeGrpcContext()
+        with (
+            patch.object(
+                EngineServicer,
+                "_session_process",
+                _mock_session_process_complete,
+            ),
+            pytest.raises(asyncio.CancelledError),
+        ):
+            async for _event in servicer.FixSession(_CancellingStream(), ctx):  # type: ignore[arg-type]
+                pass
+
+        assert store.count == before
+
+    async def test_cancel_after_upload_then_resume_removes_upload_session(self) -> None:
+        """Cancellation removes the upload-created session, not a later resume target."""
+        from apme_engine.daemon.engine_server import EngineServicer
+
+        servicer = EngineServicer()
+        store = servicer._get_session_store()
+        resume_session = store.create()
+        resume_session.report = FixReport(passes=1, fixed=0)
+
+        upload_created_id: str | None = None
+
+        class _UploadThenResumeCancelStream:
+            """Upload into one session, resume another, then cancel."""
+
+            def __init__(self) -> None:
+                self._step = 0
+
+            def __aiter__(self) -> _UploadThenResumeCancelStream:
+                return self
+
+            async def __anext__(self) -> SessionCommand:
+                if self._step == 0:
+                    self._step = 1
+                    return SessionCommand(
+                        upload=ScanChunk(scan_id="upload-then-resume", last=False),
+                    )
+                if self._step == 1:
+                    self._step = 2
+                    return SessionCommand(
+                        resume=ResumeRequest(session_id=resume_session.session_id),
+                    )
+                raise asyncio.CancelledError
+
+        ctx = FakeGrpcContext()
+        with pytest.raises(asyncio.CancelledError):
+            async for event in servicer.FixSession(
+                _UploadThenResumeCancelStream(),
+                ctx,  # type: ignore[arg-type]
+            ):
+                if event.WhichOneof("event") == "created" and upload_created_id is None:
+                    upload_created_id = event.created.session_id
+
+        assert upload_created_id is not None
+        assert store.get(upload_created_id) is None
+        assert store.get(resume_session.session_id) is resume_session

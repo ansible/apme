@@ -125,14 +125,15 @@ class ProposalDetail(BaseModel):  # type: ignore[misc]
         file: File the proposal targets.
         tier: Proposal tier (1 deterministic, 2+ AI).
         confidence: AI confidence score.
-        status: approved, rejected, declined, or pending.
+        status: proposed, approved, rejected, declined, or pending.
         path: Node identity path (optional additive).
         node_type: ContentGraph NodeType value (task, block, play, …).
         source: deterministic, ai, ai-candidate, or outcome (optional additive).
         gate: tier1 or ai (optional additive).
         rule_ids: All rule ids on this approval unit (optional additive).
         violation_ids: Linked violation PKs (optional additive).
-        line_start: First line of the node/finding (optional additive).
+        line_start: First line of the node/finding, 0 when unknown (optional additive).
+        line_end: Last line of the node/finding, 0 when unknown (optional additive).
         diff_hunk: Unified diff when available (optional additive).
         explanation: AI explanation when available (optional additive).
         suggestion: Manual suggestion when available (optional additive).
@@ -153,7 +154,8 @@ class ProposalDetail(BaseModel):  # type: ignore[misc]
     gate: str = ""
     rule_ids: list[str] = Field(default_factory=list)
     violation_ids: list[int] = Field(default_factory=list)
-    line_start: int = 0
+    line_start: int = Field(default=0, ge=0)
+    line_end: int = Field(default=0, ge=0)
     diff_hunk: str = ""
     explanation: str = ""
     suggestion: str = ""

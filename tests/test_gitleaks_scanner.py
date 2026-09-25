@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -628,3 +629,83 @@ class TestRunGitleaksNodes:
             violations = run_gitleaks_nodes(nodes)
 
         assert len(violations) == 0
+
+
+class TestHealthTimeout:
+    """Timeout path bounds reaping and suppresses kill errors."""
+
+    async def test_timeout_suppresses_kill_oserror_and_bounds_wait(self) -> None:
+        """Non-ProcessLookupError OSError from kill is suppressed; wait is bounded."""
+        from apme.v1 import common_pb2
+        from apme_engine.daemon.gitleaks_validator_server import GitleaksValidatorServicer
+
+        servicer = GitleaksValidatorServicer()
+        mock_proc = MagicMock()
+        mock_proc.communicate = AsyncMock(side_effect=TimeoutError())
+        mock_proc.kill.side_effect = OSError("kill failed")
+        mock_proc.wait = AsyncMock(return_value=None)
+
+        with (
+            patch("asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=mock_proc),
+            patch("asyncio.wait_for", wraps=asyncio.wait_for) as mock_wait_for,
+        ):
+            resp = await servicer.Health(common_pb2.HealthRequest(), None)  # type: ignore[arg-type]
+
+        assert "timeout" in resp.status
+        mock_proc.kill.assert_called_once()
+        mock_proc.wait.assert_awaited_once()
+        assert mock_wait_for.call_count == 2
+        assert mock_wait_for.call_args_list[1][1].get("timeout") is not None
+
+    async def test_hanging_wait_still_returns_timeout(self) -> None:
+        """A hung proc.wait does not leak a zombie; Health returns promptly."""
+        from apme.v1 import common_pb2
+        from apme_engine.daemon import gitleaks_validator_server
+        from apme_engine.daemon.gitleaks_validator_server import GitleaksValidatorServicer
+
+        servicer = GitleaksValidatorServicer()
+        mock_proc = MagicMock()
+        mock_proc.communicate = AsyncMock(side_effect=TimeoutError())
+
+        async def _hang() -> int:
+            """Simulate a hung reaping wait.
+
+            Returns:
+                Never returns normally; cancelled by the bounded wait.
+            """
+            await asyncio.sleep(60)
+            return 0
+
+        mock_proc.wait = AsyncMock(side_effect=_hang)
+        with (
+            patch("asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=mock_proc),
+            patch.object(gitleaks_validator_server, "_HEALTH_TIMEOUT_S", 0.05),
+        ):
+            t0 = asyncio.get_event_loop().time()
+            resp = await servicer.Health(common_pb2.HealthRequest(), None)  # type: ignore[arg-type]
+            elapsed = asyncio.get_event_loop().time() - t0
+        assert "timeout" in resp.status
+        assert elapsed < 1.0
+
+    async def test_health_timeout_respects_total_budget(self) -> None:
+        """communicate() and proc.wait() together stay within _HEALTH_TIMEOUT_S."""
+        from apme.v1 import common_pb2
+        from apme_engine.daemon import gitleaks_validator_server
+        from apme_engine.daemon.gitleaks_validator_server import GitleaksValidatorServicer
+
+        servicer = GitleaksValidatorServicer()
+        mock_proc = MagicMock()
+        mock_proc.communicate = AsyncMock(side_effect=TimeoutError())
+        mock_proc.wait = AsyncMock(side_effect=TimeoutError())
+
+        with (
+            patch("asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=mock_proc),
+            patch.object(gitleaks_validator_server, "_HEALTH_TIMEOUT_S", 0.1),
+        ):
+            t0 = asyncio.get_event_loop().time()
+            resp = await servicer.Health(common_pb2.HealthRequest(), None)  # type: ignore[arg-type]
+            elapsed = asyncio.get_event_loop().time() - t0
+
+        assert "timeout" in resp.status
+        assert elapsed < 0.5
+        mock_proc.kill.assert_called_once()

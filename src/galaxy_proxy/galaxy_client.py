@@ -19,6 +19,8 @@ from dataclasses import dataclass, field
 
 import httpx
 
+from galaxy_proxy import MAX_VERSION_PAGES
+
 DEFAULT_GALAXY_URL = "https://galaxy.ansible.com"
 
 COLLECTIONS_PATH = "/api/v3/plugin/ansible/content/published/collections/index"
@@ -164,23 +166,18 @@ class GalaxyClient:
             List of version strings from the first successful upstream.
 
         Raises:
-            httpx.HTTPStatusError: When the last attempted server returns an error status.
-            httpx.RequestError: When the last attempted server's request fails.
-            RuntimeError: When no Galaxy servers are configured.
+            RuntimeError: When no Galaxy servers are configured, when every
+                server's version listing was truncated at the page bound, or
+                when every server failed (the last failure is chained via
+                ``__cause__`` so callers never see a bare
+                ``ValueError``/``KeyError`` from malformed payloads).
         """  # noqa: DOC503
         last_exc: Exception | None = None
+        truncated = False
         for srv, client in zip(self._servers, self._clients, strict=True):
             try:
                 versions = await self._list_versions_from(client, namespace, name)
-                logger.debug(
-                    "list_versions %s.%s: %d version(s) from %s",
-                    namespace,
-                    name,
-                    len(versions),
-                    srv.label(),
-                )
-                return versions
-            except (httpx.HTTPStatusError, httpx.RequestError) as exc:
+            except (httpx.HTTPStatusError, httpx.RequestError, ValueError, KeyError) as exc:
                 logger.debug(
                     "list_versions %s.%s: %s failed: %s",
                     namespace,
@@ -189,7 +186,32 @@ class GalaxyClient:
                     exc,
                 )
                 last_exc = exc
-        raise last_exc or RuntimeError("No Galaxy servers configured")
+                continue
+            if versions is None:
+                # Truncated listing: not a complete answer, fail over.
+                logger.debug(
+                    "list_versions %s.%s: %s truncated version listing, trying next server",
+                    namespace,
+                    name,
+                    srv.label(),
+                )
+                truncated = True
+                continue
+            logger.debug(
+                "list_versions %s.%s: %d version(s) from %s",
+                namespace,
+                name,
+                len(versions),
+                srv.label(),
+            )
+            return versions
+        if last_exc is not None:
+            msg = f"Galaxy version listing failed for {namespace}.{name}: {last_exc}"
+            raise RuntimeError(msg) from last_exc
+        if truncated:
+            msg = f"Galaxy version listing truncated at {MAX_VERSION_PAGES} pages for {namespace}.{name}"
+            raise RuntimeError(msg)
+        raise RuntimeError("No Galaxy servers configured")
 
     async def get_version_detail(
         self,
@@ -210,9 +232,11 @@ class GalaxyClient:
             Parsed ``CollectionVersion`` from the first successful upstream.
 
         Raises:
-            httpx.HTTPStatusError: When the last attempted server returns an error status.
-            httpx.RequestError: When the last attempted server's request fails.
-            RuntimeError: When no Galaxy servers are configured.
+            RuntimeError: When no Galaxy servers are configured, or when
+                every server failed (the last failure is chained via
+                ``__cause__`` so callers never see a bare
+                ``httpx.HTTPStatusError``/``httpx.RequestError`` or
+                ``ValueError``/``KeyError`` from malformed payloads).
         """  # noqa: DOC503
         last_exc: Exception | None = None
         for srv, client in zip(self._servers, self._clients, strict=True):
@@ -226,7 +250,7 @@ class GalaxyClient:
                     srv.label(),
                 )
                 return detail
-            except (httpx.HTTPStatusError, httpx.RequestError) as exc:
+            except (httpx.HTTPStatusError, httpx.RequestError, ValueError, KeyError) as exc:
                 logger.debug(
                     "get_version_detail %s.%s:%s: %s failed: %s",
                     namespace,
@@ -236,7 +260,10 @@ class GalaxyClient:
                     exc,
                 )
                 last_exc = exc
-        raise last_exc or RuntimeError("No Galaxy servers configured")
+        if last_exc is not None:
+            msg = f"Galaxy version detail failed for {namespace}.{name}:{version}: {last_exc}"
+            raise RuntimeError(msg) from last_exc
+        raise RuntimeError("No Galaxy servers configured")
 
     async def download_tarball(self, download_url: str) -> bytes:
         """Download a collection tarball by its absolute URL.
@@ -249,10 +276,19 @@ class GalaxyClient:
 
         Returns:
             Raw tarball bytes.
-        """
-        resp = await self._download_client.get(download_url)
-        resp.raise_for_status()
-        return resp.content  # type: ignore[no-any-return]
+
+        Raises:
+            RuntimeError: When the download fails (the ``httpx`` failure
+                is chained via ``__cause__`` so callers never see a bare
+                transport error), symmetric with :meth:`list_versions`.
+        """  # noqa: DOC503
+        try:
+            resp = await self._download_client.get(download_url)
+            resp.raise_for_status()
+            return resp.content  # type: ignore[no-any-return]
+        except (httpx.HTTPStatusError, httpx.RequestError) as exc:
+            msg = f"Galaxy tarball download failed for {download_url}: {exc}"
+            raise RuntimeError(msg) from exc
 
     async def get_version_and_download(
         self,
@@ -269,10 +305,22 @@ class GalaxyClient:
 
         Returns:
             Tuple of version metadata and tarball bytes.
-        """
-        detail = await self.get_version_detail(namespace, name, version)
-        tarball = await self.download_tarball(detail.download_url)
-        return detail, tarball
+
+        Raises:
+            RuntimeError: When metadata lookup or tarball download fails
+                (failures from the underlying calls are already
+                ``RuntimeError`` and propagate unchanged; any other
+                transport or malformed-payload failure is wrapped with the
+                original chained via ``__cause__``), symmetric with
+                :meth:`list_versions`.
+        """  # noqa: DOC503
+        try:
+            detail = await self.get_version_detail(namespace, name, version)
+            tarball = await self.download_tarball(detail.download_url)
+            return detail, tarball
+        except (httpx.HTTPStatusError, httpx.RequestError, ValueError, KeyError) as exc:
+            msg = f"Galaxy download failed for {namespace}.{name}:{version}: {exc}"
+            raise RuntimeError(msg) from exc
 
     # ── internal per-client helpers ──────────────────────────────────
 
@@ -281,19 +329,81 @@ class GalaxyClient:
         client: httpx.AsyncClient,
         namespace: str,
         name: str,
-    ) -> list[str]:
+    ) -> list[str] | None:
+        """List versions, or ``None`` when the listing is truncated.
+
+        A server that keeps returning ``links.next`` past
+        ``MAX_VERSION_PAGES`` yields a partial list that must not be
+        mistaken for a complete answer, so truncation is a failure signal
+        the caller fails over on.
+
+        Args:
+            client: Authenticated httpx client for one Galaxy server.
+            namespace: Collection namespace.
+            name: Collection name.
+
+        Returns:
+            Version strings, or ``None`` when truncated at the page bound
+            or when a page body is not a JSON object (both are failure
+            signals the caller fails over on).
+        """
         versions: list[str] = []
         url = f"{COLLECTIONS_PATH}/{namespace}/{name}/versions/"
         params: dict[str, str | int] = {"limit": 100, "offset": 0}
-        while True:
+        for _page in range(MAX_VERSION_PAGES):
             resp = await client.get(url, params=params)
             resp.raise_for_status()
             payload = resp.json()
-            for entry in payload.get("data", []):
+            if not isinstance(payload, dict):
+                # A non-dict JSON body (e.g. a list or string) has no
+                # ``.get`` — treat it as a failure so the caller fails
+                # over to the next server instead of raising AttributeError.
+                logger.debug(
+                    "Galaxy version listing for %s.%s returned non-dict payload (%s); treating as failure",
+                    namespace,
+                    name,
+                    type(payload).__name__,
+                )
+                return None
+            entries = payload.get("data")
+            if not isinstance(entries, list):
+                logger.debug(
+                    "Galaxy version listing for %s.%s returned non-list data; treating as failure",
+                    namespace,
+                    name,
+                )
+                return None
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    logger.debug(
+                        "Galaxy version listing for %s.%s returned non-object entry; treating as failure",
+                        namespace,
+                        name,
+                    )
+                    return None
                 versions.append(entry["version"])
-            if not payload.get("links", {}).get("next"):
+            if "links" in payload:
+                links = payload["links"]
+                if not isinstance(links, dict):
+                    logger.debug(
+                        "Galaxy version listing for %s.%s returned non-object links; treating as failure",
+                        namespace,
+                        name,
+                    )
+                    return None
+                if not links.get("next"):
+                    break
+            else:
                 break
             params["offset"] = int(params["offset"]) + int(params["limit"])
+        else:
+            logger.warning(
+                "Galaxy version pagination exceeded %d pages for %s.%s; treating as failure",
+                MAX_VERSION_PAGES,
+                namespace,
+                name,
+            )
+            return None
         return versions
 
     @staticmethod
@@ -303,11 +413,43 @@ class GalaxyClient:
         name: str,
         version: str,
     ) -> CollectionVersion:
+        """Fetch and parse version metadata from a single Galaxy server.
+
+        Args:
+            client: Authenticated httpx client for one Galaxy server.
+            namespace: Collection namespace.
+            name: Collection name.
+            version: Collection version string.
+
+        Returns:
+            Parsed ``CollectionVersion``.
+
+        Raises:
+            ValueError: When the response body is not a JSON object (a
+                non-dict payload has no ``.get`` — surfacing
+                ``AttributeError`` would escape the caller's failover
+                handler, so this is a ``ValueError`` the caller fails
+                over on).
+            KeyError: When the payload lacks required fields.
+        """  # noqa: DOC503
         url = f"{COLLECTIONS_PATH}/{namespace}/{name}/versions/{version}/"
         resp = await client.get(url)
         resp.raise_for_status()
         data = resp.json()
-        meta = data.get("metadata", {})
+        if not isinstance(data, dict):
+            msg = (
+                f"Galaxy version detail for {namespace}.{name}:{version} "
+                f"returned non-dict payload ({type(data).__name__})"
+            )
+            raise ValueError(msg)
+        raw_meta = data.get("metadata")
+        if raw_meta is not None and not isinstance(raw_meta, dict):
+            msg = (
+                f"Galaxy version detail for {namespace}.{name}:{version} "
+                f"returned non-object metadata ({type(raw_meta).__name__})"
+            )
+            raise ValueError(msg)
+        meta = raw_meta or {}
         return CollectionVersion(
             namespace=namespace,
             name=name,
