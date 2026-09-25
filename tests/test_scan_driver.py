@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import base64
 import os
+import subprocess
 import tempfile
 from collections.abc import AsyncIterator
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -12,8 +14,11 @@ import pytest
 from apme.v1 import engine_pb2
 from apme_gateway.scan.driver import (
     _REMOTE_HEAD_CACHE,
+    _REMOTE_HEAD_NEG_CACHE,
+    _git_auth_env,
     _git_subprocess_env,
     _inject_token_in_url,
+    _merge_git_config_env,
     clone_repo,
     coerce_option_bool,
     derive_session_id,
@@ -22,6 +27,26 @@ from apme_gateway.scan.driver import (
     run_project_scan,
 )
 from apme_gateway.scm.redaction import redact_credentials
+
+
+def _decode_auth_env(env: dict[str, str]) -> str:
+    """Decode the ``http.extraHeader`` basic credentials from a git env mapping.
+
+    Args:
+        env: Git subprocess environment containing ``GIT_CONFIG_*`` entries.
+
+    Returns:
+        Decoded ``username:password`` credential string.
+    """
+    count = int(env["GIT_CONFIG_COUNT"])
+    value = next(
+        env[f"GIT_CONFIG_VALUE_{i}"]
+        for i in range(count - 1, -1, -1)
+        if env.get(f"GIT_CONFIG_KEY_{i}", "").endswith(".extraHeader")
+    )
+    scheme, _, encoded = value.partition("Basic ")
+    assert scheme.strip().rstrip(":").upper() == "AUTHORIZATION"
+    return base64.b64decode(encoded.strip()).decode("utf-8")
 
 
 @pytest.mark.parametrize(  # type: ignore[untyped-decorator]
@@ -128,6 +153,7 @@ async def test_fetch_remote_head_uses_git_ca_env() -> None:
     """Remote head lookups pass the derived CA env through to git."""
     fake_sha = "b" * 40
     _REMOTE_HEAD_CACHE.clear()
+    _REMOTE_HEAD_NEG_CACHE.clear()
     with (
         patch.dict(os.environ, {"SSL_CERT_FILE": "/etc/ssl/certs/custom-ca.pem"}, clear=True),
         patch("apme_gateway.scan.driver.asyncio.get_running_loop") as mock_loop,
@@ -222,6 +248,7 @@ async def test_fetch_remote_head_success() -> None:
     """Verify fetch_remote_head returns SHA from ls-remote output."""
     fake_sha = "a" * 40
     _REMOTE_HEAD_CACHE.clear()
+    _REMOTE_HEAD_NEG_CACHE.clear()
     with patch("apme_gateway.scan.driver.asyncio.get_running_loop") as mock_loop:
         result = MagicMock()
         result.returncode = 0
@@ -379,10 +406,35 @@ class TestRedactCredentials:
         result = redact_credentials(text)
         assert result == text
 
+    def test_redacts_basic_auth_header(self) -> None:
+        """AUTHORIZATION Basic header tokens are masked."""
+        token = base64.b64encode(b"x-access-token:ghp_secret123").decode("ascii")
+        text = f"http.https://github.com.extraHeader: AUTHORIZATION: Basic {token}"
+        result = redact_credentials(text)
+        assert token not in result
+        assert "Basic [REDACTED]" in result
+
+    def test_redacts_curl_verbose_authorization(self) -> None:
+        """Curl-verbose Authorization headers are masked case-insensitively."""
+        token = base64.b64encode(b"oauth2:glpat-secret").decode("ascii")
+        text = f"> Authorization: Basic {token}\r\n< HTTP/1.1 401"
+        result = redact_credentials(text)
+        assert token not in result
+        assert "[REDACTED]" in result
+
+    def test_redacts_url_and_basic_header_together(self) -> None:
+        """URL credentials and header tokens are both masked."""
+        token = base64.b64encode(b"git:s3cret-token").decode("ascii")
+        text = f"fatal: https://x-access-token:s3cret-token@github.com/repo not found (AUTHORIZATION: Basic {token})"
+        result = redact_credentials(text)
+        assert "s3cret-token" not in result
+        assert token not in result
+        assert result.count("[REDACTED]") >= 2
+
 
 @pytest.mark.asyncio  # type: ignore[untyped-decorator]
 async def test_clone_repo_with_scm_token() -> None:
-    """Verify clone_repo injects token into URL when provided."""
+    """Verify clone_repo passes the token via env, never in argv."""
     with patch("apme_gateway.scan.driver.asyncio.get_running_loop") as mock_loop:
         result = MagicMock()
         result.returncode = 0
@@ -400,7 +452,10 @@ async def test_clone_repo_with_scm_token() -> None:
             await clone_repo("https://github.com/owner/repo.git", "main", dest, scm_token="ghp_test")
 
         call_args = mock_run.call_args[0][0]
-        assert "x-access-token:ghp_test@github.com" in call_args[-2]
+        assert call_args[-2] == "https://github.com/owner/repo.git"
+        assert "ghp_test" not in " ".join(call_args)
+        env = mock_run.call_args.kwargs["env"]
+        assert _decode_auth_env(env) == "x-access-token:ghp_test"
 
 
 @pytest.mark.asyncio  # type: ignore[untyped-decorator]
@@ -427,10 +482,36 @@ async def test_clone_repo_redacts_error_messages() -> None:
 
 
 @pytest.mark.asyncio  # type: ignore[untyped-decorator]
+async def test_clone_repo_redacts_basic_header_in_error() -> None:
+    """Verify clone_repo masks AUTHORIZATION Basic material from git stderr."""
+    token = base64.b64encode(b"x-access-token:ghp_secret123").decode("ascii")
+    with patch("apme_gateway.scan.driver.asyncio.get_running_loop") as mock_loop:
+        result = MagicMock()
+        result.returncode = 128
+        result.stderr = f"trace: http.extraHeader: AUTHORIZATION: Basic {token}\nfatal: auth failed"
+        mock_loop.return_value.run_in_executor = AsyncMock(return_value=result)
+
+        with tempfile.TemporaryDirectory() as td:
+            dest = os.path.join(td, "repo")
+            with pytest.raises(RuntimeError) as exc_info:
+                await clone_repo(
+                    "https://github.com/bad/repo.git",
+                    "main",
+                    dest,
+                    scm_token="ghp_secret123",
+                )
+
+        assert token not in str(exc_info.value)
+        assert "ghp_secret123" not in str(exc_info.value)
+        assert "[REDACTED]" in str(exc_info.value)
+
+
+@pytest.mark.asyncio  # type: ignore[untyped-decorator]
 async def test_fetch_remote_head_with_scm_token() -> None:
-    """Verify fetch_remote_head injects token when provided."""
+    """Verify fetch_remote_head passes the token via env, never in argv."""
     fake_sha = "c" * 40
     _REMOTE_HEAD_CACHE.clear()
+    _REMOTE_HEAD_NEG_CACHE.clear()
     with (
         patch("apme_gateway.scan.driver.asyncio.get_running_loop") as mock_loop,
         patch("apme_gateway.scan.driver.subprocess.run") as mock_run,
@@ -449,7 +530,77 @@ async def test_fetch_remote_head_with_scm_token() -> None:
 
     assert sha == fake_sha
     call_args = mock_run.call_args[0][0]
-    assert "oauth2:glpat-test@gitlab.com" in call_args[3]
+    assert call_args[3] == "https://gitlab.com/owner/repo.git"
+    assert "glpat-test" not in " ".join(call_args)
+    env = mock_run.call_args.kwargs["env"]
+    assert _decode_auth_env(env) == "oauth2:glpat-test"
+
+
+@pytest.mark.asyncio  # type: ignore[untyped-decorator]
+async def test_fetch_remote_head_negative_cache_throttles_retries() -> None:
+    """Failed ls-remote lookups are cached with a short TTL, not forever."""
+    _REMOTE_HEAD_CACHE.clear()
+    _REMOTE_HEAD_NEG_CACHE.clear()
+    with (
+        patch("apme_gateway.scan.driver.asyncio.get_running_loop") as mock_loop,
+        patch("apme_gateway.scan.driver.subprocess.run") as mock_run,
+    ):
+        result = MagicMock()
+        result.returncode = 128
+        result.stdout = ""
+        mock_run.return_value = result
+        mock_loop.return_value.run_in_executor = AsyncMock(side_effect=lambda _exec, func: func())
+
+        assert await fetch_remote_head("https://github.com/owner/repo.git", "main") is None
+        assert await fetch_remote_head("https://github.com/owner/repo.git", "main") is None
+
+    assert _REMOTE_HEAD_CACHE == {}
+    assert len(_REMOTE_HEAD_NEG_CACHE) == 1
+    # Second lookup served from the short-TTL negative cache: no new subprocess.
+    assert mock_run.call_count == 1
+
+
+class TestGitAuthEnv:
+    """Tests for _git_auth_env token transport via git config env."""
+
+    def test_github_credentials(self) -> None:
+        """GitHub tokens map to x-access-token basic credentials."""
+        env = _git_auth_env("https://github.com/owner/repo.git", "ghp_test123")
+        assert env["GIT_CONFIG_COUNT"] == "1"
+        assert env["GIT_CONFIG_KEY_0"] == "http.https://github.com.extraHeader"
+        assert _decode_auth_env(env) == "x-access-token:ghp_test123"
+
+    def test_auth_header_scoped_to_repo_origin(self) -> None:
+        """The extraHeader key is scoped per origin, including ports."""
+        env = _git_auth_env("https://git.example.com:8443/org/repo.git", "token123")
+        assert env["GIT_CONFIG_KEY_0"] == "http.https://git.example.com:8443.extraHeader"
+        assert _decode_auth_env(env) == "git:token123"
+
+    def test_merge_preserves_existing_git_config(self) -> None:
+        """Merging appends pairs instead of clobbering existing entries."""
+        base = {
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "http.sslVerify",
+            "GIT_CONFIG_VALUE_0": "false",
+        }
+        merged = _merge_git_config_env(base, [("http.https://a.example.extraHeader", "AUTHORIZATION: Basic eA==")])
+        assert merged["GIT_CONFIG_COUNT"] == "2"
+        assert merged["GIT_CONFIG_KEY_0"] == "http.sslVerify"
+        assert merged["GIT_CONFIG_KEY_1"] == "http.https://a.example.extraHeader"
+        assert merged["GIT_CONFIG_VALUE_1"] == "AUTHORIZATION: Basic eA=="
+
+    def test_gitlab_user_pass_credentials(self) -> None:
+        """GitLab deploy tokens keep username:password credentials."""
+        env = _git_auth_env(
+            "https://gitlab.com/group/repo.git",
+            "gitlab+deploy-token-1:secret",
+        )
+        assert _decode_auth_env(env) == "gitlab+deploy-token-1:secret"
+
+    def test_unknown_provider_git_fallback(self) -> None:
+        """Unknown providers fall back to the git username."""
+        env = _git_auth_env("https://custom-git.example.com/repo.git", "token123")
+        assert _decode_auth_env(env) == "git:token123"
 
 
 @pytest.mark.asyncio  # type: ignore[untyped-decorator]
@@ -458,6 +609,7 @@ async def test_fetch_remote_head_cache_separates_auth_and_unauth() -> None:
     fake_sha_unauth = "a" * 40
     fake_sha_auth = "b" * 40
     _REMOTE_HEAD_CACHE.clear()
+    _REMOTE_HEAD_NEG_CACHE.clear()
 
     with (
         patch("apme_gateway.scan.driver.asyncio.get_running_loop") as mock_loop,
@@ -487,6 +639,266 @@ async def test_fetch_remote_head_cache_separates_auth_and_unauth() -> None:
         # Should make a new request, not return cached unauthenticated result
         assert sha2 == fake_sha_auth
         assert mock_run.call_count == 2
+
+
+@pytest.mark.asyncio  # type: ignore[untyped-decorator]
+async def test_fetch_remote_head_separates_distinct_tokens() -> None:
+    """Two different tokens on the same repo+branch do not share a cache entry."""
+    _REMOTE_HEAD_CACHE.clear()
+    _REMOTE_HEAD_NEG_CACHE.clear()
+    with (
+        patch("apme_gateway.scan.driver.asyncio.get_running_loop") as mock_loop,
+        patch("apme_gateway.scan.driver.subprocess.run") as mock_run,
+    ):
+        mock_loop.return_value.run_in_executor = AsyncMock(side_effect=lambda _exec, func: func())
+
+        first = MagicMock()
+        first.returncode = 0
+        first.stdout = f"{'a' * 40}\trefs/heads/main\n"
+        mock_run.return_value = first
+        assert await fetch_remote_head("https://github.com/o/r.git", "main", scm_token="tok-one") == "a" * 40
+
+        second = MagicMock()
+        second.returncode = 0
+        second.stdout = f"{'b' * 40}\trefs/heads/main\n"
+        mock_run.return_value = second
+        assert await fetch_remote_head("https://github.com/o/r.git", "main", scm_token="tok-two") == "b" * 40
+
+        assert mock_run.call_count == 2
+
+
+@pytest.mark.asyncio  # type: ignore[untyped-decorator]
+async def test_clone_repo_timeout_expired_surfaces_runtime_error() -> None:
+    """clone_repo TimeoutExpired surfaces as RuntimeError, never raw."""
+    with patch("apme_gateway.scan.driver.asyncio.get_running_loop") as mock_loop:
+        mock_loop.return_value.run_in_executor = AsyncMock(
+            side_effect=subprocess.TimeoutExpired(cmd=["git"], timeout=120)
+        )
+        with tempfile.TemporaryDirectory() as td, pytest.raises(RuntimeError, match="timed out"):
+            await clone_repo("https://github.com/o/r.git", "main", td + "/repo", scm_token="s3cret")
+
+
+@pytest.mark.asyncio  # type: ignore[untyped-decorator]
+async def test_clone_repo_strips_embedded_userinfo(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Userinfo in the stored URL never reaches git argv; host is warned, secret is not.
+
+    Args:
+        caplog: Pytest log capture fixture.
+    """
+    secret_url = "https://deployer:s3cret-token@github.com/owner/repo.git"
+    with (
+        caplog.at_level("WARNING", logger="apme_gateway.scan.driver"),
+        patch("apme_gateway.scan.driver.asyncio.get_running_loop") as mock_loop,
+        patch("apme_gateway.scan.driver.subprocess.run") as mock_run,
+    ):
+        result = MagicMock()
+        result.returncode = 0
+        result.stderr = ""
+        mock_run.return_value = result
+        mock_loop.return_value.run_in_executor = AsyncMock(side_effect=lambda _exec, func: func())
+
+        with tempfile.TemporaryDirectory() as td:
+            await clone_repo(secret_url, "main", os.path.join(td, "repo"))
+
+    call_args = mock_run.call_args[0][0]
+    assert call_args[-2] == "https://github.com/owner/repo.git"
+    assert "s3cret-token" not in " ".join(call_args)
+    env = mock_run.call_args.kwargs["env"]
+    assert _decode_auth_env(env) == "deployer:s3cret-token"
+    assert "github.com" in caplog.text
+    assert "s3cret-token" not in caplog.text
+
+
+@pytest.mark.asyncio  # type: ignore[untyped-decorator]
+async def test_clone_repo_userinfo_with_token_keeps_header_auth() -> None:
+    """Stripped userinfo URLs still authenticate via header env when scm_token is set."""
+    secret_url = "https://deployer:old-credential@github.com/owner/repo.git"
+    with patch("apme_gateway.scan.driver.asyncio.get_running_loop") as mock_loop:
+        result = MagicMock()
+        result.returncode = 0
+        result.stderr = ""
+        mock_loop.return_value.run_in_executor = AsyncMock(return_value=result)
+
+        with (
+            tempfile.TemporaryDirectory() as td,
+            patch("apme_gateway.scan.driver.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = result
+            mock_loop.return_value.run_in_executor = AsyncMock(side_effect=lambda _exec, func: func())
+
+            dest = os.path.join(td, "repo")
+            await clone_repo(secret_url, "main", dest, scm_token="ghp_test")
+
+        call_args = mock_run.call_args[0][0]
+        assert call_args[-2] == "https://github.com/owner/repo.git"
+        assert "old-credential" not in " ".join(call_args)
+        assert "ghp_test" not in " ".join(call_args)
+        env = mock_run.call_args.kwargs["env"]
+        assert _decode_auth_env(env) == "x-access-token:ghp_test"
+
+
+@pytest.mark.asyncio  # type: ignore[untyped-decorator]
+async def test_fetch_remote_head_malformed_port_returns_none() -> None:
+    """Malformed ports in authenticated URLs return None instead of raising."""
+    _REMOTE_HEAD_CACHE.clear()
+    _REMOTE_HEAD_NEG_CACHE.clear()
+    bad_url = "https://host:badport/repo.git"
+    sha = await fetch_remote_head(bad_url, "main", scm_token="tok")
+    assert sha is None
+
+
+@pytest.mark.asyncio  # type: ignore[untyped-decorator]
+async def test_fetch_remote_head_strips_embedded_userinfo(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """ls-remote receives the stripped URL; header auth still sent when scm_token is set.
+
+    Args:
+        caplog: Pytest log capture fixture.
+    """
+    fake_sha = "f" * 40
+    _REMOTE_HEAD_CACHE.clear()
+    _REMOTE_HEAD_NEG_CACHE.clear()
+    secret_url = "https://deployer:s3cret-token@github.com/owner/repo.git"
+    with (
+        caplog.at_level("WARNING", logger="apme_gateway.scan.driver"),
+        patch("apme_gateway.scan.driver.asyncio.get_running_loop") as mock_loop,
+        patch("apme_gateway.scan.driver.subprocess.run") as mock_run,
+    ):
+        result = MagicMock()
+        result.returncode = 0
+        result.stdout = f"{fake_sha}\trefs/heads/main\n"
+        mock_run.return_value = result
+        mock_loop.return_value.run_in_executor = AsyncMock(side_effect=lambda _exec, func: func())
+
+        sha = await fetch_remote_head(secret_url, "main", scm_token="ghp_test")
+
+    assert sha == fake_sha
+    call_args = mock_run.call_args[0][0]
+    assert call_args[3] == "https://github.com/owner/repo.git"
+    assert "s3cret-token" not in " ".join(call_args)
+    assert "ghp_test" not in " ".join(call_args)
+    env = mock_run.call_args.kwargs["env"]
+    assert _decode_auth_env(env) == "x-access-token:ghp_test"
+    assert "github.com" in caplog.text
+    assert "s3cret-token" not in caplog.text
+
+
+class TestRedactTightenedPatterns:
+    """Tightened Basic/Bearer patterns avoid prose while covering headers."""
+
+    def test_bearer_token_masked(self) -> None:
+        """Bearer tokens are masked."""
+        token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.c29tZXBheWxvYWQ.c2lnbmF0dXJl"
+        text = f"Authorization: Bearer {token}"
+        result = redact_credentials(text)
+        assert token not in result
+        assert "[REDACTED]" in result
+
+    def test_plain_english_untouched(self) -> None:
+        """Plain English mentioning bearer/basic is left alone."""
+        text = "The bearer of bad news arrived yesterday with a Basic understanding of the system"
+        assert redact_credentials(text) == text
+
+    def test_bare_basic_prose_untouched(self) -> None:
+        """Bare Basic prose without an Authorization prefix is not redacted."""
+        text = "This is a Basic understanding of the configuration format"
+        assert redact_credentials(text) == text
+
+    def test_short_bearer_fragment_untouched(self) -> None:
+        """Short Bearer fragments below the token floor are not redacted."""
+        text = "Bearer of light"
+        assert redact_credentials(text) == text
+
+    def test_short_basic_auth_header_masked(self) -> None:
+        """Short Basic auth values are redacted when prefixed by Authorization."""
+        text = "AUTHORIZATION: Basic YTpi"
+        result = redact_credentials(text)
+        assert "YTpi" not in result
+        assert "Basic [REDACTED]" in result
+
+    def test_short_bearer_token_masked(self) -> None:
+        """Short bearer access tokens are redacted."""
+        text = "Authorization: Bearer ghp_ab"
+        result = redact_credentials(text)
+        assert "ghp_ab" not in result
+        assert "[REDACTED]" in result
+
+
+@pytest.mark.asyncio  # type: ignore[untyped-decorator]
+async def test_fetch_remote_head_cache_normalizes_repo_url() -> None:
+    """Variant URL spellings share one cache entry; raw URL still goes to git."""
+    fake_sha = "e" * 40
+    _REMOTE_HEAD_CACHE.clear()
+    _REMOTE_HEAD_NEG_CACHE.clear()
+    with (
+        patch("apme_gateway.scan.driver.asyncio.get_running_loop") as mock_loop,
+        patch("apme_gateway.scan.driver.subprocess.run") as mock_run,
+    ):
+        result = MagicMock()
+        result.returncode = 0
+        result.stdout = f"{fake_sha}\trefs/heads/main\n"
+        mock_run.return_value = result
+        mock_loop.return_value.run_in_executor = AsyncMock(side_effect=lambda _exec, func: func())
+
+        sha1 = await fetch_remote_head("https://github.com/org/repo.git", "main")
+        assert sha1 == fake_sha
+        assert mock_run.call_count == 1
+        raw_argv = mock_run.call_args[0][0]
+        assert raw_argv[3] == "https://github.com/org/repo.git"
+
+        sha2 = await fetch_remote_head("https://GitHub.com/org/repo", "main")
+        assert sha2 == fake_sha
+        assert mock_run.call_count == 1
+
+
+@pytest.mark.asyncio  # type: ignore[untyped-decorator]
+async def test_clone_repo_redacts_tokens_straddling_stderr_truncation() -> None:
+    """Tokens straddling the 500-char cut are masked (redact before truncate)."""
+    secret = "ghp_straddlingsecret123456"
+    filler = "E" * 470
+    stderr = f"{filler} https://x-access-token:{secret}@github.com/org/repo not found"
+    assert "@" not in stderr[:500]
+    with patch("apme_gateway.scan.driver.asyncio.get_running_loop") as mock_loop:
+        result = MagicMock()
+        result.returncode = 128
+        result.stderr = stderr
+        mock_loop.return_value.run_in_executor = AsyncMock(return_value=result)
+
+        with tempfile.TemporaryDirectory() as td:
+            dest = os.path.join(td, "repo")
+            with pytest.raises(RuntimeError) as exc_info:
+                await clone_repo("https://github.com/bad/repo.git", "main", dest)
+
+        assert secret not in str(exc_info.value)
+        assert "[REDACTED]" in str(exc_info.value)
+
+
+@pytest.mark.asyncio  # type: ignore[untyped-decorator]
+async def test_fetch_remote_head_stores_fresh_timestamp() -> None:
+    """Cache entries use the post-subprocess clock reading, not the stale one."""
+    fake_sha = "d" * 40
+    _REMOTE_HEAD_CACHE.clear()
+    _REMOTE_HEAD_NEG_CACHE.clear()
+    with (
+        patch("apme_gateway.scan.driver.time.monotonic", side_effect=[100.0, 200.0]),
+        patch("apme_gateway.scan.driver.asyncio.get_running_loop") as mock_loop,
+        patch("apme_gateway.scan.driver.subprocess.run") as mock_run,
+    ):
+        result = MagicMock()
+        result.returncode = 0
+        result.stdout = f"{fake_sha}\trefs/heads/main\n"
+        mock_run.return_value = result
+        mock_loop.return_value.run_in_executor = AsyncMock(side_effect=lambda _exec, func: func())
+
+        sha = await fetch_remote_head("https://github.com/org/fresh.git", "main")
+        assert sha == fake_sha
+
+    assert len(_REMOTE_HEAD_CACHE) == 1
+    stored_ts = next(iter(_REMOTE_HEAD_CACHE.values()))[0]
+    assert stored_ts == 200.0
 
 
 @pytest.mark.asyncio  # type: ignore[untyped-decorator]

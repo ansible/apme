@@ -6,6 +6,7 @@ files are written.
 """
 
 import asyncio
+import contextlib
 import contextvars
 import json
 import logging
@@ -28,6 +29,9 @@ from apme_engine.validators.gitleaks.scanner import GITLEAKS_BIN, run_gitleaks_n
 logger = logging.getLogger("apme.gitleaks")
 
 _MAX_CONCURRENT_RPCS = int(os.environ.get("APME_GITLEAKS_MAX_RPCS", "16"))
+
+#: Bound for the gitleaks ``version`` probe and for reaping it after a timeout.
+_HEALTH_TIMEOUT_S = 5.0
 
 
 def _extract_nodes_from_graph_data(raw: bytes) -> tuple[list[tuple[str, str]], set[str]]:
@@ -198,13 +202,30 @@ class GitleaksValidatorServicer(validate_pb2_grpc.ValidatorServicer):
             HealthResponse with status including gitleaks version or error.
         """
         try:
+            deadline = time.monotonic() + _HEALTH_TIMEOUT_S
             proc = await asyncio.create_subprocess_exec(
                 GITLEAKS_BIN,
                 "version",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+            try:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    with contextlib.suppress(OSError):
+                        proc.kill()
+                    return HealthResponse(status="gitleaks health timeout")
+                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=remaining)
+            except TimeoutError:
+                with contextlib.suppress(OSError):
+                    proc.kill()
+                remaining = deadline - time.monotonic()
+                if remaining > 0:
+                    try:
+                        await asyncio.wait_for(proc.wait(), timeout=remaining)
+                    except TimeoutError:
+                        logger.warning("Gitleaks: health probe still unreaped after kill; possible zombie")
+                return HealthResponse(status="gitleaks health timeout")
             if proc.returncode == 0:
                 version = stdout.decode().strip()
                 return HealthResponse(status=f"ok (gitleaks {version})")

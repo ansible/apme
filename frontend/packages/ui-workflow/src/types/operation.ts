@@ -36,6 +36,8 @@ export interface OperationProposal {
   status?: "proposed" | "declined" | "pending" | "approved" | "rejected";
   suggestion?: string;
   line_start?: number;
+  /** 1-based end line of the proposal span; 0/undefined = unknown (same guard as line_start). */
+  line_end?: number;
   /** Stable graph node path (ADR-062 / Option C Gate 1 grouping key). */
   path?: string;
   /** ContentGraph NodeType (task, block, play, …); empty when not graph-backed. */

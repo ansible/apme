@@ -424,6 +424,7 @@ async def _forward_events(
                             "source": p.source,
                             "suggestion": p.suggestion,
                             "path": p.path,
+                            "node_type": getattr(p, "node_type", "") or "",
                         }
                         for p in pr.proposals
                     ],
@@ -446,7 +447,12 @@ async def _forward_events(
                             "file": v.file,
                             "path": v.path or "",
                             "node_type": getattr(v, "node_type", "") or "",
+                            "remediation_class": (int(v.remediation_class) if v.remediation_class else 0),
                             "source": v.source or "",
+                            "original_yaml": v.original_yaml or "",
+                            "fixed_yaml": v.fixed_yaml or "",
+                            "co_fixes": list(v.co_fixes) if v.co_fixes else [],
+                            "node_line_start": (int(getattr(v, "node_line_start", 0) or 0) or None),
                         }
                         for v in triage.candidates
                     ],

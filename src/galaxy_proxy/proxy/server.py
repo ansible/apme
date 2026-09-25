@@ -28,6 +28,7 @@ from fastapi.responses import HTMLResponse, Response
 from packaging.version import InvalidVersion, Version
 from pydantic import BaseModel
 
+from galaxy_proxy import MAX_VERSION_PAGES
 from galaxy_proxy.collection_downloader import (
     GalaxyServerConfig,
     download_collections,
@@ -330,13 +331,14 @@ def create_app(
                 name,
                 servers=servers_cfg,
             )
-            # Do not persist an empty result.  An empty response can mean that
-            # Galaxy was temporarily unreachable (for example, during CI
-            # startup), and caching that negative result makes the collection
-            # unavailable for the entire metadata TTL.
-            if galaxy_versions:
-                cache.put_metadata(namespace, name, galaxy_versions)
-            versions = galaxy_versions
+            if galaxy_versions is not None:
+                if galaxy_versions:
+                    cache.put_metadata(namespace, name, galaxy_versions)
+                versions = galaxy_versions
+            else:
+                # Truncation or total server failure — do not cache an empty
+                # listing that would masquerade as a valid zero-version catalog.
+                versions = []
 
         if not versions and not cached_wheel_set:
             lock_key = f"{namespace}.{name}:latest"
@@ -656,7 +658,7 @@ async def _fetch_galaxy_versions(
     name: str,
     *,
     servers: list[GalaxyServerConfig] | None = None,
-) -> list[str]:
+) -> list[str] | None:
     """Fetch all published version strings for a collection from Galaxy.
 
     When *servers* is provided, each configured server is tried in order
@@ -674,7 +676,8 @@ async def _fetch_galaxy_versions(
         servers: Ordered list of Galaxy server configs (optional).
 
     Returns:
-        Sorted list of version strings, empty on error.
+        Sorted list of version strings on success (possibly empty), or
+        ``None`` when every server fails (including pagination truncation).
     """
     base_urls: list[tuple[str, str | None]] = []
     for srv in servers or []:
@@ -699,7 +702,7 @@ async def _fetch_galaxy_versions(
         name,
         ", ".join(tried),
     )
-    return []
+    return None
 
 
 def _normalize_galaxy_url(raw_url: str) -> str:
@@ -749,8 +752,10 @@ async def _fetch_versions_from(
         token: Optional auth token for the server.
 
     Returns:
-        List of version strings on success, or ``None`` on failure so
-        the caller can fall through to the next server.
+        List of version strings on success, or ``None`` on failure — or
+        when the listing is truncated at ``MAX_VERSION_PAGES`` — so the
+        caller can fall through to the next server. A truncated listing is
+        not a complete answer and must never resolve as one.
     """
     versions: list[str] = []
     normalized = _normalize_galaxy_url(base_url)
@@ -770,7 +775,9 @@ async def _fetch_versions_from(
         ) as client:
             for attempt in range(3):
                 try:
-                    while True:
+                    params = {"limit": 100, "offset": 0}
+                    versions.clear()
+                    for _page in range(MAX_VERSION_PAGES):
                         resp = await client.get(url, params=params)
                         logger.info(
                             "galaxy_backend_response operation=version_lookup collection=%s.%s server=%s status=%d",
@@ -781,18 +788,67 @@ async def _fetch_versions_from(
                         )
                         resp.raise_for_status()
                         payload = resp.json()
-                        for entry in payload.get("data", []):
+                        if not isinstance(payload, dict):
+                            # A non-dict JSON body (e.g. a list or string) has no
+                            # ``.get`` — treat it as a failure so the caller falls
+                            # through to the next server instead of raising
+                            # AttributeError.
+                            logger.debug(
+                                "Version fetch from %s returned non-dict payload (%s) for %s.%s",
+                                base_url,
+                                type(payload).__name__,
+                                namespace,
+                                name,
+                            )
+                            return None
+                        entries = payload.get("data")
+                        if not isinstance(entries, list):
+                            logger.debug(
+                                "Version fetch from %s returned non-list data for %s.%s",
+                                base_url,
+                                namespace,
+                                name,
+                            )
+                            return None
+                        for entry in entries:
+                            if not isinstance(entry, dict):
+                                logger.debug(
+                                    "Version fetch from %s returned non-object entry for %s.%s",
+                                    base_url,
+                                    namespace,
+                                    name,
+                                )
+                                return None
                             versions.append(entry["version"])
-                        if not payload.get("links", {}).get("next"):
+                        if "links" in payload:
+                            links = payload["links"]
+                            if not isinstance(links, dict):
+                                logger.debug(
+                                    "Version fetch from %s returned non-object links for %s.%s",
+                                    base_url,
+                                    namespace,
+                                    name,
+                                )
+                                return None
+                            if not links.get("next"):
+                                break
+                        else:
                             break
                         params["offset"] = int(params["offset"]) + int(params["limit"])
+                    else:
+                        logger.warning(
+                            "Galaxy version pagination exceeded %d pages for %s.%s; treating as failure",
+                            MAX_VERSION_PAGES,
+                            namespace,
+                            name,
+                        )
+                        return None
                     status = "ok"
                     return versions
                 except httpx.HTTPError:
                     if attempt == 2:
                         return None
                     versions.clear()
-                    params["offset"] = 0
                     await asyncio.sleep(0.5 * (attempt + 1))
         return versions
     except (httpx.HTTPError, KeyError, TypeError, AttributeError, ValueError) as exc:

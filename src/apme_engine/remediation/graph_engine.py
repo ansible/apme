@@ -802,10 +802,14 @@ class GraphRemediationEngine:
         """
         dirty = graph.dirty_nodes
         effective_dirty = expand_dirty_node_ids(graph, self._rules, dirty)
+        # NOTE: both rescan paths receive the *expanded* set.  Recording and
+        # resolution below already operate on effective_dirty, and the
+        # built-in rescan expands internally as well — scanning only the raw
+        # dirty set would resolve ancestors that were never re-evaluated.
         if self._rescan_fn is not None:
-            new_violations = await self._rescan_fn(graph, dirty)
+            new_violations = await self._rescan_fn(graph, effective_dirty)
         else:
-            rescan_report = rescan_dirty(graph, self._rules, dirty)
+            rescan_report = rescan_dirty(graph, self._rules, effective_dirty)
             new_violations = graph_report_to_violations(rescan_report)
 
         _record_violations(

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from dataclasses import dataclass, field
+from pathlib import PurePath, PureWindowsPath
 from typing import cast
 
 import jsonpickle
@@ -36,6 +38,22 @@ from .utils import (
     remove_lock_file,
     unlock_file,
 )
+
+logger = logging.getLogger(__name__)
+
+
+def _findings_path_parts(findings_path: str) -> tuple[str, ...]:
+    """Split a findings JSON path into components on any OS separator.
+
+    Args:
+        findings_path: Absolute or relative path to a findings.json file.
+
+    Returns:
+        Path components using the native or Windows separator as appropriate.
+    """
+    if os.sep == "\\" or "\\" in findings_path:
+        return PureWindowsPath(findings_path).parts
+    return PurePath(findings_path).parts
 
 
 def _safe_str(v: YAMLValue, default: str = "") -> str:
@@ -756,7 +774,10 @@ class RAMClient:
                     if m.fqcn == search_name or m.fqcn == name or m.fqcn.endswith(f".{short_name}"):
                         matched = True
                 if matched:
-                    parts = findings_json.split("/")
+                    parts = _findings_path_parts(findings_json)
+                    if len(parts) < 6:
+                        logger.debug("Skipping module with short findings path: %r", findings_json)
+                        continue
 
                     matched_modules.append(
                         {
@@ -848,7 +869,10 @@ class RAMClient:
                     if r.fqcn == name or r.fqcn.endswith(f".{name}"):
                         matched = True
                 if matched:
-                    parts = findings_json.split("/")
+                    parts = _findings_path_parts(findings_json)
+                    if len(parts) < 5:
+                        logger.debug("Skipping role with short findings path: %r", findings_json)
+                        continue
                     offspring_objects = []
                     for taskfile_key in r.taskfiles:
                         tf_key = taskfile_key.key if isinstance(taskfile_key, TaskFile) else str(taskfile_key)
@@ -995,7 +1019,10 @@ class RAMClient:
 
                 # TODO: support taskfile reference with variables
                 if matched:
-                    parts = findings_json.split("/")
+                    parts = _findings_path_parts(findings_json)
+                    if len(parts) < 5:
+                        logger.debug("Skipping taskfile with short findings path: %r", findings_json)
+                        continue
                     offspring_objects = []
                     for task_key in tf.tasks:
                         t_key = task_key.key if isinstance(task_key, Task) else str(task_key)
@@ -1101,8 +1128,14 @@ class RAMClient:
                         if t.name == name or (t.name and name in t.name):
                             matched = True
                 if matched:
-                    parts = findings_json.split("/")
+                    parts = _findings_path_parts(findings_json)
+                    if len(parts) < 5:
+                        logger.debug("Skipping task with short findings path: %r", findings_json)
+                        continue
                     offspring_objects = []
+                    # Unknown executable types yield no offspring (a Task with
+                    # a missing/unrecognized type must not crash the search).
+                    _tmp_offspring_objects: list[YAMLDict] = []
                     if t.executable_type == ExecutableType.MODULE_TYPE:
                         _tmp_offspring_objects = self.search_module(t.executable, used_in=t.defined_in)
                     elif t.executable_type == ExecutableType.ROLE_TYPE:
@@ -1110,6 +1143,12 @@ class RAMClient:
                     elif t.executable_type == ExecutableType.TASKFILE_TYPE:
                         _tmp_offspring_objects = self.search_taskfile(
                             t.executable, from_path=t.defined_in, from_key=t.key, used_in=t.defined_in
+                        )
+                    else:
+                        logger.debug(
+                            "Task %r has unrecognized executable_type %r; no offspring collected",
+                            t.key,
+                            t.executable_type,
                         )
                     if len(_tmp_offspring_objects) > 0:
                         child = _tmp_offspring_objects[0]
@@ -1189,7 +1228,10 @@ class RAMClient:
             objs = ObjectList.from_json(fpath=obj_json)
             obj = objs.find_by_key(obj_key)
             if obj is not None:
-                parts = obj_json.split("/")
+                parts = _findings_path_parts(obj_json)
+                if len(parts) < 6:
+                    logger.debug("Skipping object with short JSON path: %r", obj_json)
+                    continue
                 matched_obj = {
                     "object": obj,
                     "defined_in": {
@@ -1242,13 +1284,16 @@ class RAMClient:
             target_version = "*"
         found_path_list = []
         for findings_path in self._findings_json_list_cache:
-            parts = findings_path.split("/")
+            parts = _findings_path_parts(findings_path)
+            if len(parts) < 5:
+                logger.debug("Skipping findings with short path: %r", findings_path)
+                continue
             _type = parts[-5][:-1]
             _name = parts[-4]
             _version = parts[-3]
             if _name != target_name:
                 continue
-            if target_version and target_version != "*" and _version != target_name:
+            if target_version and target_version != "*" and _version != target_version:
                 continue
             if target_type and target_type != "*" and _type != target_type:
                 continue
