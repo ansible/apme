@@ -24,21 +24,24 @@ jobs:
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
       # ADR-047 / lean-ci: install prek, then run the same tox gate developers use.
       - run: uv tool install prek
+      # Run openapi as its own tox env (matches historical prek.yml). Skipping the
+      # nested openapi-check hook avoids false "files were modified" failures from
+      # tox/setuptools side effects under prek's dirty-tree detection.
       - name: Lint
         run: |
           set -o pipefail
-          uvx --with tox-uv tox -e lint 2>&1 | tee lint.log
+          SKIP=openapi-check uvx --with tox-uv tox -e lint 2>&1 | tee lint.log
+      - name: OpenAPI check
+        run: uvx --with tox-uv tox -e openapi -- --check
       - name: Annotate lint failures
         if: failure()
         run: |
-          # Surface hook errors as check annotations (readable via API without log auth).
-          echo "::error::tox -e lint failed; excerpt follows"
-          # Prefer hook failure lines, then compiler/mypy/ruff errors.
-          {
-            grep -E 'Failed$|Failed\s|error:|E[0-9]{3}|error\[|Found [0-9]+ error' lint.log || true
-            echo '--- tail ---'
-            tail -n 80 lint.log || true
-          } | head -n 120 | while IFS= read -r line; do
-            # Truncate to keep annotations usable
-            echo "::error::${line:0:200}"
-          done
+          echo "::error::prek workflow failed"
+          if [ -f lint.log ]; then
+            python3 - <<'PY'
+          from pathlib import Path
+          log = Path("lint.log").read_text(errors="replace").splitlines()
+          for line in log[-80:]:
+              print(f"::error::{line[:240]}")
+          PY
+          fi
