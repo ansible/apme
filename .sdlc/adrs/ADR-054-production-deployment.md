@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (Helm workload topology amended by [ADR-069](ADR-069-helm-simple-all-in-one.md))
+Partially Implemented (ExternalSecret integration pending)
 
 ## Date
 
@@ -254,4 +254,6 @@ not the default.
 |------|--------|--------|
 | 2026-04-10 | APME Team | Initial acceptance (Helm + bootc) |
 | 2026-08-03 | APME Team | Helm topology amended by ADR-069 (Simple all-in-one) |
+| 2026-09-22 | Agent | Status clarified — Helm chart and bootc VM image shipped; ExternalSecret operator integration not implemented |
+| 2026-09-22 | Agent | Status → Partially Implemented — Helm chart and bootc shipped |
 | 2026-08-24 | APME Team | Engine→Abbenay uses a shared Unix socket (token on plaintext TCP rejected) |

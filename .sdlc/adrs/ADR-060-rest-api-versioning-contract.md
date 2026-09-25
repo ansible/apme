@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Partially Implemented (deprecation middleware and break-diff CI pending)
 
 ## Date
 
@@ -206,3 +206,5 @@ incrementally.
 |------|--------|--------|
 | 2026-07-08 | Brad Thornton | Initial proposal, accepted |
 | 2026-07-21 | Brad Thornton | OpenAPI baseline + freshness check; break-diff still future work |
+| 2026-09-22 | Agent | Status clarified — `/api/v1` contract, checked-in OpenAPI, and `tox -e openapi` shipped; RFC 9745 middleware and break-diff CI remain |
+| 2026-09-22 | Agent | Status → Partially Implemented — OpenAPI baseline and versioning contract shipped |

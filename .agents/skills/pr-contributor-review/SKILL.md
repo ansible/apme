@@ -11,7 +11,7 @@ argument-hint: "<PR number or URL>"
 user-invocable: true
 metadata:
   author: APME Team
-  version: 1.1.0
+  version: 1.2.0
 ---
 
 # Review Contributor PR
@@ -127,6 +127,22 @@ before proceeding.
 
 - Keep the description accurate: list what changed and how to verify (tests,
   manual steps).
+
+### 4b. ADR and issue traceability (review gate)
+
+Before declaring the PR merge-ready, run the **`pr-traceability`** checklist:
+
+1. **Issues** — PR body or commits should `Closes #N` or `Refs #N` for tracked
+   work; flag missing links or scope mismatches.
+2. **ADRs** — if the diff implements an ADR decision, expect ADR status /
+   revision updates in the same PR (or a documented reason they are deferred).
+   Flag code that contradicts an accepted ADR without a superseding ADR.
+3. Ask the contributor to add **`## Related issues`** and **`## Related ADRs`**
+   sections if missing (use `gh pr edit` when authorized).
+
+Blocking findings: shipped feature with related ADR still `Accepted`; `Closes
+#N` that does not match the diff; architectural change with no ADR when one
+clearly applies.
 
 ### 5. Pushing to the contributor's branch
 

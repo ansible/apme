@@ -44,7 +44,7 @@ Scan SDLC directories, extract status from each artifact, and present a concise 
 | REQ | Draft, In Review, Approved, In Progress, Implemented |
 | TASK | Pending, In Progress, Complete, Blocked |
 | DR | Open (Blocking/High/Medium/Low), Decided, Deferred |
-| ADR | Proposed, Accepted, Deprecated |
+| ADR | Proposed, Accepted, Partially Implemented, Implemented, Deprecated, Superseded |
 
 **Phase status is derived from its REQs:**
 - Not Started: All REQs are Draft

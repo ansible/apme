@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Partially Implemented (remaining Engine package-boundary imports pending)
 
 ## Date
 
@@ -163,3 +163,5 @@ performance measurement.
 | Date | Author | Change |
 |------|--------|--------|
 | 2026-07-08 | AI Agent | Initial proposal and acceptance |
+| 2026-09-22 | Agent | Status → Implemented — shared `apme_engine.graph` package extracted with rules, scanner, and severity modules |
+| 2026-09-22 | Agent | Status → Partially Implemented — graph package shipped; `L030_non_builtin_use_graph` and shared helpers still import `apme_engine.engine` at runtime |
