@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from typing import cast
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -12,6 +13,7 @@ from apme_gateway.app import create_app
 from apme_gateway.db import get_session
 from apme_gateway.db.models import Project, Proposal, ProposalRuleAnalytics, Scan, Session, Violation
 from apme_gateway.proposals.draft import (
+    _preload_per_query_limit,
     abandon_project_drafts,
     apply_draft_updates,
     commit_gate_decisions,
@@ -152,6 +154,86 @@ async def test_upsert_live_stubs_sets_engine_proposal_id() -> None:
         assert rows[0].engine_proposal_id == "ai-0007"
         assert rows[0].proposal_id.startswith("prop-ai-")
         assert rows[0].status == "pending"
+
+
+@pytest.mark.asyncio  # type: ignore[untyped-decorator]
+async def test_upsert_persists_line_end() -> None:
+    """Live line_end survives the stub upsert instead of resetting to 0."""
+    async with get_session() as db:
+        rows = await upsert_live_proposal_stubs(
+            db,
+            scan_id="scan-line-end-1",
+            project_id=None,
+            proposals=[
+                {
+                    "id": "eng-le-1",
+                    "rule_id": "L007",
+                    "file": "a.yml",
+                    "tier": 1,
+                    "status": "pending",
+                    "source": "deterministic",
+                    "line_start": 10,
+                    "line_end": 14,
+                }
+            ],
+        )
+        await db.commit()
+        assert rows[0].line_start == 10
+        assert rows[0].line_end == 14
+
+        # Re-emit without line_end must not clobber the stored span.
+        rows = await upsert_live_proposal_stubs(
+            db,
+            scan_id="scan-line-end-1",
+            project_id=None,
+            proposals=[
+                {
+                    "id": "eng-le-1",
+                    "rule_id": "L007",
+                    "file": "a.yml",
+                    "tier": 1,
+                    "status": "pending",
+                    "source": "deterministic",
+                    "line_start": 10,
+                }
+            ],
+        )
+        await db.commit()
+        assert rows[0].line_end == 14
+
+
+@pytest.mark.asyncio  # type: ignore[untyped-decorator]
+async def test_upsert_dedupes_duplicate_engine_ids_in_batch() -> None:
+    """Two payloads with one engine id in a single batch insert one row."""
+    async with get_session() as db:
+        rows = await upsert_live_proposal_stubs(
+            db,
+            scan_id="scan-dupe-1",
+            project_id=None,
+            proposals=[
+                {
+                    "id": "eng-dupe",
+                    "rule_id": "L007",
+                    "file": "a.yml",
+                    "tier": 1,
+                    "status": "pending",
+                    "source": "deterministic",
+                },
+                {
+                    "id": "eng-dupe",
+                    "rule_id": "L007",
+                    "file": "a.yml",
+                    "tier": 1,
+                    "status": "approved",
+                    "source": "deterministic",
+                },
+            ],
+        )
+        await db.commit()
+        assert len(rows) == 2
+        assert rows[0].id == rows[1].id
+        stored = list((await db.execute(select(Proposal).where(Proposal.scan_id == "scan-dupe-1"))).scalars().all())
+        assert len(stored) == 1
 
 
 @pytest.mark.asyncio  # type: ignore[untyped-decorator]
@@ -680,3 +762,460 @@ async def test_bridge_uses_file_rule_line_start() -> None:
         assert by_line[1].analytics_flushed == 1
         assert by_line[2].engine_proposal_id == "eng-b"
         assert by_line[2].status == "declined"
+
+
+@pytest.mark.asyncio  # type: ignore[untyped-decorator]
+async def test_upsert_live_stubs_tolerates_non_numeric_batch() -> None:
+    """One bad row defaults instead of failing the whole batch."""
+    async with get_session() as db:
+        rows = await upsert_live_proposal_stubs(
+            db,
+            scan_id="scan-bad-batch",
+            project_id=None,
+            proposals=[
+                {
+                    "id": "eng-good",
+                    "rule_id": "L007",
+                    "file": "a.yml",
+                    "tier": 1,
+                    "status": "pending",
+                    "source": "deterministic",
+                    "line_start": 10,
+                    "line_end": 14,
+                    "confidence": 0.8,
+                },
+                {
+                    "id": "eng-bad",
+                    "rule_id": "L008",
+                    "file": "b.yml",
+                    "tier": "high",
+                    "status": "pending",
+                    "source": "deterministic",
+                    "line_start": "high",
+                    "line_end": "high",
+                    "confidence": "high",
+                },
+            ],
+        )
+        await db.commit()
+        assert len(rows) == 2
+        by_eng = {r.engine_proposal_id: r for r in rows}
+        assert by_eng["eng-good"].line_start == 10
+        assert by_eng["eng-good"].line_end == 14
+        assert by_eng["eng-bad"].tier == 0
+        assert by_eng["eng-bad"].line_start == 0
+        assert by_eng["eng-bad"].line_end == 0
+        assert by_eng["eng-bad"].confidence == 0.0
+
+
+@pytest.mark.asyncio  # type: ignore[untyped-decorator]
+async def test_upsert_live_stubs_tolerates_bad_update() -> None:
+    """Re-emit with non-numeric confidence/tier keeps stored values."""
+
+    async def _row_by_engine(scan_id: str, engine_id: str) -> Proposal:
+        """Load one stub row by scan and engine id.
+
+        Args:
+            scan_id: Operation scan UUID.
+            engine_id: Engine proposal id.
+
+        Returns:
+            Matching Proposal row.
+        """
+        async with get_session() as db:
+            row = (
+                await db.execute(
+                    select(Proposal).where(
+                        Proposal.scan_id == scan_id,
+                        Proposal.engine_proposal_id == engine_id,
+                    )
+                )
+            ).scalar_one()
+            return cast(Proposal, row)
+
+    async with get_session() as db:
+        rows = await upsert_live_proposal_stubs(
+            db,
+            scan_id="scan-bad-update",
+            project_id=None,
+            proposals=[
+                {
+                    "id": "eng-u",
+                    "rule_id": "L007",
+                    "file": "a.yml",
+                    "tier": 1,
+                    "status": "pending",
+                    "source": "deterministic",
+                    "confidence": 0.7,
+                }
+            ],
+        )
+        await db.commit()
+        assert rows[0].confidence == 0.7
+
+    async with get_session() as db:
+        rows = await upsert_live_proposal_stubs(
+            db,
+            scan_id="scan-bad-update",
+            project_id=None,
+            proposals=[
+                {
+                    "id": "eng-u",
+                    "rule_id": "L007",
+                    "file": "a.yml",
+                    "tier": "high",
+                    "status": "pending",
+                    "source": "deterministic",
+                    "confidence": "high",
+                }
+            ],
+        )
+        await db.commit()
+        assert rows[0].confidence == 0.7
+        assert rows[0].tier == 1
+
+    row = await _row_by_engine("scan-bad-update", "eng-u")
+    assert row.confidence == 0.7
+    assert row.tier == 1
+
+
+@pytest.mark.asyncio  # type: ignore[untyped-decorator]
+async def test_upsert_live_stubs_chunks_large_preload() -> None:
+    """Batched preload stays within the IN-clause bind budget."""
+    from unittest.mock import patch
+
+    from apme_gateway.proposals import draft as draft_module
+
+    count = 30
+    proposals = [
+        {
+            "id": f"eng-chunk-{i}",
+            "rule_id": "L007",
+            "file": "a.yml",
+            "tier": 1,
+            "status": "pending",
+            "source": "deterministic",
+            "line_start": i + 1,
+        }
+        for i in range(count)
+    ]
+    async with get_session() as db:
+        with patch.object(draft_module, "get_in_clause_chunk_size", return_value=6):
+            rows = await upsert_live_proposal_stubs(
+                db,
+                scan_id="scan-chunk",
+                project_id=None,
+                proposals=proposals,
+            )
+        await db.commit()
+        assert len(rows) == count
+        stored = list((await db.execute(select(Proposal).where(Proposal.scan_id == "scan-chunk"))).scalars().all())
+        assert len(stored) == count
+
+    async with get_session() as db:
+        with patch.object(draft_module, "get_in_clause_chunk_size", return_value=6):
+            rows = await upsert_live_proposal_stubs(
+                db,
+                scan_id="scan-chunk",
+                project_id=None,
+                proposals=proposals,
+            )
+        await db.commit()
+        assert len(rows) == count
+        stored = list((await db.execute(select(Proposal).where(Proposal.scan_id == "scan-chunk"))).scalars().all())
+        assert len(stored) == count
+
+
+def test_chunk_reserves_scan_id_bind() -> None:
+    """Per-query budget keeps 2N + scan_id within the IN-clause limit."""
+    chunk = 900
+    per_query = _preload_per_query_limit(chunk)
+    assert per_query == 449
+    assert per_query * 2 + 1 <= chunk
+    # Old // 2 math forgot scan_id == and exceeded the budget.
+    assert (chunk // 2) * 2 + 1 > chunk
+
+
+def test_draft_coercers_clamp() -> None:
+    """Negative lines/tiers clamp to 0 and confidence clamps to 0..1."""
+    from apme_gateway.proposals.grouping import _safe_float, _to_int
+
+    assert _to_int(-5, 7) == 0
+    assert _to_int("-5", 7) == 0
+    assert _to_int("abc", 7) == 7
+    assert _safe_float(1.5, 0.0) == 1.0
+    assert _safe_float(-0.5, 0.7) == 0.0
+    assert _safe_float("abc", 0.7) == 0.7
+    assert _safe_float(float("nan"), 0.7) == 0.7
+    assert _safe_float("nan", 0.7) == 0.7
+
+
+@pytest.mark.asyncio  # type: ignore[untyped-decorator]
+async def test_upsert_reconciles_duplicate_engine_rows() -> None:
+    """Duplicate live rows for one engine id are deleted, keeping the newest."""
+    scan_id = "scan-dupe-reconcile"
+    async with get_session() as db:
+        db.add(
+            Session(
+                session_id="sess-dupe",
+                project_path="/tmp",
+                first_seen="2026-01-01T00:00:00+00:00",
+                last_seen="2026-01-01T00:00:00+00:00",
+            )
+        )
+        db.add(
+            Scan(
+                scan_id=scan_id,
+                session_id="sess-dupe",
+                project_path="/tmp",
+                source="gateway",
+                trigger="ui",
+                created_at="2026-01-01T00:00:00+00:00",
+                scan_type="remediate",
+            )
+        )
+        await db.flush()
+        db.add(
+            Proposal(
+                scan_id=scan_id,
+                proposal_id="prop-old",
+                rule_id="L007",
+                file="a.yml",
+                tier=2,
+                confidence=0.5,
+                status="pending",
+                path="",
+                source="ai",
+                gate="ai",
+                rule_ids_json='["L007"]',
+                violation_ids_json="[]",
+                engine_proposal_id="eng-dup",
+                draft=0,
+            )
+        )
+        db.add(
+            Proposal(
+                scan_id=scan_id,
+                proposal_id="prop-new",
+                rule_id="L007",
+                file="a.yml",
+                tier=2,
+                confidence=0.9,
+                status="approved",
+                path="",
+                source="ai",
+                gate="ai",
+                rule_ids_json='["L007"]',
+                violation_ids_json="[]",
+                engine_proposal_id="eng-dup",
+                draft=0,
+            )
+        )
+        await db.commit()
+        rows = await upsert_live_proposal_stubs(
+            db,
+            scan_id=scan_id,
+            project_id=None,
+            proposals=[
+                {
+                    "id": "eng-dup",
+                    "rule_id": "L007",
+                    "file": "a.yml",
+                    "tier": 2,
+                    "status": "pending",
+                    "source": "ai",
+                }
+            ],
+        )
+        await db.commit()
+        stored = list((await db.execute(select(Proposal).where(Proposal.scan_id == scan_id))).scalars().all())
+        assert len(stored) == 1
+        assert stored[0].engine_proposal_id == "eng-dup"
+        assert rows[0].id == stored[0].id
+
+
+@pytest.mark.asyncio  # type: ignore[untyped-decorator]
+async def test_upsert_explicit_zero_clears_and_blank_preserves() -> None:
+    """Numeric 0 is explicit (clears); None/blank preserves stored values."""
+    scan_id = "scan-explicit-zero"
+    async with get_session() as db:
+        rows = await upsert_live_proposal_stubs(
+            db,
+            scan_id=scan_id,
+            project_id=None,
+            proposals=[
+                {
+                    "id": "eng-zero",
+                    "rule_id": "L007",
+                    "file": "a.yml",
+                    "tier": 1,
+                    "status": "pending",
+                    "source": "deterministic",
+                    "line_start": 10,
+                    "line_end": 14,
+                    "confidence": 0.8,
+                }
+            ],
+        )
+        await db.commit()
+        assert rows[0].confidence == 0.8
+
+        # Explicit numeric 0 clears stale values.
+        rows = await upsert_live_proposal_stubs(
+            db,
+            scan_id=scan_id,
+            project_id=None,
+            proposals=[
+                {
+                    "id": "eng-zero",
+                    "rule_id": "L007",
+                    "file": "a.yml",
+                    "tier": 0,
+                    "status": "pending",
+                    "source": "deterministic",
+                    "line_start": 0,
+                    "line_end": 0,
+                    "confidence": 0,
+                }
+            ],
+        )
+        await db.commit()
+        assert rows[0].line_start == 0
+        assert rows[0].line_end == 0
+        assert rows[0].confidence == 0.0
+        assert rows[0].tier == 0
+
+    async with get_session() as db:
+        rows = await upsert_live_proposal_stubs(
+            db,
+            scan_id="scan-blank-preserve",
+            project_id=None,
+            proposals=[
+                {
+                    "id": "eng-blank",
+                    "rule_id": "L007",
+                    "file": "a.yml",
+                    "tier": 1,
+                    "status": "pending",
+                    "source": "deterministic",
+                    "line_start": 10,
+                    "line_end": 14,
+                    "confidence": 0.8,
+                }
+            ],
+        )
+        await db.commit()
+        rows = await upsert_live_proposal_stubs(
+            db,
+            scan_id="scan-blank-preserve",
+            project_id=None,
+            proposals=[
+                {
+                    "id": "eng-blank",
+                    "rule_id": "L007",
+                    "file": "a.yml",
+                    "tier": "",
+                    "status": "pending",
+                    "source": "deterministic",
+                    "line_start": "",
+                    "line_end": "",
+                    "confidence": "",
+                }
+            ],
+        )
+        await db.commit()
+        assert rows[0].line_start == 10
+        assert rows[0].line_end == 14
+        assert rows[0].confidence == 0.8
+        assert rows[0].tier == 1
+
+
+@pytest.mark.asyncio  # type: ignore[untyped-decorator]
+async def test_upsert_string_zero_confidence_is_explicit() -> None:
+    """String '0' confidence is explicit and clears to 0.0."""
+    scan_id = "scan-str-zero"
+    async with get_session() as db:
+        await upsert_live_proposal_stubs(
+            db,
+            scan_id=scan_id,
+            project_id=None,
+            proposals=[
+                {
+                    "id": "eng-szero",
+                    "rule_id": "L007",
+                    "file": "a.yml",
+                    "tier": 1,
+                    "status": "pending",
+                    "source": "deterministic",
+                    "confidence": 0.8,
+                }
+            ],
+        )
+        await db.commit()
+        rows = await upsert_live_proposal_stubs(
+            db,
+            scan_id=scan_id,
+            project_id=None,
+            proposals=[
+                {
+                    "id": "eng-szero",
+                    "rule_id": "L007",
+                    "file": "a.yml",
+                    "tier": 1,
+                    "status": "pending",
+                    "source": "deterministic",
+                    "confidence": "0",
+                }
+            ],
+        )
+        await db.commit()
+        assert rows[0].confidence == 0.0
+
+
+@pytest.mark.asyncio  # type: ignore[untyped-decorator]
+async def test_gate_commit_rejects_bool_violation_ids() -> None:
+    """Bool violation ids never stamp the wrong row (True must not become 1)."""
+    project_id, scan_id = await _seed_project_scan(with_draft=True)
+    async with get_session() as db:
+        for _ in range(3):
+            db.add(
+                Violation(
+                    scan_id=scan_id,
+                    rule_id="L007",
+                    level="warning",
+                    message="x",
+                    file="a.yml",
+                    line=1,
+                    path="a.yml::t[0]",
+                    remediation_class=2,
+                    remediation_resolution=0,
+                    scope=0,
+                    fixed_yaml="",
+                )
+            )
+        await db.flush()
+        violations = list((await db.execute(select(Violation).where(Violation.scan_id == scan_id))).scalars().all())
+        assert [v.id for v in violations] == [1, 2, 3]
+        prop = (await db.execute(select(Proposal).where(Proposal.scan_id == scan_id))).scalar_one()
+        prop.violation_ids_json = '[true, "12.0", 3]'
+        prop.status = "pending"
+        await db.commit()
+
+    async with get_session() as db:
+        n = await commit_gate_decisions(
+            db,
+            scan_id=scan_id,
+            project_id=project_id,
+            approved_engine_ids=["ai-0001"],
+        )
+        await db.commit()
+        assert n == 1
+
+    async with get_session() as db:
+        by_id = {
+            v.id: v for v in (await db.execute(select(Violation).where(Violation.scan_id == scan_id))).scalars().all()
+        }
+        # True must not coerce to 1; "12.0" coerces to 12 (absent) — only 3 stamps.
+        assert by_id[1].review_status is None
+        assert by_id[2].review_status is None
+        assert by_id[3].review_status == "ai_approved"

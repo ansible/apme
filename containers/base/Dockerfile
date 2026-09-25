@@ -30,7 +30,7 @@ COPY . /app
 # install build deps into .venv then sync the project (ADR-061 base image).
 RUN --mount=type=cache,target=/tmp/uv-cache \
     chmod -R a+rX /app \
-    && uv pip install --python .venv/bin/python 'setuptools>=61' wheel \
+    && uv pip install --python .venv/bin/python 'setuptools>=61,<84' wheel \
     && UV_NO_BUILD_ISOLATION=1 uv sync --frozen --no-dev --extra ai --extra gateway
 
 ENV PATH="/app/.venv/bin:$PATH"

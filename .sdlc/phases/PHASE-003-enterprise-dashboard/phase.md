@@ -21,7 +21,7 @@ Enterprise Dashboard with ROI/Time-Saved reporting and Custom Policy engine. Sec
 - [ ] Dashboard displays enterprise-wide metrics
 - [ ] Custom policy engine operational
 - [ ] Secret detection identifies hardcoded credentials
-- [ ] SBOM generation covers all collections/modules
+- [x] SBOM inventory covers collections and Python dependencies (REQ-003 via Gateway `apme sbom`; CVE/CWE/VEX enrichment tracked in REQ-020 / ADR-072; roles/modules deferred per ADR-044)
 - [ ] AAP Pre-Flight check integrated
 
 ## Requirements
@@ -37,6 +37,7 @@ Enterprise Dashboard with ROI/Time-Saved reporting and Custom Policy engine. Sec
 | REQ-013 | Extended OPA Policy Inputs | Draft |
 | REQ-014 | Policy Permissive Mode | Draft |
 | REQ-016 | Phase 2 SCM Providers (GitLab + Bitbucket) | In Progress |
+| REQ-020 | Unified Supply Chain Security (SBOM, CVE, CWE) | Draft |
 
 ## Dependencies
 

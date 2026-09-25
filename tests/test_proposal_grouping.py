@@ -407,3 +407,344 @@ def test_group_violations_splits_mixed_rem_class_path() -> None:
     assert len(props) == 2
     sources = {p.source for p in props}
     assert sources == {"deterministic", "ai-candidate"}
+
+
+def test_group_object_input_preserves_node_line_end() -> None:
+    """Attribute objects keep the ``node_line_end`` fallback like mappings do."""
+
+    class _Violation:
+        id = 7
+        rule_id = "L013"
+        file = "tasks/main.yml"
+        path = "tasks/main.yml::task[0]"
+        line = 5
+        node_line_start = 5
+        node_line_end = 14
+        remediation_class = 1
+        fixed_yaml = "command: echo hi\n"
+        original_yaml = "shell: echo hi\n"
+
+    props = group_violations([_Violation()])
+    assert len(props) == 1
+    assert props[0].line_start == 5
+    assert props[0].line_end == 14
+
+
+def test_group_violations_selects_span_from_same_item() -> None:
+    """line_start/line_end come from the same grouped item."""
+    violations = [
+        {
+            "id": 1,
+            "rule_id": "L007",
+            "file": "a.yml",
+            "path": "a.yml::t[0]",
+            "line": 5,
+            "node_line_start": 10,
+            "node_line_end": 0,
+            "line_end": 0,
+            "remediation_class": 1,
+            "fixed_yaml": "x\n",
+        },
+        {
+            "id": 2,
+            "rule_id": "L013",
+            "file": "a.yml",
+            "path": "a.yml::t[0]",
+            "line": 99,
+            "node_line_start": 0,
+            "node_line_end": 50,
+            "line_end": 50,
+            "remediation_class": 1,
+            "fixed_yaml": "x\n",
+        },
+    ]
+    props = group_violations(violations)
+    assert len(props) == 1
+    assert props[0].line_start == 10
+    assert props[0].line_end == 0
+
+
+def test_to_int_coercion() -> None:
+    """_to_int coerces integral floats/numeric strings; bool/others map to 0."""
+    from apme_gateway.proposals.grouping import _to_int
+
+    assert _to_int(12) == 12
+    assert _to_int("12") == 12
+    assert _to_int(" 12 ") == 12
+    assert _to_int(12.0) == 12
+    assert _to_int("12.0") == 12
+    assert _to_int(12.5) == 0
+    assert _to_int("12.5") == 0
+    assert _to_int("high") == 0
+    assert _to_int(True) == 0
+    assert _to_int(False) == 0
+    assert _to_int(None) == 0
+    assert _to_int("") == 0
+
+
+def test_group_violations_coerces_numeric_string_lines() -> None:
+    """JSON-ish numeric strings do not collapse to 0."""
+    violations = [
+        {
+            "id": "7",
+            "rule_id": "L007",
+            "file": "a.yml",
+            "path": "a.yml::t[0]",
+            "line": "12",
+            "node_line_start": "12",
+            "node_line_end": "18",
+            "line_end": "18",
+            "remediation_class": 1,
+            "fixed_yaml": "x\n",
+        }
+    ]
+    props = group_violations(violations)
+    assert len(props) == 1
+    assert props[0].line_start == 12
+    assert props[0].line_end == 18
+    assert props[0].violation_ids == (7,)
+
+
+def test_group_violations_bool_lines_map_to_zero() -> None:
+    """Bool line values map to 0 instead of 1."""
+    violations = [
+        {
+            "id": 1,
+            "rule_id": "L007",
+            "file": "a.yml",
+            "path": "a.yml::t[0]",
+            "line": True,
+            "node_line_start": True,
+            "node_line_end": True,
+            "line_end": True,
+            "remediation_class": 1,
+            "fixed_yaml": "x\n",
+        }
+    ]
+    props = group_violations(violations)
+    assert props[0].line_start == 0
+    assert props[0].line_end == 0
+
+
+def test_merge_outcomes_coerces_string_payloads() -> None:
+    """String outcome fields coerce instead of crashing the merge."""
+    from types import SimpleNamespace
+
+    props = group_violations(
+        [
+            {
+                "id": 1,
+                "rule_id": "L007",
+                "file": "a.yml",
+                "path": "a.yml::t[0]",
+                "remediation_class": 2,
+            }
+        ]
+    )
+    outcome = SimpleNamespace(
+        proposal_id="",
+        rule_id="L007",
+        file="a.yml",
+        status="approved",
+        confidence="0.9",
+        tier="2",
+        line_end="12",
+    )
+    merged = merge_outcomes(props, [outcome])
+    assert merged[0].confidence == 0.9
+    assert merged[0].tier == 2
+    assert merged[0].line_end == 12
+
+
+def test_merge_outcomes_coerces_float_strings_and_falls_back() -> None:
+    """Integral float strings parse; garbage falls back to grouped values."""
+    from types import SimpleNamespace
+
+    props = group_violations(
+        [
+            {
+                "id": 1,
+                "rule_id": "L007",
+                "file": "a.yml",
+                "path": "a.yml::t[0]",
+                "remediation_class": 2,
+            }
+        ]
+    )
+    good = SimpleNamespace(
+        proposal_id="",
+        rule_id="L007",
+        file="a.yml",
+        status="approved",
+        confidence="high",
+        tier="2.0",
+        line_end="12.0",
+    )
+    merged = merge_outcomes(props, [good])
+    assert merged[0].tier == 2
+    assert merged[0].line_end == 12
+    assert merged[0].confidence == props[0].confidence
+
+    bad = SimpleNamespace(
+        proposal_id="",
+        rule_id="L007",
+        file="a.yml",
+        status="approved",
+        confidence="abc",
+        tier="abc",
+        line_end="abc",
+    )
+    merged_bad = merge_outcomes(props, [bad])
+    assert merged_bad[0].tier == props[0].tier
+    assert merged_bad[0].line_end == props[0].line_end
+    assert merged_bad[0].confidence == props[0].confidence
+
+
+def test_grouping_coercers_clamp() -> None:
+    """Negative lines/tiers clamp to 0 and confidence clamps to 0..1."""
+    from apme_gateway.proposals.grouping import _safe_float, _to_int
+
+    assert _to_int(-5) == 0
+    assert _to_int("-5") == 0
+    assert _to_int("12", 7) == 12
+    assert _to_int("abc", 7) == 7
+    assert _safe_float(1.5) == 1.0
+    assert _safe_float(-0.5) == 0.0
+    assert _safe_float("2.0") == 1.0
+    assert _safe_float("abc", 0.7) == 0.7
+
+
+def test_group_violations_tolerates_string_remediation_class() -> None:
+    """String remediation_class payloads coerce instead of raising."""
+    ai_like = group_violations(
+        [
+            {
+                "id": 1,
+                "rule_id": "L007",
+                "file": "a.yml",
+                "path": "a.yml::t[0]",
+                "remediation_class": "2.0",
+            }
+        ]
+    )
+    assert ai_like[0].source == SOURCE_AI_CANDIDATE
+    assert ai_like[0].tier == 2
+
+    garbage = group_violations(
+        [
+            {
+                "id": 2,
+                "rule_id": "L007",
+                "file": "a.yml",
+                "path": "",
+                "remediation_class": "high",
+            }
+        ]
+    )
+    assert garbage[0].source == "outcome"
+    assert garbage[0].tier == 0
+
+
+def test_as_mapping_coerces_object_remediation_class() -> None:
+    """Attribute objects with string remediation_class do not crash lanes."""
+
+    class _Violation:
+        id = 7
+        rule_id = "L007"
+        file = "a.yml"
+        path = "a.yml::t[0]"
+        line = 5
+        remediation_class = "2.0"
+        fixed_yaml = ""
+
+    props = group_violations([_Violation()])
+    assert len(props) == 1
+    assert props[0].source == SOURCE_AI_CANDIDATE
+    assert props[0].tier == 2
+
+
+def test_analytics_increments_tolerates_string_tier() -> None:
+    """String tier payloads coerce instead of raising."""
+    rows = analytics_increments(
+        {
+            "status": "approved",
+            "rule_id": "L001",
+            "rule_ids": ["L001"],
+            "source": "outcome",
+            "tier": "2.0",
+            "gate": "ai",
+            "coupled": False,
+        }
+    )
+    assert rows
+    assert rows[0]["tier"] == 2
+    assert rows[0]["source"] == "ai"
+
+    garbage = analytics_increments(
+        {
+            "status": "approved",
+            "rule_id": "L001",
+            "rule_ids": ["L001"],
+            "source": "outcome",
+            "tier": "high",
+            "gate": "",
+            "coupled": False,
+        }
+    )
+    assert garbage
+    assert garbage[0]["tier"] == 0
+    assert garbage[0]["source"] == "deterministic"
+
+
+def test_parse_violation_id_rejects_bool_and_non_integral() -> None:
+    """Violation id parsing mirrors _to_int validation without a default."""
+    from apme_gateway.proposals.grouping import _coerce_violation_ids, _parse_violation_id
+
+    assert _parse_violation_id(7) == 7
+    assert _parse_violation_id("7") == 7
+    assert _parse_violation_id(" 7 ") == 7
+    assert _parse_violation_id(12.0) == 12
+    assert _parse_violation_id("12.0") == 12
+    assert _parse_violation_id(True) is None
+    assert _parse_violation_id(False) is None
+    assert _parse_violation_id(12.9) is None
+    assert _parse_violation_id("12.5") is None
+    assert _parse_violation_id("abc") is None
+    assert _parse_violation_id(None) is None
+    assert _parse_violation_id(0) is None
+    assert _parse_violation_id(-3) is None
+    assert _coerce_violation_ids(["abc", 1, "2", True, 3.5]) == [1, 2]
+
+
+def test_group_violations_rejects_bool_and_truncated_ids() -> None:
+    """Bool and non-integral ids are skipped instead of admitted/truncated."""
+    raws = [True, 12.9, "12.5", "abc", None, -3, 0, 5, "7", 12.0]
+    violations = [
+        {
+            "id": raw,
+            "rule_id": "L007",
+            "file": "a.yml",
+            "path": "a.yml::t[0]",
+            "remediation_class": 1,
+            "fixed_yaml": "x\n",
+        }
+        for raw in raws
+    ]
+    props = group_violations(violations)
+    assert len(props) == 1
+    assert props[0].violation_ids == (5, 7, 12)
+
+
+def test_violation_accepts_review_status_tolerates_string_rem_class() -> None:
+    """String remediation_class coerces instead of raising on stamp checks."""
+    from types import SimpleNamespace
+
+    from apme_gateway.proposals.grouping import violation_accepts_review_status
+
+    ai_str = SimpleNamespace(fixed_yaml="", remediation_class="2.0")
+    assert violation_accepts_review_status("ai", ai_str) is True
+    garbage = SimpleNamespace(fixed_yaml="", remediation_class="high")
+    assert violation_accepts_review_status("ai", garbage) is False
+    assert violation_accepts_review_status("deterministic", garbage) is False
+    mapping_ai = {"fixed_yaml": "", "remediation_class": "2"}
+    assert violation_accepts_review_status("ai", mapping_ai) is True

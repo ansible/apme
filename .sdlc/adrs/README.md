@@ -100,6 +100,7 @@ Decisions under consideration — not yet accepted or implemented.
 | [ADR-046](ADR-046-ai-assisted-report-generation.md) | AI-Assisted Report Generation | 2026-03-30 |
 | [ADR-058](ADR-058-collection-dependency-suggestion.md) | Collection Dependency Suggestion for Unresolved Modules (R501) | 2026-06-23 |
 | [ADR-071](ADR-071-pip-index-egress.md) | Pip Index Egress via Galaxy Proxy | 2026-09-16 |
+| [ADR-072](ADR-072-unified-supply-chain-sbom-cve-cwe.md) | Unified Supply Chain Security — CycloneDX SBOM with Gateway CVE/CWE Enrichment | 2026-09-21 |
 
 ## Superseded
 
@@ -113,7 +114,7 @@ Decisions replaced by newer ADRs.
 ## Creating New ADRs
 
 1. Copy the template from `../templates/adr.md`
-2. Use the next available number (currently ADR-072)
+2. Use the next available number (currently ADR-073)
 3. Include:
    - Status (Proposed → Accepted → Partially Implemented → Implemented)
    - Date

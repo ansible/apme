@@ -26,6 +26,7 @@ from apme_gateway.operation_types import (
     ProgressEntry,
     Proposal,
     SSEEventType,
+    is_must_deliver,
 )
 
 logger = logging.getLogger(__name__)
@@ -398,6 +399,7 @@ class OperationRegistry:
                         "node_type": p.node_type,
                         "suggestion": p.suggestion,
                         "line_start": p.line_start,
+                        "line_end": p.line_end,
                         "before_text": p.before_text,
                         "after_text": p.after_text,
                     }
@@ -498,19 +500,47 @@ class OperationRegistry:
     def _broadcast(self, op: OperationState, event_type: SSEEventType, data: dict[str, Any]) -> None:
         """Push an event to all SSE subscriber queues for an operation.
 
+        Terminal broadcasts (``result`` / ``pr_created`` / terminal
+        ``status_changed``) are must-deliver: when a slow subscriber's
+        queue is full, the oldest non-terminal delta is dropped to make
+        room instead of evicting the subscriber and losing the terminal
+        message. A queued terminal is evicted only when the queue holds
+        nothing else.
+
         Args:
             op: The operation state.
             event_type: SSE event type identifier.
             data: Event payload.
         """
         msg = {"event": event_type.value, "data": data}
+        must_deliver = is_must_deliver(msg)
         dead: list[asyncio.Queue[dict[str, Any]]] = []
         for q in op.sse_subscribers:
             try:
                 q.put_nowait(msg)
             except asyncio.QueueFull:
-                dead.append(q)
-                logger.warning("Dropping slow SSE subscriber for operation %s", op.operation_id[:12])
+                if not must_deliver:
+                    dead.append(q)
+                    logger.warning("Dropping slow SSE subscriber for operation %s", op.operation_id[:12])
+                    continue
+                # Must-deliver terminal: drop oldest non-terminals first so
+                # a queued result (with patches) survives a trailing bare
+                # status. Drain synchronously with no await between get and
+                # put, so the re-queue below cannot raise QueueFull.
+                buffered: list[dict[str, Any]] = []
+                with contextlib.suppress(asyncio.QueueEmpty):
+                    while True:
+                        buffered.append(q.get_nowait())
+                while q.maxsize > 0 and len(buffered) >= q.maxsize:
+                    for index, item in enumerate(buffered):
+                        if not is_must_deliver(item):
+                            del buffered[index]
+                            break
+                    else:
+                        del buffered[0]
+                for item in buffered:
+                    q.put_nowait(item)
+                q.put_nowait(msg)
         for q in dead:
             with contextlib.suppress(ValueError):
                 op.sse_subscribers.remove(q)

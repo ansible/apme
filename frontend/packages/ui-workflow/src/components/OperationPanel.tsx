@@ -267,6 +267,7 @@ export function OperationPanel({
       status: p.status,
       suggestion: p.suggestion,
       line_start: p.line_start,
+      line_end: p.line_end,
       path: p.path,
       node_type: p.node_type,
       source: p.source,

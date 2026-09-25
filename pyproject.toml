@@ -38,7 +38,7 @@ ai = [
     "abbenay-client==2026.8.9",
 ]
 gateway = [
-    "sqlalchemy>=2.0",
+    "sqlalchemy[asyncio]>=2.0",
     "asyncpg>=0.30",
     "python-multipart>=0.0.31",
 ]
@@ -223,7 +223,7 @@ constraint-dependencies = [
     "pip>=26.1",
     "pygments>=2.20.0",
     "requests>=2.33.0",
-    "setuptools>=83.0.0",
+    "setuptools>=83.0.0,<84",
     "urllib3>=2.7.0",
 ]
 

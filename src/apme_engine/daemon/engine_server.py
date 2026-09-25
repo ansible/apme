@@ -1397,10 +1397,13 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             SessionEvent: Events streamed to the client.
 
         Raises:
+            asyncio.CancelledError: Re-raised after cleaning up upload-created
+                sessions on client disconnect.
             Exception: Propagates unexpected errors after logging.
         """
         store = self._get_session_store()
         session: SessionState | None = None
+        upload_created_session_id: str | None = None
         scan_id = ""
 
         try:
@@ -1415,6 +1418,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                             store,
                             chunk,
                         )
+                        upload_created_session_id = session.session_id
                         yield SessionEvent(
                             created=SessionCreated(
                                 session_id=session.session_id,
@@ -1500,9 +1504,21 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                 elif oneof == "close":
                     if session:
                         store.remove(session.session_id)
+                    if upload_created_session_id and (
+                        session is None or upload_created_session_id != session.session_id
+                    ):
+                        store.remove(upload_created_session_id)
+                    upload_created_session_id = None
                     yield SessionEvent(closed=SessionClosed())
                     return
 
+        except asyncio.CancelledError:
+            # Client disconnect raises CancelledError (a BaseException), which
+            # bypasses the explicit close path.  Remove only sessions this stream
+            # created so gateway reconnect can ResumeRequest without NOT_FOUND.
+            if upload_created_session_id:
+                store.remove(upload_created_session_id)
+            raise
         except ResourceExhaustedError as e:
             await context.abort(grpc.StatusCode.RESOURCE_EXHAUSTED, str(e))
         except RequiredValidatorDependencyError as e:
