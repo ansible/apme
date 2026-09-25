@@ -24,4 +24,21 @@ jobs:
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
       # ADR-047 / lean-ci: install prek, then run the same tox gate developers use.
       - run: uv tool install prek
-      - run: uvx --with tox-uv tox -e lint
+      - name: Lint
+        run: |
+          set -o pipefail
+          uvx --with tox-uv tox -e lint 2>&1 | tee lint.log
+      - name: Annotate lint failures
+        if: failure()
+        run: |
+          # Surface hook errors as check annotations (readable via API without log auth).
+          echo "::error::tox -e lint failed; excerpt follows"
+          # Prefer hook failure lines, then compiler/mypy/ruff errors.
+          {
+            grep -E 'Failed$|Failed\s|error:|E[0-9]{3}|error\[|Found [0-9]+ error' lint.log || true
+            echo '--- tail ---'
+            tail -n 80 lint.log || true
+          } | head -n 120 | while IFS= read -r line; do
+            # Truncate to keep annotations usable
+            echo "::error::${line:0:200}"
+          done
