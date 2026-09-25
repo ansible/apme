@@ -37,6 +37,65 @@ logger = logging.getLogger(__name__)
 
 _GRPC_MAX_MSG = 50 * 1024 * 1024  # 50 MiB — matches Engine
 
+# PE-25: operator-wait timeouts (env-overridable). The driver must never hang
+# forever holding temp dirs/streams waiting on an operator who never responds.
+# On timeout each wait mirrors its existing no-queue default:
+#   begin    (FindingsReady assess pause) -> auto-begin (same as queue omitted)
+#   escalate (AiTriageReady)              -> allow-all (same as queue omitted)
+#   approve  (ProposalsReady)             -> decline-all (same as queue omitted)
+_OP_BEGIN_TIMEOUT_DEFAULT_S = 600.0  # APME_OP_BEGIN_TIMEOUT_S
+_OP_ESCALATE_TIMEOUT_DEFAULT_S = 600.0  # APME_OP_ESCALATE_TIMEOUT_S
+_OP_APPROVE_TIMEOUT_DEFAULT_S = 1800.0  # APME_OP_APPROVE_TIMEOUT_S
+
+
+def _op_timeout(env_name: str, default_s: float) -> float:
+    """Return the operator-wait timeout in seconds for *env_name* (PE-25).
+
+    Thin wrapper over :func:`apme_engine.config_env.get_env_float` kept for
+    backward compatibility.
+
+    Args:
+        env_name: Environment variable holding the timeout override.
+        default_s: Default seconds when the variable is unset/invalid.
+
+    Returns:
+        Positive timeout seconds. Unset, unparsable, non-finite, or
+        non-positive values fall back to the default with a warning — NaN
+        must never become "decline-all immediately" nor inf "wait forever".
+    """
+    from apme_engine.config_env import get_env_float as _get_env_float
+
+    return _get_env_float(env_name, default_s, positive_only=True)
+
+
+def _drain_queue[T](queue: asyncio.Queue[T]) -> int:
+    """Discard stale items left by a previous timed-out operator wait.
+
+    A ``wait_for(queue.get())`` timeout cancels the getter but leaves a
+    late-arriving answer queued; the next event would then consume it with no
+    wait and skip its operator prompt (wrong-phase authorization). Draining
+    before each wait (and right after a timeout) forces every event to wait
+    for a fresh answer. The residual race — an answer landing between drain
+    and get — can only be fresh input for the current prompt, since the
+    operator cannot answer a prompt not yet shown except via a stale late
+    arrival already drained.
+
+    Args:
+        queue: Operator answer queue to drain.
+
+    Returns:
+        Number of stale items discarded.
+    """
+    drained = 0
+    while True:
+        try:
+            queue.get_nowait()
+            queue.task_done()
+            drained += 1
+        except asyncio.QueueEmpty:
+            return drained
+
+
 # ADR-068: server enforces adaptive deadlines; no fixed client gRPC timeout.
 
 _FALSEY_OPTION_STRINGS = frozenset({"", "0", "false", "no", "off", "n"})
@@ -75,6 +134,11 @@ def coerce_option_bool(value: object, *, default: bool = False) -> bool:
 
 def derive_session_id(project_id: str) -> str:
     """Deterministic session ID so the engine reuses venvs across operations.
+
+    Must remain a pure function of ``project_id`` (PE-32): session reuse is
+    what makes the engine-side requirements-hash reconcile work — changed
+    requirements refresh the existing venv (stale collections removed, new
+    ones installed) instead of leaking state between sessions.
 
     Args:
         project_id: UUID hex of the project.
@@ -796,16 +860,43 @@ async def run_project_operation(
                 kind = event.WhichOneof("event")
                 if kind == "findings":
                     if begin_remediate_queue is not None:
-                        await begin_remediate_queue.get()
+                        begin_timeout = _op_timeout("APME_OP_BEGIN_TIMEOUT_S", _OP_BEGIN_TIMEOUT_DEFAULT_S)
+                        _drain_queue(begin_remediate_queue)
+                        try:
+                            await asyncio.wait_for(
+                                begin_remediate_queue.get(),
+                                timeout=begin_timeout,
+                            )
+                        except TimeoutError:
+                            # Mirror the no-queue default: auto-begin.
+                            logger.warning(
+                                "BeginRemediate operator wait timed out after %ss; auto-beginning",
+                                begin_timeout,
+                            )
+                            _drain_queue(begin_remediate_queue)
                     await command_queue.put(
                         engine_pb2.SessionCommand(begin_remediate=engine_pb2.BeginRemediateRequest())
                     )
                 elif kind == "ai_triage":
-                    target_dicts: list[dict[str, object]]
+                    target_dicts: list[dict[str, object]] | None = None
                     if escalate_ai_queue is not None:
-                        target_dicts = await escalate_ai_queue.get()
-                    else:
-                        # No queue — escalate every candidate path (allow-all).
+                        escalate_timeout = _op_timeout("APME_OP_ESCALATE_TIMEOUT_S", _OP_ESCALATE_TIMEOUT_DEFAULT_S)
+                        _drain_queue(escalate_ai_queue)
+                        try:
+                            target_dicts = await asyncio.wait_for(
+                                escalate_ai_queue.get(),
+                                timeout=escalate_timeout,
+                            )
+                        except TimeoutError:
+                            # Mirror the no-queue default: allow-all.
+                            logger.warning(
+                                "AI-escalate operator wait timed out after %ss; escalating all candidates",
+                                escalate_timeout,
+                            )
+                            _drain_queue(escalate_ai_queue)
+                            target_dicts = None
+                    if target_dicts is None:
+                        # No queue (or timed out) — escalate every candidate path (allow-all).
                         paths = sorted({c.path for c in event.ai_triage.candidates if c.path})
                         target_dicts = [{"path": p, "rule_ids": []} for p in paths]
                     targets: list[engine_pb2.AiEscalateTarget] = []
@@ -820,7 +911,21 @@ async def run_project_operation(
                         engine_pb2.SessionCommand(ai_escalate=engine_pb2.AiEscalateRequest(targets=targets))
                     )
                 elif kind == "proposals" and approval_queue is not None:
-                    approved_ids = await approval_queue.get()
+                    approve_timeout = _op_timeout("APME_OP_APPROVE_TIMEOUT_S", _OP_APPROVE_TIMEOUT_DEFAULT_S)
+                    _drain_queue(approval_queue)
+                    try:
+                        approved_ids = await asyncio.wait_for(
+                            approval_queue.get(),
+                            timeout=approve_timeout,
+                        )
+                    except TimeoutError:
+                        # Mirror the no-queue default: decline-all.
+                        logger.warning(
+                            "Approval operator wait timed out after %ss; declining all proposals",
+                            approve_timeout,
+                        )
+                        _drain_queue(approval_queue)
+                        approved_ids = []
                     await command_queue.put(
                         engine_pb2.SessionCommand(approve=engine_pb2.ApprovalRequest(approved_ids=approved_ids))
                     )

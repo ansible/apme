@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import configparser
+import hmac
 import logging
 import os
 import re
@@ -45,6 +46,45 @@ from galaxy_proxy.proxy.cache import ProxyCache
 from galaxy_proxy.proxy.passthrough import PyPIPassthrough
 
 logger = logging.getLogger(__name__)
+
+_ADMIN_TOKEN_ENV = "APME_PROXY_ADMIN_TOKEN"
+# Must match _PROXY_ADMIN_TOKEN_HEADER in
+# apme_gateway/_galaxy_proxy_sync.py — the two services deploy
+# independently, so a one-side rename 403s config pushes.
+# Rollout order matters: enable the token on the proxy first, then on the
+# gateway. A new gateway pushing to an old proxy (or vice versa) fails
+# closed with 403 while the envs disagree — Gateway logs the failed push.
+_ADMIN_TOKEN_HEADER = "x-apme-proxy-token"
+
+
+def _admin_token_configured() -> str:
+    """Return the configured admin token, or empty string when unset.
+
+    Returns:
+        Stripped ``APME_PROXY_ADMIN_TOKEN`` value (``""`` when unset).
+    """
+    return os.environ.get(_ADMIN_TOKEN_ENV, "").strip()
+
+
+def _require_admin_token(request: Request) -> None:
+    """Enforce shared-admin-token auth on admin endpoints.
+
+    When ``APME_PROXY_ADMIN_TOKEN`` is unset the admin surface stays open
+    (default local daemon behavior). Otherwise the request must present the
+    token in the ``x-apme-proxy-token`` header.
+
+    Args:
+        request: Incoming HTTP request.
+
+    Raises:
+        HTTPException: 403 when the presented token does not match.
+    """
+    expected = _admin_token_configured()
+    if not expected:
+        return
+    provided = request.headers.get(_ADMIN_TOKEN_HEADER, "")
+    if not hmac.compare_digest(provided, expected):
+        raise HTTPException(status_code=403, detail="Invalid admin token")
 
 
 def _safe_server_label(raw_url: str) -> str:
@@ -193,6 +233,13 @@ def create_app(
     app.state.ansible_cfg_path = ansible_cfg_path
     app.state.ansible_galaxy_bin = ansible_galaxy_bin
 
+    if not _admin_token_configured():
+        logger.warning(
+            "APME_PROXY_ADMIN_TOKEN is not set — /admin/galaxy-config and "
+            "/convert-tarballs are unprotected. Set APME_PROXY_ADMIN_TOKEN "
+            "to require token auth on the admin surface."
+        )
+
     def _get_galaxy_config() -> tuple[Path | None, list[GalaxyServerConfig] | None, str | None]:
         """Read current Galaxy config from app state.
 
@@ -215,7 +262,7 @@ def create_app(
         return {"status": "ok"}
 
     @app.post("/admin/galaxy-config")  # type: ignore[untyped-decorator]
-    async def update_galaxy_config(body: _GalaxyConfigPayload) -> dict[str, Any]:
+    async def update_galaxy_config(request: Request, body: _GalaxyConfigPayload) -> dict[str, Any]:
         """Accept Galaxy server configs pushed from the Gateway (ADR-045).
 
         The Gateway calls this after startup and after any CRUD change to
@@ -223,14 +270,17 @@ def create_app(
         and uses them for all subsequent ``ansible-galaxy`` downloads.
 
         Args:
+            request: Incoming HTTP request (carries the admin token header).
             body: Galaxy server configurations to register.
 
         Returns:
             dict: Confirmation with count and names of accepted servers.
 
         Raises:
-            HTTPException: 422 if any server name is empty, invalid, or duplicated.
+            HTTPException: 403 if the admin token is invalid; 422 if any
+                server name is empty, invalid, or duplicated.
         """
+        _require_admin_token(request)
         seen: set[str] = set()
         for s in body.servers:
             name = s.name.strip()
@@ -510,19 +560,24 @@ def create_app(
         )
 
     @app.post("/convert-tarballs")  # type: ignore[untyped-decorator]
-    async def convert_tarballs(tarball_dir: str) -> dict[str, list[str]]:
+    async def convert_tarballs(request: Request, tarball_dir: str) -> dict[str, list[str]]:
         """Convert all tarballs in a directory to wheels and cache them.
 
         This endpoint supports the flow where Engine sends collection specs
         and the proxy converts pre-downloaded tarballs to wheels.
 
         Args:
+            request: Incoming HTTP request (carries the admin token header).
             tarball_dir: Path to directory containing ``.tar.gz`` files
                 (resolved to absolute internally).
 
         Returns:
             Dict with ``converted`` (wheel filenames) and ``failed`` (tarball names).
-        """
+
+        Raises:
+            HTTPException: 403 if the admin token is invalid.
+        """  # noqa: DOC502 -- the 403 raise lives in _require_admin_token
+        _require_admin_token(request)
         tarball_path = _validate_tarball_dir(tarball_dir)
 
         converted: list[str] = []

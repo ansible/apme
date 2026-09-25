@@ -6,7 +6,10 @@ Podman container (openpolicyagent/opa) or a local ``opa`` binary.
 A timeout-based circuit-breaker avoids repeatedly running OPA when evaluations
 consistently time out. After a configurable number of consecutive timeouts
 (see ``APME_OPA_MAX_CONSECUTIVE_TIMEOUTS``), OPA evaluation is temporarily
-disabled and :func:`run_opa` raises :exc:`OpaInfrastructureError`. A successful
+disabled and :func:`run_opa` raises :exc:`OpaInfrastructureError`. Once the
+cooldown (see ``APME_OPA_BREAKER_COOLDOWN``, default 300s) elapses, the next
+call is let through as a half-open trial: success resets the counter and
+re-enables evaluation, failure re-latches the breaker. A successful
 call resets the counter. Use :func:`reset_opa_circuit_breaker` to clear the
 counter and re-enable OPA evaluation.
 """
@@ -15,6 +18,8 @@ import json
 import os
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 
 from apme_engine.engine.models import ViolationDict, YAMLDict
@@ -23,6 +28,11 @@ OPA_IMAGE = "docker.io/openpolicyagent/opa:1.17.1"
 
 _consecutive_timeouts = 0
 _opa_disabled = False
+_disabled_at: float | None = None
+# Breaker globals are read/written from executor threads: all check-and-set
+# transitions go through this lock so half-open trials stay single-flight.
+_breaker_lock = threading.Lock()
+_trial_in_flight = False
 
 
 class OpaInfrastructureError(RuntimeError):
@@ -35,19 +45,89 @@ def _max_consecutive_timeouts() -> int:
     Returns:
         Positive int from APME_OPA_MAX_CONSECUTIVE_TIMEOUTS, or 3 if unset/invalid.
     """
-    raw = os.environ.get("APME_OPA_MAX_CONSECUTIVE_TIMEOUTS", "3")
-    try:
-        n = int(raw)
-        return max(1, n)
-    except ValueError:
-        return 3
+    from apme_engine.config_env import get_env_int as _get_env_int
+
+    return _get_env_int("APME_OPA_MAX_CONSECUTIVE_TIMEOUTS", 3, min_value=1)
 
 
 def reset_opa_circuit_breaker() -> None:
     """Reset the timeout circuit-breaker so OPA eval is re-enabled."""
-    global _consecutive_timeouts, _opa_disabled
-    _consecutive_timeouts = 0
-    _opa_disabled = False
+    global _consecutive_timeouts, _opa_disabled, _disabled_at, _trial_in_flight
+    with _breaker_lock:
+        _consecutive_timeouts = 0
+        _opa_disabled = False
+        _disabled_at = None
+        _trial_in_flight = False
+
+
+def _breaker_cooldown() -> float:
+    """Return breaker half-open cooldown in seconds (from env or default 300).
+
+    Returns:
+        Positive finite float from APME_OPA_BREAKER_COOLDOWN, or 300.0 if
+        unset/invalid/non-positive (a zero cooldown would retry-storm a
+        broken OPA; infinity would never half-open).
+    """
+    from apme_engine.config_env import get_env_float as _get_env_float
+
+    return _get_env_float("APME_OPA_BREAKER_COOLDOWN", 300.0, positive_only=True)
+
+
+def _breaker_cooled_locked() -> bool:
+    """Return whether a half-open trial slot is claimable (lock held).
+
+    The breaker stays latched (``_opa_disabled`` True) for the whole trial:
+    only the trial owner proceeds (via ``is_trial``), the rest keep seeing
+    "disabled". The slot is claimable once the cooldown elapsed and no trial
+    is in flight.
+
+    Returns:
+        True when disabled, cooled down, and no trial in flight.
+    """
+    return bool(
+        _opa_disabled
+        and _disabled_at is not None
+        and (time.monotonic() - _disabled_at) >= _breaker_cooldown()
+        and not _trial_in_flight
+    )
+
+
+def _claim_breaker_trial() -> bool:
+    """Atomically claim the single half-open trial slot after cooldown.
+
+    The breaker stays latched during the trial so concurrent callers keep
+    hitting the ``_opa_disabled`` gate and are rejected (single-flight);
+    only the trial owner proceeds via ``is_trial``. Success clears the
+    latch in :func:`_settle_breaker_trial`.
+
+    Returns:
+        True when the caller owns the trial; False when disabled without
+        cooldown, on cooldown, or when another thread already holds it.
+    """
+    global _trial_in_flight
+    with _breaker_lock:
+        if not _breaker_cooled_locked():
+            return False
+        _trial_in_flight = True
+        return True
+
+
+def _settle_breaker_trial(succeeded: bool) -> None:
+    """Release the trial slot, re-latching the breaker on trial failure.
+
+    Args:
+        succeeded: Whether the trial eval succeeded.
+    """
+    global _consecutive_timeouts, _opa_disabled, _disabled_at, _trial_in_flight
+    with _breaker_lock:
+        _trial_in_flight = False
+        if succeeded:
+            _consecutive_timeouts = 0
+            _opa_disabled = False
+            _disabled_at = None
+        else:
+            _opa_disabled = True
+            _disabled_at = time.monotonic()
 
 
 def _run_opa_podman(
@@ -230,6 +310,12 @@ def opa_eval_unavailable_reason(
         Error message when eval fails, otherwise None.
     """
     if _opa_disabled:
+        # A disabled breaker may have cooled down since the last probe: only
+        # report "disabled" when no trial slot is currently claimable.
+        with _breaker_lock:
+            cooled = _breaker_cooled_locked()
+        if cooled:
+            return None
         return "OPA evaluation disabled by circuit breaker"
 
     bundle = Path(bundle_path)
@@ -277,7 +363,10 @@ def run_opa(
     A timeout-based circuit-breaker is applied. If evaluations time out
     consecutively (see ``APME_OPA_MAX_CONSECUTIVE_TIMEOUTS``, default 3), OPA
     evaluation is temporarily disabled for the process. This function raises
-    :class:`OpaInfrastructureError` without invoking OPA. Call
+    :class:`OpaInfrastructureError` without invoking OPA. After the cooldown
+    (see ``APME_OPA_BREAKER_COOLDOWN``, default 300s) a single trial eval is
+    allowed through; its success resets the counter and re-enables OPA, while
+    its failure re-latches the breaker. Call
     :func:`reset_opa_circuit_breaker` to re-enable.
 
     Args:
@@ -296,32 +385,44 @@ def run_opa(
     """
     global _consecutive_timeouts, _opa_disabled
 
-    if _opa_disabled:
-        raise OpaInfrastructureError("OPA evaluation is disabled by the circuit breaker")
-
+    # Breaker entry is lock-guarded and single-flight: at most one caller
+    # past cooldown owns the half-open trial; the rest see "disabled".
+    # Bundle validation happens BEFORE claiming so a bad path never leaks
+    # the trial slot.
     bundle = Path(bundle_path)
     if not bundle.is_dir():
         raise FileNotFoundError(f"OPA bundle path is not a directory: {bundle_path}")
-    input_str = json.dumps(input_data)
+    try:
+        input_str = json.dumps(input_data)
+    except (TypeError, ValueError) as e:
+        raise OpaInfrastructureError(f"OPA input is not JSON-serializable: {e}") from None
+    is_trial = False
+    if _opa_disabled:
+        is_trial = _claim_breaker_trial()
+        if not is_trial:
+            raise OpaInfrastructureError("OPA evaluation is disabled by the circuit breaker")
+
     timeout = 60
     max_timeouts = _max_consecutive_timeouts()
     use_podman = os.environ.get("OPA_USE_PODMAN", "1").lower() not in ("0", "false", "no")
 
     def _on_timeout(via: str) -> None:
-        global _consecutive_timeouts, _opa_disabled
-        _consecutive_timeouts += 1
-        input_kb = len(input_str) / 1024
-        if _consecutive_timeouts >= max_timeouts:
-            _opa_disabled = True
-            sys.stderr.write(
-                f"OPA eval timed out {_consecutive_timeouts} consecutive times "
-                f"(input: {input_kb:.0f} KB). Disabling OPA validation for this run.\n"
-            )
-        else:
-            sys.stderr.write(
-                f"OPA eval timed out after {timeout}s via {via} (input: {input_kb:.0f} KB) "
-                f"[{_consecutive_timeouts}/{max_timeouts}].\n"
-            )
+        global _consecutive_timeouts, _opa_disabled, _disabled_at
+        with _breaker_lock:
+            _consecutive_timeouts += 1
+            input_kb = len(input_str) / 1024
+            if _consecutive_timeouts >= max_timeouts:
+                _opa_disabled = True
+                _disabled_at = time.monotonic()
+                sys.stderr.write(
+                    f"OPA eval timed out {_consecutive_timeouts} consecutive times "
+                    f"(input: {input_kb:.0f} KB). Disabling OPA validation for this run.\n"
+                )
+            else:
+                sys.stderr.write(
+                    f"OPA eval timed out after {timeout}s via {via} (input: {input_kb:.0f} KB) "
+                    f"[{_consecutive_timeouts}/{max_timeouts}].\n"
+                )
 
     out = None
     if use_podman:
@@ -331,12 +432,19 @@ def run_opa(
             out = None  # fall back to local opa
         except subprocess.TimeoutExpired:
             _on_timeout("Podman")
+            if is_trial:
+                _settle_breaker_trial(False)
             raise OpaInfrastructureError("OPA evaluation timed out via Podman") from None
     if out is None:
         try:
             out = _run_opa_local(input_str, bundle, entrypoint, timeout)
         except FileNotFoundError:
-            _consecutive_timeouts = 0
+            if is_trial:
+                _settle_breaker_trial(False)
+            else:
+                with _breaker_lock:
+                    _consecutive_timeouts = 0
+                    _disabled_at = None
             if use_podman:
                 sys.stderr.write(
                     "podman: command not found. Set OPA_USE_PODMAN=0 to use local opa, or install podman.\n"
@@ -348,16 +456,27 @@ def run_opa(
             raise OpaInfrastructureError("OPA binary is not available") from None
         except subprocess.TimeoutExpired:
             _on_timeout("local binary")
+            if is_trial:
+                _settle_breaker_trial(False)
             raise OpaInfrastructureError("OPA evaluation timed out via local binary") from None
 
-    _consecutive_timeouts = 0
+    if is_trial:
+        _settle_breaker_trial(True)
+    else:
+        with _breaker_lock:
+            _consecutive_timeouts = 0
+            _disabled_at = None
 
     if out.returncode != 0:
+        if is_trial:
+            _settle_breaker_trial(False)
         sys.stderr.write("OPA eval failed: [REDACTED]\n")
         raise OpaInfrastructureError("OPA evaluation returned a non-zero exit code")
     try:
         result = json.loads(out.stdout)
     except json.JSONDecodeError:
+        if is_trial:
+            _settle_breaker_trial(False)
         sys.stderr.write("OPA returned invalid JSON: [REDACTED]\n")
         raise OpaInfrastructureError("OPA evaluation returned invalid JSON") from None
     # OPA eval returns { "result": [ { "expressions": [ { "value": [...] } ] } ] }

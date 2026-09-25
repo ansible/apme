@@ -1,16 +1,9 @@
-import { apmeApiUrl, getApmeApiAdapter } from "../api/apmeApiAdapter";
+import { apmeApiUrl, bareRuleId, getApmeApiAdapter } from "../api/apmeApiAdapter";
+
+export { bareRuleId };
 
 /** Live descriptions populated from the Gateway /rules API. */
 const _descriptions: Record<string, string> = {};
-
-/**
- * Strip validator prefix (e.g. "native:L042" → "L042") for description lookup.
- */
-export function bareRuleId(ruleId: string): string {
-  const idx = ruleId.indexOf(":");
-  if (idx > 0 && idx < ruleId.length - 1) return ruleId.slice(idx + 1);
-  return ruleId;
-}
 
 /**
  * Look up a rule description, handling prefixed IDs like "native:L042".

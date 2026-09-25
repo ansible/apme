@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import contextlib
 import fcntl
+import hashlib
 import json
 import logging
 import os
@@ -840,8 +841,183 @@ def list_installed_collections(venv_dir: Path) -> list[tuple[str, str, str, str]
 
 
 _DEFAULT_TTL = 3600
+
+
+def _parse_positive_int_env(name: str, default: int) -> int:
+    """Parse *name* as int, falling back to *default* with a warning.
+
+    Thin wrapper over :func:`apme_engine.config_env.get_env_int` kept for
+    backward compatibility.
+
+    Import-time env typos must degrade to defaults, never crash the daemon
+    at import. Non-positive values also fall back (a zero/negative sibling
+    cap would refuse every new venv, including legitimate ones).
+
+    Args:
+        name: Environment variable name.
+        default: Positive value used when unset, unparsable, or non-positive.
+
+    Returns:
+        Positive int value.
+    """
+    from apme_engine.config_env import get_env_int as _get_env_int
+
+    return _get_env_int(name, default, min_value=1)
+
+
+#: Cap on sibling venvs (distinct ansible-core versions) per session (PE-36).
+#: New versions beyond the cap are refused loudly instead of evicting live
+#: venvs out from under in-flight scans.
+_MAX_VENVS_PER_SESSION = _parse_positive_int_env("APME_SESSION_MAX_VENVS_PER_SESSION", 8)
 _SAFE_SESSION_RE = re.compile(r"^[A-Za-z0-9_\-]+$")
 _SAFE_VERSION_RE = re.compile(r"^\d+\.\d+(\.\d+)?$")
+
+
+def _requirements_hash(collection_specs: list[str]) -> str:
+    """Hash the requested collection set for stale-venv detection (PE-32).
+
+    Sessions are reused per project while venvs were append-only, so removed
+    collections went stale and hid unresolved-module findings. The hash is
+    stored on the session meta; a mismatch triggers a reconcile (remove
+    collections no longer required, install new ones) instead of pure append.
+
+    Args:
+        collection_specs: Collection specifiers requested for the venv.
+
+    Returns:
+        Short hex digest stable under spec reordering.
+    """
+    material = "\n".join(sorted(collection_specs))
+    return hashlib.sha256(material.encode()).hexdigest()[:16]
+
+
+def _spec_to_bare_pip(spec: str) -> str:
+    """Map a collection spec to its bare pip package name (no version pin).
+
+    Args:
+        spec: Collection specifier (namespace.collection or namespace.collection:version).
+
+    Returns:
+        Bare pip package name for uninstall, e.g. ``ansible-collection-community-general``.
+    """
+    return _spec_to_pip(spec).split("==")[0]
+
+
+def _redact_url_credentials(text: str) -> str:
+    """Scrub ``user:pass@`` userinfo from URLs in subprocess output.
+
+    Private-index pip URLs can embed basic-auth credentials that would
+    otherwise land verbatim in daemon logs on install/uninstall failures.
+
+    Args:
+        text: Subprocess output possibly containing URLs.
+
+    Returns:
+        Text with URL userinfo replaced by ``***``.
+    """
+    return re.sub(r"(https?://)[^/\s@]+@", r"\1***@", text)
+
+
+def uninstall_collections(venv_dir: Path, pip_packages: list[str]) -> list[str]:
+    """Uninstall pip packages from a session venv (best-effort, PE-32).
+
+    Used to remove collections no longer required when the requested set
+    shrinks between scans. Failures are logged, never raised — a stale
+    package is preferable to a failed scan.
+
+    Args:
+        venv_dir: Root of the virtual environment.
+        pip_packages: Bare pip package names to uninstall.
+
+    Returns:
+        Bare names confirmed absent afterwards. Callers must only forget
+        what this reports removed — meta claiming a still-installed stale
+        package is gone would hide unresolved-module findings (the exact
+        bug this reconcile exists to fix).
+    """
+    if not pip_packages:
+        return []
+    try:
+        pip_python = get_venv_python(venv_dir)
+    except FileNotFoundError:
+        logger.warning("Venv: cannot uninstall %s — venv has no python: %s", pip_packages, venv_dir)
+        return []
+    use_uv = _uv_available()
+    if use_uv:
+        cmd = ["uv", "pip", "uninstall", "--python", str(pip_python), *pip_packages]
+    else:
+        cmd = [str(pip_python), "-m", "pip", "uninstall", "-y", *pip_packages]
+    try:
+        result = _run_subprocess_timed(cmd, timeout=_PIP_INSTALL_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        logger.warning("Venv: uninstall timed out after %ds for %s", _PIP_INSTALL_TIMEOUT_S, pip_packages)
+        return []
+    except OSError as e:
+        # Broken venv (missing/non-executable python): fail closed, keep
+        # stale entries listed for retry instead of aborting the scan.
+        logger.warning("Venv: cannot run uninstall in %s (%s) — keeping %s listed", venv_dir, e, pip_packages)
+        return []
+    if result.returncode != 0:
+        logger.warning(
+            "Venv: uninstall failed for %s: %s",
+            pip_packages,
+            _redact_url_credentials((result.stderr or result.stdout or "").strip()[:500]),
+        )
+    return _confirm_absent_packages(pip_python, pip_packages)
+
+
+def _confirm_absent_packages(pip_python: Path, pip_packages: list[str]) -> list[str]:
+    """Return the subset of *pip_packages* not installed in the venv.
+
+    A single ``importlib.metadata`` probe: names raising
+    ``PackageNotFoundError`` are confirmed gone. Any probe failure is
+    fail-closed (returns ``[]``) so callers keep stale entries listed and
+    retry next acquire instead of forgetting live packages.
+
+    Args:
+        pip_python: Python binary of the session venv.
+        pip_packages: Bare pip package names to check.
+
+    Returns:
+        Names confirmed absent from the venv.
+    """
+    script = (
+        "import importlib.metadata\n"
+        "import json\n"
+        "import sys\n"
+        "names = json.loads(sys.argv[1])\n"
+        "absent = []\n"
+        "for _name in names:\n"
+        "    try:\n"
+        "        importlib.metadata.version(_name)\n"
+        "    except importlib.metadata.PackageNotFoundError:\n"
+        "        absent.append(_name)\n"
+        "print(json.dumps(absent))\n"
+    )
+    try:
+        result = _run_subprocess_timed(
+            [str(pip_python), "-c", script, json.dumps(pip_packages)],
+            timeout=60,
+        )
+    except subprocess.TimeoutExpired:
+        logger.warning("Venv: package-absence probe timed out for %s", pip_packages)
+        return []
+    except OSError as e:
+        logger.warning("Venv: package-absence probe cannot run in %s (%s)", pip_python, e)
+        return []
+    if result.returncode != 0:
+        logger.warning(
+            "Venv: package-absence probe failed for %s: %s",
+            pip_packages,
+            _redact_url_credentials((result.stderr or result.stdout or "").strip()[:200]),
+        )
+        return []
+    try:
+        absent = json.loads((result.stdout or "").strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        logger.warning("Venv: package-absence probe returned unparsable output for %s", pip_packages)
+        return []
+    return [n for n in absent if n in set(pip_packages)]
 
 
 def _sanitize_session_id(session_id: str) -> str:
@@ -889,6 +1065,9 @@ class VenvSession:
         ansible_version: Normalised ansible-core version installed.
         installed_collections: Collection specifiers actually present in the venv.
         failed_collections: Collection specifiers that could not be installed.
+        requirements_hash: Hash of the requested collection set (PE-32); a
+            mismatch against the request triggers a reconcile (uninstall
+            stale, install missing) instead of pure append.
         created_at: Unix timestamp of venv creation.
         last_used_at: Unix timestamp of last acquire / touch.
     """
@@ -898,6 +1077,7 @@ class VenvSession:
     ansible_version: str
     installed_collections: list[str] = field(default_factory=list)
     failed_collections: list[str] = field(default_factory=list)
+    requirements_hash: str = ""
     created_at: float = 0.0
     last_used_at: float = 0.0
 
@@ -905,10 +1085,15 @@ class VenvSession:
 class VenvSessionManager:
     """Manage session-scoped venvs with locking, TTL, and reaping.
 
-    Sessions support multiple ``ansible-core`` versions (tox-style matrix).
-    Collections are installed incrementally — only missing collections are
-    added, never removed.  This supports use-cases like VSCode extensions
-    where the workspace scope may grow between scans.
+    Sessions support multiple ``ansible-core`` versions (tox-style matrix),
+    capped at ``APME_SESSION_MAX_VENVS_PER_SESSION`` (default 8) sibling
+    venvs — further versions are refused loudly rather than evicting live
+    venvs out from under in-flight scans (PE-36). Collections are reconciled against the
+    requested set — missing collections are installed and collections no
+    longer required are removed — tracked via a requirements hash, so
+    shrinking requirements cannot leave stale collections behind (PE-32).
+    This supports use-cases like VSCode extensions where the workspace
+    scope may change between scans.
     """
 
     def __init__(
@@ -938,19 +1123,24 @@ class VenvSessionManager:
         ansible_version: str,
         collection_specs: list[str] | None = None,
     ) -> VenvSession:
-        """Get or create a session venv, installing only missing collections.
+        """Get or create a session venv, reconciling collections with the request.
 
         If a venv for ``(session_id, ansible_version)`` exists and already
-        contains all requested collections, it is reused instantly (warm hit).
-        Otherwise only the *delta* (new collections) is installed.
+        contains exactly the requested collections, it is reused instantly
+        (warm hit). Otherwise the venv is reconciled: collections no longer
+        requested are uninstalled and only the *delta* (new collections) is
+        installed (PE-32) — never pure append, so removed collections cannot
+        go stale and hide unresolved-module findings.
 
         Individual collection install failures are non-fatal — the session
         records only successfully installed collections and logs warnings
         for any that failed.  The ``failed_collections`` attribute lists
         specs that could not be installed.
 
-        New core versions create sibling venvs under the same session
-        directory — existing ones are never destroyed.
+          New core versions create sibling venvs under the same session
+          directory — existing ones are never destroyed, up to
+          ``APME_SESSION_MAX_VENVS_PER_SESSION`` (default 8) siblings, beyond
+          which the request is refused with a clear error (PE-36).
 
         Args:
             session_id: Client-provided session identifier.
@@ -961,14 +1151,18 @@ class VenvSessionManager:
             A ``VenvSession`` with a ready-to-use venv.
 
         Raises:
+            ValueError: If creating the new sibling would exceed
+                ``APME_SESSION_MAX_VENVS_PER_SESSION`` — refused loudly
+                instead of evicting live venvs.
             PipInstallTimeout: If a pip/uv install stalls past its bound —
                 fails fast instead of walking the fallback chain.
             Exception: Re-raises unexpected acquire failures after recording
                 error metrics.
-        """
+        """  # noqa: DOC503 -- ValueError is raised by _enforce_sibling_cap
         session_id = _sanitize_session_id(session_id)
         specs = collection_specs or []
         pip_version = _normalize_version(ansible_version)
+        desired_hash = _requirements_hash(specs)
 
         session_dir = self._root / session_id
         session_dir.mkdir(parents=True, exist_ok=True)
@@ -989,10 +1183,17 @@ class VenvSessionManager:
                     existing = self._read_version_meta(meta_path)
                     if existing is not None and venv_dir.is_dir():
                         installed = set(existing.installed_collections)
-                        missing = set(specs) - installed
+                        requested = set(specs)
+                        missing = requested - installed
+                        stale = installed - requested
+                        # The stored hash makes the warm-hit decision explicit:
+                        # an exact multiset match short-circuits the set-diff.
+                        hash_match = bool(existing.requirements_hash) and (existing.requirements_hash == desired_hash)
 
-                        if not missing:
+                        if hash_match or (not missing and not stale):
                             existing.last_used_at = time.time()
+                            if not existing.requirements_hash:
+                                existing.requirements_hash = desired_hash
                             self._write_version_meta(meta_path, existing)
                             dur = (time.monotonic() - t0) * 1000
                             logger.info(
@@ -1009,11 +1210,64 @@ class VenvSessionManager:
                             )
                             return existing
 
-                        logger.debug("Venv: installing %d missing collections", len(missing))
-                        failed = install_collections_incremental(venv_dir, sorted(missing))
-                        succeeded = set(specs) - set(failed)
+                        still_present: set[str] = set()
+                        if stale:
+                            logger.info(
+                                "Venv: removing %d stale collections no longer requested: %s",
+                                len(stale),
+                                ", ".join(sorted(stale)),
+                            )
+                            # Map stale specs to bare pip names best-effort: an
+                            # unmappable (legacy/corrupt) spec stays listed and
+                            # is retried next acquire rather than aborting it.
+                            bare_by_spec: dict[str, str] = {}
+                            for s in stale:
+                                try:
+                                    bare_by_spec[s] = _spec_to_bare_pip(s)
+                                except ValueError:
+                                    logger.warning(
+                                        "Venv: cannot map stale spec %r to a pip package — keeping it listed",
+                                        s,
+                                    )
+                            removed_bare = set(uninstall_collections(venv_dir, sorted(set(bare_by_spec.values()))))
+                            removed_specs = {s for s, b in bare_by_spec.items() if b in removed_bare}
+                            installed -= removed_specs
+                            still_present = stale - removed_specs
+                            if still_present:
+                                logger.warning(
+                                    "Venv: %d stale collection(s) still installed after uninstall; "
+                                    "keeping them listed for retry next acquire: %s",
+                                    len(still_present),
+                                    ", ".join(sorted(still_present)),
+                                )
+
+                        failed: list[str] = []
+                        if missing:
+                            logger.debug("Venv: installing %d missing collections", len(missing))
+                            failed = install_collections_incremental(venv_dir, sorted(missing))
+                            # Every still-requested past failure was retried
+                            # above, so this round's failures are the full set.
+                            existing.failed_collections = sorted(failed)
+                        else:
+                            # Stale-only removal: no install ran; just prune
+                            # failures that are no longer requested.
+                            failed = [f for f in existing.failed_collections if f in requested]
+                            existing.failed_collections = sorted(failed)
+                        succeeded = requested - set(failed)
                         existing.installed_collections = sorted(installed | succeeded)
-                        existing.failed_collections = sorted(failed)
+                        # Only persist the desired hash on full converge: a
+                        # partial reconcile (stale still present or installs
+                        # failed) must retain the old hash so the next acquire
+                        # retries instead of warm-hitting a stale venv.
+                        if not still_present and not failed:
+                            existing.requirements_hash = desired_hash
+                        else:
+                            logger.warning(
+                                "Venv: reconcile partial (%d still present, %d failed); "
+                                "keeping requirements_hash for retry next acquire",
+                                len(still_present),
+                                len(failed),
+                            )
                         existing.last_used_at = time.time()
                         self._write_version_meta(meta_path, existing)
                         dur = (time.monotonic() - t0) * 1000
@@ -1040,6 +1294,7 @@ class VenvSessionManager:
                         )
                         return existing
 
+                    self._enforce_sibling_cap(session_dir, pip_version, session_id)
                     version_dir.mkdir(parents=True, exist_ok=True)
                     if venv_dir.is_dir():
                         shutil.rmtree(venv_dir)
@@ -1059,6 +1314,7 @@ class VenvSessionManager:
                         ansible_version=pip_version,
                         installed_collections=succeeded_specs,
                         failed_collections=sorted(failed),
+                        requirements_hash=desired_hash,
                         created_at=now,
                         last_used_at=now,
                     )
@@ -1108,6 +1364,53 @@ class VenvSessionManager:
                 status="error",
             )
             raise
+
+    def _enforce_sibling_cap(self, session_dir: Path, pip_version: str, session_id: str) -> None:
+        """Refuse new sibling venvs once the session holds the cap (PE-36).
+
+        Any ``X.Y[.Z]`` client version string spawns a sibling venv; without a
+        cap, version-matrix probing grows the session directory without bound.
+        At most ``APME_SESSION_MAX_VENVS_PER_SESSION`` (default 8) sibling
+        venvs may exist.
+
+        Eviction is deliberately *not* automatic: deleting a sibling while
+        another in-flight scan's validator is executing inside it would
+        corrupt that scan (ENOENT mid-run, blamed on flaky infra), and only
+        the manager knows which venvs are in use with no refcounting yet.
+        Refusing loudly (naming the cap) bounds growth without risking live
+        scans; per-use pinning is a tracked follow-up.
+
+        Args:
+            session_dir: Session directory holding per-version subdirectories.
+            pip_version: Normalised version about to be created.
+            session_id: Session identifier (for log/error messages).
+
+        Raises:
+            ValueError: If creating the new sibling would exceed the cap.
+                Names the cap and the remedy.
+        """
+        max_venvs = _MAX_VENVS_PER_SESSION
+        siblings = 0
+        for child in session_dir.iterdir():
+            # Count only real version directories: skip dotfiles, symlinks
+            # (never rmtree'd here), and the version being created.
+            if (
+                not child.is_dir()
+                or child.is_symlink()
+                or child.name.startswith(".")
+                or child.name == pip_version
+                or _SAFE_VERSION_RE.match(child.name) is None
+            ):
+                continue
+            siblings += 1
+        if siblings >= max_venvs:
+            msg = (
+                f"Session {session_id} already holds {siblings} sibling venvs "
+                f"(APME_SESSION_MAX_VENVS_PER_SESSION={max_venvs}); refusing to "
+                f"create core={pip_version}. Reuse a pinned version, clean the "
+                "session, or increase the cap."
+            )
+            raise ValueError(msg)
 
     @staticmethod
     def _record_acquire_metrics(
@@ -1327,6 +1630,7 @@ class VenvSessionManager:
                 ansible_version=data["ansible_version"],
                 installed_collections=data.get("installed_collections", []),
                 failed_collections=data.get("failed_collections", []),
+                requirements_hash=data.get("requirements_hash", ""),
                 created_at=data.get("created_at", 0.0),
                 last_used_at=data.get("last_used_at", 0.0),
             )

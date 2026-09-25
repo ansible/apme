@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import logging
 import math
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any, NamedTuple, cast
 
-from sqlalchemy import case, func, or_, select, update
+from sqlalchemy import ColumnElement, Select, case, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -37,7 +38,7 @@ from apme_gateway.scm.repo_url import normalize_repo_url
 logger = logging.getLogger(__name__)
 
 
-def _chunked_not_in(column: Any, ids: set[int]) -> Any:
+def _chunked_not_in(column: ColumnElement[Any], ids: set[int]) -> ColumnElement[bool]:
     """Build a NOT IN exclusion filter safe for the active dialect's bind limit.
 
     For sets within a single chunk, produces a single ``column NOT IN (...)``
@@ -2522,7 +2523,7 @@ async def get_suppression_hashes(
     return {row[0] for row in result.all()}
 
 
-def _latest_scan_ids_subquery(*, project_id: str | None = None) -> Any:
+def _latest_scan_ids_subquery(*, project_id: str | None = None) -> Select:
     """Return a selectable of the most recent scan ID(s) for use in IN clauses.
 
     Produces a DB-side subquery, avoiding the need to materialise scan IDs
@@ -2712,7 +2713,7 @@ def _match_violations(
     rows: list[Any],
     full_hashes: set[str],
     rule_only_hashes: set[str],
-    compute_fingerprint: Any,
+    compute_fingerprint: Callable[..., str],
 ) -> set[int]:
     """Match violations against suppression hashes (single-project case).
 

@@ -12,6 +12,7 @@ import asyncio
 import base64
 import logging
 import time
+from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote, urlparse
 
@@ -19,6 +20,7 @@ import httpx
 
 from apme_gateway.scm._http import async_client, custom_ca_bundle, http_verify
 from apme_gateway.scm.base import PullRequestResult
+from apme_gateway.scm.text import is_text_blob
 
 logger = logging.getLogger(__name__)
 
@@ -63,34 +65,41 @@ def _parse_owner_repo(repo_url: str) -> tuple[str, str]:
     return owner, repo
 
 
-def _branch_ref_url(api: str, owner: str, repo: str, branch: str) -> str:
-    """Build the GitHub git ref URL for a branch head (slashes URL-encoded).
+@dataclass(frozen=True)
+class GitHubRepo:
+    """GitHub repository coordinates bound to an API base URL.
 
-    Args:
+    Attributes:
         api: GitHub API base URL.
         owner: Repository owner.
         repo: Repository name.
-        branch: Branch name.
-
-    Returns:
-        Fully qualified REST URL for the branch ref.
     """
-    return f"{api}/repos/{owner}/{repo}/git/ref/heads/{quote(branch, safe='')}"
 
+    api: str
+    owner: str
+    repo: str
 
-def _branch_refs_update_url(api: str, owner: str, repo: str, branch: str) -> str:
-    """Build the GitHub git refs update URL for a branch head.
+    def branch_ref_url(self, branch: str) -> str:
+        """Build the GitHub git ref URL for a branch head (slashes URL-encoded).
 
-    Args:
-        api: GitHub API base URL.
-        owner: Repository owner.
-        repo: Repository name.
-        branch: Branch name.
+        Args:
+            branch: Branch name.
 
-    Returns:
-        Fully qualified REST URL for updating the branch ref.
-    """
-    return f"{api}/repos/{owner}/{repo}/git/refs/heads/{quote(branch, safe='')}"
+        Returns:
+            Fully qualified REST URL for the branch ref.
+        """
+        return f"{self.api}/repos/{self.owner}/{self.repo}/git/ref/heads/{quote(branch, safe='')}"
+
+    def branch_refs_update_url(self, branch: str) -> str:
+        """Build the GitHub git refs update URL for a branch head.
+
+        Args:
+            branch: Branch name.
+
+        Returns:
+            Fully qualified REST URL for updating the branch ref.
+        """
+        return f"{self.api}/repos/{self.owner}/{self.repo}/git/refs/heads/{quote(branch, safe='')}"
 
 
 class GitHubProvider:
@@ -140,9 +149,10 @@ class GitHubProvider:
             Commit SHA when the branch exists, else ``None``.
         """
         owner, repo = _parse_owner_repo(repo_url)
+        gh_repo = GitHubRepo(api=self._api, owner=owner, repo=repo)
         async with self._client(timeout=30) as client:
             resp = await client.get(
-                _branch_ref_url(self._api, owner, repo, branch),
+                gh_repo.branch_ref_url(branch),
                 headers=self._headers(token),
             )
             if resp.status_code == 404:
@@ -169,6 +179,7 @@ class GitHubProvider:
             Commit SHA at the tip of *new_branch* after creation (or if it already exists).
         """
         owner, repo = _parse_owner_repo(repo_url)
+        gh_repo = GitHubRepo(api=self._api, owner=owner, repo=repo)
         existing = await self.branch_head_sha(repo_url, new_branch, token)
         if existing:
             logger.info("Branch %s already exists on %s/%s", new_branch, owner, repo)
@@ -176,7 +187,7 @@ class GitHubProvider:
 
         async with self._client(timeout=30) as client:
             ref_resp = await client.get(
-                _branch_ref_url(self._api, owner, repo, base_branch),
+                gh_repo.branch_ref_url(base_branch),
                 headers=self._headers(token),
             )
             ref_resp.raise_for_status()
@@ -219,6 +230,7 @@ class GitHubProvider:
             TimeoutError: When the full operation exceeds the submission budget.
         """
         owner, repo = _parse_owner_repo(repo_url)
+        gh_repo = GitHubRepo(api=self._api, owner=owner, repo=repo)
         # Per-request timeout caps a single hung blob/tree/commit call; operation
         # deadline bounds the full multi-file submission (pacing + retries).
         per_request_timeout = _PUSH_PER_REQUEST_TIMEOUT_S
@@ -234,7 +246,7 @@ class GitHubProvider:
                         commit_sha_head = parent_commit_sha
                     else:
                         ref_resp = await client.get(
-                            _branch_ref_url(self._api, owner, repo, branch),
+                            gh_repo.branch_ref_url(branch),
                             headers=headers,
                         )
                         ref_resp.raise_for_status()
@@ -250,7 +262,7 @@ class GitHubProvider:
                     tree_items = []
                     last_request_at: float | None = None
                     for path, content in files.items():
-                        if _is_text(content):
+                        if is_text_blob(content):
                             blob_json = {"content": content.decode("utf-8"), "encoding": "utf-8"}
                         else:
                             blob_json = {
@@ -302,7 +314,7 @@ class GitHubProvider:
                     await _paced_request_json(
                         client,
                         method="PATCH",
-                        url=_branch_refs_update_url(self._api, owner, repo, branch),
+                        url=gh_repo.branch_refs_update_url(branch),
                         headers=headers,
                         json={"sha": commit_sha},
                         last_request_at=last_request_at,
@@ -586,19 +598,3 @@ async def _paced_post_json(
         last_request_at=last_request_at,
         operation_deadline=operation_deadline,
     )
-
-
-def _is_text(data: bytes) -> bool:
-    """Heuristic: treat content as text if it decodes as UTF-8 without errors.
-
-    Args:
-        data: Raw bytes to check.
-
-    Returns:
-        True if the data is valid UTF-8 text.
-    """
-    try:
-        data.decode("utf-8")
-    except UnicodeDecodeError:
-        return False
-    return True

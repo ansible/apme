@@ -68,6 +68,9 @@ from apme_gateway.scan.driver import coerce_option_bool
 
 logger = logging.getLogger(__name__)
 
+# PE-26: same 50 MiB send/receive limits as scan/driver.py (_GRPC_MAX_MSG).
+_GRPC_MAX_MSG = 50 * 1024 * 1024  # 50 MiB — matches Engine
+
 _STATUS_NAMES: dict[int, str] = {
     0: "SESSION_STATUS_UNSPECIFIED",
     1: "AWAITING_APPROVAL",
@@ -564,6 +567,21 @@ async def handle_session(
             enable_ai: bool = coerce_option_bool(options.get("enable_ai", False))
             ai_model: str = options.get("ai_model", "")
             interactive: bool = coerce_option_bool(options.get("interactive", False))
+            # PE-40: forward validator-skip flags into ScanOptions. These are
+            # the actual engine.proto ScanOptions fields
+            # (skip_collection_health, skip_dep_audit — ADR-051); there are no
+            # skip_gitleaks/skip_validators fields. Defaults preserved when absent.
+            skip_collection_health: bool = coerce_option_bool(options.get("skip_collection_health", False))
+            skip_dep_audit: bool = coerce_option_bool(options.get("skip_dep_audit", False))
+            for _opt_key in options:
+                if _opt_key.startswith("skip_") and _opt_key not in (
+                    "skip_collection_health",
+                    "skip_dep_audit",
+                ):
+                    logger.warning(
+                        "Unknown validator-skip option %r ignored (supported: skip_collection_health, skip_dep_audit)",
+                        _opt_key,
+                    )
 
             scan_id = str(uuid.uuid4())
             scan_rule_configs = await _load_scan_rule_configs()
@@ -571,7 +589,13 @@ async def handle_session(
         command_queue: asyncio.Queue[SessionCommand | None] = asyncio.Queue()
         done = asyncio.Event()
 
-        channel = grpc.aio.insecure_channel(engine_address)
+        channel = grpc.aio.insecure_channel(
+            engine_address,
+            options=[
+                ("grpc.max_send_message_length", _GRPC_MAX_MSG),
+                ("grpc.max_receive_message_length", _GRPC_MAX_MSG),
+            ],
+        )
         try:
             stub = engine_pb2_grpc.EngineStub(channel)  # type: ignore[no-untyped-call]
 
@@ -592,6 +616,8 @@ async def handle_session(
                         ansible_core_version=ansible_version or None,
                         collection_specs=collections or None,
                         galaxy_servers=galaxy_servers or None,
+                        skip_collection_health=skip_collection_health,
+                        skip_dep_audit=skip_dep_audit,
                     )
                     first_chunk = next(chunk_iter, None)
                     if first_chunk is None:

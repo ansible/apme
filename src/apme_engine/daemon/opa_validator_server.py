@@ -77,7 +77,7 @@ class OpaValidatorServicer(validate_pb2_grpc.ValidatorServicer):
                         hierarchy_payload = json.loads(request.hierarchy_payload)
                     except (json.JSONDecodeError, UnicodeDecodeError):
                         logger.warning("OPA: failed to decode hierarchy_payload (req=%s)", req_id)
-                        return ValidateResponse(violations=[], request_id=req_id, logs=sink.entries)
+                        return infra_error_response(req_id, sink.entries)
 
                 ctx = contextvars.copy_context()
                 violations = await asyncio.get_event_loop().run_in_executor(

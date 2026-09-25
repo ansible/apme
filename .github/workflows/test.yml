@@ -80,11 +80,18 @@ jobs:
       - run: uvx --with tox-uv tox -e integration
         env:
           OPA_USE_PODMAN: "0"
-      - name: Retry integration on timeout
-        if: failure()
-        run: uvx --with tox-uv tox -e integration
+      - name: Integration (OPA Podman path)
+        run: |
+          if ! command -v podman >/dev/null 2>&1; then
+            echo "podman not available on runner; skipping Podman-path OPA leg"
+            echo "::warning title=OPA-Podman-leg::skipped: no podman on runner, production Podman transport uncovered on this run"
+            echo "## OPA Podman leg skipped — no podman on runner" >> "$GITHUB_STEP_SUMMARY"
+            echo "Production defaults to OPA_USE_PODMAN=1; this run exercised only the local-binary path." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          uvx --with tox-uv tox -e integration
         env:
-          OPA_USE_PODMAN: "0"
+          OPA_USE_PODMAN: "1"
 
   ui:
     runs-on: ubuntu-24.04
