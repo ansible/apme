@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import errno
 import fcntl
 import json
 import logging
@@ -263,20 +264,95 @@ def _health_check(address: str, timeout: float = 3.0) -> bool:
 
 
 # Wildcard / all-interfaces hosts must never reach sock.bind() (CWE-200 /
-# CodeQL py/bind-socket-all-network-interfaces). Port probes use loopback.
-_WILDCARD_BIND_HOSTS = frozenset({"", "0.0.0.0", "::", "[::]"})
+# CodeQL py/bind-socket-all-network-interfaces). Expand them to concrete
+# local addresses instead so conflicts on any interface are still detected.
+_WILDCARD_IPV4 = frozenset({"", "0.0.0.0"})
+_WILDCARD_IPV6 = frozenset({"::", "[::]"})
 
 
-def _probe_bind_host(host: str) -> str:
-    """Map wildcard bind addresses to loopback for availability probes.
+def _local_addresses(family: int) -> frozenset[str]:
+    """Best-effort set of assigned local addresses for *family*.
+
+    Always includes the loopback address. Never returns wildcard hosts.
+
+    Args:
+        family: ``socket.AF_INET`` or ``socket.AF_INET6``.
+
+    Returns:
+        Concrete local IP strings suitable for ``sock.bind()``.
+    """
+    loopback = "127.0.0.1" if family == socket.AF_INET else "::1"
+    found: set[str] = {loopback}
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, family, socket.SOCK_STREAM):
+            raw_ip = info[4][0]
+            if not isinstance(raw_ip, str) or not raw_ip or "%" in raw_ip:
+                continue
+            if family == socket.AF_INET6 and raw_ip.lower().startswith("fe80:"):
+                continue
+            found.add(raw_ip)
+    except OSError:
+        pass
+    try:
+        # TEST-NET / documentation prefix — connect does not send packets.
+        remote = ("192.0.2.1", 1) if family == socket.AF_INET else ("2001:db8::1", 1)
+        with socket.socket(family, socket.SOCK_DGRAM) as sock:
+            sock.connect(remote)
+            raw_ip = sock.getsockname()[0]
+            if isinstance(raw_ip, str) and raw_ip and "%" not in raw_ip:
+                found.add(raw_ip)
+    except OSError:
+        pass
+    return frozenset(found)
+
+
+def _probe_targets(host: str) -> list[tuple[int, str]]:
+    """Resolve *host* into concrete ``(family, address)`` bind probe targets.
+
+    Wildcard hosts expand to every known local address of the matching
+    family so a listener on a non-loopback interface still fails the check,
+    without ever binding ``''`` / ``0.0.0.0`` / ``::``.
 
     Args:
         host: Host from a gRPC listen address or caller-supplied bind target.
 
     Returns:
-        ``127.0.0.1`` for all-interfaces / empty hosts; otherwise *host*.
+        One or more ``(address_family, ip)`` pairs to probe.
     """
-    return "127.0.0.1" if host in _WILDCARD_BIND_HOSTS else host
+    if host in _WILDCARD_IPV4:
+        return [(socket.AF_INET, addr) for addr in sorted(_local_addresses(socket.AF_INET))]
+    if host in _WILDCARD_IPV6:
+        return [(socket.AF_INET6, addr) for addr in sorted(_local_addresses(socket.AF_INET6))]
+    if host.startswith("[") and host.endswith("]"):
+        return [(socket.AF_INET6, host[1:-1])]
+    if ":" in host:
+        return [(socket.AF_INET6, host)]
+    return [(socket.AF_INET, host)]
+
+
+def _bind_probe(family: int, addr: str, port: int) -> bool | None:
+    """Probe whether *port* is free on *addr*.
+
+    Args:
+        family: Address family for the temporary socket.
+        addr: Concrete IP to bind (never a wildcard).
+        port: TCP port number.
+
+    Returns:
+        ``True`` if the bind succeeded (port free), ``False`` if the port is
+        in use, or ``None`` if *addr* is not assignable on this host.
+    """
+    with socket.socket(family, socket.SOCK_STREAM) as sock:
+        try:
+            if family == socket.AF_INET6:
+                sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
+            sock.bind((addr, port))
+        except OSError as exc:
+            # Address not present / family disabled — skip, do not treat as busy.
+            if exc.errno in {errno.EADDRNOTAVAIL, errno.EAFNOSUPPORT}:
+                return None
+            return False
+        return True
 
 
 def _check_port_available(host: str, port: int) -> bool:
@@ -284,24 +360,26 @@ def _check_port_available(host: str, port: int) -> bool:
 
     Uses ``bind()`` instead of ``connect()`` so the check works for
     non-loopback listen addresses and avoids socket leaks. Wildcard hosts
-    (``0.0.0.0``, ``::``, empty string) are probed via ``127.0.0.1`` so
-    the temporary socket never binds to all interfaces.
+    (``0.0.0.0``, ``::``, empty string) are expanded to concrete local
+    interface addresses so the temporary socket never binds to all
+    interfaces, while still detecting conflicts on any local interface.
 
     Args:
         host: Host to probe.
         port: TCP port number.
 
     Returns:
-        True when the port is available (bind succeeds).
+        True when the port is available (bind succeeds on every probeable
+        local address for *host*).
     """
-    probe_host = _probe_bind_host(host)
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        try:
-            sock.bind((probe_host, port))
-        except OSError:
+    for family, addr in _probe_targets(host):
+        result = _bind_probe(family, addr, port)
+        if result is False:
             return False
-        else:
-            return True
+    # Unprobeable addresses (``None``) are skipped. If every target was
+    # unprobeable (e.g. IPv6 disabled for ``::``), defer to the daemon's
+    # real bind rather than inventing a false conflict.
+    return True
 
 
 def _address_port_bound(address: str) -> bool:

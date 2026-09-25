@@ -40,11 +40,57 @@ def test_check_port_available_on_free_port() -> None:
 
 
 def test_check_port_available_normalizes_wildcard_hosts() -> None:
-    """Wildcard hosts are probed via loopback and must not bind all interfaces."""
+    """Wildcard hosts expand to local addresses and must not bind all interfaces."""
     port = _ephemeral_port()
     assert _check_port_available("0.0.0.0", port) is True
     assert _check_port_available("", port) is True
     assert _check_port_available("::", port) is True
+
+
+def _first_non_loopback_ipv4() -> str | None:
+    """Return a non-loopback IPv4 address assigned to this host, if any.
+
+    Returns:
+        An IPv4 string, or ``None`` when only loopback is available.
+    """
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET, socket.SOCK_STREAM):
+            raw_ip = info[4][0]
+            if isinstance(raw_ip, str) and raw_ip and not raw_ip.startswith("127."):
+                return raw_ip
+    except OSError:
+        pass
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.connect(("192.0.2.1", 1))
+            raw_ip = sock.getsockname()[0]
+            if isinstance(raw_ip, str) and raw_ip and not raw_ip.startswith("127."):
+                return raw_ip
+    except OSError:
+        pass
+    return None
+
+
+def test_wildcard_probe_detects_non_loopback_occupant() -> None:
+    """IPv4 wildcards report busy when a non-loopback interface owns the port."""
+    addr = _first_non_loopback_ipv4()
+    if addr is None:
+        pytest.skip("no non-loopback IPv4 address available")
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        sock.bind((addr, 0))
+    except OSError:
+        pytest.skip(f"cannot bind to non-loopback address {addr}")
+    sock.listen(1)
+    port = sock.getsockname()[1]
+    try:
+        assert _check_port_available("0.0.0.0", port) is False
+        assert _check_port_available("", port) is False
+        # Concrete loopback probe still sees the port as free on lo.
+        assert _check_port_available("127.0.0.1", port) is True
+    finally:
+        sock.close()
 
 
 def test_check_port_available_on_bound_port() -> None:
