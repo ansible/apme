@@ -39,6 +39,14 @@ def test_check_port_available_on_free_port() -> None:
     assert _check_port_available("127.0.0.1", port) is True
 
 
+def test_check_port_available_normalizes_wildcard_hosts() -> None:
+    """Wildcard hosts are probed via loopback and must not bind all interfaces."""
+    port = _ephemeral_port()
+    assert _check_port_available("0.0.0.0", port) is True
+    assert _check_port_available("", port) is True
+    assert _check_port_available("::", port) is True
+
+
 def test_check_port_available_on_bound_port() -> None:
     """A port that is already bound should report as unavailable."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

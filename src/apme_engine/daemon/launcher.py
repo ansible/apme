@@ -262,11 +262,30 @@ def _health_check(address: str, timeout: float = 3.0) -> bool:
             channel.close()
 
 
+# Wildcard / all-interfaces hosts must never reach sock.bind() (CWE-200 /
+# CodeQL py/bind-socket-all-network-interfaces). Port probes use loopback.
+_WILDCARD_BIND_HOSTS = frozenset({"", "0.0.0.0", "::", "[::]"})
+
+
+def _probe_bind_host(host: str) -> str:
+    """Map wildcard bind addresses to loopback for availability probes.
+
+    Args:
+        host: Host from a gRPC listen address or caller-supplied bind target.
+
+    Returns:
+        ``127.0.0.1`` for all-interfaces / empty hosts; otherwise *host*.
+    """
+    return "127.0.0.1" if host in _WILDCARD_BIND_HOSTS else host
+
+
 def _check_port_available(host: str, port: int) -> bool:
     """Return True if *port* on *host* is free (bind succeeds).
 
     Uses ``bind()`` instead of ``connect()`` so the check works for
-    non-loopback addresses like ``0.0.0.0`` and avoids socket leaks.
+    non-loopback listen addresses and avoids socket leaks. Wildcard hosts
+    (``0.0.0.0``, ``::``, empty string) are probed via ``127.0.0.1`` so
+    the temporary socket never binds to all interfaces.
 
     Args:
         host: Host to probe.
@@ -275,9 +294,10 @@ def _check_port_available(host: str, port: int) -> bool:
     Returns:
         True when the port is available (bind succeeds).
     """
+    probe_host = _probe_bind_host(host)
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         try:
-            sock.bind((host, port))
+            sock.bind((probe_host, port))
         except OSError:
             return False
         else:
@@ -296,9 +316,7 @@ def _address_port_bound(address: str) -> bool:
     host, _, port_s = address.rpartition(":")
     if not host or not port_s.isdigit():
         return True
-    # Bind checks against 127.0.0.1 / 0.0.0.0 — normalize wildcard hosts.
-    probe_host = "127.0.0.1" if host in {"0.0.0.0", "::", "[::]"} else host
-    return not _check_port_available(probe_host, int(port_s))
+    return not _check_port_available(host, int(port_s))
 
 
 def _assert_ports_free(host: str, ports: dict[str, int]) -> None:
