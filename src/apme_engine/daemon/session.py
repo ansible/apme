@@ -14,6 +14,7 @@ import os
 import shutil
 import time
 import uuid
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -27,15 +28,110 @@ from apme.v1.engine_pb2 import (
     Proposal,
     ScanOptions,
 )
-from apme_engine.daemon.deadline import _parse_int_env, operation_deadline_mono
+from apme_engine.config_env import get_env_float as _shared_get_env_float
+from apme_engine.config_env import get_env_int
+from apme_engine.daemon.deadline import operation_deadline_mono
 from apme_engine.engine.models import ViolationDict
 
 logger = logging.getLogger(__name__)
 
 _DEFAULT_TTL = int(os.environ.get("APME_SESSION_TTL", "1800"))  # 30 min
-_MAX_LIFETIME = _parse_int_env("APME_SESSION_MAX_LIFETIME", 7200)  # 2 hr
+_MAX_LIFETIME = get_env_int("APME_SESSION_MAX_LIFETIME", 7200)  # 2 hr
 _MAX_SESSIONS = int(os.environ.get("APME_SESSION_MAX", "10"))
 _REAP_INTERVAL = 60  # seconds
+
+
+# PE-20 admission hardening. FixSession is unauthenticated, so a single
+# client can starve scans by bursting session creation (each session can
+# trigger pip/galaxy builds). The concurrent-venv-build semaphore below caps
+# the expensive resource (pip/galaxy builds) and is active by default. The
+# minimum create interval is opt-in (default 0/disabled): session creation
+# itself is cheap, and legitimate bursts (gateway fan-out, tests) must not
+# fail spuriously. Neither mechanism is authentication. Real caller auth is
+# tracked in GitHub #664.
+def _parse_float_env(name: str, default: float) -> float:
+    """Parse *name* as a finite float, falling back to *default* with a warning.
+
+    Thin wrapper over :func:`apme_engine.config_env.get_env_float` kept for
+    backward compatibility (tests import this name).
+
+    Args:
+        name: Environment variable name.
+        default: Value used when unset, unparsable, or non-finite.
+
+    Returns:
+        Finite float value (import-time env typos must degrade to defaults,
+        never crash the daemon or invert a guard).
+    """
+    return _shared_get_env_float(name, default)
+
+
+_MIN_CREATE_INTERVAL_S = _parse_float_env("APME_SESSION_MIN_CREATE_INTERVAL_S", 0.0)
+_MAX_CONCURRENT_VENV_BUILDS = get_env_int("APME_SESSION_MAX_CONCURRENT_VENV_BUILDS", 3)
+if _MAX_CONCURRENT_VENV_BUILDS < 1:
+    logger.warning(
+        "Invalid APME_SESSION_MAX_CONCURRENT_VENV_BUILDS=%d — using default 3",
+        _MAX_CONCURRENT_VENV_BUILDS,
+    )
+    _MAX_CONCURRENT_VENV_BUILDS = 3
+# Bound the semaphore wait so hung pip/galaxy builds cannot starve warm-hit
+# scans indefinitely (3 hung builds would otherwise stall all new scans
+# holding streams/sessions). Scoping the semaphore to the build-only section
+# requires a manager refactor (warm-hit check lives inside acquire under a
+# file lock); until then a bounded wait fails fast with a clear error.
+_VENV_BUILD_WAIT_S = _parse_float_env("APME_SESSION_VENV_BUILD_WAIT_S", 600.0)
+if _VENV_BUILD_WAIT_S <= 0.0:
+    logger.warning(
+        "Invalid APME_SESSION_VENV_BUILD_WAIT_S=%s — using default 600.0",
+        _VENV_BUILD_WAIT_S,
+    )
+    _VENV_BUILD_WAIT_S = 600.0
+
+_venv_build_semaphore: asyncio.Semaphore | None = None
+
+
+def get_venv_build_semaphore() -> asyncio.Semaphore:
+    """Return the process-wide cap on concurrent venv builds (PE-20).
+
+    The venv build itself lives outside this module (``VenvSessionManager``);
+    the engine's venv-acquire path should guard its build/install work with
+    this semaphore (or :func:`limit_venv_builds`).
+
+    Returns:
+        Shared ``asyncio.Semaphore`` sized by
+        ``APME_SESSION_MAX_CONCURRENT_VENV_BUILDS`` (default 3).
+    """
+    global _venv_build_semaphore
+    if _venv_build_semaphore is None:
+        _venv_build_semaphore = asyncio.Semaphore(_MAX_CONCURRENT_VENV_BUILDS)
+    return _venv_build_semaphore
+
+
+@contextlib.asynccontextmanager
+async def limit_venv_builds() -> AsyncIterator[None]:
+    """Cap concurrent venv (pip/galaxy) builds across sessions (PE-20).
+
+    The wait is bounded by ``APME_SESSION_VENV_BUILD_WAIT_S`` (default 600s)
+    so hung builds fail fast instead of starving warm-hit scans forever.
+
+    Yields:
+        None: Control while holding one build slot.
+
+    Raises:
+        TimeoutError: If no build slot frees within the wait bound.
+    """
+    sem = get_venv_build_semaphore()
+    try:
+        await asyncio.wait_for(sem.acquire(), timeout=_VENV_BUILD_WAIT_S)
+    except TimeoutError as exc:
+        raise TimeoutError(
+            f"No venv build slot freed within {_VENV_BUILD_WAIT_S:.0f}s "
+            f"({_MAX_CONCURRENT_VENV_BUILDS} slots); try again shortly"
+        ) from exc
+    try:
+        yield
+    finally:
+        sem.release()
 
 
 @dataclass
@@ -107,6 +203,10 @@ class SessionState:
             AI assessment mutates the graph. Restored when the user declines
             AI proposals so unapproved AI / post-AI Tier 1 never leak into
             commit/PR payloads.
+        upload_sealed: True once the terminal upload chunk has been
+            processed; duplicate ``chunk.last`` retries replay state instead
+            of re-running remediation. Dies with the session (close,
+            disconnect, reaper) so no cross-session seal set can leak.
         operation_budget_s: Adaptive wall-clock budget for current compute
             phase (ADR-068); 0 when unset.
         operation_started_at: ``time.monotonic()`` when budget tracking began.
@@ -182,6 +282,12 @@ class SessionState:
     graph_engine: object | None = None
     # working_files before Gate 2 AI assessment (restore on decline-all).
     pre_gate2_files: dict[str, bytes] = field(default_factory=dict)
+
+    # Terminal upload chunk already processed (PE-34). Set before the first
+    # ``chunk.last`` runs so transport retries replay current state instead
+    # of double-executing remediation. Lives on the session so it dies with
+    # it (close/disconnect/reaper) — no servicer-side set to leak.
+    upload_sealed: bool = False
 
     # ADR-068: adaptive operation deadline (decoupled from idle TTL).
     operation_budget_s: int = 0
@@ -291,6 +397,7 @@ class SessionStore:
         """Initialize empty session store."""
         self._sessions: dict[str, SessionState] = {}
         self._reaper_task: asyncio.Task[None] | None = None
+        self._last_create_mono: float = 0.0
 
     @property
     def count(self) -> int:
@@ -300,22 +407,38 @@ class SessionStore:
     def create(self) -> SessionState:
         """Create a new session, raising ResourceExhaustedError if at limit.
 
+        Enforces the session cap first, then the optional minimum creation
+        interval (``APME_SESSION_MIN_CREATE_INTERVAL_S``, default 0/disabled)
+        so operators can opt into burst protection for unauthenticated
+        clients (PE-20; real caller auth is GitHub #664).
+
         Returns:
             New SessionState.
 
         Raises:
-            ResourceExhaustedError: If at max concurrent sessions.
+            ResourceExhaustedError: If at max concurrent sessions, or if
+                called sooner than the minimum interval after the previous
+                successful creation.
         """
+        # NOTE: the cap check + interval check + insert below contain no
+        # awaits, so they are atomic on the single event-loop thread that
+        # runs FixSession handlers — concurrent streams interleave only at
+        # await points, never inside create().
         if len(self._sessions) >= _MAX_SESSIONS:
             msg = (
                 f"Maximum concurrent sessions ({_MAX_SESSIONS}) reached. "
                 "Close an existing session or wait for expiration."
             )
             raise ResourceExhaustedError(msg)
+        now_mono = time.monotonic()
+        if self._last_create_mono and (now_mono - self._last_create_mono) < _MIN_CREATE_INTERVAL_S:
+            msg = f"Session creation rate limited: at most one session per {_MIN_CREATE_INTERVAL_S}s. Retry shortly."
+            raise ResourceExhaustedError(msg)
         session_id = uuid.uuid4().hex[:12]
         state = SessionState(session_id=session_id)
         state.init_lifetime_deadline()
         self._sessions[session_id] = state
+        self._last_create_mono = now_mono
         logger.info("Session %s created (active: %d)", session_id, len(self._sessions))
         return state
 

@@ -32,8 +32,9 @@ from apme_engine.graph.scanner import (
     rescan_dirty,
     scan,
 )
-from apme_engine.remediation.partition import normalize_rule_id, partition_violations
+from apme_engine.remediation.partition import partition_violations
 from apme_engine.remediation.registry import TransformRegistry
+from apme_engine.rule_ids import normalize_rule_id
 
 if TYPE_CHECKING:
     from apme_engine.remediation.ai_provider import AIProvider
@@ -694,8 +695,6 @@ class GraphRemediationEngine:
         results = await asyncio.gather(
             *[_propose_one_tracked(nid, nvs) for nid, nvs in by_node.items()],
         )
-
-        from apme_engine.remediation.partition import normalize_rule_id  # noqa: PLC0415
 
         # Apply accepted fixes serially (graph mutations are not thread-safe)
         proposals: list[AINodeProposal] = []

@@ -23,11 +23,28 @@ logger = logging.getLogger(__name__)
 _PROXY_URL_ENV = "APME_GALAXY_PROXY_URL"
 _PROXY_URL_DEFAULT = "http://127.0.0.1:8765"
 
+_PROXY_ADMIN_TOKEN_ENV = "APME_PROXY_ADMIN_TOKEN"
+# Must match _ADMIN_TOKEN_HEADER in galaxy_proxy/proxy/server.py — the two
+# services deploy independently, so a one-side rename 403s config pushes.
+_PROXY_ADMIN_TOKEN_HEADER = "x-apme-proxy-token"
+
 _pending_push: asyncio.Task[None] | None = None
 
 
 def _proxy_base_url() -> str:
     return os.environ.get(_PROXY_URL_ENV, "").strip() or _PROXY_URL_DEFAULT
+
+
+def _admin_token_headers() -> dict[str, str]:
+    """Return the admin token header when ``APME_PROXY_ADMIN_TOKEN`` is set.
+
+    Returns:
+        Header dict with the proxy admin token, or empty when unset.
+    """
+    token = os.environ.get(_PROXY_ADMIN_TOKEN_ENV, "").strip()
+    if token:
+        return {_PROXY_ADMIN_TOKEN_HEADER: token}
+    return {}
 
 
 async def push_galaxy_config() -> bool:
@@ -68,7 +85,7 @@ async def push_galaxy_config() -> bool:
     url = _proxy_base_url().rstrip("/") + "/admin/galaxy-config"
     try:
         async with httpx.AsyncClient(timeout=5) as client:
-            resp = await client.post(url, json=payload)
+            resp = await client.post(url, json=payload, headers=_admin_token_headers())
             resp.raise_for_status()
         logger.info(
             "Pushed %d Galaxy server(s) to proxy at %s",

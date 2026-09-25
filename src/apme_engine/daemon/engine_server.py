@@ -14,6 +14,7 @@ import difflib
 import json
 import logging
 import os
+import posixpath
 import tempfile
 import time
 import uuid
@@ -71,6 +72,7 @@ from apme.v1.reporting_pb2 import (
     ProposalOutcome,
 )
 from apme.v1.validate_pb2 import ValidateRequest
+from apme_engine.config_env import get_env_int
 from apme_engine.daemon.deadline import (
     FALLBACK_NON_AI_OPERATION_BUDGET,
     BudgetConfigError,
@@ -83,13 +85,19 @@ from apme_engine.daemon.deadline import (
 )
 from apme_engine.daemon.event_emitter import emit_fix_completed, emit_register_rules, start_sinks
 from apme_engine.daemon.fs_utils import write_chunked_fs as _write_chunked_fs
-from apme_engine.daemon.session import ResourceExhaustedError, SessionState, SessionStore
+from apme_engine.daemon.session import (
+    ResourceExhaustedError,
+    SessionState,
+    SessionStore,
+    limit_venv_builds,
+)
 from apme_engine.daemon.violation_convert import violation_dict_to_proto, violation_proto_to_dict
 from apme_engine.engine.models import RemediationClass, ViolationDict
 from apme_engine.graph.content_graph import ContentGraph
 from apme_engine.graph.scanner import filter_noqa_violations, graph_rule_opt_in_from_rule_configs
 from apme_engine.log_bridge import attach_collector
 from apme_engine.remediation.graph_engine import FilePatch as SplicedFilePatch
+from apme_engine.rule_ids import normalize_rule_id
 from apme_engine.runner import run_scan
 from apme_engine.venv_manager.session import (
     VenvSession,
@@ -105,6 +113,26 @@ _ExecutorResult = TypeVar("_ExecutorResult")
 
 _MAX_CONCURRENT_RPCS = int(os.environ.get("APME_ENGINE_MAX_RPCS", "16"))
 _GRPC_MAX_MSG = 50 * 1024 * 1024  # 50 MiB — hierarchy+scandata can exceed the 4 MiB default
+
+# Per-session aggregate upload caps enforced in _session_upload_append (PE-35).
+# Parsed safely: env typos fall back to defaults with a warning instead of
+# crashing the daemon at import or inverting a guard.
+_SESSION_MAX_UPLOAD_BYTES = get_env_int("APME_SESSION_MAX_UPLOAD_BYTES", 256 * 1024 * 1024)
+_SESSION_MAX_UPLOAD_FILES = get_env_int("APME_SESSION_MAX_UPLOAD_FILES", 2000)
+if _SESSION_MAX_UPLOAD_BYTES < 0 or _SESSION_MAX_UPLOAD_FILES < 0:
+    logger.warning("Negative upload caps are meaningless — using defaults (bytes=256MiB, files=2000)")
+    _SESSION_MAX_UPLOAD_BYTES = 256 * 1024 * 1024
+    _SESSION_MAX_UPLOAD_FILES = 2000
+
+# Health fan-out bounds (PE-23): per-probe timeout plus a single overall
+# deadline so one slow validator cannot stall the aggregate Health response.
+# The overall deadline is deliberately larger than the per-probe timeout so it
+# only fires when several probes hang past their own timeouts. Recovery after
+# the deadline gets only a short grace for cancellation cleanup (not a second
+# full deadline) so worst-case latency stays within k8s probe budgets.
+_HEALTH_PER_PROBE_TIMEOUT_S = 5.0
+_HEALTH_OVERALL_TIMEOUT_S = 12.0
+_HEALTH_RECOVERY_GRACE_S = 2.0
 
 
 @dataclass
@@ -177,6 +205,30 @@ def _write_session_galaxy_cfg(
     except Exception:
         logger.exception("Failed to write session Galaxy config in %s", cfg_dir)
         return None
+
+
+def _normalize_upload_path(path: str) -> str:
+    """Normalize an upload path to a session-relative posix key.
+
+    Upload keys must match materialized file paths: posix-style separators,
+    no leading slash, ``.``/``..`` collapsed. Paths escaping the session
+    root are rejected so ``original_files`` keys always match the files
+    written by ``write_chunked_fs``.
+
+    Args:
+        path: Raw ``File.path`` from an upload chunk.
+
+    Returns:
+        Normalized relative posix path.
+
+    Raises:
+        ValueError: If the path is empty or escapes the session root.
+    """
+    posix = path.replace("\\", "/").lstrip("/")
+    normalized = posixpath.normpath(posix)
+    if not normalized or normalized == "." or normalized == ".." or normalized.startswith("../"):
+        raise ValueError(f"Upload path escapes session root or is empty: {path!r}")
+    return normalized
 
 
 def _sort_violations(violations: list[ViolationDict]) -> list[ViolationDict]:
@@ -330,8 +382,6 @@ def _filter_violations_by_escalate_targets(
     Returns:
         Filtered list (or all / none per ``targets``).
     """
-    from apme_engine.remediation.partition import normalize_rule_id  # noqa: PLC0415
-
     if targets is None:
         return violations
     if not targets:
@@ -366,10 +416,7 @@ def _decline_skipped_ai_escalation(session: SessionState) -> int:
         Number of ledger rows declined.
     """
     from apme_engine.graph.content_graph import ContentGraph  # noqa: PLC0415
-    from apme_engine.remediation.partition import (  # noqa: PLC0415
-        add_classification_to_violations,
-        normalize_rule_id,
-    )
+    from apme_engine.remediation.partition import add_classification_to_violations  # noqa: PLC0415
 
     targets = session.ai_escalate_targets
     if targets is None:
@@ -708,11 +755,18 @@ def _apply_rule_configs(
 
     config_map: dict[str, object] = {}
     for rc in rule_configs:
-        config_map[rc.rule_id] = rc  # type: ignore[attr-defined]
+        norm = normalize_rule_id(rc.rule_id)  # type: ignore[attr-defined]
+        if norm in config_map:
+            logger.warning(
+                "Duplicate normalized rule ID %r in rule_configs — last-wins; "
+                "divergent enabled/severity flags resolve order-dependently",
+                norm,
+            )
+        config_map[norm] = rc
 
     filtered: list[ViolationDict] = []
     for v in violations:
-        rule_id = str(v.get("rule_id", ""))
+        rule_id = normalize_rule_id(str(v.get("rule_id", "")))
         rc = config_map.get(rule_id)
         if rc is not None:
             if not rc.enabled:  # type: ignore[attr-defined]
@@ -728,6 +782,120 @@ def _apply_rule_configs(
 
 
 _known_rule_ids: set[str] = set()
+
+
+async def _missing_validator_health(name: str, env_var: str) -> tuple[bool, ServiceHealth | None]:
+    """Report a validator with no configured address.
+
+    Args:
+        name: Validator name (key of ``VALIDATOR_ENV_VARS``).
+        env_var: Environment variable holding its gRPC address.
+
+    Returns:
+        Tuple of (unhealthy, entry or ``None`` when the optional validator
+        is simply skipped).
+    """
+    if name in REQUIRED_VALIDATORS:
+        return (
+            True,
+            ServiceHealth(name=name, status=f"error: {env_var} not configured", address=""),
+        )
+    return (False, None)
+
+
+async def _probe_validator_health(name: str, addr: str) -> tuple[bool, ServiceHealth | None]:
+    """Probe one validator with a per-probe timeout; degrade instead of raising.
+
+    Args:
+        name: Validator name (key of ``VALIDATOR_ENV_VARS``).
+        addr: gRPC address of the validator.
+
+    Returns:
+        Tuple of (unhealthy, ``ServiceHealth`` entry). Timeouts and errors
+        are recorded as degraded entries, never raised.
+    """
+    required = name in REQUIRED_VALIDATORS
+    try:
+        channel = grpc.aio.insecure_channel(addr)
+        try:
+            stub = validate_pb2_grpc.ValidatorStub(channel)  # type: ignore[no-untyped-call]
+            resp = await asyncio.wait_for(
+                stub.Health(HealthRequest(), timeout=_HEALTH_PER_PROBE_TIMEOUT_S),
+                timeout=_HEALTH_PER_PROBE_TIMEOUT_S,
+            )
+            status = resp.status
+            return (
+                required and status != "ok",
+                ServiceHealth(name=name, status=status, address=addr),
+            )
+        finally:
+            await channel.close(grace=None)
+    except TimeoutError:
+        return (
+            required,
+            ServiceHealth(name=name, status="error: health probe timed out", address=addr),
+        )
+    except Exception as e:  # noqa: BLE001 - health probe must degrade
+        return (required, ServiceHealth(name=name, status=f"error: {e}", address=addr))
+
+
+async def _probe_galaxy_proxy_health(proxy_url: str) -> tuple[bool, ServiceHealth | None]:
+    """Probe Galaxy Proxy ``/health`` with a per-probe timeout.
+
+    Args:
+        proxy_url: Galaxy Proxy base URL (may be empty when unconfigured).
+
+    Returns:
+        Tuple of (unhealthy, ``ServiceHealth`` entry). Timeouts and errors
+        are recorded as degraded entries, never raised.
+    """
+    if not proxy_url:
+        return (
+            True,
+            ServiceHealth(
+                name="galaxy_proxy",
+                status="error: APME_GALAXY_PROXY_URL not configured",
+                address="",
+            ),
+        )
+    health_url = proxy_url.rstrip("/") + "/health"
+    try:
+        async with httpx.AsyncClient(timeout=_HEALTH_PER_PROBE_TIMEOUT_S) as client:
+            http_resp = await asyncio.wait_for(
+                client.get(health_url),
+                timeout=_HEALTH_PER_PROBE_TIMEOUT_S,
+            )
+        proxy_ok = False
+        detail = f"HTTP {http_resp.status_code}"
+        if http_resp.status_code == 200:
+            try:
+                payload = http_resp.json()
+            except ValueError:
+                payload = None
+            proxy_ok = isinstance(payload, dict) and payload.get("status") == "ok"
+            if not proxy_ok:
+                reported = payload.get("status") if isinstance(payload, dict) else None
+                detail = f"status={reported!r}" if reported is not None else "invalid /health body"
+        if proxy_ok:
+            return (False, ServiceHealth(name="galaxy_proxy", status="ok", address=proxy_url))
+        return (
+            True,
+            ServiceHealth(name="galaxy_proxy", status=f"error: {detail}", address=proxy_url),
+        )
+    except TimeoutError:
+        return (
+            True,
+            ServiceHealth(name="galaxy_proxy", status="error: health probe timed out", address=proxy_url),
+        )
+    except httpx.TimeoutException:
+        # httpx raises its own timeout hierarchy, not builtin TimeoutError:
+        # report it under the same uniform message as validator probes.
+        return (
+            True,
+            ServiceHealth(name="galaxy_proxy", status="error: health probe timed out", address=proxy_url),
+        )
+    except Exception as e:  # noqa: BLE001 - health probe must degrade
+        return (True, ServiceHealth(name="galaxy_proxy", status=f"error: {e}", address=proxy_url))
 
 
 class EngineServicer(engine_pb2_grpc.EngineServicer):
@@ -1028,8 +1196,11 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         )
         logger.info("Collection specs merged (req=%s): %s", scan_id, collection_specs)
 
-        # 3. Venv acquire (always — creates or incrementally installs)
-        async with self._activate_galaxy_proxy_config(galaxy_cfg_path):
+        # 3. Venv acquire (always — creates or incrementally installs).
+        # PE-20: cap concurrent pip/galaxy builds across sessions so one
+        # unauthenticated client cannot starve scans (warm-hit reuses are
+        # fast, so the semaphore only bites when real builds run).
+        async with self._activate_galaxy_proxy_config(galaxy_cfg_path), limit_venv_builds():
             venv_session = await asyncio.get_event_loop().run_in_executor(
                 None,
                 ctx.run,
@@ -1200,9 +1371,15 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             )
 
         violations = _deduplicate_violations(_sort_violations(violations))
-        if rule_configs:
-            unknown, missing = _validate_rule_configs(rule_configs, complete=rule_configs_complete)
+        if rule_configs or rule_configs_complete:
+            configs = rule_configs if rule_configs is not None else []
+            unknown, missing = _validate_rule_configs(configs, complete=rule_configs_complete)
             if rule_configs_complete:
+                # ADR-041 §5: the Gateway path performs a bidirectional audit
+                # and hard-fails on unknown *or* missing rule IDs so catalog
+                # skew forces upgrade completion instead of scanning silently.
+                # (Relaxing this to degraded-continue needs an ADR-041
+                # amendment plus a client-visible degraded flag — tracked.)
                 errors: list[str] = []
                 if unknown:
                     errors.append(f"unknown rule IDs: {unknown}")
@@ -1219,7 +1396,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                     scan_id,
                     unknown,
                 )
-            violations = _apply_rule_configs(violations, rule_configs)
+            violations = _apply_rule_configs(violations, configs)
         _attach_snippets(violations, files)
 
         total_ms = (time.monotonic() - scan_t0) * 1000
@@ -1296,12 +1473,20 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
     ) -> tuple[list[File], str, str, ScanOptions | None, FixOptions | None]:
         """Drain a ScanChunk stream into accumulated state.
 
+        File paths use the same :func:`_normalize_upload_path` canonicalizer
+        as FixSession uploads, so one payload is accepted-or-rejected
+        identically on every ingress path (a path escaping the session root
+        raises ``ValueError`` here exactly as on upload).
+
         Args:
             request_stream: Async iterator of ScanChunk messages.
 
         Returns:
             Tuple of (files, scan_id, project_root, scan_options, fix_options).
-        """
+
+        Raises:
+            ValueError: If a file path escapes the session root.
+        """  # noqa: DOC502 -- the raise lives in _normalize_upload_path
         all_files: list[File] = []
         scan_id = ""
         project_root = "project"
@@ -1316,7 +1501,8 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                 opts = chunk.options
             if chunk.HasField("fix_options"):
                 fix_opts = chunk.fix_options
-            all_files.extend(chunk.files)  # type: ignore[arg-type]
+            for f in chunk.files:
+                all_files.append(File(path=_normalize_upload_path(f.path), content=f.content))  # type: ignore[attr-defined]
             if chunk.last:
                 break
         return all_files, scan_id or str(uuid.uuid4()), project_root, opts, fix_opts
@@ -1336,10 +1522,16 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         with attach_collector() as sink:
             logger.info("Format: start (%d files)", len(request.files))
             t0 = time.monotonic()
+            # Same path canonicalizer as every other ingress: one payload is
+            # accepted-or-rejected identically on all RPCs.
+            normalized = [
+                File(path=_normalize_upload_path(f.path), content=f.content)  # type: ignore[attr-defined]
+                for f in request.files
+            ]
             diffs = await asyncio.get_event_loop().run_in_executor(
                 None,
-                self._format_files,  # type: ignore[arg-type]
-                list(request.files),
+                self._format_files,
+                normalized,
             )
             dur = (time.monotonic() - t0) * 1000
             logger.info("Format: done (%.0fms, %d files changed)", dur, len(diffs))
@@ -1427,9 +1619,20 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                             ),
                         )
 
+                    if chunk.last and session.upload_sealed:
+                        logger.warning(
+                            "FixSession: duplicate terminal upload chunk ignored (session_id=%s, scan_id=%s)",
+                            session.session_id,
+                            scan_id,
+                        )
+                        async for event in self._session_replay_state(session):
+                            yield event
+                        continue
+
                     self._session_upload_append(session, chunk)
 
                     if chunk.last:
+                        session.upload_sealed = True
                         peer = context.peer()
                         logger.info(
                             "FixSession: processing %d file(s) (session_id=%s, scan_id=%s, peer=%s)",
@@ -1438,8 +1641,16 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                             scan_id,
                             peer,
                         )
-                        async for event in self._session_process(session, scan_id):
-                            yield event
+                        try:
+                            async for event in self._session_process(session, scan_id):
+                                yield event
+                        except Exception:
+                            # Processing failed: unseal so a retried terminal
+                            # chunk re-runs instead of replaying partial state.
+                            # (Cancellation takes the disconnect-cleanup path,
+                            # which removes the session outright.)
+                            session.upload_sealed = False
+                            raise
 
                 elif oneof == "approve":
                     if session is None:
@@ -1524,6 +1735,11 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         except RequiredValidatorDependencyError as e:
             await context.abort(grpc.StatusCode.UNAVAILABLE, str(e))
         except ValueError as ve:
+            # The stream is dead: drop sessions this stream created so a
+            # rejected upload cannot squat a slot until TTL reap (PE-35 caps
+            # stop RAM blowup; this stops session-table exhaustion).
+            if upload_created_session_id:
+                store.remove(upload_created_session_id)
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(ve))
         except Exception as e:
             logger.exception("FixSession failed (session=%s): %s", scan_id, e)
@@ -1548,9 +1764,51 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
 
     @staticmethod
     def _session_upload_append(session: SessionState, chunk: ScanChunk) -> None:
-        for f in chunk.files:
-            session.original_files[f.path] = f.content  # type: ignore[attr-defined]
-            session.working_files[f.path] = f.content  # type: ignore[attr-defined]
+        """Append upload chunk files using normalized session-relative keys.
+
+        Paths are normalized with :func:`_normalize_upload_path` — the same
+        helper applied on the materialization path — so ``original_files``
+        keys always match materialized files. Per-session aggregate caps
+        (``APME_SESSION_MAX_UPLOAD_BYTES`` / ``APME_SESSION_MAX_UPLOAD_FILES``)
+        are enforced before mutating any state.
+
+        Args:
+            session: Active session whose ``original_files``/``working_files``
+                receive the uploaded content.
+            chunk: Upload chunk carrying ``File`` entries.
+
+        Raises:
+            ValueError: If the session already processed its terminal chunk
+                (post-seal uploads are rejected — start a new session), if a
+                path escapes the session root, or if an aggregate upload cap
+                would be exceeded.
+        """
+        if session.upload_sealed:
+            raise ValueError("Session upload already processed: start a new session for additional files")
+        staged = [(_normalize_upload_path(f.path), f.content) for f in chunk.files]  # type: ignore[attr-defined]
+        # One chunk may repeat a path (e.g. `a.yml` + `./a.yml` normalize
+        # alike): last copy wins, accounted once so byte math stays exact.
+        deduped: dict[str, bytes] = {}
+        for path, content in staged:
+            deduped[path] = content
+        staged = list(deduped.items())
+        new_keys = {path for path, _ in staged} - set(session.original_files)
+        file_total = len(session.original_files) + len(new_keys)
+        if file_total > _SESSION_MAX_UPLOAD_FILES:
+            raise ValueError(
+                f"Session upload file limit exceeded: {file_total} files (max {_SESSION_MAX_UPLOAD_FILES})"
+            )
+        current_bytes = sum(len(content) for content in session.original_files.values())
+        replaced_bytes = sum(len(session.original_files[path]) for path, _ in staged if path in session.original_files)
+        incoming_bytes = sum(len(content) for _, content in staged)
+        byte_total = current_bytes - replaced_bytes + incoming_bytes
+        if byte_total > _SESSION_MAX_UPLOAD_BYTES:
+            raise ValueError(
+                f"Session upload size limit exceeded: {byte_total} bytes (max {_SESSION_MAX_UPLOAD_BYTES} bytes)"
+            )
+        for path, content in staged:
+            session.original_files[path] = content
+            session.working_files[path] = content
 
     async def _session_process(
         self,
@@ -1569,7 +1827,9 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         from apme_engine.formatter import format_content
         from apme_engine.remediation.transforms import build_default_registry
 
-        all_files = [File(path=p, content=c) for p, c in session.working_files.items()]
+        # Same normalization as _session_upload_append so materialized files
+        # always match original_files keys.
+        all_files = [File(path=_normalize_upload_path(p), content=c) for p, c in session.working_files.items()]
 
         fix_opts = session.fix_options
         scan_opts = session.scan_options
@@ -2777,6 +3037,11 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         to the whole node, so duplicate rows would let conflicting decisions
         override each other in ``_apply_graph_approvals``.
 
+        On collision Tier-1 bytes (``after_text``/``diff_hunk``) win, and the
+        rationale follows the bytes: the Tier-1 explanation leads and any AI
+        rationale is kept only as clearly labeled context, so authorized bytes
+        are never presented under another tier's rationale.
+
         Args:
             ai_proposals: Gate 2 AI proposals from ``_build_graph_proposals``.
             tier1_proposals: Gate 2 Tier 1 proposals (``g2-t1-*`` ids).
@@ -2801,12 +3066,12 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                     existing.rule_id = ",".join(sorted(merged_rules))
                 existing.after_text = tier1.after_text
                 existing.diff_hunk = tier1.diff_hunk
+                rationale: list[str] = []
                 if tier1.explanation:
-                    existing.explanation = (
-                        f"{existing.explanation}\n{tier1.explanation}".strip()
-                        if existing.explanation
-                        else tier1.explanation
-                    )
+                    rationale.append(f"[tier-1/deterministic] {tier1.explanation}")
+                if existing.explanation:
+                    rationale.append(f"[tier-2/ai] {existing.explanation}")
+                existing.explanation = "\n".join(rationale)
             else:
                 if key not in by_node:
                     order.append(key)
@@ -3629,6 +3894,10 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         Galaxy Proxy (``APME_GALAXY_PROXY_URL``) must respond ``ok`` on
         ``/health`` — it is a core service, not optional.
 
+        Probes fan out via ``asyncio.gather`` under an overall deadline so one
+        slow validator cannot stall the response past caller deadlines; slow
+        or failing probes are recorded as degraded per-service entries.
+
         Args:
             request: Health request (unused).
             context: gRPC servicer context.
@@ -3639,77 +3908,91 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         downstream: list[ServiceHealth] = []
         unhealthy = False
 
+        metas: list[tuple[str, str, bool]] = []
+        coros: list[Awaitable[tuple[bool, ServiceHealth | None]]] = []
+
         # Probe validators
         for name, env_var in VALIDATOR_ENV_VARS.items():
             addr = os.environ.get(env_var)
             if not addr:
-                if name in REQUIRED_VALIDATORS:
-                    unhealthy = True
-                    downstream.append(
-                        ServiceHealth(
-                            name=name,
-                            status=f"error: {env_var} not configured",
-                            address="",
-                        )
-                    )
+                metas.append((name, "", name in REQUIRED_VALIDATORS))
+                coros.append(_missing_validator_health(name, env_var))
                 continue
-            try:
-                channel = grpc.aio.insecure_channel(addr)
-                try:
-                    stub = validate_pb2_grpc.ValidatorStub(channel)  # type: ignore[no-untyped-call]
-                    resp = await stub.Health(HealthRequest(), timeout=5)
-                    status = resp.status
-                    if name in REQUIRED_VALIDATORS and status != "ok":
-                        unhealthy = True
-                    downstream.append(ServiceHealth(name=name, status=status, address=addr))
-                finally:
-                    await channel.close(grace=None)
-            except Exception as e:  # noqa: BLE001 - health probe must degrade
-                if name in REQUIRED_VALIDATORS:
-                    unhealthy = True
-                downstream.append(ServiceHealth(name=name, status=f"error: {e}", address=addr))
+            metas.append((name, addr, name in REQUIRED_VALIDATORS))
+            coros.append(_probe_validator_health(name, addr))
 
         # Galaxy Proxy is required (HTTP /health) — sole collection install path.
         proxy_url = os.environ.get("APME_GALAXY_PROXY_URL", "").strip()
-        if not proxy_url:
-            unhealthy = True
-            downstream.append(
-                ServiceHealth(
-                    name="galaxy_proxy",
-                    status="error: APME_GALAXY_PROXY_URL not configured",
-                    address="",
-                )
+        metas.append(("galaxy_proxy", proxy_url, True))
+        coros.append(_probe_galaxy_proxy_health(proxy_url))
+
+        tasks = [asyncio.ensure_future(coro) for coro in coros]
+        try:
+            outcomes = await asyncio.wait_for(
+                asyncio.gather(*tasks, return_exceptions=True),
+                timeout=_HEALTH_OVERALL_TIMEOUT_S,
             )
-        else:
-            health_url = proxy_url.rstrip("/") + "/health"
+        except TimeoutError:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            # Single overall deadline: harvest immediately with only a short
+            # grace for cancellation cleanup. A probe wedged in
+            # un-cancellable cleanup must not cost a second full deadline
+            # past k8s probes (was 12s + 12s = ~24s worst case).
+            # Anything still unfinished becomes a timeout entry, never a hang.
             try:
-                async with httpx.AsyncClient(timeout=5.0) as client:
-                    http_resp = await client.get(health_url)
-                proxy_ok = False
-                detail = f"HTTP {http_resp.status_code}"
-                if http_resp.status_code == 200:
-                    try:
-                        payload = http_resp.json()
-                    except ValueError:
-                        payload = None
-                    proxy_ok = isinstance(payload, dict) and payload.get("status") == "ok"
-                    if not proxy_ok:
-                        reported = payload.get("status") if isinstance(payload, dict) else None
-                        detail = f"status={reported!r}" if reported is not None else "invalid /health body"
-                if proxy_ok:
-                    downstream.append(ServiceHealth(name="galaxy_proxy", status="ok", address=proxy_url))
-                else:
-                    unhealthy = True
-                    downstream.append(
-                        ServiceHealth(
-                            name="galaxy_proxy",
-                            status=f"error: {detail}",
-                            address=proxy_url,
+                outcomes = await asyncio.wait_for(
+                    asyncio.gather(*tasks, return_exceptions=True),
+                    timeout=_HEALTH_RECOVERY_GRACE_S,
+                )
+            except TimeoutError:
+                # Harvest without raising: faulted tasks contribute their
+                # exception instance, cancelled/unfinished tasks become
+                # timeout entries. NOTE: Task.exception() itself raises
+                # CancelledError on cancelled tasks, so check cancelled()
+                # first — the merge below must never raise out of Health.
+                harvested: list[tuple[bool, ServiceHealth | None] | BaseException] = []
+                for (pname, paddr, prequired), task in zip(metas, tasks, strict=True):
+                    if task.cancelled() or not task.done():
+                        harvested.append(
+                            (
+                                prequired,
+                                ServiceHealth(
+                                    name=pname,
+                                    status="error: health probe timed out",
+                                    address=paddr,
+                                ),
+                            )
                         )
-                    )
-            except Exception as e:  # noqa: BLE001 - health probe must degrade
+                        continue
+                    exc = task.exception()
+                    if exc is not None:
+                        harvested.append(
+                            (
+                                prequired,
+                                ServiceHealth(name=pname, status=f"error: {exc}", address=paddr),
+                            )
+                        )
+                    else:
+                        harvested.append(task.result())
+                outcomes = harvested
+        for (pname, paddr, prequired), outcome in zip(metas, outcomes, strict=True):
+            if isinstance(outcome, tuple):
+                bad, entry = outcome
+            elif isinstance(outcome, asyncio.CancelledError):
+                bad = prequired
+                entry = ServiceHealth(name=pname, status="error: health probe timed out", address=paddr)
+            elif isinstance(outcome, BaseException):
+                bad = prequired
+                entry = ServiceHealth(name=pname, status=f"error: {outcome}", address=paddr)
+            else:  # pragma: no cover - defensive; probes only return tuples or raise
+                bad = prequired
+                entry = ServiceHealth(name=pname, status=f"error: unexpected probe result: {outcome!r}", address=paddr)
+            if bad:
                 unhealthy = True
-                downstream.append(ServiceHealth(name="galaxy_proxy", status=f"error: {e}", address=proxy_url))
+            if entry is not None:
+                downstream.append(entry)
 
         return HealthResponse(
             status="unhealthy" if unhealthy else "ok",
@@ -4246,17 +4529,46 @@ def _validate_rule_configs(
     Returns:
         Tuple of (unknown_ids, missing_ids).  *missing_ids* is always
         empty when *complete* is ``False``.
+
+    IDs are compared in normalized form (see
+    :func:`~apme_engine.rule_ids.normalize_rule_id`) so a
+    prefixed config ID (``native:L042``) matches its bare catalog twin.
     """
-    if not _known_rule_ids or not rule_configs:
+    if not _known_rule_ids:
+        if complete:
+            # Fail closed: an empty engine catalog with a complete Gateway
+            # catalog means registration hasn't happened (restart window) —
+            # scanning unchecked would flap ADR-041 across restart.
+            logger.error("Rule catalog is empty with complete=True — failing closed")
+            return [], ["<engine-rule-catalog-empty>"]
+        logger.warning("Rule catalog is empty — bidirectional audit skipped, unknown rule IDs flow unchecked")
         return [], []
+    if not rule_configs:
+        if complete:
+            # Fail closed: Gateway claims a complete catalog but sent nothing —
+            # every known ID is missing.
+            return [], sorted({normalize_rule_id(r) for r in _known_rule_ids})
+        return [], []
+    known = {normalize_rule_id(r) for r in _known_rule_ids}
     config_ids: set[str] = set()
+    seen: dict[str, str] = {}
     unknown: list[str] = []
     for rc in rule_configs:
         rid: str = rc.rule_id  # type: ignore[attr-defined]
-        config_ids.add(rid)
-        if rid not in _known_rule_ids:
+        norm = normalize_rule_id(rid)
+        if norm in seen and seen[norm] != rid:
+            logger.warning(
+                "Duplicate normalized rule ID %r (from %r and %r) — last-wins; "
+                "divergent enabled/severity flags resolve order-dependently",
+                norm,
+                seen[norm],
+                rid,
+            )
+        seen[norm] = rid
+        config_ids.add(norm)
+        if norm not in known:
             unknown.append(rid)
     missing: list[str] = []
     if complete:
-        missing = sorted(_known_rule_ids - config_ids)
+        missing = sorted(known - config_ids)
     return unknown, missing

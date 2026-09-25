@@ -44,6 +44,28 @@ _OPTIONAL_SERVICES = {
 _HEALTH_TIMEOUT = 10.0
 _HEALTH_POLL_INTERVAL = 0.3
 
+logger = logging.getLogger(__name__)
+
+
+def _log_proxy_task_done(task: asyncio.Task[None]) -> None:
+    """Done-callback for the Galaxy Proxy server task (PE-27).
+
+    The proxy is a required core service: any termination is loud (error
+    level with the service name) so it is never a silent fire-and-forget
+    failure.
+
+    Args:
+        task: Completed Galaxy Proxy ``serve()`` task.
+    """
+    if task.cancelled():
+        # Cancellation also fires on clean shutdown (the engine-first branch
+        # cancels the proxy task) — that is routine teardown, not a crash.
+        logger.debug("galaxy-proxy task cancelled during shutdown")
+    elif (exc := task.exception()) is not None:
+        logger.error("galaxy-proxy task failed (Galaxy Proxy is a required core service): %s", exc)
+    else:
+        logger.error("galaxy-proxy task exited unexpectedly (Galaxy Proxy is a required core service)")
+
 
 @contextlib.contextmanager
 def _daemon_lifecycle_lock() -> Iterator[None]:
@@ -326,6 +348,10 @@ async def _run_daemon(services: dict[str, str]) -> None:
 
     Args:
         services: Map of service name -> listen address.
+
+    Raises:
+        RuntimeError: If the Galaxy Proxy task dies (required core
+            service) or the Engine server terminates unexpectedly.
     """
     from apme_engine.log_bridge import install_handler
 
@@ -387,6 +413,7 @@ async def _run_daemon(services: dict[str, str]) -> None:
 
     # Galaxy Proxy (uvicorn, not gRPC) — must start before Engine so
     # APME_GALAXY_PROXY_URL is set when the engine creates session venvs.
+    proxy_task: asyncio.Task[None] | None = None
     if "galaxy_proxy" in services:
         proxy_addr = services["galaxy_proxy"]
         proxy_host, _, proxy_port_s = proxy_addr.rpartition(":")
@@ -408,7 +435,8 @@ async def _run_daemon(services: dict[str, str]) -> None:
             log_level=logging.getLevelName(log_level).lower(),
         )
         proxy_server = uvicorn.Server(config)
-        asyncio.create_task(proxy_server.serve())
+        proxy_task = asyncio.create_task(proxy_server.serve(), name="apme-galaxy-proxy")
+        proxy_task.add_done_callback(_log_proxy_task_done)
         sys.stderr.write(f"  Galaxy Proxy on {proxy_url}\n")
 
     # Start Engine last (depends on validators being up)
@@ -417,7 +445,42 @@ async def _run_daemon(services: dict[str, str]) -> None:
     sys.stderr.write(f"  Engine on {services['engine']}\n")
     sys.stderr.flush()
 
-    # Wait until terminated
+    # PE-27: Galaxy Proxy is a required core service. If its task already
+    # died during startup, fail the daemon instead of serving without it
+    # (the parent's startup/health gate then observes the dead child).
+    if proxy_task is not None and proxy_task.done():
+        msg = "Galaxy Proxy terminated during startup; failing daemon startup (required core service)"
+        sys.stderr.write(f"{msg}\n")
+        logger.error(msg)
+        raise RuntimeError(msg)
+
+    # Wait until terminated — but fail the daemon if the proxy task ends
+    # first, so a mid-life proxy crash cannot leave the daemon half-healthy.
+    if proxy_task is not None:
+        engine_wait = asyncio.create_task(engine_server.wait_for_termination())
+        done, pending = await asyncio.wait(
+            {engine_wait, proxy_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if proxy_task in done and not engine_wait.done():
+            engine_wait.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await engine_wait
+            msg = "Galaxy Proxy terminated unexpectedly; failing daemon (required core service)"
+            sys.stderr.write(f"{msg}\n")
+            logger.error(msg)
+            raise RuntimeError(msg)
+        # Engine finished first: the daemon never exits cleanly on its own
+        # (it serves until terminated), so treat this as abnormal and fail
+        # loudly instead of returning exit code 0 to the supervisor.
+        for task in pending:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        msg = "Engine terminated unexpectedly; failing daemon"
+        sys.stderr.write(f"{msg}\n")
+        logger.error(msg)
+        raise RuntimeError(msg)
     await engine_server.wait_for_termination()
 
 

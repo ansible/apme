@@ -15,6 +15,7 @@ import httpx
 
 from apme_gateway.scm._http import async_client
 from apme_gateway.scm.base import PullRequestResult
+from apme_gateway.scm.text import is_text_blob
 from apme_gateway.scm.urls import DEFAULT_GITLAB_API_URL, split_user_pass_token
 
 logger = logging.getLogger(__name__)
@@ -248,7 +249,7 @@ class GitLabProvider:
 
         actions: list[dict[str, str]] = []
         for path, content in files.items():
-            if _is_text(content):
+            if is_text_blob(content):
                 payload = content.decode("utf-8")
                 encoding = "text"
             else:
@@ -358,19 +359,3 @@ class GitLabProvider:
         mr_url = str(data["web_url"])
         logger.info("Created GitLab MR %s on %s", mr_url, project)
         return PullRequestResult(pr_url=mr_url, branch_name=head_branch, provider="gitlab")
-
-
-def _is_text(data: bytes) -> bool:
-    """Heuristic: treat content as text if it decodes as UTF-8 without errors.
-
-    Args:
-        data: Raw bytes to check.
-
-    Returns:
-        True if the data is valid UTF-8 text.
-    """
-    try:
-        data.decode("utf-8")
-    except UnicodeDecodeError:
-        return False
-    return True
