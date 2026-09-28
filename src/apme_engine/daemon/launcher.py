@@ -11,6 +11,7 @@ import asyncio
 import contextlib
 import errno
 import fcntl
+import ipaddress
 import json
 import logging
 import os
@@ -270,6 +271,34 @@ _WILDCARD_IPV4 = frozenset({"", "0.0.0.0"})
 _WILDCARD_IPV6 = frozenset({"::", "[::]"})
 
 
+def _is_unspecified_ipv6(host: str) -> bool:
+    """Return True when *host* is an IPv6 unspecified (all-interfaces) address.
+
+    Args:
+        host: Host string, optionally bracketed.
+
+    Returns:
+        True for ``::``, ``0:0:0:0:0:0:0:0``, and equivalent expanded forms.
+    """
+    candidate = host[1:-1] if host.startswith("[") and host.endswith("]") else host
+    try:
+        address = ipaddress.ip_address(candidate)
+    except ValueError:
+        return False
+    return isinstance(address, ipaddress.IPv6Address) and address.is_unspecified
+
+
+def _ipv6_wildcard_probe_targets() -> list[tuple[int, str]]:
+    """Concrete probe targets for dual-stack IPv6 wildcard listeners.
+
+    Returns:
+        Local IPv6 and IPv4 addresses to probe for ``::`` listeners.
+    """
+    targets: list[tuple[int, str]] = [(socket.AF_INET6, addr) for addr in sorted(_local_addresses(socket.AF_INET6))]
+    targets.extend((socket.AF_INET, addr) for addr in sorted(_local_addresses(socket.AF_INET)))
+    return targets
+
+
 def _local_addresses(family: int) -> frozenset[str]:
     """Best-effort set of assigned local addresses for *family*.
 
@@ -322,12 +351,8 @@ def _probe_targets(host: str) -> list[tuple[int, str]]:
     """
     if host in _WILDCARD_IPV4:
         return [(socket.AF_INET, addr) for addr in sorted(_local_addresses(socket.AF_INET))]
-    if host in _WILDCARD_IPV6:
-        # ``::`` listeners are typically dual-stack; probe IPv4 targets too so
-        # an IPv4-only occupant is detected even when IPV6_V6ONLY is set.
-        targets: list[tuple[int, str]] = [(socket.AF_INET6, addr) for addr in sorted(_local_addresses(socket.AF_INET6))]
-        targets.extend((socket.AF_INET, addr) for addr in sorted(_local_addresses(socket.AF_INET)))
-        return targets
+    if host in _WILDCARD_IPV6 or _is_unspecified_ipv6(host):
+        return _ipv6_wildcard_probe_targets()
     if host.startswith("[") and host.endswith("]"):
         return [(socket.AF_INET6, host[1:-1])]
     if ":" in host:
@@ -347,17 +372,17 @@ def _bind_probe(family: int, addr: str, port: int) -> bool | None:
         ``True`` if the bind succeeded (port free), ``False`` if the port is
         in use, or ``None`` if *addr* is not assignable on this host.
     """
-    with socket.socket(family, socket.SOCK_STREAM) as sock:
-        try:
+    try:
+        with socket.socket(family, socket.SOCK_STREAM) as sock:
             if family == socket.AF_INET6:
                 sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
             sock.bind((addr, port))
-        except OSError as exc:
-            # Address not present / family disabled — skip, do not treat as busy.
-            if exc.errno in {errno.EADDRNOTAVAIL, errno.EAFNOSUPPORT}:
-                return None
-            return False
-        return True
+    except OSError as exc:
+        # Address not present / family disabled — skip, do not treat as busy.
+        if exc.errno in {errno.EADDRNOTAVAIL, errno.EAFNOSUPPORT}:
+            return None
+        return False
+    return True
 
 
 def _check_port_available(host: str, port: int) -> bool:

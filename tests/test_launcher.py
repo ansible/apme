@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import json
 import signal
 import socket
@@ -16,6 +17,7 @@ from apme_engine.daemon.launcher import (
     _address_port_bound,
     _assert_ports_free,
     _check_port_available,
+    _probe_targets,
     _proc_starttime,
     daemon_status,
 )
@@ -44,6 +46,34 @@ def test_check_port_available_normalizes_wildcard_hosts() -> None:
     port = _ephemeral_port()
     assert _check_port_available("0.0.0.0", port) is True
     assert _check_port_available("", port) is True
+    assert _check_port_available("::", port) is True
+    assert _check_port_available("0:0:0:0:0:0:0:0", port) is True
+    assert _check_port_available("[0:0:0:0:0:0:0:0]", port) is True
+
+
+def test_probe_targets_expands_unspecified_ipv6_forms() -> None:
+    """Expanded IPv6 unspecified hosts expand to concrete local addresses."""
+    canonical = _probe_targets("::")
+    assert canonical == _probe_targets("0:0:0:0:0:0:0:0")
+    assert canonical == _probe_targets("[0:0:0:0:0:0:0:0]")
+    assert all(addr not in {"", "::", "0:0:0:0:0:0:0:0"} for _, addr in canonical)
+
+
+def test_check_port_available_skips_unsupported_ipv6_family(monkeypatch: MonkeyPatch) -> None:
+    """IPv6-disabled hosts still probe IPv4 targets for ``::`` wildcards.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+    real_socket = socket.socket
+
+    def _socket(family: int, sock_type: int = socket.SOCK_STREAM, proto: int = 0) -> socket.socket:
+        if family == socket.AF_INET6:
+            raise OSError(errno.EAFNOSUPPORT, "Address family not supported")
+        return real_socket(family, sock_type, proto)
+
+    monkeypatch.setattr("apme_engine.daemon.launcher.socket.socket", _socket)
+    port = _ephemeral_port()
     assert _check_port_available("::", port) is True
 
 
