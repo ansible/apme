@@ -72,7 +72,7 @@ def _first_non_loopback_ipv4() -> str | None:
 
 
 def test_wildcard_probe_detects_non_loopback_occupant() -> None:
-    """IPv4 wildcards report busy when a non-loopback interface owns the port."""
+    """Wildcard hosts report busy when a non-loopback interface owns the port."""
     addr = _first_non_loopback_ipv4()
     if addr is None:
         pytest.skip("no non-loopback IPv4 address available")
@@ -87,6 +87,7 @@ def test_wildcard_probe_detects_non_loopback_occupant() -> None:
     try:
         assert _check_port_available("0.0.0.0", port) is False
         assert _check_port_available("", port) is False
+        assert _check_port_available("::", port) is False
         # Concrete loopback probe still sees the port as free on lo.
         assert _check_port_available("127.0.0.1", port) is True
     finally:

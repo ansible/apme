@@ -309,9 +309,10 @@ def _local_addresses(family: int) -> frozenset[str]:
 def _probe_targets(host: str) -> list[tuple[int, str]]:
     """Resolve *host* into concrete ``(family, address)`` bind probe targets.
 
-    Wildcard hosts expand to every known local address of the matching
-    family so a listener on a non-loopback interface still fails the check,
-    without ever binding ``''`` / ``0.0.0.0`` / ``::``.
+    Wildcard hosts expand to every known local address so a listener on a
+    non-loopback interface still fails the check, without ever binding
+    ``''`` / ``0.0.0.0`` / ``::``. IPv6 wildcards also probe local IPv4
+    addresses because dual-stack ``::`` listeners accept IPv4 traffic.
 
     Args:
         host: Host from a gRPC listen address or caller-supplied bind target.
@@ -322,7 +323,11 @@ def _probe_targets(host: str) -> list[tuple[int, str]]:
     if host in _WILDCARD_IPV4:
         return [(socket.AF_INET, addr) for addr in sorted(_local_addresses(socket.AF_INET))]
     if host in _WILDCARD_IPV6:
-        return [(socket.AF_INET6, addr) for addr in sorted(_local_addresses(socket.AF_INET6))]
+        # ``::`` listeners are typically dual-stack; probe IPv4 targets too so
+        # an IPv4-only occupant is detected even when IPV6_V6ONLY is set.
+        targets: list[tuple[int, str]] = [(socket.AF_INET6, addr) for addr in sorted(_local_addresses(socket.AF_INET6))]
+        targets.extend((socket.AF_INET, addr) for addr in sorted(_local_addresses(socket.AF_INET)))
+        return targets
     if host.startswith("[") and host.endswith("]"):
         return [(socket.AF_INET6, host[1:-1])]
     if ":" in host:
