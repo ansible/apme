@@ -18,6 +18,7 @@ ADR_PATTERN = re.compile(r"^ADR-(\d+)-(.+)\.md$")
 
 STATUS_ORDER = [
     "Implemented",
+    "Partially Implemented",
     "Accepted",
     "Proposed",
     "Superseded",
@@ -25,7 +26,8 @@ STATUS_ORDER = [
 
 _STATUS_DESCRIPTIONS: dict[str, str] = {
     "Implemented": "Decisions that are fully reflected in the codebase.",
-    "Accepted": "Decisions that have been accepted but are not yet fully implemented.",
+    "Partially Implemented": ("Decisions with substantial code shipped; ADR-defined scope still incomplete."),
+    "Accepted": "Decisions that have been accepted but not yet started in code.",
     "Proposed": "Decisions under consideration — not yet accepted or implemented.",
     "Superseded": "Decisions replaced by newer ADRs.",
 }
@@ -43,10 +45,14 @@ def _normalize_status(raw: str) -> str:
     low = raw.lower().strip()
     if "superseded" in low:
         return "Superseded"
+    if low.startswith("partially implemented"):
+        return "Partially Implemented"
+    if low == "implemented" or low.startswith("implemented "):
+        return "Implemented"
+    if low == "accepted" or low.startswith("accepted ") or low.startswith("accepted ("):
+        return "Accepted"
     if "implemented" in low:
         return "Implemented"
-    if "accepted" in low:
-        return "Accepted"
     return "Proposed"
 
 
@@ -133,7 +139,7 @@ def _render(adrs: list[dict[str, str]]) -> str:
             "1. Copy the template from `../templates/adr.md`",
             f"2. Use the next available number (currently ADR-{_next_number(adrs):03d})",
             "3. Include:",
-            "   - Status (Proposed → Accepted → Implemented)",
+            "   - Status (Proposed → Accepted → Partially Implemented → Implemented)",
             "   - Date",
             "   - Context",
             "   - Options Considered",

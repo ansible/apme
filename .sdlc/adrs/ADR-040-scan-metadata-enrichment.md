@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Partially Implemented (global collection and Python-package catalog endpoints and collection-to-project routes pending)
 
 ## Date
 
@@ -262,3 +262,5 @@ The proxy already resolves transitive dependencies. The engine reads the install
 |------|--------|--------|
 | 2026-03-25 | Brad (cidrblock) | Initial proposal |
 | 2026-03-30 | Architecture review | Extended manifest with license/supplier; SBOM as Gateway view; roles deferred to ADR-044; 3-PR implementation plan |
+| 2026-09-22 | Agent | Status → Implemented — manifest persistence, dependencies/SBOM REST, and `apme sbom` shipped; role inventory remains deferred to ADR-044 |
+| 2026-09-22 | Agent | Status → Partially Implemented — project-scoped manifest/dependencies/SBOM shipped; global `GET /api/v1/collections`, `GET /api/v1/python-packages`, and collection-to-project endpoints remain |

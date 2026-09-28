@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Implemented
 
 ## Date
 
@@ -226,3 +226,4 @@ invariant 5 (persistence at Gateway edge for durable data) and ADR-052
 |------|--------|--------|
 | 2026-07-20 | Brad Thornton | Initial proposal — SPA vs Gateway live-state ownership |
 | 2026-07-20 | Brad Thornton | Accepted |
+| 2026-09-22 | Agent | Status → Implemented — Gateway owns live operation state; SPA holds non-authoritative derived UI state only |

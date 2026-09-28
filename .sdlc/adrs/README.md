@@ -23,6 +23,7 @@ Decisions that are fully reflected in the codebase.
 | [ADR-013](ADR-013-structured-diagnostics.md) | Structured Diagnostics in the gRPC Contract | 2026-03 |
 | [ADR-014](ADR-014-ruff-prek-hooks.md) | Ruff Linter and prek Pre-commit Hooks | 2026-03 |
 | [ADR-015](ADR-015-github-actions-prek.md) | GitHub Actions CI with prek | 2026-03 |
+| [ADR-016](ADR-016-single-branch-main.md) | Single-branch `main` Strategy | 2026-03 |
 | [ADR-017](ADR-017-trust-and-verify-agent-sdlc.md) | Trust-and-verify Model for Agent SDLC Invocation | 2026-03 |
 | [ADR-018](ADR-018-mypy-strict-type-checking.md) | mypy Strict Mode Type Checking | 2026-03 |
 | [ADR-019](ADR-019-dependency-governance.md) | Dependency Governance Policy | 2026-03 |
@@ -49,36 +50,42 @@ Decisions that are fully reflected in the codebase.
 | [ADR-062](ADR-062-ephemeral-proposal-working-set.md) | Ephemeral Proposal Working Set and Review Analytics | 2026-07-09 |
 | [ADR-063](ADR-063-multi-platform-container-images.md) | Multi-Platform Container Image Publish | 2026-07-15 |
 | [ADR-064](ADR-064-assess-pause-session-continue.md) | Assess-Pause and Session-Continue Scan → Remediate | 2026-07-18 |
+| [ADR-065](ADR-065-spa-gateway-live-state-ownership.md) | SPA vs Gateway Live-Operation State Ownership | 2026-07-20 |
+| [ADR-066](ADR-066-ui-workflow-github-release-artifacts.md) | Publish `@apme/ui-workflow` via GitHub Release Artifacts | 2026-07-23 (revised 2026-07-31) |
 | [ADR-067](ADR-067-otel-metrics-in-pod-collector.md) | OpenTelemetry Metrics with In-Pod Collector | 2026-07-29 |
 | [ADR-068](ADR-068-adaptive-operation-deadlines.md) | Adaptive Operation Deadlines for Long AI Remediation | 2026-07-30 |
+| [ADR-069](ADR-069-helm-simple-all-in-one.md) | Helm Chart Simple All-in-One Topology (EAP / Upstream) | 2026-08-03 |
+| [ADR-070](ADR-070-gateway-abbenay-admin-proxy.md) | Gateway HTTP Proxy to In-Pod Abbenay Admin (Simple Model) | 2026-08-03 |
 
-## Accepted
+## Partially Implemented
 
-Decisions that have been accepted but are not yet fully implemented.
+Decisions with substantial code shipped; ADR-defined scope still incomplete.
 
 | ADR | Title | Date |
 |-----|-------|------|
-| [ADR-012](ADR-012-scale-pods-not-services.md) | Scale Pods, Not Services Within a Pod | 2026-02 |
-| [ADR-016](ADR-016-single-branch-main.md) | Single-branch `main` Strategy | 2026-03 |
-| [ADR-038](ADR-038-public-data-api.md) | Public Data API for Platform Consumers | 2026-03-25 |
-| [ADR-040](ADR-040-scan-metadata-enrichment.md) | Scan Metadata Enrichment | 2026-03-25 |
-| [ADR-043](ADR-043-default-severity-assignment.md) | Default Severity Assignment for Rule Catalog | 2026-03-26 |
-| [ADR-048](ADR-048-pod-internal-admin-endpoints.md) | Pod-Internal Admin Endpoints Rely on Network Isolation | 2026-04-01 |
+| [ADR-012](ADR-012-scale-pods-not-services.md) | Scale Pods, Not Services Within a Pod (Partially Implemented (multi-replica scaling and operator deferred)) | 2026-02 |
+| [ADR-038](ADR-038-public-data-api.md) | Public Data API for Platform Consumers (Partially Implemented (webhooks, token auth, project health endpoint, and collection-route project lookup pending)) | 2026-03-25 |
+| [ADR-040](ADR-040-scan-metadata-enrichment.md) | Scan Metadata Enrichment (Partially Implemented (global collection and Python-package catalog endpoints and collection-to-project routes pending)) | 2026-03-25 |
+| [ADR-043](ADR-043-default-severity-assignment.md) | Default Severity Assignment for Rule Catalog (Partially Implemented (Phase 5 service_affecting and R2xx rules pending)) | 2026-03-26 |
+| [ADR-048](ADR-048-pod-internal-admin-endpoints.md) | Pod-Internal Admin Endpoints Rely on Network Isolation (Partially Implemented (localhost-only Galaxy Proxy binding and removal of hostPort exposure pending)) | 2026-04-01 |
+| [ADR-050](ADR-050-post-remediation-pr-creation.md) | Post-Remediation PR Creation via Gateway SCM Integration (Partially Implemented (scm_token encryption at rest pending)) | 2026-04-07 (revised 2026-07-06) |
+| [ADR-051](ADR-051-dependency-health-scanning.md) | Dependency Health Scanning (Partially Implemented (M004 collection rules and `--rescan-deps` CLI flag pending)) | 2026-04-07 |
+| [ADR-052](ADR-052-project-operation-sse-architecture.md) | Project Operation SSE Architecture (Partially Implemented (legacy WebSocket removal pending)) | 2026-04-14 |
+| [ADR-053](ADR-053-github-integration-strategy.md) | GitHub Integration Strategy (Partially Implemented (`@v1` publish pending)) | 2026-04-10 |
+| [ADR-054](ADR-054-production-deployment.md) | Production Deployment — Helm Chart and bootc VM Image (Partially Implemented (ExternalSecret integration pending)) | 2026-04-10 |
+| [ADR-055](ADR-055-violation-fingerprint-suppression.md) | Content-Based Violation Fingerprinting and Suppression (Partially Implemented (rule_module mode and export/import remain)) | 2026-05-21 |
+| [ADR-056](ADR-056-apme-owns-scm-commit-push.md) | APME Owns SCM Commit and Push (Partially Implemented (fixed APME commit author and committer identity pending)) | 2026-07-06 |
+| [ADR-057](ADR-057-per-rule-version-applicability.md) | Per-Rule Ansible-Core Version Applicability (Partially Implemented (Gateway rule-catalog persistence and REST exposure pending)) | 2026-07-07 |
+| [ADR-059](ADR-059-graph-library-extraction.md) | Extract Shared Graph Analysis Library (Partially Implemented (remaining Engine package-boundary imports pending)) | 2026-07-08 |
+| [ADR-060](ADR-060-rest-api-versioning-contract.md) | REST API Versioning Contract (Partially Implemented (deprecation middleware and break-diff CI pending)) | 2026-07-08 |
+
+## Accepted
+
+Decisions that have been accepted but not yet started in code.
+
+| ADR | Title | Date |
+|-----|-------|------|
 | [ADR-049](ADR-049-gateway-in-daemon.md) | Gateway Embedded in Local Daemon (Accepted (daemon launcher implementation pending)) | 2026-04-01 |
-| [ADR-050](ADR-050-post-remediation-pr-creation.md) | Post-Remediation PR Creation via Gateway SCM Integration | 2026-04-07 (revised 2026-07-06) |
-| [ADR-051](ADR-051-dependency-health-scanning.md) | Dependency Health Scanning | 2026-04-07 |
-| [ADR-052](ADR-052-project-operation-sse-architecture.md) | Project Operation SSE Architecture | 2026-04-14 |
-| [ADR-053](ADR-053-github-integration-strategy.md) | GitHub Integration Strategy | 2026-04-10 |
-| [ADR-054](ADR-054-production-deployment.md) | Production Deployment — Helm Chart and bootc VM Image (Accepted (Helm workload topology amended by [ADR-069](ADR-069-helm-simple-all-in-one.md))) | 2026-04-10 |
-| [ADR-055](ADR-055-violation-fingerprint-suppression.md) | Content-Based Violation Fingerprinting and Suppression | 2026-05-21 |
-| [ADR-056](ADR-056-apme-owns-scm-commit-push.md) | APME Owns SCM Commit and Push | 2026-07-06 |
-| [ADR-057](ADR-057-per-rule-version-applicability.md) | Per-Rule Ansible-Core Version Applicability | 2026-07-07 |
-| [ADR-059](ADR-059-graph-library-extraction.md) | Extract Shared Graph Analysis Library | 2026-07-08 |
-| [ADR-060](ADR-060-rest-api-versioning-contract.md) | REST API Versioning Contract | 2026-07-08 |
-| [ADR-065](ADR-065-spa-gateway-live-state-ownership.md) | SPA vs Gateway Live-Operation State Ownership | 2026-07-20 |
-| [ADR-066](ADR-066-ui-workflow-github-release-artifacts.md) | Publish `@apme/ui-workflow` via GitHub Release Artifacts (Accepted (revised 2026-07-31: consolidated into main release)) | 2026-07-23 (revised 2026-07-31) |
-| [ADR-069](ADR-069-helm-simple-all-in-one.md) | Helm Chart Simple All-in-One Topology (EAP / Upstream) | 2026-08-03 |
-| [ADR-070](ADR-070-gateway-abbenay-admin-proxy.md) | Gateway HTTP Proxy to In-Pod Abbenay Admin (Simple Model) | 2026-08-03 |
 
 ## Proposed
 
@@ -109,7 +116,7 @@ Decisions replaced by newer ADRs.
 1. Copy the template from `../templates/adr.md`
 2. Use the next available number (currently ADR-073)
 3. Include:
-   - Status (Proposed → Accepted → Implemented)
+   - Status (Proposed → Accepted → Partially Implemented → Implemented)
    - Date
    - Context
    - Options Considered

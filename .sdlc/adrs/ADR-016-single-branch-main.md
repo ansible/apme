@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Implemented
 
 ## Date
 
@@ -48,3 +48,10 @@ Multi-branch strategies (release branches, maintenance branches) will be introdu
 
 - ADR-014: Ruff linter and prek pre-commit hooks
 - ADR-015: GitHub Actions CI with prek
+
+## Revision History
+
+| Date | Author | Change |
+|------|--------|--------|
+| 2026-03 | APME Team | Accepted — rename default branch to `main`, single long-lived branch |
+| 2026-09-22 | Agent | Status → Implemented — CI workflows and contribution process use `main` only |

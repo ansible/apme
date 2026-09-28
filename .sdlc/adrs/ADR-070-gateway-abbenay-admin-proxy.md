@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Implemented
 
 ## Date
 
@@ -344,3 +344,4 @@ Gateway stays a proxy. Default operator `emptyDir` is still ephemeral — enable
 | 2026-08-04 | bthornto | §4: document Simple caller-trust + loopback token threat model (Helm/Podman evidence) |
 | 2026-08-13 | bthornto | Amended allowlist: added `GET/POST /secrets`, `DELETE /secrets/{key}` for Abbenay ≥ v2026.8.5 memory secret store |
 | 2026-08-14 | bthornto | §7 secrets remain Abbenay SoT: file store (`secretStore: "file"`, ≥ v2026.8.6) on a durable config volume (Helm PVC / Podman cache); Gateway stays proxy-only (rejects Gateway DB SoT, #560) |
+| 2026-09-22 | Agent | Status → Implemented — Gateway Abbenay admin proxy, Helm/Podman wiring, and config durability shipped; portal settings UI remains deferred |

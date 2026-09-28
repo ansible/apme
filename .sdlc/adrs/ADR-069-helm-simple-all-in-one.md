@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Implemented
 
 ## Date
 
@@ -217,3 +217,4 @@ EAP AI remediation.
 | 2026-08-03 | APME Team | Accepted: Helm Simple all-in-one for EAP/upstream |
 | 2026-08-24 | APME Team | Engine→Abbenay gRPC uses a shared Unix socket; leftover TCP `:50057`; Helm probes the socket |
 | 2026-09-16 | APME Team | EAP Simple Helm owns a PostgreSQL sidecar and persistent database PVC; external PostgreSQL is an explicit override |
+| 2026-09-22 | Agent | Status → Implemented — Helm chart enforces Simple all-in-one topology (`replicas: 1`, co-located engine/Gateway/UI/Abbenay) |

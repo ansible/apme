@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Partially Implemented (webhooks, token auth, project health endpoint, and collection-route project lookup pending)
 
 ## Date
 
@@ -260,3 +260,6 @@ The CLI `--json` output currently drops the violation `metadata` map (rule-speci
 |------|--------|--------|
 | 2026-03-25 | Brad Thornton | Initial proposal from PR #102/#107 review discussion |
 | 2026-07-08 | Brad Thornton | Accepted — pull API, project lookup, and dashboard endpoints implemented; webhooks and token auth remain |
+| 2026-09-22 | Agent | Status clarified — codebase audit confirms pull API shipped; webhooks and token auth still pending |
+| 2026-09-22 | Agent | Status → Partially Implemented — pull API, lookup, and dashboard shipped |
+| 2026-09-22 | Agent | Pending work clarified — `GET /api/v1/projects/{id}/health` absent; `GET /api/v1/projects?repo_url=...` not implemented (lookup is `/projects/lookup` only) |

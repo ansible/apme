@@ -10,7 +10,7 @@ argument-hint: "[branch-name] [--title 'PR title']"
 user-invocable: true
 metadata:
   author: APME Team
-  version: 1.2.0
+  version: 1.3.0
 ---
 
 # PR New
@@ -577,6 +577,27 @@ If a new rule was added, regenerate the catalog:
 python tools/generate_rule_catalog.py
 ```
 
+### Step 4b: ADR and issue traceability (mandatory)
+
+**Do not commit or open a PR until this step passes** (or gaps are explicitly
+documented in the PR body with follow-up issues filed).
+
+Follow the **`pr-traceability`** skill (`.agents/skills/pr-traceability/SKILL.md`):
+
+1. Find related **GitHub issues** — link with `Closes #N` / `Refs #N`, or create
+   an issue / document why none applies.
+2. Find related **ADRs** — update status (`Implemented`, `Partially
+   Implemented`, etc.), revision history, and regenerate the index when the PR
+   implements or advances an ADR decision.
+3. Add **`## Related issues`** and **`## Related ADRs`** sections to the PR body.
+
+If the change is a **new** architectural decision, run **`/adr-new`** (Step 5)
+before or in the same PR — do not ship code that contradicts an accepted ADR
+without a superseding ADR.
+
+Reviewers use the same checklist via `pr-contributor-review` and
+`pr-address-feedback` after follow-up commits.
+
 ### Step 5: Update SDLC artifacts (if applicable)
 
 If the change involves an architectural decision (new service, new protocol, new deployment strategy, new tooling adoption), create an ADR in `.sdlc/adrs/` using the `adr-new` skill. The file should follow the naming convention `ADR-NNN-slug.md`.
@@ -658,6 +679,13 @@ gh pr create --repo upstream-owner/repo --title "conventional commit style title
 ## Changes
 - List of notable changes
 
+## Related issues
+- Closes #NNN — <why>
+- Refs #NNN — <partial / context> (or `None — <why no related issue applies>`)
+
+## Related ADRs
+- ADR-NNN — <status change or "reviewed, no change"> (or `None — <why no related ADR applies>`)
+
 ## Quality of life
 - List any non-functional improvements bundled in this PR: skill updates,
   workflow fixes, SDLC artifact changes, rule/template tweaks, documentation
@@ -668,7 +696,8 @@ gh pr create --repo upstream-owner/repo --title "conventional commit style title
 - [ ] `tox -e lint` passes
 - [ ] `tox -e unit` passes
 - [ ] Docs updated (if applicable)
-- [ ] ADR added (if applicable)
+- [ ] ADR added or updated (if applicable)
+- [ ] Issues referenced (`Closes` / `Refs`) per pr-traceability
 EOF
 )"
 ```
