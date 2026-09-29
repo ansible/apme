@@ -228,18 +228,21 @@ async def download_collections(
     """Download collection tarballs via ``ansible-galaxy collection download``.
 
     Either ``ansible_cfg_path`` (user's existing config) or ``servers``
-    (programmatic config) can be provided — not both.  When ``servers``
-    is set, per-server ``ANSIBLE_GALAXY_SERVER_*`` env vars are injected
-    into the subprocess environment.  When neither is provided,
-    ``ansible-galaxy`` inherits the container's environment (which may
-    already have Galaxy server env vars set via pod configuration).
+    (programmatic config) can be provided — not both.  A non-empty
+    ``servers`` list injects per-server ``ANSIBLE_GALAXY_SERVER_*`` env
+    vars.  An empty list fails closed without starting ``ansible-galaxy``.
+    When neither is provided, ``ansible-galaxy`` inherits the container's
+    environment (which may already have Galaxy server env vars set via
+    pod configuration).
 
     Args:
         collection_specs: Galaxy collection specifiers
             (e.g. ``["community.general:>=9.0", "ansible.posix"]``).
         download_dir: Directory to download tarballs into.
         ansible_cfg_path: Path to an existing ``ansible.cfg``.
-        servers: Galaxy server configs (injected as env vars).
+        servers: Galaxy server configs (injected as env vars).  ``[]`` fails
+            closed.  ``None`` leaves server discovery to ``ansible.cfg`` or
+            the process environment.
         ansible_galaxy_bin: Override for the ``ansible-galaxy`` binary path.
         timeout: Subprocess timeout in seconds.
 
@@ -255,6 +258,12 @@ async def download_collections(
 
     if not collection_specs:
         return DownloadResult()
+
+    if servers is not None and not servers:
+        return DownloadResult(
+            failed_specs=list(collection_specs),
+            stderr="No configured Galaxy servers",
+        )
 
     download_dir.mkdir(parents=True, exist_ok=True)
 

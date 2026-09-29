@@ -1573,6 +1573,44 @@ class TestNoImplicitGalaxyFallback:
                 _fetch_galaxy_versions("ansible", "posix", servers=[]),
             )
 
+    def test_unparseable_ansible_cfg_fails_closed(self, tmp_path: Path) -> None:
+        """A Galaxy config that cannot be parsed does not fall through to public Galaxy.
+
+        Args:
+            tmp_path: Pytest-provided temporary directory.
+        """
+        from galaxy_proxy.proxy.server import _load_servers_from_ansible_cfg
+
+        cfg = tmp_path / "ansible.cfg"
+        cfg.write_text("[galaxy]\n[galaxy]\n", encoding="utf-8")
+
+        assert _load_servers_from_ansible_cfg(cfg) == []
+
+    def test_empty_pushed_servers_do_not_query_public_galaxy(self, tmp_path: Path) -> None:
+        """POST /admin/galaxy-config with no servers stays fail-closed.
+
+        Args:
+            tmp_path: Pytest-provided temporary directory.
+        """
+        application = create_app(cache_dir=tmp_path / "cache", enable_passthrough=False)
+        mock_fetch = AsyncMock(
+            side_effect=CollectionResolutionError(
+                "ansible.posix",
+                operation="version_lookup",
+                servers_tried=[],
+            ),
+        )
+
+        with TestClient(application) as client:
+            pushed = client.post("/admin/galaxy-config", json={"servers": []})
+            assert pushed.status_code == 200
+            with patch("galaxy_proxy.proxy.server._fetch_galaxy_versions", mock_fetch):
+                resp = client.get("/simple/ansible-collection-ansible-posix/")
+
+        assert resp.status_code == 404
+        servers = mock_fetch.call_args.kwargs.get("servers")
+        assert servers == []
+
     def test_broken_ansible_cfg_does_not_query_public_galaxy(self, tmp_path: Path) -> None:
         """ansible.cfg with server_list but no usable URLs fails closed (no public Galaxy).
 

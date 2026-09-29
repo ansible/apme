@@ -217,17 +217,22 @@ def create_app(
             )
             return response
 
-    app.state.galaxy_servers = list(galaxy_servers) if galaxy_servers else []
+    app.state.galaxy_servers = None if galaxy_servers is None else list(galaxy_servers)
     app.state.ansible_cfg_path = ansible_cfg_path
     app.state.ansible_galaxy_bin = ansible_galaxy_bin
 
     def _get_galaxy_config() -> tuple[Path | None, list[GalaxyServerConfig] | None, str | None]:
         """Read current Galaxy config from app state.
 
+        ``None`` means no explicit server list (public Galaxy, or servers
+        loaded from ``ansible.cfg`` when that file has an opinion).  An
+        empty list is explicit configuration with no usable servers and
+        must stay empty so callers fail closed.
+
         Returns:
             tuple: (ansible_cfg_path, galaxy_servers, ansible_galaxy_bin).
         """
-        servers = app.state.galaxy_servers
+        servers: list[GalaxyServerConfig] | None = app.state.galaxy_servers
         cfg_path = app.state.ansible_cfg_path
         if cfg_path is None:
             env_cfg = os.environ.get("ANSIBLE_CONFIG", "").strip()
@@ -235,8 +240,30 @@ def create_app(
                 candidate = Path(env_cfg).expanduser()
                 if candidate.is_file():
                     cfg_path = candidate
+        if servers is None and cfg_path is not None:
+            servers = _load_servers_from_ansible_cfg(cfg_path)
         galaxy_bin = app.state.ansible_galaxy_bin
-        return cfg_path, servers or None, galaxy_bin
+        return cfg_path, servers, galaxy_bin
+
+    def _download_auth(
+        cfg_path: Path | None,
+        servers: list[GalaxyServerConfig] | None,
+    ) -> tuple[Path | None, list[GalaxyServerConfig] | None]:
+        """Choose one Galaxy auth source for ``ansible-galaxy``.
+
+        An explicit server list, including an empty list, is authoritative
+        and must not be replaced by ``ansible.cfg`` or the process environment.
+
+        Args:
+            cfg_path: Optional path to an existing ``ansible.cfg``.
+            servers: Explicit server list, or ``None`` when unset.
+
+        Returns:
+            ``(ansible_cfg_path, servers)`` with at most one of them set.
+        """
+        if servers is not None:
+            return None, servers
+        return cfg_path, None
 
     @app.get("/health")  # type: ignore[untyped-decorator]
     async def health() -> dict[str, str]:
@@ -351,9 +378,7 @@ def create_app(
             logger.info("metadata_cache_miss collection=%s.%s", namespace, name)
 
         if versions is None:
-            cfg_path, servers_cfg, _ = _get_galaxy_config()
-            if servers_cfg is None and cfg_path is not None:
-                servers_cfg = _load_servers_from_ansible_cfg(cfg_path)
+            _cfg_path, servers_cfg, _galaxy_bin = _get_galaxy_config()
             try:
                 galaxy_versions = await _fetch_galaxy_versions(
                     namespace,
@@ -379,12 +404,13 @@ def create_app(
                 if not cached_wheel_set:
                     try:
                         cfg_path, servers_cfg, galaxy_bin = _get_galaxy_config()
+                        cfg_for_download, servers_for_download = _download_auth(cfg_path, servers_cfg)
                         whl_name, whl_data = await _download_and_convert(
                             namespace,
                             name,
                             "",
-                            ansible_cfg_path=cfg_path,
-                            galaxy_servers=servers_cfg,
+                            ansible_cfg_path=cfg_for_download,
+                            galaxy_servers=servers_for_download,
                             ansible_galaxy_bin=galaxy_bin,
                         )
                         cache.put_wheel(whl_name, whl_data)
@@ -518,12 +544,13 @@ def create_app(
 
             try:
                 cfg_path, servers, galaxy_bin = _get_galaxy_config()
+                cfg_for_download, servers_for_download = _download_auth(cfg_path, servers)
                 whl_name, whl_data = await _download_and_convert(
                     ns,
                     coll_name,
                     version,
-                    ansible_cfg_path=cfg_path,
-                    galaxy_servers=servers,
+                    ansible_cfg_path=cfg_for_download,
+                    galaxy_servers=servers_for_download,
                     ansible_galaxy_bin=galaxy_bin,
                 )
             except Exception as exc:
@@ -667,18 +694,18 @@ def _load_servers_from_ansible_cfg(cfg_path: Path) -> list[GalaxyServerConfig] |
         cfg_path: Path to the config file.
 
     Returns:
-        Ordered Galaxy server configs when ``server_list`` is defined,
-        an empty list when ``server_list`` is present but yields no usable
-        servers (misconfiguration → fail-closed), or ``None`` when the
-        config has no ``[galaxy]`` section or no ``server_list`` directive
-        (no opinion on Galaxy → fall through to public default).
+        Ordered Galaxy server configs when ``server_list`` names usable
+        servers.  An empty list when ``server_list`` is present but blank,
+        names no usable servers, or the file cannot be parsed (fail-closed).
+        ``None`` when the file has no ``[galaxy]`` section or no
+        ``server_list`` option (no opinion → public Galaxy default).
     """
     parser = configparser.ConfigParser(interpolation=None)
     try:
         parser.read(str(cfg_path), encoding="utf-8")
     except (configparser.Error, OSError):
         logger.debug("Failed to parse ansible.cfg for Galaxy servers: %s", cfg_path, exc_info=True)
-        return None
+        return []
 
     if not parser.has_section("galaxy"):
         return None
