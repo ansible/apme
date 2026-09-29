@@ -25,12 +25,17 @@ locally-runnable tox environments; CI just calls them.
 
 2. **Workflows call tox environments, not inline shell.** Build and test logic
    belongs in `tox.ini` environments -- never in multi-line YAML `run:` blocks.
-   CI runs `uvx --with tox-uv tox -e <env>`.
+   CI runs `uvx --from tox==4.53.0 --with tox-uv==1.36.0 tox -e <env>`
+   (tox matches `uv.lock`; tox-uv is CI-only so it is pinned here, not in
+   the lock — bump both together, #591).
 
 3. **No scattered version pinning.** Python version is in `pyproject.toml`
    (`requires-python`). Node is in `frontend/package.json` (`engines.node`).
    Tool versions are managed in `.pre-commit-config.yaml`
    (ruff, mypy) and `pyproject.toml` (deps). Not in workflow YAML.
+   Carve-out: `tox`/`tox-uv` are uvx-managed CI tools outside `uv.lock`,
+   so their pins (`--from tox==4.53.0 --with tox-uv==1.36.0`, #591) live
+   in workflow YAML by necessity — keep them identical everywhere.
    Jobs that need Node use `actions/setup-node` with
    `node-version-file: frontend/package.json`.
 
@@ -52,7 +57,7 @@ environment that developers run locally.
 | tox environment | What it does | CI workflow |
 |-----------------|-------------|-------------|
 | `tox -e lint` | Lint, format, type check (prek: ruff + mypy + pydoclint) | `prek.yml` |
-| `tox -e unit` | Unit tests with coverage (`--cov-fail-under=36`) | `test.yml` |
+| `tox -e unit` | Unit tests with coverage (`--cov-fail-under=70`) | `test.yml` |
 | `tox -e integration` | Integration tests (requires OPA binary) | `test.yml` |
 | `tox -e ai` | AI extra tests (abbenay) | `test.yml` |
 | `tox -e ui` | Playwright UI tests | `test.yml` |
@@ -62,16 +67,20 @@ environment that developers run locally.
 | `tox -e build` | Build container images | `container-images.yml` (GHCR) |
 | `tox -e up` | Start the APME pod | manual |
 | `tox -e down` | Stop the APME pod | manual |
+| `tox -e e2e` | End-to-end pod scan (rebuild + start + scan + assert) | manual |
 | `tox -e pm` | Build + start + open browser | manual |
 
-Install: `uv tool install tox --with tox-uv`
+Install: `uv tool install tox==4.53.0 --with tox-uv==1.36.0` (match CI pins, #591)
 
 ## Workflow structure
 
-CI has six workflows in `.github/workflows/`:
+CI has seven workflows in `.github/workflows/`:
 
 - **prek.yml**: Runs `prek` (ruff lint, ruff format, mypy strict, pydoclint,
-  uv-lock). Quality gate for code style and type safety.
+  uv-lock). Quality gate for code style and type safety. Uses
+  `j178/prek-action` directly for its built-in caching — intentional per
+  ADR-047, not a violation of principle 2; `tox -e lint` is the local
+  equivalent. Do not "fix" this without amending ADR-047.
 - **test.yml**: Runs `tox -e unit`, `tox -e integration`, `tox -e ui`,
   `tox -e ai`, and `tox -e ui-workflow-pack` as separate jobs. Quality gate
   for correctness. Coverage threshold is enforced via `--cov-fail-under` in
@@ -87,6 +96,7 @@ CI has six workflows in `.github/workflows/`:
 - **deprecation-scrape.yml**: Monthly cron scraping ansible-core for deprecation
   gaps.
 - **pr-feedback.yml**: Labels PRs with failing checks or merge conflicts.
+- **ui-workflow-release.yml**: Publishes the `@apme/ui-workflow` release tarball.
 
 `prek.yml` and `test.yml` trigger on `pull_request` targeting `main` and use
 `concurrency` groups with `cancel-in-progress` to avoid stacking runs on rapid
@@ -97,7 +107,7 @@ pushes.
 When adding or modifying CI:
 
 - **DO** add new build logic as a tox environment in `tox.ini`, then call it
-  from the workflow with `uvx --with tox-uv tox -e <env>`.
+  from the workflow with `uvx --from tox==4.53.0 --with tox-uv==1.36.0 tox -e <env>`.
 - **DO** use SHA-pinned actions with a tag comment (e.g.,
   `actions/checkout@de0fac2e...  # v6`).
 - **DO** set `FORCE_COLOR: 1` and `PY_COLORS: 1` as workflow-level env vars

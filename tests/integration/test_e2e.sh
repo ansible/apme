@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # End-to-end integration test: rebuild containers, start pod, run scan, assert violations.
+# Primary entrypoint (ADR-047): tox -e e2e -- --skip-build --skip-teardown
 # Usage: tests/integration/test_e2e.sh [--skip-build] [--skip-teardown]
 #
 # Exits 0 on success, 1 on failure.
@@ -14,6 +15,7 @@ for arg in "$@"; do
   case "$arg" in
     --skip-build)    SKIP_BUILD=1 ;;
     --skip-teardown) SKIP_TEARDOWN=1 ;;
+    *) echo "unknown arg: $arg (expected --skip-build or --skip-teardown)" >&2; exit 2 ;;
   esac
 done
 
