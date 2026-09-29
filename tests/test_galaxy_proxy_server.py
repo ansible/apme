@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from galaxy_proxy.proxy.server import _safe_server_label, create_app
+from galaxy_proxy.proxy.server import CollectionResolutionError, _safe_server_label, create_app
 
 
 @pytest.mark.parametrize(  # type: ignore[untyped-decorator]
@@ -149,8 +149,8 @@ class TestProjectPage:
         assert whl_name in resp.text
         assert "/wheels/" in resp.text
 
-    def test_collection_no_cached_wheels_download_fails_empty(self, tmp_path: Path) -> None:
-        """When on-demand download fails, project page returns empty listing.
+    def test_collection_no_cached_wheels_download_fails_502(self, tmp_path: Path) -> None:
+        """When on-demand download fails, project page returns 502.
 
         Args:
             tmp_path: Pytest-provided temporary directory.
@@ -168,8 +168,7 @@ class TestProjectPage:
         ):
             resp = client.get("/simple/ansible-collection-ansible-posix/")
 
-        assert resp.status_code == 200
-        assert "<a href" not in resp.text
+        assert resp.status_code == 502
 
     def test_empty_versions_are_not_cached(self, tmp_path: Path) -> None:
         """Empty version results are retried instead of being cached as failures.
@@ -180,19 +179,18 @@ class TestProjectPage:
         cache_dir = tmp_path / "cache"
         application = create_app(cache_dir=cache_dir, enable_passthrough=False, metadata_ttl=600.0)
 
-        mock_download = AsyncMock(side_effect=RuntimeError("Galaxy unreachable"))
         mock_versions = AsyncMock(return_value=[])
 
         with (
             TestClient(application) as client,
-            patch("galaxy_proxy.proxy.server.download_collections", mock_download),
             patch("galaxy_proxy.proxy.server._fetch_galaxy_versions", mock_versions),
+            patch("galaxy_proxy.proxy.server.download_collections", AsyncMock(side_effect=RuntimeError("fail"))),
         ):
             resp1 = client.get("/simple/ansible-collection-ansible-posix/")
-            assert resp1.status_code == 200
+            assert resp1.status_code == 502
 
             resp2 = client.get("/simple/ansible-collection-ansible-posix/")
-            assert resp2.status_code == 200
+            assert resp2.status_code == 502
 
         assert mock_versions.call_count == 2
 
@@ -307,7 +305,7 @@ class TestServeWheel:
         assert f"wheel_size_bytes={len(whl_data)}" in completion
 
     def test_cache_miss_download_failure(self, tmp_path: Path) -> None:
-        """Download failure returns 502.
+        """Download failure returns 502 with collection and server context.
 
         Args:
             tmp_path: Pytest-provided temporary directory.
@@ -331,7 +329,8 @@ class TestServeWheel:
             resp = client.get("/wheels/ansible_collection_ansible_posix-1.5.4-py3-none-any.whl")
 
         assert resp.status_code == 502
-        assert "Galaxy server unreachable" not in resp.text
+        detail = resp.json()["detail"]
+        assert "ansible.posix" in detail
 
     def test_unparseable_namespace(self, app: TestClient) -> None:
         """Wheel with unparseable namespace/name returns 404.
@@ -581,9 +580,10 @@ class TestVersionDiscoveryWithServers:
         )
 
     def test_fetch_versions_falls_through_on_failure(self) -> None:
-        """When a configured server fails, _fetch_galaxy_versions tries the next.
+        """When a configured server fails, _fetch_galaxy_versions tries the next configured server.
 
-        Private server returns None (failure), public Galaxy returns versions.
+        First server returns None (failure), second server returns versions.
+        No implicit public Galaxy fallback.
         """
         import asyncio
 
@@ -592,6 +592,7 @@ class TestVersionDiscoveryWithServers:
 
         servers = [
             GalaxyServerConfig(name="hub", url="https://hub.example.com", token="tok"),
+            GalaxyServerConfig(name="backup", url="https://backup.example.com"),
         ]
 
         async def _side_effect(
@@ -617,8 +618,8 @@ class TestVersionDiscoveryWithServers:
         assert result == ["1.5.4"]
         assert mock_inner.call_count == 2
 
-    def test_fetch_versions_all_servers_fail_returns_none(self) -> None:
-        """Total server failure (including truncation) is None, not an empty list."""
+    def test_fetch_versions_all_servers_fail_raises_resolution_error(self) -> None:
+        """Total server failure raises CollectionResolutionError (no silent None)."""
         import asyncio
 
         from galaxy_proxy.collection_downloader import GalaxyServerConfig
@@ -628,16 +629,17 @@ class TestVersionDiscoveryWithServers:
             GalaxyServerConfig(name="hub", url="https://hub.example.com", token="tok"),
         ]
 
-        with patch(
-            "galaxy_proxy.proxy.server._fetch_versions_from",
-            new_callable=AsyncMock,
-            return_value=None,
+        with (
+            patch(
+                "galaxy_proxy.proxy.server._fetch_versions_from",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            pytest.raises(CollectionResolutionError, match="ansible.posix"),
         ):
-            result = asyncio.run(
+            asyncio.run(
                 _fetch_galaxy_versions("ansible", "posix", servers=servers),
             )
-
-        assert result is None
 
     def test_fetch_versions_sends_auth_token(self) -> None:
         """_fetch_versions_from passes the auth token in the Authorization header.
@@ -1465,3 +1467,321 @@ class TestGalaxyNonDictPayload:
             )
 
         assert result is None
+
+
+class TestNoImplicitGalaxyFallback:
+    """Gate 1: No implicit public Galaxy fallback when servers are configured."""
+
+    def test_no_public_fallback_when_servers_configured(self) -> None:
+        """When configured servers all fail, public Galaxy is NOT tried."""
+        import asyncio
+
+        from galaxy_proxy.collection_downloader import GalaxyServerConfig
+        from galaxy_proxy.proxy.server import _fetch_galaxy_versions
+
+        servers = [
+            GalaxyServerConfig(name="hub", url="https://hub.example.com", token="tok"),
+        ]
+
+        call_urls: list[str] = []
+
+        async def _tracking_fetch(
+            ns: str,
+            name: str,
+            base_url: str,
+            *,
+            token: str | None = None,
+        ) -> list[str] | None:
+            call_urls.append(base_url)
+            return None
+
+        with (
+            patch(
+                "galaxy_proxy.proxy.server._fetch_versions_from",
+                new_callable=AsyncMock,
+                side_effect=_tracking_fetch,
+            ),
+            pytest.raises(CollectionResolutionError) as exc_info,
+        ):
+            asyncio.run(
+                _fetch_galaxy_versions("ansible", "posix", servers=servers),
+            )
+
+        assert call_urls == ["https://hub.example.com"]
+        assert exc_info.value.fqcn == "ansible.posix"
+        assert exc_info.value.servers_tried == ["hub.example.com"]
+
+    def test_public_galaxy_used_when_no_servers_configured(self) -> None:
+        """Without configured servers, public Galaxy is the default."""
+        import asyncio
+
+        from galaxy_proxy.proxy.server import _fetch_galaxy_versions
+
+        with patch(
+            "galaxy_proxy.proxy.server._fetch_versions_from",
+            new_callable=AsyncMock,
+            return_value=["1.0.0"],
+        ) as mock_inner:
+            result = asyncio.run(
+                _fetch_galaxy_versions("ansible", "posix", servers=None),
+            )
+
+        assert result == ["1.0.0"]
+        mock_inner.assert_called_once_with(
+            "ansible",
+            "posix",
+            "https://galaxy.ansible.com",
+            token=None,
+        )
+
+    def test_all_configured_servers_fail_raises_resolution_error(self) -> None:
+        """Total configured server failure raises CollectionResolutionError."""
+        import asyncio
+
+        from galaxy_proxy.collection_downloader import GalaxyServerConfig
+        from galaxy_proxy.proxy.server import _fetch_galaxy_versions
+
+        servers = [
+            GalaxyServerConfig(name="hub1", url="https://hub1.example.com"),
+            GalaxyServerConfig(name="hub2", url="https://hub2.example.com"),
+        ]
+
+        with (
+            patch(
+                "galaxy_proxy.proxy.server._fetch_versions_from",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            pytest.raises(CollectionResolutionError, match="version_lookup failed") as exc_info,
+        ):
+            asyncio.run(
+                _fetch_galaxy_versions("community", "general", servers=servers),
+            )
+
+        assert exc_info.value.fqcn == "community.general"
+        assert exc_info.value.operation == "version_lookup"
+        assert len(exc_info.value.servers_tried) == 2
+
+    def test_empty_server_list_raises_immediately(self) -> None:
+        """Empty server list (broken config) raises without querying public Galaxy."""
+        import asyncio
+
+        from galaxy_proxy.proxy.server import _fetch_galaxy_versions
+
+        with pytest.raises(CollectionResolutionError, match="no configured servers"):
+            asyncio.run(
+                _fetch_galaxy_versions("ansible", "posix", servers=[]),
+            )
+
+    def test_broken_ansible_cfg_does_not_query_public_galaxy(self, tmp_path: Path) -> None:
+        """ansible.cfg with server_list but no usable URLs fails closed (no public Galaxy).
+
+        Args:
+            tmp_path: Pytest-provided temporary directory.
+        """
+        from galaxy_proxy.collection_downloader import GalaxyServerConfig
+
+        cfg = tmp_path / "ansible.cfg"
+        cfg.write_text(
+            "[galaxy]\nserver_list = broken\n\n[galaxy_server.broken]\nurl = \n",
+            encoding="utf-8",
+        )
+        application = create_app(cache_dir=tmp_path / "cache", enable_passthrough=False)
+        servers_seen: list[list[GalaxyServerConfig] | None] = []
+
+        async def record_servers(
+            namespace: str,
+            name: str,
+            *,
+            servers: list[GalaxyServerConfig] | None = None,
+        ) -> list[str]:
+            servers_seen.append(servers)
+            raise CollectionResolutionError(
+                f"{namespace}.{name}",
+                operation="version_lookup",
+                servers_tried=[],
+            )
+
+        with (
+            patch.dict("os.environ", {"ANSIBLE_CONFIG": str(cfg)}),
+            TestClient(application) as client,
+            patch("galaxy_proxy.proxy.server._fetch_galaxy_versions", side_effect=record_servers),
+        ):
+            resp = client.get("/simple/ansible-collection-ansible-posix/")
+
+        assert resp.status_code == 404
+        assert servers_seen == [[]]
+        assert "no configured servers" in resp.json()["detail"]
+
+
+class TestCollectionResolutionErrorMessages:
+    """Gate 2: Error messages include collection FQCN, version, and server labels."""
+
+    def test_resolution_error_includes_fqcn_and_servers(self) -> None:
+        """CollectionResolutionError message names the collection and servers."""
+        err = CollectionResolutionError(
+            "ansible.posix",
+            version_constraint=">=1.5",
+            operation="version_lookup",
+            servers_tried=["hub.example.com", "galaxy.ansible.com"],
+        )
+        msg = str(err)
+        assert "ansible.posix:>=1.5" in msg
+        assert "version_lookup" in msg
+        assert err.servers_tried == ["hub.example.com", "galaxy.ansible.com"]
+        assert f"[{', '.join(err.servers_tried)}]" in msg
+
+    def test_resolution_error_no_version(self) -> None:
+        """CollectionResolutionError without version constraint formats correctly."""
+        err = CollectionResolutionError(
+            "community.general",
+            operation="download",
+            servers_tried=["hub.example.com"],
+        )
+        msg = str(err)
+        assert "community.general" in msg
+        assert "download" in msg
+        assert ":>=" not in msg
+
+    def test_project_page_returns_404_on_resolution_failure(self, tmp_path: Path) -> None:
+        """project_page returns 404 with actionable message when all servers fail.
+
+        Args:
+            tmp_path: Pytest-provided temporary directory.
+        """
+        cache_dir = tmp_path / "cache"
+        application = create_app(cache_dir=cache_dir, enable_passthrough=False)
+
+        resolution_err = CollectionResolutionError(
+            "ansible.posix",
+            operation="version_lookup",
+            servers_tried=["hub.example.com"],
+        )
+        mock_versions = AsyncMock(side_effect=resolution_err)
+
+        with (
+            TestClient(application) as client,
+            patch("galaxy_proxy.proxy.server._fetch_galaxy_versions", mock_versions),
+        ):
+            resp = client.get("/simple/ansible-collection-ansible-posix/")
+
+        assert resp.status_code == 404
+        assert resp.json()["detail"] == str(resolution_err)
+
+    def test_serve_wheel_download_failure_includes_server_labels(self, tmp_path: Path) -> None:
+        """serve_wheel download failure includes configured server labels in 502.
+
+        Args:
+            tmp_path: Pytest-provided temporary directory.
+        """
+        from galaxy_proxy.collection_downloader import DownloadResult, GalaxyServerConfig
+
+        cache_dir = tmp_path / "cache"
+        application = create_app(
+            cache_dir=cache_dir,
+            galaxy_servers=[
+                GalaxyServerConfig(name="hub", url="https://hub.example.com"),
+            ],
+        )
+
+        mock_download = AsyncMock(
+            return_value=DownloadResult(
+                failed_specs=["ansible.posix:1.5.4"],
+                stderr="Galaxy server unreachable",
+            ),
+        )
+
+        with (
+            TestClient(application) as client,
+            patch("galaxy_proxy.proxy.server.download_collections", mock_download),
+        ):
+            resp = client.get("/wheels/ansible_collection_ansible_posix-1.5.4-py3-none-any.whl")
+
+        assert resp.status_code == 502
+        detail = resp.json()["detail"]
+        assert "ansible.posix" in detail
+        assert detail.endswith("(servers tried: hub.example.com)")
+
+    def test_serve_wheel_generic_failure_includes_server_labels(self, tmp_path: Path) -> None:
+        """serve_wheel generic failure includes server labels in 502 detail.
+
+        Args:
+            tmp_path: Pytest-provided temporary directory.
+        """
+        from galaxy_proxy.collection_downloader import GalaxyServerConfig
+
+        cache_dir = tmp_path / "cache"
+        application = create_app(
+            cache_dir=cache_dir,
+            galaxy_servers=[
+                GalaxyServerConfig(name="hub", url="https://hub.example.com"),
+            ],
+        )
+
+        mock_download = AsyncMock(side_effect=RuntimeError("network timeout"))
+
+        with (
+            TestClient(application) as client,
+            patch("galaxy_proxy.proxy.server.download_collections", mock_download),
+        ):
+            resp = client.get("/wheels/ansible_collection_ansible_posix-1.5.4-py3-none-any.whl")
+
+        assert resp.status_code == 502
+        detail = resp.json()["detail"]
+        assert "ansible.posix" in detail
+        assert detail.endswith("(servers tried: hub.example.com)")
+
+    def test_on_demand_download_failure_returns_502(self, tmp_path: Path) -> None:
+        """On-demand download failure returns 502, not empty listing.
+
+        Args:
+            tmp_path: Pytest-provided temporary directory.
+        """
+        from galaxy_proxy.collection_downloader import GalaxyServerConfig
+
+        cache_dir = tmp_path / "cache"
+        application = create_app(
+            cache_dir=cache_dir,
+            enable_passthrough=False,
+            galaxy_servers=[
+                GalaxyServerConfig(name="hub", url="https://hub.example.com"),
+            ],
+        )
+
+        mock_versions = AsyncMock(return_value=[])
+        mock_download = AsyncMock(
+            side_effect=RuntimeError("Galaxy server unreachable"),
+        )
+
+        with (
+            TestClient(application) as client,
+            patch("galaxy_proxy.proxy.server._fetch_galaxy_versions", mock_versions),
+            patch("galaxy_proxy.proxy.server.download_collections", mock_download),
+        ):
+            resp = client.get("/simple/ansible-collection-ansible-posix/")
+
+        assert resp.status_code == 502
+        assert "ansible.posix" in resp.json()["detail"]
+
+
+class TestCollectionDependencyFailsScans:
+    """Gate 3: Scan aborts when required collections cannot be installed."""
+
+    def test_scan_aborts_on_failed_collections(self) -> None:
+        """CollectionDependencyError is raised when collections fail to install."""
+        from apme_engine.daemon.engine_server import CollectionDependencyError
+
+        err = CollectionDependencyError(["community.general", "ansible.posix:>=1.5"])
+        assert "community.general" in str(err)
+        assert "ansible.posix:>=1.5" in str(err)
+        assert "2 required collection(s)" in str(err)
+        assert "Scan aborted" in str(err)
+        assert err.failed_collections == ["community.general", "ansible.posix:>=1.5"]
+
+    def test_single_collection_failure_message(self) -> None:
+        """Single failed collection produces correct error message."""
+        from apme_engine.daemon.engine_server import CollectionDependencyError
+
+        err = CollectionDependencyError(["ansible.netcommon"])
+        assert "1 required collection(s)" in str(err)
+        assert "ansible.netcommon" in str(err)
