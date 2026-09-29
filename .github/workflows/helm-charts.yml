@@ -11,7 +11,7 @@ on:
       - ".github/workflows/helm-charts.yml"
       - "scripts/helm_chart.sh"
       - "scripts/publish_helm_values_profiles.sh"
-      - "ci/helm-publish-requirements.txt"
+      - "ci/tox-requirements.txt"
       - "tox.ini"
   pull_request:
     paths:
@@ -19,7 +19,7 @@ on:
       - ".github/workflows/helm-charts.yml"
       - "scripts/helm_chart.sh"
       - "scripts/publish_helm_values_profiles.sh"
-      - "ci/helm-publish-requirements.txt"
+      - "ci/tox-requirements.txt"
       - "tox.ini"
   workflow_dispatch:
 
@@ -43,7 +43,7 @@ jobs:
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
 
       - name: Lint and package chart
-        run: uvx --from tox==4.53.0 --with tox-uv==1.36.0 tox -e helm
+        run: uvx --with-requirements ci/tox-requirements.txt tox -e helm
 
   release:
     if: github.event_name != 'pull_request'
@@ -79,11 +79,11 @@ jobs:
       # chart-releaser only maintains index.yaml (+ release .tgz). Publish the
       # named values profiles as loose files on Pages so operators can:
       #   helm install … -f https://ansible.github.io/apme/values-portal.yaml
-      # Toolchain pins live in ci/helm-publish-requirements.txt (not YAML).
+      # Toolchain pins live in ci/tox-requirements.txt (not YAML).
       # uvx ignores uv.lock; this job has contents: write.
       - name: Publish values profiles to GitHub Pages
         run: >-
-          uvx --with-requirements ci/helm-publish-requirements.txt
+          uvx --with-requirements ci/tox-requirements.txt
           tox -e helm-pages-profiles
         env:
           HELM_PAGES_PUSH: "1"
