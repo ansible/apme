@@ -701,6 +701,37 @@ def test_format_apply_writes_files(tmp_path: Path) -> None:
     assert target.read_bytes() == b"new"
 
 
+def test_format_apply_counts_only_written(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """--apply reports written files, not skipped ones.
+
+    Args:
+        tmp_path: Temporary directory fixture.
+        capsys: Pytest capture fixture.
+    """
+    from apme_engine.cli.format_cmd import run_format
+
+    target = tmp_path / "site.yml"
+    target.write_bytes(b"orig")
+    resp = engine_pb2.FormatResponse(
+        diffs=[
+            FileDiff(path="site.yml", original=b"orig", formatted=b"new", diff="d"),
+            FileDiff(path="../escape.yml", original=b"x", formatted=b"y", diff="d"),
+            FileDiff(path="stale.yml", original=b"stale", formatted=b"z", diff="d"),
+        ],
+        logs=[],
+    )
+    channel = MagicMock()
+    with (
+        patch("apme_engine.cli.format_cmd.yield_scan_chunks", return_value=iter([_scan_chunk()])),
+        patch("apme_engine.cli.format_cmd.resolve_engine", return_value=(channel, "addr")),
+        patch("apme_engine.cli.format_cmd.engine_pb2_grpc.EngineStub") as stub_cls,
+    ):
+        stub_cls.return_value.FormatStream.return_value = resp
+        run_format(_format_args_ns(str(target), apply=True))
+    assert target.read_bytes() == b"new"
+    assert "1 file(s) reformatted" in capsys.readouterr().err
+
+
 def test_format_show_diffs_without_apply(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """Default mode prints diffs to stdout without writing.
 
@@ -2225,7 +2256,7 @@ def test_prompt_ynasq_variants() -> None:
 
 
 def test_write_patches_dir_and_file_targets(tmp_path: Path) -> None:
-    """_write_patches writes via target dir join and via direct file target.
+    """_write_patches writes via base dir join and rejects escaping paths.
 
     Args:
         tmp_path: Temporary directory fixture.
@@ -2239,8 +2270,11 @@ def test_write_patches_dir_and_file_targets(tmp_path: Path) -> None:
     assert dfile.read_bytes() == b"new"
     solo = tmp_path / "solo.yml"
     solo.write_bytes(b"o2")
-    _write_patches(solo, [FilePatch(path="ignored.yml", original=b"o2", patched=b"n2", diff="d")])
+    _write_patches(tmp_path, [FilePatch(path="solo.yml", original=b"o2", patched=b"n2", diff="d")])
     assert solo.read_bytes() == b"n2"
+    written, failed = _write_patches(tmp_path, [FilePatch(path="../escape.yml", original=b"x", patched=b"y", diff="d")])
+    assert written == 0
+    assert failed is True
 
 
 def test_write_patches_oserror_skips(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -2309,6 +2343,20 @@ def test_check_chunk_not_found_exits(tmp_path: Path) -> None:
         pytest.raises(SystemExit) as exc,
     ):
         run_check(_check_args_ns(str(target)))
+    assert exc.value.code == EXIT_ERROR
+
+
+def test_check_missing_target_prevalidates_exits(tmp_path: Path) -> None:
+    """Nonexistent check targets exit before any engine contact.
+
+    Args:
+        tmp_path: Temporary directory fixture.
+    """
+    from apme_engine.cli.check import run_check
+
+    missing = tmp_path / "nope.yml"
+    with pytest.raises(SystemExit) as exc:
+        run_check(_check_args_ns(str(missing)))
     assert exc.value.code == EXIT_ERROR
 
 

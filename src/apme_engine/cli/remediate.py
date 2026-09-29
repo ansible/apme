@@ -37,7 +37,14 @@ from apme.v1.engine_pb2 import (
 )
 from apme_engine.cli._exit_codes import EXIT_ERROR, EXIT_VIOLATIONS
 from apme_engine.cli._galaxy_config import discover_galaxy_servers
-from apme_engine.cli._project_root import derive_session_id, discover_project_root
+from apme_engine.cli._project_root import (
+    common_scan_base,
+    derive_session_id,
+    discover_project_root,
+    discover_project_root_for_targets,
+    normalize_targets,
+    resolve_within_base,
+)
 from apme_engine.cli._rules_yml import load_rule_configs_from_project
 from apme_engine.cli._suppressions import apply_suppressions, load_suppressions
 from apme_engine.cli.ansi import dim, red, yellow
@@ -67,13 +74,18 @@ def run_remediate(args: argparse.Namespace) -> None:
     from apme_engine.cli.check import _apply_dep_scan_flags
 
     skip_collection, skip_python = _apply_dep_scan_flags(args)
-    target = Path(args.target).resolve()
-    if not target.exists():
-        sys.stderr.write(f"Target not found: {args.target}\n")
-        sys.exit(EXIT_ERROR)
+    targets = normalize_targets(getattr(args, "target", "."))
+    for candidate in targets:
+        if not Path(candidate).exists():
+            sys.stderr.write(f"Target not found: {candidate}\n")
+            sys.exit(EXIT_ERROR)
+    base = common_scan_base(targets)
 
     explicit_session = getattr(args, "session", None)
-    project_root = discover_project_root(target)
+    if len(targets) == 1:
+        project_root = discover_project_root(targets[0])
+    else:
+        project_root = discover_project_root_for_targets(targets)
     session_id = explicit_session or derive_session_id(project_root)
 
     galaxy_servers = discover_galaxy_servers(project_root) or None
@@ -98,7 +110,7 @@ def run_remediate(args: argparse.Namespace) -> None:
             ScanChunk: Scan upload chunks for the FixSession stream.
         """
         yield from yield_scan_chunks(
-            str(target),
+            targets,
             project_root_name="project",
             ansible_core_version=getattr(args, "ansible_version", None),
             collection_specs=getattr(args, "collections", None),
@@ -107,6 +119,7 @@ def run_remediate(args: argparse.Namespace) -> None:
             rule_configs=rule_cfgs or None,
             skip_collection_health=skip_collection,
             skip_dep_audit=skip_python,
+            exclude_patterns=getattr(args, "exclude", None),
         )
 
     fix_opts = FixOptions(
@@ -294,9 +307,9 @@ def run_remediate(args: argparse.Namespace) -> None:
                         sys.stderr.write(
                             f"  AI escalation: including {len(paths)} location(s)\n",
                         )
-                    targets = [AiEscalateTarget(path=p, rule_ids=[]) for p in paths]
+                    escalate_targets = [AiEscalateTarget(path=p, rule_ids=[]) for p in paths]
                     cmd_queue.put(
-                        SessionCommand(ai_escalate=AiEscalateRequest(targets=targets)),
+                        SessionCommand(ai_escalate=AiEscalateRequest(targets=escalate_targets)),
                     )
 
                 elif oneof == "approval_ack":
@@ -376,7 +389,7 @@ def run_remediate(args: argparse.Namespace) -> None:
         if got_result:
             # Deferred until the producer is proven clean above: a partial
             # or synthetic result must never mutate disk on a failed run.
-            result_files_written, write_failed = _write_patches(target, result_patches)
+            result_files_written, write_failed = _write_patches(base, result_patches)
             break
         if retry:
             time.sleep(1.0 + random.uniform(0, 1.0))
@@ -552,11 +565,11 @@ def _prompt_ynasq() -> str:
         sys.stderr.write("  Please enter y, n, a, s, or q\n")
 
 
-def _write_patches(target: Path, patches: Iterable[FilePatch]) -> tuple[int, bool]:
+def _write_patches(base: Path, patches: Iterable[FilePatch]) -> tuple[int, bool]:
     """Write patched files to disk, skipping failures.
 
     Args:
-        target: Scan target directory or single file.
+        base: Common scan base directory; patch paths must resolve inside it.
         patches: Patches to apply.
 
     Returns:
@@ -565,7 +578,12 @@ def _write_patches(target: Path, patches: Iterable[FilePatch]) -> tuple[int, boo
     count = 0
     had_failures = False
     for p in patches:
-        out_path = target / p.path if target.is_dir() else target
+        try:
+            out_path = resolve_within_base(base, p.path)
+        except ValueError as exc:
+            sys.stderr.write(f"WARNING: skipping {p.path}: {exc}\n")
+            had_failures = True
+            continue
         try:
             if _safe_write(out_path, p.original, p.patched):
                 rules = ", ".join(p.applied_rules) if p.applied_rules else "changes"

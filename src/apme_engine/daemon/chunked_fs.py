@@ -3,7 +3,7 @@
 import fnmatch
 import os
 import uuid
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -157,7 +157,7 @@ class _ScanBundle:
 
 
 def build_scan_bundle(
-    target_path: str | Path,
+    target_path: str | Path | Sequence[str | Path],
     scan_id: str | None = None,
     project_root_name: str = "project",
     ansible_core_version: str | None = None,
@@ -167,13 +167,15 @@ def build_scan_bundle(
     rule_configs: Iterable[RuleConfig] | None = None,
     skip_collection_health: bool = False,
     skip_dep_audit: bool = False,
+    exclude_patterns: Sequence[str] | None = None,
 ) -> _ScanBundle:
-    """Walk target_path (file or directory) and collect files for scanning.
+    """Walk target_path (file, directory, or list of files/directories) and collect files.
 
     Paths in File messages are relative to the project root (target_path if dir, else parent).
+    With multiple targets, paths are relative to the common ancestor directory.
 
     Args:
-        target_path: File or directory to scan.
+        target_path: File, directory, or list of files/directories to scan.
         scan_id: Optional scan identifier.
         project_root_name: Name for project root in the request.
         ansible_core_version: Optional Ansible core version.
@@ -183,6 +185,7 @@ def build_scan_bundle(
         rule_configs: Optional per-rule overrides (ADR-041), e.g. from ``.apme/rules.yml``.
         skip_collection_health: Disable collection health validator (ADR-051).
         skip_dep_audit: Disable Python CVE audit validator (ADR-051).
+        exclude_patterns: Optional CLI ``--exclude`` glob patterns (merged with .apmeignore).
 
     Returns:
         _ScanBundle with files and options populated.
@@ -190,32 +193,93 @@ def build_scan_bundle(
     Raises:
         FileNotFoundError: If target_path does not exist.
     """
-    target = Path(target_path).resolve()
-    if not target.exists():
-        raise FileNotFoundError(f"Target does not exist: {target_path}")
+    raw_targets: list[str | Path] = [target_path] if isinstance(target_path, (str, Path)) else list(target_path)
+    if not raw_targets:
+        raw_targets = ["."]
+    targets: list[Path] = [Path(t).resolve() for t in raw_targets]
+    for original, target in zip(raw_targets, targets, strict=False):
+        if not target.exists():
+            raise FileNotFoundError(f"Target does not exist: {original}")
 
-    if target.is_file():
-        root = target.parent
-        to_visit = [target]
+    if len(targets) == 1:
+        target = targets[0]
+        if target.is_file():
+            root = target.parent
+            to_visit = [target]
+        else:
+            root = target
+            to_visit = []
+            for dirpath, dirnames, filenames in os.walk(root):
+                dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+                for name in filenames:
+                    to_visit.append(Path(dirpath) / name)
     else:
-        root = target
+        anchor_dirs = [str(t.parent if t.is_file() else t) for t in targets]
+        try:
+            root = Path(os.path.commonpath(anchor_dirs)).resolve()
+        except ValueError as e:
+            raise FileNotFoundError(f"Targets share no common path: {e}") from e
         to_visit = []
-        for dirpath, dirnames, filenames in os.walk(root):
-            dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
-            for name in filenames:
-                to_visit.append(Path(dirpath) / name)
+        for target in targets:
+            if target.is_file():
+                to_visit.append(target)
+            else:
+                for dirpath, dirnames, filenames in os.walk(target):
+                    dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+                    for name in filenames:
+                        to_visit.append(Path(dirpath) / name)
 
-    ignore_patterns = _load_apmeignore(root)
+    # Ignore patterns come in three scopes, matched against different bases:
+    # - bundle-root .apmeignore: matched against bundle-relative paths.
+    # - per-target .apmeignore (multi-target only): each matched against paths
+    #   relative to its own subtree, so a bare pattern in projA never
+    #   suppresses an unrelated projB file.
+    # - CLI --exclude: matched against both bundle-relative and absolute
+    #   paths, so `check --exclude tests/ tests/t.yml` (single-file target
+    #   whose bundle-relative path is bare `t.yml`) still excludes.
+    root_ignore = _load_apmeignore(root)
+    scoped_ignores: list[tuple[Path, list[str]]] = []
+    if len(targets) > 1:
+        for target in targets:
+            scope = (target.parent if target.is_file() else target).resolve()
+            if scope != root:
+                scope_pats = [p for p in _load_apmeignore(scope) if p not in root_ignore]
+                if scope_pats:
+                    scoped_ignores.append((scope, scope_pats))
+    cli_excludes = list(exclude_patterns or [])
 
     files = []
+    seen: set[str] = set()
     for path in to_visit:
         if not path.is_file():
+            continue
+        try:
+            resolved_path = path.resolve()
+        except OSError:
+            continue
+        if str(resolved_path) in seen:
             continue
         try:
             rel = path.relative_to(root)
         except ValueError:
             continue
-        if not _should_include(path, root, ignore_patterns):
+        rel_str = str(rel)
+        if _matches_ignore(rel_str, root_ignore):
+            continue
+        if cli_excludes and (_matches_ignore(rel_str, cli_excludes) or _matches_ignore(str(path), cli_excludes)):
+            continue
+        scoped_out = False
+        for scope, pats in scoped_ignores:
+            try:
+                scope_rel = str(path.relative_to(scope))
+            except ValueError:
+                continue
+            if _matches_ignore(scope_rel, pats):
+                scoped_out = True
+                break
+        if scoped_out:
+            continue
+        if not _should_include(path, root, root_ignore):
             continue
         try:
             content = path.read_bytes()
@@ -224,6 +288,7 @@ def build_scan_bundle(
         # Skip if looks binary
         if b"\x00" in content[:8192]:
             continue
+        seen.add(str(resolved_path))
         files.append(File(path=str(rel), content=content))
 
     options = ScanOptions()
@@ -254,7 +319,7 @@ def build_scan_bundle(
 
 
 def yield_scan_chunks(
-    target_path: str | Path,
+    target_path: str | Path | Sequence[str | Path],
     scan_id: str | None = None,
     project_root_name: str = "project",
     ansible_core_version: str | None = None,
@@ -265,6 +330,7 @@ def yield_scan_chunks(
     rule_configs: Iterable[RuleConfig] | None = None,
     skip_collection_health: bool = False,
     skip_dep_audit: bool = False,
+    exclude_patterns: Sequence[str] | None = None,
 ) -> Iterator[ScanChunk]:
     """Yield ScanChunk messages for FixSession/FormatStream so the total request stays under gRPC message limits.
 
@@ -272,7 +338,7 @@ def yield_scan_chunks(
     Last chunk has last=True.
 
     Args:
-        target_path: File or directory to scan.
+        target_path: File, directory, or list of files/directories to scan.
         scan_id: Optional scan identifier.
         project_root_name: Name for project root.
         ansible_core_version: Optional Ansible core version.
@@ -283,6 +349,7 @@ def yield_scan_chunks(
         rule_configs: Optional per-rule overrides (ADR-041).
         skip_collection_health: Disable collection health validator (ADR-051).
         skip_dep_audit: Disable Python CVE audit validator (ADR-051).
+        exclude_patterns: Optional CLI ``--exclude`` glob patterns.
 
     Yields:
         ScanChunk: ScanChunk messages for streaming.
@@ -298,6 +365,7 @@ def yield_scan_chunks(
         rule_configs=rule_configs,
         skip_collection_health=skip_collection_health,
         skip_dep_audit=skip_dep_audit,
+        exclude_patterns=exclude_patterns,
     )
     files: list[File] = list(req.files)
     if not files:
