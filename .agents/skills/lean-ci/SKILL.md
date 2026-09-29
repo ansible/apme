@@ -25,17 +25,17 @@ locally-runnable tox environments; CI just calls them.
 
 2. **Workflows call tox environments, not inline shell.** Build and test logic
    belongs in `tox.ini` environments -- never in multi-line YAML `run:` blocks.
-   CI runs `uvx --from tox==4.53.0 --with tox-uv==1.36.0 tox -e <env>`
-   (tox matches `uv.lock`; tox-uv is CI-only so it is pinned here, not in
-   the lock — bump both together, #591).
+   CI runs `uvx --with-requirements ci/tox-requirements.txt tox -e <env>`
+   (tox matches `uv.lock`; tox-uv is CI-only so it is pinned in
+   `ci/tox-requirements.txt`, not in the lock — bump both together, #591).
 
 3. **No scattered version pinning.** Python version is in `pyproject.toml`
    (`requires-python`). Node is in `frontend/package.json` (`engines.node`).
    Tool versions are managed in `.pre-commit-config.yaml`
    (ruff, mypy) and `pyproject.toml` (deps). Not in workflow YAML.
    Carve-out: `tox`/`tox-uv` are uvx-managed CI tools outside `uv.lock`,
-   so their pins (`--from tox==4.53.0 --with tox-uv==1.36.0`, #591) live
-   in workflow YAML by necessity — keep them identical everywhere.
+   so their pins live in `ci/tox-requirements.txt` (#591) — workflows
+   reference that file, not inline version literals.
    Jobs that need Node use `actions/setup-node` with
    `node-version-file: frontend/package.json`.
 
@@ -107,7 +107,7 @@ pushes.
 When adding or modifying CI:
 
 - **DO** add new build logic as a tox environment in `tox.ini`, then call it
-  from the workflow with `uvx --from tox==4.53.0 --with tox-uv==1.36.0 tox -e <env>`.
+  from the workflow with `uvx --with-requirements ci/tox-requirements.txt tox -e <env>`.
 - **DO** use SHA-pinned actions with a tag comment (e.g.,
   `actions/checkout@de0fac2e...  # v6`).
 - **DO** set `FORCE_COLOR: 1` and `PY_COLORS: 1` as workflow-level env vars

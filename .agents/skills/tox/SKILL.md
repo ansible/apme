@@ -38,7 +38,7 @@ directly. Every task maps to a `tox -e <env>` command.
 4. **Never run `./containers/podman/*.sh` directly.** Use `tox -e build`,
    `tox -e up`, `tox -e down`, or `tox -e cli`.
 5. **Pass extra arguments after `--`.** Example: `tox -e unit -- -k test_sbom`.
-6. **In CI, use `uvx --from tox==4.53.0 --with tox-uv==1.36.0 tox -e <env>`** instead of installing tox (#591).
+6. **In CI, use `uvx --with-requirements ci/tox-requirements.txt tox -e <env>`** instead of installing tox (#591).
 
 ## Environment Reference
 

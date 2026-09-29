@@ -36,8 +36,8 @@ fi
 
 # ─── Phase 2: Tear down old pod + start fresh ──────────────────────────────────
 echo "==> Phase 2: Starting pod"
-podman pod rm -f apme-pod 2>/dev/null || true
-podman play kube containers/podman/pod.yaml
+bash containers/podman/down.sh 2>/dev/null || true
+bash containers/podman/up.sh
 log "Pod created, waiting for Running status..."
 
 MAX_WAIT=90
@@ -208,7 +208,7 @@ fi
 # ─── Teardown ──────────────────────────────────────────────────────────────────
 if [[ "$SKIP_TEARDOWN" -eq 0 ]]; then
   echo "==> Teardown: stopping pod"
-  podman pod rm -f apme-pod 2>/dev/null || true
+  bash containers/podman/down.sh 2>/dev/null || true
   log "Pod removed"
 else
   log "Skipping teardown (--skip-teardown)"
