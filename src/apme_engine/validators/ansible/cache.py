@@ -16,6 +16,7 @@ import json
 import logging
 import threading
 from collections import OrderedDict
+from collections.abc import Mapping
 from typing import Literal
 
 logger = logging.getLogger(__name__)
@@ -320,6 +321,8 @@ class PluginCache:
         """
         with self._lock:
             current = self._stats_locked()
+        if not isinstance(snapshot, Mapping):
+            snapshot = {}
         result: dict[str, int] = {}
         for store_name in _STORES:
             for kind in ("hits", "misses"):

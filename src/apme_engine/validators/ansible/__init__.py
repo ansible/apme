@@ -14,7 +14,7 @@ from typing import cast
 from apme_engine.engine.models import YAMLDict
 from apme_engine.validators.base import ScanContext
 
-from .cache import plugin_cache
+from .cache import CacheSnapshot, plugin_cache
 from .rules import L057_syntax, L058_argspec_doc, L059_argspec_mock, M001_M004_introspect
 
 NodeLookup = dict[str, list[tuple[int, int, str]]]
@@ -156,6 +156,44 @@ def resolve_file_line_to_node(
     return best
 
 
+def _cache_report(cache_snapshot: CacheSnapshot, violations_count: int) -> tuple[dict[str, int], str]:
+    """Build merged cache metadata and the stderr summary fragment.
+
+    Args:
+        cache_snapshot: Counter snapshot taken at scan start.
+        violations_count: Total violations for the log line.
+
+    Returns:
+        Merged cumulative + per-scan metadata and the full stderr line.
+    """
+    cache_stats = plugin_cache.stats()
+    scan_stats = plugin_cache.stats_since(cache_snapshot)
+
+    def _pair(store: str) -> str:
+        """Format per-scan and cumulative hits/misses for a store.
+
+        Args:
+            store: Cache store name.
+
+        Returns:
+            Human-readable ``Ah/Bm (scan) Ch/Dm (total)`` fragment.
+        """
+        return (
+            f"{scan_stats.get(f'scan_cache_{store}_hits', 0)}h/"
+            f"{scan_stats.get(f'scan_cache_{store}_misses', 0)}m (scan) "
+            f"{cache_stats.get(f'cache_{store}_hits', 0)}h/"
+            f"{cache_stats.get(f'cache_{store}_misses', 0)}m (total)"
+        )
+
+    line = (
+        f"Ansible validator: total {violations_count} violation(s), "
+        f"cache introspect={_pair('introspect')}, "
+        f"docspec={_pair('docspec')}, "
+        f"mockspec={_pair('mockspec')}\n"
+    )
+    return {**cache_stats, **scan_stats}, line
+
+
 class AnsibleValidator:
     """Validator that runs ansible-core checks via pre-built venvs.
 
@@ -247,12 +285,13 @@ class AnsibleValidator:
 
         task_nodes = _extract_task_nodes(context.hierarchy_payload) if context.hierarchy_payload else []
         if not task_nodes:
-            sys.stderr.write(f"Ansible validator: total {len(violations)} violation(s)\n")
+            metadata, summary_line = _cache_report(cache_snapshot, len(violations))
+            sys.stderr.write(summary_line)
             sys.stderr.flush()
             return AnsibleRunResult(
                 violations=violations,
                 rule_timings=rule_timings,
-                metadata={**plugin_cache.stats(), **plugin_cache.stats_since(cache_snapshot)},
+                metadata=metadata,
             )
 
         sys.stderr.write(f"Ansible validator: checking {len(task_nodes)} task(s)\n")
@@ -290,34 +329,11 @@ class AnsibleValidator:
         rule_timings.append(AnsibleRuleTiming(rule_id="L059", elapsed_ms=elapsed, violations=len(l059)))
         sys.stderr.write(f"  L059 (argspec-mock): {len(l059)} issue(s) in {elapsed:.1f}ms\n")
 
-        cache_stats = plugin_cache.stats()
-        scan_stats = plugin_cache.stats_since(cache_snapshot)
-
-        def _pair(store: str) -> str:
-            """Format per-scan and cumulative hits/misses for a store.
-
-            Args:
-                store: Cache store name.
-
-            Returns:
-                Human-readable ``Ah/Bm (scan) Ch/Dm (total)`` fragment.
-            """
-            return (
-                f"{scan_stats.get(f'scan_cache_{store}_hits', 0)}h/"
-                f"{scan_stats.get(f'scan_cache_{store}_misses', 0)}m (scan) "
-                f"{cache_stats.get(f'cache_{store}_hits', 0)}h/"
-                f"{cache_stats.get(f'cache_{store}_misses', 0)}m (total)"
-            )
-
-        sys.stderr.write(
-            f"Ansible validator: total {len(violations)} violation(s), "
-            f"cache introspect={_pair('introspect')}, "
-            f"docspec={_pair('docspec')}, "
-            f"mockspec={_pair('mockspec')}\n"
-        )
+        metadata, summary_line = _cache_report(cache_snapshot, len(violations))
+        sys.stderr.write(summary_line)
         sys.stderr.flush()
         return AnsibleRunResult(
             violations=violations,
             rule_timings=rule_timings,
-            metadata={**cache_stats, **scan_stats},
+            metadata=metadata,
         )

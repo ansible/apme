@@ -529,3 +529,53 @@ class TestRuleClassCache:
         assert str(tmp_path) not in scanner_mod._rule_class_cache
         rules, _ = load_graph_rules(rules_dir=str(tmp_path))
         assert {r.rule_id for r in rules} == {"CACHE1"}
+
+    def test_hidden_rule_file_invalidates(self, tmp_path: Path) -> None:
+        """Dot-prefixed rule modules are fingerprinted and invalidate on change.
+
+        Args:
+            tmp_path: Pytest temporary directory.
+        """
+        hidden = tmp_path / ".hidden_graph.py"
+        hidden.write_text(self._RULE_TMPL.format(idx=9), encoding="utf-8")
+        rules1, _ = load_graph_rules(rules_dir=str(tmp_path))
+        assert {r.rule_id for r in rules1} == {"CACHE9"}
+        hidden.write_text(self._RULE_TMPL.format(idx=10), encoding="utf-8")
+        rules2, _ = load_graph_rules(rules_dir=str(tmp_path))
+        assert {r.rule_id for r in rules2} == {"CACHE10"}
+
+    def test_content_fingerprint_detects_rewrite(self, tmp_path: Path) -> None:
+        """SHA-256 fingerprints change when rule file content changes.
+
+        Args:
+            tmp_path: Pytest temporary directory.
+        """
+        from apme_engine.graph.scanner import _dir_fingerprint
+
+        path = tmp_path / "probe_1_graph.py"
+        path.write_text(self._RULE_TMPL.format(idx=1), encoding="utf-8")
+        fp1 = _dir_fingerprint(str(tmp_path))
+        path.write_text(self._RULE_TMPL.format(idx="X"), encoding="utf-8")
+        fp2 = _dir_fingerprint(str(tmp_path))
+        assert fp1 != fp2
+
+    def test_content_rewrite_invalidates_despite_preserved_stat(self, tmp_path: Path) -> None:
+        """Content edits invalidate even when mtime and size are unchanged.
+
+        Args:
+            tmp_path: Pytest temporary directory.
+        """
+        import os
+
+        path = tmp_path / "probe_1_graph.py"
+        path.write_text(self._RULE_TMPL.format(idx=1), encoding="utf-8")
+        rules1, _ = load_graph_rules(rules_dir=str(tmp_path))
+        assert {r.rule_id for r in rules1} == {"CACHE1"}
+
+        stat = path.stat()
+        path.write_text(self._RULE_TMPL.format(idx="X"), encoding="utf-8")
+        assert path.stat().st_size == stat.st_size
+        os.utime(path, (stat.st_atime, stat.st_mtime))
+
+        rules2, _ = load_graph_rules(rules_dir=str(tmp_path))
+        assert {r.rule_id for r in rules2} == {"CACHEX"}

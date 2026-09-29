@@ -1647,11 +1647,12 @@ def test_ansible_run_delegates_to_timing(tmp_path: Path) -> None:
     assert out == [{"rule_id": "L057"}]
 
 
-def test_ansible_run_timing_no_tasks_early_return(tmp_path: Path) -> None:
+def test_ansible_run_timing_no_tasks_early_return(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """Missing root dir and no task nodes returns empty result.
 
     Args:
         tmp_path: Pytest temporary directory.
+        capsys: Pytest stderr capture fixture.
     """
     from apme_engine.validators.ansible import AnsibleValidator
     from apme_engine.validators.base import ScanContext
@@ -1668,6 +1669,10 @@ def test_ansible_run_timing_no_tasks_early_return(tmp_path: Path) -> None:
         for kind in ("hits", "misses")
     }
     assert all(isinstance(v, int) and v >= 0 for v in result.metadata.values())
+    captured = capsys.readouterr()
+    assert "cache introspect=" in captured.err
+    assert "(scan)" in captured.err
+    assert "(total)" in captured.err
 
 
 def test_ansible_run_timing_l057_with_lookup(tmp_path: Path) -> None:

@@ -332,6 +332,14 @@ class TestPluginCacheCore:
         clamped = cache.stats_since(future)
         assert all(v == 0 for v in clamped.values())
 
+    def test_stats_since_non_mapping_snapshot(self) -> None:
+        """Non-mapping snapshots are treated as empty without raising."""
+        cache = PluginCache()
+        bad_snapshots: tuple[object, ...] = (None, [], "not-a-mapping")
+        for bad in bad_snapshots:
+            delta = cache.stats_since(bad)  # type: ignore[arg-type]
+            assert all(v == 0 for v in delta.values())
+
     def test_lru_eviction(self, tmp_path: Path) -> None:
         """Oldest entries are evicted when max_entries is exceeded.
 

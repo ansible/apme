@@ -15,9 +15,11 @@ merged validator findings (e.g. OPA) in the engine after fan-out.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import re
+import shutil
 import threading
 import time
 import traceback
@@ -109,10 +111,9 @@ DISABLED_BY_DEFAULT_GRAPH_RULE_IDS: frozenset[str] = frozenset({"R402", "R404"})
 # per-instance scan state such as ``_scanned_dirs``).
 #
 # Approximation notes (accepted risks):
-# - The fingerprint is (filename, mtime_ns, size) over all top-level files
-#   (not just ``*.py``), so helper-module edits invalidate too. A rewrite
-#   preserving size within the same timestamp tick is invisible until
-#   ``invalidate_graph_rule_cache()`` or a daemon restart.
+# - Loadable rule modules (``.py``, not ``*_test.py``) are fingerprinted by
+#   SHA-256 content; other top-level files use ``(mtime_ns, size)``. Hidden
+#   dot-prefixed ``.py`` files are included (``load_classes_in_dir`` loads them).
 # - Cached classes are shared across scans: rules must keep mutable state
 #   on instances, never on the class or module level (previously reset by
 #   re-exec; now persistent for the daemon lifetime).
@@ -120,43 +121,81 @@ DISABLED_BY_DEFAULT_GRAPH_RULE_IDS: frozenset[str] = frozenset({"R402", "R404"})
 #   server-side (no proto field carries it), so growth is bounded by
 #   in-tree callers passing ``native_rules_dir()``.
 
-# Fingerprint: sorted (filename, mtime_ns, size) for top-level files.
-_DirFingerprint = tuple[tuple[str, int, int], ...]
+# Fingerprint: sorted (filename, token) for top-level files.
+_DirFingerprint = tuple[tuple[str, str], ...]
 
 _rule_class_cache: dict[str, tuple[_DirFingerprint, list[type[GraphRule]], list[str]]] = {}
 _rule_class_cache_lock = threading.Lock()
 
 
+def _clear_rule_pycache(directory: str) -> None:
+    """Remove bytecode for rule modules before rediscovery.
+
+    ``importlib`` can reuse a stale ``.pyc`` when a rule file is rewritten
+    with an unchanged timestamp (or within filesystem timestamp resolution).
+    Called only on class-cache miss, when rule files are about to be re-exec'd.
+
+    Args:
+        directory: Rules directory whose ``__pycache__`` should be cleared.
+    """
+    pycache = os.path.join(directory, "__pycache__")
+    if os.path.isdir(pycache):
+        shutil.rmtree(pycache, ignore_errors=True)
+
+
+def _is_loadable_rule_module(filename: str) -> bool:
+    """Return whether ``filename`` is a rule module the loader would execute.
+
+    Mirrors ``load_classes_in_dir``: direct ``.py`` files, excluding ``*_test.py``.
+    Dot-prefixed names (e.g. ``.hidden_rule.py``) are included.
+
+    Args:
+        filename: Basename from a directory listing.
+
+    Returns:
+        True when the loader would import the file as a rule module.
+    """
+    return filename.endswith(".py") and not filename.endswith("_test.py")
+
+
 def _dir_fingerprint(directory: str) -> _DirFingerprint | None:
     """Fingerprint top-level files in a directory.
 
-    Files that vanish or cannot be stat'ed between listing and stat are
-    skipped (a concurrent edit simply changes the fingerprint, forcing a
-    rescan on the next call).
+    Loadable rule modules are keyed by SHA-256 content so same-size rewrites
+    with preserved timestamps still invalidate the cache. Other top-level files
+    use ``mtime_ns`` and size. Files that vanish or cannot be read between
+    listing and fingerprinting are skipped (a concurrent edit changes the
+    fingerprint on the next call).
 
     Args:
         directory: Directory to fingerprint.
 
     Returns:
-        Sorted ``(filename, mtime_ns, size)`` tuples, or ``None`` when the
-        directory does not exist or cannot be listed.
+        Sorted ``(filename, token)`` tuples, or ``None`` when the directory
+        does not exist or cannot be listed.
     """
     try:
         entries = os.listdir(directory)
     except OSError:
         return None
-    fingerprint: list[tuple[str, int, int]] = []
+    fingerprint: list[tuple[str, str]] = []
     for filename in entries:
-        if filename.startswith("."):
-            continue
         full = os.path.join(directory, filename)
+        if not os.path.isfile(full):
+            continue
+        if _is_loadable_rule_module(filename):
+            try:
+                with open(full, "rb") as fh:
+                    digest = hashlib.file_digest(fh, "sha256").hexdigest()
+            except OSError:
+                continue
+            fingerprint.append((filename, digest))
+            continue
         try:
             stat = os.stat(full)
         except OSError:
             continue
-        if not os.path.isfile(full):
-            continue
-        fingerprint.append((filename, stat.st_mtime_ns, stat.st_size))
+        fingerprint.append((filename, f"m:{stat.st_mtime_ns}:{stat.st_size}"))
     fingerprint.sort()
     return tuple(fingerprint)
 
@@ -191,6 +230,7 @@ def _discover_rule_classes(directory: str) -> tuple[list[type[GraphRule]], list[
             logger.debug("Graph rule class cache hit: %s (%d classes)", key, len(cached[1]))
             return list(cached[1]), list(cached[2])
     logger.debug("Graph rule class cache miss: %s", key)
+    _clear_rule_pycache(directory)
     classes, errors = load_classes_in_dir(directory, GraphRule, fail_on_error=False)
     # Narrowing mirror of the loader's only_subclass filter (for typing).
     rule_classes = [cls for cls in classes if isinstance(cls, type) and issubclass(cls, GraphRule)]
