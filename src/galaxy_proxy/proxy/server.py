@@ -47,6 +47,34 @@ from galaxy_proxy.proxy.passthrough import PyPIPassthrough
 logger = logging.getLogger(__name__)
 
 
+class CollectionResolutionError(RuntimeError):
+    """Raised when a required collection cannot be resolved from configured servers."""
+
+    def __init__(
+        self,
+        fqcn: str,
+        *,
+        version_constraint: str = "",
+        operation: str = "version_lookup",
+        servers_tried: list[str] | None = None,
+    ) -> None:
+        """Initialize with collection context for actionable error messages.
+
+        Args:
+            fqcn: Fully qualified collection name.
+            version_constraint: Version constraint that was requested.
+            operation: The operation that failed.
+            servers_tried: Sanitized labels of Galaxy servers that were tried.
+        """
+        self.fqcn = fqcn
+        self.version_constraint = version_constraint
+        self.operation = operation
+        self.servers_tried = servers_tried or []
+        spec = f"{fqcn}:{version_constraint}" if version_constraint else fqcn
+        sources = ", ".join(self.servers_tried) if self.servers_tried else "no configured servers"
+        super().__init__(f"Collection {operation} failed for {spec}: exhausted configured Galaxy servers [{sources}]")
+
+
 def _safe_server_label(raw_url: str) -> str:
     """Return an upstream URL label without query, fragment, or credentials.
 
@@ -325,20 +353,21 @@ def create_app(
         if versions is None:
             cfg_path, servers_cfg, _ = _get_galaxy_config()
             if servers_cfg is None and cfg_path is not None:
-                servers_cfg = _load_servers_from_ansible_cfg(cfg_path) or None
-            galaxy_versions = await _fetch_galaxy_versions(
-                namespace,
-                name,
-                servers=servers_cfg,
-            )
-            if galaxy_versions is not None:
-                if galaxy_versions:
-                    cache.put_metadata(namespace, name, galaxy_versions)
-                versions = galaxy_versions
-            else:
-                # Truncation or total server failure — do not cache an empty
-                # listing that would masquerade as a valid zero-version catalog.
-                versions = []
+                servers_cfg = _load_servers_from_ansible_cfg(cfg_path)
+            try:
+                galaxy_versions = await _fetch_galaxy_versions(
+                    namespace,
+                    name,
+                    servers=servers_cfg,
+                )
+            except CollectionResolutionError as exc:
+                raise HTTPException(
+                    status_code=404,
+                    detail=str(exc),
+                ) from exc
+            if galaxy_versions:
+                cache.put_metadata(namespace, name, galaxy_versions)
+            versions = galaxy_versions
 
         if not versions and not cached_wheel_set:
             lock_key = f"{namespace}.{name}:latest"
@@ -361,13 +390,24 @@ def create_app(
                         cache.put_wheel(whl_name, whl_data)
                         logger.info("On-demand download for %s.%s: %s", namespace, name, whl_name)
                         cached_wheel_set = {whl_name}
-                    except Exception:
-                        logger.warning(
-                            "On-demand download failed for %s.%s — returning empty listing",
+                    except CollectionResolutionError as exc:
+                        raise HTTPException(
+                            status_code=404,
+                            detail=str(exc),
+                        ) from exc
+                    except Exception as exc:
+                        logger.error(
+                            "collection_download_failed operation=download "
+                            "collection=%s.%s error_type=%s outcome=failed",
                             namespace,
                             name,
+                            type(exc).__name__,
                             exc_info=True,
                         )
+                        raise HTTPException(
+                            status_code=502,
+                            detail=f"Failed to download {namespace}.{name} via ansible-galaxy",
+                        ) from exc
 
         links: list[str] = []
         seen_versions: set[str] = set()
@@ -487,17 +527,23 @@ def create_app(
                     ansible_galaxy_bin=galaxy_bin,
                 )
             except Exception as exc:
+                server_labels = [_safe_server_label(s.url) for s in servers] if servers else ["default"]
                 logger.error(
-                    "Failed to download/convert %s.%s %s error_type=%s",
+                    "collection_download_failed operation=download collection=%s.%s "
+                    "version=%s servers_tried=%s error_type=%s outcome=failed",
                     ns,
                     coll_name,
                     version,
+                    ", ".join(server_labels),
                     type(exc).__name__,
                 )
                 _record_serve("miss", status="error")
                 raise HTTPException(
                     status_code=502,
-                    detail=f"Failed to download/convert {ns}.{coll_name} {version} via ansible-galaxy",
+                    detail=(
+                        f"Failed to download/convert {ns}.{coll_name} {version} "
+                        f"via ansible-galaxy (servers tried: {', '.join(server_labels)})"
+                    ),
                 ) from exc
 
             cache.put_wheel(whl_name, whl_data)
@@ -610,7 +656,7 @@ def _galaxy_version_sort_key(version: str) -> tuple[int, Version | str]:
         return (1, version)
 
 
-def _load_servers_from_ansible_cfg(cfg_path: Path) -> list[GalaxyServerConfig]:
+def _load_servers_from_ansible_cfg(cfg_path: Path) -> list[GalaxyServerConfig] | None:
     """Parse Galaxy servers from an ``ansible.cfg`` file.
 
     This is used by the proxy's version-discovery path when no Gateway-pushed
@@ -621,16 +667,26 @@ def _load_servers_from_ansible_cfg(cfg_path: Path) -> list[GalaxyServerConfig]:
         cfg_path: Path to the config file.
 
     Returns:
-        Ordered Galaxy server configs, or an empty list on parse failure.
+        Ordered Galaxy server configs when ``server_list`` is defined,
+        an empty list when ``server_list`` is present but yields no usable
+        servers (misconfiguration → fail-closed), or ``None`` when the
+        config has no ``[galaxy]`` section or no ``server_list`` directive
+        (no opinion on Galaxy → fall through to public default).
     """
     parser = configparser.ConfigParser(interpolation=None)
     try:
         parser.read(str(cfg_path), encoding="utf-8")
     except (configparser.Error, OSError):
         logger.debug("Failed to parse ansible.cfg for Galaxy servers: %s", cfg_path, exc_info=True)
-        return []
+        return None
+
+    if not parser.has_section("galaxy"):
+        return None
 
     raw_list = parser.get("galaxy", "server_list", fallback="")
+    if not raw_list.strip():
+        return None
+
     server_names = [name.strip() for name in raw_list.split(",") if name.strip()]
     servers: list[GalaxyServerConfig] = []
     for name in server_names:
@@ -661,28 +717,44 @@ async def _fetch_galaxy_versions(
 ) -> list[str] | None:
     """Fetch all published version strings for a collection from Galaxy.
 
-    When *servers* is provided, each configured server is tried in order
-    (matching ``ansible.cfg`` ``server_list`` semantics).  The first
-    server to return a successful response wins.  If no configured server
-    succeeds — or if no servers are configured — falls back to public
-    Galaxy (``galaxy.ansible.com``).
+    When *servers* is a non-empty list, each configured server is tried
+    in order (matching ``ansible.cfg`` ``server_list`` semantics).  The
+    first server to return a successful response wins.
 
-    This enables version discovery from console.redhat.com / Automation
-    Hub / private Galaxy instances configured via the Gateway UI.
+    When *servers* is ``None`` (no explicit configuration), public Galaxy
+    (``galaxy.ansible.com``) is used as the default.
+
+    When *servers* is an empty list (explicit configuration yielded no
+    usable servers), the function raises immediately — this distinguishes
+    misconfiguration from absent configuration.
 
     Args:
         namespace: Collection namespace.
         name: Collection name.
-        servers: Ordered list of Galaxy server configs (optional).
+        servers: Ordered list of Galaxy server configs.  ``None`` means
+            no configuration (use public Galaxy default); ``[]`` means
+            explicit configuration with no usable servers (fail-closed).
 
     Returns:
-        Sorted list of version strings on success (possibly empty), or
-        ``None`` when every server fails (including pagination truncation).
+        Sorted list of version strings on success (possibly empty).
+
+    Raises:
+        CollectionResolutionError: When all configured servers fail or
+            the configuration yields no usable servers.
     """
     base_urls: list[tuple[str, str | None]] = []
-    for srv in servers or []:
-        base_urls.append((srv.url.rstrip("/"), srv.token))
-    base_urls.append((_GALAXY_API_URL, None))
+    if servers is not None:
+        if not servers:
+            fqcn = f"{namespace}.{name}"
+            raise CollectionResolutionError(
+                fqcn,
+                operation="version_lookup",
+                servers_tried=[],
+            )
+        for srv in servers:
+            base_urls.append((srv.url.rstrip("/"), srv.token))
+    else:
+        base_urls.append((_GALAXY_API_URL, None))
 
     for base_url, token in base_urls:
         logger.info(
@@ -696,13 +768,17 @@ async def _fetch_galaxy_versions(
             return sorted(set(versions), key=_galaxy_version_sort_key)
 
     tried = [_safe_server_label(url) for url, _ in base_urls]
-    logger.warning(
-        "All Galaxy servers failed for %s.%s (tried: %s)",
-        namespace,
-        name,
+    fqcn = f"{namespace}.{name}"
+    logger.error(
+        "collection_resolution_failed operation=version_lookup collection=%s servers_tried=%s outcome=failed",
+        fqcn,
         ", ".join(tried),
     )
-    return None
+    raise CollectionResolutionError(
+        fqcn,
+        operation="version_lookup",
+        servers_tried=tried,
+    )
 
 
 def _normalize_galaxy_url(raw_url: str) -> str:
@@ -945,7 +1021,10 @@ async def _download_and_convert(
         )
 
         if result.failed_specs:
-            msg = f"Failed to download {spec}"
+            server_labels = [_safe_server_label(s.url) for s in galaxy_servers] if galaxy_servers else ["default"]
+            msg = f"Failed to download {spec} from configured Galaxy servers [{', '.join(server_labels)}]"
+            if result.stderr:
+                msg += f": {result.stderr[:200]}"
             raise RuntimeError(msg)
 
         if not result.tarball_paths:
