@@ -15,7 +15,13 @@ from __future__ import annotations
 
 import re
 
-from apme_engine.graph.content_graph import ContentGraph, EdgeType, NodeType
+from apme_engine.graph.content_graph import (
+    _POSITIONAL_EDGE_VALUES as _POSITIONAL_EDGE_TYPES,  # canonical set; single source in content_graph
+)
+from apme_engine.graph.content_graph import (
+    ContentGraph,
+    NodeType,
+)
 from apme_engine.graph.sensitivity import var_looks_sensitive
 
 TASK_TYPES: frozenset[NodeType] = frozenset({NodeType.TASK, NodeType.HANDLER})
@@ -384,15 +390,6 @@ def _collect_dict_strings(d: dict[str, object], out: list[str]) -> None:
                     _collect_dict_strings(item, out)
 
 
-_POSITIONAL_EDGE_TYPES = frozenset(
-    {
-        EdgeType.CONTAINS.value,
-        EdgeType.INCLUDE.value,
-        EdgeType.IMPORT.value,
-    }
-)
-
-
 def _sorted_positional_parent_ids(graph: ContentGraph, node_id: str) -> list[str]:
     """Return sorted positional parent node IDs for ``node_id``.
 
@@ -431,20 +428,32 @@ def enclosing_play_ids(graph: ContentGraph, node_id: str) -> list[str]:
     return sorted(result)
 
 
-def _no_log_any_play_scoped_path(graph: ContentGraph, node_id: str, play_scope: set[str]) -> bool:
-    """Return True when any ancestor path within ``play_scope`` has effective no_log.
+def _no_log_play_scoped_paths(
+    graph: ContentGraph,
+    node_id: str,
+    play_scope: set[str],
+    *,
+    require_all: bool,
+) -> bool:
+    """Walk in-scope ancestor paths with one body, quantified by ``require_all``.
 
-    Shared included tasks can have multiple include parents within one play.
-    Redact when any in-scope path inherits ``no_log: true``.
+    Shared implementation behind :func:`_no_log_any_play_scoped_path`
+    (``require_all=False``: redaction, where hiding on any protected path is
+    safe) and :func:`_no_log_all_play_scoped_paths` (``require_all=True``:
+    suppression, where execution via any unprotected path still leaks).
 
     Args:
         graph: ContentGraph for the scan.
         node_id: Task or handler node id.
         play_scope: Precomputed play-scoped node IDs.
+        require_all: True requires every in-scope path protected (L110);
+            False accepts any protected path (R402 redaction).
 
     Returns:
-        True when any in-scope ancestor path resolves ``no_log`` to true.
+        True when the in-scope ancestor paths resolve ``no_log`` to true
+        under the ``require_all`` quantifier.
     """
+    quant = all if require_all else any
     seen_paths: set[tuple[str, ...]] = set()
 
     def walk(current_id: str, path: tuple[str, ...]) -> bool:
@@ -466,12 +475,29 @@ def _no_log_any_play_scoped_path(graph: ContentGraph, node_id: str, play_scope: 
         scoped_parents = [parent for parent in _sorted_positional_parent_ids(graph, current_id) if parent in play_scope]
         if not scoped_parents:
             return False
-        return any(walk(parent, next_path) for parent in scoped_parents)
+        return quant(walk(parent, next_path) for parent in scoped_parents)
 
     scoped_parents = [parent for parent in _sorted_positional_parent_ids(graph, node_id) if parent in play_scope]
     if not scoped_parents:
         return False
-    return any(walk(parent, (node_id,)) for parent in scoped_parents)
+    return quant(walk(parent, (node_id,)) for parent in scoped_parents)
+
+
+def _no_log_any_play_scoped_path(graph: ContentGraph, node_id: str, play_scope: set[str]) -> bool:
+    """Return True when any ancestor path within ``play_scope`` has effective no_log.
+
+    Shared included tasks can have multiple include parents within one play.
+    Redact when any in-scope path inherits ``no_log: true``.
+
+    Args:
+        graph: ContentGraph for the scan.
+        node_id: Task or handler node id.
+        play_scope: Precomputed play-scoped node IDs.
+
+    Returns:
+        True when any in-scope ancestor path resolves ``no_log`` to true.
+    """
+    return _no_log_play_scoped_paths(graph, node_id, play_scope, require_all=False)
 
 
 def _no_log_all_play_scoped_paths(graph: ContentGraph, node_id: str, play_scope: set[str]) -> bool:
@@ -492,33 +518,7 @@ def _no_log_all_play_scoped_paths(graph: ContentGraph, node_id: str, play_scope:
     Returns:
         True when all in-scope ancestor paths resolve ``no_log`` to true.
     """
-    seen_paths: set[tuple[str, ...]] = set()
-
-    def walk(current_id: str, path: tuple[str, ...]) -> bool:
-        if current_id in path:
-            return False
-        next_path = (*path, current_id)
-        if next_path in seen_paths:
-            return False
-        seen_paths.add(next_path)
-
-        node = graph.get_node(current_id)
-        if node is None:
-            return False
-        if node.no_log is False:
-            return False
-        if node.no_log is True:
-            return True
-
-        scoped_parents = [parent for parent in _sorted_positional_parent_ids(graph, current_id) if parent in play_scope]
-        if not scoped_parents:
-            return False
-        return all(walk(parent, next_path) for parent in scoped_parents)
-
-    scoped_parents = [parent for parent in _sorted_positional_parent_ids(graph, node_id) if parent in play_scope]
-    if not scoped_parents:
-        return False
-    return all(walk(parent, (node_id,)) for parent in scoped_parents)
+    return _no_log_play_scoped_paths(graph, node_id, play_scope, require_all=True)
 
 
 def no_log_true_in_scope(

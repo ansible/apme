@@ -65,6 +65,21 @@ class TestFindInventoryFiles:
         files = list(_find_inventory_files(str(playbook)))
         assert files == []
 
+    def test_finds_extensionless_inventory_in_subdir(self, tmp_path: Path) -> None:
+        """Extensionless YAML inventory under inventory/ is discovered.
+
+        Args:
+            tmp_path: Pytest temporary directory.
+        """
+        playbook = tmp_path / "site.yml"
+        playbook.write_text("- hosts: all\n")
+        inv_dir = tmp_path / "inventory"
+        inv_dir.mkdir()
+        inv = inv_dir / "hosts"
+        inv.write_text("plugin: ansible.builtin.constructed\n")
+        files = list(_find_inventory_files(str(playbook)))
+        assert inv in files
+
     def test_unreadable_inventory_subdir_skipped(self, tmp_path: Path) -> None:
         """Unreadable inventory/ dirs are skipped; other subdirs still scanned.
 
@@ -157,6 +172,27 @@ class TestDisableLookupsNoEffectGraphRule:
         playbook = tmp_path / "site.yml"
         playbook.write_text("- hosts: all\n")
         (tmp_path / "inventory.yml").write_text("plugin: ansible.builtin.constructed\ndisable_lookups: true\n")
+        g, pb_id = self._make_graph_with_playbook(str(playbook))
+        result = rule.process(g, pb_id)
+        assert result is not None
+        assert result.verdict is True
+        assert result.detail is not None
+        violations = cast(list[dict[str, object]], result.detail["violations"])
+        assert len(violations) == 1
+
+    def test_violation_in_extensionless_subdir_inventory(self, tmp_path: Path) -> None:
+        """disable_lookups in an extensionless inventory/ file fires M047.
+
+        Args:
+            tmp_path: Pytest temporary directory.
+        """
+        rule = DisableLookupsNoEffectGraphRule()
+        playbook = tmp_path / "site.yml"
+        playbook.write_text("- hosts: all\n")
+        inv_dir = tmp_path / "inventory"
+        inv_dir.mkdir()
+        (inv_dir / "hosts").write_text("plugin: ansible.builtin.constructed\ndisable_lookups: true\n")
+        (inv_dir / "unrelated.ini").write_text("[web]\nhost1\n")
         g, pb_id = self._make_graph_with_playbook(str(playbook))
         result = rule.process(g, pb_id)
         assert result is not None
