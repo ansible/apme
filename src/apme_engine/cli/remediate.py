@@ -43,6 +43,7 @@ from apme_engine.cli._project_root import (
     discover_project_root,
     discover_project_root_for_targets,
     normalize_targets,
+    path_within_targets,
     resolve_within_base,
 )
 from apme_engine.cli._rules_yml import load_rule_configs_from_project
@@ -79,13 +80,21 @@ def run_remediate(args: argparse.Namespace) -> None:
         if not Path(candidate).exists():
             sys.stderr.write(f"Target not found: {candidate}\n")
             sys.exit(EXIT_ERROR)
-    base = common_scan_base(targets)
+    try:
+        base = common_scan_base(targets)
+    except FileNotFoundError as e:
+        sys.stderr.write(f"{e}\n")
+        sys.exit(EXIT_ERROR)
 
     explicit_session = getattr(args, "session", None)
-    if len(targets) == 1:
-        project_root = discover_project_root(targets[0])
-    else:
-        project_root = discover_project_root_for_targets(targets)
+    try:
+        if len(targets) == 1:
+            project_root = discover_project_root(targets[0])
+        else:
+            project_root = discover_project_root_for_targets(targets)
+    except FileNotFoundError as e:
+        sys.stderr.write(f"{e}\n")
+        sys.exit(EXIT_ERROR)
     session_id = explicit_session or derive_session_id(project_root)
 
     galaxy_servers = discover_galaxy_servers(project_root) or None
@@ -389,7 +398,7 @@ def run_remediate(args: argparse.Namespace) -> None:
         if got_result:
             # Deferred until the producer is proven clean above: a partial
             # or synthetic result must never mutate disk on a failed run.
-            result_files_written, write_failed = _write_patches(base, result_patches)
+            result_files_written, write_failed = _write_patches(base, result_patches, targets)
             break
         if retry:
             time.sleep(1.0 + random.uniform(0, 1.0))
@@ -565,12 +574,17 @@ def _prompt_ynasq() -> str:
         sys.stderr.write("  Please enter y, n, a, s, or q\n")
 
 
-def _write_patches(base: Path, patches: Iterable[FilePatch]) -> tuple[int, bool]:
+def _write_patches(
+    base: Path,
+    patches: Iterable[FilePatch],
+    targets: list[str],
+) -> tuple[int, bool]:
     """Write patched files to disk, skipping failures.
 
     Args:
         base: Common scan base directory; patch paths must resolve inside it.
         patches: Patches to apply.
+        targets: Normalized CLI targets; writes must stay within these scopes.
 
     Returns:
         Tuple of (files actually written, whether any patch failed to apply).
@@ -582,6 +596,10 @@ def _write_patches(base: Path, patches: Iterable[FilePatch]) -> tuple[int, bool]
             out_path = resolve_within_base(base, p.path)
         except ValueError as exc:
             sys.stderr.write(f"WARNING: skipping {p.path}: {exc}\n")
+            had_failures = True
+            continue
+        if not path_within_targets(targets, out_path):
+            sys.stderr.write(f"WARNING: skipping {p.path}: outside selected targets\n")
             had_failures = True
             continue
         try:

@@ -702,12 +702,13 @@ def test_format_apply_writes_files(tmp_path: Path) -> None:
 
 
 def test_format_apply_counts_only_written(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    """--apply reports written files, not skipped ones.
+    """--apply reports written files, not skipped ones, and exits error on skips.
 
     Args:
         tmp_path: Temporary directory fixture.
         capsys: Pytest capture fixture.
     """
+    from apme_engine.cli._exit_codes import EXIT_ERROR
     from apme_engine.cli.format_cmd import run_format
 
     target = tmp_path / "site.yml"
@@ -725,9 +726,11 @@ def test_format_apply_counts_only_written(tmp_path: Path, capsys: pytest.Capture
         patch("apme_engine.cli.format_cmd.yield_scan_chunks", return_value=iter([_scan_chunk()])),
         patch("apme_engine.cli.format_cmd.resolve_engine", return_value=(channel, "addr")),
         patch("apme_engine.cli.format_cmd.engine_pb2_grpc.EngineStub") as stub_cls,
+        pytest.raises(SystemExit) as exc,
     ):
         stub_cls.return_value.FormatStream.return_value = resp
         run_format(_format_args_ns(str(target), apply=True))
+    assert exc.value.code == EXIT_ERROR
     assert target.read_bytes() == b"new"
     assert "1 file(s) reformatted" in capsys.readouterr().err
 
@@ -2266,13 +2269,18 @@ def test_write_patches_dir_and_file_targets(tmp_path: Path) -> None:
     dfile = tmp_path / "play.yml"
     dfile.write_bytes(b"orig")
     patches = [FilePatch(path="play.yml", original=b"orig", patched=b"new", diff="d", applied_rules=["L001"])]
-    _write_patches(tmp_path, patches)
+    targets = [str(tmp_path)]
+    _write_patches(tmp_path, patches, targets)
     assert dfile.read_bytes() == b"new"
     solo = tmp_path / "solo.yml"
     solo.write_bytes(b"o2")
-    _write_patches(tmp_path, [FilePatch(path="solo.yml", original=b"o2", patched=b"n2", diff="d")])
+    _write_patches(tmp_path, [FilePatch(path="solo.yml", original=b"o2", patched=b"n2", diff="d")], targets)
     assert solo.read_bytes() == b"n2"
-    written, failed = _write_patches(tmp_path, [FilePatch(path="../escape.yml", original=b"x", patched=b"y", diff="d")])
+    written, failed = _write_patches(
+        tmp_path,
+        [FilePatch(path="../escape.yml", original=b"x", patched=b"y", diff="d")],
+        targets,
+    )
     assert written == 0
     assert failed is True
 
@@ -2288,7 +2296,7 @@ def test_write_patches_oserror_skips(tmp_path: Path, capsys: pytest.CaptureFixtu
 
     patches = [FilePatch(path="x.yml", original=b"o", patched=b"n", diff="d")]
     with patch("apme_engine.cli.remediate._safe_write", side_effect=OSError("denied")):
-        written, failed = _write_patches(tmp_path, patches)
+        written, failed = _write_patches(tmp_path, patches, [str(tmp_path)])
     assert written == 0
     assert failed is True
     assert "WARNING: skipping" in capsys.readouterr().err
@@ -2731,7 +2739,7 @@ def test_write_patches_stale_skip_not_counted(tmp_path: Path, capsys: pytest.Cap
     p = tmp_path / "stale.yml"
     p.write_bytes(b"changed")
     patches = [FilePatch(path="stale.yml", original=b"orig", patched=b"new", diff="d")]
-    written, failed = _write_patches(tmp_path, patches)
+    written, failed = _write_patches(tmp_path, patches, [str(tmp_path)])
     assert written == 0
     assert failed is True
     assert "Fixed:" not in capsys.readouterr().err
@@ -2753,9 +2761,61 @@ def test_write_patches_returns_written_count(tmp_path: Path) -> None:
         "apme_engine.cli.remediate._safe_write",
         side_effect=[True, OSError("denied")],
     ):
-        written, failed = _write_patches(tmp_path, patches)
+        written, failed = _write_patches(tmp_path, patches, [str(tmp_path)])
     assert written == 1
     assert failed is True
+
+
+def test_write_patches_rejects_unselected_sibling(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Patches outside the selected targets are skipped even inside the scan base.
+
+    Args:
+        tmp_path: Temporary directory fixture.
+        capsys: Pytest capture fixture.
+    """
+    from apme_engine.cli.remediate import _write_patches
+
+    selected = tmp_path / "selected"
+    sibling = tmp_path / "sibling.yml"
+    selected.mkdir()
+    (selected / "a.yml").write_bytes(b"orig")
+    sibling.write_bytes(b"orig")
+    patches = [FilePatch(path="sibling.yml", original=b"orig", patched=b"new", diff="d")]
+    written, failed = _write_patches(tmp_path, patches, [str(selected)])
+    assert written == 0
+    assert failed is True
+    assert "outside selected targets" in capsys.readouterr().err
+    assert sibling.read_bytes() == b"orig"
+
+
+def test_format_apply_exits_error_on_write_failure(tmp_path: Path) -> None:
+    """Format --apply exits with error when any requested write is skipped.
+
+    Args:
+        tmp_path: Temporary directory fixture.
+    """
+    from apme_engine.cli._exit_codes import EXIT_ERROR
+    from apme_engine.cli.format_cmd import run_format
+
+    target = tmp_path / "site.yml"
+    target.write_bytes(b"orig")
+    resp = engine_pb2.FormatResponse(
+        diffs=[
+            FileDiff(path="site.yml", original=b"orig", formatted=b"new", diff="d"),
+            FileDiff(path="stale.yml", original=b"stale", formatted=b"z", diff="d"),
+        ],
+        logs=[],
+    )
+    channel = MagicMock()
+    with (
+        patch("apme_engine.cli.format_cmd.yield_scan_chunks", return_value=iter([_scan_chunk()])),
+        patch("apme_engine.cli.format_cmd.resolve_engine", return_value=(channel, "addr")),
+        patch("apme_engine.cli.format_cmd.engine_pb2_grpc.EngineStub") as stub_cls,
+        pytest.raises(SystemExit) as exc,
+    ):
+        stub_cls.return_value.FormatStream.return_value = resp
+        run_format(_format_args_ns(str(target), apply=True))
+    assert exc.value.code == EXIT_ERROR
 
 
 def test_emit_json_uses_written_count(capsys: pytest.CaptureFixture[str]) -> None:

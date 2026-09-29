@@ -203,16 +203,17 @@ def build_scan_bundle(
 
     if len(targets) == 1:
         target = targets[0]
+        scope = target.parent if target.is_file() else target
         if target.is_file():
             root = target.parent
-            to_visit = [target]
+            to_visit = [(target, scope)]
         else:
             root = target
             to_visit = []
             for dirpath, dirnames, filenames in os.walk(root):
                 dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
                 for name in filenames:
-                    to_visit.append(Path(dirpath) / name)
+                    to_visit.append((Path(dirpath) / name, scope))
     else:
         anchor_dirs = [str(t.parent if t.is_file() else t) for t in targets]
         try:
@@ -221,36 +222,41 @@ def build_scan_bundle(
             raise FileNotFoundError(f"Targets share no common path: {e}") from e
         to_visit = []
         for target in targets:
+            scope = target.parent if target.is_file() else target
             if target.is_file():
-                to_visit.append(target)
+                to_visit.append((target, scope))
             else:
                 for dirpath, dirnames, filenames in os.walk(target):
                     dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
                     for name in filenames:
-                        to_visit.append(Path(dirpath) / name)
+                        to_visit.append((Path(dirpath) / name, scope))
 
     # Ignore patterns come in three scopes, matched against different bases:
     # - bundle-root .apmeignore: matched against bundle-relative paths.
     # - per-target .apmeignore (multi-target only): each matched against paths
     #   relative to its own subtree, so a bare pattern in projA never
     #   suppresses an unrelated projB file.
-    # - CLI --exclude: matched against both bundle-relative and absolute
-    #   paths, so `check --exclude tests/ tests/t.yml` (single-file target
-    #   whose bundle-relative path is bare `t.yml`) still excludes.
+    # - CLI --exclude: matched against bundle-relative paths and paths
+    #   relative to each selected target scope.
     root_ignore = _load_apmeignore(root)
-    scoped_ignores: list[tuple[Path, list[str]]] = []
+    scoped_ignores: dict[Path, list[str]] = {}
     if len(targets) > 1:
         for target in targets:
             scope = (target.parent if target.is_file() else target).resolve()
             if scope != root:
-                scope_pats = [p for p in _load_apmeignore(scope) if p not in root_ignore]
+                scope_pats = _load_apmeignore(scope)
                 if scope_pats:
-                    scoped_ignores.append((scope, scope_pats))
+                    scoped_ignores[scope] = scope_pats
     cli_excludes = list(exclude_patterns or [])
+    target_scopes: list[Path] = []
+    for target in targets:
+        scope = (target.parent if target.is_file() else target).resolve()
+        if scope not in target_scopes:
+            target_scopes.append(scope)
 
     files = []
     seen: set[str] = set()
-    for path in to_visit:
+    for path, scope in to_visit:
         if not path.is_file():
             continue
         try:
@@ -266,19 +272,28 @@ def build_scan_bundle(
         rel_str = str(rel)
         if _matches_ignore(rel_str, root_ignore):
             continue
-        if cli_excludes and (_matches_ignore(rel_str, cli_excludes) or _matches_ignore(str(path), cli_excludes)):
-            continue
-        scoped_out = False
-        for scope, pats in scoped_ignores:
+        if cli_excludes:
+            excluded = _matches_ignore(rel_str, cli_excludes)
+            if not excluded:
+                for target_scope in target_scopes:
+                    try:
+                        scope_rel = str(path.relative_to(target_scope))
+                    except ValueError:
+                        continue
+                    if _matches_ignore(scope_rel, cli_excludes):
+                        excluded = True
+                        break
+            if excluded:
+                continue
+        scope_key = scope.resolve()
+        origin_pats = scoped_ignores.get(scope_key)
+        if origin_pats is not None:
             try:
-                scope_rel = str(path.relative_to(scope))
+                scope_rel = str(path.relative_to(scope_key))
             except ValueError:
                 continue
-            if _matches_ignore(scope_rel, pats):
-                scoped_out = True
-                break
-        if scoped_out:
-            continue
+            if _matches_ignore(scope_rel, origin_pats):
+                continue
         if not _should_include(path, root, root_ignore):
             continue
         try:

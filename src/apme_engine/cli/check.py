@@ -109,7 +109,11 @@ def _resolve_session_id(args: argparse.Namespace) -> str:
             raise SystemExit(EXIT_ERROR)
         return explicit
     targets = normalize_targets(getattr(args, "target", "."))
-    project_root = _discover_target_root(targets)
+    try:
+        project_root = _discover_target_root(targets)
+    except FileNotFoundError as e:
+        sys.stderr.write(f"{e}\n")
+        raise SystemExit(EXIT_ERROR) from e
     return derive_session_id(project_root)
 
 
@@ -156,7 +160,11 @@ def run_check(args: argparse.Namespace) -> None:
         if not Path(candidate).exists():
             sys.stderr.write(f"Target not found: {candidate}\n")
             sys.exit(EXIT_ERROR)
-    project_root = _discover_target_root(targets)
+    try:
+        project_root = _discover_target_root(targets)
+    except FileNotFoundError as e:
+        sys.stderr.write(f"{e}\n")
+        sys.exit(EXIT_ERROR)
     galaxy_servers = discover_galaxy_servers(project_root) or None
     rule_cfgs = load_rule_configs_from_project(project_root)
 
@@ -184,11 +192,14 @@ def run_check(args: argparse.Namespace) -> None:
     cmd_queue: queue.Queue[SessionCommand | None] = queue.Queue()
     scan_id_holder: list[str] = [""]
     producer_errors: list[Exception] = []
+    stop_event = threading.Event()
 
     def _upload_producer() -> None:
         try:
             first = True
             for chunk in chunks:
+                if stop_event.is_set():
+                    return
                 if first:
                     scan_id_holder[0] = chunk.scan_id or ""
                     first = False
@@ -281,8 +292,12 @@ def run_check(args: argparse.Namespace) -> None:
         sys.stderr.write(f"Engine error: {e.details()}\n")
         sys.exit(EXIT_ERROR)
     finally:
+        stop_event.set()
         cmd_queue.put(None)
         upload_thread.join(timeout=30)
+        if upload_thread.is_alive():
+            sys.stderr.write("Error: upload worker did not stop in time\n")
+            sys.exit(EXIT_ERROR)
         channel.close()
 
     if producer_errors:

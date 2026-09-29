@@ -16,6 +16,7 @@ from apme_engine.cli._project_root import (
     discover_project_root,
     discover_project_root_for_targets,
     normalize_targets,
+    path_within_targets,
     resolve_within_base,
 )
 from apme_engine.cli.discovery import resolve_engine
@@ -34,17 +35,25 @@ def run_format(args: argparse.Namespace) -> None:
         if not Path(candidate).exists():
             sys.stderr.write(f"Target not found: {candidate}\n")
             sys.exit(EXIT_ERROR)
-    base = common_scan_base(targets)
+    try:
+        base = common_scan_base(targets)
+    except FileNotFoundError as e:
+        sys.stderr.write(f"{e}\n")
+        sys.exit(EXIT_ERROR)
 
     explicit_session = getattr(args, "session", None)
-    if explicit_session:
-        session_id = explicit_session
-    elif len(targets) == 1:
-        project_root = discover_project_root(targets[0])
-        session_id = derive_session_id(project_root)
-    else:
-        project_root = discover_project_root_for_targets(targets)
-        session_id = derive_session_id(project_root)
+    try:
+        if explicit_session:
+            session_id = explicit_session
+        elif len(targets) == 1:
+            project_root = discover_project_root(targets[0])
+            session_id = derive_session_id(project_root)
+        else:
+            project_root = discover_project_root_for_targets(targets)
+            session_id = derive_session_id(project_root)
+    except FileNotFoundError as e:
+        sys.stderr.write(f"{e}\n")
+        sys.exit(EXIT_ERROR)
 
     try:
         chunks = yield_scan_chunks(
@@ -91,16 +100,26 @@ def run_format(args: argparse.Namespace) -> None:
 
     if args.apply:
         written = 0
+        write_failed = False
         for d in diffs:
             try:
                 out_path = resolve_within_base(base, d.path)
             except ValueError as exc:
                 sys.stderr.write(f"WARNING: skipping {d.path}: {exc}\n")
+                write_failed = True
+                continue
+            if not path_within_targets(targets, out_path):
+                sys.stderr.write(f"WARNING: skipping {d.path}: outside selected targets\n")
+                write_failed = True
                 continue
             if _safe_write(out_path, d.original, d.formatted):
                 sys.stderr.write(f"Formatted: {d.path}\n")
                 written += 1
+            else:
+                write_failed = True
         sys.stderr.write(f"\n{written} file(s) reformatted.\n")
+        if write_failed:
+            sys.exit(EXIT_ERROR)
     else:
         for d in diffs:
             sys.stdout.write(d.diff)

@@ -128,6 +128,27 @@ def common_scan_base(targets: Sequence[str | Path] | str | Path) -> Path:
         raise FileNotFoundError(f"Targets share no common path: {e}") from e
 
 
+def path_within_targets(targets: Sequence[str | Path], path: Path) -> bool:
+    """Return True if *path* is a selected file or under a selected directory.
+
+    Args:
+        targets: Normalized CLI target paths.
+        path: Resolved absolute path to check.
+
+    Returns:
+        True when *path* lies inside the user-selected scan targets.
+    """
+    resolved = path.resolve()
+    for raw in targets:
+        target = Path(raw).resolve()
+        if target.is_file():
+            if resolved == target:
+                return True
+        elif resolved == target or target in resolved.parents:
+            return True
+    return False
+
+
 def resolve_within_base(base: Path, rel_path: str | Path) -> Path:
     """Join a bundle-relative path to a base directory, blocking escape.
 
