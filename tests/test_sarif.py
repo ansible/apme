@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from apme.v1.engine_pb2 import ScanChunk
 from apme_engine.cli._exit_codes import EXIT_VIOLATIONS
 from apme_engine.cli.sarif import violations_to_sarif
 
@@ -353,6 +354,18 @@ def _check_args(**overrides: object) -> argparse.Namespace:
     return argparse.Namespace(**defaults)
 
 
+def _scan_chunk(scan_id: str = "scan-123") -> ScanChunk:
+    """Build a minimal ScanChunk proto for run_check upload mocks.
+
+    Args:
+        scan_id: Scan identifier.
+
+    Returns:
+        ScanChunk proto.
+    """
+    return ScanChunk(scan_id=scan_id, project_root="project", last=True)
+
+
 def _fake_fix_session(
     violations: list[dict[str, object]],
     scan_id: str = "scan-123",
@@ -424,9 +437,6 @@ class TestSarifCliFlag:
         """
         channel, stub = _fake_fix_session(violations)
 
-        upload_chunk = MagicMock()
-        upload_chunk.scan_id = "scan-123"
-
         with (
             patch(
                 "apme_engine.cli.check.discover_project_root",
@@ -442,7 +452,7 @@ class TestSarifCliFlag:
             ),
             patch(
                 "apme_engine.cli.check.yield_scan_chunks",
-                return_value=iter([upload_chunk]),
+                return_value=iter([_scan_chunk()]),
             ),
             patch(
                 "apme_engine.cli.check.resolve_engine",
