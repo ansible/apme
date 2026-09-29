@@ -87,7 +87,12 @@ def _find_inventory_files(playbook_path: str) -> Iterator[Path]:
                 yield candidate
 
     for inv_dir in inv_subdirs:
-        for candidate in sorted(inv_dir.iterdir()):
+        try:
+            candidates = sorted(inv_dir.iterdir())
+        except OSError as exc:
+            logger.debug("Skipping unreadable inventory directory %s: %s", inv_dir, exc)
+            continue
+        for candidate in candidates:
             if candidate.suffix.lower() not in (".yml", ".yaml"):
                 continue
             if candidate.is_file() and candidate not in seen:
