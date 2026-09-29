@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import cast
+from unittest.mock import patch
 
 from apme_engine.graph.content_graph import (
     ContentGraph,
@@ -63,6 +64,34 @@ class TestFindInventoryFiles:
         (tmp_path / "hosts.ini").write_text("[web]\nhost1\n")
         files = list(_find_inventory_files(str(playbook)))
         assert files == []
+
+    def test_unreadable_inventory_subdir_skipped(self, tmp_path: Path) -> None:
+        """Unreadable inventory/ dirs are skipped; other subdirs still scanned.
+
+        Args:
+            tmp_path: Pytest temporary directory.
+        """
+        playbook = tmp_path / "site.yml"
+        playbook.write_text("- hosts: all\n")
+        bad_inv = tmp_path / "inventory"
+        bad_inv.mkdir()
+        (bad_inv / "locked.yml").write_text("plugin: constructed\n")
+        good_inv = tmp_path / "inventories"
+        good_inv.mkdir()
+        good_file = good_inv / "constructed.yml"
+        good_file.write_text("plugin: constructed\n")
+
+        real_iterdir = Path.iterdir
+
+        def _iterdir_maybe_fail(self: Path) -> object:
+            if self == bad_inv:
+                raise OSError(13, "Permission denied")
+            return real_iterdir(self)
+
+        with patch.object(Path, "iterdir", _iterdir_maybe_fail):
+            files = list(_find_inventory_files(str(playbook)))
+        assert good_file in files
+        assert bad_inv / "locked.yml" not in files
 
 
 class TestTopLevelLine:
