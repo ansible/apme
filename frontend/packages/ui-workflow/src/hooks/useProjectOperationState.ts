@@ -525,6 +525,7 @@ export function useProjectOperationState(
   const statusRef = useRef<ProjectOperationStatus | null>(null);
   const errorBackoffRef = useRef(0);
   const connectRef = useRef<() => void>(() => {});
+  const gatewayKeyRef = useRef(`${api.apiBase}\0${api.origin}`);
 
   const setStateTracked = useCallback(
     (next: SetStateAction<ProjectOperationState | null>) => {
@@ -623,8 +624,9 @@ export function useProjectOperationState(
   connectRef.current = connect;
 
   const poll = useCallback(
-    async (opts?: { force?: boolean }) => {
+    async (opts?: { force?: boolean; afterGatewayChange?: boolean }) => {
       const force = opts?.force === true;
+      const afterGatewayChange = opts?.afterGatewayChange === true;
       if ((!enabled && !force) || !projectId) {
         if (!force) {
           setStateTracked(null);
@@ -645,8 +647,17 @@ export function useProjectOperationState(
           connect();
         }
       } catch {
-        // Transient Gateway/network error — keep prior state; SSE reconnect
-        // or a later refresh can recover.
+        if (!mountedRef.current || pollGen !== pollGenRef.current) return;
+        if (afterGatewayChange) {
+          setStateTracked(null);
+          setTimeout(() => {
+            if (mountedRef.current && pollGen === pollGenRef.current) {
+              void poll({ force: true });
+            }
+          }, 1_000);
+        }
+        // Transient Gateway/network error against the same gateway — keep
+        // prior state; SSE reconnect or a later refresh can recover.
       }
     },
     [projectId, connect, enabled, setStateTracked],
@@ -654,6 +665,10 @@ export function useProjectOperationState(
 
   useEffect(() => {
     mountedRef.current = true;
+    const gatewayKey = `${api.apiBase}\0${api.origin}`;
+    const gatewayChanged = gatewayKeyRef.current !== gatewayKey;
+    gatewayKeyRef.current = gatewayKey;
+
     if (!enabled || !projectId) {
       cleanup();
       setStateTracked(null);
@@ -662,12 +677,23 @@ export function useProjectOperationState(
         cleanup();
       };
     }
-    void poll();
+    if (gatewayChanged) {
+      setStateTracked(null);
+    }
+    void poll({ afterGatewayChange: gatewayChanged });
     return () => {
       mountedRef.current = false;
       cleanup();
     };
-  }, [poll, cleanup, enabled, projectId, setStateTracked]);
+  }, [
+    poll,
+    cleanup,
+    enabled,
+    projectId,
+    setStateTracked,
+    api.apiBase,
+    api.origin,
+  ]);
 
   // Explicit refresh must not depend on ``enabled``: startScan calls
   // refreshOp from a closure where attachOp was still false (no-op).

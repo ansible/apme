@@ -43,19 +43,24 @@ export function ActivityPage() {
     setPage(1);
   }, [sessionFilter]);
 
-  const fetchActivity = useCallback(() => {
+  useEffect(() => {
+    let cancelled = false;
     setLoading(true);
     const offset = (page - 1) * PAGE_SIZE;
     listActivity(PAGE_SIZE, offset, sessionFilter, api)
       .then((data) => {
+        if (cancelled) return;
         setItems(data.items);
         setTotal(data.total);
       })
       .catch(() => {})
-      .finally(() => setLoading(false));
-  }, [api, page, sessionFilter]);
-
-  useEffect(() => { fetchActivity(); }, [fetchActivity, refreshKey]);
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [api, page, sessionFilter, refreshKey]);
 
   useEffect(() => {
     let cancelled = false;

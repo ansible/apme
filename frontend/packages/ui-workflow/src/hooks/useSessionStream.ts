@@ -297,6 +297,9 @@ export function getPersistedSession(): PersistedSession | null {
 
 export function useSessionStream() {
   const api = useApmeApi();
+  const apiRef = useRef(api);
+  apiRef.current = api;
+  const prevEndpointRef = useRef<string | null>(null);
   const [status, setStatus] = useState<SessionStatus>("idle");
   const [progress, setProgress] = useState<ProgressEntry[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -815,6 +818,37 @@ export function useSessionStream() {
     clearPersistedSession();
     updateStatus("idle");
   }, [updateStatus]);
+
+  // Invalidate a stale socket when the provider endpoint changes. Persisted
+  // session material is kept so resumeSession can reconnect on the new host.
+  useEffect(() => {
+    const endpointKey = `${api.apiBase}\0${api.origin}`;
+    const prev = prevEndpointRef.current;
+    prevEndpointRef.current = endpointKey;
+    if (prev === null || prev === endpointKey) {
+      return;
+    }
+
+    if (wsRef.current) {
+      wsRef.current.close();
+      wsRef.current = null;
+    }
+    sessionEstablishedRef.current = false;
+
+    const persisted = getPersistedSession();
+    const current = statusRef.current;
+    if (
+      persisted &&
+      current !== "idle" &&
+      current !== "complete" &&
+      current !== "error"
+    ) {
+      setError("Gateway changed — reconnect to continue your session.");
+      errorSourceRef.current = null;
+      setCanReconnect(true);
+      updateStatus("disconnected");
+    }
+  }, [api.apiBase, api.origin, updateStatus]);
 
   // Close WebSocket on unmount (navigation away) but keep the persisted
   // session reference so the user can resume when they navigate back.

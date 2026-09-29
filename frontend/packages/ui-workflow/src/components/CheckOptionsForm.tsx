@@ -53,8 +53,10 @@ export function CheckOptionsForm({
   );
 
   useEffect(() => {
+    let cancelled = false;
     listAiModels(api)
       .then((m) => {
+        if (cancelled) return;
         setModels(m);
         const stored = localStorage.getItem(AI_MODEL_STORAGE_KEY);
         if (stored && m.some((x) => x.id === stored)) {
@@ -65,7 +67,12 @@ export function CheckOptionsForm({
           localStorage.setItem(AI_MODEL_STORAGE_KEY, fallback);
         }
       })
-      .catch(() => setModels([]));
+      .catch(() => {
+        if (!cancelled) setModels([]);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [api]);
 
   const handleModelChange = (value: string) => {

@@ -11,6 +11,7 @@ import {
   Spinner,
   Title,
 } from '@patternfly/react-core';
+import { useApmeApi } from '../api/apmeApiAdapter';
 import { getDashboardSummary, getDashboardRankings, getActiveOperations } from '../services/api';
 import type { ActiveOperation } from '../services/api';
 import type { DashboardSummary, ProjectRanking } from '../types/api';
@@ -53,6 +54,7 @@ const STATUS_LABELS: Record<string, { label: string; color: 'blue' | 'orange' | 
 
 export function DashboardPage() {
   const navigate = useNavigate();
+  const api = useApmeApi();
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [cleanest, setCleanest] = useState<ProjectRanking[]>([]);
   const [dirtiest, setDirtiest] = useState<ProjectRanking[]>([]);
@@ -63,17 +65,17 @@ export function DashboardPage() {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const fetchActiveOps = useCallback(() => {
-    getActiveOperations().then(setActiveOps).catch(() => {});
-  }, []);
+    getActiveOperations(api).then(setActiveOps).catch(() => {});
+  }, [api]);
 
   useEffect(() => {
     Promise.all([
-      getDashboardSummary(),
-      getDashboardRankings('health_score', 'desc', 10),
-      getDashboardRankings('health_score', 'asc', 10),
-      getDashboardRankings('last_scanned_at', 'desc', 10),
-      getDashboardRankings('scan_count', 'desc', 10),
-      getActiveOperations(),
+      getDashboardSummary(api),
+      getDashboardRankings('health_score', 'desc', 10, api),
+      getDashboardRankings('health_score', 'asc', 10, api),
+      getDashboardRankings('last_scanned_at', 'desc', 10, api),
+      getDashboardRankings('scan_count', 'desc', 10, api),
+      getActiveOperations(api),
     ])
       .then(([sum, clean, dirty, staleProjects, scanned, ops]) => {
         setSummary(sum);
@@ -90,7 +92,7 @@ export function DashboardPage() {
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
-  }, [fetchActiveOps]);
+  }, [api, fetchActiveOps]);
 
   return (
     <PageLayout>

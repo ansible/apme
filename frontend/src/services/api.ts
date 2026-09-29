@@ -254,8 +254,10 @@ export function getProjectTrend(
   return request(`/projects/${encodeURIComponent(projectId)}/trend?limit=${limit}`);
 }
 
-export function getDashboardSummary(): Promise<DashboardSummary> {
-  return request("/dashboard/summary");
+export function getDashboardSummary(
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
+): Promise<DashboardSummary> {
+  return request("/dashboard/summary", undefined, adapter);
 }
 
 export interface ActiveOperation {
@@ -268,16 +270,23 @@ export interface ActiveOperation {
   started_at: string;
 }
 
-export function getActiveOperations(): Promise<ActiveOperation[]> {
-  return request("/operations/active");
+export function getActiveOperations(
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
+): Promise<ActiveOperation[]> {
+  return request("/operations/active", undefined, adapter);
 }
 
 export function getDashboardRankings(
   sortBy = "health_score",
   order = "desc",
   limit = 10,
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
 ): Promise<ProjectRanking[]> {
-  return request(`/dashboard/rankings?sort_by=${sortBy}&order=${order}&limit=${limit}`);
+  return request(
+    `/dashboard/rankings?sort_by=${sortBy}&order=${order}&limit=${limit}`,
+    undefined,
+    adapter,
+  );
 }
 
 // ── Dependencies (ADR-040) ─────────────────────────────────────────────

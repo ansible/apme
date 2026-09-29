@@ -75,20 +75,23 @@ export function useNotificationStream(): void {
   const { setNotificationGroups } = usePageNotifications();
   const alertToaster = usePageAlertToaster();
   const api = useApmeApi();
-  const mountedRef = useRef(true);
+  const apiRef = useRef(api);
+  apiRef.current = api;
 
   useEffect(() => {
-    mountedRef.current = true;
+    let cancelled = false;
     let es: EventSource | undefined;
+    const isActive = () => !cancelled;
 
     const startStream = async () => {
       // Buffer SSE events that arrive before the REST load completes.
       const buffer: NotificationItem[] = [];
       let restLoaded = false;
 
-      es = new EventSource(apmeSseUrl('/notifications/stream', api));
+      es = new EventSource(apmeSseUrl('/notifications/stream', apiRef.current));
 
       const handleSseItem = (item: NotificationItem) => {
+        if (!isActive()) return;
         setNotificationGroups((prev) => mergeNotification(prev, item));
 
         const timeout = NO_DISMISS_TYPES.has(item.type) ? undefined : 8000;
@@ -101,11 +104,11 @@ export function useNotificationStream(): void {
           actionClose: undefined,
         });
 
-        markNotificationRead(item.id, api).catch(() => {});
+        markNotificationRead(item.id, apiRef.current).catch(() => {});
       };
 
       es.onmessage = (event) => {
-        if (!mountedRef.current) return;
+        if (!isActive()) return;
         let item: NotificationItem;
         try {
           item = JSON.parse(event.data as string) as NotificationItem;
@@ -135,12 +138,12 @@ export function useNotificationStream(): void {
           timeout,
           actionClose: undefined,
         });
-        markNotificationRead(buffered.id, api).catch(() => {});
+        markNotificationRead(buffered.id, apiRef.current).catch(() => {});
       };
 
       try {
-        const resp = await listNotifications(100, 0, false, api);
-        if (!mountedRef.current) return;
+        const resp = await listNotifications(100, 0, false, apiRef.current);
+        if (!isActive()) return;
 
         const restIds = new Set(resp.items.map((n) => n.id));
         const merged = [...resp.items];
@@ -194,7 +197,7 @@ export function useNotificationStream(): void {
           }
         }
       } catch {
-        if (!mountedRef.current) return;
+        if (!isActive()) return;
 
         // Flip restLoaded first so any SSE events arriving while we process the
         // buffered items go through handleSseItem directly rather than getting
@@ -228,11 +231,11 @@ export function useNotificationStream(): void {
     void startStream();
 
     return () => {
-      mountedRef.current = false;
+      cancelled = true;
       es?.close();
     };
     // Subscribe on apiBase/origin identity only: a host re-creating its
-    // `fetch` closure must not tear down the EventSource (fetch is only
-    // used for one-shot REST calls captured per invocation below).
+    // `fetch` closure must not tear down the EventSource. REST handlers
+    // read apiRef.current so refreshed auth applies without reconnecting.
   }, [api.apiBase, api.origin, setNotificationGroups, alertToaster]);
 }
