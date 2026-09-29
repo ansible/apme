@@ -24,7 +24,7 @@
         name: express
         global: yes
 
-    # L005: Another non-builtin
+    # Non-builtin AWS collection (L005 only matches community.*)
     - name: Use AWS module
       amazon.aws.ec2_instance:
         name: test-instance

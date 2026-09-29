@@ -1497,6 +1497,50 @@ class ContentGraph:
             current = parent_id
         return result
 
+    def play_scoped_positional_ancestors(self, node_id: str, play_scope: set[str]) -> list[ContentNode]:
+        """Return merged positional ancestors from all in-scope include paths.
+
+        Unlike :meth:`positional_ancestors`, follows every in-scope parent
+        edge instead of choosing the lexicographically first parent. Ancestors
+        are ordered closest-first; same-depth parents are sorted by node id
+        for deterministic conflict resolution.
+
+        Args:
+            node_id: Node whose in-scope ancestor chain is walked upward.
+            play_scope: Precomputed play-scoped node IDs.
+
+        Returns:
+            Ancestor ``ContentNode`` instances from immediate parent toward root.
+        """
+        result: list[ContentNode] = []
+        seen: set[str] = set()
+        positional = frozenset(
+            {
+                EdgeType.CONTAINS.value,
+                EdgeType.INCLUDE.value,
+                EdgeType.IMPORT.value,
+            }
+        )
+        current_level = sorted(
+            src
+            for src, _, data in self.g.in_edges(node_id, data=True)
+            if data.get("edge_type") in positional and src in play_scope
+        )
+        while current_level:
+            next_level: list[str] = []
+            for parent_id in current_level:
+                if parent_id in seen:
+                    continue
+                seen.add(parent_id)
+                parent_node = self.get_node(parent_id)
+                if parent_node is not None:
+                    result.append(parent_node)
+                for src, _, data in self.g.in_edges(parent_id, data=True):
+                    if data.get("edge_type") in positional and src in play_scope and src not in seen:
+                        next_level.append(src)
+            current_level = sorted(set(next_level))
+        return result
+
     def positional_ancestor_ids(self, node_id: str) -> set[str]:
         """Return ancestor node IDs via CONTAINS, INCLUDE, or IMPORT edges.
 

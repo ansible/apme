@@ -353,13 +353,8 @@ class VariableProvenanceResolver:
         if node is not None:
             chain.append(node)
         if play_context_id is not None:
-            chain.extend(
-                self._graph.positional_ancestors(
-                    node_id,
-                    play_context_id=play_context_id,
-                    play_scope=play_scope,
-                )
-            )
+            scope = play_scope if play_scope is not None else self._graph.play_scoped_node_ids(play_context_id)
+            chain.extend(self._graph.play_scoped_positional_ancestors(node_id, scope))
             seen = {n.node_id for n in chain}
             for ancestor in self._graph.ancestors(play_context_id):
                 if ancestor.node_id not in seen:
