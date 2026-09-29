@@ -9,6 +9,7 @@ import {
   TextInput,
 } from '@patternfly/react-core';
 import { listAiModels, type AiModelInfo } from '../api/listAiModels';
+import { useApmeApi } from '../api/apmeApiAdapter';
 import { AI_MODEL_STORAGE_KEY } from '../shared/constants';
 
 export interface CheckOptionsFormProps {
@@ -45,13 +46,14 @@ export function CheckOptionsForm({
   idPrefix = '',
 }: CheckOptionsFormProps) {
   const prefix = idPrefix ? `${idPrefix}-` : '';
+  const api = useApmeApi();
   const [models, setModels] = useState<AiModelInfo[]>([]);
   const [selectedModel, setSelectedModel] = useState(
     () => localStorage.getItem(AI_MODEL_STORAGE_KEY) ?? '',
   );
 
   useEffect(() => {
-    listAiModels()
+    listAiModels(api)
       .then((m) => {
         setModels(m);
         const stored = localStorage.getItem(AI_MODEL_STORAGE_KEY);
@@ -64,7 +66,7 @@ export function CheckOptionsForm({
         }
       })
       .catch(() => setModels([]));
-  }, []);
+  }, [api]);
 
   const handleModelChange = (value: string) => {
     setSelectedModel(value);

@@ -10,8 +10,18 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
-import { apmeApiUrl, getApmeApiAdapter } from "../api/apmeApiAdapter";
+import {
+  apmeApiUrl,
+  getApmeApiAdapter,
+  useApmeApi,
+  type ApmeApiAdapter,
+} from "../api/apmeApiAdapter";
 import { readSseStream, type SseEvent } from "../api/sseFetch";
+import type {
+  OperationProgress,
+  OperationProposal,
+  OperationResult,
+} from "../types/operation";
 
 export type ProjectOperationStatus =
   | "queued"
@@ -48,9 +58,16 @@ export const LIVE_OPERATION_STATUSES = new Set<ProjectOperationStatus>([
   "submitting_pr",
 ]);
 
-export interface ProgressEntry {
-  phase: string;
-  message: string;
+/**
+ * Gateway wire shape for operation progress. Shares field names/types with
+ * the `OperationProgress` contract so renames propagate at compile time;
+ * `timestamp` arrives as an ISO string (panels convert to epoch ms), and
+ * the Gateway may attach AI budget fields the shared view type omits.
+ * (Shared optional additions flow in silently — review Gateway payload
+ * changes, don't rely on the compiler alone.)
+ */
+export interface ProgressEntry
+  extends Omit<OperationProgress, "timestamp" | "progress" | "level"> {
   timestamp: string;
   progress?: number | null;
   level?: number | null;
@@ -59,34 +76,22 @@ export interface ProgressEntry {
   ai_total?: number | null;
 }
 
-export interface Proposal {
-  id: string;
-  rule_id: string;
-  file: string;
-  tier: number;
-  confidence: number;
-  explanation?: string;
-  diff_hunk?: string;
-  status?: "proposed" | "declined" | "pending" | "approved" | "rejected";
-  suggestion?: string;
-  line_start?: number;
-  /** 1-based end line of the proposal span; 0/undefined = unknown (same guard as line_start). */
-  line_end?: number;
-  path?: string;
-  /** ContentGraph NodeType (task, block, play, …); empty when not graph-backed. */
-  node_type?: string;
-  source?: string;
-  before_text?: string;
-  after_text?: string;
-}
+/**
+ * Gateway wire shape for proposals. Field-for-field identical to the
+ * shared `OperationProposal` contract — aliased so panel components and
+ * the SSE hook cannot drift.
+ */
+export type Proposal = OperationProposal;
 
-export interface OperationResultData {
-  total_violations: number;
-  fixable: number;
-  ai_proposed: number;
-  ai_declined: number;
-  ai_accepted: number;
-  manual_review: number;
+/**
+ * Gateway wire shape for operation results. Shares field names/types with
+ * the `OperationResult` contract, plus engine payload the result card does
+ * not display (fixed violation detail, patch diffs). The Gateway omits
+ * `ai_candidate`; panels fall back to `ai_proposed` for that cell, and a
+ * Gateway-sent `ai_candidate` is not surfaced — extend here if needed.
+ */
+export interface OperationResultData
+  extends Omit<OperationResult, "ai_candidate" | "remediated_count"> {
   remediated_count: number;
   fixed_violations: Array<Record<string, unknown>>;
   patches: Array<{ file: string; diff: string }>;
@@ -309,12 +314,16 @@ export interface ProjectOperationState {
  * Poll for current operation state. Returns the state snapshot, or null
  * if no operation exists (404). Non-OK responses and network failures
  * reject so callers can distinguish "absent" from "probe failed".
+ *
+ * Pass the `useApmeApi()` value when calling from React so nested
+ * providers resolve correctly; the module default applies otherwise.
  */
 export async function fetchProjectOperationState(
   projectId: string,
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
 ): Promise<ProjectOperationState | null> {
-  const { fetch: doFetch } = getApmeApiAdapter();
-  const res = await doFetch(apmeApiUrl(`/projects/${projectId}/operation`));
+  const { fetch: doFetch } = adapter;
+  const res = await doFetch(apmeApiUrl(`/projects/${projectId}/operation`, adapter));
   if (res.status === 404) return null;
   if (!res.ok) {
     throw new Error(
@@ -499,6 +508,11 @@ export function useProjectOperationState(
   options: UseProjectOperationStateOptions = {},
 ) {
   const enabled = options.enabled ?? true;
+  const api = useApmeApi();
+  // Live ref so SSE resubscription is gated on apiBase/origin identity:
+  // a host re-creating its `fetch` closure must not reconnect the stream.
+  const apiRef = useRef(api);
+  apiRef.current = api;
   const [state, setState] = useState<ProjectOperationState | null>(null);
   const [connected, setConnected] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
@@ -568,14 +582,14 @@ export function useProjectOperationState(
     const ac = new AbortController();
     abortRef.current = ac;
 
-    const { fetch: doFetch } = getApmeApiAdapter();
+    const adapter = apiRef.current;
     // Use apmeApiUrl (not EventSource-only helper) so absolute discovery
     // bases and adapter.fetch auth both apply.
-    const url = apmeApiUrl(`/projects/${projectId}/operation/events`);
+    const url = apmeApiUrl(`/projects/${projectId}/operation/events`, adapter);
 
     void (async () => {
       try {
-        const res = await doFetch(url, {
+        const res = await adapter.fetch(url, {
           method: "GET",
           headers: { Accept: "text/event-stream" },
           signal: ac.signal,
@@ -604,7 +618,7 @@ export function useProjectOperationState(
         scheduleReconnect(gen, "error");
       }
     })();
-  }, [projectId, cleanup, scheduleReconnect, setStateTracked]);
+  }, [projectId, api.apiBase, api.origin, cleanup, scheduleReconnect, setStateTracked]);
 
   connectRef.current = connect;
 
@@ -619,7 +633,7 @@ export function useProjectOperationState(
       }
       const pollGen = pollGenRef.current;
       try {
-        const s = await fetchProjectOperationState(projectId);
+        const s = await fetchProjectOperationState(projectId, apiRef.current);
         // Never update React state after unmount or after clear/cleanup invalidated this poll.
         if (!mountedRef.current || pollGen !== pollGenRef.current) return;
         if (!s) {

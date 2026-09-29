@@ -78,4 +78,15 @@ describe('apmeApiAdapter', () => {
       'wss://gw.example/api/v1/ws/session',
     );
   });
+
+  it('threads an explicit adapter through URL helpers for non-React callers', () => {
+    const adapter = createDefaultApmeApiAdapter({
+      apiBase: 'https://gw.example/api/v1',
+    });
+    expect(apmeApiUrl('/health', adapter)).toBe(
+      'https://gw.example/api/v1/health',
+    );
+    // Singleton default still applies when no adapter is passed.
+    expect(apmeApiUrl('/health')).toBe('/api/v1/health');
+  });
 });

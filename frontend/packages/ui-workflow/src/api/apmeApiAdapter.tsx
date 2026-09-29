@@ -6,7 +6,6 @@
 import {
   createContext,
   useContext,
-  useEffect,
   useMemo,
   type ReactNode,
 } from 'react';
@@ -47,6 +46,12 @@ export function createDefaultApmeApiAdapter(
 
 let currentAdapter: ApmeApiAdapter = createDefaultApmeApiAdapter();
 
+/**
+ * Module-level default adapter for non-React callers (plain service
+ * modules, tests). React code under an `ApmeApiProvider` must prefer
+ * `useApmeApi()` so nested providers stay isolated — the provider never
+ * writes here.
+ */
 export function getApmeApiAdapter(): ApmeApiAdapter {
   return currentAdapter;
 }
@@ -64,8 +69,8 @@ function normalizeApiBase(apiBase: string): string {
 }
 
 /** Build a REST URL from a path like `/health` or `health`. */
-export function apmeApiUrl(path: string): string {
-  const apiBase = normalizeApiBase(getApmeApiAdapter().apiBase);
+export function apmeApiUrl(path: string, adapter: ApmeApiAdapter = getApmeApiAdapter()): string {
+  const apiBase = normalizeApiBase(adapter.apiBase);
   const p = path.startsWith('/') ? path : `/${path}`;
   if (p.startsWith('/api/')) {
     return p;
@@ -73,8 +78,8 @@ export function apmeApiUrl(path: string): string {
   return `${apiBase}${p}`;
 }
 
-function resolveFullPath(path: string): string {
-  const apiBase = normalizeApiBase(getApmeApiAdapter().apiBase);
+function resolveFullPath(path: string, adapter: ApmeApiAdapter): string {
+  const apiBase = normalizeApiBase(adapter.apiBase);
   const p = path.startsWith('/') ? path : `/${path}`;
   if (p.startsWith('/api/')) {
     return p;
@@ -89,9 +94,9 @@ function isSameOrigin(origin: string): boolean {
 }
 
 /** WebSocket URL for a path like `/api/v1/ws/session` or `/ws/session`. */
-export function apmeWsUrl(path: string): string {
-  const { origin } = getApmeApiAdapter();
-  const fullPath = resolveFullPath(path);
+export function apmeWsUrl(path: string, adapter: ApmeApiAdapter = getApmeApiAdapter()): string {
+  const { origin } = adapter;
+  const fullPath = resolveFullPath(path, adapter);
   // Absolute apiBase (e.g. https://gw.example/api/v1) already produced a full URL.
   if (/^https?:\/\//i.test(fullPath)) {
     const url = new URL(fullPath);
@@ -114,9 +119,9 @@ export function apmeWsUrl(path: string): string {
 }
 
 /** EventSource URL for SSE endpoints. */
-export function apmeSseUrl(path: string): string {
-  const { origin } = getApmeApiAdapter();
-  const fullPath = resolveFullPath(path);
+export function apmeSseUrl(path: string, adapter: ApmeApiAdapter = getApmeApiAdapter()): string {
+  const { origin } = adapter;
+  const fullPath = resolveFullPath(path, adapter);
   // Relative URL keeps EventSource on the Vite proxy (same as pre-adapter).
   if (isSameOrigin(origin)) {
     return fullPath;
@@ -126,6 +131,12 @@ export function apmeSseUrl(path: string): string {
 
 const ApmeApiContext = createContext<ApmeApiAdapter | null>(null);
 
+/**
+ * Provide the Gateway adapter via React context. The provider never
+ * touches the module-level default, so nested providers stay isolated:
+ * each subtree sees its nearest provider value, and unmounting an inner
+ * provider cannot clobber the outer one.
+ */
 export function ApmeApiProvider({
   adapter,
   children,
@@ -137,19 +148,6 @@ export function ApmeApiProvider({
     () => createDefaultApmeApiAdapter(adapter ?? {}),
     [adapter?.fetch, adapter?.apiBase, adapter?.origin],
   );
-
-  // Keep the module singleton aligned during render so child useEffects
-  // (SSE/WS) see the provider value — child effects run before parent effects.
-  if (currentAdapter !== value) {
-    currentAdapter = value;
-  }
-
-  useEffect(() => {
-    setApmeApiAdapter(value);
-    return () => {
-      setApmeApiAdapter(createDefaultApmeApiAdapter());
-    };
-  }, [value]);
 
   return (
     <ApmeApiContext.Provider value={value}>{children}</ApmeApiContext.Provider>

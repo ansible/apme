@@ -35,7 +35,18 @@ import type {
   UpdateProjectRequest,
   ViolationDetail,
 } from "../types/api";
-import { apmeApiUrl, getApmeApiAdapter } from "../api/apmeApiAdapter";
+import {
+  apmeApiUrl,
+  getApmeApiAdapter,
+  type ApmeApiAdapter,
+} from "../api/apmeApiAdapter";
+
+// NOTE (#447): adapter resolution is injectable per call. `apiFetch` and
+// `request` take an optional trailing `ApmeApiAdapter` (module default
+// otherwise); functions called from components under a provider
+// (listActivity, listNotifications, markNotificationRead) expose it so
+// callers pass `useApmeApi()`. Remaining helpers keep the default for
+// non-React callers and tests (set via `setApmeApiAdapter()`).
 
 class ApiError extends Error {
   status: number;
@@ -81,20 +92,26 @@ export function apiErrorMessage(err: unknown, fallback = "Request failed"): stri
 async function apiFetch(
   path: string,
   init?: Omit<RequestInit, "headers"> & { headers?: Record<string, string> },
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
 ): Promise<Response> {
-  const { fetch: doFetch } = getApmeApiAdapter();
-  return doFetch(apmeApiUrl(path), init);
+  const { fetch: doFetch } = adapter;
+  return doFetch(apmeApiUrl(path, adapter), init);
 }
 
 async function request<T>(
   path: string,
   init?: Omit<RequestInit, "headers"> & { headers?: Record<string, string> },
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
 ): Promise<T> {
   const { headers: extraHeaders, ...rest } = init ?? {};
-  const res = await apiFetch(path, {
-    ...rest,
-    headers: { Accept: "application/json", ...extraHeaders },
-  });
+  const res = await apiFetch(
+    path,
+    {
+      ...rest,
+      headers: { Accept: "application/json", ...extraHeaders },
+    },
+    adapter,
+  );
   if (!res.ok) {
     const text = await res.text();
     throw new ApiError(res.status, text);
@@ -117,10 +134,11 @@ export function listActivity(
   limit = 50,
   offset = 0,
   sessionId?: string,
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
 ): Promise<PaginatedResponse<ActivitySummary>> {
   let url = `/activity?limit=${limit}&offset=${offset}`;
   if (sessionId) url += `&session_id=${sessionId}`;
-  return request(url);
+  return request(url, undefined, adapter);
 }
 
 export function getActivity(scanId: string): Promise<ActivityDetail> {
@@ -488,14 +506,18 @@ export function listNotifications(
   limit = 50,
   offset = 0,
   unreadOnly = false,
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
 ): Promise<PaginatedResponse<NotificationItem>> {
   let url = `/notifications?limit=${limit}&offset=${offset}`;
   if (unreadOnly) url += "&unread_only=true";
-  return request(url);
+  return request(url, undefined, adapter);
 }
 
-export async function markNotificationRead(id: number): Promise<void> {
-  const res = await apiFetch(`/notifications/${id}/read`, { method: "PATCH" });
+export async function markNotificationRead(
+  id: number,
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
+): Promise<void> {
+  const res = await apiFetch(`/notifications/${id}/read`, { method: "PATCH" }, adapter);
   if (!res.ok) throw new Error(`${res.status}`);
 }
 

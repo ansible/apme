@@ -12,7 +12,7 @@ import {
   ModalHeader,
   TextArea,
 } from '@patternfly/react-core';
-import { apmeApiUrl, getApmeApiAdapter } from '../api/apmeApiAdapter';
+import { apmeApiUrl, useApmeApi } from '../api/apmeApiAdapter';
 
 export interface FeedbackPayload {
   type: 'false_positive' | 'bad_ai_suggestion' | 'rule_misfire';
@@ -53,6 +53,8 @@ export function FeedbackModal({ isOpen, onClose, prefill, gatewayUrl = '' }: Fee
     if (isOpen && prefill?.type) setIssueType(prefill.type);
   }, [isOpen, prefill?.type]);
 
+  const api = useApmeApi();
+
   const handleSubmit = useCallback(async () => {
     setSubmitting(true);
     setError(null);
@@ -66,11 +68,11 @@ export function FeedbackModal({ isOpen, onClose, prefill, gatewayUrl = '' }: Fee
         context: prefill?.context ?? { violation_message: '', ai_proposal_diff: '', ai_explanation: '', source_snippet: '' },
         user_comment: comment,
       };
-      const { fetch: doFetch } = getApmeApiAdapter();
+      const { fetch: doFetch } = api;
       const url =
         gatewayUrl !== ''
           ? `${gatewayUrl.replace(/\/$/, '')}/api/v1/feedback`
-          : apmeApiUrl('/feedback');
+          : apmeApiUrl('/feedback', api);
       const resp = await doFetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -87,7 +89,7 @@ export function FeedbackModal({ isOpen, onClose, prefill, gatewayUrl = '' }: Fee
     } finally {
       setSubmitting(false);
     }
-  }, [issueType, comment, prefill, gatewayUrl]);
+  }, [api, issueType, comment, prefill, gatewayUrl]);
 
   const handleClose = useCallback(() => {
     setResult(null);

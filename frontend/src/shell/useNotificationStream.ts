@@ -14,7 +14,7 @@ import { usePageNotifications } from '@ansible/ansible-ui-framework';
 import { usePageAlertToaster } from '@ansible/ansible-ui-framework/PageAlertToaster';
 import type { IPageNotification } from '@ansible/ansible-ui-framework/PageNotifications/PageNotification';
 import type { IPageNotificationGroup } from '@ansible/ansible-ui-framework/PageNotifications/PageNotificationGroup';
-import { apmeSseUrl } from '../api/apmeApiAdapter';
+import { apmeSseUrl, useApmeApi } from '../api/apmeApiAdapter';
 import { listNotifications, markNotificationRead } from '../services/api';
 import type { NotificationItem } from '../types/api';
 
@@ -74,6 +74,7 @@ const NO_DISMISS_TYPES = new Set(['secrets_detected']);
 export function useNotificationStream(): void {
   const { setNotificationGroups } = usePageNotifications();
   const alertToaster = usePageAlertToaster();
+  const api = useApmeApi();
   const mountedRef = useRef(true);
 
   useEffect(() => {
@@ -85,7 +86,7 @@ export function useNotificationStream(): void {
       const buffer: NotificationItem[] = [];
       let restLoaded = false;
 
-      es = new EventSource(apmeSseUrl('/notifications/stream'));
+      es = new EventSource(apmeSseUrl('/notifications/stream', api));
 
       const handleSseItem = (item: NotificationItem) => {
         setNotificationGroups((prev) => mergeNotification(prev, item));
@@ -100,7 +101,7 @@ export function useNotificationStream(): void {
           actionClose: undefined,
         });
 
-        markNotificationRead(item.id).catch(() => {});
+        markNotificationRead(item.id, api).catch(() => {});
       };
 
       es.onmessage = (event) => {
@@ -134,11 +135,11 @@ export function useNotificationStream(): void {
           timeout,
           actionClose: undefined,
         });
-        markNotificationRead(buffered.id).catch(() => {});
+        markNotificationRead(buffered.id, api).catch(() => {});
       };
 
       try {
-        const resp = await listNotifications(100, 0);
+        const resp = await listNotifications(100, 0, false, api);
         if (!mountedRef.current) return;
 
         const restIds = new Set(resp.items.map((n) => n.id));
@@ -230,5 +231,8 @@ export function useNotificationStream(): void {
       mountedRef.current = false;
       es?.close();
     };
-  }, [setNotificationGroups, alertToaster]);
+    // Subscribe on apiBase/origin identity only: a host re-creating its
+    // `fetch` closure must not tear down the EventSource (fetch is only
+    // used for one-shot REST calls captured per invocation below).
+  }, [api.apiBase, api.origin, setNotificationGroups, alertToaster]);
 }
