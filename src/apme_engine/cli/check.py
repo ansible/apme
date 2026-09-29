@@ -8,7 +8,6 @@ import queue
 import sys
 import threading
 from collections.abc import Iterator
-from pathlib import Path
 
 import grpc
 
@@ -26,9 +25,10 @@ from apme_engine.cli._galaxy_config import discover_galaxy_servers
 from apme_engine.cli._models import ViolationDict
 from apme_engine.cli._project_root import (
     derive_session_id,
-    discover_project_root,
+    discover_project_root,  # noqa: F401 — re-exported for test patch compatibility
     discover_project_root_for_targets,
     normalize_targets,
+    resolve_scan_context,
 )
 from apme_engine.cli._rules_yml import load_rule_configs_from_project
 from apme_engine.cli._suppressions import apply_suppressions, load_suppressions
@@ -45,24 +45,6 @@ from apme_engine.daemon.violation_convert import violation_proto_to_dict
 from apme_engine.remediation.partition import count_by_remediation_class, count_by_resolution
 
 _SAFE_SESSION_RE = __import__("re").compile(r"^[A-Za-z0-9_\-]+$")
-
-
-def _discover_target_root(targets: list[str]) -> Path:
-    """Discover the project root, honoring unit-test patches on ``discover_project_root``.
-
-    Single targets go through the module-level ``discover_project_root``
-    (patchable as ``apme_engine.cli.check.discover_project_root``);
-    multi-target scans use the common-base helper.
-
-    Args:
-        targets: Normalized target path strings.
-
-    Returns:
-        Discovered project root path.
-    """
-    if len(targets) == 1:
-        return discover_project_root(targets[0])
-    return discover_project_root_for_targets(targets)
 
 
 class _ScanSummaryCompat:
@@ -110,7 +92,7 @@ def _resolve_session_id(args: argparse.Namespace) -> str:
         return explicit
     targets = normalize_targets(getattr(args, "target", "."))
     try:
-        project_root = _discover_target_root(targets)
+        project_root = discover_project_root_for_targets(targets)
     except FileNotFoundError as e:
         sys.stderr.write(f"{e}\n")
         raise SystemExit(EXIT_ERROR) from e
@@ -155,13 +137,8 @@ def run_check(args: argparse.Namespace) -> None:
     verbosity = getattr(args, "verbose", 0) or 0
     session_id = _resolve_session_id(args)
 
-    targets = normalize_targets(getattr(args, "target", "."))
-    for candidate in targets:
-        if not Path(candidate).exists():
-            sys.stderr.write(f"Target not found: {candidate}\n")
-            sys.exit(EXIT_ERROR)
     try:
-        project_root = _discover_target_root(targets)
+        targets, _, project_root = resolve_scan_context(getattr(args, "target", "."))
     except FileNotFoundError as e:
         sys.stderr.write(f"{e}\n")
         sys.exit(EXIT_ERROR)

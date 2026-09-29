@@ -11,13 +11,11 @@ import grpc
 from apme.v1 import engine_pb2_grpc
 from apme_engine.cli._exit_codes import EXIT_ERROR, EXIT_VIOLATIONS
 from apme_engine.cli._project_root import (
-    common_scan_base,
     derive_session_id,
-    discover_project_root,
+    discover_project_root,  # noqa: F401 — re-exported for test patch compatibility
     discover_project_root_for_targets,
-    normalize_targets,
-    path_within_targets,
-    resolve_within_base,
+    resolve_scan_context,
+    resolve_write_path,
 )
 from apme_engine.cli.discovery import resolve_engine
 from apme_engine.cli.output import render_logs
@@ -30,13 +28,8 @@ def run_format(args: argparse.Namespace) -> None:
     Args:
         args: Parsed CLI arguments.
     """
-    targets = normalize_targets(getattr(args, "target", "."))
-    for candidate in targets:
-        if not Path(candidate).exists():
-            sys.stderr.write(f"Target not found: {candidate}\n")
-            sys.exit(EXIT_ERROR)
     try:
-        base = common_scan_base(targets)
+        targets, base, _ = resolve_scan_context(getattr(args, "target", "."))
     except FileNotFoundError as e:
         sys.stderr.write(f"{e}\n")
         sys.exit(EXIT_ERROR)
@@ -45,9 +38,6 @@ def run_format(args: argparse.Namespace) -> None:
     try:
         if explicit_session:
             session_id = explicit_session
-        elif len(targets) == 1:
-            project_root = discover_project_root(targets[0])
-            session_id = derive_session_id(project_root)
         else:
             project_root = discover_project_root_for_targets(targets)
             session_id = derive_session_id(project_root)
@@ -102,14 +92,8 @@ def run_format(args: argparse.Namespace) -> None:
         written = 0
         write_failed = False
         for d in diffs:
-            try:
-                out_path = resolve_within_base(base, d.path)
-            except ValueError as exc:
-                sys.stderr.write(f"WARNING: skipping {d.path}: {exc}\n")
-                write_failed = True
-                continue
-            if not path_within_targets(targets, out_path):
-                sys.stderr.write(f"WARNING: skipping {d.path}: outside selected targets\n")
+            out_path = resolve_write_path(base, targets, d.path)
+            if out_path is None:
                 write_failed = True
                 continue
             if _safe_write(out_path, d.original, d.formatted):

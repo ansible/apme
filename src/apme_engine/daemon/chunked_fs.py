@@ -156,6 +156,103 @@ class _ScanBundle:
     session_id: str = ""
 
 
+def resolve_common_base(resolved: list[Path]) -> Path:
+    """Return the common ancestor directory for pre-resolved targets.
+
+    Single-source helper for CLI ``common_scan_base`` and daemon
+    ``build_scan_bundle`` so scan paths and write confinement cannot drift.
+    Anchors are the directory itself, or the parent for files.
+
+    Args:
+        resolved: Pre-resolved absolute target paths (non-empty).
+
+    Returns:
+        Absolute path to the common base directory.
+
+    Raises:
+        FileNotFoundError: If targets span filesystem roots.
+    """
+    if len(resolved) == 1:
+        single = resolved[0]
+        return single.parent if single.is_file() else single
+    anchors = [str(p.parent if p.is_file() else p) for p in resolved]
+    try:
+        return Path(os.path.commonpath(anchors)).resolve()
+    except ValueError as e:
+        raise FileNotFoundError(f"Targets share no common path: {e}") from e
+
+
+def _resolve_targets(
+    raw_targets: list[str | Path],
+) -> tuple[list[Path], Path]:
+    """Normalize raw targets to resolved paths plus common base.
+
+    Args:
+        raw_targets: Raw target values (non-empty, strings or Paths).
+
+    Returns:
+        Tuple of (resolved absolute targets, common base directory).
+
+    Raises:
+        FileNotFoundError: If a target is missing or spans roots.
+    """
+    targets: list[Path] = [Path(t).resolve() for t in raw_targets]
+    for original, target in zip(raw_targets, targets, strict=False):
+        if not target.exists():
+            raise FileNotFoundError(f"Target does not exist: {original}")
+    return targets, resolve_common_base(targets)
+
+
+def _walk_target(target: Path, scope: Path) -> Iterator[tuple[Path, Path]]:
+    """Yield ``(path, scope)`` pairs for one target subtree.
+
+    Args:
+        target: Resolved file or directory target.
+        scope: Per-target scope (parent for files, self for dirs).
+
+    Yields:
+        tuple[Path, Path]: Candidate path and originating scope.
+    """
+    if target.is_file():
+        yield target, scope
+        return
+    for dirpath, dirnames, filenames in os.walk(target):
+        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+        for name in filenames:
+            yield Path(dirpath) / name, scope
+
+
+def _is_excluded(
+    rel_str: str,
+    scope_rel: str | None,
+    scoped_pats: list[str] | None,
+    cli_excludes: list[str],
+    target_scope_rels: list[str],
+) -> bool:
+    """Apply CLI-exclude and per-target ignore checks for one candidate.
+
+    Bundle-root ``.apmeignore`` is owned by ``_should_include``; this helper
+    covers the remaining two scopes so root patterns are matched once.
+
+    Args:
+        rel_str: Bundle-relative path string.
+        scope_rel: Path string relative to originating scope (or None).
+        scoped_pats: Originating scope ``.apmeignore`` patterns (or None).
+        cli_excludes: CLI ``--exclude`` patterns.
+        target_scope_rels: Path strings relative to each target scope.
+
+    Returns:
+        True when the file must be skipped.
+    """
+    if cli_excludes:
+        if _matches_ignore(rel_str, cli_excludes):
+            return True
+        for target_rel in target_scope_rels:
+            if _matches_ignore(target_rel, cli_excludes):
+                return True
+    return scoped_pats is not None and scope_rel is not None and _matches_ignore(scope_rel, scoped_pats)
+
+
 def build_scan_bundle(
     target_path: str | Path | Sequence[str | Path],
     scan_id: str | None = None,
@@ -189,47 +286,16 @@ def build_scan_bundle(
 
     Returns:
         _ScanBundle with files and options populated.
-
-    Raises:
-        FileNotFoundError: If target_path does not exist.
     """
     raw_targets: list[str | Path] = [target_path] if isinstance(target_path, (str, Path)) else list(target_path)
     if not raw_targets:
         raw_targets = ["."]
-    targets: list[Path] = [Path(t).resolve() for t in raw_targets]
-    for original, target in zip(raw_targets, targets, strict=False):
-        if not target.exists():
-            raise FileNotFoundError(f"Target does not exist: {original}")
+    targets, root = _resolve_targets(raw_targets)
 
-    if len(targets) == 1:
-        target = targets[0]
+    to_visit: list[tuple[Path, Path]] = []
+    for target in targets:
         scope = target.parent if target.is_file() else target
-        if target.is_file():
-            root = target.parent
-            to_visit = [(target, scope)]
-        else:
-            root = target
-            to_visit = []
-            for dirpath, dirnames, filenames in os.walk(root):
-                dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
-                for name in filenames:
-                    to_visit.append((Path(dirpath) / name, scope))
-    else:
-        anchor_dirs = [str(t.parent if t.is_file() else t) for t in targets]
-        try:
-            root = Path(os.path.commonpath(anchor_dirs)).resolve()
-        except ValueError as e:
-            raise FileNotFoundError(f"Targets share no common path: {e}") from e
-        to_visit = []
-        for target in targets:
-            scope = target.parent if target.is_file() else target
-            if target.is_file():
-                to_visit.append((target, scope))
-            else:
-                for dirpath, dirnames, filenames in os.walk(target):
-                    dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
-                    for name in filenames:
-                        to_visit.append((Path(dirpath) / name, scope))
+        to_visit.extend(_walk_target(target, scope))
 
     # Ignore patterns come in three scopes, matched against different bases:
     # - bundle-root .apmeignore: matched against bundle-relative paths.
@@ -270,30 +336,20 @@ def build_scan_bundle(
         except ValueError:
             continue
         rel_str = str(rel)
-        if _matches_ignore(rel_str, root_ignore):
-            continue
-        if cli_excludes:
-            excluded = _matches_ignore(rel_str, cli_excludes)
-            if not excluded:
-                for target_scope in target_scopes:
-                    try:
-                        scope_rel = str(path.relative_to(target_scope))
-                    except ValueError:
-                        continue
-                    if _matches_ignore(scope_rel, cli_excludes):
-                        excluded = True
-                        break
-            if excluded:
-                continue
         scope_key = scope.resolve()
         origin_pats = scoped_ignores.get(scope_key)
-        if origin_pats is not None:
+        try:
+            scope_rel = str(path.relative_to(scope_key))
+        except ValueError:
+            continue
+        target_scope_rels: list[str] = []
+        for target_scope in target_scopes:
             try:
-                scope_rel = str(path.relative_to(scope_key))
+                target_scope_rels.append(str(path.relative_to(target_scope)))
             except ValueError:
                 continue
-            if _matches_ignore(scope_rel, origin_pats):
-                continue
+        if _is_excluded(rel_str, scope_rel, origin_pats, cli_excludes, target_scope_rels):
+            continue
         if not _should_include(path, root, root_ignore):
             continue
         try:

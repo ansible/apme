@@ -38,13 +38,11 @@ from apme.v1.engine_pb2 import (
 from apme_engine.cli._exit_codes import EXIT_ERROR, EXIT_VIOLATIONS
 from apme_engine.cli._galaxy_config import discover_galaxy_servers
 from apme_engine.cli._project_root import (
-    common_scan_base,
     derive_session_id,
-    discover_project_root,
-    discover_project_root_for_targets,
-    normalize_targets,
-    path_within_targets,
-    resolve_within_base,
+    discover_project_root,  # noqa: F401 — re-exported for test patch compatibility
+    discover_project_root_for_targets,  # noqa: F401 — re-exported for test patch compatibility
+    resolve_scan_context,
+    resolve_write_path,
 )
 from apme_engine.cli._rules_yml import load_rule_configs_from_project
 from apme_engine.cli._suppressions import apply_suppressions, load_suppressions
@@ -75,26 +73,13 @@ def run_remediate(args: argparse.Namespace) -> None:
     from apme_engine.cli.check import _apply_dep_scan_flags
 
     skip_collection, skip_python = _apply_dep_scan_flags(args)
-    targets = normalize_targets(getattr(args, "target", "."))
-    for candidate in targets:
-        if not Path(candidate).exists():
-            sys.stderr.write(f"Target not found: {candidate}\n")
-            sys.exit(EXIT_ERROR)
     try:
-        base = common_scan_base(targets)
+        targets, base, project_root = resolve_scan_context(getattr(args, "target", "."))
     except FileNotFoundError as e:
         sys.stderr.write(f"{e}\n")
         sys.exit(EXIT_ERROR)
 
     explicit_session = getattr(args, "session", None)
-    try:
-        if len(targets) == 1:
-            project_root = discover_project_root(targets[0])
-        else:
-            project_root = discover_project_root_for_targets(targets)
-    except FileNotFoundError as e:
-        sys.stderr.write(f"{e}\n")
-        sys.exit(EXIT_ERROR)
     session_id = explicit_session or derive_session_id(project_root)
 
     galaxy_servers = discover_galaxy_servers(project_root) or None
@@ -592,14 +577,8 @@ def _write_patches(
     count = 0
     had_failures = False
     for p in patches:
-        try:
-            out_path = resolve_within_base(base, p.path)
-        except ValueError as exc:
-            sys.stderr.write(f"WARNING: skipping {p.path}: {exc}\n")
-            had_failures = True
-            continue
-        if not path_within_targets(targets, out_path):
-            sys.stderr.write(f"WARNING: skipping {p.path}: outside selected targets\n")
+        out_path = resolve_write_path(base, targets, p.path)
+        if out_path is None:
             had_failures = True
             continue
         try:

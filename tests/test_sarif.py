@@ -439,7 +439,7 @@ class TestSarifCliFlag:
 
         with (
             patch(
-                "apme_engine.cli.check.discover_project_root",
+                "apme_engine.cli.check.discover_project_root_for_targets",
                 return_value=Path("/fake"),
             ),
             patch(

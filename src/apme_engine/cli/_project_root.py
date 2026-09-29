@@ -9,7 +9,6 @@ across CLI invocations from the same project.
 from __future__ import annotations
 
 import hashlib
-import os
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -101,31 +100,22 @@ def normalize_targets(raw: str | Path | Sequence[str | Path] | None) -> list[str
 def common_scan_base(targets: Sequence[str | Path] | str | Path) -> Path:
     """Return the common ancestor directory for one or more scan targets.
 
-    Single targets preserve historical behavior (the directory itself, or
-    the parent for files). Multiple targets resolve to their common path so
-    bundled file paths stay unique.
+    Single-source wrapper around daemon ``resolve_common_base`` so scan
+    paths and write confinement cannot drift (finding #1).
 
     Args:
         targets: Normalized target paths, or a single target string.
 
     Returns:
         Absolute path to the common scan base directory.
-
-    Raises:
-        FileNotFoundError: If targets span filesystem roots with no common path.
     """
+    from apme_engine.daemon.chunked_fs import resolve_common_base
+
     items: list[str | Path] = [targets] if isinstance(targets, (str, Path)) else [t for t in targets if str(t)]
     if not items:
         return Path(".").resolve()
     resolved = [Path(t).resolve() for t in items]
-    if len(resolved) == 1:
-        single = resolved[0]
-        return single.parent if single.is_file() else single
-    anchors = [str(p.parent if p.is_file() else p) for p in resolved]
-    try:
-        return Path(os.path.commonpath(anchors)).resolve()
-    except ValueError as e:
-        raise FileNotFoundError(f"Targets share no common path: {e}") from e
+    return resolve_common_base(resolved)
 
 
 def path_within_targets(targets: Sequence[str | Path], path: Path) -> bool:
@@ -188,3 +178,53 @@ def discover_project_root_for_targets(targets: str | Path | Sequence[str | Path]
     if len(normalized) == 1:
         return discover_project_root(normalized[0])
     return discover_project_root(common_scan_base(normalized))
+
+
+def resolve_scan_context(raw_target: str | Path | Sequence[str | Path] | None) -> tuple[list[str], Path, Path]:
+    """Resolve CLI targets, scan base, and project root in one place.
+
+    Collapses the normalize -> exists-check -> common-base -> discover
+    preamble triplicated across check/remediate/format (finding #9).
+
+    Args:
+        raw_target: Raw ``args.target`` value.
+
+    Returns:
+        Tuple of (normalized targets, common scan base, project root).
+
+    Raises:
+        FileNotFoundError: If a target is missing or spans roots.
+    """
+    targets = normalize_targets(raw_target)
+    for candidate in targets:
+        if not Path(candidate).exists():
+            raise FileNotFoundError(f"Target not found: {candidate}")
+    base = common_scan_base(targets)
+    project_root = discover_project_root_for_targets(targets)
+    return targets, base, project_root
+
+
+def resolve_write_path(base: Path, targets: Sequence[str | Path], rel_path: str | Path) -> Path | None:
+    """Resolve a bundle-relative path for writing, enforcing confinement.
+
+    Shared by format --apply and remediate _write_patches (finding #10).
+
+    Args:
+        base: Common scan base directory.
+        targets: Normalized CLI targets; writes must stay within these.
+        rel_path: Bundle-relative file path.
+
+    Returns:
+        Resolved absolute path, or None when skipped (warning emitted).
+    """
+    import sys
+
+    try:
+        out_path = resolve_within_base(base, rel_path)
+    except ValueError as exc:
+        sys.stderr.write(f"WARNING: skipping {rel_path}: {exc}\n")
+        return None
+    if not path_within_targets(targets, out_path):
+        sys.stderr.write(f"WARNING: skipping {rel_path}: outside selected targets\n")
+        return None
+    return out_path

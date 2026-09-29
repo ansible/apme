@@ -1628,7 +1628,7 @@ def test_common_scan_base_cross_drive_raises(tmp_path: Path, monkeypatch: pytest
     def _fail_commonpath(_paths: list[str]) -> str:
         raise ValueError("different drives")
 
-    monkeypatch.setattr("apme_engine.cli._project_root.os.path.commonpath", _fail_commonpath)
+    monkeypatch.setattr("apme_engine.daemon.chunked_fs.os.path.commonpath", _fail_commonpath)
     with pytest.raises(FileNotFoundError, match="Targets share no common path"):
         common_scan_base([str(a), str(b)])
 
@@ -1648,6 +1648,30 @@ def test_resolve_within_base_rejects_escape(tmp_path: Path) -> None:
         resolve_within_base(tmp_path, "/etc/passwd")
     with pytest.raises(ValueError):
         resolve_within_base(tmp_path, "../escape.yml")
+
+
+def test_chunked_build_bundle_cross_drive_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """build_scan_bundle maps commonpath ValueError to FileNotFoundError (finding #15).
+
+    Args:
+        tmp_path: Pytest temporary directory.
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+    import pytest
+
+    from apme_engine.daemon.chunked_fs import build_scan_bundle
+
+    a = tmp_path / "a"
+    b = tmp_path / "b"
+    a.mkdir()
+    b.mkdir()
+
+    def _fail_commonpath(_paths: list[str]) -> str:
+        raise ValueError("different drives")
+
+    monkeypatch.setattr("apme_engine.daemon.chunked_fs.os.path.commonpath", _fail_commonpath)
+    with pytest.raises(FileNotFoundError, match="Targets share no common path"):
+        build_scan_bundle([str(a), str(b)])
 
 
 # ---------------------------------------------------------------------------
