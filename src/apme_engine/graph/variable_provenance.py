@@ -138,7 +138,13 @@ class VariableProvenanceResolver:
         """
         self._graph = graph
 
-    def resolve_variables(self, node_id: str) -> dict[str, VariableProvenance]:
+    def resolve_variables(
+        self,
+        node_id: str,
+        *,
+        play_context_id: str | None = None,
+        play_scope: set[str] | None = None,
+    ) -> dict[str, VariableProvenance]:
         """Resolve all variables in scope for a node.
 
         Returns a dict mapping variable names to their provenance.
@@ -146,6 +152,9 @@ class VariableProvenanceResolver:
 
         Args:
             node_id: Graph node id whose effective variable scope is resolved.
+            play_context_id: Optional play node id scoping shared included
+                tasks (mirrors ``positional_ancestors`` play disambiguation).
+            play_scope: Optional precomputed play scope for ``play_context_id``.
 
         Returns:
             Map from variable name to ``VariableProvenance`` (shadowing applied).
@@ -155,7 +164,7 @@ class VariableProvenanceResolver:
         if node is None:
             return result
 
-        scope_chain = self._build_scope_chain(node_id)
+        scope_chain = self._build_scope_chain(node_id, play_context_id, play_scope)
 
         for scope_node in scope_chain:
             source = _PROVENANCE_BY_NODE_TYPE.get(scope_node.node_type, ProvenanceSource.EXTERNAL)
@@ -199,7 +208,13 @@ class VariableProvenanceResolver:
 
         return result
 
-    def resolve_all_definitions(self, node_id: str) -> dict[str, list[VariableProvenance]]:
+    def resolve_all_definitions(
+        self,
+        node_id: str,
+        *,
+        play_context_id: str | None = None,
+        play_scope: set[str] | None = None,
+    ) -> dict[str, list[VariableProvenance]]:
         """Return every variable definition visible to a node, without shadowing.
 
         Unlike ``resolve_variables()`` which returns only the winning
@@ -210,6 +225,8 @@ class VariableProvenanceResolver:
 
         Args:
             node_id: Graph node id whose full variable scope is resolved.
+            play_context_id: Optional play node id scoping shared included tasks.
+            play_scope: Optional precomputed play scope for ``play_context_id``.
 
         Returns:
             Map from variable name to list of ``VariableProvenance`` entries
@@ -220,7 +237,7 @@ class VariableProvenanceResolver:
         if node is None:
             return result
 
-        scope_chain = self._build_scope_chain(node_id)
+        scope_chain = self._build_scope_chain(node_id, play_context_id, play_scope)
 
         for scope_node in scope_chain:
             source = _PROVENANCE_BY_NODE_TYPE.get(scope_node.node_type, ProvenanceSource.EXTERNAL)
@@ -268,7 +285,13 @@ class VariableProvenanceResolver:
 
         return result
 
-    def resolve_property_origins(self, node_id: str) -> dict[str, PropertyOrigin]:
+    def resolve_property_origins(
+        self,
+        node_id: str,
+        *,
+        play_context_id: str | None = None,
+        play_scope: set[str] | None = None,
+    ) -> dict[str, PropertyOrigin]:
         """Find the defining scope for each inherited property.
 
         For ``become``, ``environment``, ``no_log``, etc., walks up the
@@ -276,6 +299,8 @@ class VariableProvenanceResolver:
 
         Args:
             node_id: Graph node id whose inherited properties are attributed.
+            play_context_id: Optional play node id scoping shared included tasks.
+            play_scope: Optional precomputed play scope for ``play_context_id``.
 
         Returns:
             Map from property name to ``PropertyOrigin`` for defined properties only.
@@ -285,7 +310,7 @@ class VariableProvenanceResolver:
         if node is None:
             return result
 
-        scope_chain = self._build_scope_chain(node_id)
+        scope_chain = self._build_scope_chain(node_id, play_context_id, play_scope)
 
         for prop_name in _INHERITED_PROPERTIES:
             for scope_node in scope_chain:
@@ -302,20 +327,46 @@ class VariableProvenanceResolver:
 
         return result
 
-    def _build_scope_chain(self, node_id: str) -> list[ContentNode]:
+    def _build_scope_chain(
+        self,
+        node_id: str,
+        play_context_id: str | None = None,
+        play_scope: set[str] | None = None,
+    ) -> list[ContentNode]:
         """Build the variable scope chain (self first, root last).
+
+        With ``play_context_id`` set, positional ancestors (CONTAINS,
+        INCLUDE, IMPORT) within that play's subtree disambiguate shared
+        included tasks; the play's own unscoped ancestors (playbook, root)
+        are appended so playbook-level variables keep resolving.
 
         Args:
             node_id: Node to resolve scope for.
+            play_context_id: Optional play node id for shared includes.
+            play_scope: Optional precomputed play scope for ``play_context_id``.
 
         Returns:
-            The node (if present) followed by ``CONTAINS`` ancestors toward the root.
+            The node (if present) followed by ancestors toward the root.
         """
         chain: list[ContentNode] = []
         node = self._graph.get_node(node_id)
         if node is not None:
             chain.append(node)
-        chain.extend(self._graph.ancestors(node_id))
+        if play_context_id is not None:
+            chain.extend(
+                self._graph.positional_ancestors(
+                    node_id,
+                    play_context_id=play_context_id,
+                    play_scope=play_scope,
+                )
+            )
+            seen = {n.node_id for n in chain}
+            for ancestor in self._graph.ancestors(play_context_id):
+                if ancestor.node_id not in seen:
+                    seen.add(ancestor.node_id)
+                    chain.append(ancestor)
+        else:
+            chain.extend(self._graph.ancestors(node_id))
         return chain
 
     def _collect_vars_file_vars(

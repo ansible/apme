@@ -34,7 +34,7 @@ rules:
 Suppress rules on specific tasks using `# noqa`:
 
 ```yaml
-- name: Run dangerous command  # noqa: R108, L030
+- name: Run dangerous command  # noqa: R108, L026
   ansible.builtin.shell: rm -rf /tmp/*
 ```
 

@@ -112,7 +112,6 @@ These violations have a clear "what needs to change" but the "how" requires unde
 - **R118** — restructure complex Jinja2 logic in `when:` clauses (many valid refactorings)
 - **M003** — rewrite tasks using removed modules to use their replacement (may require restructuring parameters)
 - **SEC:\*** — replace hardcoded secrets with vault lookups (AI can infer the variable name from context)
-- **L030** — extract complex `ansible.builtin.shell` one-liners into scripts (requires understanding intent)
 
 AI proposals are never auto-applied by default. The user reviews the diff and accepts or rejects. `--auto-approve` enables unattended mode for CI.
 

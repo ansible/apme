@@ -10,7 +10,6 @@
 {"rule_id":"R107","filepath":"ansible_risk_insight/rules/R107_pkg_install_with_insecure_option.py","commit_id":"f20e97d07d208e4791521ada9912bd2b32c79a7f"}
 {"rule_id":"R108","filepath":"ansible_risk_insight/rules/R108_privilege_escalation.py","commit_id":"f20e97d07d208e4791521ada9912bd2b32c79a7f"}
 {"rule_id":"R109","filepath":"ansible_risk_insight/rules/R109_key_config_change.py","commit_id":"f20e97d07d208e4791521ada9912bd2b32c79a7f"}
-{"rule_id":"R110","filepath":"apme_engine/graph/rules/L030_non_builtin_use.py","commit_id":"f20e97d07d208e4791521ada9912bd2b32c79a7f"}
 {"rule_id":"R111","filepath":"ansible_risk_insight/rules/R111_parameterized_import_role.py","commit_id":"f20e97d07d208e4791521ada9912bd2b32c79a7f"}
 {"rule_id":"R112","filepath":"ansible_risk_insight/rules/R112_parameterized_import_taskfile.py","commit_id":"f20e97d07d208e4791521ada9912bd2b32c79a7f"}
 {"rule_id":"R113","filepath":"ansible_risk_insight/rules/R113_parameterized_pkg_install.py","commit_id":"f20e97d07d208e4791521ada9912bd2b32c79a7f"}
@@ -30,7 +29,6 @@
 {"rule_id":"R306","filepath":"apme_engine/graph/rules/L039_undefined_variable.py","commit_id":"f20e97d07d208e4791521ada9912bd2b32c79a7f"}
 {"rule_id":"L026","filepath":"apme_engine/graph/rules/L026_non_fqcn_use.py","commit_id":"f20e97d07d208e4791521ada9912bd2b32c79a7f"}
 {"rule_id":"L027","filepath":"apme_engine/graph/rules/L027_role_without_metadata.py","commit_id":"f20e97d07d208e4791521ada9912bd2b32c79a7f"}
-{"rule_id":"L030","filepath":"apme_engine/graph/rules/L030_non_builtin_use.py","commit_id":"f20e97d07d208e4791521ada9912bd2b32c79a7f"}
 {"rule_id":"L031","filepath":"apme_engine/graph/rules/L031_insecure_file_permission.py","commit_id":"f20e97d07d208e4791521ada9912bd2b32c79a7f"}
 {"rule_id":"L032","filepath":"apme_engine/graph/rules/L032_changed_data_dependence.py","commit_id":"f20e97d07d208e4791521ada9912bd2b32c79a7f"}
 {"rule_id":"L033","filepath":"apme_engine/graph/rules/L033_unconditional_override.py","commit_id":"f20e97d07d208e4791521ada9912bd2b32c79a7f"}
