@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { PageLayout } from '@ansible/ansible-ui-framework';
 import {
@@ -64,11 +64,16 @@ export function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const fetchActiveOps = useCallback(() => {
-    getActiveOperations(api).then(setActiveOps).catch(() => {});
-  }, [api]);
-
   useEffect(() => {
+    let cancelled = false;
+    const fetchActiveOps = () => {
+      getActiveOperations(api)
+        .then((ops) => {
+          if (!cancelled) setActiveOps(ops);
+        })
+        .catch(() => {});
+    };
+
     Promise.all([
       getDashboardSummary(api),
       getDashboardRankings('health_score', 'desc', 10, api),
@@ -78,6 +83,7 @@ export function DashboardPage() {
       getActiveOperations(api),
     ])
       .then(([sum, clean, dirty, staleProjects, scanned, ops]) => {
+        if (cancelled) return;
         setSummary(sum);
         setCleanest(clean);
         setDirtiest(dirty);
@@ -86,13 +92,16 @@ export function DashboardPage() {
         setActiveOps(ops);
       })
       .catch(() => {})
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
 
     pollRef.current = setInterval(fetchActiveOps, 5000);
     return () => {
+      cancelled = true;
       if (pollRef.current) clearInterval(pollRef.current);
     };
-  }, [api, fetchActiveOps]);
+  }, [api]);
 
   return (
     <PageLayout>
