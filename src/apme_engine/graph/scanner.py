@@ -163,16 +163,16 @@ def _dir_fingerprint(directory: str) -> _DirFingerprint | None:
 
     Loadable rule modules are keyed by SHA-256 content so same-size rewrites
     with preserved timestamps still invalidate the cache. Other top-level files
-    use ``mtime_ns`` and size. Files that vanish or cannot be read between
-    listing and fingerprinting are skipped (a concurrent edit changes the
-    fingerprint on the next call).
+    use ``mtime_ns`` and size. Non-rule files that vanish or cannot be stat'ed
+    between listing and fingerprinting are skipped. If a loadable rule module
+    cannot be read, ``None`` is returned so discovery bypasses a stale cache.
 
     Args:
         directory: Directory to fingerprint.
 
     Returns:
         Sorted ``(filename, token)`` tuples, or ``None`` when the directory
-        does not exist or cannot be listed.
+        does not exist, cannot be listed, or a rule module cannot be read.
     """
     try:
         entries = os.listdir(directory)
@@ -188,7 +188,7 @@ def _dir_fingerprint(directory: str) -> _DirFingerprint | None:
                 with open(full, "rb") as fh:
                     digest = hashlib.file_digest(fh, "sha256").hexdigest()
             except OSError:
-                continue
+                return None
             fingerprint.append((filename, digest))
             continue
         try:

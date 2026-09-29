@@ -544,6 +544,38 @@ class TestRuleClassCache:
         rules2, _ = load_graph_rules(rules_dir=str(tmp_path))
         assert {r.rule_id for r in rules2} == {"CACHE10"}
 
+    def test_unreadable_rule_module_bypasses_cache(self, tmp_path: Path) -> None:
+        """Unreadable rule modules force uncached discovery instead of stale cache.
+
+        Args:
+            tmp_path: Pytest temporary directory.
+        """
+        import hashlib
+        import os
+        from unittest.mock import patch
+
+        from apme_engine.graph import scanner as scanner_mod
+        from apme_engine.graph.scanner import _dir_fingerprint
+
+        self._write_rule(tmp_path, 1)
+        load_graph_rules(rules_dir=str(tmp_path))
+        assert os.path.normpath(str(tmp_path)) in scanner_mod._rule_class_cache
+
+        blocked = tmp_path / "blocked_graph.py"
+        blocked.write_text(self._RULE_TMPL.format(idx=2), encoding="utf-8")
+
+        real_digest = hashlib.file_digest
+
+        def guarded_digest(fh: object, algo: str) -> object:
+            if Path(getattr(fh, "name", "")).name == "blocked_graph.py":
+                raise OSError("permission denied")
+            return real_digest(fh, algo)  # type: ignore[arg-type]
+
+        with patch("apme_engine.graph.scanner.hashlib.file_digest", new=guarded_digest):
+            assert _dir_fingerprint(str(tmp_path)) is None
+            rules, _ = load_graph_rules(rules_dir=str(tmp_path))
+        assert {r.rule_id for r in rules} == {"CACHE1", "CACHE2"}
+
     def test_content_fingerprint_detects_rewrite(self, tmp_path: Path) -> None:
         """SHA-256 fingerprints change when rule file content changes.
 
