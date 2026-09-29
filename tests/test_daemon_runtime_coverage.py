@@ -1660,6 +1660,14 @@ def test_ansible_run_timing_no_tasks_early_return(tmp_path: Path) -> None:
     result = validator.run_with_timing(ScanContext(hierarchy_payload={}, root_dir=str(tmp_path / "nope")))
     assert result.violations == []
     assert result.rule_timings == []
+    # Early return carries the same metadata schema as full scans.
+    assert set(result.metadata) == {
+        f"{prefix}cache_{store}_{kind}"
+        for prefix in ("", "scan_")
+        for store in ("introspect", "docspec", "mockspec")
+        for kind in ("hits", "misses")
+    }
+    assert all(isinstance(v, int) and v >= 0 for v in result.metadata.values())
 
 
 def test_ansible_run_timing_l057_with_lookup(tmp_path: Path) -> None:
@@ -1714,13 +1722,17 @@ def test_ansible_run_timing_full_rules(tmp_path: Path) -> None:
         patch("apme_engine.validators.ansible.L058_argspec_doc.run", return_value=[{"rule_id": "L058"}]),
         patch("apme_engine.validators.ansible.L059_argspec_mock.run", return_value=[{"rule_id": "L059"}]),
         patch("apme_engine.validators.ansible.plugin_cache.stats", return_value={"cache_introspect_hits": 1}),
+        patch(
+            "apme_engine.validators.ansible.plugin_cache.stats_since",
+            return_value={"scan_cache_introspect_hits": 1},
+        ),
     ):
         result = AnsibleValidator(venv_root=tmp_path).run_with_timing(
             ScanContext(hierarchy_payload=payload, root_dir=str(root))
         )
     assert len(result.violations) == 3
     assert {t.rule_id for t in result.rule_timings} >= {"M001-M004", "L058", "L059"}
-    assert result.metadata == {"cache_introspect_hits": 1}
+    assert result.metadata == {"cache_introspect_hits": 1, "scan_cache_introspect_hits": 1}
 
 
 # ---------------------------------------------------------------------------

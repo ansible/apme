@@ -23,6 +23,12 @@ logger = logging.getLogger(__name__)
 CacheType = Literal["introspect", "docspec", "mockspec"]
 CacheKey = tuple[str, str, str]  # (collection_fqcn, version, plugin_name)
 
+# Snapshot of cumulative counters, as returned by ``PluginCache.snapshot()``.
+# Keys match ``stats()`` (``cache_<store>_hits`` / ``cache_<store>_misses``).
+CacheSnapshot = dict[str, int]
+
+_STORES: tuple[CacheType, ...] = ("introspect", "docspec", "mockspec")
+
 _MAX_ENTRIES = 1024
 _MAX_VERSION_ENTRIES = 256
 
@@ -258,20 +264,72 @@ class PluginCache:
                 uncached.append(module)
         return cached, uncached
 
+    def _stats_locked(self) -> dict[str, int]:
+        """Compute cumulative counters; caller must hold ``self._lock``.
+
+        Returns:
+            Dict with keys like ``cache_introspect_hits``,
+            ``cache_introspect_misses``, etc.
+        """
+        result: dict[str, int] = {}
+        for store_name in _STORES:
+            result[f"cache_{store_name}_hits"] = self._hits[store_name]
+            result[f"cache_{store_name}_misses"] = self._misses[store_name]
+        return result
+
     def stats(self) -> dict[str, int]:
         """Return hit/miss counts for diagnostics.
+
+        Counters are cumulative for the daemon process lifetime; use
+        :meth:`snapshot` + :meth:`stats_since` for per-scan deltas.
 
         Returns:
             Dict with keys like ``cache_introspect_hits``,
             ``cache_introspect_misses``, etc.
         """
         with self._lock:
-            stores: list[CacheType] = ["introspect", "docspec", "mockspec"]
-            result: dict[str, int] = {}
-            for store_name in stores:
-                result[f"cache_{store_name}_hits"] = self._hits[store_name]
-                result[f"cache_{store_name}_misses"] = self._misses[store_name]
-            return result
+            return self._stats_locked()
+
+    def snapshot(self) -> CacheSnapshot:
+        """Capture cumulative counters for later per-scan differencing.
+
+        Deltas are approximate under concurrent scans against the shared
+        daemon cache: interleaved scans share the counters, so attribute
+        per-scan numbers exactly only for sequential scans (CLI daemon,
+        convergence-loop rescans).
+
+        Returns:
+            Counter snapshot to pass to :meth:`stats_since` at scan end.
+        """
+        return self.stats()
+
+    def stats_since(self, snapshot: CacheSnapshot) -> dict[str, int]:
+        """Return hit/miss counts accumulated since a snapshot.
+
+        Missing or non-integer keys are treated as zero; negative deltas
+        (snapshot newer than current, e.g. concurrent scans or a counter
+        reset) are clamped to zero. Never raises on a malformed snapshot —
+        diagnostics must not fail the scan.
+
+        Args:
+            snapshot: Earlier counter mapping from :meth:`snapshot`.
+
+        Returns:
+            Dict with keys like ``scan_cache_introspect_hits``,
+            ``scan_cache_introspect_misses``, etc.
+        """
+        with self._lock:
+            current = self._stats_locked()
+        result: dict[str, int] = {}
+        for store_name in _STORES:
+            for kind in ("hits", "misses"):
+                base_key = f"cache_{store_name}_{kind}"
+                now = current.get(base_key, 0)
+                then = snapshot.get(base_key, 0)
+                now_int = now if isinstance(now, int) else 0
+                then_int = then if isinstance(then, int) else 0
+                result[f"scan_{base_key}"] = max(now_int - then_int, 0)
+        return result
 
 
 plugin_cache = PluginCache()

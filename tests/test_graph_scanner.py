@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
+from pathlib import Path
 
 import pytest
 
@@ -436,3 +438,94 @@ def test_expand_dirty_node_ids_includes_play_via_include_edge() -> None:
         frozenset({included_task.node_id}),
     )
     assert play.node_id in expanded
+
+
+class TestRuleClassCache:
+    """Tests for cached rule-class discovery (#388)."""
+
+    @pytest.fixture(autouse=True)  # type: ignore[untyped-decorator]
+    def _clean_rule_class_cache(self) -> Iterator[None]:
+        """Isolate the process-global class cache per test.
+
+        Yields:
+            None: No value is yielded; clears the cache before and after.
+        """
+        from apme_engine.graph import scanner as scanner_mod
+
+        scanner_mod.invalidate_graph_rule_cache()
+        yield
+        scanner_mod.invalidate_graph_rule_cache()
+
+    _RULE_TMPL = (
+        "from dataclasses import dataclass\n"
+        "from apme_engine.graph.content_graph import ContentGraph, NodeType\n"
+        "from apme_engine.graph.rule_base import GraphRule, GraphRuleResult\n"
+        "from apme_engine.graph.types import Severity\n"
+        "@dataclass\n"
+        "class CacheProbeRule{idx}(GraphRule):\n"
+        '    rule_id: str = "CACHE{idx}"\n'
+        '    description: str = "cache probe"\n'
+        '    name: str = "CacheProbe{idx}"\n'
+        '    version: str = "v0.0.1"\n'
+        "    severity: Severity = Severity.LOW\n"
+        "    enabled: bool = True\n"
+        "    def match(self, graph: ContentGraph, node_id: str) -> bool:\n"
+        "        return False\n"
+        "    def process(self, graph: ContentGraph, node_id: str):\n"
+        "        return None\n"
+    )
+
+    def _write_rule(self, tmp_path: Path, idx: int) -> None:
+        """Write a probe rule module into a temp rules dir.
+
+        Args:
+            tmp_path: Pytest temporary directory.
+            idx: Probe index for unique rule IDs.
+        """
+        tmp_path.joinpath(f"probe_{idx}_graph.py").write_text(self._RULE_TMPL.format(idx=idx), encoding="utf-8")
+
+    def test_repeated_load_reuses_classes_with_fresh_instances(self, tmp_path: Path) -> None:
+        """Second load skips module re-exec but returns new instances.
+
+        Args:
+            tmp_path: Pytest temporary directory.
+        """
+        from apme_engine.graph import scanner as scanner_mod
+
+        self._write_rule(tmp_path, 1)
+        rules1, _ = load_graph_rules(rules_dir=str(tmp_path))
+        assert {r.rule_id for r in rules1} == {"CACHE1"}
+        cache_size = len(scanner_mod._rule_class_cache)
+        rules2, _ = load_graph_rules(rules_dir=str(tmp_path))
+        assert {r.rule_id for r in rules2} == {"CACHE1"}
+        assert len(scanner_mod._rule_class_cache) == cache_size
+        assert all(a is not b for a, b in zip(rules1, rules2, strict=True))
+
+    def test_new_file_invalidates(self, tmp_path: Path) -> None:
+        """Adding a rule file is picked up without explicit invalidation.
+
+        Args:
+            tmp_path: Pytest temporary directory.
+        """
+        self._write_rule(tmp_path, 1)
+        rules1, _ = load_graph_rules(rules_dir=str(tmp_path))
+        assert {r.rule_id for r in rules1} == {"CACHE1"}
+        self._write_rule(tmp_path, 2)
+        rules2, _ = load_graph_rules(rules_dir=str(tmp_path))
+        assert {r.rule_id for r in rules2} == {"CACHE1", "CACHE2"}
+
+    def test_explicit_invalidate(self, tmp_path: Path) -> None:
+        """invalidate_graph_rule_cache forces rediscovery.
+
+        Args:
+            tmp_path: Pytest temporary directory.
+        """
+        from apme_engine.graph import scanner as scanner_mod
+
+        self._write_rule(tmp_path, 1)
+        load_graph_rules(rules_dir=str(tmp_path))
+        assert str(tmp_path) in scanner_mod._rule_class_cache
+        scanner_mod.invalidate_graph_rule_cache(str(tmp_path))
+        assert str(tmp_path) not in scanner_mod._rule_class_cache
+        rules, _ = load_graph_rules(rules_dir=str(tmp_path))
+        assert {r.rule_id for r in rules} == {"CACHE1"}

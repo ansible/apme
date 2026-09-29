@@ -294,6 +294,44 @@ class TestPluginCacheCore:
         assert s["cache_introspect_misses"] == 2
         assert s["cache_docspec_hits"] == 0
 
+    def test_stats_since_reports_deltas(self, tmp_path: Path) -> None:
+        """stats_since returns per-scan deltas against a snapshot.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        cache = PluginCache()
+        venv = self._make_venv(tmp_path, "community", "general", "5.8.0")
+
+        cache.put("introspect", venv, "community.general.ping", {"data": True})
+        cache.get("introspect", venv, "community.general.ping")  # hit (before snapshot)
+        snap = cache.snapshot()
+        cache.get("introspect", venv, "community.general.ping")  # hit (after snapshot)
+        cache.get("introspect", venv, "community.general.uri")  # miss (after snapshot)
+
+        delta = cache.stats_since(snap)
+        assert delta["scan_cache_introspect_hits"] == 1
+        assert delta["scan_cache_introspect_misses"] == 1
+        assert delta["scan_cache_docspec_hits"] == 0
+        # Cumulative counters are unaffected by snapshotting.
+        total = cache.stats()
+        assert total["cache_introspect_hits"] == 2
+        assert total["cache_introspect_misses"] == 1
+
+    def test_stats_since_missing_keys_treated_as_zero(self, tmp_path: Path) -> None:
+        """Unknown snapshot keys and newer snapshots clamp to zero.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        cache = PluginCache()
+        delta = cache.stats_since({})
+        assert delta["scan_cache_introspect_hits"] == 0
+        assert delta["scan_cache_mockspec_misses"] == 0
+        future = {f"cache_{s}_{k}": 10**9 for s in ("introspect", "docspec", "mockspec") for k in ("hits", "misses")}
+        clamped = cache.stats_since(future)
+        assert all(v == 0 for v in clamped.values())
+
     def test_lru_eviction(self, tmp_path: Path) -> None:
         """Oldest entries are evicted when max_entries is exceeded.
 

@@ -42,7 +42,9 @@ class AnsibleRunResult:
     Attributes:
         violations: List of violation dicts.
         rule_timings: Per-rule timing data.
-        metadata: Extra metadata (e.g. cache hit/miss stats).
+        metadata: Extra metadata: cumulative ``cache_<store>_hits/misses``
+            counters plus per-scan ``scan_cache_<store>_hits/misses``
+            deltas (zero when the scan touched nothing).
     """
 
     violations: list[dict[str, object]] = field(default_factory=list)
@@ -214,6 +216,9 @@ class AnsibleValidator:
         violations: list[dict[str, object]] = []
         rule_timings: list[AnsibleRuleTiming] = []
         root_dir = Path(context.root_dir) if context.root_dir else None
+        # Cumulative counters span the daemon lifetime; snapshot for
+        # per-scan deltas reported below alongside cumulative totals.
+        cache_snapshot = plugin_cache.snapshot()
 
         node_lookup: NodeLookup = {}
         if content_graph_data:
@@ -244,7 +249,11 @@ class AnsibleValidator:
         if not task_nodes:
             sys.stderr.write(f"Ansible validator: total {len(violations)} violation(s)\n")
             sys.stderr.flush()
-            return AnsibleRunResult(violations=violations, rule_timings=rule_timings)
+            return AnsibleRunResult(
+                violations=violations,
+                rule_timings=rule_timings,
+                metadata={**plugin_cache.stats(), **plugin_cache.stats_since(cache_snapshot)},
+            )
 
         sys.stderr.write(f"Ansible validator: checking {len(task_nodes)} task(s)\n")
 
@@ -282,18 +291,33 @@ class AnsibleValidator:
         sys.stderr.write(f"  L059 (argspec-mock): {len(l059)} issue(s) in {elapsed:.1f}ms\n")
 
         cache_stats = plugin_cache.stats()
+        scan_stats = plugin_cache.stats_since(cache_snapshot)
+
+        def _pair(store: str) -> str:
+            """Format per-scan and cumulative hits/misses for a store.
+
+            Args:
+                store: Cache store name.
+
+            Returns:
+                Human-readable ``Ah/Bm (scan) Ch/Dm (total)`` fragment.
+            """
+            return (
+                f"{scan_stats.get(f'scan_cache_{store}_hits', 0)}h/"
+                f"{scan_stats.get(f'scan_cache_{store}_misses', 0)}m (scan) "
+                f"{cache_stats.get(f'cache_{store}_hits', 0)}h/"
+                f"{cache_stats.get(f'cache_{store}_misses', 0)}m (total)"
+            )
+
         sys.stderr.write(
             f"Ansible validator: total {len(violations)} violation(s), "
-            f"cache introspect={cache_stats.get('cache_introspect_hits', 0)}h/"
-            f"{cache_stats.get('cache_introspect_misses', 0)}m, "
-            f"docspec={cache_stats.get('cache_docspec_hits', 0)}h/"
-            f"{cache_stats.get('cache_docspec_misses', 0)}m, "
-            f"mockspec={cache_stats.get('cache_mockspec_hits', 0)}h/"
-            f"{cache_stats.get('cache_mockspec_misses', 0)}m\n"
+            f"cache introspect={_pair('introspect')}, "
+            f"docspec={_pair('docspec')}, "
+            f"mockspec={_pair('mockspec')}\n"
         )
         sys.stderr.flush()
         return AnsibleRunResult(
             violations=violations,
             rule_timings=rule_timings,
-            metadata=cache_stats,
+            metadata={**cache_stats, **scan_stats},
         )
