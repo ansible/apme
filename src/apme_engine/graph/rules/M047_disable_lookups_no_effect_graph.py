@@ -55,7 +55,8 @@ def _find_inventory_files(playbook_path: str) -> Iterator[Path]:
 
     Searches the playbook's directory (and parent when the playbook lives
     under ``playbooks/``/``plays/``), plus ``inventory/``/``inventories/``
-    subdirectories.
+    subdirectories. Extensionless files are yielded too; the YAML content
+    gate in :meth:`DisableLookupsNoEffectGraphRule.process` decides.
 
     Args:
         playbook_path: Path to a playbook file.
@@ -93,7 +94,8 @@ def _find_inventory_files(playbook_path: str) -> Iterator[Path]:
             logger.debug("Skipping unreadable inventory directory %s: %s", inv_dir, exc)
             continue
         for candidate in candidates:
-            if candidate.suffix.lower() not in (".yml", ".yaml"):
+            suffix = candidate.suffix.lower()
+            if suffix and suffix not in (".yml", ".yaml") and candidate.name.lower() not in ("inventory", "hosts"):
                 continue
             if candidate.is_file() and candidate not in seen:
                 seen.add(candidate)

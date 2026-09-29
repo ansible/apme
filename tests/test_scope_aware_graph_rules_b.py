@@ -669,20 +669,37 @@ class TestM005GraphRule:
         assert result is not None
         assert result.verdict is False
 
-    def test_assert_that_string_is_clean(self, rule: DataTaggingGraphRule) -> None:
+    @pytest.mark.parametrize("assert_module", ["assert", "ansible.builtin.assert", "ansible.legacy.assert"])  # type: ignore[untyped-decorator]
+    def test_assert_that_string_is_clean(self, rule: DataTaggingGraphRule, assert_module: str) -> None:
         """Registered vars in assert `that` conditions are boolean tests, not sinks.
+
+        Args:
+            rule: Rule instance under test.
+            assert_module: Assert module spelling under test.
+        """
+        g, task_id = self._build_register_then_use(
+            register_name="slurp_result",
+            consumer_module=assert_module,
+            consumer_module_options={"that": "{{ slurp_result['content'] }} == 'x'"},
+        )
+        result = rule.process(g, task_id)
+        assert result is not None
+        assert result.verdict is False
+
+    def test_that_option_on_non_assert_module_still_flagged(self, rule: DataTaggingGraphRule) -> None:
+        """The `that` exclusion is assert-scoped: other modules stay flagged.
 
         Args:
             rule: Rule instance under test.
         """
         g, task_id = self._build_register_then_use(
             register_name="slurp_result",
-            consumer_module="ansible.builtin.assert",
+            consumer_module="debug",
             consumer_module_options={"that": "{{ slurp_result['content'] }} == 'x'"},
         )
         result = rule.process(g, task_id)
         assert result is not None
-        assert result.verdict is False
+        assert result.verdict is True
 
     def test_assert_fail_msg_still_flagged(self, rule: DataTaggingGraphRule) -> None:
         """Rendered assert output (fail_msg) stays in scope for M005.
