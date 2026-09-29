@@ -137,6 +137,31 @@ def test_check_port_available_on_bound_port() -> None:
         sock.close()
 
 
+def test_ipv6_wildcard_probe_detects_ipv4_only_listener() -> None:
+    """An IPv6 wildcard check detects an IPv4-only listener for dual-stack binds."""
+    try:
+        with socket.socket(socket.AF_INET6, socket.SOCK_STREAM):
+            pass
+    except OSError:
+        pytest.skip("IPv6 sockets are unavailable")
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+        sock.listen(1)
+        assert _check_port_available("::", port) is False
+    finally:
+        sock.close()
+
+
+def test_probe_targets_ipv6_wildcard_includes_ipv4() -> None:
+    """IPv6 wildcard probes include concrete IPv4 targets for dual-stack listeners."""
+    targets = _probe_targets("::")
+    assert (socket.AF_INET, "127.0.0.1") in targets
+
+
 def test_assert_ports_free_raises_on_conflict() -> None:
     """_assert_ports_free raises RuntimeError when a port is in use."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
