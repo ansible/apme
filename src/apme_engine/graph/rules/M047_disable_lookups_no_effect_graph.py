@@ -16,7 +16,6 @@ files discovered near the playbook.
 from __future__ import annotations
 
 import logging
-import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -66,15 +65,16 @@ def _find_inventory_files(playbook_path: str) -> Iterator[Path]:
     """
     playbook = Path(playbook_path)
     search_dirs = [playbook.parent]
+    inv_subdirs: list[Path] = []
 
     if playbook.parent.name.lower() in ("playbooks", "plays"):
         search_dirs.append(playbook.parent.parent)
 
-    for base in list(search_dirs):
+    for base in search_dirs:
         for sub in ("inventory", "inventories"):
             inv_dir = base / sub
             if inv_dir.is_dir():
-                search_dirs.append(inv_dir)
+                inv_subdirs.append(inv_dir)
 
     seen: set[Path] = set()
     for search_dir in search_dirs:
@@ -82,6 +82,14 @@ def _find_inventory_files(playbook_path: str) -> Iterator[Path]:
             continue
         for pattern in _INVENTORY_PATTERNS:
             candidate = search_dir / pattern
+            if candidate.is_file() and candidate not in seen:
+                seen.add(candidate)
+                yield candidate
+
+    for inv_dir in inv_subdirs:
+        for candidate in sorted(inv_dir.iterdir()):
+            if candidate.suffix.lower() not in (".yml", ".yaml"):
+                continue
             if candidate.is_file() and candidate not in seen:
                 seen.add(candidate)
                 yield candidate
@@ -133,17 +141,17 @@ class DisableLookupsNoEffectGraphRule(GraphRule):
     tags: tuple[str, ...] = (Tag.CODING,)
     scope: str = RuleScope.INVENTORY
 
-    # Per-scan state: directories already scanned (reset via reset_scan_state)
-    _scanned_dirs: set[str] = field(default_factory=set, repr=False)
+    # Per-scan state: inventory files already scanned (reset via reset_scan_state)
+    _scanned_files: set[str] = field(default_factory=set, repr=False)
 
     def __post_init__(self) -> None:
         """Initialize mutable state and validate rule metadata."""
         super().__post_init__()
-        object.__setattr__(self, "_scanned_dirs", set())
+        object.__setattr__(self, "_scanned_files", set())
 
     def reset_scan_state(self) -> None:
-        """Clear directory deduplication state for a new scan pass."""
-        self._scanned_dirs.clear()
+        """Clear inventory-file deduplication state for a new scan pass."""
+        self._scanned_files.clear()
 
     def match(self, graph: ContentGraph, node_id: str) -> bool:
         """Match PLAYBOOK nodes to trigger inventory file scanning.
@@ -172,17 +180,12 @@ class DisableLookupsNoEffectGraphRule(GraphRule):
         if node is None:
             return None
 
-        playbook_dir = os.path.abspath(os.path.dirname(node.file_path))
-        if playbook_dir in self._scanned_dirs:
-            return GraphRuleResult(
-                verdict=False,
-                node_id=node_id,
-                file=(node.file_path, node.line_start),
-            )
-        self._scanned_dirs.add(playbook_dir)
-
         violations: list[YAMLValue] = []
         for inv_file in _find_inventory_files(node.file_path):
+            inv_key = str(inv_file.resolve())
+            if inv_key in self._scanned_files:
+                continue
+            self._scanned_files.add(inv_key)
             try:
                 content = inv_file.read_text(encoding="utf-8", errors="replace")
             except OSError:
@@ -193,7 +196,7 @@ class DisableLookupsNoEffectGraphRule(GraphRule):
             except yaml.YAMLError as exc:
                 logger.debug("Skipping unparseable inventory file %s: %s", inv_file, exc)
                 continue
-            if not isinstance(data, dict) or "disable_lookups" not in data:
+            if not isinstance(data, dict) or "plugin" not in data or "disable_lookups" not in data:
                 continue
             line = _top_level_disable_lookups_line(content) or 1
             violations.append(

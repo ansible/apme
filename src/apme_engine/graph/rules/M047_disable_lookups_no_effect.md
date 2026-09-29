@@ -18,8 +18,10 @@ plugin configs that still pass it should drop the key.
 
 ### Detection
 
-Scans YAML inventory files (`inventory.yml`, `hosts.yml`, …) adjacent to
-playbooks for a top-level `disable_lookups` key.
+Scans YAML inventory plugin configs (`inventory.yml`, `inventory/constructed.yml`,
+…) adjacent to playbooks for a top-level `disable_lookups` key. Requires a
+top-level `plugin` field so static inventories with a group named
+`disable_lookups` are not flagged.
 
 Sample inventory plugin config with the deprecated argument:
 

@@ -212,6 +212,44 @@ class TestVariableProvenance:
         assert provs["db_password"].source == ProvenanceSource.VARS_FILE
         assert provs["db_password"].defining_node_id == "vars/secrets.yml"
 
+    def test_play_context_merges_dual_include_paths(self) -> None:
+        """Shared tasks resolve vars from every include path in the play."""
+        g = ContentGraph()
+        play = ContentNode(
+            identity=NodeIdentity(path="site.yml/plays[0]", node_type=NodeType.PLAY),
+            file_path="site.yml",
+        )
+        include_a = ContentNode(
+            identity=NodeIdentity(path="site.yml/plays[0]/tasks[0]", node_type=NodeType.TASK),
+            file_path="site.yml",
+            variables={"from_a": "a"},
+        )
+        include_b = ContentNode(
+            identity=NodeIdentity(path="site.yml/plays[0]/tasks[1]", node_type=NodeType.TASK),
+            file_path="site.yml",
+            variables={"from_b": "b"},
+        )
+        shared_task = ContentNode(
+            identity=NodeIdentity(path="shared.yml/tasks[0]", node_type=NodeType.TASK),
+            file_path="shared.yml",
+        )
+        for node in (play, include_a, include_b, shared_task):
+            g.add_node(node)
+        g.add_edge(play.node_id, include_a.node_id, EdgeType.CONTAINS)
+        g.add_edge(play.node_id, include_b.node_id, EdgeType.CONTAINS)
+        g.add_edge(include_a.node_id, shared_task.node_id, EdgeType.INCLUDE)
+        g.add_edge(include_b.node_id, shared_task.node_id, EdgeType.INCLUDE)
+
+        resolver = VariableProvenanceResolver(g)
+        play_scope = g.play_scoped_node_ids(play.node_id)
+        provs = resolver.resolve_variables(
+            shared_task.node_id,
+            play_context_id=play.node_id,
+            play_scope=play_scope,
+        )
+        assert provs["from_a"].value == "a"
+        assert provs["from_b"].value == "b"
+
 
 # ---------------------------------------------------------------------------
 # PropertyOrigin

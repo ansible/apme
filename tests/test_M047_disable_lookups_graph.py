@@ -22,6 +22,23 @@ from apme_engine.graph.rules.M047_disable_lookups_no_effect_graph import (
 class TestFindInventoryFiles:
     """Tests for YAML inventory discovery."""
 
+    def test_finds_constructed_yml_in_inventory_dir(self, tmp_path: Path) -> None:
+        """YAML plugin configs under inventory/ are discovered.
+
+        Args:
+            tmp_path: Pytest temporary directory.
+        """
+        playbooks = tmp_path / "playbooks"
+        playbooks.mkdir()
+        playbook = playbooks / "site.yml"
+        playbook.write_text("- hosts: all\n")
+        inv_dir = tmp_path / "inventory"
+        inv_dir.mkdir()
+        inv = inv_dir / "constructed.yml"
+        inv.write_text("plugin: ansible.builtin.constructed\n")
+        files = list(_find_inventory_files(str(playbook)))
+        assert inv in files
+
     def test_finds_inventory_yml(self, tmp_path: Path) -> None:
         """inventory.yml next to the playbook is discovered.
 
@@ -241,8 +258,71 @@ class TestDisableLookupsNoEffectGraphRule:
         assert result is not None
         assert result.verdict is True
 
+    def test_inventory_group_named_disable_lookups_is_clean(self, tmp_path: Path) -> None:
+        """Static inventory group named disable_lookups is not a plugin arg.
+
+        Args:
+            tmp_path: Pytest temporary directory.
+        """
+        rule = DisableLookupsNoEffectGraphRule()
+        playbook = tmp_path / "site.yml"
+        playbook.write_text("- hosts: all\n")
+        (tmp_path / "inventory.yml").write_text("disable_lookups:\n  hosts:\n    host1:\n")
+        g, pb_id = self._make_graph_with_playbook(str(playbook))
+        result = rule.process(g, pb_id)
+        assert result is not None
+        assert result.verdict is False
+
+    def test_constructed_inventory_subdir_fires(self, tmp_path: Path) -> None:
+        """Plugin config under inventory/constructed.yml fires M047.
+
+        Args:
+            tmp_path: Pytest temporary directory.
+        """
+        rule = DisableLookupsNoEffectGraphRule()
+        playbooks = tmp_path / "playbooks"
+        playbooks.mkdir()
+        playbook = playbooks / "site.yml"
+        playbook.write_text("- hosts: all\n")
+        inv_dir = tmp_path / "inventory"
+        inv_dir.mkdir()
+        (inv_dir / "constructed.yml").write_text("plugin: ansible.builtin.constructed\ndisable_lookups: true\n")
+        g, pb_id = self._make_graph_with_playbook(str(playbook))
+        result = rule.process(g, pb_id)
+        assert result is not None
+        assert result.verdict is True
+
+    def test_shared_inventory_deduped_across_playbook_dirs(self, tmp_path: Path) -> None:
+        """The same root inventory file is reported only once per scan.
+
+        Args:
+            tmp_path: Pytest temporary directory.
+        """
+        playbooks = tmp_path / "playbooks"
+        plays = tmp_path / "plays"
+        playbooks.mkdir()
+        plays.mkdir()
+        (playbooks / "a.yml").write_text("- hosts: all\n")
+        (plays / "b.yml").write_text("- hosts: all\n")
+        (tmp_path / "inventory.yml").write_text("plugin: constructed\ndisable_lookups: true\n")
+        g = ContentGraph()
+        ids: list[str] = []
+        for pb_path in (playbooks / "a.yml", plays / "b.yml"):
+            pb = ContentNode(
+                identity=NodeIdentity(path=str(pb_path), node_type=NodeType.PLAYBOOK),
+                file_path=str(pb_path),
+                scope=NodeScope.OWNED,
+            )
+            g.add_node(pb)
+            ids.append(pb.node_id)
+        rule = DisableLookupsNoEffectGraphRule()
+        first_result = rule.process(g, ids[0])
+        second_result = rule.process(g, ids[1])
+        assert first_result is not None and first_result.verdict is True
+        assert second_result is not None and second_result.verdict is False
+
     def test_second_playbook_same_dir_skipped(self, tmp_path: Path) -> None:
-        """Per-dir dedupe: a second playbook in the same dir reports nothing.
+        """Per-file dedupe: a second playbook sharing inventory reports nothing.
 
         Args:
             tmp_path: Pytest temporary directory.
