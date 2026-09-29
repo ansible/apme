@@ -82,7 +82,7 @@ Every validator returns the same violation shape:
 
 - **Input**: `ContentGraph` (deserialized from `scandata`)
 - **Execution**: `GraphRule` subclasses with `match()` / `process()` methods, evaluated by `graph_scanner.scan()`
-- **Rules**: L026–L105 (lint), M005–M030 (modernize), R101–R501 (risk)
+- **Rules**: L026–L105 (lint), M005–M047 (modernize), R101–R501 (risk)
 - **Container**: `apme-native`
 - **Why Python**: Full access to the ContentGraph DAG — node attributes, edges, and structural queries. Rules that need to walk the hierarchy, inspect module options, or apply complex heuristics that would be awkward in Rego.
 

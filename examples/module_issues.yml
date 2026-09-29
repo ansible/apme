@@ -1,7 +1,7 @@
 ---
 # Module-related issues
 # L004: Deprecated modules, L005: Non-builtin modules
-# L026: Non-FQCN, L030: Non-builtin use, L037: Unresolved module
+# L026: Non-FQCN, L037: Unresolved module
 
 - name: Module issues playbook
   hosts: all
@@ -18,13 +18,13 @@
         content: "hello"
         dest: /tmp/hello.txt
 
-    # L005/L030: Using community module (not builtin)
+    # L005: Using community module (not builtin)
     - name: Use community module
       community.general.npm:
         name: express
         global: yes
 
-    # L005/L030: Another non-builtin
+    # L005: Another non-builtin
     - name: Use AWS module
       amazon.aws.ec2_instance:
         name: test-instance

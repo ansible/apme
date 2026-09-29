@@ -2485,6 +2485,62 @@ class TestR402ListAllUsedVariablesGraphRule:
         assert result is not None
         assert result.verdict is False
 
+    def test_include_tasks_inherit_play_vars(self, rule: ListAllUsedVariablesGraphRule) -> None:
+        """Play vars used in include_tasks files resolve with play provenance.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g = ContentGraph()
+        pb = ContentNode(
+            identity=NodeIdentity(path="site.yml", node_type=NodeType.PLAYBOOK),
+            file_path="site.yml",
+            variables={"pb_region": "east"},
+            scope=NodeScope.OWNED,
+        )
+        play = ContentNode(
+            identity=NodeIdentity(path="site.yml/plays[0]", node_type=NodeType.PLAY),
+            file_path="site.yml",
+            variables={"deploy_user": "web"},
+            scope=NodeScope.OWNED,
+        )
+        inc_task = ContentNode(
+            identity=NodeIdentity(path="site.yml/plays[0]/tasks[0]", node_type=NodeType.TASK),
+            file_path="site.yml",
+            module="ansible.builtin.include_tasks",
+            module_options={"file": "deploy.yml"},
+            scope=NodeScope.OWNED,
+        )
+        taskfile = ContentNode(
+            identity=NodeIdentity(path="deploy.yml", node_type=NodeType.TASKFILE),
+            file_path="deploy.yml",
+            scope=NodeScope.OWNED,
+        )
+        task = ContentNode(
+            identity=NodeIdentity(path="deploy.yml/tasks[0]", node_type=NodeType.TASK),
+            file_path="deploy.yml",
+            module="ansible.builtin.debug",
+            module_options={"msg": "user {{ deploy_user }} in {{ pb_region }}"},
+            scope=NodeScope.OWNED,
+        )
+        for n in (pb, play, inc_task, taskfile, task):
+            g.add_node(n)
+        g.add_edge(pb.node_id, play.node_id, EdgeType.CONTAINS)
+        g.add_edge(play.node_id, inc_task.node_id, EdgeType.CONTAINS)
+        g.add_edge(inc_task.node_id, taskfile.node_id, EdgeType.INCLUDE)
+        g.add_edge(taskfile.node_id, task.node_id, EdgeType.CONTAINS)
+
+        result = rule.process(g, play.node_id)
+        assert result is not None
+        assert result.verdict is True
+        assert result.detail is not None
+        var_list = cast(list[dict[str, object]], result.detail["variables_used"])
+        entry = next(v for v in var_list if v["name"] == "deploy_user")
+        assert entry["source"] == "play"
+        # Playbook-level vars survive play-scoped resolution (scope tail).
+        pb_entry = next(v for v in var_list if v["name"] == "pb_region")
+        assert pb_entry["source"] == "playbook"
+
 
 # ===========================================================================
 # R404 — ShowVariables
