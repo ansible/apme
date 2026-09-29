@@ -992,6 +992,7 @@ class VenvSessionManager:
                         missing = set(specs) - installed
 
                         if not missing:
+                            existing.failed_collections = []
                             existing.last_used_at = time.time()
                             self._write_version_meta(meta_path, existing)
                             dur = (time.monotonic() - t0) * 1000

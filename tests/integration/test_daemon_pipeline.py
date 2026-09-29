@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -33,6 +34,24 @@ from apme_engine.engine.models import ViolationDict, YAMLDict
 FIXTURE_DIR = Path(__file__).resolve().parent.parent / "fixtures" / "terrible-playbook"
 
 _SESSION_ID = "integ-test-session"
+
+
+@pytest.fixture(scope="module")  # type: ignore[untyped-decorator]
+def scan_fixture_dir(infrastructure: object, tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Mutable copy of terrible-playbook so format/tier1 do not touch the git tree.
+
+    Args:
+        infrastructure: Ensures daemon infrastructure is up before copying.
+        tmp_path_factory: Pytest factory for a module-scoped temp directory.
+
+    Returns:
+        Path to the copied project root.
+    """
+    del infrastructure
+    work_dir = Path(tmp_path_factory.mktemp("terrible-playbook"))
+    dest = work_dir / "project"
+    shutil.copytree(FIXTURE_DIR, dest)
+    return dest
 
 
 def _scan_json(fixture_dir: Path) -> tuple[YAMLDict, str]:
@@ -73,16 +92,18 @@ def _scan_json(fixture_dir: Path) -> tuple[YAMLDict, str]:
 
 
 @pytest.fixture(scope="module")  # type: ignore[untyped-decorator]
-def scan_result(infrastructure: object) -> tuple[YAMLDict, str]:
+def scan_result(scan_fixture_dir: Path) -> tuple[YAMLDict, str]:
     """Scan terrible-playbook once and cache for all tests in this module.
 
+    Runs before ``scan_verbose`` so the session venv and collections are warm.
+
     Args:
-        infrastructure: Daemon infrastructure fixture (ensures daemon is up).
+        scan_fixture_dir: Copied terrible-playbook tree.
 
     Returns:
         Tuple of (parsed scan JSON, stderr log output).
     """
-    return _scan_json(FIXTURE_DIR)
+    return _scan_json(scan_fixture_dir)
 
 
 @pytest.fixture(scope="module")  # type: ignore[untyped-decorator]
@@ -140,16 +161,23 @@ def _scan_verbose(fixture_dir: Path) -> subprocess.CompletedProcess[str]:
 
 
 @pytest.fixture(scope="module")  # type: ignore[untyped-decorator]
-def scan_verbose(infrastructure: object) -> subprocess.CompletedProcess[str]:
+def scan_verbose(
+    scan_fixture_dir: Path,
+    scan_result: tuple[YAMLDict, str],
+) -> subprocess.CompletedProcess[str]:
     """Scan terrible-playbook with -v and cache for all tests in this module.
 
+    Depends on ``scan_result`` so collection installs succeed before this run.
+
     Args:
-        infrastructure: Daemon infrastructure fixture (ensures daemon is up).
+        scan_fixture_dir: Copied terrible-playbook tree.
+        scan_result: Ensures the JSON scan (and venv warm-up) runs first.
 
     Returns:
         CompletedProcess with stdout and stderr.
     """
-    return _scan_verbose(FIXTURE_DIR)
+    del scan_result
+    return _scan_verbose(scan_fixture_dir)
 
 
 @pytest.mark.integration  # type: ignore[untyped-decorator]
@@ -256,7 +284,7 @@ def _remediate_json(fixture_dir: Path) -> YAMLDict:
 
 
 @pytest.mark.integration  # type: ignore[untyped-decorator]
-def test_remediation_idempotent(infrastructure: object, tmp_path: Path) -> None:
+def test_remediation_idempotent(infrastructure: object, scan_fixture_dir: Path, tmp_path: Path) -> None:
     """Remediate twice — second pass finds same violations with zero fixes.
 
     Proves the ContentGraph is authoritative: what it said remained after
@@ -270,12 +298,11 @@ def test_remediation_idempotent(infrastructure: object, tmp_path: Path) -> None:
 
     Args:
         infrastructure: Daemon infrastructure fixture (ensures daemon is up).
+        scan_fixture_dir: Module-scoped copy of terrible-playbook.
         tmp_path: Pytest temporary directory.
     """
-    import shutil
-
     work_dir = tmp_path / "terrible-playbook"
-    shutil.copytree(FIXTURE_DIR, work_dir)
+    shutil.copytree(scan_fixture_dir, work_dir)
 
     pass1 = _remediate_json(work_dir)
     pass1_summary = cast(dict[str, int], pass1.get("remediation_summary", {}))
@@ -559,6 +586,7 @@ def test_scan_persisted_to_gateway(scan_data: YAMLDict, infrastructure: object) 
 @pytest.mark.integration  # type: ignore[untyped-decorator]
 def test_ansible_cache_hits_on_second_scan(
     scan_data: YAMLDict,
+    scan_fixture_dir: Path,
 ) -> None:
     """Second scan of the same project gets plugin introspection cache hits.
 
@@ -575,12 +603,13 @@ def test_ansible_cache_hits_on_second_scan(
 
     Args:
         scan_data: Parsed scan data from the first scan (ensures it ran first).
+        scan_fixture_dir: Copied terrible-playbook tree used for scans.
     """
     from apme_engine.daemon.launcher import _DATA_DIR
 
     daemon_log = _DATA_DIR / "daemon.log"
 
-    _scan_json(FIXTURE_DIR)
+    _scan_json(scan_fixture_dir)
 
     assert daemon_log.is_file(), f"daemon.log not found at {daemon_log}"
     log_text = daemon_log.read_text()
