@@ -10,6 +10,11 @@ import "apme/v1/engine.proto";
 service Reporting {
   rpc ReportFixCompleted(FixCompletedEvent) returns (ReportAck);
 
+  // Client-streaming path for oversized FixCompletedEvent payloads that
+  // would exceed the 50 MiB gRPC message ceiling (ADR-020). Gateway
+  // reassembles chunks into one event, then persists once.
+  rpc ReportFixCompletedStream(stream FixCompletedChunk) returns (ReportAck);
+
   // Rule catalog registration (ADR-041).  The authority Engine pushes
   // its full rule set on startup; the Gateway reconciles its catalog.
   rpc RegisterRules(RegisterRulesRequest) returns (RegisterRulesResponse);
@@ -42,6 +47,22 @@ message ProposalOutcome {
 }
 
 message ReportAck {}
+
+// One batch of a streamed FixCompletedEvent (ADR-020 oversized path).
+// First chunk carries header (scalars + small nested messages). Subsequent
+// chunks carry batches of large repeated/blob fields. Final chunk sets last.
+message FixCompletedChunk {
+  // First chunk only: scalars + small nested messages (no large repeated/blob fields).
+  FixCompletedEvent header = 1;
+  repeated Violation remaining_violations = 2;
+  repeated Violation fixed_violations = 3;
+  repeated FilePatch patches = 4;
+  repeated ProgressUpdate logs = 5;
+  repeated ProposalOutcome proposals = 6;
+  // UTF-8 fragments concatenated in order (empty on non-graph chunks).
+  string content_graph_json_fragment = 7;
+  bool last = 8;
+}
 
 // ---------------------------------------------------------------------------
 // Rule catalog registration (ADR-041)

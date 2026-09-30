@@ -47,6 +47,32 @@ class FixCompletedEvent:
         manifest: ProjectManifest | None = ...,
         content_graph_json: str = ...,
     ) -> None: ...
+    def HasField(self, field_name: str) -> bool: ...
+    def ByteSize(self) -> int: ...
+
+class FixCompletedChunk:
+    header: FixCompletedEvent
+    remaining_violations: list[Violation]
+    fixed_violations: list[Violation]
+    patches: list[FilePatch]
+    logs: list[ProgressUpdate]
+    proposals: list[ProposalOutcome]
+    content_graph_json_fragment: str
+    last: bool
+    def __init__(
+        self,
+        *,
+        header: FixCompletedEvent | None = ...,
+        remaining_violations: Iterable[Violation] | None = ...,
+        fixed_violations: Iterable[Violation] | None = ...,
+        patches: Iterable[FilePatch] | None = ...,
+        logs: Iterable[ProgressUpdate] | None = ...,
+        proposals: Iterable[ProposalOutcome] | None = ...,
+        content_graph_json_fragment: str = ...,
+        last: bool = ...,
+    ) -> None: ...
+    def HasField(self, field_name: str) -> bool: ...
+    def ByteSize(self) -> int: ...
 
 class ProposalOutcome:
     proposal_id: str
@@ -65,6 +91,7 @@ class ProposalOutcome:
         confidence: float = ...,
         status: str = ...,
     ) -> None: ...
+    def ByteSize(self) -> int: ...
 
 class ReportAck:
     def __init__(self) -> None: ...
