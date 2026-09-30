@@ -285,3 +285,110 @@ class TestPropertyOrigin:
         origins = resolver.resolve_property_origins("roles/web/tasks/main.yml/tasks[0]")
 
         assert "become" not in origins
+
+
+class TestNoLogPlayScopedPaths:
+    """Tests for play-scoped ``no_log`` path aggregation in variable_helpers."""
+
+    def test_exponential_diamond_all_paths_protected(self) -> None:
+        """Memoized all-path check stays correct on repeated include diamonds."""
+        from apme_engine.graph.variable_helpers import no_log_true_in_scope
+
+        g = ContentGraph()
+        pb = ContentNode(
+            identity=NodeIdentity(path="site.yml", node_type=NodeType.PLAYBOOK),
+            file_path="site.yml",
+        )
+        play = ContentNode(
+            identity=NodeIdentity(path="site.yml/plays[0]", node_type=NodeType.PLAY),
+            file_path="site.yml",
+            no_log=True,
+        )
+        g.add_node(pb)
+        g.add_node(play)
+        g.add_edge(pb.node_id, play.node_id, EdgeType.CONTAINS)
+
+        shared = ContentNode(
+            identity=NodeIdentity(path="shared.yml/tasks[0]", node_type=NodeType.TASK),
+            file_path="shared.yml",
+        )
+        g.add_node(shared)
+        parent_ids = [play.node_id]
+        for depth in range(4):
+            next_parents: list[str] = []
+            for idx, parent_id in enumerate(parent_ids):
+                for branch in range(2):
+                    inc = ContentNode(
+                        identity=NodeIdentity(
+                            path=f"site.yml/plays[0]/depth{depth}_t{idx}_b{branch}",
+                            node_type=NodeType.TASK,
+                        ),
+                        file_path="site.yml",
+                        module="ansible.builtin.include_tasks",
+                        module_options={"file": "shared.yml"},
+                    )
+                    g.add_node(inc)
+                    g.add_edge(parent_id, inc.node_id, EdgeType.CONTAINS)
+                    g.add_edge(inc.node_id, shared.node_id, EdgeType.INCLUDE)
+                    next_parents.append(inc.node_id)
+            parent_ids = next_parents
+
+        play_scope = g.play_scoped_node_ids(play.node_id)
+        assert no_log_true_in_scope(
+            g,
+            shared.node_id,
+            play_context_id=play.node_id,
+            play_scope=play_scope,
+            require_all_paths=True,
+        )
+
+    def test_exponential_diamond_one_unprotected_path(self) -> None:
+        """Any unprotected branch makes all-path protection fail."""
+        from apme_engine.graph.variable_helpers import no_log_true_in_scope
+
+        g = ContentGraph()
+        pb = ContentNode(
+            identity=NodeIdentity(path="site.yml", node_type=NodeType.PLAYBOOK),
+            file_path="site.yml",
+        )
+        play = ContentNode(
+            identity=NodeIdentity(path="site.yml/plays[0]", node_type=NodeType.PLAY),
+            file_path="site.yml",
+            no_log=True,
+        )
+        g.add_node(pb)
+        g.add_node(play)
+        g.add_edge(pb.node_id, play.node_id, EdgeType.CONTAINS)
+
+        protected = ContentNode(
+            identity=NodeIdentity(path="site.yml/plays[0]/tasks[0]", node_type=NodeType.TASK),
+            file_path="site.yml",
+            module="ansible.builtin.include_tasks",
+            module_options={"file": "shared.yml"},
+        )
+        unprotected = ContentNode(
+            identity=NodeIdentity(path="site.yml/plays[0]/tasks[1]", node_type=NodeType.TASK),
+            file_path="site.yml",
+            module="ansible.builtin.include_tasks",
+            module_options={"file": "shared.yml"},
+            no_log=False,
+        )
+        shared = ContentNode(
+            identity=NodeIdentity(path="shared.yml/tasks[0]", node_type=NodeType.TASK),
+            file_path="shared.yml",
+        )
+        for node in (protected, unprotected, shared):
+            g.add_node(node)
+        g.add_edge(play.node_id, protected.node_id, EdgeType.CONTAINS)
+        g.add_edge(play.node_id, unprotected.node_id, EdgeType.CONTAINS)
+        g.add_edge(protected.node_id, shared.node_id, EdgeType.INCLUDE)
+        g.add_edge(unprotected.node_id, shared.node_id, EdgeType.INCLUDE)
+
+        play_scope = g.play_scoped_node_ids(play.node_id)
+        assert not no_log_true_in_scope(
+            g,
+            shared.node_id,
+            play_context_id=play.node_id,
+            play_scope=play_scope,
+            require_all_paths=True,
+        )

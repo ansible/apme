@@ -442,6 +442,10 @@ def _no_log_play_scoped_paths(
     safe) and :func:`_no_log_all_play_scoped_paths` (``require_all=True``:
     suppression, where execution via any unprotected path still leaks).
 
+    Protection results are memoized by node ID within the current play scope
+    so diamond include graphs do not enumerate exponentially many paths.
+    Cycle detection uses a separate in-progress set, not the result cache.
+
     Args:
         graph: ContentGraph for the scan.
         node_id: Task or handler node id.
@@ -454,33 +458,43 @@ def _no_log_play_scoped_paths(
         under the ``require_all`` quantifier.
     """
     quant = all if require_all else any
-    seen_paths: set[tuple[str, ...]] = set()
+    cache: dict[str, bool] = {}
+    in_progress: set[str] = set()
 
-    def walk(current_id: str, path: tuple[str, ...]) -> bool:
-        if current_id in path:
+    def evaluate(current_id: str) -> bool:
+        if current_id in cache:
+            return cache[current_id]
+        if current_id in in_progress:
             return False
-        next_path = (*path, current_id)
-        if next_path in seen_paths:
-            return False
-        seen_paths.add(next_path)
 
         node = graph.get_node(current_id)
         if node is None:
+            cache[current_id] = False
             return False
         if node.no_log is False:
+            cache[current_id] = False
             return False
         if node.no_log is True:
+            cache[current_id] = True
             return True
 
         scoped_parents = [parent for parent in _sorted_positional_parent_ids(graph, current_id) if parent in play_scope]
         if not scoped_parents:
+            cache[current_id] = False
             return False
-        return quant(walk(parent, next_path) for parent in scoped_parents)
+
+        in_progress.add(current_id)
+        try:
+            result = quant(evaluate(parent) for parent in scoped_parents)
+        finally:
+            in_progress.discard(current_id)
+        cache[current_id] = result
+        return result
 
     scoped_parents = [parent for parent in _sorted_positional_parent_ids(graph, node_id) if parent in play_scope]
     if not scoped_parents:
         return False
-    return quant(walk(parent, (node_id,)) for parent in scoped_parents)
+    return quant(evaluate(parent) for parent in scoped_parents)
 
 
 def _no_log_any_play_scoped_path(graph: ContentGraph, node_id: str, play_scope: set[str]) -> bool:

@@ -18,10 +18,12 @@ plugin configs that still pass it should drop the key.
 
 ### Detection
 
-Scans YAML inventory plugin configs (`inventory.yml`, `inventory/constructed.yml`,
-…) adjacent to playbooks for a top-level `disable_lookups` key. Requires a
-top-level `plugin` field so static inventories with a group named
-`disable_lookups` are not flagged.
+Scans Constructable inventory plugin configs (`plugin: constructed` or
+`plugin: ansible.builtin.constructed` in `inventory.yml`,
+`inventory/constructed.yml`, …) adjacent to playbooks for a stale top-level
+`disable_lookups` key. Static inventories with a group named
+`disable_lookups` are not flagged. Python `_compose(disable_lookups=...)`
+calls in plugin source are covered by REQ-018 rule M040, not this rule.
 
 Sample inventory plugin config with the deprecated argument:
 

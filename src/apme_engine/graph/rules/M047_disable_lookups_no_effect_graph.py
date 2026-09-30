@@ -45,6 +45,11 @@ _INVENTORY_PATTERNS = (
     "hosts.yaml",
 )
 
+# Constructable inventory plugins are the only configs where users may carry
+# a stale top-level disable_lookups key copied from older docs. REQ-018 M040
+# covers the Python _compose(disable_lookups=...) call form via AST.
+_CONSTRUCTABLE_PLUGINS = frozenset({"constructed", "ansible.builtin.constructed"})
+
 # Top-level mapping keys only: YAML forbids tab indentation, so a leading
 # non-space indent means nested. Optional single/double quotes accepted.
 _DISABLE_LOOKUPS_RE = re.compile(r"""^disable_lookups\s*:|^["']disable_lookups["']\s*:""")
@@ -203,7 +208,13 @@ class DisableLookupsNoEffectGraphRule(GraphRule):
             except yaml.YAMLError as exc:
                 logger.debug("Skipping unparseable inventory file %s: %s", inv_file, exc)
                 continue
-            if not isinstance(data, dict) or "plugin" not in data or "disable_lookups" not in data:
+            plugin = data.get("plugin") if isinstance(data, dict) else None
+            if (
+                not isinstance(data, dict)
+                or not isinstance(plugin, str)
+                or plugin not in _CONSTRUCTABLE_PLUGINS
+                or "disable_lookups" not in data
+            ):
                 continue
             line = _top_level_disable_lookups_line(content) or 1
             violations.append(
@@ -211,8 +222,10 @@ class DisableLookupsNoEffectGraphRule(GraphRule):
                     "file": str(inv_file),
                     "line": line,
                     "message": (
-                        "The 'disable_lookups' inventory plugin argument has no "
-                        "effect and is removed in ansible-core 2.23; remove it"
+                        "The top-level 'disable_lookups' key in Constructable "
+                        "inventory configs is inert and removed in ansible-core "
+                        "2.23; delete it (Python _compose() calls are covered "
+                        "by M040)"
                     ),
                 }
             )
@@ -225,7 +238,10 @@ class DisableLookupsNoEffectGraphRule(GraphRule):
             )
 
         detail: YAMLDict = {
-            "message": ("Inventory plugin 'disable_lookups' argument has no effect (removed in ansible-core 2.23)"),
+            "message": (
+                "Stale top-level 'disable_lookups' key in Constructable inventory "
+                "config has no effect (removed in ansible-core 2.23)"
+            ),
             "violations": violations,
         }
         return GraphRuleResult(
