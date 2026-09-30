@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections.abc import Iterator, Sequence
 from typing import Protocol
 
-from apme.v1 import reporting_pb2
+from apme.v1 import engine_pb2, reporting_pb2
 
 # Soft per-chunk budget — same as chunked_fs.CHUNK_MAX_BYTES.
 CHUNK_MAX_BYTES = 1024 * 1024  # 1 MiB
@@ -44,6 +44,30 @@ def needs_streaming(event: reporting_pb2.FixCompletedEvent) -> bool:
     return event.ByteSize() >= UNARY_MAX_BYTES
 
 
+def _header_report_from_report(report: engine_pb2.FixReport) -> engine_pb2.FixReport:
+    """Copy scalar FixReport fields; strip nested violations.
+
+    The nested ``remaining_violations`` / ``fixed_violations`` duplicate the
+    top-level repeated fields of :class:`FixCompletedEvent`, which travel in
+    chunked payload batches. Copying them into the header would duplicate
+    every violation on the wire and leave the first chunk unbounded against
+    the 50 MiB ceiling. The Gateway persist path only reads ``report.fixed``.
+
+    Args:
+        report: Source FixReport.
+
+    Returns:
+        Header-safe FixReport with only scalar fields set.
+    """
+    return engine_pb2.FixReport(
+        passes=report.passes,
+        fixed=report.fixed,
+        remaining_ai=report.remaining_ai,
+        remaining_manual=report.remaining_manual,
+        oscillation_detected=report.oscillation_detected,
+    )
+
+
 def _header_from_event(event: reporting_pb2.FixCompletedEvent) -> reporting_pb2.FixCompletedEvent:
     """Copy scalars and small nested messages; omit large repeated/blob fields.
 
@@ -60,7 +84,7 @@ def _header_from_event(event: reporting_pb2.FixCompletedEvent) -> reporting_pb2.
         source=event.source,
         diagnostics=event.diagnostics,
         summary=event.summary,
-        report=event.report,
+        report=_header_report_from_report(event.report),
         manifest=event.manifest,
     )
 

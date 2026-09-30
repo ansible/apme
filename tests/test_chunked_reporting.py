@@ -119,6 +119,46 @@ def test_reassemble_round_trip() -> None:
     assert rebuilt.report.fixed == 1
 
 
+def test_header_strips_nested_report_violations() -> None:
+    """Report-nested violations must not ride along in the stream header.
+
+    Regression test: _header_from_event copied event.report wholesale, so the
+    first chunk duplicated every violation (nested in header.report plus
+    chunked top-level) and stayed unbounded against the 50 MiB ceiling.
+    """
+    nested = [_violation(100 + i, "y" * 2000) for i in range(10)]
+    top = [_violation(i, "x" * 200) for i in range(4)]
+    event = reporting_pb2.FixCompletedEvent(
+        scan_id="hdr",
+        session_id="sess",
+        project_path="/p",
+        source="cli",
+        remaining_violations=top,
+        report=engine_pb2.FixReport(
+            fixed=2,
+            remaining_violations=nested,
+            fixed_violations=nested,
+        ),
+    )
+    chunks = list(yield_fix_completed_chunks(event, chunk_max_bytes=100))
+    assert len(chunks) >= 2
+    header = chunks[0].header
+    # Header report keeps scalars, drops nested repeats.
+    assert header.report.fixed == 2
+    assert not header.report.remaining_violations
+    assert not header.report.fixed_violations
+    # First chunk stays small: header only, no nested violation bytes.
+    # (Before the strip this exceeds 8 KiB with ~44 KiB of nested copies.)
+    assert chunks[0].ByteSize() < 8 * 1024
+    # Round-trip preserves the top-level payload and scalar report fields.
+    rebuilt = _reassemble_fix_completed(chunks)
+    assert rebuilt is not None
+    assert len(rebuilt.remaining_violations) == 4
+    assert rebuilt.report.fixed == 2
+    assert not rebuilt.report.remaining_violations
+    assert not rebuilt.report.fixed_violations
+
+
 def test_needs_streaming_threshold() -> None:
     """needs_streaming is False for small events and True near UNARY_MAX_BYTES."""
     small = reporting_pb2.FixCompletedEvent(scan_id="s", session_id="x", project_path="/p")
