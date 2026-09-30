@@ -490,16 +490,29 @@ class TestRuleClassCache:
         Args:
             tmp_path: Pytest temporary directory.
         """
+        from unittest.mock import patch
+
         from apme_engine.graph import scanner as scanner_mod
+        from apme_engine.graph._loader import load_classes_in_dir as _real_loader
 
         self._write_rule(tmp_path, 1)
         rules1, _ = load_graph_rules(rules_dir=str(tmp_path))
         assert {r.rule_id for r in rules1} == {"CACHE1"}
         cache_size = len(scanner_mod._rule_class_cache)
-        rules2, _ = load_graph_rules(rules_dir=str(tmp_path))
+        calls = 0
+
+        def _counting_loader(*args: object, **kwargs: object) -> object:
+            nonlocal calls
+            calls += 1
+            return _real_loader(*args, **kwargs)  # type: ignore[arg-type]
+
+        with patch("apme_engine.graph.scanner.load_classes_in_dir", new=_counting_loader):
+            rules2, _ = load_graph_rules(rules_dir=str(tmp_path))
         assert {r.rule_id for r in rules2} == {"CACHE1"}
         assert len(scanner_mod._rule_class_cache) == cache_size
+        assert calls == 0
         assert all(a is not b for a, b in zip(rules1, rules2, strict=True))
+        assert all(type(a) is type(b) for a, b in zip(rules1, rules2, strict=True))
 
     def test_new_file_invalidates(self, tmp_path: Path) -> None:
         """Adding a rule file is picked up without explicit invalidation.
@@ -611,3 +624,122 @@ class TestRuleClassCache:
 
         rules2, _ = load_graph_rules(rules_dir=str(tmp_path))
         assert {r.rule_id for r in rules2} == {"CACHEX"}
+
+    def test_error_load_not_cached_and_retries_after_fix(self, tmp_path: Path) -> None:
+        """Broken rule modules are not poisoned into the success cache.
+
+        Args:
+            tmp_path: Pytest temporary directory.
+        """
+        import os
+
+        from apme_engine.graph import scanner as scanner_mod
+
+        self._write_rule(tmp_path, 1)
+        broken = tmp_path / "broken_graph.py"
+        broken.write_text("def broken(:\n", encoding="utf-8")
+        rules1, _ = load_graph_rules(rules_dir=str(tmp_path))
+        # Broken module is skipped with a warning; only the valid rule loads.
+        assert {r.rule_id for r in rules1} == {"CACHE1"}
+        assert os.path.normpath(str(tmp_path)) not in scanner_mod._rule_class_cache
+        broken.write_text(self._RULE_TMPL.format(idx=2), encoding="utf-8")
+        rules2, _ = load_graph_rules(rules_dir=str(tmp_path))
+        assert {r.rule_id for r in rules2} == {"CACHE1", "CACHE2"}
+
+    def test_error_cooldown_skips_reexec_within_cooldown(self, tmp_path: Path) -> None:
+        """Same-fingerprint error loads skip re-exec within the cooldown.
+
+        Args:
+            tmp_path: Pytest temporary directory.
+        """
+        from unittest.mock import patch
+
+        from apme_engine.graph._loader import load_classes_in_dir as _real_loader
+
+        self._write_rule(tmp_path, 1)
+        broken = tmp_path / "broken_graph.py"
+        broken.write_text("def broken(:\n", encoding="utf-8")
+        rules1, _ = load_graph_rules(rules_dir=str(tmp_path))
+        assert {r.rule_id for r in rules1} == {"CACHE1"}
+        calls = 0
+
+        def _counting_loader(*args: object, **kwargs: object) -> object:
+            nonlocal calls
+            calls += 1
+            return _real_loader(*args, **kwargs)  # type: ignore[arg-type]
+
+        with patch("apme_engine.graph.scanner.load_classes_in_dir", new=_counting_loader):
+            rules2, _ = load_graph_rules(rules_dir=str(tmp_path))
+        assert {r.rule_id for r in rules2} == {"CACHE1"}
+        assert calls == 0
+
+    def test_clear_rule_pycache_removes_stale(self, tmp_path: Path) -> None:
+        """Stale bytecode is removed on demand.
+
+        Args:
+            tmp_path: Pytest temporary directory.
+        """
+        from apme_engine.graph.scanner import _clear_rule_pycache
+
+        pycache = tmp_path / "__pycache__"
+        pycache.mkdir()
+        stale = pycache / "stale.pyc"
+        stale.write_bytes(b"stale")
+        _clear_rule_pycache(str(tmp_path))
+        assert not pycache.exists()
+
+    def test_clear_rule_pycache_failure_warns(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+        """Pycache deletion failures are logged instead of silent.
+
+        Args:
+            tmp_path: Pytest temporary directory.
+            caplog: Pytest log capture fixture.
+        """
+        import shutil
+        from unittest.mock import patch
+
+        from apme_engine.graph import scanner as scanner_mod
+
+        pycache = tmp_path / "__pycache__"
+        pycache.mkdir()
+
+        real_rmtree = shutil.rmtree
+
+        def _failing_rmtree(path: str, *args: object, **kwargs: object) -> None:
+            onerror = kwargs.get("onerror")
+            if callable(onerror):
+                onerror(real_rmtree, path, (OSError, OSError("busy"), None))
+            # Swallow like ignore_errors=True: the warning is the signal.
+
+        with (
+            caplog.at_level("WARNING", logger="apme_engine.graph.scanner"),
+            patch("apme_engine.graph.scanner.shutil.rmtree", new=_failing_rmtree),
+        ):
+            scanner_mod._clear_rule_pycache(str(tmp_path))
+        assert any("__pycache__" in rec.getMessage() for rec in caplog.records)
+
+    def test_invalidate_during_load_does_not_restore(self, tmp_path: Path) -> None:
+        """An invalidation issued mid-load is not silently restored.
+
+        Args:
+            tmp_path: Pytest temporary directory.
+        """
+        import os
+        from unittest.mock import patch
+
+        from apme_engine.graph import scanner as scanner_mod
+        from apme_engine.graph._loader import load_classes_in_dir as _real_loader
+
+        self._write_rule(tmp_path, 1)
+        load_graph_rules(rules_dir=str(tmp_path))
+        assert os.path.normpath(str(tmp_path)) in scanner_mod._rule_class_cache
+        scanner_mod.invalidate_graph_rule_cache(str(tmp_path))
+
+        def _invalidating_loader(*args: object, **kwargs: object) -> object:
+            scanner_mod.invalidate_graph_rule_cache(str(tmp_path))
+            return _real_loader(*args, **kwargs)  # type: ignore[arg-type]
+
+        with patch("apme_engine.graph.scanner.load_classes_in_dir", new=_invalidating_loader):
+            rules, _ = load_graph_rules(rules_dir=str(tmp_path))
+        assert {r.rule_id for r in rules} == {"CACHE1"}
+        assert os.path.normpath(str(tmp_path)) not in scanner_mod._rule_class_cache
