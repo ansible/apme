@@ -2,22 +2,24 @@ import { useEffect, useState } from 'react';
 import { PageLayout, PageHeader } from '@ansible/ansible-ui-framework';
 import { Button, Label } from '@patternfly/react-core';
 import { SyncAltIcon } from '@patternfly/react-icons';
+import { useApmeApi } from '../api/apmeApiAdapter';
 import { getHealth } from '../services/api';
 import type { HealthStatus } from '../types/api';
 
 export function HealthPage() {
+  const api = useApmeApi();
   const [health, setHealth] = useState<HealthStatus | null>(null);
   const [loading, setLoading] = useState(true);
 
   const load = () => {
     setLoading(true);
-    getHealth()
+    getHealth(api)
       .then(setHealth)
       .catch(() => setHealth(null))
       .finally(() => setLoading(false));
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [api]);
 
   const isOk = (status: string) => status === 'ok';
 

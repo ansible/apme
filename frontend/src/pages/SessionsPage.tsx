@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { PageLayout, PageHeader } from '@ansible/ansible-ui-framework';
 import { Button, Pagination } from '@patternfly/react-core';
+import { useApmeApi } from '../api/apmeApiAdapter';
 import { listSessions } from '../services/api';
 import type { SessionSummary } from '../types/api';
 import { timeAgo } from '../services/format';
@@ -9,6 +10,7 @@ import { timeAgo } from '../services/format';
 const PAGE_SIZE = 20;
 
 export function SessionsPage() {
+  const api = useApmeApi();
   const navigate = useNavigate();
   const [items, setItems] = useState<SessionSummary[]>([]);
   const [total, setTotal] = useState(0);
@@ -20,7 +22,7 @@ export function SessionsPage() {
     setLoading(true);
     setError(false);
     const offset = (page - 1) * PAGE_SIZE;
-    listSessions(PAGE_SIZE, offset)
+    listSessions(PAGE_SIZE, offset, api)
       .then((data) => {
         setItems(data.items);
         setTotal(data.total);
@@ -31,7 +33,7 @@ export function SessionsPage() {
         setError(true);
       })
       .finally(() => setLoading(false));
-  }, [page]);
+  }, [page, api]);
 
   useEffect(() => { fetchSessions(); }, [fetchSessions]);
 

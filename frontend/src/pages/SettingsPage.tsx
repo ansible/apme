@@ -23,13 +23,14 @@ import {
   Tr,
 } from '@patternfly/react-table';
 import { PencilAltIcon, TrashIcon } from '@patternfly/react-icons';
+import { useApmeApi } from '../api/apmeApiAdapter';
 import {
-  listAiModels,
   listGalaxyServers,
   createGalaxyServer,
   updateGalaxyServer,
   deleteGalaxyServer,
 } from '../services/api';
+import { listAiModels } from '@apme/ui-workflow';
 import type { AiModelInfo, GalaxyServer } from '../types/api';
 
 import { AI_MODEL_STORAGE_KEY } from '@apme/ui-workflow';
@@ -57,6 +58,7 @@ function GalaxyServerFormModal({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const api = useApmeApi();
   const [form, setForm] = useState<GalaxyServerFormState>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -87,14 +89,14 @@ function GalaxyServerFormModal({
           auth_url: form.auth_url,
           token: form.token,
         };
-        await updateGalaxyServer(editing.id, body);
+        await updateGalaxyServer(editing.id, body, api);
       } else {
         await createGalaxyServer({
           name: form.name,
           url: form.url,
           token: form.token,
           auth_url: form.auth_url,
-        });
+        }, api);
       }
       onSaved();
       onClose();
@@ -167,6 +169,7 @@ function GalaxyServerFormModal({
 // ── Galaxy Servers Section ──────────────────────────────────────────
 
 function GalaxyServersSection() {
+  const api = useApmeApi();
   const [servers, setServers] = useState<GalaxyServer[]>([]);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
@@ -174,11 +177,11 @@ function GalaxyServersSection() {
 
   const refresh = useCallback(() => {
     setLoading(true);
-    listGalaxyServers()
+    listGalaxyServers(api)
       .then(setServers)
       .catch(() => setServers([]))
       .finally(() => setLoading(false));
-  }, []);
+  }, [api]);
 
   useEffect(() => { refresh(); }, [refresh]);
 
@@ -195,7 +198,7 @@ function GalaxyServersSection() {
   const handleDelete = async (s: GalaxyServer) => {
     if (!window.confirm(`Delete Galaxy server "${s.name}"?`)) return;
     try {
-      await deleteGalaxyServer(s.id);
+      await deleteGalaxyServer(s.id, api);
       refresh();
     } catch {
       /* best effort */
@@ -293,6 +296,7 @@ function GalaxyServersSection() {
 // ── Main Settings Page ──────────────────────────────────────────────
 
 export function SettingsPage() {
+  const api = useApmeApi();
   const [models, setModels] = useState<AiModelInfo[]>([]);
   const [selectedModel, setSelectedModel] = useState(
     () => localStorage.getItem(AI_MODEL_STORAGE_KEY) ?? '',
@@ -300,7 +304,7 @@ export function SettingsPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    listAiModels()
+    listAiModels(api)
       .then((m) => {
         setModels(m);
         const stored = localStorage.getItem(AI_MODEL_STORAGE_KEY);
@@ -320,7 +324,7 @@ export function SettingsPage() {
       })
       .catch(() => setModels([]))
       .finally(() => setLoading(false));
-  }, []);
+  }, [api]);
 
   const handleChange = useCallback((value: string) => {
     setSelectedModel(value);

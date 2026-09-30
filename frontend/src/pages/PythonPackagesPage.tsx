@@ -18,6 +18,7 @@ import {
   SortAmountDownIcon,
   SortAmountUpIcon,
 } from '@patternfly/react-icons';
+import { useApmeApi } from '../api/apmeApiAdapter';
 import { listPythonPackages, getDepHealthSummary } from '../services/api';
 import type { PythonPackageSummary, PythonCveSummary } from '../types/api';
 import { severityClass } from '../components/severity';
@@ -47,6 +48,7 @@ function buildPkgCveMap(cveList: PythonCveSummary[]): Map<string, PkgCveInfo> {
 }
 
 export function PythonPackagesPage() {
+  const api = useApmeApi();
   const navigate = useNavigate();
   const [packages, setPackages] = useState<PythonPackageSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -58,8 +60,8 @@ export function PythonPackagesPage() {
   const fetchPackages = useCallback(() => {
     setLoading(true);
     Promise.all([
-      listPythonPackages(500, 0),
-      getDepHealthSummary().catch(() => ({ collection_findings: [], python_cves: [], suppressed_count: 0 })),
+      listPythonPackages(500, 0, api),
+      getDepHealthSummary(api).catch(() => ({ collection_findings: [], python_cves: [], suppressed_count: 0 })),
     ])
       .then(([data, health]) => {
         setPackages(data);
@@ -67,7 +69,7 @@ export function PythonPackagesPage() {
       })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, []);
+  }, [api]);
 
   useEffect(() => { fetchPackages(); }, [fetchPackages]);
 
