@@ -422,3 +422,18 @@ class TestDisableLookupsNoEffectGraphRule:
         second_result = rule.process(g, ids[1])
         assert second_result is not None
         assert second_result.verdict is False
+
+    def test_non_constructable_plugin_with_disable_lookups_is_clean(self, tmp_path: Path) -> None:
+        """Only Constructable inventory plugins are scanned for stale keys.
+
+        Args:
+            tmp_path: Pytest temporary directory.
+        """
+        rule = DisableLookupsNoEffectGraphRule()
+        playbook = tmp_path / "site.yml"
+        playbook.write_text("- hosts: all\n")
+        (tmp_path / "inventory.yml").write_text("plugin: ansible.builtin.script\ndisable_lookups: true\n")
+        g, pb_id = self._make_graph_with_playbook(str(playbook))
+        result = rule.process(g, pb_id)
+        assert result is not None
+        assert result.verdict is False
