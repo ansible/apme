@@ -706,10 +706,10 @@ class TestRuleClassCache:
         real_rmtree = shutil.rmtree
 
         def _failing_rmtree(path: str, *args: object, **kwargs: object) -> None:
-            onerror = kwargs.get("onerror")
-            if callable(onerror):
-                onerror(real_rmtree, path, (OSError, OSError("busy"), None))
-            # Swallow like ignore_errors=True: the warning is the signal.
+            onexc = kwargs.get("onexc")
+            if callable(onexc):
+                onexc(real_rmtree, path, OSError("busy"))
+            # Swallow: the warning is the signal.
 
         with (
             caplog.at_level("WARNING", logger="apme_engine.graph.scanner"),

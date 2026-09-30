@@ -152,10 +152,14 @@ def _clear_rule_pycache(directory: str) -> None:
     pycache = os.path.join(directory, "__pycache__")
     if os.path.isdir(pycache):
 
-        def _on_error(func: object, path: str, exc_info: object) -> None:
-            logger.warning("Failed to clear rule __pycache__ at %s", pycache)
+        def _on_exc(func: object, path: str, exc: BaseException) -> None:
+            logger.warning(
+                "Failed to clear rule __pycache__ at %s: %s",
+                pycache,
+                exc,
+            )
 
-        shutil.rmtree(pycache, onerror=_on_error)
+        shutil.rmtree(pycache, onexc=_on_exc)
 
 
 def _is_loadable_rule_module(filename: str) -> bool:
