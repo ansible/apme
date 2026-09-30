@@ -10,7 +10,7 @@ from sqlalchemy import select
 from apme.v1 import common_pb2, engine_pb2, reporting_pb2
 from apme_gateway.db import get_session
 from apme_gateway.db import queries as q
-from apme_gateway.db.models import Notification, Project, Scan, Session
+from apme_gateway.db.models import Notification, Project, Scan, ScanGraph, Session
 from apme_gateway.grpc_reporting.servicer import ReportingServicer, drain_notification_tasks
 
 pytestmark = pytest.mark.usefixtures("gateway_db")
@@ -489,12 +489,13 @@ async def test_report_fix_completed_stream_persists_scan() -> None:
 
     async with get_session() as db:
         scan = await q.get_scan(db, "stream-1")
-    assert scan is not None
-    assert scan.session_id == "sess-stream"
-    assert len(scan.violations) == 1
-    assert scan.violations[0].rule_id == "L001"
-    assert scan.graph is not None
-    assert "n1" in scan.graph.graph_json
+        assert scan is not None
+        assert scan.session_id == "sess-stream"
+        assert len(scan.violations) == 1
+        assert scan.violations[0].rule_id == "L001"
+        graph = (await db.execute(select(ScanGraph).where(ScanGraph.scan_id == "stream-1"))).scalar_one_or_none()
+    assert graph is not None
+    assert "n1" in graph.graph_json
 
 
 async def test_report_fix_completed_stream_rejects_missing_last() -> None:
