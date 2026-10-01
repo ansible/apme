@@ -170,10 +170,12 @@ assert_template_contains "abbenay addr unix socket" "${RENDER}" 'value: "unix://
 assert_template_contains "abbenay-run emptyDir" "${RENDER}" $'name: abbenay-run\n          emptyDir'
 assert_template_contains "engine abbenay-run mount" "${RENDER}" $'name: abbenay-run\n              mountPath: /tmp/abbenay-run'
 assert_template_contains "abbenay XDG_RUNTIME_DIR" "${RENDER}" "value: /tmp/abbenay-run"
-# Abbenay image has no `node` on PATH (#734); probe leftover gRPC TCP instead.
-assert_template_contains "abbenay readiness tcp probe" "${RENDER}" $'readinessProbe:\n            tcpSocket:\n              port: abbenay-grpc'
-assert_template_contains "abbenay liveness tcp probe" "${RENDER}" $'livenessProbe:\n            tcpSocket:\n              port: abbenay-grpc'
+# Abbenay image has no `node` on PATH (#734); kubelet tcpSocket cannot reach
+# loopback-only :50057. Probe via in-container `abbenay status` (Unix socket).
+assert_template_contains "abbenay readiness status probe" "${RENDER}" $'readinessProbe:\n            exec:\n              command:\n                - /opt/abbenay/abbenay\n                - status'
+assert_template_contains "abbenay liveness status probe" "${RENDER}" $'livenessProbe:\n            exec:\n              command:\n                - /opt/abbenay/abbenay\n                - status'
 assert_template_lacks "abbenay probe does not use node" "${RENDER}" $'- node\n'
+assert_template_lacks "abbenay probe is not kubelet tcpSocket" "${RENDER}" $'tcpSocket:\n              port: abbenay-grpc'
 assert_template_contains "gateway engine addr localhost" "${RENDER}" 'value: "127.0.0.1:50051"'
 assert_template_contains "gateway database url" "${RENDER}" 'name: APME_DATABASE_URL'
 assert_template_contains "postgres sidecar" "${RENDER}" $'- name: postgres\n'
