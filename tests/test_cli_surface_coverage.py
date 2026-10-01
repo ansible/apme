@@ -650,6 +650,40 @@ def test_format_no_diffs_reports_clean(tmp_path: Path, capsys: pytest.CaptureFix
     assert "already formatted" in err
 
 
+def test_format_no_diffs_reports_skips(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Empty diffs with skip WARNING logs must not claim already-formatted.
+
+    Args:
+        tmp_path: Temporary directory fixture.
+        capsys: Pytest capture fixture.
+    """
+    from apme_engine.cli.format_cmd import run_format
+
+    target = tmp_path / "site.yml"
+    target.write_text("a: 1\n", encoding="utf-8")
+    resp = engine_pb2.FormatResponse(
+        diffs=[],
+        logs=[
+            ProgressUpdate(
+                message="Skipping format for nothing.yml: YAML dump/post-process failed",
+                phase="engine",
+                level=3,
+            ),
+        ],
+    )
+    channel = MagicMock()
+    with (
+        patch("apme_engine.cli.format_cmd.yield_scan_chunks", return_value=iter([_scan_chunk()])),
+        patch("apme_engine.cli.format_cmd.resolve_engine", return_value=(channel, "addr")),
+        patch("apme_engine.cli.format_cmd.engine_pb2_grpc.EngineStub") as stub_cls,
+    ):
+        stub_cls.return_value.FormatStream.return_value = resp
+        run_format(_format_args_ns(str(target), verbose=0))
+    err = capsys.readouterr().err
+    assert "already formatted" not in err
+    assert "skipped due to format errors" in err
+
+
 def test_format_check_mode_exits_violations(tmp_path: Path) -> None:
     """--check lists would-reformat files and exits 1.
 

@@ -378,6 +378,14 @@ break ``rpartition(":")``: empty host (``:port``), unbracketed IPv6
 ``host:abc``). If a caller claims graceful degrade and only catches
 ``ImportError``, also construct a parse ``ValueError`` through that
 caller. Do not treat “contains a colon” as proof of TCP.
+When a function degrades to identity (return original / omit from
+diffs / skip and continue) on failure, construct the caller path that
+reports "already clean", "idempotent", or "success" from an empty
+result list — require an explicit per-item diagnostic (error field,
+skipped list, WARNING progress/log) so failure is not presented as
+success. If that diagnostic is logged inside ``run_in_executor``,
+require ``contextvars.copy_context()`` (or an explicit progress event)
+so ADR-033 collectors and FixSession clients actually see it.
 Treat structured health/status bodies as contracts: reject
 substring/`"ok" in body` checks when the peer emits JSON with a
 ``status`` field — require exact equality (``status == "ok"``).
