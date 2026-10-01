@@ -181,9 +181,11 @@ class RuleTestCase:
     source_file: Path
     line_number: int
 
+
 def parse_rule_doc(path: Path) -> list[RuleTestCase]:
     """Extract test cases from a rule documentation file."""
     ...
+
 
 def discover_rule_docs(base_path: Path) -> list[Path]:
     """Find all rule documentation files."""
@@ -203,6 +205,7 @@ def rule_test_cases() -> list[RuleTestCase]:
     for doc_path in discover_rule_docs(docs_path):
         cases.extend(parse_rule_doc(doc_path))
     return cases
+
 
 @pytest.mark.parametrize("case", rule_test_cases())
 def test_rule_documentation(case: RuleTestCase, validator_client):

@@ -149,7 +149,8 @@ the current file-oriented `propose_unit_fixes()`:
 @runtime_checkable
 class AIProvider(Protocol):
     async def propose_node_fix(
-        self, context: AINodeContext,
+        self,
+        context: AINodeContext,
     ) -> AIProposal | None: ...
 ```
 

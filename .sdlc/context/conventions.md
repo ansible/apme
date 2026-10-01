@@ -39,8 +39,7 @@ def scan_playbook(
     *,
     fix: bool = False,
     output_format: OutputFormat = OutputFormat.JSON,
-) -> ScanResult:
-    ...
+) -> ScanResult: ...
 ```
 
 ### Docstrings (Google style)
@@ -70,11 +69,14 @@ def apply_fqcn_fix(module_name: str, line: int) -> FixResult:
 class APMEError(Exception):
     """Base exception for APME."""
 
+
 class ScanError(APMEError):
     """Error during playbook scanning."""
 
+
 class TransformError(APMEError):
     """Error during YAML transformation."""
+
 
 # Use specific exceptions
 try:
@@ -178,10 +180,10 @@ def get_severity():      # get_noun for getters
 ### Variables
 
 ```python
-playbook_path: Path      # Descriptive snake_case
+playbook_path: Path  # Descriptive snake_case
 scan_result: ScanResult  # Type-matching names
-issues: list[Issue]      # Plural for collections
-is_valid: bool           # is_ prefix for booleans
+issues: list[Issue]  # Plural for collections
+is_valid: bool  # is_ prefix for booleans
 ```
 
 ### Constants
@@ -305,6 +307,7 @@ has its own module in `src/apme_engine/cli/`.
 ```python
 import argparse
 
+
 def build_parser() -> argparse.ArgumentParser:
     """Build and return the CLI argument parser."""
     parser = argparse.ArgumentParser(
@@ -340,7 +343,7 @@ print(style("Check complete", fg=Color.GREEN))
 # Warning
 print(style("Warning:", fg=Color.YELLOW), "3 issues found")
 
-# Error  
+# Error
 print(style("Error:", fg=Color.RED), "File not found")
 ```
 

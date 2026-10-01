@@ -199,7 +199,7 @@ The Gateway stores diagnostics as a JSON string in
     "graph_nodes_built": 156,
     "total_violations": 17,
     "fan_out_ms": 120.0,
-    "total_ms": 165.2
+    "total_ms": 165.2,
 }
 ```
 
