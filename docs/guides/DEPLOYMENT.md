@@ -255,7 +255,7 @@ config `config.yaml` or POST via the Gateway admin proxy
 token on that localhost bind. Helm Simple stays loopback-only with no hostPort
 (ADR-070). gRPC for Engine/Gateway remains the shared Unix socket.
 
-The Abbenay daemon still binds leftover gRPC TCP on `127.0.0.1:50057`. Engine AI RPCs, Gateway `/health`, and Helm probes use `APME_ABBENAY_ADDR=unix:///tmp/abbenay-run/abbenay/daemon.sock` (shared `emptyDir`) because `abbenay-client` ≥ 2026.8.7 rejects consumer tokens on plaintext TCP.
+The Abbenay daemon still binds leftover gRPC TCP on `127.0.0.1:50057`. Engine AI RPCs and Gateway `/health` use `APME_ABBENAY_ADDR=unix:///tmp/abbenay-run/abbenay/daemon.sock` (shared `emptyDir`) because `abbenay-client` ≥ 2026.8.7 rejects consumer tokens on plaintext TCP. Helm container readiness/liveness probes use TCP `:50057` — the published Abbenay image has no `node` binary for Unix-socket exec probes (#734).
 
 #### UI
 

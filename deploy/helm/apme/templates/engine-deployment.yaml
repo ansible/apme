@@ -663,21 +663,17 @@ spec:
               containerPort: 50057
               protocol: TCP
           # Engine/Gateway AI uses the Unix socket; TCP :50057 is leftover.
-          # Ready when the socket accepts connections (not merely exists).
+          # Probe leftover gRPC TCP — the published Abbenay image has no `node`
+          # on PATH, so Unix-socket exec probes fail (#734). TCP listen tracks
+          # the same daemon process that owns the Unix socket.
           readinessProbe:
-            exec:
-              command:
-                - node
-                - -e
-                - "const s=require('net').createConnection('/tmp/abbenay-run/abbenay/daemon.sock');s.on('connect',function(){s.end();process.exit(0)}).on('error',function(){process.exit(1)})"
+            tcpSocket:
+              port: abbenay-grpc
             initialDelaySeconds: 5
             periodSeconds: 10
           livenessProbe:
-            exec:
-              command:
-                - node
-                - -e
-                - "const s=require('net').createConnection('/tmp/abbenay-run/abbenay/daemon.sock');s.on('connect',function(){s.end();process.exit(0)}).on('error',function(){process.exit(1)})"
+            tcpSocket:
+              port: abbenay-grpc
             initialDelaySeconds: 15
             periodSeconds: 30
           resources:

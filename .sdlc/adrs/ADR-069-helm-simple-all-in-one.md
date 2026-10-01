@@ -76,7 +76,9 @@ over `127.0.0.1` (ADR-005) except Engine→Abbenay gRPC, which uses a Unix socke
    on a shared `emptyDir` (`APME_ABBENAY_ADDR=unix:///tmp/abbenay-run/abbenay/daemon.sock`)
    because `abbenay-client` ≥ 2026.8.7 rejects consumer tokens on plaintext TCP.
    Abbenay still binds `--grpc-host 127.0.0.1` as leftover TCP (no token);
-   Helm probes connect to the Unix socket.
+   Helm readiness/liveness probes use that TCP port (`abbenay-grpc` / `:50057`)
+   because the published Abbenay image has no `node` binary for Unix-socket
+   exec probes (#734).
 3. **Single replica** — Chart defaults and validation: `replicas: 1`. HPA for
    this Deployment is disabled or rejected. Multi-replica requires a future ADR
   that reintroduces a split (or otherwise solves database + session
@@ -218,3 +220,4 @@ EAP AI remediation.
 | 2026-08-24 | APME Team | Engine→Abbenay gRPC uses a shared Unix socket; leftover TCP `:50057`; Helm probes the socket |
 | 2026-09-16 | APME Team | EAP Simple Helm owns a PostgreSQL sidecar and persistent database PVC; external PostgreSQL is an explicit override |
 | 2026-09-22 | Agent | Status → Implemented — Helm chart enforces Simple all-in-one topology (`replicas: 1`, co-located engine/Gateway/UI/Abbenay) |
+| 2026-10-01 | Agent | Helm Abbenay probes use TCP `:50057` (`abbenay-grpc`); Unix-socket `node` exec probes fail in the published image (#734) |
