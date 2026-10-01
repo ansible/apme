@@ -739,6 +739,10 @@ def _normalize_min_ansible_version(data: CommentedMap) -> None:
 def format_content(text: str, filename: str = "<stdin>") -> FormatResult:
     """Format a YAML string.
 
+    Load and dump failures are best-effort: the original content is returned
+    unchanged (for example empty flow sequences with preceding comments that
+    trip a ruamel.yaml emitter IndexError on dump).
+
     Args:
         text: Raw YAML content.
         filename: Filename for diff output (default: "<stdin>").
@@ -786,11 +790,19 @@ def format_content(text: str, filename: str = "<stdin>") -> FormatResult:
         _reorder_task_keys(data)
         _normalize_min_ansible_version(data)
 
-    formatted = yaml.dumps(data)
-
-    formatted = _fix_jinja_spacing(formatted)
-    formatted = _strip_stray_blanks(formatted)
-    formatted = _add_task_spacing(formatted)
+    try:
+        formatted = yaml.dumps(data)
+        formatted = _fix_jinja_spacing(formatted)
+        formatted = _strip_stray_blanks(formatted)
+        formatted = _add_task_spacing(formatted)
+    except Exception:
+        return FormatResult(
+            path=Path(filename),
+            original=original,
+            formatted=original,
+            changed=False,
+            diff="",
+        )
 
     changed = formatted != original
     diff = ""

@@ -2,6 +2,7 @@
 
 import textwrap
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -370,6 +371,17 @@ class TestEdgeCases:
         result = format_content("---\n")
         assert not result.changed or result.formatted.strip() == "---"
 
+    def test_empty_flow_sequence_with_comment_unchanged(self) -> None:
+        """Empty ``[]`` with a preceding comment must not raise (community.docker).
+
+        ruamel.yaml raises IndexError dumping an empty CommentedSeq that still
+        has comment metadata. format_content must degrade to unchanged content.
+        """
+        text = "---\n# nothing to do\n[]\n"
+        result = format_content(text, filename="nothing.yml")
+        assert not result.changed
+        assert result.formatted == text
+
     def test_already_formatted_no_change(self) -> None:
         """Already-formatted content produces no changes on second pass."""
         text = textwrap.dedent("""\
@@ -703,3 +715,31 @@ class TestQuoteFreeFormArgs:
         r1 = format_content(text)
         r2 = format_content(r1.formatted)
         assert r1.formatted == r2.formatted
+
+
+class TestFormatFilesGuard:
+    """Defense-in-depth: EngineServicer._format_files must not abort on one bad file."""
+
+    def test_skips_file_when_format_content_raises(self) -> None:
+        """An unexpected format_content exception skips that file and continues."""
+        from apme.v1.common_pb2 import File
+        from apme_engine.daemon.engine_server import EngineServicer
+
+        bad = File(path="bad.yml", content=b"---\n# boom\n[]\n")
+        good = File(
+            path="good.yml",
+            content=b"- name: Hello\n  ansible.builtin.debug:\n    msg: hi\n",
+        )
+
+        def _raise_on_bad(text: str, filename: str = "<stdin>") -> FormatResult:
+            if filename == "bad.yml":
+                raise IndexError("list index out of range")
+            return format_content(text, filename=filename)
+
+        with patch("apme_engine.formatter.format_content", side_effect=_raise_on_bad):
+            diffs = EngineServicer._format_files([bad, good])
+
+        assert all(d.path != "bad.yml" for d in diffs)
+        # good.yml may or may not produce a diff depending on formatter rules;
+        # the invariant is that the batch completed without raising.
+        assert isinstance(diffs, list)

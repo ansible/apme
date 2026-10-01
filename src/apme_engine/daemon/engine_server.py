@@ -1262,6 +1262,9 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
     def _format_files(files: list[File]) -> list[FileDiff]:
         """Format YAML files and return diffs for changed ones (sync, CPU-bound).
 
+        Per-file failures are skipped so one unformattable file cannot abort
+        the FixSession format phase.
+
         Args:
             files: File protos to format.
 
@@ -1278,7 +1281,12 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                 text = f.content.decode("utf-8")
             except UnicodeDecodeError:
                 continue
-            result = format_content(text, filename=f.path)
+            try:
+                result = format_content(text, filename=f.path)
+            except Exception:
+                # Defense in depth: one unformattable file must not abort the scan.
+                logger.warning("Skipping format for %s due to unexpected error", f.path, exc_info=True)
+                continue
             if result.changed:
                 diffs.append(
                     FileDiff(
