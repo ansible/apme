@@ -190,7 +190,7 @@ The Gateway stores diagnostics as a JSON string in
 `scans.diagnostics_json`. The `ReportingServicer` serializes the
 `ScanDiagnostics` proto to JSON via `_diagnostics_to_json()`:
 
-```python
+```json
 {
     "engine_parse_ms": 12.3,
     "engine_annotate_ms": 8.1,
@@ -199,7 +199,7 @@ The Gateway stores diagnostics as a JSON string in
     "graph_nodes_built": 156,
     "total_violations": 17,
     "fan_out_ms": 120.0,
-    "total_ms": 165.2,
+    "total_ms": 165.2
 }
 ```
 
