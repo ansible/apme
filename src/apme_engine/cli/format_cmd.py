@@ -54,9 +54,14 @@ def run_format(args: argparse.Namespace) -> None:
     render_logs(resp.logs, verbosity)
 
     diffs = list(resp.diffs)
+    # WARNING+ format-skip diagnostics must not be presented as "already clean."
+    has_format_warnings = any(log.level >= 3 for log in resp.logs)
 
     if not diffs:
-        sys.stderr.write("All files already formatted.\n")
+        if has_format_warnings:
+            sys.stderr.write("No files reformatted; some files were skipped due to format errors.\n")
+        else:
+            sys.stderr.write("All files already formatted.\n")
         return
 
     # --check mode: exit 1 if anything would change

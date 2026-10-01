@@ -375,12 +375,15 @@ class TestEdgeCases:
         """Empty ``[]`` with a preceding comment must not raise (community.docker).
 
         ruamel.yaml raises IndexError dumping an empty CommentedSeq that still
-        has comment metadata. format_content must degrade to unchanged content.
+        has comment metadata. format_content must degrade to unchanged content
+        and set ``error`` so callers do not treat the file as already clean.
         """
         text = "---\n# nothing to do\n[]\n"
         result = format_content(text, filename="nothing.yml")
         assert not result.changed
         assert result.formatted == text
+        assert result.error is not None
+        assert "dump" in result.error.lower()
 
     def test_already_formatted_no_change(self) -> None:
         """Already-formatted content produces no changes on second pass."""
@@ -737,9 +740,22 @@ class TestFormatFilesGuard:
             return format_content(text, filename=filename)
 
         with patch("apme_engine.formatter.format_content", side_effect=_raise_on_bad):
-            diffs = EngineServicer._format_files([bad, good])
+            batch = EngineServicer._format_files([bad, good])
 
-        assert all(d.path != "bad.yml" for d in diffs)
+        assert all(d.path != "bad.yml" for d in batch.diffs)
+        assert any(p == "bad.yml" for p, _ in batch.skipped)
         # good.yml may or may not produce a diff depending on formatter rules;
         # the invariant is that the batch completed without raising.
-        assert isinstance(diffs, list)
+        assert isinstance(batch.diffs, list)
+
+    def test_records_dump_failure_as_skipped(self) -> None:
+        """Dump failures from format_content appear in skipped, not as clean diffs."""
+        from apme.v1.common_pb2 import File
+        from apme_engine.daemon.engine_server import EngineServicer
+
+        bad = File(path="nothing.yml", content=b"---\n# nothing to do\n[]\n")
+        batch = EngineServicer._format_files([bad])
+        assert batch.diffs == []
+        assert len(batch.skipped) == 1
+        assert batch.skipped[0][0] == "nothing.yml"
+        assert "dump" in batch.skipped[0][1].lower()
