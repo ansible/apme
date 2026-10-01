@@ -1296,6 +1296,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             try:
                 text = f.content.decode("utf-8")
             except UnicodeDecodeError:
+                logger.warning("Skipping format for %s: not valid UTF-8", f.path)
                 skipped.append((f.path, "not valid UTF-8"))
                 continue
             try:

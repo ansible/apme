@@ -759,3 +759,19 @@ class TestFormatFilesGuard:
         assert len(batch.skipped) == 1
         assert batch.skipped[0][0] == "nothing.yml"
         assert "dump" in batch.skipped[0][1].lower()
+
+    def test_invalid_utf8_skip_is_logged(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Invalid UTF-8 files are skipped with a WARNING the CLI can surface.
+
+        Args:
+            caplog: Pytest log-capture fixture.
+        """
+        from apme.v1.common_pb2 import File
+        from apme_engine.daemon.engine_server import EngineServicer
+
+        bad = File(path="binary.yml", content=b"\xff\xfe")
+        with caplog.at_level("WARNING", logger="apme.engine"):
+            batch = EngineServicer._format_files([bad])
+        assert batch.diffs == []
+        assert batch.skipped == [("binary.yml", "not valid UTF-8")]
+        assert any("Skipping format for binary.yml" in r.message for r in caplog.records)
