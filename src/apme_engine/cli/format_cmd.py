@@ -61,15 +61,22 @@ def run_format(args: argparse.Namespace) -> None:
     if not diffs:
         if has_format_skips:
             sys.stderr.write("No files reformatted; some files were skipped due to format errors.\n")
+            # --check must fail: skipped files were never verified as formatted.
+            if args.check:
+                sys.exit(EXIT_ERROR)
         else:
             sys.stderr.write("All files already formatted.\n")
         return
 
-    # --check mode: exit 1 if anything would change
+    # --check mode: exit 1 if anything would change; escalate to 2 if skips
+    # occurred so CI does not treat an incomplete check as a clean failure.
     if args.check:
         for d in diffs:
             sys.stderr.write(f"Would reformat: {d.path}\n")
         sys.stderr.write(f"\n{len(diffs)} file(s) would be reformatted.\n")
+        if has_format_skips:
+            sys.stderr.write("Some files were skipped due to format errors.\n")
+            sys.exit(EXIT_ERROR)
         sys.exit(EXIT_VIOLATIONS)
 
     if args.apply:
