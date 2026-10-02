@@ -94,6 +94,7 @@ class OperatorAnswerQueue(Generic[_T]):  # noqa: UP046 -- mypy requires Generic 
             else:
                 retained.append(item)
         for item in retained:
+            self._items.task_done()
             self._items.put_nowait(item)
         return drained
 
@@ -135,6 +136,9 @@ class OperatorAnswerQueue(Generic[_T]):  # noqa: UP046 -- mypy requires Generic 
         """
         prompt_generation = expected_generation if expected_generation is not None else self._generation
         deadline = time.monotonic() + timeout_s
+        # Newer-generation answers are stashed locally and requeued once on
+        # exit so the wait blocks instead of busy-spinning on a requeued head.
+        stashed: list[tuple[int, _T]] = []
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -145,15 +149,18 @@ class OperatorAnswerQueue(Generic[_T]):  # noqa: UP046 -- mypy requires Generic 
                 break
             if generation == prompt_generation:
                 self._items.task_done()
+                for item in stashed:
+                    self._items.put_nowait(item)
                 return value
             if generation < prompt_generation:
                 self._items.task_done()
                 continue
             # Newer-generation answer: preserve for the next wait (see drain_through).
             self._items.task_done()
-            self._items.put_nowait((generation, value))
-            await asyncio.sleep(0)
+            stashed.append((generation, value))
 
+        for item in stashed:
+            self._items.put_nowait(item)
         logger.warning(
             "%s timed out after %ss; %s",
             wait_name,

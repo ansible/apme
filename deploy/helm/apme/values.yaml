@@ -33,6 +33,14 @@ engine:
   galaxyProxy:
     # -- Galaxy Proxy log level: DEBUG, INFO, WARNING, ERROR, or CRITICAL.
     logLevel: INFO
+    # -- Shared admin token for Gateway -> proxy /admin/* config pushes (ADR-048).
+    # When empty (default) the proxy stays fail-closed: Gateway pushes get
+    # 403 and Gateway health reports the proxy degraded. Set the same token
+    # on both sides via adminToken or an existingSecret reference.
+    adminToken: ""
+    existingSecret:
+      name: ""
+      key: proxy-admin-token
   # Recreate avoids RWO PVC conflicts during single-replica rolling updates.
   strategy:
     type: Recreate

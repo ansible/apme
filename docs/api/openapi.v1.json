@@ -643,7 +643,7 @@
         "type": "object"
       },
       "CreateGalaxyServerRequest": {
-        "description": "Request body for creating a Galaxy server.\n\nAttributes:\n    name: Short label.\n    url: Base API URL.\n    token: API token (optional, empty for public Galaxy).\n    auth_url: SSO/Keycloak token endpoint (optional).",
+        "description": "Request body for creating a Galaxy server.\n\nAttributes:\n    name: Short label.\n    url: Base API URL (``https://`` only \u2014 mirrors the proxy's 422 gate).\n    token: API token (optional, empty for public Galaxy).\n    auth_url: SSO/Keycloak token endpoint (optional).",
         "properties": {
           "auth_url": {
             "default": "",
@@ -2461,7 +2461,7 @@
         "type": "object"
       },
       "UpdateGalaxyServerRequest": {
-        "description": "Partial update for Galaxy server fields.\n\nAttributes:\n    name: New display label.\n    url: New base API URL.\n    token: New API token (omit or None to leave unchanged).\n    auth_url: New SSO endpoint.",
+        "description": "Partial update for Galaxy server fields.\n\nAttributes:\n    name: New display label.\n    url: New base API URL (``https://`` only when provided).\n    token: New API token (omit or None to leave unchanged).\n    auth_url: New SSO endpoint.",
         "properties": {
           "auth_url": {
             "anyOf": [

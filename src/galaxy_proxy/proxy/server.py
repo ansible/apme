@@ -14,6 +14,7 @@ import ipaddress
 import logging
 import os
 import re
+import socket
 import tempfile
 import time
 from contextlib import asynccontextmanager
@@ -196,7 +197,19 @@ def _validate_galaxy_server_url(raw_url: str) -> None:
     try:
         ip = ipaddress.ip_address(host)
     except ValueError:
-        return  # Hostname: cannot judge without DNS; allowed.
+        # Encoded literal IPs (all-decimal integers like 2130706433,
+        # hex/octal dotted quads) raise ValueError here yet the OS
+        # resolver still maps them to loopback/link-local addresses —
+        # reject anything inet_aton accepts so such URLs cannot bypass
+        # the block below and later receive stored Galaxy tokens.
+        try:
+            socket.inet_aton(host)
+        except OSError:
+            return  # Hostname: cannot judge without DNS; allowed.
+        raise HTTPException(
+            status_code=422,
+            detail=f"Galaxy server URL must not target a local/link-local address: {raw_url!r}",
+        ) from None
     if ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_unspecified or ip.is_reserved:
         raise HTTPException(
             status_code=422,

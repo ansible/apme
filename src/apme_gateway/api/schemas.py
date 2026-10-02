@@ -884,12 +884,37 @@ class GalaxyServerSchema(BaseModel):  # type: ignore[misc]
     updated_at: str
 
 
+def _require_https_galaxy_url(url: str) -> str:
+    """Reject Galaxy server URLs the proxy would refuse with 422.
+
+    Mirrors the proxy's scheme/host gate so one bad row is rejected at
+    the row that caused it instead of failing the entire pushed server
+    list at sync time. Existing ``http://`` rows should be updated to
+    ``https://`` or deleted; they can no longer be created.
+
+    Args:
+        url: Galaxy server base API URL.
+
+    Returns:
+        The unchanged URL.
+
+    Raises:
+        ValueError: If the URL is not ``https://`` with a host.
+    """
+    from urllib.parse import urlsplit
+
+    parsed = urlsplit((url or "").strip())
+    if parsed.scheme != "https" or not parsed.hostname:
+        raise ValueError(f"Galaxy server URL must use https with a host: {url!r}")
+    return url
+
+
 class CreateGalaxyServerRequest(BaseModel):  # type: ignore[misc]
     """Request body for creating a Galaxy server.
 
     Attributes:
         name: Short label.
-        url: Base API URL.
+        url: Base API URL (``https://`` only — mirrors the proxy's 422 gate).
         token: API token (optional, empty for public Galaxy).
         auth_url: SSO/Keycloak token endpoint (optional).
     """
@@ -899,13 +924,26 @@ class CreateGalaxyServerRequest(BaseModel):  # type: ignore[misc]
     token: str = ""
     auth_url: str = ""
 
+    @field_validator("url")  # type: ignore[untyped-decorator]
+    @classmethod
+    def _validate_url(cls, url: str) -> str:
+        """Reject non-HTTPS Galaxy server URLs before storing.
+
+        Args:
+            url: Galaxy server base API URL.
+
+        Returns:
+            The unchanged URL.
+        """
+        return _require_https_galaxy_url(url)
+
 
 class UpdateGalaxyServerRequest(BaseModel):  # type: ignore[misc]
     """Partial update for Galaxy server fields.
 
     Attributes:
         name: New display label.
-        url: New base API URL.
+        url: New base API URL (``https://`` only when provided).
         token: New API token (omit or None to leave unchanged).
         auth_url: New SSO endpoint.
     """
@@ -914,6 +952,21 @@ class UpdateGalaxyServerRequest(BaseModel):  # type: ignore[misc]
     url: str | None = None
     token: str | None = None
     auth_url: str | None = None
+
+    @field_validator("url")  # type: ignore[untyped-decorator]
+    @classmethod
+    def _validate_url(cls, url: str | None) -> str | None:
+        """Reject non-HTTPS Galaxy server URLs before storing.
+
+        Args:
+            url: New base API URL, or None to leave unchanged.
+
+        Returns:
+            The unchanged URL.
+        """
+        if url is None:
+            return None
+        return _require_https_galaxy_url(url)
 
 
 class DashboardSummary(BaseModel):  # type: ignore[misc]

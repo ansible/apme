@@ -1468,6 +1468,39 @@ async def _drive_operation(
 
             bridge_task = asyncio.create_task(_approval_bridge())
 
+        def _on_begin_timeout() -> None:
+            """Mirror POST /begin-remediate when the begin wait auto-begins.
+
+            Idempotent: when the bridge already applied the transition,
+            the future is done/cleared and this is a no-op. A late
+            Begin during the assess window returns idempotent success
+            (same as a duplicate click); once proposals arrive the
+            status check returns 409.
+            """
+            state = registry.get(operation_id)
+            if state is None or state.status != OperationStatus.ASSESSED:
+                return
+            fut = state.begin_remediate_future
+            if fut is not None and not fut.done():
+                state.scan_type = "remediate"
+                fut.set_result(None)
+
+        def _on_escalate_timeout() -> None:
+            """Retire the escalate future on allow-all timeout fallback.
+
+            Wakes the bridge (stale item is generation-tagged, so a
+            later prompt ignores it) and clears the future so a late
+            POST /escalate-ai gets 409 session_expired instead of being
+            accepted and silently dropped.
+            """
+            state = registry.get(operation_id)
+            if state is None:
+                return
+            fut = state.escalate_ai_future
+            if fut is not None and not fut.done():
+                fut.set_result([])
+            state.escalate_ai_future = None
+
         _, result, clone_commit = await run_project_operation(
             project_id=project_id,
             repo_url=repo_url,
@@ -1484,6 +1517,8 @@ async def _drive_operation(
             approval_queue=approval_queue,
             begin_remediate_queue=begin_remediate_queue,
             escalate_ai_queue=escalate_ai_queue,
+            on_begin_timeout=_on_begin_timeout,
+            on_escalate_timeout=_on_escalate_timeout,
             scan_id=scan_id,
             galaxy_servers=galaxy_servers or None,
             scm_token=scm_token,

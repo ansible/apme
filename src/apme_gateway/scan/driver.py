@@ -708,6 +708,8 @@ async def run_project_operation(
     approval_queue: OperatorAnswerQueue[list[str]] | None = None,
     begin_remediate_queue: OperatorAnswerQueue[None] | None = None,
     escalate_ai_queue: OperatorAnswerQueue[list[dict[str, object]]] | None = None,
+    on_begin_timeout: Callable[[], None] | None = None,
+    on_escalate_timeout: Callable[[], None] | None = None,
     scan_id: str | None = None,
     galaxy_servers: list[GalaxyServerDef] | None = None,
     scm_token: str | None = None,
@@ -745,6 +747,18 @@ async def run_project_operation(
         escalate_ai_queue: Queue of ``{path, rule_ids}`` target dicts to leave
             AI escalation triage. If omitted when ``AiTriageReady`` arrives,
             all candidate paths are escalated (allow-all).
+        on_begin_timeout: Optional callback invoked when the begin wait
+            times out and the driver auto-begins. The caller applies the
+            same registry transition as ``POST /begin-remediate``
+            (``scan_type`` → remediate, retire the pending future) so the
+            run is reported truthfully and a late Begin cannot pair a new
+            proposal list with an old gate. Invoking it is idempotent —
+            when the wait was satisfied by the bridge instead, the
+            transition is already applied and the callback is a no-op.
+        on_escalate_timeout: Optional callback invoked when the AI-escalate
+            wait times out and the driver falls back to allow-all. The
+            caller retires the pending escalate future so a late
+            ``POST /escalate-ai`` is rejected instead of silently dropped.
         scan_id: Optional pre-generated scan ID; one is created if omitted.
         galaxy_servers: Global Galaxy server defs to inject into scan metadata (ADR-045).
         scm_token: Optional SCM token for private repository access.
@@ -845,12 +859,22 @@ async def run_project_operation(
                             "APME_OP_BEGIN_TIMEOUT_S", _OP_BEGIN_TIMEOUT_DEFAULT_S, positive_only=True
                         )
                         # Timeout (None) mirrors the no-queue default: auto-begin.
+                        # The signal carries no payload — a bridge-forwarded
+                        # begin is None too — so invoke the timeout callback
+                        # unconditionally. It is idempotent: a no-op when
+                        # POST /begin-remediate already applied the registry
+                        # transition.
                         await begin_remediate_queue.next_answer(
                             begin_timeout,
                             "BeginRemediate operator wait",
                             "auto-beginning",
                             expected_generation=begin_generation,
                         )
+                        if on_begin_timeout is not None:
+                            try:
+                                on_begin_timeout()
+                            except Exception:
+                                logger.exception("on_begin_timeout callback failed")
                     await command_queue.put(
                         engine_pb2.SessionCommand(begin_remediate=engine_pb2.BeginRemediateRequest())
                     )
@@ -869,6 +893,11 @@ async def run_project_operation(
                         )
                         if target_dicts is None:
                             escalate_timed_out = True
+                            if on_escalate_timeout is not None:
+                                try:
+                                    on_escalate_timeout()
+                                except Exception:
+                                    logger.exception("on_escalate_timeout callback failed")
                     if target_dicts is None:
                         # No queue (or timed out) — escalate every candidate path (allow-all).
                         paths = sorted({c.path for c in event.ai_triage.candidates if c.path})

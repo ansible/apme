@@ -1061,25 +1061,30 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         # slot when a cold build or incremental install is actually needed
         # (acquire re-checks under the same file lock, so the peek cannot
         # race a concurrent build into an inconsistent venv).
-        async with self._activate_galaxy_proxy_config(galaxy_cfg_path):
-            venv_session = await asyncio.get_event_loop().run_in_executor(
-                None,
-                ctx.run,
-                self._get_venv_manager().peek_warm,
-                sid,
-                core_version,
-                collection_specs,
-            )
-            if venv_session is None:
-                async with limit_venv_builds():
-                    venv_session = await asyncio.get_event_loop().run_in_executor(
-                        None,
-                        ctx.run,
-                        self._get_venv_manager().acquire,
-                        sid,
-                        core_version,
-                        collection_specs,
-                    )
+        # peek_warm installs nothing, so it runs outside the Galaxy config
+        # override; the build slot is acquired before activating the config
+        # so a session never waits up to _VENV_BUILD_WAIT_S while holding
+        # the process-wide Galaxy lock and ANSIBLE_CONFIG override (which
+        # would leak its credentials to lock-free sessions via the
+        # in-process proxy and block all other Galaxy-config sessions).
+        venv_session = await asyncio.get_event_loop().run_in_executor(
+            None,
+            ctx.run,
+            self._get_venv_manager().peek_warm,
+            sid,
+            core_version,
+            collection_specs,
+        )
+        if venv_session is None:
+            async with limit_venv_builds(), self._activate_galaxy_proxy_config(galaxy_cfg_path):
+                venv_session = await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    ctx.run,
+                    self._get_venv_manager().acquire,
+                    sid,
+                    core_version,
+                    collection_specs,
+                )
         venv_path = str(venv_session.venv_root)
         if venv_session.failed_collections:
             logger.warning(
@@ -1388,10 +1393,25 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                 opts = chunk.options
             if chunk.HasField("fix_options"):
                 fix_opts = chunk.fix_options
+            # One chunk may repeat a path (e.g. `a.yml` + `./a.yml` normalize
+            # alike): last copy wins, accounted once — the same normalize
+            # +last-wins dedup as FixSession `_session_upload_append`, so one
+            # payload is accepted-or-rejected identically on every ingress.
+            staged: dict[str, File] = {}
             for f in chunk.files:
-                normalized = File(path=engine_upload._normalize_upload_path(f.path), content=f.content)  # type: ignore[attr-defined]
-                all_files.append(normalized)
-                total_bytes += len(normalized.content)
+                normalized_path = engine_upload._normalize_upload_path(f.path)  # type: ignore[attr-defined]
+                staged[normalized_path] = File(path=normalized_path, content=f.content)  # type: ignore[attr-defined]
+            for normalized in staged.values():
+                existing = next(
+                    (i for i, ef in enumerate(all_files) if ef.path == normalized.path),
+                    None,
+                )
+                if existing is None:
+                    all_files.append(normalized)
+                    total_bytes += len(normalized.content)
+                else:
+                    total_bytes += len(normalized.content) - len(all_files[existing].content)
+                    all_files[existing] = normalized
                 if len(all_files) > max_files:
                     raise ValueError(f"Upload file limit exceeded: {len(all_files)} files (max {max_files})")
                 if total_bytes > max_bytes:
