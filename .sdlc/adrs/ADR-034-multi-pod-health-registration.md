@@ -15,8 +15,8 @@ The current `/api/v1/health` endpoint (PR #69) probes a **hardcoded list** of up
 ```python
 _UPSTREAM_SERVICES: list[tuple[str, str, str]] = [
     ("Engine Orchestrator", "APME_ENGINE_ADDRESS", "127.0.0.1:50051"),
-    ("Native Validator",     "NATIVE_GRPC_ADDRESS",  "127.0.0.1:50055"),
-    ...
+    ("Native Validator", "NATIVE_GRPC_ADDRESS", "127.0.0.1:50055"),
+    ...,
 ]
 ```
 

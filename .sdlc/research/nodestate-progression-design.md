@@ -153,17 +153,17 @@ rebuild + venv + validator fan-out) to O(graph rules on dirty nodes).
 @dataclass(frozen=True)
 class NodeState:
     pass_number: int
-    phase: str        # "original", "scanned", "transformed"
-    yaml_lines: str   # raw YAML text at this point
-    content_hash: str # sha256 of yaml_lines
+    phase: str  # "original", "scanned", "transformed"
+    yaml_lines: str  # raw YAML text at this point
+    content_hash: str  # sha256 of yaml_lines
     violations: tuple[str, ...]  # rule IDs active at this state
-    timestamp: str    # ISO 8601
+    timestamp: str  # ISO 8601
 ```
 
 Each `ContentNode` gains:
 
 ```python
-state: NodeState | None = None            # current state
+state: NodeState | None = None  # current state
 progression: list[NodeState] = field(...)  # full history
 ```
 

@@ -95,22 +95,27 @@ from __future__ import annotations
 from typing import Protocol
 from dataclasses import dataclass, field
 
+
 @dataclass
 class AISkipped:
     """A violation the AI could not fix, with an explanation."""
+
     rule_id: str
     line: int
     reason: str
     suggestion: str
 
+
 @dataclass
 class AINodeFix:
     """AI-generated fix for a single graph node."""
+
     fixed_snippet: str
     rule_ids: list[str] = field(default_factory=list)
     explanation: str = ""
     confidence: float = 0.85
     skipped: list[AISkipped] = field(default_factory=list)
+
 
 class AIProvider(Protocol):
     async def propose_node_fix(

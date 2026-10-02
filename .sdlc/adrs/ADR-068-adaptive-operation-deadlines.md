@@ -459,6 +459,7 @@ operation_deadline = min(
     session.max_lifetime_deadline_mono,
 )
 
+
 async def _fail_remediate(code: str):
     """Cancel, await cleanup, then emit terminal error."""
     remediate_task.cancel()
@@ -469,6 +470,7 @@ async def _fail_remediate(code: str):
     except Exception:
         logger.exception("remediate_task cleanup failed after %s", code)
     yield error_event(code)
+
 
 while not remediate_task.done():
     now = monotonic()
@@ -487,12 +489,12 @@ while not remediate_task.done():
     if update is None:
         continue
     session.touch()  # idle TTL refresh (heartbeats included)
-    if (
-        update.operation_generation == session.operation_generation
-        and is_task_linked_progress(update, session.operation_generation)
+    if update.operation_generation == session.operation_generation and is_task_linked_progress(
+        update, session.operation_generation
     ):
         session.last_progress_at = monotonic()
     yield SessionEvent(progress=update)
+
 
 # Phase anchor (called at _session_process start and AI gate entry):
 def begin_operation_phase(session: SessionState, budget_s: int) -> None:
