@@ -62,13 +62,15 @@
     "type-fest": "^5.7.0",
     "typescript": "^7.0.2",
     "vite": "^8.2.0",
-    "vitest": "^4.1.10",
+    "vitest": "4.1.11",
     "zustand": "^5.0.15"
   },
   "overrides": {
     "undici": "8.10.0",
     "@babel/core": ">=7.29.6",
-    "postcss": "8.5.23"
+    "postcss": "8.5.23",
+    "vitest": "4.1.11",
+    "@vitest/mocker": "4.1.11"
   },
   "workspaces": [
     "packages/*"
