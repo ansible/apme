@@ -327,7 +327,7 @@ On Kubernetes/OpenShift the chart deploys **one** Deployment (Simple / all-in-on
 
 Key K8s behavior:
 - **Single replica**: Chart validation rejects `replicas > 1` / HPA for this topology
-- **Localhost**: Engine/Gateway → Abbenay Unix socket (`unix:///tmp/abbenay-run/abbenay/daemon.sock`; required when a consumer token is set); reporting → `127.0.0.1:50060`. Abbenay still binds gRPC on `127.0.0.1:50057` as leftover TCP (no TLS for the chart path). Helm probes connect to the Unix socket.
+- **Localhost**: Engine/Gateway → Abbenay Unix socket (`unix:///tmp/abbenay-run/abbenay/daemon.sock`; required when a consumer token is set); reporting → `127.0.0.1:50060`. Abbenay still binds gRPC on `127.0.0.1:50057` as leftover TCP (no TLS for the chart path). Helm readiness/liveness probes use in-container `/opt/abbenay/abbenay status` — kubelet `tcpSocket` cannot reach loopback-only listeners, and the published image has no `node` (#734).
 - **PodDisruptionBudget**: Protects the Simple Deployment during node drains
 - **NetworkPolicy**: Optional default-deny with allow rules for Ingress → Gateway/UI
 
