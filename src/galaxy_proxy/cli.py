@@ -116,6 +116,18 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--pypi-url", default="https://pypi.org", help="Upstream PyPI URL for passthrough.")
     parser.add_argument("--cache-dir", type=Path, default=None, help="Wheel cache directory.")
     parser.add_argument("--metadata-ttl", type=int, default=600, help="Metadata cache TTL in seconds.")
+    parser.add_argument(
+        "--download-timeout",
+        type=float,
+        default=float(os.environ.get("GALAXY_PROXY_DOWNLOAD_TIMEOUT", "900")),
+        help=(
+            "Seconds to wait for a single 'ansible-galaxy collection download' "
+            "subprocess before giving up (env: GALAXY_PROXY_DOWNLOAD_TIMEOUT, "
+            "default: 900). A single collection against a slow/remote Galaxy "
+            "server can legitimately take 1-2 minutes; raise this if servers "
+            "must be tried in sequence or upstream latency is high."
+        ),
+    )
     parser.add_argument("--no-passthrough", action="store_true", help="Disable PyPI passthrough.")
     parser.add_argument("-v", "--verbose", action="count", default=0, help="Increase logging verbosity.")
 
@@ -149,6 +161,7 @@ def main(argv: list[str] | None = None) -> None:
         ansible_cfg_path=args.ansible_cfg,
         galaxy_servers=parsed_servers,
         ansible_galaxy_bin=args.ansible_galaxy_bin,
+        download_timeout=args.download_timeout,
     )
 
     from apme_engine.observability import setup_otel, shutdown_otel
@@ -169,6 +182,7 @@ def main(argv: list[str] | None = None) -> None:
         sys.stderr.write("Galaxy auth: ansible-galaxy default config discovery\n")
     sys.stderr.write(f"PyPI passthrough: {'disabled' if args.no_passthrough else args.pypi_url}\n")
     sys.stderr.write(f"Cache: {args.cache_dir or '~/.cache/ansible-collection-proxy'}\n")
+    sys.stderr.write(f"Download timeout: {args.download_timeout:.0f}s\n")
     sys.stderr.flush()
 
     try:
