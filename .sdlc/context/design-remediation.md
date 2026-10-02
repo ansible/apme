@@ -176,9 +176,9 @@ Each rule across all validators declares tier-awareness in its metadata:
 @dataclass
 class RuleMetadata:
     rule_id: str
-    level: str              # "error", "warning", "info"
-    fixable: bool           # True if a Tier 1 deterministic transform exists
-    ai_proposable: bool     # True if the rule is a good candidate for AI fix
+    level: str  # "error", "warning", "info"
+    fixable: bool  # True if a Tier 1 deterministic transform exists
+    ai_proposable: bool  # True if the rule is a good candidate for AI fix
     description: str
 ```
 
@@ -286,14 +286,14 @@ Violations are grouped by graph node and packaged with graph-derived context for
 ```python
 @dataclass(frozen=True, slots=True)
 class AINodeContext:
-    node_id: str                     # graph node identifier
-    node_type: str                   # task, block, handler, etc.
-    yaml_lines: str                  # current YAML text for this node
+    node_id: str  # graph node identifier
+    node_type: str  # task, block, handler, etc.
+    yaml_lines: str  # current YAML text for this node
     violations: list[ViolationDict]  # all violations on this node
-    file_path: str                   # source file (display only)
-    parent_context: str              # summarized ancestor chain (play vars, become, tags)
-    sibling_snippets: list[str]      # YAML of surrounding siblings for awareness
-    feedback: str                    # validation feedback from prior failed AI attempt
+    file_path: str  # source file (display only)
+    parent_context: str  # summarized ancestor chain (play vars, become, tags)
+    sibling_snippets: list[str]  # YAML of surrounding siblings for awareness
+    feedback: str  # validation feedback from prior failed AI attempt
 ```
 
 This is node-scoped, not file-scoped — the AI fixes one graph node at a time with rich structural context from the `ContentGraph`.
@@ -317,11 +317,11 @@ The AI must respond with structured JSON: `fixed_snippet` (complete corrected YA
 ```python
 @dataclass
 class AINodeFix:
-    fixed_snippet: str          # corrected YAML text for the node
-    rule_ids: list[str]         # rule IDs addressed by this fix
-    explanation: str            # human-readable summary of changes
-    confidence: float           # 0.0-1.0 (default 0.85)
-    skipped: list[AISkipped]    # violations the AI could not fix
+    fixed_snippet: str  # corrected YAML text for the node
+    rule_ids: list[str]  # rule IDs addressed by this fix
+    explanation: str  # human-readable summary of changes
+    confidence: float  # 0.0-1.0 (default 0.85)
+    skipped: list[AISkipped]  # violations the AI could not fix
 ```
 
 The `AIProvider` protocol's sole entry point is `propose_node_fix(context: AINodeContext) -> AINodeFix | None`. Returns `None` when the AI cannot produce a fix.
@@ -398,33 +398,35 @@ An oscillation occurs when a fix introduces a new violation that triggers anothe
 ```python
 @dataclass
 class GraphFixReport:
-    passes: int                                # convergence passes executed
-    fixed: int                                 # violations resolved
-    applied_patches: list[FilePatch]           # populated by splice_modifications()
+    passes: int  # convergence passes executed
+    fixed: int  # violations resolved
+    applied_patches: list[FilePatch]  # populated by splice_modifications()
     remaining_violations: list[ViolationDict]  # open + ai_abstained
-    fixed_violations: list[ViolationDict]      # resolved during convergence
+    fixed_violations: list[ViolationDict]  # resolved during convergence
     ai_abstained_violations: list[ViolationDict]  # AI attempted but failed
-    oscillation_detected: bool                 # True if loop bailed
-    nodes_modified: int                        # ContentNodes mutated
-    ai_proposals: list[AINodeProposal]         # pending human approval
+    oscillation_detected: bool  # True if loop bailed
+    nodes_modified: int  # ContentNodes mutated
+    ai_proposals: list[AINodeProposal]  # pending human approval
+
 
 @dataclass
 class FilePatch:
-    path: str           # file that was patched
-    original: str       # original content
-    patched: str        # content after transforms
-    diff: str           # unified diff
-    rule_ids: list[str] # applied rule IDs
+    path: str  # file that was patched
+    original: str  # original content
+    patched: str  # content after transforms
+    diff: str  # unified diff
+    rule_ids: list[str]  # applied rule IDs
+
 
 @dataclass
 class AINodeProposal:
-    node_id: str        # graph node modified by AI
-    file_path: str      # source file (for display)
-    before_yaml: str    # YAML before AI transform
-    after_yaml: str     # YAML after AI transform
-    rule_ids: list[str] # addressed rule IDs
-    explanation: str    # human-readable summary
-    confidence: float   # AI confidence score
+    node_id: str  # graph node modified by AI
+    file_path: str  # source file (for display)
+    before_yaml: str  # YAML before AI transform
+    after_yaml: str  # YAML after AI transform
+    rule_ids: list[str]  # addressed rule IDs
+    explanation: str  # human-readable summary
+    confidence: float  # AI confidence score
 ```
 
 ---

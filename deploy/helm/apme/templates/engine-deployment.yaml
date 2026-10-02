@@ -662,22 +662,22 @@ spec:
             - name: abbenay-grpc
               containerPort: 50057
               protocol: TCP
-          # Engine/Gateway AI uses the Unix socket; TCP :50057 is leftover.
-          # Ready when the socket accepts connections (not merely exists).
+          # Engine/Gateway AI uses the Unix socket; TCP :50057 is leftover
+          # loopback-only. Kubelet tcpSocket/httpGet hit the pod IP and cannot
+          # reach 127.0.0.1 binds. The published image has no `node` on PATH
+          # (#734); use the SEA binary's status check (Unix socket) instead.
           readinessProbe:
             exec:
               command:
-                - node
-                - -e
-                - "const s=require('net').createConnection('/tmp/abbenay-run/abbenay/daemon.sock');s.on('connect',function(){s.end();process.exit(0)}).on('error',function(){process.exit(1)})"
+                - /opt/abbenay/abbenay
+                - status
             initialDelaySeconds: 5
             periodSeconds: 10
           livenessProbe:
             exec:
               command:
-                - node
-                - -e
-                - "const s=require('net').createConnection('/tmp/abbenay-run/abbenay/daemon.sock');s.on('connect',function(){s.end();process.exit(0)}).on('error',function(){process.exit(1)})"
+                - /opt/abbenay/abbenay
+                - status
             initialDelaySeconds: 15
             periodSeconds: 30
           resources:
