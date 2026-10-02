@@ -10,7 +10,23 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+from galaxy_proxy.proxy import server as proxy_server
 from galaxy_proxy.proxy.server import _safe_server_label, create_app
+
+
+@pytest.fixture(autouse=True)  # type: ignore[untyped-decorator]
+def _open_admin_for_functional_tests(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Opt out of fail-closed admin auth for functional (non-auth) tests.
+
+    These tests exercise admin-endpoint behavior, not its auth gate (covered
+    in test_review_fixes_proxy_auth.py), so they run with the explicit
+    single-host opt-out enabled.
+
+    Args:
+        monkeypatch: Pytest fixture for modifying environment.
+    """
+    monkeypatch.delenv(proxy_server._ADMIN_TOKEN_ENV, raising=False)
+    monkeypatch.setenv(proxy_server._ALLOW_UNAUTH_ADMIN_ENV, "1")
 
 
 @pytest.mark.parametrize(  # type: ignore[untyped-decorator]

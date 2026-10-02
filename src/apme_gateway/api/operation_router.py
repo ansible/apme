@@ -14,7 +14,7 @@ import logging
 import time
 import uuid
 from collections.abc import AsyncIterator, Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -37,9 +37,49 @@ from apme_gateway.operation_types import (
     is_terminal,
 )
 
+if TYPE_CHECKING:
+    from apme_gateway.scan.operator_queue import OperatorAnswerQueue
+
 logger = logging.getLogger(__name__)
 
 operation_router = APIRouter(prefix="/api/v1/projects/{project_id}/operation")
+
+
+async def _forward_approval_gate_result(
+    op: OperationState,
+    approval_queue: OperatorAnswerQueue[list[str]] | None,
+) -> bool:
+    """Forward one resolved approval gate to the driver queue (bridge step).
+
+    Single-step form of the ``_approval_bridge`` approve arm, extracted so
+    tests drive the production path instead of reimplementing it: waits for
+    the operation's current gate future, enqueues the approved ids tagged
+    with the gate's prompt generation, and clears the gate when it has not
+    been superseded meanwhile.
+
+    Args:
+        op: Registry operation state holding the approval gate.
+        approval_queue: Driver answer queue, if the run uses operator approval.
+
+    Returns:
+        True when a gate was forwarded; False when there was no gate.
+
+    Raises:
+        asyncio.CancelledError: Propagates bridge-task cancellation (the
+            caller breaks its loop, as before).
+    """  # noqa: DOC502 -- CancelledError propagates from `await gate.future`
+    gate = op.approval_gate
+    if gate is None:
+        return False
+    ids = await gate.future
+    if approval_queue is not None:
+        await approval_queue.put(
+            ids,
+            for_generation=gate.prompt_generation,
+        )
+    if op.approval_gate is gate:
+        op.approval_gate = None
+    return True
 
 
 # ── Request / Response schemas ────────────────────────────────────────
@@ -75,9 +115,11 @@ class ApproveRequest(BaseModel):  # type: ignore[misc]
 
     Attributes:
         approved_ids: List of proposal IDs the user accepted.
+        approval_gate_id: Gate identifier from the proposals snapshot/SSE event.
     """
 
     approved_ids: list[str] = Field(default_factory=list)
+    approval_gate_id: str | None = None
 
 
 class DraftProposalUpdate(BaseModel):  # type: ignore[misc]
@@ -253,7 +295,7 @@ async def approve_proposals(project_id: str, body: ApproveRequest) -> dict[str, 
 
     Gate-commits Gateway working-set rows (omit = decline) and rolls
     analytics when claimable, then resolves the operation's
-    ``approval_future`` so the background gRPC task can send the approval
+    ``approval_gate`` so the background gRPC task can send the approval
     to Engine. ``review_status`` is stamped when violation ids are already
     linked; otherwise FixCompleted stamps after the id bridge. Request /
     response shape is unchanged (ADR-060).
@@ -277,40 +319,57 @@ async def approve_proposals(project_id: str, body: ApproveRequest) -> dict[str, 
             status_code=409,
             detail=f"Operation is in '{state.status.value}', not 'awaiting_approval'",
         )
-    if state.approval_future is None or state.approval_future.done():
+    gate = state.approval_gate
+    if gate is None or gate.future.done():
         raise HTTPException(status_code=409, detail="Approval already submitted")
 
-    # Gate commit: mirror omit=reject + analytics before waking Engine.
-    # review_status often waits until FixCompleted (stubs lack violation_ids).
-    # Scope to this round's offered ids so a later gate does not rewrite prior
-    # decisions on the same scan.
-    from apme_gateway.proposals.draft import commit_gate_decisions  # noqa: PLC0415
+    async with state.approval_gate_lock:
+        if gate.future.done():
+            raise HTTPException(status_code=409, detail="Approval already submitted")
+        if state.approval_gate is not gate:
+            raise HTTPException(
+                status_code=409,
+                detail="Approval superseded by newer proposals",
+            )
+        if body.approval_gate_id is not None and body.approval_gate_id != gate.gate_id:
+            raise HTTPException(
+                status_code=409,
+                detail="Approval superseded by newer proposals",
+            )
 
-    offered = [p.id for p in (state.proposals or [])]
-    offered_set = set(offered)
-    approved_set = {str(i) for i in body.approved_ids}
-    unknown = sorted(approved_set - offered_set)
-    # ADR-060: do not harden /approve into a 400 for unknown ids — prior
-    # behavior ignored extras. Log and proceed with the offered intersection.
-    if unknown:
-        logger.warning(
-            "Ignoring %s unknown approve id(s) for project %s (not in offered set)",
-            len(unknown),
-            project_id[:12],
-        )
-    # Preserve offered order; only ids that were actually presented this round.
-    approved = [pid for pid in offered if pid in approved_set]
-    async with get_session() as db:
-        await commit_gate_decisions(
-            db,
-            scan_id=state.scan_id,
-            project_id=project_id,
-            approved_engine_ids=approved,
-            offered_engine_ids=offered,
-        )
-        await db.commit()
+        # Gate commit: mirror omit=reject + analytics before waking Engine.
+        # review_status often waits until FixCompleted (stubs lack violation_ids).
+        # Scope to this round's offered ids so a later gate does not rewrite prior
+        # decisions on the same scan.
+        from apme_gateway.proposals.draft import commit_gate_decisions  # noqa: PLC0415
 
-    state.approval_future.set_result(approved)
+        offered = [p.id for p in (state.proposals or [])]
+        offered_set = set(offered)
+        approved_set = {str(i) for i in body.approved_ids}
+        unknown = sorted(approved_set - offered_set)
+        # ADR-060: do not harden /approve into a 400 for unknown ids — prior
+        # behavior ignored extras. Log and proceed with the offered intersection.
+        if unknown:
+            logger.warning(
+                "Ignoring %s unknown approve id(s) for project %s (not in offered set)",
+                len(unknown),
+                project_id[:12],
+            )
+        # Preserve offered order; only ids that were actually presented this round.
+        approved = [pid for pid in offered if pid in approved_set]
+
+        async with get_session() as db:
+            await commit_gate_decisions(
+                db,
+                scan_id=state.scan_id,
+                project_id=project_id,
+                approved_engine_ids=approved,
+                offered_engine_ids=offered,
+            )
+            await db.commit()
+
+        gate.future.set_result(approved)
+
     return {"status": "approved"}
 
 
@@ -488,8 +547,10 @@ async def cancel_operation(project_id: str) -> dict[str, str]:
     registry.transition(state.operation_id, OperationStatus.CANCELLED)
     if state.grpc_task and not state.grpc_task.done():
         state.grpc_task.cancel()
-    if state.approval_future and not state.approval_future.done():
-        state.approval_future.set_result([])
+    if state.approval_gate is not None and not state.approval_gate.future.done():
+        async with state.approval_gate_lock:
+            if state.approval_gate is not None and not state.approval_gate.future.done():
+                state.approval_gate.future.set_result([])
     if state.begin_remediate_future and not state.begin_remediate_future.done():
         state.begin_remediate_future.cancel()
     if state.escalate_ai_future and not state.escalate_ai_future.done():
@@ -1095,6 +1156,7 @@ async def _drive_operation(
         fetch_remote_head,
         run_project_operation,
     )
+    from apme_gateway.scan.operator_queue import OperatorAnswerQueue
 
     registry = get_operation_registry()
 
@@ -1233,7 +1295,10 @@ async def _drive_operation(
                 ai_proposed_count = sum(1 for i in ai_items if i.status != "declined")
                 ai_declined_count = sum(1 for i in ai_items if i.status == "declined")
                 awaiting_ai_approval = bool(ai_items)
-                registry.set_proposals(operation_id, items)
+                # Driver calls approval_queue.begin_prompt() before this callback;
+                # store the same generation on the gate that next_answer waits for.
+                prompt_generation = approval_queue.current_generation if approval_queue is not None else None
+                await registry.set_proposals(operation_id, items, prompt_generation=prompt_generation)
                 # ADR-062 Phase 2: upsert Gateway stubs with engine_proposal_id.
                 from apme_gateway.proposals.draft import upsert_live_proposal_stubs  # noqa: PLC0415
 
@@ -1341,18 +1406,18 @@ async def _drive_operation(
         raw_specs = options.get("collection_specs", [])
         specs = [str(s) for s in raw_specs] if isinstance(raw_specs, list) else []
 
-        approval_queue: asyncio.Queue[list[str]] | None = None
-        begin_remediate_queue: asyncio.Queue[None] | None = None
-        escalate_ai_queue: asyncio.Queue[list[dict[str, object]]] | None = None
+        approval_queue: OperatorAnswerQueue[list[str]] | None = None
+        begin_remediate_queue: OperatorAnswerQueue[None] | None = None
+        escalate_ai_queue: OperatorAnswerQueue[list[dict[str, object]]] | None = None
         bridge_task: asyncio.Task[None] | None = None
         enable_ai = coerce_option_bool(options.get("enable_ai", False))
 
         if remediate or assess_pause:
-            approval_queue = asyncio.Queue()
+            approval_queue = OperatorAnswerQueue()
             if assess_pause:
-                begin_remediate_queue = asyncio.Queue()
+                begin_remediate_queue = OperatorAnswerQueue()
             if enable_ai:
-                escalate_ai_queue = asyncio.Queue()
+                escalate_ai_queue = OperatorAnswerQueue()
 
             async def _approval_bridge() -> None:
                 """Bridge registry futures to the driver's command queues."""
@@ -1393,12 +1458,9 @@ async def _drive_operation(
                             op.escalate_ai_future = None
                         except asyncio.CancelledError:
                             break
-                    elif op.status == OperationStatus.AWAITING_APPROVAL and op.approval_future is not None:
+                    elif op.status == OperationStatus.AWAITING_APPROVAL and op.approval_gate is not None:
                         try:
-                            ids = await op.approval_future
-                            if approval_queue is not None:
-                                await approval_queue.put(ids)
-                            op.approval_future = None
+                            await _forward_approval_gate_result(op, approval_queue)
                         except asyncio.CancelledError:
                             break
                     else:

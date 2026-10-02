@@ -370,11 +370,14 @@ class ComponentHealth(BaseModel):  # type: ignore[misc]
         name: Human-readable component name.
         status: Health status (ok, unavailable, or degraded).
         address: Network address of the component.
+        detail: Optional human-readable detail (e.g. last-push freshness
+            for the Galaxy Proxy component).
     """
 
     name: str
     status: str
     address: str
+    detail: str | None = None
 
 
 class HealthStatus(BaseModel):  # type: ignore[misc]
