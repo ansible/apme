@@ -743,10 +743,14 @@ class TestFormatFilesGuard:
             batch = EngineServicer._format_files([bad, good])
 
         assert all(d.path != "bad.yml" for d in batch.diffs)
-        assert any(p == "bad.yml" for p, _ in batch.skipped)
-        # good.yml may or may not produce a diff depending on formatter rules;
-        # the invariant is that the batch completed without raising.
-        assert isinstance(batch.diffs, list)
+        assert len(batch.skipped) == 1
+        assert batch.skipped[0][0] == "bad.yml"
+        assert "unexpected error" in batch.skipped[0][1]
+        assert "list index out of range" in batch.skipped[0][1]
+        assert all(p != "good.yml" for p, _ in batch.skipped)
+        good_diffs = [d for d in batch.diffs if d.path == "good.yml"]
+        assert len(good_diffs) == 1
+        assert good_diffs[0].formatted != good.content
 
     def test_records_dump_failure_as_skipped(self) -> None:
         """Dump failures from format_content appear in skipped, not as clean diffs."""

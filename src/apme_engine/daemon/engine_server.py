@@ -1774,20 +1774,18 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         idem_diffs = idem_batch.diffs
         session.idempotency_ok = len(idem_diffs) == 0 and not idem_batch.skipped
         if not session.idempotency_ok:
+            _idem_parts = []
             if idem_diffs:
-                _idem_warn = ProgressUpdate(
-                    message="Formatter is not idempotent on this input",
-                    phase="format",
-                    level=3,  # WARNING
+                _idem_parts.append("Formatter is not idempotent on this input")
+            if idem_batch.skipped:
+                _idem_parts.append(
+                    f"Idempotency check skipped {len(idem_batch.skipped)} file(s) that formatted on the first pass"
                 )
-            else:
-                _idem_warn = ProgressUpdate(
-                    message=(
-                        f"Idempotency check skipped {len(idem_batch.skipped)} file(s) that formatted on the first pass"
-                    ),
-                    phase="format",
-                    level=3,  # WARNING
-                )
+            _idem_warn = ProgressUpdate(
+                message="; ".join(_idem_parts),
+                phase="format",
+                level=3,  # WARNING
+            )
             session.record_progress(task_linked=is_task_linked_progress(_idem_warn.phase))
             self._stamp_progress_update(_idem_warn, session)
             session.progress_logs.append(_idem_warn)
