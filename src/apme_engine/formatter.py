@@ -75,6 +75,9 @@ class FormatResult:
         formatted: Content after formatting.
         changed: True if formatting changed the content.
         diff: Unified diff string (empty if unchanged).
+        error: When set, formatting was skipped and ``formatted`` is the
+            original content (load/dump failure). Callers must not treat
+            this as "already formatted."
     """
 
     path: Path
@@ -82,6 +85,7 @@ class FormatResult:
     formatted: str
     changed: bool
     diff: str = field(default="", repr=False)
+    error: str | None = None
 
 
 def _normalize_jinja_pipes(inner: str) -> str:
@@ -739,6 +743,10 @@ def _normalize_min_ansible_version(data: CommentedMap) -> None:
 def format_content(text: str, filename: str = "<stdin>") -> FormatResult:
     """Format a YAML string.
 
+    Load and dump failures are best-effort: the original content is returned
+    unchanged (for example empty flow sequences with preceding comments that
+    trip a ruamel.yaml emitter IndexError on dump).
+
     Args:
         text: Raw YAML content.
         filename: Filename for diff output (default: "<stdin>").
@@ -755,13 +763,14 @@ def format_content(text: str, filename: str = "<stdin>") -> FormatResult:
 
     try:
         data = yaml.load(text)
-    except Exception:
+    except Exception as exc:
         return FormatResult(
             path=Path(filename),
             original=original,
             formatted=original,
             changed=False,
             diff="",
+            error=f"YAML load failed: {exc}",
         )
 
     if data is None or not isinstance(data, CommentedMap | CommentedSeq | list | dict):
@@ -786,11 +795,20 @@ def format_content(text: str, filename: str = "<stdin>") -> FormatResult:
         _reorder_task_keys(data)
         _normalize_min_ansible_version(data)
 
-    formatted = yaml.dumps(data)
-
-    formatted = _fix_jinja_spacing(formatted)
-    formatted = _strip_stray_blanks(formatted)
-    formatted = _add_task_spacing(formatted)
+    try:
+        formatted = yaml.dumps(data)
+        formatted = _fix_jinja_spacing(formatted)
+        formatted = _strip_stray_blanks(formatted)
+        formatted = _add_task_spacing(formatted)
+    except Exception as exc:
+        return FormatResult(
+            path=Path(filename),
+            original=original,
+            formatted=original,
+            changed=False,
+            diff="",
+            error=f"YAML dump/post-process failed: {exc}",
+        )
 
     changed = formatted != original
     diff = ""

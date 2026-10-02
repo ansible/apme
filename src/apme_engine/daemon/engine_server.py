@@ -20,7 +20,7 @@ import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TypeVar
+from typing import TypeVar, cast
 
 import grpc
 import grpc.aio
@@ -102,6 +102,20 @@ from apme_engine.venv_manager.session import (
 logger = logging.getLogger("apme.engine")
 
 _ExecutorResult = TypeVar("_ExecutorResult")
+
+
+@dataclass(frozen=True)
+class _FormatBatchResult:
+    """Result of batch formatting: diffs for changed files and skip diagnostics.
+
+    Attributes:
+        diffs: FileDiff protos for files whose content changed.
+        skipped: ``(path, reason)`` pairs for files that could not be formatted.
+    """
+
+    diffs: list[FileDiff]
+    skipped: list[tuple[str, str]] = field(default_factory=list)
+
 
 _MAX_CONCURRENT_RPCS = int(os.environ.get("APME_ENGINE_MAX_RPCS", "16"))
 _GRPC_MAX_MSG = 50 * 1024 * 1024  # 50 MiB — hierarchy+scandata can exceed the 4 MiB default
@@ -1259,26 +1273,44 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         )
 
     @staticmethod
-    def _format_files(files: list[File]) -> list[FileDiff]:
-        """Format YAML files and return diffs for changed ones (sync, CPU-bound).
+    def _format_files(files: list[File]) -> _FormatBatchResult:
+        """Format YAML files and return diffs plus per-file skip diagnostics.
+
+        Per-file failures are skipped so one unformattable file cannot abort
+        the FixSession format phase. Callers must surface ``skipped`` so
+        dump/load failures are not presented as "already formatted."
 
         Args:
             files: File protos to format.
 
         Returns:
-            List of FileDiff for files whose content changed.
+            ``_FormatBatchResult`` with changed-file diffs and skipped paths.
         """
         from apme_engine.formatter import format_content
 
         diffs: list[FileDiff] = []
+        skipped: list[tuple[str, str]] = []
         for f in files:
             if not f.path.endswith((".yml", ".yaml")):
                 continue
             try:
                 text = f.content.decode("utf-8")
             except UnicodeDecodeError:
+                logger.warning("Skipping format for %s: not valid UTF-8", f.path)
+                skipped.append((f.path, "not valid UTF-8"))
                 continue
-            result = format_content(text, filename=f.path)
+            try:
+                result = format_content(text, filename=f.path)
+            except Exception as exc:
+                # Defense in depth: one unformattable file must not abort the scan.
+                reason = f"unexpected error: {exc}"
+                logger.warning("Skipping format for %s: %s", f.path, reason, exc_info=True)
+                skipped.append((f.path, reason))
+                continue
+            if result.error:
+                logger.warning("Skipping format for %s: %s", f.path, result.error)
+                skipped.append((f.path, result.error))
+                continue
             if result.changed:
                 diffs.append(
                     FileDiff(
@@ -1288,7 +1320,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                         diff=result.diff,
                     )
                 )
-        return diffs
+        return _FormatBatchResult(diffs=diffs, skipped=skipped)
 
     @staticmethod
     async def _accumulate_chunks(
@@ -1336,14 +1368,21 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         with attach_collector() as sink:
             logger.info("Format: start (%d files)", len(request.files))
             t0 = time.monotonic()
-            diffs = await asyncio.get_event_loop().run_in_executor(
+            files = cast(list[File], list(request.files))
+            ctx = contextvars.copy_context()
+            batch = await asyncio.get_event_loop().run_in_executor(
                 None,
-                self._format_files,  # type: ignore[arg-type]
-                list(request.files),
+                ctx.run,
+                lambda: self._format_files(files),
             )
             dur = (time.monotonic() - t0) * 1000
-            logger.info("Format: done (%.0fms, %d files changed)", dur, len(diffs))
-            return FormatResponse(diffs=diffs, logs=sink.entries)
+            logger.info(
+                "Format: done (%.0fms, %d files changed, %d skipped)",
+                dur,
+                len(batch.diffs),
+                len(batch.skipped),
+            )
+            return FormatResponse(diffs=batch.diffs, logs=sink.entries)
 
     async def FormatStream(
         self,
@@ -1363,14 +1402,21 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         with attach_collector() as sink:
             logger.info("FormatStream: start (%d files, req=%s)", len(all_files), scan_id)
             t0 = time.monotonic()
-            diffs = await asyncio.get_event_loop().run_in_executor(
+            ctx = contextvars.copy_context()
+            batch = await asyncio.get_event_loop().run_in_executor(
                 None,
-                self._format_files,
-                all_files,
+                ctx.run,
+                lambda: self._format_files(all_files),
             )
             dur = (time.monotonic() - t0) * 1000
-            logger.info("FormatStream: done (%.0fms, %d files changed, req=%s)", dur, len(diffs), scan_id)
-            return FormatResponse(diffs=diffs, logs=sink.entries)
+            logger.info(
+                "FormatStream: done (%.0fms, %d files changed, %d skipped, req=%s)",
+                dur,
+                len(batch.diffs),
+                len(batch.skipped),
+                scan_id,
+            )
+            return FormatResponse(diffs=batch.diffs, logs=sink.entries)
 
     # ── FixSession RPC (bidirectional stream, ADR-028) ─────────────────
 
@@ -1652,11 +1698,28 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         if isinstance(format_result, SessionEvent):
             yield format_result
             return
-        format_diffs = format_result
+        format_batch = format_result
+        format_diffs = format_batch.diffs
         session.format_diffs = list(format_diffs)
+
+        if format_batch.skipped:
+            _fmt_skip = ProgressUpdate(
+                message=(
+                    f"Skipped formatting {len(format_batch.skipped)} file(s): "
+                    + "; ".join(f"{p} ({r})" for p, r in format_batch.skipped[:5])
+                    + ("…" if len(format_batch.skipped) > 5 else "")
+                ),
+                phase="format",
+                level=3,  # WARNING
+            )
+            session.record_progress(task_linked=is_task_linked_progress(_fmt_skip.phase))
+            self._stamp_progress_update(_fmt_skip, session)
+            session.progress_logs.append(_fmt_skip)
+            yield SessionEvent(progress=_fmt_skip)
 
         formatted_files: list[File] = list(all_files)
         format_map: dict[str, bytes] = {d.path: d.formatted for d in format_diffs}
+        format_skipped_paths = {p for p, _ in format_batch.skipped}
 
         temp_dir_result = await self._supervise_executor(
             session,
@@ -1695,20 +1758,31 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             yield deadline_event
             return
 
-        # Phase 2: Idempotency check
+        # Phase 2: Idempotency check (exclude files skipped on the first pass —
+        # they were never reformatted, so a second-pass skip is not an
+        # idempotency failure; report them separately below).
+        idem_inputs = [f for f in formatted_files if f.path not in format_skipped_paths]
         idem_result = await self._supervise_executor(
             session,
             self._format_files,
-            formatted_files,
+            idem_inputs,
         )
         if isinstance(idem_result, SessionEvent):
             yield idem_result
             return
-        idem_diffs = idem_result
-        session.idempotency_ok = len(idem_diffs) == 0
+        idem_batch = idem_result
+        idem_diffs = idem_batch.diffs
+        session.idempotency_ok = len(idem_diffs) == 0 and not idem_batch.skipped
         if not session.idempotency_ok:
+            _idem_parts = []
+            if idem_diffs:
+                _idem_parts.append("Formatter is not idempotent on this input")
+            if idem_batch.skipped:
+                _idem_parts.append(
+                    f"Idempotency check skipped {len(idem_batch.skipped)} file(s) that formatted on the first pass"
+                )
             _idem_warn = ProgressUpdate(
-                message="Formatter is not idempotent on this input",
+                message="; ".join(_idem_parts),
                 phase="format",
                 level=3,  # WARNING
             )

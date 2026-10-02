@@ -2,6 +2,7 @@
 
 import textwrap
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -370,6 +371,20 @@ class TestEdgeCases:
         result = format_content("---\n")
         assert not result.changed or result.formatted.strip() == "---"
 
+    def test_empty_flow_sequence_with_comment_unchanged(self) -> None:
+        """Empty ``[]`` with a preceding comment must not raise (community.docker).
+
+        ruamel.yaml raises IndexError dumping an empty CommentedSeq that still
+        has comment metadata. format_content must degrade to unchanged content
+        and set ``error`` so callers do not treat the file as already clean.
+        """
+        text = "---\n# nothing to do\n[]\n"
+        result = format_content(text, filename="nothing.yml")
+        assert not result.changed
+        assert result.formatted == text
+        assert result.error is not None
+        assert "dump" in result.error.lower()
+
     def test_already_formatted_no_change(self) -> None:
         """Already-formatted content produces no changes on second pass."""
         text = textwrap.dedent("""\
@@ -703,3 +718,64 @@ class TestQuoteFreeFormArgs:
         r1 = format_content(text)
         r2 = format_content(r1.formatted)
         assert r1.formatted == r2.formatted
+
+
+class TestFormatFilesGuard:
+    """Defense-in-depth: EngineServicer._format_files must not abort on one bad file."""
+
+    def test_skips_file_when_format_content_raises(self) -> None:
+        """An unexpected format_content exception skips that file and continues."""
+        from apme.v1.common_pb2 import File
+        from apme_engine.daemon.engine_server import EngineServicer
+
+        bad = File(path="bad.yml", content=b"---\n# boom\n[]\n")
+        good = File(
+            path="good.yml",
+            content=b"- name: Hello\n  ansible.builtin.debug:\n    msg: hi\n",
+        )
+
+        def _raise_on_bad(text: str, filename: str = "<stdin>") -> FormatResult:
+            if filename == "bad.yml":
+                raise IndexError("list index out of range")
+            return format_content(text, filename=filename)
+
+        with patch("apme_engine.formatter.format_content", side_effect=_raise_on_bad):
+            batch = EngineServicer._format_files([bad, good])
+
+        assert all(d.path != "bad.yml" for d in batch.diffs)
+        assert len(batch.skipped) == 1
+        assert batch.skipped[0][0] == "bad.yml"
+        assert "unexpected error" in batch.skipped[0][1]
+        assert "list index out of range" in batch.skipped[0][1]
+        assert all(p != "good.yml" for p, _ in batch.skipped)
+        good_diffs = [d for d in batch.diffs if d.path == "good.yml"]
+        assert len(good_diffs) == 1
+        assert good_diffs[0].formatted != good.content
+
+    def test_records_dump_failure_as_skipped(self) -> None:
+        """Dump failures from format_content appear in skipped, not as clean diffs."""
+        from apme.v1.common_pb2 import File
+        from apme_engine.daemon.engine_server import EngineServicer
+
+        bad = File(path="nothing.yml", content=b"---\n# nothing to do\n[]\n")
+        batch = EngineServicer._format_files([bad])
+        assert batch.diffs == []
+        assert len(batch.skipped) == 1
+        assert batch.skipped[0][0] == "nothing.yml"
+        assert "dump" in batch.skipped[0][1].lower()
+
+    def test_invalid_utf8_skip_is_logged(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Invalid UTF-8 files are skipped with a WARNING the CLI can surface.
+
+        Args:
+            caplog: Pytest log-capture fixture.
+        """
+        from apme.v1.common_pb2 import File
+        from apme_engine.daemon.engine_server import EngineServicer
+
+        bad = File(path="binary.yml", content=b"\xff\xfe")
+        with caplog.at_level("WARNING", logger="apme.engine"):
+            batch = EngineServicer._format_files([bad])
+        assert batch.diffs == []
+        assert batch.skipped == [("binary.yml", "not valid UTF-8")]
+        assert any("Skipping format for binary.yml" in r.message for r in caplog.records)
