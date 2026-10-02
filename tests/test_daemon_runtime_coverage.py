@@ -1647,11 +1647,12 @@ def test_ansible_run_delegates_to_timing(tmp_path: Path) -> None:
     assert out == [{"rule_id": "L057"}]
 
 
-def test_ansible_run_timing_no_tasks_early_return(tmp_path: Path) -> None:
+def test_ansible_run_timing_no_tasks_early_return(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """Missing root dir and no task nodes returns empty result.
 
     Args:
         tmp_path: Pytest temporary directory.
+        capsys: Pytest stderr capture fixture.
     """
     from apme_engine.validators.ansible import AnsibleValidator
     from apme_engine.validators.base import ScanContext
@@ -1660,6 +1661,18 @@ def test_ansible_run_timing_no_tasks_early_return(tmp_path: Path) -> None:
     result = validator.run_with_timing(ScanContext(hierarchy_payload={}, root_dir=str(tmp_path / "nope")))
     assert result.violations == []
     assert result.rule_timings == []
+    # Early return carries the same metadata schema as full scans.
+    assert set(result.metadata) == {
+        f"{prefix}cache_{store}_{kind}"
+        for prefix in ("", "scan_")
+        for store in ("introspect", "docspec", "mockspec")
+        for kind in ("hits", "misses")
+    }
+    assert all(isinstance(v, int) and v >= 0 for v in result.metadata.values())
+    captured = capsys.readouterr()
+    assert "cache introspect=" in captured.err
+    assert "(scan)" in captured.err
+    assert "(total)" in captured.err
 
 
 def test_ansible_run_timing_l057_with_lookup(tmp_path: Path) -> None:
@@ -1692,19 +1705,28 @@ def test_ansible_run_timing_l057_with_lookup(tmp_path: Path) -> None:
     assert any(t.rule_id == "L057" for t in result.rule_timings)
 
 
-def test_ansible_run_timing_full_rules(tmp_path: Path) -> None:
+def test_ansible_run_timing_full_rules(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """Task nodes trigger M001-M004, L058, and L059 with cache stats.
 
     Args:
         tmp_path: Pytest temporary directory.
+        capsys: Pytest stderr capture fixture.
     """
     from apme_engine.engine.models import YAMLDict
     from apme_engine.validators.ansible import AnsibleValidator
+    from apme_engine.validators.ansible.cache import plugin_cache
     from apme_engine.validators.base import ScanContext
 
     root = tmp_path / "proj"
     root.mkdir()
     payload: YAMLDict = {"hierarchy": [{"nodes": [{"type": "taskcall", "module": "debug"}]}]}
+    real_stats_since = plugin_cache.stats_since
+    seen_snapshots: list[object] = []
+
+    def _recording_stats_since(snapshot: object) -> dict[str, int]:
+        seen_snapshots.append(snapshot)
+        return real_stats_since(snapshot)  # type: ignore[arg-type]
+
     with (
         patch("apme_engine.validators.ansible.L057_syntax.run", return_value=[]),
         patch(
@@ -1713,14 +1735,30 @@ def test_ansible_run_timing_full_rules(tmp_path: Path) -> None:
         ),
         patch("apme_engine.validators.ansible.L058_argspec_doc.run", return_value=[{"rule_id": "L058"}]),
         patch("apme_engine.validators.ansible.L059_argspec_mock.run", return_value=[{"rule_id": "L059"}]),
-        patch("apme_engine.validators.ansible.plugin_cache.stats", return_value={"cache_introspect_hits": 1}),
+        patch(
+            "apme_engine.validators.ansible.plugin_cache.stats_since",
+            side_effect=_recording_stats_since,
+            autospec=True,
+        ),
     ):
         result = AnsibleValidator(venv_root=tmp_path).run_with_timing(
             ScanContext(hierarchy_payload=payload, root_dir=str(root))
         )
     assert len(result.violations) == 3
     assert {t.rule_id for t in result.rule_timings} >= {"M001-M004", "L058", "L059"}
-    assert result.metadata == {"cache_introspect_hits": 1}
+    expected_keys = {
+        f"{prefix}cache_{store}_{kind}"
+        for prefix in ("", "scan_")
+        for store in ("introspect", "docspec", "mockspec")
+        for kind in ("hits", "misses")
+    }
+    assert expected_keys <= set(result.metadata)
+    assert all(isinstance(v, int) and v >= 0 for v in result.metadata.values())
+    assert len(seen_snapshots) == 1
+    assert isinstance(seen_snapshots[0], dict)
+    captured = capsys.readouterr()
+    assert "(scan)" in captured.err
+    assert "(total)" in captured.err
 
 
 # ---------------------------------------------------------------------------

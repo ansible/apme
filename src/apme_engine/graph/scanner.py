@@ -15,9 +15,12 @@ merged validator findings (e.g. OPA) in the engine after fan-out.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import re
+import shutil
+import threading
 import time
 import traceback
 from collections.abc import Sequence
@@ -94,6 +97,225 @@ def native_rules_dir() -> str:
 DISABLED_BY_DEFAULT_GRAPH_RULE_IDS: frozenset[str] = frozenset({"R402", "R404"})
 
 
+# ---------------------------------------------------------------------------
+# Rule-class discovery cache (#388)
+# ---------------------------------------------------------------------------
+#
+# ``load_classes_in_dir`` re-executes every rule module on each call. With
+# ~150 rule files, that dominates repeated ``Validate`` requests (including
+# incremental rescans during remediation convergence), while the discovered
+# classes only change when rule files are added, removed, or modified.
+# This cache stores discovered classes per directory, keyed by a fingerprint
+# of the directory listing. Rule *instances* are still created fresh on
+# every ``load_graph_rules`` call, preserving per-scan isolation (including
+# per-instance scan state such as ``_scanned_dirs``).
+#
+# Approximation notes (accepted risks):
+# - Loadable rule modules (``.py``, not ``*_test.py``) are fingerprinted by
+#   SHA-256 content; other top-level files use ``(mtime_ns, size)``. Hidden
+#   dot-prefixed ``.py`` files are included (``load_classes_in_dir`` loads them).
+# - Cached classes are shared across scans: rules must keep mutable state
+#   on instances, never on the class or module level (previously reset by
+#   re-exec; now persistent for the daemon lifetime).
+# - Keys are ``normpath``-normalized directory strings. ``rules_dir`` is
+#   server-side (no proto field carries it), so growth is bounded by
+#   in-tree callers passing ``native_rules_dir()``.
+
+# Fingerprint: sorted (filename, token) for top-level files.
+_DirFingerprint = tuple[tuple[str, str], ...]
+
+_rule_class_cache: dict[str, tuple[_DirFingerprint, list[type[GraphRule]], list[str]]] = {}
+_rule_class_cache_lock = threading.Lock()
+# Serializes miss-path rediscovery so N concurrent Validates on a cold/stale
+# cache share one re-exec instead of each paying full discovery (#4).
+_rule_class_discovery_lock = threading.Lock()
+# Bumped on every invalidate; miss-path writes only when the generation is
+# unchanged, so an invalidation issued mid-load is not silently restored (#6).
+_rule_class_cache_generation = 0
+# Negative cache for error loads: (fingerprint, classes, errors, monotonic_ts).
+# Persistent breakage costs only a fingerprint hash per scan within the
+# cooldown; file changes still invalidate via fingerprint mismatch (#5).
+_rule_class_error_cache: dict[str, tuple[_DirFingerprint, list[type[GraphRule]], list[str], float]] = {}
+_RULE_CLASS_ERROR_COOLDOWN_S = 30.0
+
+
+def _clear_rule_pycache(directory: str) -> None:
+    """Remove bytecode for rule modules before rediscovery.
+
+    ``importlib`` can reuse a stale ``.pyc`` when a rule file is rewritten
+    with an unchanged timestamp (or within filesystem timestamp resolution).
+    Called only on class-cache miss, when rule files are about to be re-exec'd.
+
+    Args:
+        directory: Rules directory whose ``__pycache__`` should be cleared.
+    """
+    pycache = os.path.join(directory, "__pycache__")
+    if os.path.isdir(pycache):
+
+        def _on_exc(func: object, path: str, exc: BaseException) -> None:
+            logger.warning(
+                "Failed to clear rule __pycache__ at %s: %s",
+                pycache,
+                exc,
+            )
+
+        shutil.rmtree(pycache, onexc=_on_exc)
+
+
+def _is_loadable_rule_module(filename: str) -> bool:
+    """Return whether ``filename`` is a rule module the loader would execute.
+
+    Mirrors ``load_classes_in_dir``: direct ``.py`` files, excluding ``*_test.py``.
+    Dot-prefixed names (e.g. ``.hidden_rule.py``) are included.
+
+    Args:
+        filename: Basename from a directory listing.
+
+    Returns:
+        True when the loader would import the file as a rule module.
+    """
+    return filename.endswith(".py") and not filename.endswith("_test.py")
+
+
+def _dir_fingerprint(directory: str) -> _DirFingerprint | None:
+    """Fingerprint top-level files in a directory.
+
+    Loadable rule modules are keyed by SHA-256 content so same-size rewrites
+    with preserved timestamps still invalidate the cache. Other top-level files
+    use ``mtime_ns`` and size. Non-rule files that vanish or cannot be stat'ed
+    between listing and fingerprinting are skipped. If a loadable rule module
+    cannot be read, ``None`` is returned so discovery bypasses a stale cache.
+
+    Args:
+        directory: Directory to fingerprint.
+
+    Returns:
+        Sorted ``(filename, token)`` tuples, or ``None`` when the directory
+        does not exist, cannot be listed, or a rule module cannot be read.
+    """
+    try:
+        entries = os.listdir(directory)
+    except OSError:
+        return None
+    fingerprint: list[tuple[str, str]] = []
+    for filename in entries:
+        full = os.path.join(directory, filename)
+        if not os.path.isfile(full):
+            continue
+        if _is_loadable_rule_module(filename):
+            try:
+                with open(full, "rb") as fh:
+                    digest = hashlib.file_digest(fh, "sha256").hexdigest()
+            except OSError:
+                return None
+            fingerprint.append((filename, digest))
+            continue
+        try:
+            stat = os.stat(full)
+        except OSError:
+            continue
+        fingerprint.append((filename, f"m:{stat.st_mtime_ns}:{stat.st_size}"))
+    fingerprint.sort()
+    return tuple(fingerprint)
+
+
+def _discover_rule_classes(directory: str) -> tuple[list[type[GraphRule]], list[str]]:
+    """Discover GraphRule subclasses in a directory, using the class cache.
+
+    On fingerprint match the cached classes are reused without re-executing
+    rule modules; otherwise the directory is rescanned and the cache updated.
+    Directories that cannot be fingerprinted (e.g. vanishing mid-scan) are
+    loaded uncached, preserving the pre-cache behavior for that edge.
+    Directories whose load reports errors use a short negative cache
+    (same-fingerprint errors within the cooldown skip re-exec); file changes
+    still invalidate via fingerprint mismatch, and fixed files reload.
+
+    Args:
+        directory: Directory containing rule modules.
+
+    Returns:
+        Tuple of (rule classes, error messages).
+    """
+    key = os.path.normpath(directory)
+    fingerprint = _dir_fingerprint(directory)
+    if fingerprint is None:
+        classes, errors = load_classes_in_dir(directory, GraphRule, fail_on_error=False)
+        return (
+            [cls for cls in classes if isinstance(cls, type) and issubclass(cls, GraphRule)],
+            errors,
+        )
+    with _rule_class_cache_lock:
+        cached = _rule_class_cache.get(key)
+        if cached is not None and cached[0] == fingerprint:
+            logger.debug("Graph rule class cache hit: %s (%d classes)", key, len(cached[1]))
+            return list(cached[1]), list(cached[2])
+        err_entry = _rule_class_error_cache.get(key)
+        if (
+            err_entry is not None
+            and err_entry[0] == fingerprint
+            and time.monotonic() - err_entry[3] < _RULE_CLASS_ERROR_COOLDOWN_S
+        ):
+            logger.debug("Graph rule class error-cache hit: %s", key)
+            return list(err_entry[1]), list(err_entry[2])
+    # Single-flight: serialize rediscovery so concurrent misses share one load.
+    with _rule_class_discovery_lock:
+        with _rule_class_cache_lock:
+            cached = _rule_class_cache.get(key)
+            if cached is not None and cached[0] == fingerprint:
+                logger.debug("Graph rule class cache hit: %s (%d classes)", key, len(cached[1]))
+                return list(cached[1]), list(cached[2])
+            err_entry = _rule_class_error_cache.get(key)
+            if (
+                err_entry is not None
+                and err_entry[0] == fingerprint
+                and time.monotonic() - err_entry[3] < _RULE_CLASS_ERROR_COOLDOWN_S
+            ):
+                logger.debug("Graph rule class error-cache hit: %s", key)
+                return list(err_entry[1]), list(err_entry[2])
+            generation = _rule_class_cache_generation
+        logger.debug("Graph rule class cache miss: %s", key)
+        _clear_rule_pycache(directory)
+        classes, errors = load_classes_in_dir(directory, GraphRule, fail_on_error=False)
+        # Narrowing mirror of the loader's only_subclass filter (for typing).
+        rule_classes = [cls for cls in classes if isinstance(cls, type) and issubclass(cls, GraphRule)]
+        with _rule_class_cache_lock:
+            if _rule_class_cache_generation != generation:
+                # Invalidated mid-load: do not restore the discarded entry.
+                return list(rule_classes), list(errors)
+            if not errors:
+                _rule_class_cache[key] = (fingerprint, rule_classes, errors)
+                _rule_class_error_cache.pop(key, None)
+            else:
+                _rule_class_error_cache[key] = (
+                    fingerprint,
+                    rule_classes,
+                    errors,
+                    time.monotonic(),
+                )
+        return list(rule_classes), list(errors)
+
+
+def invalidate_graph_rule_cache(rules_dir: str = "") -> None:
+    """Drop cached rule classes, forcing rediscovery on the next load.
+
+    Intended for tests and future operator-triggered reload paths; the
+    daemon otherwise relies on fingerprint invalidation (plus restarts).
+
+    Args:
+        rules_dir: Directory to invalidate, or empty to clear all entries.
+    """
+    global _rule_class_cache_generation
+    with _rule_class_cache_lock:
+        _rule_class_cache_generation += 1
+        if rules_dir:
+            norm = os.path.normpath(rules_dir)
+            _rule_class_cache.pop(norm, None)
+            _rule_class_error_cache.pop(norm, None)
+        else:
+            _rule_class_cache.clear()
+            _rule_class_error_cache.clear()
+
+
 def graph_rule_opt_in_from_rule_configs(rule_configs: Sequence[object] | None) -> list[str]:
     """Return disabled-by-default GraphRule IDs enabled via ``RuleConfig``.
 
@@ -154,7 +376,7 @@ def load_graph_rules(
     for directory in rules_dir.split(":"):
         if not os.path.isdir(directory):
             continue
-        classes, errors = load_classes_in_dir(directory, GraphRule, fail_on_error=False)
+        classes, errors = _discover_rule_classes(directory)
         for err in errors:
             logger.warning("Skipped graph rule: %s", err)
         for cls in classes:
