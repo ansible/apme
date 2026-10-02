@@ -10,7 +10,7 @@ from sqlalchemy import select
 from apme.v1 import common_pb2, engine_pb2, reporting_pb2
 from apme_gateway.db import get_session
 from apme_gateway.db import queries as q
-from apme_gateway.db.models import Notification, Project, Scan, Session
+from apme_gateway.db.models import Notification, Project, Scan, ScanGraph, Session
 from apme_gateway.grpc_reporting.servicer import ReportingServicer, drain_notification_tasks
 
 pytestmark = pytest.mark.usefixtures("gateway_db")
@@ -451,3 +451,98 @@ async def test_notification_uses_persisted_violations_after_replay() -> None:
     assert [v.rule_id for v in violations] == ["L001"]
     assert {r.type for r in rows} == {"scan_complete"}
     ctx.abort.assert_not_awaited()
+
+
+async def test_report_fix_completed_stream_persists_scan() -> None:
+    """Multi-chunk ReportFixCompletedStream reassembles and persists once."""
+    from collections.abc import AsyncIterator
+
+    from apme_engine.daemon.chunked_reporting import yield_fix_completed_chunks
+
+    servicer = ReportingServicer()
+    viol = common_pb2.Violation(
+        rule_id="L001",
+        severity=common_pb2.SEVERITY_ERROR,
+        message="bad task",
+        file="a.yml",
+        line=10,
+    )
+    event = reporting_pb2.FixCompletedEvent(
+        scan_id="stream-1",
+        session_id="sess-stream",
+        project_path="/proj",
+        source="cli",
+        remaining_violations=[viol],
+        content_graph_json='{"nodes":[{"id":"n1"}],"edges":[]}',
+        summary=common_pb2.ScanSummary(total=1, auto_fixable=0, ai_candidate=0, manual_review=1),
+    )
+    chunks = list(yield_fix_completed_chunks(event, chunk_max_bytes=40))
+
+    async def _aiter() -> AsyncIterator[reporting_pb2.FixCompletedChunk]:
+        for chunk in chunks:
+            yield chunk
+
+    ctx = _mock_context()
+    result = await servicer.ReportFixCompletedStream(_aiter(), ctx)
+    assert isinstance(result, reporting_pb2.ReportAck)
+    ctx.abort.assert_not_awaited()
+
+    async with get_session() as db:
+        scan = await q.get_scan(db, "stream-1")
+        assert scan is not None
+        assert scan.session_id == "sess-stream"
+        assert len(scan.violations) == 1
+        assert scan.violations[0].rule_id == "L001"
+        graph = (await db.execute(select(ScanGraph).where(ScanGraph.scan_id == "stream-1"))).scalar_one_or_none()
+    assert graph is not None
+    assert "n1" in graph.graph_json
+
+
+async def test_report_fix_completed_stream_rejects_missing_last() -> None:
+    """Stream without last=true aborts and does not persist a scan."""
+    from collections.abc import AsyncIterator
+
+    import grpc
+
+    servicer = ReportingServicer()
+    chunk = reporting_pb2.FixCompletedChunk(
+        header=reporting_pb2.FixCompletedEvent(
+            scan_id="no-last",
+            session_id="sess",
+            project_path="/p",
+        ),
+        last=False,
+    )
+
+    async def _aiter() -> AsyncIterator[reporting_pb2.FixCompletedChunk]:
+        yield chunk
+
+    ctx = _mock_context()
+    await servicer.ReportFixCompletedStream(_aiter(), ctx)
+    ctx.abort.assert_awaited_once_with(
+        grpc.StatusCode.INVALID_ARGUMENT,
+        "FixCompletedChunk stream ended without last=true",
+    )
+
+    async with get_session() as db:
+        scan = await q.get_scan(db, "no-last")
+    assert scan is None
+
+
+async def test_report_fix_completed_stream_rejects_missing_scan_id() -> None:
+    """Stream with last but no header scan_id aborts without persist."""
+    from collections.abc import AsyncIterator
+
+    import grpc
+
+    servicer = ReportingServicer()
+
+    async def _aiter() -> AsyncIterator[reporting_pb2.FixCompletedChunk]:
+        yield reporting_pb2.FixCompletedChunk(last=True)
+
+    ctx = _mock_context()
+    await servicer.ReportFixCompletedStream(_aiter(), ctx)
+    ctx.abort.assert_awaited_once_with(
+        grpc.StatusCode.INVALID_ARGUMENT,
+        "FixCompletedChunk stream missing scan_id header",
+    )

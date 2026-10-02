@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 from datetime import UTC, datetime
 
 import grpc
@@ -80,6 +80,50 @@ def _diagnostics_to_json(diag: object) -> str | None:
     )
 
 
+def _reassemble_fix_completed(
+    chunks: Sequence[reporting_pb2.FixCompletedChunk],
+) -> reporting_pb2.FixCompletedEvent | None:
+    """Merge streamed FixCompletedChunk messages into one FixCompletedEvent.
+
+    Args:
+        chunks: Ordered chunks ending with ``last=True``.
+
+    Returns:
+        Reassembled event, or None if the stream is empty / missing identity.
+    """
+    if not chunks:
+        return None
+    event = reporting_pb2.FixCompletedEvent()
+    graph_parts: list[str] = []
+    for chunk in chunks:
+        if chunk.HasField("header"):
+            header = chunk.header
+            event.scan_id = header.scan_id
+            event.session_id = header.session_id
+            event.project_path = header.project_path
+            event.source = header.source
+            if header.HasField("diagnostics"):
+                event.diagnostics.CopyFrom(header.diagnostics)
+            if header.HasField("summary"):
+                event.summary.CopyFrom(header.summary)
+            if header.HasField("report"):
+                event.report.CopyFrom(header.report)
+            if header.HasField("manifest"):
+                event.manifest.CopyFrom(header.manifest)
+        event.remaining_violations.extend(chunk.remaining_violations)
+        event.fixed_violations.extend(chunk.fixed_violations)
+        event.patches.extend(chunk.patches)
+        event.logs.extend(chunk.logs)
+        event.proposals.extend(chunk.proposals)
+        if chunk.content_graph_json_fragment:
+            graph_parts.append(chunk.content_graph_json_fragment)
+    if graph_parts:
+        event.content_graph_json = "".join(graph_parts)
+    if not event.scan_id:
+        return None
+    return event
+
+
 class ReportingServicer(reporting_pb2_grpc.ReportingServicer):
     """Concrete Reporting servicer that persists events to the configured database."""
 
@@ -100,6 +144,69 @@ class ReportingServicer(reporting_pb2_grpc.ReportingServicer):
 
         Returns:
             Empty acknowledgement.
+        """
+        return await self._persist_fix_completed(request, context)
+
+    async def ReportFixCompletedStream(  # noqa: N802
+        self,
+        request_iterator: AsyncIterator[reporting_pb2.FixCompletedChunk],
+        context: grpc.aio.ServicerContext,  # type: ignore[type-arg]
+    ) -> reporting_pb2.ReportAck:
+        """Reassemble a streamed FixCompletedEvent and persist once (ADR-020).
+
+        Chunks are accumulated until ``last=True``. Persistence runs only after
+        full reassembly so ADR-062 stub rewrite stays atomic.
+
+        Args:
+            request_iterator: Client stream of FixCompletedChunk messages.
+            context: gRPC servicer context.
+
+        Returns:
+            Empty acknowledgement after successful persist.
+        """
+        chunks: list[reporting_pb2.FixCompletedChunk] = []
+        got_last = False
+        async for chunk in request_iterator:
+            chunks.append(chunk)
+            if chunk.last:
+                got_last = True
+                break
+
+        if not got_last:
+            await context.abort(
+                grpc.StatusCode.INVALID_ARGUMENT,
+                "FixCompletedChunk stream ended without last=true",
+            )
+            return reporting_pb2.ReportAck()
+
+        event = _reassemble_fix_completed(chunks)
+        if event is None:
+            await context.abort(
+                grpc.StatusCode.INVALID_ARGUMENT,
+                "FixCompletedChunk stream missing scan_id header",
+            )
+            return reporting_pb2.ReportAck()
+
+        logger.info(
+            "ReportFixCompletedStream reassembled scan_id=%s chunks=%d",
+            event.scan_id,
+            len(chunks),
+        )
+        return await self._persist_fix_completed(event, context)
+
+    async def _persist_fix_completed(
+        self,
+        request: reporting_pb2.FixCompletedEvent,
+        context: grpc.aio.ServicerContext,  # type: ignore[type-arg]
+    ) -> reporting_pb2.ReportAck:
+        """Persist a fully assembled FixCompletedEvent in one transaction.
+
+        Args:
+            request: Complete remediate/check completion event.
+            context: gRPC servicer context.
+
+        Returns:
+            Empty acknowledgement after commit (notifications scheduled OOB).
         """
         logger.info("ReportFixCompleted scan_id=%s session=%s", request.scan_id, request.session_id)
         try:
