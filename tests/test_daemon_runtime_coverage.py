@@ -1326,6 +1326,354 @@ def test_chunked_yield_splits_batches(tmp_path: Path) -> None:
     assert all(c.last is False for c in chunks[:-1])
 
 
+def test_chunked_build_bundle_multi_target(tmp_path: Path) -> None:
+    """Multiple targets merge into one bundle with common-root-relative paths.
+
+    Args:
+        tmp_path: Pytest temporary directory.
+    """
+    from apme_engine.daemon.chunked_fs import build_scan_bundle
+
+    proj = tmp_path / "proj"
+    (proj / "playbooks").mkdir(parents=True)
+    (proj / "roles").mkdir(parents=True)
+    (proj / "playbooks" / "a.yml").write_text("- hosts: all\n")
+    (proj / "roles" / "b.yml").write_text("- hosts: all\n")
+    bundle = build_scan_bundle(
+        [proj / "playbooks", proj / "roles"],
+        scan_id="m1",
+    )
+    paths = sorted(f.path for f in bundle.files)
+    assert paths == ["playbooks/a.yml", "roles/b.yml"]
+
+
+def test_chunked_build_bundle_multi_target_missing(tmp_path: Path) -> None:
+    """A missing entry in a multi-target list raises FileNotFoundError.
+
+    Args:
+        tmp_path: Pytest temporary directory.
+    """
+    from apme_engine.daemon.chunked_fs import build_scan_bundle
+
+    ok = tmp_path / "ok.yml"
+    ok.write_text("- hosts: all\n")
+    with pytest.raises(FileNotFoundError):
+        build_scan_bundle([ok, tmp_path / "nope.yml"])
+
+
+def test_chunked_build_bundle_exclude_patterns(tmp_path: Path) -> None:
+    """CLI --exclude patterns filter files alongside .apmeignore.
+
+    Args:
+        tmp_path: Pytest temporary directory.
+    """
+    from apme_engine.daemon.chunked_fs import build_scan_bundle, yield_scan_chunks
+
+    root = tmp_path / "proj"
+    (root / "tests").mkdir(parents=True)
+    (root / "vendor").mkdir(parents=True)
+    (root / "site.yml").write_text("- hosts: all\n")
+    (root / "tests" / "t.yml").write_text("- hosts: all\n")
+    (root / "vendor" / "lib.yml").write_text("- hosts: all\n")
+
+    bundle = build_scan_bundle(root, exclude_patterns=["tests/", "vendor/*"])
+    paths = sorted(f.path for f in bundle.files)
+    assert paths == ["site.yml"]
+
+    chunks = list(yield_scan_chunks([root], exclude_patterns=["tests/", "vendor/*"]))
+    assert sum(len(chunk.files) for chunk in chunks) == 1
+
+
+def test_cli_targets_normalize_and_common_base(tmp_path: Path) -> None:
+    """Target normalization accepts str/list; common base resolves correctly.
+
+    Args:
+        tmp_path: Pytest temporary directory.
+    """
+    from apme_engine.cli._project_root import common_scan_base, normalize_targets
+
+    assert normalize_targets(None) == ["."]
+    assert normalize_targets("") == ["."]
+    assert normalize_targets([]) == ["."]
+    assert normalize_targets("playbooks/") == ["playbooks/"]
+    assert normalize_targets(["a", "b"]) == ["a", "b"]
+
+    single_dir = tmp_path / "proj"
+    single_dir.mkdir()
+    assert common_scan_base([str(single_dir)]) == single_dir.resolve()
+
+    single_file = tmp_path / "play.yml"
+    single_file.write_text("- hosts: all\n")
+    assert common_scan_base([str(single_file)]) == tmp_path.resolve()
+
+    (tmp_path / "pb").mkdir()
+    (tmp_path / "rl").mkdir()
+    base = common_scan_base([str(tmp_path / "pb"), str(tmp_path / "rl")])
+    assert base == tmp_path.resolve()
+
+
+def test_cli_parser_multi_target_and_exclude() -> None:
+    """check/remediate/format accept multiple targets; check/remediate accept --exclude."""
+    from apme_engine.cli.parser import build_parser
+
+    parser = build_parser()
+    args = parser.parse_args(["check", "playbooks/", "roles/", "--exclude", "tests/", "vendor/*"])
+    assert args.target == ["playbooks/", "roles/"]
+    assert args.exclude == ["tests/", "vendor/*"]
+
+    args = parser.parse_args(["remediate", "a.yml", "--exclude", "tests/"])
+    assert args.target == ["a.yml"]
+    assert args.exclude == ["tests/"]
+
+    args = parser.parse_args(["format", "a.yml", "b.yml"])
+    assert args.target == ["a.yml", "b.yml"]
+
+    args = parser.parse_args(["check"])
+    assert args.target == ["."]
+    assert args.exclude is None
+
+
+def test_cli_parser_targets_before_exclude() -> None:
+    """Targets-first ordering keeps positionals out of --exclude's greedy list."""
+    from apme_engine.cli.parser import build_parser
+
+    parser = build_parser()
+    args = parser.parse_args(["check", ".", "--exclude", "tests/", "vendor/*"])
+    assert args.target == ["."]
+    assert args.exclude == ["tests/", "vendor/*"]
+    args = parser.parse_args(["check", "--exclude", "tests/", "--", "playbooks/"])
+    assert args.target == ["playbooks/"]
+    assert args.exclude == ["tests/"]
+
+
+def test_chunked_build_bundle_dedups_overlapping_targets(tmp_path: Path) -> None:
+    """Duplicate and overlapping targets emit each file once.
+
+    Args:
+        tmp_path: Pytest temporary directory.
+    """
+    from apme_engine.daemon.chunked_fs import build_scan_bundle
+
+    proj = tmp_path / "proj"
+    (proj / "sub").mkdir(parents=True)
+    (proj / "a.yml").write_text("- hosts: all\n")
+    (proj / "sub" / "b.yml").write_text("- hosts: all\n")
+    bundle = build_scan_bundle([proj, proj, proj / "a.yml"], scan_id="d1")
+    paths = sorted(f.path for f in bundle.files)
+    assert paths == ["a.yml", "sub/b.yml"]
+
+
+def test_chunked_build_bundle_merges_per_target_ignores(tmp_path: Path) -> None:
+    """Each target subtree's .apmeignore applies in multi-target scans.
+
+    Args:
+        tmp_path: Pytest temporary directory.
+    """
+    from apme_engine.daemon.chunked_fs import build_scan_bundle
+
+    proj_a = tmp_path / "projA"
+    proj_b = tmp_path / "projB"
+    (proj_a / "gen").mkdir(parents=True)
+    (proj_b).mkdir(parents=True)
+    (proj_a / "keep.yml").write_text("- hosts: all\n")
+    (proj_a / "gen" / "skip.yml").write_text("- hosts: all\n")
+    (proj_a / ".apmeignore").write_text("gen/\n")
+    (proj_b / "other.yml").write_text("- hosts: all\n")
+    bundle = build_scan_bundle([proj_a, proj_b])
+    paths = sorted(f.path for f in bundle.files)
+    assert "projA/keep.yml" in paths
+    assert "projB/other.yml" in paths
+    assert not [p for p in paths if p.startswith("projA/gen/")]
+
+
+def test_chunked_per_target_ignore_does_not_leak_across_targets(tmp_path: Path) -> None:
+    """A bare pattern in one target's .apmeignore must not suppress siblings.
+
+    Args:
+        tmp_path: Pytest temporary directory.
+    """
+    from apme_engine.daemon.chunked_fs import build_scan_bundle
+
+    proj_a = tmp_path / "projA"
+    proj_b = tmp_path / "projB"
+    proj_a.mkdir()
+    proj_b.mkdir()
+    (proj_a / "keep.yml").write_text("- hosts: all\n")
+    (proj_a / ".apmeignore").write_text("keep.yml\n")
+    (proj_b / "keep.yml").write_text("- hosts: all\n")
+    (proj_b / "other.yml").write_text("- hosts: all\n")
+    bundle = build_scan_bundle([proj_a, proj_b])
+    paths = sorted(f.path for f in bundle.files)
+    assert "projA/keep.yml" not in paths
+    assert "projB/keep.yml" in paths
+    assert "projB/other.yml" in paths
+
+
+def test_chunked_cli_exclude_matches_target_relative_glob(tmp_path: Path) -> None:
+    """--exclude globs match paths relative to each selected target scope.
+
+    Args:
+        tmp_path: Pytest temporary directory.
+    """
+    from apme_engine.daemon.chunked_fs import build_scan_bundle
+
+    service = tmp_path / "repo" / "service"
+    other = tmp_path / "repo" / "other"
+    (service / "generated").mkdir(parents=True)
+    other.mkdir(parents=True)
+    (service / "generated" / "x.yml").write_text("- hosts: all\n")
+    (service / "keep.yml").write_text("- hosts: all\n")
+    (other / "keep.yml").write_text("- hosts: all\n")
+    bundle = build_scan_bundle(
+        [service, other],
+        exclude_patterns=["generated/*.yml"],
+    )
+    paths = sorted(f.path for f in bundle.files)
+    assert paths == ["other/keep.yml", "service/keep.yml"]
+
+
+def test_chunked_identical_ignore_pattern_kept_per_target(tmp_path: Path) -> None:
+    """Target-local .apmeignore patterns are kept even when root has the same text.
+
+    Args:
+        tmp_path: Pytest temporary directory.
+    """
+    from apme_engine.daemon.chunked_fs import build_scan_bundle
+
+    root = tmp_path / "repo"
+    proj = root / "service"
+    other = root / "other"
+    (proj / "generated").mkdir(parents=True)
+    other.mkdir(parents=True)
+    (proj / "generated" / "skip.yml").write_text("- hosts: all\n")
+    (proj / "keep.yml").write_text("- hosts: all\n")
+    (other / "keep.yml").write_text("- hosts: all\n")
+    (root / ".apmeignore").write_text("generated/\n")
+    (proj / ".apmeignore").write_text("generated/\n")
+    bundle = build_scan_bundle([proj, other])
+    paths = sorted(f.path for f in bundle.files)
+    assert paths == ["other/keep.yml", "service/keep.yml"]
+
+
+def test_chunked_overlapping_targets_use_originating_scope_ignore(tmp_path: Path) -> None:
+    """Nested target ignores do not suppress files selected by a parent target.
+
+    Args:
+        tmp_path: Pytest temporary directory.
+    """
+    from apme_engine.daemon.chunked_fs import build_scan_bundle
+
+    proj = tmp_path / "proj"
+    nested = proj / "nested"
+    nested.mkdir(parents=True)
+    (proj / "a.yml").write_text("- hosts: all\n")
+    (nested / "b.yml").write_text("- hosts: all\n")
+    (nested / ".apmeignore").write_text("b.yml\n")
+    bundle = build_scan_bundle([proj, nested / "b.yml"])
+    paths = sorted(f.path for f in bundle.files)
+    assert paths == ["a.yml", "nested/b.yml"]
+
+
+def test_common_scan_base_guards(tmp_path: Path) -> None:
+    """Empty, string, and single inputs resolve without raising.
+
+    Args:
+        tmp_path: Pytest temporary directory.
+    """
+    from apme_engine.cli._project_root import common_scan_base
+
+    assert common_scan_base([]) == Path(".").resolve()
+    assert common_scan_base("whatever-missing") == Path("whatever-missing").resolve()
+    single = tmp_path / "one.yml"
+    single.write_text("- hosts: all\n")
+    assert common_scan_base([str(single)]) == tmp_path.resolve()
+
+
+def test_path_within_targets_file_and_dir(tmp_path: Path) -> None:
+    """Selected files and directory descendants are authorized write scopes.
+
+    Args:
+        tmp_path: Pytest temporary directory.
+    """
+    from apme_engine.cli._project_root import path_within_targets
+
+    selected_dir = tmp_path / "selected"
+    selected_dir.mkdir()
+    child = selected_dir / "child.yml"
+    child.write_text("- hosts: all\n")
+    sibling = tmp_path / "sibling.yml"
+    sibling.write_text("- hosts: all\n")
+    assert path_within_targets([str(selected_dir)], child)
+    assert not path_within_targets([str(selected_dir)], sibling)
+    assert path_within_targets([str(sibling)], sibling)
+    assert not path_within_targets([str(sibling)], child)
+
+
+def test_common_scan_base_cross_drive_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Targets on separate filesystem roots raise FileNotFoundError.
+
+    Args:
+        tmp_path: Pytest temporary directory.
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+    import pytest
+
+    from apme_engine.cli._project_root import common_scan_base
+
+    a = tmp_path / "a"
+    b = tmp_path / "b"
+    a.mkdir()
+    b.mkdir()
+
+    def _fail_commonpath(_paths: list[str]) -> str:
+        raise ValueError("different drives")
+
+    monkeypatch.setattr("apme_engine.daemon.chunked_fs.os.path.commonpath", _fail_commonpath)
+    with pytest.raises(FileNotFoundError, match="Targets share no common path"):
+        common_scan_base([str(a), str(b)])
+
+
+def test_resolve_within_base_rejects_escape(tmp_path: Path) -> None:
+    """Absolute and parent-escaping bundle paths are rejected.
+
+    Args:
+        tmp_path: Pytest temporary directory.
+    """
+    import pytest
+
+    from apme_engine.cli._project_root import resolve_within_base
+
+    assert resolve_within_base(tmp_path, "sub/a.yml") == (tmp_path.resolve() / "sub/a.yml").resolve()
+    with pytest.raises(ValueError):
+        resolve_within_base(tmp_path, "/etc/passwd")
+    with pytest.raises(ValueError):
+        resolve_within_base(tmp_path, "../escape.yml")
+
+
+def test_chunked_build_bundle_cross_drive_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """build_scan_bundle maps commonpath ValueError to FileNotFoundError (finding #15).
+
+    Args:
+        tmp_path: Pytest temporary directory.
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+    import pytest
+
+    from apme_engine.daemon.chunked_fs import build_scan_bundle
+
+    a = tmp_path / "a"
+    b = tmp_path / "b"
+    a.mkdir()
+    b.mkdir()
+
+    def _fail_commonpath(_paths: list[str]) -> str:
+        raise ValueError("different drives")
+
+    monkeypatch.setattr("apme_engine.daemon.chunked_fs.os.path.commonpath", _fail_commonpath)
+    with pytest.raises(FileNotFoundError, match="Targets share no common path"):
+        build_scan_bundle([str(a), str(b)])
+
+
 # ---------------------------------------------------------------------------
 # grpc_reporting sink
 # ---------------------------------------------------------------------------
