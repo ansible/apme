@@ -8,6 +8,7 @@ import {
   Split,
   SplitItem,
 } from '@patternfly/react-core';
+import { useApmeApi } from '../api/apmeApiAdapter';
 import { getSession, getSessionTrend } from '../services/api';
 import type { SessionDetail, TrendPoint } from '../types/api';
 import { StatusBadge } from '../components/StatusBadge';
@@ -15,6 +16,7 @@ import { timeAgo } from '../services/format';
 import { TrendChart } from '../components/TrendChart';
 
 export function SessionDetailPage() {
+  const api = useApmeApi();
   const { sessionId } = useParams<{ sessionId: string }>();
   const navigate = useNavigate();
   const [session, setSession] = useState<SessionDetail | null>(null);
@@ -28,8 +30,8 @@ export function SessionDetailPage() {
     setError(false);
     try {
       const [sess, trendData] = await Promise.all([
-        getSession(sessionId),
-        getSessionTrend(sessionId).catch(() => [] as TrendPoint[]),
+        getSession(sessionId, api),
+        getSessionTrend(sessionId, api).catch(() => [] as TrendPoint[]),
       ]);
       setSession(sess);
       setTrend(trendData);
@@ -39,7 +41,7 @@ export function SessionDetailPage() {
     } finally {
       setLoading(false);
     }
-  }, [sessionId]);
+  }, [sessionId, api]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 

@@ -10,6 +10,7 @@ import {
   SplitItem,
 } from '@patternfly/react-core';
 import { ExternalLinkAltIcon } from '@patternfly/react-icons';
+import { useApmeApi } from '../api/apmeApiAdapter';
 import { getPythonPackageDetail } from '../services/api';
 import type { PythonPackageDetail } from '../types/api';
 import { healthLabelColor } from '../components/severity';
@@ -19,6 +20,7 @@ function HealthBadge({ score }: { score: number }) {
 }
 
 export function PythonPackageDetailPage() {
+  const api = useApmeApi();
   const { name } = useParams<{ name: string }>();
   const navigate = useNavigate();
   const [pkg, setPkg] = useState<PythonPackageDetail | null>(null);
@@ -30,7 +32,7 @@ export function PythonPackageDetailPage() {
     setLoading(true);
     setError(false);
     try {
-      const data = await getPythonPackageDetail(name);
+      const data = await getPythonPackageDetail(name, api);
       setPkg(data);
     } catch {
       setError(true);
@@ -38,7 +40,7 @@ export function PythonPackageDetailPage() {
     } finally {
       setLoading(false);
     }
-  }, [name]);
+  }, [name, api]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 

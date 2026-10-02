@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { PageLayout } from '@ansible/ansible-ui-framework';
 import {
@@ -11,6 +11,7 @@ import {
   Spinner,
   Title,
 } from '@patternfly/react-core';
+import { useApmeApi } from '../api/apmeApiAdapter';
 import { getDashboardSummary, getDashboardRankings, getActiveOperations } from '../services/api';
 import type { ActiveOperation } from '../services/api';
 import type { DashboardSummary, ProjectRanking } from '../types/api';
@@ -53,6 +54,7 @@ const STATUS_LABELS: Record<string, { label: string; color: 'blue' | 'orange' | 
 
 export function DashboardPage() {
   const navigate = useNavigate();
+  const api = useApmeApi();
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [cleanest, setCleanest] = useState<ProjectRanking[]>([]);
   const [dirtiest, setDirtiest] = useState<ProjectRanking[]>([]);
@@ -62,20 +64,26 @@ export function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const fetchActiveOps = useCallback(() => {
-    getActiveOperations().then(setActiveOps).catch(() => {});
-  }, []);
-
   useEffect(() => {
+    let cancelled = false;
+    const fetchActiveOps = () => {
+      getActiveOperations(api)
+        .then((ops) => {
+          if (!cancelled) setActiveOps(ops);
+        })
+        .catch(() => {});
+    };
+
     Promise.all([
-      getDashboardSummary(),
-      getDashboardRankings('health_score', 'desc', 10),
-      getDashboardRankings('health_score', 'asc', 10),
-      getDashboardRankings('last_scanned_at', 'desc', 10),
-      getDashboardRankings('scan_count', 'desc', 10),
-      getActiveOperations(),
+      getDashboardSummary(api),
+      getDashboardRankings('health_score', 'desc', 10, api),
+      getDashboardRankings('health_score', 'asc', 10, api),
+      getDashboardRankings('last_scanned_at', 'desc', 10, api),
+      getDashboardRankings('scan_count', 'desc', 10, api),
+      getActiveOperations(api),
     ])
       .then(([sum, clean, dirty, staleProjects, scanned, ops]) => {
+        if (cancelled) return;
         setSummary(sum);
         setCleanest(clean);
         setDirtiest(dirty);
@@ -84,13 +92,16 @@ export function DashboardPage() {
         setActiveOps(ops);
       })
       .catch(() => {})
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
 
     pollRef.current = setInterval(fetchActiveOps, 5000);
     return () => {
+      cancelled = true;
       if (pollRef.current) clearInterval(pollRef.current);
     };
-  }, [fetchActiveOps]);
+  }, [api]);
 
   return (
     <PageLayout>

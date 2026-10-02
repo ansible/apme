@@ -14,7 +14,7 @@ import { usePageNotifications } from '@ansible/ansible-ui-framework';
 import { usePageAlertToaster } from '@ansible/ansible-ui-framework/PageAlertToaster';
 import type { IPageNotification } from '@ansible/ansible-ui-framework/PageNotifications/PageNotification';
 import type { IPageNotificationGroup } from '@ansible/ansible-ui-framework/PageNotifications/PageNotificationGroup';
-import { apmeSseUrl } from '../api/apmeApiAdapter';
+import { apmeSseUrl, useApmeApi } from '../api/apmeApiAdapter';
 import { listNotifications, markNotificationRead } from '../services/api';
 import type { NotificationItem } from '../types/api';
 
@@ -74,20 +74,24 @@ const NO_DISMISS_TYPES = new Set(['secrets_detected']);
 export function useNotificationStream(): void {
   const { setNotificationGroups } = usePageNotifications();
   const alertToaster = usePageAlertToaster();
-  const mountedRef = useRef(true);
+  const api = useApmeApi();
+  const apiRef = useRef(api);
+  apiRef.current = api;
 
   useEffect(() => {
-    mountedRef.current = true;
+    let cancelled = false;
     let es: EventSource | undefined;
+    const isActive = () => !cancelled;
 
     const startStream = async () => {
       // Buffer SSE events that arrive before the REST load completes.
       const buffer: NotificationItem[] = [];
       let restLoaded = false;
 
-      es = new EventSource(apmeSseUrl('/notifications/stream'));
+      es = new EventSource(apmeSseUrl('/notifications/stream', apiRef.current));
 
       const handleSseItem = (item: NotificationItem) => {
+        if (!isActive()) return;
         setNotificationGroups((prev) => mergeNotification(prev, item));
 
         const timeout = NO_DISMISS_TYPES.has(item.type) ? undefined : 8000;
@@ -100,11 +104,11 @@ export function useNotificationStream(): void {
           actionClose: undefined,
         });
 
-        markNotificationRead(item.id).catch(() => {});
+        markNotificationRead(item.id, apiRef.current).catch(() => {});
       };
 
       es.onmessage = (event) => {
-        if (!mountedRef.current) return;
+        if (!isActive()) return;
         let item: NotificationItem;
         try {
           item = JSON.parse(event.data as string) as NotificationItem;
@@ -134,12 +138,12 @@ export function useNotificationStream(): void {
           timeout,
           actionClose: undefined,
         });
-        markNotificationRead(buffered.id).catch(() => {});
+        markNotificationRead(buffered.id, apiRef.current).catch(() => {});
       };
 
       try {
-        const resp = await listNotifications(100, 0);
-        if (!mountedRef.current) return;
+        const resp = await listNotifications(100, 0, false, apiRef.current);
+        if (!isActive()) return;
 
         const restIds = new Set(resp.items.map((n) => n.id));
         const merged = [...resp.items];
@@ -193,7 +197,7 @@ export function useNotificationStream(): void {
           }
         }
       } catch {
-        if (!mountedRef.current) return;
+        if (!isActive()) return;
 
         // Flip restLoaded first so any SSE events arriving while we process the
         // buffered items go through handleSseItem directly rather than getting
@@ -227,8 +231,11 @@ export function useNotificationStream(): void {
     void startStream();
 
     return () => {
-      mountedRef.current = false;
+      cancelled = true;
       es?.close();
     };
-  }, [setNotificationGroups, alertToaster]);
+    // Subscribe on apiBase/origin identity only: a host re-creating its
+    // `fetch` closure must not tear down the EventSource. REST handlers
+    // read apiRef.current so refreshed auth applies without reconnecting.
+  }, [api.apiBase, api.origin, setNotificationGroups, alertToaster]);
 }

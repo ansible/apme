@@ -47,6 +47,12 @@ Helpers such as `apmeApiUrl('/projects/:id/operation')` resolve against
 `apiBase`. Hosts plug in **how** calls are made; the **operation API shape**
 stays the Gateway `/api/v1` contract (ADR-060).
 
+Providers are context-isolated: `ApmeApiProvider` never writes the module
+default, so nested providers resolve per-subtree and unmounting an inner
+provider cannot clobber the outer one. Hooks consume the nearest provider
+via `useApmeApi()`; plain service modules fall back to the module default
+(set with `setApmeApiAdapter()` for tests and non-React hosts).
+
 ```text
 ┌─────────────────────────────────────────────────────────────┐
 │  @apme/ui-workflow                                          │

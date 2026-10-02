@@ -256,24 +256,9 @@ export function OperationPanel({
         </Card>,
       );
     }
-    const proposals = state.proposals.map((p) => ({
-      id: p.id,
-      rule_id: p.rule_id,
-      file: p.file,
-      tier: p.tier,
-      confidence: p.confidence,
-      explanation: p.explanation,
-      diff_hunk: p.diff_hunk,
-      status: p.status,
-      suggestion: p.suggestion,
-      line_start: p.line_start,
-      line_end: p.line_end,
-      path: p.path,
-      node_type: p.node_type,
-      source: p.source,
-      before_text: p.before_text,
-      after_text: p.after_text,
-    }));
+    // state.proposals is OperationProposal[] via the hook's Proposal alias —
+    // pass through directly so new shared fields cannot be dropped here.
+    const proposals = state.proposals;
     return withStepper(
       state,
       enableAi,

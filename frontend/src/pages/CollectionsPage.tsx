@@ -18,12 +18,14 @@ import {
   SortAmountDownIcon,
   SortAmountUpIcon,
 } from '@patternfly/react-icons';
+import { useApmeApi } from '../api/apmeApiAdapter';
 import { listCollections, getDepHealthSummary } from '../services/api';
 import type { CollectionSummary, CollectionHealthSummary } from '../types/api';
 
 type SortField = 'fqcn' | 'version' | 'project_count' | 'findings';
 
 export function CollectionsPage() {
+  const api = useApmeApi();
   const navigate = useNavigate();
   const [collections, setCollections] = useState<CollectionSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -35,8 +37,8 @@ export function CollectionsPage() {
   const fetchCollections = useCallback(() => {
     setLoading(true);
     Promise.all([
-      listCollections(500, 0),
-      getDepHealthSummary().catch(() => ({ collection_findings: [], python_cves: [], suppressed_count: 0 })),
+      listCollections(500, 0, api),
+      getDepHealthSummary(api).catch(() => ({ collection_findings: [], python_cves: [], suppressed_count: 0 })),
     ])
       .then(([data, health]) => {
         setCollections(data);
@@ -48,7 +50,7 @@ export function CollectionsPage() {
       })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, []);
+  }, [api]);
 
   useEffect(() => { fetchCollections(); }, [fetchCollections]);
 

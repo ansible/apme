@@ -35,7 +35,17 @@ import type {
   UpdateProjectRequest,
   ViolationDetail,
 } from "../types/api";
-import { apmeApiUrl, getApmeApiAdapter } from "../api/apmeApiAdapter";
+import {
+  apmeApiUrl,
+  getApmeApiAdapter,
+  type ApmeApiAdapter,
+} from "../api/apmeApiAdapter";
+
+// NOTE (#447): adapter resolution is injectable per call. `apiFetch` and
+// `request` take an optional trailing `ApmeApiAdapter` (module default
+// otherwise). All exported helpers accept the same optional adapter for
+// React callers under `ApmeApiProvider`; pass `useApmeApi()` from components.
+// Module defaults remain for non-React callers and tests (`setApmeApiAdapter()`).
 
 class ApiError extends Error {
   status: number;
@@ -81,20 +91,26 @@ export function apiErrorMessage(err: unknown, fallback = "Request failed"): stri
 async function apiFetch(
   path: string,
   init?: Omit<RequestInit, "headers"> & { headers?: Record<string, string> },
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
 ): Promise<Response> {
-  const { fetch: doFetch } = getApmeApiAdapter();
-  return doFetch(apmeApiUrl(path), init);
+  const { fetch: doFetch } = adapter;
+  return doFetch(apmeApiUrl(path, adapter), init);
 }
 
 async function request<T>(
   path: string,
   init?: Omit<RequestInit, "headers"> & { headers?: Record<string, string> },
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
 ): Promise<T> {
   const { headers: extraHeaders, ...rest } = init ?? {};
-  const res = await apiFetch(path, {
-    ...rest,
-    headers: { Accept: "application/json", ...extraHeaders },
-  });
+  const res = await apiFetch(
+    path,
+    {
+      ...rest,
+      headers: { Accept: "application/json", ...extraHeaders },
+    },
+    adapter,
+  );
   if (!res.ok) {
     const text = await res.text();
     throw new ApiError(res.status, text);
@@ -102,79 +118,117 @@ async function request<T>(
   return res.json() as Promise<T>;
 }
 
-export function getHealth(): Promise<HealthStatus> {
-  return request("/health");
+export function getHealth(
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
+): Promise<HealthStatus> {
+  return request("/health", undefined, adapter);
 }
 
 export function listSessions(
   limit = 50,
   offset = 0,
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
 ): Promise<PaginatedResponse<SessionSummary>> {
-  return request(`/sessions?limit=${limit}&offset=${offset}`);
+  return request(`/sessions?limit=${limit}&offset=${offset}`, undefined, adapter);
 }
 
 export function listActivity(
   limit = 50,
   offset = 0,
   sessionId?: string,
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
 ): Promise<PaginatedResponse<ActivitySummary>> {
   let url = `/activity?limit=${limit}&offset=${offset}`;
   if (sessionId) url += `&session_id=${sessionId}`;
-  return request(url);
+  return request(url, undefined, adapter);
 }
 
-export function getActivity(scanId: string): Promise<ActivityDetail> {
-  return request(`/activity/${scanId}`);
+export function getActivity(
+  scanId: string,
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
+): Promise<ActivityDetail> {
+  return request(`/activity/${scanId}`, undefined, adapter);
 }
 
-export async function deleteActivity(scanId: string): Promise<void> {
-  const res = await apiFetch(`/activity/${scanId}`, { method: "DELETE" });
+export async function deleteActivity(
+  scanId: string,
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
+): Promise<void> {
+  const res = await apiFetch(`/activity/${scanId}`, { method: "DELETE" }, adapter);
   if (!res.ok) throw new Error(`${res.status}`);
 }
 
 export function submitActivity(
   projectId: string,
   activityId: string,
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
 ): Promise<SubmitResponse> {
-  return request(`/projects/${projectId}/operation/submit`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ activity_id: activityId }),
-  });
+  return request(
+    `/projects/${projectId}/operation/submit`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ activity_id: activityId }),
+    },
+    adapter,
+  );
 }
 
-export function getSession(sessionId: string): Promise<SessionDetail> {
-  return request(`/sessions/${sessionId}`);
+export function getSession(
+  sessionId: string,
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
+): Promise<SessionDetail> {
+  return request(`/sessions/${sessionId}`, undefined, adapter);
 }
 
-export function getTopViolations(limit = 20): Promise<TopViolation[]> {
-  return request(`/violations/top?limit=${limit}`);
+export function getTopViolations(
+  limit = 20,
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
+): Promise<TopViolation[]> {
+  return request(`/violations/top?limit=${limit}`, undefined, adapter);
 }
 
-export function getSessionTrend(sessionId: string): Promise<TrendPoint[]> {
-  return request(`/sessions/${sessionId}/trend`);
+export function getSessionTrend(
+  sessionId: string,
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
+): Promise<TrendPoint[]> {
+  return request(`/sessions/${sessionId}/trend`, undefined, adapter);
 }
 
-export function getRemediationRates(limit = 20): Promise<RemediationRateEntry[]> {
-  return request(`/stats/remediation-rates?limit=${limit}`);
+export function getRemediationRates(
+  limit = 20,
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
+): Promise<RemediationRateEntry[]> {
+  return request(`/stats/remediation-rates?limit=${limit}`, undefined, adapter);
 }
 
-export function getAiAcceptance(): Promise<AiAcceptanceEntry[]> {
-  return request(`/stats/ai-acceptance`);
+export function getAiAcceptance(
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
+): Promise<AiAcceptanceEntry[]> {
+  return request(`/stats/ai-acceptance`, undefined, adapter);
 }
 
-export function listAiModels(): Promise<AiModelInfo[]> {
-  return request(`/ai/models`);
+export function listAiModels(
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
+): Promise<AiModelInfo[]> {
+  return request(`/ai/models`, undefined, adapter);
 }
 
 // ── Project API (ADR-037) ────────────────────────────────────────────
 
-export function createProject(body: CreateProjectRequest): Promise<ProjectSummary> {
-  return request("/projects", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+export function createProject(
+  body: CreateProjectRequest,
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
+): Promise<ProjectSummary> {
+  return request(
+    "/projects",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+    adapter,
+  );
 }
 
 export function listProjects(
@@ -182,29 +236,47 @@ export function listProjects(
   offset = 0,
   sortBy = "created_at",
   order = "desc",
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
 ): Promise<PaginatedResponse<ProjectSummary>> {
-  return request(`/projects?limit=${limit}&offset=${offset}&sort_by=${sortBy}&order=${order}`);
+  return request(
+    `/projects?limit=${limit}&offset=${offset}&sort_by=${sortBy}&order=${order}`,
+    undefined,
+    adapter,
+  );
 }
 
-export function getProject(projectId: string): Promise<ProjectDetail> {
-  return request(`/projects/${encodeURIComponent(projectId)}`);
+export function getProject(
+  projectId: string,
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
+): Promise<ProjectDetail> {
+  return request(`/projects/${encodeURIComponent(projectId)}`, undefined, adapter);
 }
 
 export function updateProject(
   projectId: string,
   body: UpdateProjectRequest,
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
 ): Promise<ProjectSummary> {
-  return request(`/projects/${encodeURIComponent(projectId)}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  return request(
+    `/projects/${encodeURIComponent(projectId)}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+    adapter,
+  );
 }
 
-export async function deleteProject(projectId: string): Promise<void> {
-  const res = await apiFetch(`/projects/${encodeURIComponent(projectId)}`, {
-    method: "DELETE",
-  });
+export async function deleteProject(
+  projectId: string,
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
+): Promise<void> {
+  const res = await apiFetch(
+    `/projects/${encodeURIComponent(projectId)}`,
+    { method: "DELETE" },
+    adapter,
+  );
   if (!res.ok) throw new Error(`${res.status}`);
 }
 
@@ -212,8 +284,13 @@ export function listProjectActivity(
   projectId: string,
   limit = 50,
   offset = 0,
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
 ): Promise<PaginatedResponse<ActivitySummary>> {
-  return request(`/projects/${encodeURIComponent(projectId)}/activity?limit=${limit}&offset=${offset}`);
+  return request(
+    `/projects/${encodeURIComponent(projectId)}/activity?limit=${limit}&offset=${offset}`,
+    undefined,
+    adapter,
+  );
 }
 
 export function listProjectViolations(
@@ -222,22 +299,30 @@ export function listProjectViolations(
   offset = 0,
   severity?: string,
   ruleId?: string,
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
 ): Promise<ViolationDetail[]> {
   let url = `/projects/${encodeURIComponent(projectId)}/violations?limit=${limit}&offset=${offset}`;
   if (severity) url += `&severity=${severity}`;
   if (ruleId) url += `&rule_id=${ruleId}`;
-  return request(url);
+  return request(url, undefined, adapter);
 }
 
 export function getProjectTrend(
   projectId: string,
   limit = 20,
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
 ): Promise<TrendPoint[]> {
-  return request(`/projects/${encodeURIComponent(projectId)}/trend?limit=${limit}`);
+  return request(
+    `/projects/${encodeURIComponent(projectId)}/trend?limit=${limit}`,
+    undefined,
+    adapter,
+  );
 }
 
-export function getDashboardSummary(): Promise<DashboardSummary> {
-  return request("/dashboard/summary");
+export function getDashboardSummary(
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
+): Promise<DashboardSummary> {
+  return request("/dashboard/summary", undefined, adapter);
 }
 
 export interface ActiveOperation {
@@ -250,22 +335,36 @@ export interface ActiveOperation {
   started_at: string;
 }
 
-export function getActiveOperations(): Promise<ActiveOperation[]> {
-  return request("/operations/active");
+export function getActiveOperations(
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
+): Promise<ActiveOperation[]> {
+  return request("/operations/active", undefined, adapter);
 }
 
 export function getDashboardRankings(
   sortBy = "health_score",
   order = "desc",
   limit = 10,
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
 ): Promise<ProjectRanking[]> {
-  return request(`/dashboard/rankings?sort_by=${sortBy}&order=${order}&limit=${limit}`);
+  return request(
+    `/dashboard/rankings?sort_by=${sortBy}&order=${order}&limit=${limit}`,
+    undefined,
+    adapter,
+  );
 }
 
 // ── Dependencies (ADR-040) ─────────────────────────────────────────────
 
-export function getProjectDependencies(projectId: string): Promise<ProjectDependencies> {
-  return request(`/projects/${encodeURIComponent(projectId)}/dependencies`);
+export function getProjectDependencies(
+  projectId: string,
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
+): Promise<ProjectDependencies> {
+  return request(
+    `/projects/${encodeURIComponent(projectId)}/dependencies`,
+    undefined,
+    adapter,
+  );
 }
 
 // ── ContentGraph visualization ─────────────────────────────────────────
@@ -277,14 +376,22 @@ export interface GraphData {
   execution_edges?: Array<{ source: string; target: string }>;
 }
 
-export function getProjectGraph(projectId: string): Promise<GraphData> {
-  return request(`/projects/${encodeURIComponent(projectId)}/graph`);
+export function getProjectGraph(
+  projectId: string,
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
+): Promise<GraphData> {
+  return request(`/projects/${encodeURIComponent(projectId)}/graph`, undefined, adapter);
 }
 
-export async function getProjectSbom(projectId: string): Promise<Blob> {
-  const res = await apiFetch(`/projects/${encodeURIComponent(projectId)}/sbom`, {
-    headers: { Accept: "application/vnd.cyclonedx+json" },
-  });
+export async function getProjectSbom(
+  projectId: string,
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
+): Promise<Blob> {
+  const res = await apiFetch(
+    `/projects/${encodeURIComponent(projectId)}/sbom`,
+    { headers: { Accept: "application/vnd.cyclonedx+json" } },
+    adapter,
+  );
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`${res.status}: ${text}`);
@@ -295,68 +402,107 @@ export async function getProjectSbom(projectId: string): Promise<Blob> {
 export function listCollections(
   limit = 200,
   offset = 0,
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
 ): Promise<CollectionSummary[]> {
-  return request(`/collections?limit=${limit}&offset=${offset}`);
+  return request(`/collections?limit=${limit}&offset=${offset}`, undefined, adapter);
 }
 
-export function getCollectionDetail(fqcn: string): Promise<CollectionDetail> {
-  return request(`/collections/${encodeURIComponent(fqcn)}`);
+export function getCollectionDetail(
+  fqcn: string,
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
+): Promise<CollectionDetail> {
+  return request(`/collections/${encodeURIComponent(fqcn)}`, undefined, adapter);
 }
 
-export function listCollectionProjects(fqcn: string): Promise<CollectionProjectRef[]> {
-  return request(`/collections/${encodeURIComponent(fqcn)}/projects`);
+export function listCollectionProjects(
+  fqcn: string,
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
+): Promise<CollectionProjectRef[]> {
+  return request(`/collections/${encodeURIComponent(fqcn)}/projects`, undefined, adapter);
 }
 
 export function listPythonPackages(
   limit = 200,
   offset = 0,
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
 ): Promise<PythonPackageSummary[]> {
-  return request(`/python-packages?limit=${limit}&offset=${offset}`);
+  return request(`/python-packages?limit=${limit}&offset=${offset}`, undefined, adapter);
 }
 
-export function getPythonPackageDetail(name: string): Promise<PythonPackageDetail> {
-  return request(`/python-packages/${encodeURIComponent(name)}`);
+export function getPythonPackageDetail(
+  name: string,
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
+): Promise<PythonPackageDetail> {
+  return request(`/python-packages/${encodeURIComponent(name)}`, undefined, adapter);
 }
 
 // ── Dependency health (ADR-051) ─────────────────────────────────────────
 
-export function getDepHealthSummary(): Promise<DepHealthSummary> {
-  return request("/dep-health");
+export function getDepHealthSummary(
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
+): Promise<DepHealthSummary> {
+  return request("/dep-health", undefined, adapter);
 }
 
-export function getProjectDepHealth(projectId: string): Promise<DepHealthSummary> {
-  return request(`/projects/${encodeURIComponent(projectId)}/dep-health`);
+export function getProjectDepHealth(
+  projectId: string,
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
+): Promise<DepHealthSummary> {
+  return request(
+    `/projects/${encodeURIComponent(projectId)}/dep-health`,
+    undefined,
+    adapter,
+  );
 }
 
 // ── Galaxy server settings (ADR-045) ────────────────────────────────────
 
-export function listGalaxyServers(): Promise<GalaxyServer[]> {
-  return request("/settings/galaxy-servers");
+export function listGalaxyServers(
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
+): Promise<GalaxyServer[]> {
+  return request("/settings/galaxy-servers", undefined, adapter);
 }
 
-export function createGalaxyServer(body: CreateGalaxyServerRequest): Promise<GalaxyServer> {
-  return request("/settings/galaxy-servers", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+export function createGalaxyServer(
+  body: CreateGalaxyServerRequest,
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
+): Promise<GalaxyServer> {
+  return request(
+    "/settings/galaxy-servers",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+    adapter,
+  );
 }
 
 export function updateGalaxyServer(
   serverId: number,
   body: UpdateGalaxyServerRequest,
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
 ): Promise<GalaxyServer> {
-  return request(`/settings/galaxy-servers/${serverId}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  return request(
+    `/settings/galaxy-servers/${serverId}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+    adapter,
+  );
 }
 
-export async function deleteGalaxyServer(serverId: number): Promise<void> {
-  const res = await apiFetch(`/settings/galaxy-servers/${serverId}`, {
-    method: "DELETE",
-  });
+export async function deleteGalaxyServer(
+  serverId: number,
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
+): Promise<void> {
+  const res = await apiFetch(
+    `/settings/galaxy-servers/${serverId}`,
+    { method: "DELETE" },
+    adapter,
+  );
   if (!res.ok) throw new Error(`${res.status}`);
 }
 
@@ -364,23 +510,32 @@ export async function deleteGalaxyServer(serverId: number): Promise<void> {
 
 export function listSuppressions(
   scope?: string,
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
 ): Promise<SuppressionRecord[]> {
   const params = scope ? `?scope=${encodeURIComponent(scope)}` : "";
-  return request(`/suppressions${params}`);
+  return request(`/suppressions${params}`, undefined, adapter);
 }
 
 export function createSuppression(
   body: CreateSuppressionRequest,
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
 ): Promise<SuppressionRecord> {
-  return request("/suppressions", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  return request(
+    "/suppressions",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+    adapter,
+  );
 }
 
-export async function deleteSuppression(id: number): Promise<void> {
-  const res = await apiFetch(`/suppressions/${id}`, { method: "DELETE" });
+export async function deleteSuppression(
+  id: number,
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
+): Promise<void> {
+  const res = await apiFetch(`/suppressions/${id}`, { method: "DELETE" }, adapter);
   if (!res.ok) {
     const text = await res.text();
     throw new ApiError(res.status, text);
@@ -389,8 +544,10 @@ export async function deleteSuppression(id: number): Promise<void> {
 
 // ── Feedback (POC) ─────────────────────────────────────────────────────
 
-export function getFeedbackEnabled(): Promise<{ enabled: boolean }> {
-  return request("/feedback/enabled");
+export function getFeedbackEnabled(
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
+): Promise<{ enabled: boolean }> {
+  return request("/feedback/enabled", undefined, adapter);
 }
 
 // ── Rule catalog (ADR-041) ─────────────────────────────────────────────
@@ -435,51 +592,72 @@ function mapRuleApiToDetail(r: RuleApiRow): RuleDetail {
   };
 }
 
-export function listRules(params?: {
-  category?: string;
-  source?: string;
-  enabled_only?: boolean;
-}): Promise<RuleDetail[]> {
+export function listRules(
+  params?: {
+    category?: string;
+    source?: string;
+    enabled_only?: boolean;
+  },
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
+): Promise<RuleDetail[]> {
   const sp = new URLSearchParams();
   if (params?.category) sp.set("category", params.category);
   if (params?.source) sp.set("source", params.source);
   if (params?.enabled_only === true) sp.set("enabled_only", "true");
   const q = sp.toString();
-  return request<RuleApiRow[]>(`/rules${q ? `?${q}` : ""}`).then((rows) => rows.map(mapRuleApiToDetail));
+  return request<RuleApiRow[]>(`/rules${q ? `?${q}` : ""}`, undefined, adapter).then((rows) =>
+    rows.map(mapRuleApiToDetail),
+  );
 }
 
-export function getRule(ruleId: string): Promise<RuleDetail> {
-  return request<RuleApiRow>(`/rules/${encodeURIComponent(ruleId)}`).then(mapRuleApiToDetail);
+export function getRule(
+  ruleId: string,
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
+): Promise<RuleDetail> {
+  return request<RuleApiRow>(`/rules/${encodeURIComponent(ruleId)}`, undefined, adapter).then(
+    mapRuleApiToDetail,
+  );
 }
 
 export async function updateRuleConfig(
   ruleId: string,
   config: RuleOverrideRequest,
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
 ): Promise<void> {
-  const res = await apiFetch(`/rules/${encodeURIComponent(ruleId)}/config`, {
-    method: "PUT",
-    headers: { Accept: "application/json", "Content-Type": "application/json" },
-    body: JSON.stringify(config),
-  });
+  const res = await apiFetch(
+    `/rules/${encodeURIComponent(ruleId)}/config`,
+    {
+      method: "PUT",
+      headers: { Accept: "application/json", "Content-Type": "application/json" },
+      body: JSON.stringify(config),
+    },
+    adapter,
+  );
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`${res.status}: ${text}`);
   }
 }
 
-export async function deleteRuleConfig(ruleId: string): Promise<void> {
-  const res = await apiFetch(`/rules/${encodeURIComponent(ruleId)}/config`, {
-    method: "DELETE",
-    headers: { Accept: "application/json" },
-  });
+export async function deleteRuleConfig(
+  ruleId: string,
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
+): Promise<void> {
+  const res = await apiFetch(
+    `/rules/${encodeURIComponent(ruleId)}/config`,
+    { method: "DELETE", headers: { Accept: "application/json" } },
+    adapter,
+  );
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`${res.status}: ${text}`);
   }
 }
 
-export function getRuleStats(): Promise<RuleStats> {
-  return request("/rules/stats");
+export function getRuleStats(
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
+): Promise<RuleStats> {
+  return request("/rules/stats", undefined, adapter);
 }
 
 // ── Notifications ───────────────────────────────────────────────────────
@@ -488,23 +666,32 @@ export function listNotifications(
   limit = 50,
   offset = 0,
   unreadOnly = false,
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
 ): Promise<PaginatedResponse<NotificationItem>> {
   let url = `/notifications?limit=${limit}&offset=${offset}`;
   if (unreadOnly) url += "&unread_only=true";
-  return request(url);
+  return request(url, undefined, adapter);
 }
 
-export async function markNotificationRead(id: number): Promise<void> {
-  const res = await apiFetch(`/notifications/${id}/read`, { method: "PATCH" });
+export async function markNotificationRead(
+  id: number,
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
+): Promise<void> {
+  const res = await apiFetch(`/notifications/${id}/read`, { method: "PATCH" }, adapter);
   if (!res.ok) throw new Error(`${res.status}`);
 }
 
-export async function markAllNotificationsRead(): Promise<void> {
-  const res = await apiFetch(`/notifications/read-all`, { method: "POST" });
+export async function markAllNotificationsRead(
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
+): Promise<void> {
+  const res = await apiFetch(`/notifications/read-all`, { method: "POST" }, adapter);
   if (!res.ok) throw new Error(`${res.status}`);
 }
 
-export async function deleteNotification(id: number): Promise<void> {
-  const res = await apiFetch(`/notifications/${id}`, { method: "DELETE" });
+export async function deleteNotification(
+  id: number,
+  adapter: ApmeApiAdapter = getApmeApiAdapter(),
+): Promise<void> {
+  const res = await apiFetch(`/notifications/${id}`, { method: "DELETE" }, adapter);
   if (!res.ok) throw new Error(`${res.status}`);
 }

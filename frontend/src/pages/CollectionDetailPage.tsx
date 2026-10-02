@@ -10,6 +10,7 @@ import {
   SplitItem,
 } from '@patternfly/react-core';
 import { ExternalLinkAltIcon } from '@patternfly/react-icons';
+import { useApmeApi } from '../api/apmeApiAdapter';
 import { getCollectionDetail } from '../services/api';
 import type { CollectionDetail } from '../types/api';
 import { healthLabelColor } from '../components/severity';
@@ -19,6 +20,7 @@ function HealthBadge({ score }: { score: number }) {
 }
 
 export function CollectionDetailPage() {
+  const api = useApmeApi();
   const { fqcn } = useParams<{ fqcn: string }>();
   const navigate = useNavigate();
   const [collection, setCollection] = useState<CollectionDetail | null>(null);
@@ -30,7 +32,7 @@ export function CollectionDetailPage() {
     setLoading(true);
     setError(false);
     try {
-      const data = await getCollectionDetail(fqcn);
+      const data = await getCollectionDetail(fqcn, api);
       setCollection(data);
     } catch {
       setError(true);
@@ -38,7 +40,7 @@ export function CollectionDetailPage() {
     } finally {
       setLoading(false);
     }
-  }, [fqcn]);
+  }, [fqcn, api]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
