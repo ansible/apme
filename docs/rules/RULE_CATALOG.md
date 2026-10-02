@@ -51,8 +51,8 @@ Routing follows `src/apme_engine/remediation/partition.py` (ADR-026 scope metada
 | Tier | Label | Count | Routing |
 |------|-------|-------|---------|
 | 1 | auto | 25 | Deterministic transform in registry — applied by `apme remediate` |
-| 2 | ai | 69 | Task/block scope, no fixer — AI proposes patch (Abbenay) |
-| 3 | manual | 63 | Play/role/collection scope, cross-file, or info severity |
+| 2 | ai | 68 | Task/block scope, no fixer — AI proposes patch (Abbenay) |
+| 3 | manual | 64 | Play/role/collection scope, cross-file, or info severity |
 
 Full analysis and promotion candidates: [REMEDIATION_TIER_REPORT.md](REMEDIATION_TIER_REPORT.md).
 
@@ -87,7 +87,6 @@ Full analysis and promotion candidates: [REMEDIATION_TIER_REPORT.md](REMEDIATION
 | L025 | L | OPA | low | task | auto | Task/play name should start with uppercase. | Yes | Yes | Yes | Yes |
 | L026 | L | Native | low | task | auto | Tasks should use FQCN for modules. | Yes | Yes | Yes | Yes |
 | L027 | L | Native | low | role | manual | Roles should have meta/main.yml with metadata. | Yes | Yes | Yes | — |
-| L030 | L | Native | low | task | ai | Non-builtin module used when a builtin equivalent exists. | Yes | Yes | Yes | — |
 | L031 | L | Native | high | task | ai | File permission may be insecure. | Yes | Yes | Yes | — |
 | L032 | L | Native | low | task | ai | Variable redefinition may cause confusion. | Yes | Yes | Yes | — |
 | L033 | L | Native | low | task | ai | Overriding vars without conditions. | Yes | Yes | Yes | — |
@@ -193,6 +192,7 @@ Full analysis and promotion candidates: [REMEDIATION_TIER_REPORT.md](REMEDIATION
 | M028 | M | OPA | high | task | ai | first_found lookup auto-splitting paths on delimiters is deprecated (2.23) | Yes | Yes | Yes | — |
 | M029 | M | Native | medium | playbook | manual | Inventory scripts must include _meta.hostvars in JSON output (enforced in 2.23) | Yes | Yes | Yes | — |
 | M030 | M | Native | medium | task | ai | Conditional expressions that fail Jinja2 parsing will error in 2.23 instead of being silently ignored | Yes | Yes | Yes | — |
+| M047 | M | Native | medium | inventory | manual | Inventory plugin disable_lookups argument has no effect (removed in 2.23) | Yes | Yes | Yes | — |
 | P001 | P | Ansible | error | task | ai | Validate module name (Ansible required). | — | Yes | Yes | — |
 | P002 | P | Ansible | error | task | ai | Validate module argument keys (Ansible required). | — | Yes | Yes | — |
 | P003 | P | Ansible | error | task | ai | Validate module argument values (Ansible required). | — | — | Yes | — |
@@ -282,7 +282,6 @@ Full analysis and promotion candidates: [REMEDIATION_TIER_REPORT.md](REMEDIATION
 | A002 | high | task | ai | Tasks should not use deprecated AAP API endpoints or deprecated ansible.hub modules. | Yes | Yes | Yes | — |
 | L026 | low | task | auto | Tasks should use FQCN for modules. | Yes | Yes | Yes | Yes |
 | L027 | low | role | manual | Roles should have meta/main.yml with metadata. | Yes | Yes | Yes | — |
-| L030 | low | task | ai | Non-builtin module used when a builtin equivalent exists. | Yes | Yes | Yes | — |
 | L031 | high | task | ai | File permission may be insecure. | Yes | Yes | Yes | — |
 | L032 | low | task | ai | Variable redefinition may cause confusion. | Yes | Yes | Yes | — |
 | L033 | low | task | ai | Overriding vars without conditions. | Yes | Yes | Yes | — |
@@ -356,6 +355,7 @@ Full analysis and promotion candidates: [REMEDIATION_TIER_REPORT.md](REMEDIATION
 | M027 | low | task | ai | Mixing inline k=v arguments with args: mapping is deprecated (2.23) | Yes | Yes | Yes | — |
 | M029 | medium | playbook | manual | Inventory scripts must include _meta.hostvars in JSON output (enforced in 2.23) | Yes | Yes | Yes | — |
 | M030 | medium | task | ai | Conditional expressions that fail Jinja2 parsing will error in 2.23 instead of being silently ignored | Yes | Yes | Yes | — |
+| M047 | medium | inventory | manual | Inventory plugin disable_lookups argument has no effect (removed in 2.23) | Yes | Yes | Yes | — |
 | R101 | medium | task | ai | Task executes parameterized command (annotation-based) | Yes | Yes | Yes | — |
 | R103 | medium | task | ai | Task downloads and executes (annotation-based). | Yes | Yes | Yes | — |
 | R104 | medium | task | ai | Download from unauthorized source (annotation-based). | Yes | Yes | Yes | — |

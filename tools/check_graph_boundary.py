@@ -33,18 +33,16 @@ _ALLOWED_LAZY_IMPORTS: dict[str, set[str]] = {
     "content_graph.py": {"apme_engine.engine.yaml_utils"},
 }
 
-_ALLOWED_RULE_IMPORTS: dict[str, set[str]] = {
-    "L030_non_builtin_use_graph.py": {"apme_engine.engine.finder"},
-}
+# No per-rule engine-import exceptions. L030's pinhole for
+# apme_engine.engine.finder was removed with the rule (#377); built-in
+# graph rules must not import from apme_engine.engine (ADR-053).
 
 
 def _check_file(path: Path) -> list[str]:
     """Return boundary violations for a single Python file."""
     relative = path.relative_to(_GRAPH_PKG)
     rel_str = str(relative)
-    filename = relative.name
     allowed = _ALLOWED_LAZY_IMPORTS.get(relative.parts[0] if relative.parts else "", set())
-    allowed = allowed | _ALLOWED_RULE_IMPORTS.get(filename, set())
 
     try:
         tree = ast.parse(path.read_text(), filename=str(path))

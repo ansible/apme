@@ -49,6 +49,7 @@ VERSION_DEFAULTS: dict[str, SpecifierSet] = {
     "M028": SpecifierSet(">=2.23"),  # first_found auto-splitting deprecated
     "M029": SpecifierSet(">=2.23"),  # inventory script missing _meta
     "M030": SpecifierSet(">=2.23"),  # broken conditional expressions
+    "M047": SpecifierSet(">=2.23"),  # disable_lookups inventory arg removed
 }
 
 _STR_CACHE: dict[str, str] = {rule_id: str(spec) for rule_id, spec in VERSION_DEFAULTS.items()}

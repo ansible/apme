@@ -21,6 +21,7 @@ from apme_engine.graph.types import RuleTag as Tag
 from apme_engine.graph.types import Severity, YAMLDict, YAMLValue
 from apme_engine.graph.variable_helpers import (
     TASK_TYPES,
+    enclosing_play_ids,
     no_log_true_in_scope,
 )
 
@@ -122,7 +123,7 @@ class DebugSensitiveVarsGraphRule(GraphRule):
     description: str = "Debug tasks should not log sensitive variables without no_log: true"
     enabled: bool = True
     name: str = "DebugSensitiveVars"
-    version: str = "v0.0.1"
+    version: str = "v0.0.2"
     severity: Severity = Severity.HIGH
     tags: tuple[str, ...] = (Tag.SYSTEM, Tag.SECURITY)
 
@@ -169,7 +170,26 @@ class DebugSensitiveVarsGraphRule(GraphRule):
                 file=(node.file_path, node.line_start),
             )
 
-        if no_log_true_in_scope(graph, node_id):
+        # Shared task files included from several plays resolve no_log per
+        # play: execution under any unprotected play leaks the values, so
+        # the task is protected only when every enclosing play protects it
+        # (and, within a play, every include path — require_all_paths).
+        play_ids = enclosing_play_ids(graph, node_id)
+        if not play_ids:
+            protected = no_log_true_in_scope(graph, node_id)
+        else:
+            scopes = {play_id: graph.play_scoped_node_ids(play_id) for play_id in play_ids}
+            protected = all(
+                no_log_true_in_scope(
+                    graph,
+                    node_id,
+                    play_context_id=play_id,
+                    play_scope=scopes[play_id],
+                    require_all_paths=True,
+                )
+                for play_id in play_ids
+            )
+        if protected:
             return GraphRuleResult(
                 verdict=False,
                 node_id=node_id,

@@ -68,7 +68,7 @@ co-located shape on Kubernetes/OpenShift — see the [Scaling](#scaling) section
 | Service | Image | Port | Role |
 |---------|-------|------|------|
 | **Engine** | apme-engine | 50051 | Runs the engine (load → build_content_graph → apply_rules → hierarchy); manages session-scoped venvs (`VenvSessionManager`); fans out `ValidateRequest` to all validators in parallel; merges, deduplicates, and streams violations via `FixSession` |
-| **Native** | apme-native | 50055 | ~90 GraphRule subclasses operating on deserialized `ContentGraph`. Rules span L027–L110, M005–M030, A001–A002, R101–R501 (see `src/apme_engine/validators/native/rules/`) |
+| **Native** | apme-native | 50055 | ~90 GraphRule subclasses operating on deserialized `ContentGraph`. Rules span L027–L110, M005–M047, A001–A002, R101–R501 (see `src/apme_engine/validators/native/rules/`) |
 | **OPA** | apme-opa | 50054 | OPA binary (invoked via subprocess) + Python gRPC wrapper. Rego rules L003–L025, M006/M008/M009/M011, R118 on the hierarchy JSON |
 | **Ansible** | apme-ansible | 50053 | Ansible-runtime checks using session-scoped venvs (shared read-only via `/sessions` volume). Rules L057–L059, M001–M004 |
 | **Gitleaks** | apme-gitleaks | 50056 | Gitleaks binary + Python gRPC wrapper. Scans raw files for hardcoded secrets, API keys, private keys. Filters vault-encrypted content and Jinja2 expressions. Rules SEC:* (800+ patterns) |
