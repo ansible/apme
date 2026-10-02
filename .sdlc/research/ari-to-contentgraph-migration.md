@@ -199,22 +199,22 @@ changes.
 ```python
 @dataclass
 class ContentNode:
-    identity: NodeIdentity          # stable YAML-path ID
-    node_type: str                  # playbook, play, role, taskfile, task, handler, block, ...
-    scope: NodeScope                # owned | referenced
-    state: NodeState                # current content + violations
-    progression: list[NodeState]    # history across passes
+    identity: NodeIdentity  # stable YAML-path ID
+    node_type: str  # playbook, play, role, taskfile, task, handler, block, ...
+    scope: NodeScope  # owned | referenced
+    state: NodeState  # current content + violations
+    progression: list[NodeState]  # history across passes
 
     # Domain data (ported from Object subclasses):
     name: str
     defined_in: str
     line_num_in_file: tuple[int, int] | None
-    options: dict                   # play/task options (become, when, tags, etc.)
-    variables: dict                 # vars defined at this scope
-    module: str                     # for tasks: module FQCN
-    module_options: dict | str      # for tasks: resolved module args
-    executable_type: ExecutableType # MODULE_TYPE, ROLE_TYPE, TASKFILE_TYPE
-    annotations: list[Annotation]   # risk annotations, spec annotations, etc.
+    options: dict  # play/task options (become, when, tags, etc.)
+    variables: dict  # vars defined at this scope
+    module: str  # for tasks: module FQCN
+    module_options: dict | str  # for tasks: resolved module args
+    executable_type: ExecutableType  # MODULE_TYPE, ROLE_TYPE, TASKFILE_TYPE
+    annotations: list[Annotation]  # risk annotations, spec annotations, etc.
     become: BecomeInfo | None
 
     # Provenance (new):
@@ -296,9 +296,7 @@ class GraphBuilder:
 
         # Resolution helpers (ported from tree.py)
         self.dicts = make_dicts(root_definitions, ext_definitions)
-        self.module_redirects = load_module_redirects(
-            root_definitions, ext_definitions, self.dicts["modules"]
-        )
+        self.module_redirects = load_module_redirects(root_definitions, ext_definitions, self.dicts["modules"])
 
         # Caches (same pattern as TreeLoader)
         self.module_cache: dict[str, str] = {}
@@ -330,8 +328,7 @@ class GraphBuilder:
         self._classify_all_scopes(graph)
 
         # Phase 4: Validate DAG invariant
-        assert nx.is_directed_acyclic_graph(graph.g), \
-            "ContentGraph must be acyclic"
+        assert nx.is_directed_acyclic_graph(graph.g), "ContentGraph must be acyclic"
 
         return graph
 
@@ -343,37 +340,40 @@ class GraphBuilder:
         """
         pb_id = NodeIdentity.for_file(pb.defined_in)
 
-        graph.add_node(pb_id, ContentNode(
-            identity=pb_id,
-            node_type="playbook",
-            name=pb.name,
-            defined_in=pb.defined_in,
-        ))
+        graph.add_node(
+            pb_id,
+            ContentNode(
+                identity=pb_id,
+                node_type="playbook",
+                name=pb.name,
+                defined_in=pb.defined_in,
+            ),
+        )
 
         for i, play in enumerate(pb.plays):
             if not isinstance(play, Play):
                 continue
             play_id = NodeIdentity.for_play(pb.defined_in, i)
-            graph.add_node(play_id, ContentNode(
-                identity=play_id,
-                node_type="play",
-                name=play.name,
-                defined_in=play.defined_in,
-                options=play.options,
-                variables=play.variables,
-                become=play.become,
-            ))
-            graph.add_edge(pb_id, play_id,
-                edge_type="contains", position=i)
+            graph.add_node(
+                play_id,
+                ContentNode(
+                    identity=play_id,
+                    node_type="play",
+                    name=play.name,
+                    defined_in=play.defined_in,
+                    options=play.options,
+                    variables=play.variables,
+                    become=play.become,
+                ),
+            )
+            graph.add_edge(pb_id, play_id, edge_type="contains", position=i)
 
             # Play children: roles, pre_tasks, tasks, post_tasks, handlers
             self._add_play_children(graph, play, play_id)
 
         return pb_id
 
-    def _add_play_children(
-        self, graph: ContentGraph, play: Play, play_id: str
-    ):
+    def _add_play_children(self, graph: ContentGraph, play: Play, play_id: str):
         """Add role refs, task refs for a play."""
         pos = 0
 
@@ -382,13 +382,14 @@ class GraphBuilder:
             if not isinstance(rip, RoleInPlay):
                 continue
             resolved_key = resolve_role(
-                rip.name, self.dicts["roles"],
-                play.collection, play.collections_in_play,
+                rip.name,
+                self.dicts["roles"],
+                play.collection,
+                play.collections_in_play,
             )
             if resolved_key:
                 role_id = self._ensure_role_node(graph, resolved_key)
-                graph.add_edge(play_id, role_id,
-                    edge_type="dependency", position=pos)
+                graph.add_edge(play_id, role_id, edge_type="dependency", position=pos)
                 pos += 1
 
         # pre_tasks, tasks, post_tasks, handlers
@@ -399,9 +400,7 @@ class GraphBuilder:
                 task_id = self._add_task_node(graph, task, play_id, pos)
                 pos += 1
 
-    def _add_task_node(
-        self, graph: ContentGraph, task: Task, parent_id: str, position: int
-    ) -> str:
+    def _add_task_node(self, graph: ContentGraph, task: Task, parent_id: str, position: int) -> str:
         """Add a task node and resolve its executable reference.
 
         Key difference from TreeLoader: if the task references a role or
@@ -410,33 +409,38 @@ class GraphBuilder:
         """
         task_id = NodeIdentity.for_task(task.defined_in, task.index)
 
-        graph.add_node(task_id, ContentNode(
-            identity=task_id,
-            node_type="task",
-            name=task.name,
-            defined_in=task.defined_in,
-            line_num_in_file=task.line_num_in_file,
-            module=task.module,
-            module_options=task.module_options,
-            executable_type=task.executable_type,
-            options=task.options,
-            variables=task.variables,
-            become=task.become,
-        ))
-        graph.add_edge(parent_id, task_id,
-            edge_type="contains", position=position)
+        graph.add_node(
+            task_id,
+            ContentNode(
+                identity=task_id,
+                node_type="task",
+                name=task.name,
+                defined_in=task.defined_in,
+                line_num_in_file=task.line_num_in_file,
+                module=task.module,
+                module_options=task.module_options,
+                executable_type=task.executable_type,
+                options=task.options,
+                variables=task.variables,
+                become=task.become,
+            ),
+        )
+        graph.add_edge(parent_id, task_id, edge_type="contains", position=position)
 
         # Resolve executable → edge (not subtree copy)
         if task.executable_type == ExecutableType.ROLE_TYPE:
             resolved = resolve_role(
-                task.executable, self.dicts["roles"],
-                task.collection, task.collections_in_play,
+                task.executable,
+                self.dicts["roles"],
+                task.collection,
+                task.collections_in_play,
             )
             if resolved:
                 role_id = self._ensure_role_node(graph, resolved)
-                edge_type = ("import" if "import_role" in task.module
-                             else "include")
-                graph.add_edge(task_id, role_id,
+                edge_type = "import" if "import_role" in task.module else "include"
+                graph.add_edge(
+                    task_id,
+                    role_id,
                     edge_type=edge_type,
                     conditional="when" in task.options,
                     dynamic=(edge_type == "include"),
@@ -444,13 +448,16 @@ class GraphBuilder:
 
         elif task.executable_type == ExecutableType.TASKFILE_TYPE:
             resolved = resolve_taskfile(
-                task.executable, self.dicts["taskfiles"], task.key,
+                task.executable,
+                self.dicts["taskfiles"],
+                task.key,
             )
             if resolved:
                 tf_id = self._ensure_taskfile_node(graph, resolved)
-                edge_type = ("import" if "import_tasks" in task.module
-                             else "include")
-                graph.add_edge(task_id, tf_id,
+                edge_type = "import" if "import_tasks" in task.module else "include"
+                graph.add_edge(
+                    task_id,
+                    tf_id,
                     edge_type=edge_type,
                     conditional="when" in task.options,
                     dynamic=(edge_type == "include"),
@@ -458,12 +465,12 @@ class GraphBuilder:
 
         elif task.executable_type == ExecutableType.MODULE_TYPE:
             resolved = resolve_module(
-                task.executable, self.dicts["modules"],
+                task.executable,
+                self.dicts["modules"],
                 self.module_redirects,
             )
             if resolved:
-                graph.add_edge(task_id, resolved,
-                    edge_type="invokes")
+                graph.add_edge(task_id, resolved, edge_type="invokes")
 
         return task_id
 
@@ -481,9 +488,7 @@ class GraphBuilder:
             self._add_role_definition(graph, role_obj)
         return role_id
 
-    def _ensure_taskfile_node(
-        self, graph: ContentGraph, tf_key: str
-    ) -> str:
+    def _ensure_taskfile_node(self, graph: ContentGraph, tf_key: str) -> str:
         """Return existing taskfile node ID, or create one."""
         tf_id = NodeIdentity.from_key(tf_key)
         if graph.has_node(tf_id):
@@ -555,11 +560,12 @@ def resolve(trees, additional):
     for tree in trees:
         taskcalls = resolve_variables(tree, additional)
 
+
 # variable_resolver.py:228 - resolve_variables()
 def resolve_variables(tree, additional):
     context = Context(inventories=inventories)
-    for call_obj in tree.items:          # LINEAR walk of flat ObjectList
-        context.add(call_obj, depth)     # merges vars into context
+    for call_obj in tree.items:  # LINEAR walk of flat ObjectList
+        context.add(call_obj, depth)  # merges vars into context
         if isinstance(call_obj, TaskCall):
             VariableAnnotator(context).run(call_obj)  # resolves {{ }}
 ```
@@ -605,9 +611,7 @@ class VariableProvenanceResolver:
                 continue
             self._resolve_task(graph, node_id, node)
 
-    def _resolve_task(
-        self, graph: ContentGraph, task_id: str, task_node: ContentNode
-    ):
+    def _resolve_task(self, graph: ContentGraph, task_id: str, task_node: ContentNode):
         """Resolve all variables and inherited properties for a task."""
         # Build the ancestry chain by walking parent edges
         ancestors = self._get_ancestor_chain(graph, task_id)
@@ -622,65 +626,80 @@ class VariableProvenanceResolver:
                 # Role defaults (lowest precedence)
                 for var_name, var_val in ancestor.default_variables.items():
                     if var_name not in merged_vars:
-                        merged_vars[var_name] = (var_val, VariableProvenance(
-                            source="role_default",
-                            defining_node=ancestor_id,
-                        ))
+                        merged_vars[var_name] = (
+                            var_val,
+                            VariableProvenance(
+                                source="role_default",
+                                defining_node=ancestor_id,
+                            ),
+                        )
                 # Role vars (higher precedence, overwrites defaults)
                 for var_name, var_val in ancestor.role_variables.items():
-                    merged_vars[var_name] = (var_val, VariableProvenance(
-                        source="role_var",
-                        defining_node=ancestor_id,
-                    ))
+                    merged_vars[var_name] = (
+                        var_val,
+                        VariableProvenance(
+                            source="role_var",
+                            defining_node=ancestor_id,
+                        ),
+                    )
 
             elif ancestor.node_type == "play":
                 for var_name, var_val in ancestor.variables.items():
-                    merged_vars[var_name] = (var_val, VariableProvenance(
-                        source="play",
-                        defining_node=ancestor_id,
-                    ))
+                    merged_vars[var_name] = (
+                        var_val,
+                        VariableProvenance(
+                            source="play",
+                            defining_node=ancestor_id,
+                        ),
+                    )
 
             elif ancestor.node_type == "block":
                 for var_name, var_val in ancestor.variables.items():
-                    merged_vars[var_name] = (var_val, VariableProvenance(
-                        source="block",
-                        defining_node=ancestor_id,
-                    ))
+                    merged_vars[var_name] = (
+                        var_val,
+                        VariableProvenance(
+                            source="block",
+                            defining_node=ancestor_id,
+                        ),
+                    )
 
         # Task's own vars (highest explicit precedence)
         for var_name, var_val in task_node.variables.items():
-            merged_vars[var_name] = (var_val, VariableProvenance(
-                source="local",
-                defining_node=task_id,
-            ))
+            merged_vars[var_name] = (
+                var_val,
+                VariableProvenance(
+                    source="local",
+                    defining_node=task_id,
+                ),
+            )
 
         # Store provenance on the node
-        task_node.variable_provenance = {
-            k: prov for k, (_, prov) in merged_vars.items()
-        }
+        task_node.variable_provenance = {k: prov for k, (_, prov) in merged_vars.items()}
 
         # Resolve Jinja2 templates in module_options
         # (reuses existing resolve_module_options logic)
         resolved_context = self._build_resolution_context(merged_vars)
-        task_node.resolved_module_options = resolve_templates(
-            task_node.module_options, resolved_context
-        )
+        task_node.resolved_module_options = resolve_templates(task_node.module_options, resolved_context)
 
         # Resolve inherited properties with PropertyOrigin
         self._resolve_inherited_properties(graph, task_id, task_node, ancestors)
 
-    def _resolve_inherited_properties(
-        self, graph, task_id, task_node, ancestors
-    ):
+    def _resolve_inherited_properties(self, graph, task_id, task_node, ancestors):
         """Track PropertyOrigin for become, ignore_errors, etc.
 
         This is the ContentGraph equivalent of ansible-core's
         _get_parent_attribute() — but it records the origin as data
         rather than computing it on every read.
         """
-        inheritable_props = ["become", "become_user", "ignore_errors",
-                             "ignore_unreachable", "check_mode",
-                             "no_log", "run_once"]
+        inheritable_props = [
+            "become",
+            "become_user",
+            "ignore_errors",
+            "ignore_unreachable",
+            "check_mode",
+            "no_log",
+            "run_once",
+        ]
 
         for prop in inheritable_props:
             # Walk ancestors from nearest to farthest
@@ -696,9 +715,7 @@ class VariableProvenanceResolver:
                     )
                     break
 
-    def _get_ancestor_chain(
-        self, graph: ContentGraph, node_id: str
-    ) -> list[str]:
+    def _get_ancestor_chain(self, graph: ContentGraph, node_id: str) -> list[str]:
         """Walk parent edges to build a linear ancestor chain.
 
         For DAG nodes with multiple parents (shared roles), compute the
@@ -712,16 +729,9 @@ class VariableProvenanceResolver:
             return []
 
         ancestor_set = set(ancestors)
-        roots = [
-            a for a in ancestors
-            if all(p not in ancestor_set
-                   for p in graph.g.predecessors(a))
-        ]
+        roots = [a for a in ancestors if all(p not in ancestor_set for p in graph.g.predecessors(a))]
 
-        paths = [
-            nx.shortest_path(graph.g, root, node_id)
-            for root in roots
-        ]
+        paths = [nx.shortest_path(graph.g, root, node_id) for root in roots]
         paths.sort(key=lambda p: (len(p), tuple(p)))
         return paths[0][:-1]  # exclude node itself
 ```
@@ -926,12 +936,14 @@ def build_hierarchy_from_graph(
             # Reuse existing node_to_dict serialization logic
             nodes.append(content_node_to_opa_dict(node))
 
-        trees_data.append({
-            "root_key": root_id,
-            "root_type": node.node_type,
-            "root_path": node.defined_in,
-            "nodes": nodes,
-        })
+        trees_data.append(
+            {
+                "root_key": root_id,
+                "root_type": node.node_type,
+                "root_path": node.defined_in,
+                "nodes": nodes,
+            }
+        )
 
     return {
         "scan_id": scan_id or utc_timestamp(),
@@ -985,6 +997,7 @@ class NodeIdentity:
         site.yml::play[0]#task[3]
         roles/web/tasks/main.yml::task[0]
     """
+
     file_path: str
     yaml_path: str
 
@@ -1032,6 +1045,7 @@ class VariableProvenance:
 @dataclass
 class NodeState:
     """Immutable snapshot of a node at a specific pipeline phase."""
+
     pass_number: int
     phase: str  # "original", "formatted", "scanned", "transformed"
     content_hash: str
@@ -1042,6 +1056,7 @@ class NodeState:
 @dataclass
 class ContentNode:
     """All data for a single node in the ContentGraph."""
+
     identity: NodeIdentity
     node_type: str
     scope: NodeScope = NodeScope.OWNED
@@ -1176,17 +1191,19 @@ class GraphBuilder:
 
         for i, handler in enumerate(play.handlers):
             handler_id = NodeIdentity.for_handler(handler.defined_in, i)
-            graph.add_node(handler_id, ContentNode(
-                identity=handler_id,
-                node_type="handler",
-                name=handler.name,
-                defined_in=handler.defined_in,
-                line_num_in_file=handler.line_num_in_file,
-                module=handler.module,
-                module_options=handler.module_options,
-            ))
-            graph.add_edge(play_id, handler_id,
-                edge_type="contains", position=i)
+            graph.add_node(
+                handler_id,
+                ContentNode(
+                    identity=handler_id,
+                    node_type="handler",
+                    name=handler.name,
+                    defined_in=handler.defined_in,
+                    line_num_in_file=handler.line_num_in_file,
+                    module=handler.module,
+                    module_options=handler.module_options,
+                ),
+            )
+            graph.add_edge(play_id, handler_id, edge_type="contains", position=i)
 
             for topic in handler.listen_topics:
                 handler_topics.setdefault(topic, []).append(str(handler_id))
@@ -1202,9 +1219,7 @@ class GraphBuilder:
                 for subscriber_id in handler_topics.get(handler_name, []):
                     graph.add_edge(task_id, subscriber_id, edge_type="notify")
 
-    def _add_block_edges(
-        self, graph: ContentGraph, block_id: str, block: dict
-    ):
+    def _add_block_edges(self, graph: ContentGraph, block_id: str, block: dict):
         """Create rescue and always edges from a block node.
 
         Main block tasks use `contains` edges (already built by _add_task_node).
@@ -1222,95 +1237,102 @@ class GraphBuilder:
 #### Data-flow edges
 
 ```python
-    def _add_data_flow_edges(self, graph: ContentGraph):
-        """Create data_flow edges from set_fact/register to consumers.
+def _add_data_flow_edges(self, graph: ContentGraph):
+    """Create data_flow edges from set_fact/register to consumers.
 
-        Two passes: (1) collect all variable producers, (2) find consumers
-        that reference those variables in when/loop/Jinja2 expressions.
-        """
-        producers: dict[str, str] = {}  # var_name → producing_node_id
+    Two passes: (1) collect all variable producers, (2) find consumers
+    that reference those variables in when/loop/Jinja2 expressions.
+    """
+    producers: dict[str, str] = {}  # var_name → producing_node_id
 
-        for node_id in nx.topological_sort(graph.g):
-            node = graph.get_node(node_id)
-            if node.node_type != "task":
-                continue
-            if reg := node.options.get("register"):
-                producers[reg] = node_id
-            if node.module in ("ansible.builtin.set_fact", "set_fact"):
-                for var_name in (node.module_options or {}).keys():
-                    producers[var_name] = node_id
+    for node_id in nx.topological_sort(graph.g):
+        node = graph.get_node(node_id)
+        if node.node_type != "task":
+            continue
+        if reg := node.options.get("register"):
+            producers[reg] = node_id
+        if node.module in ("ansible.builtin.set_fact", "set_fact"):
+            for var_name in (node.module_options or {}).keys():
+                producers[var_name] = node_id
 
-        for node_id in graph.g.nodes:
-            node = graph.get_node(node_id)
-            if node.node_type != "task":
-                continue
-            referenced_vars = extract_jinja2_vars(node.options, node.module_options)
-            for var_name in referenced_vars:
-                if var_name in producers and producers[var_name] != node_id:
-                    graph.add_edge(
-                        producers[var_name], node_id,
-                        edge_type="data_flow",
-                        variable=var_name,
-                    )
+    for node_id in graph.g.nodes:
+        node = graph.get_node(node_id)
+        if node.node_type != "task":
+            continue
+        referenced_vars = extract_jinja2_vars(node.options, node.module_options)
+        for var_name in referenced_vars:
+            if var_name in producers and producers[var_name] != node_id:
+                graph.add_edge(
+                    producers[var_name],
+                    node_id,
+                    edge_type="data_flow",
+                    variable=var_name,
+                )
 ```
 
 #### Vars-include and invocation edges
 
 ```python
-    def _add_vars_include_edges(
-        self, graph: ContentGraph, play_id: str, play: Play
-    ):
-        """Create vars_include edges from plays to vars files.
+def _add_vars_include_edges(self, graph: ContentGraph, play_id: str, play: Play):
+    """Create vars_include edges from plays to vars files.
 
-        Handles vars_files: on plays and include_vars tasks.
-        """
-        for vars_file_path in play.options.get("vars_files", []):
-            vars_id = NodeIdentity.for_file(vars_file_path)
-            if not graph.has_node(str(vars_id)):
-                graph.add_node(vars_id, ContentNode(
+    Handles vars_files: on plays and include_vars tasks.
+    """
+    for vars_file_path in play.options.get("vars_files", []):
+        vars_id = NodeIdentity.for_file(vars_file_path)
+        if not graph.has_node(str(vars_id)):
+            graph.add_node(
+                vars_id,
+                ContentNode(
                     identity=vars_id,
                     node_type="vars_file",
                     defined_in=vars_file_path,
-                ))
-            graph.add_edge(play_id, str(vars_id), edge_type="vars_include")
+                ),
+            )
+        graph.add_edge(play_id, str(vars_id), edge_type="vars_include")
 
-    def _add_invokes_edges(self, graph: ContentGraph):
-        """Create invokes edges from tasks to Python module/plugin files.
 
-        For each task, resolve its FQCN module to a physical Python file.
-        If the module exists as a node (owned or referenced), create an
-        invokes edge. Also creates the module/plugin node if it doesn't
-        exist yet.
-        """
-        for node_id in list(graph.g.nodes):
-            node = graph.get_node(node_id)
-            if node.node_type != "task" or not node.resolved_module_name:
-                continue
-            module_path = self._resolve_module_path(node.resolved_module_name)
-            if module_path:
-                module_node_id = NodeIdentity.for_file(module_path)
-                if not graph.has_node(str(module_node_id)):
-                    graph.add_node(module_node_id, ContentNode(
+def _add_invokes_edges(self, graph: ContentGraph):
+    """Create invokes edges from tasks to Python module/plugin files.
+
+    For each task, resolve its FQCN module to a physical Python file.
+    If the module exists as a node (owned or referenced), create an
+    invokes edge. Also creates the module/plugin node if it doesn't
+    exist yet.
+    """
+    for node_id in list(graph.g.nodes):
+        node = graph.get_node(node_id)
+        if node.node_type != "task" or not node.resolved_module_name:
+            continue
+        module_path = self._resolve_module_path(node.resolved_module_name)
+        if module_path:
+            module_node_id = NodeIdentity.for_file(module_path)
+            if not graph.has_node(str(module_node_id)):
+                graph.add_node(
+                    module_node_id,
+                    ContentNode(
                         identity=module_node_id,
                         node_type=self._classify_python_type(module_path),
                         defined_in=module_path,
                         scope=NodeScope.REFERENCED,
-                    ))
-                graph.add_edge(node_id, str(module_node_id), edge_type="invokes")
+                    ),
+                )
+            graph.add_edge(node_id, str(module_node_id), edge_type="invokes")
 
-    def _classify_python_type(self, path: str) -> str:
-        """Determine node type from Python file path convention."""
-        if "plugins/modules/" in path or "library/" in path:
-            return "module"
-        if "plugins/action/" in path:
-            return "action_plugin"
-        if "plugins/filter/" in path:
-            return "filter_plugin"
-        if "plugins/lookup/" in path:
-            return "lookup_plugin"
-        if "module_utils/" in path:
-            return "module_utils"
-        return "module"  # default for ambiguous paths
+
+def _classify_python_type(self, path: str) -> str:
+    """Determine node type from Python file path convention."""
+    if "plugins/modules/" in path or "library/" in path:
+        return "module"
+    if "plugins/action/" in path:
+        return "action_plugin"
+    if "plugins/filter/" in path:
+        return "filter_plugin"
+    if "plugins/lookup/" in path:
+        return "lookup_plugin"
+    if "module_utils/" in path:
+        return "module_utils"
+    return "module"  # default for ambiguous paths
 ```
 
 ### Python file analysis pipeline
@@ -1324,8 +1346,11 @@ import ast
 from pathlib import Path
 
 PYTHON_NODE_TYPES = {
-    "module", "action_plugin", "filter_plugin",
-    "lookup_plugin", "module_utils",
+    "module",
+    "action_plugin",
+    "filter_plugin",
+    "lookup_plugin",
+    "module_utils",
 }
 
 STDLIB_TOP_LEVEL = frozenset({...})  # populated from sys.stdlib_module_names
@@ -1371,9 +1396,7 @@ class PythonFileAnalyzer:
 
     def _extract_argument_spec(self, node: ContentNode, tree: ast.Module):
         for n in ast.walk(tree):
-            if (isinstance(n, ast.Assign)
-                    and any(self._name_matches(t, "argument_spec")
-                            for t in n.targets)):
+            if isinstance(n, ast.Assign) and any(self._name_matches(t, "argument_spec") for t in n.targets):
                 if isinstance(n.value, ast.Dict):
                     node.argument_spec_complete = self._all_params_typed(n.value)
                 break
@@ -1382,11 +1405,7 @@ class PythonFileAnalyzer:
         functions = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]
         if not functions:
             return
-        typed = sum(
-            1 for f in functions
-            if f.returns is not None
-            or any(a.annotation is not None for a in f.args.args)
-        )
+        typed = sum(1 for f in functions if f.returns is not None or any(a.annotation is not None for a in f.args.args))
         node.type_hint_coverage = typed / len(functions)
         documented = sum(1 for f in functions if ast.get_docstring(f))
         node.docstring_coverage = documented / len(functions)
@@ -1405,9 +1424,7 @@ class PythonFileAnalyzer:
                     external.append(n.module)
         node.external_imports = external
 
-    def _add_py_imports_edges(
-        self, graph: ContentGraph, node: ContentNode, tree: ast.Module
-    ):
+    def _add_py_imports_edges(self, graph: ContentGraph, node: ContentNode, tree: ast.Module):
         """Create py_imports edges to module_utils this file imports."""
         for n in ast.walk(tree):
             if isinstance(n, ast.ImportFrom) and n.module:
@@ -1416,13 +1433,17 @@ class PythonFileAnalyzer:
                     if utils_path:
                         utils_id = NodeIdentity.for_file(utils_path)
                         if not graph.has_node(str(utils_id)):
-                            graph.add_node(utils_id, ContentNode(
-                                identity=utils_id,
-                                node_type="module_utils",
-                                defined_in=utils_path,
-                            ))
+                            graph.add_node(
+                                utils_id,
+                                ContentNode(
+                                    identity=utils_id,
+                                    node_type="module_utils",
+                                    defined_in=utils_path,
+                                ),
+                            )
                         graph.add_edge(
-                            str(node.identity), str(utils_id),
+                            str(node.identity),
+                            str(utils_id),
                             edge_type="py_imports",
                         )
 ```
@@ -1533,6 +1554,7 @@ beyond the raw YAML snippet.
 @dataclass
 class AIEscalationContext:
     """Graph-derived context sent to the AI provider alongside the snippet."""
+
     node_id: str
     node_type: str
     ancestors: list[dict]  # [{node_id, node_type, name}, ...]
@@ -1552,16 +1574,15 @@ def build_ai_context(graph: ContentGraph, node_id: str) -> AIEscalationContext:
     ancestors = []
     for pred in nx.ancestors(graph.g, node_id):
         pred_node = graph.get_node(pred)
-        ancestors.append({
-            "node_id": pred,
-            "node_type": pred_node.node_type,
-            "name": pred_node.name,
-        })
+        ancestors.append(
+            {
+                "node_id": pred,
+                "node_type": pred_node.node_type,
+                "name": pred_node.name,
+            }
+        )
 
-    incoming = [
-        data.get("edge_type", "unknown")
-        for _, _, data in graph.g.in_edges(node_id, data=True)
-    ]
+    incoming = [data.get("edge_type", "unknown") for _, _, data in graph.g.in_edges(node_id, data=True)]
 
     parents = list(graph.g.predecessors(node_id))
     sibling_count = graph.g.out_degree(parents[0]) - 1 if parents else 0
@@ -1581,7 +1602,8 @@ def build_ai_context(graph: ContentGraph, node_id: str) -> AIEscalationContext:
 
 
 def verify_remediation_safety(
-    graph_before: ContentGraph, graph_after: ContentGraph,
+    graph_before: ContentGraph,
+    graph_after: ContentGraph,
 ) -> list[str]:
     """Compare pre- and post-remediation graphs for structural safety.
 
@@ -1600,8 +1622,10 @@ def verify_remediation_safety(
     edge_match = categorical_edge_match(["edge_type"], [None])
 
     if nx.is_isomorphic(
-        graph_before.g, graph_after.g,
-        node_match=node_match, edge_match=edge_match,
+        graph_before.g,
+        graph_after.g,
+        node_match=node_match,
+        edge_match=edge_match,
     ):
         return []
 
@@ -1649,31 +1673,33 @@ def serialize_for_visualization(
         node = graph.get_node(node_id)
         severity = _worst_severity(node.annotations) if node.annotations else None
         cx = complexity_reports.get(node_id) if complexity_reports else None
-        nodes.append({
-            "id": node_id,
-            "label": node.name or Path(node.defined_in).name,
-            "type": node.node_type,
-            "scope": node.scope.value,
-            "file": node.defined_in,
-            "severity": severity,
-            "complexity": cx.cyclomatic if cx else None,
-            "fan_in": cx.fan_in if cx else None,
-            "fan_out": cx.fan_out if cx else None,
-            "violation_count": len([
-                a for a in node.annotations if hasattr(a, "severity")
-            ]),
-        })
+        nodes.append(
+            {
+                "id": node_id,
+                "label": node.name or Path(node.defined_in).name,
+                "type": node.node_type,
+                "scope": node.scope.value,
+                "file": node.defined_in,
+                "severity": severity,
+                "complexity": cx.cyclomatic if cx else None,
+                "fan_in": cx.fan_in if cx else None,
+                "fan_out": cx.fan_out if cx else None,
+                "violation_count": len([a for a in node.annotations if hasattr(a, "severity")]),
+            }
+        )
 
     edges = []
     for u, v, data in graph.g.edges(data=True):
-        edges.append({
-            "source": u,
-            "target": v,
-            "type": data.get("edge_type", "contains"),
-            "conditional": data.get("conditional", False),
-            "dynamic": data.get("dynamic", False),
-            "label": data.get("variable", data.get("edge_type", "")),
-        })
+        edges.append(
+            {
+                "source": u,
+                "target": v,
+                "type": data.get("edge_type", "contains"),
+                "conditional": data.get("conditional", False),
+                "dynamic": data.get("dynamic", False),
+                "label": data.get("variable", data.get("edge_type", "")),
+            }
+        )
 
     components = [list(c) for c in nx.weakly_connected_components(graph.g)]
 
@@ -1701,17 +1727,19 @@ def rule_M201_complexity_threshold(graph: ContentGraph) -> list[Violation]:
         cx = compute_complexity(graph, root_id)
         root_node = graph.get_node(root_id)
         if cx.cyclomatic > COMPLEXITY_THRESHOLD:
-            violations.append(Violation(
-                rule_id="M201",
-                node_id=root_id,
-                file=root_node.defined_in,
-                message=(
-                    f"Cyclomatic complexity {cx.cyclomatic} exceeds threshold "
-                    f"{COMPLEXITY_THRESHOLD}. Consider splitting into AAP "
-                    f"Controller workflow nodes."
-                ),
-                severity="medium",
-            ))
+            violations.append(
+                Violation(
+                    rule_id="M201",
+                    node_id=root_id,
+                    file=root_node.defined_in,
+                    message=(
+                        f"Cyclomatic complexity {cx.cyclomatic} exceeds threshold "
+                        f"{COMPLEXITY_THRESHOLD}. Consider splitting into AAP "
+                        f"Controller workflow nodes."
+                    ),
+                    severity="medium",
+                )
+            )
     return violations
 
 
@@ -1735,17 +1763,19 @@ def rule_M202_deep_conditional_nesting(graph: ContentGraph) -> list[Violation]:
                 continue
 
         if min_depth > DEPTH_THRESHOLD:
-            violations.append(Violation(
-                rule_id="M202",
-                node_id=node_id,
-                file=node.defined_in,
-                message=(
-                    f"Conditional at depth {min_depth} (threshold "
-                    f"{DEPTH_THRESHOLD}). Consider moving branching logic "
-                    f"to play level or AAP workflow."
-                ),
-                severity="low",
-            ))
+            violations.append(
+                Violation(
+                    rule_id="M202",
+                    node_id=node_id,
+                    file=node.defined_in,
+                    message=(
+                        f"Conditional at depth {min_depth} (threshold "
+                        f"{DEPTH_THRESHOLD}). Consider moving branching logic "
+                        f"to play level or AAP workflow."
+                    ),
+                    severity="low",
+                )
+            )
     return violations
 
 
@@ -1756,17 +1786,19 @@ def rule_R501_high_fan_out(graph: ContentGraph) -> list[Violation]:
         fan_out = graph.g.out_degree(node_id)
         if fan_out > FAN_OUT_THRESHOLD:
             node = graph.get_node(node_id)
-            violations.append(Violation(
-                rule_id="R501",
-                node_id=node_id,
-                file=node.defined_in,
-                message=(
-                    f"Fan-out of {fan_out} exceeds threshold "
-                    f"{FAN_OUT_THRESHOLD}. This node has too many "
-                    f"dependencies, making it fragile to changes."
-                ),
-                severity="medium",
-            ))
+            violations.append(
+                Violation(
+                    rule_id="R501",
+                    node_id=node_id,
+                    file=node.defined_in,
+                    message=(
+                        f"Fan-out of {fan_out} exceeds threshold "
+                        f"{FAN_OUT_THRESHOLD}. This node has too many "
+                        f"dependencies, making it fragile to changes."
+                    ),
+                    severity="medium",
+                )
+            )
     return violations
 
 
@@ -1777,18 +1809,17 @@ def rule_R502_dead_handler(graph: ContentGraph) -> list[Violation]:
         node = graph.get_node(node_id)
         if node.node_type != "handler":
             continue
-        notify_edges = [
-            (u, v, d) for u, v, d in graph.g.in_edges(node_id, data=True)
-            if d.get("edge_type") == "notify"
-        ]
+        notify_edges = [(u, v, d) for u, v, d in graph.g.in_edges(node_id, data=True) if d.get("edge_type") == "notify"]
         if not notify_edges:
-            violations.append(Violation(
-                rule_id="R502",
-                node_id=node_id,
-                file=node.defined_in,
-                message=f"Handler '{node.name}' is never notified.",
-                severity="low",
-            ))
+            violations.append(
+                Violation(
+                    rule_id="R502",
+                    node_id=node_id,
+                    file=node.defined_in,
+                    message=f"Handler '{node.name}' is never notified.",
+                    severity="low",
+                )
+            )
     return violations
 ```
 
@@ -1845,16 +1876,18 @@ def compute_dependency_scorecards(
             + max(0, 1.0 - ext_deps * 0.01) * 0.15
         )
 
-        scorecards.append(DependencyScorecard(
-            collection=collection,
-            module_count=n,
-            documentation_ratio=doc_ratio,
-            check_mode_ratio=check_ratio,
-            arg_spec_ratio=arg_ratio,
-            type_hint_avg=hint_avg,
-            external_dep_count=ext_deps,
-            overall_score=overall,
-        ))
+        scorecards.append(
+            DependencyScorecard(
+                collection=collection,
+                module_count=n,
+                documentation_ratio=doc_ratio,
+                check_mode_ratio=check_ratio,
+                arg_spec_ratio=arg_ratio,
+                type_hint_avg=hint_avg,
+                external_dep_count=ext_deps,
+                overall_score=overall,
+            )
+        )
 
     return sorted(scorecards, key=lambda s: s.overall_score)
 ```
@@ -1885,19 +1918,19 @@ def assert_topology_stable(
     )
 
     node_match = categorical_node_match(
-        ["node_type", "defined_in"], [None, None],
+        ["node_type", "defined_in"],
+        [None, None],
     )
     edge_match = categorical_edge_match(["edge_type"], [None])
 
     if not nx.is_isomorphic(
-        graph_a.g, graph_b.g,
+        graph_a.g,
+        graph_b.g,
         node_match=node_match,
         edge_match=edge_match,
     ):
         diff = _describe_topology_diff(graph_a, graph_b)
-        raise TopologyDriftError(
-            f"Graph topology changed between passes ({label}): {diff}"
-        )
+        raise TopologyDriftError(f"Graph topology changed between passes ({label}): {diff}")
 
 
 def _describe_topology_diff(a: ContentGraph, b: ContentGraph) -> str:
@@ -1933,10 +1966,7 @@ def record_format_state(
 
     Called after the formatter runs, before the scan phase.
     """
-    changed_files = {
-        path for path, content in formatted_files.items()
-        if original_files.get(path) != content
-    }
+    changed_files = {path for path, content in formatted_files.items() if original_files.get(path) != content}
 
     for node_id in graph.g.nodes:
         node = graph.get_node(node_id)
@@ -1944,7 +1974,8 @@ def record_format_state(
             continue
 
         content = _extract_node_content(
-            formatted_files[node.defined_in], node.line_num_in_file,
+            formatted_files[node.defined_in],
+            node.line_num_in_file,
         )
         state = NodeState(
             pass_number=pass_number,
@@ -2019,30 +2050,27 @@ class GraphAwareRemediationEngine:
 
             if len(all_graphs) > 1:
                 assert_topology_stable(
-                    all_graphs[-2], all_graphs[-1],
+                    all_graphs[-2],
+                    all_graphs[-1],
                     label=f"pass {pass_num - 1} → {pass_num}",
                 )
 
             current: dict[str, set[str]] = {}
             for nid in graph.g.nodes:
                 node = graph.get_node(nid)
-                rule_ids = {
-                    a.rule_id for a in node.annotations
-                    if hasattr(a, "rule_id")
-                }
+                rule_ids = {a.rule_id for a in node.annotations if hasattr(a, "rule_id")}
                 if rule_ids:
                     current[nid] = rule_ids
 
             if not current:
                 return ConvergenceResult(
-                    converged=True, passes=pass_num, graph=graph,
+                    converged=True,
+                    passes=pass_num,
+                    graph=graph,
                     approval_groups=approval_groups,
                 )
 
-            oscillating = {
-                nid for nid, rules in current.items()
-                if rules & previous_violations.get(nid, set())
-            }
+            oscillating = {nid for nid, rules in current.items() if rules & previous_violations.get(nid, set())}
 
             # Phase 1: Tier 1 deterministic transforms
             tier1_applied = False
@@ -2072,11 +2100,15 @@ class GraphAwareRemediationEngine:
                             continue  # Tier 1 exists, skip AI
                         session = TransformSession(graph, self._structured_files)
                         changeset = await ai_as_transform(
-                            session, nid, self._ai,
+                            session,
+                            nid,
+                            self._ai,
                         )
                         if changeset and changeset.direct_changes:
                             group = self._merge_and_group(
-                                graph, changeset, pass_num,
+                                graph,
+                                changeset,
+                                pass_num,
                             )
                             group.source = "ai"
                             approval_groups.append(group)
@@ -2085,25 +2117,34 @@ class GraphAwareRemediationEngine:
 
             if not tier1_applied:
                 return ConvergenceResult(
-                    converged=False, passes=pass_num,
-                    remaining=current, graph=graph,
+                    converged=False,
+                    passes=pass_num,
+                    remaining=current,
+                    graph=graph,
                     approval_groups=approval_groups,
                 )
 
             previous_violations = current
 
         return ConvergenceResult(
-            converged=False, passes=self._max_passes,
-            remaining=current, graph=graph,
+            converged=False,
+            passes=self._max_passes,
+            remaining=current,
+            graph=graph,
             approval_groups=approval_groups,
         )
 
     def _merge_and_group(
-        self, graph: ContentGraph, changeset: ChangeSet, pass_num: int,
+        self,
+        graph: ContentGraph,
+        changeset: ChangeSet,
+        pass_num: int,
     ) -> ApprovalGroup:
         self._merge_changeset(changeset)
         group = compute_approval_group(
-            graph, self._rebuild_graph(), changeset,
+            graph,
+            self._rebuild_graph(),
+            changeset,
         )
         group.pass_number = pass_num
         return group
@@ -2199,8 +2240,7 @@ class TransformSession:
         """Query descendants of a node, optionally filtered by type."""
         descs = nx.descendants(self._graph.g, node_id)
         if node_type:
-            return [d for d in descs
-                    if self._graph.get_node(d).node_type == node_type]
+            return [d for d in descs if self._graph.get_node(d).node_type == node_type]
         return list(descs)
 
     def submit(self) -> ChangeSet:
@@ -2223,15 +2263,13 @@ Example transform:
 def fix_play_become(session: TransformSession, play_id: str):
     play = session.get_node(play_id)
 
-    session.modify_node(play_id, play.defined_in,
-        lambda sf: remove_key(sf, play, "become"))
+    session.modify_node(play_id, play.defined_in, lambda sf: remove_key(sf, play, "become"))
 
     for child_id in session.descendants(play_id, node_type="task"):
         child = session.get_node(child_id)
         if child.module in SKIP_BECOME_MODULES:
             continue
-        session.modify_node(child_id, child.defined_in,
-            lambda sf: add_key(sf, child, "become", True))
+        session.modify_node(child_id, child.defined_in, lambda sf: add_key(sf, child, "become", True))
 
     return session.submit()
 ```
@@ -2434,19 +2472,16 @@ class PrivilegeEscalationRule(Rule):
         if task.become.enabled:
             return RuleResult(...)
 
+
 # AFTER (ContentGraph): fires once on the defining node
 class PrivilegeEscalationRule(GraphRule):
     def process(self, graph: ContentGraph, node_id: str) -> RuleResult | None:
         node = graph.get_node(node_id)
         origin = node.property_origins.get("become")
         if origin and not origin.inherited:
-            affected = len([
-                d for d in nx.descendants(graph.g, node_id)
-                if graph.get_node(d).node_type == "task"
-            ])
+            affected = len([d for d in nx.descendants(graph.g, node_id) if graph.get_node(d).node_type == "task"])
             return RuleResult(
-                message=f"Play enables privilege escalation "
-                        f"(affects {affected} tasks)",
+                message=f"Play enables privilege escalation (affects {affected} tasks)",
             )
         return None
 ```
@@ -2480,6 +2515,7 @@ class CommandExecRule(Rule):
         ac = AnnotationCondition().risk_type(RiskType.CMD_EXEC).attr("is_mutable_cmd", True)
         verdict = task.has_annotation_by_condition(ac)
         ...
+
 
 # AFTER (GraphRule) — same logic, different entry point
 class CommandExecRule(GraphRule):

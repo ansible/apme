@@ -153,7 +153,7 @@ self.violation(
     file=node["file"],
     line=node["line"][0],
     ai_guidance="Add a 'tags' key with at least one dept: prefixed tag. "
-                "Valid departments: platform, security, network, app.",
+    "Valid departments: platform, security, network, app.",
 )
 ```
 
@@ -210,6 +210,7 @@ The plugin system is not viable without a low-friction authoring experience. The
 ```python
 from apme_plugin_sdk import PluginBase
 
+
 class MyOrgPlugin(PluginBase):
     name = "myorg"
     version = "1.0.0"
@@ -219,15 +220,17 @@ class MyOrgPlugin(PluginBase):
         for tree in hierarchy:
             for node in tree["nodes"]:
                 if node["type"] == "play" and "dept" not in node.get("tags", []):
-                    violations.append(self.violation(
-                        rule_id="001",
-                        level="warning",
-                        message="Plays must have a department tag",
-                        file=node["file"],
-                        line=node["line"][0],
-                        ai_guidance="Add a 'tags' key with at least one 'dept:'-prefixed tag. "
-                                    "Valid departments: platform, security, network, app.",
-                    ))
+                    violations.append(
+                        self.violation(
+                            rule_id="001",
+                            level="warning",
+                            message="Plays must have a department tag",
+                            file=node["file"],
+                            line=node["line"][0],
+                            ai_guidance="Add a 'tags' key with at least one 'dept:'-prefixed tag. "
+                            "Valid departments: platform, security, network, app.",
+                        )
+                    )
         return violations
 
     def transform(self, file, violation):
@@ -254,6 +257,7 @@ class MyOrgPlugin(PluginBase):
 
         out = yaml.dump_all(docs, default_flow_style=False).encode()
         return self.file(path=file.path, content=out)
+
 
 if __name__ == "__main__":
     MyOrgPlugin.serve()
