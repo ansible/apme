@@ -169,9 +169,11 @@ operator explicitly opts out with `APME_PROXY_ALLOW_UNAUTH_ADMIN=1`
 (https, no userinfo, no loopback/link-local targets) before storage so a
 compromised push cannot redirect token-bearing downloads. Gateway-first
 rollout order is unchanged. Secret wiring for Podman/Helm deployments
-(shared token env in both containers) remains a tracked follow-up; until
-then un-updated deployments surface failed pushes as degraded Galaxy
-Proxy health instead of silent stale config.
+landed with the shared token env in both containers
+(`APME_PROXY_ADMIN_TOKEN` via `engine.galaxyProxy.adminToken` /
+`existingSecret`, Podman `${APME_PROXY_ADMIN_TOKEN}`); deployments that
+do not set it stay fail-closed and surface failed pushes as degraded
+Galaxy Proxy health instead of silent stale config.
 
 | Date | Author | Change |
 |------|--------|--------|
@@ -179,3 +181,4 @@ Proxy health instead of silent stale config.
 | 2026-09-22 | Agent | Status → Implemented — pod-internal admin endpoints rely on network isolation as designed; no auth layer required until topology changes |
 | 2026-09-22 | Agent | Status → Partially Implemented — Galaxy Proxy still binds `0.0.0.0` and Podman publishes `hostPort` 8765; localhost-only binding required before Implemented |
 | 2026-10-02 | Agent | Amendment — shared-token auth added; fail-closed default with explicit local-daemon opt-out; pushed URL validation (PR #708 review finding #1) |
+| 2026-10-03 | Agent | Amendment — Podman/Helm secret wiring landed (shared token env in both containers); unset token stays fail-closed with degraded-health signal |
