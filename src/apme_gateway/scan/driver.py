@@ -13,6 +13,7 @@ import asyncio
 import base64
 import contextlib
 import hashlib
+import inspect
 import logging
 import os
 import shutil
@@ -21,6 +22,7 @@ import tempfile
 import time
 import uuid
 from collections.abc import AsyncIterator, Callable, Coroutine
+from functools import partial
 from typing import Any
 from urllib.parse import quote, unquote, urlparse, urlunparse
 
@@ -29,13 +31,36 @@ import grpc.aio
 
 from apme.v1 import engine_pb2, engine_pb2_grpc
 from apme.v1.common_pb2 import GalaxyServerDef
+from apme_engine.config_env import get_env_float
 from apme_engine.daemon.chunked_fs import yield_scan_chunks
+from apme_gateway.scan.operator_queue import (
+    OperatorAnswerQueue as OperatorAnswerQueue,
+)
+from apme_gateway.scan.operator_queue import (
+    _drain_queue as _drain_queue,  # noqa: F401 -- re-exported (tests import from driver)
+)
 from apme_gateway.scm.redaction import redact_credentials as _redact_credentials
 from apme_gateway.scm.repo_url import normalize_repo_url
 
 logger = logging.getLogger(__name__)
 
 _GRPC_MAX_MSG = 50 * 1024 * 1024  # 50 MiB — matches Engine
+
+# PE-25: operator-wait timeouts (env-overridable). The driver must never hang
+# forever holding temp dirs/streams waiting on an operator who never responds.
+# On timeout each wait mirrors its existing no-queue default:
+#   begin    (FindingsReady assess pause) -> auto-begin (same as queue omitted)
+#   escalate (AiTriageReady)              -> allow-all (same as queue omitted)
+#   approve  (ProposalsReady)             -> decline-all (same as queue omitted)
+_OP_BEGIN_TIMEOUT_DEFAULT_S = 600.0  # APME_OP_BEGIN_TIMEOUT_S
+_OP_ESCALATE_TIMEOUT_DEFAULT_S = 600.0  # APME_OP_ESCALATE_TIMEOUT_S
+_OP_APPROVE_TIMEOUT_DEFAULT_S = 1800.0  # APME_OP_APPROVE_TIMEOUT_S
+
+# Backward-compatibility alias: identical to the canonical parser with the
+# positive floor, kept because tests import this name (single canonical
+# home: config_env). Drift-proof: partial application, no body to diverge.
+# Production call sites use get_env_float(..., positive_only=True) directly.
+_op_timeout = partial(get_env_float, positive_only=True)
 
 # ADR-068: server enforces adaptive deadlines; no fixed client gRPC timeout.
 
@@ -75,6 +100,11 @@ def coerce_option_bool(value: object, *, default: bool = False) -> bool:
 
 def derive_session_id(project_id: str) -> str:
     """Deterministic session ID so the engine reuses venvs across operations.
+
+    Must remain a pure function of ``project_id`` (PE-32): session reuse is
+    what makes the engine-side requirements-hash reconcile work — changed
+    requirements refresh the existing venv (stale collections removed, new
+    ones installed) instead of leaking state between sessions.
 
     Args:
         project_id: UUID hex of the project.
@@ -676,9 +706,12 @@ async def run_project_operation(
     interactive: bool = False,
     assess_pause: bool = False,
     progress_callback: ProgressCallback | None = None,
-    approval_queue: asyncio.Queue[list[str]] | None = None,
-    begin_remediate_queue: asyncio.Queue[None] | None = None,
-    escalate_ai_queue: asyncio.Queue[list[dict[str, object]]] | None = None,
+    approval_queue: OperatorAnswerQueue[list[str]] | None = None,
+    begin_remediate_queue: OperatorAnswerQueue[None] | None = None,
+    escalate_ai_queue: OperatorAnswerQueue[list[dict[str, object]]] | None = None,
+    on_begin_timeout: Callable[[], None] | None = None,
+    on_escalate_timeout: Callable[[], None] | None = None,
+    on_approve_timeout: Callable[[], Any] | None = None,
     scan_id: str | None = None,
     galaxy_servers: list[GalaxyServerDef] | None = None,
     scm_token: str | None = None,
@@ -716,6 +749,24 @@ async def run_project_operation(
         escalate_ai_queue: Queue of ``{path, rule_ids}`` target dicts to leave
             AI escalation triage. If omitted when ``AiTriageReady`` arrives,
             all candidate paths are escalated (allow-all).
+        on_begin_timeout: Optional callback invoked when the begin wait
+            times out and the driver auto-begins. The caller applies the
+            same registry transition as ``POST /begin-remediate``
+            (``scan_type`` → remediate, retire the pending future) so the
+            run is reported truthfully and a late Begin cannot pair a new
+            proposal list with an old gate. Invoking it is idempotent —
+            when the wait was satisfied by the bridge instead, the
+            transition is already applied and the callback is a no-op.
+        on_escalate_timeout: Optional callback invoked when the AI-escalate
+            wait times out and the driver falls back to allow-all. The
+            caller retires the pending escalate future so a late
+            ``POST /escalate-ai`` is rejected instead of silently dropped.
+        on_approve_timeout: Optional callback (sync or async) invoked when
+            the approval wait times out and the driver declines all
+            proposals. The caller resolves and retires the current
+            approval gate and gate-commits decline-all for the offered
+            IDs, so a late ``POST /approve`` cannot commit decisions the
+            Engine already declined.
         scan_id: Optional pre-generated scan ID; one is created if omitted.
         galaxy_servers: Global Galaxy server defs to inject into scan metadata (ADR-045).
         scm_token: Optional SCM token for private repository access.
@@ -789,23 +840,74 @@ async def run_project_operation(
             response_stream = stub.FixSession(_command_stream())
 
             result: engine_pb2.SessionResult | None = None
+            # Operator-timeout fallbacks change spend/authorization semantics;
+            # when *both* fire, the run paid full AI cost for zero applied
+            # fixes — pair them into one degraded signal at result time so
+            # the pairing is visible instead of two isolated timeouts.
+            escalate_timed_out = False
+            approve_timed_out = False
             async for event in response_stream:
+                kind = event.WhichOneof("event")
+                begin_generation: int | None = None
+                escalate_generation: int | None = None
+                approval_generation: int | None = None
+                if kind == "findings" and begin_remediate_queue is not None:
+                    begin_generation = begin_remediate_queue.begin_prompt()
+                elif kind == "ai_triage" and escalate_ai_queue is not None:
+                    escalate_generation = escalate_ai_queue.begin_prompt()
+                elif kind == "proposals" and approval_queue is not None:
+                    approval_generation = approval_queue.begin_prompt()
+
                 if progress_callback:
                     await progress_callback(event)
 
-                kind = event.WhichOneof("event")
                 if kind == "findings":
                     if begin_remediate_queue is not None:
-                        await begin_remediate_queue.get()
+                        begin_timeout = get_env_float(
+                            "APME_OP_BEGIN_TIMEOUT_S", _OP_BEGIN_TIMEOUT_DEFAULT_S, positive_only=True
+                        )
+                        # Timeout (None) mirrors the no-queue default: auto-begin.
+                        # The signal carries no payload — a bridge-forwarded
+                        # begin is None too — so invoke the timeout callback
+                        # unconditionally. It is idempotent: a no-op when
+                        # POST /begin-remediate already applied the registry
+                        # transition.
+                        await begin_remediate_queue.next_answer(
+                            begin_timeout,
+                            "BeginRemediate operator wait",
+                            "auto-beginning",
+                            expected_generation=begin_generation,
+                        )
+                        if on_begin_timeout is not None:
+                            try:
+                                on_begin_timeout()
+                            except Exception:
+                                logger.exception("on_begin_timeout callback failed")
                     await command_queue.put(
                         engine_pb2.SessionCommand(begin_remediate=engine_pb2.BeginRemediateRequest())
                     )
                 elif kind == "ai_triage":
-                    target_dicts: list[dict[str, object]]
+                    target_dicts: list[dict[str, object]] | None = None
                     if escalate_ai_queue is not None:
-                        target_dicts = await escalate_ai_queue.get()
-                    else:
-                        # No queue — escalate every candidate path (allow-all).
+                        escalate_timeout = get_env_float(
+                            "APME_OP_ESCALATE_TIMEOUT_S", _OP_ESCALATE_TIMEOUT_DEFAULT_S, positive_only=True
+                        )
+                        # Timeout (None) mirrors the no-queue default: allow-all.
+                        target_dicts = await escalate_ai_queue.next_answer(
+                            escalate_timeout,
+                            "AI-escalate operator wait",
+                            "escalating all candidates",
+                            expected_generation=escalate_generation,
+                        )
+                        if target_dicts is None:
+                            escalate_timed_out = True
+                            if on_escalate_timeout is not None:
+                                try:
+                                    on_escalate_timeout()
+                                except Exception:
+                                    logger.exception("on_escalate_timeout callback failed")
+                    if target_dicts is None:
+                        # No queue (or timed out) — escalate every candidate path (allow-all).
                         paths = sorted({c.path for c in event.ai_triage.candidates if c.path})
                         target_dicts = [{"path": p, "rule_ids": []} for p in paths]
                     targets: list[engine_pb2.AiEscalateTarget] = []
@@ -820,7 +922,26 @@ async def run_project_operation(
                         engine_pb2.SessionCommand(ai_escalate=engine_pb2.AiEscalateRequest(targets=targets))
                     )
                 elif kind == "proposals" and approval_queue is not None:
-                    approved_ids = await approval_queue.get()
+                    approve_timeout = get_env_float(
+                        "APME_OP_APPROVE_TIMEOUT_S", _OP_APPROVE_TIMEOUT_DEFAULT_S, positive_only=True
+                    )
+                    # Timeout (None) mirrors the no-queue default: decline-all.
+                    approved_ids = await approval_queue.next_answer(
+                        approve_timeout,
+                        "Approval operator wait",
+                        "declining all proposals",
+                        expected_generation=approval_generation,
+                    )
+                    if approved_ids is None:
+                        approve_timed_out = True
+                        approved_ids = []
+                        if on_approve_timeout is not None:
+                            try:
+                                maybe_awaitable = on_approve_timeout()
+                                if inspect.isawaitable(maybe_awaitable):
+                                    await maybe_awaitable
+                            except Exception:
+                                logger.exception("on_approve_timeout callback failed")
                     await command_queue.put(
                         engine_pb2.SessionCommand(approve=engine_pb2.ApprovalRequest(approved_ids=approved_ids))
                     )
@@ -831,6 +952,13 @@ async def run_project_operation(
                     )
                 elif kind == "result":
                     result = event.result
+                    if escalate_timed_out and approve_timed_out:
+                        logger.warning(
+                            "Operator timeouts paired (scan_id=%s): escalate allowed-all "
+                            "then approve declined-all — full AI spend with zero applied "
+                            "fixes (degraded)",
+                            scan_id,
+                        )
                     await command_queue.put(engine_pb2.SessionCommand(close=engine_pb2.CloseRequest()))
                     await command_queue.put(None)
                 elif kind == "error":

@@ -2,6 +2,7 @@
 
 import json
 import subprocess
+from collections.abc import Iterator
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock, patch
@@ -13,8 +14,10 @@ from apme_engine.opa_client import OpaInfrastructureError, reset_opa_circuit_bre
 
 
 @pytest.fixture(autouse=True)  # type: ignore[untyped-decorator]
-def _reset_circuit_breaker() -> None:
-    """Reset the OPA timeout circuit-breaker before each test."""
+def _reset_circuit_breaker() -> Iterator[None]:
+    """Reset the OPA timeout circuit-breaker before and after each test."""
+    reset_opa_circuit_breaker()
+    yield
     reset_opa_circuit_breaker()
 
 

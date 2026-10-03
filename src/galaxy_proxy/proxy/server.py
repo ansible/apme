@@ -9,9 +9,12 @@ from __future__ import annotations
 
 import asyncio
 import configparser
+import hmac
+import ipaddress
 import logging
 import os
 import re
+import socket
 import tempfile
 import time
 from contextlib import asynccontextmanager
@@ -46,6 +49,95 @@ from galaxy_proxy.proxy.passthrough import PyPIPassthrough
 
 logger = logging.getLogger(__name__)
 
+_ADMIN_TOKEN_ENV = "APME_PROXY_ADMIN_TOKEN"
+_ALLOW_UNAUTH_ADMIN_ENV = "APME_PROXY_ALLOW_UNAUTH_ADMIN"
+# Must match _PROXY_ADMIN_TOKEN_HEADER in
+# apme_gateway/_galaxy_proxy_sync.py — the two services deploy
+# independently, so a one-side rename 403s config pushes.
+# Admin auth is fail-closed: when no token is configured, admin routes
+# reject every request unless the operator explicitly opts out with
+# APME_PROXY_ALLOW_UNAUTH_ADMIN=1 (single-host local daemon only).
+# Rollout order matters: enable the token on the gateway first, then on the
+# proxy. Gateway-first is hitless because an old proxy ignores the extra
+# header (open only when it also opts out); proxy-first 403s pushes from
+# old gateways while the envs disagree — Gateway logs the failed push and
+# reports the proxy component degraded via /health.
+_ADMIN_TOKEN_HEADER = "x-apme-proxy-token"
+
+_UNAUTH_TRUTHY = frozenset({"1", "true", "yes", "on"})
+
+
+def _unauth_admin_allowed() -> bool:
+    """Return whether unauthenticated admin access is explicitly allowed.
+
+    Opt-out for the single-host local daemon only — never set this when the
+    proxy listens on a routable address. Deployments must configure
+    ``APME_PROXY_ADMIN_TOKEN`` instead.
+
+    Returns:
+        True when ``APME_PROXY_ALLOW_UNAUTH_ADMIN`` is explicitly truthy.
+    """
+    return os.environ.get(_ALLOW_UNAUTH_ADMIN_ENV, "").strip().lower() in _UNAUTH_TRUTHY
+
+
+def _admin_token_configured() -> str | None:
+    """Return the configured admin token, or signal unset/invalid.
+
+    Returns:
+        Stripped ASCII ``APME_PROXY_ADMIN_TOKEN`` value, ``""`` when unset,
+        or ``None`` when set but contains non-ASCII characters (misconfigured).
+    """
+    token = os.environ.get(_ADMIN_TOKEN_ENV, "").strip()
+    if not token:
+        return ""
+    try:
+        token.encode("ascii")
+    except UnicodeEncodeError:
+        logger.error(
+            "%s contains non-ASCII characters; admin routes reject all requests",
+            _ADMIN_TOKEN_ENV,
+        )
+        return None
+    return token
+
+
+def _require_admin_token(request: Request) -> None:
+    """Enforce shared-admin-token auth on admin endpoints.
+
+    Fail-closed: when ``APME_PROXY_ADMIN_TOKEN`` is unset the admin surface
+    rejects every request unless the operator explicitly opted out with
+    ``APME_PROXY_ALLOW_UNAUTH_ADMIN=1`` (single-host local daemon only).
+    Otherwise the request must present the token in the
+    ``x-apme-proxy-token`` header.
+
+    Args:
+        request: Incoming HTTP request.
+
+    Raises:
+        HTTPException: 403 when no token is configured (and no opt-out),
+            when the configured token is invalid, or when the presented
+            token does not match.
+    """
+    expected = _admin_token_configured()
+    if expected == "":
+        if _unauth_admin_allowed():
+            return
+        raise HTTPException(
+            status_code=403,
+            detail="Admin token is not configured; set APME_PROXY_ADMIN_TOKEN "
+            "or explicitly allow unauthenticated admin with "
+            "APME_PROXY_ALLOW_UNAUTH_ADMIN=1",
+        )
+    if expected is None:
+        raise HTTPException(status_code=403, detail="Invalid admin token")
+    provided = request.headers.get(_ADMIN_TOKEN_HEADER, "")
+    try:
+        provided.encode("ascii")
+    except UnicodeEncodeError:
+        raise HTTPException(status_code=403, detail="Invalid admin token") from None
+    if not hmac.compare_digest(provided, expected):
+        raise HTTPException(status_code=403, detail="Invalid admin token")
+
 
 def _safe_server_label(raw_url: str) -> str:
     """Return an upstream URL label without query, fragment, or credentials.
@@ -63,6 +155,71 @@ def _safe_server_label(raw_url: str) -> str:
         return f"{parsed.hostname}:{parsed.port}" if parsed.port else parsed.hostname
     except ValueError:
         return "unknown"
+
+
+def _validate_galaxy_server_url(raw_url: str) -> None:
+    """Reject Galaxy server URLs that cannot safely receive stored tokens.
+
+    A pushed server URL later receives the victim's stored Galaxy token in
+    the Authorization header on every version-list and tarball download, so
+    an attacker who can POST ``/admin/galaxy-config`` must not be able to
+    point it at an arbitrary host. This rejects non-HTTPS schemes (tokens
+    would travel in cleartext), embedded userinfo (credentials the proxy
+    would forward), and literal IPs that target this host or the local link
+    (loopback, link-local including the cloud-metadata address, multicast,
+    unspecified, reserved). Hostnames are accepted — they cannot be judged
+    without DNS — and private-range IPs stay allowed for enterprise hubs.
+
+    Args:
+        raw_url: Galaxy server URL from the admin config push.
+
+    Raises:
+        HTTPException: 422 describing why the URL is rejected.
+    """
+    url = (raw_url or "").strip()
+    parsed = urlsplit(url)
+    if parsed.scheme != "https":
+        raise HTTPException(
+            status_code=422,
+            detail=f"Galaxy server URL must use https: {raw_url!r}",
+        )
+    if parsed.username or parsed.password:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Galaxy server URL must not embed userinfo credentials: {raw_url!r}",
+        )
+    host = parsed.hostname or ""
+    if not host:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Galaxy server URL has no host: {raw_url!r}",
+        )
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        # Encoded literal IPs (all-decimal integers like 2130706433,
+        # hex/octal dotted quads) raise ValueError here yet the OS
+        # resolver still maps them to loopback/link-local addresses —
+        # reject anything inet_aton accepts so such URLs cannot bypass
+        # the block below and later receive stored Galaxy tokens.
+        try:
+            socket.inet_aton(host)
+        except OSError:
+            return  # Hostname: cannot judge without DNS; allowed.
+        raise HTTPException(
+            status_code=422,
+            detail=f"Galaxy server URL must not target a local/link-local address: {raw_url!r}",
+        ) from None
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        # IPv4-mapped IPv6 literals (e.g. ::ffff:127.0.0.1) report
+        # is_loopback/is_link_local False on some releases yet connect to
+        # the embedded IPv4 target — judge the mapped address instead.
+        ip = ip.ipv4_mapped
+    if ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_unspecified or ip.is_reserved:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Galaxy server URL must not target a local/link-local address: {raw_url!r}",
+        )
 
 
 _GALAXY_API_URL = "https://galaxy.ansible.com"
@@ -193,6 +350,21 @@ def create_app(
     app.state.ansible_cfg_path = ansible_cfg_path
     app.state.ansible_galaxy_bin = ansible_galaxy_bin
 
+    if _admin_token_configured() == "" and not _unauth_admin_allowed():
+        logger.warning(
+            "APME_PROXY_ADMIN_TOKEN is not configured — /admin/galaxy-config and "
+            "/convert-tarballs reject all requests. Set APME_PROXY_ADMIN_TOKEN "
+            "to require token auth on the admin surface, or explicitly allow "
+            "unauthenticated admin on a single-host daemon with "
+            "APME_PROXY_ALLOW_UNAUTH_ADMIN=1."
+        )
+    elif _admin_token_configured() == "":
+        logger.warning(
+            "APME_PROXY_ALLOW_UNAUTH_ADMIN is set — /admin/galaxy-config and "
+            "/convert-tarballs are unprotected. Only use this opt-out on a "
+            "single-host daemon; set APME_PROXY_ADMIN_TOKEN everywhere else."
+        )
+
     def _get_galaxy_config() -> tuple[Path | None, list[GalaxyServerConfig] | None, str | None]:
         """Read current Galaxy config from app state.
 
@@ -215,7 +387,7 @@ def create_app(
         return {"status": "ok"}
 
     @app.post("/admin/galaxy-config")  # type: ignore[untyped-decorator]
-    async def update_galaxy_config(body: _GalaxyConfigPayload) -> dict[str, Any]:
+    async def update_galaxy_config(request: Request, body: _GalaxyConfigPayload) -> dict[str, Any]:
         """Accept Galaxy server configs pushed from the Gateway (ADR-045).
 
         The Gateway calls this after startup and after any CRUD change to
@@ -223,14 +395,19 @@ def create_app(
         and uses them for all subsequent ``ansible-galaxy`` downloads.
 
         Args:
+            request: Incoming HTTP request (carries the admin token header).
             body: Galaxy server configurations to register.
 
         Returns:
             dict: Confirmation with count and names of accepted servers.
 
         Raises:
-            HTTPException: 422 if any server name is empty, invalid, or duplicated.
+            HTTPException: 403 if the admin token is invalid or unconfigured;
+                422 if any server name is empty, invalid, or duplicated, or
+                any server URL is unsafe (non-https, embedded userinfo, or
+                local/link-local target).
         """
+        _require_admin_token(request)
         seen: set[str] = set()
         for s in body.servers:
             name = s.name.strip()
@@ -241,6 +418,11 @@ def create_app(
             if name.upper() in seen:
                 raise HTTPException(status_code=422, detail=f"Duplicate server name: {s.name!r}")
             seen.add(name.upper())
+            # Fail closed before storing: a stored URL later receives the
+            # victim's Galaxy token on every download, so an unsafe URL must
+            # never reach app state (tokens are never attached to hosts that
+            # fail validation because they are never stored).
+            _validate_galaxy_server_url(s.url)
 
         app.state.galaxy_servers = [
             GalaxyServerConfig(
@@ -510,19 +692,24 @@ def create_app(
         )
 
     @app.post("/convert-tarballs")  # type: ignore[untyped-decorator]
-    async def convert_tarballs(tarball_dir: str) -> dict[str, list[str]]:
+    async def convert_tarballs(request: Request, tarball_dir: str) -> dict[str, list[str]]:
         """Convert all tarballs in a directory to wheels and cache them.
 
         This endpoint supports the flow where Engine sends collection specs
         and the proxy converts pre-downloaded tarballs to wheels.
 
         Args:
+            request: Incoming HTTP request (carries the admin token header).
             tarball_dir: Path to directory containing ``.tar.gz`` files
                 (resolved to absolute internally).
 
         Returns:
             Dict with ``converted`` (wheel filenames) and ``failed`` (tarball names).
-        """
+
+        Raises:
+            HTTPException: 403 if the admin token is invalid.
+        """  # noqa: DOC502 -- the 403 raise lives in _require_admin_token
+        _require_admin_token(request)
         tarball_path = _validate_tarball_dir(tarball_dir)
 
         converted: list[str] = []

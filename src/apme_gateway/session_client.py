@@ -62,11 +62,15 @@ from apme.v1.engine_pb2 import (
 )
 from apme_engine.daemon.chunked_fs import yield_scan_chunks
 from apme_engine.graph.severity import severity_from_proto, severity_to_label
+from apme_engine.rule_ids import normalize_rule_id
 from apme_gateway.db import get_session
 from apme_gateway.db.queries import list_rules_with_resolved_config
 from apme_gateway.scan.driver import coerce_option_bool
 
 logger = logging.getLogger(__name__)
+
+# PE-26: same 50 MiB send/receive limits as scan/driver.py (_GRPC_MAX_MSG).
+_GRPC_MAX_MSG = 50 * 1024 * 1024  # 50 MiB — matches Engine
 
 _STATUS_NAMES: dict[int, str] = {
     0: "SESSION_STATUS_UNSPECIFIED",
@@ -117,8 +121,20 @@ async def _load_scan_rule_configs() -> list[RuleConfig]:
     Best-effort: returns an empty list if the DB is unavailable, the query
     fails, or no rules are registered yet.
 
+    Rule IDs are canonicalized to bare form at the source so the Engine
+    never receives ``native:``-prefixed twins of the same rule.  Rows that
+    collapse onto one bare ID with conflicting flags fail the session
+    fast with the conflicting IDs named: omitting them while sending
+    ``rule_configs_complete=True`` would trip the Engine's bidirectional
+    audit with a misleading "catalog out of sync" error, and silently
+    picking a winner would guess operator intent.
+
     Returns:
         ``RuleConfig`` messages suitable for ``ScanOptions.rule_configs``.
+
+    Raises:
+        ValueError: When any canonical rule ID has conflicting
+            configuration flags across duplicate rows.
     """
     try:
         async with get_session() as db:
@@ -126,14 +142,38 @@ async def _load_scan_rule_configs() -> list[RuleConfig]:
     except Exception:
         logger.warning("Failed to load rule_configs for scan — proceeding without overrides", exc_info=True)
         return []
+    conflicts: set[str] = set()
+    by_id: dict[str, dict[str, object]] = {}
+    for row in rows:
+        bare = normalize_rule_id(str(row["rule_id"]))
+        if bare in conflicts:
+            continue
+        flags = (row["severity"], row["enabled"], row["enforced"])
+        if bare in by_id:
+            prior = by_id[bare]
+            prior_flags = (prior["severity"], prior["enabled"], prior["enforced"])
+            if prior_flags != flags:
+                logger.error(
+                    "Conflicting gateway rule rows normalize to %r — omitting from scan config",
+                    bare,
+                )
+                conflicts.add(bare)
+                del by_id[bare]
+                continue
+        by_id[bare] = {"severity": row["severity"], "enabled": row["enabled"], "enforced": row["enforced"]}
+    if conflicts:
+        raise ValueError(
+            f"Gateway rule configuration has conflicting rows for {sorted(conflicts)}; "
+            "resolve the duplicate rule rows before scanning"
+        )
     return [
         RuleConfig(
-            rule_id=str(row["rule_id"]),
-            severity=cast(int, row["severity"]),
-            enabled=bool(row["enabled"]),
-            enforced=bool(row["enforced"]),
+            rule_id=bare,
+            severity=cast(int, entry["severity"]),
+            enabled=bool(entry["enabled"]),
+            enforced=bool(entry["enforced"]),
         )
-        for row in rows
+        for bare, entry in by_id.items()
     ]
 
 
@@ -564,6 +604,21 @@ async def handle_session(
             enable_ai: bool = coerce_option_bool(options.get("enable_ai", False))
             ai_model: str = options.get("ai_model", "")
             interactive: bool = coerce_option_bool(options.get("interactive", False))
+            # PE-40: forward validator-skip flags into ScanOptions. These are
+            # the actual engine.proto ScanOptions fields
+            # (skip_collection_health, skip_dep_audit — ADR-051); there are no
+            # skip_gitleaks/skip_validators fields. Defaults preserved when absent.
+            skip_collection_health: bool = coerce_option_bool(options.get("skip_collection_health", False))
+            skip_dep_audit: bool = coerce_option_bool(options.get("skip_dep_audit", False))
+            for _opt_key in options:
+                if _opt_key.startswith("skip_") and _opt_key not in (
+                    "skip_collection_health",
+                    "skip_dep_audit",
+                ):
+                    logger.warning(
+                        "Unknown validator-skip option %r ignored (supported: skip_collection_health, skip_dep_audit)",
+                        _opt_key,
+                    )
 
             scan_id = str(uuid.uuid4())
             scan_rule_configs = await _load_scan_rule_configs()
@@ -571,7 +626,13 @@ async def handle_session(
         command_queue: asyncio.Queue[SessionCommand | None] = asyncio.Queue()
         done = asyncio.Event()
 
-        channel = grpc.aio.insecure_channel(engine_address)
+        channel = grpc.aio.insecure_channel(
+            engine_address,
+            options=[
+                ("grpc.max_send_message_length", _GRPC_MAX_MSG),
+                ("grpc.max_receive_message_length", _GRPC_MAX_MSG),
+            ],
+        )
         try:
             stub = engine_pb2_grpc.EngineStub(channel)  # type: ignore[no-untyped-call]
 
@@ -592,6 +653,8 @@ async def handle_session(
                         ansible_core_version=ansible_version or None,
                         collection_specs=collections or None,
                         galaxy_servers=galaxy_servers or None,
+                        skip_collection_health=skip_collection_health,
+                        skip_dep_audit=skip_dep_audit,
                     )
                     first_chunk = next(chunk_iter, None)
                     if first_chunk is None:

@@ -374,6 +374,19 @@ spec:
           env:
             - name: LOG_LEVEL
               value: {{ .Values.engine.galaxyProxy.logLevel | quote }}
+            {{- if .Values.engine.galaxyProxy.existingSecret.name }}
+            - name: APME_PROXY_ADMIN_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.engine.galaxyProxy.existingSecret.name }}
+                  key: {{ .Values.engine.galaxyProxy.existingSecret.key }}
+            {{- else if .Values.engine.galaxyProxy.adminToken }}
+            - name: APME_PROXY_ADMIN_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $fullname }}-secrets
+                  key: proxy-admin-token
+            {{- end }}
           {{- with .Values.securityContext }}
           securityContext:
             {{- toYaml . | nindent 12 }}
@@ -504,6 +517,19 @@ spec:
             {{- if .Values.depAudit.enabled }}
             - name: DEP_AUDIT_GRPC_ADDRESS
               value: "127.0.0.1:50059"
+            {{- end }}
+            {{- if .Values.engine.galaxyProxy.existingSecret.name }}
+            - name: APME_PROXY_ADMIN_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.engine.galaxyProxy.existingSecret.name }}
+                  key: {{ .Values.engine.galaxyProxy.existingSecret.key }}
+            {{- else if .Values.engine.galaxyProxy.adminToken }}
+            - name: APME_PROXY_ADMIN_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $fullname }}-secrets
+                  key: proxy-admin-token
             {{- end }}
             {{- if .Values.gateway.feedback.enabled }}
             - name: APME_FEEDBACK_ENABLED
