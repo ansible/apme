@@ -1165,7 +1165,7 @@ async def test_load_scan_rule_configs_divergent_omits_conflicting_rule(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Conflicting rows for one bare ID fail the scan when no rules remain.
+    """Conflicting rows for one bare ID fail the scan with the IDs named.
 
     Args:
         monkeypatch: Pytest monkeypatch fixture.
@@ -1178,16 +1178,20 @@ async def test_load_scan_rule_configs_divergent_omits_conflicting_rule(
             {"rule_id": "L001", "severity": 1, "enabled": True, "enforced": False},
         ],
     )
-    with caplog.at_level(logging.ERROR), pytest.raises(ValueError, match="entirely conflicting"):
+    with caplog.at_level(logging.ERROR), pytest.raises(ValueError, match="conflicting rows for"):
         await session_client._load_scan_rule_configs()
     assert "Conflicting gateway rule rows" in caplog.text
 
 
-async def test_load_scan_rule_configs_partial_conflict_keeps_non_conflicting(
+async def test_load_scan_rule_configs_partial_conflict_fails_with_ids_named(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Only conflicting bare IDs are omitted when other rules remain valid.
+    """Any conflicting bare ID fails fast naming it, even when others are valid.
+
+    Omitting the conflicted ID while sending ``rule_configs_complete=True``
+    would trip the Engine's bidirectional audit with a misleading
+    "catalog out of sync" error, so the loader refuses instead.
 
     Args:
         monkeypatch: Pytest monkeypatch fixture.
@@ -1201,9 +1205,8 @@ async def test_load_scan_rule_configs_partial_conflict_keeps_non_conflicting(
             {"rule_id": "L002", "severity": 2, "enabled": True, "enforced": True},
         ],
     )
-    with caplog.at_level(logging.ERROR):
-        configs = await session_client._load_scan_rule_configs()
-    assert [c.rule_id for c in configs] == ["L002"]
+    with caplog.at_level(logging.ERROR), pytest.raises(ValueError, match="conflicting rows for.*L001"):
+        await session_client._load_scan_rule_configs()
     assert "Conflicting gateway rule rows" in caplog.text
 
 

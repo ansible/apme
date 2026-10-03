@@ -123,17 +123,18 @@ async def _load_scan_rule_configs() -> list[RuleConfig]:
 
     Rule IDs are canonicalized to bare form at the source so the Engine
     never receives ``native:``-prefixed twins of the same rule.  Rows that
-    collapse onto one bare ID with conflicting flags are omitted from the
-    scan config with an error log so the Engine never silently receives a
-    picked winner. When every loaded row conflicts, raises ``ValueError``
-    so the session fails explicitly instead of sending an empty catalog.
+    collapse onto one bare ID with conflicting flags fail the session
+    fast with the conflicting IDs named: omitting them while sending
+    ``rule_configs_complete=True`` would trip the Engine's bidirectional
+    audit with a misleading "catalog out of sync" error, and silently
+    picking a winner would guess operator intent.
 
     Returns:
         ``RuleConfig`` messages suitable for ``ScanOptions.rule_configs``.
 
     Raises:
-        ValueError: When DB rows were loaded but every canonical rule ID
-            had conflicting configuration flags.
+        ValueError: When any canonical rule ID has conflicting
+            configuration flags across duplicate rows.
     """
     try:
         async with get_session() as db:
@@ -160,8 +161,11 @@ async def _load_scan_rule_configs() -> list[RuleConfig]:
                 del by_id[bare]
                 continue
         by_id[bare] = {"severity": row["severity"], "enabled": row["enabled"], "enforced": row["enforced"]}
-    if rows and not by_id:
-        raise ValueError("Gateway rule configuration is entirely conflicting; scan cannot proceed with overrides")
+    if conflicts:
+        raise ValueError(
+            f"Gateway rule configuration has conflicting rows for {sorted(conflicts)}; "
+            "resolve the duplicate rule rows before scanning"
+        )
     return [
         RuleConfig(
             rule_id=bare,

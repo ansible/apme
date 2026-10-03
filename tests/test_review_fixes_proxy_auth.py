@@ -231,12 +231,13 @@ class TestUnsetTokenFailClosed:
             caplog: Pytest log capture fixture.
         """
         monkeypatch.setenv(proxy_server._ADMIN_TOKEN_ENV, "tokén")
+        monkeypatch.delenv(proxy_server._ALLOW_UNAUTH_ADMIN_ENV, raising=False)
         caplog.set_level("WARNING")
         app = create_app(cache_dir=tmp_path / "cache", enable_passthrough=False)
         with TestClient(app) as client:
             resp = client.post("/admin/galaxy-config", json={"servers": []})
         assert resp.status_code == 403
-        assert not any("is not set" in record.message for record in caplog.records)
+        assert not any("is not configured" in record.getMessage() for record in caplog.records)
 
 
 class TestGalaxyServerUrlValidation:
