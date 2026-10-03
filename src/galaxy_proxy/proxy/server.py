@@ -210,6 +210,11 @@ def _validate_galaxy_server_url(raw_url: str) -> None:
             status_code=422,
             detail=f"Galaxy server URL must not target a local/link-local address: {raw_url!r}",
         ) from None
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        # IPv4-mapped IPv6 literals (e.g. ::ffff:127.0.0.1) report
+        # is_loopback/is_link_local False on some releases yet connect to
+        # the embedded IPv4 target — judge the mapped address instead.
+        ip = ip.ipv4_mapped
     if ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_unspecified or ip.is_reserved:
         raise HTTPException(
             status_code=422,

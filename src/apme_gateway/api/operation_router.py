@@ -1501,6 +1501,40 @@ async def _drive_operation(
                 fut.set_result([])
             state.escalate_ai_future = None
 
+        async def _on_approve_timeout() -> None:
+            """Retire the approval gate on decline-all timeout fallback.
+
+            Gate-commits decline-all for the offered IDs (same
+            omit=decline semantics as POST /approve) so Gateway rows
+            match the Engine's decline, then resolves the gate: the
+            bridge forwards the empty result as a stale
+            generation-tagged item the driver ignores, and a late
+            POST /approve gets 409 instead of committing decisions the
+            Engine already declined.
+            """
+            state = registry.get(operation_id)
+            if state is None or state.status != OperationStatus.AWAITING_APPROVAL:
+                return
+            gate = state.approval_gate
+            if gate is None or gate.future.done():
+                return
+            async with state.approval_gate_lock:
+                if gate.future.done() or state.approval_gate is not gate:
+                    return
+                from apme_gateway.proposals.draft import commit_gate_decisions  # noqa: PLC0415
+
+                offered = [p.id for p in (state.proposals or [])]
+                async with get_session() as db:
+                    await commit_gate_decisions(
+                        db,
+                        scan_id=state.scan_id,
+                        project_id=project_id,
+                        approved_engine_ids=[],
+                        offered_engine_ids=offered,
+                    )
+                    await db.commit()
+                gate.future.set_result([])
+
         _, result, clone_commit = await run_project_operation(
             project_id=project_id,
             repo_url=repo_url,
@@ -1519,6 +1553,7 @@ async def _drive_operation(
             escalate_ai_queue=escalate_ai_queue,
             on_begin_timeout=_on_begin_timeout,
             on_escalate_timeout=_on_escalate_timeout,
+            on_approve_timeout=_on_approve_timeout,
             scan_id=scan_id,
             galaxy_servers=galaxy_servers or None,
             scm_token=scm_token,

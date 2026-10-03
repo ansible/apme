@@ -13,6 +13,7 @@ import asyncio
 import base64
 import contextlib
 import hashlib
+import inspect
 import logging
 import os
 import shutil
@@ -710,6 +711,7 @@ async def run_project_operation(
     escalate_ai_queue: OperatorAnswerQueue[list[dict[str, object]]] | None = None,
     on_begin_timeout: Callable[[], None] | None = None,
     on_escalate_timeout: Callable[[], None] | None = None,
+    on_approve_timeout: Callable[[], Any] | None = None,
     scan_id: str | None = None,
     galaxy_servers: list[GalaxyServerDef] | None = None,
     scm_token: str | None = None,
@@ -759,6 +761,12 @@ async def run_project_operation(
             wait times out and the driver falls back to allow-all. The
             caller retires the pending escalate future so a late
             ``POST /escalate-ai`` is rejected instead of silently dropped.
+        on_approve_timeout: Optional callback (sync or async) invoked when
+            the approval wait times out and the driver declines all
+            proposals. The caller resolves and retires the current
+            approval gate and gate-commits decline-all for the offered
+            IDs, so a late ``POST /approve`` cannot commit decisions the
+            Engine already declined.
         scan_id: Optional pre-generated scan ID; one is created if omitted.
         galaxy_servers: Global Galaxy server defs to inject into scan metadata (ADR-045).
         scm_token: Optional SCM token for private repository access.
@@ -927,6 +935,13 @@ async def run_project_operation(
                     if approved_ids is None:
                         approve_timed_out = True
                         approved_ids = []
+                        if on_approve_timeout is not None:
+                            try:
+                                maybe_awaitable = on_approve_timeout()
+                                if inspect.isawaitable(maybe_awaitable):
+                                    await maybe_awaitable
+                            except Exception:
+                                logger.exception("on_approve_timeout callback failed")
                     await command_queue.put(
                         engine_pb2.SessionCommand(approve=engine_pb2.ApprovalRequest(approved_ids=approved_ids))
                     )

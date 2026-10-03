@@ -85,10 +85,12 @@ async def test_next_answer_preserves_newer_item_without_losing_it() -> None:
         "https://0x7f000001/collections/",
         "https://0177.0.0.1/collections/",
         "https://2852039166/collections/",
+        "https://[::ffff:127.0.0.1]/collections/",
+        "https://[::ffff:169.254.169.254]/collections/",
     ],
 )
 def test_proxy_rejects_encoded_literal_loopback_urls(url: str) -> None:
-    """Integer/hex/octal literal IPs must not bypass the local-address block.
+    """Integer/hex/octal and IPv4-mapped literals must not bypass the block.
 
     Args:
         url: Galaxy server URL with an encoded literal-IP host.
@@ -116,3 +118,22 @@ def test_update_galaxy_server_allows_none_but_rejects_http() -> None:
     assert UpdateGalaxyServerRequest(name="renamed").url is None
     with pytest.raises(ValidationError):
         UpdateGalaxyServerRequest(url="http://galaxy.example.com/api/")
+
+
+@pytest.mark.parametrize(  # type: ignore[untyped-decorator]
+    "url",
+    [
+        "https://user:pass@galaxy.example.com/api/",
+        "https://127.0.0.1/api/",
+        "https://2130706433/api/",
+        "https://[::ffff:169.254.169.254]/api/",
+    ],
+)
+def test_create_galaxy_server_mirrors_proxy_local_address_gate(url: str) -> None:
+    """Gateway rejects what the proxy would 422, at the offending row.
+
+    Args:
+        url: Galaxy server URL the proxy refuses.
+    """
+    with pytest.raises(ValidationError):
+        CreateGalaxyServerRequest(name="bad", url=url)
