@@ -1,0 +1,32 @@
+---
+# deprecated-modules.yml
+# This playbook uses deprecated/removed modules to test M-rule detection.
+# Expected violations:
+#   - M001: Short module name should be FQCN
+#   - M002: Module is deprecated
+#   - M003: Module has been redirected
+#   - M009: with_* should be loop
+
+- name: Test deprecated module detection
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    # M001: Short name should be FQCN
+    - name: Using short module name
+      debug:
+        msg: "This should trigger M001 - use ansible.builtin.debug"
+
+    # M009: with_items deprecated in favor of loop
+    - name: Using with_items
+      ansible.builtin.debug:
+        msg: "Item: {{ item }}"
+      with_items:
+        - one
+        - two
+        - three
+
+    # Example of old include syntax (if targeting older ansible versions)
+    # Uncomment to test M008 (bare include)
+    # - include: other_tasks.yml

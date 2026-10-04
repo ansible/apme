@@ -1,0 +1,36 @@
+---
+# vault-reference.yml
+# This playbook references vault-encrypted variables.
+# APME should NOT trigger SEC:* false positives on Jinja2 lookups.
+# Expected violations: 0
+
+- name: Use vault-encrypted secrets safely
+  hosts: app_servers
+  become: true
+  become_user: root
+
+  vars:
+    # These reference vault-encrypted variables - not hardcoded secrets
+    db_password: "{{ vault_db_password }}"
+    api_key: "{{ vault_api_key }}"
+    aws_secret: "{{ lookup('hashi_vault', 'secret/aws:secret_key') }}"
+
+  tasks:
+    - name: Configure database with vault password
+      ansible.builtin.template:
+        src: db.conf.j2
+        dest: /etc/app/db.conf
+        mode: "0600"
+      vars:
+        password: "{{ db_password }}"
+
+    - name: Set API key from vault
+      ansible.builtin.lineinfile:
+        path: /etc/environment
+        line: "API_KEY={{ api_key }}"
+
+    - name: Use lookup for AWS credentials
+      ansible.builtin.debug:
+        msg: "AWS configured with vault-managed credentials"
+      vars:
+        aws_access: "{{ lookup('env', 'AWS_ACCESS_KEY_ID') }}"
