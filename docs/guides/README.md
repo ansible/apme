@@ -10,6 +10,7 @@ troubleshoot APME.
 | [CLI.md](CLI.md) | CLI installation, commands, daemon mode, CI usage, limitations |
 | [DEPLOYMENT.md](DEPLOYMENT.md) | Podman pod, bootc VM, Helm chart — setup and configuration |
 | [DEVELOPMENT.md](DEVELOPMENT.md) | Local setup, tox environments, adding rules, testing |
+| [CI_CD_INTEGRATION.md](CI_CD_INTEGRATION.md) | GitHub Actions, GitLab CI, Jenkins, Azure DevOps integration |
 | [RULE_CONFIGURATION.md](RULE_CONFIGURATION.md) | Rule configuration, suppression, dependency scan options |
 | [PODMAN_OPA_ISSUES.md](PODMAN_OPA_ISSUES.md) | Podman rootless troubleshooting for OPA |
 
