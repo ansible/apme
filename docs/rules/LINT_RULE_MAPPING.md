@@ -149,7 +149,7 @@ These rules use ansible-core's plugin loader (`find_plugin_with_context()`) to r
 | M002 | Deprecated module -- module has deprecation metadata |
 | M003 | Module redirect -- module name was redirected to a new FQCN |
 | M004 | Removed module -- tombstoned module (raises `AnsiblePluginRemovedError`) |
-| M048 | Prefer `ansible.builtin` when a non-builtin FQCN has a builtin twin (authoritative; replaces L030's static-list approach for this gap) |
+| M048 | Prefer `ansible.builtin` when a non-builtin FQCN has a builtin twin (authoritative venv resolution; covers the non-community gap L005 cannot see; successor to L030's static-list prefer-builtin check) |
 
 Note: OPA L002 was retired — FQCN checking is now handled by **M001** (semantic resolution via ansible-core's plugin loader) and **L026** (model-based detection in the native validator). The remediation registry still maps `L002` to the FQCN fixer for backward compatibility with older scan results.
 

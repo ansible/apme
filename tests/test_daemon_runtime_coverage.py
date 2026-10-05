@@ -2082,7 +2082,7 @@ def test_ansible_run_timing_l057_with_lookup(tmp_path: Path) -> None:
 
 
 def test_ansible_run_timing_full_rules(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    """Task nodes trigger M001-M004, L058, and L059 with cache stats.
+    """Task nodes trigger M001-M004/M048, L058, and L059 with cache stats.
 
     Args:
         tmp_path: Pytest temporary directory.
