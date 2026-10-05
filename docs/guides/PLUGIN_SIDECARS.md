@@ -133,13 +133,16 @@ built-in Validator. Plugins use `APME_PLUGIN_*_ADDRESS` only.
 
 ### Host process (no image)
 
-If you only want to try the gRPC server on the laptop:
+If you only want to try the gRPC server on the laptop, export the Engine
+address first, then start the plugin in this shell (or background it).
+Engine ``apme daemon`` / ``check`` runs in a **second** shell that
+inherits or sets the same address:
 
 ```bash
 # needs `opa` on PATH
 export APME_OPA_PLUGIN_BUNDLE="$PWD/examples/plugins/opa-custom/bundle"
-APME_PLUGIN_LISTEN=0.0.0.0:50100 python examples/plugins/opa-custom/plugin.py
 export APME_PLUGIN_OPACUSTOM_ADDRESS=127.0.0.1:50100
+APME_PLUGIN_LISTEN=0.0.0.0:50100 python examples/plugins/opa-custom/plugin.py
 ```
 
 ### Authoring more Rego
@@ -218,9 +221,12 @@ write the user tree.
 
 ```bash
 pip install "ansible-security-scanner==0.1.39"   # or current release
-APME_PLUGIN_LISTEN=0.0.0.0:50101 python examples/plugins/secscan/plugin.py
 export APME_PLUGIN_SECSCAN_ADDRESS=127.0.0.1:50101
+APME_PLUGIN_LISTEN=0.0.0.0:50101 python examples/plugins/secscan/plugin.py
 ```
+
+Start the plugin in this shell (or background it). Run Engine in a
+**second** shell with the same ``APME_PLUGIN_SECSCAN_ADDRESS``.
 
 ## Enabling both sidecars
 

@@ -239,7 +239,10 @@ artifact type, translate it:
      of a different class (e.g. Tier 1 fixed + AI-candidate +
      MANUAL_REVIEW on the same node path)? Filters must be
      allowlists of the intended class, not "everything except X"
-     — the latter silently includes unrelated classes.
+     — the latter silently includes unrelated classes. When a leftover
+     / unbound finding set is unioned onto every dirty node, construct
+     two nodes in different files that share a rule ID — carry-over
+     must be scoped to a matching ``file`` (empty file may mean global).
    - **Docstring vs deny-by-default** — if prose says "only when
      compatible" / "same class", the fallback branch must not return
      ``True`` unconditionally for unknown/sentinel sources.
@@ -412,6 +415,10 @@ GitHub ``run:``), construct interpolator collisions: unescaped
 ``{...}`` that tox substitutes before Python runs. For
 ``next(glob(...))``, construct the empty-match path and require an
 explicit error instead of ``StopIteration``.
+When a docs/shell recipe starts a foreground server, construct the
+one-shell reader: later ``export`` / client commands never run. Put
+env exports before the blocking command and say a second shell
+consumes them.
 
 Do NOT discuss architecture philosophy. Rank findings
 critical/high/medium/low.

@@ -1148,6 +1148,55 @@ class TestGraphRemediationEngine:
         assert record is not None
         assert record.status == "open"
 
+    def test_resolve_dirty_unbound_ext_stays_file_scoped(self) -> None:
+        """Unbound EXT- findings do not keep a different file's node open."""
+        graph = ContentGraph()
+        node_a = _make_node(
+            "playbooks/a.yml/plays[0]/tasks[0]",
+            file_path="playbooks/a.yml",
+        )
+        node_b = _make_node(
+            "playbooks/b.yml/plays[0]/tasks[0]",
+            file_path="playbooks/b.yml",
+            line_start=10,
+            line_end=14,
+        )
+        graph.add_node(node_a)
+        graph.add_node(node_b)
+        rule_id = "EXT-secscan-hardcoded-secret"
+        graph.register_violations(
+            [
+                {
+                    "rule_id": rule_id,
+                    "path": node_a.node_id,
+                    "file": node_a.file_path,
+                    "severity": "high",
+                    "scope": "task",
+                },
+                {
+                    "rule_id": rule_id,
+                    "path": node_b.node_id,
+                    "file": node_b.file_path,
+                    "severity": "high",
+                    "scope": "task",
+                },
+            ],
+            0,
+        )
+        _resolve_dirty_violations(
+            graph,
+            [{"rule_id": rule_id, "path": "", "file": node_b.file_path}],
+            frozenset({node_a.node_id, node_b.node_id}),
+            fixed_by="deterministic",
+            pass_number=1,
+        )
+        rec_a = node_a.violation_ledger.get((node_a.node_id, rule_id))
+        rec_b = node_b.violation_ledger.get((node_b.node_id, rule_id))
+        assert rec_a is not None
+        assert rec_a.status == "fixed"
+        assert rec_b is not None
+        assert rec_b.status == "open"
+
     async def test_plugin_ext_findings_skip_builtin_ai(self) -> None:
         """EXT- findings are not sent through the built-in mixed-node AI pass."""
         from unittest.mock import AsyncMock

@@ -1158,7 +1158,9 @@ def _resolve_dirty_violations(
 
     When the rescan includes ``EXT-<plugin>-unavailable``, open findings
     for that plugin prefix stay remaining so a down sidecar cannot mark
-    them fixed.
+    them fixed. Unbound ``EXT-`` findings (no node ``path``) keep a
+    dirty node's ledger open only when the finding ``file`` is empty or
+    matches that node's ``file_path``.
 
     Args:
         graph: ContentGraph whose ledger to update.
@@ -1169,7 +1171,7 @@ def _resolve_dirty_violations(
         status: Target status (``"fixed"`` or ``"proposed"``).
     """
     remaining_by_node: dict[str, set[str]] = defaultdict(set)
-    unbound_ext: set[str] = set()
+    unbound_ext: dict[str, set[str]] = defaultdict(set)
     incomplete_prefixes: set[str] = set()
     for v in rescan_violations:
         rule_id = normalize_rule_id(str(v.get("rule_id", "")))
@@ -1179,7 +1181,7 @@ def _resolve_dirty_violations(
         if node_id:
             remaining_by_node[node_id].add(rule_id)
         elif rule_id.startswith("EXT-"):
-            unbound_ext.add(rule_id)
+            unbound_ext[rule_id].add(str(v.get("file") or ""))
 
     for nid in dirty_ids:
         remaining = remaining_by_node.get(nid, set())
@@ -1191,7 +1193,11 @@ def _resolve_dirty_violations(
                 if str(rec.violation.get("rule_id", "")).startswith("EXT-")
             }
             if unbound_ext:
-                remaining = remaining | (unbound_ext & open_ext)
+                remaining = remaining | {
+                    rid
+                    for rid in open_ext
+                    if rid in unbound_ext and ("" in unbound_ext[rid] or node.file_path in unbound_ext[rid])
+                }
             if incomplete_prefixes:
                 remaining = remaining | {
                     rid for rid in open_ext if any(rid.startswith(prefix) for prefix in incomplete_prefixes)
