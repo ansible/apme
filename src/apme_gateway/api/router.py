@@ -25,6 +25,7 @@ from sqlalchemy import select
 
 from apme_engine.graph.audit_metadata import sanitize_audit_metadata_value
 from apme_engine.graph.severity import severity_from_proto, severity_to_label
+from apme_gateway._galaxy_proxy_sync import get_sync_status
 from apme_gateway.api.schemas import (
     ActiveOperationSummary,
     ActivityDetail,
@@ -250,6 +251,22 @@ async def health() -> HealthStatus:
         *(_check_component(name, env_var, default) for name, env_var, default in _UPSTREAM_SERVICES)
     )
     component_list = list(components)
+
+    # Galaxy Proxy freshness overlay: a failed config push means scans run
+    # on stale proxy config, so surface it as a degraded component with
+    # the last-push age instead of a silent warning elsewhere.
+    sync = get_sync_status()
+    if sync["attempted"]:
+        age_s = sync["age_s"]
+        age = f"{age_s:.0f}s" if isinstance(age_s, float) else "unknown age"
+        for component in component_list:
+            if component.name != "Galaxy Proxy":
+                continue
+            if sync["ok"]:
+                component.detail = f"last config push ok {age} ago"
+            else:
+                component.status = "degraded"
+                component.detail = f"last config push failed {age} ago: {sync['error']}"
 
     all_ok = db_ok and all(c.status == "ok" for c in component_list)
 
@@ -2262,11 +2279,13 @@ async def project_operate_ws(
     """
     from apme_gateway._galaxy_inject import load_galaxy_server_defs
     from apme_gateway.config import load_config
+    from apme_gateway.operation_types import ApprovalGate
     from apme_gateway.scan.driver import (
         coerce_option_bool,
         fetch_remote_head,
         run_project_operation,
     )
+    from apme_gateway.scan.operator_queue import OperatorAnswerQueue
 
     await websocket.accept()
 
@@ -2306,6 +2325,8 @@ async def project_operate_ws(
         ai_proposed_count = 0
         ai_declined_count = 0
         ai_accepted_count = 0
+        approval_prompt_gen = 0
+        ws_approval_gate: ApprovalGate | None = None
 
         async def _progress_cb(event: object) -> None:
             """Translate FixSession ``SessionEvent`` protobufs into WebSocket messages.
@@ -2313,7 +2334,14 @@ async def project_operate_ws(
             Args:
                 event: gRPC SessionEvent protobuf.
             """
-            nonlocal started_sent, operation_budget_seconds, ai_proposed_count, ai_declined_count, ai_accepted_count
+            nonlocal \
+                started_sent, \
+                operation_budget_seconds, \
+                ai_proposed_count, \
+                ai_declined_count, \
+                ai_accepted_count, \
+                approval_prompt_gen, \
+                ws_approval_gate
 
             kind = None
             with contextlib.suppress(Exception):
@@ -2353,6 +2381,12 @@ async def project_operate_ws(
                 await websocket.send_json(progress_payload)
             elif kind == "proposals":
                 await _ensure_started()
+                if is_remediate:
+                    ws_approval_gate = ApprovalGate(
+                        future=asyncio.get_running_loop().create_future(),
+                        prompt_generation=approval_queue.current_generation,
+                    )
+                    approval_prompt_gen = approval_queue.current_generation
                 props = event.proposals  # type: ignore[attr-defined]
                 items = [
                     {
@@ -2371,7 +2405,10 @@ async def project_operate_ws(
                 ]
                 ai_proposed_count = sum(1 for i in items if i.get("status") != "declined")
                 ai_declined_count = sum(1 for i in items if i.get("status") == "declined")
-                await websocket.send_json({"type": "proposals", "proposals": items})
+                proposals_msg: dict[str, object] = {"type": "proposals", "proposals": items}
+                if ws_approval_gate is not None:
+                    proposals_msg["approval_gate_id"] = ws_approval_gate.gate_id
+                await websocket.send_json(proposals_msg)
             elif kind == "approval_ack":
                 ack = event.approval_ack  # type: ignore[attr-defined]
                 ai_accepted_count = getattr(ack, "applied_count", 0)
@@ -2448,7 +2485,7 @@ async def project_operate_ws(
 
         clone_commit = ""
         if is_remediate:
-            approval_queue: asyncio.Queue[list[str]] = asyncio.Queue()
+            approval_queue: OperatorAnswerQueue[list[str]] = OperatorAnswerQueue()
             op_result: tuple[str, object, str] | None = None
 
             async def _run_op() -> tuple[str, object, str]:
@@ -2485,7 +2522,25 @@ async def project_operate_ws(
                     if msg_type == "approve":
                         ids = client_msg.get("approved_ids", [])
                         approved = [str(i) for i in ids] if isinstance(ids, list) else []
-                        await approval_queue.put(approved)
+                        gate = ws_approval_gate
+                        if gate is None:
+                            continue
+                        raw_gate_id = client_msg.get("approval_gate_id")
+                        if raw_gate_id is not None and (
+                            not isinstance(raw_gate_id, str) or raw_gate_id != gate.gate_id
+                        ):
+                            await websocket.send_json(
+                                {
+                                    "type": "error",
+                                    "code": "stale_approval_gate",
+                                    "message": "Approval gate expired; refresh proposals and retry.",
+                                }
+                            )
+                            continue
+                        await approval_queue.put(
+                            approved,
+                            for_generation=gate.prompt_generation,
+                        )
                     elif msg_type == "cancel":
                         op_task.cancel()
                         break

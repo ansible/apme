@@ -488,7 +488,11 @@ fix-now vs follow-up issue. Be skeptical.
 **Lens — system architecture:** Zoom out beyond this PR's files:
 - Dependency direction (gateway vs engine; no inverted imports)
 - Where state lives and failure modes (concurrency, restart,
-  multi-instance, partial flush/claim)
+  multi-instance, partial flush/claim). Client-visible IDs that
+  authorize or bind requests (gate ids, session tokens, generation
+  handles) must not reuse values across process lifetimes —
+  process-local counters reset on restart and can accept stale
+  client retries against a new operation
 - Scaling: algorithmic cost, PostgreSQL parameter limits, fan-out under load
 - Whether schemas/analytics support the views claimed in ADR/docs
 - Frontend/API contract readiness for the stated UX

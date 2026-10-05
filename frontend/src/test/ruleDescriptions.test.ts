@@ -37,6 +37,7 @@ describe("getRuleDescription (dynamic fetch)", () => {
       json: () =>
         Promise.resolve([
           { rule_id: "L042", description: "Test rule description" },
+          { rule_id: "L001", description: "Lint rule one" },
           { rule_id: "M010", description: "Python 2 interpreter" },
         ]),
     } as Response);
@@ -51,6 +52,8 @@ describe("getRuleDescription (dynamic fetch)", () => {
       "Test rule description",
     );
     expect(mod.getRuleDescription("M010")).toBe("Python 2 interpreter");
+    expect(mod.getRuleDescription("SEC:L001")).toBe("");
+    expect(mod.getRuleDescription("opa:L003")).toBe("");
     expect(mod.getRuleDescription("ZZZZ999")).toBe("");
   });
 

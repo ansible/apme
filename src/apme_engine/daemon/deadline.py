@@ -10,27 +10,15 @@ import logging
 import math
 import os
 
+from apme_engine.config_env import get_env_int
 from apme_engine.engine.models import ViolationDict
 
 logger = logging.getLogger("apme.deadline")
 
 
-def _parse_int_env(name: str, default: int) -> int:
-    """Parse an integer environment variable with a safe fallback.
-
-    Args:
-        name: Environment variable name.
-        default: Value to use when unset or invalid.
-
-    Returns:
-        Parsed integer, or ``default`` on missing/invalid input.
-    """
-    raw = os.environ.get(name, str(default))
-    try:
-        return int(raw)
-    except (TypeError, ValueError):
-        logger.warning("Invalid %s=%r; using default %d", name, raw, default)
-        return default
+# Backward-compatibility alias: identical to the canonical parser, kept
+# because tests import this name (single canonical home: config_env).
+_parse_int_env = get_env_int
 
 
 _DEFAULT_SCAN_BASE = _parse_int_env("APME_OPERATION_SCAN_BASE", 300)
