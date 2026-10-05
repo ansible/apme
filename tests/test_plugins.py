@@ -108,7 +108,10 @@ def test_transform_rule_ids_union() -> None:
 
 def test_yaml_is_well_formed() -> None:
     """Empty and invalid YAML are rejected."""
+    assert yaml_is_well_formed("name: apt\n") is True
     assert yaml_is_well_formed("- name: ok\n") is True
+    assert yaml_is_well_formed("hello\n") is False
+    assert yaml_is_well_formed("- a: 1\n- b: 2\n") is False
     assert yaml_is_well_formed("   ") is False
     assert yaml_is_well_formed(": not: [yaml") is False
     assert yaml_is_well_formed("---\n") is False
@@ -393,6 +396,28 @@ async def test_ensure_plugins_retries_empty_cache(monkeypatch: pytest.MonkeyPatc
     assert loaded == [plugin]
 
 
+async def test_ensure_plugins_describe_failure_keeps_stub(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Describe failure still returns a stub so Validate can emit unavailable.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+    monkeypatch.setenv("APME_PLUGIN_ORGPOLICY_ADDRESS", "127.0.0.1:50100")
+    servicer = EngineServicer()
+    servicer._plugin_cache = []
+    with patch(
+        "apme_engine.daemon.engine_server.describe_plugin",
+        AsyncMock(side_effect=RuntimeError("down")),
+    ):
+        loaded = await servicer._ensure_plugins()
+    assert len(loaded) == 1
+    assert loaded[0].name == "orgpolicy"
+    assert loaded[0].rule_id_prefix == "EXT-orgpolicy-"
+    assert servicer._plugin_cache == []
+
+
 def test_bind_ext_findings_requires_covering_span() -> None:
     """Line outside every node span is not bound by nearest-neighbor."""
     from types import SimpleNamespace
@@ -432,6 +457,89 @@ def test_bind_ext_findings_requires_covering_span() -> None:
     bound = _bind_ext_findings_to_graph(findings, graph)  # type: ignore[arg-type]
     assert bound[0]["path"] == ""
     assert bound[1]["path"] == ""
+
+
+def test_bind_unavailable_pins_fallback_node() -> None:
+    """``EXT-*-unavailable`` binds to a graph node so check is not a silent pass."""
+    from types import SimpleNamespace
+
+    node = SimpleNamespace(
+        file_path="playbooks/site.yml",
+        line_start=1,
+        line_end=20,
+        node_id="playbooks/site.yml",
+        node_type="playbook",
+    )
+    graph = SimpleNamespace(
+        get_node=lambda nid: node if nid == node.node_id else None,
+        nodes=lambda: iter([node]),
+    )
+    findings: list[ViolationDict] = [
+        {
+            "rule_id": "EXT-orgpolicy-unavailable",
+            "file": "",
+            "path": "",
+            "message": "Plugin Validate failed; results are incomplete.",
+        }
+    ]
+    bound = _bind_ext_findings_to_graph(findings, graph)  # type: ignore[arg-type]
+    assert bound[0]["path"] == node.node_id
+
+
+def test_bind_ext_findings_rejects_suffix_path() -> None:
+    """``main.yml`` must not bind to ``roles/db/tasks/main.yml``."""
+    from types import SimpleNamespace
+
+    node = SimpleNamespace(
+        file_path="roles/db/tasks/main.yml",
+        line_start=1,
+        line_end=40,
+        node_id="roles/db/tasks/main.yml/tasks[0]",
+        node_type="task",
+    )
+    graph = SimpleNamespace(
+        get_node=lambda nid: node if nid == node.node_id else None,
+        nodes=lambda: iter([node]),
+    )
+    findings: list[ViolationDict] = [
+        {
+            "rule_id": "EXT-secscan-hardcoded-secret",
+            "file": "main.yml",
+            "line": 6,
+            "path": "",
+            "message": "secret",
+        }
+    ]
+    bound = _bind_ext_findings_to_graph(findings, graph)  # type: ignore[arg-type]
+    assert bound[0]["path"] == ""
+
+
+def test_bind_ext_findings_accepts_string_line() -> None:
+    """JSON string line numbers still bind to a covering span."""
+    from types import SimpleNamespace
+
+    node = SimpleNamespace(
+        file_path="playbooks/site.yml",
+        line_start=4,
+        line_end=12,
+        node_id="playbooks/site.yml/plays[0]/tasks[0]",
+        node_type="task",
+    )
+    graph = SimpleNamespace(
+        get_node=lambda nid: node if nid == node.node_id else None,
+        nodes=lambda: iter([node]),
+    )
+    findings: list[ViolationDict] = [
+        {
+            "rule_id": "EXT-secscan-hardcoded-secret",
+            "file": "playbooks/site.yml",
+            "line": "6",
+            "path": "",
+            "message": "secret",
+        }
+    ]
+    bound = _bind_ext_findings_to_graph(findings, graph)  # type: ignore[arg-type]
+    assert bound[0]["path"] == node.node_id
 
 
 async def test_plugin_validate_rpc_error_emits_unavailable() -> None:

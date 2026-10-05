@@ -106,7 +106,7 @@ Phases follow [ADR-042 Implementation Notes](../../.sdlc/adrs/ADR-042-third-part
 | **1** | `plugin.proto`, `apme_plugin_sdk`, shared codegen, example plugin | Stable **contract** for authors; runnable **reference plugin**. |
 | **2** | `APME_PLUGIN_*_ADDRESS` discovery, `Describe`, **Validate** fan-out on Engine | **`apme check`** (and hosted scans) can report **`EXT-`** violations when the deployment includes plugins. |
 | **3** | `partition.py` / routing, plugin **`Transform`** in convergence loop | **`apme remediate`** applies **Tier 1** fixes for plugin-owned rules via gRPC, not only built-in transforms. |
-| **4** | Tier 2 partitioned by plugin; **`ai_guidance`** in prompts | Failed or missing plugin transforms escalate to **AI** with plugin-supplied context (per ADR-025 stack). |
+| **4** | Tier 2 partitioned by plugin; **`ai_guidance`** in prompts | **Not shipped.** Remaining `EXT-` findings are manual review until per-plugin AI batching. |
 | **5** | PyPI SDK, template project, **versioned hierarchy JSON** doc, authoring guide | **Production onboarding** for third parties without copying the monorepo. |
 
 **Smallest slice that proves end-to-end product value:** Phases **2 + 3** (findings + deterministic fixes). Phase **1** alone is a valid **spike** but does not change the shipped CLI until Engine integration lands.

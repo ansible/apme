@@ -130,7 +130,7 @@ export APME_PLUGIN_ORGPOLICY_ADDRESS=127.0.0.1:50100
 
 - Rule IDs must use `EXT-<plugin_name>-<NNN>` (for example `EXT-orgpolicy-001`)
 - `Transform` receives the **node YAML fragment** (`ContentNode.yaml_lines`); the Engine applies it with `ContentGraph.apply_yaml`
-- Engine aggregate `Health` never fails because a plugin is down. A configured plugin whose `Validate` RPC fails still emits `EXT-<name>-unavailable` so `apme check` is not a silent pass
+- Engine aggregate `Health` never fails because a plugin is down. A configured plugin whose `Validate` RPC fails still emits `EXT-<name>-unavailable` so `apme check` is not a silent pass. If `Describe` fails, Engine still calls `Validate` (stub identity; failed Describes are not cached)
 - Remaining plugin findings are **manual review** until ADR-042 Phase 4 (per-plugin AI)
 - Plugin ports are **50100–50199** (see [ADR-042](../../.sdlc/adrs/ADR-042-third-party-plugin-services.md))
 - Reference implementations: [`examples/plugins/orgpolicy/`](../../examples/plugins/orgpolicy/) (host process), [`opa-custom/`](../../examples/plugins/opa-custom/) (OPA image), [`secscan/`](../../examples/plugins/secscan/) ([ansible-security-scanner](https://github.com/cpeoples/ansible-security-scanner) image)

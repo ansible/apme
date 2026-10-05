@@ -57,7 +57,8 @@ def _yaml_is_well_formed(text: str) -> bool:
         text: Node YAML fragment from a plugin Transform.
 
     Returns:
-        False when empty, multi-document, null, or ``yaml.safe_load_all`` raises.
+        False when empty, multi-document, null, not a mapping, or
+        ``yaml.safe_load_all`` raises.
     """
     if not text.strip():
         return False
@@ -65,7 +66,12 @@ def _yaml_is_well_formed(text: str) -> bool:
         docs = list(yaml.safe_load_all(text))
     except yaml.YAMLError:
         return False
-    return len(docs) == 1 and docs[0] is not None
+    if len(docs) != 1 or docs[0] is None:
+        return False
+    data = docs[0]
+    if isinstance(data, dict):
+        return True
+    return isinstance(data, list) and len(data) == 1 and isinstance(data[0], dict)
 
 
 @dataclass
@@ -619,7 +625,7 @@ class GraphRemediationEngine:
             return False
         node = graph.get_node(node_id)
         if node is None or not node.yaml_lines:
-            self._demote_failed_plugin_rule(graph, node_id, violation)
+            self._stamp_plugin_transform_failed(graph, node_id, violation)
             return False
         try:
             new_yaml = await self._plugin_transform_fn(violation, node.yaml_lines, node.file_path)
@@ -632,36 +638,31 @@ class GraphRemediationEngine:
             self._demote_failed_plugin_rule(graph, node_id, violation)
             return False
         if new_yaml is None:
-            self._demote_failed_plugin_rule(graph, node_id, violation)
+            self._stamp_plugin_transform_failed(graph, node_id, violation)
             return False
         if not _yaml_is_well_formed(new_yaml):
             logger.warning(
                 "Plugin transform for %s failed or returned invalid YAML; skipping",
                 violation.get("rule_id"),
             )
-            self._demote_failed_plugin_rule(graph, node_id, violation)
+            self._stamp_plugin_transform_failed(graph, node_id, violation)
             return False
         return graph.apply_yaml(node_id, new_yaml)
 
-    def _demote_failed_plugin_rule(
+    def _stamp_plugin_transform_failed(
         self,
         graph: ContentGraph,
         node_id: str,
         violation: ViolationDict,
     ) -> None:
-        """Drop a plugin Transform ID and stamp TRANSFORM_FAILED (ADR-042).
-
-        Phase 4 (per-plugin AI batching) is not implemented; remaining EXT-
-        findings are ``MANUAL_REVIEW`` so they are not mixed into built-in
-        AI prompts or counted as AI work.
+        """Stamp TRANSFORM_FAILED on one finding without retiring the rule.
 
         Args:
             graph: ContentGraph whose ledger holds the finding.
             node_id: Node path.
-            violation: EXT-* finding that failed Transform.
+            violation: EXT-* finding that was not applied.
         """
         rule_id = normalize_rule_id(str(violation.get("rule_id", "")))
-        self._plugin_transform_ids.discard(rule_id)
         violation["remediation_class"] = RemediationClass.MANUAL_REVIEW
         violation["remediation_resolution"] = RemediationResolution.TRANSFORM_FAILED
         node = graph.get_node(node_id)
@@ -675,6 +676,27 @@ class GraphRemediationEngine:
         updated["remediation_class"] = RemediationClass.MANUAL_REVIEW
         updated["remediation_resolution"] = RemediationResolution.TRANSFORM_FAILED
         record.violation = updated
+
+    def _demote_failed_plugin_rule(
+        self,
+        graph: ContentGraph,
+        node_id: str,
+        violation: ViolationDict,
+    ) -> None:
+        """Drop a plugin Transform ID after a transport failure (ADR-042).
+
+        Phase 4 (per-plugin AI batching) is not implemented; remaining EXT-
+        findings are ``MANUAL_REVIEW`` so they are not mixed into built-in
+        AI prompts or counted as AI work.
+
+        Args:
+            graph: ContentGraph whose ledger holds the finding.
+            node_id: Node path.
+            violation: EXT-* finding that failed Transform.
+        """
+        rule_id = normalize_rule_id(str(violation.get("rule_id", "")))
+        self._plugin_transform_ids.discard(rule_id)
+        self._stamp_plugin_transform_failed(graph, node_id, violation)
 
     async def _apply_ai_transforms(
         self,
@@ -1119,15 +1141,25 @@ def _resolve_dirty_violations(
         status: Target status (``"fixed"`` or ``"proposed"``).
     """
     remaining_by_node: dict[str, set[str]] = defaultdict(set)
+    unbound_ext: set[str] = set()
     for v in rescan_violations:
+        rule_id = normalize_rule_id(str(v.get("rule_id", "")))
         node_id = str(v.get("path", ""))
         if node_id:
-            remaining_by_node[node_id].add(
-                normalize_rule_id(str(v.get("rule_id", ""))),
-            )
+            remaining_by_node[node_id].add(rule_id)
+        elif rule_id.startswith("EXT-"):
+            unbound_ext.add(rule_id)
 
     for nid in dirty_ids:
         remaining = remaining_by_node.get(nid, set())
+        node = graph.get_node(nid)
+        if node is not None and unbound_ext:
+            open_ext = {
+                normalize_rule_id(str(rec.violation.get("rule_id", "")))
+                for rec in node.violation_ledger.values()
+                if str(rec.violation.get("rule_id", "")).startswith("EXT-")
+            }
+            remaining = remaining | (unbound_ext & open_ext)
         graph.resolve_violations(
             nid,
             remaining,

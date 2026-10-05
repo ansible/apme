@@ -64,13 +64,14 @@ is not a silent pass.
 5. **Pod**: extra container + `APME_PLUGIN_<NAME>_ADDRESS` on **engine**.
 6. **Restart** the pod (`tox -e down` then `tox -e up` after uncommenting,
    or recreate the pod after editing `pod.yaml`).
-7. **Verify**: `tox -e cli -- health-check`. Plugin rows (`plugin:<name>`)
-   are listed as optional. A non-ok plugin does **not** fail Engine
-   aggregate health or the CLI exit code. Helm does **not** inject
+7. **Verify**: `tox -e cli -- health-check`, then
+   `tox -e cli -- check /workspace` on a project that should fire the
+   rule. Plugin rows (`plugin:<name>`) are listed as optional. A non-ok
+   plugin does **not** fail Engine aggregate health or the CLI exit code.
+   If `Describe` fails, Engine still calls `Validate` (stub identity;
+   failed Describes are not cached). Helm does **not** inject
    `APME_PLUGIN_*` — cluster attach is the operator CR
    ([apme-operator#39](https://github.com/ansible/apme-operator/issues/39)).
-   then `tox -e cli -- check /workspace` on a project that should fire the
-   rule.
 
 Cluster attach (OpenShift / Kubernetes) is the APME Operator
 `Apme.spec.plugins[]` — see [apme-operator#39](https://github.com/ansible/apme-operator/issues/39).
@@ -125,7 +126,6 @@ Alongside the other containers (after `gitleaks` is a good place):
           value: "data.apme.plugin.violations"
       ports:
         - containerPort: 50100
-          hostPort: 50100
 ```
 
 Do **not** set `OPA_GRPC_ADDRESS` to this sidecar. That env var is the
@@ -208,7 +208,6 @@ Sidecar (different port from the OPA plugin):
           value: "0.0.0.0:50101"
       ports:
         - containerPort: 50101
-          hostPort: 50101
 ```
 
 The wrapper writes `ValidateRequest.files` into an ephemeral directory and

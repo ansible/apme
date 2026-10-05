@@ -133,11 +133,11 @@ Plugin transforms participate in the same convergence loop: scan -> fix -> resca
 
 Whole-file rewrites (e.g. wrapping a SAST tool that emits unified diffs) remain a future extension; v1 is node-scoped so identity and convergence stay intact.
 
-If a plugin's `Transform` returns an error or `applied=false` for a given violation, the Engine drops that rule ID from further plugin Transform routing and stamps `REMEDIATION_CLASS_AI_CANDIDATE` with `REMEDIATION_RESOLUTION_TRANSFORM_FAILED`. Phase 4 (per-plugin AI batching) is **not** implemented yet: EXT- findings are excluded from the built-in mixed-node AI pass so they are not merged into built-in prompts. They remain visible as failed transforms until Phase 4 ships.
+If a plugin's `Transform` returns an error or `applied=false` for a given violation, the Engine stamps `REMEDIATION_CLASS_MANUAL_REVIEW` with `REMEDIATION_RESOLUTION_TRANSFORM_FAILED` on **that finding**. Transport failures (RPC raise) also drop the rule ID from further plugin Transform routing. Phase 4 (per-plugin AI batching) is **not** implemented yet: EXT- findings are excluded from the built-in mixed-node AI pass so they are not merged into built-in prompts.
 
-### 5. AI escalation for plugin violations
+### 5. AI escalation for plugin violations (Phase 4 — not implemented)
 
-When plugin violations reach Tier 2 (no transform registered, or transform failed), they enter AI-assisted remediation. Plugin violations require different handling than built-in violations because APME's AI prompts are tuned for built-in rules and have no domain knowledge about third-party checks.
+When Phase 4 ships, plugin violations that have no Transform (or whose Transform failed) enter a **separate** AI pass per plugin prefix. Until then, remaining ``EXT-`` findings are ``MANUAL_REVIEW``. Plugin violations require different handling than built-in violations because APME's AI prompts are tuned for built-in rules and have no domain knowledge about third-party checks.
 
 #### AI guidance via violation metadata
 
@@ -156,7 +156,7 @@ The SDK provides a convenience parameter:
 ```python
 self.violation(
     rule_id="001",
-    level="warning",
+    severity="high",
     message="Plays must have a department tag",
     file=node["file"],
     line=node["line"][0],
@@ -464,3 +464,4 @@ Local Podman images and `pod.yaml` containers for a private OPA bundle and
 | 2026-10-05 | APME Team | Document Podman plugin sidecar images (custom OPA + ansible-security-scanner) |
 | 2026-10-05 | APME Team | Pin plugin identity to env token; retry Describe misses; strip Validate extras; bind file-scoped EXT- findings; stamp TRANSFORM_FAILED without mixed-node AI |
 | 2026-10-05 | APME Team | Honest Phase 4 gap: EXT- remaining is manual review; Validate sends ansible_core_version/collection_specs; Transform sends hierarchy; Health is overridable |
+| 2026-10-05 | APME Team | Pin unavailable findings on the ledger; Describe failures still Validate; exact path bind; demote finding not rule on applied=false |

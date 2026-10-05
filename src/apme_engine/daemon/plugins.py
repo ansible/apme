@@ -189,7 +189,7 @@ def yaml_is_well_formed(text: str) -> bool:
         text: YAML document or node fragment.
 
     Returns:
-        False when empty, multi-document, null, or parse fails.
+        False when empty, multi-document, null, not a mapping, or parse fails.
     """
     if not text.strip():
         return False
@@ -197,7 +197,12 @@ def yaml_is_well_formed(text: str) -> bool:
         docs = list(yaml.safe_load_all(text))
     except yaml.YAMLError:
         return False
-    return len(docs) == 1 and docs[0] is not None
+    if len(docs) != 1 or docs[0] is None:
+        return False
+    data = docs[0]
+    if isinstance(data, dict):
+        return True
+    return isinstance(data, list) and len(data) == 1 and isinstance(data[0], dict)
 
 
 def _channel(address: str) -> grpc.aio.Channel:

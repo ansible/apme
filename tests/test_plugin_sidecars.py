@@ -163,3 +163,16 @@ def test_secscan_write_file_tree(tmp_path: Path) -> None:
     assert (tmp_path / "site.yml").read_bytes() == b"---\n"
     assert (tmp_path / "roles/x/tasks/main.yml").read_bytes() == b"ok"
     assert not (tmp_path / "escape.yml").exists()
+
+
+def test_plugin_sidecars_do_not_publish_host_port() -> None:
+    """Plugin gRPC stays pod-local; 50100/50101 must not be hostPort."""
+    root = Path(__file__).resolve().parents[1]
+    for rel in (
+        "examples/plugins/pod-sidecars.yaml",
+        "containers/podman/pod.yaml",
+        "docs/guides/PLUGIN_SIDECARS.md",
+    ):
+        text = (root / rel).read_text(encoding="utf-8")
+        assert "hostPort: 50100" not in text
+        assert "hostPort: 50101" not in text

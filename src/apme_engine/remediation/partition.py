@@ -143,7 +143,7 @@ def classify_violation(violation: ViolationDict) -> RemediationClass:
     This is called **after** the convergence loop.  Violations that were
     fixed during convergence are classified separately as AUTO_FIXABLE by
     the caller — remaining violations are never AUTO_FIXABLE because the
-    convergence loop already tried all deterministic transforms.  What
+    convergence loop already tried all deterministic transforms.
     Remaining ``EXT-`` findings are ``MANUAL_REVIEW`` until ADR-042 Phase 4.
     Other remaining violations are either AI-proposable or require manual
     review.

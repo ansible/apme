@@ -7,8 +7,8 @@
 # 3. Paste the two containers into spec.containers
 # 4. tox -e down && tox -e up
 #
-# The same blocks are commented in containers/podman/pod.yaml.
-# Full walkthrough: docs/guides/PLUGIN_SIDECARS.md
+# Leave hostPort commented. Plugin Transform is unauthenticated; pod-local
+# 127.0.0.1 is enough. Publishing 50100/50101 on the host is not required.
 #
 # --- engine env ---
 #        - name: APME_PLUGIN_OPACUSTOM_ADDRESS
@@ -28,7 +28,6 @@
 #          value: "data.apme.plugin.violations"
 #      ports:
 #        - containerPort: 50100
-#          hostPort: 50100
 #    - name: plugin-secscan
 #      image: apme-plugin-secscan:latest
 #      env:
@@ -36,4 +35,3 @@
 #          value: "0.0.0.0:50101"
 #      ports:
 #        - containerPort: 50101
-#          hostPort: 50101

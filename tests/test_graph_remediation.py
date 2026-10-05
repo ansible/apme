@@ -1067,10 +1067,10 @@ class TestGraphRemediationEngine:
         updated = graph.get_node(node.node_id)
         assert updated is not None
         assert updated.yaml_lines == original
-        assert rule_id not in engine._plugin_transform_ids
         remaining = report.remaining_violations
         assert remaining
         assert remaining[0]["remediation_resolution"] == RemediationResolution.TRANSFORM_FAILED
+        assert rule_id in engine._plugin_transform_ids
 
     async def test_plugin_ext_findings_skip_builtin_ai(self) -> None:
         """EXT- findings are not sent through the built-in mixed-node AI pass."""

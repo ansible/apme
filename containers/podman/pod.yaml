@@ -345,7 +345,6 @@ spec:
     #          value: "data.apme.plugin.violations"
     #      ports:
     #        - containerPort: 50100
-    #          hostPort: 50100
     #    - name: plugin-secscan
     #      image: apme-plugin-secscan:latest
     #      env:
@@ -353,7 +352,6 @@ spec:
     #          value: "0.0.0.0:50101"
     #      ports:
     #        - containerPort: 50101
-    #          hostPort: 50101
   volumes:
     - name: postgres-data
       persistentVolumeClaim:
