@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
+from apme_engine.daemon.violation_convert import violation_dict_to_proto, violation_proto_to_dict
+from apme_engine.engine.models import ViolationDict
 from apme_engine.validators.ansible.rules import M001_M004_introspect
 
 
@@ -79,28 +81,8 @@ def _m001(violations: list[dict[str, object]]) -> list[dict[str, object]]:
 class TestM048PreferBuiltin:
     """M048 fires for non-builtin FQCNs with an authoritative builtin twin."""
 
-    def test_posix_mount_with_builtin_twin(self) -> None:
-        """ansible.posix.mount with builtin_alternative emits M048."""
-        intro: dict[str, object] = {
-            "ansible.posix.mount": {
-                "fqcn": "ansible.posix.mount",
-                "deprecated": False,
-                "warnings": [],
-                "redirects": [],
-                "removed": False,
-                "builtin_alternative": "ansible.builtin.mount",
-            }
-        }
-        violations = _run_with_intro([_task("ansible.posix.mount")], intro)
-        m048 = _m048(violations)
-        assert len(m048) == 1
-        assert m048[0]["severity"] == "low"
-        assert m048[0]["builtin_alternative"] == "ansible.builtin.mount"
-        assert m048[0]["resolved_fqcn"] == "ansible.posix.mount"
-        assert "Prefer builtin module" in str(m048[0]["message"])
-
     def test_community_copy_with_builtin_twin(self) -> None:
-        """community.general.copy with builtin twin emits M048 (L030 parity)."""
+        """community.general.copy with builtin twin emits M048."""
         intro: dict[str, object] = {
             "community.general.copy": {
                 "fqcn": "community.general.copy",
@@ -114,7 +96,11 @@ class TestM048PreferBuiltin:
         violations = _run_with_intro([_task("community.general.copy")], intro)
         m048 = _m048(violations)
         assert len(m048) == 1
+        assert m048[0]["severity"] == "low"
         assert m048[0]["builtin_alternative"] == "ansible.builtin.copy"
+        assert m048[0]["resolved_fqcn"] == "ansible.builtin.copy"
+        assert m048[0]["original_module"] == "community.general.copy"
+        assert "Prefer builtin module" in str(m048[0]["message"])
 
     def test_no_builtin_equivalent(self) -> None:
         """community.general.timezone without builtin twin does not emit M048."""
@@ -162,11 +148,11 @@ class TestM048PreferBuiltin:
         assert len(_m001(violations)) == 1
         assert _m048(violations) == []
 
-    def test_posix_sysctl_no_builtin(self) -> None:
-        """ansible.posix.sysctl with no builtin resolve does not emit M048."""
+    def test_posix_mount_left_core_no_m048(self) -> None:
+        """ansible.posix.mount has no real builtin twin on modern core — no M048."""
         intro: dict[str, object] = {
-            "ansible.posix.sysctl": {
-                "fqcn": "ansible.posix.sysctl",
+            "ansible.posix.mount": {
+                "fqcn": "ansible.posix.mount",
                 "deprecated": False,
                 "warnings": [],
                 "redirects": [],
@@ -174,7 +160,37 @@ class TestM048PreferBuiltin:
                 "builtin_alternative": "",
             }
         }
-        violations = _run_with_intro([_task("ansible.posix.sysctl")], intro)
+        violations = _run_with_intro([_task("ansible.posix.mount")], intro)
+        assert _m048(violations) == []
+
+    def test_unresolved_fqcn_no_m048(self) -> None:
+        """Unresolved FQCN must not emit M048 even if short name is a builtin."""
+        intro: dict[str, object] = {
+            "typo.ns.copy": {
+                "fqcn": "",
+                "deprecated": False,
+                "warnings": [],
+                "redirects": [],
+                "removed": False,
+                "builtin_alternative": "",
+            }
+        }
+        violations = _run_with_intro([_task("typo.ns.copy")], intro)
+        assert _m048(violations) == []
+
+    def test_ansible_legacy_excluded(self) -> None:
+        """ansible.legacy.* is treated like builtin — no M048."""
+        intro: dict[str, object] = {
+            "ansible.legacy.copy": {
+                "fqcn": "ansible.legacy.copy",
+                "deprecated": False,
+                "warnings": [],
+                "redirects": [],
+                "removed": False,
+                "builtin_alternative": "ansible.builtin.copy",
+            }
+        }
+        violations = _run_with_intro([_task("ansible.legacy.copy")], intro)
         assert _m048(violations) == []
 
     def test_removed_module_skips_m048(self) -> None:
@@ -193,3 +209,49 @@ class TestM048PreferBuiltin:
         violations = _run_with_intro([_task("some.collection.gone")], intro)
         assert any(v.get("rule_id") == "M004" for v in violations)
         assert _m048(violations) == []
+
+    def test_builtin_alternative_survives_proto_roundtrip(self) -> None:
+        """builtin_alternative is preserved through violation dict↔proto conversion."""
+        intro: dict[str, object] = {
+            "community.general.copy": {
+                "fqcn": "community.general.copy",
+                "deprecated": False,
+                "warnings": [],
+                "redirects": [],
+                "removed": False,
+                "builtin_alternative": "ansible.builtin.copy",
+            }
+        }
+        violations = _run_with_intro([_task("community.general.copy")], intro)
+        m048: ViolationDict = dict(_m048(violations)[0])  # type: ignore[arg-type]
+        proto = violation_dict_to_proto(m048)
+        assert proto.metadata.get("builtin_alternative") == "ansible.builtin.copy"
+        assert proto.metadata.get("resolved_fqcn") == "ansible.builtin.copy"
+        back = violation_proto_to_dict(proto)
+        assert back.get("builtin_alternative") == "ansible.builtin.copy"
+        assert back.get("resolved_fqcn") == "ansible.builtin.copy"
+
+
+class TestM048ScriptTwinLookup:
+    """Exercise the introspect subprocess twin-lookup against real ansible-core."""
+
+    def test_short_name_copy_resolves_as_builtin_twin(self) -> None:
+        """Short-name twin probe finds ansible.builtin.copy (authoritative path)."""
+        from ansible.plugins.loader import init_plugin_loader, module_loader
+
+        init_plugin_loader()
+        ctx = module_loader.find_plugin_with_context("copy", ignore_deprecated=False)
+        assert ctx.resolved
+        alt = getattr(ctx, "resolved_fqcn", "") or ""
+        assert alt.startswith("ansible.builtin.")
+
+    def test_mount_short_name_is_not_builtin(self) -> None:
+        """Mount left core — short-name resolve is not ansible.builtin.*."""
+        from ansible.plugins.loader import init_plugin_loader, module_loader
+
+        init_plugin_loader()
+        ctx = module_loader.find_plugin_with_context("mount", ignore_deprecated=False)
+        alt = ""
+        if ctx.resolved:
+            alt = getattr(ctx, "resolved_fqcn", "") or ""
+        assert not alt.startswith("ansible.builtin.")

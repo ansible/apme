@@ -24,7 +24,10 @@ data = json.loads(sys.stdin.read())
 module_names = data.get("modules", [])
 results = {}
 
-from ansible.plugins.loader import module_loader
+from ansible.plugins.loader import init_plugin_loader, module_loader
+
+# Required so FQCN lookups (ansible.builtin.*, collections) resolve.
+init_plugin_loader()
 
 for name in module_names:
     info = {
@@ -51,17 +54,19 @@ for name in module_names:
             info["removed"] = True
             info["removal_msg"] = str(e)
 
-    resolved = info["fqcn"] or name
+    # Prefer-builtin twin: only when the original name resolved to a
+    # non-builtin / non-legacy FQCN. Short-name lookup finds real
+    # builtins even when ansible.builtin.<short> is a redirect out of core.
+    resolved = info["fqcn"]
     if (
-        resolved.count(".") >= 2
+        resolved
+        and resolved.count(".") >= 2
         and not resolved.startswith("ansible.builtin.")
         and not resolved.startswith("ansible.legacy.")
     ):
         short = resolved.rsplit(".", 1)[-1]
         try:
-            ctx2 = module_loader.find_plugin_with_context(
-                "ansible.builtin." + short, ignore_deprecated=False
-            )
+            ctx2 = module_loader.find_plugin_with_context(short, ignore_deprecated=False)
             if ctx2.resolved:
                 alt = getattr(ctx2, "resolved_fqcn", "") or ""
                 if alt.startswith("ansible.builtin."):
@@ -232,6 +237,7 @@ def run(
 
         # M048: Prefer ansible.builtin when a non-builtin FQCN has a builtin twin.
         # Short names are owned by M001; only already-FQCN module names fire here.
+        # resolved_fqcn is the rewrite target (builtin), matching M001/M003 polarity.
         builtin_alt = str(info.get("builtin_alternative", "") or "")
         if builtin_alt and str(module_name).count(".") >= 2:
             prefer_from = fqcn if fqcn.count(".") >= 2 else module_name
@@ -249,7 +255,7 @@ def run(
                         "line": line_num,
                         "path": node.get("key", ""),
                         "scope": "task",
-                        "resolved_fqcn": prefer_from,
+                        "resolved_fqcn": builtin_alt,
                         "original_module": module_name,
                         "builtin_alternative": builtin_alt,
                     }
