@@ -453,6 +453,45 @@ class TestAdminGalaxyConfig:
         assert resp.status_code == 200
         assert resp.json()["servers"] == ["automation-hub"]
 
+    def test_push_clears_cache(self, tmp_path: Path) -> None:
+        """Pushing new Galaxy config clears cached wheels and metadata.
+
+        Prevents stale data from previous server selection being served
+        after a configuration change.
+
+        Args:
+            tmp_path: Pytest-provided temporary directory.
+        """
+        cache_dir = tmp_path / "cache"
+        application = create_app(cache_dir=cache_dir, enable_passthrough=False)
+
+        with TestClient(application) as client:
+            # Put some data in the cache to verify it gets cleared
+            from galaxy_proxy.proxy.cache import ProxyCache
+
+            cache = ProxyCache(cache_dir=cache_dir)
+            cache.put_metadata("ansible", "posix", ["1.0.0", "2.0.0"])
+            cache.put_wheel(
+                "ansible_collection_ansible_posix-1.0.0-py3-none-any.whl",
+                b"fake wheel data",
+            )
+
+            # Verify cache has data
+            assert cache.get_metadata("ansible", "posix") is not None
+            assert cache.get_wheel("ansible_collection_ansible_posix-1.0.0-py3-none-any.whl") is not None
+
+            # Push new Galaxy config
+            resp = client.post(
+                "/admin/galaxy-config",
+                json={"servers": [{"name": "newhub", "url": "https://new.example.com"}]},
+            )
+            assert resp.status_code == 200
+
+            # Verify cache is cleared
+            fresh_cache = ProxyCache(cache_dir=cache_dir)
+            assert fresh_cache.get_metadata("ansible", "posix") is None
+            assert fresh_cache.get_wheel("ansible_collection_ansible_posix-1.0.0-py3-none-any.whl") is None
+
 
 class TestVersionDiscoveryWithServers:
     """Tests for _fetch_galaxy_versions using configured Galaxy servers."""

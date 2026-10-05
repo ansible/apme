@@ -307,6 +307,7 @@ def create_app(
             for s in body.servers
         ]
         app.state.ansible_cfg_path = None
+        cache.clear()
         names = [s.name.strip() for s in body.servers]
         logger.info("Galaxy config updated: %d server(s): %s", len(names), ", ".join(names))
         return {"accepted": len(names), "servers": names}
