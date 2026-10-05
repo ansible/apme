@@ -91,6 +91,8 @@ def partition_violations(
     """Split violations into (tier1_fixable, tier2_ai, tier3_manual).
 
     Routing uses scope metadata (ADR-026) instead of hardcoded rule lists:
+    - Remaining ``EXT-`` findings without a plugin Transform are Tier 3
+      (manual review) until ADR-042 Phase 4.
     - Cross-file / data-flow rules (``CROSS_FILE_RULES``) are always Tier 3.
     - Tier 1: deterministic transform exists in registry or plugin Transform.
     - Tier 2: scope is AI-proposable (task/block) and no cross-file constraint.
@@ -120,6 +122,10 @@ def partition_violations(
             tier3.append(v)
         elif is_finding_resolvable(v, registry, plugin_transform_ids):
             tier1.append(v)
+        elif str(v.get("rule_id") or "").startswith("EXT-"):
+            v["remediation_class"] = RemediationClass.MANUAL_REVIEW
+            v["remediation_resolution"] = RemediationResolution.MANUAL
+            tier3.append(v)
         elif _get_scope(v) not in AI_PROPOSABLE_SCOPES:
             v["remediation_resolution"] = RemediationResolution.MANUAL
             tier3.append(v)
@@ -138,7 +144,9 @@ def classify_violation(violation: ViolationDict) -> RemediationClass:
     fixed during convergence are classified separately as AUTO_FIXABLE by
     the caller — remaining violations are never AUTO_FIXABLE because the
     convergence loop already tried all deterministic transforms.  What
-    remains is either AI-proposable or requires manual review.
+    Remaining ``EXT-`` findings are ``MANUAL_REVIEW`` until ADR-042 Phase 4.
+    Other remaining violations are either AI-proposable or require manual
+    review.
 
     Args:
         violation: Violation dict with rule_id and scope.
@@ -146,6 +154,8 @@ def classify_violation(violation: ViolationDict) -> RemediationClass:
     Returns:
         One of RemediationClass.AI_CANDIDATE or MANUAL_REVIEW.
     """
+    if str(violation.get("rule_id") or "").startswith("EXT-"):
+        return RemediationClass.MANUAL_REVIEW
     sev = str(violation.get("severity") or "").lower()
     if sev == "info":
         return RemediationClass.MANUAL_REVIEW

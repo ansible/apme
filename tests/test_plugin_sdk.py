@@ -29,6 +29,36 @@ class _SamplePlugin(PluginBase):
         return [self.prefixed_id("010")]
 
 
+def test_sample_plugin_health_ok() -> None:
+    """Default ``PluginBase.health`` is exact ``ok``."""
+    assert _SamplePlugin().health() == "ok"
+
+
+class _UnhealthyPlugin(PluginBase):
+    """Plugin whose Health reports a missing tool.
+
+    Attributes:
+        name: Plugin name used in EXT- rule IDs.
+        version: Semver string.
+    """
+
+    name = "bad"
+    version = "0.0.1"
+
+    def health(self) -> str:
+        """Report that a wrapped tool is missing.
+
+        Returns:
+            Error status string.
+        """
+        return "error: tool missing"
+
+
+def test_plugin_health_override() -> None:
+    """Authors can fail Health when a wrapped tool is missing."""
+    assert _UnhealthyPlugin().health() == "error: tool missing"
+
+
 def test_prefixed_id_and_describe() -> None:
     """``EXT-<name>-`` prefix is applied consistently."""
     plugin = _SamplePlugin()
@@ -109,3 +139,18 @@ def test_orgpolicy_example_flags_community_general() -> None:
     assert findings[0]["rule_id"] == "EXT-orgpolicy-001"
     assert "community.general.apk" in findings[0]["message"]
     assert plugin.transform_rule_ids() == []
+
+
+async def test_plugin_servicer_health_swallows_raise() -> None:
+    """``health()`` exceptions become an error status, not an RPC crash."""
+    from apme.v1.common_pb2 import HealthRequest
+    from apme_plugin_sdk.base import _PluginServicer
+
+    plugin = _SamplePlugin()
+
+    def _boom() -> str:
+        raise RuntimeError("boom")
+
+    plugin.health = _boom  # type: ignore[method-assign]
+    resp = await _PluginServicer(plugin).Health(HealthRequest(), None)  # type: ignore[arg-type]
+    assert resp.status == "error: health check failed"

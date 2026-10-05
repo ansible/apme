@@ -33,7 +33,7 @@ class OrgPolicyPlugin(PluginBase):
         """No deterministic rewrite for collection bans.
 
         Returns:
-            Empty list — findings escalate to AI / manual review.
+            Empty list — remaining findings are manual review until ADR-042 Phase 4.
         """
         return []
 

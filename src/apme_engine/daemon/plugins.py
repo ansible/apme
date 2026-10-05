@@ -1,7 +1,9 @@
 """Third-party Plugin discovery and gRPC client helpers (ADR-042).
 
 Plugins are optional sidecars discovered via ``APME_PLUGIN_<NAME>_ADDRESS``.
-They are never required: missing, unhealthy, or failing plugins are skipped.
+They are never required for Engine Health. A configured plugin whose
+Validate RPC fails emits ``EXT-<name>-unavailable`` so ``apme check``
+is not a silent pass.
 """
 
 from __future__ import annotations
@@ -181,21 +183,21 @@ def transform_rule_ids(plugins: Sequence[DiscoveredPlugin]) -> frozenset[str]:
 
 
 def yaml_is_well_formed(text: str) -> bool:
-    """Return True when ``text`` parses as YAML.
+    """Return True when ``text`` is a single non-null YAML document.
 
     Args:
         text: YAML document or node fragment.
 
     Returns:
-        False when empty or parse fails.
+        False when empty, multi-document, null, or parse fails.
     """
     if not text.strip():
         return False
     try:
-        yaml.safe_load(text)
+        docs = list(yaml.safe_load_all(text))
     except yaml.YAMLError:
         return False
-    return True
+    return len(docs) == 1 and docs[0] is not None
 
 
 def _channel(address: str) -> grpc.aio.Channel:
@@ -257,12 +259,28 @@ async def describe_plugin(name: str, address: str) -> DiscoveredPlugin:
         rule_prefix = prefix
     else:
         rule_prefix = reported_prefix
-    allowed = frozenset(rid for rid in resp.transform_rule_ids if rid.startswith(rule_prefix))
+    allowed: set[str] = set()
+    for rid in resp.transform_rule_ids:
+        token = (rid or "").strip()
+        if not token:
+            continue
+        if token.startswith(rule_prefix):
+            allowed.add(token)
+            continue
+        if token.startswith(EXT_PREFIX):
+            logger.warning(
+                "Plugin %s declared transform_rule_id %s outside prefix %s",
+                name,
+                token,
+                rule_prefix,
+            )
+            continue
+        allowed.add(f"{rule_prefix}{token.lstrip('-')}")
     return DiscoveredPlugin(
         name=name,
         address=address,
         rule_id_prefix=rule_prefix,
-        transform_rule_ids=allowed,
+        transform_rule_ids=frozenset(allowed),
         version=resp.version or "",
     )
 
@@ -308,6 +326,14 @@ async def call_plugin_validate(
     except grpc.RpcError:
         logger.error("Plugin Validate at %s failed (req=%s)", address, request.request_id)
         return [], "rpc error"
+    except Exception:  # noqa: BLE001 - plugins are optional
+        logger.error(
+            "Plugin Validate at %s failed (req=%s)",
+            address,
+            request.request_id,
+            exc_info=True,
+        )
+        return [], "validate error"
     finally:
         await channel.close(grace=None)
 
@@ -320,6 +346,7 @@ async def call_plugin_transform(
     yaml_content: str,
     violation: ViolationDict,
     timeout: float = _TRANSFORM_TIMEOUT,
+    hierarchy_payload: bytes = b"",
 ) -> tuple[bool, str | None, str]:
     """Call Plugin.Transform for one node YAML fragment.
 
@@ -330,6 +357,7 @@ async def call_plugin_transform(
         yaml_content: Current node YAML.
         violation: Finding to fix.
         timeout: RPC timeout in seconds.
+        hierarchy_payload: Current hierarchy JSON (ADR-042 Transform context).
 
     Returns:
         Tuple of ``(applied, new_yaml_or_None, error)``.
@@ -338,6 +366,7 @@ async def call_plugin_transform(
         request_id=request_id,
         file=File(path=file_path, content=yaml_content.encode("utf-8")),
         violation=violation_dict_to_proto(violation),
+        hierarchy_payload=hierarchy_payload,
     )
     channel = _channel(address)
     stub = plugin_pb2_grpc.PluginStub(channel)  # type: ignore[no-untyped-call]
@@ -381,6 +410,8 @@ async def probe_plugin_health(address: str) -> str:
             return "ok"
         return status or "error: empty health status"
     except grpc.RpcError as exc:
+        return f"error: {exc}"
+    except Exception as exc:  # noqa: BLE001 - plugins are optional
         return f"error: {exc}"
     finally:
         await channel.close(grace=None)

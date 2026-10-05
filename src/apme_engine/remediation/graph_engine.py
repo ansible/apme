@@ -51,21 +51,21 @@ PluginTransformFn = Callable[[ViolationDict, str, str], Awaitable[str | None]]
 
 
 def _yaml_is_well_formed(text: str) -> bool:
-    """Return True when ``text`` is non-empty parseable YAML.
+    """Return True when ``text`` is a single non-null YAML document.
 
     Args:
         text: Node YAML fragment from a plugin Transform.
 
     Returns:
-        False when empty or ``yaml.safe_load`` raises.
+        False when empty, multi-document, null, or ``yaml.safe_load_all`` raises.
     """
     if not text.strip():
         return False
     try:
-        yaml.safe_load(text)
+        docs = list(yaml.safe_load_all(text))
     except yaml.YAMLError:
         return False
-    return True
+    return len(docs) == 1 and docs[0] is not None
 
 
 @dataclass
@@ -625,23 +625,23 @@ class GraphRemediationEngine:
             new_yaml = await self._plugin_transform_fn(violation, node.yaml_lines, node.file_path)
         except Exception:  # noqa: BLE001 - plugin RPC failures must not abort convergence
             logger.warning(
-                "Plugin transform raised for %s; demoting to AI_CANDIDATE",
+                "Plugin transform raised for %s; demoting to MANUAL_REVIEW",
                 violation.get("rule_id"),
                 exc_info=True,
             )
             self._demote_failed_plugin_rule(graph, node_id, violation)
             return False
-        if new_yaml is None or not _yaml_is_well_formed(new_yaml):
+        if new_yaml is None:
+            self._demote_failed_plugin_rule(graph, node_id, violation)
+            return False
+        if not _yaml_is_well_formed(new_yaml):
             logger.warning(
                 "Plugin transform for %s failed or returned invalid YAML; skipping",
                 violation.get("rule_id"),
             )
             self._demote_failed_plugin_rule(graph, node_id, violation)
             return False
-        if not graph.apply_yaml(node_id, new_yaml):
-            self._demote_failed_plugin_rule(graph, node_id, violation)
-            return False
-        return True
+        return graph.apply_yaml(node_id, new_yaml)
 
     def _demote_failed_plugin_rule(
         self,
@@ -651,9 +651,9 @@ class GraphRemediationEngine:
     ) -> None:
         """Drop a plugin Transform ID and stamp TRANSFORM_FAILED (ADR-042).
 
-        Phase 4 (per-plugin AI batching) is not implemented; EXT- findings
-        are also skipped in the built-in mixed-node AI pass so they remain
-        visible as failed transforms rather than mixed into built-in prompts.
+        Phase 4 (per-plugin AI batching) is not implemented; remaining EXT-
+        findings are ``MANUAL_REVIEW`` so they are not mixed into built-in
+        AI prompts or counted as AI work.
 
         Args:
             graph: ContentGraph whose ledger holds the finding.
@@ -662,7 +662,7 @@ class GraphRemediationEngine:
         """
         rule_id = normalize_rule_id(str(violation.get("rule_id", "")))
         self._plugin_transform_ids.discard(rule_id)
-        violation["remediation_class"] = RemediationClass.AI_CANDIDATE
+        violation["remediation_class"] = RemediationClass.MANUAL_REVIEW
         violation["remediation_resolution"] = RemediationResolution.TRANSFORM_FAILED
         node = graph.get_node(node_id)
         if node is None:
@@ -672,7 +672,7 @@ class GraphRemediationEngine:
         if record is None:
             return
         updated = dict(record.violation)
-        updated["remediation_class"] = RemediationClass.AI_CANDIDATE
+        updated["remediation_class"] = RemediationClass.MANUAL_REVIEW
         updated["remediation_resolution"] = RemediationResolution.TRANSFORM_FAILED
         record.violation = updated
 

@@ -130,7 +130,8 @@ export APME_PLUGIN_ORGPOLICY_ADDRESS=127.0.0.1:50100
 
 - Rule IDs must use `EXT-<plugin_name>-<NNN>` (for example `EXT-orgpolicy-001`)
 - `Transform` receives the **node YAML fragment** (`ContentNode.yaml_lines`); the Engine applies it with `ContentGraph.apply_yaml`
-- Plugins are always optional: a missing or failing plugin is skipped and never fails Engine `Health`
+- Engine aggregate `Health` never fails because a plugin is down. A configured plugin whose `Validate` RPC fails still emits `EXT-<name>-unavailable` so `apme check` is not a silent pass
+- Remaining plugin findings are **manual review** until ADR-042 Phase 4 (per-plugin AI)
 - Plugin ports are **50100–50199** (see [ADR-042](../../.sdlc/adrs/ADR-042-third-party-plugin-services.md))
 - Reference implementations: [`examples/plugins/orgpolicy/`](../../examples/plugins/orgpolicy/) (host process), [`opa-custom/`](../../examples/plugins/opa-custom/) (OPA image), [`secscan/`](../../examples/plugins/secscan/) ([ansible-security-scanner](https://github.com/cpeoples/ansible-security-scanner) image)
 - Podman pod: uncomment sidecars in [`containers/podman/pod.yaml`](../../containers/podman/pod.yaml) after `tox -e build-plugins` — [PLUGIN_SIDECARS.md](PLUGIN_SIDECARS.md)
@@ -215,7 +216,8 @@ APME uses prefixed numeric IDs (per ADR-008):
 | **A** | AAP-specific (platform compatibility) | A001–A099 |
 | **SEC** | Secrets (Gitleaks) | SEC:* |
 
-Custom rules should use the `CUSTOM-` or `EXT-` prefix to avoid conflicts.
+Custom plugin rules use the `EXT-<name>-` prefix (ADR-042). Do not use
+`CUSTOM-`; the Engine drops plugin findings that are not `EXT-`.
 
 ## Related Documentation
 

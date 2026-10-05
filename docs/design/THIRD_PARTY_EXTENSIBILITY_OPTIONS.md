@@ -171,7 +171,7 @@ Useful when the **only** goal is gates in CI, not automated fixes aligned with t
 
 ## Cross-cutting concerns (any plugin path)
 
-1. **`partition.py` / Tier routing** — Today unknown IDs follow scope-based Tier 2/3 logic. Plugins need explicit rules: **Tier 1 = plugin `Transform` success**; failures → ADR-042’s **transform failed → AI candidate** behavior.
+1. **`partition.py` / Tier routing** — Plugin Transform IDs are Tier 1. Other `EXT-` findings are **manual review** until ADR-042 Phase 4 (per-plugin AI). Transform failure stamps ``TRANSFORM_FAILED``.
 2. **Violation metadata** — SARIF, UI, and Gateway reporting should carry **origin** (`EXT-` prefix / plugin name) for attribution.
 3. **Hierarchy JSON as public API** — ADR-042 flags **versioning** responsibility; breaking hierarchy shape breaks plugins silently or loudly depending on discipline.
 4. **ADR status** — Treating ADR-042 as **Accepted** before implementation aligns SDLC with [`AGENTS.md`](../../AGENTS.md) invariants (built-in closed, plugins separate).

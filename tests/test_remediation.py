@@ -165,6 +165,14 @@ class TestPartition:
         assert len(t1) == 1
         assert t2 == []
         assert t3 == []
+        t1, t2, t3 = partition_violations(
+            [{"rule_id": "EXT-orgpolicy-001", "severity": "high", "scope": "task"}],
+            reg,
+            plugin_ids,
+        )
+        assert t1 == []
+        assert t2 == []
+        assert len(t3) == 1
 
     def test_normalize_rule_id_strips_native_prefix(self) -> None:
         """Verifies normalize_rule_id strips 'native:' prefix."""
@@ -226,6 +234,7 @@ class TestPartition:
     def test_classify_violation_manual_review(self) -> None:
         """Verifies classify_violation returns manual-review when ai_proposable is False."""
         assert classify_violation({"rule_id": "POLICY", "ai_proposable": False}) == RemediationClass.MANUAL_REVIEW
+        assert classify_violation({"rule_id": "EXT-orgpolicy-001", "scope": "task"}) == RemediationClass.MANUAL_REVIEW
 
     def test_add_classification_to_violations(self) -> None:
         """Verifies add_classification_to_violations classifies remaining violations."""

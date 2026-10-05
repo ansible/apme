@@ -77,7 +77,7 @@ message DescribeResponse {
 }
 ```
 
-- **Validate** reuses existing `ValidateRequest`/`ValidateResponse`. The Engine sends only `request_id`, `files`, and `hierarchy_payload` (JSON). It does not forward `scandata`, `venv_path`, or `content_graph_data`.
+- **Validate** reuses existing `ValidateRequest`/`ValidateResponse`. The Engine sends `request_id`, `files`, `hierarchy_payload` (JSON), `ansible_core_version`, and `collection_specs`. It does not forward `scandata`, `venv_path`, or `content_graph_data`.
 - **Transform** receives one file and the violation to fix, plus hierarchy context. Returns the transformed file or `applied=false` / an error.
 - **Describe** is used for version, optional prefix, and `transform_rule_ids`. Plugin **identity** is the env-var token (`APME_PLUGIN_<NAME>_ADDRESS` → name `<name>`), never `Describe.name` (a sidecar must not impersonate `opa` / `native`). The Engine keeps only Transform IDs under `EXT-<name>-`.
 - **Health** reuses the existing `HealthRequest`/`HealthResponse` from `common.proto`. Plugin Health is probed with the required validators but is never `required` for Engine aggregate status.
@@ -203,7 +203,7 @@ The plugin system is not viable without a low-friction authoring experience. The
 
 - Async gRPC server lifecycle (startup, graceful shutdown, signal handling)
 - `Describe` response auto-generated from class attributes (`name`, `version`)
-- `Health` endpoint (always returns `"ok"`)
+- `Health` endpoint (override ``PluginBase.health()``; default ``ok``. Example sidecars fail Health when the wrapped tool/bundle is missing.)
 - `EXT-` prefix enforcement on rule IDs
 - Proto serialization/deserialization (plugin author works with plain dicts and dataclasses)
 - Configurable listen address via `APME_PLUGIN_LISTEN` env var (default `0.0.0.0:50100`). Plugin ports are **50100–50199** so they never collide with Engine `:50051`, validators `:50053–50059` / `:50062`, Gateway `:50060`, or Abbenay `:50057`.
@@ -231,7 +231,7 @@ class MyOrgPlugin(PluginBase):
                     violations.append(
                         self.violation(
                             rule_id="001",
-                            level="warning",
+                            severity="warning",
                             message="Plays must have a department tag",
                             file=node["file"],
                             line=node["line"][0],
@@ -241,30 +241,26 @@ class MyOrgPlugin(PluginBase):
                     )
         return violations
 
-    def transform(self, file, violation):
+    def transform_rule_ids(self):
+        return [self.prefixed_id("001")]
+
+    def transform(self, file_path, content, violation, hierarchy=None):
+        del file_path, hierarchy
         if violation.rule_id != self.prefixed_id("001"):
             return None
-
         import yaml
 
-        docs = list(yaml.safe_load_all(file.content.decode()))
-        changed = False
-        for doc in docs:
-            if not isinstance(doc, dict):
-                continue
-            tags = doc.get("tags")
-            if tags is None:
-                doc["tags"] = ["dept:unassigned"]
-                changed = True
-            elif isinstance(tags, list) and not any(t.startswith("dept:") for t in tags):
-                tags.append("dept:unassigned")
-                changed = True
-
-        if not changed:
+        doc = yaml.safe_load(content.decode())
+        if not isinstance(doc, dict):
             return None
-
-        out = yaml.dump_all(docs, default_flow_style=False).encode()
-        return self.file(path=file.path, content=out)
+        tags = doc.get("tags")
+        if tags is None:
+            doc["tags"] = ["dept:unassigned"]
+        elif isinstance(tags, list) and not any(str(t).startswith("dept:") for t in tags):
+            tags.append("dept:unassigned")
+        else:
+            return None
+        return yaml.safe_dump(doc, default_flow_style=False).encode()
 
 
 if __name__ == "__main__":
@@ -414,8 +410,8 @@ Local Podman images and `pod.yaml` containers for a private OPA bundle and
 
 ### Phase 3: Remediation routing
 
-1. Update `normalize_rule_id()` in `partition.py` to recognize `EXT-` prefix
-2. Route `EXT-` violations to plugin `Transform` RPC instead of built-in registry
+1. Keep `EXT-` IDs as full strings (``normalize_rule_id`` lives in `rule_ids.py` and does not strip ``EXT-``)
+2. Route `EXT-` violations with declared `transform_rule_ids` to plugin `Transform` RPC instead of the built-in registry
 3. Integrate plugin transforms into the convergence loop
 4. Update `launcher.py` if plugins should be discoverable in local daemon mode
 
@@ -467,3 +463,4 @@ Local Podman images and `pod.yaml` containers for a private OPA bundle and
 | 2026-10-05 | APME Team | APME Engine: `plugin.proto`, SDK, discovery, Validate fan-out, EXT Transform routing |
 | 2026-10-05 | APME Team | Document Podman plugin sidecar images (custom OPA + ansible-security-scanner) |
 | 2026-10-05 | APME Team | Pin plugin identity to env token; retry Describe misses; strip Validate extras; bind file-scoped EXT- findings; stamp TRANSFORM_FAILED without mixed-node AI |
+| 2026-10-05 | APME Team | Honest Phase 4 gap: EXT- remaining is manual review; Validate sends ansible_core_version/collection_specs; Transform sends hierarchy; Health is overridable |

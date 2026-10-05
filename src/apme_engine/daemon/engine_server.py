@@ -518,12 +518,17 @@ def _plugin_validate_request(request: ValidateRequest) -> ValidateRequest:
         request: Full engine ValidateRequest (may include native scandata).
 
     Returns:
-        Request carrying ``request_id``, ``files``, and ``hierarchy_payload`` only.
+        Request carrying ``request_id``, ``files``, ``hierarchy_payload``,
+        ``ansible_core_version``, and ``collection_specs`` (ADR-042 §6).
+        Native-only fields (``scandata``, ``venv_path``, ``content_graph_data``)
+        are omitted.
     """
     return ValidateRequest(
         request_id=request.request_id,
         files=request.files,
         hierarchy_payload=request.hierarchy_payload,
+        ansible_core_version=request.ansible_core_version,
+        collection_specs=request.collection_specs,
     )
 
 
@@ -576,7 +581,11 @@ def _nearest_graph_node(graph: ContentGraph, file_path: str, line: object) -> st
     """
     if not file_path:
         return ""
-    line_n = line if isinstance(line, int) else 0
+    line_n = 0
+    if isinstance(line, int):
+        line_n = line
+    elif isinstance(line, list) and line and isinstance(line[0], int):
+        line_n = line[0]
     matches = [n for n in graph.nodes() if _same_scan_path(n.file_path, file_path)]
     if not matches:
         return ""
@@ -585,8 +594,10 @@ def _nearest_graph_node(graph: ContentGraph, file_path: str, line: object) -> st
         if covering:
             covering.sort(key=lambda n: ((n.line_end or n.line_start) - n.line_start, n.line_start))
             return covering[0].node_id
-        matches.sort(key=lambda n: abs(n.line_start - line_n))
-    return matches[0].node_id
+        return ""
+    if len(matches) == 1:
+        return matches[0].node_id
+    return ""
 
 
 def _same_scan_path(node_path: str, finding_path: str) -> bool:
@@ -621,7 +632,16 @@ async def _call_plugin_validate_result(
     """
     violations, error = await call_plugin_validate(plugin.address, request)
     if error:
-        return _ValidatorResult(error=error)
+        unavailable: ViolationDict = {
+            "rule_id": f"{plugin.rule_id_prefix}unavailable",
+            "message": "Plugin Validate failed; results are incomplete.",
+            "severity": "high",
+            "source": f"plugin:{plugin.name}",
+            "file": "",
+            "path": "",
+            "scope": "playbook",
+        }
+        return _ValidatorResult(violations=[unavailable], error=error)
     return _ValidatorResult(violations=filter_plugin_violations(plugin, violations))
 
 
@@ -2811,7 +2831,27 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             open_ext: list[ViolationDict] = []
             if plugins:
                 open_ext = [dict(v) for v in g.collect_violations() if str(v.get("rule_id") or "").startswith("EXT-")]
-                rescan_files = [File(path=p, content=c) for p, c in session.working_files.items()]
+                from apme_engine.remediation.graph_engine import splice_modifications
+
+                merged = dict(session.working_files)
+                originals: dict[str, str] = {}
+                for path, content in merged.items():
+                    originals[path] = content.decode("utf-8", errors="replace")
+                for node in g.nodes():
+                    if not node.file_path:
+                        continue
+                    rel = _working_files_key(session.temp_dir, node.file_path)
+                    src = merged.get(rel, merged.get(node.file_path))
+                    if src is not None and node.file_path not in originals:
+                        originals[node.file_path] = src.decode("utf-8", errors="replace")
+                for patch in splice_modifications(g, originals, include_pending=True):
+                    rel = _working_files_key(session.temp_dir, patch.path)
+                    data = patch.patched.encode("utf-8")
+                    if rel in merged:
+                        merged[rel] = data
+                    elif patch.path in merged:
+                        merged[patch.path] = data
+                rescan_files = [File(path=p, content=c) for p, c in merged.items()]
                 rescan_dicts = [d for n in g.nodes() if (d := content_node_to_opa_dict(n, graph=g))]
                 rescan_payload = b""
                 if rescan_dicts:
@@ -2831,11 +2871,16 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                         },
                         default=str,
                     ).encode()
+                plugin_opts = session.fix_options or session.scan_options
                 plugin_req = _plugin_validate_request(
                     ValidateRequest(
                         request_id=f"{scan_id}-rescan",
                         files=rescan_files,
                         hierarchy_payload=rescan_payload,
+                        ansible_core_version=(getattr(plugin_opts, "ansible_core_version", "") if plugin_opts else ""),
+                        collection_specs=(
+                            list(getattr(plugin_opts, "collection_specs", []) or []) if plugin_opts else []
+                        ),
                     )
                 )
                 for plugin in plugins:
@@ -2858,6 +2903,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                     elif result.error:
                         logger.warning("Rescan: %s RPC failed: %s", name, result.error)
                         plugin_failed = name.startswith("plugin:")
+                        all_violations.extend(result.violations)
                     else:
                         all_violations.extend(result.violations)
                     if plugin_failed:
@@ -2865,8 +2911,8 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
 
             if failed_plugin_sources:
                 for item in open_ext:
-                    src = str(item.get("source") or "")
-                    if src in failed_plugin_sources:
+                    plugin_src = str(item.get("source") or "")
+                    if plugin_src in failed_plugin_sources:
                         all_violations.append(item)
 
             return filter_noqa_violations(_bind_ext_findings_to_graph(all_violations, g), g)
@@ -2894,12 +2940,32 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             plugin = plugin_for_rule(plugins_for_fix, str(violation.get("rule_id", "")))
             if plugin is None:
                 return None
+            hier_dicts = [d for n in graph.nodes() if (d := content_node_to_opa_dict(n, graph=graph))]
+            hierarchy_payload = b""
+            if hier_dicts:
+                hierarchy_payload = json.dumps(
+                    {
+                        "scan_id": scan_id,
+                        "hierarchy": [
+                            {
+                                "root_key": "transform",
+                                "root_type": "transform",
+                                "root_path": "",
+                                "nodes": hier_dicts,
+                            }
+                        ],
+                        "collection_set": [],
+                        "metadata": {},
+                    },
+                    default=str,
+                ).encode()
             applied, new_yaml, err = await call_plugin_transform(
                 plugin.address,
                 request_id=scan_id,
                 file_path=file_path,
                 yaml_content=yaml_lines,
                 violation=violation,
+                hierarchy_payload=hierarchy_payload,
             )
             if err:
                 logger.warning(

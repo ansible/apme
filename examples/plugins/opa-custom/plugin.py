@@ -51,6 +51,21 @@ class OpaCustomPlugin(PluginBase):
         """
         return []
 
+    def health(self) -> str:
+        """Fail Health when ``opa`` or the bundle directory is missing.
+
+        Returns:
+            ``ok`` or an error string.
+        """
+        import shutil
+
+        if shutil.which("opa") is None:
+            return "error: opa binary not found"
+        bundle = Path(os.environ.get("APME_OPA_PLUGIN_BUNDLE", str(_DEFAULT_BUNDLE)))
+        if not bundle.is_dir():
+            return f"error: bundle missing: {bundle}"
+        return "ok"
+
     def validate(
         self,
         files: Sequence[tuple[str, bytes]],
@@ -165,11 +180,13 @@ def eval_bundle(bundle: Path, entrypoint: str, hierarchy: object) -> list[dict[s
         hierarchy: Engine hierarchy JSON.
 
     Returns:
-        Violation objects from OPA, or an empty list on failure.
+        Violation objects from OPA.
+
+    Raises:
+        RuntimeError: If the bundle is missing or ``opa eval`` cannot run.
     """
     if not bundle.is_dir():
-        logger.warning("OPA plugin: bundle is not a directory: %s", bundle)
-        return []
+        raise RuntimeError(f"OPA plugin bundle is not a directory: {bundle}")
     input_str = json.dumps(opa_input_document(hierarchy))
     try:
         completed = subprocess.run(
@@ -180,15 +197,12 @@ def eval_bundle(bundle: Path, entrypoint: str, hierarchy: object) -> list[dict[s
             timeout=_OPA_TIMEOUT,
             check=False,
         )
-    except FileNotFoundError:
-        logger.warning("OPA plugin: opa binary not found on PATH")
-        return []
-    except subprocess.TimeoutExpired:
-        logger.warning("OPA plugin: opa eval timed out after %ss", _OPA_TIMEOUT)
-        return []
+    except FileNotFoundError as exc:
+        raise RuntimeError("opa binary not found on PATH") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"opa eval timed out after {_OPA_TIMEOUT}s") from exc
     if completed.returncode != 0:
-        logger.warning("OPA plugin: opa eval failed (exit %s)", completed.returncode)
-        return []
+        raise RuntimeError(f"opa eval failed (exit {completed.returncode})")
     return parse_opa_eval_stdout(completed.stdout or "")
 
 

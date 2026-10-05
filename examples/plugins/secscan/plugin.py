@@ -62,6 +62,16 @@ class SecscanPlugin(PluginBase):
         """
         return []
 
+    def health(self) -> str:
+        """Fail Health when ansible-security-scanner is not installed.
+
+        Returns:
+            ``ok`` or an error string.
+        """
+        if _Scanner is None:
+            return "error: ansible-security-scanner is not installed"
+        return "ok"
+
     def validate(
         self,
         files: Sequence[tuple[str, bytes]],
@@ -78,8 +88,7 @@ class SecscanPlugin(PluginBase):
         """
         del hierarchy
         if _Scanner is None:
-            logger.warning("secscan plugin: ansible-security-scanner is not installed")
-            return []
+            raise RuntimeError("ansible-security-scanner is not installed")
         findings = scan_files(files)
         return [map_finding(self, finding) for finding in findings]
 
@@ -145,7 +154,7 @@ def map_finding(plugin: PluginBase, finding: _FindingLike) -> dict[str, str | in
     return plugin.violation(
         rule_id=str(finding.rule_id or "unknown"),
         message=message[:2000],
-        file=str(safe) if safe is not None else rel,
+        file=str(safe) if safe is not None else "",
         line=line if line > 0 else 0,
         severity=str(finding.severity or "high"),
         scope="task",

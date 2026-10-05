@@ -90,6 +90,17 @@ def test_opa_validate_uses_eval_bundle(monkeypatch: pytest.MonkeyPatch) -> None:
     assert findings[0]["file"] == "a.yml"
 
 
+def test_opa_custom_health_without_opa(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Health fails closed when the ``opa`` binary is missing.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+    mod = _load_plugin("opa-custom")
+    monkeypatch.setattr("shutil.which", lambda *_args: None)
+    assert "opa binary" in mod.OpaCustomPlugin().health()
+
+
 def test_secscan_safe_relpath_rejects_escape() -> None:
     """Absolute and parent paths are not written to the temp tree."""
     mod = _load_plugin("secscan")
@@ -121,11 +132,16 @@ def test_secscan_map_finding_prefixes_rule_id() -> None:
 
 
 def test_secscan_validate_without_package() -> None:
-    """When the scanner extra is not installed, Validate is a no-op."""
+    """When the scanner extra is not installed, Validate raises.
+
+    Engine then records ``EXT-secscan-unavailable`` instead of a silent pass.
+    """
     mod = _load_plugin("secscan")
     if getattr(mod, "_Scanner", None) is not None:
         pytest.skip("ansible-security-scanner is installed")
-    assert mod.SecscanPlugin().validate([("site.yml", b"---\n")], None) == []
+    with pytest.raises(RuntimeError, match="ansible-security-scanner"):
+        mod.SecscanPlugin().validate([("site.yml", b"---\n")], None)
+    assert "not installed" in mod.SecscanPlugin().health()
 
 
 def test_secscan_write_file_tree(tmp_path: Path) -> None:

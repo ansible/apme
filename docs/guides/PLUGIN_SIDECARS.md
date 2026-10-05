@@ -44,8 +44,9 @@ APME_PLUGIN_<NAME>_ADDRESS=127.0.0.1:<port>
 `<NAME>` is uppercase alphanumeric. The Engine lowercases it (`OPACUSTOM` →
 plugin name `opacustom`, prefix `EXT-opacustom-`). Ports **50100–50199**.
 
-Plugins are always optional: a missing or failing sidecar is skipped and
-never fails Engine `Health`.
+Plugins are optional for Engine `Health`. A configured plugin whose
+`Validate` RPC fails still emits `EXT-<name>-unavailable` so `apme check`
+is not a silent pass.
 
 ## Checklist (any plugin)
 
@@ -150,7 +151,7 @@ export APME_PLUGIN_OPACUSTOM_ADDRESS=127.0.0.1:50100
   `module` string (same shape the built-in OPA validator sees).
 - Each violation **must** use an `EXT-opacustom-` rule ID (or a bare
   suffix such as `001`; the SDK prefixes it).
-- Optional `ai_guidance` string is copied to violation metadata for Tier 2.
+- Optional `ai_guidance` string is stored on violation metadata for ADR-042 Phase 4.
 
 ## 2. ansible-security-scanner plugin
 
@@ -164,9 +165,10 @@ wraps `AnsibleSecurityScanner.scan_directory()` behind `Plugin.Validate`.
 Findings become `EXT-secscan-<scanner_rule_id>` (for example
 `EXT-secscan-hardcoded_password`). Detection only: the scanner’s `--fix`
 unified diffs are **whole-file** patches; ADR-042 `Transform` is
-**node YAML** only, so this sidecar does not implement `Transform`. Failed
-or missing transforms escalate to AI / manual review (`ai_guidance` is the
-scanner `recommendation` text).
+**node YAML** only, so this sidecar does not implement `Transform`.
+Remaining `EXT-secscan-*` findings are **manual review** until ADR-042
+Phase 4 (per-plugin AI batching). `ai_guidance` stores the scanner
+`recommendation` for that future path.
 
 ### Build the image
 

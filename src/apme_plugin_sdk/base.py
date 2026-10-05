@@ -87,7 +87,7 @@ class PluginBase:
             path: Graph node path when known.
             severity: Label (high, medium, …).
             scope: ADR-026 scope (task, play, …).
-            ai_guidance: Optional Tier 2 prompt hint.
+            ai_guidance: Optional Phase 4 prompt hint (stored on metadata).
 
         Returns:
             Dict consumed by the SDK servicer.
@@ -104,6 +104,16 @@ class PluginBase:
         if ai_guidance:
             out["ai_guidance"] = ai_guidance
         return out
+
+    def health(self) -> str:
+        """Return Health status (``ok`` or an error string).
+
+        Override when a wrapped tool or bundle can be missing.
+
+        Returns:
+            Status string; Engine treats only exact ``ok`` as healthy.
+        """
+        return "ok"
 
     def transform_rule_ids(self) -> list[str]:
         """Return rule IDs this plugin can Transform.
@@ -129,17 +139,25 @@ class PluginBase:
         """
         return []
 
-    def transform(self, file_path: str, content: bytes, violation: Violation) -> bytes | None:
+    def transform(
+        self,
+        file_path: str,
+        content: bytes,
+        violation: Violation,
+        hierarchy: object = None,
+    ) -> bytes | None:
         """Return replacement node YAML, or ``None`` if not applied.
 
         Args:
             file_path: Playbook path.
             content: Current node YAML bytes.
             violation: Proto finding to fix.
+            hierarchy: Parsed ``hierarchy_payload`` JSON, or ``None``.
 
         Returns:
             New YAML bytes, or ``None``.
         """
+        del hierarchy
         return None
 
     def describe(self) -> DescribeResponse:
@@ -234,16 +252,21 @@ class _PluginServicer(plugin_pb2_grpc.PluginServicer):
         request: HealthRequest,
         context: grpc.aio.ServicerContext,  # type: ignore[type-arg]
     ) -> HealthResponse:
-        """Return ok.
+        """Return the plugin Health status.
 
         Args:
             request: Unused.
             context: gRPC context.
 
         Returns:
-            HealthResponse with status ok.
+            HealthResponse from ``PluginBase.health``.
         """
-        return HealthResponse(status="ok")
+        try:
+            status = (self._plugin.health() or "").strip()
+        except Exception:  # noqa: BLE001 - plugin Health must always reply
+            logger.exception("Plugin %s health() failed", self._plugin.name)
+            status = "error: health check failed"
+        return HealthResponse(status=status or "error: empty health status")
 
     async def Describe(
         self,
@@ -274,6 +297,9 @@ class _PluginServicer(plugin_pb2_grpc.PluginServicer):
 
         Returns:
             ValidateResponse.
+
+        Raises:
+            Exception: After aborting the RPC when ``validate()`` fails.
         """
         files = [(str(f.path), bytes(f.content)) for f in request.files]  # type: ignore[attr-defined]
         hierarchy: object | None = None
@@ -283,7 +309,12 @@ class _PluginServicer(plugin_pb2_grpc.PluginServicer):
             except (json.JSONDecodeError, UnicodeDecodeError):
                 logger.warning("Plugin %s: invalid hierarchy_payload", self._plugin.name)
         loop = asyncio.get_running_loop()
-        raw = await loop.run_in_executor(None, self._plugin.validate, files, hierarchy)
+        try:
+            raw = await loop.run_in_executor(None, self._plugin.validate, files, hierarchy)
+        except Exception:
+            logger.exception("Plugin %s validate failed", self._plugin.name)
+            await context.abort(grpc.StatusCode.INTERNAL, "validate failed")
+            raise
         violations: list[Violation] = []
         for item in raw:
             violations.append(_dict_to_violation(item, self._plugin.rule_id_prefix))
@@ -303,6 +334,12 @@ class _PluginServicer(plugin_pb2_grpc.PluginServicer):
         Returns:
             TransformResponse.
         """
+        hierarchy: object | None = None
+        if request.hierarchy_payload:
+            try:
+                hierarchy = json.loads(request.hierarchy_payload.decode("utf-8"))
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                logger.warning("Plugin %s: invalid transform hierarchy_payload", self._plugin.name)
         try:
             loop = asyncio.get_running_loop()
             new_bytes = await loop.run_in_executor(
@@ -311,6 +348,7 @@ class _PluginServicer(plugin_pb2_grpc.PluginServicer):
                 request.file.path,
                 bytes(request.file.content),
                 request.violation,
+                hierarchy,
             )
         except Exception as exc:  # noqa: BLE001 - plugin code
             logger.exception("Plugin %s transform failed", self._plugin.name)

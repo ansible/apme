@@ -13,6 +13,7 @@ from apme.v1.validate_pb2 import ValidateRequest, ValidateResponse
 from apme_engine.daemon.engine_server import (
     EngineServicer,
     _bind_ext_findings_to_graph,
+    _call_plugin_validate_result,
     _plugin_validate_request,
 )
 from apme_engine.daemon.plugins import (
@@ -110,16 +111,20 @@ def test_yaml_is_well_formed() -> None:
     assert yaml_is_well_formed("- name: ok\n") is True
     assert yaml_is_well_formed("   ") is False
     assert yaml_is_well_formed(": not: [yaml") is False
+    assert yaml_is_well_formed("---\n") is False
+    assert yaml_is_well_formed("- a: 1\n---\n- b: 2\n") is False
 
 
 def test_plugin_validate_request_public_fields_only() -> None:
-    """Plugin ValidateRequest carries request_id, files, and hierarchy only."""
+    """Plugin ValidateRequest carries ADR-042 public fields only."""
     req = ValidateRequest(
         request_id="r1",
         scandata=b"pickle",
         hierarchy_payload=b"{}",
         venv_path="/sessions/x",
         content_graph_data=b"graph",
+        ansible_core_version="2.18.0",
+        collection_specs=["community.general:8.0.0"],
         files=[File(path="a.yml", content=b"- hosts: all\n")],
     )
     clone = _plugin_validate_request(req)
@@ -128,6 +133,8 @@ def test_plugin_validate_request_public_fields_only() -> None:
     assert clone.venv_path == ""
     assert clone.content_graph_data == b""
     assert clone.hierarchy_payload == b"{}"
+    assert clone.ansible_core_version == "2.18.0"
+    assert list(clone.collection_specs) == ["community.general:8.0.0"]
     assert len(clone.files) == 1
     assert req.scandata == b"pickle"
     assert req.venv_path == "/sessions/x"
@@ -166,7 +173,7 @@ async def test_describe_normalizes_reported_prefix() -> None:
                 name="opa",
                 version="1.0.0",
                 rule_id_prefix="orgpolicy",
-                transform_rule_ids=["EXT-orgpolicy-002", "L001"],
+                transform_rule_ids=["EXT-orgpolicy-002", "002", "EXT-secteam-001"],
             )
 
     class _Channel:
@@ -255,6 +262,37 @@ async def test_call_plugin_transform_returns_yaml() -> None:
     assert applied is True
     assert yaml_text == "- name: fixed\n"
     assert error == ""
+
+
+async def test_call_plugin_transform_sends_hierarchy_payload() -> None:
+    """TransformRequest includes hierarchy JSON when the Engine supplies it."""
+    from apme.v1.plugin_pb2 import TransformRequest, TransformResponse
+
+    captured: list[TransformRequest] = []
+
+    class _Stub:
+        async def Transform(self, req: TransformRequest, timeout: float = 60) -> TransformResponse:
+            captured.append(req)
+            return TransformResponse(applied=False)
+
+    class _Channel:
+        async def close(self, grace: object = None) -> None:
+            return None
+
+    with (
+        patch("apme_engine.daemon.plugins._channel", return_value=_Channel()),
+        patch("apme_engine.daemon.plugins.plugin_pb2_grpc.PluginStub", return_value=_Stub()),
+    ):
+        await call_plugin_transform(
+            "127.0.0.1:50100",
+            request_id="r1",
+            file_path="site.yml",
+            yaml_content="- name: old\n",
+            violation={"rule_id": "EXT-orgpolicy-002", "message": "fix me"},
+            hierarchy_payload=b'{"hierarchy":[]}',
+        )
+    assert captured
+    assert captured[0].hierarchy_payload == b'{"hierarchy":[]}'
 
 
 async def test_call_plugin_transform_non_rpc_error() -> None:
@@ -353,3 +391,85 @@ async def test_ensure_plugins_retries_empty_cache(monkeypatch: pytest.MonkeyPatc
     ):
         loaded = await servicer._ensure_plugins()
     assert loaded == [plugin]
+
+
+def test_bind_ext_findings_requires_covering_span() -> None:
+    """Line outside every node span is not bound by nearest-neighbor."""
+    from types import SimpleNamespace
+
+    node = SimpleNamespace(
+        file_path="playbooks/site.yml",
+        line_start=4,
+        line_end=12,
+        node_id="playbooks/site.yml/plays[0]/tasks[0]",
+    )
+    other = SimpleNamespace(
+        file_path="playbooks/site.yml",
+        line_start=20,
+        line_end=30,
+        node_id="playbooks/site.yml/plays[0]/tasks[1]",
+    )
+    graph = SimpleNamespace(
+        get_node=lambda nid: {node.node_id: node, other.node_id: other}.get(nid),
+        nodes=lambda: iter([node, other]),
+    )
+    findings: list[ViolationDict] = [
+        {
+            "rule_id": "EXT-secscan-hardcoded-secret",
+            "file": "playbooks/site.yml",
+            "line": 99,
+            "path": "",
+            "message": "secret",
+        },
+        {
+            "rule_id": "EXT-secscan-other",
+            "file": "playbooks/site.yml",
+            "line": 0,
+            "path": "",
+            "message": "file-level",
+        },
+    ]
+    bound = _bind_ext_findings_to_graph(findings, graph)  # type: ignore[arg-type]
+    assert bound[0]["path"] == ""
+    assert bound[1]["path"] == ""
+
+
+async def test_plugin_validate_rpc_error_emits_unavailable() -> None:
+    """Validate RPC failure becomes ``EXT-<name>-unavailable``."""
+    plugin = DiscoveredPlugin(
+        name="orgpolicy",
+        address="127.0.0.1:50100",
+        rule_id_prefix="EXT-orgpolicy-",
+    )
+    with patch(
+        "apme_engine.daemon.engine_server.call_plugin_validate",
+        AsyncMock(return_value=([], "rpc error")),
+    ):
+        result = await _call_plugin_validate_result(plugin, ValidateRequest(request_id="r1"))
+    assert result.error == "rpc error"
+    assert len(result.violations) == 1
+    assert result.violations[0]["rule_id"] == "EXT-orgpolicy-unavailable"
+    assert result.violations[0]["source"] == "plugin:orgpolicy"
+
+
+async def test_call_plugin_validate_non_rpc_error() -> None:
+    """Non-RpcError from Validate must not raise."""
+
+    class _Stub:
+        async def Validate(self, _req: object, timeout: float = 300) -> object:
+            raise RuntimeError("boom")
+
+    class _Channel:
+        async def close(self, grace: object = None) -> None:
+            return None
+
+    with (
+        patch("apme_engine.daemon.plugins._channel", return_value=_Channel()),
+        patch("apme_engine.daemon.plugins.plugin_pb2_grpc.PluginStub", return_value=_Stub()),
+    ):
+        violations, error = await call_plugin_validate(
+            "127.0.0.1:50100",
+            ValidateRequest(request_id="r1"),
+        )
+    assert violations == []
+    assert error == "validate error"
