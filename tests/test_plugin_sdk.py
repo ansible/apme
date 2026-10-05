@@ -6,6 +6,8 @@ import importlib.util
 from pathlib import Path
 from types import ModuleType
 
+import pytest
+
 from apme_plugin_sdk.base import PluginBase, _dict_to_violation
 
 
@@ -32,6 +34,12 @@ class _SamplePlugin(PluginBase):
 def test_sample_plugin_health_ok() -> None:
     """Default ``PluginBase.health`` is exact ``ok``."""
     assert _SamplePlugin().health() == "ok"
+
+
+def test_plugin_base_validate_must_be_implemented() -> None:
+    """Default ``validate()`` raises so Engine fails closed."""
+    with pytest.raises(NotImplementedError, match="must implement validate"):
+        _SamplePlugin().validate([], None)
 
 
 class _UnhealthyPlugin(PluginBase):

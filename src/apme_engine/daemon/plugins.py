@@ -411,7 +411,15 @@ async def call_plugin_transform(
         return False, None, err
     if not resp.applied:
         return False, None, ""
-    new_text = resp.file.content.decode("utf-8", errors="replace")
+    try:
+        new_text = resp.file.content.decode("utf-8")
+    except UnicodeDecodeError:
+        logger.error(
+            "Plugin Transform at %s returned invalid UTF-8 (req=%s)",
+            address,
+            request_id,
+        )
+        return False, None, "invalid utf-8"
     return True, new_text, ""
 
 

@@ -808,6 +808,10 @@ async def _call_plugin_validate_result(
 ) -> _ValidatorResult:
     """Call Plugin.Validate and keep only EXT-prefixed findings.
 
+    Any dropped row (wrong prefix or reserved ``*-unavailable``) is
+    incomplete input: emit ``EXT-<name>-unavailable`` alongside kept
+    findings so a mixed payload cannot silently pass.
+
     Args:
         plugin: Discovered plugin (address + prefix).
         request: ValidateRequest with only public Plugin fields.
@@ -819,15 +823,16 @@ async def _call_plugin_validate_result(
     if error:
         return _ValidatorResult(violations=[_plugin_unavailable_finding(plugin)], error=error)
     filtered = filter_plugin_violations(plugin, violations)
-    if violations and not filtered:
+    if len(filtered) < len(violations):
         logger.warning(
-            "Plugin %s returned %d finding(s) none matching prefix %s",
+            "Plugin %s returned %d finding(s); kept %d matching prefix %s",
             plugin.name,
             len(violations),
+            len(filtered),
             plugin.rule_id_prefix,
         )
         return _ValidatorResult(
-            violations=[_plugin_unavailable_finding(plugin)],
+            violations=[*filtered, _plugin_unavailable_finding(plugin)],
             error="prefix mismatch",
         )
     return _ValidatorResult(violations=filtered)

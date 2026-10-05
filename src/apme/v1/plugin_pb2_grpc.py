@@ -7,7 +7,7 @@ from apme.v1 import common_pb2 as apme_dot_v1_dot_common__pb2
 from apme.v1 import plugin_pb2 as apme_dot_v1_dot_plugin__pb2
 from apme.v1 import validate_pb2 as apme_dot_v1_dot_validate__pb2
 
-GRPC_GENERATED_VERSION = '1.84.0'
+GRPC_GENERATED_VERSION = '1.83.0'
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
 

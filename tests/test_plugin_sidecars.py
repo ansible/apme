@@ -179,6 +179,34 @@ def test_secscan_write_file_tree(tmp_path: Path) -> None:
     assert not (tmp_path / "escape.yml").exists()
 
 
+def test_secscan_scan_files_passes_absolute_targets(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Scanner ``target_files`` must be absolute under the temp tree, not CWD-relative.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+    mod = _load_plugin("secscan")
+    captured: dict[str, object] = {}
+
+    class _FakeScanner:
+        def __init__(self, **kwargs: object) -> None:
+            captured.update(kwargs)
+
+        def scan_directory(self) -> SimpleNamespace:
+            return SimpleNamespace(findings=[])
+
+    monkeypatch.setattr(mod, "_Scanner", _FakeScanner)
+    findings = mod.scan_files([("playbooks/site.yml", b"---\n")])
+    assert findings == []
+    targets = captured["target_files"]
+    assert isinstance(targets, list)
+    assert len(targets) == 1
+    target = Path(str(targets[0]))
+    assert target.is_absolute()
+    assert target.name == "site.yml"
+    assert target.parent.name == "playbooks"
+
+
 def test_plugin_sidecars_do_not_publish_host_port() -> None:
     """Plugin gRPC stays pod-local; 50100/50101 must not be hostPort."""
     root = Path(__file__).resolve().parents[1]

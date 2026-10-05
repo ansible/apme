@@ -269,6 +269,37 @@ async def test_call_plugin_transform_returns_yaml() -> None:
     assert error == ""
 
 
+async def test_call_plugin_transform_rejects_invalid_utf8() -> None:
+    """Invalid UTF-8 Transform bytes are a finding-level failure, not replacement."""
+    from apme.v1.plugin_pb2 import TransformResponse
+
+    class _Stub:
+        async def Transform(self, _req: object, timeout: float = 60) -> TransformResponse:
+            return TransformResponse(
+                applied=True,
+                file=File(path="site.yml", content=b"\xff\xfe not utf-8"),
+            )
+
+    class _Channel:
+        async def close(self, grace: object = None) -> None:
+            return None
+
+    with (
+        patch("apme_engine.daemon.plugins._channel", return_value=_Channel()),
+        patch("apme_engine.daemon.plugins.plugin_pb2_grpc.PluginStub", return_value=_Stub()),
+    ):
+        applied, yaml_text, error = await call_plugin_transform(
+            "127.0.0.1:50100",
+            request_id="r1",
+            file_path="site.yml",
+            yaml_content="- name: old\n",
+            violation={"rule_id": "EXT-orgpolicy-002", "message": "fix me"},
+        )
+    assert applied is False
+    assert yaml_text is None
+    assert error == "invalid utf-8"
+
+
 async def test_call_plugin_transform_sends_hierarchy_payload() -> None:
     """TransformRequest includes hierarchy JSON when the Engine supplies it."""
     from apme.v1.plugin_pb2 import TransformRequest, TransformResponse
@@ -576,6 +607,27 @@ async def test_plugin_validate_prefix_mismatch_emits_unavailable() -> None:
         result = await _call_plugin_validate_result(plugin, ValidateRequest(request_id="r1"))
     assert result.error == "prefix mismatch"
     assert result.violations[0]["rule_id"] == "EXT-orgpolicy-unavailable"
+
+
+async def test_plugin_validate_partial_prefix_drop_emits_unavailable() -> None:
+    """Kept findings plus dropped rows still emit ``EXT-<name>-unavailable``."""
+    plugin = DiscoveredPlugin(
+        name="orgpolicy",
+        address="127.0.0.1:50100",
+        rule_id_prefix="EXT-orgpolicy-",
+    )
+    mixed = [
+        {"rule_id": "EXT-orgpolicy-001", "message": "ok"},
+        {"rule_id": "EXT-secteam-001", "message": "foreign prefix"},
+    ]
+    with patch(
+        "apme_engine.daemon.engine_server.call_plugin_validate",
+        AsyncMock(return_value=(mixed, None)),
+    ):
+        result = await _call_plugin_validate_result(plugin, ValidateRequest(request_id="r1"))
+    assert result.error == "prefix mismatch"
+    ids = [row["rule_id"] for row in result.violations]
+    assert ids == ["EXT-orgpolicy-001", "EXT-orgpolicy-unavailable"]
 
 
 async def test_call_plugin_validate_non_rpc_error() -> None:

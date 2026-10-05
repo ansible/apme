@@ -203,7 +203,8 @@ def scan_files(files: Sequence[tuple[str, bytes]]) -> list[_FindingLike]:
         written = write_file_tree(root, files)
         if not written:
             return []
-        scanner = _Scanner(directory=str(root), target_files=written, jobs=1)
+        abs_targets = [str(root / rel) for rel in written]
+        scanner = _Scanner(directory=str(root), target_files=abs_targets, jobs=1)
         report = scanner.scan_directory()
         raw = getattr(report, "findings", []) or []
         remapped: list[_FindingLike] = []

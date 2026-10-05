@@ -140,8 +140,11 @@ class PluginBase:
 
         Returns:
             Violation dicts (use ``self.violation``).
+
+        Raises:
+            NotImplementedError: Subclasses must implement detection.
         """
-        return []
+        raise NotImplementedError(f"{type(self).__name__} must implement validate()")
 
     def transform(
         self,
@@ -258,6 +261,9 @@ class _PluginServicer(plugin_pb2_grpc.PluginServicer):
     ) -> HealthResponse:
         """Return the plugin Health status.
 
+        Runs ``plugin.health()`` in an executor so a blocking probe
+        cannot stall the event loop (ADR-007).
+
         Args:
             request: Unused.
             context: gRPC context.
@@ -265,8 +271,10 @@ class _PluginServicer(plugin_pb2_grpc.PluginServicer):
         Returns:
             HealthResponse from ``PluginBase.health``.
         """
+        loop = asyncio.get_running_loop()
         try:
-            status = (self._plugin.health() or "").strip()
+            raw = await loop.run_in_executor(None, self._plugin.health)
+            status = (raw or "").strip()
         except Exception:  # noqa: BLE001 - plugin Health must always reply
             logger.exception("Plugin %s health() failed", self._plugin.name)
             status = "error: health check failed"
