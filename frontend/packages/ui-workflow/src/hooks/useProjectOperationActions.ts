@@ -126,10 +126,13 @@ export function useProjectOperationActions(projectId: string) {
   );
 
   const approve = useCallback(
-    async (approvedIds: string[]) => {
+    async (approvedIds: string[], approvalGateId?: string) => {
       return postJson<{ status: string }>(
         `/projects/${projectId}/operation/approve`,
-        { approved_ids: approvedIds },
+        {
+          approved_ids: approvedIds,
+          ...(approvalGateId != null ? { approval_gate_id: approvalGateId } : {}),
+        },
       );
     },
     [projectId],

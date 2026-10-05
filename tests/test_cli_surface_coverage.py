@@ -58,11 +58,11 @@ class _FakeRpcError(grpc.RpcError):
         return self._details
 
 
-def _rem_args(target: str, **overrides: object) -> argparse.Namespace:
+def _rem_args(target: str | list[str], **overrides: object) -> argparse.Namespace:
     """Build a remediate namespace with sane defaults.
 
     Args:
-        target: Scan target path string.
+        target: Scan target path string or list of paths.
         **overrides: Attribute overrides.
 
     Returns:
@@ -91,11 +91,11 @@ def _rem_args(target: str, **overrides: object) -> argparse.Namespace:
     return argparse.Namespace(**defaults)
 
 
-def _check_args_ns(target: str, **overrides: object) -> argparse.Namespace:
+def _check_args_ns(target: str | list[str], **overrides: object) -> argparse.Namespace:
     """Build a check namespace with sane defaults.
 
     Args:
-        target: Scan target path string.
+        target: Scan target path string or list of paths.
         **overrides: Attribute overrides.
 
     Returns:
@@ -123,11 +123,11 @@ def _check_args_ns(target: str, **overrides: object) -> argparse.Namespace:
     return argparse.Namespace(**defaults)
 
 
-def _format_args_ns(target: str, **overrides: object) -> argparse.Namespace:
+def _format_args_ns(target: str | list[str], **overrides: object) -> argparse.Namespace:
     """Build a format namespace with sane defaults.
 
     Args:
-        target: Format target path string.
+        target: Format target path string or list of paths.
         **overrides: Attribute overrides.
 
     Returns:
@@ -570,7 +570,7 @@ def test_format_derives_session_when_missing(tmp_path: Path) -> None:
     resp.diffs = []
     channel = MagicMock()
     with (
-        patch("apme_engine.cli.format_cmd.discover_project_root", return_value=tmp_path) as disc,
+        patch("apme_engine.cli.format_cmd.discover_project_root_for_targets", return_value=tmp_path) as disc,
         patch("apme_engine.cli.format_cmd.derive_session_id", return_value="derived-1") as der,
         patch("apme_engine.cli.format_cmd.yield_scan_chunks", return_value=iter([_scan_chunk()])),
         patch("apme_engine.cli.format_cmd.resolve_engine", return_value=(channel, "addr")),
@@ -650,6 +650,40 @@ def test_format_no_diffs_reports_clean(tmp_path: Path, capsys: pytest.CaptureFix
     assert "already formatted" in err
 
 
+def test_format_no_diffs_reports_skips(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Empty diffs with skip WARNING logs must not claim already-formatted.
+
+    Args:
+        tmp_path: Temporary directory fixture.
+        capsys: Pytest capture fixture.
+    """
+    from apme_engine.cli.format_cmd import run_format
+
+    target = tmp_path / "site.yml"
+    target.write_text("a: 1\n", encoding="utf-8")
+    resp = engine_pb2.FormatResponse(
+        diffs=[],
+        logs=[
+            ProgressUpdate(
+                message="Skipping format for nothing.yml: YAML dump/post-process failed",
+                phase="engine",
+                level=3,
+            ),
+        ],
+    )
+    channel = MagicMock()
+    with (
+        patch("apme_engine.cli.format_cmd.yield_scan_chunks", return_value=iter([_scan_chunk()])),
+        patch("apme_engine.cli.format_cmd.resolve_engine", return_value=(channel, "addr")),
+        patch("apme_engine.cli.format_cmd.engine_pb2_grpc.EngineStub") as stub_cls,
+    ):
+        stub_cls.return_value.FormatStream.return_value = resp
+        run_format(_format_args_ns(str(target), verbose=0))
+    err = capsys.readouterr().err
+    assert "already formatted" not in err
+    assert "skipped due to format errors" in err
+
+
 def test_format_check_mode_exits_violations(tmp_path: Path) -> None:
     """--check lists would-reformat files and exits 1.
 
@@ -676,6 +710,70 @@ def test_format_check_mode_exits_violations(tmp_path: Path) -> None:
     assert exc.value.code == EXIT_VIOLATIONS
 
 
+def test_format_check_mode_exits_error_on_skips_without_diffs(tmp_path: Path) -> None:
+    """--check with format skips and no diffs exits EXIT_ERROR.
+
+    Args:
+        tmp_path: Temporary directory fixture.
+    """
+    from apme_engine.cli.format_cmd import run_format
+
+    target = tmp_path / "site.yml"
+    target.write_text("a: 1\n", encoding="utf-8")
+    resp = engine_pb2.FormatResponse(
+        diffs=[],
+        logs=[
+            ProgressUpdate(
+                message="Skipping format for bad.yml: not valid UTF-8",
+                phase="engine",
+                level=3,
+            ),
+        ],
+    )
+    channel = MagicMock()
+    with (
+        patch("apme_engine.cli.format_cmd.yield_scan_chunks", return_value=iter([_scan_chunk()])),
+        patch("apme_engine.cli.format_cmd.resolve_engine", return_value=(channel, "addr")),
+        patch("apme_engine.cli.format_cmd.engine_pb2_grpc.EngineStub") as stub_cls,
+        pytest.raises(SystemExit) as exc,
+    ):
+        stub_cls.return_value.FormatStream.return_value = resp
+        run_format(_format_args_ns(str(target), check=True))
+    assert exc.value.code == EXIT_ERROR
+
+
+def test_format_check_mode_exits_error_on_skips_with_diffs(tmp_path: Path) -> None:
+    """--check with diffs and format skips exits EXIT_ERROR (incomplete check).
+
+    Args:
+        tmp_path: Temporary directory fixture.
+    """
+    from apme_engine.cli.format_cmd import run_format
+
+    target = tmp_path / "site.yml"
+    target.write_text("a: 1\n", encoding="utf-8")
+    resp = engine_pb2.FormatResponse(
+        diffs=[FileDiff(path="site.yml", original=b"a", formatted=b"b", diff="d")],
+        logs=[
+            ProgressUpdate(
+                message="Skipping format for bad.yml: YAML dump/post-process failed",
+                phase="engine",
+                level=3,
+            ),
+        ],
+    )
+    channel = MagicMock()
+    with (
+        patch("apme_engine.cli.format_cmd.yield_scan_chunks", return_value=iter([_scan_chunk()])),
+        patch("apme_engine.cli.format_cmd.resolve_engine", return_value=(channel, "addr")),
+        patch("apme_engine.cli.format_cmd.engine_pb2_grpc.EngineStub") as stub_cls,
+        pytest.raises(SystemExit) as exc,
+    ):
+        stub_cls.return_value.FormatStream.return_value = resp
+        run_format(_format_args_ns(str(target), check=True))
+    assert exc.value.code == EXIT_ERROR
+
+
 def test_format_apply_writes_files(tmp_path: Path) -> None:
     """--apply writes formatted bytes via _safe_write.
 
@@ -699,6 +797,40 @@ def test_format_apply_writes_files(tmp_path: Path) -> None:
         stub_cls.return_value.FormatStream.return_value = resp
         run_format(_format_args_ns(str(target), apply=True))
     assert target.read_bytes() == b"new"
+
+
+def test_format_apply_counts_only_written(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """--apply reports written files, not skipped ones, and exits error on skips.
+
+    Args:
+        tmp_path: Temporary directory fixture.
+        capsys: Pytest capture fixture.
+    """
+    from apme_engine.cli._exit_codes import EXIT_ERROR
+    from apme_engine.cli.format_cmd import run_format
+
+    target = tmp_path / "site.yml"
+    target.write_bytes(b"orig")
+    resp = engine_pb2.FormatResponse(
+        diffs=[
+            FileDiff(path="site.yml", original=b"orig", formatted=b"new", diff="d"),
+            FileDiff(path="../escape.yml", original=b"x", formatted=b"y", diff="d"),
+            FileDiff(path="stale.yml", original=b"stale", formatted=b"z", diff="d"),
+        ],
+        logs=[],
+    )
+    channel = MagicMock()
+    with (
+        patch("apme_engine.cli.format_cmd.yield_scan_chunks", return_value=iter([_scan_chunk()])),
+        patch("apme_engine.cli.format_cmd.resolve_engine", return_value=(channel, "addr")),
+        patch("apme_engine.cli.format_cmd.engine_pb2_grpc.EngineStub") as stub_cls,
+        pytest.raises(SystemExit) as exc,
+    ):
+        stub_cls.return_value.FormatStream.return_value = resp
+        run_format(_format_args_ns(str(target), apply=True))
+    assert exc.value.code == EXIT_ERROR
+    assert target.read_bytes() == b"new"
+    assert "1 file(s) reformatted" in capsys.readouterr().err
 
 
 def test_format_show_diffs_without_apply(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -2225,7 +2357,7 @@ def test_prompt_ynasq_variants() -> None:
 
 
 def test_write_patches_dir_and_file_targets(tmp_path: Path) -> None:
-    """_write_patches writes via target dir join and via direct file target.
+    """_write_patches writes via base dir join and rejects escaping paths.
 
     Args:
         tmp_path: Temporary directory fixture.
@@ -2235,12 +2367,20 @@ def test_write_patches_dir_and_file_targets(tmp_path: Path) -> None:
     dfile = tmp_path / "play.yml"
     dfile.write_bytes(b"orig")
     patches = [FilePatch(path="play.yml", original=b"orig", patched=b"new", diff="d", applied_rules=["L001"])]
-    _write_patches(tmp_path, patches)
+    targets = [str(tmp_path)]
+    _write_patches(tmp_path, patches, targets)
     assert dfile.read_bytes() == b"new"
     solo = tmp_path / "solo.yml"
     solo.write_bytes(b"o2")
-    _write_patches(solo, [FilePatch(path="ignored.yml", original=b"o2", patched=b"n2", diff="d")])
+    _write_patches(tmp_path, [FilePatch(path="solo.yml", original=b"o2", patched=b"n2", diff="d")], targets)
     assert solo.read_bytes() == b"n2"
+    written, failed = _write_patches(
+        tmp_path,
+        [FilePatch(path="../escape.yml", original=b"x", patched=b"y", diff="d")],
+        targets,
+    )
+    assert written == 0
+    assert failed is True
 
 
 def test_write_patches_oserror_skips(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -2254,7 +2394,7 @@ def test_write_patches_oserror_skips(tmp_path: Path, capsys: pytest.CaptureFixtu
 
     patches = [FilePatch(path="x.yml", original=b"o", patched=b"n", diff="d")]
     with patch("apme_engine.cli.remediate._safe_write", side_effect=OSError("denied")):
-        written, failed = _write_patches(tmp_path, patches)
+        written, failed = _write_patches(tmp_path, patches, [str(tmp_path)])
     assert written == 0
     assert failed is True
     assert "WARNING: skipping" in capsys.readouterr().err
@@ -2309,6 +2449,20 @@ def test_check_chunk_not_found_exits(tmp_path: Path) -> None:
         pytest.raises(SystemExit) as exc,
     ):
         run_check(_check_args_ns(str(target)))
+    assert exc.value.code == EXIT_ERROR
+
+
+def test_check_missing_target_prevalidates_exits(tmp_path: Path) -> None:
+    """Nonexistent check targets exit before any engine contact.
+
+    Args:
+        tmp_path: Temporary directory fixture.
+    """
+    from apme_engine.cli.check import run_check
+
+    missing = tmp_path / "nope.yml"
+    with pytest.raises(SystemExit) as exc:
+        run_check(_check_args_ns(str(missing)))
     assert exc.value.code == EXIT_ERROR
 
 
@@ -2683,7 +2837,7 @@ def test_write_patches_stale_skip_not_counted(tmp_path: Path, capsys: pytest.Cap
     p = tmp_path / "stale.yml"
     p.write_bytes(b"changed")
     patches = [FilePatch(path="stale.yml", original=b"orig", patched=b"new", diff="d")]
-    written, failed = _write_patches(tmp_path, patches)
+    written, failed = _write_patches(tmp_path, patches, [str(tmp_path)])
     assert written == 0
     assert failed is True
     assert "Fixed:" not in capsys.readouterr().err
@@ -2705,9 +2859,61 @@ def test_write_patches_returns_written_count(tmp_path: Path) -> None:
         "apme_engine.cli.remediate._safe_write",
         side_effect=[True, OSError("denied")],
     ):
-        written, failed = _write_patches(tmp_path, patches)
+        written, failed = _write_patches(tmp_path, patches, [str(tmp_path)])
     assert written == 1
     assert failed is True
+
+
+def test_write_patches_rejects_unselected_sibling(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Patches outside the selected targets are skipped even inside the scan base.
+
+    Args:
+        tmp_path: Temporary directory fixture.
+        capsys: Pytest capture fixture.
+    """
+    from apme_engine.cli.remediate import _write_patches
+
+    selected = tmp_path / "selected"
+    sibling = tmp_path / "sibling.yml"
+    selected.mkdir()
+    (selected / "a.yml").write_bytes(b"orig")
+    sibling.write_bytes(b"orig")
+    patches = [FilePatch(path="sibling.yml", original=b"orig", patched=b"new", diff="d")]
+    written, failed = _write_patches(tmp_path, patches, [str(selected)])
+    assert written == 0
+    assert failed is True
+    assert "outside selected targets" in capsys.readouterr().err
+    assert sibling.read_bytes() == b"orig"
+
+
+def test_format_apply_exits_error_on_write_failure(tmp_path: Path) -> None:
+    """Format --apply exits with error when any requested write is skipped.
+
+    Args:
+        tmp_path: Temporary directory fixture.
+    """
+    from apme_engine.cli._exit_codes import EXIT_ERROR
+    from apme_engine.cli.format_cmd import run_format
+
+    target = tmp_path / "site.yml"
+    target.write_bytes(b"orig")
+    resp = engine_pb2.FormatResponse(
+        diffs=[
+            FileDiff(path="site.yml", original=b"orig", formatted=b"new", diff="d"),
+            FileDiff(path="stale.yml", original=b"stale", formatted=b"z", diff="d"),
+        ],
+        logs=[],
+    )
+    channel = MagicMock()
+    with (
+        patch("apme_engine.cli.format_cmd.yield_scan_chunks", return_value=iter([_scan_chunk()])),
+        patch("apme_engine.cli.format_cmd.resolve_engine", return_value=(channel, "addr")),
+        patch("apme_engine.cli.format_cmd.engine_pb2_grpc.EngineStub") as stub_cls,
+        pytest.raises(SystemExit) as exc,
+    ):
+        stub_cls.return_value.FormatStream.return_value = resp
+        run_format(_format_args_ns(str(target), apply=True))
+    assert exc.value.code == EXIT_ERROR
 
 
 def test_emit_json_uses_written_count(capsys: pytest.CaptureFixture[str]) -> None:
@@ -2777,3 +2983,212 @@ def test_remediate_json_files_updated_reflects_written(tmp_path: Path, capsys: p
     assert exc.value.code == EXIT_ERROR
     payload = json.loads(capsys.readouterr().out)
     assert payload["files_updated"] == 1
+
+
+def test_check_producer_error_exits(tmp_path: Path) -> None:
+    """Check upload producer failure exits EXIT_ERROR without hang (finding #3).
+
+    Args:
+        tmp_path: Temporary directory fixture.
+    """
+    from apme_engine.cli.check import run_check
+
+    target = tmp_path / "site.yml"
+    target.write_text("a: 1\n", encoding="utf-8")
+
+    def _failing_chunks(*args: object, **kwargs: object) -> Iterator[ScanChunk]:
+        yield _scan_chunk()
+        raise RuntimeError("disk-gone")
+
+    channel = MagicMock()
+    stub = MagicMock()
+    stub.FixSession.return_value = []
+    with (
+        patch(
+            "apme_engine.cli.check.yield_scan_chunks",
+            side_effect=_failing_chunks,
+        ),
+        patch("apme_engine.cli.check.resolve_engine", return_value=(channel, "addr")),
+        patch("apme_engine.cli.check.engine_pb2_grpc.EngineStub", return_value=stub),
+        pytest.raises(SystemExit) as exc,
+    ):
+        run_check(_check_args_ns(str(target)))
+    assert exc.value.code == EXIT_ERROR
+    channel.close.assert_called_once()
+
+
+def test_check_multi_target_plumbing_forwards_list(tmp_path: Path) -> None:
+    """Check executes multi-target list through chunking (finding #5).
+
+    Args:
+        tmp_path: Temporary directory fixture.
+    """
+    from apme_engine.cli.check import run_check
+
+    dir_a = tmp_path / "a"
+    dir_b = tmp_path / "b"
+    dir_a.mkdir()
+    dir_b.mkdir()
+    (dir_a / "x.yml").write_text("- hosts: all\n", encoding="utf-8")
+    (dir_b / "y.yml").write_text("- hosts: all\n", encoding="utf-8")
+    result = _mk_event("result")
+    result.result.remaining_violations = []
+    result.result.patches = []
+    closed = _mk_event("closed")
+    channel = MagicMock()
+    stub = MagicMock()
+    stub.FixSession.return_value = [result, closed]
+    with (
+        patch(
+            "apme_engine.cli.check.yield_scan_chunks",
+            return_value=iter([_scan_chunk()]),
+        ) as y,
+        patch("apme_engine.cli.check.resolve_engine", return_value=(channel, "addr")),
+        patch("apme_engine.cli.check.engine_pb2_grpc.EngineStub", return_value=stub),
+    ):
+        run_check(_check_args_ns([str(dir_a), str(dir_b)], show_suppressed=True))
+        assert y.call_count == 1
+        forwarded = y.call_args.args[0] if y.call_args.args else y.call_args.kwargs.get("target_path")
+        assert forwarded is not None
+        assert list(forwarded) == [str(dir_a), str(dir_b)]
+
+
+def test_remediate_multi_target_plumbing_confines_writes(tmp_path: Path) -> None:
+    """Remediate multi-target list reaches chunking and write confinement (finding #5).
+
+    Args:
+        tmp_path: Temporary directory fixture.
+    """
+    from apme_engine.cli.remediate import run_remediate
+
+    dir_a = tmp_path / "a"
+    dir_b = tmp_path / "b"
+    dir_a.mkdir()
+    dir_b.mkdir()
+    (dir_a / "x.yml").write_text("- hosts: all\n", encoding="utf-8")
+    (dir_b / "y.yml").write_text("- hosts: all\n", encoding="utf-8")
+    result = _mk_event("result")
+    result.result.remaining_violations = []
+    result.result.patches = []
+    channel = MagicMock()
+    stub = MagicMock()
+    stub.FixSession.return_value = [result, _mk_event("closed")]
+    with (
+        patch(
+            "apme_engine.cli.remediate.yield_scan_chunks",
+            return_value=iter([_scan_chunk()]),
+        ) as y,
+        patch("apme_engine.cli.remediate.resolve_engine", return_value=(channel, "addr")),
+        patch("apme_engine.cli.remediate.engine_pb2_grpc.EngineStub", return_value=stub),
+    ):
+        run_remediate(_rem_args([str(dir_a), str(dir_b)]))
+        assert y.call_count >= 1
+        forwarded = y.call_args.args[0] if y.call_args.args else None
+        assert forwarded is not None and list(forwarded) == [str(dir_a), str(dir_b)]
+
+
+def test_format_multi_target_plumbing_forwards_list(tmp_path: Path) -> None:
+    """Format multi-target list reaches chunking (finding #5).
+
+    Args:
+        tmp_path: Temporary directory fixture.
+    """
+    from apme_engine.cli.format_cmd import run_format
+
+    dir_a = tmp_path / "a"
+    dir_b = tmp_path / "b"
+    dir_a.mkdir()
+    dir_b.mkdir()
+    (dir_a / "x.yml").write_text("a: 1\n", encoding="utf-8")
+    (dir_b / "y.yml").write_text("a: 1\n", encoding="utf-8")
+    resp = MagicMock()
+    resp.logs = []
+    resp.diffs = []
+    channel = MagicMock()
+    with (
+        patch(
+            "apme_engine.cli.format_cmd.yield_scan_chunks",
+            return_value=iter([_scan_chunk()]),
+        ) as y,
+        patch("apme_engine.cli.format_cmd.resolve_engine", return_value=(channel, "addr")),
+        patch("apme_engine.cli.format_cmd.engine_pb2_grpc.EngineStub") as stub_cls,
+    ):
+        stub_cls.return_value.FormatStream.return_value = resp
+        run_format(_format_args_ns([str(dir_a), str(dir_b)]))
+        assert y.call_count == 1
+        forwarded = y.call_args.args[0] if y.call_args.args else None
+        assert forwarded is not None and list(forwarded) == [str(dir_a), str(dir_b)]
+
+
+def test_format_stream_not_found_exits_error(tmp_path: Path) -> None:
+    """FileNotFoundError from FormatStream exits EXIT_ERROR (finding #7).
+
+    Args:
+        tmp_path: Temporary directory fixture.
+    """
+    from apme_engine.cli.format_cmd import run_format
+
+    target = tmp_path / "site.yml"
+    target.write_text("a: 1\n", encoding="utf-8")
+    channel = MagicMock()
+    with (
+        patch(
+            "apme_engine.cli.format_cmd.yield_scan_chunks",
+            return_value=iter([_scan_chunk()]),
+        ),
+        patch("apme_engine.cli.format_cmd.resolve_engine", return_value=(channel, "addr")),
+        patch("apme_engine.cli.format_cmd.engine_pb2_grpc.EngineStub") as stub_cls,
+        pytest.raises(SystemExit) as exc,
+    ):
+        stub_cls.return_value.FormatStream.side_effect = FileNotFoundError("gone")
+        run_format(_format_args_ns(str(target)))
+    assert exc.value.code == EXIT_ERROR
+    channel.close.assert_called_once()
+
+
+def test_format_safe_write_oserror_returns_false(tmp_path: Path) -> None:
+    """_safe_write OSError on read/write returns False (finding #11).
+
+    Args:
+        tmp_path: Temporary directory fixture.
+    """
+    from apme_engine.cli.format_cmd import _safe_write
+
+    target = tmp_path / "site.yml"
+    target.write_bytes(b"orig")
+    with patch("pathlib.Path.read_bytes", side_effect=OSError("denied")):
+        assert _safe_write(target, b"orig", b"new") is False
+    with patch("pathlib.Path.write_bytes", side_effect=OSError("denied")):
+        assert _safe_write(target, b"orig", b"new") is False
+
+
+def test_format_apply_in_scope_stale_counts_and_exits(tmp_path: Path) -> None:
+    """In-scope stale file is skipped by _safe_write, counted, exits error (finding #11).
+
+    Args:
+        tmp_path: Temporary directory fixture.
+    """
+    from apme_engine.cli.format_cmd import run_format
+
+    target = tmp_path / "site.yml"
+    target.write_bytes(b"changed")
+    resp = engine_pb2.FormatResponse(
+        diffs=[
+            FileDiff(path="site.yml", original=b"orig", formatted=b"new", diff="d"),
+        ],
+        logs=[],
+    )
+    channel = MagicMock()
+    with (
+        patch(
+            "apme_engine.cli.format_cmd.yield_scan_chunks",
+            return_value=iter([_scan_chunk()]),
+        ),
+        patch("apme_engine.cli.format_cmd.resolve_engine", return_value=(channel, "addr")),
+        patch("apme_engine.cli.format_cmd.engine_pb2_grpc.EngineStub") as stub_cls,
+        pytest.raises(SystemExit) as exc,
+    ):
+        stub_cls.return_value.FormatStream.return_value = resp
+        run_format(_format_args_ns(str(tmp_path), apply=True))
+    assert exc.value.code == EXIT_ERROR
+    assert target.read_bytes() == b"changed"

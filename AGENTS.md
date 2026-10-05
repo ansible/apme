@@ -120,7 +120,7 @@ one needs to change, write an ADR first.
     and pod commands go through `tox -e <env>`. **Never invoke `pytest`, `ruff`,
     `mypy`, `prek`, or shell scripts directly.** Pass extra arguments after
     `--` (e.g. `tox -e unit -- -k test_sbom`). In CI, use
-    `uvx --with tox-uv tox -e <env>`. See `.agents/skills/tox/SKILL.md` for
+    `uvx --with-requirements ci/tox-requirements.txt tox -e <env>`. See `.agents/skills/tox/SKILL.md` for
     the full environment reference.
 
 16. **Helm for Kubernetes/OpenShift; Podman for local dev only** (ADR-004,

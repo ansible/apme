@@ -147,6 +147,7 @@ class AnsibleValidatorServicer(validate_pb2_grpc.ValidatorServicer):
                         hierarchy_payload = cast(YAMLDict, json.loads(request.hierarchy_payload))
                     except (json.JSONDecodeError, UnicodeDecodeError):
                         logger.warning("Ansible: failed to parse hierarchy_payload (req=%s)", req_id)
+                        return infra_error_response(req_id, sink.entries)
 
                 logger.info(
                     "Ansible: validate start (%d files, core=%s, req=%s)",

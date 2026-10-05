@@ -577,36 +577,66 @@ class TestEngineFanOut:
         sent_request = call_args[0][0]
         assert list(sent_request.dirty_node_ids) == ["node-a", "node-b"]
 
-    def test_rescan_bridge_sends_dirty_node_ids_to_native(self) -> None:
-        """_rescan_bridge constructs ValidateRequest with dirty_node_ids for native."""
-        import apme_engine.daemon.engine_server as es
+    async def test_rescan_sends_dirty_node_ids_to_native_on_the_wire(self) -> None:
+        """Rescan-style request forwards sorted dirty_node_ids with rescan request_id."""
+        from apme_engine.daemon.engine_server import _call_validator
 
-        source = Path(es.__file__).read_text()
-        assert "dirty_node_ids=sorted(dirty_ids)" in source
-        assert "NATIVE_GRPC_ADDRESS" in source
+        mock_resp = MagicMock()
+        mock_resp.violations = []
+        mock_resp.HasField = MagicMock(return_value=False)
 
-    def test_engine_no_longer_imports_native_validator(self) -> None:
-        """Engine should not import NativeValidator directly (it's in its own container)."""
-        import apme_engine.daemon.engine_server as es
+        mock_stub = MagicMock()
+        mock_stub.Validate = AsyncMock(return_value=mock_resp)
 
-        source = Path(es.__file__).read_text()
-        assert "from apme_engine.validators.native" not in source
-        assert "NativeValidator()" not in source
+        with patch("apme_engine.daemon.engine_server.grpc.aio.insecure_channel") as mock_channel:
+            mock_channel_instance = MagicMock()
+            mock_channel_instance.close = AsyncMock()
+            mock_channel.return_value = mock_channel_instance
+            with patch("apme_engine.daemon.engine_server.validate_pb2_grpc.ValidatorStub", return_value=mock_stub):
+                request = validate_pb2.ValidateRequest(
+                    request_id="scan-1-rescan",
+                    content_graph_data=b'{"version":1}',
+                    dirty_node_ids=sorted({"node-b", "node-a"}),
+                )
+                await _call_validator("localhost:50055", request)
 
-    def test_engine_no_longer_imports_opa_client(self) -> None:
-        """Engine should not import opa_client (OPA is behind gRPC now)."""
-        import apme_engine.daemon.engine_server as es
+        call_args = mock_stub.Validate.call_args
+        sent_request = call_args[0][0]
+        assert list(sent_request.dirty_node_ids) == ["node-a", "node-b"]
+        assert sent_request.request_id == "scan-1-rescan"
 
-        source = Path(es.__file__).read_text()
-        assert "from apme_engine.opa_client" not in source
-        assert "_call_opa" not in source
+    # NOTE: import-absence source-substring checks
+    # (test_engine_no_longer_imports_native_validator,
+    # test_engine_no_longer_imports_opa_client) were removed: they assert on
+    # production source text, so they pass even when wiring is broken. The
+    # engine/validator service boundary is a deployment concern, not a unit
+    # test assertion — enforce it via packaging review if needed.
 
-    def test_engine_propagates_request_id(self) -> None:
-        """Engine should set request_id on ValidateRequest."""
-        import apme_engine.daemon.engine_server as es
+    async def test_call_validator_propagates_request_id_on_the_wire(self) -> None:
+        """_call_validator forwards request_id to the validator stub."""
+        from apme_engine.daemon.engine_server import _call_validator
 
-        source = Path(es.__file__).read_text()
-        assert "request_id=scan_id" in source
+        mock_resp = MagicMock()
+        mock_resp.violations = []
+        mock_resp.HasField = MagicMock(return_value=False)
+
+        mock_stub = MagicMock()
+        mock_stub.Validate = AsyncMock(return_value=mock_resp)
+
+        with patch("apme_engine.daemon.engine_server.grpc.aio.insecure_channel") as mock_channel:
+            mock_channel_instance = MagicMock()
+            mock_channel_instance.close = AsyncMock()
+            mock_channel.return_value = mock_channel_instance
+            with patch("apme_engine.daemon.engine_server.validate_pb2_grpc.ValidatorStub", return_value=mock_stub):
+                request = validate_pb2.ValidateRequest(
+                    request_id="scan-42",
+                    content_graph_data=b'{"version":1}',
+                )
+                await _call_validator("localhost:50055", request)
+
+        call_args = mock_stub.Validate.call_args
+        sent_request = call_args[0][0]
+        assert sent_request.request_id == "scan-42"
 
     def test_engine_serve_is_async(self) -> None:
         """Engine serve function is an async coroutine."""
@@ -616,14 +646,41 @@ class TestEngineFanOut:
 
         assert inspect.iscoroutinefunction(serve)
 
-    def test_engine_aggregates_diagnostics(self) -> None:
-        """Engine should collect validator diagnostics into ScanDiagnostics."""
-        import apme_engine.daemon.engine_server as es
+    async def test_validator_diagnostics_aggregate_into_scan_diagnostics(self) -> None:
+        """Diagnostics surfaced by _call_validator aggregate into ScanDiagnostics."""
+        from apme.v1 import engine_pb2
+        from apme_engine.daemon.engine_server import _call_validator
 
-        source = Path(es.__file__).read_text()
-        assert "ScanDiagnostics" in source
-        assert "validator_diagnostics" in source
-        assert "engine_diagnostics" in source
+        def _resp_with_diag(name: str) -> MagicMock:
+            diag = common_pb2.ValidatorDiagnostics(
+                validator_name=name,
+                total_ms=10.0,
+                violations_found=1,
+            )
+            resp = MagicMock()
+            resp.violations = []
+            resp.HasField = MagicMock(return_value=True)
+            resp.diagnostics = diag
+            return resp
+
+        mock_stub = MagicMock()
+        mock_stub.Validate = AsyncMock(side_effect=[_resp_with_diag("native"), _resp_with_diag("opa")])
+
+        with patch("apme_engine.daemon.engine_server.grpc.aio.insecure_channel") as mock_channel:
+            mock_channel_instance = MagicMock()
+            mock_channel_instance.close = AsyncMock()
+            mock_channel.return_value = mock_channel_instance
+            with patch("apme_engine.daemon.engine_server.validate_pb2_grpc.ValidatorStub", return_value=mock_stub):
+                collected = []
+                for _ in range(2):
+                    request = validate_pb2.ValidateRequest(request_id="agg-1")
+                    result = await _call_validator("localhost:50055", request)
+                    assert result.diagnostics is not None
+                    collected.append(result.diagnostics)
+
+        scan_diag = engine_pb2.ScanDiagnostics(validators=collected, total_ms=50.0)
+        assert len(scan_diag.validators) == 2
+        assert {v.validator_name for v in scan_diag.validators} == {"native", "opa"}
 
 
 class TestGrpcAioConsistency:

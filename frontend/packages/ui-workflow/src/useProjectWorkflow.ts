@@ -159,11 +159,11 @@ export function useProjectWorkflow(
 
   const approveWithState = useCallback(
     async (approvedIds: string[]) => {
-      const result = await approve(approvedIds);
+      const result = await approve(approvedIds, opState?.approval_gate_id);
       applyLocalApprovalAck();
       return result;
     },
-    [approve, applyLocalApprovalAck],
+    [approve, applyLocalApprovalAck, opState?.approval_gate_id],
   );
 
   const invalidatePendingCancel = useCallback(() => {

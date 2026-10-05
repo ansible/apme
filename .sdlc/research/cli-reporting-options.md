@@ -82,6 +82,7 @@ console.print(table)
 from textual.app import App
 from textual.widgets import DataTable, Header, Footer
 
+
 class ScanResultsApp(App):
     def compose(self):
         yield Header()

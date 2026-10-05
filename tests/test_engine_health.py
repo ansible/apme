@@ -84,7 +84,7 @@ async def test_health_ok_when_required_validators_healthy(
             "apme_engine.daemon.engine_server.validate_pb2_grpc.ValidatorStub",
             return_value=_Stub(),
         ),
-        patch("apme_engine.daemon.engine_server.httpx.AsyncClient", return_value=mock_client),
+        patch("apme_engine.daemon.engine_health.httpx.AsyncClient", return_value=mock_client),
     ):
         servicer = EngineServicer()
         resp = await servicer.Health(common_pb2.HealthRequest(), MagicMock())
@@ -141,7 +141,7 @@ async def test_health_unhealthy_when_galaxy_proxy_status_not_ok(
             "apme_engine.daemon.engine_server.validate_pb2_grpc.ValidatorStub",
             return_value=_Stub(),
         ),
-        patch("apme_engine.daemon.engine_server.httpx.AsyncClient", return_value=mock_client),
+        patch("apme_engine.daemon.engine_health.httpx.AsyncClient", return_value=mock_client),
     ):
         servicer = EngineServicer()
         resp = await servicer.Health(common_pb2.HealthRequest(), MagicMock())

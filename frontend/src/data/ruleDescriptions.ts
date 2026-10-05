@@ -1,22 +1,22 @@
-import { apmeApiUrl, getApmeApiAdapter } from "../api/apmeApiAdapter";
+import { apmeApiUrl, bareRuleId, getApmeApiAdapter } from "../api/apmeApiAdapter";
+
+export { bareRuleId };
 
 /** Live descriptions populated from the Gateway /rules API. */
 const _descriptions: Record<string, string> = {};
 
 /**
- * Strip validator prefix (e.g. "native:L042" → "L042") for description lookup.
- */
-export function bareRuleId(ruleId: string): string {
-  const idx = ruleId.indexOf(":");
-  if (idx > 0 && idx < ruleId.length - 1) return ruleId.slice(idx + 1);
-  return ruleId;
-}
-
-/**
- * Look up a rule description, handling prefixed IDs like "native:L042".
+ * Look up a rule description, handling legacy ``native:`` prefixed IDs only.
+ *
+ * Backend normalization strips only the ``native:`` prefix; broader
+ * ``bareRuleId`` stripping would map unrelated IDs (e.g. ``SEC:L001`` →
+ * ``L001``).
  */
 export function getRuleDescription(ruleId: string): string {
-  return _descriptions[ruleId] ?? _descriptions[bareRuleId(ruleId)] ?? "";
+  const bareNative = ruleId.startsWith("native:")
+    ? ruleId.slice("native:".length)
+    : ruleId;
+  return _descriptions[ruleId] ?? _descriptions[bareNative] ?? "";
 }
 
 let _fetchStarted = false;

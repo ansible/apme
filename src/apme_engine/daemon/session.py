@@ -14,6 +14,7 @@ import os
 import shutil
 import time
 import uuid
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -27,15 +28,100 @@ from apme.v1.engine_pb2 import (
     Proposal,
     ScanOptions,
 )
-from apme_engine.daemon.deadline import _parse_int_env, operation_deadline_mono
+from apme_engine.config_env import get_env_float, get_env_int
+from apme_engine.daemon.deadline import operation_deadline_mono
 from apme_engine.engine.models import ViolationDict
 
 logger = logging.getLogger(__name__)
 
 _DEFAULT_TTL = int(os.environ.get("APME_SESSION_TTL", "1800"))  # 30 min
-_MAX_LIFETIME = _parse_int_env("APME_SESSION_MAX_LIFETIME", 7200)  # 2 hr
+_MAX_LIFETIME = get_env_int("APME_SESSION_MAX_LIFETIME", 7200)  # 2 hr
 _MAX_SESSIONS = int(os.environ.get("APME_SESSION_MAX", "10"))
 _REAP_INTERVAL = 60  # seconds
+
+
+# Backward-compatibility alias: identical to the canonical parser, kept
+# because tests import this name (single canonical home: config_env).
+_parse_float_env = get_env_float
+
+
+# PE-20 admission hardening. FixSession is unauthenticated, so a single
+# client can starve scans by bursting session creation (each session can
+# trigger pip/galaxy builds). The concurrent-venv-build semaphore below caps
+# the expensive resource (pip/galaxy builds) and is active by default. The
+# minimum create interval is opt-in (default 0/disabled): session creation
+# itself is cheap, and legitimate bursts (gateway fan-out, tests) must not
+# fail spuriously. Neither mechanism is authentication. Real caller auth is
+# tracked in GitHub #664.
+_MIN_CREATE_INTERVAL_S = _parse_float_env("APME_SESSION_MIN_CREATE_INTERVAL_S", 0.0)
+# Floors use the shared config_env capability directly so the two modules
+# cannot drift (below-minimum values fall back to defaults with a warning).
+_MAX_CONCURRENT_VENV_BUILDS = get_env_int("APME_SESSION_MAX_CONCURRENT_VENV_BUILDS", 3, min_value=1)
+# Bound the semaphore wait so hung pip/galaxy builds cannot starve warm-hit
+# scans indefinitely (3 hung builds would otherwise stall all new scans
+# holding streams/sessions). The engine takes a semaphore-free warm-hit peek
+# first (VenvSessionManager.peek_warm) and only cold/incremental builds wait
+# for a slot, so the bound only applies to scans that actually build.
+_VENV_BUILD_WAIT_S = get_env_float("APME_SESSION_VENV_BUILD_WAIT_S", 600.0, positive_only=True)
+
+_venv_build_semaphore: asyncio.Semaphore | None = None
+
+
+def get_venv_build_semaphore() -> asyncio.Semaphore:
+    """Return the process-wide cap on concurrent venv builds (PE-20).
+
+    The venv build itself lives outside this module (``VenvSessionManager``);
+    the engine's venv-acquire path should guard its build/install work with
+    this semaphore (or :func:`limit_venv_builds`).
+
+    Returns:
+        Shared ``asyncio.Semaphore`` sized by
+        ``APME_SESSION_MAX_CONCURRENT_VENV_BUILDS`` (default 3).
+    """
+    global _venv_build_semaphore
+    if _venv_build_semaphore is None:
+        _venv_build_semaphore = asyncio.Semaphore(_MAX_CONCURRENT_VENV_BUILDS)
+    return _venv_build_semaphore
+
+
+@contextlib.asynccontextmanager
+async def limit_venv_builds() -> AsyncIterator[Callable[[asyncio.Future[object]], None]]:
+    """Cap concurrent venv (pip/galaxy) builds across sessions (PE-20).
+
+    The wait is bounded by ``APME_SESSION_VENV_BUILD_WAIT_S`` (default 600s)
+    so hung builds fail fast instead of starving warm-hit scans forever.
+
+    Yields:
+        Callable[[asyncio.Future[object]], None]: Transfers slot release to an
+        executor future's completion. Call with the future from
+        ``run_in_executor`` before awaiting so cancellation of the awaiting
+        coroutine does not release the slot while the worker thread is still
+        running. When omitted, the slot releases when the context exits.
+
+    Raises:
+        ResourceExhaustedError: If no build slot frees within the wait bound
+            (surfaced as gRPC RESOURCE_EXHAUSTED so clients back off).
+    """
+    sem = get_venv_build_semaphore()
+    try:
+        await asyncio.wait_for(sem.acquire(), timeout=_VENV_BUILD_WAIT_S)
+    except TimeoutError as exc:
+        raise ResourceExhaustedError(
+            f"No venv build slot freed within {_VENV_BUILD_WAIT_S:.0f}s "
+            f"({_MAX_CONCURRENT_VENV_BUILDS} slots); try again shortly"
+        ) from exc
+    transferred = False
+
+    def _release_on(fut: asyncio.Future[object]) -> None:
+        nonlocal transferred
+        transferred = True
+        fut.add_done_callback(lambda _f: sem.release())
+
+    try:
+        yield _release_on
+    finally:
+        if not transferred:
+            sem.release()
 
 
 @dataclass
@@ -107,6 +193,21 @@ class SessionState:
             AI assessment mutates the graph. Restored when the user declines
             AI proposals so unapproved AI / post-AI Tier 1 never leak into
             commit/PR payloads.
+        upload_sealed: True once the terminal upload chunk has been
+            processed; duplicate ``chunk.last`` retries replay state instead
+            of re-running remediation. Dies with the session (close,
+            disconnect, reaper) so no cross-session seal set can leak.
+        upload_sealed_hash: SHA-256 over the sealed payload (sorted
+            normalized path + content pairs). A retried terminal chunk
+            replays state only when its payload hash matches; differing
+            bytes abort so a corrected payload can never be silently
+            dropped in favor of stale state.
+        upload_sealed_chunk_hash: SHA-256 over the terminal chunk payload
+            alone (same normalize+dedup as append). Retried terminal
+            chunks are compared against this, not the full-payload hash:
+            the full payload covers all accumulated files while a single
+            chunk covers only its own files, so comparing a retried chunk
+            to the full hash can never match for multi-chunk uploads.
         operation_budget_s: Adaptive wall-clock budget for current compute
             phase (ADR-068); 0 when unset.
         operation_started_at: ``time.monotonic()`` when budget tracking began.
@@ -182,6 +283,16 @@ class SessionState:
     graph_engine: object | None = None
     # working_files before Gate 2 AI assessment (restore on decline-all).
     pre_gate2_files: dict[str, bytes] = field(default_factory=dict)
+
+    # Terminal upload chunk already processed (PE-34). Set before the first
+    # ``chunk.last`` runs so transport retries replay current state instead
+    # of double-executing remediation. Lives on the session so it dies with
+    # it (close/disconnect/reaper) — no servicer-side set to leak.
+    upload_sealed: bool = False
+    # Payload hash captured at seal time (see ``upload_sealed_hash`` docs).
+    upload_sealed_hash: str = ""
+    # Terminal-chunk hash captured at seal time for retry comparison.
+    upload_sealed_chunk_hash: str = ""
 
     # ADR-068: adaptive operation deadline (decoupled from idle TTL).
     operation_budget_s: int = 0
@@ -272,12 +383,46 @@ class SessionState:
         )
         return max(0, int(deadline - time.monotonic()))
 
+    def reset_partial_run_state(self) -> None:
+        """Drop partial-run mutations so a retried terminal chunk starts clean.
+
+        Called when processing fails after seal: restores uploaded bytes and
+        clears per-run artifacts without removing the session from the store.
+        """
+        self.working_files = dict(self.original_files)
+        self.format_diffs = []
+        self.tier1_patches = []
+        self.proposals.clear()
+        self.review_declined_proposals.clear()
+        self.progress_logs = []
+        self.report = None
+        self.ai_proposals = []
+        self.tier1_proposals = []
+        self.remaining_ai = []
+        self.remaining_manual = []
+        self.dep_health_violations = []
+        self.awaiting_tier1_gate = False
+        self.awaiting_assess = False
+        self.awaiting_ai_triage = False
+        self.content_graph = None
+        self.graph_engine = None
+        self.status = 2  # PROCESSING
+        self._cleanup_temp_dir()
+
     def cleanup(self) -> None:
         """Remove temp directory and session-scoped Galaxy config if present."""
+        self._cleanup_galaxy_cfg()
+        self._cleanup_temp_dir()
+
+    def _cleanup_galaxy_cfg(self) -> None:
+        """Remove session-scoped Galaxy config directory if present."""
         if self.galaxy_cfg_path and self.galaxy_cfg_path.parent.is_dir():
             with contextlib.suppress(OSError):
                 shutil.rmtree(self.galaxy_cfg_path.parent)
             self.galaxy_cfg_path = None
+
+    def _cleanup_temp_dir(self) -> None:
+        """Remove materialized working directory if present."""
         if self.temp_dir and self.temp_dir.is_dir():
             with contextlib.suppress(OSError):
                 shutil.rmtree(self.temp_dir)
@@ -291,6 +436,7 @@ class SessionStore:
         """Initialize empty session store."""
         self._sessions: dict[str, SessionState] = {}
         self._reaper_task: asyncio.Task[None] | None = None
+        self._last_create_mono: float = 0.0
 
     @property
     def count(self) -> int:
@@ -300,22 +446,38 @@ class SessionStore:
     def create(self) -> SessionState:
         """Create a new session, raising ResourceExhaustedError if at limit.
 
+        Enforces the session cap first, then the optional minimum creation
+        interval (``APME_SESSION_MIN_CREATE_INTERVAL_S``, default 0/disabled)
+        so operators can opt into burst protection for unauthenticated
+        clients (PE-20; real caller auth is GitHub #664).
+
         Returns:
             New SessionState.
 
         Raises:
-            ResourceExhaustedError: If at max concurrent sessions.
+            ResourceExhaustedError: If at max concurrent sessions, or if
+                called sooner than the minimum interval after the previous
+                successful creation.
         """
+        # NOTE: the cap check + interval check + insert below contain no
+        # awaits, so they are atomic on the single event-loop thread that
+        # runs FixSession handlers — concurrent streams interleave only at
+        # await points, never inside create().
         if len(self._sessions) >= _MAX_SESSIONS:
             msg = (
                 f"Maximum concurrent sessions ({_MAX_SESSIONS}) reached. "
                 "Close an existing session or wait for expiration."
             )
             raise ResourceExhaustedError(msg)
+        now_mono = time.monotonic()
+        if self._last_create_mono and (now_mono - self._last_create_mono) < _MIN_CREATE_INTERVAL_S:
+            msg = f"Session creation rate limited: at most one session per {_MIN_CREATE_INTERVAL_S}s. Retry shortly."
+            raise ResourceExhaustedError(msg)
         session_id = uuid.uuid4().hex[:12]
         state = SessionState(session_id=session_id)
         state.init_lifetime_deadline()
         self._sessions[session_id] = state
+        self._last_create_mono = now_mono
         logger.info("Session %s created (active: %d)", session_id, len(self._sessions))
         return state
 
