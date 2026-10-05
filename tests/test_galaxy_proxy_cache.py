@@ -74,6 +74,31 @@ class TestProxyCacheWheelAccess:
         cache.put_wheel("demo-1.0.0-py3-none-any.whl", data)
         assert cache.get_wheel("demo-1.0.0-py3-none-any.whl") == data
 
+    def test_clear_preserves_cache_root_and_clears_subdirs(self, tmp_path: Path) -> None:
+        """clear() wipes wheels/metadata only and leaves the cache root intact.
+
+        The cache root is often a volume mount at ``/cache``; removing it
+        fails with ``PermissionError`` on Podman/K8s.
+
+        Args:
+            tmp_path: Pytest-provided temporary directory.
+        """
+        root = tmp_path / "cache"
+        cache = ProxyCache(cache_dir=root)
+        cache.put_wheel("demo-1.0.0-py3-none-any.whl", b"wheel")
+        cache.put_metadata("ansible", "posix", ["1.0.0"])
+        marker = root / ".volume-mount"
+        marker.write_text("preserved", encoding="utf-8")
+
+        cache.clear()
+
+        assert root.is_dir()
+        assert marker.read_text(encoding="utf-8") == "preserved"
+        assert cache.wheels_dir.is_dir()
+        assert cache.metadata_dir.is_dir()
+        assert cache.get_wheel("demo-1.0.0-py3-none-any.whl") is None
+        assert cache.get_metadata("ansible", "posix") is None
+
     def test_get_wheel_rejects_traversal(self, tmp_path: Path) -> None:
         """get_wheel rejects traversal attempts before reading the filesystem.
 

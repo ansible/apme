@@ -176,10 +176,16 @@ class ProxyCache:
         path.write_text(json.dumps(data, indent=2))
 
     def clear(self) -> None:
-        """Remove all cached files."""
+        """Remove all cached wheels and metadata.
+
+        Only subdirectories are removed so the cache root (often a volume
+        mount at ``/cache``) is preserved — ``rmtree`` on the mount point
+        itself fails with ``PermissionError`` on Podman/K8s volumes.
+        """
         import shutil
 
-        if self.root.exists():
-            shutil.rmtree(self.root)
+        for subdir in (self.wheels_dir, self.metadata_dir):
+            if subdir.exists():
+                shutil.rmtree(subdir)
         self.wheels_dir.mkdir(parents=True, exist_ok=True)
         self.metadata_dir.mkdir(parents=True, exist_ok=True)
