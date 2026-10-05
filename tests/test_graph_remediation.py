@@ -17,6 +17,7 @@ from apme_engine.graph.content_graph import (
     NodeScope,
     NodeType,
 )
+from apme_engine.graph.relpath import norm_relpath
 from apme_engine.graph.rule_base import (
     GraphRule,
     GraphRuleResult,
@@ -61,6 +62,13 @@ _TASK_YAML_COPY = """\
     src: a.txt
     dest: /tmp/a.txt
 """
+
+
+def test_norm_relpath_strips_dot_slash_and_backslashes() -> None:
+    """Binder and remediation must agree on ``./`` and Windows slashes."""
+    assert norm_relpath("./playbooks/site.yml") == "playbooks/site.yml"
+    assert norm_relpath(r"playbooks\site.yml") == "playbooks/site.yml"
+    assert norm_relpath("") == ""
 
 
 def _make_node(
@@ -1185,7 +1193,7 @@ class TestGraphRemediationEngine:
         )
         _resolve_dirty_violations(
             graph,
-            [{"rule_id": rule_id, "path": "", "file": node_b.file_path}],
+            [{"rule_id": rule_id, "path": "", "file": f"./{node_b.file_path}"}],
             frozenset({node_a.node_id, node_b.node_id}),
             fixed_by="deterministic",
             pass_number=1,

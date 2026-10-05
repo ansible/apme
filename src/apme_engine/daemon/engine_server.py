@@ -105,6 +105,7 @@ from apme_engine.daemon.session import (
 from apme_engine.daemon.violation_convert import violation_dict_to_proto, violation_proto_to_dict
 from apme_engine.engine.models import RemediationClass, ViolationDict
 from apme_engine.graph.content_graph import ContentGraph, NodeType
+from apme_engine.graph.relpath import norm_relpath
 from apme_engine.graph.scanner import filter_noqa_violations, graph_rule_opt_in_from_rule_configs
 from apme_engine.log_bridge import attach_collector
 from apme_engine.remediation.graph_engine import FilePatch as SplicedFilePatch
@@ -555,6 +556,53 @@ def _plugin_hierarchy_payload(graph: ContentGraph, scan_id: str) -> bytes:
     return json.dumps(payload, default=str).encode()
 
 
+def _build_plugin_rescan_request(
+    session: SessionState,
+    graph: ContentGraph,
+    scan_id: str,
+) -> ValidateRequest:
+    """Build Plugin.Validate rescan payload (blocking; call via executor).
+
+    Args:
+        session: FixSession with working files and collection specs.
+        graph: Current ContentGraph (may include pending Transform YAML).
+        scan_id: Parent scan identifier.
+
+    Returns:
+        Public-field ValidateRequest for every discovered plugin.
+    """
+    from apme_engine.remediation.graph_engine import splice_modifications
+
+    merged = dict(session.working_files)
+    originals: dict[str, str] = {}
+    for path, content in merged.items():
+        originals[path] = content.decode("utf-8", errors="replace")
+    for node in graph.nodes():
+        if not node.file_path:
+            continue
+        rel = _working_files_key(session.temp_dir, node.file_path)
+        src = merged.get(rel, merged.get(node.file_path))
+        if src is not None and node.file_path not in originals:
+            originals[node.file_path] = src.decode("utf-8", errors="replace")
+    for patch in splice_modifications(graph, originals, include_pending=True):
+        rel = _working_files_key(session.temp_dir, patch.path)
+        data = patch.patched.encode("utf-8")
+        if rel in merged:
+            merged[rel] = data
+        elif patch.path in merged:
+            merged[patch.path] = data
+    rescan_files = [File(path=p, content=c) for p, c in merged.items()]
+    return _plugin_validate_request(
+        ValidateRequest(
+            request_id=f"{scan_id}-rescan",
+            files=rescan_files,
+            hierarchy_payload=_plugin_hierarchy_payload(graph, f"{scan_id}-rescan"),
+            ansible_core_version=session.ansible_core_version,
+            collection_specs=_plugin_collection_specs(session),
+        )
+    )
+
+
 def _plugin_collection_specs(session: SessionState) -> list[str]:
     """Collection specs for Plugin.Validate / Transform (venv, then request).
 
@@ -782,24 +830,9 @@ def _same_scan_path(node_path: str, finding_path: str) -> bool:
     """
     if not node_path or not finding_path:
         return False
-    left = _norm_relpath(node_path)
-    right = _norm_relpath(finding_path)
+    left = norm_relpath(node_path)
+    right = norm_relpath(finding_path)
     return bool(left) and left == right
-
-
-def _norm_relpath(path: str) -> str:
-    """Normalize slashes and a single ``./`` prefix without stripping dots.
-
-    Args:
-        path: Project-relative or plugin finding path.
-
-    Returns:
-        Normalized relative path.
-    """
-    text = path.replace("\\", "/")
-    while text.startswith("./"):
-        text = text[2:]
-    return text
 
 
 async def _call_plugin_validate_result(
@@ -3042,35 +3075,12 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
 
             plugins = await self._ensure_plugins()
             if plugins:
-                from apme_engine.remediation.graph_engine import splice_modifications
-
-                merged = dict(session.working_files)
-                originals: dict[str, str] = {}
-                for path, content in merged.items():
-                    originals[path] = content.decode("utf-8", errors="replace")
-                for node in g.nodes():
-                    if not node.file_path:
-                        continue
-                    rel = _working_files_key(session.temp_dir, node.file_path)
-                    src = merged.get(rel, merged.get(node.file_path))
-                    if src is not None and node.file_path not in originals:
-                        originals[node.file_path] = src.decode("utf-8", errors="replace")
-                for patch in splice_modifications(g, originals, include_pending=True):
-                    rel = _working_files_key(session.temp_dir, patch.path)
-                    data = patch.patched.encode("utf-8")
-                    if rel in merged:
-                        merged[rel] = data
-                    elif patch.path in merged:
-                        merged[patch.path] = data
-                rescan_files = [File(path=p, content=c) for p, c in merged.items()]
-                plugin_req = _plugin_validate_request(
-                    ValidateRequest(
-                        request_id=f"{scan_id}-rescan",
-                        files=rescan_files,
-                        hierarchy_payload=_plugin_hierarchy_payload(g, f"{scan_id}-rescan"),
-                        ansible_core_version=session.ansible_core_version,
-                        collection_specs=_plugin_collection_specs(session),
-                    )
+                plugin_req = await asyncio.get_running_loop().run_in_executor(
+                    None,
+                    _build_plugin_rescan_request,
+                    session,
+                    g,
+                    scan_id,
                 )
                 for plugin in plugins:
                     ext_coros.append(_call_plugin_validate_result(plugin, plugin_req))
@@ -3116,6 +3126,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
 
         plugins_for_fix = await self._ensure_plugins()
         plugin_ids = transform_rule_ids(plugins_for_fix)
+        plugin_hierarchy: list[bytes] = []
 
         async def _plugin_transform_fn(
             violation: ViolationDict,
@@ -3125,18 +3136,22 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             plugin = plugin_for_rule(plugins_for_fix, str(violation.get("rule_id", "")))
             if plugin is None:
                 return None
+            loop = asyncio.get_running_loop()
+            if not plugin_hierarchy:
+                plugin_hierarchy.append(await loop.run_in_executor(None, _plugin_hierarchy_payload, graph, scan_id))
             applied, new_yaml, err = await call_plugin_transform(
                 plugin.address,
                 request_id=scan_id,
                 file_path=file_path,
                 yaml_content=yaml_lines,
                 violation=violation,
-                hierarchy_payload=_plugin_hierarchy_payload(graph, scan_id),
+                hierarchy_payload=plugin_hierarchy[0],
             )
             if err == PLUGIN_TRANSFORM_TRANSPORT:
                 raise RuntimeError(err)
             if not applied or new_yaml is None:
                 return None
+            plugin_hierarchy.clear()
             return new_yaml
 
         graph_engine = GraphRemediationEngine(

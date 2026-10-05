@@ -374,6 +374,9 @@ silent ``OSError``/I/O suppress on paths later re-read by the pipeline
 that will be persisted or re-parsed (treat invalid encoding as
 failure), writes that skip the same path-safety checks as
 sibling helpers (``resolve`` + ``is_relative_to`` / reject ``..``),
+path equality across modules that must share one normalizer
+(backslashes, leading ``./`` — do not compare raw plugin ``file``
+to ``node.file_path``),
 helpers that write a tree then pass *relative* ``target_files`` to a
 scanner whose ``directory=`` is not CWD (paths resolve from CWD —
 pass absolute paths under the tree root), fail-closed filters that

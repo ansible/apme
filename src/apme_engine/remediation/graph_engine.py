@@ -27,6 +27,7 @@ import yaml
 
 from apme_engine.engine.models import ViolationDict
 from apme_engine.graph.content_graph import ContentGraph
+from apme_engine.graph.relpath import norm_relpath
 from apme_engine.graph.rule_base import GraphRule
 from apme_engine.graph.scanner import (
     expand_dirty_node_ids,
@@ -1181,7 +1182,7 @@ def _resolve_dirty_violations(
         if node_id:
             remaining_by_node[node_id].add(rule_id)
         elif rule_id.startswith("EXT-"):
-            unbound_ext[rule_id].add(str(v.get("file") or ""))
+            unbound_ext[rule_id].add(norm_relpath(str(v.get("file") or "")))
 
     for nid in dirty_ids:
         remaining = remaining_by_node.get(nid, set())
@@ -1196,7 +1197,8 @@ def _resolve_dirty_violations(
                 remaining = remaining | {
                     rid
                     for rid in open_ext
-                    if rid in unbound_ext and ("" in unbound_ext[rid] or node.file_path in unbound_ext[rid])
+                    if rid in unbound_ext
+                    and ("" in unbound_ext[rid] or norm_relpath(node.file_path) in unbound_ext[rid])
                 }
             if incomplete_prefixes:
                 remaining = remaining | {
