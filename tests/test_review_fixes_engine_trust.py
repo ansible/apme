@@ -1311,7 +1311,7 @@ class TestDiagnosticsAggregation:
             ),
         )
         mgr = MagicMock()
-        mgr.get.return_value = None
+        mgr.peek_warm.return_value = None
         mgr.acquire.return_value = SimpleNamespace(venv_root=tmp_path, failed_collections=[], installed_collections=[])
 
         servicer = EngineServicer()

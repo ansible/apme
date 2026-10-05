@@ -275,7 +275,7 @@ class TestGalaxyServerUrlValidation:
                 headers=headers,
             )
         assert resp.status_code == 422
-        assert client.app.state.galaxy_servers == []
+        assert client.app.state.galaxy_servers is None
 
     @pytest.mark.parametrize(
         "url",

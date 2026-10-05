@@ -970,8 +970,8 @@ class VenvSessionManager:
         """Persist warm-hit touch-ups and return the reused session.
 
         Refreshes ``last_used_at`` (TTL), converges the requirements hash,
-        and prunes failure records for specs no longer requested. Caller
-        must hold the session lock.
+        and clears stale collection failure records. Caller must hold the
+        session lock.
 
         Args:
             meta_path: Path to the version's ``meta.json``.
@@ -984,11 +984,10 @@ class VenvSessionManager:
         Returns:
             The reused session record.
         """
-        requested = set(specs)
         existing.last_used_at = time.time()
         existing.requirements_hash = desired_hash
-        # Prune failure records for specs no longer requested.
-        existing.failed_collections = sorted(f for f in existing.failed_collections if f in requested)
+        # All requested collections are installed on warm hit — clear stale failures.
+        existing.failed_collections = []
         self._write_version_meta(meta_path, existing)
         dur = (time.monotonic() - t0) * 1000
         logger.info(

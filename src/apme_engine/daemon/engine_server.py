@@ -683,6 +683,28 @@ class RequiredValidatorDependencyError(RuntimeError):
     """Required validator missing, unreachable, or returned an RPC error."""
 
 
+class CollectionDependencyError(RuntimeError):
+    """Required collection(s) could not be resolved or downloaded.
+
+    Raised when the venv session reports failed collections, causing the
+    scan to abort rather than continue with incomplete dependencies.
+    """
+
+    def __init__(self, failed_collections: list[str]) -> None:
+        """Initialize with the list of collections that failed to install.
+
+        Args:
+            failed_collections: Collection specs that could not be installed.
+        """
+        self.failed_collections = failed_collections
+        failed_list = ", ".join(failed_collections)
+        super().__init__(
+            f"Scan aborted: {len(failed_collections)} required collection(s) "
+            f"could not be resolved or downloaded from configured Galaxy "
+            f"servers: {failed_list}"
+        )
+
+
 def _scan_rule_audit_inputs(scan_opts: ScanOptions | None) -> tuple[list[object], bool]:
     """Extract the ADR-041 rule-catalog audit inputs from scan options.
 
@@ -989,6 +1011,8 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                 request-scoped control over optional validators (ADR-051).
 
         Raises:
+            CollectionDependencyError: If one or more required collections
+                could not be installed into the session venv.
             RequiredValidatorDependencyError: If a required validator
                 (native, opa, ansible) is not configured or its RPC fails.
             ValueError: If ``rule_configs_complete`` is ``True`` and either
@@ -1091,13 +1115,13 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                 venv_session = await asyncio.shield(acquire_future)
         venv_path = str(venv_session.venv_root)
         if venv_session.failed_collections:
-            logger.warning(
-                "Venv: %d collection(s) failed to install (session=%s, req=%s): %s — scan will continue without them",
-                len(venv_session.failed_collections),
+            logger.error(
+                "collection_dependency_failed session=%s req=%s failed_collections=%s outcome=scan_aborted",
                 sid,
                 scan_id,
                 ", ".join(venv_session.failed_collections),
             )
+            raise CollectionDependencyError(venv_session.failed_collections)
         logger.info(
             "Venv: ready (%d collections installed, session=%s, req=%s)",
             len(venv_session.installed_collections),
@@ -1519,6 +1543,11 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                 paths, over-cap streams, post-seal protocol violations);
                 sealed sessions survive for approve/resume.
             Exception: Propagates unexpected errors after logging.
+
+        Note:
+            ``CollectionDependencyError`` is caught and mapped to gRPC
+            ``FAILED_PRECONDITION`` so clients receive an actionable status
+            instead of ``UNKNOWN``.
         """
         store = self._get_session_store()
         session: SessionState | None = None
@@ -1691,6 +1720,8 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         except ResourceExhaustedError as e:
             _drop_unsealed_created()
             await context.abort(grpc.StatusCode.RESOURCE_EXHAUSTED, str(e))
+        except CollectionDependencyError as e:
+            await context.abort(grpc.StatusCode.FAILED_PRECONDITION, str(e))
         except RequiredValidatorDependencyError as e:
             _drop_unsealed_created()
             await context.abort(grpc.StatusCode.UNAVAILABLE, str(e))
