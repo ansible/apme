@@ -14,6 +14,7 @@ from apme_gateway.api.operation_router import operation_events
 from apme_gateway.app import create_app
 from apme_gateway.operation_registry import get_operation_registry
 from apme_gateway.operation_types import (
+    ApprovalGate,
     OperationState,
     OperationStatus,
     ProgressEntry,
@@ -51,11 +52,12 @@ def _operation_url(project_id: str, suffix: str) -> str:
     return f"/api/v1/projects/{project_id}/operation{suffix}"
 
 
-def _setup_awaiting_approval(
+async def _setup_awaiting_approval(
     *,
     project_id: str = "proj-lifecycle-approve",
     scan_id: str = "scan-lifecycle-approve",
     operation_id: str = "op-lifecycle-approve",
+    prompt_generation: int | None = None,
 ) -> OperationState:
     """Register an operation waiting on proposal approval with two offers.
 
@@ -63,6 +65,7 @@ def _setup_awaiting_approval(
         project_id: Owning project UUID.
         scan_id: Engine scan identifier.
         operation_id: Unique operation identifier.
+        prompt_generation: Driver prompt generation for the approval gate.
 
     Returns:
         The registered operation state in ``AWAITING_APPROVAL``.
@@ -74,12 +77,13 @@ def _setup_awaiting_approval(
         scan_id=scan_id,
         scan_type="remediate",
     )
-    registry.set_proposals(
+    await registry.set_proposals(
         operation_id,
         [
             Proposal(id="t1-aaa", rule_id="L001", file="a.yml"),
             Proposal(id="t1-bbb", rule_id="L002", file="b.yml"),
         ],
+        prompt_generation=prompt_generation,
     )
     assert state.status == OperationStatus.AWAITING_APPROVAL
     return state
@@ -92,16 +96,153 @@ async def test_approve_ignores_unknown_ids(client: AsyncClient) -> None:
         client: Async HTTPX test client.
     """
     project_id = "proj-lifecycle-approve"
-    state = _setup_awaiting_approval(project_id=project_id)
+    state = await _setup_awaiting_approval(project_id=project_id)
+    gate = state.approval_gate
+    assert gate is not None
     resp = await client.post(
         _operation_url(project_id, "/approve"),
-        json={"approved_ids": ["t1-aaa", "zzz-unknown"]},
+        json={"approved_ids": ["t1-aaa", "zzz-unknown"], "approval_gate_id": gate.gate_id},
     )
     assert resp.status_code == 200
     assert resp.json() == {"status": "approved"}
-    assert state.approval_future is not None
-    assert state.approval_future.done()
-    assert state.approval_future.result() == ["t1-aaa"]
+    assert state.approval_gate is not None
+    assert state.approval_gate.future.done()
+    assert state.approval_gate.future.result() == ["t1-aaa"]
+
+
+async def test_approve_requires_matching_gate_id(client: AsyncClient) -> None:
+    """REST approve rejects stale approval_gate_id but accepts omitted gate id (ADR-060).
+
+    Args:
+        client: Async HTTPX test client.
+    """
+    project_id = "proj-lifecycle-gate-id"
+    state = await _setup_awaiting_approval(
+        project_id=project_id,
+        scan_id="scan-gate-id",
+        operation_id="op-gate-id",
+    )
+    gate = state.approval_gate
+    assert gate is not None
+
+    omitted = await client.post(
+        _operation_url(project_id, "/approve"),
+        json={"approved_ids": ["t1-aaa"]},
+    )
+    assert omitted.status_code == 200
+
+    state2 = await _setup_awaiting_approval(
+        project_id="proj-lifecycle-gate-id-2",
+        scan_id="scan-gate-id-2",
+        operation_id="op-gate-id-2",
+    )
+    gate2 = state2.approval_gate
+    assert gate2 is not None
+
+    stale = await client.post(
+        _operation_url("proj-lifecycle-gate-id-2", "/approve"),
+        json={"approved_ids": ["t1-aaa"], "approval_gate_id": gate.gate_id},
+    )
+    assert stale.status_code == 409
+    assert not gate2.future.done()
+
+
+async def test_approve_rejects_second_submit_after_first_succeeds(client: AsyncClient) -> None:
+    """Concurrent or repeated /approve calls cannot overwrite the first decision.
+
+    Args:
+        client: Async HTTPX test client.
+    """
+    project_id = "proj-lifecycle-double-approve"
+    state = await _setup_awaiting_approval(
+        project_id=project_id,
+        scan_id="scan-double-approve",
+        operation_id="op-double-approve",
+    )
+    gate = state.approval_gate
+    assert gate is not None
+    payload = {"approved_ids": ["t1-aaa"], "approval_gate_id": gate.gate_id}
+
+    first = await client.post(_operation_url(project_id, "/approve"), json=payload)
+    assert first.status_code == 200
+
+    second = await client.post(
+        _operation_url(project_id, "/approve"),
+        json={"approved_ids": ["t1-bbb"], "approval_gate_id": gate.gate_id},
+    )
+    assert second.status_code == 409
+    assert second.json()["detail"] == "Approval already submitted"
+    assert gate.future.result() == ["t1-aaa"]
+
+
+async def test_set_proposals_retires_pending_gate() -> None:
+    """A superseding proposals event resolves the previous gate with []."""
+    registry = get_operation_registry()
+    state = await _setup_awaiting_approval(
+        project_id="proj-gate-retire",
+        scan_id="scan-gate-retire",
+        operation_id="op-gate-retire",
+    )
+    gate1 = state.approval_gate
+    assert gate1 is not None
+    assert not gate1.future.done()
+
+    await registry.set_proposals(
+        state.operation_id,
+        [Proposal(id="t1-ccc", rule_id="L003", file="c.yml")],
+        prompt_generation=2,
+    )
+
+    assert gate1.future.done()
+    assert gate1.future.result() == []
+    assert state.approval_gate is not gate1
+    assert state.approval_gate is not None
+    assert not state.approval_gate.future.done()
+
+
+async def test_approval_bridge_forwards_resolved_gate_after_supersede() -> None:
+    """Bridge forwards a completed gate even when a newer gate replaced it."""
+    from apme_gateway.api.operation_router import _forward_approval_gate_result
+    from apme_gateway.scan.operator_queue import OperatorAnswerQueue
+
+    registry = get_operation_registry()
+    queue: OperatorAnswerQueue[list[str]] = OperatorAnswerQueue()
+    state = await _setup_awaiting_approval(
+        project_id="proj-gate-forward",
+        scan_id="scan-gate-forward",
+        operation_id="op-gate-forward",
+        prompt_generation=1,
+    )
+    gate1 = state.approval_gate
+    assert gate1 is not None
+
+    # Bridge suspends on gate1 before it resolves (production interleaving).
+    bridge_task = asyncio.create_task(_forward_approval_gate_result(state, queue))
+    await asyncio.sleep(0)
+    assert not bridge_task.done()
+
+    # REST /approve resolves gate1; new proposals supersede before the
+    # bridge loop is scheduled again (gate1 keeps its ids — already done).
+    gate1.future.set_result(["t1-aaa"])
+    await registry.set_proposals(
+        state.operation_id,
+        [Proposal(id="t1-bbb", rule_id="L002", file="b.yml")],
+        prompt_generation=2,
+    )
+    assert state.approval_gate is not gate1
+
+    # Drive the production bridge step (not a reimplementation of it).
+    assert await bridge_task is True
+    # The superseding gate survives; the driver wait receives gate1's answer.
+    assert state.approval_gate is not gate1
+    assert state.approval_gate is not None
+    answer = await queue.next_answer(
+        5.0,
+        "Test wait",
+        "defaulting",
+        expected_generation=gate1.prompt_generation,
+    )
+    assert answer == ["t1-aaa"]
 
 
 async def test_cancel_active_operation(client: AsyncClient) -> None:
@@ -121,7 +262,7 @@ async def test_cancel_active_operation(client: AsyncClient) -> None:
     registry.transition(state.operation_id, OperationStatus.SCANNING)
     state.grpc_task = asyncio.create_task(asyncio.sleep(60))
     loop = asyncio.get_running_loop()
-    state.approval_future = loop.create_future()
+    state.approval_gate = ApprovalGate(future=loop.create_future())
 
     resp = await client.post(_operation_url(project_id, "/cancel"))
 
@@ -132,9 +273,9 @@ async def test_cancel_active_operation(client: AsyncClient) -> None:
     with contextlib.suppress(asyncio.CancelledError):
         await state.grpc_task
     assert state.grpc_task.cancelled()
-    assert state.approval_future is not None
-    assert state.approval_future.done()
-    assert state.approval_future.result() == []
+    assert state.approval_gate is not None
+    assert state.approval_gate.future.done()
+    assert state.approval_gate.future.result() == []
 
 
 async def test_cancel_terminal_operation_conflicts(client: AsyncClient) -> None:

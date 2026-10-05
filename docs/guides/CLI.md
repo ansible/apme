@@ -70,6 +70,8 @@ apme daemon stop      # stop the background daemon
 ```bash
 apme check /path/to/playbook-or-project
 apme check .                              # scan current directory
+apme check playbooks/ roles/              # scan multiple paths
+apme check . --exclude "tests/" "vendor/*"  # skip matching paths (targets first)
 apme check --json .                       # JSON output
 apme check --sarif .                      # SARIF 2.1.0 output (for GitHub/IDE)
 apme check -v .                           # summary diagnostics + top 10 slow rules
@@ -79,6 +81,11 @@ apme check --ansible-version 2.17 .       # target a specific ansible-core versi
 ```
 
 **Exit codes:** 0 = clean, 1 = violations found, 2 = error.
+
+> Pass scan targets before `--exclude`: `--exclude` takes a greedy glob
+> list, so a trailing target would be swallowed as another pattern.
+> When a pattern could be mistaken for a path, disambiguate with `--`:
+> `apme check --exclude "tests/" -- playbooks/`.
 
 #### Dependency scanning options
 
@@ -92,6 +99,8 @@ apme check --skip-python-audit .          # skip only Python CVE audit
 
 ```bash
 apme remediate /path/to/project           # Tier 1 deterministic transforms
+apme remediate playbooks/ roles/          # remediate multiple paths
+apme remediate . --exclude "tests/"       # skip matching paths (targets first)
 apme remediate --interactive .            # Gate 1 review for deterministic fixes
 apme remediate --ai .                     # include Tier 2 AI-assisted fixes
 apme remediate --interactive --ai .       # two-gate flow (Tier 1 then AI)
@@ -113,9 +122,10 @@ The remediation pipeline:
 
 ```bash
 apme format /path/to/project              # show diffs (no changes written)
+apme format playbooks/ roles/             # format multiple paths
 apme format --apply /path/to/project      # apply changes in place
 apme format --check /path/to/project      # CI mode: exit 1 if changes needed
-apme format --exclude "vendor/**" .       # exclude paths
+apme format . --exclude "vendor/**"       # exclude paths (targets first)
 ```
 
 Normalizes indentation, key ordering, Jinja spacing, and removes tabs while
@@ -214,7 +224,9 @@ See [examples/ci/](../../examples/ci/) for complete workflow examples.
 | `--session ID` | check, format, remediate | Explicit session ID for venv reuse |
 | `--ansible-version` | check, remediate | Target ansible-core version |
 | `--collections` | check, remediate | Additional collection specs to install |
-| `--timeout` | check, health-check | gRPC timeout in seconds |
+| `--timeout` | check, remediate, health-check | gRPC timeout in seconds |
+| `--exclude GLOB...` | check, format, remediate | Skip matching paths (pass targets first) |
+| `target...` | check, format, remediate | One or more files/directories (default: `.`) |
 
 ## Limitations vs full deployment
 

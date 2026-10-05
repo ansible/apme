@@ -167,7 +167,11 @@ def _start_infrastructure() -> None:
 
     os.environ["APME_DATA_DIR"] = data_dir
     os.environ["APME_GALAXY_PROXY_URL"] = proxy_url
-    os.environ["OPA_USE_PODMAN"] = "0"
+    # Default to the local OPA binary, but honor an explicit CI override:
+    # the Podman-path CI leg sets OPA_USE_PODMAN=1 to exercise the
+    # production-default container transport (a hard assignment here would
+    # silently test the local path twice).
+    os.environ.setdefault("OPA_USE_PODMAN", "0")
 
     # --- Gateway (gRPC reporting + REST API) ---
     gateway_grpc_port = _free_port()

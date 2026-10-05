@@ -24,7 +24,6 @@ from typing import TypeVar, cast
 
 import grpc
 import grpc.aio
-import httpx
 
 from apme.v1 import engine_pb2_grpc, reporting_pb2, validate_pb2_grpc
 from apme.v1.common_pb2 import (
@@ -71,6 +70,7 @@ from apme.v1.reporting_pb2 import (
     ProposalOutcome,
 )
 from apme.v1.validate_pb2 import ValidateRequest
+from apme_engine.daemon import engine_health, engine_upload
 from apme_engine.daemon.deadline import (
     FALLBACK_NON_AI_OPERATION_BUDGET,
     BudgetConfigError,
@@ -83,13 +83,19 @@ from apme_engine.daemon.deadline import (
 )
 from apme_engine.daemon.event_emitter import emit_fix_completed, emit_register_rules, start_sinks
 from apme_engine.daemon.fs_utils import write_chunked_fs as _write_chunked_fs
-from apme_engine.daemon.session import ResourceExhaustedError, SessionState, SessionStore
+from apme_engine.daemon.session import (
+    ResourceExhaustedError,
+    SessionState,
+    SessionStore,
+    limit_venv_builds,
+)
 from apme_engine.daemon.violation_convert import violation_dict_to_proto, violation_proto_to_dict
 from apme_engine.engine.models import RemediationClass, ViolationDict
 from apme_engine.graph.content_graph import ContentGraph
 from apme_engine.graph.scanner import filter_noqa_violations, graph_rule_opt_in_from_rule_configs
 from apme_engine.log_bridge import attach_collector
 from apme_engine.remediation.graph_engine import FilePatch as SplicedFilePatch
+from apme_engine.rule_ids import normalize_rule_id
 from apme_engine.runner import run_scan
 from apme_engine.venv_manager.session import (
     VenvSession,
@@ -344,8 +350,6 @@ def _filter_violations_by_escalate_targets(
     Returns:
         Filtered list (or all / none per ``targets``).
     """
-    from apme_engine.remediation.partition import normalize_rule_id  # noqa: PLC0415
-
     if targets is None:
         return violations
     if not targets:
@@ -380,10 +384,7 @@ def _decline_skipped_ai_escalation(session: SessionState) -> int:
         Number of ledger rows declined.
     """
     from apme_engine.graph.content_graph import ContentGraph  # noqa: PLC0415
-    from apme_engine.remediation.partition import (  # noqa: PLC0415
-        add_classification_to_violations,
-        normalize_rule_id,
-    )
+    from apme_engine.remediation.partition import add_classification_to_violations  # noqa: PLC0415
 
     targets = session.ai_escalate_targets
     if targets is None:
@@ -696,6 +697,46 @@ class RequiredValidatorDependencyError(RuntimeError):
     """Required validator missing, unreachable, or returned an RPC error."""
 
 
+class CollectionDependencyError(RuntimeError):
+    """Required collection(s) could not be resolved or downloaded.
+
+    Raised when the venv session reports failed collections, causing the
+    scan to abort rather than continue with incomplete dependencies.
+    """
+
+    def __init__(self, failed_collections: list[str]) -> None:
+        """Initialize with the list of collections that failed to install.
+
+        Args:
+            failed_collections: Collection specs that could not be installed.
+        """
+        self.failed_collections = failed_collections
+        failed_list = ", ".join(failed_collections)
+        super().__init__(
+            f"Scan aborted: {len(failed_collections)} required collection(s) "
+            f"could not be resolved or downloaded from configured Galaxy "
+            f"servers: {failed_list}"
+        )
+
+
+def _scan_rule_audit_inputs(scan_opts: ScanOptions | None) -> tuple[list[object], bool]:
+    """Extract the ADR-041 rule-catalog audit inputs from scan options.
+
+    The completeness flag is forwarded independently of list emptiness: an
+    empty catalog attested complete must still hard-fail the bidirectional
+    audit (missing IDs) instead of silently scanning with the audit skipped.
+
+    Args:
+        scan_opts: Scan options from the client's first upload chunk, if any.
+
+    Returns:
+        Tuple of (rule configs, completeness flag).
+    """
+    if scan_opts is None:
+        return [], False
+    return list(scan_opts.rule_configs), scan_opts.rule_configs_complete
+
+
 def _apply_rule_configs(
     violations: list[ViolationDict],
     rule_configs: list[object],
@@ -722,11 +763,18 @@ def _apply_rule_configs(
 
     config_map: dict[str, object] = {}
     for rc in rule_configs:
-        config_map[rc.rule_id] = rc  # type: ignore[attr-defined]
+        norm = normalize_rule_id(rc.rule_id)  # type: ignore[attr-defined]
+        if norm in config_map:
+            logger.warning(
+                "Duplicate normalized rule ID %r in rule_configs — last-wins; "
+                "divergent enabled/severity flags resolve order-dependently",
+                norm,
+            )
+        config_map[norm] = rc
 
     filtered: list[ViolationDict] = []
     for v in violations:
-        rule_id = str(v.get("rule_id", ""))
+        rule_id = normalize_rule_id(str(v.get("rule_id", "")))
         rc = config_map.get(rule_id)
         if rc is not None:
             if not rc.enabled:  # type: ignore[attr-defined]
@@ -977,6 +1025,8 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                 request-scoped control over optional validators (ADR-051).
 
         Raises:
+            CollectionDependencyError: If one or more required collections
+                could not be installed into the session venv.
             RequiredValidatorDependencyError: If a required validator
                 (native, opa, ansible) is not configured or its RPC fails.
             ValueError: If ``rule_configs_complete`` is ``True`` and either
@@ -1042,25 +1092,50 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         )
         logger.info("Collection specs merged (req=%s): %s", scan_id, collection_specs)
 
-        # 3. Venv acquire (always — creates or incrementally installs)
-        async with self._activate_galaxy_proxy_config(galaxy_cfg_path):
-            venv_session = await asyncio.get_event_loop().run_in_executor(
-                None,
-                ctx.run,
-                self._get_venv_manager().acquire,
-                sid,
-                core_version,
-                collection_specs,
-            )
+        # 3. Venv acquire (always — creates or incrementally installs).
+        # PE-20: cap concurrent pip/galaxy builds across sessions so one
+        # unauthenticated client cannot starve scans. Warm hits never take
+        # a build slot: peek first without the semaphore, and only take a
+        # slot when a cold build or incremental install is actually needed
+        # (acquire re-checks under the same file lock, so the peek cannot
+        # race a concurrent build into an inconsistent venv).
+        # peek_warm installs nothing, so it runs outside the Galaxy config
+        # override; the build slot is acquired before activating the config
+        # so a session never waits up to _VENV_BUILD_WAIT_S while holding
+        # the process-wide Galaxy lock and ANSIBLE_CONFIG override (which
+        # would leak its credentials to lock-free sessions via the
+        # in-process proxy and block all other Galaxy-config sessions).
+        venv_session = await asyncio.get_event_loop().run_in_executor(
+            None,
+            ctx.run,
+            self._get_venv_manager().peek_warm,
+            sid,
+            core_version,
+            collection_specs,
+        )
+        if venv_session is None:
+            async with limit_venv_builds() as release_on, self._activate_galaxy_proxy_config(galaxy_cfg_path):
+                loop = asyncio.get_event_loop()
+                acquire_future = loop.run_in_executor(
+                    None,
+                    ctx.run,
+                    self._get_venv_manager().acquire,
+                    sid,
+                    core_version,
+                    collection_specs,
+                )
+                # Hold the build slot until the worker finishes, even if cancelled.
+                release_on(cast(asyncio.Future[object], acquire_future))
+                venv_session = await asyncio.shield(acquire_future)
         venv_path = str(venv_session.venv_root)
         if venv_session.failed_collections:
-            logger.warning(
-                "Venv: %d collection(s) failed to install (session=%s, req=%s): %s — scan will continue without them",
-                len(venv_session.failed_collections),
+            logger.error(
+                "collection_dependency_failed session=%s req=%s failed_collections=%s outcome=scan_aborted",
                 sid,
                 scan_id,
                 ", ".join(venv_session.failed_collections),
             )
+            raise CollectionDependencyError(venv_session.failed_collections)
         logger.info(
             "Venv: ready (%d collections installed, session=%s, req=%s)",
             len(venv_session.installed_collections),
@@ -1214,26 +1289,41 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             )
 
         violations = _deduplicate_violations(_sort_violations(violations))
-        if rule_configs:
-            unknown, missing = _validate_rule_configs(rule_configs, complete=rule_configs_complete)
+        if rule_configs or rule_configs_complete:
+            configs = rule_configs if rule_configs is not None else []
+            unknown, missing, divergent = _validate_rule_configs(configs, complete=rule_configs_complete)
             if rule_configs_complete:
+                # ADR-041 §5: the Gateway path performs a bidirectional audit
+                # and hard-fails on unknown *or* missing rule IDs so catalog
+                # skew forces upgrade completion instead of scanning silently.
+                # (Relaxing this to degraded-continue needs an ADR-041
+                # amendment plus a client-visible degraded flag — tracked.)
+                # Divergent repeats fail closed the same way: conflicting
+                # enabled/severity flags for one rule would otherwise resolve
+                # by row order while the audit attests in-sync.
                 errors: list[str] = []
                 if unknown:
                     errors.append(f"unknown rule IDs: {unknown}")
                 if missing:
                     errors.append(f"missing rule IDs (known to this engine but absent from config): {missing}")
+                if divergent:
+                    errors.append(
+                        f"divergent rule configs for {divergent}: same rule with conflicting "
+                        "enabled/severity/enforced flags — refusing to guess"
+                    )
                 if errors:
                     raise ValueError(
                         f"Rule catalog mismatch (bidirectional audit): {'; '.join(errors)}. "
                         "The Gateway catalog is out of sync with this engine."
                     )
-            elif unknown:
+            elif unknown or divergent:
                 logger.warning(
-                    "rule_configs references unknown rule IDs (scan=%s): %s — ignoring",
+                    "rule_configs references unknown rule IDs (scan=%s): %s — ignoring; divergent repeats: %s",
                     scan_id,
                     unknown,
+                    divergent,
                 )
-            violations = _apply_rule_configs(violations, rule_configs)
+            violations = _apply_rule_configs(violations, configs)
         _attach_snippets(violations, files)
 
         total_ms = (time.monotonic() - scan_t0) * 1000
@@ -1328,13 +1418,28 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
     ) -> tuple[list[File], str, str, ScanOptions | None, FixOptions | None]:
         """Drain a ScanChunk stream into accumulated state.
 
+        File paths use the same :func:`_normalize_upload_path` canonicalizer
+        as FixSession uploads, so one payload is accepted-or-rejected
+        identically on every ingress path (a path escaping the session root
+        raises ``ValueError`` here exactly as on upload).
+
         Args:
             request_stream: Async iterator of ScanChunk messages.
 
         Returns:
             Tuple of (files, scan_id, project_root, scan_options, fix_options).
-        """
+
+        Raises:
+            ValueError: If a file path escapes the session root, or if the
+                per-session aggregate upload caps
+                (``APME_SESSION_MAX_UPLOAD_BYTES`` /
+                ``APME_SESSION_MAX_UPLOAD_FILES``) would be exceeded — the
+                same admission policy as FixSession uploads.
+        """  # noqa: DOC502 -- the raise lives in _normalize_upload_path
         all_files: list[File] = []
+        total_bytes = 0
+        max_files = engine_upload._SESSION_MAX_UPLOAD_FILES
+        max_bytes = engine_upload._SESSION_MAX_UPLOAD_BYTES
         scan_id = ""
         project_root = "project"
         opts: ScanOptions | None = None
@@ -1348,7 +1453,29 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                 opts = chunk.options
             if chunk.HasField("fix_options"):
                 fix_opts = chunk.fix_options
-            all_files.extend(chunk.files)  # type: ignore[arg-type]
+            # One chunk may repeat a path (e.g. `a.yml` + `./a.yml` normalize
+            # alike): last copy wins, accounted once — the same normalize
+            # +last-wins dedup as FixSession `_session_upload_append`, so one
+            # payload is accepted-or-rejected identically on every ingress.
+            staged: dict[str, File] = {}
+            for f in chunk.files:
+                normalized_path = engine_upload._normalize_upload_path(f.path)  # type: ignore[attr-defined]
+                staged[normalized_path] = File(path=normalized_path, content=f.content)  # type: ignore[attr-defined]
+            for normalized in staged.values():
+                existing = next(
+                    (i for i, ef in enumerate(all_files) if ef.path == normalized.path),
+                    None,
+                )
+                if existing is None:
+                    all_files.append(normalized)
+                    total_bytes += len(normalized.content)
+                else:
+                    total_bytes += len(normalized.content) - len(all_files[existing].content)
+                    all_files[existing] = normalized
+                if len(all_files) > max_files:
+                    raise ValueError(f"Upload file limit exceeded: {len(all_files)} files (max {max_files})")
+                if total_bytes > max_bytes:
+                    raise ValueError(f"Upload size limit exceeded: {total_bytes} bytes (max {max_bytes} bytes)")
             if chunk.last:
                 break
         return all_files, scan_id or str(uuid.uuid4()), project_root, opts, fix_opts
@@ -1368,12 +1495,21 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         with attach_collector() as sink:
             logger.info("Format: start (%d files)", len(request.files))
             t0 = time.monotonic()
-            files = cast(list[File], list(request.files))
+            # Same path canonicalizer as every other ingress: one payload is
+            # accepted-or-rejected identically on all RPCs. Escaping paths
+            # abort INVALID_ARGUMENT exactly as on FixSession uploads.
+            try:
+                normalized = [
+                    File(path=engine_upload._normalize_upload_path(f.path), content=f.content)  # type: ignore[attr-defined]
+                    for f in request.files
+                ]
+            except ValueError as ve:
+                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(ve))
             ctx = contextvars.copy_context()
             batch = await asyncio.get_event_loop().run_in_executor(
                 None,
                 ctx.run,
-                lambda: self._format_files(files),
+                lambda: self._format_files(normalized),
             )
             dur = (time.monotonic() - t0) * 1000
             logger.info(
@@ -1398,7 +1534,10 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         Returns:
             FormatResponse with file diffs.
         """
-        all_files, scan_id, *_ = await self._accumulate_chunks(request_stream)
+        try:
+            all_files, scan_id, *_ = await self._accumulate_chunks(request_stream)
+        except ValueError as ve:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(ve))
         with attach_collector() as sink:
             logger.info("FormatStream: start (%d files, req=%s)", len(all_files), scan_id)
             t0 = time.monotonic()
@@ -1445,12 +1584,27 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         Raises:
             asyncio.CancelledError: Re-raised after cleaning up upload-created
                 sessions on client disconnect.
+            ValueError: Aborts INVALID_ARGUMENT on bad uploads (escaping
+                paths, over-cap streams, post-seal protocol violations);
+                sealed sessions survive for approve/resume.
             Exception: Propagates unexpected errors after logging.
+
+        Note:
+            ``CollectionDependencyError`` is caught and mapped to gRPC
+            ``FAILED_PRECONDITION`` so clients receive an actionable status
+            instead of ``UNKNOWN``.
         """
         store = self._get_session_store()
         session: SessionState | None = None
         upload_created_session_id: str | None = None
         scan_id = ""
+
+        def _drop_unsealed_created() -> None:
+            """Remove upload-created sessions that never completed processing."""
+            if upload_created_session_id:
+                created = store.get(upload_created_session_id)
+                if created is None or not created.upload_sealed:
+                    store.remove(upload_created_session_id)
 
         try:
             async for cmd in request_stream:
@@ -1473,9 +1627,29 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                             ),
                         )
 
-                    self._session_upload_append(session, chunk)
+                    if chunk.last and session.upload_sealed:
+                        if engine_upload._hash_upload_chunk(chunk) == session.upload_sealed_chunk_hash:
+                            logger.warning(
+                                "FixSession: duplicate terminal upload chunk ignored (session_id=%s, scan_id=%s)",
+                                session.session_id,
+                                scan_id,
+                            )
+                            async for event in self._session_replay_state(session):
+                                yield event
+                            continue
+                        raise ValueError(
+                            "Retried terminal upload chunk carries different file bytes than the "
+                            "sealed upload — replaying it would silently drop the corrected files. "
+                            "Start a new session for corrected files; the sealed session is kept "
+                            "for approve/resume."
+                        )
+
+                    engine_upload._session_upload_append(session, chunk)
 
                     if chunk.last:
+                        session.upload_sealed = True
+                        session.upload_sealed_hash = engine_upload._hash_upload_files(session.original_files)
+                        session.upload_sealed_chunk_hash = engine_upload._hash_upload_chunk(chunk)
                         peer = context.peer()
                         logger.info(
                             "FixSession: processing %d file(s) (session_id=%s, scan_id=%s, peer=%s)",
@@ -1484,8 +1658,31 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                             scan_id,
                             peer,
                         )
-                        async for event in self._session_process(session, scan_id):
-                            yield event
+
+                        assert session is not None
+                        bound_session = session
+
+                        def _unseal_after_failure(_s: SessionState = bound_session) -> None:
+                            _s.upload_sealed = False
+                            _s.upload_sealed_hash = ""
+                            _s.upload_sealed_chunk_hash = ""
+                            _s.reset_partial_run_state()
+
+                        process_failed = False
+                        try:
+                            async for event in self._session_process(session, scan_id):
+                                if event.WhichOneof("event") == "error":
+                                    process_failed = True
+                                yield event
+                        except Exception:
+                            # Processing failed: unseal so a retried terminal
+                            # chunk re-runs instead of replaying partial state.
+                            # (Cancellation takes the disconnect-cleanup path,
+                            # which removes the session outright.)
+                            _unseal_after_failure()
+                            raise
+                        if process_failed:
+                            _unseal_after_failure()
 
                 elif oneof == "approve":
                     if session is None:
@@ -1566,10 +1763,21 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                 store.remove(upload_created_session_id)
             raise
         except ResourceExhaustedError as e:
+            _drop_unsealed_created()
             await context.abort(grpc.StatusCode.RESOURCE_EXHAUSTED, str(e))
+        except CollectionDependencyError as e:
+            await context.abort(grpc.StatusCode.FAILED_PRECONDITION, str(e))
         except RequiredValidatorDependencyError as e:
+            _drop_unsealed_created()
             await context.abort(grpc.StatusCode.UNAVAILABLE, str(e))
         except ValueError as ve:
+            # The stream is dead: drop sessions this stream created so a
+            # rejected upload cannot squat a slot until TTL reap (PE-35 caps
+            # stop RAM blowup; this stops session-table exhaustion).
+            # A sealed (already processed, approval-capable) session survives:
+            # the client can resume/approve it on a fresh stream instead of
+            # losing it to a stray post-seal chunk.
+            _drop_unsealed_created()
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(ve))
         except Exception as e:
             logger.exception("FixSession failed (session=%s): %s", scan_id, e)
@@ -1592,12 +1800,6 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         session.project_root = first_chunk.project_root or ""
         return session, scan_id
 
-    @staticmethod
-    def _session_upload_append(session: SessionState, chunk: ScanChunk) -> None:
-        for f in chunk.files:
-            session.original_files[f.path] = f.content  # type: ignore[attr-defined]
-            session.working_files[f.path] = f.content  # type: ignore[attr-defined]
-
     async def _session_process(
         self,
         session: SessionState,
@@ -1615,7 +1817,11 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         from apme_engine.formatter import format_content
         from apme_engine.remediation.transforms import build_default_registry
 
-        all_files = [File(path=p, content=c) for p, c in session.working_files.items()]
+        # Same normalization as _session_upload_append so materialized files
+        # always match original_files keys.
+        all_files = [
+            File(path=engine_upload._normalize_upload_path(p), content=c) for p, c in session.working_files.items()
+        ]
 
         fix_opts = session.fix_options
         scan_opts = session.scan_options
@@ -1638,11 +1844,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             fix_session_id = scan_opts.session_id
             galaxy_servers = scan_opts.galaxy_servers
 
-        scan_rule_configs: list[object] = []
-        scan_rule_configs_complete = False
-        if scan_opts and scan_opts.rule_configs:
-            scan_rule_configs = list(scan_opts.rule_configs)
-            scan_rule_configs_complete = scan_opts.rule_configs_complete
+        scan_rule_configs, scan_rule_configs_complete = _scan_rule_audit_inputs(scan_opts)
 
         skip_validators: set[str] = set()
         if scan_opts:
@@ -1652,6 +1854,9 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                 skip_validators.add("dep_audit")
 
         if galaxy_servers:
+            # Retry after reset_partial_run_state() may still hold the prior
+            # config path; remove it so token-bearing temp dirs are not orphaned.
+            session._cleanup_galaxy_cfg()
             session.galaxy_cfg_path = _write_session_galaxy_cfg(galaxy_servers)
             if session.galaxy_cfg_path:
                 logger.info(
@@ -2851,6 +3056,11 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         to the whole node, so duplicate rows would let conflicting decisions
         override each other in ``_apply_graph_approvals``.
 
+        On collision Tier-1 bytes (``after_text``/``diff_hunk``) win, and the
+        rationale follows the bytes: the Tier-1 explanation leads and any AI
+        rationale is kept only as clearly labeled context, so authorized bytes
+        are never presented under another tier's rationale.
+
         Args:
             ai_proposals: Gate 2 AI proposals from ``_build_graph_proposals``.
             tier1_proposals: Gate 2 Tier 1 proposals (``g2-t1-*`` ids).
@@ -2875,12 +3085,12 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                     existing.rule_id = ",".join(sorted(merged_rules))
                 existing.after_text = tier1.after_text
                 existing.diff_hunk = tier1.diff_hunk
+                rationale: list[str] = []
                 if tier1.explanation:
-                    existing.explanation = (
-                        f"{existing.explanation}\n{tier1.explanation}".strip()
-                        if existing.explanation
-                        else tier1.explanation
-                    )
+                    rationale.append(f"[tier-1/deterministic] {tier1.explanation}")
+                if existing.explanation:
+                    rationale.append(f"[tier-2/ai] {existing.explanation}")
+                existing.explanation = "\n".join(rationale)
             else:
                 if key not in by_node:
                     order.append(key)
@@ -3424,11 +3634,11 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             idx += 1
         return declined
 
-    async def _session_build_result(
+    async def _session_serialize_result(
         self,
         session: SessionState,
     ) -> AsyncIterator[SessionEvent]:
-        """Build and yield the final SessionResult event.
+        """Build and yield the final SessionResult event without side effects.
 
         Args:
             session: Completed session with working files to diff.
@@ -3469,6 +3679,28 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                 fixed_violations=list(report.fixed_violations),
             ),
         )
+
+    async def _session_build_result(
+        self,
+        session: SessionState,
+    ) -> AsyncIterator[SessionEvent]:
+        """Build and yield the final SessionResult event.
+
+        Args:
+            session: Completed session with working files to diff.
+
+        Yields:
+            SessionEvent: Event containing the SessionResult.
+        """
+        patches: list[FilePatch] = []
+        remaining_violations: list[object] = []
+        async for event in self._session_serialize_result(session):
+            yield event
+            if event.WhichOneof("event") == "result":
+                patches = list(event.result.patches)
+                remaining_violations = list(event.result.remaining_violations)
+
+        report = session.report or FixReport()
 
         # Always emit FixCompletedEvent for both check and remediate modes.
         # The gateway's link_scan_to_project() sets the correct scan_type
@@ -3639,7 +3871,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                 ),
             )
         if session.status == 3:  # COMPLETE
-            async for event in self._session_build_result(session):
+            async for event in self._session_serialize_result(session):
                 yield event
 
     # ── ListAIModels RPC ────────────────────────────────────────────────
@@ -3703,6 +3935,10 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         Galaxy Proxy (``APME_GALAXY_PROXY_URL``) must respond ``ok`` on
         ``/health`` — it is a core service, not optional.
 
+        Probes fan out via ``asyncio.gather`` under an overall deadline so one
+        slow validator cannot stall the response past caller deadlines; slow
+        or failing probes are recorded as degraded per-service entries.
+
         Args:
             request: Health request (unused).
             context: gRPC servicer context.
@@ -3713,77 +3949,42 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         downstream: list[ServiceHealth] = []
         unhealthy = False
 
+        metas: list[tuple[str, str, bool]] = []
+        coros: list[Awaitable[tuple[bool, ServiceHealth | None]]] = []
+
         # Probe validators
         for name, env_var in VALIDATOR_ENV_VARS.items():
             addr = os.environ.get(env_var)
+            required = name in REQUIRED_VALIDATORS
             if not addr:
-                if name in REQUIRED_VALIDATORS:
-                    unhealthy = True
-                    downstream.append(
-                        ServiceHealth(
-                            name=name,
-                            status=f"error: {env_var} not configured",
-                            address="",
-                        )
-                    )
+                metas.append((name, "", required))
+                coros.append(engine_health._missing_validator_health(name, env_var, required=required))
                 continue
-            try:
-                channel = grpc.aio.insecure_channel(addr)
-                try:
-                    stub = validate_pb2_grpc.ValidatorStub(channel)  # type: ignore[no-untyped-call]
-                    resp = await stub.Health(HealthRequest(), timeout=5)
-                    status = resp.status
-                    if name in REQUIRED_VALIDATORS and status != "ok":
-                        unhealthy = True
-                    downstream.append(ServiceHealth(name=name, status=status, address=addr))
-                finally:
-                    await channel.close(grace=None)
-            except Exception as e:  # noqa: BLE001 - health probe must degrade
-                if name in REQUIRED_VALIDATORS:
-                    unhealthy = True
-                downstream.append(ServiceHealth(name=name, status=f"error: {e}", address=addr))
+            metas.append((name, addr, required))
+            coros.append(engine_health._probe_validator_health(name, addr, required=required))
 
         # Galaxy Proxy is required (HTTP /health) — sole collection install path.
         proxy_url = os.environ.get("APME_GALAXY_PROXY_URL", "").strip()
-        if not proxy_url:
-            unhealthy = True
-            downstream.append(
-                ServiceHealth(
-                    name="galaxy_proxy",
-                    status="error: APME_GALAXY_PROXY_URL not configured",
-                    address="",
-                )
-            )
-        else:
-            health_url = proxy_url.rstrip("/") + "/health"
-            try:
-                async with httpx.AsyncClient(timeout=5.0) as client:
-                    http_resp = await client.get(health_url)
-                proxy_ok = False
-                detail = f"HTTP {http_resp.status_code}"
-                if http_resp.status_code == 200:
-                    try:
-                        payload = http_resp.json()
-                    except ValueError:
-                        payload = None
-                    proxy_ok = isinstance(payload, dict) and payload.get("status") == "ok"
-                    if not proxy_ok:
-                        reported = payload.get("status") if isinstance(payload, dict) else None
-                        detail = f"status={reported!r}" if reported is not None else "invalid /health body"
-                if proxy_ok:
-                    downstream.append(ServiceHealth(name="galaxy_proxy", status="ok", address=proxy_url))
-                else:
-                    unhealthy = True
-                    downstream.append(
-                        ServiceHealth(
-                            name="galaxy_proxy",
-                            status=f"error: {detail}",
-                            address=proxy_url,
-                        )
-                    )
-            except Exception as e:  # noqa: BLE001 - health probe must degrade
+        metas.append(("galaxy_proxy", proxy_url, True))
+        coros.append(engine_health._probe_galaxy_proxy_health(proxy_url))
+
+        outcomes = await engine_health.collect_health_probe_outcomes(coros, metas)
+        for (pname, paddr, prequired), outcome in zip(metas, outcomes, strict=True):
+            if isinstance(outcome, tuple):
+                bad, entry = outcome
+            elif isinstance(outcome, asyncio.CancelledError):
+                bad = prequired
+                entry = ServiceHealth(name=pname, status="error: health probe timed out", address=paddr)
+            elif isinstance(outcome, BaseException):
+                bad = prequired
+                entry = ServiceHealth(name=pname, status=f"error: {outcome}", address=paddr)
+            else:  # pragma: no cover - defensive; probes only return tuples or raise
+                bad = prequired
+                entry = ServiceHealth(name=pname, status=f"error: unexpected probe result: {outcome!r}", address=paddr)
+            if bad:
                 unhealthy = True
-                downstream.append(ServiceHealth(name="galaxy_proxy", status=f"error: {e}", address=proxy_url))
+            if entry is not None:
+                downstream.append(entry)
 
         return HealthResponse(
             status="unhealthy" if unhealthy else "ok",
@@ -4305,7 +4506,7 @@ def _validate_rule_configs(
     rule_configs: list[object],
     *,
     complete: bool = False,
-) -> tuple[list[str], list[str]]:
+) -> tuple[list[str], list[str], list[str]]:
     """Validate rule IDs in configs against this Engine's known catalog.
 
     Performs a forward check (unknown IDs) always.  When *complete* is
@@ -4318,19 +4519,61 @@ def _validate_rule_configs(
             and check for missing IDs (bidirectional audit).
 
     Returns:
-        Tuple of (unknown_ids, missing_ids).  *missing_ids* is always
-        empty when *complete* is ``False``.
+        Tuple of (unknown_ids, missing_ids, divergent_ids).  *missing_ids*
+        is always empty when *complete* is ``False``.  *divergent_ids* holds
+        normalized IDs configured more than once with conflicting
+        enabled/severity/enforced flags — identical repeats are harmless
+        (warn-only) but conflicting repeats resolve order-dependently.
+
+    IDs are compared in normalized form (see
+    :func:`~apme_engine.rule_ids.normalize_rule_id`) so a
+    prefixed config ID (``native:L042``) matches its bare catalog twin.
     """
-    if not _known_rule_ids or not rule_configs:
-        return [], []
+    if not _known_rule_ids:
+        if complete:
+            # Fail closed: an empty engine catalog with a complete Gateway
+            # catalog means registration hasn't happened (restart window) —
+            # scanning unchecked would flap ADR-041 across restart.
+            logger.error("Rule catalog is empty with complete=True — failing closed")
+            return [], ["<engine-rule-catalog-empty>"], []
+        logger.warning("Rule catalog is empty — bidirectional audit skipped, unknown rule IDs flow unchecked")
+        return [], [], []
+    if not rule_configs:
+        if complete:
+            # Fail closed: Gateway claims a complete catalog but sent nothing —
+            # every known ID is missing.
+            return [], sorted({normalize_rule_id(r) for r in _known_rule_ids}), []
+        return [], [], []
+    known = {normalize_rule_id(r) for r in _known_rule_ids}
     config_ids: set[str] = set()
+    seen: dict[str, str] = {}
+    seen_flags: dict[str, tuple[object, object, object]] = {}
     unknown: list[str] = []
+    divergent: list[str] = []
     for rc in rule_configs:
         rid: str = rc.rule_id  # type: ignore[attr-defined]
-        config_ids.add(rid)
-        if rid not in _known_rule_ids:
+        norm = normalize_rule_id(rid)
+        flags = (rc.severity, rc.enabled, rc.enforced)  # type: ignore[attr-defined]
+        if norm in seen and seen[norm] != rid:
+            logger.warning(
+                "Duplicate normalized rule ID %r (from %r and %r) — last-wins; "
+                "divergent enabled/severity flags resolve order-dependently",
+                norm,
+                seen[norm],
+                rid,
+            )
+        if norm in seen_flags and seen_flags[norm] != flags and norm not in divergent:
+            logger.warning(
+                "Divergent config flags for normalized rule ID %r — resolves order-dependently",
+                norm,
+            )
+            divergent.append(norm)
+        seen[norm] = rid
+        seen_flags[norm] = flags
+        config_ids.add(norm)
+        if norm not in known:
             unknown.append(rid)
     missing: list[str] = []
     if complete:
-        missing = sorted(_known_rule_ids - config_ids)
-    return unknown, missing
+        missing = sorted(known - config_ids)
+    return unknown, missing, divergent

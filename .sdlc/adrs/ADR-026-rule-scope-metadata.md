@@ -19,11 +19,13 @@ APME's remediation engine routes violations to three tiers:
 The current partition logic uses a hardcoded set (`PLAY_LEVEL_RULES`) to identify violations that shouldn't go to AI:
 
 ```python
-PLAY_LEVEL_RULES: frozenset[str] = frozenset({
-    "L042",  # high task count complexity
-    "M010",  # Python 2 interpreter
-    "R108",  # privilege escalation
-})
+PLAY_LEVEL_RULES: frozenset[str] = frozenset(
+    {
+        "L042",  # high task count complexity
+        "M010",  # Python 2 interpreter
+        "R108",  # privilege escalation
+    }
+)
 ```
 
 This approach has significant problems:
@@ -45,14 +47,14 @@ During AI escalation testing, we observed that play-level rules (L042, M010, R10
 ```python
 class RuleScope(str, Enum):
     """Structural scope at which a rule operates."""
-    
-    TASK = "task"             # Individual task — AI can propose fixes
-    BLOCK = "block"           # Block structure — AI may help
-    PLAY = "play"             # Play header, vars, become — manual
-    PLAYBOOK = "playbook"     # Multi-play structure — manual
-    ROLE = "role"             # Role-level (meta, defaults) — manual
-    INVENTORY = "inventory"   # Inventory/group_vars — manual
-    COLLECTION = "collection" # Cross-repo scope — manual
+
+    TASK = "task"  # Individual task — AI can propose fixes
+    BLOCK = "block"  # Block structure — AI may help
+    PLAY = "play"  # Play header, vars, become — manual
+    PLAYBOOK = "playbook"  # Multi-play structure — manual
+    ROLE = "role"  # Role-level (meta, defaults) — manual
+    INVENTORY = "inventory"  # Inventory/group_vars — manual
+    COLLECTION = "collection"  # Cross-repo scope — manual
 ```
 
 ### Violation Schema Extension
