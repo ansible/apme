@@ -11,6 +11,7 @@ from unittest.mock import patch
 from apme_engine.validators.ansible.cache import (
     PluginCache,
     _ansible_core_version,
+    _collection_search_fingerprint,
     _collection_version,
     _parse_fqcn,
 )
@@ -372,6 +373,92 @@ class TestPluginCacheCore:
         assert cache.get("docspec", venv, "community.general.ping") == {"store": "docspec"}
         assert cache.get("mockspec", venv, "community.general.ping") is None
 
+    def test_introspect_partitions_by_core_version(self, tmp_path: Path) -> None:
+        """Introspect cache keys include ansible-core version for M048 twin lookup.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        cache = PluginCache()
+
+        venv1_dir = tmp_path / "venv1"
+        venv1 = self._make_venv(venv1_dir, "community", "general", "5.8.0")
+        release1 = venv1_dir / "lib" / "python3.11" / "site-packages" / "ansible"
+        release1.mkdir(parents=True)
+        (release1 / "release.py").write_text("__version__ = '2.16.3'\n")
+        ctx1 = cache.introspect_context_suffix(venv1)
+        cache.put(
+            "introspect",
+            venv1,
+            "community.general.copy",
+            {"builtin_alternative": "ansible.builtin.copy"},
+            introspect_context=ctx1,
+        )
+
+        venv2_dir = tmp_path / "venv2"
+        venv2 = self._make_venv(venv2_dir, "community", "general", "5.8.0")
+        release2 = venv2_dir / "lib" / "python3.11" / "site-packages" / "ansible"
+        release2.mkdir(parents=True)
+        (release2 / "release.py").write_text("__version__ = '2.21.0'\n")
+        ctx2 = cache.introspect_context_suffix(venv2)
+        assert ctx1 != ctx2
+        assert (
+            cache.get(
+                "introspect",
+                venv2,
+                "community.general.copy",
+                introspect_context=ctx2,
+            )
+            is None
+        )
+
+    def test_introspect_partitions_by_collection_search_env(self, tmp_path: Path) -> None:
+        """Introspect cache keys include collection search path overrides.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        cache = PluginCache()
+        venv = self._make_builtin_venv(tmp_path, "2.16.3")
+        self._make_venv(tmp_path, "community", "general", "5.8.0")
+
+        ctx_a = cache.introspect_context_suffix(
+            venv,
+            {"ANSIBLE_COLLECTIONS_PATH": "/path/a"},
+        )
+        ctx_b = cache.introspect_context_suffix(
+            venv,
+            {"ANSIBLE_COLLECTIONS_PATH": "/path/b"},
+        )
+        assert ctx_a != ctx_b
+
+        cache.put(
+            "introspect",
+            venv,
+            "community.general.copy",
+            {"builtin_alternative": "ansible.builtin.copy"},
+            introspect_context=ctx_a,
+        )
+        assert (
+            cache.get(
+                "introspect",
+                venv,
+                "community.general.copy",
+                introspect_context=ctx_b,
+            )
+            is None
+        )
+
+    def test_collection_search_fingerprint_prefers_env_extra(self) -> None:
+        """env_extra overrides take precedence over os.environ for fingerprinting."""
+        with patch.dict(
+            "os.environ",
+            {"ANSIBLE_COLLECTIONS_PATH": "/from-env"},
+            clear=False,
+        ):
+            fp = _collection_search_fingerprint({"ANSIBLE_COLLECTIONS_PATH": "/from-extra"})
+        assert fp == "ANSIBLE_COLLECTIONS_PATH=/from-extra"
+
     def test_no_version_means_no_cache(self, tmp_path: Path) -> None:
         """FQCN with no discoverable version returns None (no cache).
 
@@ -494,10 +581,68 @@ class TestM001M004CachedPath:
 
             M001_M004_introspect._run_introspection(["ping"], venv)
 
-            hit = fresh_cache.get("introspect", str(venv), "ansible.builtin.ping")
+            ctx = fresh_cache.introspect_context_suffix(str(venv))
+            hit = fresh_cache.get("introspect", str(venv), "ansible.builtin.ping", introspect_context=ctx)
             assert hit is not None
             assert isinstance(hit, dict)
             assert hit["fqcn"] == "ansible.builtin.ping"
+
+    def test_twin_lookup_error_skips_cache(self, tmp_path: Path) -> None:
+        """Twin lookup failures are logged and not cached as no-twin results.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        from apme_engine.validators.ansible.cache import PluginCache
+        from apme_engine.validators.ansible.rules import M001_M004_introspect
+
+        venv = self._make_venv_with_python(tmp_path)
+        release_dir = venv / "lib" / "python3.11" / "site-packages" / "ansible"
+        release_dir.mkdir(parents=True)
+        (release_dir / "release.py").write_text("__version__ = '2.16.3'\n")
+
+        fresh_cache = PluginCache()
+        subprocess_result = json.dumps(
+            {
+                "community.general.copy": {
+                    "fqcn": "community.general.copy",
+                    "deprecated": False,
+                    "warnings": [],
+                    "redirects": [],
+                    "removed": False,
+                    "removal_msg": "",
+                    "plugin_path": "/some/path",
+                    "builtin_alternative": "",
+                    "builtin_alternative_error": "RuntimeError: twin probe failed",
+                }
+            }
+        )
+
+        with (
+            patch.object(M001_M004_introspect, "plugin_cache", fresh_cache),
+            patch("subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = type("Result", (), {"returncode": 0, "stdout": subprocess_result, "stderr": ""})()
+
+            result = M001_M004_introspect._run_introspection(["community.general.copy"], venv)
+            assert "community.general.copy" in result
+            copy_info = result["community.general.copy"]
+            assert isinstance(copy_info, dict)
+            assert "builtin_alternative_error" not in copy_info
+
+            ctx = fresh_cache.introspect_context_suffix(str(venv))
+            assert (
+                fresh_cache.get(
+                    "introspect",
+                    str(venv),
+                    "community.general.copy",
+                    introspect_context=ctx,
+                )
+                is None
+            )
+
+            M001_M004_introspect._run_introspection(["community.general.copy"], venv)
+            assert mock_run.call_count == 2
 
     def test_mixed_cached_and_uncached(self, tmp_path: Path) -> None:
         """Partition splits modules; only uncached ones go to subprocess.
@@ -520,7 +665,14 @@ class TestM001M004CachedPath:
             "removal_msg": "",
             "plugin_path": "",
         }
-        fresh_cache.put("introspect", str(venv), "community.general.ping", pre_cached)
+        introspect_ctx = fresh_cache.introspect_context_suffix(str(venv))
+        fresh_cache.put(
+            "introspect",
+            str(venv),
+            "community.general.ping",
+            pre_cached,
+            introspect_context=introspect_ctx,
+        )
 
         subprocess_result = json.dumps(
             {

@@ -39,6 +39,7 @@ for name in module_names:
         "removal_msg": "",
         "plugin_path": "",
         "builtin_alternative": "",
+        "builtin_alternative_error": "",
     }
     try:
         ctx = module_loader.find_plugin_with_context(name, ignore_deprecated=False)
@@ -71,8 +72,8 @@ for name in module_names:
                 alt = getattr(ctx2, "resolved_fqcn", "") or ""
                 if alt.startswith("ansible.builtin."):
                     info["builtin_alternative"] = alt
-        except Exception:
-            pass
+        except Exception as e:
+            info["builtin_alternative_error"] = f"{type(e).__name__}: {e}"
 
     results[name] = info
 
@@ -102,7 +103,13 @@ def _run_introspection(
         return {}
 
     venv_str = str(venv_root)
-    cached_results, uncached = plugin_cache.partition("introspect", venv_str, module_names)
+    introspect_ctx = plugin_cache.introspect_context_suffix(venv_str, env_extra)
+    cached_results, uncached = plugin_cache.partition(
+        "introspect",
+        venv_str,
+        module_names,
+        introspect_context=introspect_ctx,
+    )
 
     if not uncached:
         return cached_results
@@ -143,10 +150,21 @@ def _run_introspection(
         return cached_results
 
     for name, info in fresh.items():
-        resolved_fqcn = ""
-        if isinstance(info, dict):
-            resolved_fqcn = str(info.get("fqcn", ""))
-        plugin_cache.put("introspect", venv_str, name, info, resolved_fqcn=resolved_fqcn)
+        if not isinstance(info, dict):
+            continue
+        twin_err = str(info.pop("builtin_alternative_error", "") or "")
+        if twin_err:
+            sys.stderr.write(f"M048 twin lookup failed for {name}: {twin_err}\n")
+            continue
+        resolved_fqcn = str(info.get("fqcn", ""))
+        plugin_cache.put(
+            "introspect",
+            venv_str,
+            name,
+            info,
+            resolved_fqcn=resolved_fqcn,
+            introspect_context=introspect_ctx,
+        )
 
     merged: dict[str, object] = {}
     merged.update(cached_results)
