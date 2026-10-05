@@ -23,6 +23,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+import yaml
+
 from apme_engine.engine.models import ViolationDict
 from apme_engine.graph.content_graph import ContentGraph
 from apme_engine.graph.rule_base import GraphRule
@@ -44,6 +46,25 @@ logger = logging.getLogger("apme.remediation.graph")
 ProgressCallback = Callable[[str, str, float, int], None]
 RescanFn = Callable[[ContentGraph, frozenset[str]], Awaitable[list["ViolationDict"]]]
 AiPhaseStartCallback = Callable[[list[ViolationDict]], Awaitable[None] | None]
+PluginTransformFn = Callable[[ViolationDict, str, str], Awaitable[str | None]]
+
+
+def _yaml_is_well_formed(text: str) -> bool:
+    """Return True when ``text`` is non-empty parseable YAML.
+
+    Args:
+        text: Node YAML fragment from a plugin Transform.
+
+    Returns:
+        False when empty or ``yaml.safe_load`` raises.
+    """
+    if not text.strip():
+        return False
+    try:
+        yaml.safe_load(text)
+    except yaml.YAMLError:
+        return False
+    return True
 
 
 @dataclass
@@ -192,6 +213,8 @@ class GraphRemediationEngine:
         rescan_fn: RescanFn | None = None,
         ai_provider: AIProvider | None = None,
         ai_phase_start_cb: AiPhaseStartCallback | None = None,
+        plugin_transform_ids: frozenset[str] | None = None,
+        plugin_transform_fn: PluginTransformFn | None = None,
     ) -> None:
         """Initialize the graph remediation engine.
 
@@ -214,6 +237,8 @@ class GraphRemediationEngine:
                 only in-memory graph rules.
             ai_provider: Optional AI provider for Tier 2 transforms.
             ai_phase_start_cb: Optional callback when Tier 2 begins (ADR-068).
+            plugin_transform_ids: EXT-* rule IDs a plugin can Transform (ADR-042).
+            plugin_transform_fn: Async ``(violation, yaml, file_path) -> new_yaml``.
         """
         self._registry = registry
         self._graph = graph
@@ -225,6 +250,8 @@ class GraphRemediationEngine:
         self._rescan_fn = rescan_fn
         self._ai_provider = ai_provider
         self._ai_phase_start_cb = ai_phase_start_cb
+        self._plugin_transform_ids = plugin_transform_ids or frozenset()
+        self._plugin_transform_fn = plugin_transform_fn
 
     def _progress(
         self,
@@ -324,7 +351,7 @@ class GraphRemediationEngine:
         for pass_num in range(1, self._max_passes + 1):
             passes = pass_num
             tier1_stalled = False
-            tier1, tier2, tier3 = partition_violations(violations, registry)
+            tier1, tier2, tier3 = partition_violations(violations, registry, self._plugin_transform_ids)
             logger.debug(
                 "Graph remediation pass %d: %d violations -> tier1=%d tier2=%d "
                 "tier3=%d (ai_provider=%s skip_ai=%s skip_tier1=%s)",
@@ -388,7 +415,7 @@ class GraphRemediationEngine:
                         resolve_status=resolve_status,
                     )
                     violations = graph.collect_violations()
-                    new_tier1, new_tier2, _ = partition_violations(violations, registry)
+                    new_tier1, new_tier2, _ = partition_violations(violations, registry, self._plugin_transform_ids)
                     new_fixable = len(new_tier1)
 
                     if new_fixable >= prev_count:
@@ -437,7 +464,7 @@ class GraphRemediationEngine:
                     violations = graph.collect_violations()
 
                     # Phase C: Post-AI Tier 1 cleanup
-                    new_tier1, new_tier2, _ = partition_violations(violations, registry)
+                    new_tier1, new_tier2, _ = partition_violations(violations, registry, self._plugin_transform_ids)
                     if new_tier1:
                         self._progress(
                             "graph-tier1",
@@ -456,7 +483,7 @@ class GraphRemediationEngine:
                             resolve_status="pending_review" if interactive else "fixed",
                         )
                         violations = graph.collect_violations()
-                        _, new_tier2, _ = partition_violations(violations, registry)
+                        _, new_tier2, _ = partition_violations(violations, registry, self._plugin_transform_ids)
 
                     if new_tier2:
                         ai_feedback_by_node = _build_ai_feedback(new_tier2)
@@ -538,11 +565,14 @@ class GraphRemediationEngine:
             node_id = str(v.get("path", ""))
 
             transform_fn = registry.get_node_transform(rule_id)
-            if transform_fn is None:
+            if transform_fn is not None:
+                applied = await graph.apply_transform(node_id, transform_fn, v)
+            elif rule_id in self._plugin_transform_ids:
+                applied = await self._apply_plugin_transform(graph, node_id, v)
+            else:
                 skipped_no_transform += 1
                 continue
 
-            applied = await graph.apply_transform(node_id, transform_fn, v)
             if applied:
                 applied_this_pass += 1
             else:
@@ -567,6 +597,35 @@ class GraphRemediationEngine:
         )
 
         return applied_this_pass
+
+    async def _apply_plugin_transform(
+        self,
+        graph: ContentGraph,
+        node_id: str,
+        violation: ViolationDict,
+    ) -> bool:
+        """Apply a plugin Transform RPC result onto one graph node.
+
+        Args:
+            graph: ContentGraph to mutate.
+            node_id: Node path.
+            violation: EXT-* finding.
+
+        Returns:
+            True when YAML was applied.
+        """
+        if self._plugin_transform_fn is None:
+            return False
+        node = graph.get_node(node_id)
+        if node is None or not node.yaml_lines:
+            return False
+        new_yaml = await self._plugin_transform_fn(violation, node.yaml_lines, node.file_path)
+        if new_yaml is None:
+            return False
+        if not _yaml_is_well_formed(new_yaml):
+            logger.warning("Plugin transform for %s returned invalid YAML; skipping", violation.get("rule_id"))
+            return False
+        return graph.apply_yaml(node_id, new_yaml)
 
     async def _apply_ai_transforms(
         self,

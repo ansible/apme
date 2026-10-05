@@ -258,6 +258,18 @@ class TestViolationDictToProto:
         assert "[REDACTED]" in stored
         assert "pass" not in stored
 
+    def test_ai_guidance_round_trip(self) -> None:
+        """Plugin ai_guidance metadata survives dict ↔ proto conversion."""
+        v: ViolationDict = {
+            "rule_id": "EXT-orgpolicy-001",
+            "message": "Banned collection",
+            "ai_guidance": "Replace community.general with ansible.builtin.",
+        }
+        proto = violation_dict_to_proto(v)
+        assert proto.metadata["ai_guidance"] == "Replace community.general with ansible.builtin."
+        restored = violation_proto_to_dict(proto)
+        assert restored.get("ai_guidance") == "Replace community.general with ansible.builtin."
+
 
 class TestCheckCliConverter:
     """Ensure check uses the full daemon violation converter."""

@@ -35,3 +35,5 @@ echo "==> Checking UBI volume write permissions (ADR-061)..."
 bash containers/podman/check-volume-permissions.sh
 
 echo "Images built. Start with: tox -e up"
+echo "Optional plugin sidecars (custom OPA / ansible-security-scanner): tox -e build-plugins"
+echo "See docs/guides/PLUGIN_SIDECARS.md"

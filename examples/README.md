@@ -6,6 +6,25 @@ See [ci/](ci/) for ready-to-use GitHub Actions workflows and pre-commit
 hook configurations. Copy these to your Ansible repos to integrate APME
 into your pipelines.
 
+## Example plugins
+
+[`plugins/`](plugins/) has ADR-042 Plugin sidecars:
+
+- [`orgpolicy/`](plugins/orgpolicy/) — host-process example (`EXT-orgpolicy-001`)
+- [`opa-custom/`](plugins/opa-custom/) — **image**: private OPA bundle (not the built-in `opa` container)
+- [`secscan/`](plugins/secscan/) — **image**: [ansible-security-scanner](https://github.com/cpeoples/ansible-security-scanner)
+
+Build images and add containers to the Podman pod:
+[PLUGIN_SIDECARS.md](../docs/guides/PLUGIN_SIDECARS.md) (`tox -e build-plugins`).
+
+```bash
+APME_PLUGIN_LISTEN=0.0.0.0:50100 python examples/plugins/orgpolicy/plugin.py
+export APME_PLUGIN_ORGPOLICY_ADDRESS=127.0.0.1:50100
+```
+
+See [ADR-042](../.sdlc/adrs/ADR-042-third-party-plugin-services.md) and
+[Rule Configuration](../docs/guides/RULE_CONFIGURATION.md#third-party-plugin-services-adr-042).
+
 ## Example Playbooks
 
 These playbooks are **intentionally non-conformant**. They exist to

@@ -55,7 +55,11 @@ def _get_scope(violation: ViolationDict) -> str:
     return _to_str_value(violation.get("scope"), RuleScope.TASK.value)
 
 
-def is_finding_resolvable(violation: ViolationDict, registry: TransformRegistry) -> bool:
+def is_finding_resolvable(
+    violation: ViolationDict,
+    registry: TransformRegistry,
+    plugin_transform_ids: frozenset[str] | None = None,
+) -> bool:
     """Return True if the violation has a registered deterministic transform (Tier 1).
 
     Cross-file / data-flow rules are never Tier 1, even if a caller registers
@@ -64,6 +68,7 @@ def is_finding_resolvable(violation: ViolationDict, registry: TransformRegistry)
     Args:
         violation: Violation dict with rule_id.
         registry: Transform registry to check for rule.
+        plugin_transform_ids: EXT-* rule IDs a plugin declared as Transform-capable.
 
     Returns:
         True if rule_id has a registered transform and is not cross-file.
@@ -71,24 +76,29 @@ def is_finding_resolvable(violation: ViolationDict, registry: TransformRegistry)
     bare_id = normalize_rule_id(str(violation.get("rule_id", "")))
     if bare_id in CROSS_FILE_RULES:
         return False
-    return bare_id in registry
+    if bare_id in registry:
+        return True
+    extra = plugin_transform_ids or frozenset()
+    return bare_id in extra
 
 
 def partition_violations(
     violations: list[ViolationDict],
     registry: TransformRegistry,
+    plugin_transform_ids: frozenset[str] | None = None,
 ) -> tuple[list[ViolationDict], list[ViolationDict], list[ViolationDict]]:
     """Split violations into (tier1_fixable, tier2_ai, tier3_manual).
 
     Routing uses scope metadata (ADR-026) instead of hardcoded rule lists:
     - Cross-file / data-flow rules (``CROSS_FILE_RULES``) are always Tier 3.
-    - Tier 1: deterministic transform exists in registry.
+    - Tier 1: deterministic transform exists in registry or plugin Transform.
     - Tier 2: scope is AI-proposable (task/block) and no cross-file constraint.
     - Tier 3: scope is not AI-proposable, or cross-file context required.
 
     Args:
         violations: List of violation dicts.
         registry: Transform registry for Tier 1 lookup.
+        plugin_transform_ids: EXT-* IDs with a plugin Transform (ADR-042).
 
     Returns:
         Tuple of (tier1_fixable, tier2_ai, tier3_manual).
@@ -107,7 +117,7 @@ def partition_violations(
         if bare_id in CROSS_FILE_RULES:
             v["remediation_resolution"] = RemediationResolution.NEEDS_CROSS_FILE
             tier3.append(v)
-        elif is_finding_resolvable(v, registry):
+        elif is_finding_resolvable(v, registry, plugin_transform_ids):
             tier1.append(v)
         elif _get_scope(v) not in AI_PROPOSABLE_SCOPES:
             v["remediation_resolution"] = RemediationResolution.MANUAL

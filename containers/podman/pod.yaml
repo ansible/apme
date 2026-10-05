@@ -9,6 +9,9 @@
 # CLI is run on-the-fly with: ./run-cli.sh [args]
 # Start from repo root: podman play kube pod.yaml
 # Requires: images built first (./build.sh). PVCs are created from pvc.yaml on start.
+# Optional ADR-042 plugin sidecars (custom OPA bundle, ansible-security-scanner):
+# commented below. Build with tox -e build-plugins and see docs/guides/PLUGIN_SIDECARS.md.
+# Do not volume-mount extra Rego into the built-in `opa` container.
 apiVersion: v1
 kind: Pod
 metadata:
@@ -35,6 +38,12 @@ spec:
           value: "127.0.0.1:50058"
         - name: DEP_AUDIT_GRPC_ADDRESS
           value: "127.0.0.1:50059"
+        # Optional Plugin sidecars (uncomment with the containers at the bottom of
+        # spec.containers). tox -e build-plugins first.
+        # - name: APME_PLUGIN_OPACUSTOM_ADDRESS
+        #   value: "127.0.0.1:50100"
+        # - name: APME_PLUGIN_SECSCAN_ADDRESS
+        #   value: "127.0.0.1:50101"
         - name: APME_GALAXY_PROXY_URL
           value: "http://127.0.0.1:8765"
         - name: APME_REPORTING_ENDPOINT
@@ -321,6 +330,30 @@ spec:
         - name: otel-config
           mountPath: /etc/otelcol/config.yaml
           readOnly: true
+    # Optional ADR-042 Plugin sidecars. Not started by default (images are not
+    # part of tox -e build). Guide: docs/guides/PLUGIN_SIDECARS.md
+    # Fragment: examples/plugins/pod-sidecars.yaml
+    #
+    #    - name: plugin-opa-custom
+    #      image: apme-plugin-opa-custom:latest
+    #      env:
+    #        - name: APME_PLUGIN_LISTEN
+    #          value: "0.0.0.0:50100"
+    #        - name: APME_OPA_PLUGIN_BUNDLE
+    #          value: "/bundle"
+    #        - name: APME_OPA_PLUGIN_ENTRYPOINT
+    #          value: "data.apme.plugin.violations"
+    #      ports:
+    #        - containerPort: 50100
+    #          hostPort: 50100
+    #    - name: plugin-secscan
+    #      image: apme-plugin-secscan:latest
+    #      env:
+    #        - name: APME_PLUGIN_LISTEN
+    #          value: "0.0.0.0:50101"
+    #      ports:
+    #        - containerPort: 50101
+    #          hostPort: 50101
   volumes:
     - name: postgres-data
       persistentVolumeClaim:

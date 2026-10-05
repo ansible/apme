@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed
+Partially Implemented (operator `spec.plugins[]`, PyPI SDK, per-plugin AI batching pending)
 
 ## Date
 
@@ -107,8 +107,8 @@ APME_PLUGIN_<NAME>_ADDRESS=host:port
 Examples:
 
 ```bash
-APME_PLUGIN_SECTEAM_ADDRESS=localhost:50060
-APME_PLUGIN_ORGPOLICY_ADDRESS=localhost:50061
+APME_PLUGIN_SECTEAM_ADDRESS=localhost:50100
+APME_PLUGIN_ORGPOLICY_ADDRESS=localhost:50101
 ```
 
 - The Engine scans env vars matching `APME_PLUGIN_*_ADDRESS` at startup.
@@ -123,7 +123,15 @@ During fix passes, the Engine (or Remediation Engine) routes violations by rule 
 - **Built-in prefixes** (L, M, R, P, SEC) — routed to the built-in `TransformRegistry` as today.
 - **EXT- prefix** — routed to the originating plugin's `Transform` RPC. The Engine maintains a `rule_prefix -> plugin_address` map built from `Describe` responses.
 
-Plugin transforms participate in the same convergence loop: scan -> fix -> rescan -> repeat until stable. The plugin receives one `TransformRequest` per violation, returns the fixed file (or `applied=false`), and the Engine writes the result back before rescanning.
+Plugin transforms participate in the same convergence loop: scan -> fix -> rescan -> repeat until stable.
+
+**Graph-safe Transform (amendment, ADR-044):** Built-in Tier 1 uses node-local `CommentedMap` functions via `TransformRegistry` / `ContentGraph.apply_transform`. Plugins do **not** receive `TransformSession` over gRPC (that API is engine-internal). Instead:
+
+- `TransformRequest.file.content` is the **current node YAML fragment** (`ContentNode.yaml_lines`); `file.path` is the playbook path.
+- The plugin returns replacement node YAML (`applied=true`) or `applied=false`.
+- The Engine checks YAML well-formedness, then `ContentGraph.apply_yaml()` and marks the node dirty. Plugins never write `/sessions` or the user tree.
+
+Whole-file rewrites (e.g. wrapping a SAST tool that emits unified diffs) remain a future extension; v1 is node-scoped so identity and convergence stay intact.
 
 If a plugin's `Transform` returns an error or `applied=false` for a given violation, the violation is reclassified as `REMEDIATION_CLASS_AI_CANDIDATE` with `REMEDIATION_RESOLUTION_TRANSFORM_FAILED` (Tier 2), matching the built-in remediation engine's handling of transform failures. The violation then enters the AI escalation path described below.
 
@@ -198,7 +206,7 @@ The plugin system is not viable without a low-friction authoring experience. The
 - `Health` endpoint (always returns `"ok"`)
 - `EXT-` prefix enforcement on rule IDs
 - Proto serialization/deserialization (plugin author works with plain dicts and dataclasses)
-- Configurable listen address via `APME_PLUGIN_LISTEN` env var (default `:50060`)
+- Configurable listen address via `APME_PLUGIN_LISTEN` env var (default `0.0.0.0:50100`). Plugin ports are **50100–50199** so they never collide with Engine `:50051`, validators `:50053–50059` / `:50062`, Gateway `:50060`, or Abbenay `:50057`.
 
 **Plugin author implements two methods:**
 
@@ -393,6 +401,10 @@ apme-reviews/
 3. Update `scripts/gen_grpc.sh` to generate stubs for both packages
 4. Write an example plugin (e.g., "all plays must have a department tag")
 
+Local Podman images and `pod.yaml` containers for a private OPA bundle and
+[ansible-security-scanner](https://github.com/cpeoples/ansible-security-scanner):
+[PLUGIN_SIDECARS.md](../../docs/guides/PLUGIN_SIDECARS.md).
+
 ### Phase 2: Engine integration
 
 1. Add `APME_PLUGIN_*_ADDRESS` env var scanning to `engine_server.py`
@@ -440,6 +452,7 @@ apme-reviews/
 - `src/apme_engine/daemon/engine_server.py` — Engine fan-out and remediation orchestration
 - `src/apme_engine/remediation/partition.py` — Rule ID normalization and tier classification
 - `src/apme_engine/remediation/registry.py` — Built-in TransformRegistry
+- [docs/guides/PLUGIN_SIDECARS.md](../../docs/guides/PLUGIN_SIDECARS.md) — build plugin images; add OPA / ansible-security-scanner containers to the Podman pod
 
 ---
 
@@ -450,3 +463,6 @@ apme-reviews/
 | 2026-03-20 | APME Team | Initial proposal |
 | 2026-03-20 | APME Team | Add AI escalation: per-plugin batching and ai_guidance metadata |
 | 2026-04-20 | APME Team | Link options briefing design doc in References |
+| 2026-10-05 | APME Team | Accept for implementation: node-scoped Transform + apply_yaml (ADR-044); plugin ports 50100+ (not Gateway 50060); operator attach is `Apme.spec.plugins[]` ([apme-operator#39](https://github.com/ansible/apme-operator/issues/39)) |
+| 2026-10-05 | APME Team | APME Engine: `plugin.proto`, SDK, discovery, Validate fan-out, EXT Transform routing |
+| 2026-10-05 | APME Team | Document Podman plugin sidecar images (custom OPA + ansible-security-scanner) |

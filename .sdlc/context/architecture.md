@@ -288,6 +288,14 @@ The wrapper adds **Ansible-aware filtering**:
 | 8080 | Gateway | HTTP (REST API) |
 | 8081 | UI | HTTP (nginx-served SPA) |
 | 8765 | Galaxy Proxy | HTTP (PEP 503 simple repository API) |
+| 50100–50199 | Third-party plugins | gRPC (`APME_PLUGIN_<NAME>_ADDRESS`, ADR-042) |
+
+In-repo examples: custom OPA bundle on **50100** (`apme-plugin-opa-custom`)
+and [ansible-security-scanner](https://github.com/cpeoples/ansible-security-scanner)
+on **50101** (`apme-plugin-secscan`). These are optional commented containers
+in `containers/podman/pod.yaml`. Build with `tox -e build-plugins`. See
+[PLUGIN_SIDECARS.md](../../docs/guides/PLUGIN_SIDECARS.md). Do not inject extra
+Rego into the built-in OPA image on 50054.
 
 ---
 

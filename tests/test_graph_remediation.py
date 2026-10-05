@@ -981,6 +981,93 @@ class TestGraphRemediationEngine:
         assert isinstance(step["diff"], str)
         assert len(str(step["diff"])) > 0
 
+    async def test_plugin_transform_applies_yaml(self) -> None:
+        """EXT-* findings with a plugin Transform rewrite node YAML via apply_yaml."""
+        graph = ContentGraph()
+        node = _make_node(module="apt")
+        graph.add_node(node)
+        registry = TransformRegistry()
+        rule_id = "EXT-orgpolicy-002"
+
+        async def _fn(
+            _violation: ViolationDict,
+            _yaml_lines: str,
+            _file_path: str,
+        ) -> str | None:
+            return _TASK_YAML_FQCN
+
+        async def _rescan(_graph: ContentGraph, _dirty: frozenset[str]) -> list[ViolationDict]:
+            return []
+
+        engine = GraphRemediationEngine(
+            registry,
+            graph,
+            [],
+            plugin_transform_ids=frozenset({rule_id}),
+            plugin_transform_fn=_fn,
+            rescan_fn=_rescan,
+            max_passes=2,
+        )
+        report = await engine.remediate(
+            initial_violations=[
+                {
+                    "rule_id": rule_id,
+                    "path": node.node_id,
+                    "file": node.file_path,
+                    "severity": "high",
+                    "scope": "task",
+                }
+            ]
+        )
+        assert report.fixed == 1
+        updated = graph.get_node(node.node_id)
+        assert updated is not None
+        assert "ansible.builtin.apt" in updated.yaml_lines
+
+    async def test_plugin_transform_rejects_invalid_yaml(self) -> None:
+        """Malformed plugin YAML is skipped (node unchanged)."""
+        graph = ContentGraph()
+        node = _make_node(module="apt")
+        graph.add_node(node)
+        original = node.yaml_lines
+        registry = TransformRegistry()
+        rule_id = "EXT-orgpolicy-002"
+
+        async def _fn(
+            _violation: ViolationDict,
+            _yaml_lines: str,
+            _file_path: str,
+        ) -> str | None:
+            return ": this: is: [not yaml"
+
+        async def _rescan(_graph: ContentGraph, _dirty: frozenset[str]) -> list[ViolationDict]:
+            return []
+
+        engine = GraphRemediationEngine(
+            registry,
+            graph,
+            [],
+            plugin_transform_ids=frozenset({rule_id}),
+            plugin_transform_fn=_fn,
+            rescan_fn=_rescan,
+            max_passes=2,
+        )
+        report = await engine.remediate(
+            initial_violations=[
+                {
+                    "rule_id": rule_id,
+                    "path": node.node_id,
+                    "file": node.file_path,
+                    "severity": "high",
+                    "scope": "task",
+                }
+            ]
+        )
+        assert report.fixed == 0
+        updated = graph.get_node(node.node_id)
+        assert updated is not None
+        assert updated.yaml_lines == original
+
 
 # ---------------------------------------------------------------------------
 # native_rules_dir

@@ -1,7 +1,14 @@
 # Options discussion: third-party extensibility and overall tool use
 
 This document is a **decision-support briefing** grounded in the current
-repository. It complements [ADR-042: Third-Party Plugin Services](../../.sdlc/adrs/ADR-042-third-party-plugin-services.md), which remains **Proposed**; there is **no** `plugin.proto` or `APME_PLUGIN_*` integration in code yet.
+repository. It complements [ADR-042: Third-Party Plugin Services](../../.sdlc/adrs/ADR-042-third-party-plugin-services.md).
+
+APME Engine now implements ADR-042 phases 1–3 in-tree: `plugin.proto`,
+`apme_plugin_sdk`, `APME_PLUGIN_*_ADDRESS` discovery, Validate fan-out,
+EXT- prefix enforcement, and node-scoped `Transform` via
+`ContentGraph.apply_yaml`. Cluster sidecar attach remains the APME Operator
+(`Apme.spec.plugins[]`; [apme-operator#39](https://github.com/ansible/apme-operator/issues/39)).
+PyPI SDK packaging and per-plugin AI batching (phases 4–5) are still open.
 
 ---
 
@@ -17,11 +24,16 @@ repository. It complements [ADR-042: Third-Party Plugin Services](../../.sdlc/ad
 
 - Parses content, builds **hierarchy** (and related payloads), then **fan-out** to validators via `asyncio.gather()` — see [`_scan_pipeline`](../../src/apme_engine/daemon/engine_server.py).
 - Validators implement **`Validator.Validate` + `Health` only** — [`proto/apme/v1/validate.proto`](../../proto/apme/v1/validate.proto). Built-in validators are **read-only** (ADR-009).
-- **Tier 1 remediation** is **in-process**: [`partition.py`](../../src/apme_engine/remediation/partition.py) routes to **`TransformRegistry`** by `rule_id` (after `normalize_rule_id`). There is **no** `EXT-` or plugin routing today.
+- **Tier 1 remediation** is **in-process** for built-in rule IDs
+  ([`partition.py`](../../src/apme_engine/remediation/partition.py) →
+  **`TransformRegistry`**). Violations whose IDs match a plugin
+  `Describe.transform_rule_ids` set are routed to that plugin's
+  **`Transform`** RPC; the Engine splices returned node YAML with
+  `apply_yaml`.
 
 **Local daemon**
 
-- [`launcher.py`](../../src/apme_engine/daemon/launcher.py) sets env vars (`NATIVE_GRPC_ADDRESS`, etc.) for known services. Plugins would need an analogous **discovery and startup** story for `apme daemon` / pod (ADR-042 sketches `APME_PLUGIN_<NAME>_ADDRESS`).
+- [`launcher.py`](../../src/apme_engine/daemon/launcher.py) sets env vars (`NATIVE_GRPC_ADDRESS`, etc.) for known services. Plugins are discovered from `APME_PLUGIN_<NAME>_ADDRESS` on the Engine process. For the local Podman pod, add a sidecar container and that env var on Engine — [PLUGIN_SIDECARS.md](../guides/PLUGIN_SIDECARS.md) (custom OPA image + ansible-security-scanner). The CLI daemon does not spawn plugins unless those env vars are already set.
 
 ```mermaid
 flowchart LR
@@ -91,7 +103,7 @@ Phases follow [ADR-042 Implementation Notes](../../.sdlc/adrs/ADR-042-third-part
 
 | Phase | What ships (summary) | User-visible outcome |
 |-------|----------------------|----------------------|
-| **1** | `plugin.proto`, `apme_plugin_sdk`, shared codegen, example plugin | Stable **contract** for authors; runnable **reference plugin** (not yet wired into product Engine). |
+| **1** | `plugin.proto`, `apme_plugin_sdk`, shared codegen, example plugin | Stable **contract** for authors; runnable **reference plugin**. |
 | **2** | `APME_PLUGIN_*_ADDRESS` discovery, `Describe`, **Validate** fan-out on Engine | **`apme check`** (and hosted scans) can report **`EXT-`** violations when the deployment includes plugins. |
 | **3** | `partition.py` / routing, plugin **`Transform`** in convergence loop | **`apme remediate`** applies **Tier 1** fixes for plugin-owned rules via gRPC, not only built-in transforms. |
 | **4** | Tier 2 partitioned by plugin; **`ai_guidance`** in prompts | Failed or missing plugin transforms escalate to **AI** with plugin-supplied context (per ADR-025 stack). |
@@ -191,7 +203,7 @@ ADR-042’s “point Engine at plugin addresses” story should be read **togeth
 
 ## Implementation checkpoint: `ai_guidance` and violation metadata
 
-ADR-042 requires preserving **`metadata["ai_guidance"]`** through proto ↔ dict conversion for Tier 2 escalation. Today, [`violation_convert.py`](../../src/apme_engine/daemon/violation_convert.py) uses an explicit **`_METADATA_KEYS`** allowlist for fields copied onto violations; **`ai_guidance` is not listed**, so plugin guidance would be **dropped** unless that list (or the conversion rules for **`EXT-`** violations) is updated when Phase **4** is implemented—ideally alongside or before first plugin AI paths ship.
+ADR-042 requires preserving **`metadata["ai_guidance"]`** through proto ↔ dict conversion for Tier 2 escalation. [`violation_convert.py`](../../src/apme_engine/daemon/violation_convert.py) includes **`ai_guidance`** in **`_METADATA_KEYS`**, and Abbenay node/validation prompts inject that string when present. Per-plugin AI *batching* (separate passes per `EXT-` prefix) is still open.
 
 ---
 

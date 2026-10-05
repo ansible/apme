@@ -59,6 +59,7 @@ tox is the single entry point for all developer tasks. Every CI check has a corr
 | `tox -e helm` | `scripts/helm_chart.sh` (`helm lint` + `helm package`) | Helm chart |
 | `tox -e graph` | `tools/visualize_graph.py` (interactive HTML graph) | Developer tool |
 | `tox -e build` | `containers/podman/build.sh` | Pod lifecycle |
+| `tox -e build-plugins` | Optional plugin sidecar images (custom OPA + ansible-security-scanner) | Pod lifecycle |
 | `tox -e up` | `build.sh` + `up.sh` | Pod lifecycle |
 | `tox -e down` | `containers/podman/down.sh` | Pod lifecycle |
 | `tox -e wipe` | `down --wipe` (stop + delete DB/sessions/Abbenay secrets.json) | Pod lifecycle |
@@ -342,6 +343,9 @@ test_L0XX_pass {
 ```
 
 3. Create rule doc `src/apme_engine/validators/opa/bundle/L0XX.md`.
+
+Organization-specific Rego does **not** belong in that bundle. Ship a Plugin
+sidecar image instead: [PLUGIN_SIDECARS.md](PLUGIN_SIDECARS.md).
 
 ### Ansible rule
 

@@ -240,10 +240,10 @@ def _build_validation_prompt(context: AINodeContext) -> str:
 
     ai_prompts = _load_ai_prompts()
     bare_id = canonicalize_rule_id(rule_id)
-    hint = ai_prompts.get(bare_id)
+    hint = str(v.get("ai_guidance") or "").strip() or ai_prompts.get(bare_id)
     rule_guidance = ""
     if hint:
-        rule_guidance = f"## Rule-Specific Guidance\n\n**[{bare_id}]**: {hint}"
+        rule_guidance = f"## Rule-Specific Guidance\n\n**[{bare_id or rule_id}]**: {hint}"
 
     parent_section = ""
     if context.parent_context:
@@ -339,9 +339,11 @@ def _build_node_prompt(context: AINodeContext) -> str:
         rid = str(v.get("rule_id", ""))
         bare = canonicalize_rule_id(rid)
         if bare and bare not in seen_rules:
-            hint = ai_prompts.get(bare)
+            plugin_hint = str(v.get("ai_guidance") or "").strip()
+            hint = plugin_hint or ai_prompts.get(bare)
             if hint:
-                guidance_entries.append(f"**[{bare}]**: {hint}")
+                label = rid if plugin_hint else bare
+                guidance_entries.append(f"**[{label}]**: {hint}")
                 seen_rules.add(bare)
 
     rule_guidance = ""

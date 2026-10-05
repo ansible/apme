@@ -66,6 +66,7 @@ Decisions with substantial code shipped; ADR-defined scope still incomplete.
 | [ADR-012](ADR-012-scale-pods-not-services.md) | Scale Pods, Not Services Within a Pod (Partially Implemented (multi-replica scaling and operator deferred)) | 2026-02 |
 | [ADR-038](ADR-038-public-data-api.md) | Public Data API for Platform Consumers (Partially Implemented (webhooks, token auth, project health endpoint, and collection-route project lookup pending)) | 2026-03-25 |
 | [ADR-040](ADR-040-scan-metadata-enrichment.md) | Scan Metadata Enrichment (Partially Implemented (global collection and Python-package catalog endpoints and collection-to-project routes pending)) | 2026-03-25 |
+| [ADR-042](ADR-042-third-party-plugin-services.md) | Third-Party Plugin Services (Partially Implemented (operator `spec.plugins[]`, PyPI SDK, per-plugin AI batching pending)) | 2026-03-20 |
 | [ADR-043](ADR-043-default-severity-assignment.md) | Default Severity Assignment for Rule Catalog (Partially Implemented (Phase 5 service_affecting and R2xx rules pending)) | 2026-03-26 |
 | [ADR-048](ADR-048-pod-internal-admin-endpoints.md) | Pod-Internal Admin Endpoints Rely on Network Isolation (Partially Implemented (localhost-only Galaxy Proxy binding and removal of hostPort exposure pending)) | 2026-04-01 |
 | [ADR-050](ADR-050-post-remediation-pr-creation.md) | Post-Remediation PR Creation via Gateway SCM Integration (Partially Implemented (scm_token encryption at rest pending)) | 2026-04-07 (revised 2026-07-06) |
@@ -96,7 +97,6 @@ Decisions under consideration — not yet accepted or implemented.
 | [ADR-027](ADR-027-agentic-project-remediation.md) | Agentic Project-Level AI Remediation | 2026-03-19 |
 | [ADR-034](ADR-034-multi-pod-health-registration.md) | Multi-Pod Health Registration | 2026-03-23 |
 | [ADR-036](ADR-036-two-pass-remediation-engine.md) | Two-Pass Remediation Engine with Project-Level Transforms | 2026-03-23 |
-| [ADR-042](ADR-042-third-party-plugin-services.md) | Third-Party Plugin Services | 2026-03-20 |
 | [ADR-046](ADR-046-ai-assisted-report-generation.md) | AI-Assisted Report Generation | 2026-03-30 |
 | [ADR-058](ADR-058-collection-dependency-suggestion.md) | Collection Dependency Suggestion for Unresolved Modules (R501) | 2026-06-23 |
 | [ADR-071](ADR-071-pip-index-egress.md) | Pip Index Egress via Galaxy Proxy | 2026-09-16 |

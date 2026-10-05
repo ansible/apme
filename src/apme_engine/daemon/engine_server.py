@@ -83,6 +83,16 @@ from apme_engine.daemon.deadline import (
 )
 from apme_engine.daemon.event_emitter import emit_fix_completed, emit_register_rules, start_sinks
 from apme_engine.daemon.fs_utils import write_chunked_fs as _write_chunked_fs
+from apme_engine.daemon.plugins import (
+    DiscoveredPlugin,
+    call_plugin_transform,
+    call_plugin_validate,
+    filter_plugin_violations,
+    load_plugins,
+    plugin_for_rule,
+    probe_plugin_health,
+    transform_rule_ids,
+)
 from apme_engine.daemon.session import (
     ResourceExhaustedError,
     SessionState,
@@ -500,6 +510,40 @@ async def _call_validator(
         await channel.close(grace=None)
 
 
+def _plugin_validate_request(request: ValidateRequest) -> ValidateRequest:
+    """Copy a ValidateRequest with ``scandata`` cleared (ADR-042).
+
+    Args:
+        request: Full engine ValidateRequest (may include native scandata).
+
+    Returns:
+        Clone safe to send to Plugin.Validate.
+    """
+    clone = ValidateRequest()
+    clone.CopyFrom(request)
+    clone.ClearField("scandata")
+    return clone
+
+
+async def _call_plugin_validate_result(
+    plugin: DiscoveredPlugin,
+    request: ValidateRequest,
+) -> _ValidatorResult:
+    """Call Plugin.Validate and keep only EXT-prefixed findings.
+
+    Args:
+        plugin: Discovered plugin (address + prefix).
+        request: ValidateRequest with scandata empty.
+
+    Returns:
+        ``_ValidatorResult`` (errors are non-fatal).
+    """
+    violations, error = await call_plugin_validate(plugin.address, request)
+    if error:
+        return _ValidatorResult(error=error)
+    return _ValidatorResult(violations=filter_plugin_violations(plugin, violations))
+
+
 _REQUIREMENTS_PATHS = {"requirements.yml", "collections/requirements.yml"}
 
 
@@ -805,6 +849,36 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
 
     _venv_mgr: VenvSessionManager | None = None
     _galaxy_proxy_cfg_lock: asyncio.Lock | None = None
+    _plugin_cache: list[DiscoveredPlugin] | None = None
+    _plugin_lock: asyncio.Lock | None = None
+
+    def __init__(self) -> None:
+        """Initialize per-servicer plugin discovery cache (ADR-042)."""
+        super().__init__()
+        self._plugin_cache = None
+        self._plugin_lock = None
+
+    async def _ensure_plugins(self) -> list[DiscoveredPlugin]:
+        """Discover and Describe plugins once per servicer lifetime.
+
+        Plugins are optional: Describe failures are skipped, never raised.
+
+        Returns:
+            Cached list of successfully described plugins.
+        """
+        if self._plugin_cache is not None:
+            return self._plugin_cache
+        if self._plugin_lock is None:
+            self._plugin_lock = asyncio.Lock()
+        async with self._plugin_lock:
+            if self._plugin_cache is not None:
+                return self._plugin_cache
+            loaded = await load_plugins()
+            self._plugin_cache = loaded
+            if loaded:
+                names = ", ".join(p.name for p in loaded)
+                logger.info("Plugins: loaded %d (%s)", len(loaded), names)
+            return loaded
 
     def _get_venv_manager(self) -> VenvSessionManager:
         """Return (or create) the singleton VenvSessionManager.
@@ -1173,6 +1247,8 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             content_graph_data=content_graph_data,
             graph_rule_opt_in=graph_rule_opt_in_from_rule_configs(rule_configs),
         )
+        plugin_request = _plugin_validate_request(validate_request)
+        plugins = await self._ensure_plugins()
 
         _pcb = progress_callback
 
@@ -1201,6 +1277,9 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         task_coros: list[Awaitable[_ValidatorResult]] = [
             _call_validator(addr, validate_request) for _name, addr in validator_targets
         ]
+        for plugin in plugins:
+            task_names.append(plugin.name)
+            task_coros.append(_call_plugin_validate_result(plugin, plugin_request))
 
         violations: list[ViolationDict] = []
         validator_diagnostics: list[ValidatorDiagnostics] = []
@@ -1267,6 +1346,8 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                     msg = f"Required validator {name} RPC failed: {result.error}"
                     logger.error("%s (req=%s)", msg, scan_id)
                     raise RequiredValidatorDependencyError(msg)
+                if result.error:
+                    logger.warning("Fan-out: %s RPC failed (req=%s): %s", name, scan_id, result.error)
                 counts[name] = len(result.violations)
                 violations.extend(result.violations)
                 if result.diagnostics:
@@ -1275,6 +1356,9 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                     validator_logs.append(list(result.logs))
 
             parts = " ".join(f"{n.title()}={counts.get(n, 0)}" for n in VALIDATOR_ENV_VARS)
+            if plugins:
+                plugin_parts = " ".join(f"{p.name}={counts.get(p.name, 0)}" for p in plugins)
+                parts = f"{parts} {plugin_parts}".strip()
             logger.info("Fan-out: done (%.0fms) %s Total=%d (req=%s)", fan_out_ms, parts, len(violations), scan_id)
 
         before_noqa = len(violations)
@@ -2246,6 +2330,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         ai_violations: list[ViolationDict] | None = None,
         max_ai_attempts: int = 2,
         concurrency: int | None = None,
+        plugin_transform_ids: frozenset[str] | None = None,
     ) -> None:
         """Re-anchor budget at the AI gate with AI-only estimate (ADR-068).
 
@@ -2256,6 +2341,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             ai_violations: Pre-partitioned tier-2 violations (skips partition).
             max_ai_attempts: AI resubmission cap from graph engine.
             concurrency: Parallel AI calls (default env).
+            plugin_transform_ids: EXT-* IDs with a plugin Transform (ADR-042).
 
         Raises:
             BudgetConfigError: When AI budget inputs are invalid.
@@ -2265,7 +2351,11 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         elif violations is not None and registry is not None:
             from apme_engine.remediation.partition import partition_violations  # noqa: PLC0415
 
-            _, tier2, _ = partition_violations(violations, registry)  # type: ignore[arg-type]
+            _, tier2, _ = partition_violations(
+                violations,
+                registry,  # type: ignore[arg-type]
+                plugin_transform_ids,
+            )
             ai_nodes = count_ai_nodes(tier2)
         else:
             ai_nodes = 0
@@ -2615,6 +2705,41 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                     )
                     ext_names.append("ansible")
 
+            plugins = await self._ensure_plugins()
+            if plugins:
+                rescan_files = [
+                    File(path=n.file_path, content=n.yaml_lines.encode("utf-8")) for n in dirty_nodes if n.yaml_lines
+                ]
+                rescan_dicts = [d for n in dirty_nodes if (d := content_node_to_opa_dict(n, graph=g))]
+                rescan_payload = b""
+                if rescan_dicts:
+                    rescan_payload = json.dumps(
+                        {
+                            "scan_id": f"{scan_id}-rescan",
+                            "hierarchy": [
+                                {
+                                    "root_key": "rescan",
+                                    "root_type": "rescan",
+                                    "root_path": "",
+                                    "nodes": rescan_dicts,
+                                }
+                            ],
+                            "collection_set": [],
+                            "metadata": {},
+                        },
+                        default=str,
+                    ).encode()
+                plugin_req = _plugin_validate_request(
+                    ValidateRequest(
+                        request_id=f"{scan_id}-rescan",
+                        files=rescan_files,
+                        hierarchy_payload=rescan_payload,
+                    )
+                )
+                for plugin in plugins:
+                    ext_coros.append(_call_plugin_validate_result(plugin, plugin_req))
+                    ext_names.append(plugin.name)
+
             if ext_coros:
                 results = await asyncio.gather(*ext_coros, return_exceptions=True)
                 for name, result in zip(ext_names, results, strict=True):
@@ -2643,6 +2768,35 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
 
         ai_concurrency = parse_ai_concurrency()
 
+        plugins_for_fix = await self._ensure_plugins()
+        plugin_ids = transform_rule_ids(plugins_for_fix)
+
+        async def _plugin_transform_fn(
+            violation: ViolationDict,
+            yaml_lines: str,
+            file_path: str,
+        ) -> str | None:
+            plugin = plugin_for_rule(plugins_for_fix, str(violation.get("rule_id", "")))
+            if plugin is None:
+                return None
+            applied, new_yaml, err = await call_plugin_transform(
+                plugin.address,
+                request_id=scan_id,
+                file_path=file_path,
+                yaml_content=yaml_lines,
+                violation=violation,
+            )
+            if err:
+                logger.warning(
+                    "Plugin transform failed for %s (scan=%s): %s",
+                    violation.get("rule_id"),
+                    scan_id,
+                    err,
+                )
+            if not applied or new_yaml is None:
+                return None
+            return new_yaml
+
         graph_engine = GraphRemediationEngine(
             registry=registry,  # type: ignore[arg-type]
             graph=graph,
@@ -2653,6 +2807,8 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             rescan_fn=_rescan_bridge,
             ai_provider=ai_provider,  # type: ignore[arg-type]
             ai_phase_start_cb=None,
+            plugin_transform_ids=plugin_ids,
+            plugin_transform_fn=_plugin_transform_fn if plugin_ids else None,
         )
         if ai_provider and not skip_ai:
 
@@ -3382,6 +3538,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                 registry=engine._registry,  # noqa: SLF001
                 max_ai_attempts=engine._max_ai_attempts,  # noqa: SLF001
                 concurrency=ai_concurrency,
+                plugin_transform_ids=getattr(engine, "_plugin_transform_ids", None) or frozenset(),
             )
         except BudgetConfigError as exc:
             yield SessionEvent(error=SessionError(code="invalid_budget_config", message=str(exc)))
@@ -3928,7 +4085,8 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         """Aggregate health including required validators and Galaxy Proxy.
 
         Engine is ok only when required validators and Galaxy Proxy are
-        configured and healthy.
+        configured and healthy. Third-party plugins (ADR-042) are probed
+        when discovered but never fail the aggregate status.
 
         Required validators (native, OPA, Ansible) missing from the environment
         yield an unhealthy aggregate status so probes fail before scan setup.
@@ -3962,6 +4120,17 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                 continue
             metas.append((name, addr, required))
             coros.append(engine_health._probe_validator_health(name, addr, required=required))
+
+        plugins = await self._ensure_plugins()
+        for plugin in plugins:
+            status = await probe_plugin_health(plugin.address)
+            downstream.append(
+                ServiceHealth(
+                    name=f"plugin:{plugin.name}",
+                    status=status,
+                    address=plugin.address,
+                )
+            )
 
         # Galaxy Proxy is required (HTTP /health) — sole collection install path.
         proxy_url = os.environ.get("APME_GALAXY_PROXY_URL", "").strip()

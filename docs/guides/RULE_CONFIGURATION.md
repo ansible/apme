@@ -93,80 +93,48 @@ Content-Type: application/json
 
 ## Custom Rules (BYO)
 
-APME supports adding custom rules through multiple mechanisms.
+Organization-specific checks do **not** go into the built-in OPA or Native
+bundles (ADR-042). Ship a **Plugin sidecar** that implements the `Plugin`
+gRPC service.
 
-### OPA Custom Bundles
+### Custom OPA (Rego) as a Plugin image
 
-The OPA validator supports custom Rego rule bundles. This is the primary method for adding custom rules today.
+Do **not** volume-mount extra `.rego` files into the built-in `opa` container
+and do **not** call `OpaValidator(bundle_path=...)` for org policy in
+production. Bake a private bundle into a Plugin image, add a container to
+`containers/podman/pod.yaml`, and point Engine at it with
+`APME_PLUGIN_<NAME>_ADDRESS`.
 
-**1. Create a custom bundle directory:**
+Copy-paste example (banned `community.general.*` prefixes in `data.json`):
+[`examples/plugins/opa-custom/`](../../examples/plugins/opa-custom/).
 
-```
-my-custom-rules/
-├── custom_rules.rego
-└── custom_rules.md
-```
-
-**2. Write your Rego rule:**
-
-```rego
-# my-custom-rules/custom_rules.rego
-package apme.custom
-
-import future.keywords.in
-
-violations[v] {
-    # Your rule logic here
-    task := input.hierarchy.tasks[_]
-    task.module == "ansible.builtin.command"
-    not task.options.creates
-    not task.options.removes
-    
-    v := {
-        "rule_id": "CUSTOM-001",
-        "level": "warning",
-        "message": "Command task should have creates or removes",
-        "file": task.file,
-        "line": task.line
-    }
-}
+```bash
+tox -e build
+tox -e build-plugins
+# uncomment plugin-opa-custom in containers/podman/pod.yaml
 ```
 
-**3. Create documentation sidecar:**
+Step-by-step (including ansible-security-scanner):
+[PLUGIN_SIDECARS.md](PLUGIN_SIDECARS.md).
 
-```markdown
----
-rule_id: CUSTOM-001
-validator: opa
-description: Command tasks should be idempotent
-scope: task
----
+### Third-Party Plugin Services (ADR-042)
 
-## Custom Rule 001
+Organization-specific checks do **not** go into built-in OPA or Native bundles.
+Ship a sidecar that implements the `Plugin` gRPC service (`Validate`, optional
+`Transform`, `Describe`, `Health`). The Engine discovers plugins from
+environment variables and fans `Validate` out next to built-in validators.
 
-Command tasks should specify `creates` or `removes` for idempotency.
+```bash
+export APME_PLUGIN_ORGPOLICY_ADDRESS=127.0.0.1:50100
 ```
 
-**4. Use your custom bundle:**
-
-When using the OPA validator programmatically:
-
-```python
-from apme_engine.validators.opa import OpaValidator
-
-validator = OpaValidator(bundle_path="/path/to/my-custom-rules", entrypoint="data.apme.custom.violations")
-```
-
-### Third-Party Plugin Services (Future)
-
-ADR-042 defines a plugin architecture for enterprise deployments. Plugins:
-
-- Implement a `Plugin` gRPC service
-- Use rule IDs like `EXT-<plugin_name>-<NNN>`
-- Support both validation AND transformation
-- Discovered via `APME_PLUGIN_<NAME>_ADDRESS` environment variables
-
-**Status:** Design complete, implementation pending.
+- Rule IDs must use `EXT-<plugin_name>-<NNN>` (for example `EXT-orgpolicy-001`)
+- `Transform` receives the **node YAML fragment** (`ContentNode.yaml_lines`); the Engine applies it with `ContentGraph.apply_yaml`
+- Plugins are always optional: a missing or failing plugin is skipped and never fails Engine `Health`
+- Plugin ports are **50100–50199** (see [ADR-042](../../.sdlc/adrs/ADR-042-third-party-plugin-services.md))
+- Reference implementations: [`examples/plugins/orgpolicy/`](../../examples/plugins/orgpolicy/) (host process), [`opa-custom/`](../../examples/plugins/opa-custom/) (OPA image), [`secscan/`](../../examples/plugins/secscan/) ([ansible-security-scanner](https://github.com/cpeoples/ansible-security-scanner) image)
+- Podman pod: uncomment sidecars in [`containers/podman/pod.yaml`](../../containers/podman/pod.yaml) after `tox -e build-plugins` — [PLUGIN_SIDECARS.md](PLUGIN_SIDECARS.md)
+- Attach in cluster via the APME Operator `Apme.spec.plugins[]` ([apme-operator#39](https://github.com/ansible/apme-operator/issues/39))
 
 ## AI Confidence Scoring
 

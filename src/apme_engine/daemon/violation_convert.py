@@ -62,6 +62,7 @@ _METADATA_KEYS = frozenset(
         "variables_used",
         "variable_set",
         "inbound_src",
+        "ai_guidance",
     }
 )
 

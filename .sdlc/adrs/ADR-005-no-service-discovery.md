@@ -46,6 +46,7 @@ No etcd, no registration, no heartbeats.
 - etcd adds operational complexity (Raft cluster, persistence, health monitoring) for a problem that doesn't exist — there's no dynamic service topology
 - **Required** engine-core services (Engine, Native, OPA, Ansible, Galaxy Proxy) must be configured; scans fail if any required dependency is missing or unhealthy
 - **Optional** validators (Gitleaks, Collection Health, Dep Audit) may be omitted — Engine skips unset addresses with graceful degradation
+- Third-party plugins (`APME_PLUGIN_<NAME>_ADDRESS`, ports 50100–50199) are always optional
 
 ## Consequences
 

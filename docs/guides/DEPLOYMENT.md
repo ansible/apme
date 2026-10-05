@@ -151,6 +151,7 @@ Proxy, Gateway HTTP, Gateway Reporting gRPC) plus optional validators
 | `GITLEAKS_GRPC_ADDRESS` | — | Gitleaks validator address (e.g., `127.0.0.1:50056`) |
 | `COLLECTION_HEALTH_GRPC_ADDRESS` | — | Collection Health validator address (e.g., `127.0.0.1:50058`) |
 | `DEP_AUDIT_GRPC_ADDRESS` | — | Dep Audit validator address (e.g., `127.0.0.1:50059`) |
+| `APME_PLUGIN_<NAME>_ADDRESS` | — | Optional Plugin sidecar (ADR-042), e.g. `APME_PLUGIN_OPACUSTOM_ADDRESS=127.0.0.1:50100`. Ports **50100–50199**. See [PLUGIN_SIDECARS.md](PLUGIN_SIDECARS.md). |
 | `APME_REPORTING_ENDPOINT` | — | Gateway gRPC Reporting address (e.g., `127.0.0.1:50060`). Events are pushed after each check or remediate run. |
 | `APME_ABBENAY_ADDR` | — | Abbenay AI daemon address. Helm/Podman default is `unix:///tmp/abbenay-run/abbenay/daemon.sock` (required when a consumer token is set; `abbenay-client` ≥ 2026.8.7 rejects tokens on plaintext TCP). Also accepts `host:port`. |
 | `APME_ABBENAY_TOKEN` | — | Consumer token for Abbenay authentication. Must match a token in Abbenay's `config.yaml`. |

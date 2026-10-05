@@ -1,0 +1,39 @@
+# Optional ADR-042 plugin sidecars for the local Podman pod.
+#
+# This file is a copy-paste fragment, not a standalone pod.
+# 1. tox -e build && tox -e build-plugins
+# 2. Paste the engine env vars onto the `engine` container in
+#    containers/podman/pod.yaml
+# 3. Paste the two containers into spec.containers
+# 4. tox -e down && tox -e up
+#
+# The same blocks are commented in containers/podman/pod.yaml.
+# Full walkthrough: docs/guides/PLUGIN_SIDECARS.md
+#
+# --- engine env ---
+#        - name: APME_PLUGIN_OPACUSTOM_ADDRESS
+#          value: "127.0.0.1:50100"
+#        - name: APME_PLUGIN_SECSCAN_ADDRESS
+#          value: "127.0.0.1:50101"
+#
+# --- spec.containers ---
+#    - name: plugin-opa-custom
+#      image: apme-plugin-opa-custom:latest
+#      env:
+#        - name: APME_PLUGIN_LISTEN
+#          value: "0.0.0.0:50100"
+#        - name: APME_OPA_PLUGIN_BUNDLE
+#          value: "/bundle"
+#        - name: APME_OPA_PLUGIN_ENTRYPOINT
+#          value: "data.apme.plugin.violations"
+#      ports:
+#        - containerPort: 50100
+#          hostPort: 50100
+#    - name: plugin-secscan
+#      image: apme-plugin-secscan:latest
+#      env:
+#        - name: APME_PLUGIN_LISTEN
+#          value: "0.0.0.0:50101"
+#      ports:
+#        - containerPort: 50101
+#          hostPort: 50101

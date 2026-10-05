@@ -12,8 +12,9 @@ PROTOS=(
   apme/v1/engine.proto
   apme/v1/validate.proto
   apme/v1/reporting.proto
+  apme/v1/plugin.proto
 )
-if [ -d "$ROOT/.venv" ]; then
+if [ -d "$ROOT/.venv" ] && "$ROOT/.venv/bin/python" -c "import grpc_tools.protoc" 2>/dev/null; then
   PY="${ROOT}/.venv/bin/python"
 else
   PY=python
