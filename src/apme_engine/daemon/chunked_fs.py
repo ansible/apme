@@ -3,7 +3,7 @@
 import fnmatch
 import os
 import uuid
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -156,8 +156,105 @@ class _ScanBundle:
     session_id: str = ""
 
 
+def resolve_common_base(resolved: list[Path]) -> Path:
+    """Return the common ancestor directory for pre-resolved targets.
+
+    Single-source helper for CLI ``common_scan_base`` and daemon
+    ``build_scan_bundle`` so scan paths and write confinement cannot drift.
+    Anchors are the directory itself, or the parent for files.
+
+    Args:
+        resolved: Pre-resolved absolute target paths (non-empty).
+
+    Returns:
+        Absolute path to the common base directory.
+
+    Raises:
+        FileNotFoundError: If targets span filesystem roots.
+    """
+    if len(resolved) == 1:
+        single = resolved[0]
+        return single.parent if single.is_file() else single
+    anchors = [str(p.parent if p.is_file() else p) for p in resolved]
+    try:
+        return Path(os.path.commonpath(anchors)).resolve()
+    except ValueError as e:
+        raise FileNotFoundError(f"Targets share no common path: {e}") from e
+
+
+def _resolve_targets(
+    raw_targets: list[str | Path],
+) -> tuple[list[Path], Path]:
+    """Normalize raw targets to resolved paths plus common base.
+
+    Args:
+        raw_targets: Raw target values (non-empty, strings or Paths).
+
+    Returns:
+        Tuple of (resolved absolute targets, common base directory).
+
+    Raises:
+        FileNotFoundError: If a target is missing or spans roots.
+    """
+    targets: list[Path] = [Path(t).resolve() for t in raw_targets]
+    for original, target in zip(raw_targets, targets, strict=False):
+        if not target.exists():
+            raise FileNotFoundError(f"Target does not exist: {original}")
+    return targets, resolve_common_base(targets)
+
+
+def _walk_target(target: Path, scope: Path) -> Iterator[tuple[Path, Path]]:
+    """Yield ``(path, scope)`` pairs for one target subtree.
+
+    Args:
+        target: Resolved file or directory target.
+        scope: Per-target scope (parent for files, self for dirs).
+
+    Yields:
+        tuple[Path, Path]: Candidate path and originating scope.
+    """
+    if target.is_file():
+        yield target, scope
+        return
+    for dirpath, dirnames, filenames in os.walk(target):
+        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+        for name in filenames:
+            yield Path(dirpath) / name, scope
+
+
+def _is_excluded(
+    rel_str: str,
+    scope_rel: str | None,
+    scoped_pats: list[str] | None,
+    cli_excludes: list[str],
+    target_scope_rels: list[str],
+) -> bool:
+    """Apply CLI-exclude and per-target ignore checks for one candidate.
+
+    Bundle-root ``.apmeignore`` is owned by ``_should_include``; this helper
+    covers the remaining two scopes so root patterns are matched once.
+
+    Args:
+        rel_str: Bundle-relative path string.
+        scope_rel: Path string relative to originating scope (or None).
+        scoped_pats: Originating scope ``.apmeignore`` patterns (or None).
+        cli_excludes: CLI ``--exclude`` patterns.
+        target_scope_rels: Path strings relative to each target scope.
+
+    Returns:
+        True when the file must be skipped.
+    """
+    if cli_excludes:
+        if _matches_ignore(rel_str, cli_excludes):
+            return True
+        for target_rel in target_scope_rels:
+            if _matches_ignore(target_rel, cli_excludes):
+                return True
+    return scoped_pats is not None and scope_rel is not None and _matches_ignore(scope_rel, scoped_pats)
+
+
 def build_scan_bundle(
-    target_path: str | Path,
+    target_path: str | Path | Sequence[str | Path],
     scan_id: str | None = None,
     project_root_name: str = "project",
     ansible_core_version: str | None = None,
@@ -167,13 +264,15 @@ def build_scan_bundle(
     rule_configs: Iterable[RuleConfig] | None = None,
     skip_collection_health: bool = False,
     skip_dep_audit: bool = False,
+    exclude_patterns: Sequence[str] | None = None,
 ) -> _ScanBundle:
-    """Walk target_path (file or directory) and collect files for scanning.
+    """Walk target_path (file, directory, or list of files/directories) and collect files.
 
     Paths in File messages are relative to the project root (target_path if dir, else parent).
+    With multiple targets, paths are relative to the common ancestor directory.
 
     Args:
-        target_path: File or directory to scan.
+        target_path: File, directory, or list of files/directories to scan.
         scan_id: Optional scan identifier.
         project_root_name: Name for project root in the request.
         ansible_core_version: Optional Ansible core version.
@@ -183,39 +282,75 @@ def build_scan_bundle(
         rule_configs: Optional per-rule overrides (ADR-041), e.g. from ``.apme/rules.yml``.
         skip_collection_health: Disable collection health validator (ADR-051).
         skip_dep_audit: Disable Python CVE audit validator (ADR-051).
+        exclude_patterns: Optional CLI ``--exclude`` glob patterns (merged with .apmeignore).
 
     Returns:
         _ScanBundle with files and options populated.
-
-    Raises:
-        FileNotFoundError: If target_path does not exist.
     """
-    target = Path(target_path).resolve()
-    if not target.exists():
-        raise FileNotFoundError(f"Target does not exist: {target_path}")
+    raw_targets: list[str | Path] = [target_path] if isinstance(target_path, (str, Path)) else list(target_path)
+    if not raw_targets:
+        raw_targets = ["."]
+    targets, root = _resolve_targets(raw_targets)
 
-    if target.is_file():
-        root = target.parent
-        to_visit = [target]
-    else:
-        root = target
-        to_visit = []
-        for dirpath, dirnames, filenames in os.walk(root):
-            dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
-            for name in filenames:
-                to_visit.append(Path(dirpath) / name)
+    to_visit: list[tuple[Path, Path]] = []
+    for target in targets:
+        scope = target.parent if target.is_file() else target
+        to_visit.extend(_walk_target(target, scope))
 
-    ignore_patterns = _load_apmeignore(root)
+    # Ignore patterns come in three scopes, matched against different bases:
+    # - bundle-root .apmeignore: matched against bundle-relative paths.
+    # - per-target .apmeignore (multi-target only): each matched against paths
+    #   relative to its own subtree, so a bare pattern in projA never
+    #   suppresses an unrelated projB file.
+    # - CLI --exclude: matched against bundle-relative paths and paths
+    #   relative to each selected target scope.
+    root_ignore = _load_apmeignore(root)
+    scoped_ignores: dict[Path, list[str]] = {}
+    if len(targets) > 1:
+        for target in targets:
+            scope = (target.parent if target.is_file() else target).resolve()
+            if scope != root:
+                scope_pats = _load_apmeignore(scope)
+                if scope_pats:
+                    scoped_ignores[scope] = scope_pats
+    cli_excludes = list(exclude_patterns or [])
+    target_scopes: list[Path] = []
+    for target in targets:
+        scope = (target.parent if target.is_file() else target).resolve()
+        if scope not in target_scopes:
+            target_scopes.append(scope)
 
     files = []
-    for path in to_visit:
+    seen: set[str] = set()
+    for path, scope in to_visit:
         if not path.is_file():
+            continue
+        try:
+            resolved_path = path.resolve()
+        except OSError:
+            continue
+        if str(resolved_path) in seen:
             continue
         try:
             rel = path.relative_to(root)
         except ValueError:
             continue
-        if not _should_include(path, root, ignore_patterns):
+        rel_str = str(rel)
+        scope_key = scope.resolve()
+        origin_pats = scoped_ignores.get(scope_key)
+        try:
+            scope_rel = str(path.relative_to(scope_key))
+        except ValueError:
+            continue
+        target_scope_rels: list[str] = []
+        for target_scope in target_scopes:
+            try:
+                target_scope_rels.append(str(path.relative_to(target_scope)))
+            except ValueError:
+                continue
+        if _is_excluded(rel_str, scope_rel, origin_pats, cli_excludes, target_scope_rels):
+            continue
+        if not _should_include(path, root, root_ignore):
             continue
         try:
             content = path.read_bytes()
@@ -224,6 +359,7 @@ def build_scan_bundle(
         # Skip if looks binary
         if b"\x00" in content[:8192]:
             continue
+        seen.add(str(resolved_path))
         files.append(File(path=str(rel), content=content))
 
     options = ScanOptions()
@@ -254,7 +390,7 @@ def build_scan_bundle(
 
 
 def yield_scan_chunks(
-    target_path: str | Path,
+    target_path: str | Path | Sequence[str | Path],
     scan_id: str | None = None,
     project_root_name: str = "project",
     ansible_core_version: str | None = None,
@@ -265,6 +401,7 @@ def yield_scan_chunks(
     rule_configs: Iterable[RuleConfig] | None = None,
     skip_collection_health: bool = False,
     skip_dep_audit: bool = False,
+    exclude_patterns: Sequence[str] | None = None,
 ) -> Iterator[ScanChunk]:
     """Yield ScanChunk messages for FixSession/FormatStream so the total request stays under gRPC message limits.
 
@@ -272,7 +409,7 @@ def yield_scan_chunks(
     Last chunk has last=True.
 
     Args:
-        target_path: File or directory to scan.
+        target_path: File, directory, or list of files/directories to scan.
         scan_id: Optional scan identifier.
         project_root_name: Name for project root.
         ansible_core_version: Optional Ansible core version.
@@ -283,6 +420,7 @@ def yield_scan_chunks(
         rule_configs: Optional per-rule overrides (ADR-041).
         skip_collection_health: Disable collection health validator (ADR-051).
         skip_dep_audit: Disable Python CVE audit validator (ADR-051).
+        exclude_patterns: Optional CLI ``--exclude`` glob patterns.
 
     Yields:
         ScanChunk: ScanChunk messages for streaming.
@@ -298,6 +436,7 @@ def yield_scan_chunks(
         rule_configs=rule_configs,
         skip_collection_health=skip_collection_health,
         skip_dep_audit=skip_dep_audit,
+        exclude_patterns=exclude_patterns,
     )
     files: list[File] = list(req.files)
     if not files:
