@@ -304,8 +304,10 @@ class AnsibleValidator:
         )
         elapsed = (time.monotonic() - t0) * 1000
         violations.extend(m_violations)
-        rule_timings.append(AnsibleRuleTiming(rule_id="M001-M004", elapsed_ms=elapsed, violations=len(m_violations)))
-        sys.stderr.write(f"  M001-M004 (introspection): {len(m_violations)} issue(s) in {elapsed:.1f}ms\n")
+        rule_timings.append(
+            AnsibleRuleTiming(rule_id="M001-M004/M048", elapsed_ms=elapsed, violations=len(m_violations))
+        )
+        sys.stderr.write(f"  M001-M004/M048 (introspection): {len(m_violations)} issue(s) in {elapsed:.1f}ms\n")
 
         t0 = time.monotonic()
         l058 = L058_argspec_doc.run(

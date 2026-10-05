@@ -2121,7 +2121,7 @@ def test_ansible_run_timing_full_rules(tmp_path: Path, capsys: pytest.CaptureFix
             ScanContext(hierarchy_payload=payload, root_dir=str(root))
         )
     assert len(result.violations) == 3
-    assert {t.rule_id for t in result.rule_timings} >= {"M001-M004", "L058", "L059"}
+    assert {t.rule_id for t in result.rule_timings} >= {"M001-M004/M048", "L058", "L059"}
     expected_keys = {
         f"{prefix}cache_{store}_{kind}"
         for prefix in ("", "scan_")

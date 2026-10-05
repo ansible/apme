@@ -139,7 +139,7 @@ These rules operate on the content graph via native Python `GraphRule` implement
 |---------|------|-------------|
 | L111 | L111_inventory_group_hyphens_graph.py | Inventory group names should not contain hyphens |
 
-## Modernize rules — M001-M004 (ansible validator)
+## Modernize rules — M001-M004 / M048 (ansible validator)
 
 These rules use ansible-core's plugin loader (`find_plugin_with_context()`) to resolve modules against the actual runtime metadata (`ansible_builtin_runtime.yml` and collection `meta/runtime.yml`). They stay current with whichever ansible-core version is in the venv.
 
@@ -149,6 +149,7 @@ These rules use ansible-core's plugin loader (`find_plugin_with_context()`) to r
 | M002 | Deprecated module -- module has deprecation metadata |
 | M003 | Module redirect -- module name was redirected to a new FQCN |
 | M004 | Removed module -- tombstoned module (raises `AnsiblePluginRemovedError`) |
+| M048 | Prefer `ansible.builtin` when a non-builtin FQCN has a builtin twin (authoritative; replaces L030's static-list approach for this gap) |
 
 Note: OPA L002 was retired — FQCN checking is now handled by **M001** (semantic resolution via ansible-core's plugin loader) and **L026** (model-based detection in the native validator). The remediation registry still maps `L002` to the FQCN fixer for backward compatibility with older scan results.
 
