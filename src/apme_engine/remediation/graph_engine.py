@@ -419,11 +419,12 @@ class GraphRemediationEngine:
 
                 if applied_this_pass == 0:
                     tier1_stalled = True
-                    tier2.extend(tier1)
+                    promoted = [v for v in tier1 if not str(v.get("rule_id") or "").startswith("EXT-")]
+                    tier2.extend(promoted)
                     logger.debug(
                         "Graph remediation pass %d: tier1 stalled (0 applied); promoted %d to tier2 (total tier2=%d)",
                         pass_num,
-                        len(tier1),
+                        len(promoted),
                         len(tier2),
                     )
                 else:

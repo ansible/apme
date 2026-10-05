@@ -17,6 +17,7 @@ from apme_engine.daemon.engine_server import (
     _plugin_validate_request,
 )
 from apme_engine.daemon.plugins import (
+    PLUGIN_TRANSFORM_TRANSPORT,
     DiscoveredPlugin,
     call_plugin_transform,
     call_plugin_validate,
@@ -68,6 +69,7 @@ def test_filter_plugin_violations_drops_wrong_prefix() -> None:
     )
     raw: list[ViolationDict] = [
         {"rule_id": "EXT-orgpolicy-001", "message": "ok"},
+        {"rule_id": "EXT-orgpolicy-unavailable", "message": "reserved"},
         {"rule_id": "EXT-secteam-001", "message": "other plugin"},
         {"rule_id": "P001", "message": "built-in"},
     ]
@@ -176,7 +178,7 @@ async def test_describe_normalizes_reported_prefix() -> None:
                 name="opa",
                 version="1.0.0",
                 rule_id_prefix="orgpolicy",
-                transform_rule_ids=["EXT-orgpolicy-002", "002", "EXT-secteam-001"],
+                transform_rule_ids=["EXT-orgpolicy-002", "002", "EXT-secteam-001", "EXT-orgpolicy-unavailable"],
             )
 
     class _Channel:
@@ -322,7 +324,7 @@ async def test_call_plugin_transform_non_rpc_error() -> None:
         )
     assert applied is False
     assert yaml_text is None
-    assert error == "transform error"
+    assert error == PLUGIN_TRANSFORM_TRANSPORT
 
 
 async def test_probe_plugin_health_requires_exact_ok() -> None:

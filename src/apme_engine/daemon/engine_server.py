@@ -84,6 +84,7 @@ from apme_engine.daemon.deadline import (
 from apme_engine.daemon.event_emitter import emit_fix_completed, emit_register_rules, start_sinks
 from apme_engine.daemon.fs_utils import write_chunked_fs as _write_chunked_fs
 from apme_engine.daemon.plugins import (
+    PLUGIN_TRANSFORM_TRANSPORT,
     DiscoveredPlugin,
     call_plugin_transform,
     call_plugin_validate,
@@ -2849,8 +2850,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             )
             graph = ContentGraph()
 
-        plugin_unbound = _unbound_ext_violations(initial_violations, graph)
-        session.plugin_unbound_violations = plugin_unbound
+        session.plugin_unbound_violations = _unbound_ext_violations(initial_violations, graph)
 
         loop = asyncio.get_running_loop()
         originals = await loop.run_in_executor(None, _load_yaml_originals, yaml_paths, temp_dir)
@@ -3128,7 +3128,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                 violation=violation,
                 hierarchy_payload=_plugin_hierarchy_payload(graph, scan_id),
             )
-            if err in {"rpc error", "transform error", "no response"}:
+            if err == PLUGIN_TRANSFORM_TRANSPORT:
                 raise RuntimeError(err)
             if not applied or new_yaml is None:
                 return None
@@ -3232,7 +3232,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         # the graph-owned NodeState snapshot objects.
         remaining = [dict(v) for v in graph_report.remaining_violations]
         remaining.extend(dep_health_violations)
-        _append_unbound_ext(remaining, plugin_unbound, graph)
+        _append_unbound_ext(remaining, session.plugin_unbound_violations, graph)
         add_classification_to_violations(remaining)
         session.dep_health_violations = [dict(v) for v in remaining if str(v.get("source", "")) in dep_health_sources]
 

@@ -43,6 +43,7 @@ _DESCRIBE_TIMEOUT: Final[float] = 5.0
 _HEALTH_TIMEOUT: Final[float] = 5.0
 _VALIDATE_TIMEOUT: Final[float] = 300.0
 _TRANSFORM_TIMEOUT: Final[float] = 60.0
+PLUGIN_TRANSFORM_TRANSPORT: Final[str] = "__apme_plugin_transport__"
 
 
 @dataclass(frozen=True)
@@ -142,6 +143,13 @@ def filter_plugin_violations(
                 plugin.name,
                 rule_id,
                 prefix,
+            )
+            continue
+        if rule_id.rsplit("-", 1)[-1] == "unavailable":
+            logger.warning(
+                "Dropping plugin %s reserved rule_id %r",
+                plugin.name,
+                rule_id,
             )
             continue
         item = dict(raw)
@@ -269,6 +277,13 @@ async def describe_plugin(name: str, address: str) -> DiscoveredPlugin:
         token = (rid or "").strip()
         if not token:
             continue
+        if token.rsplit("-", 1)[-1] == "unavailable":
+            logger.warning(
+                "Plugin %s declared reserved transform_rule_id %s",
+                name,
+                token,
+            )
+            continue
         if token.startswith(rule_prefix):
             allowed.add(token)
             continue
@@ -380,17 +395,20 @@ async def call_plugin_transform(
         resp = await stub.Transform(req, timeout=timeout)
     except grpc.RpcError:
         logger.error("Plugin Transform at %s failed (req=%s)", address, request_id)
-        return False, None, "rpc error"
+        return False, None, PLUGIN_TRANSFORM_TRANSPORT
     except Exception:  # noqa: BLE001 - plugins are optional
         logger.error("Plugin Transform at %s failed (req=%s)", address, request_id, exc_info=True)
-        return False, None, "transform error"
+        return False, None, PLUGIN_TRANSFORM_TRANSPORT
     finally:
         await channel.close(grace=None)
 
     if resp is None:
-        return False, None, "no response"
+        return False, None, PLUGIN_TRANSFORM_TRANSPORT
     if resp.error:
-        return False, None, resp.error
+        err = resp.error
+        if err == PLUGIN_TRANSFORM_TRANSPORT:
+            err = "plugin error"
+        return False, None, err
     if not resp.applied:
         return False, None, ""
     new_text = resp.file.content.decode("utf-8", errors="replace")

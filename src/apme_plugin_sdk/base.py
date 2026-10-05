@@ -58,12 +58,16 @@ class PluginBase:
             suffix: Bare id (``001``) or already-prefixed id.
 
         Returns:
-            ``EXT-<name>-<suffix>`` unless ``suffix`` already starts with ``EXT-``.
+            ``EXT-<name>-<suffix>`` unless ``suffix`` already uses this
+            plugin's prefix.
         """
         token = suffix.strip()
-        if token.startswith("EXT-"):
+        own = self.rule_id_prefix
+        if token.startswith(own):
             return token
-        return f"{self.rule_id_prefix}{token.lstrip('-')}"
+        if token.startswith("EXT-"):
+            token = token[len("EXT-") :]
+        return f"{own}{token.lstrip('-')}"
 
     def violation(
         self,
@@ -395,7 +399,9 @@ def _dict_to_violation(item: dict[str, str | int], prefix: str) -> Violation:
     from apme.v1.common_pb2 import Violation as ViolationProto
 
     rule_id = str(item.get("rule_id") or "")
-    if not rule_id.startswith("EXT-"):
+    if not rule_id.startswith(prefix):
+        if rule_id.startswith("EXT-"):
+            rule_id = rule_id[len("EXT-") :]
         rule_id = f"{prefix}{rule_id.lstrip('-')}"
     v = ViolationProto(
         rule_id=rule_id,

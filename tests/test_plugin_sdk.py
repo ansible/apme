@@ -65,6 +65,7 @@ def test_prefixed_id_and_describe() -> None:
     assert plugin.rule_id_prefix == "EXT-secteam-"
     assert plugin.prefixed_id("001") == "EXT-secteam-001"
     assert plugin.prefixed_id("EXT-secteam-001") == "EXT-secteam-001"
+    assert plugin.prefixed_id("EXT-other-001") == "EXT-secteam-other-001"
     desc = plugin.describe()
     assert desc.name == "secteam"
     assert desc.version == "9.9.9"
@@ -93,6 +94,8 @@ def test_dict_to_violation_prefixes_bare_ids() -> None:
     """Bare rule IDs from validate() are prefixed before they hit the wire."""
     proto = _dict_to_violation({"rule_id": "007", "message": "x"}, "EXT-secteam-")
     assert proto.rule_id == "EXT-secteam-007"
+    foreign = _dict_to_violation({"rule_id": "EXT-other-001", "message": "x"}, "EXT-secteam-")
+    assert foreign.rule_id == "EXT-secteam-other-001"
 
 
 def _load_orgpolicy() -> ModuleType:
