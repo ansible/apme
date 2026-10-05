@@ -87,10 +87,11 @@ from apme_engine.daemon.plugins import (
     DiscoveredPlugin,
     call_plugin_transform,
     call_plugin_validate,
+    describe_plugin,
+    discover_plugin_addresses,
     filter_plugin_violations,
-    load_plugins,
     plugin_for_rule,
-    probe_plugin_health,
+    probe_plugin_health_outcome,
     transform_rule_ids,
 )
 from apme_engine.daemon.session import (
@@ -511,18 +512,98 @@ async def _call_validator(
 
 
 def _plugin_validate_request(request: ValidateRequest) -> ValidateRequest:
-    """Copy a ValidateRequest with ``scandata`` cleared (ADR-042).
+    """Build a Plugin.Validate payload with only the ADR-042 public fields.
 
     Args:
         request: Full engine ValidateRequest (may include native scandata).
 
     Returns:
-        Clone safe to send to Plugin.Validate.
+        Request carrying ``request_id``, ``files``, and ``hierarchy_payload`` only.
     """
-    clone = ValidateRequest()
-    clone.CopyFrom(request)
-    clone.ClearField("scandata")
-    return clone
+    return ValidateRequest(
+        request_id=request.request_id,
+        files=request.files,
+        hierarchy_payload=request.hierarchy_payload,
+    )
+
+
+def _bind_ext_findings_to_graph(
+    violations: list[ViolationDict],
+    graph: ContentGraph | None,
+) -> list[ViolationDict]:
+    """Fill ``path`` on EXT- findings so the graph ledger can keep them.
+
+    File-oriented plugins (SAST wrappers) often know file+line but not the
+    ContentGraph node id. Without a matching ``path``, ``register_violations``
+    drops the finding and ``apme check`` never shows it.
+
+    Args:
+        violations: Mixed built-in and plugin findings.
+        graph: ContentGraph from the current scan, or None.
+
+    Returns:
+        The same list (mutated in place for EXT- rows).
+    """
+    if graph is None:
+        return violations
+    for item in violations:
+        rule_id = str(item.get("rule_id") or "")
+        if not rule_id.startswith("EXT-"):
+            continue
+        current = str(item.get("path") or "")
+        if current and graph.get_node(current) is not None:
+            continue
+        node_id = _nearest_graph_node(
+            graph,
+            str(item.get("file") or ""),
+            item.get("line"),
+        )
+        if node_id:
+            item["path"] = node_id
+    return violations
+
+
+def _nearest_graph_node(graph: ContentGraph, file_path: str, line: object) -> str:
+    """Return the most specific node id covering ``file_path`` + line.
+
+    Args:
+        graph: ContentGraph.
+        file_path: Relative path from the plugin finding.
+        line: 1-based line number, if present.
+
+    Returns:
+        Node id, or empty string when nothing matches.
+    """
+    if not file_path:
+        return ""
+    line_n = line if isinstance(line, int) else 0
+    matches = [n for n in graph.nodes() if _same_scan_path(n.file_path, file_path)]
+    if not matches:
+        return ""
+    if line_n > 0:
+        covering = [n for n in matches if n.line_start <= line_n <= (n.line_end if n.line_end > 0 else n.line_start)]
+        if covering:
+            covering.sort(key=lambda n: ((n.line_end or n.line_start) - n.line_start, n.line_start))
+            return covering[0].node_id
+        matches.sort(key=lambda n: abs(n.line_start - line_n))
+    return matches[0].node_id
+
+
+def _same_scan_path(node_path: str, finding_path: str) -> bool:
+    """Return True when two relative paths refer to the same project file.
+
+    Args:
+        node_path: Path stored on the ContentNode.
+        finding_path: Path from a plugin finding.
+
+    Returns:
+        True on exact or suffix match (scanner may prefix a temp dir).
+    """
+    if not node_path or not finding_path:
+        return False
+    left = node_path.replace("\\", "/").lstrip("./")
+    right = finding_path.replace("\\", "/").lstrip("./")
+    return left == right or right.endswith("/" + left) or left.endswith("/" + right)
 
 
 async def _call_plugin_validate_result(
@@ -533,7 +614,7 @@ async def _call_plugin_validate_result(
 
     Args:
         plugin: Discovered plugin (address + prefix).
-        request: ValidateRequest with scandata empty.
+        request: ValidateRequest with only public Plugin fields.
 
     Returns:
         ``_ValidatorResult`` (errors are non-fatal).
@@ -859,23 +940,39 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         self._plugin_lock = None
 
     async def _ensure_plugins(self) -> list[DiscoveredPlugin]:
-        """Discover and Describe plugins once per servicer lifetime.
+        """Discover plugins; cache successful Describes and retry misses.
 
-        Plugins are optional: Describe failures are skipped, never raised.
+        An empty first attempt (sidecar not listening yet) must not pin
+        a permanent miss list for the process lifetime.
 
         Returns:
-            Cached list of successfully described plugins.
+            Successfully described plugins for currently set addresses.
         """
-        if self._plugin_cache is not None:
-            return self._plugin_cache
         if self._plugin_lock is None:
             self._plugin_lock = asyncio.Lock()
         async with self._plugin_lock:
-            if self._plugin_cache is not None:
-                return self._plugin_cache
-            loaded = await load_plugins()
+            wanted = discover_plugin_addresses()
+            previous = list(self._plugin_cache or [])
+            by_key = {(p.name, p.address): p for p in previous}
+            loaded: list[DiscoveredPlugin] = []
+            for name, address in wanted:
+                existing = by_key.get((name, address))
+                if existing is not None:
+                    loaded.append(existing)
+                    continue
+                try:
+                    loaded.append(await describe_plugin(name, address))
+                except Exception:  # noqa: BLE001 - plugins are optional
+                    logger.warning(
+                        "Plugin %s at %s Describe failed; skipping",
+                        name,
+                        address,
+                        exc_info=True,
+                    )
             self._plugin_cache = loaded
-            if loaded:
+            prev_keys = {(p.name, p.address) for p in previous}
+            now_keys = {(p.name, p.address) for p in loaded}
+            if now_keys != prev_keys and loaded:
                 names = ", ".join(p.name for p in loaded)
                 logger.info("Plugins: loaded %d (%s)", len(loaded), names)
             return loaded
@@ -1278,7 +1375,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             _call_validator(addr, validate_request) for _name, addr in validator_targets
         ]
         for plugin in plugins:
-            task_names.append(plugin.name)
+            task_names.append(f"plugin:{plugin.name}")
             task_coros.append(_call_plugin_validate_result(plugin, plugin_request))
 
         violations: list[ViolationDict] = []
@@ -1357,10 +1454,14 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
 
             parts = " ".join(f"{n.title()}={counts.get(n, 0)}" for n in VALIDATOR_ENV_VARS)
             if plugins:
-                plugin_parts = " ".join(f"{p.name}={counts.get(p.name, 0)}" for p in plugins)
+                plugin_parts = " ".join(f"{p.name}={counts.get(f'plugin:{p.name}', 0)}" for p in plugins)
                 parts = f"{parts} {plugin_parts}".strip()
             logger.info("Fan-out: done (%.0fms) %s Total=%d (req=%s)", fan_out_ms, parts, len(violations), scan_id)
 
+        violations = _bind_ext_findings_to_graph(
+            violations,
+            content_graph if isinstance(content_graph, ContentGraph) else None,
+        )
         before_noqa = len(violations)
         violations = filter_noqa_violations(
             violations, content_graph if isinstance(content_graph, ContentGraph) else None
@@ -2706,11 +2807,12 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                     ext_names.append("ansible")
 
             plugins = await self._ensure_plugins()
+            failed_plugin_sources: set[str] = set()
+            open_ext: list[ViolationDict] = []
             if plugins:
-                rescan_files = [
-                    File(path=n.file_path, content=n.yaml_lines.encode("utf-8")) for n in dirty_nodes if n.yaml_lines
-                ]
-                rescan_dicts = [d for n in dirty_nodes if (d := content_node_to_opa_dict(n, graph=g))]
+                open_ext = [dict(v) for v in g.collect_violations() if str(v.get("rule_id") or "").startswith("EXT-")]
+                rescan_files = [File(path=p, content=c) for p, c in session.working_files.items()]
+                rescan_dicts = [d for n in g.nodes() if (d := content_node_to_opa_dict(n, graph=g))]
                 rescan_payload = b""
                 if rescan_dicts:
                     rescan_payload = json.dumps(
@@ -2738,23 +2840,36 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                 )
                 for plugin in plugins:
                     ext_coros.append(_call_plugin_validate_result(plugin, plugin_req))
-                    ext_names.append(plugin.name)
+                    ext_names.append(f"plugin:{plugin.name}")
 
             if ext_coros:
                 results = await asyncio.gather(*ext_coros, return_exceptions=True)
                 for name, result in zip(ext_names, results, strict=True):
+                    plugin_failed = False
                     if isinstance(result, BaseException):
                         if name in REQUIRED_VALIDATORS:
                             msg = f"Required validator {name} failed during rescan: {result}"
                             raise RequiredValidatorDependencyError(msg) from result
                         logger.warning("Rescan: %s failed: %s", name, result)
-                        continue
-                    if name in REQUIRED_VALIDATORS and result.error:
+                        plugin_failed = name.startswith("plugin:")
+                    elif name in REQUIRED_VALIDATORS and result.error:
                         msg = f"Required validator {name} RPC failed during rescan: {result.error}"
                         raise RequiredValidatorDependencyError(msg)
-                    all_violations.extend(result.violations)
+                    elif result.error:
+                        logger.warning("Rescan: %s RPC failed: %s", name, result.error)
+                        plugin_failed = name.startswith("plugin:")
+                    else:
+                        all_violations.extend(result.violations)
+                    if plugin_failed:
+                        failed_plugin_sources.add(name)
 
-            return filter_noqa_violations(all_violations, g)
+            if failed_plugin_sources:
+                for item in open_ext:
+                    src = str(item.get("source") or "")
+                    if src in failed_plugin_sources:
+                        all_violations.append(item)
+
+            return filter_noqa_violations(_bind_ext_findings_to_graph(all_violations, g), g)
 
         ai_provider = self._resolve_ai_provider(session.fix_options)
         assess_pause = bool(session.fix_options and session.fix_options.assess_pause)
@@ -4086,7 +4201,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
 
         Engine is ok only when required validators and Galaxy Proxy are
         configured and healthy. Third-party plugins (ADR-042) are probed
-        when discovered but never fail the aggregate status.
+        in the same fan-out (``required=False``) and never fail the aggregate.
 
         Required validators (native, OPA, Ansible) missing from the environment
         yield an unhealthy aggregate status so probes fail before scan setup.
@@ -4121,16 +4236,10 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             metas.append((name, addr, required))
             coros.append(engine_health._probe_validator_health(name, addr, required=required))
 
-        plugins = await self._ensure_plugins()
-        for plugin in plugins:
-            status = await probe_plugin_health(plugin.address)
-            downstream.append(
-                ServiceHealth(
-                    name=f"plugin:{plugin.name}",
-                    status=status,
-                    address=plugin.address,
-                )
-            )
+        for plugin_name, plugin_addr in discover_plugin_addresses():
+            pname = f"plugin:{plugin_name}"
+            metas.append((pname, plugin_addr, False))
+            coros.append(probe_plugin_health_outcome(plugin_name, plugin_addr))
 
         # Galaxy Proxy is required (HTTP /health) — sole collection install path.
         proxy_url = os.environ.get("APME_GALAXY_PROXY_URL", "").strip()

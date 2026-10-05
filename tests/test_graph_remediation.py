@@ -1067,6 +1067,57 @@ class TestGraphRemediationEngine:
         updated = graph.get_node(node.node_id)
         assert updated is not None
         assert updated.yaml_lines == original
+        assert rule_id not in engine._plugin_transform_ids
+        remaining = report.remaining_violations
+        assert remaining
+        assert remaining[0]["remediation_resolution"] == RemediationResolution.TRANSFORM_FAILED
+
+    async def test_plugin_ext_findings_skip_builtin_ai(self) -> None:
+        """EXT- findings are not sent through the built-in mixed-node AI pass."""
+        from unittest.mock import AsyncMock
+
+        graph = ContentGraph()
+        node = _make_node(module="apt")
+        graph.add_node(node)
+        registry = TransformRegistry()
+        rule_id = "EXT-orgpolicy-002"
+        ai_provider = AsyncMock()
+        ai_provider.propose_node_fix = AsyncMock(side_effect=AssertionError("EXT- must not enter built-in AI"))
+
+        async def _fn(
+            _violation: ViolationDict,
+            _yaml_lines: str,
+            _file_path: str,
+        ) -> str | None:
+            return None
+
+        async def _rescan(_graph: ContentGraph, _dirty: frozenset[str]) -> list[ViolationDict]:
+            return []
+
+        engine = GraphRemediationEngine(
+            registry,
+            graph,
+            [],
+            plugin_transform_ids=frozenset({rule_id}),
+            plugin_transform_fn=_fn,
+            rescan_fn=_rescan,
+            ai_provider=ai_provider,
+            max_passes=2,
+        )
+        report = await engine.remediate(
+            initial_violations=[
+                {
+                    "rule_id": rule_id,
+                    "path": node.node_id,
+                    "file": node.file_path,
+                    "severity": "high",
+                    "scope": "task",
+                }
+            ]
+        )
+        ai_provider.propose_node_fix.assert_not_called()
+        assert report.fixed == 0
+        assert report.remaining_violations
 
 
 # ---------------------------------------------------------------------------

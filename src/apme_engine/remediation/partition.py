@@ -7,6 +7,7 @@ R108 privilege escalation that may be legitimately required).
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -58,7 +59,7 @@ def _get_scope(violation: ViolationDict) -> str:
 def is_finding_resolvable(
     violation: ViolationDict,
     registry: TransformRegistry,
-    plugin_transform_ids: frozenset[str] | None = None,
+    plugin_transform_ids: Collection[str] | None = None,
 ) -> bool:
     """Return True if the violation has a registered deterministic transform (Tier 1).
 
@@ -85,7 +86,7 @@ def is_finding_resolvable(
 def partition_violations(
     violations: list[ViolationDict],
     registry: TransformRegistry,
-    plugin_transform_ids: frozenset[str] | None = None,
+    plugin_transform_ids: Collection[str] | None = None,
 ) -> tuple[list[ViolationDict], list[ViolationDict], list[ViolationDict]]:
     """Split violations into (tier1_fixable, tier2_ai, tier3_manual).
 

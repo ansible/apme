@@ -16,6 +16,9 @@ from apme_engine.cli.discovery import resolve_engine
 def run_health_check(args: argparse.Namespace) -> None:
     """Execute the health-check subcommand.
 
+    Plugin sidecar rows (``plugin:*``) are printed but ignored for the
+    process exit code — they are optional (ADR-042).
+
     Args:
         args: Parsed CLI arguments.
     """
@@ -50,6 +53,6 @@ def run_health_check(args: argparse.Namespace) -> None:
             symbol = "\u2714" if ok else "\u2718"
             sys.stdout.write(f"  {symbol} {name:15s} {status:10s} {address}\n")
 
-    all_ok = all(info["status"] == "ok" for info in results.values())
+    all_ok = all(info["status"] == "ok" for name, info in results.items() if not name.startswith("plugin:"))
     if not all_ok:
         sys.exit(1)

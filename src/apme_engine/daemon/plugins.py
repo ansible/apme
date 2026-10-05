@@ -18,7 +18,7 @@ import grpc.aio
 import yaml
 
 from apme.v1 import plugin_pb2_grpc
-from apme.v1.common_pb2 import File, HealthRequest, HealthResponse
+from apme.v1.common_pb2 import File, HealthRequest, HealthResponse, ServiceHealth
 from apme.v1.plugin_pb2 import (
     DescribeRequest,
     DescribeResponse,
@@ -243,14 +243,26 @@ async def describe_plugin(name: str, address: str) -> DiscoveredPlugin:
     finally:
         await channel.close(grace=None)
 
-    reported = (resp.name or "").strip().lower()
-    resolved_name = reported or name
-    prefix = normalize_rule_id_prefix(resolved_name, resp.rule_id_prefix)
+    # Identity is the env-var token, never Describe.name (a plugin must not
+    # impersonate a built-in validator name such as ``opa`` / ``native``).
+    prefix = inferred_rule_id_prefix(name)
+    reported_prefix = normalize_rule_id_prefix(name, resp.rule_id_prefix)
+    if not reported_prefix.startswith(prefix):
+        logger.warning(
+            "Plugin %s reported prefix %s; using env prefix %s",
+            name,
+            reported_prefix,
+            prefix,
+        )
+        rule_prefix = prefix
+    else:
+        rule_prefix = reported_prefix
+    allowed = frozenset(rid for rid in resp.transform_rule_ids if rid.startswith(rule_prefix))
     return DiscoveredPlugin(
-        name=resolved_name,
+        name=name,
         address=address,
-        rule_id_prefix=prefix,
-        transform_rule_ids=frozenset(resp.transform_rule_ids),
+        rule_id_prefix=rule_prefix,
+        transform_rule_ids=allowed,
         version=resp.version or "",
     )
 
@@ -293,9 +305,9 @@ async def call_plugin_validate(
     try:
         resp = await stub.Validate(request, timeout=timeout)
         return [violation_proto_to_dict(v) for v in resp.violations], None
-    except grpc.RpcError as exc:
-        logger.error("Plugin Validate at %s failed (req=%s): %s", address, request.request_id, exc)
-        return [], str(exc)
+    except grpc.RpcError:
+        logger.error("Plugin Validate at %s failed (req=%s)", address, request.request_id)
+        return [], "rpc error"
     finally:
         await channel.close(grace=None)
 
@@ -329,15 +341,20 @@ async def call_plugin_transform(
     )
     channel = _channel(address)
     stub = plugin_pb2_grpc.PluginStub(channel)  # type: ignore[no-untyped-call]
+    resp: TransformResponse | None = None
     try:
-        try:
-            resp: TransformResponse = await stub.Transform(req, timeout=timeout)
-        except grpc.RpcError as exc:
-            logger.error("Plugin Transform at %s failed (req=%s): %s", address, request_id, exc)
-            return False, None, str(exc)
+        resp = await stub.Transform(req, timeout=timeout)
+    except grpc.RpcError:
+        logger.error("Plugin Transform at %s failed (req=%s)", address, request_id)
+        return False, None, "rpc error"
+    except Exception:  # noqa: BLE001 - plugins are optional
+        logger.error("Plugin Transform at %s failed (req=%s)", address, request_id, exc_info=True)
+        return False, None, "transform error"
     finally:
         await channel.close(grace=None)
 
+    if resp is None:
+        return False, None, "no response"
     if resp.error:
         return False, None, resp.error
     if not resp.applied:
@@ -359,8 +376,28 @@ async def probe_plugin_health(address: str) -> str:
     stub = plugin_pb2_grpc.PluginStub(channel)  # type: ignore[no-untyped-call]
     try:
         resp: HealthResponse = await stub.Health(HealthRequest(), timeout=_HEALTH_TIMEOUT)
-        return resp.status or "ok"
+        status = (resp.status or "").strip()
+        if status == "ok":
+            return "ok"
+        return status or "error: empty health status"
     except grpc.RpcError as exc:
         return f"error: {exc}"
     finally:
         await channel.close(grace=None)
+
+
+async def probe_plugin_health_outcome(name: str, address: str) -> tuple[bool, ServiceHealth | None]:
+    """Probe one plugin for Engine aggregate Health (never required).
+
+    Args:
+        name: Env-var plugin token (lowercase).
+        address: Plugin gRPC address.
+
+    Returns:
+        ``(False, ServiceHealth)`` so a down plugin cannot fail Engine.
+    """
+    status = await probe_plugin_health(address)
+    return (
+        False,
+        ServiceHealth(name=f"plugin:{name}", status=status, address=address),
+    )

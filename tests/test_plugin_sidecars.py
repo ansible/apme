@@ -29,7 +29,7 @@ def _load_plugin(subdir: str) -> ModuleType:
 
 
 def test_opa_input_document_wraps_list() -> None:
-    """Lists become ``{\"hierarchy\": ...}`` for ``opa eval -I``."""
+    """Lists become ``{"hierarchy": ...}`` for ``opa eval -I``."""
     mod = _load_plugin("opa-custom")
     assert mod.opa_input_document([{"nodes": []}]) == {"hierarchy": [{"nodes": []}]}
     assert mod.opa_input_document(None) == {"hierarchy": []}

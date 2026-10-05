@@ -77,10 +77,10 @@ message DescribeResponse {
 }
 ```
 
-- **Validate** reuses existing `ValidateRequest`/`ValidateResponse`. Plugins consume `files` and `hierarchy_payload` (JSON). They ignore `scandata` (Python-specific serialization) — the contract is language-agnostic.
+- **Validate** reuses existing `ValidateRequest`/`ValidateResponse`. The Engine sends only `request_id`, `files`, and `hierarchy_payload` (JSON). It does not forward `scandata`, `venv_path`, or `content_graph_data`.
 - **Transform** receives one file and the violation to fix, plus hierarchy context. Returns the transformed file or `applied=false` / an error.
-- **Describe** lets the plugin self-declare its name, rule ID prefix, and which rule IDs support transforms. The Engine calls this at startup to build the routing table.
-- **Health** reuses the existing `HealthRequest`/`HealthResponse` from `common.proto`.
+- **Describe** is used for version, optional prefix, and `transform_rule_ids`. Plugin **identity** is the env-var token (`APME_PLUGIN_<NAME>_ADDRESS` → name `<name>`), never `Describe.name` (a sidecar must not impersonate `opa` / `native`). The Engine keeps only Transform IDs under `EXT-<name>-`.
+- **Health** reuses the existing `HealthRequest`/`HealthResponse` from `common.proto`. Plugin Health is probed with the required validators but is never `required` for Engine aggregate status.
 
 ### 2. Rule ID convention: EXT- prefix
 
@@ -133,7 +133,7 @@ Plugin transforms participate in the same convergence loop: scan -> fix -> resca
 
 Whole-file rewrites (e.g. wrapping a SAST tool that emits unified diffs) remain a future extension; v1 is node-scoped so identity and convergence stay intact.
 
-If a plugin's `Transform` returns an error or `applied=false` for a given violation, the violation is reclassified as `REMEDIATION_CLASS_AI_CANDIDATE` with `REMEDIATION_RESOLUTION_TRANSFORM_FAILED` (Tier 2), matching the built-in remediation engine's handling of transform failures. The violation then enters the AI escalation path described below.
+If a plugin's `Transform` returns an error or `applied=false` for a given violation, the Engine drops that rule ID from further plugin Transform routing and stamps `REMEDIATION_CLASS_AI_CANDIDATE` with `REMEDIATION_RESOLUTION_TRANSFORM_FAILED`. Phase 4 (per-plugin AI batching) is **not** implemented yet: EXT- findings are excluded from the built-in mixed-node AI pass so they are not merged into built-in prompts. They remain visible as failed transforms until Phase 4 ships.
 
 ### 5. AI escalation for plugin violations
 
@@ -466,3 +466,4 @@ Local Podman images and `pod.yaml` containers for a private OPA bundle and
 | 2026-10-05 | APME Team | Accept for implementation: node-scoped Transform + apply_yaml (ADR-044); plugin ports 50100+ (not Gateway 50060); operator attach is `Apme.spec.plugins[]` ([apme-operator#39](https://github.com/ansible/apme-operator/issues/39)) |
 | 2026-10-05 | APME Team | APME Engine: `plugin.proto`, SDK, discovery, Validate fan-out, EXT Transform routing |
 | 2026-10-05 | APME Team | Document Podman plugin sidecar images (custom OPA + ansible-security-scanner) |
+| 2026-10-05 | APME Team | Pin plugin identity to env token; retry Describe misses; strip Validate extras; bind file-scoped EXT- findings; stamp TRANSFORM_FAILED without mixed-node AI |

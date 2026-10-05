@@ -1,11 +1,11 @@
-"""OPA Plugin sidecar: evaluate a private Rego bundle (ADR-042).
+r"""OPA Plugin sidecar: evaluate a private Rego bundle (ADR-042).
 
 This is not the built-in OPA validator. Custom policy must not be copied
 into ``src/apme_engine/validators/opa/bundle``.
 
 Run on the host (``opa`` on PATH)::
 
-    APME_OPA_PLUGIN_BUNDLE=examples/plugins/opa-custom/bundle \\
+    APME_OPA_PLUGIN_BUNDLE=examples/plugins/opa-custom/bundle \
       APME_PLUGIN_LISTEN=0.0.0.0:50100 python examples/plugins/opa-custom/plugin.py
 
 Point Engine at it::

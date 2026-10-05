@@ -30,7 +30,8 @@ async def test_health_unhealthy_when_required_validator_missing(
         monkeypatch.delenv(env, raising=False)
 
     servicer = EngineServicer()
-    resp = await servicer.Health(common_pb2.HealthRequest(), MagicMock())
+    with patch("apme_engine.daemon.engine_server.discover_plugin_addresses", return_value=[]):
+        resp = await servicer.Health(common_pb2.HealthRequest(), MagicMock())
     assert resp.status == "unhealthy"
     names = {d.name for d in resp.downstream}
     assert {"native", "opa", "ansible", "galaxy_proxy"} <= names
@@ -85,6 +86,7 @@ async def test_health_ok_when_required_validators_healthy(
             return_value=_Stub(),
         ),
         patch("apme_engine.daemon.engine_health.httpx.AsyncClient", return_value=mock_client),
+        patch("apme_engine.daemon.engine_server.discover_plugin_addresses", return_value=[]),
     ):
         servicer = EngineServicer()
         resp = await servicer.Health(common_pb2.HealthRequest(), MagicMock())
@@ -142,6 +144,7 @@ async def test_health_unhealthy_when_galaxy_proxy_status_not_ok(
             return_value=_Stub(),
         ),
         patch("apme_engine.daemon.engine_health.httpx.AsyncClient", return_value=mock_client),
+        patch("apme_engine.daemon.engine_server.discover_plugin_addresses", return_value=[]),
     ):
         servicer = EngineServicer()
         resp = await servicer.Health(common_pb2.HealthRequest(), MagicMock())
@@ -180,6 +183,7 @@ async def test_health_unhealthy_when_galaxy_proxy_missing(
             "apme_engine.daemon.engine_server.validate_pb2_grpc.ValidatorStub",
             return_value=_Stub(),
         ),
+        patch("apme_engine.daemon.engine_server.discover_plugin_addresses", return_value=[]),
     ):
         servicer = EngineServicer()
         resp = await servicer.Health(common_pb2.HealthRequest(), MagicMock())
@@ -199,6 +203,7 @@ async def test_health_ok_when_plugin_unhealthy(
     monkeypatch.setenv("OPA_GRPC_ADDRESS", "127.0.0.1:50054")
     monkeypatch.setenv("ANSIBLE_GRPC_ADDRESS", "127.0.0.1:50053")
     monkeypatch.setenv("APME_GALAXY_PROXY_URL", "http://127.0.0.1:8765")
+    monkeypatch.setenv("APME_PLUGIN_ORGPOLICY_ADDRESS", "127.0.0.1:50100")
     for env in (
         "GITLEAKS_GRPC_ADDRESS",
         "COLLECTION_HEALTH_GRPC_ADDRESS",
@@ -229,14 +234,6 @@ async def test_health_ok_when_plugin_unhealthy(
     mock_client.__aexit__ = AsyncMock(return_value=None)
     mock_client.get = AsyncMock(return_value=_HttpResp())
 
-    from apme_engine.daemon.plugins import DiscoveredPlugin
-
-    plugin = DiscoveredPlugin(
-        name="orgpolicy",
-        address="127.0.0.1:50100",
-        rule_id_prefix="EXT-orgpolicy-",
-    )
-
     with (
         patch("apme_engine.daemon.engine_server.grpc.aio.insecure_channel", return_value=_Channel()),
         patch(
@@ -245,12 +242,17 @@ async def test_health_ok_when_plugin_unhealthy(
         ),
         patch("apme_engine.daemon.engine_health.httpx.AsyncClient", return_value=mock_client),
         patch(
-            "apme_engine.daemon.engine_server.load_plugins",
-            AsyncMock(return_value=[plugin]),
-        ),
-        patch(
-            "apme_engine.daemon.engine_server.probe_plugin_health",
-            AsyncMock(return_value="error: plugin down"),
+            "apme_engine.daemon.engine_server.probe_plugin_health_outcome",
+            AsyncMock(
+                return_value=(
+                    False,
+                    common_pb2.ServiceHealth(
+                        name="plugin:orgpolicy",
+                        status="error: plugin down",
+                        address="127.0.0.1:50100",
+                    ),
+                )
+            ),
         ),
     ):
         servicer = EngineServicer()

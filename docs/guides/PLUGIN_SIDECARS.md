@@ -63,7 +63,11 @@ never fails Engine `Health`.
 5. **Pod**: extra container + `APME_PLUGIN_<NAME>_ADDRESS` on **engine**.
 6. **Restart** the pod (`tox -e down` then `tox -e up` after uncommenting,
    or recreate the pod after editing `pod.yaml`).
-7. **Verify**: `tox -e cli -- health-check` (plugins are listed as optional)
+7. **Verify**: `tox -e cli -- health-check`. Plugin rows (`plugin:<name>`)
+   are listed as optional. A non-ok plugin does **not** fail Engine
+   aggregate health or the CLI exit code. Helm does **not** inject
+   `APME_PLUGIN_*` — cluster attach is the operator CR
+   ([apme-operator#39](https://github.com/ansible/apme-operator/issues/39)).
    then `tox -e cli -- check /workspace` on a project that should fire the
    rule.
 
@@ -233,6 +237,11 @@ tox -e cli -- health-check
 `tox -e up` does **not** build plugin images (keeps the default pod
 offline-friendly). Build them with `tox -e build-plugins` first or the
 pod will fail to start those containers.
+
+`tox -e cli -- health-check` prints `plugin:opacustom` / `plugin:secscan`
+when those env vars are set. Those rows can be non-ok without failing
+the command (plugins are optional). The published Helm chart does not
+set `APME_PLUGIN_*`; use the operator `spec.plugins[]` CR on Kubernetes.
 
 ## What not to do
 

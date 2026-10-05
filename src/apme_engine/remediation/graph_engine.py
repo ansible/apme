@@ -34,6 +34,7 @@ from apme_engine.graph.scanner import (
     rescan_dirty,
     scan,
 )
+from apme_engine.graph.types import RemediationClass, RemediationResolution
 from apme_engine.remediation.partition import partition_violations
 from apme_engine.remediation.registry import TransformRegistry
 from apme_engine.rule_ids import normalize_rule_id
@@ -250,7 +251,7 @@ class GraphRemediationEngine:
         self._rescan_fn = rescan_fn
         self._ai_provider = ai_provider
         self._ai_phase_start_cb = ai_phase_start_cb
-        self._plugin_transform_ids = plugin_transform_ids or frozenset()
+        self._plugin_transform_ids: set[str] = set(plugin_transform_ids or ())
         self._plugin_transform_fn = plugin_transform_fn
 
     def _progress(
@@ -618,14 +619,62 @@ class GraphRemediationEngine:
             return False
         node = graph.get_node(node_id)
         if node is None or not node.yaml_lines:
+            self._demote_failed_plugin_rule(graph, node_id, violation)
             return False
-        new_yaml = await self._plugin_transform_fn(violation, node.yaml_lines, node.file_path)
-        if new_yaml is None:
+        try:
+            new_yaml = await self._plugin_transform_fn(violation, node.yaml_lines, node.file_path)
+        except Exception:  # noqa: BLE001 - plugin RPC failures must not abort convergence
+            logger.warning(
+                "Plugin transform raised for %s; demoting to AI_CANDIDATE",
+                violation.get("rule_id"),
+                exc_info=True,
+            )
+            self._demote_failed_plugin_rule(graph, node_id, violation)
             return False
-        if not _yaml_is_well_formed(new_yaml):
-            logger.warning("Plugin transform for %s returned invalid YAML; skipping", violation.get("rule_id"))
+        if new_yaml is None or not _yaml_is_well_formed(new_yaml):
+            logger.warning(
+                "Plugin transform for %s failed or returned invalid YAML; skipping",
+                violation.get("rule_id"),
+            )
+            self._demote_failed_plugin_rule(graph, node_id, violation)
             return False
-        return graph.apply_yaml(node_id, new_yaml)
+        if not graph.apply_yaml(node_id, new_yaml):
+            self._demote_failed_plugin_rule(graph, node_id, violation)
+            return False
+        return True
+
+    def _demote_failed_plugin_rule(
+        self,
+        graph: ContentGraph,
+        node_id: str,
+        violation: ViolationDict,
+    ) -> None:
+        """Drop a plugin Transform ID and stamp TRANSFORM_FAILED (ADR-042).
+
+        Phase 4 (per-plugin AI batching) is not implemented; EXT- findings
+        are also skipped in the built-in mixed-node AI pass so they remain
+        visible as failed transforms rather than mixed into built-in prompts.
+
+        Args:
+            graph: ContentGraph whose ledger holds the finding.
+            node_id: Node path.
+            violation: EXT-* finding that failed Transform.
+        """
+        rule_id = normalize_rule_id(str(violation.get("rule_id", "")))
+        self._plugin_transform_ids.discard(rule_id)
+        violation["remediation_class"] = RemediationClass.AI_CANDIDATE
+        violation["remediation_resolution"] = RemediationResolution.TRANSFORM_FAILED
+        node = graph.get_node(node_id)
+        if node is None:
+            return
+        key = (node_id, rule_id)
+        record = node.violation_ledger.get(key)
+        if record is None:
+            return
+        updated = dict(record.violation)
+        updated["remediation_class"] = RemediationClass.AI_CANDIDATE
+        updated["remediation_resolution"] = RemediationResolution.TRANSFORM_FAILED
+        record.violation = updated
 
     async def _apply_ai_transforms(
         self,
@@ -635,6 +684,9 @@ class GraphRemediationEngine:
         feedback_by_node: dict[str, str],
     ) -> list[AINodeProposal]:
         """Apply AI transforms for Tier 2 violations.
+
+        EXT- plugin findings are skipped here (ADR-042 Phase 4 pending):
+        they must not share a prompt with built-in L/M/R/P/SEC rules.
 
         Proposals are fetched concurrently (bounded by
         ``max_ai_concurrency``), then applied serially because
@@ -654,6 +706,9 @@ class GraphRemediationEngine:
 
         by_node: dict[str, list[ViolationDict]] = defaultdict(list)
         for v in tier2:
+            rule_id = str(v.get("rule_id") or "")
+            if rule_id.startswith("EXT-"):
+                continue
             node_id = str(v.get("path", ""))
             if node_id:
                 by_node[node_id].append(v)
