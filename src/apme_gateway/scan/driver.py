@@ -246,12 +246,6 @@ def _url_embedded_userpass(repo_url: str) -> tuple[str, str] | None:
     return user, password
 
 
-# Domain-separated salt for remote-head auth cache fingerprints. This is a
-# cache-partition key (not password storage); PBKDF2 satisfies CodeQL's
-# sensitive-data hashing rule while remaining cheap at iterations=1.
-_AUTH_CACHE_SALT = b"apme.remote-head.auth-cache.v1"
-
-
 def _auth_cache_marker(scm_token: str | None, url_userpass: tuple[str, str] | None) -> str:
     """Build a stable cache marker for credential-aware SCM lookups.
 
@@ -268,14 +262,14 @@ def _auth_cache_marker(scm_token: str | None, url_userpass: tuple[str, str] | No
         material = f"{url_userpass[0]}:{url_userpass[1]}"
     else:
         return ""
-    # PBKDF2 (not raw SHA-256): fingerprints credentials for cache isolation
-    # only — never used for password verification or storage.
-    token_hash = hashlib.pbkdf2_hmac(
-        "sha256",
+    # Process-local cache partition fingerprint — not password storage.
+    # BLAKE2 personalization domain-separates this from other digests.
+    # codeql[py/weak-sensitive-data-hashing]
+    token_hash = hashlib.blake2b(
         material.encode(),
-        _AUTH_CACHE_SALT,
-        iterations=1,
-    ).hex()[:16]
+        digest_size=8,
+        person=b"apme-auth-cache",
+    ).hexdigest()
     return f":auth:{token_hash}"
 
 
