@@ -165,9 +165,9 @@ Each rule across all validators declares tier-awareness in its metadata:
 @dataclass
 class RuleMetadata:
     rule_id: str
-    level: str              # "error", "warning", "info"
-    fixable: bool           # True if a Tier 1 deterministic transform exists
-    ai_proposable: bool     # True if the rule is a good candidate for AI fix
+    level: str  # "error", "warning", "info"
+    fixable: bool  # True if a Tier 1 deterministic transform exists
+    ai_proposable: bool  # True if the rule is a good candidate for AI fix
     description: str
 ```
 
@@ -184,6 +184,7 @@ from collections.abc import Callable
 from ruamel.yaml.comments import CommentedMap
 
 NodeTransformFn = Callable[[CommentedMap, dict], bool]
+
 
 class TransformRegistry:
     """Maps rule IDs to node-level transform functions."""
@@ -377,12 +378,13 @@ The **violation ledger** replaces all of this with a single source of truth: eac
 ```python
 ViolationKey = tuple[str, str]  # (node_id, normalized_rule_id)
 
+
 @dataclass
 class ViolationRecord:
     key: ViolationKey
-    violation: ViolationDict      # original validator payload
-    status: str = "open"          # "open" | "fixed" | "proposed" | "declined"
-    fixed_by: str | None = None   # "deterministic" | "ai"
+    violation: ViolationDict  # original validator payload
+    status: str = "open"  # "open" | "fixed" | "proposed" | "declined"
+    fixed_by: str | None = None  # "deterministic" | "ai"
     fixed_in_pass: int | None = None
     discovered_in_pass: int = 0
 ```

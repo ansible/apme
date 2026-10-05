@@ -213,8 +213,9 @@ def test_validate_rule_configs_unknown_ids(
         engine_pb2.RuleConfig(rule_id="L001", enabled=True),
         engine_pb2.RuleConfig(rule_id="NOT_A_RULE", enabled=True),
     ]
-    unknown, missing = _validate_rule_configs(configs)
+    unknown, missing, divergent = _validate_rule_configs(configs)
     assert unknown == ["NOT_A_RULE"], "unknown rule_id must be reported"
+    assert divergent == [], "no conflicting repeats"
     assert missing == [], "partial mode should not report missing"
 
 
@@ -237,8 +238,9 @@ def test_validate_rule_configs_known_ids_pass(
         engine_pb2.RuleConfig(rule_id="L001", enabled=True),
         engine_pb2.RuleConfig(rule_id="P010", enabled=False),
     ]
-    unknown, missing = _validate_rule_configs(configs)
+    unknown, missing, divergent = _validate_rule_configs(configs)
     assert unknown == [], "all rule IDs are known; no errors expected"
+    assert divergent == [], "no conflicting repeats"
     assert missing == [], "all known IDs covered; no missing expected"
 
 
@@ -255,8 +257,9 @@ def test_validate_rule_configs_empty_known_set(
     """
     monkeypatch.setattr("apme_engine.daemon.engine_server._known_rule_ids", set())
     configs: list[object] = [engine_pb2.RuleConfig(rule_id="ANYTHING", enabled=True)]
-    unknown, missing = _validate_rule_configs(configs)
+    unknown, missing, divergent = _validate_rule_configs(configs)
     assert unknown == [], "empty known set must skip validation"
+    assert divergent == [], "no conflicting repeats"
     assert missing == [], "empty known set must skip validation"
 
 
@@ -278,7 +281,7 @@ def test_validate_rule_configs_complete_detects_missing(
     configs: list[object] = [
         engine_pb2.RuleConfig(rule_id="L001", enabled=True),
     ]
-    unknown, missing = _validate_rule_configs(configs, complete=True)
+    unknown, missing, divergent = _validate_rule_configs(configs, complete=True)
     assert unknown == [], "L001 is known; no unknowns"
     assert missing == ["L002", "M001"], "L002 and M001 are known but absent from config"
 
@@ -302,8 +305,9 @@ def test_validate_rule_configs_complete_all_covered(
         engine_pb2.RuleConfig(rule_id="L001", enabled=True),
         engine_pb2.RuleConfig(rule_id="M001", enabled=True),
     ]
-    unknown, missing = _validate_rule_configs(configs, complete=True)
+    unknown, missing, divergent = _validate_rule_configs(configs, complete=True)
     assert unknown == [], "all config IDs are known"
+    assert divergent == [], "no conflicting repeats"
     assert missing == [], "all known IDs are covered"
 
 
@@ -326,9 +330,59 @@ def test_validate_rule_configs_complete_both_directions(
         engine_pb2.RuleConfig(rule_id="L001", enabled=True),
         engine_pb2.RuleConfig(rule_id="X999", enabled=True),
     ]
-    unknown, missing = _validate_rule_configs(configs, complete=True)
+    unknown, missing, divergent = _validate_rule_configs(configs, complete=True)
     assert unknown == ["X999"], "X999 is not known to the Engine"
     assert missing == ["L002"], "L002 is known but absent from config"
+
+
+def test_validate_rule_configs_divergent_flags_reported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One normalized ID with conflicting flags is reported as divergent.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+
+    Returns:
+        None: Assert-only test.
+    """
+    monkeypatch.setattr(
+        "apme_engine.daemon.engine_server._known_rule_ids",
+        {"L001"},
+    )
+    configs: list[object] = [
+        engine_pb2.RuleConfig(rule_id="native:L001", enabled=False),
+        engine_pb2.RuleConfig(rule_id="L001", enabled=True),
+    ]
+    unknown, missing, divergent = _validate_rule_configs(configs, complete=True)
+    assert unknown == [], "both IDs are known"
+    assert missing == [], "L001 is covered"
+    assert divergent == ["L001"], "conflicting enabled flags must be reported"
+
+
+def test_validate_rule_configs_identical_repeat_not_divergent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Identical repeats (same flags) warn but are not divergent.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+
+    Returns:
+        None: Assert-only test.
+    """
+    monkeypatch.setattr(
+        "apme_engine.daemon.engine_server._known_rule_ids",
+        {"L001"},
+    )
+    configs: list[object] = [
+        engine_pb2.RuleConfig(rule_id="native:L001", enabled=True),
+        engine_pb2.RuleConfig(rule_id="L001", enabled=True),
+    ]
+    unknown, missing, divergent = _validate_rule_configs(configs, complete=True)
+    assert unknown == []
+    assert missing == []
+    assert divergent == [], "same flags resolve identically; warn-only is enough"
 
 
 class TestGetRuleGuidance:

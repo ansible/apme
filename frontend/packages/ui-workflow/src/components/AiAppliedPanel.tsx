@@ -9,14 +9,15 @@ export interface AiAppliedPanelProps {
   aiAccepted: number;
   remediatedCount: number;
   onContinue: () => void;
-  onCancel?: () => void;
+  /** Leave the workflow without calling cancel (operation is already terminal). */
+  onDismiss?: () => void;
 }
 
 export function AiAppliedPanel({
   aiAccepted,
   remediatedCount,
   onContinue,
-  onCancel,
+  onDismiss,
 }: AiAppliedPanelProps) {
   const appliedLabel =
     aiAccepted > 0
@@ -44,9 +45,9 @@ export function AiAppliedPanel({
               summary="Continue to create branch and push your remediated changes."
               onNext={onContinue}
               secondary={
-                onCancel ? (
-                  <Button variant="link" onClick={onCancel}>
-                    Cancel
+                onDismiss ? (
+                  <Button variant="link" onClick={onDismiss}>
+                    Dismiss
                   </Button>
                 ) : undefined
               }

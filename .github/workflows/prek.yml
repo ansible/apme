@@ -22,6 +22,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
-      - uses: j178/prek-action@4e14d07f9231acabce116ccfca13b13dd9755ece # v3.0.0
-      # Explicit tox gate (same command as docs / prek openapi-check entry).
+      # ADR-047 / lean-ci: install prek, then run the same tox gate developers use.
+      - run: uv tool install prek
+      # Skip nested openapi-check (tox-in-prek dirty-tree false positives); run it
+      # as a sibling tox env instead.
+      - run: SKIP=openapi-check uvx --with tox-uv tox -e lint
       - run: uvx --with tox-uv tox -e openapi -- --check

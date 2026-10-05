@@ -46,7 +46,7 @@ The research proposes a single function as the sole decision point for splitting
 
 ```python
 def is_finding_resolvable(rule_result) -> bool:
-    return getattr(rule_result.rule, 'spec_mutation', False)
+    return getattr(rule_result.rule, "spec_mutation", False)
 ```
 
 This maps cleanly to our validator model. Each rule could declare a `fixable: bool` attribute on its metadata. The `remediate` pipeline would use this to decide whether to attempt automatic remediation or defer to the AI service. This should be a property on our rule metadata base class, not inferred via `getattr`.

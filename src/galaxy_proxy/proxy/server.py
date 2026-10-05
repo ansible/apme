@@ -9,9 +9,12 @@ from __future__ import annotations
 
 import asyncio
 import configparser
+import hmac
+import ipaddress
 import logging
 import os
 import re
+import socket
 import tempfile
 import time
 from contextlib import asynccontextmanager
@@ -46,6 +49,123 @@ from galaxy_proxy.proxy.passthrough import PyPIPassthrough
 
 logger = logging.getLogger(__name__)
 
+_ADMIN_TOKEN_ENV = "APME_PROXY_ADMIN_TOKEN"
+_ALLOW_UNAUTH_ADMIN_ENV = "APME_PROXY_ALLOW_UNAUTH_ADMIN"
+# Must match _PROXY_ADMIN_TOKEN_HEADER in
+# apme_gateway/_galaxy_proxy_sync.py — the two services deploy
+# independently, so a one-side rename 403s config pushes.
+# Admin auth is fail-closed: when no token is configured, admin routes
+# reject every request unless the operator explicitly opts out with
+# APME_PROXY_ALLOW_UNAUTH_ADMIN=1 (single-host local daemon only).
+# Rollout order matters: enable the token on the gateway first, then on the
+# proxy. Gateway-first is hitless because an old proxy ignores the extra
+# header (open only when it also opts out); proxy-first 403s pushes from
+# old gateways while the envs disagree — Gateway logs the failed push and
+# reports the proxy component degraded via /health.
+_ADMIN_TOKEN_HEADER = "x-apme-proxy-token"
+
+_UNAUTH_TRUTHY = frozenset({"1", "true", "yes", "on"})
+
+
+def _unauth_admin_allowed() -> bool:
+    """Return whether unauthenticated admin access is explicitly allowed.
+
+    Opt-out for the single-host local daemon only — never set this when the
+    proxy listens on a routable address. Deployments must configure
+    ``APME_PROXY_ADMIN_TOKEN`` instead.
+
+    Returns:
+        True when ``APME_PROXY_ALLOW_UNAUTH_ADMIN`` is explicitly truthy.
+    """
+    return os.environ.get(_ALLOW_UNAUTH_ADMIN_ENV, "").strip().lower() in _UNAUTH_TRUTHY
+
+
+def _admin_token_configured() -> str | None:
+    """Return the configured admin token, or signal unset/invalid.
+
+    Returns:
+        Stripped ASCII ``APME_PROXY_ADMIN_TOKEN`` value, ``""`` when unset,
+        or ``None`` when set but contains non-ASCII characters (misconfigured).
+    """
+    token = os.environ.get(_ADMIN_TOKEN_ENV, "").strip()
+    if not token:
+        return ""
+    try:
+        token.encode("ascii")
+    except UnicodeEncodeError:
+        logger.error(
+            "%s contains non-ASCII characters; admin routes reject all requests",
+            _ADMIN_TOKEN_ENV,
+        )
+        return None
+    return token
+
+
+def _require_admin_token(request: Request) -> None:
+    """Enforce shared-admin-token auth on admin endpoints.
+
+    Fail-closed: when ``APME_PROXY_ADMIN_TOKEN`` is unset the admin surface
+    rejects every request unless the operator explicitly opted out with
+    ``APME_PROXY_ALLOW_UNAUTH_ADMIN=1`` (single-host local daemon only).
+    Otherwise the request must present the token in the
+    ``x-apme-proxy-token`` header.
+
+    Args:
+        request: Incoming HTTP request.
+
+    Raises:
+        HTTPException: 403 when no token is configured (and no opt-out),
+            when the configured token is invalid, or when the presented
+            token does not match.
+    """
+    expected = _admin_token_configured()
+    if expected == "":
+        if _unauth_admin_allowed():
+            return
+        raise HTTPException(
+            status_code=403,
+            detail="Admin token is not configured; set APME_PROXY_ADMIN_TOKEN "
+            "or explicitly allow unauthenticated admin with "
+            "APME_PROXY_ALLOW_UNAUTH_ADMIN=1",
+        )
+    if expected is None:
+        raise HTTPException(status_code=403, detail="Invalid admin token")
+    provided = request.headers.get(_ADMIN_TOKEN_HEADER, "")
+    try:
+        provided.encode("ascii")
+    except UnicodeEncodeError:
+        raise HTTPException(status_code=403, detail="Invalid admin token") from None
+    if not hmac.compare_digest(provided, expected):
+        raise HTTPException(status_code=403, detail="Invalid admin token")
+
+
+class CollectionResolutionError(RuntimeError):
+    """Raised when a required collection cannot be resolved from configured servers."""
+
+    def __init__(
+        self,
+        fqcn: str,
+        *,
+        version_constraint: str = "",
+        operation: str = "version_lookup",
+        servers_tried: list[str] | None = None,
+    ) -> None:
+        """Initialize with collection context for actionable error messages.
+
+        Args:
+            fqcn: Fully qualified collection name.
+            version_constraint: Version constraint that was requested.
+            operation: The operation that failed.
+            servers_tried: Sanitized labels of Galaxy servers that were tried.
+        """
+        self.fqcn = fqcn
+        self.version_constraint = version_constraint
+        self.operation = operation
+        self.servers_tried = servers_tried or []
+        spec = f"{fqcn}:{version_constraint}" if version_constraint else fqcn
+        sources = ", ".join(self.servers_tried) if self.servers_tried else "no configured servers"
+        super().__init__(f"Collection {operation} failed for {spec}: exhausted configured Galaxy servers [{sources}]")
+
 
 def _safe_server_label(raw_url: str) -> str:
     """Return an upstream URL label without query, fragment, or credentials.
@@ -63,6 +183,77 @@ def _safe_server_label(raw_url: str) -> str:
         return f"{parsed.hostname}:{parsed.port}" if parsed.port else parsed.hostname
     except ValueError:
         return "unknown"
+
+
+def _validate_galaxy_server_url(raw_url: str) -> None:
+    """Reject Galaxy server URLs that cannot safely receive stored tokens.
+
+    A pushed server URL later receives the victim's stored Galaxy token in
+    the Authorization header on every version-list and tarball download, so
+    an attacker who can POST ``/admin/galaxy-config`` must not be able to
+    point it at an arbitrary host. This rejects non-HTTPS schemes (tokens
+    would travel in cleartext), embedded userinfo (credentials the proxy
+    would forward), and literal IPs that target this host or the local link
+    (loopback, link-local including the cloud-metadata address, multicast,
+    unspecified, reserved). Hostnames are accepted — they cannot be judged
+    without DNS — and private-range IPs stay allowed for enterprise hubs.
+
+    Args:
+        raw_url: Galaxy server URL from the admin config push.
+
+    Raises:
+        HTTPException: 422 describing why the URL is rejected.
+    """
+    url = (raw_url or "").strip()
+    parsed = urlsplit(url)
+    if parsed.scheme != "https":
+        raise HTTPException(
+            status_code=422,
+            detail=f"Galaxy server URL must use https: {raw_url!r}",
+        )
+    if parsed.username or parsed.password:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Galaxy server URL must not embed userinfo credentials: {raw_url!r}",
+        )
+    host = parsed.hostname or ""
+    if not host:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Galaxy server URL has no host: {raw_url!r}",
+        )
+    bare_host = host.rstrip(".")
+    if bare_host == "localhost" or bare_host.endswith(".localhost"):
+        raise HTTPException(
+            status_code=422,
+            detail=f"Galaxy server URL must not target a local/link-local address: {raw_url!r}",
+        )
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        # Encoded literal IPs (all-decimal integers like 2130706433,
+        # hex/octal dotted quads) raise ValueError here yet the OS
+        # resolver still maps them to loopback/link-local addresses —
+        # reject anything inet_aton accepts so such URLs cannot bypass
+        # the block below and later receive stored Galaxy tokens.
+        try:
+            socket.inet_aton(host)
+        except OSError:
+            return  # Hostname: cannot judge without DNS; allowed.
+        raise HTTPException(
+            status_code=422,
+            detail=f"Galaxy server URL must not target a local/link-local address: {raw_url!r}",
+        ) from None
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        # IPv4-mapped IPv6 literals (e.g. ::ffff:127.0.0.1) report
+        # is_loopback/is_link_local False on some releases yet connect to
+        # the embedded IPv4 target — judge the mapped address instead.
+        ip = ip.ipv4_mapped
+    if ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_unspecified or ip.is_reserved:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Galaxy server URL must not target a local/link-local address: {raw_url!r}",
+        )
 
 
 _GALAXY_API_URL = "https://galaxy.ansible.com"
@@ -189,17 +380,37 @@ def create_app(
             )
             return response
 
-    app.state.galaxy_servers = list(galaxy_servers) if galaxy_servers else []
+    app.state.galaxy_servers = None if galaxy_servers is None else list(galaxy_servers)
     app.state.ansible_cfg_path = ansible_cfg_path
     app.state.ansible_galaxy_bin = ansible_galaxy_bin
+
+    if _admin_token_configured() == "" and not _unauth_admin_allowed():
+        logger.warning(
+            "APME_PROXY_ADMIN_TOKEN is not configured — /admin/galaxy-config and "
+            "/convert-tarballs reject all requests. Set APME_PROXY_ADMIN_TOKEN "
+            "to require token auth on the admin surface, or explicitly allow "
+            "unauthenticated admin on a single-host daemon with "
+            "APME_PROXY_ALLOW_UNAUTH_ADMIN=1."
+        )
+    elif _admin_token_configured() == "":
+        logger.warning(
+            "APME_PROXY_ALLOW_UNAUTH_ADMIN is set — /admin/galaxy-config and "
+            "/convert-tarballs are unprotected. Only use this opt-out on a "
+            "single-host daemon; set APME_PROXY_ADMIN_TOKEN everywhere else."
+        )
 
     def _get_galaxy_config() -> tuple[Path | None, list[GalaxyServerConfig] | None, str | None]:
         """Read current Galaxy config from app state.
 
+        ``None`` means no explicit server list (public Galaxy, or servers
+        loaded from ``ansible.cfg`` when that file has an opinion).  An
+        empty list is explicit configuration with no usable servers and
+        must stay empty so callers fail closed.
+
         Returns:
             tuple: (ansible_cfg_path, galaxy_servers, ansible_galaxy_bin).
         """
-        servers = app.state.galaxy_servers
+        servers: list[GalaxyServerConfig] | None = app.state.galaxy_servers
         cfg_path = app.state.ansible_cfg_path
         if cfg_path is None:
             env_cfg = os.environ.get("ANSIBLE_CONFIG", "").strip()
@@ -207,15 +418,37 @@ def create_app(
                 candidate = Path(env_cfg).expanduser()
                 if candidate.is_file():
                     cfg_path = candidate
+        if servers is None and cfg_path is not None:
+            servers = _load_servers_from_ansible_cfg(cfg_path)
         galaxy_bin = app.state.ansible_galaxy_bin
-        return cfg_path, servers or None, galaxy_bin
+        return cfg_path, servers, galaxy_bin
+
+    def _download_auth(
+        cfg_path: Path | None,
+        servers: list[GalaxyServerConfig] | None,
+    ) -> tuple[Path | None, list[GalaxyServerConfig] | None]:
+        """Choose one Galaxy auth source for ``ansible-galaxy``.
+
+        An explicit server list, including an empty list, is authoritative
+        and must not be replaced by ``ansible.cfg`` or the process environment.
+
+        Args:
+            cfg_path: Optional path to an existing ``ansible.cfg``.
+            servers: Explicit server list, or ``None`` when unset.
+
+        Returns:
+            ``(ansible_cfg_path, servers)`` with at most one of them set.
+        """
+        if servers is not None:
+            return None, servers
+        return cfg_path, None
 
     @app.get("/health")  # type: ignore[untyped-decorator]
     async def health() -> dict[str, str]:
         return {"status": "ok"}
 
     @app.post("/admin/galaxy-config")  # type: ignore[untyped-decorator]
-    async def update_galaxy_config(body: _GalaxyConfigPayload) -> dict[str, Any]:
+    async def update_galaxy_config(request: Request, body: _GalaxyConfigPayload) -> dict[str, Any]:
         """Accept Galaxy server configs pushed from the Gateway (ADR-045).
 
         The Gateway calls this after startup and after any CRUD change to
@@ -223,14 +456,19 @@ def create_app(
         and uses them for all subsequent ``ansible-galaxy`` downloads.
 
         Args:
+            request: Incoming HTTP request (carries the admin token header).
             body: Galaxy server configurations to register.
 
         Returns:
             dict: Confirmation with count and names of accepted servers.
 
         Raises:
-            HTTPException: 422 if any server name is empty, invalid, or duplicated.
+            HTTPException: 403 if the admin token is invalid or unconfigured;
+                422 if any server name is empty, invalid, or duplicated, or
+                any server URL is unsafe (non-https, embedded userinfo, or
+                local/link-local target).
         """
+        _require_admin_token(request)
         seen: set[str] = set()
         for s in body.servers:
             name = s.name.strip()
@@ -241,6 +479,11 @@ def create_app(
             if name.upper() in seen:
                 raise HTTPException(status_code=422, detail=f"Duplicate server name: {s.name!r}")
             seen.add(name.upper())
+            # Fail closed before storing: a stored URL later receives the
+            # victim's Galaxy token on every download, so an unsafe URL must
+            # never reach app state (tokens are never attached to hosts that
+            # fail validation because they are never stored).
+            _validate_galaxy_server_url(s.url)
 
         app.state.galaxy_servers = [
             GalaxyServerConfig(
@@ -252,6 +495,7 @@ def create_app(
             for s in body.servers
         ]
         app.state.ansible_cfg_path = None
+        cache.clear()
         names = [s.name.strip() for s in body.servers]
         logger.info("Galaxy config updated: %d server(s): %s", len(names), ", ".join(names))
         return {"accepted": len(names), "servers": names}
@@ -323,22 +567,21 @@ def create_app(
             logger.info("metadata_cache_miss collection=%s.%s", namespace, name)
 
         if versions is None:
-            cfg_path, servers_cfg, _ = _get_galaxy_config()
-            if servers_cfg is None and cfg_path is not None:
-                servers_cfg = _load_servers_from_ansible_cfg(cfg_path) or None
-            galaxy_versions = await _fetch_galaxy_versions(
-                namespace,
-                name,
-                servers=servers_cfg,
-            )
-            if galaxy_versions is not None:
-                if galaxy_versions:
-                    cache.put_metadata(namespace, name, galaxy_versions)
-                versions = galaxy_versions
-            else:
-                # Truncation or total server failure — do not cache an empty
-                # listing that would masquerade as a valid zero-version catalog.
-                versions = []
+            _cfg_path, servers_cfg, _galaxy_bin = _get_galaxy_config()
+            try:
+                galaxy_versions = await _fetch_galaxy_versions(
+                    namespace,
+                    name,
+                    servers=servers_cfg,
+                )
+            except CollectionResolutionError as exc:
+                raise HTTPException(
+                    status_code=404,
+                    detail=str(exc),
+                ) from exc
+            if galaxy_versions:
+                cache.put_metadata(namespace, name, galaxy_versions)
+            versions = galaxy_versions
 
         if not versions and not cached_wheel_set:
             lock_key = f"{namespace}.{name}:latest"
@@ -350,24 +593,36 @@ def create_app(
                 if not cached_wheel_set:
                     try:
                         cfg_path, servers_cfg, galaxy_bin = _get_galaxy_config()
+                        cfg_for_download, servers_for_download = _download_auth(cfg_path, servers_cfg)
                         whl_name, whl_data = await _download_and_convert(
                             namespace,
                             name,
                             "",
-                            ansible_cfg_path=cfg_path,
-                            galaxy_servers=servers_cfg,
+                            ansible_cfg_path=cfg_for_download,
+                            galaxy_servers=servers_for_download,
                             ansible_galaxy_bin=galaxy_bin,
                         )
                         cache.put_wheel(whl_name, whl_data)
                         logger.info("On-demand download for %s.%s: %s", namespace, name, whl_name)
                         cached_wheel_set = {whl_name}
-                    except Exception:
-                        logger.warning(
-                            "On-demand download failed for %s.%s — returning empty listing",
+                    except CollectionResolutionError as exc:
+                        raise HTTPException(
+                            status_code=404,
+                            detail=str(exc),
+                        ) from exc
+                    except Exception as exc:
+                        logger.error(
+                            "collection_download_failed operation=download "
+                            "collection=%s.%s error_type=%s outcome=failed",
                             namespace,
                             name,
+                            type(exc).__name__,
                             exc_info=True,
                         )
+                        raise HTTPException(
+                            status_code=502,
+                            detail=f"Failed to download {namespace}.{name} via ansible-galaxy",
+                        ) from exc
 
         links: list[str] = []
         seen_versions: set[str] = set()
@@ -478,26 +733,33 @@ def create_app(
 
             try:
                 cfg_path, servers, galaxy_bin = _get_galaxy_config()
+                cfg_for_download, servers_for_download = _download_auth(cfg_path, servers)
                 whl_name, whl_data = await _download_and_convert(
                     ns,
                     coll_name,
                     version,
-                    ansible_cfg_path=cfg_path,
-                    galaxy_servers=servers,
+                    ansible_cfg_path=cfg_for_download,
+                    galaxy_servers=servers_for_download,
                     ansible_galaxy_bin=galaxy_bin,
                 )
             except Exception as exc:
+                server_labels = [_safe_server_label(s.url) for s in servers] if servers else ["default"]
                 logger.error(
-                    "Failed to download/convert %s.%s %s error_type=%s",
+                    "collection_download_failed operation=download collection=%s.%s "
+                    "version=%s servers_tried=%s error_type=%s outcome=failed",
                     ns,
                     coll_name,
                     version,
+                    ", ".join(server_labels),
                     type(exc).__name__,
                 )
                 _record_serve("miss", status="error")
                 raise HTTPException(
                     status_code=502,
-                    detail=f"Failed to download/convert {ns}.{coll_name} {version} via ansible-galaxy",
+                    detail=(
+                        f"Failed to download/convert {ns}.{coll_name} {version} "
+                        f"via ansible-galaxy (servers tried: {', '.join(server_labels)})"
+                    ),
                 ) from exc
 
             cache.put_wheel(whl_name, whl_data)
@@ -510,19 +772,24 @@ def create_app(
         )
 
     @app.post("/convert-tarballs")  # type: ignore[untyped-decorator]
-    async def convert_tarballs(tarball_dir: str) -> dict[str, list[str]]:
+    async def convert_tarballs(request: Request, tarball_dir: str) -> dict[str, list[str]]:
         """Convert all tarballs in a directory to wheels and cache them.
 
         This endpoint supports the flow where Engine sends collection specs
         and the proxy converts pre-downloaded tarballs to wheels.
 
         Args:
+            request: Incoming HTTP request (carries the admin token header).
             tarball_dir: Path to directory containing ``.tar.gz`` files
                 (resolved to absolute internally).
 
         Returns:
             Dict with ``converted`` (wheel filenames) and ``failed`` (tarball names).
-        """
+
+        Raises:
+            HTTPException: 403 if the admin token is invalid.
+        """  # noqa: DOC502 -- the 403 raise lives in _require_admin_token
+        _require_admin_token(request)
         tarball_path = _validate_tarball_dir(tarball_dir)
 
         converted: list[str] = []
@@ -610,7 +877,7 @@ def _galaxy_version_sort_key(version: str) -> tuple[int, Version | str]:
         return (1, version)
 
 
-def _load_servers_from_ansible_cfg(cfg_path: Path) -> list[GalaxyServerConfig]:
+def _load_servers_from_ansible_cfg(cfg_path: Path) -> list[GalaxyServerConfig] | None:
     """Parse Galaxy servers from an ``ansible.cfg`` file.
 
     This is used by the proxy's version-discovery path when no Gateway-pushed
@@ -621,7 +888,11 @@ def _load_servers_from_ansible_cfg(cfg_path: Path) -> list[GalaxyServerConfig]:
         cfg_path: Path to the config file.
 
     Returns:
-        Ordered Galaxy server configs, or an empty list on parse failure.
+        Ordered Galaxy server configs when ``server_list`` names usable
+        servers.  An empty list when ``server_list`` is present but blank,
+        names no usable servers, or the file cannot be parsed (fail-closed).
+        ``None`` when the file has no ``[galaxy]`` section or no
+        ``server_list`` option (no opinion → public Galaxy default).
     """
     parser = configparser.ConfigParser(interpolation=None)
     try:
@@ -630,7 +901,16 @@ def _load_servers_from_ansible_cfg(cfg_path: Path) -> list[GalaxyServerConfig]:
         logger.debug("Failed to parse ansible.cfg for Galaxy servers: %s", cfg_path, exc_info=True)
         return []
 
-    raw_list = parser.get("galaxy", "server_list", fallback="")
+    if not parser.has_section("galaxy"):
+        return None
+
+    if not parser.has_option("galaxy", "server_list"):
+        return None
+
+    raw_list = parser.get("galaxy", "server_list")
+    if not raw_list.strip():
+        return []
+
     server_names = [name.strip() for name in raw_list.split(",") if name.strip()]
     servers: list[GalaxyServerConfig] = []
     for name in server_names:
@@ -661,28 +941,44 @@ async def _fetch_galaxy_versions(
 ) -> list[str] | None:
     """Fetch all published version strings for a collection from Galaxy.
 
-    When *servers* is provided, each configured server is tried in order
-    (matching ``ansible.cfg`` ``server_list`` semantics).  The first
-    server to return a successful response wins.  If no configured server
-    succeeds — or if no servers are configured — falls back to public
-    Galaxy (``galaxy.ansible.com``).
+    When *servers* is a non-empty list, each configured server is tried
+    in order (matching ``ansible.cfg`` ``server_list`` semantics).  The
+    first server to return a successful response wins.
 
-    This enables version discovery from console.redhat.com / Automation
-    Hub / private Galaxy instances configured via the Gateway UI.
+    When *servers* is ``None`` (no explicit configuration), public Galaxy
+    (``galaxy.ansible.com``) is used as the default.
+
+    When *servers* is an empty list (explicit configuration yielded no
+    usable servers), the function raises immediately — this distinguishes
+    misconfiguration from absent configuration.
 
     Args:
         namespace: Collection namespace.
         name: Collection name.
-        servers: Ordered list of Galaxy server configs (optional).
+        servers: Ordered list of Galaxy server configs.  ``None`` means
+            no configuration (use public Galaxy default); ``[]`` means
+            explicit configuration with no usable servers (fail-closed).
 
     Returns:
-        Sorted list of version strings on success (possibly empty), or
-        ``None`` when every server fails (including pagination truncation).
+        Sorted list of version strings on success (possibly empty).
+
+    Raises:
+        CollectionResolutionError: When all configured servers fail or
+            the configuration yields no usable servers.
     """
     base_urls: list[tuple[str, str | None]] = []
-    for srv in servers or []:
-        base_urls.append((srv.url.rstrip("/"), srv.token))
-    base_urls.append((_GALAXY_API_URL, None))
+    if servers is not None:
+        if not servers:
+            fqcn = f"{namespace}.{name}"
+            raise CollectionResolutionError(
+                fqcn,
+                operation="version_lookup",
+                servers_tried=[],
+            )
+        for srv in servers:
+            base_urls.append((srv.url.rstrip("/"), srv.token))
+    else:
+        base_urls.append((_GALAXY_API_URL, None))
 
     for base_url, token in base_urls:
         logger.info(
@@ -696,13 +992,17 @@ async def _fetch_galaxy_versions(
             return sorted(set(versions), key=_galaxy_version_sort_key)
 
     tried = [_safe_server_label(url) for url, _ in base_urls]
-    logger.warning(
-        "All Galaxy servers failed for %s.%s (tried: %s)",
-        namespace,
-        name,
+    fqcn = f"{namespace}.{name}"
+    logger.error(
+        "collection_resolution_failed operation=version_lookup collection=%s servers_tried=%s outcome=failed",
+        fqcn,
         ", ".join(tried),
     )
-    return None
+    raise CollectionResolutionError(
+        fqcn,
+        operation="version_lookup",
+        servers_tried=tried,
+    )
 
 
 def _normalize_galaxy_url(raw_url: str) -> str:
@@ -945,7 +1245,8 @@ async def _download_and_convert(
         )
 
         if result.failed_specs:
-            msg = f"Failed to download {spec}"
+            server_labels = [_safe_server_label(s.url) for s in galaxy_servers] if galaxy_servers else ["default"]
+            msg = f"Failed to download {spec} from configured Galaxy servers [{', '.join(server_labels)}]"
             raise RuntimeError(msg)
 
         if not result.tarball_paths:

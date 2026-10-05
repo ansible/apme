@@ -65,11 +65,13 @@ class TransformRegistry:
         def decorator(func: TransformFunc):
             cls._transforms[rule_id] = func
             return func
+
         return decorator
 
     @classmethod
     def get(cls, rule_id: str) -> TransformFunc | None:
         return cls._transforms.get(rule_id)
+
 
 @TransformRegistry.register("L002")
 def fix_fqcn(node: YAMLNode, violation: Violation) -> YAMLNode:

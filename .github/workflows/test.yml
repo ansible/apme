@@ -46,8 +46,16 @@ jobs:
             exit 1
           fi
 
-  integration:
+  integration-matrix:
     runs-on: ubuntu-24.04
+    # Each OPA transport runs on a fresh runner: the daemon binds fixed
+    # ports, so consecutive integration runs on one machine collide
+    # (leaked TIME_WAIT sockets / slow teardown), while separate jobs
+    # are isolated by construction.
+    strategy:
+      fail-fast: false
+      matrix:
+        opa-transport: [local, podman]
     services:
       postgres:
         image: postgres:16
@@ -75,16 +83,30 @@ jobs:
           echo "${OPA_SHA256}  /tmp/opa_linux_amd64_static" | sha256sum --check -
           sudo install -m 755 /tmp/opa_linux_amd64_static /usr/local/bin/opa
           opa version
+      - name: Install Podman
+        if: matrix.opa-transport == 'podman'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman
+          podman --version
       - name: Verify PostgreSQL reachability
         run: uvx --with tox-uv tox -e postgres-check
-      - run: uvx --with tox-uv tox -e integration
-        env:
-          OPA_USE_PODMAN: "0"
-      - name: Retry integration on timeout
-        if: failure()
+      - name: Integration (OPA ${{ matrix.opa-transport }} path)
         run: uvx --with tox-uv tox -e integration
         env:
-          OPA_USE_PODMAN: "0"
+          OPA_USE_PODMAN: ${{ matrix.opa-transport == 'podman' && '1' || '0' }}
+
+  integration:
+    runs-on: ubuntu-24.04
+    needs: integration-matrix
+    if: always()
+    steps:
+      - name: Verify integration matrix passed
+        run: |
+          if [[ "${{ needs.integration-matrix.result }}" != "success" ]]; then
+            echo "::error::Integration matrix did not pass (${{ needs.integration-matrix.result }})"
+            exit 1
+          fi
 
   ui:
     runs-on: ubuntu-24.04

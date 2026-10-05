@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import errno
 import fcntl
+import ipaddress
 import json
 import logging
 import os
@@ -22,6 +24,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from importlib.metadata import version as pkg_version
 from pathlib import Path
+from types import FrameType
 
 _DATA_DIR = Path(os.environ.get("APME_DATA_DIR", "~/.apme-data")).expanduser()
 _STATE_FILE = _DATA_DIR / "daemon.json"
@@ -43,6 +46,60 @@ _OPTIONAL_SERVICES = {
 
 _HEALTH_TIMEOUT = 10.0
 _HEALTH_POLL_INTERVAL = 0.3
+
+logger = logging.getLogger(__name__)
+
+_shutdown_requested = False
+
+
+def _request_daemon_shutdown() -> None:
+    """Record that the daemon child received an intentional stop signal."""
+    global _shutdown_requested
+    _shutdown_requested = True
+
+
+def _chain_uvicorn_shutdown(proxy_server: object) -> None:
+    """Chain Uvicorn's ``handle_exit`` to the daemon shutdown flag.
+
+    Uvicorn installs ``Server.handle_exit`` via ``signal.signal`` during
+    ``serve()``, replacing any ``loop.add_signal_handler`` hooks. Wrap the
+    server handler so an intentional SIGTERM/SIGINT stop is recorded before
+    the proxy task completes.
+
+    Args:
+        proxy_server: Uvicorn ``Server`` instance about to start serving.
+    """
+    original = getattr(proxy_server, "handle_exit", None)
+    if original is None:
+        return
+
+    def handle_exit(sig: int, frame: FrameType | None) -> None:
+        _request_daemon_shutdown()
+        original(sig, frame)
+
+    proxy_server.handle_exit = handle_exit  # type: ignore[attr-defined]
+
+
+def _log_proxy_task_done(task: asyncio.Task[None]) -> None:
+    """Done-callback for the Galaxy Proxy server task (PE-27).
+
+    The proxy is a required core service: any termination is loud (error
+    level with the service name) so it is never a silent fire-and-forget
+    failure.
+
+    Args:
+        task: Completed Galaxy Proxy ``serve()`` task.
+    """
+    if task.cancelled():
+        # Cancellation also fires on clean shutdown (the engine-first branch
+        # cancels the proxy task) — that is routine teardown, not a crash.
+        logger.debug("galaxy-proxy task cancelled during shutdown")
+    elif (exc := task.exception()) is not None:
+        logger.error("galaxy-proxy task failed (Galaxy Proxy is a required core service): %s", exc)
+    elif _shutdown_requested:
+        logger.debug("galaxy-proxy task stopped during requested shutdown")
+    else:
+        logger.error("galaxy-proxy task exited unexpectedly (Galaxy Proxy is a required core service)")
 
 
 @contextlib.contextmanager
@@ -262,26 +319,152 @@ def _health_check(address: str, timeout: float = 3.0) -> bool:
             channel.close()
 
 
+# Wildcard / all-interfaces hosts must never reach sock.bind() (CWE-200 /
+# CodeQL py/bind-socket-all-network-interfaces). Expand them to concrete
+# local addresses instead so conflicts on any interface are still detected.
+_WILDCARD_IPV4 = frozenset({"", "0.0.0.0"})
+_WILDCARD_IPV6 = frozenset({"::", "[::]"})
+
+
+def _is_unspecified_ipv6(host: str) -> bool:
+    """Return True when *host* is an IPv6 unspecified (all-interfaces) address.
+
+    Args:
+        host: Host string, optionally bracketed.
+
+    Returns:
+        True for ``::``, ``0:0:0:0:0:0:0:0``, and equivalent expanded forms.
+    """
+    candidate = host[1:-1] if host.startswith("[") and host.endswith("]") else host
+    try:
+        address = ipaddress.ip_address(candidate)
+    except ValueError:
+        return False
+    return isinstance(address, ipaddress.IPv6Address) and address.is_unspecified
+
+
+def _ipv6_wildcard_probe_targets() -> list[tuple[int, str]]:
+    """Concrete probe targets for dual-stack IPv6 wildcard listeners.
+
+    Returns:
+        Local IPv6 and IPv4 addresses to probe for ``::`` listeners.
+    """
+    targets: list[tuple[int, str]] = [(socket.AF_INET6, addr) for addr in sorted(_local_addresses(socket.AF_INET6))]
+    targets.extend((socket.AF_INET, addr) for addr in sorted(_local_addresses(socket.AF_INET)))
+    return targets
+
+
+def _local_addresses(family: int) -> frozenset[str]:
+    """Best-effort set of assigned local addresses for *family*.
+
+    Always includes the loopback address. Never returns wildcard hosts.
+
+    Args:
+        family: ``socket.AF_INET`` or ``socket.AF_INET6``.
+
+    Returns:
+        Concrete local IP strings suitable for ``sock.bind()``.
+    """
+    loopback = "127.0.0.1" if family == socket.AF_INET else "::1"
+    found: set[str] = {loopback}
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, family, socket.SOCK_STREAM):
+            raw_ip = info[4][0]
+            if not isinstance(raw_ip, str) or not raw_ip or "%" in raw_ip:
+                continue
+            if family == socket.AF_INET6 and raw_ip.lower().startswith("fe80:"):
+                continue
+            found.add(raw_ip)
+    except OSError:
+        pass
+    try:
+        # TEST-NET / documentation prefix — connect does not send packets.
+        remote = ("192.0.2.1", 1) if family == socket.AF_INET else ("2001:db8::1", 1)
+        with socket.socket(family, socket.SOCK_DGRAM) as sock:
+            sock.connect(remote)
+            raw_ip = sock.getsockname()[0]
+            if isinstance(raw_ip, str) and raw_ip and "%" not in raw_ip:
+                found.add(raw_ip)
+    except OSError:
+        pass
+    return frozenset(found)
+
+
+def _probe_targets(host: str) -> list[tuple[int, str]]:
+    """Resolve *host* into concrete ``(family, address)`` bind probe targets.
+
+    Wildcard hosts expand to every known local address so a listener on a
+    non-loopback interface still fails the check, without ever binding
+    ``''`` / ``0.0.0.0`` / ``::``. IPv6 wildcards also probe local IPv4
+    addresses because dual-stack ``::`` listeners accept IPv4 traffic.
+
+    Args:
+        host: Host from a gRPC listen address or caller-supplied bind target.
+
+    Returns:
+        One or more ``(address_family, ip)`` pairs to probe.
+    """
+    if host in _WILDCARD_IPV4:
+        return [(socket.AF_INET, addr) for addr in sorted(_local_addresses(socket.AF_INET))]
+    if host in _WILDCARD_IPV6 or _is_unspecified_ipv6(host):
+        return _ipv6_wildcard_probe_targets()
+    if host.startswith("[") and host.endswith("]"):
+        return [(socket.AF_INET6, host[1:-1])]
+    if ":" in host:
+        return [(socket.AF_INET6, host)]
+    return [(socket.AF_INET, host)]
+
+
+def _bind_probe(family: int, addr: str, port: int) -> bool | None:
+    """Probe whether *port* is free on *addr*.
+
+    Args:
+        family: Address family for the temporary socket.
+        addr: Concrete IP to bind (never a wildcard).
+        port: TCP port number.
+
+    Returns:
+        ``True`` if the bind succeeded (port free), ``False`` if the port is
+        in use, or ``None`` if *addr* is not assignable on this host.
+    """
+    try:
+        with socket.socket(family, socket.SOCK_STREAM) as sock:
+            if family == socket.AF_INET6:
+                sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
+            sock.bind((addr, port))
+    except OSError as exc:
+        # Address not present / family disabled — skip, do not treat as busy.
+        if exc.errno in {errno.EADDRNOTAVAIL, errno.EAFNOSUPPORT}:
+            return None
+        return False
+    return True
+
+
 def _check_port_available(host: str, port: int) -> bool:
     """Return True if *port* on *host* is free (bind succeeds).
 
     Uses ``bind()`` instead of ``connect()`` so the check works for
-    non-loopback addresses like ``0.0.0.0`` and avoids socket leaks.
+    non-loopback listen addresses and avoids socket leaks. Wildcard hosts
+    (``0.0.0.0``, ``::``, empty string) are expanded to concrete local
+    interface addresses so the temporary socket never binds to all
+    interfaces, while still detecting conflicts on any local interface.
 
     Args:
         host: Host to probe.
         port: TCP port number.
 
     Returns:
-        True when the port is available (bind succeeds).
+        True when the port is available (bind succeeds on every probeable
+        local address for *host*).
     """
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        try:
-            sock.bind((host, port))
-        except OSError:
+    for family, addr in _probe_targets(host):
+        result = _bind_probe(family, addr, port)
+        if result is False:
             return False
-        else:
-            return True
+    # Unprobeable addresses (``None``) are skipped. If every target was
+    # unprobeable (e.g. IPv6 disabled for ``::``), defer to the daemon's
+    # real bind rather than inventing a false conflict.
+    return True
 
 
 def _address_port_bound(address: str) -> bool:
@@ -296,9 +479,7 @@ def _address_port_bound(address: str) -> bool:
     host, _, port_s = address.rpartition(":")
     if not host or not port_s.isdigit():
         return True
-    # Bind checks against 127.0.0.1 / 0.0.0.0 — normalize wildcard hosts.
-    probe_host = "127.0.0.1" if host in {"0.0.0.0", "::", "[::]"} else host
-    return not _check_port_available(probe_host, int(port_s))
+    return not _check_port_available(host, int(port_s))
 
 
 def _assert_ports_free(host: str, ports: dict[str, int]) -> None:
@@ -321,15 +502,56 @@ def _assert_ports_free(host: str, ports: dict[str, int]) -> None:
             raise RuntimeError(msg)
 
 
+def _daemon_child_exit_code(services: dict[str, str]) -> int:
+    """Run the daemon in a child process and map failures to an exit code.
+
+    Args:
+        services: Service name to ``host:port`` map for the child.
+
+    Returns:
+        Process exit code (0 success, non-zero on crash or ``SystemExit``).
+    """
+    try:
+        asyncio.run(_run_daemon(services))
+        return 0
+    except KeyboardInterrupt:
+        return 0
+    except SystemExit as e:
+        code = e.code
+        exit_code = code if isinstance(code, int) else (0 if code is None else 1)
+        if exit_code:
+            sys.stderr.write(f"Daemon exited during startup: {e}\n")
+            sys.stderr.flush()
+        return exit_code
+    except Exception as e:
+        sys.stderr.write(f"Daemon crashed: {e}\n")
+        import traceback
+
+        traceback.print_exc(file=sys.stderr)
+        sys.stderr.flush()
+        return 1
+
+
 async def _run_daemon(services: dict[str, str]) -> None:
     """Run all daemon services in a single event loop (blocks forever).
 
     Args:
         services: Map of service name -> listen address.
+
+    Raises:
+        RuntimeError: If the Galaxy Proxy task dies (required core
+            service) or the Engine server terminates unexpectedly.
     """
     from apme_engine.log_bridge import install_handler
 
     install_handler()
+
+    global _shutdown_requested
+    _shutdown_requested = False
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        with contextlib.suppress(NotImplementedError, ValueError):
+            loop.add_signal_handler(sig, _request_daemon_shutdown)
 
     from apme_engine.daemon.engine_server import serve as engine_serve
 
@@ -387,6 +609,7 @@ async def _run_daemon(services: dict[str, str]) -> None:
 
     # Galaxy Proxy (uvicorn, not gRPC) — must start before Engine so
     # APME_GALAXY_PROXY_URL is set when the engine creates session venvs.
+    proxy_task: asyncio.Task[None] | None = None
     if "galaxy_proxy" in services:
         proxy_addr = services["galaxy_proxy"]
         proxy_host, _, proxy_port_s = proxy_addr.rpartition(":")
@@ -408,7 +631,9 @@ async def _run_daemon(services: dict[str, str]) -> None:
             log_level=logging.getLevelName(log_level).lower(),
         )
         proxy_server = uvicorn.Server(config)
-        asyncio.create_task(proxy_server.serve())
+        _chain_uvicorn_shutdown(proxy_server)
+        proxy_task = asyncio.create_task(proxy_server.serve(), name="apme-galaxy-proxy")
+        proxy_task.add_done_callback(_log_proxy_task_done)
         sys.stderr.write(f"  Galaxy Proxy on {proxy_url}\n")
 
     # Start Engine last (depends on validators being up)
@@ -417,7 +642,45 @@ async def _run_daemon(services: dict[str, str]) -> None:
     sys.stderr.write(f"  Engine on {services['engine']}\n")
     sys.stderr.flush()
 
-    # Wait until terminated
+    # PE-27: Galaxy Proxy is a required core service. If its task already
+    # died during startup, fail the daemon instead of serving without it
+    # (the parent's startup/health gate then observes the dead child).
+    if proxy_task is not None and proxy_task.done():
+        msg = "Galaxy Proxy terminated during startup; failing daemon startup (required core service)"
+        sys.stderr.write(f"{msg}\n")
+        logger.error(msg)
+        raise RuntimeError(msg)
+
+    # Wait until terminated — but fail the daemon if the proxy task ends
+    # first, so a mid-life proxy crash cannot leave the daemon half-healthy.
+    if proxy_task is not None:
+        engine_wait = asyncio.create_task(engine_server.wait_for_termination())
+        done, pending = await asyncio.wait(
+            {engine_wait, proxy_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if proxy_task in done and not engine_wait.done():
+            engine_wait.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await engine_wait
+            if _shutdown_requested:
+                logger.info("Daemon shutdown complete (Galaxy Proxy stopped after stop signal)")
+                return
+            msg = "Galaxy Proxy terminated unexpectedly; failing daemon (required core service)"
+            sys.stderr.write(f"{msg}\n")
+            logger.error(msg)
+            raise RuntimeError(msg)
+        # Engine finished first: the daemon never exits cleanly on its own
+        # (it serves until terminated), so treat this as abnormal and fail
+        # loudly instead of returning exit code 0 to the supervisor.
+        for task in pending:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        msg = "Engine terminated unexpectedly; failing daemon"
+        sys.stderr.write(f"{msg}\n")
+        logger.error(msg)
+        raise RuntimeError(msg)
     await engine_server.wait_for_termination()
 
 
@@ -491,18 +754,7 @@ def _start_daemon_unlocked(
         sys.stderr.write(f"\n--- daemon start {datetime.now(UTC).isoformat()} ---\n")
         sys.stderr.flush()
 
-        try:
-            asyncio.run(_run_daemon(services))
-        except KeyboardInterrupt:
-            pass
-        except Exception as e:
-            sys.stderr.write(f"Daemon crashed: {e}\n")
-            import traceback
-
-            traceback.print_exc(file=sys.stderr)
-            sys.stderr.flush()
-        finally:
-            os._exit(0)
+        os._exit(_daemon_child_exit_code(services))
 
     # Parent: publish ownership marker before daemon.json so stop_daemon can
     # always verify the child (race if state is visible without a marker).

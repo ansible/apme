@@ -349,41 +349,46 @@ def _make_fake_servers() -> tuple[MagicMock, list[MagicMock]]:
 def test_launcher_run_daemon_all_services(monkeypatch: pytest.MonkeyPatch) -> None:
     """_run_daemon starts every validator, proxy, and engine.
 
+    Servers hang until cancelled: the launcher now fails loudly when the
+    engine or proxy task terminates (supervision), so immediate-return
+    mocks would deterministically raise RuntimeError instead of proving
+    startup. The daemon is run as a task, startup is asserted, then the
+    task is cancelled.
+
     Args:
         monkeypatch: Pytest monkeypatch fixture.
     """
     import apme_engine.daemon.launcher as launcher
 
-    engine_server, _ = _make_fake_servers()
+    engine_server = MagicMock()
+
+    async def _hang_termination() -> None:
+        """Block until cancelled (like a real serving daemon)."""
+        await asyncio.Event().wait()
+
+    engine_server.wait_for_termination = _hang_termination
     monkeypatch.setattr("apme_engine.log_bridge.install_handler", lambda: None)
 
-    async def _fake_native(_addr: str) -> MagicMock:
-        return MagicMock()
+    serve_calls: list[str] = []
 
-    async def _fake_opa(_addr: str) -> MagicMock:
-        return MagicMock()
+    def _track(name: str) -> object:
+        async def _fake_serve(_addr: str) -> MagicMock:
+            serve_calls.append(name)
+            return MagicMock()
 
-    async def _fake_ansible(_addr: str) -> MagicMock:
-        return MagicMock()
+        return _fake_serve
 
-    async def _fake_gitleaks(_addr: str) -> MagicMock:
-        return MagicMock()
-
-    async def _fake_ch(_addr: str) -> MagicMock:
-        return MagicMock()
-
-    async def _fake_dep(_addr: str) -> MagicMock:
-        return MagicMock()
+    monkeypatch.setattr("apme_engine.daemon.native_validator_server.serve", _track("native"))
+    monkeypatch.setattr("apme_engine.daemon.opa_validator_server.serve", _track("opa"))
+    monkeypatch.setattr("apme_engine.daemon.ansible_validator_server.serve", _track("ansible"))
+    monkeypatch.setattr("apme_engine.daemon.gitleaks_validator_server.serve", _track("gitleaks"))
+    monkeypatch.setattr("apme_engine.daemon.collection_health_server.serve", _track("collection_health"))
+    monkeypatch.setattr("apme_engine.daemon.dep_audit_server.serve", _track("dep_audit"))
 
     async def _fake_engine(_addr: str) -> MagicMock:
+        serve_calls.append("engine")
         return engine_server
 
-    monkeypatch.setattr("apme_engine.daemon.native_validator_server.serve", _fake_native)
-    monkeypatch.setattr("apme_engine.daemon.opa_validator_server.serve", _fake_opa)
-    monkeypatch.setattr("apme_engine.daemon.ansible_validator_server.serve", _fake_ansible)
-    monkeypatch.setattr("apme_engine.daemon.gitleaks_validator_server.serve", _fake_gitleaks)
-    monkeypatch.setattr("apme_engine.daemon.collection_health_server.serve", _fake_ch)
-    monkeypatch.setattr("apme_engine.daemon.dep_audit_server.serve", _fake_dep)
     monkeypatch.setattr("apme_engine.daemon.engine_server.serve", _fake_engine)
 
     fake_app = object()
@@ -413,8 +418,8 @@ def test_launcher_run_daemon_all_services(monkeypatch: pytest.MonkeyPatch) -> No
             """
 
         async def serve(self) -> None:
-            """No-op serve."""
-            return None
+            """Hang until cancelled (like a real serving proxy)."""
+            await asyncio.Event().wait()
 
     fake_uvicorn.Config = _FakeConfig  # type: ignore[attr-defined]
     fake_uvicorn.Server = _FakeServer  # type: ignore[attr-defined]
@@ -431,14 +436,36 @@ def test_launcher_run_daemon_all_services(monkeypatch: pytest.MonkeyPatch) -> No
         "dep_audit": "127.0.0.1:50059",
         "galaxy_proxy": "127.0.0.1:8765",
     }
+
+    import contextlib
+
+    async def _run_and_cancel() -> str | None:
+        """Start the daemon, let startup complete, then cancel it.
+
+        Returns:
+            The ``APME_GALAXY_PROXY_URL`` env value set during startup.
+        """
+        task = asyncio.create_task(launcher._run_daemon(services))
+        # Yield until every serve stub has been awaited (startup done).
+        for _ in range(1000):
+            await asyncio.sleep(0)
+            if len(serve_calls) == 7:
+                break
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+        return os.environ.get("APME_GALAXY_PROXY_URL")
+
     old_env = dict(os.environ)
     try:
-        asyncio.run(launcher._run_daemon(services))
-        proxy_url = os.environ.get("APME_GALAXY_PROXY_URL")
+        proxy_url = asyncio.run(_run_and_cancel())
     finally:
         os.environ.clear()
         os.environ.update(old_env)
     assert proxy_url == "http://127.0.0.1:8765"
+    assert sorted(serve_calls) == sorted(
+        ["native", "opa", "ansible", "gitleaks", "collection_health", "dep_audit", "engine"]
+    )
 
 
 def test_launcher_start_unlocked_stops_stale_then_starts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -519,7 +546,7 @@ def test_launcher_child_keyboard_interrupt_exits(tmp_path: Path, monkeypatch: py
 
 
 def test_launcher_child_exception_exits(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Forked child logs crashes then exits zero.
+    """Forked child logs crashes then exits non-zero.
 
     Args:
         tmp_path: Pytest temporary directory.
@@ -548,9 +575,10 @@ def test_launcher_child_exception_exits(tmp_path: Path, monkeypatch: pytest.Monk
         patch("apme_engine.daemon.launcher.os.dup2", return_value=None),
         patch("apme_engine.daemon.launcher.asyncio.run", side_effect=_raise_runtime),
         patch("apme_engine.daemon.launcher.os._exit", side_effect=_fake_exit),
-        pytest.raises(SystemExit),
+        pytest.raises(SystemExit) as exc_info,
     ):
         launcher._start_daemon_unlocked()
+    assert exc_info.value.code == 1
 
 
 def test_launcher_start_poll_pid_dies(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

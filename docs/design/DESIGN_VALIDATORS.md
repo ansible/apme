@@ -41,26 +41,27 @@ The engine is the **single source of truth** for "what's in this repo/playbook."
 ```python
 # src/apme_engine/validators/base.py
 
+
 class Validator(Protocol):
-    def run(self, context: ScanContext) -> list[dict[str, Any]]:
-        ...
+    def run(self, context: ScanContext) -> list[dict[str, Any]]: ...
+
 
 class ScanContext:
-    hierarchy_payload: dict      # always present (JSON-serializable)
-    scandata: Any = None         # full SingleScan (for native validator)
-    root_dir: str = ""           # filesystem path (for ansible validator)
+    hierarchy_payload: dict  # always present (JSON-serializable)
+    scandata: Any = None  # full SingleScan (for native validator)
+    root_dir: str = ""  # filesystem path (for ansible validator)
 ```
 
 Every validator returns the same violation shape:
 
 ```python
 {
-    "rule_id": str,    # e.g. "L024", "native:L026", "M002"
-    "level": str,      # "error", "warning", "info"
+    "rule_id": str,  # e.g. "L024", "native:L026", "M002"
+    "level": str,  # "error", "warning", "info"
     "message": str,
-    "file": str,       # relative path
-    "line": int,       # or [start, end]
-    "path": str,       # hierarchy path
+    "file": str,  # relative path
+    "line": int,  # or [start, end]
+    "path": str,  # hierarchy path
     # Optional rule-specific metadata (forwarded via proto metadata map):
     # "resolved_fqcn", "original_module", "with_key", "redirect_chain", "removal_msg"
 }
@@ -196,15 +197,15 @@ Every validator returns structured timing data in `ValidateResponse.diagnostics`
 
 ```python
 ValidatorDiagnostics(
-    validator_name="native",       # identifies the validator
-    request_id="scan-uuid",        # echoed for correlation
-    total_ms=42.0,                 # wall-clock time
-    files_received=10,             # input file count
-    violations_found=5,            # output violation count
-    rule_timings=[                 # per-rule granularity
+    validator_name="native",  # identifies the validator
+    request_id="scan-uuid",  # echoed for correlation
+    total_ms=42.0,  # wall-clock time
+    files_received=10,  # input file count
+    violations_found=5,  # output violation count
+    rule_timings=[  # per-rule granularity
         RuleTiming(rule_id="L026", elapsed_ms=3.5, violations=2),
     ],
-    metadata={"key": "value"},     # validator-specific data
+    metadata={"key": "value"},  # validator-specific data
 )
 ```
 

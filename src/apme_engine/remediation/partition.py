@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 from apme_engine.engine.models import RemediationClass, RemediationResolution, RuleScope
 from apme_engine.graph.scanner import DISABLED_BY_DEFAULT_GRAPH_RULE_IDS
 from apme_engine.remediation.registry import TransformRegistry
+from apme_engine.rule_ids import normalize_rule_id as normalize_rule_id
 
 AI_PROPOSABLE_SCOPES: frozenset[str] = frozenset({RuleScope.TASK, RuleScope.BLOCK})
 
@@ -51,26 +52,7 @@ def _get_scope(violation: ViolationDict) -> str:
     Returns:
         Scope string value (e.g. ``"task"``, ``"play"``).
     """
-    raw = violation.get("scope") or RuleScope.TASK
-    return raw.value if hasattr(raw, "value") else str(raw)
-
-
-def normalize_rule_id(rule_id: str) -> str:
-    """Strip validator-specific prefixes from a rule ID for registry lookup.
-
-    Historically native violations were prefixed with ``native:``.  That prefix
-    is no longer added at the source, but this function remains for backward
-    compatibility with any persisted data that still carries it.
-
-    Args:
-        rule_id: Raw rule ID, possibly prefixed (e.g. ``native:L021``).
-
-    Returns:
-        Bare rule ID suitable for registry lookup (e.g. ``L021``).
-    """
-    if rule_id.startswith("native:"):
-        rule_id = rule_id[len("native:") :]
-    return rule_id
+    return _to_str_value(violation.get("scope"), RuleScope.TASK.value)
 
 
 def is_finding_resolvable(violation: ViolationDict, registry: TransformRegistry) -> bool:

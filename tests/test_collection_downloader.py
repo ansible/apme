@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import configparser
 import os
 from pathlib import Path
@@ -247,6 +248,19 @@ class TestDownloadCollections:
         assert result == DownloadResult()
         assert result.tarball_paths == []
         assert result.failed_specs == []
+
+    def test_empty_server_list_fails_closed(self, tmp_path: Path) -> None:
+        """An explicit empty server list does not start ansible-galaxy.
+
+        Args:
+            tmp_path: Pytest-provided temporary directory.
+        """
+        with patch("galaxy_proxy.collection_downloader.asyncio.create_subprocess_exec") as mock_exec:
+            result = asyncio.run(download_collections(["ansible.posix"], tmp_path, servers=[]))
+
+        mock_exec.assert_not_called()
+        assert result.failed_specs == ["ansible.posix"]
+        assert result.tarball_paths == []
 
     @pytest.mark.asyncio  # type: ignore[untyped-decorator]
     async def test_successful_download(self, tmp_path: Path) -> None:

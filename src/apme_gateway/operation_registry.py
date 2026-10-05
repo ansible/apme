@@ -20,6 +20,7 @@ from typing import Any
 
 from apme_gateway.operation_types import (
     TERMINAL_STATUSES,
+    ApprovalGate,
     OperationResult,
     OperationState,
     OperationStatus,
@@ -353,6 +354,8 @@ class OperationRegistry:
             fut = op.escalate_ai_future
             if fut is None or fut.done():
                 return
+        if op.begin_remediate_future is not None and not op.begin_remediate_future.done():
+            op.begin_remediate_future.set_result(None)
         op.ai_triage_candidates = candidates
         if op.escalate_ai_future is None:
             loop = asyncio.get_running_loop()
@@ -364,22 +367,41 @@ class OperationRegistry:
             {"candidates": candidates},
         )
 
-    def set_proposals(self, operation_id: str, proposals: list[Proposal]) -> None:
+    async def set_proposals(
+        self,
+        operation_id: str,
+        proposals: list[Proposal],
+        *,
+        prompt_generation: int | None = None,
+    ) -> None:
         """Store proposals and transition to AWAITING_APPROVAL.
 
-        Also creates the ``approval_future`` that ``POST /approve`` will resolve.
+        Also creates an immutable ``approval_gate`` that ``POST /approve`` resolves.
 
         Args:
             operation_id: The operation to update.
             proposals: List of AI proposals.
+            prompt_generation: Driver prompt generation for this approval gate.
         """
         op = self._ops.get(operation_id)
         if op is None:
             return
-        op.proposals = proposals
         loop = asyncio.get_running_loop()
-        op.approval_future = loop.create_future()
+        async with op.approval_gate_lock:
+            if op.begin_remediate_future is not None and not op.begin_remediate_future.done():
+                op.begin_remediate_future.set_result(None)
+            if op.escalate_ai_future is not None and not op.escalate_ai_future.done():
+                op.escalate_ai_future.set_result([])
+            op.proposals = proposals
+            old_gate = op.approval_gate
+            if old_gate is not None and not old_gate.future.done():
+                old_gate.future.set_result([])
+            op.approval_gate = ApprovalGate(
+                future=loop.create_future(),
+                prompt_generation=prompt_generation,
+            )
         self.transition(operation_id, OperationStatus.AWAITING_APPROVAL)
+        gate_id = op.approval_gate.gate_id if op.approval_gate is not None else None
         self._broadcast(
             op,
             SSEEventType.PROPOSALS,
@@ -405,6 +427,7 @@ class OperationRegistry:
                     }
                     for p in proposals
                 ],
+                **({"approval_gate_id": gate_id} if gate_id is not None else {}),
             },
         )
 
