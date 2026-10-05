@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import os
 import subprocess
 import tempfile
@@ -13,8 +14,10 @@ import pytest
 
 from apme.v1 import engine_pb2
 from apme_gateway.scan.driver import (
+    _AUTH_CACHE_SALT,
     _REMOTE_HEAD_CACHE,
     _REMOTE_HEAD_NEG_CACHE,
+    _auth_cache_marker,
     _git_auth_env,
     _git_subprocess_env,
     _inject_token_in_url,
@@ -665,6 +668,26 @@ async def test_fetch_remote_head_separates_distinct_tokens() -> None:
         assert await fetch_remote_head("https://github.com/o/r.git", "main", scm_token="tok-two") == "b" * 40
 
         assert mock_run.call_count == 2
+
+
+def test_auth_cache_marker_separates_url_userpass() -> None:
+    """Embedded URL credentials produce distinct PBKDF2 cache markers."""
+    marker_a = _auth_cache_marker(None, ("deployer", "secret-a"))
+    marker_b = _auth_cache_marker(None, ("deployer", "secret-b"))
+    assert marker_a.startswith(":auth:")
+    assert marker_b.startswith(":auth:")
+    assert marker_a != marker_b
+    # Pin algorithm: raw SHA-256 of the same material must not match.
+    material = "deployer:secret-a"
+    sha_prefix = hashlib.sha256(material.encode()).hexdigest()[:16]
+    pbkdf_prefix = hashlib.pbkdf2_hmac(
+        "sha256",
+        material.encode(),
+        _AUTH_CACHE_SALT,
+        iterations=1,
+    ).hex()[:16]
+    assert marker_a == f":auth:{pbkdf_prefix}"
+    assert marker_a != f":auth:{sha_prefix}"
 
 
 @pytest.mark.asyncio  # type: ignore[untyped-decorator]

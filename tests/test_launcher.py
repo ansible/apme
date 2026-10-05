@@ -16,7 +16,9 @@ from apme_engine.daemon.launcher import (
     DaemonState,
     _address_port_bound,
     _assert_ports_free,
+    _bind_probe,
     _check_port_available,
+    _local_addresses,
     _probe_targets,
     _proc_starttime,
     daemon_status,
@@ -57,6 +59,22 @@ def test_probe_targets_expands_unspecified_ipv6_forms() -> None:
     assert canonical == _probe_targets("0:0:0:0:0:0:0:0")
     assert canonical == _probe_targets("[0:0:0:0:0:0:0:0]")
     assert all(addr not in {"", "::", "0:0:0:0:0:0:0:0"} for _, addr in canonical)
+
+
+def test_bind_probe_rejects_wildcard_addresses() -> None:
+    """Wildcard candidates never reach sock.bind; probe returns None."""
+    with patch("apme_engine.daemon.launcher.socket.socket") as mock_socket:
+        assert _bind_probe(socket.AF_INET, "0.0.0.0", 9) is None
+        assert _bind_probe(socket.AF_INET, "", 9) is None
+        assert _bind_probe(socket.AF_INET6, "::", 9) is None
+        mock_socket.assert_not_called()
+
+
+def test_local_addresses_exclude_wildcard_ips() -> None:
+    """Discovered local addresses never include all-interfaces hosts."""
+    forbidden = {"", "0.0.0.0", "::", "[::]"}
+    assert forbidden.isdisjoint(_local_addresses(socket.AF_INET))
+    assert forbidden.isdisjoint(_local_addresses(socket.AF_INET6))
 
 
 def test_check_port_available_skips_unsupported_ipv6_family(monkeypatch: MonkeyPatch) -> None:

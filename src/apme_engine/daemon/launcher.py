@@ -435,9 +435,10 @@ def _probe_targets(host: str) -> list[tuple[int, str]]:
     Returns:
         One or more ``(address_family, ip)`` pairs to probe.
     """
-    if host in _WILDCARD_IPV4:
-        return [(socket.AF_INET, addr) for addr in sorted(_local_addresses(socket.AF_INET))]
-    if host in _WILDCARD_IPV6 or _is_unspecified_ipv6(host):
+    if _is_wildcard_bind_addr(host):
+        # IPv4 wildcards stay on AF_INET; IPv6 / unspecified forms probe both.
+        if host in _WILDCARD_IPV4:
+            return [(socket.AF_INET, addr) for addr in sorted(_local_addresses(socket.AF_INET))]
         return _ipv6_wildcard_probe_targets()
     if host.startswith("[") and host.endswith("]"):
         return [(socket.AF_INET6, host[1:-1])]
@@ -451,12 +452,13 @@ def _bind_probe(family: int, addr: str, port: int) -> bool | None:
 
     Args:
         family: Address family for the temporary socket.
-        addr: Concrete IP to bind (never a wildcard).
+        addr: Candidate bind address; wildcards return ``None`` without binding.
         port: TCP port number.
 
     Returns:
         ``True`` if the bind succeeded (port free), ``False`` if the port is
-        in use, or ``None`` if *addr* is not assignable on this host.
+        in use, or ``None`` if *addr* is a wildcard or not assignable on this
+        host.
     """
     concrete = _concrete_bind_addr(addr)
     if concrete is None:
