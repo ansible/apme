@@ -38,7 +38,7 @@ directly. Every task maps to a `tox -e <env>` command.
 4. **Never run `./containers/podman/*.sh` directly.** Use `tox -e build`,
    `tox -e up`, `tox -e down`, or `tox -e cli`.
 5. **Pass extra arguments after `--`.** Example: `tox -e unit -- -k test_sbom`.
-6. **In CI, use `uvx --with tox-uv tox -e <env>`** instead of installing tox.
+6. **In CI, use `uvx --from tox==4.53.0 --with tox-uv==1.36.0 tox -e <env>`** instead of installing tox (#591).
 
 ## Environment Reference
 
@@ -52,11 +52,12 @@ directly. Every task maps to a `tox -e <env>` command.
 
 | Environment | What it runs | When to use |
 |-------------|-------------|-------------|
-| `tox -e unit` | `pytest` with `--cov-fail-under=36` | After any code change. |
+| `tox -e unit` | `pytest` with `--cov-fail-under=70` | After any code change. |
 | `tox -e unit -- -k <pattern>` | Single test or test pattern | Debugging a specific test. |
 | `tox -e unit -- --no-cov` | Tests without coverage overhead | Quick iteration. |
 | `tox -e integration` | `pytest tests/integration/` against an externally managed PostgreSQL (needs OPA binary) | After engine or validator changes. |
 | `tox -e integration-local` | Disposable PostgreSQL container, then `tox -e integration` | Repeatable local integration setup when PostgreSQL is not already running. |
+| `tox -e e2e` | Full pod lifecycle e2e: rebuild, start pod, scan, assert violations | After container/pod/deployment changes. |
 | `tox -e ai` | `pytest` with AI extras (abbenay) | After AI/remediation changes. |
 | `tox -e ui` | `pytest -m ui` (Playwright, needs running pod) | After Gateway or UI changes. |
 | `tox -e ui-workflow-pack` | `npm pack` for `@apme/ui-workflow` (release tarball) | After `frontend/packages/ui-workflow` or TypeScript changes. |
@@ -155,7 +156,7 @@ tox l
 ## Installation
 
 ```bash
-uv tool install tox --with tox-uv
+uv tool install tox==4.53.0 --with tox-uv==1.36.0
 ```
 
 ## Configuration

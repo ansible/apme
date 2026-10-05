@@ -37,7 +37,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
-      - run: uvx --with tox-uv tox -e unit
+      - run: uvx --from tox==4.53.0 --with tox-uv==1.36.0 tox -e unit
       - name: Fail if git reports dirty
         run: |
           if [[ -n $(git status -s) ]]; then
@@ -90,9 +90,9 @@ jobs:
           sudo apt-get install -y podman
           podman --version
       - name: Verify PostgreSQL reachability
-        run: uvx --with tox-uv tox -e postgres-check
+        run: uvx --from tox==4.53.0 --with tox-uv==1.36.0 tox -e postgres-check
       - name: Integration (OPA ${{ matrix.opa-transport }} path)
-        run: uvx --with tox-uv tox -e integration
+        run: uvx --from tox==4.53.0 --with tox-uv==1.36.0 tox -e integration
         env:
           OPA_USE_PODMAN: ${{ matrix.opa-transport == 'podman' && '1' || '0' }}
 
@@ -152,7 +152,7 @@ jobs:
           APME_GATEWAY_GRPC_LISTEN: 127.0.0.1:50060
           APME_GATEWAY_HTTP_HOST: 127.0.0.1
           APME_GATEWAY_HTTP_PORT: 8080
-      - run: uvx --with tox-uv tox -e ui
+      - run: uvx --from tox==4.53.0 --with tox-uv==1.36.0 tox -e ui
         env:
           APME_UI_URL: http://localhost:8081
           APME_DATABASE_URL: postgresql+asyncpg://apme:apme@localhost:5432/apme_test
@@ -164,7 +164,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
-      - run: uvx --with tox-uv tox -e ai
+      - run: uvx --from tox==4.53.0 --with tox-uv==1.36.0 tox -e ai
 
   ui-workflow-pack:
     runs-on: ubuntu-24.04
@@ -177,4 +177,4 @@ jobs:
           node-version-file: frontend/package.json
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - run: uvx --with tox-uv tox -e ui-workflow-pack
+      - run: uvx --from tox==4.53.0 --with tox-uv==1.36.0 tox -e ui-workflow-pack

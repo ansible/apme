@@ -26,5 +26,5 @@ jobs:
       - run: uv tool install prek
       # Skip nested openapi-check (tox-in-prek dirty-tree false positives); run it
       # as a sibling tox env instead.
-      - run: SKIP=openapi-check uvx --with tox-uv tox -e lint
-      - run: uvx --with tox-uv tox -e openapi -- --check
+      - run: SKIP=openapi-check uvx --from tox==4.53.0 --with tox-uv==1.36.0 tox -e lint
+      - run: uvx --from tox==4.53.0 --with tox-uv==1.36.0 tox -e openapi -- --check

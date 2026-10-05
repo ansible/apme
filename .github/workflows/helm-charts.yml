@@ -43,7 +43,7 @@ jobs:
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
 
       - name: Lint and package chart
-        run: uvx --with tox-uv tox -e helm
+        run: uvx --from tox==4.53.0 --with tox-uv==1.36.0 tox -e helm
 
   release:
     if: github.event_name != 'pull_request'
