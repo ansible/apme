@@ -707,7 +707,10 @@ async def test_clone_repo_strips_embedded_userinfo(
     assert "s3cret-token" not in " ".join(call_args)
     env = mock_run.call_args.kwargs["env"]
     assert _decode_auth_env(env) == "deployer:s3cret-token"
-    assert "github.com" in caplog.text
+    assert any(
+        record.getMessage() == "Stripping embedded credentials from repo URL for host github.com"
+        for record in caplog.records
+    )
     assert "s3cret-token" not in caplog.text
 
 
@@ -782,7 +785,10 @@ async def test_fetch_remote_head_strips_embedded_userinfo(
     assert "ghp_test" not in " ".join(call_args)
     env = mock_run.call_args.kwargs["env"]
     assert _decode_auth_env(env) == "x-access-token:ghp_test"
-    assert "github.com" in caplog.text
+    assert any(
+        record.getMessage() == "Stripping embedded credentials from repo URL for host github.com"
+        for record in caplog.records
+    )
     assert "s3cret-token" not in caplog.text
 
 

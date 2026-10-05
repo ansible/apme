@@ -8,9 +8,11 @@ finding #12 (SessionStore admission plus venv-build semaphore).
 from __future__ import annotations
 
 import asyncio
+import re
 import subprocess
 from pathlib import Path
 from typing import cast
+from urllib.parse import urlparse
 
 import pytest
 
@@ -553,8 +555,8 @@ class TestRedactCredentials:
         assert "pass" not in redacted
         assert "token123" not in redacted
         assert "***@" in redacted
-        assert "proxy.example.com" in redacted
-        assert "other.example" in redacted
+        hostnames = {urlparse(match).hostname for match in re.findall(r"https?://\S+", redacted)}
+        assert hostnames == {"proxy.example.com", "other.example"}
 
 
 class TestRequirementsHash:

@@ -354,6 +354,35 @@ def _ipv6_wildcard_probe_targets() -> list[tuple[int, str]]:
     return targets
 
 
+def _is_wildcard_bind_addr(addr: str) -> bool:
+    """Return True when *addr* would bind all interfaces.
+
+    Args:
+        addr: Candidate bind address (never a hostname).
+
+    Returns:
+        True for empty string, ``0.0.0.0``, ``::``, and equivalent forms.
+    """
+    return addr in _WILDCARD_IPV4 or addr in _WILDCARD_IPV6 or _is_unspecified_ipv6(addr)
+
+
+def _concrete_bind_addr(addr: str) -> str | None:
+    """Return *addr* only when it is safe to pass to ``sock.bind()``.
+
+    Rejects all-interfaces / unspecified addresses so CodeQL and runtime
+    agree that wildcard hosts never reach ``bind()``.
+
+    Args:
+        addr: Candidate bind address.
+
+    Returns:
+        *addr* when concrete; ``None`` when it is a wildcard.
+    """
+    if _is_wildcard_bind_addr(addr):
+        return None
+    return addr
+
+
 def _local_addresses(family: int) -> frozenset[str]:
     """Best-effort set of assigned local addresses for *family*.
 
@@ -374,6 +403,8 @@ def _local_addresses(family: int) -> frozenset[str]:
                 continue
             if family == socket.AF_INET6 and raw_ip.lower().startswith("fe80:"):
                 continue
+            if _is_wildcard_bind_addr(raw_ip):
+                continue
             found.add(raw_ip)
     except OSError:
         pass
@@ -383,7 +414,7 @@ def _local_addresses(family: int) -> frozenset[str]:
         with socket.socket(family, socket.SOCK_DGRAM) as sock:
             sock.connect(remote)
             raw_ip = sock.getsockname()[0]
-            if isinstance(raw_ip, str) and raw_ip and "%" not in raw_ip:
+            if isinstance(raw_ip, str) and raw_ip and "%" not in raw_ip and not _is_wildcard_bind_addr(raw_ip):
                 found.add(raw_ip)
     except OSError:
         pass
@@ -427,11 +458,14 @@ def _bind_probe(family: int, addr: str, port: int) -> bool | None:
         ``True`` if the bind succeeded (port free), ``False`` if the port is
         in use, or ``None`` if *addr* is not assignable on this host.
     """
+    concrete = _concrete_bind_addr(addr)
+    if concrete is None:
+        return None
     try:
         with socket.socket(family, socket.SOCK_STREAM) as sock:
             if family == socket.AF_INET6:
                 sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
-            sock.bind((addr, port))
+            sock.bind((concrete, port))
     except OSError as exc:
         # Address not present / family disabled — skip, do not treat as busy.
         if exc.errno in {errno.EADDRNOTAVAIL, errno.EAFNOSUPPORT}:
