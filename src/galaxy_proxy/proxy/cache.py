@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import tempfile
 import time
 from dataclasses import dataclass
@@ -181,11 +182,15 @@ class ProxyCache:
         Only subdirectories are removed so the cache root (often a volume
         mount at ``/cache``) is preserved — ``rmtree`` on the mount point
         itself fails with ``PermissionError`` on Podman/K8s volumes.
-        """
-        import shutil
 
+        Managed ``wheels`` / ``metadata`` paths may be directory symlinks
+        (or dangling links). ``shutil.rmtree`` rejects symlinks, so those
+        are unlinked and replaced with real directories.
+        """
         for subdir in (self.wheels_dir, self.metadata_dir):
-            if subdir.exists():
+            if subdir.is_symlink():
+                subdir.unlink()
+            elif subdir.exists():
                 shutil.rmtree(subdir)
         self.wheels_dir.mkdir(parents=True, exist_ok=True)
         self.metadata_dir.mkdir(parents=True, exist_ok=True)
