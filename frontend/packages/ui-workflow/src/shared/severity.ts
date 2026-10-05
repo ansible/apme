@@ -55,8 +55,15 @@ const SEVERITY_RANK: Record<string, number> = {
  * SEC-prefixed rules always map to "critical".
  * Legacy strings are normalized per ADR-043 backward-compatible mapping.
  */
+export function isSecRule(ruleId?: string): boolean {
+  // Strict "SEC:" form matches the backend canonical contract
+  // (graph/severity.py, notifications.py, rule_catalog "SEC:*"): a bare
+  // "SEC"-without-colon prefix (SECOND-*, SECURE-*) must NOT escalate.
+  return ruleId?.startsWith('SEC:') ?? false;
+}
+
 export function severityClass(level: string, ruleId?: string): string {
-  if (ruleId?.startsWith('SEC')) return 'critical';
+  if (isSecRule(ruleId)) return 'critical';
   const l = level.toLowerCase();
   if (l === 'fatal' || l === 'critical') return 'critical';
   if (l === 'error') return 'error';
@@ -70,14 +77,14 @@ export function severityClass(level: string, ruleId?: string): string {
 
 /** Upper-case display label for the severity badge text. */
 export function severityLabel(level: string, ruleId?: string): string {
-  if (ruleId?.startsWith('SEC')) return 'CRITICAL';
+  if (isSecRule(ruleId)) return 'CRITICAL';
   const cls = severityClass(level, ruleId);
   return SEVERITY_LABELS[cls]?.toUpperCase() ?? 'INFO';
 }
 
 /** Title-case label for PatternFly ``Label`` chips (matches Manual review style). */
 export function severityDisplayLabel(level: string, ruleId?: string): string {
-  if (ruleId?.startsWith('SEC')) return 'Critical';
+  if (isSecRule(ruleId)) return 'Critical';
   const cls = severityClass(level, ruleId);
   return SEVERITY_LABELS[cls] ?? 'Info';
 }

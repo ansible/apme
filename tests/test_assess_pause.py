@@ -112,6 +112,41 @@ def test_set_findings_ignores_after_assess_pause() -> None:
     asyncio.run(_run())
 
 
+def test_set_ai_triage_retires_pending_begin_future() -> None:
+    """A later triage stage resolves a timed-out begin-remediate future.
+
+    Returns:
+        None.
+    """
+    import asyncio
+
+    from apme_gateway.operation_registry import OperationRegistry
+
+    async def _run() -> None:
+        registry = OperationRegistry()
+        op_id = "op-triage-retire-begin"
+        registry.create(
+            operation_id=op_id,
+            project_id="proj-triage",
+            scan_id="scan-triage",
+            scan_type="remediate",
+        )
+        registry.set_findings(op_id, [{"rule_id": "L001", "message": "assess"}])
+        op = registry.get(op_id)
+        assert op is not None
+        begin_future = op.begin_remediate_future
+        assert begin_future is not None
+        assert not begin_future.done()
+
+        registry.transition(op_id, OperationStatus.APPLYING)
+        registry.set_ai_triage(op_id, [{"rule_id": "L001", "path": "p::0", "message": "ai"}])
+
+        assert begin_future.done()
+        assert begin_future.result() is None
+
+    asyncio.run(_run())
+
+
 def test_begin_remediate_idempotent_after_bridge_clears_future() -> None:
     """Retry after bridge clears the future must not raise session_expired.
 

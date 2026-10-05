@@ -164,3 +164,31 @@ class TestWriteSessionGalaxyCfg:
         assert parser.get("galaxy_server.hub_1", "url") == "https://hub2.example.com/"
 
         shutil.rmtree(cfg_path.parent)
+
+    def test_rewrite_cleans_prior_galaxy_cfg_directory(self) -> None:
+        """Retry rewrite removes the previous token-bearing config directory."""
+        import shutil
+
+        from apme_engine.daemon.session import SessionState
+
+        servers = [
+            GalaxyServerDef(
+                name="hub",
+                url="https://hub.example.com/api/galaxy/",
+                token="secret-token",
+            ),
+        ]
+        state = SessionState(session_id="retry-galaxy")
+        first = _write_session_galaxy_cfg(servers)
+        assert first is not None
+        old_parent = first.parent
+        state.galaxy_cfg_path = first
+
+        # Mirrors _session_process retry path after reset_partial_run_state().
+        state._cleanup_galaxy_cfg()
+        second = _write_session_galaxy_cfg(servers)
+        assert second is not None
+        state.galaxy_cfg_path = second
+
+        assert not old_parent.exists()
+        shutil.rmtree(second.parent)
