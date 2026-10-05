@@ -8,11 +8,40 @@ REST/SSE endpoints for project operations.
 from __future__ import annotations
 
 import asyncio
+import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
+
+
+def _new_approval_gate_id() -> str:
+    """Return an opaque approval gate identifier unique across process lifetimes.
+
+    Returns:
+        Opaque gate id that does not reuse values after Gateway restart.
+    """
+    return uuid.uuid4().hex
+
+
+@dataclass(slots=True)
+class ApprovalGate:
+    """Immutable approval gate pairing REST ``/approve`` with driver generation.
+
+    ``OperationRegistry.set_proposals`` creates a new gate when proposals arrive.
+    Superseding a pending gate resolves its future with ``[]`` so the approval
+    bridge cannot remain blocked on a replaced future.
+
+    Attributes:
+        future: Resolved by ``POST /approve`` with approved proposal IDs.
+        prompt_generation: Driver prompt generation when proposals were offered.
+        gate_id: Opaque identifier for this approval round (REST/WS clients).
+    """
+
+    future: asyncio.Future[list[str]]
+    prompt_generation: int | None = None
+    gate_id: str = field(default_factory=_new_approval_gate_id)
 
 
 class OperationStatus(str, Enum):
@@ -184,7 +213,9 @@ class OperationState:
         operation_budget_seconds: Creation-time operation budget from ``SessionCreated`` (ADR-068).
         clone_commit: HEAD SHA of the cloned repository.
         grpc_task: The background asyncio.Task driving Engine.
-        approval_future: Resolved by ``POST /approve``.
+        approval_gate: Immutable gate pairing ``POST /approve`` with the driver
+            prompt generation active when proposals were offered.
+        approval_gate_lock: Serializes gate replacement and ``/approve`` commits.
         begin_remediate_future: Resolved by ``POST /begin-remediate`` (ADR-064).
         escalate_ai_future: Resolved by ``POST /escalate-ai`` with target dicts.
         sse_subscribers: One queue per connected SSE client.
@@ -207,7 +238,8 @@ class OperationState:
     operation_budget_seconds: int | None = None
     clone_commit: str = ""
     grpc_task: asyncio.Task[Any] | None = field(default=None, repr=False)
-    approval_future: asyncio.Future[list[str]] | None = field(default=None, repr=False)
+    approval_gate: ApprovalGate | None = field(default=None, repr=False)
+    approval_gate_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
     begin_remediate_future: asyncio.Future[None] | None = field(default=None, repr=False)
     escalate_ai_future: asyncio.Future[list[dict[str, Any]]] | None = field(default=None, repr=False)
     sse_subscribers: list[asyncio.Queue[dict[str, Any]]] = field(default_factory=list, repr=False)
@@ -287,6 +319,8 @@ class OperationState:
             data["operation_budget_seconds"] = self.operation_budget_seconds
         if self.clone_commit:
             data["clone_commit"] = self.clone_commit
+        if self.approval_gate is not None:
+            data["approval_gate_id"] = self.approval_gate.gate_id
         return data
 
 
