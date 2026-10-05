@@ -109,6 +109,20 @@ def test_secscan_safe_relpath_rejects_escape() -> None:
     assert mod.safe_relpath("../secret.yml") is None
 
 
+def test_secscan_scan_relpath_strips_tmp_root(tmp_path: Path) -> None:
+    """Absolute scanner paths under the temp tree become Engine-relative.
+
+    Args:
+        tmp_path: Pytest temporary directory.
+    """
+    mod = _load_plugin("secscan")
+    abs_hit = tmp_path / "playbooks" / "site.yml"
+    abs_hit.parent.mkdir(parents=True)
+    abs_hit.write_text("---\n", encoding="utf-8")
+    assert mod.scan_relpath(tmp_path, str(abs_hit)) == "playbooks/site.yml"
+    assert mod.scan_relpath(tmp_path, "/etc/passwd") == ""
+
+
 def test_secscan_map_finding_prefixes_rule_id() -> None:
     """Scanner rule IDs become ``EXT-secscan-<id>`` with recommendation as AI hint."""
     mod = _load_plugin("secscan")

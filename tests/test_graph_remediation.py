@@ -29,6 +29,7 @@ from apme_engine.graph.scanner import (
 from apme_engine.graph.types import RemediationResolution, RuleScope
 from apme_engine.remediation.graph_engine import (
     GraphRemediationEngine,
+    _resolve_dirty_violations,
     splice_modifications,
 )
 from apme_engine.remediation.registry import TransformRegistry
@@ -1071,6 +1072,81 @@ class TestGraphRemediationEngine:
         assert remaining
         assert remaining[0]["remediation_resolution"] == RemediationResolution.TRANSFORM_FAILED
         assert rule_id in engine._plugin_transform_ids
+
+    async def test_plugin_transform_rejects_root_shape_mismatch(self) -> None:
+        """A mapping must not replace a sequence node fragment."""
+        graph = ContentGraph()
+        node = _make_node(module="apt")
+        graph.add_node(node)
+        registry = TransformRegistry()
+        rule_id = "EXT-orgpolicy-002"
+        original = node.yaml_lines
+
+        async def _fn(
+            _violation: ViolationDict,
+            _yaml_lines: str,
+            _file_path: str,
+        ) -> str | None:
+            return "name: Install nginx\nansible.builtin.apt:\n  name: nginx\n"
+
+        async def _rescan(_graph: ContentGraph, _dirty: frozenset[str]) -> list[ViolationDict]:
+            return []
+
+        engine = GraphRemediationEngine(
+            registry,
+            graph,
+            [],
+            plugin_transform_ids=frozenset({rule_id}),
+            plugin_transform_fn=_fn,
+            rescan_fn=_rescan,
+            max_passes=2,
+        )
+        report = await engine.remediate(
+            initial_violations=[
+                {
+                    "rule_id": rule_id,
+                    "path": node.node_id,
+                    "file": node.file_path,
+                    "severity": "high",
+                    "scope": "task",
+                }
+            ]
+        )
+        assert report.fixed == 0
+        updated = graph.get_node(node.node_id)
+        assert updated is not None
+        assert updated.yaml_lines == original
+        remaining = report.remaining_violations
+        assert remaining
+        assert remaining[0]["remediation_resolution"] == RemediationResolution.TRANSFORM_FAILED
+
+    def test_resolve_dirty_keeps_ext_on_plugin_unavailable(self) -> None:
+        """A plugin Validate failure must not mark that plugin's findings fixed."""
+        graph = ContentGraph()
+        node = _make_node(module="apt")
+        graph.add_node(node)
+        graph.register_violations(
+            [
+                {
+                    "rule_id": "EXT-orgpolicy-001",
+                    "path": node.node_id,
+                    "file": node.file_path,
+                    "severity": "high",
+                    "scope": "task",
+                }
+            ],
+            0,
+        )
+        _resolve_dirty_violations(
+            graph,
+            [{"rule_id": "EXT-orgpolicy-unavailable", "path": "site.yml", "file": ""}],
+            frozenset({node.node_id}),
+            fixed_by="deterministic",
+            pass_number=1,
+        )
+        record = node.violation_ledger.get((node.node_id, "EXT-orgpolicy-001"))
+        assert record is not None
+        assert record.status == "open"
 
     async def test_plugin_ext_findings_skip_builtin_ai(self) -> None:
         """EXT- findings are not sent through the built-in mixed-node AI pass."""

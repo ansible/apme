@@ -50,6 +50,31 @@ AiPhaseStartCallback = Callable[[list[ViolationDict]], Awaitable[None] | None]
 PluginTransformFn = Callable[[ViolationDict, str, str], Awaitable[str | None]]
 
 
+def _yaml_root_kind(text: str) -> str | None:
+    """Return ``map`` or ``seq`` when ``text`` is a node-shaped YAML document.
+
+    Args:
+        text: YAML document or node fragment.
+
+    Returns:
+        ``map`` for a mapping, ``seq`` for a one-item list of mapping, else None.
+    """
+    if not text.strip():
+        return None
+    try:
+        docs = list(yaml.safe_load_all(text))
+    except yaml.YAMLError:
+        return None
+    if len(docs) != 1 or docs[0] is None:
+        return None
+    data = docs[0]
+    if isinstance(data, dict):
+        return "map"
+    if isinstance(data, list) and len(data) == 1 and isinstance(data[0], dict):
+        return "seq"
+    return None
+
+
 def _yaml_is_well_formed(text: str) -> bool:
     """Return True when ``text`` is a single non-null YAML document.
 
@@ -60,18 +85,7 @@ def _yaml_is_well_formed(text: str) -> bool:
         False when empty, multi-document, null, not a mapping, or
         ``yaml.safe_load_all`` raises.
     """
-    if not text.strip():
-        return False
-    try:
-        docs = list(yaml.safe_load_all(text))
-    except yaml.YAMLError:
-        return False
-    if len(docs) != 1 or docs[0] is None:
-        return False
-    data = docs[0]
-    if isinstance(data, dict):
-        return True
-    return isinstance(data, list) and len(data) == 1 and isinstance(data[0], dict)
+    return _yaml_root_kind(text) is not None
 
 
 @dataclass
@@ -647,6 +661,15 @@ class GraphRemediationEngine:
             )
             self._stamp_plugin_transform_failed(graph, node_id, violation)
             return False
+        orig_kind = _yaml_root_kind(node.yaml_lines)
+        new_kind = _yaml_root_kind(new_yaml)
+        if orig_kind is not None and new_kind is not None and orig_kind != new_kind:
+            logger.warning(
+                "Plugin transform for %s returned a different YAML root shape; skipping",
+                violation.get("rule_id"),
+            )
+            self._stamp_plugin_transform_failed(graph, node_id, violation)
+            return False
         return graph.apply_yaml(node_id, new_yaml)
 
     def _stamp_plugin_transform_failed(
@@ -1132,6 +1155,10 @@ def _resolve_dirty_violations(
     and calls ``graph.resolve_violations`` so that absent violations
     transition to *status* with the given attribution.
 
+    When the rescan includes ``EXT-<plugin>-unavailable``, open findings
+    for that plugin prefix stay remaining so a down sidecar cannot mark
+    them fixed.
+
     Args:
         graph: ContentGraph whose ledger to update.
         rescan_violations: Violations returned by the rescan.
@@ -1142,9 +1169,12 @@ def _resolve_dirty_violations(
     """
     remaining_by_node: dict[str, set[str]] = defaultdict(set)
     unbound_ext: set[str] = set()
+    incomplete_prefixes: set[str] = set()
     for v in rescan_violations:
         rule_id = normalize_rule_id(str(v.get("rule_id", "")))
         node_id = str(v.get("path", ""))
+        if rule_id.startswith("EXT-") and rule_id.rsplit("-", 1)[-1] == "unavailable":
+            incomplete_prefixes.add(rule_id[: -len("unavailable")])
         if node_id:
             remaining_by_node[node_id].add(rule_id)
         elif rule_id.startswith("EXT-"):
@@ -1153,13 +1183,18 @@ def _resolve_dirty_violations(
     for nid in dirty_ids:
         remaining = remaining_by_node.get(nid, set())
         node = graph.get_node(nid)
-        if node is not None and unbound_ext:
+        if node is not None:
             open_ext = {
                 normalize_rule_id(str(rec.violation.get("rule_id", "")))
                 for rec in node.violation_ledger.values()
                 if str(rec.violation.get("rule_id", "")).startswith("EXT-")
             }
-            remaining = remaining | (unbound_ext & open_ext)
+            if unbound_ext:
+                remaining = remaining | (unbound_ext & open_ext)
+            if incomplete_prefixes:
+                remaining = remaining | {
+                    rid for rid in open_ext if any(rid.startswith(prefix) for prefix in incomplete_prefixes)
+                }
         graph.resolve_violations(
             nid,
             remaining,

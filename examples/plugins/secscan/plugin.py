@@ -20,7 +20,8 @@ import sys
 import tempfile
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Protocol
+from types import SimpleNamespace
+from typing import Protocol, cast
 
 _SRC = Path(__file__).resolve().parents[3] / "src"
 if _SRC.is_dir() and str(_SRC) not in sys.path:
@@ -111,6 +112,30 @@ def safe_relpath(raw: str) -> Path | None:
     return path
 
 
+def scan_relpath(root: Path, file_path: str) -> str:
+    """Map a scanner path back to the Engine-relative path under ``root``.
+
+    Args:
+        root: Temporary scan directory.
+        file_path: Path reported by the scanner (often absolute under ``root``).
+
+    Returns:
+        Relative path, or empty string when the path is outside ``root``.
+    """
+    text = (file_path or "").strip()
+    if not text:
+        return ""
+    path = Path(text)
+    try:
+        rel = path.resolve().relative_to(root.resolve())
+    except (OSError, ValueError):
+        safe = safe_relpath(text)
+        return str(safe) if safe is not None else ""
+    if ".." in rel.parts:
+        return ""
+    return str(rel)
+
+
 def write_file_tree(root: Path, files: Sequence[tuple[str, bytes]]) -> list[str]:
     """Materialize Engine files under ``root``.
 
@@ -181,7 +206,26 @@ def scan_files(files: Sequence[tuple[str, bytes]]) -> list[_FindingLike]:
         scanner = _Scanner(directory=str(root), target_files=written, jobs=1)
         report = scanner.scan_directory()
         raw = getattr(report, "findings", []) or []
-        return [item for item in raw if item is not None]
+        remapped: list[_FindingLike] = []
+        for item in raw:
+            if item is None:
+                continue
+            rel = scan_relpath(root, str(getattr(item, "file_path", "") or ""))
+            remapped.append(
+                cast(
+                    _FindingLike,
+                    SimpleNamespace(
+                        file_path=rel,
+                        line_number=getattr(item, "line_number", 0),
+                        rule_id=getattr(item, "rule_id", ""),
+                        severity=getattr(item, "severity", ""),
+                        title=getattr(item, "title", ""),
+                        description=getattr(item, "description", ""),
+                        recommendation=getattr(item, "recommendation", ""),
+                    ),
+                )
+            )
+        return remapped
 
 
 if __name__ == "__main__":

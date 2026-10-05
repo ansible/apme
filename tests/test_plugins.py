@@ -560,6 +560,22 @@ async def test_plugin_validate_rpc_error_emits_unavailable() -> None:
     assert result.violations[0]["source"] == "plugin:orgpolicy"
 
 
+async def test_plugin_validate_prefix_mismatch_emits_unavailable() -> None:
+    """Findings that all fail prefix checks become ``EXT-<name>-unavailable``."""
+    plugin = DiscoveredPlugin(
+        name="orgpolicy",
+        address="127.0.0.1:50100",
+        rule_id_prefix="EXT-orgpolicy-",
+    )
+    with patch(
+        "apme_engine.daemon.engine_server.call_plugin_validate",
+        AsyncMock(return_value=([{"rule_id": "L001", "message": "wrong prefix"}], None)),
+    ):
+        result = await _call_plugin_validate_result(plugin, ValidateRequest(request_id="r1"))
+    assert result.error == "prefix mismatch"
+    assert result.violations[0]["rule_id"] == "EXT-orgpolicy-unavailable"
+
+
 async def test_call_plugin_validate_non_rpc_error() -> None:
     """Non-RpcError from Validate must not raise."""
 

@@ -533,6 +533,52 @@ def _plugin_validate_request(request: ValidateRequest) -> ValidateRequest:
     )
 
 
+def _plugin_hierarchy_payload(graph: ContentGraph, scan_id: str) -> bytes:
+    """Serialize the graph with the same hierarchy shape as the initial Validate.
+
+    Args:
+        graph: Current ContentGraph.
+        scan_id: Scan or rescan identifier.
+
+    Returns:
+        JSON bytes with ``hierarchy``, ``collection_set``, and ``metadata``.
+    """
+    from apme_engine.engine.graph_opa_payload import build_hierarchy_from_graph
+
+    payload = build_hierarchy_from_graph(
+        graph,
+        scan_type="project",
+        scan_name=scan_id,
+        scan_id=scan_id,
+    )
+    return json.dumps(payload, default=str).encode()
+
+
+def _plugin_collection_specs(session: SessionState) -> list[str]:
+    """Collection specs for Plugin.Validate / Transform (venv, then request).
+
+    Args:
+        session: FixSession state.
+
+    Returns:
+        ``name:version`` strings when the venv is known, else request specs.
+    """
+    specs: list[str] = []
+    for row in session.installed_collections:
+        if not row:
+            continue
+        fqcn = str(row[0])
+        version = str(row[1]) if len(row) > 1 else ""
+        if fqcn:
+            specs.append(f"{fqcn}:{version}" if version else fqcn)
+    if specs:
+        return specs
+    plugin_opts = session.fix_options or session.scan_options
+    if plugin_opts is None:
+        return []
+    return list(getattr(plugin_opts, "collection_specs", []) or [])
+
+
 def _plugin_unavailable_finding(plugin: DiscoveredPlugin) -> ViolationDict:
     """Build the fail-closed finding for a plugin that did not Validate.
 
@@ -771,7 +817,19 @@ async def _call_plugin_validate_result(
     violations, error = await call_plugin_validate(plugin.address, request)
     if error:
         return _ValidatorResult(violations=[_plugin_unavailable_finding(plugin)], error=error)
-    return _ValidatorResult(violations=filter_plugin_violations(plugin, violations))
+    filtered = filter_plugin_violations(plugin, violations)
+    if violations and not filtered:
+        logger.warning(
+            "Plugin %s returned %d finding(s) none matching prefix %s",
+            plugin.name,
+            len(violations),
+            plugin.rule_id_prefix,
+        )
+        return _ValidatorResult(
+            violations=[_plugin_unavailable_finding(plugin)],
+            error="prefix mismatch",
+        )
+    return _ValidatorResult(violations=filtered)
 
 
 _REQUIREMENTS_PATHS = {"requirements.yml", "collections/requirements.yml"}
@@ -3000,35 +3058,13 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                     elif patch.path in merged:
                         merged[patch.path] = data
                 rescan_files = [File(path=p, content=c) for p, c in merged.items()]
-                rescan_dicts = [d for n in g.nodes() if (d := content_node_to_opa_dict(n, graph=g))]
-                rescan_payload = b""
-                if rescan_dicts:
-                    rescan_payload = json.dumps(
-                        {
-                            "scan_id": f"{scan_id}-rescan",
-                            "hierarchy": [
-                                {
-                                    "root_key": "rescan",
-                                    "root_type": "rescan",
-                                    "root_path": "",
-                                    "nodes": rescan_dicts,
-                                }
-                            ],
-                            "collection_set": [],
-                            "metadata": {},
-                        },
-                        default=str,
-                    ).encode()
-                plugin_opts = session.fix_options or session.scan_options
                 plugin_req = _plugin_validate_request(
                     ValidateRequest(
                         request_id=f"{scan_id}-rescan",
                         files=rescan_files,
-                        hierarchy_payload=rescan_payload,
-                        ansible_core_version=(getattr(plugin_opts, "ansible_core_version", "") if plugin_opts else ""),
-                        collection_specs=(
-                            list(getattr(plugin_opts, "collection_specs", []) or []) if plugin_opts else []
-                        ),
+                        hierarchy_payload=_plugin_hierarchy_payload(g, f"{scan_id}-rescan"),
+                        ansible_core_version=session.ansible_core_version,
+                        collection_specs=_plugin_collection_specs(session),
                     )
                 )
                 for plugin in plugins:
@@ -3057,7 +3093,9 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                     else:
                         all_violations.extend(result.violations)
 
-            return filter_noqa_violations(_bind_ext_findings_to_graph(all_violations, g), g)
+            bound = filter_noqa_violations(_bind_ext_findings_to_graph(all_violations, g), g)
+            session.plugin_unbound_violations = _unbound_ext_violations(bound, g)
+            return bound
 
         ai_provider = self._resolve_ai_provider(session.fix_options)
         assess_pause = bool(session.fix_options and session.fix_options.assess_pause)
@@ -3082,32 +3120,13 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             plugin = plugin_for_rule(plugins_for_fix, str(violation.get("rule_id", "")))
             if plugin is None:
                 return None
-            hier_dicts = [d for n in graph.nodes() if (d := content_node_to_opa_dict(n, graph=graph))]
-            hierarchy_payload = b""
-            if hier_dicts:
-                hierarchy_payload = json.dumps(
-                    {
-                        "scan_id": scan_id,
-                        "hierarchy": [
-                            {
-                                "root_key": "transform",
-                                "root_type": "transform",
-                                "root_path": "",
-                                "nodes": hier_dicts,
-                            }
-                        ],
-                        "collection_set": [],
-                        "metadata": {},
-                    },
-                    default=str,
-                ).encode()
             applied, new_yaml, err = await call_plugin_transform(
                 plugin.address,
                 request_id=scan_id,
                 file_path=file_path,
                 yaml_content=yaml_lines,
                 violation=violation,
-                hierarchy_payload=hierarchy_payload,
+                hierarchy_payload=_plugin_hierarchy_payload(graph, scan_id),
             )
             if err in {"rpc error", "transform error", "no response"}:
                 raise RuntimeError(err)

@@ -170,6 +170,8 @@ class SessionState:
             final reporting.
         plugin_unbound_violations: EXT- findings that did not bind to a
             ContentGraph node (kept off the ledger, merged into remaining).
+            Refreshed after each plugin rescan so remaining tracks the
+            latest Validate, not a start-of-run snapshot.
         approved_ids: Set of proposal IDs approved by the user.
         approved_proposals: Metadata snapshots of approved proposals.
         rejected_proposals: Metadata snapshots of rejected proposals retained

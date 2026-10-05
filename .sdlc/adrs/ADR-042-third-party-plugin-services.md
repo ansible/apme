@@ -465,3 +465,4 @@ Local Podman images and `pod.yaml` containers for a private OPA bundle and
 | 2026-10-05 | APME Team | Pin plugin identity to env token; retry Describe misses; strip Validate extras; bind file-scoped EXT- findings; stamp TRANSFORM_FAILED without mixed-node AI |
 | 2026-10-05 | APME Team | Honest Phase 4 gap: EXT- remaining is manual review; Validate sends ansible_core_version/collection_specs; Transform sends hierarchy; Health is overridable |
 | 2026-10-05 | APME Team | Pin unavailable findings on the ledger; Describe failures still Validate; exact path bind; demote finding not rule on applied=false |
+| 2026-10-05 | APME Team | Fail-closed prefix mismatch; plugin rescan cannot mark EXT- fixed; refresh unbound; Validate-shaped hierarchy on rescan/Transform |
