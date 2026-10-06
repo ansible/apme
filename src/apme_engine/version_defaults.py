@@ -23,6 +23,7 @@ VERSION_DEFAULTS: dict[str, SpecifierSet] = {
     "M002": SpecifierSet(">=2.9"),  # deprecated module
     "M003": SpecifierSet(">=2.9"),  # module redirect
     "M004": SpecifierSet(">=2.9"),  # removed module
+    "M048": SpecifierSet(">=2.9"),  # prefer builtin FQCN twin
     # ── ansible-core 2.18 changes ────────────────────────────────────────
     "M010": SpecifierSet(">=2.18"),  # Python 2 interpreter dropped
     # ── ansible-core 2.19 changes ────────────────────────────────────────

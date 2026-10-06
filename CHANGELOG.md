@@ -11,14 +11,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **M047** — Flag stale top-level `disable_lookups` keys in Constructable inventory
   YAML (removed in ansible-core 2.23). Python `_compose(disable_lookups=...)`
   in custom inventory plugins remains REQ-018 **M040**.
+- **M048** — Prefer `ansible.builtin` when a non-builtin FQCN has a builtin
+  equivalent, resolved authoritatively via the session venv's
+  `find_plugin_with_context()` ([#714](https://github.com/ansible/apme/issues/714)).
+  Covers already-FQCN prefer-builtin cases (e.g. `community.general.copy`)
+  without restoring L030's static `builtin-modules.txt` check. Modules that
+  left core (e.g. `mount` → `ansible.posix`) are not flagged.
 
 ### Removed
 
-- **L030** — Static builtin-module list check retired in favor of Ansible
-  validator **M001** (short names) and OPA **L005** (`community.*`). Non-community
-  FQCNs with builtin equivalents (e.g. `ansible.posix.*`) are tracked in
-  [#714](https://github.com/ansible/apme/issues/714) until the Ansible validator
-  gains authoritative coverage.
+- **L030** — Static builtin-module list check retired; short names are covered by
+  Ansible validator **M001**, `community.*` by OPA **L005**, and fully qualified
+  modules with builtin twins by Ansible validator **M048** ([#714](https://github.com/ansible/apme/issues/714)).
 
 ### Fixed
 
@@ -33,8 +37,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Known gaps (tracked)
 
-- [#714](https://github.com/ansible/apme/issues/714) — Ansible-validator coverage
-  for non-community FQCN → builtin suggestions after L030 removal.
 - [#748](https://github.com/ansible/apme/issues/748) — Play-context scoping for
   L039, L032, L047, R404, M026, L034.
 - [#749](https://github.com/ansible/apme/issues/749) — M005 edge case for assert

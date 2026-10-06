@@ -14,6 +14,7 @@ from __future__ import annotations
 import glob as _glob
 import json
 import logging
+import os
 import threading
 from collections import OrderedDict
 from collections.abc import Mapping
@@ -75,6 +76,34 @@ def _ansible_core_version(venv_root: str) -> str:
         except OSError:
             continue
     return ""
+
+
+_COLLECTION_SEARCH_ENV_KEYS = (
+    "ANSIBLE_COLLECTIONS_PATH",
+    "ANSIBLE_COLLECTIONS_PATHS",
+    "ANSIBLE_CONFIG",
+)
+
+
+def _collection_search_fingerprint(env_extra: dict[str, str] | None) -> str:
+    """Fingerprint environment overrides that affect plugin resolution.
+
+    Args:
+        env_extra: Optional overrides merged into the subprocess environment.
+
+    Returns:
+        Sorted ``KEY=value`` pairs joined by ``|``, or ``""`` when unset.
+    """
+    parts: list[str] = []
+    seen: set[str] = set()
+    for source in (env_extra, os.environ):
+        if not source:
+            continue
+        for key in _COLLECTION_SEARCH_ENV_KEYS:
+            if key in source and key not in seen:
+                parts.append(f"{key}={source[key]}")
+                seen.add(key)
+    return "|".join(sorted(parts))
 
 
 def _parse_fqcn(plugin_name: str) -> tuple[str, str, str] | None:
@@ -151,7 +180,37 @@ class PluginCache:
             self._version_cache.popitem(last=False)
         return version
 
-    def _make_key(self, venv_root: str, plugin_name: str) -> CacheKey | None:
+    def introspect_context_suffix(
+        self,
+        venv_root: str,
+        env_extra: dict[str, str] | None = None,
+    ) -> str:
+        """Build a suffix for introspect cache keys.
+
+        M048 twin lookup depends on ansible-core and collection search paths,
+        which are not captured by collection MANIFEST versions alone.
+
+        Args:
+            venv_root: Venv root path.
+            env_extra: Optional subprocess environment overrides.
+
+        Returns:
+            Context suffix (core version + collection search fingerprint).
+        """
+        with self._lock:
+            core_version = self._resolve_version(venv_root, "ansible", "builtin")
+        env_fp = _collection_search_fingerprint(env_extra)
+        if env_fp:
+            return f"core:{core_version}|{env_fp}"
+        return f"core:{core_version}"
+
+    def _make_key(
+        self,
+        venv_root: str,
+        plugin_name: str,
+        *,
+        context_suffix: str = "",
+    ) -> CacheKey | None:
         """Build a cache key from a plugin name.
 
         Returns ``None`` for short-form names that can't be resolved to
@@ -160,6 +219,8 @@ class PluginCache:
         Args:
             venv_root: Venv root path.
             plugin_name: FQCN or short-form module name.
+            context_suffix: Optional suffix appended to the version segment
+                (used by the introspect store for M048 twin-lookup inputs).
 
         Returns:
             Cache key tuple or ``None``.
@@ -171,22 +232,33 @@ class PluginCache:
         version = self._resolve_version(venv_root, namespace, name)
         if not version:
             return None
+        if context_suffix:
+            version = f"{version}@{context_suffix}"
         collection_fqcn = f"{namespace}.{name}"
         return (collection_fqcn, version, plugin_name)
 
-    def get(self, store: CacheType, venv_root: str, plugin_name: str) -> object | None:
+    def get(
+        self,
+        store: CacheType,
+        venv_root: str,
+        plugin_name: str,
+        *,
+        introspect_context: str | None = None,
+    ) -> object | None:
         """Look up a cached result.
 
         Args:
             store: Which cache store to query.
             venv_root: Venv root path.
             plugin_name: Module FQCN or short-form name.
+            introspect_context: Context suffix for the introspect store only.
 
         Returns:
             Cached result or ``None`` on miss.
         """
         with self._lock:
-            key = self._make_key(venv_root, plugin_name)
+            context_suffix = introspect_context if store == "introspect" else ""
+            key = self._make_key(venv_root, plugin_name, context_suffix=context_suffix or "")
             if key is None:
                 self._misses[store] += 1
                 return None
@@ -207,6 +279,7 @@ class PluginCache:
         result: object,
         *,
         resolved_fqcn: str = "",
+        introspect_context: str | None = None,
     ) -> None:
         """Store a result in the cache.
 
@@ -220,17 +293,19 @@ class PluginCache:
             plugin_name: Module name as provided to the subprocess.
             result: Subprocess result to cache.
             resolved_fqcn: Resolved FQCN if different from plugin_name.
+            introspect_context: Context suffix for the introspect store only.
         """
         with self._lock:
             lru = self._stores[store]
+            context_suffix = introspect_context if store == "introspect" else ""
 
-            key = self._make_key(venv_root, plugin_name)
+            key = self._make_key(venv_root, plugin_name, context_suffix=context_suffix or "")
             if key is not None:
                 lru[key] = result
                 lru.move_to_end(key)
 
             if resolved_fqcn and resolved_fqcn != plugin_name:
-                fqcn_key = self._make_key(venv_root, resolved_fqcn)
+                fqcn_key = self._make_key(venv_root, resolved_fqcn, context_suffix=context_suffix or "")
                 if fqcn_key is not None:
                     lru[fqcn_key] = result
                     lru.move_to_end(fqcn_key)
@@ -243,6 +318,8 @@ class PluginCache:
         store: CacheType,
         venv_root: str,
         modules: list[str],
+        *,
+        introspect_context: str | None = None,
     ) -> tuple[dict[str, object], list[str]]:
         """Split a module list into cached results and uncached names.
 
@@ -250,6 +327,7 @@ class PluginCache:
             store: Which cache store to query.
             venv_root: Venv root path.
             modules: Module names to check.
+            introspect_context: Context suffix for the introspect store only.
 
         Returns:
             ``(cached_results, uncached_modules)`` where cached_results maps
@@ -258,7 +336,12 @@ class PluginCache:
         cached: dict[str, object] = {}
         uncached: list[str] = []
         for module in modules:
-            result = self.get(store, venv_root, module)
+            result = self.get(
+                store,
+                venv_root,
+                module,
+                introspect_context=introspect_context,
+            )
             if result is not None:
                 cached[module] = result
             else:
