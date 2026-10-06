@@ -170,6 +170,47 @@ implementing `EventSink` and registering in `start_sinks()`.
 Both events carry `repeated ProgressUpdate logs` for pipeline milestone
 capture (ADR-033).
 
+### Oversized Event Transport (chunked streaming)
+
+Engine ↔ Gateway reporting channels use a **50 MiB**
+`grpc.max_send/receive_message_length` ceiling (shared with Engine/validator
+limits). Large collections (e.g. `community.general`) can produce a
+`FixCompletedEvent` larger than that ceiling when packing
+`remaining_violations`, `fixed_violations`, `patches`, and
+`content_graph_json` into a single unary frame.
+
+**Decision:** Keep unary `ReportFixCompleted` for small events. When
+`FixCompletedEvent.ByteSize()` is at or above **45 MiB**, the sink uses
+client-streaming `ReportFixCompletedStream` of `FixCompletedChunk` messages
+instead:
+
+1. The first chunk carries a **header** with scalars and small nested messages
+   (`scan_id`, `session_id`, `project_path`, `source`, `diagnostics`,
+   `summary`, `report`, `manifest`) — large repeated/blob fields are omitted.
+2. Subsequent chunks lazily batch large repeated fields under a **1 MiB** soft
+   budget (same as `chunked_fs.CHUNK_MAX_BYTES`) and UTF-8-safe fragments of
+   `content_graph_json`. The Engine holds at most two body chunks while
+   setting the final `last=true` marker; chunk packing runs in an executor.
+3. If the header or one repeated item cannot fit in a 50 MiB gRPC frame, the
+   Engine serializes the complete event and splits its wire bytes into
+   bounded `serialized_event_fragment` frames. This handles oversized
+   manifests and individual findings without sending an oversized frame.
+4. The Gateway incrementally merges typed chunks or buffers serialized
+   fragments, with a **256 MiB** aggregate stream limit and a **4096 chunk**
+   count limit. It then persists one reassembled `FixCompletedEvent` in a
+   **single transaction** (same path as unary). No per-chunk commits —
+   preserves ADR-062 stub rewrite atomicity and finalize’s “row appears with
+   real `session_id`” contract.
+5. Stream timeout is **120s** (unary remains 10s; fast-fail 1s when
+   health-gated down). Operation finalization waits up to **150s** for the
+   persisted scan row, leaving 30s beyond the stream deadline for Gateway
+   reassembly and finalization. Delivery stays best-effort: failures are
+   logged and never block the primary `FixSession` path.
+
+Raising the 50 MiB channel limit alone is not the durability strategy —
+chunking keeps each gRPC frame below the ceiling and bounds aggregate
+reassembly memory while allowing events larger than one frame.
+
 ### Configuration
 
 Set `APME_REPORTING_ENDPOINT` (e.g. `localhost:50060`) to enable event
@@ -184,3 +225,14 @@ emission.  When unset, no sinks are loaded and zero overhead is incurred.
 - ADR-018: mypy strict mode (reporting service must be fully typed)
 - ADR-019: Dependency governance (DB dependency must pass the checklist)
 - ADR-033: Centralized log bridge (pipeline logs included in event payloads)
+- ADR-039: Unified operation stream — only `FixCompletedEvent` for check and remediate
+- ADR-062: Ephemeral proposal working set — FixCompleted upgrades stub scans atomically
+
+## Revision History
+
+| Date | Author | Change |
+|------|--------|--------|
+| 2026-03 | APME | Accepted — best-effort health-gated gRPC reporting; engine stays stateless |
+| 2026-03 | APME | Implementation notes: `GrpcReportingSink`, `FixCompletedEvent`, pluggable sinks |
+| 2026-09-30 | Agent | Oversized event transport: client-streaming `ReportFixCompletedStream` / `FixCompletedChunk` when unary payload ≥ 45 MiB; reassemble-then-persist; 1 MiB chunk budget; 50 MiB channel limit unchanged (#721) |
+| 2026-10-06 | Agent | Bound stream reassembly, fragment individually oversized fields, yield chunks lazily, and align the 150s operation wait with the 120s stream timeout (#722) |

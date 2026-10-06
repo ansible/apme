@@ -5,7 +5,7 @@ import warnings
 
 from apme.v1 import reporting_pb2 as apme_dot_v1_dot_reporting__pb2
 
-GRPC_GENERATED_VERSION = '1.83.0'
+GRPC_GENERATED_VERSION = '1.84.0'
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
 
@@ -41,6 +41,11 @@ class ReportingStub:
                 request_serializer=apme_dot_v1_dot_reporting__pb2.FixCompletedEvent.SerializeToString,
                 response_deserializer=apme_dot_v1_dot_reporting__pb2.ReportAck.FromString,
                 _registered_method=True)
+        self.ReportFixCompletedStream = channel.stream_unary(
+                '/apme.v1.Reporting/ReportFixCompletedStream',
+                request_serializer=apme_dot_v1_dot_reporting__pb2.FixCompletedChunk.SerializeToString,
+                response_deserializer=apme_dot_v1_dot_reporting__pb2.ReportAck.FromString,
+                _registered_method=True)
         self.RegisterRules = channel.unary_unary(
                 '/apme.v1.Reporting/RegisterRules',
                 request_serializer=apme_dot_v1_dot_reporting__pb2.RegisterRulesRequest.SerializeToString,
@@ -59,6 +64,15 @@ class ReportingServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def ReportFixCompletedStream(self, request_iterator, context):
+        """Client-streaming path for oversized FixCompletedEvent payloads that
+        would exceed the 50 MiB gRPC message ceiling (ADR-020). Gateway
+        reassembles chunks into one event, then persists once.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def RegisterRules(self, request, context):
         """Rule catalog registration (ADR-041).  The authority Engine pushes
         its full rule set on startup; the Gateway reconciles its catalog.
@@ -73,6 +87,11 @@ def add_ReportingServicer_to_server(servicer, server):
             'ReportFixCompleted': grpc.unary_unary_rpc_method_handler(
                     servicer.ReportFixCompleted,
                     request_deserializer=apme_dot_v1_dot_reporting__pb2.FixCompletedEvent.FromString,
+                    response_serializer=apme_dot_v1_dot_reporting__pb2.ReportAck.SerializeToString,
+            ),
+            'ReportFixCompletedStream': grpc.stream_unary_rpc_method_handler(
+                    servicer.ReportFixCompletedStream,
+                    request_deserializer=apme_dot_v1_dot_reporting__pb2.FixCompletedChunk.FromString,
                     response_serializer=apme_dot_v1_dot_reporting__pb2.ReportAck.SerializeToString,
             ),
             'RegisterRules': grpc.unary_unary_rpc_method_handler(
@@ -109,6 +128,33 @@ class Reporting:
             target,
             '/apme.v1.Reporting/ReportFixCompleted',
             apme_dot_v1_dot_reporting__pb2.FixCompletedEvent.SerializeToString,
+            apme_dot_v1_dot_reporting__pb2.ReportAck.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ReportFixCompletedStream(request_iterator,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.stream_unary(
+            request_iterator,
+            target,
+            '/apme.v1.Reporting/ReportFixCompletedStream',
+            apme_dot_v1_dot_reporting__pb2.FixCompletedChunk.SerializeToString,
             apme_dot_v1_dot_reporting__pb2.ReportAck.FromString,
             options,
             channel_credentials,

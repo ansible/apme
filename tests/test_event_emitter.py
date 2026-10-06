@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from apme.v1.reporting_pb2 import (
+    FixCompletedChunk,
     FixCompletedEvent,
     ProposalOutcome,
     RegisterRulesRequest,
@@ -53,6 +54,14 @@ def _fix_event(**overrides: str) -> FixCompletedEvent:
         project_path=overrides.get("project_path", "/tmp/project"),
         source=overrides.get("source", "cli"),
     )
+
+
+def test_operation_wait_covers_reporting_stream_deadline() -> None:
+    """Gateway finalization leaves margin after the reporting stream timeout."""
+    from apme_engine.daemon.sinks.grpc_reporting import _STREAM_TIMEOUT_S
+    from apme_gateway.api.operation_router import _SCAN_PERSIST_WAIT_S
+
+    assert _SCAN_PERSIST_WAIT_S > _STREAM_TIMEOUT_S
 
 
 # ---------------------------------------------------------------------------
@@ -313,6 +322,68 @@ async def test_grpc_sink_sends_when_available() -> None:
     await sink.on_fix_completed(_fix_event())
     mock_stub.ReportFixCompleted.assert_awaited_once()
     assert mock_stub.ReportFixCompleted.call_args.kwargs.get("timeout") == _TIMEOUT_S
+    mock_stub.ReportFixCompletedStream.assert_not_called()
+
+
+async def test_grpc_sink_streams_oversized_event() -> None:
+    """Oversized events use ReportFixCompletedStream with the stream timeout."""
+    from apme_engine.daemon.sinks.grpc_reporting import _STREAM_TIMEOUT_S
+
+    sink = GrpcReportingSink("localhost:50060")
+    sink._available = True
+
+    mock_stub = AsyncMock()
+    mock_stub.ReportFixCompletedStream.return_value = ReportAck()
+    sink._stub = mock_stub
+
+    huge = _fix_event()
+    with patch("apme_engine.daemon.sinks.grpc_reporting.UNARY_MAX_BYTES", 1):
+        await sink.on_fix_completed(huge)
+
+    mock_stub.ReportFixCompletedStream.assert_awaited_once()
+    assert mock_stub.ReportFixCompletedStream.call_args.kwargs.get("timeout") == _STREAM_TIMEOUT_S
+    mock_stub.ReportFixCompleted.assert_not_called()
+
+
+async def test_grpc_sink_stream_failure_flips_unavailable() -> None:
+    """A failed stream send should flip _available to False."""
+    sink = GrpcReportingSink("localhost:50060")
+    sink._available = True
+
+    mock_stub = AsyncMock()
+    mock_stub.ReportFixCompletedStream.side_effect = Exception("connection refused")
+    sink._stub = mock_stub
+
+    with patch("apme_engine.daemon.sinks.grpc_reporting.UNARY_MAX_BYTES", 1):
+        await sink.on_fix_completed(_fix_event())
+    assert sink._available is False
+
+
+async def test_grpc_sink_streams_chunks_as_an_async_iterator() -> None:
+    """Chunk generation is exposed as an async iterator to gRPC."""
+    sink = GrpcReportingSink("localhost:50060")
+    sink._available = True
+    observed: list[FixCompletedChunk] = []
+
+    async def consume(
+        chunks: AsyncIterator[FixCompletedChunk],
+        *,
+        timeout: float,
+    ) -> ReportAck:
+        async for chunk in chunks:
+            observed.append(chunk)
+        return ReportAck()
+
+    mock_stub = AsyncMock()
+    mock_stub.ReportFixCompletedStream.side_effect = consume
+    sink._stub = mock_stub
+
+    with patch("apme_engine.daemon.sinks.grpc_reporting.UNARY_MAX_BYTES", 1):
+        await sink.on_fix_completed(_fix_event())
+
+    assert observed
+    assert observed[-1].last is True
+    mock_stub.ReportFixCompletedStream.assert_awaited_once()
 
 
 async def test_grpc_sink_flips_unavailable_on_send_failure() -> None:
