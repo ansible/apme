@@ -47,16 +47,17 @@ The engine is the **single source of truth** for "what's in this repo/playbook."
 ```python
 # src/apme_engine/validators/base.py
 
+
 @runtime_checkable
 class Validator(Protocol):
-    def run(self, context: ScanContext) -> list[ViolationDict]:
-        ...
+    def run(self, context: ScanContext) -> list[ViolationDict]: ...
+
 
 @dataclass
 class ScanContext:
-    hierarchy_payload: YAMLDict          # always present (JSON-serializable)
-    scandata: object = None              # legacy path (replaced by ContentGraph)
-    root_dir: str = ""                   # filesystem path
+    hierarchy_payload: YAMLDict  # always present (JSON-serializable)
+    scandata: object = None  # legacy path (replaced by ContentGraph)
+    root_dir: str = ""  # filesystem path
     engine_diagnostics: EngineDiagnostics = field(default_factory=EngineDiagnostics)
 ```
 
@@ -220,15 +221,15 @@ Every validator returns structured timing data in `ValidateResponse.diagnostics`
 
 ```python
 ValidatorDiagnostics(
-    validator_name="native",       # identifies the validator
-    request_id="scan-uuid",        # echoed for correlation
-    total_ms=42.0,                 # wall-clock time
-    files_received=10,             # input file count
-    violations_found=5,            # output violation count
-    rule_timings=[                 # per-rule granularity
+    validator_name="native",  # identifies the validator
+    request_id="scan-uuid",  # echoed for correlation
+    total_ms=42.0,  # wall-clock time
+    files_received=10,  # input file count
+    violations_found=5,  # output violation count
+    rule_timings=[  # per-rule granularity
         RuleTiming(rule_id="L026", elapsed_ms=3.5, violations=2),
     ],
-    metadata={"key": "value"},     # validator-specific data
+    metadata={"key": "value"},  # validator-specific data
 )
 ```
 

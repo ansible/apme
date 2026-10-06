@@ -277,11 +277,7 @@ Direct Anthropic API calls also work as a fallback for prototyping without Abben
    ```python
    def create_sandbox(project_path: Path) -> Path:
        sandbox = Path(tempfile.mkdtemp(prefix="apme-sandbox-"))
-       shutil.copytree(
-           project_path, 
-           sandbox / "project",
-           ignore=shutil.ignore_patterns('.git', '__pycache__', '*.pyc')
-       )
+       shutil.copytree(project_path, sandbox / "project", ignore=shutil.ignore_patterns(".git", "__pycache__", "*.pyc"))
        return sandbox / "project"
    ```
 

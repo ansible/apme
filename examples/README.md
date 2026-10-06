@@ -24,7 +24,7 @@ secrets are by design. **Do not run these playbooks** with
 | `risky_permissions.yml` | L018–L022, L031 — file modes, become, shell pipes |
 | `style_violations.yml` | L025, L041–L050 — naming, key order, free-form |
 | `complex_playbook.yml` | L003, L016–L017, L023, L042 — complexity, prompts |
-| `module_issues.yml` | L026, L030, L037 — non-FQCN, non-builtin, unresolved |
+| `module_issues.yml` | L026, L005, L037 — non-FQCN, community use, unresolved |
 | `secrets_example.yml` | SEC rules — AWS keys, GitHub PAT, private keys |
 | `roles/broken_role/` | L027–L039 — missing metadata, undefined vars |
 | `minimal_playbook.yml` | Minimal baseline with a few issues |

@@ -237,6 +237,66 @@ class TestSessionState:
         remaining = state.operation_budget_remaining()
         assert 115 <= remaining <= 120
 
+    def test_reset_partial_run_state_clears_per_run_artifacts(self, tmp_path: Path) -> None:
+        """Failed runs do not leak progress_logs or gate state into retries.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        state = SessionState(session_id="retry-1")
+        state.original_files = {"a.yml": b"orig\n"}
+        state.working_files = {"a.yml": b"mutated\n"}
+        state.progress_logs.append(
+            ProgressUpdate(message="formatting", phase="format", level=2),
+        )
+        state.report = FixReport()
+        state.ai_proposals = [object()]
+        state.tier1_proposals = [object()]
+        state.remaining_ai = [ViolationDict(rule_id="L001", message="x", path="a.yml")]
+        state.remaining_manual = [ViolationDict(rule_id="L002", message="y", path="a.yml")]
+        state.dep_health_violations = [ViolationDict(rule_id="R001", message="z", path="a.yml")]
+        state.awaiting_tier1_gate = True
+        state.awaiting_assess = True
+        state.awaiting_ai_triage = True
+        state.content_graph = object()
+        state.graph_engine = object()
+        state.review_declined_proposals["p1"] = Proposal(id="p1")
+        state.proposals["p2"] = Proposal(id="p2")
+        state.status = 3  # COMPLETE
+        temp = tmp_path / "session_temp"
+        temp.mkdir()
+        state.temp_dir = temp
+        cfg_dir = tmp_path / "galaxy"
+        cfg_dir.mkdir()
+        cfg = cfg_dir / "ansible.cfg"
+        cfg.write_text("[galaxy]\n")
+        state.galaxy_cfg_path = cfg
+
+        state.reset_partial_run_state()
+
+        assert state.working_files == state.original_files
+        assert state.format_diffs == []
+        assert state.tier1_patches == []
+        assert state.proposals == {}
+        assert state.review_declined_proposals == {}
+        assert state.progress_logs == []
+        assert state.report is None
+        assert state.ai_proposals == []
+        assert state.tier1_proposals == []
+        assert state.remaining_ai == []
+        assert state.remaining_manual == []
+        assert state.dep_health_violations == []
+        assert state.awaiting_tier1_gate is False
+        assert state.awaiting_assess is False
+        assert state.awaiting_ai_triage is False
+        assert state.content_graph is None
+        assert state.graph_engine is None
+        assert state.status == 2  # PROCESSING
+        assert not temp.exists()
+        assert state.temp_dir is None
+        assert cfg.exists()
+        assert state.galaxy_cfg_path == cfg
+
     def test_cleanup_removes_temp_dir(self, tmp_path: Path) -> None:
         """cleanup() deletes temp_dir contents and clears the field.
 

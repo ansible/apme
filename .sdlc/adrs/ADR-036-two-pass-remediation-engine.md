@@ -154,6 +154,7 @@ class ProjectTransformResult:
     next_steps: list[NextStep]
     remaining: list[ViolationDict]
 
+
 class ProjectTransform(Protocol):
     def apply(
         self,

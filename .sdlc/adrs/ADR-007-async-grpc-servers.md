@@ -70,7 +70,7 @@ async def validate(self, request):
 # Server configuration
 server = grpc.aio.server(
     options=[
-        ('grpc.max_concurrent_rpcs', 8),
+        ("grpc.max_concurrent_rpcs", 8),
     ]
 )
 ```

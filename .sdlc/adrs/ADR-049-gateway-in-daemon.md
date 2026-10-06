@@ -156,8 +156,8 @@ _DEFAULT_PORTS = {
     "opa": 50054,
     "ansible": 50053,
     "galaxy_proxy": 8765,
-    "gateway_grpc": 50060,   # NEW
-    "gateway_http": 8080,    # NEW
+    "gateway_grpc": 50060,  # NEW
+    "gateway_http": 8080,  # NEW
 }
 ```
 
@@ -177,21 +177,19 @@ if "gateway_grpc" in services:
     gw_app = create_gateway_app()
     gw_host, _, gw_port_s = services["gateway_http"].rpartition(":")
     gw_config = uvicorn.Config(
-        gw_app, host=gw_host or "127.0.0.1",
-        port=int(gw_port_s), log_level="warning",
+        gw_app,
+        host=gw_host or "127.0.0.1",
+        port=int(gw_port_s),
+        log_level="warning",
     )
     gw_server = uvicorn.Server(gw_config)
     asyncio.create_task(gw_server.serve())
 
     # Gateway gRPC (ReportingServicer) — required for FixCompletedEvent delivery
     reporting_server = grpc.aio.server()
-    reporting_pb2_grpc.add_ReportingServicer_to_server(
-        ReportingServicer(), reporting_server
-    )
+    reporting_pb2_grpc.add_ReportingServicer_to_server(ReportingServicer(), reporting_server)
     # Loopback-only: plaintext Reporting must not listen on all interfaces.
-    reporting_server.add_insecure_port(
-        f"127.0.0.1:{services['gateway_grpc'].rsplit(':', 1)[-1]}"
-    )
+    reporting_server.add_insecure_port(f"127.0.0.1:{services['gateway_grpc'].rsplit(':', 1)[-1]}")
     await reporting_server.start()
 
     # Must be APME_REPORTING_ENDPOINT — start_sinks() ignores ADDRESS

@@ -46,7 +46,6 @@ SEVERITY_DEFAULTS: dict[str, Severity] = {
     # Low: FQCN / naming / best-practice
     "L050": Severity.LOW,
     "L026": Severity.LOW,
-    "L030": Severity.LOW,
     "L027": Severity.LOW,
     "L032": Severity.LOW,
     "L033": Severity.LOW,
@@ -93,6 +92,7 @@ SEVERITY_DEFAULTS: dict[str, Severity] = {
     "M019": Severity.LOW,
     "M020": Severity.LOW,
     "M027": Severity.LOW,
+    "M048": Severity.LOW,
     # Info: advisory / style / reports
     "L040": Severity.INFO,
     "L042": Severity.INFO,
@@ -119,6 +119,7 @@ SEVERITY_DEFAULTS: dict[str, Severity] = {
     "M026": Severity.MEDIUM,
     "M029": Severity.MEDIUM,
     "M030": Severity.MEDIUM,
+    "M047": Severity.MEDIUM,
     "R101": Severity.MEDIUM,
     "R103": Severity.MEDIUM,
     "R104": Severity.MEDIUM,

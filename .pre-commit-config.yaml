@@ -1,6 +1,6 @@
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.16.4
+    rev: v0.16.5
     hooks:
       - id: ruff
         args: [--fix]
@@ -17,7 +17,7 @@ repos:
           - types-PyYAML
           - grpc-stubs
   - repo: https://github.com/astral-sh/uv-pre-commit
-    rev: 0.12.5
+    rev: 0.12.8
     hooks:
       - id: uv-lock
   - repo: https://github.com/jsh9/pydoclint
@@ -71,6 +71,6 @@ repos:
       - id: openapi-check
         name: openapi-check (Gateway OpenAPI v1)
         language: system
-        entry: bash -c 'uvx --with tox-uv tox -e openapi -- --check'
+        entry: bash -c 'uvx --with-requirements ci/tox-requirements.txt tox -e openapi -- --check'
         files: ^(src/apme_gateway/(api/|app\.py$)|docs/api/openapi\.v1\.json$|scripts/export_openapi\.py$|pyproject\.toml$|uv\.lock$)
         pass_filenames: false

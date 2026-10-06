@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import tempfile
 import time
 from dataclasses import dataclass
@@ -176,10 +177,20 @@ class ProxyCache:
         path.write_text(json.dumps(data, indent=2))
 
     def clear(self) -> None:
-        """Remove all cached files."""
-        import shutil
+        """Remove all cached wheels and metadata.
 
-        if self.root.exists():
-            shutil.rmtree(self.root)
+        Only subdirectories are removed so the cache root (often a volume
+        mount at ``/cache``) is preserved — ``rmtree`` on the mount point
+        itself fails with ``PermissionError`` on Podman/K8s volumes.
+
+        Managed ``wheels`` / ``metadata`` paths may be directory symlinks
+        (or dangling links). ``shutil.rmtree`` rejects symlinks, so those
+        are unlinked and replaced with real directories.
+        """
+        for subdir in (self.wheels_dir, self.metadata_dir):
+            if subdir.is_symlink():
+                subdir.unlink()
+            elif subdir.exists():
+                shutil.rmtree(subdir)
         self.wheels_dir.mkdir(parents=True, exist_ok=True)
         self.metadata_dir.mkdir(parents=True, exist_ok=True)

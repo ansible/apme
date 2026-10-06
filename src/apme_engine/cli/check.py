@@ -23,7 +23,13 @@ from apme.v1.engine_pb2 import (
 from apme_engine.cli._exit_codes import EXIT_ERROR, EXIT_VIOLATIONS
 from apme_engine.cli._galaxy_config import discover_galaxy_servers
 from apme_engine.cli._models import ViolationDict
-from apme_engine.cli._project_root import derive_session_id, discover_project_root
+from apme_engine.cli._project_root import (
+    derive_session_id,
+    discover_project_root,  # noqa: F401 — re-exported for test patch compatibility
+    discover_project_root_for_targets,
+    normalize_targets,
+    resolve_scan_context,
+)
 from apme_engine.cli._rules_yml import load_rule_configs_from_project
 from apme_engine.cli._suppressions import apply_suppressions, load_suppressions
 from apme_engine.cli.ansi import dim, red, yellow
@@ -84,8 +90,12 @@ def _resolve_session_id(args: argparse.Namespace) -> str:
             )
             raise SystemExit(EXIT_ERROR)
         return explicit
-    target: str = getattr(args, "target", ".")
-    project_root = discover_project_root(target)
+    targets = normalize_targets(getattr(args, "target", "."))
+    try:
+        project_root = discover_project_root_for_targets(targets)
+    except FileNotFoundError as e:
+        sys.stderr.write(f"{e}\n")
+        raise SystemExit(EXIT_ERROR) from e
     return derive_session_id(project_root)
 
 
@@ -127,14 +137,17 @@ def run_check(args: argparse.Namespace) -> None:
     verbosity = getattr(args, "verbose", 0) or 0
     session_id = _resolve_session_id(args)
 
-    target: str = getattr(args, "target", ".")
-    project_root = discover_project_root(target)
+    try:
+        targets, _, project_root = resolve_scan_context(getattr(args, "target", "."))
+    except FileNotFoundError as e:
+        sys.stderr.write(f"{e}\n")
+        sys.exit(EXIT_ERROR)
     galaxy_servers = discover_galaxy_servers(project_root) or None
     rule_cfgs = load_rule_configs_from_project(project_root)
 
     try:
         chunks = yield_scan_chunks(
-            args.target,
+            targets,
             project_root_name="project",
             ansible_core_version=getattr(args, "ansible_version", None),
             collection_specs=getattr(args, "collections", None),
@@ -143,8 +156,11 @@ def run_check(args: argparse.Namespace) -> None:
             rule_configs=rule_cfgs or None,
             skip_collection_health=skip_collection,
             skip_dep_audit=skip_python,
+            exclude_patterns=getattr(args, "exclude", None),
         )
     except FileNotFoundError as e:
+        # Targets are pre-validated above; this guards a deletion race
+        # between validation and the background upload walk.
         sys.stderr.write(f"{e}\n")
         sys.exit(EXIT_ERROR)
 
@@ -152,14 +168,26 @@ def run_check(args: argparse.Namespace) -> None:
 
     cmd_queue: queue.Queue[SessionCommand | None] = queue.Queue()
     scan_id_holder: list[str] = [""]
+    producer_errors: list[Exception] = []
+    stop_event = threading.Event()
 
     def _upload_producer() -> None:
-        first = True
-        for chunk in chunks:
-            if first:
-                scan_id_holder[0] = chunk.scan_id or ""
-                first = False
-            cmd_queue.put(SessionCommand(upload=chunk))
+        try:
+            first = True
+            for chunk in chunks:
+                if stop_event.is_set():
+                    return
+                if first:
+                    scan_id_holder[0] = chunk.scan_id or ""
+                    first = False
+                cmd_queue.put(SessionCommand(upload=chunk))
+        except Exception as exc:  # noqa: BLE001 — reported by the main thread
+            # The upload walk runs after target pre-validation, so a failure
+            # here is a deletion race or I/O error. Record it and terminate
+            # the command stream so the main thread never blocks on an
+            # empty queue; the error is reported after the stream drains.
+            producer_errors.append(exc)
+            cmd_queue.put(None)
 
     upload_thread = threading.Thread(target=_upload_producer, daemon=True)
     upload_thread.start()
@@ -241,8 +269,17 @@ def run_check(args: argparse.Namespace) -> None:
         sys.stderr.write(f"Engine error: {e.details()}\n")
         sys.exit(EXIT_ERROR)
     finally:
+        stop_event.set()
         cmd_queue.put(None)
+        upload_thread.join(timeout=30)
+        if upload_thread.is_alive():
+            sys.stderr.write("Error: upload worker did not stop in time\n")
+            sys.exit(EXIT_ERROR)
         channel.close()
+
+    if producer_errors:
+        sys.stderr.write(f"{producer_errors[0]}\n")
+        sys.exit(EXIT_ERROR)
 
     if not got_result:
         sys.stderr.write("Error: no session result received from engine\n")
