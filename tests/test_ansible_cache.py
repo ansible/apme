@@ -449,15 +449,84 @@ class TestPluginCacheCore:
             is None
         )
 
+    def test_introspect_partitions_by_ansible_config(self, tmp_path: Path) -> None:
+        """Introspect cache keys distinguish selected Ansible config files.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        cache = PluginCache()
+        venv = self._make_builtin_venv(tmp_path, "2.16.3")
+        self._make_venv(tmp_path, "community", "general", "5.8.0")
+
+        ctx_a = cache.introspect_context_suffix(venv, {"ANSIBLE_CONFIG": "/config/a.cfg"})
+        ctx_b = cache.introspect_context_suffix(venv, {"ANSIBLE_CONFIG": "/config/b.cfg"})
+        assert ctx_a != ctx_b
+
+        cache.put(
+            "introspect",
+            venv,
+            "community.general.copy",
+            {"builtin_alternative": "ansible.builtin.copy"},
+            introspect_context=ctx_a,
+        )
+        assert (
+            cache.get(
+                "introspect",
+                venv,
+                "community.general.copy",
+                introspect_context=ctx_b,
+            )
+            is None
+        )
+
+    def test_introspect_context_resolves_core_version_under_lock(self, tmp_path: Path) -> None:
+        """Context suffix version lookup is synchronized with cache operations.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        cache = PluginCache()
+        venv = self._make_builtin_venv(tmp_path, "2.16.3")
+        resolve_version = cache._resolve_version
+
+        def check_lock(venv_root: str, namespace: str, name: str) -> str:
+            """Confirm the version lookup runs while the cache lock is held.
+
+            Args:
+                venv_root: Venv root path passed to version lookup.
+                namespace: Collection namespace passed to version lookup.
+                name: Collection name passed to version lookup.
+
+            Returns:
+                Resolved version from the original lookup method.
+            """
+            lock_was_acquired = cache._lock.acquire(blocking=False)
+            if lock_was_acquired:
+                cache._lock.release()
+            assert not lock_was_acquired
+            return resolve_version(venv_root, namespace, name)
+
+        with patch.object(cache, "_resolve_version", side_effect=check_lock):
+            assert cache.introspect_context_suffix(venv) == "core:2.16.3"
+
     def test_collection_search_fingerprint_prefers_env_extra(self) -> None:
         """env_extra overrides take precedence over os.environ for fingerprinting."""
         with patch.dict(
             "os.environ",
-            {"ANSIBLE_COLLECTIONS_PATH": "/from-env"},
+            {
+                "ANSIBLE_COLLECTIONS_PATH": "/from-env",
+                "ANSIBLE_CONFIG": "/from-env.cfg",
+            },
             clear=False,
         ):
-            fp = _collection_search_fingerprint({"ANSIBLE_COLLECTIONS_PATH": "/from-extra"})
-        assert fp == "ANSIBLE_COLLECTIONS_PATH=/from-extra"
+            fp = _collection_search_fingerprint(
+                {
+                    "ANSIBLE_COLLECTIONS_PATH": "/from-extra",
+                    "ANSIBLE_CONFIG": "/from-extra.cfg",
+                }
+            )
+        assert fp == "ANSIBLE_COLLECTIONS_PATH=/from-extra|ANSIBLE_CONFIG=/from-extra.cfg"
 
     def test_no_version_means_no_cache(self, tmp_path: Path) -> None:
         """FQCN with no discoverable version returns None (no cache).

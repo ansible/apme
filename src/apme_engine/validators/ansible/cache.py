@@ -78,11 +78,15 @@ def _ansible_core_version(venv_root: str) -> str:
     return ""
 
 
-_COLLECTION_SEARCH_ENV_KEYS = ("ANSIBLE_COLLECTIONS_PATH", "ANSIBLE_COLLECTIONS_PATHS")
+_COLLECTION_SEARCH_ENV_KEYS = (
+    "ANSIBLE_COLLECTIONS_PATH",
+    "ANSIBLE_COLLECTIONS_PATHS",
+    "ANSIBLE_CONFIG",
+)
 
 
 def _collection_search_fingerprint(env_extra: dict[str, str] | None) -> str:
-    """Fingerprint env vars that affect collection plugin resolution.
+    """Fingerprint environment overrides that affect plugin resolution.
 
     Args:
         env_extra: Optional overrides merged into the subprocess environment.
@@ -193,7 +197,8 @@ class PluginCache:
         Returns:
             Context suffix (core version + collection search fingerprint).
         """
-        core_version = self._resolve_version(venv_root, "ansible", "builtin")
+        with self._lock:
+            core_version = self._resolve_version(venv_root, "ansible", "builtin")
         env_fp = _collection_search_fingerprint(env_extra)
         if env_fp:
             return f"core:{core_version}|{env_fp}"
