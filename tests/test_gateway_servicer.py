@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -455,8 +456,6 @@ async def test_notification_uses_persisted_violations_after_replay() -> None:
 
 async def test_report_fix_completed_stream_persists_scan() -> None:
     """Multi-chunk ReportFixCompletedStream reassembles and persists once."""
-    from collections.abc import AsyncIterator
-
     from apme_engine.daemon.chunked_reporting import yield_fix_completed_chunks
 
     servicer = ReportingServicer()
@@ -476,7 +475,8 @@ async def test_report_fix_completed_stream_persists_scan() -> None:
         content_graph_json='{"nodes":[{"id":"n1"}],"edges":[]}',
         summary=common_pb2.ScanSummary(total=1, auto_fixable=0, ai_candidate=0, manual_review=1),
     )
-    chunks = list(yield_fix_completed_chunks(event, chunk_max_bytes=40))
+    chunks = list(yield_fix_completed_chunks(event, chunk_max_bytes=40, max_message_bytes=20))
+    assert all(chunk.HasField("serialized_event_fragment") for chunk in chunks)
 
     async def _aiter() -> AsyncIterator[reporting_pb2.FixCompletedChunk]:
         for chunk in chunks:
@@ -500,8 +500,6 @@ async def test_report_fix_completed_stream_persists_scan() -> None:
 
 async def test_report_fix_completed_stream_rejects_missing_last() -> None:
     """Stream without last=true aborts and does not persist a scan."""
-    from collections.abc import AsyncIterator
-
     import grpc
 
     servicer = ReportingServicer()
@@ -531,8 +529,6 @@ async def test_report_fix_completed_stream_rejects_missing_last() -> None:
 
 async def test_report_fix_completed_stream_rejects_missing_scan_id() -> None:
     """Stream with last but no header scan_id aborts without persist."""
-    from collections.abc import AsyncIterator
-
     import grpc
 
     servicer = ReportingServicer()

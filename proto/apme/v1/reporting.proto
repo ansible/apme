@@ -49,8 +49,10 @@ message ProposalOutcome {
 message ReportAck {}
 
 // One batch of a streamed FixCompletedEvent (ADR-020 oversized path).
-// First chunk carries header (scalars + small nested messages). Subsequent
-// chunks carry batches of large repeated/blob fields. Final chunk sets last.
+// First chunk carries a header; subsequent chunks carry bounded batches of
+// repeated/blob fields. Events with a single field larger than the gRPC frame
+// limit use serialized_event_fragment to split the complete event across
+// frames. Final chunk sets last.
 message FixCompletedChunk {
   // First chunk only: scalars + small nested messages (no large repeated/blob fields).
   FixCompletedEvent header = 1;
@@ -62,6 +64,9 @@ message FixCompletedChunk {
   // UTF-8 fragments concatenated in order (empty on non-graph chunks).
   string content_graph_json_fragment = 7;
   bool last = 8;
+  // Optional serialized FixCompletedEvent fragment for an individually
+  // oversized field or header. All fragments are concatenated before parsing.
+  optional bytes serialized_event_fragment = 9;
 }
 
 // ---------------------------------------------------------------------------

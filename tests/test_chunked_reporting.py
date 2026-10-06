@@ -87,6 +87,43 @@ def test_yield_fragments_content_graph_json() -> None:
     assert chunks[-1].last is True
 
 
+def test_yield_fragments_individually_oversized_violation() -> None:
+    """A single repeated item larger than a frame uses serialized fragments."""
+    event = reporting_pb2.FixCompletedEvent(
+        scan_id="large-item",
+        session_id="sess",
+        project_path="/p",
+        remaining_violations=[_violation(1, "x" * 256)],
+    )
+
+    chunks = list(yield_fix_completed_chunks(event, chunk_max_bytes=40, max_message_bytes=100))
+
+    assert chunks
+    assert all(chunk.HasField("serialized_event_fragment") for chunk in chunks)
+    assert all(chunk.ByteSize() <= 100 for chunk in chunks)
+    assert chunks[-1].last is True
+    rebuilt = _reassemble_fix_completed(chunks)
+    assert rebuilt == event
+
+
+def test_yield_fragments_oversized_manifest_header() -> None:
+    """A manifest that cannot fit in the first frame uses wire fragments."""
+    event = reporting_pb2.FixCompletedEvent(
+        scan_id="large-manifest",
+        session_id="sess",
+        project_path="/p",
+        manifest=common_pb2.ProjectManifest(dependency_tree="tree" * 100),
+    )
+
+    chunks = list(yield_fix_completed_chunks(event, chunk_max_bytes=40, max_message_bytes=100))
+
+    assert chunks
+    assert all(chunk.HasField("serialized_event_fragment") for chunk in chunks)
+    assert all(chunk.ByteSize() <= 100 for chunk in chunks)
+    rebuilt = _reassemble_fix_completed(chunks)
+    assert rebuilt == event
+
+
 def test_reassemble_round_trip() -> None:
     """Chunk then reassemble restores the original event fields."""
     event = reporting_pb2.FixCompletedEvent(

@@ -11,12 +11,17 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+from collections.abc import AsyncIterator, Iterator
 
 import grpc
 import grpc.aio
 
 from apme.v1 import reporting_pb2, reporting_pb2_grpc
-from apme_engine.daemon.chunked_reporting import needs_streaming, yield_fix_completed_chunks
+from apme_engine.daemon.chunked_reporting import (
+    GRPC_MAX_MESSAGE_BYTES,
+    UNARY_MAX_BYTES,
+    yield_fix_completed_chunks,
+)
 
 logger = logging.getLogger("apme.events.grpc")
 
@@ -26,7 +31,38 @@ _FAST_FAIL_TIMEOUT_S = 1.0
 _HEALTH_INTERVAL_S = 10.0
 _STARTUP_PROBE_RETRIES = 5
 _STARTUP_PROBE_DELAY_S = 2.0
-_GRPC_MAX_MSG = 50 * 1024 * 1024  # 50 MiB — match Engine/validator limits
+_GRPC_MAX_MSG = GRPC_MAX_MESSAGE_BYTES
+
+
+def _next_chunk(
+    iterator: Iterator[reporting_pb2.FixCompletedChunk],
+) -> reporting_pb2.FixCompletedChunk | None:
+    """Advance the synchronous chunk packer once, returning None at EOF.
+
+    Args:
+        iterator: Lazy chunk iterator.
+
+    Returns:
+        Next chunk, or None when the iterator is exhausted.
+    """
+    return next(iterator, None)
+
+
+async def _async_chunks(
+    event: reporting_pb2.FixCompletedEvent,
+) -> AsyncIterator[reporting_pb2.FixCompletedChunk]:
+    """Run chunk packing in the executor and expose an async gRPC iterator.
+
+    Args:
+        event: Completed event to stream.
+
+    Yields:
+        reporting_pb2.FixCompletedChunk: Chunks produced lazily by the packer.
+    """
+    iterator = yield_fix_completed_chunks(event)
+    loop = asyncio.get_running_loop()
+    while (chunk := await loop.run_in_executor(None, _next_chunk, iterator)) is not None:
+        yield chunk
 
 
 class GrpcReportingSink:
@@ -97,7 +133,9 @@ class GrpcReportingSink:
         """
         if self._stub is None:
             return
-        stream = needs_streaming(event)
+        loop = asyncio.get_running_loop()
+        event_size = await loop.run_in_executor(None, event.ByteSize)
+        stream = event_size >= UNARY_MAX_BYTES
         if not self._available:
             timeout = _FAST_FAIL_TIMEOUT_S
         elif stream:
@@ -109,11 +147,11 @@ class GrpcReportingSink:
                 logger.info(
                     "Streaming FixCompletedEvent scan_id=%s (%d bytes) to %s",
                     event.scan_id,
-                    event.ByteSize(),
+                    event_size,
                     self._endpoint,
                 )
                 await self._stub.ReportFixCompletedStream(
-                    yield_fix_completed_chunks(event),
+                    _async_chunks(event),
                     timeout=timeout,
                 )
             else:

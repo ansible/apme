@@ -12,10 +12,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Iterable, Sequence
 from datetime import UTC, datetime
 
 import grpc
+from google.protobuf.message import DecodeError
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import select as sa_select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -50,6 +51,12 @@ logger = logging.getLogger(__name__)
 # Strong refs so fire-and-forget notification tasks are not GC'd mid-flight.
 _pending_notification_tasks: set[asyncio.Task[None]] = set()
 
+# A streamed event is bounded even though it can exceed the unary gRPC limit.
+# The chunk-count limit also rejects streams made from tiny or empty frames.
+MAX_STREAM_BYTES = 256 * 1024 * 1024
+MAX_STREAM_CHUNKS = 4096
+MAX_STREAM_CHUNK_BYTES = 50 * 1024 * 1024
+
 
 def _now_iso() -> str:
     return datetime.now(tz=UTC).isoformat()
@@ -80,44 +87,74 @@ def _diagnostics_to_json(diag: object) -> str | None:
     )
 
 
+def _merge_fix_completed_chunk(
+    event: reporting_pb2.FixCompletedEvent,
+    graph_parts: list[str],
+    chunk: reporting_pb2.FixCompletedChunk,
+) -> None:
+    """Merge one legacy typed chunk into an in-progress event.
+
+    Args:
+        event: Event being assembled.
+        graph_parts: UTF-8 graph fragments received so far.
+        chunk: Typed FixCompletedChunk to merge.
+    """
+    if chunk.HasField("header"):
+        header = chunk.header
+        event.scan_id = header.scan_id
+        event.session_id = header.session_id
+        event.project_path = header.project_path
+        event.source = header.source
+        if header.HasField("diagnostics"):
+            event.diagnostics.CopyFrom(header.diagnostics)
+        if header.HasField("summary"):
+            event.summary.CopyFrom(header.summary)
+        if header.HasField("report"):
+            event.report.CopyFrom(header.report)
+        if header.HasField("manifest"):
+            event.manifest.CopyFrom(header.manifest)
+    event.remaining_violations.extend(chunk.remaining_violations)
+    event.fixed_violations.extend(chunk.fixed_violations)
+    event.patches.extend(chunk.patches)
+    event.logs.extend(chunk.logs)
+    event.proposals.extend(chunk.proposals)
+    if chunk.content_graph_json_fragment:
+        graph_parts.append(chunk.content_graph_json_fragment)
+
+
 def _reassemble_fix_completed(
-    chunks: Sequence[reporting_pb2.FixCompletedChunk],
+    chunks: Iterable[reporting_pb2.FixCompletedChunk],
 ) -> reporting_pb2.FixCompletedEvent | None:
     """Merge streamed FixCompletedChunk messages into one FixCompletedEvent.
 
     Args:
-        chunks: Ordered chunks ending with ``last=True``.
+        chunks: Ordered chunks ending with ``last=True``. Legacy typed chunks
+            are merged field by field; serialized fragments are parsed as one
+            event.
 
     Returns:
         Reassembled event, or None if the stream is empty / missing identity.
     """
-    if not chunks:
-        return None
     event = reporting_pb2.FixCompletedEvent()
+    serialized_parts: list[bytes] = []
     graph_parts: list[str] = []
+    serialized_mode: bool | None = None
     for chunk in chunks:
-        if chunk.HasField("header"):
-            header = chunk.header
-            event.scan_id = header.scan_id
-            event.session_id = header.session_id
-            event.project_path = header.project_path
-            event.source = header.source
-            if header.HasField("diagnostics"):
-                event.diagnostics.CopyFrom(header.diagnostics)
-            if header.HasField("summary"):
-                event.summary.CopyFrom(header.summary)
-            if header.HasField("report"):
-                event.report.CopyFrom(header.report)
-            if header.HasField("manifest"):
-                event.manifest.CopyFrom(header.manifest)
-        event.remaining_violations.extend(chunk.remaining_violations)
-        event.fixed_violations.extend(chunk.fixed_violations)
-        event.patches.extend(chunk.patches)
-        event.logs.extend(chunk.logs)
-        event.proposals.extend(chunk.proposals)
-        if chunk.content_graph_json_fragment:
-            graph_parts.append(chunk.content_graph_json_fragment)
-    if graph_parts:
+        is_serialized = chunk.HasField("serialized_event_fragment")
+        if serialized_mode is None:
+            serialized_mode = is_serialized
+        elif serialized_mode != is_serialized:
+            return None
+        if is_serialized:
+            serialized_parts.append(chunk.serialized_event_fragment)
+        else:
+            _merge_fix_completed_chunk(event, graph_parts, chunk)
+    if serialized_mode:
+        try:
+            event.ParseFromString(b"".join(serialized_parts))
+        except DecodeError:
+            return None
+    elif graph_parts:
         event.content_graph_json = "".join(graph_parts)
     if not event.scan_id:
         return None
@@ -154,8 +191,9 @@ class ReportingServicer(reporting_pb2_grpc.ReportingServicer):
     ) -> reporting_pb2.ReportAck:
         """Reassemble a streamed FixCompletedEvent and persist once (ADR-020).
 
-        Chunks are accumulated until ``last=True``. Persistence runs only after
-        full reassembly so ADR-062 stub rewrite stays atomic.
+        Chunks are merged incrementally and bounded by total bytes and count.
+        Persistence runs only after full reassembly so ADR-062 stub rewrite
+        stays atomic.
 
         Args:
             request_iterator: Client stream of FixCompletedChunk messages.
@@ -164,13 +202,60 @@ class ReportingServicer(reporting_pb2_grpc.ReportingServicer):
         Returns:
             Empty acknowledgement after successful persist.
         """
-        chunks: list[reporting_pb2.FixCompletedChunk] = []
+        event = reporting_pb2.FixCompletedEvent()
+        graph_parts: list[str] = []
+        serialized_event = bytearray()
+        stream_mode: bool | None = None
+        total_bytes = 0
+        chunk_count = 0
         got_last = False
         async for chunk in request_iterator:
-            chunks.append(chunk)
+            if got_last:
+                await context.abort(
+                    grpc.StatusCode.INVALID_ARGUMENT,
+                    "FixCompletedChunk stream contains data after last=true",
+                )
+                return reporting_pb2.ReportAck()
+
+            chunk_count += 1
+            if chunk_count > MAX_STREAM_CHUNKS:
+                await context.abort(
+                    grpc.StatusCode.RESOURCE_EXHAUSTED,
+                    f"FixCompletedChunk stream exceeds {MAX_STREAM_CHUNKS} chunks",
+                )
+                return reporting_pb2.ReportAck()
+
+            chunk_size = chunk.ByteSize()
+            if chunk_size > MAX_STREAM_CHUNK_BYTES:
+                await context.abort(
+                    grpc.StatusCode.RESOURCE_EXHAUSTED,
+                    f"FixCompletedChunk exceeds {MAX_STREAM_CHUNK_BYTES} bytes",
+                )
+                return reporting_pb2.ReportAck()
+            total_bytes += chunk_size
+            if total_bytes > MAX_STREAM_BYTES:
+                await context.abort(
+                    grpc.StatusCode.RESOURCE_EXHAUSTED,
+                    f"FixCompletedChunk stream exceeds {MAX_STREAM_BYTES} bytes",
+                )
+                return reporting_pb2.ReportAck()
+
+            is_serialized = chunk.HasField("serialized_event_fragment")
+            if stream_mode is None:
+                stream_mode = is_serialized
+            elif stream_mode != is_serialized:
+                await context.abort(
+                    grpc.StatusCode.INVALID_ARGUMENT,
+                    "FixCompletedChunk stream mixes serialized and typed chunks",
+                )
+                return reporting_pb2.ReportAck()
+
+            if is_serialized:
+                serialized_event.extend(chunk.serialized_event_fragment)
+            else:
+                _merge_fix_completed_chunk(event, graph_parts, chunk)
             if chunk.last:
                 got_last = True
-                break
 
         if not got_last:
             await context.abort(
@@ -179,8 +264,22 @@ class ReportingServicer(reporting_pb2_grpc.ReportingServicer):
             )
             return reporting_pb2.ReportAck()
 
-        event = _reassemble_fix_completed(chunks)
-        if event is None:
+        if stream_mode:
+            serialized_bytes = bytes(serialized_event)
+            serialized_event = bytearray()
+            try:
+                event.ParseFromString(serialized_bytes)
+            except DecodeError:
+                await context.abort(
+                    grpc.StatusCode.INVALID_ARGUMENT,
+                    "FixCompletedChunk serialized event is malformed",
+                )
+                return reporting_pb2.ReportAck()
+            del serialized_bytes
+        elif graph_parts:
+            event.content_graph_json = "".join(graph_parts)
+
+        if not event.scan_id:
             await context.abort(
                 grpc.StatusCode.INVALID_ARGUMENT,
                 "FixCompletedChunk stream missing scan_id header",
@@ -190,7 +289,7 @@ class ReportingServicer(reporting_pb2_grpc.ReportingServicer):
         logger.info(
             "ReportFixCompletedStream reassembled scan_id=%s chunks=%d",
             event.scan_id,
-            len(chunks),
+            chunk_count,
         )
         return await self._persist_fix_completed(event, context)
 

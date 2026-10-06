@@ -1079,7 +1079,8 @@ def _build_pr_body(scan: Scan, patched_files: Sequence[PatchedFile]) -> str:
 
 # ── Operation driver (replaces WebSocket tunnel logic) ────────────────
 
-_SCAN_PERSIST_WAIT_S = 60.0
+# Leave time for the engine's 120s reporting stream deadline plus Gateway work.
+_SCAN_PERSIST_WAIT_S = 150.0
 _SCAN_PERSIST_POLL_S = 0.25
 
 
