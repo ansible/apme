@@ -39,7 +39,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Check: format + remediate (dry-run) — shows what would change",
         epilog="exit codes: 0 = no violations, 1 = violations found, 2 = error",
     )
-    check_p.add_argument("target", nargs="?", default=".", help="Path to playbook, role, or project")
+    check_p.add_argument("target", nargs="*", default=["."], help="Path(s) to playbook, role, or project")
+    check_p.add_argument("--exclude", nargs="*", default=None, help="Glob patterns to skip")
     check_p.add_argument("--diff", action="store_true", help="Show unified diffs of what remediate would change")
     check_output = check_p.add_mutually_exclusive_group()
     check_output.add_argument("--json", action="store_true", help="Output violations as JSON (includes diffs)")
@@ -100,7 +101,7 @@ def build_parser() -> argparse.ArgumentParser:
         parents=[global_opts],
         help="Normalize YAML formatting (indentation, key order, jinja spacing)",
     )
-    fmt_p.add_argument("target", nargs="?", default=".", help="Path to file or directory")
+    fmt_p.add_argument("target", nargs="*", default=["."], help="Path(s) to file or directory")
     fmt_p.add_argument("--apply", action="store_true", help="Write formatted files in place")
     fmt_p.add_argument("--check", action="store_true", help="Exit 1 if files would change (CI mode)")
     fmt_p.add_argument("--exclude", nargs="*", default=None, help="Glob patterns to skip")
@@ -117,7 +118,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Remediate: format + auto-fix, writes changes to disk",
         epilog="exit codes: 0 = all clean, 1 = remaining violations, 2 = error",
     )
-    remediate_p.add_argument("target", nargs="?", default=".", help="Path to file or directory")
+    remediate_p.add_argument("target", nargs="*", default=["."], help="Path(s) to file or directory")
+    remediate_p.add_argument("--exclude", nargs="*", default=None, help="Glob patterns to skip")
     remediate_p.add_argument("--max-passes", type=int, default=5, help="Max convergence passes (default: 5)")
     remediate_p.add_argument(
         "--ansible-version",

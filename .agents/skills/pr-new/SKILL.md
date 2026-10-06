@@ -378,6 +378,14 @@ break ``rpartition(":")``: empty host (``:port``), unbracketed IPv6
 ``host:abc``). If a caller claims graceful degrade and only catches
 ``ImportError``, also construct a parse ``ValueError`` through that
 caller. Do not treat “contains a colon” as proof of TCP.
+When a function degrades to identity (return original / omit from
+diffs / skip and continue) on failure, construct the caller path that
+reports "already clean", "idempotent", or "success" from an empty
+result list — require an explicit per-item diagnostic (error field,
+skipped list, WARNING progress/log) so failure is not presented as
+success. If that diagnostic is logged inside ``run_in_executor``,
+require ``contextvars.copy_context()`` (or an explicit progress event)
+so ADR-033 collectors and FixSession clients actually see it.
 Treat structured health/status bodies as contracts: reject
 substring/`"ok" in body` checks when the peer emits JSON with a
 ``status`` field — require exact equality (``status == "ok"``).
@@ -488,7 +496,11 @@ fix-now vs follow-up issue. Be skeptical.
 **Lens — system architecture:** Zoom out beyond this PR's files:
 - Dependency direction (gateway vs engine; no inverted imports)
 - Where state lives and failure modes (concurrency, restart,
-  multi-instance, partial flush/claim)
+  multi-instance, partial flush/claim). Client-visible IDs that
+  authorize or bind requests (gate ids, session tokens, generation
+  handles) must not reuse values across process lifetimes —
+  process-local counters reset on restart and can accept stale
+  client retries against a new operation
 - Scaling: algorithmic cost, PostgreSQL parameter limits, fan-out under load
 - Whether schemas/analytics support the views claimed in ADR/docs
 - Frontend/API contract readiness for the stated UX

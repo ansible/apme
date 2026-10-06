@@ -308,6 +308,8 @@ export interface ProjectOperationState {
   /** ADR-068: creation-time operation budget from SessionCreated. */
   operation_budget_seconds?: number;
   clone_commit?: string;
+  /** Opaque approval-round id; sent with POST /approve after proposals arrive. */
+  approval_gate_id?: string;
 }
 
 /**
@@ -394,7 +396,10 @@ export function applyOperationSseEvent(
         break;
       }
       case "proposals": {
-        const data = JSON.parse(ev.data) as { proposals: Proposal[] };
+        const data = JSON.parse(ev.data) as {
+          proposals: Proposal[];
+          approval_gate_id?: string;
+        };
         // Gateway always transitions to awaiting_approval before broadcasting
         // proposals. Set status here too so a missed/out-of-order status_changed
         // cannot leave the UI on applying/progress and skip Gate 2 review.
@@ -407,6 +412,9 @@ export function applyOperationSseEvent(
             ...prev,
             status: "awaiting_approval",
             proposals: data.proposals,
+            ...(data.approval_gate_id != null
+              ? { approval_gate_id: data.approval_gate_id }
+              : {}),
           };
         });
         break;

@@ -23,6 +23,7 @@ VERSION_DEFAULTS: dict[str, SpecifierSet] = {
     "M002": SpecifierSet(">=2.9"),  # deprecated module
     "M003": SpecifierSet(">=2.9"),  # module redirect
     "M004": SpecifierSet(">=2.9"),  # removed module
+    "M048": SpecifierSet(">=2.9"),  # prefer builtin FQCN twin
     # ── ansible-core 2.18 changes ────────────────────────────────────────
     "M010": SpecifierSet(">=2.18"),  # Python 2 interpreter dropped
     # ── ansible-core 2.19 changes ────────────────────────────────────────
@@ -49,6 +50,7 @@ VERSION_DEFAULTS: dict[str, SpecifierSet] = {
     "M028": SpecifierSet(">=2.23"),  # first_found auto-splitting deprecated
     "M029": SpecifierSet(">=2.23"),  # inventory script missing _meta
     "M030": SpecifierSet(">=2.23"),  # broken conditional expressions
+    "M047": SpecifierSet(">=2.23"),  # disable_lookups inventory arg removed
 }
 
 _STR_CACHE: dict[str, str] = {rule_id: str(spec) for rule_id, spec in VERSION_DEFAULTS.items()}

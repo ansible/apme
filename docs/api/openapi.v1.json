@@ -399,8 +399,19 @@
         "type": "object"
       },
       "ApproveRequest": {
-        "description": "Body for ``POST /approve``.\n\nAttributes:\n    approved_ids: List of proposal IDs the user accepted.",
+        "description": "Body for ``POST /approve``.\n\nAttributes:\n    approved_ids: List of proposal IDs the user accepted.\n    approval_gate_id: Gate identifier from the proposals snapshot/SSE event.",
         "properties": {
+          "approval_gate_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approval Gate Id"
+          },
           "approved_ids": {
             "items": {
               "type": "string"
@@ -597,11 +608,22 @@
         "type": "object"
       },
       "ComponentHealth": {
-        "description": "Health status for a single service component.\n\nAttributes:\n    name: Human-readable component name.\n    status: Health status (ok, unavailable, or degraded).\n    address: Network address of the component.",
+        "description": "Health status for a single service component.\n\nAttributes:\n    name: Human-readable component name.\n    status: Health status (ok, unavailable, or degraded).\n    address: Network address of the component.\n    detail: Optional human-readable detail (e.g. last-push freshness\n        for the Galaxy Proxy component).",
         "properties": {
           "address": {
             "title": "Address",
             "type": "string"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
           },
           "name": {
             "title": "Name",
@@ -621,7 +643,7 @@
         "type": "object"
       },
       "CreateGalaxyServerRequest": {
-        "description": "Request body for creating a Galaxy server.\n\nAttributes:\n    name: Short label.\n    url: Base API URL.\n    token: API token (optional, empty for public Galaxy).\n    auth_url: SSO/Keycloak token endpoint (optional).",
+        "description": "Request body for creating a Galaxy server.\n\nAttributes:\n    name: Short label.\n    url: Base API URL (``https://`` only \u2014 mirrors the proxy's 422 gate).\n    token: API token (optional, empty for public Galaxy).\n    auth_url: SSO/Keycloak token endpoint (optional).",
         "properties": {
           "auth_url": {
             "default": "",
@@ -2439,7 +2461,7 @@
         "type": "object"
       },
       "UpdateGalaxyServerRequest": {
-        "description": "Partial update for Galaxy server fields.\n\nAttributes:\n    name: New display label.\n    url: New base API URL.\n    token: New API token (omit or None to leave unchanged).\n    auth_url: New SSO endpoint.",
+        "description": "Partial update for Galaxy server fields.\n\nAttributes:\n    name: New display label.\n    url: New base API URL (``https://`` only when provided).\n    token: New API token (omit or None to leave unchanged).\n    auth_url: New SSO endpoint.",
         "properties": {
           "auth_url": {
             "anyOf": [
@@ -3990,7 +4012,7 @@
     },
     "/api/v1/projects/{project_id}/operation/approve": {
       "post": {
-        "description": "Submit approval decisions for live proposals (engine ids).\n\nGate-commits Gateway working-set rows (omit = decline) and rolls\nanalytics when claimable, then resolves the operation's\n``approval_future`` so the background gRPC task can send the approval\nto Engine. ``review_status`` is stamped when violation ids are already\nlinked; otherwise FixCompleted stamps after the id bridge. Request /\nresponse shape is unchanged (ADR-060).\n\nArgs:\n    project_id: Target project UUID.\n    body: Approved **engine** proposal IDs.\n\nReturns:\n    Confirmation message.\n\nRaises:\n    HTTPException: 404 if no operation, 409 if not in awaiting_approval.",
+        "description": "Submit approval decisions for live proposals (engine ids).\n\nGate-commits Gateway working-set rows (omit = decline) and rolls\nanalytics when claimable, then resolves the operation's\n``approval_gate`` so the background gRPC task can send the approval\nto Engine. ``review_status`` is stamped when violation ids are already\nlinked; otherwise FixCompleted stamps after the id bridge. Request /\nresponse shape is unchanged (ADR-060).\n\nArgs:\n    project_id: Target project UUID.\n    body: Approved **engine** proposal IDs.\n\nReturns:\n    Confirmation message.\n\nRaises:\n    HTTPException: 404 if no operation, 409 if not in awaiting_approval.",
         "operationId": "approve_proposals_api_v1_projects__project_id__operation_approve_post",
         "parameters": [
           {

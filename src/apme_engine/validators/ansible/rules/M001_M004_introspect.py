@@ -1,10 +1,11 @@
-"""M001-M004: Plugin introspection via ansible-core's find_plugin_with_context().
+"""M001-M004 / M048: Plugin introspection via ansible-core's find_plugin_with_context().
 
 Uses the venv's ansible-core to resolve modules and detect:
   M001 - FQCN resolution (module resolved to a different canonical name)
   M002 - Deprecated module (deprecation metadata in runtime.yml)
   M003 - Module redirect (module name redirected to new FQCN)
   M004 - Removed module (tombstoned, raises AnsiblePluginRemovedError)
+  M048 - Prefer ansible.builtin when a non-builtin FQCN has a builtin twin
 """
 
 import json
@@ -23,7 +24,10 @@ data = json.loads(sys.stdin.read())
 module_names = data.get("modules", [])
 results = {}
 
-from ansible.plugins.loader import module_loader
+from ansible.plugins.loader import init_plugin_loader, module_loader
+
+# Required so FQCN lookups (ansible.builtin.*, collections) resolve.
+init_plugin_loader()
 
 for name in module_names:
     info = {
@@ -34,6 +38,8 @@ for name in module_names:
         "removed": False,
         "removal_msg": "",
         "plugin_path": "",
+        "builtin_alternative": "",
+        "builtin_alternative_error": "",
     }
     try:
         ctx = module_loader.find_plugin_with_context(name, ignore_deprecated=False)
@@ -48,6 +54,26 @@ for name in module_names:
         if "Removed" in err_name or "removed" in str(e).lower():
             info["removed"] = True
             info["removal_msg"] = str(e)
+
+    # Prefer-builtin twin: only when the original name resolved to a
+    # non-builtin / non-legacy FQCN. Short-name lookup finds real
+    # builtins even when ansible.builtin.<short> is a redirect out of core.
+    resolved = info["fqcn"]
+    if (
+        resolved
+        and resolved.count(".") >= 2
+        and not resolved.startswith("ansible.builtin.")
+        and not resolved.startswith("ansible.legacy.")
+    ):
+        short = resolved.rsplit(".", 1)[-1]
+        try:
+            ctx2 = module_loader.find_plugin_with_context(short, ignore_deprecated=False)
+            if ctx2.resolved:
+                alt = getattr(ctx2, "resolved_fqcn", "") or ""
+                if alt.startswith("ansible.builtin."):
+                    info["builtin_alternative"] = alt
+        except Exception as e:
+            info["builtin_alternative_error"] = f"{type(e).__name__}: {e}"
 
     results[name] = info
 
@@ -77,14 +103,20 @@ def _run_introspection(
         return {}
 
     venv_str = str(venv_root)
-    cached_results, uncached = plugin_cache.partition("introspect", venv_str, module_names)
+    introspect_ctx = plugin_cache.introspect_context_suffix(venv_str, env_extra)
+    cached_results, uncached = plugin_cache.partition(
+        "introspect",
+        venv_str,
+        module_names,
+        introspect_context=introspect_ctx,
+    )
 
     if not uncached:
         return cached_results
 
     python = venv_root / "bin" / "python"
     if not python.is_file():
-        sys.stderr.write(f"M001-M004: venv python not found at {python}, skipping introspection\n")
+        sys.stderr.write(f"M001-M004/M048: venv python not found at {python}, skipping introspection\n")
         return cached_results
 
     env = dict(os.environ)
@@ -118,10 +150,21 @@ def _run_introspection(
         return cached_results
 
     for name, info in fresh.items():
-        resolved_fqcn = ""
-        if isinstance(info, dict):
-            resolved_fqcn = str(info.get("fqcn", ""))
-        plugin_cache.put("introspect", venv_str, name, info, resolved_fqcn=resolved_fqcn)
+        if not isinstance(info, dict):
+            continue
+        twin_err = str(info.pop("builtin_alternative_error", "") or "")
+        if twin_err:
+            sys.stderr.write(f"M048 twin lookup failed for {name}: {twin_err}\n")
+            continue
+        resolved_fqcn = str(info.get("fqcn", ""))
+        plugin_cache.put(
+            "introspect",
+            venv_str,
+            name,
+            info,
+            resolved_fqcn=resolved_fqcn,
+            introspect_context=introspect_ctx,
+        )
 
     merged: dict[str, object] = {}
     merged.update(cached_results)
@@ -135,7 +178,7 @@ def run(
     env_extra: dict[str, str] | None = None,
     **_kwargs: object,
 ) -> list[dict[str, object]]:
-    """Run plugin introspection and return M001-M004 violations.
+    """Run plugin introspection and return M001-M004 / M048 violations.
 
     Args:
         task_nodes: List of task node dicts.
@@ -144,7 +187,7 @@ def run(
         **_kwargs: Ignored keyword arguments.
 
     Returns:
-        List of violation dicts for M001, M002, M003, M004.
+        List of violation dicts for M001, M002, M003, M004, and M048.
     """
     module_set: set[str] = set()
     for n in task_nodes:
@@ -209,6 +252,32 @@ def run(
                     "original_module": module_name,
                 }
             )
+
+        # M048: Prefer ansible.builtin when a non-builtin FQCN has a builtin twin.
+        # Short names are owned by M001; only already-FQCN module names fire here.
+        # resolved_fqcn is the rewrite target (builtin), matching M001/M003 polarity.
+        builtin_alt = str(info.get("builtin_alternative", "") or "")
+        if builtin_alt and str(module_name).count(".") >= 2:
+            prefer_from = fqcn if fqcn.count(".") >= 2 else module_name
+            if (
+                prefer_from.count(".") >= 2
+                and not prefer_from.startswith("ansible.builtin.")
+                and not prefer_from.startswith("ansible.legacy.")
+            ):
+                violations.append(
+                    {
+                        "rule_id": "M048",
+                        "severity": "low",
+                        "message": f"Prefer builtin module: {prefer_from} -> {builtin_alt}",
+                        "file": file_path,
+                        "line": line_num,
+                        "path": node.get("key", ""),
+                        "scope": "task",
+                        "resolved_fqcn": builtin_alt,
+                        "original_module": module_name,
+                        "builtin_alternative": builtin_alt,
+                    }
+                )
 
         # M002: Deprecation
         if info.get("deprecated") or info.get("warnings"):

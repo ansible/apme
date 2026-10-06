@@ -16,7 +16,7 @@
 
 ```bash
 # tox — sole developer orchestration tool (ADR-047)
-uv tool install tox --with tox-uv
+uv tool install tox==4.53.0 --with tox-uv==1.36.0
 
 # prek — git hooks (runs automatically on commit)
 uv tool install prek
@@ -50,6 +50,7 @@ tox is the single entry point for all developer tasks. Every CI check has a corr
 | `tox -e lint` | `prek run --all-files` (ruff, mypy, pydoclint, uv-lock) | Quality gate |
 | `tox -e unit` | `pytest` with coverage (`--cov-fail-under=70`) | Test |
 | `tox -e integration` | `pytest tests/integration/` (requires OPA binary) | Test |
+| `tox -e e2e` | Full pod lifecycle e2e: rebuild, start pod, scan, assert violations | Test |
 | `tox -e ai` | `pytest` with AI extras (abbenay) | Test |
 | `tox -e ui` | `pytest -m ui` (Playwright, requires running gateway + UI) | Test |
 | `tox -e ui-workflow-pack` | `npm pack` for `@apme/ui-workflow` (release tarball) | Test |
@@ -113,14 +114,15 @@ Configuration: `[tool.ruff]` and `[tool.ruff.lint.pydocstyle]` (convention = goo
 
 Prek runs automatically on pull requests targeting `main` via GitHub Actions (`.github/workflows/prek.yml`). Tests run via tox in `.github/workflows/test.yml`.
 
-### Running ruff directly
+### Lint and format (via tox, ADR-047)
 
 ```bash
-ruff check src/ tests/          # lint
-ruff check --fix src/ tests/    # lint + auto-fix
-ruff format src/ tests/         # format
-ruff format --check src/ tests/ # format check (CI mode)
+tox -e lint              # prek: ruff check + format, mypy, pydoclint
+tox -e unit -- -k ...    # run a subset of unit tests
 ```
+
+Never invoke `ruff`, `mypy`, `prek`, or `pytest` directly — always go
+through `tox -e <env>` (see `/tox` skill reference).
 
 ## Code organization
 
@@ -619,7 +621,7 @@ uv run python scripts/debug/ws-diag.py tests/fixtures/terrible-playbook
 | Prefix | Category | Examples |
 |--------|----------|----------|
 | **L** | Lint (style, correctness, best practice) | L002–L059 |
-| **M** | Modernize (ansible-core metadata) | M001–M030 |
+| **M** | Modernize (ansible-core metadata) | M001–M047 |
 | **R** | Risk/security (annotation-based) | R101–R501, R118 |
 | **P** | Policy (legacy, superseded by L058/L059) | P001–P004 |
 

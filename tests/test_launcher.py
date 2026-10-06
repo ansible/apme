@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import json
 import signal
 import socket
@@ -16,6 +17,7 @@ from apme_engine.daemon.launcher import (
     _address_port_bound,
     _assert_ports_free,
     _check_port_available,
+    _probe_targets,
     _proc_starttime,
     daemon_status,
 )
@@ -39,6 +41,89 @@ def test_check_port_available_on_free_port() -> None:
     assert _check_port_available("127.0.0.1", port) is True
 
 
+def test_check_port_available_normalizes_wildcard_hosts() -> None:
+    """Wildcard hosts expand to local addresses and must not bind all interfaces."""
+    port = _ephemeral_port()
+    assert _check_port_available("0.0.0.0", port) is True
+    assert _check_port_available("", port) is True
+    assert _check_port_available("::", port) is True
+    assert _check_port_available("0:0:0:0:0:0:0:0", port) is True
+    assert _check_port_available("[0:0:0:0:0:0:0:0]", port) is True
+
+
+def test_probe_targets_expands_unspecified_ipv6_forms() -> None:
+    """Expanded IPv6 unspecified hosts expand to concrete local addresses."""
+    canonical = _probe_targets("::")
+    assert canonical == _probe_targets("0:0:0:0:0:0:0:0")
+    assert canonical == _probe_targets("[0:0:0:0:0:0:0:0]")
+    assert all(addr not in {"", "::", "0:0:0:0:0:0:0:0"} for _, addr in canonical)
+
+
+def test_check_port_available_skips_unsupported_ipv6_family(monkeypatch: MonkeyPatch) -> None:
+    """IPv6-disabled hosts still probe IPv4 targets for ``::`` wildcards.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+    real_socket = socket.socket
+
+    def _socket(family: int, sock_type: int = socket.SOCK_STREAM, proto: int = 0) -> socket.socket:
+        if family == socket.AF_INET6:
+            raise OSError(errno.EAFNOSUPPORT, "Address family not supported")
+        return real_socket(family, sock_type, proto)
+
+    monkeypatch.setattr("apme_engine.daemon.launcher.socket.socket", _socket)
+    port = _ephemeral_port()
+    assert _check_port_available("::", port) is True
+
+
+def _first_non_loopback_ipv4() -> str | None:
+    """Return a non-loopback IPv4 address assigned to this host, if any.
+
+    Returns:
+        An IPv4 string, or ``None`` when only loopback is available.
+    """
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET, socket.SOCK_STREAM):
+            raw_ip = info[4][0]
+            if isinstance(raw_ip, str) and raw_ip and not raw_ip.startswith("127."):
+                return raw_ip
+    except OSError:
+        pass
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.connect(("192.0.2.1", 1))
+            raw_ip = sock.getsockname()[0]
+            if isinstance(raw_ip, str) and raw_ip and not raw_ip.startswith("127."):
+                return raw_ip
+    except OSError:
+        pass
+    return None
+
+
+def test_wildcard_probe_detects_non_loopback_occupant() -> None:
+    """Wildcard hosts report busy when a non-loopback interface owns the port."""
+    addr = _first_non_loopback_ipv4()
+    if addr is None:
+        pytest.skip("no non-loopback IPv4 address available")
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        sock.bind((addr, 0))
+    except OSError:
+        pytest.skip(f"cannot bind to non-loopback address {addr}")
+    sock.listen(1)
+    port = sock.getsockname()[1]
+    try:
+        assert _check_port_available("0.0.0.0", port) is False
+        assert _check_port_available("", port) is False
+        assert _check_port_available("::", port) is False
+        # Concrete loopback probe still sees the port as free on lo.
+        assert _check_port_available("127.0.0.1", port) is True
+    finally:
+        sock.close()
+
+
 def test_check_port_available_on_bound_port() -> None:
     """A port that is already bound should report as unavailable."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -50,6 +135,31 @@ def test_check_port_available_on_bound_port() -> None:
         assert _check_port_available("127.0.0.1", port) is False
     finally:
         sock.close()
+
+
+def test_ipv6_wildcard_probe_detects_ipv4_only_listener() -> None:
+    """An IPv6 wildcard check detects an IPv4-only listener for dual-stack binds."""
+    try:
+        with socket.socket(socket.AF_INET6, socket.SOCK_STREAM):
+            pass
+    except OSError:
+        pytest.skip("IPv6 sockets are unavailable")
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+        sock.listen(1)
+        assert _check_port_available("::", port) is False
+    finally:
+        sock.close()
+
+
+def test_probe_targets_ipv6_wildcard_includes_ipv4() -> None:
+    """IPv6 wildcard probes include concrete IPv4 targets for dual-stack listeners."""
+    targets = _probe_targets("::")
+    assert (socket.AF_INET, "127.0.0.1") in targets
 
 
 def test_assert_ports_free_raises_on_conflict() -> None:

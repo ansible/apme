@@ -34,7 +34,7 @@ rules:
 Suppress rules on specific tasks using `# noqa`:
 
 ```yaml
-- name: Run dangerous command  # noqa: R108, L030
+- name: Run dangerous command  # noqa: R108, L026
   ansible.builtin.shell: rm -rf /tmp/*
 ```
 
@@ -154,10 +154,7 @@ When using the OPA validator programmatically:
 ```python
 from apme_engine.validators.opa import OpaValidator
 
-validator = OpaValidator(
-    bundle_path="/path/to/my-custom-rules",
-    entrypoint="data.apme.custom.violations"
-)
+validator = OpaValidator(bundle_path="/path/to/my-custom-rules", entrypoint="data.apme.custom.violations")
 ```
 
 ### Third-Party Plugin Services (Future)

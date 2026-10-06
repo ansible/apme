@@ -15,8 +15,8 @@ dependencies = [
     "ruamel.yaml",
     "filelock",
     "rapidfuzz",
-    "grpcio>=1.83.0",
-    "grpcio-health-checking>=1.83.0",
+    "grpcio>=1.84.0",
+    "grpcio-health-checking>=1.84.0",
     "protobuf>=7.35.1,<8",
     "networkx>=3.1",
     "httpx",
@@ -53,7 +53,7 @@ dev = [
     "types-protobuf",
     "types-PyYAML",
     "grpc-stubs",
-    "grpcio-tools>=1.83.0",
+    "grpcio-tools>=1.84.0",
     "pytest-playwright",
     "pytest-xdist>=3.5",
 ]
@@ -217,10 +217,11 @@ where = ["src"]
 
 [tool.uv]
 constraint-dependencies = [
+    "anyio>=4.14.2",
     "cryptography>=50.0.0",
     "idna>=3.15",
     "msgpack>=1.2.1",
-    "pip>=26.1",
+    "pip>=26.2",
     "pygments>=2.20.0",
     "requests>=2.33.0",
     "setuptools>=83.0.0,<84",

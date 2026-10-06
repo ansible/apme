@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, ClassVar, cast
 import networkx as nx  # type: ignore[import-untyped]
 
 from apme_engine.graph.types import RemediationResolution, ViolationDict, YAMLDict, YAMLValue
+from apme_engine.rule_ids import normalize_rule_id
 
 if TYPE_CHECKING:
     from ruamel.yaml.comments import CommentedMap as _CommentedMap
@@ -104,6 +105,19 @@ class EdgeType(str, Enum):
     PY_IMPORTS = "py_imports"
     VARS_INCLUDE = "vars_include"
     CONTAINS = "contains"
+
+
+# Canonical set of edge-type values that carry positional (structural)
+# ancestry: CONTAINS, INCLUDE, IMPORT. Shared by the positional-ancestor
+# queries below and by ``variable_helpers`` — add a new positional edge
+# type here, not in a per-method copy.
+_POSITIONAL_EDGE_VALUES = frozenset(
+    {
+        EdgeType.CONTAINS.value,
+        EdgeType.INCLUDE.value,
+        EdgeType.IMPORT.value,
+    }
+)
 
 
 class NodeScope(str, Enum):
@@ -267,22 +281,12 @@ class ViolationRecord:
     ai_suggestion: str | None = None
 
 
-def _normalize_rule_id(rule_id: str) -> str:
-    """Strip legacy ``native:`` prefix from a rule ID.
-
-    Args:
-        rule_id: Raw rule ID, possibly prefixed.
-
-    Returns:
-        Bare rule ID suitable for ledger keys.
-    """
-    if rule_id.startswith("native:"):
-        return rule_id[len("native:") :]
-    return rule_id
-
-
 def _violation_key(v: ViolationDict) -> ViolationKey:
     """Derive a ``ViolationKey`` from a violation dict.
+
+    The rule ID is normalized with the canonical
+    :func:`~apme_engine.rule_ids.normalize_rule_id` so ledger keys agree
+    with remediation routing (leaf module — no import cycle).
 
     Args:
         v: Violation dict with ``path`` and ``rule_id`` entries.
@@ -290,7 +294,7 @@ def _violation_key(v: ViolationDict) -> ViolationKey:
     Returns:
         ``(path, normalized_rule_id)`` tuple.
     """
-    return (str(v.get("path", "")), _normalize_rule_id(str(v.get("rule_id", ""))))
+    return (str(v.get("path", "")), normalize_rule_id(str(v.get("rule_id", ""))))
 
 
 def _content_hash(text: str) -> str:
@@ -943,6 +947,39 @@ class ContentGraph:
                 count += 1
         return count
 
+    def _transition_violations(
+        self,
+        node_id: str,
+        from_status: str,
+        to_status: str,
+        *,
+        clear_attribution: bool = False,
+    ) -> int:
+        """Move a node's ledger entries from one status to another.
+
+        Args:
+            node_id: Graph node whose violations to transition.
+            from_status: Only entries currently in this status move.
+            to_status: Status to assign to matching entries.
+            clear_attribution: When True, reset ``fixed_by`` and
+                ``fixed_in_pass`` on transitioned entries (declines).
+
+        Returns:
+            Number of violations transitioned.
+        """
+        node = self.get_node(node_id)
+        if node is None:
+            return 0
+        count = 0
+        for record in node.violation_ledger.values():
+            if record.status == from_status:
+                record.status = to_status
+                if clear_attribution:
+                    record.fixed_by = None
+                    record.fixed_in_pass = None
+                count += 1
+        return count
+
     def approve_pending_review(self, node_id: str) -> int:
         """Promote ``pending_review`` violations to ``fixed`` on a node.
 
@@ -954,15 +991,7 @@ class ContentGraph:
         Returns:
             Number of violations promoted.
         """
-        node = self.get_node(node_id)
-        if node is None:
-            return 0
-        count = 0
-        for record in node.violation_ledger.values():
-            if record.status == "pending_review":
-                record.status = "fixed"
-                count += 1
-        return count
+        return self._transition_violations(node_id, "pending_review", "fixed")
 
     def decline_pending_review(self, node_id: str) -> int:
         """Transition ``pending_review`` violations to ``declined`` on a node.
@@ -975,17 +1004,7 @@ class ContentGraph:
         Returns:
             Number of violations declined.
         """
-        node = self.get_node(node_id)
-        if node is None:
-            return 0
-        count = 0
-        for record in node.violation_ledger.values():
-            if record.status == "pending_review":
-                record.status = "declined"
-                record.fixed_by = None
-                record.fixed_in_pass = None
-                count += 1
-        return count
+        return self._transition_violations(node_id, "pending_review", "declined", clear_attribution=True)
 
     def approve_proposed(self, node_id: str) -> int:
         """Promote ``proposed`` violations to ``fixed`` on a node.
@@ -998,15 +1017,7 @@ class ContentGraph:
         Returns:
             Number of violations promoted.
         """
-        node = self.get_node(node_id)
-        if node is None:
-            return 0
-        count = 0
-        for record in node.violation_ledger.values():
-            if record.status == "proposed":
-                record.status = "fixed"
-                count += 1
-        return count
+        return self._transition_violations(node_id, "proposed", "fixed")
 
     def decline_proposed(self, node_id: str) -> int:
         """Transition ``proposed`` violations to ``declined`` on a node.
@@ -1021,17 +1032,7 @@ class ContentGraph:
         Returns:
             Number of violations declined.
         """
-        node = self.get_node(node_id)
-        if node is None:
-            return 0
-        count = 0
-        for record in node.violation_ledger.values():
-            if record.status == "proposed":
-                record.status = "declined"
-                record.fixed_by = None
-                record.fixed_in_pass = None
-                count += 1
-        return count
+        return self._transition_violations(node_id, "proposed", "declined", clear_attribution=True)
 
     def decline_open_violations(self, violations: list[ViolationDict]) -> int:
         """Transition matching ``open`` ledger entries to sticky ``declined``.
@@ -1481,13 +1482,7 @@ class ContentGraph:
         current = node_id
         if play_scope is None and play_context_id is not None:
             play_scope = self.play_scoped_node_ids(play_context_id)
-        positional = frozenset(
-            {
-                EdgeType.CONTAINS.value,
-                EdgeType.INCLUDE.value,
-                EdgeType.IMPORT.value,
-            }
-        )
+        positional = _POSITIONAL_EDGE_VALUES
         while True:
             parents = sorted(
                 src for src, _, data in self.g.in_edges(current, data=True) if data.get("edge_type") in positional
@@ -1509,6 +1504,44 @@ class ContentGraph:
             current = parent_id
         return result
 
+    def play_scoped_positional_ancestors(self, node_id: str, play_scope: set[str]) -> list[ContentNode]:
+        """Return merged positional ancestors from all in-scope include paths.
+
+        Unlike :meth:`positional_ancestors`, follows every in-scope parent
+        edge instead of choosing the lexicographically first parent. Ancestors
+        are ordered closest-first; same-depth parents are sorted by node id
+        for deterministic conflict resolution.
+
+        Args:
+            node_id: Node whose in-scope ancestor chain is walked upward.
+            play_scope: Precomputed play-scoped node IDs.
+
+        Returns:
+            Ancestor ``ContentNode`` instances from immediate parent toward root.
+        """
+        result: list[ContentNode] = []
+        seen: set[str] = set()
+        positional = _POSITIONAL_EDGE_VALUES
+        current_level = sorted(
+            src
+            for src, _, data in self.g.in_edges(node_id, data=True)
+            if data.get("edge_type") in positional and src in play_scope
+        )
+        while current_level:
+            next_level: list[str] = []
+            for parent_id in current_level:
+                if parent_id in seen:
+                    continue
+                seen.add(parent_id)
+                parent_node = self.get_node(parent_id)
+                if parent_node is not None:
+                    result.append(parent_node)
+                for src, _, data in self.g.in_edges(parent_id, data=True):
+                    if data.get("edge_type") in positional and src in play_scope and src not in seen:
+                        next_level.append(src)
+            current_level = sorted(set(next_level))
+        return result
+
     def positional_ancestor_ids(self, node_id: str) -> set[str]:
         """Return ancestor node IDs via CONTAINS, INCLUDE, or IMPORT edges.
 
@@ -1525,13 +1558,7 @@ class ContentGraph:
         result: set[str] = set()
         seen: set[str] = set()
         stack = [node_id]
-        positional = frozenset(
-            {
-                EdgeType.CONTAINS.value,
-                EdgeType.INCLUDE.value,
-                EdgeType.IMPORT.value,
-            }
-        )
+        positional = _POSITIONAL_EDGE_VALUES
         while stack:
             current = stack.pop()
             for src, _, data in self.g.in_edges(current, data=True):

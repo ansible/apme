@@ -393,7 +393,7 @@ export function OperationPanel({
           aiAccepted={state.result?.ai_accepted ?? 0}
           remediatedCount={state.result?.remediated_count ?? 0}
           onContinue={() => setAiApplyFinished(true)}
-          onCancel={handleCancel}
+          onDismiss={onDismiss}
         />,
         stepperOpts,
       );

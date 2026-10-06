@@ -75,8 +75,10 @@ over `127.0.0.1` (ADR-005) except Engine→Abbenay gRPC, which uses a Unix socke
    `127.0.0.1:<port>`, matching Podman. Engine→Abbenay gRPC uses a Unix socket
    on a shared `emptyDir` (`APME_ABBENAY_ADDR=unix:///tmp/abbenay-run/abbenay/daemon.sock`)
    because `abbenay-client` ≥ 2026.8.7 rejects consumer tokens on plaintext TCP.
-   Abbenay still binds `--grpc-host 127.0.0.1` as leftover TCP (no token);
-   Helm probes connect to the Unix socket.
+   Abbenay still binds `--grpc-host 127.0.0.1` as leftover TCP (no token).
+   Helm readiness/liveness probes run in-container via
+   `/opt/abbenay/abbenay status` (Unix socket) — kubelet `tcpSocket` cannot
+   reach loopback-only listeners, and the published image has no `node` (#734).
 3. **Single replica** — Chart defaults and validation: `replicas: 1`. HPA for
    this Deployment is disabled or rejected. Multi-replica requires a future ADR
   that reintroduces a split (or otherwise solves database + session
@@ -184,8 +186,8 @@ EAP AI remediation.
 - Update `docs/guides/DEPLOYMENT.md`, chart README/NOTES, and
   `.sdlc/context/architecture.md` Scaling section.
 - Align or simplify APME #400 / PR #492: keep client TLS factory for non-Helm
-  remote Abbenay if needed; chart Engine gRPC is a Unix socket, TCP loopback
-  remains for in-container probes.
+  remote Abbenay if needed; chart Engine gRPC is a Unix socket; leftover TCP
+  loopback remains but Helm probes use `abbenay status` (not kubelet TCP).
 - Follow-up: Abbenay #65 (cert reuse) remains useful for non-Simple remote
   clients, not required for this chart topology.
 - Add PostgreSQL 16 as a sidecar with a `*-postgres-data` PVC and wire Gateway
@@ -218,3 +220,4 @@ EAP AI remediation.
 | 2026-08-24 | APME Team | Engine→Abbenay gRPC uses a shared Unix socket; leftover TCP `:50057`; Helm probes the socket |
 | 2026-09-16 | APME Team | EAP Simple Helm owns a PostgreSQL sidecar and persistent database PVC; external PostgreSQL is an explicit override |
 | 2026-09-22 | Agent | Status → Implemented — Helm chart enforces Simple all-in-one topology (`replicas: 1`, co-located engine/Gateway/UI/Abbenay) |
+| 2026-10-01 | Agent | Helm Abbenay probes use in-container `/opt/abbenay/abbenay status` (not `node`, not kubelet `tcpSocket` on loopback-only `:50057`) (#734) |

@@ -91,7 +91,7 @@ class ListAllUsedVariablesGraphRule(GraphRule):
     description: str = "Report variables used at end of sequence"
     enabled: bool = False
     name: str = "ListAllUsedVariables"
-    version: str = "v0.0.1"
+    version: str = "v0.0.2"
     severity: Severity = Severity.INFO
     tags: tuple[str, ...] = (Tag.DEBUG,)
     scope: str = RuleScope.PLAY
@@ -174,7 +174,11 @@ class ListAllUsedVariablesGraphRule(GraphRule):
             if not pre_refs and not post_refs:
                 continue
             if tid not in resolved_by_task:
-                resolved_by_task[tid] = resolver.resolve_variables(tid)
+                resolved_by_task[tid] = resolver.resolve_variables(
+                    tid,
+                    play_context_id=node_id,
+                    play_scope=play_scope,
+                )
             resolved = resolved_by_task[tid]
             task_node = graph.get_node(tid)
             task_path = task_node.identity.path if task_node else tid

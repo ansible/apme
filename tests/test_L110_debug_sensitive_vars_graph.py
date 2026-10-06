@@ -330,6 +330,149 @@ class TestDebugSensitiveVarsGraphRule:
         assert result is not None
         assert result.verdict is False
 
+    def _make_shared_include_graph(
+        self,
+        *,
+        play_a_no_log: bool | None,
+        play_b_no_log: bool | None,
+    ) -> tuple[ContentGraph, str]:
+        """Build two plays including the same task file with a debug task.
+
+        Args:
+            play_a_no_log: no_log setting on the first play.
+            play_b_no_log: no_log setting on the second play.
+
+        Returns:
+            Tuple of (graph, shared debug task node id).
+        """
+        g = ContentGraph()
+        pb = ContentNode(
+            identity=NodeIdentity(path="site.yml", node_type=NodeType.PLAYBOOK),
+            file_path="site.yml",
+            scope=NodeScope.OWNED,
+        )
+        g.add_node(pb)
+        for i, play_no_log in enumerate((play_a_no_log, play_b_no_log)):
+            play = ContentNode(
+                identity=NodeIdentity(path=f"site.yml/plays[{i}]", node_type=NodeType.PLAY),
+                file_path="site.yml",
+                no_log=play_no_log,
+                scope=NodeScope.OWNED,
+            )
+            g.add_node(play)
+            g.add_edge(pb.node_id, play.node_id, EdgeType.CONTAINS)
+            inc = ContentNode(
+                identity=NodeIdentity(path=f"site.yml/plays[{i}]/tasks[0]", node_type=NodeType.TASK),
+                file_path="site.yml",
+                module="ansible.builtin.include_tasks",
+                module_options={"file": "shared.yml"},
+                scope=NodeScope.OWNED,
+            )
+            g.add_node(inc)
+            g.add_edge(play.node_id, inc.node_id, EdgeType.CONTAINS)
+            g.add_edge(inc.node_id, "shared.yml", EdgeType.INCLUDE)
+        taskfile = ContentNode(
+            identity=NodeIdentity(path="shared.yml", node_type=NodeType.TASKFILE),
+            file_path="shared.yml",
+            scope=NodeScope.OWNED,
+        )
+        g.add_node(taskfile)
+        task = ContentNode(
+            identity=NodeIdentity(path="shared.yml/tasks[0]", node_type=NodeType.TASK),
+            file_path="shared.yml",
+            module="ansible.builtin.debug",
+            module_options={"msg": "Password: {{ db_password }}"},
+            scope=NodeScope.OWNED,
+        )
+        g.add_node(task)
+        g.add_edge(taskfile.node_id, task.node_id, EdgeType.CONTAINS)
+        return g, task.node_id
+
+    def test_shared_include_unprotected_play_fires(self) -> None:
+        """Shared task fires when any enclosing play lacks no_log."""
+        g, task_id = self._make_shared_include_graph(
+            play_a_no_log=True,
+            play_b_no_log=None,
+        )
+        rule = DebugSensitiveVarsGraphRule()
+
+        assert rule.match(g, task_id)
+        result = rule.process(g, task_id)
+
+        assert result is not None
+        assert result.verdict is True
+
+    def test_shared_include_all_protected_passes(self) -> None:
+        """Shared task passes when every enclosing play sets no_log."""
+        g, task_id = self._make_shared_include_graph(
+            play_a_no_log=True,
+            play_b_no_log=True,
+        )
+        rule = DebugSensitiveVarsGraphRule()
+
+        result = rule.process(g, task_id)
+
+        assert result is not None
+        assert result.verdict is False
+
+    def test_shared_include_diamond_unprotected_path_fires(self) -> None:
+        """One unprotected include path in a play leaks despite a protected one."""
+        g = ContentGraph()
+        pb = ContentNode(
+            identity=NodeIdentity(path="site.yml", node_type=NodeType.PLAYBOOK),
+            file_path="site.yml",
+            scope=NodeScope.OWNED,
+        )
+        play = ContentNode(
+            identity=NodeIdentity(path="site.yml/plays[0]", node_type=NodeType.PLAY),
+            file_path="site.yml",
+            scope=NodeScope.OWNED,
+        )
+        g.add_node(pb)
+        g.add_node(play)
+        g.add_edge(pb.node_id, play.node_id, EdgeType.CONTAINS)
+        block = ContentNode(
+            identity=NodeIdentity(path="site.yml/plays[0]/block[0]", node_type=NodeType.BLOCK),
+            file_path="site.yml",
+            no_log=True,
+            scope=NodeScope.OWNED,
+        )
+        g.add_node(block)
+        g.add_edge(play.node_id, block.node_id, EdgeType.CONTAINS)
+        for i, parent_id in enumerate((block.node_id, play.node_id)):
+            inc = ContentNode(
+                identity=NodeIdentity(path=f"site.yml/plays[0]/tasks[{i}]", node_type=NodeType.TASK),
+                file_path="site.yml",
+                module="ansible.builtin.include_tasks",
+                module_options={"file": "shared.yml"},
+                scope=NodeScope.OWNED,
+            )
+            g.add_node(inc)
+            g.add_edge(parent_id, inc.node_id, EdgeType.CONTAINS)
+            g.add_edge(inc.node_id, "shared.yml", EdgeType.INCLUDE)
+        taskfile = ContentNode(
+            identity=NodeIdentity(path="shared.yml", node_type=NodeType.TASKFILE),
+            file_path="shared.yml",
+            scope=NodeScope.OWNED,
+        )
+        g.add_node(taskfile)
+        task = ContentNode(
+            identity=NodeIdentity(path="shared.yml/tasks[0]", node_type=NodeType.TASK),
+            file_path="shared.yml",
+            module="ansible.builtin.debug",
+            module_options={"msg": "Password: {{ db_password }}"},
+            scope=NodeScope.OWNED,
+        )
+        g.add_node(task)
+        g.add_edge(taskfile.node_id, task.node_id, EdgeType.CONTAINS)
+
+        rule = DebugSensitiveVarsGraphRule()
+        assert rule.match(g, task.node_id)
+        result = rule.process(g, task.node_id)
+
+        assert result is not None
+        assert result.verdict is True
+
     def test_non_sensitive_var_passes(self) -> None:
         """Rule passes when debug msg contains only non-sensitive vars."""
         graph, task_id = _make_debug_graph(msg="User: {{ username }}")

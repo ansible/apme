@@ -311,6 +311,54 @@ def test_set_ai_triage_ignores_after_escalate() -> None:
     asyncio.run(_run())
 
 
+def test_set_proposals_retires_pending_operator_futures() -> None:
+    """ProposalsReady resolves stale begin and escalate futures after timeouts.
+
+    Returns:
+        None.
+    """
+    import asyncio
+
+    from apme_gateway.operation_registry import OperationRegistry
+    from apme_gateway.operation_types import Proposal
+
+    async def _run() -> None:
+        registry = OperationRegistry()
+        op_id = "op-proposals-retire"
+        registry.create(
+            operation_id=op_id,
+            project_id="proj-proposals",
+            scan_id="scan-proposals",
+            scan_type="remediate",
+        )
+        registry.set_findings(op_id, [{"rule_id": "L001", "message": "assess"}])
+        op = registry.get(op_id)
+        assert op is not None
+        begin_future = op.begin_remediate_future
+        assert begin_future is not None
+
+        registry.transition(op_id, OperationStatus.APPLYING)
+        registry.set_ai_triage(op_id, [{"rule_id": "L001", "path": "p::0", "message": "ai"}])
+        op = registry.get(op_id)
+        assert op is not None
+        escalate_future = op.escalate_ai_future
+        assert escalate_future is not None
+        assert not escalate_future.done()
+
+        await registry.set_proposals(
+            op_id,
+            [Proposal(id="t1-aaa", rule_id="L001", file="a.yml")],
+            prompt_generation=1,
+        )
+
+        assert begin_future.done()
+        assert begin_future.result() is None
+        assert escalate_future.done()
+        assert escalate_future.result() == []
+
+    asyncio.run(_run())
+
+
 def test_escalate_ai_endpoint_resolves_future() -> None:
     """POST escalate-ai resolves the future and transitions to APPLYING.
 

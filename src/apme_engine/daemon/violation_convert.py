@@ -50,6 +50,7 @@ _METADATA_KEYS = frozenset(
         "with_key",
         "redirect_chain",
         "removal_msg",
+        "builtin_alternative",
         "collection_fqcn",
         "collection_version",
         "cve_id",

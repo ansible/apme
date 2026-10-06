@@ -19,6 +19,14 @@ from apme_engine.graph.types import Severity, YAMLDict, YAMLValue
 
 _TASK_TYPES = frozenset({NodeType.TASK, NodeType.HANDLER})
 
+_ASSERT_MODULES = frozenset(
+    {
+        "assert",
+        "ansible.builtin.assert",
+        "ansible.legacy.assert",
+    }
+)
+
 _JINJA_VAR_REF = re.compile(r"\{\{\s*(\w+)")
 
 
@@ -109,7 +117,7 @@ class DataTaggingGraphRule(GraphRule):
     description: str = "Registered variable used in Jinja template may be untrusted in 2.19+"
     enabled: bool = True
     name: str = "DataTagging"
-    version: str = "v0.0.2"
+    version: str = "v0.0.3"
     severity: Severity = Severity.HIGH
     tags: tuple[str, ...] = (Tag.CODING,)
 
@@ -154,8 +162,16 @@ class DataTaggingGraphRule(GraphRule):
 
         # ``loop`` selects data for iteration; it does not re-template strings
         # contained in the registered result.
+        #
+        # String-form ``assert: that`` conditions evaluate to booleans (e.g.
+        # molecule verify.yml ``that: "{{ slurp['content'] }} == 'x'"``);
+        # the content is never re-templated into configuration, so boolean
+        # comparisons there are not an untrusted-data sink (#581).
+        # ``fail_msg``/``success_msg`` ARE rendered output and stay scanned.
+        # (List-form ``that`` items were never scanned — pre-existing gap.)
+        that_excluded = frozenset({"that"}) if node.module in _ASSERT_MODULES else frozenset()
         all_strings = _string_values(node.options, excluded_keys=frozenset({"loop"})) + _string_values(
-            node.module_options
+            node.module_options, excluded_keys=that_excluded
         )
         flagged: set[str] = set()
         for val in all_strings:

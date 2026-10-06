@@ -53,7 +53,7 @@ Coverage comparison against the **ansible-lint** codebase (rule `id` from `src/a
 | galaxy | L027 | Role without metadata |
 | name | L024 | Task without name (OPA) |
 | command-instead-of-shell | L007 | Prefer command over shell (OPA) |
-| only-builtins | L030 | Non-builtin module use |
+| only-builtins | M001 / L005 / M048 | Short names via M001, `community.*` via L005, and fully qualified modules with builtin twins via M048 (L030 static list retired) |
 | risky-file-permissions | L031 | Insecure file permission |
 | no-tabs | L040 | No tabs in YAML |
 | key-order | L041 | Key ordering (name before module) |

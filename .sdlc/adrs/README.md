@@ -46,6 +46,7 @@ Decisions that are fully reflected in the codebase.
 | [ADR-044](ADR-044-node-identity-progression-model.md) | Node Identity and Progression Model | 2026-03-27 |
 | [ADR-045](ADR-045-galaxy-auth-delegation.md) | Delegate Galaxy Authentication to ansible-galaxy, Galaxy Config as Scan Metadata | 2026-03-28 |
 | [ADR-047](ADR-047-tox-developer-orchestration.md) | tox as Sole Developer Orchestration Tool | 2026-03-30 |
+| [ADR-059](ADR-059-graph-library-extraction.md) | Extract Shared Graph Analysis Library | 2026-07-08 |
 | [ADR-061](ADR-061-ubi-container-bases.md) | UBI10 Container Base Images | 2026-07-08 |
 | [ADR-062](ADR-062-ephemeral-proposal-working-set.md) | Ephemeral Proposal Working Set and Review Analytics | 2026-07-09 |
 | [ADR-063](ADR-063-multi-platform-container-images.md) | Multi-Platform Container Image Publish | 2026-07-15 |
@@ -76,7 +77,6 @@ Decisions with substantial code shipped; ADR-defined scope still incomplete.
 | [ADR-055](ADR-055-violation-fingerprint-suppression.md) | Content-Based Violation Fingerprinting and Suppression (Partially Implemented (rule_module mode and export/import remain)) | 2026-05-21 |
 | [ADR-056](ADR-056-apme-owns-scm-commit-push.md) | APME Owns SCM Commit and Push (Partially Implemented (fixed APME commit author and committer identity pending)) | 2026-07-06 |
 | [ADR-057](ADR-057-per-rule-version-applicability.md) | Per-Rule Ansible-Core Version Applicability (Partially Implemented (Gateway rule-catalog persistence and REST exposure pending)) | 2026-07-07 |
-| [ADR-059](ADR-059-graph-library-extraction.md) | Extract Shared Graph Analysis Library (Partially Implemented (remaining Engine package-boundary imports pending)) | 2026-07-08 |
 | [ADR-060](ADR-060-rest-api-versioning-contract.md) | REST API Versioning Contract (Partially Implemented (deprecation middleware and break-diff CI pending)) | 2026-07-08 |
 
 ## Accepted

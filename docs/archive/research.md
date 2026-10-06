@@ -26,15 +26,17 @@
 ```python
 from ansible_risk_insight import ARIScanner, Config
 
-scanner = ARIScanner(Config(
-    rules_dir="/path/to/custom/rules",  # Colon-separated dirs
-    rules=["P001", "P002", "R301"],     # Filter to specific rules
-    data_dir="/tmp/ari-data",           # Cache directory
-))
+scanner = ARIScanner(
+    Config(
+        rules_dir="/path/to/custom/rules",  # Colon-separated dirs
+        rules=["P001", "P002", "R301"],  # Filter to specific rules
+        data_dir="/tmp/ari-data",  # Cache directory
+    )
+)
 
 # For full project scanning (playbooks + roles + collections):
 result = scanner.evaluate(
-    type="project",         # Scans ALL playbooks, roles, and modules
+    type="project",  # Scans ALL playbooks, roles, and modules
     path="/path/to/project",
     # playbook_only defaults to False - DO NOT set True for project scans
 )
@@ -135,7 +137,7 @@ def is_finding_resolvable(rule_result: RuleResult) -> bool:
 
     This is the SOLE decision point for the deterministic/AI partition.
     """
-    return getattr(rule_result.rule, 'spec_mutation', False)
+    return getattr(rule_result.rule, "spec_mutation", False)
 ```
 
 Note: `rule_result.rule` is typed as `RuleMetadata`, but at runtime for ARI's built-in rules it is a `Rule` instance (which inherits from `RuleMetadata` and adds `spec_mutation`). For custom rules, the `Rule` base class also defines `spec_mutation`. The `getattr` with default `False` safely handles both cases.
@@ -182,7 +184,7 @@ def rule_result_to_finding(
     # rule_result.rule is typed RuleMetadata but at runtime is Rule (inherits RuleMetadata)
     # RuleMetadata fields: rule_id, description, name, version, commit_id, severity, tags
     # Rule adds: enabled, precedence, spec_mutation
-    rule_id = rule_result.rule.rule_id        # e.g., "R301", "P001", "SEC001"
+    rule_id = rule_result.rule.rule_id  # e.g., "R301", "P001", "SEC001"
     rule_severity = rule_result.rule.severity  # lowercase string: "error", "warning", "info"
 
     # --- Description from detail dict ---
@@ -499,6 +501,7 @@ from ansible_risk_insight.models import (
     RuleTag as Tag,
 )
 
+
 @dataclass
 class SEC001HardcodedPassword(Rule):
     rule_id: str = "SEC001"
@@ -513,13 +516,14 @@ class SEC001HardcodedPassword(Rule):
         ctx.parent (Object), ctx.root_key (str), ctx.vars, ctx.host_info.
         Access task arguments via ctx.current's spec/resolved attributes."""
         current = ctx.current
-        return current is not None and hasattr(current, 'spec') and current.spec is not None
+        return current is not None and hasattr(current, "spec") and current.spec is not None
 
     def process(self, ctx: AnsibleRunContext) -> RuleResult:
         """Analyze the matched node and return a RuleResult.
         Set verdict=True if the rule is violated, False if clean.
         Note: detail is a dict, not a string."""
         import re
+
         pattern = r'(?i)(password|passwd|pass)\s*[:=]\s*[\'"][^\'"{$]+[\'"]'
         module_args = self._extract_module_args(ctx.current)
         if module_args:
@@ -537,7 +541,7 @@ class SEC001HardcodedPassword(Rule):
         Implementation must inspect current.spec — see ARI's built-in
         rules (e.g., P001_module_name_validation.py) for the exact
         attribute access pattern for module_options/resolved_args."""
-        if hasattr(current, 'spec') and hasattr(current.spec, 'module_options'):
+        if hasattr(current, "spec") and hasattr(current.spec, "module_options"):
             return current.spec.module_options
         return None
 

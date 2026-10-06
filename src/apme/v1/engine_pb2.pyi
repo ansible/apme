@@ -79,6 +79,7 @@ class ScanDiagnostics:
     fan_out_ms: float
     total_ms: float
     def __init__(self, **kwargs: object) -> None: ...
+    def CopyFrom(self, other: ScanDiagnostics) -> None: ...
 
 class FormatRequest:
     files: list[object]
@@ -102,6 +103,7 @@ class FilePatch:
     diff: str
     applied_rules: list[str]
     def __init__(self, **kwargs: object) -> None: ...
+    def ByteSize(self) -> int: ...
 
 class FixReport:
     passes: int
@@ -112,6 +114,7 @@ class FixReport:
     remaining_violations: list[Violation]
     fixed_violations: list[Violation]
     def __init__(self, **kwargs: object) -> None: ...
+    def CopyFrom(self, other: FixReport) -> None: ...
 
 # ---------------------------------------------------------------------------
 # FixSession: bidirectional streaming (ADR-028)

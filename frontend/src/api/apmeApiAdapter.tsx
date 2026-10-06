@@ -4,6 +4,7 @@ export {
   apmeApiUrl,
   apmeWsUrl,
   apmeSseUrl,
+  bareRuleId,
   createDefaultApmeApiAdapter,
   getApmeApiAdapter,
   setApmeApiAdapter,

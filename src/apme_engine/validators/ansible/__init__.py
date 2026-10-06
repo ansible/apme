@@ -14,7 +14,7 @@ from typing import cast
 from apme_engine.engine.models import YAMLDict
 from apme_engine.validators.base import ScanContext
 
-from .cache import plugin_cache
+from .cache import CacheSnapshot, plugin_cache
 from .rules import L057_syntax, L058_argspec_doc, L059_argspec_mock, M001_M004_introspect
 
 NodeLookup = dict[str, list[tuple[int, int, str]]]
@@ -42,7 +42,9 @@ class AnsibleRunResult:
     Attributes:
         violations: List of violation dicts.
         rule_timings: Per-rule timing data.
-        metadata: Extra metadata (e.g. cache hit/miss stats).
+        metadata: Extra metadata: cumulative ``cache_<store>_hits/misses``
+            counters plus per-scan ``scan_cache_<store>_hits/misses``
+            deltas (zero when the scan touched nothing).
     """
 
     violations: list[dict[str, object]] = field(default_factory=list)
@@ -154,6 +156,44 @@ def resolve_file_line_to_node(
     return best
 
 
+def _cache_report(cache_snapshot: CacheSnapshot, violations_count: int) -> tuple[dict[str, int], str]:
+    """Build merged cache metadata and the stderr summary fragment.
+
+    Args:
+        cache_snapshot: Counter snapshot taken at scan start.
+        violations_count: Total violations for the log line.
+
+    Returns:
+        Merged cumulative + per-scan metadata and the full stderr line.
+    """
+    cache_stats = plugin_cache.stats()
+    scan_stats = plugin_cache.stats_since(cache_snapshot)
+
+    def _pair(store: str) -> str:
+        """Format per-scan and cumulative hits/misses for a store.
+
+        Args:
+            store: Cache store name.
+
+        Returns:
+            Human-readable ``Ah/Bm (scan) Ch/Dm (total)`` fragment.
+        """
+        return (
+            f"{scan_stats.get(f'scan_cache_{store}_hits', 0)}h/"
+            f"{scan_stats.get(f'scan_cache_{store}_misses', 0)}m (scan) "
+            f"{cache_stats.get(f'cache_{store}_hits', 0)}h/"
+            f"{cache_stats.get(f'cache_{store}_misses', 0)}m (total)"
+        )
+
+    line = (
+        f"Ansible validator: total {violations_count} violation(s), "
+        f"cache introspect={_pair('introspect')}, "
+        f"docspec={_pair('docspec')}, "
+        f"mockspec={_pair('mockspec')}\n"
+    )
+    return {**cache_stats, **scan_stats}, line
+
+
 class AnsibleValidator:
     """Validator that runs ansible-core checks via pre-built venvs.
 
@@ -214,6 +254,9 @@ class AnsibleValidator:
         violations: list[dict[str, object]] = []
         rule_timings: list[AnsibleRuleTiming] = []
         root_dir = Path(context.root_dir) if context.root_dir else None
+        # Cumulative counters span the daemon lifetime; snapshot for
+        # per-scan deltas reported below alongside cumulative totals.
+        cache_snapshot = plugin_cache.snapshot()
 
         node_lookup: NodeLookup = {}
         if content_graph_data:
@@ -242,9 +285,14 @@ class AnsibleValidator:
 
         task_nodes = _extract_task_nodes(context.hierarchy_payload) if context.hierarchy_payload else []
         if not task_nodes:
-            sys.stderr.write(f"Ansible validator: total {len(violations)} violation(s)\n")
+            metadata, summary_line = _cache_report(cache_snapshot, len(violations))
+            sys.stderr.write(summary_line)
             sys.stderr.flush()
-            return AnsibleRunResult(violations=violations, rule_timings=rule_timings)
+            return AnsibleRunResult(
+                violations=violations,
+                rule_timings=rule_timings,
+                metadata=metadata,
+            )
 
         sys.stderr.write(f"Ansible validator: checking {len(task_nodes)} task(s)\n")
 
@@ -256,8 +304,10 @@ class AnsibleValidator:
         )
         elapsed = (time.monotonic() - t0) * 1000
         violations.extend(m_violations)
-        rule_timings.append(AnsibleRuleTiming(rule_id="M001-M004", elapsed_ms=elapsed, violations=len(m_violations)))
-        sys.stderr.write(f"  M001-M004 (introspection): {len(m_violations)} issue(s) in {elapsed:.1f}ms\n")
+        rule_timings.append(
+            AnsibleRuleTiming(rule_id="M001-M004/M048", elapsed_ms=elapsed, violations=len(m_violations))
+        )
+        sys.stderr.write(f"  M001-M004/M048 (introspection): {len(m_violations)} issue(s) in {elapsed:.1f}ms\n")
 
         t0 = time.monotonic()
         l058 = L058_argspec_doc.run(
@@ -281,19 +331,11 @@ class AnsibleValidator:
         rule_timings.append(AnsibleRuleTiming(rule_id="L059", elapsed_ms=elapsed, violations=len(l059)))
         sys.stderr.write(f"  L059 (argspec-mock): {len(l059)} issue(s) in {elapsed:.1f}ms\n")
 
-        cache_stats = plugin_cache.stats()
-        sys.stderr.write(
-            f"Ansible validator: total {len(violations)} violation(s), "
-            f"cache introspect={cache_stats.get('cache_introspect_hits', 0)}h/"
-            f"{cache_stats.get('cache_introspect_misses', 0)}m, "
-            f"docspec={cache_stats.get('cache_docspec_hits', 0)}h/"
-            f"{cache_stats.get('cache_docspec_misses', 0)}m, "
-            f"mockspec={cache_stats.get('cache_mockspec_hits', 0)}h/"
-            f"{cache_stats.get('cache_mockspec_misses', 0)}m\n"
-        )
+        metadata, summary_line = _cache_report(cache_snapshot, len(violations))
+        sys.stderr.write(summary_line)
         sys.stderr.flush()
         return AnsibleRunResult(
             violations=violations,
             rule_timings=rule_timings,
-            metadata=cache_stats,
+            metadata=metadata,
         )

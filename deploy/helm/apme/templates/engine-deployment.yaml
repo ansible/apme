@@ -374,6 +374,19 @@ spec:
           env:
             - name: LOG_LEVEL
               value: {{ .Values.engine.galaxyProxy.logLevel | quote }}
+            {{- if .Values.engine.galaxyProxy.existingSecret.name }}
+            - name: APME_PROXY_ADMIN_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.engine.galaxyProxy.existingSecret.name }}
+                  key: {{ .Values.engine.galaxyProxy.existingSecret.key }}
+            {{- else }}
+            - name: APME_PROXY_ADMIN_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $fullname }}-secrets
+                  key: proxy-admin-token
+            {{- end }}
           {{- with .Values.securityContext }}
           securityContext:
             {{- toYaml . | nindent 12 }}
@@ -504,6 +517,19 @@ spec:
             {{- if .Values.depAudit.enabled }}
             - name: DEP_AUDIT_GRPC_ADDRESS
               value: "127.0.0.1:50059"
+            {{- end }}
+            {{- if .Values.engine.galaxyProxy.existingSecret.name }}
+            - name: APME_PROXY_ADMIN_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.engine.galaxyProxy.existingSecret.name }}
+                  key: {{ .Values.engine.galaxyProxy.existingSecret.key }}
+            {{- else }}
+            - name: APME_PROXY_ADMIN_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $fullname }}-secrets
+                  key: proxy-admin-token
             {{- end }}
             {{- if .Values.gateway.feedback.enabled }}
             - name: APME_FEEDBACK_ENABLED
@@ -662,22 +688,22 @@ spec:
             - name: abbenay-grpc
               containerPort: 50057
               protocol: TCP
-          # Engine/Gateway AI uses the Unix socket; TCP :50057 is leftover.
-          # Ready when the socket accepts connections (not merely exists).
+          # Engine/Gateway AI uses the Unix socket; TCP :50057 is leftover
+          # loopback-only. Kubelet tcpSocket/httpGet hit the pod IP and cannot
+          # reach 127.0.0.1 binds. The published image has no `node` on PATH
+          # (#734); use the SEA binary's status check (Unix socket) instead.
           readinessProbe:
             exec:
               command:
-                - node
-                - -e
-                - "const s=require('net').createConnection('/tmp/abbenay-run/abbenay/daemon.sock');s.on('connect',function(){s.end();process.exit(0)}).on('error',function(){process.exit(1)})"
+                - /opt/abbenay/abbenay
+                - status
             initialDelaySeconds: 5
             periodSeconds: 10
           livenessProbe:
             exec:
               command:
-                - node
-                - -e
-                - "const s=require('net').createConnection('/tmp/abbenay-run/abbenay/daemon.sock');s.on('connect',function(){s.end();process.exit(0)}).on('error',function(){process.exit(1)})"
+                - /opt/abbenay/abbenay
+                - status
             initialDelaySeconds: 15
             periodSeconds: 30
           resources:

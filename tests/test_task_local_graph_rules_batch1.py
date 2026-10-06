@@ -1,4 +1,4 @@
-"""Unit tests for task-local graph rules (L026, L030, L036, L044, L048, L074, L081–L084, L092)."""
+"""Unit tests for task-local graph rules (L026, L036, L044, L048, L074, L081–L084, L092)."""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ from apme_engine.engine.models import YAMLDict
 from apme_engine.graph.content_graph import ContentGraph, ContentNode, EdgeType, NodeIdentity, NodeScope, NodeType
 from apme_engine.graph.rule_base import GraphRule
 from apme_engine.graph.rules.L026_non_fqcn_use_graph import NonFQCNUseGraphRule
-from apme_engine.graph.rules.L030_non_builtin_use_graph import NonBuiltinUseGraphRule
 from apme_engine.graph.rules.L036_unnecessary_include_vars_graph import UnnecessaryIncludeVarsGraphRule
 from apme_engine.graph.rules.L044_avoid_implicit_graph import AvoidImplicitGraphRule
 from apme_engine.graph.rules.L048_no_same_owner_graph import NoSameOwnerGraphRule
@@ -173,81 +172,6 @@ class TestL026NonFQCNUseGraphRule:
         assert result.detail is not None
         d: YAMLDict = result.detail
         assert d["module"] == "copy"
-
-
-class TestL030NonBuiltinUseGraphRule:
-    """Tests for ``NonBuiltinUseGraphRule`` (L030)."""
-
-    @pytest.fixture  # type: ignore[untyped-decorator]
-    def rule(self) -> NonBuiltinUseGraphRule:
-        """Provide a fresh L030 rule instance.
-
-        Returns:
-            A new ``NonBuiltinUseGraphRule``.
-        """
-        return NonBuiltinUseGraphRule()
-
-    def test_match_collection_module(self, rule: NonBuiltinUseGraphRule) -> None:
-        """Declared non-builtin FQCN on module matches.
-
-        Args:
-            rule: Rule instance under test.
-        """
-        g, tid = _make_task(module="community.general.copy")
-        assert rule.match(g, tid)
-
-    def test_no_match_builtin(self, rule: NonBuiltinUseGraphRule) -> None:
-        """Declared ansible.builtin FQCN does not match.
-
-        Args:
-            rule: Rule instance under test.
-        """
-        g, tid = _make_task(module="ansible.builtin.debug")
-        assert not rule.match(g, tid)
-
-    def test_violation_detail_has_fqcn(self, rule: NonBuiltinUseGraphRule) -> None:
-        """Violation detail exposes fqcn and builtin alternative.
-
-        Args:
-            rule: Rule instance under test.
-        """
-        g, tid = _make_task(module="community.general.copy")
-        result = rule.process(g, tid)
-        assert result is not None
-        assert result.verdict is True
-        assert result.detail is not None
-        d: YAMLDict = result.detail
-        assert d["fqcn"] == "community.general.copy"
-        assert d["builtin_alternative"] == "ansible.builtin.copy"
-
-    def test_no_match_no_builtin_equivalent(self, rule: NonBuiltinUseGraphRule) -> None:
-        """Non-builtin FQCN with no builtin counterpart does not match.
-
-        Args:
-            rule: Rule instance under test.
-        """
-        g, tid = _make_task(module="community.general.timezone")
-        assert not rule.match(g, tid)
-
-    def test_no_violation_no_builtin_equivalent(self, rule: NonBuiltinUseGraphRule) -> None:
-        """Process returns verdict=False when no builtin equivalent exists.
-
-        Args:
-            rule: Rule instance under test.
-        """
-        g, tid = _make_task(module="community.general.timezone")
-        result = rule.process(g, tid)
-        assert result is not None
-        assert result.verdict is False
-
-    def test_no_match_amazon_aws_module(self, rule: NonBuiltinUseGraphRule) -> None:
-        """Cloud provider modules without builtin equivalents pass.
-
-        Args:
-            rule: Rule instance under test.
-        """
-        g, tid = _make_task(module="amazon.aws.ec2_instance")
-        assert not rule.match(g, tid)
 
 
 class TestL036UnnecessaryIncludeVarsGraphRule:
@@ -838,11 +762,11 @@ class TestNoqaSuppression:
         assert not suppressed_l026, "L026 should be suppressed by # noqa: L026"
 
     def test_noqa_does_not_suppress_other_rules(self) -> None:
-        """A ``# noqa: L030`` comment does not suppress L026."""
-        g, tid = _make_task(module="copy")
+        """A ``# noqa: L044`` comment does not suppress L026."""
+        g, tid = _make_task(module="file")
         node = g.get_node(tid)
         assert node is not None
-        node.yaml_lines = "- name: Copy file\n  copy:  # noqa: L030\n    src: a\n    dest: /tmp/b\n"
+        node.yaml_lines = "- name: Copy file\n  file:  # noqa: L044\n    src: a\n    dest: /tmp/b\n"
 
         rules: list[GraphRule] = [NonFQCNUseGraphRule()]
         report = scan(g, rules)
@@ -856,34 +780,32 @@ class TestNoqaSuppression:
         assert found
 
     def test_noqa_multiple_rules(self) -> None:
-        """A ``# noqa: L026, L030`` comment suppresses both rules."""
-        g, tid = _make_task(module="community.general.copy")
+        """A ``# noqa: L026, L044`` comment suppresses both rules."""
+        g, tid = _make_task(module="file")
         node = g.get_node(tid)
         assert node is not None
 
-        rules: list[GraphRule] = [NonFQCNUseGraphRule(), NonBuiltinUseGraphRule()]
+        rules: list[GraphRule] = [NonFQCNUseGraphRule(), AvoidImplicitGraphRule()]
 
-        node.yaml_lines = "- name: Copy file\n  community.general.copy:\n    src: a\n    dest: /tmp/b\n"
+        node.yaml_lines = "- name: Copy file\n  file:\n    src: a\n    dest: /tmp/b\n"
         baseline = scan(g, rules)
         baseline_hits = [
             rr
             for nr in baseline.node_results
             for rr in nr.rule_results
-            if rr.rule and rr.rule.rule_id in ("L026", "L030") and rr.verdict
+            if rr.rule and rr.rule.rule_id in ("L026", "L044") and rr.verdict
         ]
-        assert baseline_hits, "Baseline scan should produce L026 and/or L030 violations without noqa"
+        assert baseline_hits, "Baseline scan should produce L026 and/or L044 violations without noqa"
 
-        node.yaml_lines = (
-            "- name: Copy file  # noqa: L026, L030\n  community.general.copy:\n    src: a\n    dest: /tmp/b\n"
-        )
+        node.yaml_lines = "- name: Copy file  # noqa: L026, L044\n  file:\n    src: a\n    dest: /tmp/b\n"
         report = scan(g, rules)
         suppressed_hits = [
             rr
             for nr in report.node_results
             for rr in nr.rule_results
-            if rr.rule and rr.rule.rule_id in ("L026", "L030") and rr.verdict
+            if rr.rule and rr.rule.rule_id in ("L026", "L044") and rr.verdict
         ]
-        assert not suppressed_hits, "Both L026 and L030 should be suppressed by # noqa: L026, L030"
+        assert not suppressed_hits, "Both L026 and L044 should be suppressed by # noqa: L026, L044"
 
     def test_parse_noqa_empty(self) -> None:
         """No noqa comment yields empty set."""

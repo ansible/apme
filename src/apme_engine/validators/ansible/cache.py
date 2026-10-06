@@ -14,14 +14,22 @@ from __future__ import annotations
 import glob as _glob
 import json
 import logging
+import os
 import threading
 from collections import OrderedDict
+from collections.abc import Mapping
 from typing import Literal
 
 logger = logging.getLogger(__name__)
 
 CacheType = Literal["introspect", "docspec", "mockspec"]
 CacheKey = tuple[str, str, str]  # (collection_fqcn, version, plugin_name)
+
+# Snapshot of cumulative counters, as returned by ``PluginCache.snapshot()``.
+# Keys match ``stats()`` (``cache_<store>_hits`` / ``cache_<store>_misses``).
+CacheSnapshot = dict[str, int]
+
+_STORES: tuple[CacheType, ...] = ("introspect", "docspec", "mockspec")
 
 _MAX_ENTRIES = 1024
 _MAX_VERSION_ENTRIES = 256
@@ -68,6 +76,34 @@ def _ansible_core_version(venv_root: str) -> str:
         except OSError:
             continue
     return ""
+
+
+_COLLECTION_SEARCH_ENV_KEYS = (
+    "ANSIBLE_COLLECTIONS_PATH",
+    "ANSIBLE_COLLECTIONS_PATHS",
+    "ANSIBLE_CONFIG",
+)
+
+
+def _collection_search_fingerprint(env_extra: dict[str, str] | None) -> str:
+    """Fingerprint environment overrides that affect plugin resolution.
+
+    Args:
+        env_extra: Optional overrides merged into the subprocess environment.
+
+    Returns:
+        Sorted ``KEY=value`` pairs joined by ``|``, or ``""`` when unset.
+    """
+    parts: list[str] = []
+    seen: set[str] = set()
+    for source in (env_extra, os.environ):
+        if not source:
+            continue
+        for key in _COLLECTION_SEARCH_ENV_KEYS:
+            if key in source and key not in seen:
+                parts.append(f"{key}={source[key]}")
+                seen.add(key)
+    return "|".join(sorted(parts))
 
 
 def _parse_fqcn(plugin_name: str) -> tuple[str, str, str] | None:
@@ -144,7 +180,37 @@ class PluginCache:
             self._version_cache.popitem(last=False)
         return version
 
-    def _make_key(self, venv_root: str, plugin_name: str) -> CacheKey | None:
+    def introspect_context_suffix(
+        self,
+        venv_root: str,
+        env_extra: dict[str, str] | None = None,
+    ) -> str:
+        """Build a suffix for introspect cache keys.
+
+        M048 twin lookup depends on ansible-core and collection search paths,
+        which are not captured by collection MANIFEST versions alone.
+
+        Args:
+            venv_root: Venv root path.
+            env_extra: Optional subprocess environment overrides.
+
+        Returns:
+            Context suffix (core version + collection search fingerprint).
+        """
+        with self._lock:
+            core_version = self._resolve_version(venv_root, "ansible", "builtin")
+        env_fp = _collection_search_fingerprint(env_extra)
+        if env_fp:
+            return f"core:{core_version}|{env_fp}"
+        return f"core:{core_version}"
+
+    def _make_key(
+        self,
+        venv_root: str,
+        plugin_name: str,
+        *,
+        context_suffix: str = "",
+    ) -> CacheKey | None:
         """Build a cache key from a plugin name.
 
         Returns ``None`` for short-form names that can't be resolved to
@@ -153,6 +219,8 @@ class PluginCache:
         Args:
             venv_root: Venv root path.
             plugin_name: FQCN or short-form module name.
+            context_suffix: Optional suffix appended to the version segment
+                (used by the introspect store for M048 twin-lookup inputs).
 
         Returns:
             Cache key tuple or ``None``.
@@ -164,22 +232,33 @@ class PluginCache:
         version = self._resolve_version(venv_root, namespace, name)
         if not version:
             return None
+        if context_suffix:
+            version = f"{version}@{context_suffix}"
         collection_fqcn = f"{namespace}.{name}"
         return (collection_fqcn, version, plugin_name)
 
-    def get(self, store: CacheType, venv_root: str, plugin_name: str) -> object | None:
+    def get(
+        self,
+        store: CacheType,
+        venv_root: str,
+        plugin_name: str,
+        *,
+        introspect_context: str | None = None,
+    ) -> object | None:
         """Look up a cached result.
 
         Args:
             store: Which cache store to query.
             venv_root: Venv root path.
             plugin_name: Module FQCN or short-form name.
+            introspect_context: Context suffix for the introspect store only.
 
         Returns:
             Cached result or ``None`` on miss.
         """
         with self._lock:
-            key = self._make_key(venv_root, plugin_name)
+            context_suffix = introspect_context if store == "introspect" else ""
+            key = self._make_key(venv_root, plugin_name, context_suffix=context_suffix or "")
             if key is None:
                 self._misses[store] += 1
                 return None
@@ -200,6 +279,7 @@ class PluginCache:
         result: object,
         *,
         resolved_fqcn: str = "",
+        introspect_context: str | None = None,
     ) -> None:
         """Store a result in the cache.
 
@@ -213,17 +293,19 @@ class PluginCache:
             plugin_name: Module name as provided to the subprocess.
             result: Subprocess result to cache.
             resolved_fqcn: Resolved FQCN if different from plugin_name.
+            introspect_context: Context suffix for the introspect store only.
         """
         with self._lock:
             lru = self._stores[store]
+            context_suffix = introspect_context if store == "introspect" else ""
 
-            key = self._make_key(venv_root, plugin_name)
+            key = self._make_key(venv_root, plugin_name, context_suffix=context_suffix or "")
             if key is not None:
                 lru[key] = result
                 lru.move_to_end(key)
 
             if resolved_fqcn and resolved_fqcn != plugin_name:
-                fqcn_key = self._make_key(venv_root, resolved_fqcn)
+                fqcn_key = self._make_key(venv_root, resolved_fqcn, context_suffix=context_suffix or "")
                 if fqcn_key is not None:
                     lru[fqcn_key] = result
                     lru.move_to_end(fqcn_key)
@@ -236,6 +318,8 @@ class PluginCache:
         store: CacheType,
         venv_root: str,
         modules: list[str],
+        *,
+        introspect_context: str | None = None,
     ) -> tuple[dict[str, object], list[str]]:
         """Split a module list into cached results and uncached names.
 
@@ -243,6 +327,7 @@ class PluginCache:
             store: Which cache store to query.
             venv_root: Venv root path.
             modules: Module names to check.
+            introspect_context: Context suffix for the introspect store only.
 
         Returns:
             ``(cached_results, uncached_modules)`` where cached_results maps
@@ -251,27 +336,86 @@ class PluginCache:
         cached: dict[str, object] = {}
         uncached: list[str] = []
         for module in modules:
-            result = self.get(store, venv_root, module)
+            result = self.get(
+                store,
+                venv_root,
+                module,
+                introspect_context=introspect_context,
+            )
             if result is not None:
                 cached[module] = result
             else:
                 uncached.append(module)
         return cached, uncached
 
+    def _stats_locked(self) -> dict[str, int]:
+        """Compute cumulative counters; caller must hold ``self._lock``.
+
+        Returns:
+            Dict with keys like ``cache_introspect_hits``,
+            ``cache_introspect_misses``, etc.
+        """
+        result: dict[str, int] = {}
+        for store_name in _STORES:
+            result[f"cache_{store_name}_hits"] = self._hits[store_name]
+            result[f"cache_{store_name}_misses"] = self._misses[store_name]
+        return result
+
     def stats(self) -> dict[str, int]:
         """Return hit/miss counts for diagnostics.
+
+        Counters are cumulative for the daemon process lifetime; use
+        :meth:`snapshot` + :meth:`stats_since` for per-scan deltas.
 
         Returns:
             Dict with keys like ``cache_introspect_hits``,
             ``cache_introspect_misses``, etc.
         """
         with self._lock:
-            stores: list[CacheType] = ["introspect", "docspec", "mockspec"]
-            result: dict[str, int] = {}
-            for store_name in stores:
-                result[f"cache_{store_name}_hits"] = self._hits[store_name]
-                result[f"cache_{store_name}_misses"] = self._misses[store_name]
-            return result
+            return self._stats_locked()
+
+    def snapshot(self) -> CacheSnapshot:
+        """Capture cumulative counters for later per-scan differencing.
+
+        Deltas are approximate under concurrent scans against the shared
+        daemon cache: interleaved scans share the counters, so attribute
+        per-scan numbers exactly only for sequential scans (CLI daemon,
+        convergence-loop rescans).
+
+        Returns:
+            Counter snapshot to pass to :meth:`stats_since` at scan end.
+        """
+        return self.stats()
+
+    def stats_since(self, snapshot: CacheSnapshot) -> dict[str, int]:
+        """Return hit/miss counts accumulated since a snapshot.
+
+        Missing or non-integer keys are treated as zero; negative deltas
+        (snapshot newer than current, e.g. concurrent scans or a counter
+        reset) are clamped to zero. Never raises on a malformed snapshot —
+        diagnostics must not fail the scan.
+
+        Args:
+            snapshot: Earlier counter mapping from :meth:`snapshot`.
+
+        Returns:
+            Dict with keys like ``scan_cache_introspect_hits``,
+            ``scan_cache_introspect_misses``, etc.
+        """
+        with self._lock:
+            current = self._stats_locked()
+        if not isinstance(snapshot, Mapping):
+            snapshot = {}
+        result: dict[str, int] = {}
+        for store_name in _STORES:
+            for kind in ("hits", "misses"):
+                base_key = f"cache_{store_name}_{kind}"
+                now = current.get(base_key, 0)
+                then = snapshot.get(base_key, 0)
+                now_int = now if isinstance(now, int) else 0
+                then_int = then if isinstance(then, int) else 0
+                result[f"scan_{base_key}"] = max(now_int - then_int, 0)
+        return result
 
 
 plugin_cache = PluginCache()
