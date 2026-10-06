@@ -107,6 +107,19 @@ class EdgeType(str, Enum):
     CONTAINS = "contains"
 
 
+# Canonical set of edge-type values that carry positional (structural)
+# ancestry: CONTAINS, INCLUDE, IMPORT. Shared by the positional-ancestor
+# queries below and by ``variable_helpers`` — add a new positional edge
+# type here, not in a per-method copy.
+_POSITIONAL_EDGE_VALUES = frozenset(
+    {
+        EdgeType.CONTAINS.value,
+        EdgeType.INCLUDE.value,
+        EdgeType.IMPORT.value,
+    }
+)
+
+
 class NodeScope(str, Enum):
     """Ownership scope for violations and remediation eligibility.
 
@@ -1469,13 +1482,7 @@ class ContentGraph:
         current = node_id
         if play_scope is None and play_context_id is not None:
             play_scope = self.play_scoped_node_ids(play_context_id)
-        positional = frozenset(
-            {
-                EdgeType.CONTAINS.value,
-                EdgeType.INCLUDE.value,
-                EdgeType.IMPORT.value,
-            }
-        )
+        positional = _POSITIONAL_EDGE_VALUES
         while True:
             parents = sorted(
                 src for src, _, data in self.g.in_edges(current, data=True) if data.get("edge_type") in positional
@@ -1497,6 +1504,44 @@ class ContentGraph:
             current = parent_id
         return result
 
+    def play_scoped_positional_ancestors(self, node_id: str, play_scope: set[str]) -> list[ContentNode]:
+        """Return merged positional ancestors from all in-scope include paths.
+
+        Unlike :meth:`positional_ancestors`, follows every in-scope parent
+        edge instead of choosing the lexicographically first parent. Ancestors
+        are ordered closest-first; same-depth parents are sorted by node id
+        for deterministic conflict resolution.
+
+        Args:
+            node_id: Node whose in-scope ancestor chain is walked upward.
+            play_scope: Precomputed play-scoped node IDs.
+
+        Returns:
+            Ancestor ``ContentNode`` instances from immediate parent toward root.
+        """
+        result: list[ContentNode] = []
+        seen: set[str] = set()
+        positional = _POSITIONAL_EDGE_VALUES
+        current_level = sorted(
+            src
+            for src, _, data in self.g.in_edges(node_id, data=True)
+            if data.get("edge_type") in positional and src in play_scope
+        )
+        while current_level:
+            next_level: list[str] = []
+            for parent_id in current_level:
+                if parent_id in seen:
+                    continue
+                seen.add(parent_id)
+                parent_node = self.get_node(parent_id)
+                if parent_node is not None:
+                    result.append(parent_node)
+                for src, _, data in self.g.in_edges(parent_id, data=True):
+                    if data.get("edge_type") in positional and src in play_scope and src not in seen:
+                        next_level.append(src)
+            current_level = sorted(set(next_level))
+        return result
+
     def positional_ancestor_ids(self, node_id: str) -> set[str]:
         """Return ancestor node IDs via CONTAINS, INCLUDE, or IMPORT edges.
 
@@ -1513,13 +1558,7 @@ class ContentGraph:
         result: set[str] = set()
         seen: set[str] = set()
         stack = [node_id]
-        positional = frozenset(
-            {
-                EdgeType.CONTAINS.value,
-                EdgeType.INCLUDE.value,
-                EdgeType.IMPORT.value,
-            }
-        )
+        positional = _POSITIONAL_EDGE_VALUES
         while stack:
             current = stack.pop()
             for src, _, data in self.g.in_edges(current, data=True):

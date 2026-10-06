@@ -448,7 +448,7 @@ def parse_noqa(yaml_lines: str) -> frozenset[str]:
     """Extract suppressed rule IDs from ``# noqa:`` comments in YAML.
 
     Supports both single-rule (``# noqa: R108``) and multi-rule
-    (``# noqa: R108, L030``) forms.  Rule IDs are normalized to
+    (``# noqa: R108, L026``) forms.  Rule IDs are normalized to
     uppercase.  Only the first whitespace-delimited token of each
     comma-separated entry is treated as a rule ID, so trailing
     justification text (``# noqa: L068 intentional``, ``# noqa: L068 lola``,

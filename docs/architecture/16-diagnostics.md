@@ -168,7 +168,6 @@ No diagnostics displayed.
   Fan-out:      120ms
   ├── Native       80ms |  12 violation(s)
   │   ├── L026    12ms |  3 violations
-  │   ├── L030     8ms |  2 violations
   │   └── M005    15ms |  1 violation
   ├── Opa          95ms |   3 violation(s)
   │   ├── L003     5ms |  1 violation

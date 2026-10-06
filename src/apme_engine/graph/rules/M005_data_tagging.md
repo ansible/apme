@@ -48,4 +48,14 @@ violation:
     - name: Show greeting
       ansible.builtin.debug:
         msg: "Hello, world"
+
+    - name: Slurp file for verification
+      ansible.builtin.slurp:
+        src: /tmp/security.conf
+      register: slurp_result
+
+    - name: Assert file contains expected content
+      ansible.builtin.assert:
+        that: "{{ slurp_result['content'] }} == 'eA=='"
+        fail_msg: "security.conf content mismatch"
 ```

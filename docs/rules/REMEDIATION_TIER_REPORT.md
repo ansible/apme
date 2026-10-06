@@ -10,14 +10,14 @@ Analysis of default remediation routing for all rules. Regenerate with:
 | Tier | Count | % of 157 |
 |------|-------|--------|
 | Tier 1 — auto (has transform) | 25 | 16% |
-| Tier 2 — AI (task/block, no fixer) | 69 | 44% |
-| Tier 3 — manual | 63 | 40% |
+| Tier 2 — AI (task/block, no fixer) | 68 | 43% |
+| Tier 3 — manual | 64 | 41% |
 
 ### Promotion potential
 
 - **26** Tier 2 rules could likely move to Tier 1 (mechanical transforms)
 - **9** Tier 3 rules have mechanical fixes blocked by scope
-- **69 - 26 = 43** Tier 2 rules should stay AI (judgment/security)
+- **68 - 26 = 42** Tier 2 rules should stay AI (judgment/security)
 
 ### Tier 3 breakdown
 
@@ -29,7 +29,7 @@ Analysis of default remediation routing for all rules. Regenerate with:
 | collection scope | 10 |
 | role scope | 10 |
 | play scope | 7 |
-| inventory scope | 2 |
+| inventory scope | 3 |
 
 ## Tier 1 — Auto (25 rules)
 
@@ -61,7 +61,7 @@ Analysis of default remediation routing for all rules. Regenerate with:
 | M008 | OPA | high | task | Bare include is removed in 2.19+; use include_tasks or import_tasks. |
 | M009 | OPA | high | task | with_* loops are deprecated; use loop instead. |
 
-## Tier 2 — AI (69 rules)
+## Tier 2 — AI (68 rules)
 
 ### Could move to Tier 1 auto
 
@@ -103,7 +103,6 @@ Analysis of default remediation routing for all rules. Regenerate with:
 | L004 | high | task | Task/block scope — AI can propose fix (Tier 2) |
 | L014 | low | task | Task/block scope — AI can propose fix (Tier 2) |
 | L017 | low | task | Task/block scope — AI can propose fix (Tier 2) |
-| L030 | low | task | Task/block scope — AI can propose fix (Tier 2) |
 | L031 | high | task | Task/block scope — AI can propose fix (Tier 2) |
 | L032 | low | task | Task/block scope — AI can propose fix (Tier 2) |
 | L033 | low | task | Task/block scope — AI can propose fix (Tier 2) |
@@ -142,7 +141,7 @@ Analysis of default remediation routing for all rules. Regenerate with:
 | R115 | medium | task | Task/block scope — AI can propose fix (Tier 2) |
 | SEC:* | critical | task | Task/block scope — AI can propose fix (Tier 2) |
 
-## Tier 3 — Manual (63 rules)
+## Tier 3 — Manual (64 rules)
 
 | Rule ID | Validator | Severity | Scope | Auto candidate? | Reason |
 |---------|-----------|----------|-------|-----------------|--------|
@@ -200,6 +199,7 @@ Analysis of default remediation routing for all rules. Regenerate with:
 | M011 | OPA | high | collection | — | Scope 'collection' — play/role/collection not AI-proposable |
 | M025 | OPA | high | play | — | Scope 'play' — play/role/collection not AI-proposable |
 | M029 | Native | medium | playbook | — | Scope 'playbook' — play/role/collection not AI-proposable |
+| M047 | Native | medium | inventory | — | Scope 'inventory' — play/role/collection not AI-proposable |
 | R108 | Native | medium | play | — | Scope 'play' — play/role/collection not AI-proposable |
 | R111 | Native | medium | task | — | Project-level context required (cross-file or data-flow consumers) |
 | R112 | Native | medium | task | — | Project-level context required (cross-file or data-flow consumers) |
