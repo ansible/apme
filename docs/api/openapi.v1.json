@@ -423,6 +423,110 @@
         "title": "ApproveRequest",
         "type": "object"
       },
+      "AtomicOperateOptions": {
+        "description": "Server-side gate options for atomic ``POST /operate`` (additive).\n\nAttributes:\n    auto_approve_tier1: Auto-approve Tier 1 deterministic proposals.\n    auto_approve_ai: Auto-escalate AI candidates and auto-approve AI proposals.\n    enable_ai: Enable Tier 2 AI tier (implied by auto_approve_ai).\n    ai_model: Optional model override.\n    ansible_version: Target ansible-core version.\n    collection_specs: Galaxy collection install specs.\n    submit: Optional submit-after-complete options.",
+        "properties": {
+          "ai_model": {
+            "default": "",
+            "title": "Ai Model",
+            "type": "string"
+          },
+          "ansible_version": {
+            "default": "",
+            "title": "Ansible Version",
+            "type": "string"
+          },
+          "auto_approve_ai": {
+            "default": false,
+            "title": "Auto Approve Ai",
+            "type": "boolean"
+          },
+          "auto_approve_tier1": {
+            "default": false,
+            "title": "Auto Approve Tier1",
+            "type": "boolean"
+          },
+          "collection_specs": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Collection Specs",
+            "type": "array"
+          },
+          "enable_ai": {
+            "default": false,
+            "title": "Enable Ai",
+            "type": "boolean"
+          },
+          "submit": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AtomicOperateSubmitOptions"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "AtomicOperateOptions",
+        "type": "object"
+      },
+      "AtomicOperateRequest": {
+        "description": "Request body for atomic ``POST /api/v1/projects/{id}/operate``.\n\nAttributes:\n    action: ``check`` or ``remediate``. Defaults to ``check`` (unlike\n        ``OperateRequest.action``, which is required): a bare POST with\n        no body is read-only by default so agent one-call automation\n        cannot accidentally start a remediate.\n    options: Atomic gate/submit options.\n    abandon_working_set: Allow flush of interactive draft working set.",
+        "properties": {
+          "abandon_working_set": {
+            "default": false,
+            "title": "Abandon Working Set",
+            "type": "boolean"
+          },
+          "action": {
+            "default": "check",
+            "pattern": "^(check|remediate)$",
+            "title": "Action",
+            "type": "string"
+          },
+          "options": {
+            "$ref": "#/components/schemas/AtomicOperateOptions"
+          }
+        },
+        "title": "AtomicOperateRequest",
+        "type": "object"
+      },
+      "AtomicOperateSubmitOptions": {
+        "description": "Submit options for atomic ``POST /operate`` (additive).\n\nAttributes:\n    create_pr: Whether to open a PR after pushing.\n    branch_name: Explicit branch name (auto-generated when omitted).\n    submit_token: Optional idempotency token forwarded to the embedded\n        submit (``Idempotency-Key`` header is preferred when present).",
+        "properties": {
+          "branch_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch Name"
+          },
+          "create_pr": {
+            "default": true,
+            "title": "Create Pr",
+            "type": "boolean"
+          },
+          "submit_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Submit Token"
+          }
+        },
+        "title": "AtomicOperateSubmitOptions",
+        "type": "object"
+      },
       "CollectionDetail": {
         "description": "Detail view for a single collection (ADR-040).\n\nAttributes:\n    fqcn: Fully-qualified collection name.\n    versions: All version strings seen across projects.\n    source: Primary origin.\n    project_count: Number of projects using this collection.\n    projects: Projects that depend on this collection.",
         "properties": {
@@ -1078,6 +1182,129 @@
         "title": "HealthStatus",
         "type": "object"
       },
+      "ImportScanRequest": {
+        "description": "Request body for ``POST /api/v1/scans/import`` (additive).\n\nStores CLI-local ``apme check --json`` output as Gateway activity\nwithout requiring a registered project scan run.\n\nPer-field ``max_length`` caps plus the 5000-row cap bound the\nworst-case JSON payload; total request-body size itself is bounded\nby the ASGI server / reverse-proxy max-body setting (not by\nPydantic \u2014 FastAPI has no per-route body-size knob).\n\nAttributes:\n    project_id: Optional registered project UUID to link.\n    project_path: Local project path label (stored on the scan row).\n    scan_type: ``check`` or ``remediate``.\n    violations: Violation rows from ``apme check --json`` (max 5000).\n    source: Origin label (default ``cli``).",
+        "properties": {
+          "project_id": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
+          },
+          "project_path": {
+            "default": "external",
+            "maxLength": 1000,
+            "title": "Project Path",
+            "type": "string"
+          },
+          "scan_type": {
+            "default": "check",
+            "pattern": "^(check|remediate)$",
+            "title": "Scan Type",
+            "type": "string"
+          },
+          "source": {
+            "default": "cli",
+            "maxLength": 32,
+            "title": "Source",
+            "type": "string"
+          },
+          "violations": {
+            "items": {
+              "$ref": "#/components/schemas/ImportViolationSchema"
+            },
+            "maxItems": 5000,
+            "title": "Violations",
+            "type": "array"
+          }
+        },
+        "title": "ImportScanRequest",
+        "type": "object"
+      },
+      "ImportScanResponse": {
+        "description": "Response for ``POST /api/v1/scans/import`` (additive).\n\nAttributes:\n    scan_id: UUID of the stored run.\n    session_id: Owning session hash.\n    violation_count: Number of stored violation rows.",
+        "properties": {
+          "scan_id": {
+            "title": "Scan Id",
+            "type": "string"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "violation_count": {
+            "title": "Violation Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "scan_id",
+          "session_id",
+          "violation_count"
+        ],
+        "title": "ImportScanResponse",
+        "type": "object"
+      },
+      "ImportViolationSchema": {
+        "description": "One violation row for ``POST /api/v1/scans/import`` (additive).\n\nAttributes:\n    rule_id: Rule identifier (e.g. L001).\n    level: Severity level string.\n    message: Human-readable description.\n    file: Relative file path.\n    line: Line number or None.\n    path: YAML path within the file.\n    remediation_class: Remediation tier label (``auto-fixable``,\n        ``ai-candidate``, ``manual-review``) as emitted by\n        ``apme check --json``. Empty when unknown \u2014 the import\n        endpoint counts such rows as ``manual_review`` (pending\n        triage) and stores ``0`` (unspecified) on the violation row.",
+        "properties": {
+          "file": {
+            "default": "",
+            "maxLength": 1000,
+            "title": "File",
+            "type": "string"
+          },
+          "level": {
+            "default": "warning",
+            "maxLength": 16,
+            "title": "Level",
+            "type": "string"
+          },
+          "line": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Line"
+          },
+          "message": {
+            "default": "",
+            "maxLength": 4000,
+            "title": "Message",
+            "type": "string"
+          },
+          "path": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Path",
+            "type": "string"
+          },
+          "remediation_class": {
+            "default": "",
+            "maxLength": 32,
+            "title": "Remediation Class",
+            "type": "string"
+          },
+          "rule_id": {
+            "default": "",
+            "maxLength": 64,
+            "title": "Rule Id",
+            "type": "string"
+          }
+        },
+        "title": "ImportViolationSchema",
+        "type": "object"
+      },
       "LogEntry": {
         "description": "Pipeline log entry.\n\nAttributes:\n    id: Auto-increment ID.\n    message: Log message text.\n    phase: Pipeline subsystem.\n    progress: Progress fraction 0.0-1.0.\n    level: Numeric log level.",
         "properties": {
@@ -1460,6 +1687,71 @@
           "health_score"
         ],
         "title": "ProjectDetail",
+        "type": "object"
+      },
+      "ProjectFormatFileDiff": {
+        "description": "One formatted file diff (additive).\n\nAttributes:\n    path: Relative file path.\n    diff: Unified diff text.",
+        "properties": {
+          "diff": {
+            "default": "",
+            "title": "Diff",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "title": "ProjectFormatFileDiff",
+        "type": "object"
+      },
+      "ProjectFormatRequest": {
+        "description": "Request body for ``POST /api/v1/projects/{id}/format`` (additive).\n\nAttributes:\n    branch: Branch override (defaults to the project branch).",
+        "properties": {
+          "branch": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Branch override (defaults to the project branch). 1-100 chars; letters, digits, '.', '_', '/', '-'; must satisfy git check-ref-format component rules. Invalid names fail with 422.",
+            "title": "Branch"
+          }
+        },
+        "title": "ProjectFormatRequest",
+        "type": "object"
+      },
+      "ProjectFormatResponse": {
+        "description": "Response for ``POST /api/v1/projects/{id}/format`` (additive).\n\nAttributes:\n    project_id: Owning project UUID.\n    commit: HEAD SHA of the cloned repo.\n    diffs: Per-file format diffs.",
+        "properties": {
+          "commit": {
+            "default": "",
+            "title": "Commit",
+            "type": "string"
+          },
+          "diffs": {
+            "items": {
+              "$ref": "#/components/schemas/ProjectFormatFileDiff"
+            },
+            "title": "Diffs",
+            "type": "array"
+          },
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id"
+        ],
+        "title": "ProjectFormatResponse",
         "type": "object"
       },
       "ProjectRanking": {
@@ -2254,8 +2546,52 @@
         "title": "SessionSummary",
         "type": "object"
       },
+      "SessionVenvInfo": {
+        "description": "Read-only session venv view (additive, Engine-owned venvs).\n\nSourced from persisted Gateway session/scan rows only \u2014 never writes\nto Engine venv state (ADR-022 single-writer invariant).\n\nAttributes:\n    session_id: Deterministic session hash.\n    project_path: Filesystem path of the project.\n    requirements_hash: Hash of the requirements set for the session.\n        Legacy name \u2014 superseded by ``manifest_hash``; both carry the\n        same value.\n    manifest_hash: Canonical name for the requirements-set hash\n        (additive alias of ``requirements_hash``).\n    ansible_core_version: ansible-core version from the latest manifest.\n    age_seconds: Session dwell in seconds (``last_seen`` minus\n        ``first_seen``), not wall-clock age since creation. The field\n        name is kept for REST contract stability (ADR-060).\n    last_seen: ISO 8601 timestamp of most recent event.",
+        "properties": {
+          "age_seconds": {
+            "default": 0,
+            "title": "Age Seconds",
+            "type": "integer"
+          },
+          "ansible_core_version": {
+            "default": "",
+            "title": "Ansible Core Version",
+            "type": "string"
+          },
+          "last_seen": {
+            "default": "",
+            "title": "Last Seen",
+            "type": "string"
+          },
+          "manifest_hash": {
+            "default": "",
+            "title": "Manifest Hash",
+            "type": "string"
+          },
+          "project_path": {
+            "default": "",
+            "title": "Project Path",
+            "type": "string"
+          },
+          "requirements_hash": {
+            "default": "",
+            "title": "Requirements Hash",
+            "type": "string"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id"
+        ],
+        "title": "SessionVenvInfo",
+        "type": "object"
+      },
       "SubmitRequest": {
-        "description": "Request body for the unified SCM submit endpoint (ADR-050).\n\nPushes patched files to a branch and optionally opens a PR.\nAll fields are optional \u2014 the Gateway generates sensible defaults.\n\nWhen ``activity_id`` is provided, patched files are loaded from the\ndatabase (supports historical scans).  When omitted, the endpoint\nuses the live in-memory operation for the project.\n\nAttributes:\n    activity_id: Optional scan/activity ID to submit from DB history.\n    branch_name: Name for the new branch (default auto-generated).\n    create_pr: Whether to open a PR after pushing (default ``True``).\n    title: PR title (default auto-generated from remediation stats).\n    body: PR body in Markdown (default auto-generated).\n    scm_token: One-time SCM token (overrides project/global token).",
+        "description": "Request body for the unified SCM submit endpoint (ADR-050).\n\nPushes patched files to a branch and optionally opens a PR.\nAll fields are optional \u2014 the Gateway generates sensible defaults.\n\nWhen ``activity_id`` is provided, patched files are loaded from the\ndatabase (supports historical scans).  When omitted, the endpoint\nuses the live in-memory operation for the project.\n\nAttributes:\n    activity_id: Optional scan/activity ID to submit from DB history.\n    branch_name: Name for the new branch (default auto-generated).\n    create_pr: Whether to open a PR after pushing (default ``True``).\n    title: PR title (default auto-generated from remediation stats).\n    body: PR body in Markdown (default auto-generated).\n    scm_token: One-time SCM token (overrides project/global token).\n    submit_token: Idempotency token from ``POST /approve`` (N19) or\n        client-generated ``Idempotency-Key``; double-submit with the\n        same token replays the stored result instead of pushing again.",
         "properties": {
           "activity_id": {
             "anyOf": [
@@ -2307,6 +2643,17 @@
               }
             ],
             "title": "Scm Token"
+          },
+          "submit_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Submit Token"
           },
           "title": {
             "anyOf": [
@@ -3882,6 +4229,63 @@
         "summary": "Project Dependencies Endpoint"
       }
     },
+    "/api/v1/projects/{project_id}/format": {
+      "post": {
+        "description": "Format a registered project's files via Engine Format gRPC (additive).\n\nIntentional read-only preview: clones the project repo, streams files\nto Engine ``Format`` (unary), and returns per-file diffs without\nwriting. The Gateway never writes formatted content back \u2014 apply via\nCLI ``apme format --apply`` or ``apme remediate``. Agent-facing\nalternative to the CLI-local ``apme format`` (Engine gRPC) path.\nClone file collection reuses the ``APME_SCAN_MAX_FILES`` /\n``APME_SCAN_MAX_BYTES`` caps (413 when exceeded) so a large clone\ncannot balloon Gateway RAM before the Engine's own PE-35 session caps\napply.\n\nArgs:\n    project_id: Project UUID.\n    body: Optional branch override (defaults to the project branch;\n        validated like all other branch entry points, 422 when invalid).\n\nReturns:\n    Project format diffs with the clone commit SHA.\n\nRaises:\n    HTTPException: 404 if project not found; 400 on invalid repo/branch;\n        413 when scan caps are exceeded; 502 on clone/Engine errors.",
+        "operationId": "project_format_endpoint_api_v1_projects__project_id__format_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ProjectFormatRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectFormatResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Project Format Endpoint"
+      }
+    },
     "/api/v1/projects/{project_id}/graph": {
       "get": {
         "description": "Return the ContentGraph JSON for a project's latest scan.\n\nThe response is the raw ``ContentGraph.to_dict()`` output \u2014 nodes,\nedges, and execution_edges \u2014 ready for client-side D3/dagre rendering.\n\nArgs:\n    project_id: Project UUID or name.\n\nReturns:\n    JSON response with graph data.\n\nRaises:\n    HTTPException: 404 if project not found or no graph data available.",
@@ -3918,6 +4322,65 @@
           }
         },
         "summary": "Project Graph Endpoint"
+      }
+    },
+    "/api/v1/projects/{project_id}/operate": {
+      "post": {
+        "description": "Run check/remediate atomically with server-side gates (additive).\n\nDrives begin-remediate, AI escalation, and approval gates server-side\nfrom ``options.{auto_approve_tier1,auto_approve_ai}`` and optionally\nsubmits (branch/PR) from ``options.submit``. Blocks until the\noperation reaches a terminal state and returns that snapshot. The\nstepped ``/operation`` flow is unchanged. A missing body defaults to\n``{\"action\": \"check\"}`` (read-only).\n\nThe terminal wait is capped at ``_ATOMIC_OPERATE_TIMEOUT_S`` (1800s);\nexceeding it surfaces HTTP 504 and cancels the drive task so no\norphaned Engine stream survives the request. The embedded submit\npropagates idempotency: the caller's ``Idempotency-Key`` header (or\n``options.submit.submit_token``) is forwarded as the submit token, so\nretrying the atomic call replays the stored submit result instead of\npushing twice. Replay keys on ``(project_id, token)`` alone when the\nstored entry already carries a completed submit result \u2014 a fresh\n``scan_id`` per atomic attempt does not force a 409 when\nbranch/activity bindings match. Submit inputs (idempotency token\nentropy, branch-name shape) are validated up front with 400/422\nbefore any operation is created.\n\nArgs:\n    project_id: Target project UUID.\n    body: Atomic action + options payload (defaults to check).\n    request: Incoming request (for ``Idempotency-Key`` header forwarding\n        to the embedded submit).\n\nReturns:\n    Terminal operation snapshot (includes ``result`` and optional\n    ``pr_url`` when ``options.submit`` was requested; additive\n    ``submit_error`` when the embedded submit failed).\n\nRaises:\n    HTTPException: 404 if project not found; 400 on weak idempotency\n        token; 422 on invalid submit branch name; 409 on active\n        operation or draft working set without abandon opt-in; 504 on\n        timeout.\n    asyncio.CancelledError: Re-raised on client disconnect (never\n        swallowed by submit-error handling).",
+        "operationId": "atomic_operate_api_v1_projects__project_id__operate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/AtomicOperateRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Atomic Operate Api V1 Projects  Project Id  Operate Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Atomic Operate"
       }
     },
     "/api/v1/projects/{project_id}/operation": {
@@ -4012,7 +4475,7 @@
     },
     "/api/v1/projects/{project_id}/operation/approve": {
       "post": {
-        "description": "Submit approval decisions for live proposals (engine ids).\n\nGate-commits Gateway working-set rows (omit = decline) and rolls\nanalytics when claimable, then resolves the operation's\n``approval_gate`` so the background gRPC task can send the approval\nto Engine. ``review_status`` is stamped when violation ids are already\nlinked; otherwise FixCompleted stamps after the id bridge. Request /\nresponse shape is unchanged (ADR-060).\n\nArgs:\n    project_id: Target project UUID.\n    body: Approved **engine** proposal IDs.\n\nReturns:\n    Confirmation message.\n\nRaises:\n    HTTPException: 404 if no operation, 409 if not in awaiting_approval.",
+        "description": "Submit approval decisions for live proposals (engine ids).\n\nGate-commits Gateway working-set rows (omit = decline) and rolls\nanalytics when claimable, then resolves the operation's\n``approval_gate`` so the background gRPC task can send the approval\nto Engine. ``review_status`` is stamped when violation ids are already\nlinked; otherwise FixCompleted stamps after the id bridge. Returns an\nadditive ``submit_token`` (uuid) for idempotent ``POST /submit``\n(N19); existing ``status`` field is unchanged (ADR-060).\n\nArgs:\n    project_id: Target project UUID.\n    body: Approved **engine** proposal IDs.\n\nReturns:\n    Confirmation message plus ``submit_token`` for idempotent submit.\n\nRaises:\n    HTTPException: 404 if no operation, 409 if not in awaiting_approval.",
         "operationId": "approve_proposals_api_v1_projects__project_id__operation_approve_post",
         "parameters": [
           {
@@ -4298,7 +4761,7 @@
     },
     "/api/v1/projects/{project_id}/operation/submit": {
       "post": {
-        "description": "Push patched files to a branch and optionally open a PR (ADR-050).\n\nThis is the unified SCM submit endpoint that replaces the former\n``/activity/{id}/pull-request`` and ``/operation/create-pr`` endpoints.\n\nTwo modes:\n\n- **Live operation** (no ``activity_id``): uses the in-memory\n  ``OperationRegistry`` for the project \u2014 requires a completed\n  remediation operation.\n- **Historical activity** (``activity_id`` provided): loads patched\n  files from the database \u2014 works for any past remediation that still\n  has stored patches.\n\nArgs:\n    project_id: Target project UUID.\n    body: Optional submit options (branch name, create_pr flag, etc.).\n\nReturns:\n    Branch, commit SHA, optional PR URL, and provider.\n\nRaises:\n    HTTPException: 404/409/422/502 depending on state.",
+        "description": "Push patched files to a branch and optionally open a PR (ADR-050).\n\nThin wrapper serializing concurrent same-token submits on a\nper-(project_id, token) in-flight lock held from cache check through\npersist, so duplicates await the winner and then replay instead of\npushing/opening duplicate PRs. Untokened calls run unlocked. The wait\nis bounded (#29, 30s -> 503 + Retry-After) so a hung submit fails\nfast instead of queueing. Lock order is token-lock (outer, here)\nthen scan-lock (inner, in the impl); never reversed.\n\nArgs:\n    project_id: Target project UUID.\n    body: Optional submit options (branch name, create_pr flag, etc.).\n    request: Incoming request (for ``Idempotency-Key`` header).\n\nReturns:\n    Branch, commit SHA, optional PR URL, and provider.",
         "operationId": "submit_operation_api_v1_projects__project_id__operation_submit_post",
         "parameters": [
           {
@@ -4871,6 +5334,45 @@
         "summary": "Put Rule Config"
       }
     },
+    "/api/v1/scans/import": {
+      "post": {
+        "description": "Store CLI-local ``apme check --json`` output as Gateway activity.\n\nAdditive shared-space endpoint for the CLI-local XOR Gateway-managed\ntopology: CLI-local runs stay local by default; ``apme check\n--report-to-gateway`` POSTs here to mirror results into Gateway\nactivity/history without requiring a registered project scan run.\n\nEach import mints a fresh random session (per-scan ``session_id``) so\nunlinked ``project_path=\"external\"`` imports never share one session\nrow. Tier counts are resolved from each violation's\n``remediation_class`` label (``auto-fixable`` \u2192 ``auto_fixable``,\n``ai-candidate`` \u2192 ``ai_candidate``); rows with an empty/unknown\nlabel are counted as ``manual_review`` (pending triage) and stored\nwith ``remediation_class=0`` (unspecified). At most 5000 violations\nare stored per import; per-violation ``message`` is capped at 4000\nchars, ``file`` at 1000 chars, ``path`` at 2000 chars, ``rule_id``\nat 64, ``level`` at 16, ``remediation_class`` at 32\n(Pydantic enforces the caps with 422; the handler truncates\ndefensively after redaction). Obvious ``api_key``/``token``-style\nsecrets in messages are replaced with ``[REDACTED]`` before persistence.\nThrottle policy (best-effort, in-memory): at most 10 imports per\n60s per project key (``project_id`` or ``project_path``); excess\ncalls fail with 429 before any DB write.\n\nArgs:\n    body: External scan payload (violations + project linkage).\n\nReturns:\n    New scan/session identifiers and stored violation count.\n\nRaises:\n    HTTPException: 404 if a provided project_id does not exist;\n        400 if more than 5000 violations are supplied; 429 when the\n        per-project import rate limit is exceeded.",
+        "operationId": "import_external_scan_api_v1_scans_import_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportScanRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportScanResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Import External Scan"
+      }
+    },
     "/api/v1/sessions": {
       "get": {
         "description": "List sessions ordered by most recently seen.\n\nArgs:\n    limit: Page size.\n    offset: Row offset.\n\nReturns:\n    Paginated list of sessions.",
@@ -4923,6 +5425,46 @@
           }
         },
         "summary": "List Sessions"
+      }
+    },
+    "/api/v1/sessions/venvs/{session_id}": {
+      "get": {
+        "description": "Return read-only session venv info (additive, Engine-owned venvs).\n\nSourced from persisted Gateway session/scan rows only \u2014 the Engine\nremains the single writer to ``/sessions`` venvs (ADR-022). Exposes\nthe deterministic session hash, ansible-core version from the latest\nscan manifest, and session dwell for agent operability.\n\nArgs:\n    session_id: Deterministic session hash.\n\nReturns:\n    Read-only venv view with hash/requirements/dwell (``age_seconds``\n    is ``last_seen`` minus ``first_seen``, not wall-clock age; the\n    field name is kept for contract stability).\n\nRaises:\n    HTTPException: 404 if session not found.",
+        "operationId": "get_session_venv_info_api_v1_sessions_venvs__session_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionVenvInfo"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Session Venv Info"
       }
     },
     "/api/v1/sessions/{session_id}": {

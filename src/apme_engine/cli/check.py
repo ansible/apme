@@ -301,7 +301,11 @@ def run_check(args: argparse.Namespace) -> None:
         from apme_engine.engine._version import __version__ as _engine_version
 
         sarif_doc = violations_to_sarif(violations, tool_version=_engine_version)
-        print(json.dumps(sarif_doc))
+        # Stdout first (flushed) so piped consumers never lose results if
+        # the best-effort Gateway mirror below stalls or fails.
+        print(json.dumps(sarif_doc), flush=True)
+        if getattr(args, "report_to_gateway", False):
+            _report_check_to_gateway(args, project_root, violations)
         if violations:
             sys.exit(EXIT_VIOLATIONS)
         return
@@ -327,7 +331,9 @@ def run_check(args: argparse.Namespace) -> None:
             "resolution_summary": dict(res_counts),
             "diffs": diffs,
         }
-        print(json.dumps(out, indent=2))
+        print(json.dumps(out, indent=2), flush=True)
+        if getattr(args, "report_to_gateway", False):
+            _report_check_to_gateway(args, project_root, violations)
         if violations:
             sys.exit(EXIT_VIOLATIONS)
         return
@@ -343,7 +349,57 @@ def run_check(args: argparse.Namespace) -> None:
 
     display_summary = _ScanSummaryCompat(tier1_report)
     render_check_results(violations, scan_id=scan_id, scan_time_ms=None, summary=display_summary)
+    sys.stdout.flush()
+    if getattr(args, "report_to_gateway", False):
+        _report_check_to_gateway(args, project_root, violations)
     if suppressed_count and not show_suppressed:
         sys.stderr.write(dim(f"  ({suppressed_count} suppressed violation(s) hidden — use --show-suppressed)\n"))
     if violations:
         sys.exit(EXIT_VIOLATIONS)
+
+
+def _report_check_to_gateway(
+    args: argparse.Namespace,
+    project_root: object,
+    violations: list[ViolationDict],
+) -> None:
+    """Mirror CLI-local check results into Gateway activity (additive stub).
+
+    POSTs to ``POST /api/v1/scans/import`` (shared-space mirror). Best
+    effort: failures warn on stderr and never change the check exit code.
+
+    Args:
+        args: Parsed CLI arguments (gateway_url, project_id).
+        project_root: Resolved project root path.
+        violations: Active violations to mirror.
+    """
+    try:
+        from apme_engine.cli.gateway_client import GatewayClient  # noqa: PLC0415
+
+        client = GatewayClient(base_url=getattr(args, "gateway_url", None))
+        payload: dict[str, object] = {
+            "project_path": str(project_root),
+            "scan_type": "check",
+            "source": "cli",
+            "violations": [
+                {
+                    "rule_id": str(v.get("rule_id", "")),
+                    "level": str(v.get("level") or v.get("severity") or "warning"),
+                    "message": str(v.get("message", "")),
+                    "file": str(v.get("file", "")),
+                    "line": v.get("line"),
+                    "path": str(v.get("path", "")),
+                    "remediation_class": str(v.get("remediation_class") or ""),
+                }
+                for v in violations
+            ],
+        }
+        project_id = getattr(args, "project_id", None)
+        if project_id:
+            payload["project_id"] = project_id
+        result = client.import_scan(payload)
+        reported_id = result.get("scan_id") if isinstance(result, dict) else None
+        if reported_id:
+            sys.stderr.write(f"  Reported to Gateway: scan {reported_id}\n")
+    except Exception as exc:  # noqa: BLE001 — best-effort mirror only
+        sys.stderr.write(f"  Warning: --report-to-gateway failed: {exc}\n")

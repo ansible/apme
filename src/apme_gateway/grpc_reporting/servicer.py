@@ -5,6 +5,10 @@ Engine pods push ``FixCompletedEvent`` messages to this servicer via gRPC
 in a persistence transaction. Notification rows are scheduled afterwards as
 fire-and-forget background tasks (separate sessions) so notification latency
 and failures cannot delay or fail the RPC acknowledgement (ADR-029).
+Notification intent (the outbox row) is persisted in a separate best-effort
+transaction after the scan commit and before the ACK — not in the same
+transaction as the scan — so a restart between ACK and background
+generation can replay it; outbox failures never fail the RPC.
 """
 
 from __future__ import annotations
@@ -38,6 +42,17 @@ from apme_gateway.db.models import (
     Session,
     Violation,
 )
+from apme_gateway.notifications import (
+    _RECONCILE_OUTBOX_CONCURRENCY,
+    _RECONCILE_OUTBOX_PAGE_SIZE,
+    _bump_notification_outbox_attempts,
+    _deliver_scan_notifications,
+    _enqueue_notification_outbox,
+    _mark_notification_outbox_sent,
+    _pending_notification_tasks,
+    _violation_set_hash,
+    reconcile_notification_outbox,
+)
 from apme_gateway.proposals.flush import replace_scan_proposals
 from apme_gateway.proposals.grouping import (
     group_violations,
@@ -48,14 +63,23 @@ from apme_gateway.proposals.grouping import (
 
 logger = logging.getLogger(__name__)
 
-# Strong refs so fire-and-forget notification tasks are not GC'd mid-flight.
-_pending_notification_tasks: set[asyncio.Task[None]] = set()
-
 # A streamed event is bounded even though it can exceed the unary gRPC limit.
 # The chunk-count limit also rejects streams made from tiny or empty frames.
 MAX_STREAM_BYTES = 256 * 1024 * 1024
 MAX_STREAM_CHUNKS = 4096
 MAX_STREAM_CHUNK_BYTES = 50 * 1024 * 1024
+
+__all__ = [
+    "_pending_notification_tasks",
+    "_RECONCILE_OUTBOX_PAGE_SIZE",
+    "_RECONCILE_OUTBOX_CONCURRENCY",
+    "_deliver_scan_notifications",
+    "_violation_set_hash",
+    "_enqueue_notification_outbox",
+    "_bump_notification_outbox_attempts",
+    "_mark_notification_outbox_sent",
+    "reconcile_notification_outbox",
+]
 
 
 def _now_iso() -> str:
@@ -368,6 +392,11 @@ class ReportingServicer(reporting_pb2_grpc.ReportingServicer):
             return reporting_pb2.ReportAck()
 
         # Acknowledge immediately; notifications run out-of-band.
+        # Persist outbox intent in a separate best-effort transaction after
+        # the scan commit and before ACK (not the same transaction as the
+        # scan) so a restart between ACK and background generation cannot
+        # lose them; outbox failures never fail the already-committed RPC.
+        await _enqueue_notification_outbox(request.scan_id)
         _schedule_scan_notifications(request.scan_id)
         return reporting_pb2.ReportAck()
 
@@ -795,22 +824,15 @@ def _schedule_scan_notifications(scan_id: str) -> None:
     Opens its own session, logs failures, and never propagates to the caller.
     Strong references keep the task alive until completion. Violations are
     read from the database (not the gRPC request) so a deferred task always
-    sees the latest committed set after an idempotent replay.
+    sees the latest committed set after an idempotent replay. On success the
+    persistent outbox row is marked sent (N18).
 
     Args:
         scan_id: Persisted scan UUID to notify for.
     """
 
     async def _run() -> None:
-        try:
-            async with get_session() as db:
-                await _generate_scan_notifications(db, scan_id)
-        except Exception:
-            logger.warning(
-                "Notification generation failed for scan %s",
-                scan_id,
-                exc_info=True,
-            )
+        await _deliver_scan_notifications(scan_id)
 
     task = asyncio.create_task(_run(), name=f"scan-notifications-{scan_id}")
     _pending_notification_tasks.add(task)
@@ -831,7 +853,7 @@ async def drain_notification_tasks() -> None:
 async def _generate_scan_notifications(
     db: AsyncSession,
     scan_id: str,
-) -> None:
+) -> bool:
     """Create notifications from a persisted scan event (best-effort).
 
     Reloads the scan and its ``Violation`` rows by primary key so deferred
@@ -845,6 +867,12 @@ async def _generate_scan_notifications(
     Args:
         db: Active async database session (post-persistence).
         scan_id: Persisted scan UUID.
+
+    Returns:
+        True when notifications were generated; False when generation
+        failed (the caller leaves the outbox row unsent so startup
+        reconciliation can retry). A missing scan is a terminal no-op
+        and returns True so it is not retried forever.
     """
     try:
         from apme_gateway.notifications import (  # noqa: PLC0415
@@ -855,15 +883,17 @@ async def _generate_scan_notifications(
         scan = (await db.execute(sa_select(Scan).where(Scan.scan_id == scan_id))).scalar_one_or_none()
         if scan is None:
             logger.warning("Notification generation skipped: scan %s not found", scan_id)
-            return
+            return True
 
         violations = list((await db.execute(sa_select(Violation).where(Violation.scan_id == scan_id))).scalars().all())
         payloads = await generate_notifications(db, scan, violations)
         await db.commit()
         broadcast_notifications(payloads)
+        return True
     except Exception:
         try:
             await db.rollback()
         except Exception:
             logger.debug("Rollback after notification failure also failed", exc_info=True)
         logger.warning("Notification generation failed for scan %s", scan_id, exc_info=True)
+        return False

@@ -50,6 +50,7 @@ def _violation(rule_id: str) -> ViolationDict:
         "rule_id": rule_id,
         "severity": "error",
         "message": "test violation",
+        "scope": "task",
     }
 
 

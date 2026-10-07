@@ -94,6 +94,22 @@ def build_parser() -> argparse.ArgumentParser:
         default=False,
         help="Include suppressed violations in output (ADR-055)",
     )
+    check_p.add_argument(
+        "--report-to-gateway",
+        action="store_true",
+        default=False,
+        help="POST check JSON to Gateway POST /api/v1/scans/import (shared-space mirror)",
+    )
+    check_p.add_argument(
+        "--gateway-url",
+        default=None,
+        help="Gateway URL for --report-to-gateway (default: $APME_GATEWAY_URL or http://localhost:8080)",
+    )
+    check_p.add_argument(
+        "--project-id",
+        default=None,
+        help="Project UUID to link when using --report-to-gateway (omit for unlinked external scan)",
+    )
 
     # ── format ──
     fmt_p = subparsers.add_parser(
@@ -224,7 +240,7 @@ def build_parser() -> argparse.ArgumentParser:
         parents=[global_opts],
         help="Generate SBOM for a project (via Gateway REST API)",
     )
-    sbom_p.add_argument("project_id", help="Project identifier (UUID or name)")
+    sbom_p.add_argument("project_id", nargs="?", default=None, help="Project identifier (UUID or name)")
     sbom_p.add_argument(
         "--format",
         default="cyclonedx",
@@ -241,6 +257,46 @@ def build_parser() -> argparse.ArgumentParser:
         "--gateway-url",
         default=None,
         help="Gateway URL (default: $APME_GATEWAY_URL or http://localhost:8080)",
+    )
+    sbom_p.add_argument(
+        "--path",
+        default=None,
+        help="Local project path: build SBOM from local manifests without a registered project",
+    )
+
+    # ── submit (thin shim over Gateway POST /operation/submit) ──
+    submit_p = subparsers.add_parser(
+        "submit",
+        parents=[global_opts],
+        help="Push remediated patches to a branch/PR (via Gateway REST API)",
+    )
+    submit_p.add_argument("project_id", help="Project identifier (UUID)")
+    submit_p.add_argument(
+        "--branch",
+        default=None,
+        help="Branch name (default: auto-generated apme/remediate-<scan>)",
+    )
+    submit_p.add_argument(
+        "--no-pr",
+        action="store_true",
+        default=False,
+        help="Push branch without opening a PR",
+    )
+    submit_p.add_argument(
+        "--activity-id",
+        default=None,
+        help="Historical activity (scan) ID to submit instead of the live operation",
+    )
+    submit_p.add_argument(
+        "--gateway-url",
+        default=None,
+        help="Gateway URL (default: $APME_GATEWAY_URL or http://localhost:8080)",
+    )
+    submit_p.add_argument(
+        "--json",
+        action="store_true",
+        default=False,
+        help="Output submit result as JSON",
     )
 
     # ── suppress ──

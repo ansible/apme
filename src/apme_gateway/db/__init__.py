@@ -47,6 +47,7 @@ async def init_db(database_url: str) -> None:
                 await conn.run_sync(_migrate_proposals_table)
                 await conn.run_sync(_migrate_scans_table)
                 await conn.run_sync(_migrate_projects_table)
+                await conn.run_sync(_migrate_notification_outbox_table)
         except (OperationalError, OSError):
             if engine is not None:
                 await engine.dispose()
@@ -91,6 +92,7 @@ async def reset_db() -> None:
         await conn.run_sync(_migrate_proposals_table)
         await conn.run_sync(_migrate_scans_table)
         await conn.run_sync(_migrate_projects_table)
+        await conn.run_sync(_migrate_notification_outbox_table)
 
 
 def get_engine() -> AsyncEngine:
@@ -235,7 +237,7 @@ def _migrate_proposals_table(conn: object) -> None:
 
 
 def _migrate_scans_table(conn: object) -> None:
-    """Add SCM publish columns to ``scans`` (ADR-050).
+    """Add SCM publish columns to ``scans`` (ADR-050, N19).
 
     ``create_all`` only creates missing *tables* — it does not add columns
     to existing tables.  This function inspects the ``scans`` table and
@@ -260,6 +262,10 @@ def _migrate_scans_table(conn: object) -> None:
         migrations.append("ALTER TABLE scans ADD COLUMN branch_name TEXT DEFAULT NULL")
     if "commit_sha" not in existing:
         migrations.append("ALTER TABLE scans ADD COLUMN commit_sha TEXT DEFAULT NULL")
+    if "submit_token" not in existing:
+        migrations.append("ALTER TABLE scans ADD COLUMN submit_token TEXT DEFAULT NULL")
+    if "scm_provider" not in existing:
+        migrations.append("ALTER TABLE scans ADD COLUMN scm_provider TEXT DEFAULT NULL")
 
     for stmt in migrations:
         conn.execute(text(stmt))
@@ -300,6 +306,36 @@ def _migrate_projects_table(conn: Connection) -> None:
                 text("UPDATE projects SET normalized_repo_url = :normalized WHERE id = :pid"),
                 {"normalized": canonical, "pid": row[0]},
             )
+
+
+def _migrate_notification_outbox_table(conn: Connection) -> None:
+    """Add the outbox reconciliation index and clean up orphaned rows.
+
+    ``create_all`` creates the ``sent_at`` index and the ``scans`` FK for
+    fresh databases, but does not alter existing tables.  This migration
+    adds the missing index additively and deletes orphaned outbox rows
+    whose scan no longer exists (emulating the ``ondelete=CASCADE``
+    cleanup for pre-FK rows).  SQLite cannot add a foreign key to an
+    existing table via ``ALTER TABLE`` — the FK is enforced for tables
+    created after this change; orphan cleanup keeps legacy tables
+    consistent instead.
+
+    Args:
+        conn: Synchronous SQLAlchemy connection (from ``run_sync``).
+    """
+    if not isinstance(conn, Connection):
+        return
+    insp = inspect(conn)
+    if not insp.has_table("notification_outbox"):
+        return
+    indexes = {idx["name"] for idx in insp.get_indexes("notification_outbox")}
+    if "ix_notification_outbox_sent_at" not in indexes:
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_notification_outbox_sent_at ON notification_outbox (sent_at)"))
+    columns = {col["name"] for col in insp.get_columns("notification_outbox")}
+    if "content_hash" not in columns:
+        conn.execute(text("ALTER TABLE notification_outbox ADD COLUMN content_hash TEXT DEFAULT NULL"))
+    if insp.has_table("scans"):
+        conn.execute(text("DELETE FROM notification_outbox WHERE scan_id NOT IN (SELECT scan_id FROM scans)"))
 
 
 async def close_db() -> None:

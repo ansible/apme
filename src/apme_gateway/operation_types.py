@@ -219,6 +219,9 @@ class OperationState:
         begin_remediate_future: Resolved by ``POST /begin-remediate`` (ADR-064).
         escalate_ai_future: Resolved by ``POST /escalate-ai`` with target dicts.
         sse_subscribers: One queue per connected SSE client.
+        submit_token: Idempotency token issued by ``POST /approve`` (N19).
+        submit_error: Additive submit failure surfaced on the atomic
+            ``POST /operate`` terminal snapshot (never masks terminal status).
     """
 
     operation_id: str
@@ -243,6 +246,8 @@ class OperationState:
     begin_remediate_future: asyncio.Future[None] | None = field(default=None, repr=False)
     escalate_ai_future: asyncio.Future[list[dict[str, Any]]] | None = field(default=None, repr=False)
     sse_subscribers: list[asyncio.Queue[dict[str, Any]]] = field(default_factory=list, repr=False)
+    submit_token: str | None = field(default=None, repr=False)
+    submit_error: str | None = field(default=None, repr=False)
 
     def to_snapshot(self) -> dict[str, Any]:
         """Serialise the full state for an SSE ``snapshot`` event or REST ``GET /``.
@@ -321,6 +326,10 @@ class OperationState:
             data["clone_commit"] = self.clone_commit
         if self.approval_gate is not None:
             data["approval_gate_id"] = self.approval_gate.gate_id
+        if self.submit_token is not None:
+            data["submit_token"] = self.submit_token
+        if self.submit_error is not None:
+            data["submit_error"] = self.submit_error
         return data
 
 

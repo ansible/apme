@@ -22,6 +22,47 @@ from urllib.parse import urlsplit
 
 logger = logging.getLogger(__name__)
 
+_COLLECTION_SPEC_RE = re.compile(r"^[A-Za-z0-9_.-]+\.[A-Za-z0-9_.-]+(:([A-Za-z0-9_.,<>=!~-]+|\*))?$")
+
+
+def validate_collection_spec(spec: str) -> str:
+    """Validate a Galaxy collection spec against option-injection boundaries.
+
+    Accepts ``namespace.name`` with an optional ``:version`` suffix
+    (e.g. ``community.general:>=9.0``). Rejects empty specs, leading
+    ``-`` (option injection), inner whitespace, and characters outside
+    the allowlist so a spec can never become an ``ansible-galaxy`` flag
+    or shell metachar. ``*`` is accepted only as the entire version
+    (``ns.name:*``, meaning any version) — never embedded in a range
+    such as ``>=1.0.*``. PEP 440 operators (``==``, ``>=``, ``~=``, ``!=``,
+    compound ``,`` ranges) are accepted; ``~`` is allowed for ``~=``.
+
+    Spaces are normalized before validation (all ``" "`` removed, then
+    validated), identically on every path that accepts specs, so
+    ``"ns.name: >= 9.0"`` and ``"ns.name:>=9.0"`` validate identically.
+
+    Args:
+        spec: Raw collection specifier.
+
+    Returns:
+        The space-normalized spec when valid.
+
+    Raises:
+        ValueError: When the spec is empty, starts with ``-``, or fails
+            the allowlist regex.
+    """
+    value = (spec or "").strip().replace(" ", "")
+    if not value:
+        msg = "Collection spec must not be empty"
+        raise ValueError(msg)
+    if value.startswith("-"):
+        msg = f"Collection spec must not start with '-': {value[:60]}"
+        raise ValueError(msg)
+    if not _COLLECTION_SPEC_RE.match(value):
+        msg = f"Invalid collection spec: {value[:80]}"
+        raise ValueError(msg)
+    return value
+
 
 def _safe_server_label(raw_url: str) -> str:
     """Return an upstream server label without credentials or URL details.
@@ -248,6 +289,9 @@ async def download_collections(
 
     Returns:
         DownloadResult with paths to downloaded tarballs and any failures.
+        Specs failing validation are recorded in ``failed_specs`` (batch
+        continues with the valid remainder) instead of raising, so one
+        invalid spec cannot abort the batch or escape as a 502.
 
     Raises:
         ValueError: When both ``ansible_cfg_path`` and ``servers`` are provided.
@@ -258,6 +302,20 @@ async def download_collections(
 
     if not collection_specs:
         return DownloadResult()
+
+    validated_specs: list[str] = []
+    invalid_specs: list[str] = []
+    for spec in collection_specs:
+        try:
+            validated_specs.append(validate_collection_spec(spec))
+        except ValueError as exc:
+            logger.warning("Skipping invalid collection spec %r: %s", spec, exc)
+            invalid_specs.append(spec)
+    if not validated_specs:
+        return DownloadResult(
+            failed_specs=list(collection_specs),
+            stderr="No valid collection specs",
+        )
 
     if servers is not None and not servers:
         return DownloadResult(
@@ -275,7 +333,7 @@ async def download_collections(
     )
 
     normalized_specs = []
-    for spec in collection_specs:
+    for spec in validated_specs:
         if ":" in spec:
             fqcn, version = spec.split(":", 1)
             normalized_specs.append(f"{fqcn.strip()}:{version.strip()}")
@@ -289,6 +347,7 @@ async def download_collections(
         "--download-path",
         str(download_dir),
         "--no-deps",
+        "--",
         *normalized_specs,
     ]
 
@@ -345,6 +404,9 @@ async def download_collections(
                 process.returncode,
             )
             failed = _compute_failed_specs(collection_specs, tarballs)
+            for spec in invalid_specs:
+                if spec not in failed:
+                    failed.append(spec)
             return DownloadResult(
                 tarball_paths=tarballs,
                 failed_specs=failed,
@@ -353,7 +415,11 @@ async def download_collections(
 
         logger.info("galaxy_backend_response operation=download status=200 tarballs=%d", len(tarballs))
         status = "ok"
-        return DownloadResult(tarball_paths=tarballs, stderr=stderr_text)
+        return DownloadResult(
+            tarball_paths=tarballs,
+            failed_specs=list(invalid_specs),
+            stderr=stderr_text,
+        )
 
     except TimeoutError:
         status = "timeout"

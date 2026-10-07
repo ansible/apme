@@ -14,6 +14,7 @@ import contextlib
 import json
 import logging
 import os
+import time
 import uuid
 from collections.abc import AsyncIterator
 from typing import cast
@@ -45,12 +46,17 @@ from apme_gateway.api.schemas import (
     DepHealthSummary,
     GalaxyServerSchema,
     HealthStatus,
+    ImportScanRequest,
+    ImportScanResponse,
     LogEntry,
     NotificationSchema,
     PaginatedResponse,
     PatchDetail,
     ProjectDependencies,
     ProjectDetail,
+    ProjectFormatFileDiff,
+    ProjectFormatRequest,
+    ProjectFormatResponse,
     ProjectRanking,
     ProjectSummary,
     ProposalDetail,
@@ -62,6 +68,7 @@ from apme_gateway.api.schemas import (
     RemediationRateEntry,
     SessionDetail,
     SessionSummary,
+    SessionVenvInfo,
     SuppressionSchema,
     TopViolation,
     TrendPoint,
@@ -674,9 +681,16 @@ async def get_project_detail(project_id: str) -> ProjectDetail:
 
         cfg = load_config()
         token = proj.scm_token or cfg.scm_token
-        remote_sha = await fetch_remote_head(
-            proj.repo_url, proj.branch, scm_token=token, scm_provider=proj.scm_provider
-        )
+        try:
+            remote_sha = await fetch_remote_head(
+                proj.repo_url, proj.branch, scm_token=token, scm_provider=proj.scm_provider
+            )
+        except ValueError:
+            # Fail-closed token/URL rejection on a best-effort freshness
+            # poll must not 500 the detail view; the actual clone path
+            # raises the same error when a scan runs.
+            logger.debug("remote-head poll skipped for project %s", project_id, exc_info=True)
+            remote_sha = None
         if remote_sha and remote_sha != proj.last_scanned_commit:
             has_new = True
 
@@ -1415,6 +1429,440 @@ async def get_session_detail(session_id: str) -> SessionDetail:
         first_seen=sess.first_seen,
         last_seen=sess.last_seen,
         scans=[_to_activity_summary(s) for s in sess.scans],
+    )
+
+
+@router.get("/sessions/venvs/{session_id}")  # type: ignore[untyped-decorator]
+async def get_session_venv_info(session_id: str) -> SessionVenvInfo:
+    """Return read-only session venv info (additive, Engine-owned venvs).
+
+    Sourced from persisted Gateway session/scan rows only — the Engine
+    remains the single writer to ``/sessions`` venvs (ADR-022). Exposes
+    the deterministic session hash, ansible-core version from the latest
+    scan manifest, and session dwell for agent operability.
+
+    Args:
+        session_id: Deterministic session hash.
+
+    Returns:
+        Read-only venv view with hash/requirements/dwell (``age_seconds``
+        is ``last_seen`` minus ``first_seen``, not wall-clock age; the
+        field name is kept for contract stability).
+
+    Raises:
+        HTTPException: 404 if session not found.
+    """
+    from datetime import datetime  # noqa: PLC0415
+
+    async with get_session() as db:
+        sess = await q.get_session(db, session_id)
+        if sess is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+        project_path = sess.project_path
+        first_seen = sess.first_seen
+        last_seen = sess.last_seen
+        manifest, _collections, _packages = await q.session_dependencies(db, session_id)
+    ansible_core = manifest.ansible_core_version if manifest else ""
+    requirements_hash = ""
+    if manifest is not None:
+        import hashlib as _hashlib  # noqa: PLC0415
+
+        requirements_hash = _hashlib.sha256((manifest.requirements_files_json or "[]").encode("utf-8")).hexdigest()[:16]
+    age_seconds = 0
+    try:
+        first_dt = datetime.fromisoformat(first_seen)
+        last_dt = datetime.fromisoformat(last_seen)
+        # Session dwell (last_seen - first_seen), not wall-clock age since
+        # creation; the age_seconds field name is kept for REST stability.
+        age_seconds = max(0, int((last_dt - first_dt).total_seconds()))
+    except (ValueError, TypeError):
+        age_seconds = 0
+    return SessionVenvInfo(
+        session_id=session_id,
+        project_path=project_path,
+        requirements_hash=requirements_hash,
+        manifest_hash=requirements_hash,
+        ansible_core_version=ansible_core,
+        age_seconds=age_seconds,
+        last_seen=last_seen,
+    )
+
+
+_IMPORT_MAX_VIOLATIONS = 5000
+_IMPORT_MAX_MESSAGE_CHARS = 4000
+_IMPORT_MAX_FILE_CHARS = 1000
+_IMPORT_MAX_PATH_CHARS = 2000
+_IMPORT_MAX_RULE_ID_CHARS = 64
+_IMPORT_MAX_LEVEL_CHARS = 16
+_IMPORT_MAX_REMEDIATION_CLASS_CHARS = 32
+_IMPORT_MAX_PROJECT_PATH_CHARS = 1000
+_IMPORT_MAX_SOURCE_CHARS = 32
+# Per-key import throttle: max imports per sliding window (best-effort
+# in-memory guard against rapid large imports minting unbounded
+# sessions/scans/violation rows). Small functional imports are
+# unaffected (10/min headroom); flood callers get 429, never 500.
+# Unlinked imports (no project_id) share one "external" bucket so rotating
+# project_path cannot mint a fresh quota per request (#18). A global cap
+# bounds aggregate import throughput per gateway process.
+_IMPORT_RATE_LIMIT_PER_MIN = 10
+_IMPORT_RATE_WINDOW_S = 60.0
+_IMPORT_RATE_STATE: dict[str, list[float]] = {}
+_IMPORT_RATE_GLOBAL_KEY = "__global__"
+_IMPORT_RATE_GLOBAL_PER_MIN = 100
+
+
+def _check_import_rate_limit(key: str, *, unlinked: bool = False) -> None:
+    """Enforce per-key import throttle (sliding window, best-effort).
+
+    Policy: at most ``_IMPORT_RATE_LIMIT_PER_MIN`` imports per
+    ``_IMPORT_RATE_WINDOW_S`` seconds per project key
+    (``project_id`` or shared ``"external"`` bucket for unlinked
+    imports). Unlinked callers that rotate ``project_path`` share the
+    external bucket, so distinct paths do not each get a fresh quota
+    (#18). A global per-process cap (``_IMPORT_RATE_GLOBAL_PER_MIN``)
+    bounds aggregate flood throughput. Excess calls fail with 429
+    before any DB write. State is in-memory per gateway process;
+    timestamps older than the window are pruned on each call and the
+    keyspace is bounded to 1000 entries.
+
+    Concurrency: this function is synchronous with no awaits, so on the
+    single gateway event loop each check-and-record runs atomically —
+    concurrent coroutines cannot interleave between the quota check and
+    the timestamp append (#11). Multi-process/multi-replica deployments
+    still multiply the caps per process (documented throttle policy,
+    not a correctness gate); a durable distributed throttle would need
+    a shared store and is out of scope for this best-effort guard.
+
+    Args:
+        key: Project linkage key (already defaulted, truncated).
+        unlinked: True when the import carries no project_id (CLI-local
+            mirror); forces the shared external bucket.
+
+    Raises:
+        HTTPException: 429 when the key exceeded its quota.
+    """
+    if unlinked:
+        key = "external"
+    now = time.monotonic()
+    window_start = now - _IMPORT_RATE_WINDOW_S
+    timestamps = [t for t in _IMPORT_RATE_STATE.get(key, []) if t > window_start]
+    if len(timestamps) >= _IMPORT_RATE_LIMIT_PER_MIN:
+        logger.warning(
+            "Import rate limit exceeded for %r: %d imports in last %.0fs",
+            key,
+            len(timestamps),
+            _IMPORT_RATE_WINDOW_S,
+        )
+        raise HTTPException(
+            status_code=429,
+            detail=(f"Too many imports for {key!r}: max {_IMPORT_RATE_LIMIT_PER_MIN} per {_IMPORT_RATE_WINDOW_S:.0f}s"),
+        )
+    global_timestamps = [t for t in _IMPORT_RATE_STATE.get(_IMPORT_RATE_GLOBAL_KEY, []) if t > window_start]
+    if len(global_timestamps) >= _IMPORT_RATE_GLOBAL_PER_MIN:
+        logger.warning(
+            "Global import rate limit exceeded: %d imports in last %.0fs",
+            len(global_timestamps),
+            _IMPORT_RATE_WINDOW_S,
+        )
+        raise HTTPException(
+            status_code=429,
+            detail=(f"Too many imports globally: max {_IMPORT_RATE_GLOBAL_PER_MIN} per {_IMPORT_RATE_WINDOW_S:.0f}s"),
+        )
+    global_timestamps.append(now)
+    _IMPORT_RATE_STATE[_IMPORT_RATE_GLOBAL_KEY] = global_timestamps
+    timestamps.append(now)
+    _IMPORT_RATE_STATE[key] = timestamps
+    if len(_IMPORT_RATE_STATE) > 1000:
+        for _k in [k for k, ts in _IMPORT_RATE_STATE.items() if not [t for t in ts if t > window_start]]:
+            del _IMPORT_RATE_STATE[_k]
+        if len(_IMPORT_RATE_STATE) > 1000:
+            for _k in list(_IMPORT_RATE_STATE)[: len(_IMPORT_RATE_STATE) - 1000]:
+                del _IMPORT_RATE_STATE[_k]
+
+
+_SECRET_REDACT_RE = None  # compiled lazily in _redact_import_secrets
+_SECRET_REDACT_JSON_RE = None  # compiled lazily in _redact_import_secrets
+_SECRET_REDACT_SPACE_RE = None  # compiled lazily in _redact_import_secrets
+
+
+def _redact_import_secrets(message: str) -> str:
+    """Redact obvious secret values from imported violation text.
+
+    Matches ``api_key``/``token``/``secret``/``password``-style
+    ``key=value`` or ``key: value`` pairs (including JSON-quoted
+    ``"key": "value"`` shapes, plus narrowly scoped space-separated
+    ``private_key <PEM header>`` and ``Bearer <token>`` forms) and
+    replaces the value with ``[REDACTED]`` so CLI-mirrored findings
+    cannot persist raw credentials in Gateway history. Non-matching
+    text is unchanged.
+
+    Args:
+        message: Raw violation message, file, or path text.
+
+    Returns:
+        Text with secret values replaced by ``[REDACTED]``.
+    """
+    import re as _re  # noqa: PLC0415
+
+    global _SECRET_REDACT_RE  # noqa: PLW0603
+    if _SECRET_REDACT_RE is None:
+        _SECRET_REDACT_RE = _re.compile(
+            r"(?i)(api[_-]?key|auth[_-]?token|access[_-]?token|secret|passwd|password"
+            r"|private[_-]?key|bearer|aws[_-]?secret|aws[_-]?access[_-]?key[_-]?id"
+            r"|aws[_-]?session[_-]?token|github[_-]?token|\bpwd\b)"
+            r"\s*[:=]\s*\S+"
+        )
+    redacted = _SECRET_REDACT_RE.sub(lambda m: f"{m.group(1)}=[REDACTED]", message)
+    # Bare high-entropy credential shapes with no key (AKIA IDs, ghp_/xox-
+    # tokens, PEM blocks, glpat/sk/JWT) are redacted best-effort; keyed
+    # pairs above stay primary.
+    redacted = _re.sub(r"\bAKIA[0-9A-Z]{16}\b", "[REDACTED]", redacted)
+    redacted = _re.sub(r"\b(ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b", "[REDACTED]", redacted)
+    redacted = _re.sub(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b", "[REDACTED]", redacted)
+    # Lone PEM blocks without a preceding key name (CWE-532 #1).
+    redacted = _re.sub(
+        r"-----BEGIN[^-]*PRIVATE KEY-----[\s\S]*?-----END[^-]*PRIVATE KEY-----",
+        "[REDACTED]",
+        redacted,
+    )
+    # Bare GitLab / generic secret prefixes and JWT runs.
+    redacted = _re.sub(r"\bglpat-[A-Za-z0-9_-]{8,}\b", "[REDACTED]", redacted)
+    redacted = _re.sub(r"\bsk-[A-Za-z0-9]{8,}\b", "[REDACTED]", redacted)
+    redacted = _re.sub(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b", "[REDACTED]", redacted)
+    global _SECRET_REDACT_JSON_RE, _SECRET_REDACT_SPACE_RE  # noqa: PLW0603
+    if _SECRET_REDACT_JSON_RE is None:
+        _SECRET_REDACT_JSON_RE = _re.compile(
+            r'(?i)("(?:api[_-]?key|auth[_-]?token|access[_-]?token|secret|passwd|password'
+            r"|private[_-]?key|bearer|aws[_-]?secret|aws[_-]?access[_-]?key[_-]?id"
+            r"|aws[_-]?session[_-]?token|github[_-]?token|\bpwd\b)"
+            r'"\s*:\s*")[^"]*(")'
+        )
+    redacted = _SECRET_REDACT_JSON_RE.sub(r"\1[REDACTED]\2", redacted)
+    if _SECRET_REDACT_SPACE_RE is None:
+        # Space-separated shapes with no ``=``/``:`` (PEM headers,
+        # ``Bearer <token>``). Narrowly scoped to avoid prose mangling:
+        # a PEM header line after ``private_key``, or a token-like run
+        # (8+ token chars) after ``Bearer``.
+        _SECRET_REDACT_SPACE_RE = _re.compile(
+            r"(?i)(private[_-]?key)\s+-----BEGIN[^\n]*"
+            r"|\b([Bb]earer)\s+[A-Za-z0-9\-._~+/=]{8,}"
+        )
+    return _SECRET_REDACT_SPACE_RE.sub(
+        lambda m: f"{m.group(1)}=[REDACTED]" if m.group(1) is not None else f"{m.group(2)} [REDACTED]",
+        redacted,
+    )
+
+
+_IMPORT_REMEDIATION_CLASS_TO_INT = {
+    "auto-fixable": 1,  # REMEDIATION_CLASS_AUTO_FIXABLE
+    "ai-candidate": 2,  # REMEDIATION_CLASS_AI_CANDIDATE
+    "manual-review": 3,  # REMEDIATION_CLASS_MANUAL_REVIEW
+}
+
+
+def _import_remediation_class_to_int(label: str | None) -> int:
+    """Map an import ``remediation_class`` label to its proto int.
+
+    Args:
+        label: Tier label from ``ImportViolationSchema`` (or None/empty).
+
+    Returns:
+        Proto ``RemediationClass`` int, or 0 (unspecified) when unknown.
+    """
+    return _IMPORT_REMEDIATION_CLASS_TO_INT.get((label or "").strip().lower(), 0)
+
+
+@router.post("/scans/import", status_code=201)  # type: ignore[untyped-decorator]
+async def import_external_scan(body: ImportScanRequest) -> ImportScanResponse:
+    """Store CLI-local ``apme check --json`` output as Gateway activity.
+
+    Additive shared-space endpoint for the CLI-local XOR Gateway-managed
+    topology: CLI-local runs stay local by default; ``apme check
+    --report-to-gateway`` POSTs here to mirror results into Gateway
+    activity/history without requiring a registered project scan run.
+
+    Each import mints a fresh random session (per-scan ``session_id``) so
+    unlinked ``project_path="external"`` imports never share one session
+    row. Tier counts are resolved from each violation's
+    ``remediation_class`` label (``auto-fixable`` → ``auto_fixable``,
+    ``ai-candidate`` → ``ai_candidate``); rows with an empty/unknown
+    label are counted as ``manual_review`` (pending triage) and stored
+    with ``remediation_class=0`` (unspecified). At most 5000 violations
+    are stored per import; per-violation ``message`` is capped at 4000
+    chars, ``file`` at 1000 chars, ``path`` at 2000 chars, ``rule_id``
+    at 64, ``level`` at 16, ``remediation_class`` at 32
+    (Pydantic enforces the caps with 422; the handler truncates
+    defensively after redaction). Obvious ``api_key``/``token``-style
+    secrets in messages are replaced with ``[REDACTED]`` before persistence.
+    Throttle policy (best-effort, in-memory): at most 10 imports per
+    60s per project key (``project_id`` or ``project_path``); excess
+    calls fail with 429 before any DB write.
+
+    Args:
+        body: External scan payload (violations + project linkage).
+
+    Returns:
+        New scan/session identifiers and stored violation count.
+
+    Raises:
+        HTTPException: 404 if a provided project_id does not exist;
+            400 if more than 5000 violations are supplied; 429 when the
+            per-project import rate limit is exceeded.
+    """
+    import uuid as _uuid  # noqa: PLC0415
+    from datetime import UTC as _UTC  # noqa: PLC0415
+    from datetime import datetime as _datetime  # noqa: PLC0415
+
+    from apme_gateway.db.models import Scan as _Scan
+    from apme_gateway.db.models import Session as _Session
+    from apme_gateway.db.models import Violation as _Violation
+
+    if len(body.violations) > _IMPORT_MAX_VIOLATIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Too many violations: {len(body.violations)} (max {_IMPORT_MAX_VIOLATIONS})",
+        )
+    _rate_key = (body.project_id or "external")[:_IMPORT_MAX_PROJECT_PATH_CHARS]
+    _check_import_rate_limit(_rate_key, unlinked=body.project_id is None)
+    scan_id = _uuid.uuid4().hex
+    project_path = (body.project_path or "external")[:_IMPORT_MAX_PROJECT_PATH_CHARS]
+    # Per-scan random session: never derive from project_path (the old
+    # sha256(project_path) scheme collapsed every unlinked import into one
+    # shared "external" session).
+    session_id = _uuid.uuid4().hex[:16]
+    now = _datetime.now(_UTC).isoformat()
+    auto_fixable = sum(
+        1
+        for v in body.violations
+        if (v.remediation_class or "")[:_IMPORT_MAX_REMEDIATION_CLASS_CHARS].strip().lower() == "auto-fixable"
+    )
+    ai_candidate = sum(
+        1
+        for v in body.violations
+        if (v.remediation_class or "")[:_IMPORT_MAX_REMEDIATION_CLASS_CHARS].strip().lower() == "ai-candidate"
+    )
+    manual_review = len(body.violations) - auto_fixable - ai_candidate
+    async with get_session() as db:
+        project_id: str | None = None
+        if body.project_id:
+            proj = await q.resolve_project(db, body.project_id)
+            if proj is None:
+                raise HTTPException(status_code=404, detail="Project not found")
+            project_id = proj.id
+        existing = await q.get_session(db, session_id)
+        if existing is None:
+            db.add(
+                _Session(
+                    session_id=session_id,
+                    project_path=project_path,
+                    first_seen=now,
+                    last_seen=now,
+                )
+            )
+        else:
+            existing.last_seen = now
+        scan = _Scan(
+            scan_id=scan_id,
+            session_id=session_id,
+            project_id=project_id,
+            project_path=project_path,
+            source=(body.source or "cli")[:_IMPORT_MAX_SOURCE_CHARS],
+            trigger="cli",
+            created_at=now,
+            scan_type=body.scan_type,
+            total_violations=len(body.violations),
+            auto_fixable=auto_fixable,
+            ai_candidate=ai_candidate,
+            manual_review=manual_review,
+            fixed_count=0,
+        )
+        db.add(scan)
+        await db.flush()
+        for v in body.violations:
+            db.add(
+                _Violation(
+                    scan_id=scan_id,
+                    rule_id=(v.rule_id or "")[:_IMPORT_MAX_RULE_ID_CHARS],
+                    level=(v.level or "warning")[:_IMPORT_MAX_LEVEL_CHARS],
+                    message=_redact_import_secrets((v.message or "")[:_IMPORT_MAX_MESSAGE_CHARS])[
+                        :_IMPORT_MAX_MESSAGE_CHARS
+                    ],
+                    file=_redact_import_secrets((v.file or "")[:_IMPORT_MAX_FILE_CHARS])[:_IMPORT_MAX_FILE_CHARS],
+                    line=v.line,
+                    path=_redact_import_secrets((v.path or "")[:_IMPORT_MAX_PATH_CHARS])[:_IMPORT_MAX_PATH_CHARS],
+                    remediation_class=_import_remediation_class_to_int(
+                        (v.remediation_class or "")[:_IMPORT_MAX_REMEDIATION_CLASS_CHARS]
+                    ),
+                )
+            )
+        await db.commit()
+        if project_id:
+            try:
+                await q.update_project_health(db, project_id)
+            except Exception:
+                logger.warning("Post-commit project health update failed (scan_id=%s)", scan_id, exc_info=True)
+    return ImportScanResponse(
+        scan_id=scan_id,
+        session_id=session_id,
+        violation_count=len(body.violations),
+    )
+
+
+@router.post("/projects/{project_id}/format")  # type: ignore[untyped-decorator]
+async def project_format_endpoint(project_id: str, body: ProjectFormatRequest | None = None) -> ProjectFormatResponse:
+    """Format a registered project's files via Engine Format gRPC (additive).
+
+    Intentional read-only preview: clones the project repo, streams files
+    to Engine ``Format`` (unary), and returns per-file diffs without
+    writing. The Gateway never writes formatted content back — apply via
+    CLI ``apme format --apply`` or ``apme remediate``. Agent-facing
+    alternative to the CLI-local ``apme format`` (Engine gRPC) path.
+    Clone file collection reuses the ``APME_SCAN_MAX_FILES`` /
+    ``APME_SCAN_MAX_BYTES`` caps (413 when exceeded) so a large clone
+    cannot balloon Gateway RAM before the Engine's own PE-35 session caps
+    apply.
+
+    Args:
+        project_id: Project UUID.
+        body: Optional branch override (defaults to the project branch;
+            validated like all other branch entry points, 422 when invalid).
+
+    Returns:
+        Project format diffs with the clone commit SHA.
+
+    Raises:
+        HTTPException: 404 if project not found; 400 on invalid repo/branch;
+            413 when scan caps are exceeded; 502 on clone/Engine errors.
+    """
+    from apme_gateway.config import load_config as _load_config  # noqa: PLC0415
+    from apme_gateway.scan.driver import ScanCapExceeded as _ScanCapExceeded  # noqa: PLC0415
+    from apme_gateway.scan.driver import run_project_format as _run_project_format  # noqa: PLC0415
+
+    async with get_session() as db:
+        proj = await q.resolve_project(db, project_id)
+    if proj is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    branch = (body.branch if body and body.branch else None) or proj.branch
+
+    cfg = _load_config()
+    try:
+        commit, diffs = await _run_project_format(
+            repo_url=proj.repo_url,
+            branch=branch,
+            engine_address=cfg.engine_address,
+            scm_token=proj.scm_token or cfg.scm_token,
+            scm_provider=proj.scm_provider,
+        )
+    except _ScanCapExceeded as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return ProjectFormatResponse(
+        project_id=proj.id,
+        commit=commit,
+        diffs=[ProjectFormatFileDiff(path=d["path"], diff=d["diff"]) for d in diffs],
     )
 
 
@@ -2302,9 +2750,15 @@ async def project_operate_ws(
 
         cfg = load_config()
         scm_token = proj.scm_token or cfg.scm_token
-        remote_sha = await fetch_remote_head(
-            proj.repo_url, proj.branch, scm_token=scm_token, scm_provider=proj.scm_provider
-        )
+        try:
+            remote_sha = await fetch_remote_head(
+                proj.repo_url, proj.branch, scm_token=scm_token, scm_provider=proj.scm_provider
+            )
+        except ValueError:
+            # Best-effort new-commits notice only; fail-closed token/URL
+            # rejections surface when the operation clones.
+            logger.debug("remote-head poll skipped for project %s", project_id, exc_info=True)
+            remote_sha = None
         if remote_sha and proj.last_scanned_commit and remote_sha != proj.last_scanned_commit:
             await websocket.send_json(
                 {

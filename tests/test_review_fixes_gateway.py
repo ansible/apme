@@ -27,11 +27,10 @@ from apme_gateway.scan.driver import (
     _OP_APPROVE_TIMEOUT_DEFAULT_S,
     _OP_BEGIN_TIMEOUT_DEFAULT_S,
     _OP_ESCALATE_TIMEOUT_DEFAULT_S,
-    OperatorAnswerQueue,
-    _drain_queue,
     _op_timeout,
     run_project_operation,
 )
+from apme_gateway.scan.operator_queue import OperatorAnswerQueue, _drain_queue
 from apme_gateway.scm.github import GitHubProvider
 from apme_gateway.scm.gitlab import GitLabProvider
 from apme_gateway.scm.text import is_text_blob

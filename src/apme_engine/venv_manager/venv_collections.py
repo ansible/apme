@@ -16,11 +16,27 @@ from pathlib import Path
 _SAFE_VERSION_RE = re.compile(r"^\d+\.\d+(\.\d+)?$")
 
 
+_RANGE_PREFIXES = ("==", "!=", ">=", "<=", "~=", "===", ">", "<", "*")
+
+
 def _spec_to_pip(spec: str) -> str:
     """Convert a collection spec to a pip package name.
 
     ``community.general:9.0.0`` -> ``ansible-collection-community-general==9.0.0``
     ``ansible.posix``           -> ``ansible-collection-ansible-posix``
+    ``community.general:>=1.0.0`` -> ``ansible-collection-community-general>=1.0.0``
+    ``community.general:>=1.0.0,<2.0.0`` -> ``ansible-collection-community-general>=1.0.0,<2.0.0``
+
+    Bare pins (``1.2.3``) become ``==1.2.3``; PEP 440 range constraints
+    (``>=``, ``>``, ``<``, ``<=``, ``!=``, ``~=``, ``==`` with compound
+    ``,`` ranges) are passed through verbatim.  ``"*"`` means any version
+    and maps to the bare package name.
+
+    The spec is first validated with Galaxy's
+    :func:`galaxy_proxy.collection_downloader.validate_collection_spec`
+    (spaces normalized before validation, identically to the download
+    path) so option-injection and shell-metachar specs fail here before
+    ever reaching pip.
 
     Args:
         spec: Collection specifier (namespace.collection or namespace.collection:version).
@@ -29,18 +45,46 @@ def _spec_to_pip(spec: str) -> str:
         pip-installable package specifier.
 
     Raises:
-        ValueError: If spec does not contain a dot (expected namespace.collection).
+        ValueError: If spec does not contain a dot (expected namespace.collection),
+            fails collection-spec validation, or the version constraint is
+            not valid PEP 440.
     """
-    base = spec.split(":")[0].strip()
+    from galaxy_proxy.collection_downloader import validate_collection_spec  # noqa: PLC0415
+
+    normalized = validate_collection_spec(spec)
+    base = normalized.split(":")[0].strip()
     if "." not in base:
         raise ValueError(f"Invalid collection spec (expected namespace.collection): {spec}")
     namespace, collection = base.split(".", 1)
     pkg = f"ansible-collection-{namespace}-{collection}"
-    if ":" in spec:
-        version = spec.split(":", 1)[1].strip()
-        if version:
-            pkg = f"{pkg}=={version}"
+    if ":" in normalized:
+        version = normalized.split(":", 1)[1].strip().replace(" ", "")
+        if not version or version == "*":
+            return pkg
+        if version.startswith(_RANGE_PREFIXES):
+            _validate_pep440_specifier(version, spec)
+            return f"{pkg}{version}"
+        _validate_pep440_specifier(f"=={version}", spec)
+        pkg = f"{pkg}=={version}"
     return pkg
+
+
+def _validate_pep440_specifier(version_spec: str, original: str) -> None:
+    """Validate a PEP 440 version specifier, raising ValueError if invalid.
+
+    Args:
+        version_spec: Specifier string such as ``==1.2.3`` or ``>=1.0.0,<2.0.0``.
+        original: Original collection spec (for the error message).
+
+    Raises:
+        ValueError: If the specifier is not valid PEP 440.
+    """
+    from packaging.specifiers import SpecifierSet
+
+    try:
+        SpecifierSet(version_spec)
+    except Exception as exc:
+        raise ValueError(f"Invalid collection version constraint {original!r}: {exc}") from exc
 
 
 def _requirements_hash(collection_specs: list[str]) -> str:
@@ -136,7 +180,10 @@ def _spec_to_bare_pip(spec: str) -> str:
     Returns:
         Bare pip package name for uninstall, e.g. ``ansible-collection-community-general``.
     """
-    return _spec_to_pip(spec).split("==")[0]
+    import re
+
+    pip_spec = _spec_to_pip(spec)
+    return re.split(r"[=<>!~]", pip_spec, maxsplit=1)[0]
 
 
 def _has_valid_meta(version_dir: Path) -> bool:
