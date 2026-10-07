@@ -86,7 +86,7 @@ export function useNotificationStream(): void {
     const gatewayKey = `${api.apiBase}\0${api.origin}`;
     if (gatewayKeyRef.current !== gatewayKey) {
       gatewayKeyRef.current = gatewayKey;
-      setNotificationGroups({});
+      setNotificationGroups(() => ({}));
     }
 
     const startStream = async () => {
