@@ -211,7 +211,11 @@ artifact type, translate it:
    string with the same whitespace class, not ``split(trim(x, " "), " ")``.
    Also construct _temporal_ failures: what happens when an async
    dependency never responds, times out, or responds after the
-   consumer has moved on? What happens when `asyncio.gather()`
+   consumer has moved on? For React effects that rerun when a provider,
+   route, or selected entity changes, resolve and reject an older request
+   after cleanup; verify its success, catch, and finally handlers cannot
+   overwrite current data, selections, persisted values, or loading state.
+   What happens when `asyncio.gather()`
    returns a mix of results and exceptions — does every caller
    handle `return_exceptions=True` correctly?
    When the change schedules fire-and-forget tasks (notifications,

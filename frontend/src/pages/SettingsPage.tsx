@@ -304,8 +304,12 @@ export function SettingsPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let cancelled = false;
+
     listAiModels(api)
       .then((m) => {
+        if (cancelled) return;
+
         setModels(m);
         const stored = localStorage.getItem(AI_MODEL_STORAGE_KEY);
         const ids = new Set(m.map((x) => x.id));
@@ -322,8 +326,16 @@ export function SettingsPage() {
           }
         }
       })
-      .catch(() => setModels([]))
-      .finally(() => setLoading(false));
+      .catch(() => {
+        if (!cancelled) setModels([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [api]);
 
   const handleChange = useCallback((value: string) => {
