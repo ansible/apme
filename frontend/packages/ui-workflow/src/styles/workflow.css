@@ -136,6 +136,14 @@
   border-bottom: 1px solid var(--pf-t--global--border--color--default);
 }
 
+.apme-diff-warning {
+  grid-column: 1 / -1;
+  padding: 6px 12px;
+  color: var(--pf-t--global--color--status--warning--default);
+  font-size: 12px;
+  border-bottom: 1px solid var(--pf-t--global--border--color--default);
+}
+
 .apme-diff-line {
   display: block;
 }

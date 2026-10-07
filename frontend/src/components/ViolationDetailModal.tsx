@@ -210,7 +210,11 @@ export function ViolationDetailModal({ isOpen, onClose, violation, diff, scanTyp
                     This diff also includes fixes for: {violation.co_fixes.join(', ')}
                   </p>
                 )}
-                <DiffView diff={violationDiff} />
+                <DiffView
+                  diff={violationDiff}
+                  before={violation.original_yaml}
+                  after={violation.fixed_yaml}
+                />
               </div>
             </Tab>
           ) : null}
