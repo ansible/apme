@@ -3,15 +3,17 @@ import { useEffect, useMemo, useRef } from 'react';
 import { YamlLine } from './yamlHighlight';
 
 export interface DiffViewProps {
-  /** Unified diff hunk (used when before/after are absent, or for unified mode). */
+  /** Unified diff (used when full before/after text is absent, or for unified mode). */
   diff?: string;
   before?: string;
   after?: string;
-  /** Default side-by-side when before/after (or parseable diff) is available. */
+  /** Default side-by-side when complete before/after text is available. */
   mode?: 'unified' | 'side-by-side';
   className?: string;
   /** 1-based line in the Current (before) pane to highlight. */
   highlightLine?: number | null;
+  /** Whether to warn that a unified diff may omit unchanged source lines. */
+  partialSourceWarning?: boolean;
 }
 
 /**
@@ -40,6 +42,211 @@ const lineStyles: Record<string, React.CSSProperties> = {
   header: { color: 'var(--pf-t--global--color--status--info--default)', fontWeight: 600 },
   context: {},
 };
+
+function escapedTokenEnd(text: string, start: number): number | undefined {
+  let cursor = start;
+  while (text[cursor] === '\\') cursor++;
+  if (cursor === start) return undefined;
+  if (text[cursor] === 'n' || text[cursor] === 't') return cursor + 1;
+  if (text[cursor] !== 'r') return undefined;
+
+  cursor++;
+  const newlineSlashStart = cursor;
+  while (text[cursor] === '\\') cursor++;
+  return cursor > newlineSlashStart && text[cursor] === 'n' ? cursor + 1 : undefined;
+}
+
+/** Decode candidate transport escapes; callers must verify against full source. */
+function decodeEscapedProposalText(text: string): string {
+  let out = '';
+  for (let cursor = 0; cursor < text.length; ) {
+    const end = text[cursor] === '\\' ? escapedTokenEnd(text, cursor) : undefined;
+    if (end === undefined) {
+      if (text[cursor] === '\\') {
+        let runEnd = cursor + 1;
+        while (text[runEnd] === '\\') runEnd++;
+        out += text.slice(cursor, runEnd);
+        cursor = runEnd;
+      } else {
+        out += text[cursor]!;
+        cursor++;
+      }
+      continue;
+    }
+    out += text[end - 1] === 't' ? '\t' : '\n';
+    cursor = end;
+  }
+  return out;
+}
+
+function normalizeLineEndings(text: string): string {
+  return text.replace(/\r\n/g, '\n');
+}
+
+function sourceLineCount(text: string): number {
+  if (!text) return 0;
+  return text.replace(/\n$/, '').split('\n').length;
+}
+
+function diffCoversCompleteSide(
+  diff: string,
+  side: 'before' | 'after',
+  expectedLineCount: number,
+): boolean {
+  const hunkPattern = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/gm;
+  const startIndex = side === 'before' ? 1 : 3;
+  const countIndex = side === 'before' ? 2 : 4;
+  let nextLine = 1;
+  let totalLines = 0;
+  let foundHunk = false;
+  for (const match of diff.matchAll(hunkPattern)) {
+    const startLine = Number(match[startIndex]);
+    const lineCount = Number(match[countIndex] ?? 1);
+    const expectedStart = lineCount === 0 ? nextLine - 1 : nextLine;
+    if (startLine !== expectedStart) return false;
+    foundHunk = true;
+    totalLines += lineCount;
+    if (lineCount > 0) nextLine = startLine + lineCount;
+  }
+  return foundHunk && totalLines === expectedLineCount;
+}
+
+function sourceLines(text: string): string[] {
+  if (!text) return [];
+  const lines = normalizeLineEndings(text).split('\n');
+  if (text.endsWith('\n')) lines.pop();
+  return lines;
+}
+
+/** Check that every escape-bearing source line is present and unchanged in the diff. */
+function diffVerifiesEscapeLines(
+  beforeText: string,
+  afterText: string | undefined,
+  diff: string | undefined,
+): boolean {
+  if (!diff?.trim()) return false;
+  const beforeLines = sourceLines(beforeText);
+  const afterLines = afterText === undefined ? undefined : sourceLines(afterText);
+  const escapeLines = new Set<number>();
+  beforeLines.forEach((line, index) => {
+    if (decodeEscapedProposalText(line) !== line) escapeLines.add(index + 1);
+  });
+  const lines = diff.split('\n');
+  let oldLine = 1;
+  let newLine = 1;
+  let sawHunk = false;
+  let expectedOldCount = 0;
+  let expectedNewCount = 0;
+  let consumedOldCount = 0;
+  let consumedNewCount = 0;
+  const verifiedEscapeLines = new Set<number>();
+
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index]!;
+    const hunk = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(line);
+    if (hunk) {
+      if (
+        sawHunk &&
+        (consumedOldCount !== expectedOldCount || consumedNewCount !== expectedNewCount)
+      ) {
+        return false;
+      }
+      oldLine = Number(hunk[1]);
+      newLine = Number(hunk[3]);
+      expectedOldCount = Number(hunk[2] ?? 1);
+      expectedNewCount = Number(hunk[4] ?? 1);
+      consumedOldCount = 0;
+      consumedNewCount = 0;
+      sawHunk = true;
+      continue;
+    }
+    if (!sawHunk || (line === '' && index === lines.length - 1)) continue;
+    if (line.startsWith('\\ No newline')) continue;
+
+    const prefix = line[0];
+    const content = line.slice(1);
+    if (prefix === ' ' || prefix === '-') {
+      if (beforeLines[oldLine - 1] !== content) return false;
+      if (escapeLines.has(oldLine)) verifiedEscapeLines.add(oldLine);
+      oldLine++;
+      consumedOldCount++;
+    } else if (prefix !== '+') {
+      return false;
+    }
+    if (prefix === ' ' || prefix === '+') {
+      if (afterLines && afterLines[newLine - 1] !== content) return false;
+      newLine++;
+      consumedNewCount++;
+    }
+  }
+  return (
+    sawHunk &&
+    consumedOldCount === expectedOldCount &&
+    consumedNewCount === expectedNewCount &&
+    verifiedEscapeLines.size === escapeLines.size
+  );
+}
+
+function diffMatchesCompleteProposal(
+  beforeText: string,
+  afterText: string,
+  diff: string | undefined,
+): boolean {
+  if (!diff?.trim()) return false;
+  const expectedBefore = normalizeLineEndings(beforeText);
+  const expectedAfter = normalizeLineEndings(afterText);
+  const { before, after } = textsFromUnifiedDiff(diff);
+  return (
+    diffCoversCompleteSide(diff, 'before', sourceLineCount(expectedBefore)) &&
+    diffCoversCompleteSide(diff, 'after', sourceLineCount(expectedAfter)) &&
+    normalizeLineEndings(before) === expectedBefore &&
+    normalizeLineEndings(after) === expectedAfter
+  );
+}
+
+function recoverProposalYamlText(
+  text: string,
+  diff?: string,
+  completeAfterText?: string,
+): string | undefined {
+  if (!diff?.trim()) return undefined;
+  if (completeAfterText === undefined) return undefined;
+
+  const candidate = normalizeLineEndings(decodeEscapedProposalText(text));
+  if (candidate === normalizeLineEndings(text)) return undefined;
+  return diffMatchesCompleteProposal(candidate, completeAfterText, diff)
+    ? candidate
+    : undefined;
+}
+
+/** True when encoded line breaks remain unverified and must be shown verbatim. */
+export function hasUnresolvedProposalEscapes(
+  text: string,
+  diff?: string,
+  completeAfterText?: string,
+): boolean {
+  const candidate = decodeEscapedProposalText(text);
+  if (candidate === text) return false;
+  if (
+    completeAfterText !== undefined &&
+    diffMatchesCompleteProposal(text, completeAfterText, diff)
+  ) {
+    return false;
+  }
+  if (diffVerifiesEscapeLines(text, completeAfterText, diff)) return false;
+  return recoverProposalYamlText(text, diff, completeAfterText) === undefined;
+}
+
+/** Recover escaped before_text only when a complete diff verifies both sides. */
+export function resolveProposalYamlText(
+  text: string,
+  diff?: string,
+  role: 'before' | 'after' = 'before',
+  completeAfterText?: string,
+): string {
+  if (!text.trim() || role === 'after') return text;
+  return recoverProposalYamlText(text, diff, completeAfterText) ?? text;
+}
 
 /** Recover before/after text from a unified diff when the API omits them. */
 export function textsFromUnifiedDiff(diff: string): { before: string; after: string } {
@@ -87,8 +294,8 @@ interface AlignedRow {
 const MAX_DIFF_LINES = 400;
 
 function alignSideBySide(before: string, after: string): AlignedRow[] {
-  const oldLines = before.split('\n');
-  const newLines = after.split('\n');
+  const oldLines = before === '' ? [] : before.split('\n');
+  const newLines = after === '' ? [] : after.split('\n');
   const n = oldLines.length;
   const m = newLines.length;
 
@@ -241,11 +448,13 @@ function useScrollHighlight(
 function SideBySideDiff({
   before,
   after,
+  sourceWarning,
   className,
   highlightLine,
 }: {
   before: string;
   after: string;
+  sourceWarning?: boolean;
   className?: string;
   highlightLine?: number | null;
 }) {
@@ -258,6 +467,11 @@ function SideBySideDiff({
       ref={containerRef}
       className={`apme-side-by-side apme-yaml-hl ${className ?? ''}`.trim()}
     >
+      {sourceWarning ? (
+        <div className="apme-diff-warning" role="status">
+          Current source may contain escaped text that could not be safely reconstructed, so it is shown as received.
+        </div>
+      ) : null}
       <div className="apme-diff-pane">
         <div className="apme-diff-pane-header">Current</div>
         <pre className="apme-diff-content">
@@ -347,6 +561,7 @@ export function CurrentYamlView({
   );
 }
 
+/** Side-by-side or unified proposal diff with optional line highlight (apme#752). */
 export function DiffView({
   diff,
   before,
@@ -354,22 +569,42 @@ export function DiffView({
   mode = 'side-by-side',
   className,
   highlightLine,
+  partialSourceWarning = true,
 }: DiffViewProps) {
   const resolved = useMemo(() => {
-    const b = before?.trim() ? before : undefined;
-    const a = after?.trim() ? after : undefined;
-    if (b !== undefined && a !== undefined) {
-      return { before: b, after: a };
-    }
-    if (diff?.trim()) {
-      return textsFromUnifiedDiff(diff);
-    }
-    return null;
+    const beforeText = before?.trim() ? before : '';
+    const afterText = after?.trim() ? after : '';
+    const bothTextsMatchDiff =
+      before !== undefined &&
+      after !== undefined &&
+      diffMatchesCompleteProposal(beforeText, afterText, diff);
+    const beforeAvailable =
+      before !== undefined && (Boolean(before.trim()) || bothTextsMatchDiff);
+    const afterAvailable =
+      after !== undefined && (Boolean(after.trim()) || bothTextsMatchDiff);
+    if (!beforeAvailable || !afterAvailable) return null;
+    return {
+      before: resolveProposalYamlText(beforeText, diff, 'before', afterText),
+      after: afterText,
+      sourceWarning: hasUnresolvedProposalEscapes(beforeText, diff, afterText),
+    };
   }, [before, after, diff]);
 
   if (mode === 'unified') {
     if (diff?.trim()) {
-      return <UnifiedDiff diff={diff} className={className} />;
+      const completeDiff =
+        resolved !== null &&
+        diffMatchesCompleteProposal(resolved.before, resolved.after, diff);
+      return (
+        <div>
+          {partialSourceWarning && !completeDiff ? (
+            <div className="apme-diff-warning" role="status">
+              Only the supplied diff context is shown; unchanged source lines may be omitted.
+            </div>
+          ) : null}
+          <UnifiedDiff diff={diff} className={className} />
+        </div>
+      );
     }
     if (resolved) {
       // Build a minimal unified view from before/after for callers that insist.
@@ -384,9 +619,18 @@ export function DiffView({
     return null;
   }
 
-  if (!resolved || (!resolved.before && !resolved.after)) {
+  if (!resolved) {
     if (diff?.trim()) {
-      return <UnifiedDiff diff={diff} className={className} />;
+      return (
+        <div>
+          {partialSourceWarning ? (
+            <div className="apme-diff-warning" role="status">
+              Only the supplied diff context is shown; unchanged source lines may be omitted.
+            </div>
+          ) : null}
+          <UnifiedDiff diff={diff} className={className} />
+        </div>
+      );
     }
     return null;
   }
@@ -395,6 +639,7 @@ export function DiffView({
     <SideBySideDiff
       before={resolved.before}
       after={resolved.after}
+      sourceWarning={resolved.sourceWarning}
       className={className}
       highlightLine={highlightLine}
     />

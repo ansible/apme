@@ -396,6 +396,11 @@ GitHub ``run:``), construct interpolator collisions: unescaped
 ``next(glob(...))``, construct the empty-match path and require an
 explicit error instead of ``StopIteration``.
 
+For any text unescape/decode normalizer, construct inputs with one and
+multiple escaping layers, structural boundaries at root and nested
+positions, and lookalike escape sequences inside quoted content. Verify
+the detector and the rewrite recognize the same boundaries.
+
 Do NOT discuss architecture philosophy. Rank findings
 critical/high/medium/low.
 ```
