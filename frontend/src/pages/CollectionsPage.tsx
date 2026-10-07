@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { PageLayout, PageHeader } from '@ansible/ansible-ui-framework';
 import {
@@ -34,13 +34,15 @@ export function CollectionsPage() {
   const [sortAsc, setSortAsc] = useState(false);
   const [healthMap, setHealthMap] = useState<Map<string, CollectionHealthSummary>>(new Map());
 
-  const fetchCollections = useCallback(() => {
+  useEffect(() => {
+    let active = true;
     setLoading(true);
     Promise.all([
       listCollections(500, 0, api),
       getDepHealthSummary(api).catch(() => ({ collection_findings: [], python_cves: [], suppressed_count: 0 })),
     ])
       .then(([data, health]) => {
+        if (!active) return;
         setCollections(data);
         const map = new Map<string, CollectionHealthSummary>();
         for (const f of health.collection_findings) {
@@ -49,10 +51,9 @@ export function CollectionsPage() {
         setHealthMap(map);
       })
       .catch(() => {})
-      .finally(() => setLoading(false));
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
   }, [api]);
-
-  useEffect(() => { fetchCollections(); }, [fetchCollections]);
 
   const filtered = useMemo(() => {
     let items = [...collections];

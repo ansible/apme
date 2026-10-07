@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { PageLayout, PageHeader } from '@ansible/ansible-ui-framework';
 import {
@@ -26,23 +26,31 @@ export function PythonPackageDetailPage() {
   const [pkg, setPkg] = useState<PythonPackageDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const requestIdRef = useRef(0);
 
   const fetchData = useCallback(async () => {
+    const requestId = ++requestIdRef.current;
+    const isCurrent = () => requestIdRef.current === requestId;
     if (!name) return;
     setLoading(true);
     setError(false);
     try {
       const data = await getPythonPackageDetail(name, api);
+      if (!isCurrent()) return;
       setPkg(data);
     } catch {
+      if (!isCurrent()) return;
       setError(true);
       setPkg(null);
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
   }, [name, api]);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  useEffect(() => {
+    fetchData();
+    return () => { requestIdRef.current += 1; };
+  }, [fetchData]);
 
   if (loading) {
     return (

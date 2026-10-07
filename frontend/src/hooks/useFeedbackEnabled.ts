@@ -7,9 +7,12 @@ export function useFeedbackEnabled(): boolean {
   const [enabled, setEnabled] = useState(false);
 
   useEffect(() => {
+    let active = true;
+    setEnabled(false);
     getFeedbackEnabled(api)
-      .then((r) => setEnabled(r.enabled))
-      .catch(() => setEnabled(false));
+      .then((r) => { if (active) setEnabled(r.enabled); })
+      .catch(() => { if (active) setEnabled(false); });
+    return () => { active = false; };
   }, [api]);
 
   return enabled;

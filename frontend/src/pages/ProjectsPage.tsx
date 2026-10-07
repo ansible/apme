@@ -103,19 +103,33 @@ export function ProjectsPage() {
   }, []);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const projectsRequestRef = useRef(0);
+  const loadingRequestRef = useRef(0);
 
   const fetchProjects = useCallback((silent = false) => {
-    if (!silent) setLoading(true);
+    const requestId = ++projectsRequestRef.current;
+    const loadingRequestId = silent ? null : ++loadingRequestRef.current;
+    if (loadingRequestId !== null) setLoading(true);
     listProjects(50, 0, 'created_at', 'desc', api)
-      .then((data) => setProjects(data.items))
+      .then((data) => {
+        if (projectsRequestRef.current === requestId) setProjects(data.items);
+      })
       .catch(() => {})
-      .finally(() => { if (!silent) setLoading(false); });
+      .finally(() => {
+        if (loadingRequestId !== null && loadingRequestRef.current === loadingRequestId) {
+          setLoading(false);
+        }
+      });
   }, [api]);
 
   useEffect(() => {
     fetchProjects();
     pollRef.current = setInterval(() => fetchProjects(true), 5000);
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+      projectsRequestRef.current += 1;
+      loadingRequestRef.current += 1;
+    };
   }, [fetchProjects]);
 
   const handleCreate = useCallback(async () => {

@@ -61,12 +61,14 @@ export function ActivityDetailPage() {
   const [acknowledgedIds, setAcknowledgedIds] = useState<Set<number>>(new Set());
 
   useEffect(() => {
+    let active = true;
     if (!activityId) return;
     setLoading(true);
     getActivity(activityId, api)
-      .then(setDetail)
-      .catch(() => setDetail(null))
-      .finally(() => setLoading(false));
+      .then((data) => { if (active) setDetail(data); })
+      .catch(() => { if (active) setDetail(null); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
   }, [activityId, api]);
 
   const findings = useMemo(() => {

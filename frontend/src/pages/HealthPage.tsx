@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { PageLayout, PageHeader } from '@ansible/ansible-ui-framework';
 import { Button, Label } from '@patternfly/react-core';
 import { SyncAltIcon } from '@patternfly/react-icons';
@@ -10,16 +10,21 @@ export function HealthPage() {
   const api = useApmeApi();
   const [health, setHealth] = useState<HealthStatus | null>(null);
   const [loading, setLoading] = useState(true);
+  const requestIdRef = useRef(0);
 
-  const load = () => {
+  const load = useCallback(() => {
+    const requestId = ++requestIdRef.current;
     setLoading(true);
     getHealth(api)
-      .then(setHealth)
-      .catch(() => setHealth(null))
-      .finally(() => setLoading(false));
-  };
+      .then((data) => { if (requestIdRef.current === requestId) setHealth(data); })
+      .catch(() => { if (requestIdRef.current === requestId) setHealth(null); })
+      .finally(() => { if (requestIdRef.current === requestId) setLoading(false); });
+  }, [api]);
 
-  useEffect(() => { load(); }, [api]);
+  useEffect(() => {
+    load();
+    return () => { requestIdRef.current += 1; };
+  }, [load]);
 
   const isOk = (status: string) => status === 'ok';
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { PageLayout, PageHeader } from '@ansible/ansible-ui-framework';
 import { severityClass, severityLabel, severityOrder, SEVERITY_LABELS, healthColor } from '../components/severity';
@@ -74,6 +74,8 @@ export function ProjectDetailPage() {
   const [depHealth, setDepHealth] = useState<DepHealthSummary | null>(null);
   const [graphData, setGraphData] = useState<GraphData | null>(null);
   const [graphLoading, setGraphLoading] = useState(false);
+  const detailRequestRef = useRef(0);
+  const graphRequestRef = useRef(0);
   const [trend, setTrend] = useState<TrendPoint[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<ProjectTabKey>(() =>
@@ -173,6 +175,8 @@ export function ProjectDetailPage() {
   );
 
   const fetchData = useCallback(async () => {
+    const requestId = ++detailRequestRef.current;
+    const isCurrent = () => detailRequestRef.current === requestId;
     if (!projectId) return;
     setLoading(true);
     setScans([]);
@@ -180,8 +184,10 @@ export function ProjectDetailPage() {
     setDependencies(null);
     setDepHealth(null);
     setTrend([]);
+    setProject(null);
     try {
       const proj = await getProject(projectId, api);
+      if (!isCurrent()) return;
       setProject(proj);
       const [scanResult, violResult, depsResult, trendResult, healthResult] = await Promise.allSettled([
         listProjectActivity(projectId, 20, 0, api),
@@ -190,19 +196,24 @@ export function ProjectDetailPage() {
         getProjectTrend(projectId, 20, api),
         getProjectDepHealth(projectId, api),
       ]);
+      if (!isCurrent()) return;
       if (scanResult.status === 'fulfilled') setScans(scanResult.value.items);
       if (violResult.status === 'fulfilled') setViolations(violResult.value);
       if (depsResult.status === 'fulfilled') setDependencies(depsResult.value);
       if (trendResult.status === 'fulfilled') setTrend(trendResult.value);
       if (healthResult.status === 'fulfilled') setDepHealth(healthResult.value);
     } catch {
+      if (!isCurrent()) return;
       setProject(null);
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
   }, [projectId, api]);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  useEffect(() => {
+    fetchData();
+    return () => { detailRequestRef.current += 1; };
+  }, [fetchData]);
 
   useEffect(() => {
     if (opState?.status === 'completed' || opState?.status === 'pr_submitted') {
@@ -211,11 +222,30 @@ export function ProjectDetailPage() {
   }, [opState?.status, fetchData]);
 
   useEffect(() => {
-    if (activeTab === 'visualize' && projectId && !graphData && !graphLoading) {
-      setGraphLoading(true);
-      getProjectGraph(projectId, api).then(setGraphData).catch(() => setGraphData(null)).finally(() => setGraphLoading(false));
+    let active = true;
+    const requestId = ++graphRequestRef.current;
+    setGraphData(null);
+    if (activeTab !== 'visualize' || !projectId) {
+      setGraphLoading(false);
+      return () => { active = false; };
     }
-  }, [activeTab, projectId, graphData, graphLoading, api]);
+
+    setGraphLoading(true);
+    getProjectGraph(projectId, api)
+      .then((data) => {
+        if (active && graphRequestRef.current === requestId) setGraphData(data);
+      })
+      .catch(() => {
+        if (active && graphRequestRef.current === requestId) setGraphData(null);
+      })
+      .finally(() => {
+        if (active && graphRequestRef.current === requestId) setGraphLoading(false);
+      });
+    return () => {
+      active = false;
+      if (graphRequestRef.current === requestId) graphRequestRef.current += 1;
+    };
+  }, [activeTab, projectId, api]);
 
   useEffect(() => {
     if ((searchParams.get('action') === 'check' || searchParams.get('action') === 'scan') && project && !opState) {

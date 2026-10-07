@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { PageLayout, PageHeader } from '@ansible/ansible-ui-framework';
 import {
@@ -57,21 +57,22 @@ export function PythonPackagesPage() {
   const [sortAsc, setSortAsc] = useState(false);
   const [cveList, setCveList] = useState<PythonCveSummary[]>([]);
 
-  const fetchPackages = useCallback(() => {
+  useEffect(() => {
+    let active = true;
     setLoading(true);
     Promise.all([
       listPythonPackages(500, 0, api),
       getDepHealthSummary(api).catch(() => ({ collection_findings: [], python_cves: [], suppressed_count: 0 })),
     ])
       .then(([data, health]) => {
+        if (!active) return;
         setPackages(data);
         setCveList(health.python_cves);
       })
       .catch(() => {})
-      .finally(() => setLoading(false));
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
   }, [api]);
-
-  useEffect(() => { fetchPackages(); }, [fetchPackages]);
 
   const pkgCveMap = useMemo(() => buildPkgCveMap(cveList), [cveList]);
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { PageLayout, PageHeader } from '@ansible/ansible-ui-framework';
 import {
@@ -23,8 +23,11 @@ export function SessionDetailPage() {
   const [trend, setTrend] = useState<TrendPoint[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const requestIdRef = useRef(0);
 
   const fetchData = useCallback(async () => {
+    const requestId = ++requestIdRef.current;
+    const isCurrent = () => requestIdRef.current === requestId;
     if (!sessionId) return;
     setLoading(true);
     setError(false);
@@ -33,17 +36,22 @@ export function SessionDetailPage() {
         getSession(sessionId, api),
         getSessionTrend(sessionId, api).catch(() => [] as TrendPoint[]),
       ]);
+      if (!isCurrent()) return;
       setSession(sess);
       setTrend(trendData);
     } catch {
+      if (!isCurrent()) return;
       setError(true);
       setSession(null);
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
   }, [sessionId, api]);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  useEffect(() => {
+    fetchData();
+    return () => { requestIdRef.current += 1; };
+  }, [fetchData]);
 
   if (loading) {
     return (
