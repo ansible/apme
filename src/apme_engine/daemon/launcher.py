@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import ctypes
 import errno
 import fcntl
 import ipaddress
@@ -354,6 +355,76 @@ def _ipv6_wildcard_probe_targets() -> list[tuple[int, str]]:
     return targets
 
 
+class _InterfaceAddress(ctypes.Structure):
+    """Subset of the POSIX ``ifaddrs`` structure used for address discovery."""
+
+
+_InterfaceAddress._fields_ = [
+    ("ifa_next", ctypes.POINTER(_InterfaceAddress)),
+    ("ifa_name", ctypes.c_char_p),
+    ("ifa_flags", ctypes.c_uint),
+    ("ifa_addr", ctypes.c_void_p),
+    ("ifa_netmask", ctypes.c_void_p),
+    ("ifa_ifu", ctypes.c_void_p),
+    ("ifa_data", ctypes.c_void_p),
+]
+
+
+def _assigned_interface_addresses(family: int) -> set[str]:
+    """Return assigned, concrete interface addresses for an IP family.
+
+    ``getifaddrs`` enumerates every address, including secondary addresses
+    that hostname lookup and route selection do not expose. The other
+    discovery paths in ``_local_addresses`` remain as best-effort fallbacks
+    for systems without this API.
+
+    Args:
+        family: ``socket.AF_INET`` or ``socket.AF_INET6``.
+
+    Returns:
+        Assigned address strings, excluding IPv6 link-local addresses.
+    """
+    try:
+        libc = ctypes.CDLL(None, use_errno=True)
+        getifaddrs = libc.getifaddrs
+        freeifaddrs = libc.freeifaddrs
+    except (AttributeError, OSError):
+        return set()
+
+    getifaddrs.argtypes = [ctypes.POINTER(ctypes.POINTER(_InterfaceAddress))]
+    getifaddrs.restype = ctypes.c_int
+    freeifaddrs.argtypes = [ctypes.POINTER(_InterfaceAddress)]
+    freeifaddrs.restype = None
+
+    interface_list = ctypes.POINTER(_InterfaceAddress)()
+    if getifaddrs(ctypes.byref(interface_list)) != 0:
+        return set()
+
+    addresses: set[str] = set()
+    try:
+        current = interface_list
+        while current:
+            address = current.contents.ifa_addr
+            if address:
+                raw_family = ctypes.string_at(address, 2)
+                address_family = ctypes.c_ushort.from_address(address).value
+                # BSD sockaddr starts with sa_len, then sa_family; Linux
+                # stores sa_family in the first two bytes.
+                if address_family not in {socket.AF_INET, socket.AF_INET6}:
+                    address_family = raw_family[1]
+
+                if address_family == family:
+                    offset, size = (4, 4) if family == socket.AF_INET else (8, 16)
+                    raw_ip = ctypes.string_at(address + offset, size)
+                    ip = ipaddress.ip_address(raw_ip)
+                    if not ip.is_unspecified and not (isinstance(ip, ipaddress.IPv6Address) and ip.is_link_local):
+                        addresses.add(str(ip))
+            current = current.contents.ifa_next
+    finally:
+        freeifaddrs(interface_list)
+    return addresses
+
+
 def _local_addresses(family: int) -> frozenset[str]:
     """Best-effort set of assigned local addresses for *family*.
 
@@ -367,6 +438,9 @@ def _local_addresses(family: int) -> frozenset[str]:
     """
     loopback = "127.0.0.1" if family == socket.AF_INET else "::1"
     found: set[str] = {loopback}
+    found.update(
+        addr for addr in _assigned_interface_addresses(family) if not ipaddress.ip_address(addr).is_unspecified
+    )
     try:
         for info in socket.getaddrinfo(socket.gethostname(), None, family, socket.SOCK_STREAM):
             raw_ip = info[4][0]
