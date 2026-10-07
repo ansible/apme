@@ -7,12 +7,14 @@ import {
   Label,
   Title,
 } from '@patternfly/react-core';
+import { useApmeApi } from '../api/apmeApiAdapter';
 import { getTopViolations, getRemediationRates, getAiAcceptance, listRules } from '../services/api';
 import { RuleId } from '../components/RuleId';
 import type { TopViolation, RemediationRateEntry, AiAcceptanceEntry, RuleDetail } from '../types/api';
 import { getRuleDescription } from '../data/ruleDescriptions';
 
 export function AnalyticsPage() {
+  const api = useApmeApi();
   const [topViolations, setTopViolations] = useState<TopViolation[]>([]);
   const [remediationRates, setRemediationRates] = useState<RemediationRateEntry[]>([]);
   const [aiAcceptance, setAiAcceptance] = useState<AiAcceptanceEntry[]>([]);
@@ -20,23 +22,31 @@ export function AnalyticsPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setTopViolations([]);
+    setRemediationRates([]);
+    setAiAcceptance([]);
+    setRules([]);
     Promise.all([
-      getTopViolations(20),
-      getRemediationRates(20),
-      getAiAcceptance(),
+      getTopViolations(20, api),
+      getRemediationRates(20, api),
+      getAiAcceptance(api),
     ])
       .then(([violations, rates, acceptance]) => {
+        if (!active) return;
         setTopViolations(violations);
         setRemediationRates(rates);
         setAiAcceptance(acceptance);
       })
       .catch(() => {})
-      .finally(() => setLoading(false));
+      .finally(() => { if (active) setLoading(false); });
 
-    listRules()
-      .then(setRules)
+    listRules(undefined, api)
+      .then((data) => { if (active) setRules(data); })
       .catch(() => {});
-  }, []);
+    return () => { active = false; };
+  }, [api]);
 
   const descriptionMap = useMemo(() => {
     const m = new Map<string, string>();

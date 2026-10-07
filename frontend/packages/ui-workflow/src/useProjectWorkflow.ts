@@ -4,6 +4,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useApmeApi } from './api/apmeApiAdapter';
 import {
   fetchProjectOperationState,
   LIVE_OPERATION_STATUSES,
@@ -77,6 +78,8 @@ export function useProjectWorkflow(
   } = options;
   const { ansibleVersion, collections, enableAi, autoApplyTier1 } = checkOptions;
 
+  const api = useApmeApi();
+
   const [attachOp, setAttachOp] = useState(initiallyAttached);
   const [isCancelling, setIsCancelling] = useState(false);
   /** Bumped when session dismissed or replaced so stale cancelOp() completions are ignored. */
@@ -96,7 +99,7 @@ export function useProjectWorkflow(
   useEffect(() => {
     if (!initiallyAttached || !projectId) return;
     let cancelled = false;
-    fetchProjectOperationState(projectId)
+    fetchProjectOperationState(projectId, api)
       .then((op) => {
         if (cancelled || op) return;
         setAttachOp(false);
@@ -108,7 +111,7 @@ export function useProjectWorkflow(
     return () => {
       cancelled = true;
     };
-  }, [initiallyAttached, projectId, onDismissSession]);
+  }, [initiallyAttached, projectId, api, onDismissSession]);
 
   const {
     start: startOp,
@@ -376,7 +379,7 @@ export function useProjectWorkflow(
         return opState.scan_id === latestScanId ? latestScanId : null;
       }
       try {
-        const op = await fetchProjectOperationState(projectId);
+        const op = await fetchProjectOperationState(projectId, api);
         if (
           op &&
           op.scan_id === latestScanId &&
@@ -389,7 +392,7 @@ export function useProjectWorkflow(
       }
       return null;
     },
-    [attachOp, opState, projectId],
+    [attachOp, opState, projectId, api],
   );
 
   const cancel = useCallback(async () => {

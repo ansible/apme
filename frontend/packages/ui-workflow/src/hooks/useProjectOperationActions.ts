@@ -6,7 +6,11 @@
  */
 
 import { useCallback } from "react";
-import { apmeApiUrl, getApmeApiAdapter } from "../api/apmeApiAdapter";
+import {
+  apmeApiUrl,
+  useApmeApi,
+  type ApmeApiAdapter,
+} from "../api/apmeApiAdapter";
 
 /** Raised when remediate would discard an interactive draft working set. */
 export class WorkingSetConflictError extends Error {
@@ -62,9 +66,13 @@ function parseErrorBody(status: number, text: string): Error {
   return new Error(`${status}: ${text}`);
 }
 
-async function postJson<T>(path: string, body?: unknown): Promise<T> {
-  const { fetch: doFetch } = getApmeApiAdapter();
-  const res = await doFetch(apmeApiUrl(path), {
+async function postJson<T>(
+  adapter: ApmeApiAdapter,
+  path: string,
+  body?: unknown,
+): Promise<T> {
+  const { fetch: doFetch } = adapter;
+  const res = await doFetch(apmeApiUrl(path, adapter), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -79,9 +87,13 @@ async function postJson<T>(path: string, body?: unknown): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-async function patchJson<T>(path: string, body: unknown): Promise<T> {
-  const { fetch: doFetch } = getApmeApiAdapter();
-  const res = await doFetch(apmeApiUrl(path), {
+async function patchJson<T>(
+  adapter: ApmeApiAdapter,
+  path: string,
+  body: unknown,
+): Promise<T> {
+  const { fetch: doFetch } = adapter;
+  const res = await doFetch(apmeApiUrl(path, adapter), {
     method: "PATCH",
     headers: {
       "Content-Type": "application/json",
@@ -110,10 +122,12 @@ export interface StartOperationOptions {
 }
 
 export function useProjectOperationActions(projectId: string) {
+  const api = useApmeApi();
   const start = useCallback(
     async (action: "check" | "remediate", options: StartOperationOptions = {}) => {
       const { abandon_working_set, ...opOptions } = options;
       return postJson<{ operation_id: string }>(
+        api,
         `/projects/${projectId}/operation`,
         {
           action,
@@ -122,12 +136,13 @@ export function useProjectOperationActions(projectId: string) {
         },
       );
     },
-    [projectId],
+    [api, projectId],
   );
 
   const approve = useCallback(
     async (approvedIds: string[], approvalGateId?: string) => {
       return postJson<{ status: string }>(
+        api,
         `/projects/${projectId}/operation/approve`,
         {
           approved_ids: approvedIds,
@@ -135,42 +150,46 @@ export function useProjectOperationActions(projectId: string) {
         },
       );
     },
-    [projectId],
+    [api, projectId],
   );
 
   const beginRemediate = useCallback(async () => {
     return postJson<{ status: string }>(
+      api,
       `/projects/${projectId}/operation/begin-remediate`,
     );
-  }, [projectId]);
+  }, [api, projectId]);
 
   const patchProposals = useCallback(
     async (
       updates: Array<{ proposal_id: string; status: string }>,
     ) => {
       return patchJson<{ updated: unknown[] }>(
+        api,
         `/projects/${projectId}/operation/proposals`,
         { updates },
       );
     },
-    [projectId],
+    [api, projectId],
   );
 
   const cancel = useCallback(async () => {
     return postJson<{ status: string }>(
+      api,
       `/projects/${projectId}/operation/cancel`,
     );
-  }, [projectId]);
+  }, [api, projectId]);
 
   /** ADR-062: leave awaiting_ai_triage — empty targets skips AI. */
   const escalateAi = useCallback(
     async (targets: Array<{ path: string; rule_ids?: string[] }> = []) => {
       return postJson<{ status?: string }>(
+        api,
         `/projects/${projectId}/operation/escalate-ai`,
         { targets },
       );
     },
-    [projectId],
+    [api, projectId],
   );
 
   const createPR = useCallback(
@@ -185,9 +204,9 @@ export function useProjectOperationActions(projectId: string) {
         commit_sha: string;
         pr_url: string | null;
         provider: string;
-      }>(`/projects/${projectId}/operation/submit`, options);
+      }>(api, `/projects/${projectId}/operation/submit`, options);
     },
-    [projectId],
+    [api, projectId],
   );
 
   return {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { PageLayout, PageHeader } from '@ansible/ansible-ui-framework';
 import { severityClass, severityLabel, severityOrder, SEVERITY_LABELS, healthColor } from '../components/severity';
@@ -27,6 +27,7 @@ import {
   ExclamationTriangleIcon,
   ShieldAltIcon,
 } from '@patternfly/react-icons';
+import { useApmeApi } from '../api/apmeApiAdapter';
 import { deleteProject, getProject, getProjectDependencies, getProjectDepHealth, getProjectGraph, getProjectSbom, getProjectTrend, listProjectActivity, listProjectViolations, updateProject, apiErrorMessage } from '../services/api';
 import type { GraphData } from '../services/api';
 import type { ActivitySummary, DepHealthSummary, ProjectDependencies, ProjectDetail, TrendPoint, ViolationDetail } from '../types/api';
@@ -62,6 +63,7 @@ function tabFromSearchParam(tabParam: string | null): ProjectTabKey {
 }
 
 export function ProjectDetailPage() {
+  const api = useApmeApi();
   const { projectId } = useParams<{ projectId: string }>();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -72,6 +74,8 @@ export function ProjectDetailPage() {
   const [depHealth, setDepHealth] = useState<DepHealthSummary | null>(null);
   const [graphData, setGraphData] = useState<GraphData | null>(null);
   const [graphLoading, setGraphLoading] = useState(false);
+  const detailRequestRef = useRef(0);
+  const graphRequestRef = useRef(0);
   const [trend, setTrend] = useState<TrendPoint[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<ProjectTabKey>(() =>
@@ -171,6 +175,8 @@ export function ProjectDetailPage() {
   );
 
   const fetchData = useCallback(async () => {
+    const requestId = ++detailRequestRef.current;
+    const isCurrent = () => detailRequestRef.current === requestId;
     if (!projectId) return;
     setLoading(true);
     setScans([]);
@@ -178,29 +184,36 @@ export function ProjectDetailPage() {
     setDependencies(null);
     setDepHealth(null);
     setTrend([]);
+    setProject(null);
     try {
-      const proj = await getProject(projectId);
+      const proj = await getProject(projectId, api);
+      if (!isCurrent()) return;
       setProject(proj);
       const [scanResult, violResult, depsResult, trendResult, healthResult] = await Promise.allSettled([
-        listProjectActivity(projectId, 20, 0),
-        listProjectViolations(projectId, 500, 0),
-        getProjectDependencies(projectId),
-        getProjectTrend(projectId),
-        getProjectDepHealth(projectId),
+        listProjectActivity(projectId, 20, 0, api),
+        listProjectViolations(projectId, 500, 0, undefined, undefined, api),
+        getProjectDependencies(projectId, api),
+        getProjectTrend(projectId, 20, api),
+        getProjectDepHealth(projectId, api),
       ]);
+      if (!isCurrent()) return;
       if (scanResult.status === 'fulfilled') setScans(scanResult.value.items);
       if (violResult.status === 'fulfilled') setViolations(violResult.value);
       if (depsResult.status === 'fulfilled') setDependencies(depsResult.value);
       if (trendResult.status === 'fulfilled') setTrend(trendResult.value);
       if (healthResult.status === 'fulfilled') setDepHealth(healthResult.value);
     } catch {
+      if (!isCurrent()) return;
       setProject(null);
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
-  }, [projectId]);
+  }, [projectId, api]);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  useEffect(() => {
+    fetchData();
+    return () => { detailRequestRef.current += 1; };
+  }, [fetchData]);
 
   useEffect(() => {
     if (opState?.status === 'completed' || opState?.status === 'pr_submitted') {
@@ -209,11 +222,30 @@ export function ProjectDetailPage() {
   }, [opState?.status, fetchData]);
 
   useEffect(() => {
-    if (activeTab === 'visualize' && projectId && !graphData && !graphLoading) {
-      setGraphLoading(true);
-      getProjectGraph(projectId).then(setGraphData).catch(() => setGraphData(null)).finally(() => setGraphLoading(false));
+    let active = true;
+    const requestId = ++graphRequestRef.current;
+    setGraphData(null);
+    if (activeTab !== 'visualize' || !projectId) {
+      setGraphLoading(false);
+      return () => { active = false; };
     }
-  }, [activeTab, projectId, graphData, graphLoading]);
+
+    setGraphLoading(true);
+    getProjectGraph(projectId, api)
+      .then((data) => {
+        if (active && graphRequestRef.current === requestId) setGraphData(data);
+      })
+      .catch(() => {
+        if (active && graphRequestRef.current === requestId) setGraphData(null);
+      })
+      .finally(() => {
+        if (active && graphRequestRef.current === requestId) setGraphLoading(false);
+      });
+    return () => {
+      active = false;
+      if (graphRequestRef.current === requestId) graphRequestRef.current += 1;
+    };
+  }, [activeTab, projectId, api]);
 
   useEffect(() => {
     if ((searchParams.get('action') === 'check' || searchParams.get('action') === 'scan') && project && !opState) {
@@ -225,9 +257,9 @@ export function ProjectDetailPage() {
   const handleDelete = useCallback(async () => {
     if (!projectId) return;
     if (!window.confirm('Delete this project and all its activity history?')) return;
-    await deleteProject(projectId);
+    await deleteProject(projectId, api);
     navigate('/projects');
-  }, [projectId, navigate]);
+  }, [projectId, navigate, api]);
 
   const [editName, setEditName] = useState('');
   const [editUrl, setEditUrl] = useState('');
@@ -263,7 +295,7 @@ export function ProjectDetailPage() {
       if (scmTokenDirty) updates.scm_token = editScmToken.trim();
       if (scmProviderDirty) updates.scm_provider = editScmProvider || null;
       if (Object.keys(updates).length > 0) {
-        await updateProject(projectId, updates);
+        await updateProject(projectId, updates, api);
         fetchData();
       }
     } catch (err) {
@@ -271,7 +303,7 @@ export function ProjectDetailPage() {
     } finally {
       setSaving(false);
     }
-  }, [projectId, project, editName, editUrl, editBranch, editScmToken, editScmProvider, scmTokenDirty, scmProviderDirty, fetchData]);
+  }, [projectId, project, editName, editUrl, editBranch, editScmToken, editScmProvider, scmTokenDirty, scmProviderDirty, fetchData, api]);
 
   if (loading && !project) {
     return (
@@ -764,6 +796,7 @@ function ViolationsTab({ violations }: { violations: ViolationDetail[] }) {
 }
 
 function DependenciesTab({ dependencies, depHealth, loading, projectId }: { dependencies: ProjectDependencies | null; depHealth: DepHealthSummary | null; loading: boolean; projectId?: string }) {
+  const api = useApmeApi();
   const navigate = useNavigate();
   const [downloading, setDownloading] = useState(false);
 
@@ -796,7 +829,7 @@ function DependenciesTab({ dependencies, depHealth, loading, projectId }: { depe
     if (!projectId) return;
     setDownloading(true);
     try {
-      const blob = await getProjectSbom(projectId);
+      const blob = await getProjectSbom(projectId, api);
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -812,7 +845,7 @@ function DependenciesTab({ dependencies, depHealth, loading, projectId }: { depe
     } finally {
       setDownloading(false);
     }
-  }, [projectId]);
+  }, [projectId, api]);
 
   if (loading && !dependencies) {
     return (

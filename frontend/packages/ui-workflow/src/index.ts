@@ -18,6 +18,7 @@ export {
   setApmeApiAdapter,
   useApmeApi,
   type ApmeApiAdapter,
+  type ApmeFetch,
 } from './api/apmeApiAdapter';
 
 export {
@@ -25,6 +26,8 @@ export {
   readSseStream,
   type SseEvent,
 } from './api/sseFetch';
+
+export { listAiModels, type AiModelInfo } from './api/listAiModels';
 
 export {
   useProjectWorkflow,
@@ -56,6 +59,9 @@ export {
   useProjectOperationState,
   type ProjectOperationState,
   type AssessFinding,
+  type ProgressEntry,
+  type Proposal,
+  type OperationResultData,
 } from './hooks/useProjectOperationState';
 
 export {

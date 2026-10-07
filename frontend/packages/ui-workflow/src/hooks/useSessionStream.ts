@@ -12,7 +12,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { apmeWsUrl } from "../api/apmeApiAdapter";
+import { apmeWsUrl, useApmeApi } from "../api/apmeApiAdapter";
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -296,6 +296,10 @@ export function getPersistedSession(): PersistedSession | null {
 // ── Hook ───────────────────────────────────────────────────────────
 
 export function useSessionStream() {
+  const api = useApmeApi();
+  const apiRef = useRef(api);
+  apiRef.current = api;
+  const prevEndpointRef = useRef<string | null>(null);
   const [status, setStatus] = useState<SessionStatus>("idle");
   const [progress, setProgress] = useState<ProgressEntry[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -707,7 +711,9 @@ export function useSessionStream() {
       reset();
       updateStatus("connecting");
 
-      const ws = new WebSocket(apmeWsUrl("/api/v1/ws/session"));
+      // apiBase-relative so custom provider bases (Portal) resolve; the
+      // default /api/v1 base reproduces the historical absolute path.
+      const ws = new WebSocket(apmeWsUrl("/ws/session", api));
       wsRef.current = ws;
 
       ws.onopen = async () => {
@@ -737,7 +743,7 @@ export function useSessionStream() {
 
       wireHandlers(ws);
     },
-    [reset, updateStatus, wireHandlers],
+    [api, reset, updateStatus, wireHandlers],
   );
 
   const resumeSession = useCallback(
@@ -754,11 +760,11 @@ export function useSessionStream() {
       // New socket: nothing established on it yet.
       sessionEstablishedRef.current = false;
 
-      let url = `/api/v1/ws/session?resume=${encodeURIComponent(sid)}`;
+      let url = `/ws/session?resume=${encodeURIComponent(sid)}`;
       if (originalScanId) {
         url += `&scan_id=${encodeURIComponent(originalScanId)}`;
       }
-      const ws = new WebSocket(apmeWsUrl(url));
+      const ws = new WebSocket(apmeWsUrl(url, api));
       wsRef.current = ws;
 
       ws.onopen = () => {
@@ -767,7 +773,7 @@ export function useSessionStream() {
 
       wireHandlers(ws);
     },
-    [updateStatus, wireHandlers],
+    [api, updateStatus, wireHandlers],
   );
 
   const approve = useCallback(
@@ -812,6 +818,37 @@ export function useSessionStream() {
     clearPersistedSession();
     updateStatus("idle");
   }, [updateStatus]);
+
+  // Invalidate a stale socket when the provider endpoint changes. Persisted
+  // session material is kept so resumeSession can reconnect on the new host.
+  useEffect(() => {
+    const endpointKey = `${api.apiBase}\0${api.origin}`;
+    const prev = prevEndpointRef.current;
+    prevEndpointRef.current = endpointKey;
+    if (prev === null || prev === endpointKey) {
+      return;
+    }
+
+    if (wsRef.current) {
+      wsRef.current.close();
+      wsRef.current = null;
+    }
+    sessionEstablishedRef.current = false;
+
+    const persisted = getPersistedSession();
+    const current = statusRef.current;
+    if (
+      persisted &&
+      current !== "idle" &&
+      current !== "complete" &&
+      current !== "error"
+    ) {
+      setError("Gateway changed — reconnect to continue your session.");
+      errorSourceRef.current = null;
+      setCanReconnect(true);
+      updateStatus("disconnected");
+    }
+  }, [api.apiBase, api.origin, updateStatus]);
 
   // Close WebSocket on unmount (navigation away) but keep the persisted
   // session reference so the user can resume when they navigate back.

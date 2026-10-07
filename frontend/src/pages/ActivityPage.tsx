@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 import { PageLayout, PageHeader } from '@ansible/ansible-ui-framework';
 import { Button, Pagination } from '@patternfly/react-core';
-import { apmeApiUrl, getApmeApiAdapter } from '../api/apmeApiAdapter';
+import { apmeApiUrl, useApmeApi } from '../api/apmeApiAdapter';
 import { listActivity } from '../services/api';
 import type { ActivitySummary } from '../types/api';
 import { timeAgo } from '../services/format';
@@ -17,6 +17,7 @@ const PAGE_SIZE = 20;
 
 export function ActivityPage() {
   const navigate = useNavigate();
+  const api = useApmeApi();
   const [searchParams] = useSearchParams();
   const sessionFilter = searchParams.get('session_id') ?? undefined;
   const [items, setItems] = useState<ActivitySummary[]>([]);
@@ -42,19 +43,24 @@ export function ActivityPage() {
     setPage(1);
   }, [sessionFilter]);
 
-  const fetchActivity = useCallback(() => {
+  useEffect(() => {
+    let cancelled = false;
     setLoading(true);
     const offset = (page - 1) * PAGE_SIZE;
-    listActivity(PAGE_SIZE, offset, sessionFilter)
+    listActivity(PAGE_SIZE, offset, sessionFilter, api)
       .then((data) => {
+        if (cancelled) return;
         setItems(data.items);
         setTotal(data.total);
       })
       .catch(() => {})
-      .finally(() => setLoading(false));
-  }, [page, sessionFilter]);
-
-  useEffect(() => { fetchActivity(); }, [fetchActivity, refreshKey]);
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [api, page, sessionFilter, refreshKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -64,7 +70,7 @@ export function ActivityPage() {
 
     const projectId = latest.project_id;
     const scanId = latest.scan_id;
-    fetchProjectOperationState(projectId)
+    fetchProjectOperationState(projectId, api)
       .then((op) => {
         if (cancelled || !op) return;
         if (op.scan_id === scanId && LIVE_OPERATION_STATUSES.has(op.status)) {
@@ -75,7 +81,7 @@ export function ActivityPage() {
         /* probe failed — leave Resume hidden */
       });
     return () => { cancelled = true; };
-  }, [items, page, refreshKey]);
+  }, [api, items, page, refreshKey]);
 
   const handleResume = useCallback(
     (e: React.MouseEvent, projectId: string) => {
@@ -99,9 +105,9 @@ export function ActivityPage() {
         // Always Scan (check + assess_pause); do not inherit remediate from history.
         // Match Project Scan defaults: enable_ai on, optional stored model.
         const aiModel = localStorage.getItem(AI_MODEL_STORAGE_KEY) ?? undefined;
-        const { fetch: doFetch } = getApmeApiAdapter();
+        const { fetch: doFetch } = api;
         const res = await doFetch(
-          apmeApiUrl(`/projects/${item.project_id}/operation`),
+          apmeApiUrl(`/projects/${item.project_id}/operation`, api),
           {
             method: 'POST',
             headers: {
@@ -132,7 +138,7 @@ export function ActivityPage() {
         setStartOverBusy(false);
       }
     },
-    [navigate, startOverBusy],
+    [api, navigate, startOverBusy],
   );
 
   return (

@@ -32,6 +32,7 @@ import {
   SortAmountDownIcon,
   SortAmountUpIcon,
 } from '@patternfly/react-icons';
+import { useApmeApi } from '../api/apmeApiAdapter';
 import { createProject, deleteProject, listProjects, apiErrorMessage } from '../services/api';
 import type { ProjectSummary } from '../types/api';
 import { timeAgo } from '../services/format';
@@ -57,6 +58,7 @@ function StatusLabel({ lastScanned }: { lastScanned: string | null }) {
 }
 
 export function ProjectsPage() {
+  const api = useApmeApi();
   const navigate = useNavigate();
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -101,19 +103,33 @@ export function ProjectsPage() {
   }, []);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const projectsRequestRef = useRef(0);
+  const loadingRequestRef = useRef(0);
 
   const fetchProjects = useCallback((silent = false) => {
-    if (!silent) setLoading(true);
-    listProjects(50, 0)
-      .then((data) => setProjects(data.items))
+    const requestId = ++projectsRequestRef.current;
+    const loadingRequestId = silent ? null : ++loadingRequestRef.current;
+    if (loadingRequestId !== null) setLoading(true);
+    listProjects(50, 0, 'created_at', 'desc', api)
+      .then((data) => {
+        if (projectsRequestRef.current === requestId) setProjects(data.items);
+      })
       .catch(() => {})
-      .finally(() => { if (!silent) setLoading(false); });
-  }, []);
+      .finally(() => {
+        if (loadingRequestId !== null && loadingRequestRef.current === loadingRequestId) {
+          setLoading(false);
+        }
+      });
+  }, [api]);
 
   useEffect(() => {
     fetchProjects();
     pollRef.current = setInterval(() => fetchProjects(true), 5000);
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+      projectsRequestRef.current += 1;
+      loadingRequestRef.current += 1;
+    };
   }, [fetchProjects]);
 
   const handleCreate = useCallback(async () => {
@@ -134,7 +150,7 @@ export function ProjectsPage() {
       };
       if (createScmToken.trim()) body.scm_token = createScmToken.trim();
       if (createScmProvider) body.scm_provider = createScmProvider;
-      await createProject(body);
+      await createProject(body, api);
       setShowCreate(false);
       setCreateName('');
       setCreateUrl('');
@@ -149,17 +165,17 @@ export function ProjectsPage() {
     } finally {
       setCreating(false);
     }
-  }, [createName, createUrl, createBranch, createScmToken, createScmProvider, fetchProjects]);
+  }, [createName, createUrl, createBranch, createScmToken, createScmProvider, fetchProjects, api]);
 
   const handleDelete = useCallback(async (proj: ProjectSummary) => {
     if (!confirm(`Delete project "${proj.name}"? This cannot be undone.`)) return;
     try {
-      await deleteProject(proj.id);
+      await deleteProject(proj.id, api);
       fetchProjects();
     } catch {
       alert('Failed to delete project.');
     }
-  }, [fetchProjects]);
+  }, [fetchProjects, api]);
 
   const filtered = useMemo(() => {
     let items = [...projects];

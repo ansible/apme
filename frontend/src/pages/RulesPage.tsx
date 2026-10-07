@@ -33,6 +33,7 @@ import {
   Thead,
   Tr,
 } from '@patternfly/react-table';
+import { useApmeApi } from '../api/apmeApiAdapter';
 import { deleteRuleConfig, getRule, getRuleStats, listRules, updateRuleConfig } from '../services/api';
 import type { RuleDetail, RuleStats } from '../types/api';
 import { severityClass, severityLabel, SEVERITY_INT_OPTIONS, SEVERITY_INT_TO_API, SEVERITY_LABELS } from '../components/severity';
@@ -51,6 +52,7 @@ function SeverityBadge({ severity }: { severity: string }) {
 }
 
 export function RulesPage() {
+  const api = useApmeApi();
   const [rules, setRules] = useState<RuleDetail[]>([]);
   const [stats, setStats] = useState<RuleStats | null>(null);
   const [loading, setLoading] = useState(true);
@@ -59,8 +61,13 @@ export function RulesPage() {
   const [sourceFilter, setSourceFilter] = useState('');
   const [updatingIds, setUpdatingIds] = useState<Set<string>>(new Set());
   const [selectedRule, setSelectedRule] = useState<RuleDetail | null>(null);
+  const [selectedRuleId, setSelectedRuleId] = useState<string | null>(null);
+  const [detailReload, setDetailReload] = useState(0);
   const [detailLoading, setDetailLoading] = useState(false);
   const detailRequestRef = useRef(0);
+  const listRequestRef = useRef(0);
+  const statsRequestRef = useRef(0);
+  const loadingRequestRef = useRef(0);
 
   const startUpdating = useCallback((id: string) => {
     setUpdatingIds((prev) => new Set(prev).add(id));
@@ -71,63 +78,96 @@ export function RulesPage() {
   }, []);
 
   const fetchRules = useCallback(() => {
+    const requestId = ++listRequestRef.current;
+    const loadingId = ++loadingRequestRef.current;
     setLoading(true);
     listRules({
       category: categoryFilter || undefined,
       source: sourceFilter || undefined,
-    })
-      .then(setRules)
-      .catch(() => setRules([]))
-      .finally(() => setLoading(false));
-  }, [categoryFilter, sourceFilter]);
+    }, api)
+      .then((data) => { if (listRequestRef.current === requestId) setRules(data); })
+      .catch(() => { if (listRequestRef.current === requestId) setRules([]); })
+      .finally(() => {
+        if (loadingRequestRef.current === loadingId) setLoading(false);
+      });
+  }, [categoryFilter, sourceFilter, api]);
 
   const refreshRules = useCallback(() => {
+    const requestId = ++listRequestRef.current;
     listRules({
       category: categoryFilter || undefined,
       source: sourceFilter || undefined,
-    })
-      .then(setRules)
+    }, api)
+      .then((data) => { if (listRequestRef.current === requestId) setRules(data); })
       .catch(() => {});
-  }, [categoryFilter, sourceFilter]);
+  }, [categoryFilter, sourceFilter, api]);
 
   useEffect(() => {
     fetchRules();
+    return () => {
+      listRequestRef.current += 1;
+      loadingRequestRef.current += 1;
+    };
   }, [fetchRules]);
 
   useEffect(() => {
-    getRuleStats()
-      .then(setStats)
-      .catch(() => setStats(null));
-  }, []);
+    const requestId = ++statsRequestRef.current;
+    setStats(null);
+    getRuleStats(api)
+      .then((data) => {
+        if (statsRequestRef.current === requestId) setStats(data);
+      })
+      .catch(() => {
+        if (statsRequestRef.current === requestId) setStats(null);
+      });
+    return () => { statsRequestRef.current += 1; };
+  }, [api]);
 
   const refreshStats = useCallback(() => {
-    getRuleStats()
-      .then(setStats)
+    const requestId = ++statsRequestRef.current;
+    getRuleStats(api)
+      .then((data) => {
+        if (statsRequestRef.current === requestId) setStats(data);
+      })
       .catch(() => {});
-  }, []);
+  }, [api]);
 
   const openRuleDetail = useCallback((ruleId: string) => {
-    const token = ++detailRequestRef.current;
     const local = rules.find((r) => r.rule_id === ruleId) ?? null;
     setSelectedRule(local);
-    setDetailLoading(true);
-    getRule(ruleId)
-      .then((data) => {
-        if (detailRequestRef.current === token) setSelectedRule(data);
-      })
-      .catch(() => {})
-      .finally(() => {
-        if (detailRequestRef.current === token) setDetailLoading(false);
-      });
+    setSelectedRuleId(ruleId);
+    setDetailReload((value) => value + 1);
   }, [rules]);
+
+  useEffect(() => {
+    if (!selectedRuleId) return;
+    let active = true;
+    const requestId = ++detailRequestRef.current;
+    setSelectedRule(null);
+    setDetailLoading(true);
+    getRule(selectedRuleId, api)
+      .then((data) => {
+        if (active && detailRequestRef.current === requestId) setSelectedRule(data);
+      })
+      .catch(() => {
+        if (active && detailRequestRef.current === requestId) setSelectedRule(null);
+      })
+      .finally(() => {
+        if (active && detailRequestRef.current === requestId) setDetailLoading(false);
+      });
+    return () => {
+      active = false;
+      detailRequestRef.current += 1;
+    };
+  }, [api, selectedRuleId, detailReload]);
 
   const handleResetOverride = useCallback(async (ruleId: string) => {
     startUpdating(ruleId);
     try {
-      await deleteRuleConfig(ruleId);
+      await deleteRuleConfig(ruleId, api);
       refreshRules();
       refreshStats();
-      if (selectedRule?.rule_id === ruleId) {
+      if (selectedRuleId === ruleId) {
         openRuleDetail(ruleId);
       }
     } catch {
@@ -135,7 +175,7 @@ export function RulesPage() {
     } finally {
       stopUpdating(ruleId);
     }
-  }, [selectedRule, refreshRules, refreshStats, openRuleDetail, startUpdating, stopUpdating]);
+  }, [selectedRuleId, refreshRules, refreshStats, openRuleDetail, startUpdating, stopUpdating, api]);
 
   const categoryOptions = useMemo(() => {
     const fromStats = stats ? Object.keys(stats.by_category) : [];
@@ -169,7 +209,7 @@ export function RulesPage() {
       setSelectedRule((cur) => cur?.rule_id === rule.rule_id ? { ...cur, ...patch } : cur);
       startUpdating(rule.rule_id);
       try {
-        await updateRuleConfig(rule.rule_id, { enabled_override: enabled });
+        await updateRuleConfig(rule.rule_id, { enabled_override: enabled }, api);
         refreshStats();
       } catch {
         setRules((cur) => cur.map((r) => r.rule_id === rule.rule_id ? { ...r, ...prev } : r));
@@ -178,7 +218,7 @@ export function RulesPage() {
         stopUpdating(rule.rule_id);
       }
     },
-    [refreshStats, startUpdating, stopUpdating],
+    [refreshStats, startUpdating, stopUpdating, api],
   );
 
   const handleSeverityChange = useCallback(
@@ -191,7 +231,7 @@ export function RulesPage() {
       setSelectedRule((cur) => cur?.rule_id === rule.rule_id ? { ...cur, ...patch } : cur);
       startUpdating(rule.rule_id);
       try {
-        await updateRuleConfig(rule.rule_id, { severity_override: severityInt });
+        await updateRuleConfig(rule.rule_id, { severity_override: severityInt }, api);
         refreshStats();
       } catch {
         setRules((cur) => cur.map((r) => r.rule_id === rule.rule_id ? { ...r, ...prev } : r));
@@ -200,7 +240,7 @@ export function RulesPage() {
         stopUpdating(rule.rule_id);
       }
     },
-    [refreshStats, startUpdating, stopUpdating],
+    [refreshStats, startUpdating, stopUpdating, api],
   );
 
   const handleEnforcedChange = useCallback(
@@ -211,7 +251,7 @@ export function RulesPage() {
       setSelectedRule((cur) => cur?.rule_id === rule.rule_id ? { ...cur, ...patch } : cur);
       startUpdating(rule.rule_id);
       try {
-        await updateRuleConfig(rule.rule_id, { enforced });
+        await updateRuleConfig(rule.rule_id, { enforced }, api);
         refreshStats();
       } catch {
         setRules((cur) => cur.map((r) => r.rule_id === rule.rule_id ? { ...r, ...prev } : r));
@@ -220,7 +260,7 @@ export function RulesPage() {
         stopUpdating(rule.rule_id);
       }
     },
-    [refreshStats, startUpdating, stopUpdating],
+    [refreshStats, startUpdating, stopUpdating, api],
   );
 
   return (
@@ -410,7 +450,12 @@ export function RulesPage() {
       {selectedRule && (
         <Modal
           isOpen
-          onClose={() => { detailRequestRef.current++; setSelectedRule(null); }}
+          onClose={() => {
+            detailRequestRef.current++;
+            setSelectedRuleId(null);
+            setSelectedRule(null);
+            setDetailLoading(false);
+          }}
           variant="medium"
         >
           <ModalHeader title={`Rule: ${selectedRule.rule_id}`} />
@@ -528,7 +573,12 @@ export function RulesPage() {
                 Reset Override
               </Button>
             )}
-            <Button variant="link" onClick={() => { detailRequestRef.current++; setSelectedRule(null); }}>Close</Button>
+            <Button variant="link" onClick={() => {
+              detailRequestRef.current++;
+              setSelectedRuleId(null);
+              setSelectedRule(null);
+              setDetailLoading(false);
+            }}>Close</Button>
           </ModalFooter>
         </Modal>
       )}

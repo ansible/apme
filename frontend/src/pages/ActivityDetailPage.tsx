@@ -16,6 +16,7 @@ import {
   FlexItem,
 } from '@patternfly/react-core';
 import { ExternalLinkAltIcon } from '@patternfly/react-icons';
+import { useApmeApi } from '../api/apmeApiAdapter';
 import { createSuppression, deleteActivity, getActivity, submitActivity } from '../services/api';
 import { useFeedbackEnabled } from '../hooks/useFeedbackEnabled';
 import type { AssessFinding } from '@apme/ui-workflow';
@@ -47,6 +48,7 @@ function violationToFinding(v: ViolationDetail): AssessFinding {
 }
 
 export function ActivityDetailPage() {
+  const api = useApmeApi();
   const { activityId } = useParams<{ activityId: string }>();
   const navigate = useNavigate();
   const feedbackEnabled = useFeedbackEnabled();
@@ -59,13 +61,15 @@ export function ActivityDetailPage() {
   const [acknowledgedIds, setAcknowledgedIds] = useState<Set<number>>(new Set());
 
   useEffect(() => {
+    let active = true;
     if (!activityId) return;
     setLoading(true);
-    getActivity(activityId)
-      .then(setDetail)
-      .catch(() => setDetail(null))
-      .finally(() => setLoading(false));
-  }, [activityId]);
+    getActivity(activityId, api)
+      .then((data) => { if (active) setDetail(data); })
+      .catch(() => { if (active) setDetail(null); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [activityId, api]);
 
   const findings = useMemo(() => {
     if (!detail) return [];
@@ -94,7 +98,7 @@ export function ActivityDetailPage() {
   const handleDelete = async () => {
     if (!activityId || !confirm('Delete this activity record? This cannot be undone.')) return;
     try {
-      await deleteActivity(activityId);
+      await deleteActivity(activityId, api);
       navigate('/activity');
     } catch {
       alert('Failed to delete activity record.');
@@ -106,7 +110,7 @@ export function ActivityDetailPage() {
     setPrCreating(true);
     setPrError(null);
     try {
-      const result = await submitActivity(detail.project_id, activityId);
+      const result = await submitActivity(detail.project_id, activityId, api);
       setDetail((prev) =>
         prev
           ? {
@@ -134,7 +138,7 @@ export function ActivityDetailPage() {
         fingerprint_mode: hasYaml ? 'full' : 'rule_only',
         scope: detail.project_id ? `project:${detail.project_id}` : 'global',
         reason: 'Acknowledged via activity detail',
-      });
+      }, api);
       setAcknowledgedIds((prev) => new Set(prev).add(violation.id));
     } catch (err: unknown) {
       const status =

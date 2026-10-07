@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { PageLayout, PageHeader } from '@ansible/ansible-ui-framework';
 import {
@@ -10,6 +10,7 @@ import {
   SplitItem,
 } from '@patternfly/react-core';
 import { ExternalLinkAltIcon } from '@patternfly/react-icons';
+import { useApmeApi } from '../api/apmeApiAdapter';
 import { getCollectionDetail } from '../services/api';
 import type { CollectionDetail } from '../types/api';
 import { healthLabelColor } from '../components/severity';
@@ -19,28 +20,37 @@ function HealthBadge({ score }: { score: number }) {
 }
 
 export function CollectionDetailPage() {
+  const api = useApmeApi();
   const { fqcn } = useParams<{ fqcn: string }>();
   const navigate = useNavigate();
   const [collection, setCollection] = useState<CollectionDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const requestIdRef = useRef(0);
 
   const fetchData = useCallback(async () => {
+    const requestId = ++requestIdRef.current;
+    const isCurrent = () => requestIdRef.current === requestId;
     if (!fqcn) return;
     setLoading(true);
     setError(false);
     try {
-      const data = await getCollectionDetail(fqcn);
+      const data = await getCollectionDetail(fqcn, api);
+      if (!isCurrent()) return;
       setCollection(data);
     } catch {
+      if (!isCurrent()) return;
       setError(true);
       setCollection(null);
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
-  }, [fqcn]);
+  }, [fqcn, api]);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  useEffect(() => {
+    fetchData();
+    return () => { requestIdRef.current += 1; };
+  }, [fetchData]);
 
   if (loading) {
     return (
