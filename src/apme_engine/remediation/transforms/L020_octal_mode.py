@@ -12,6 +12,7 @@ from __future__ import annotations
 import re
 
 from ruamel.yaml.comments import CommentedMap
+from ruamel.yaml.scalarstring import SingleQuotedScalarString
 
 from apme_engine.engine.models import ViolationDict
 from apme_engine.engine.yaml_utils import OctalIntYAML11
@@ -47,7 +48,7 @@ def fix_octal_mode(task: CommentedMap, violation: ViolationDict) -> bool:
     if isinstance(mode_val, str):
         stripped = mode_val.strip()
         if _OCTAL_DIGITS.match(stripped) and not stripped.startswith("0"):
-            container["mode"] = f"0{stripped}"
+            container["mode"] = SingleQuotedScalarString(f"0{stripped}")
             return True
         return False
 
@@ -60,7 +61,7 @@ def fix_octal_mode(task: CommentedMap, violation: ViolationDict) -> bool:
             if not _OCTAL_DIGITS.match(decimal_digits):
                 return False
             normalized = f"0{decimal_digits}" if not decimal_digits.startswith("0") else decimal_digits
-        container["mode"] = normalized
+        container["mode"] = SingleQuotedScalarString(normalized)
         return True
 
     return False

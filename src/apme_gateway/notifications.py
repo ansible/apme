@@ -16,7 +16,7 @@ import asyncio
 import contextlib
 import json
 import logging
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Sequence
 from typing import Any
 
 from sqlalchemy import select as sa_select
@@ -313,3 +313,294 @@ def broadcast_notifications(payloads: list[dict[str, Any]]) -> None:
     """
     for p in payloads:
         _broadcast(p)
+
+
+# ---------------------------------------------------------------------------
+# Persistent notification outbox (N18)
+# ---------------------------------------------------------------------------
+# Owns the outbox retry lifecycle: intent persistence before ACK, attempt
+# accounting, sent stamping, violation-set hashing, and startup
+# reconciliation. Moved here from ``grpc_reporting.servicer`` so the
+# servicer stays under 1k lines; the servicer re-exports these names for
+# backward compatibility (tests patch the servicer namespace).
+
+# Strong refs so fire-and-forget notification tasks are not GC'd mid-flight.
+_pending_notification_tasks: set[asyncio.Task[None]] = set()
+
+# Startup reconciliation bounds (N18): oldest-first page size per call and
+# max concurrent inline generations (no unbounded task fan-out).
+_RECONCILE_OUTBOX_PAGE_SIZE = 100
+_RECONCILE_OUTBOX_CONCURRENCY = 5
+
+
+def _outbox_now_iso() -> str:
+    """Return the current UTC time as an ISO-8601 string.
+
+    Returns:
+        ISO-8601 timestamp string.
+    """
+    from datetime import UTC as _UTC
+    from datetime import datetime as _datetime
+
+    return _datetime.now(tz=_UTC).isoformat()
+
+
+async def _deliver_scan_notifications(scan_id: str) -> bool:
+    """Run one best-effort notification attempt; mark sent only on success.
+
+    Bumps the outbox attempt counter, generates from the latest committed
+    rows, and stamps ``sent_at`` only when generation reports success, so
+    a failed attempt stays unsent for startup reconciliation to retry.
+
+    Args:
+        scan_id: Persisted scan UUID to notify for.
+
+    Returns:
+        True only when notifications were generated successfully.
+    """
+    try:
+        await _bump_notification_outbox_attempts(scan_id)
+        ok = False
+        from apme_gateway.db import get_session as _get_session  # noqa: PLC0415
+
+        async with _get_session() as db:
+            from apme_gateway.grpc_reporting.servicer import (  # noqa: PLC0415
+                _generate_scan_notifications as _generate,
+            )
+
+            ok = await _generate(db, scan_id)
+        if ok:
+            await _mark_notification_outbox_sent(scan_id)
+        else:
+            logger.warning(
+                "Notification generation unsuccessful for scan %s; outbox left unsent",
+                scan_id,
+            )
+        return ok
+    except Exception:
+        logger.warning(
+            "Notification generation failed for scan %s",
+            scan_id,
+            exc_info=True,
+        )
+        return False
+
+
+def _violation_set_hash(violations: Sequence[Any]) -> str:
+    """Hash a scan's violation set for outbox re-queue decisions (#21).
+
+    Args:
+        violations: ORM Violation rows (or objects with rule_id/file/line/message).
+
+    Returns:
+        Hex SHA-256 over sorted violation identity tuples.
+    """
+    import hashlib as _hashlib  # noqa: PLC0415
+
+    items: list[tuple[str, str, str, str]] = []
+    for v in violations:
+        items.append(
+            (
+                str(getattr(v, "rule_id", "") or ""),
+                str(getattr(v, "file", "") or ""),
+                str(getattr(v, "line", "") or ""),
+                str(getattr(v, "message", "") or ""),
+            )
+        )
+    items.sort()
+    h = _hashlib.sha256()
+    for parts in items:
+        h.update("\x00".join(parts).encode("utf-8"))
+        h.update(b"\x00")
+    return h.hexdigest()
+
+
+async def _enqueue_notification_outbox(scan_id: str) -> None:
+    """Persist notification intent before ACK (N18, best-effort).
+
+    Runs in its own short transaction after the scan commit — separate
+    from (not the same as) the scan persistence transaction — so outbox
+    failures never fail the already-committed RPC. Uses get-or-create
+    with an ``IntegrityError`` fallback instead of check-then-insert so
+    concurrent duplicate ``ReportFixCompleted`` deliveries for one scan
+    cannot race into a duplicate-key failure. A sent row is re-queued
+    only when the violation set changed (``content_hash`` differs, #21);
+    true duplicates (same hash) stay silent.
+
+    Args:
+        scan_id: Persisted scan UUID to notify for.
+    """
+    try:
+        from sqlalchemy import select as _sa_select  # noqa: PLC0415
+        from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
+
+        from apme_gateway.db import get_session as _get_session  # noqa: PLC0415
+        from apme_gateway.db.models import NotificationOutbox, Violation  # noqa: PLC0415
+
+        async with _get_session() as db:
+            rows = (await db.execute(_sa_select(Violation).where(Violation.scan_id == scan_id))).scalars().all()
+            content_hash = _violation_set_hash(rows)
+            existing = (
+                await db.execute(_sa_select(NotificationOutbox).where(NotificationOutbox.scan_id == scan_id))
+            ).scalar_one_or_none()
+            if existing is None:
+                db.add(
+                    NotificationOutbox(
+                        scan_id=scan_id,
+                        created_at=_outbox_now_iso(),
+                        sent_at=None,
+                        attempts=0,
+                        content_hash=content_hash,
+                    )
+                )
+                try:
+                    await db.commit()
+                except IntegrityError:
+                    # Lost a concurrent insert race for the same scan_id:
+                    # roll back; the winner row was just inserted unsent, so
+                    # no state change is needed — and a sent row must never
+                    # be resurrected here.
+                    await db.rollback()
+                    winner = (
+                        await db.execute(_sa_select(NotificationOutbox).where(NotificationOutbox.scan_id == scan_id))
+                    ).scalar_one_or_none()
+                    if winner is not None and winner.sent_at is not None:
+                        logger.debug(
+                            "Notification outbox for scan %s already sent; race loser left sent",
+                            scan_id,
+                        )
+                    return
+            elif existing.sent_at is None:
+                # Re-queue on replay: a new ReportFixCompleted means fresh
+                # notifications may be due (idempotent generation skips dupes).
+                existing.sent_at = None
+                existing.content_hash = content_hash
+                await db.commit()
+            elif getattr(existing, "content_hash", None) != content_hash:
+                # Genuinely new violations for an already-notified scan:
+                # re-queue so generation runs again (#21).
+                existing.sent_at = None
+                existing.content_hash = content_hash
+                await db.commit()
+            else:
+                logger.debug(
+                    "Notification outbox for scan %s already sent; duplicate delivery left sent",
+                    scan_id,
+                )
+    except Exception:
+        logger.warning("Failed to enqueue notification outbox for scan %s", scan_id, exc_info=True)
+
+
+async def _bump_notification_outbox_attempts(scan_id: str) -> None:
+    """Increment the outbox attempt counter for one generation try (N18).
+
+    Called on every try — success or failure — so ``attempts`` measures
+    generation pressure for observability, not just completions. Failures
+    are logged and never propagated.
+
+    Args:
+        scan_id: Scan whose notifications are being generated.
+    """
+    try:
+        from sqlalchemy import select as _sa_select  # noqa: PLC0415
+
+        from apme_gateway.db import get_session as _get_session  # noqa: PLC0415
+        from apme_gateway.db.models import NotificationOutbox  # noqa: PLC0415
+
+        async with _get_session() as db:
+            row = (
+                await db.execute(_sa_select(NotificationOutbox).where(NotificationOutbox.scan_id == scan_id))
+            ).scalar_one_or_none()
+            if row is not None:
+                row.attempts = int(row.attempts or 0) + 1
+                await db.commit()
+    except Exception:
+        logger.warning("Failed to bump notification outbox attempts for scan %s", scan_id, exc_info=True)
+
+
+async def _mark_notification_outbox_sent(scan_id: str) -> None:
+    """Mark the outbox row sent after successful generation (N18).
+
+    Only stamps ``sent_at`` — ``attempts`` is bumped on every try by
+    :func:`_bump_notification_outbox_attempts`, not here, so failed
+    attempts remain visible.
+
+    Args:
+        scan_id: Scan whose notifications were generated.
+    """
+    try:
+        from sqlalchemy import select as _sa_select  # noqa: PLC0415
+
+        from apme_gateway.db import get_session as _get_session  # noqa: PLC0415
+        from apme_gateway.db.models import NotificationOutbox  # noqa: PLC0415
+
+        async with _get_session() as db:
+            row = (
+                await db.execute(_sa_select(NotificationOutbox).where(NotificationOutbox.scan_id == scan_id))
+            ).scalar_one_or_none()
+            if row is not None:
+                row.sent_at = _outbox_now_iso()
+                await db.commit()
+    except Exception:
+        logger.warning("Failed to mark notification outbox sent for scan %s", scan_id, exc_info=True)
+
+
+async def reconcile_notification_outbox(*, limit: int = 100) -> int:
+    """Replay unsent notification intents after startup (N18).
+
+    Queries the oldest unsent outbox rows first (``ORDER BY attempts,
+    created_at``) with ``LIMIT 100`` and caps re-queued rows per call;
+    generations run inline with a semaphore (max 5 concurrent) instead
+    of an unbounded fire-and-forget fan-out. Ordering low-attempt rows
+    first keeps one repeatedly-failing (high-attempt) row from head-of-
+    line blocking fresh rows on every call. Safe to call multiple
+    times; generation itself is idempotent (existing notification types
+    are skipped). Returns the count of successfully delivered rows (not
+    rows selected), so drain loops stop on a fully-failing page instead
+    of spinning forever on persistently failing rows.
+
+    Args:
+        limit: Maximum rows to re-queue per call (clamped to 100).
+
+    Returns:
+        Number of scans successfully delivered (marked sent).
+    """
+    page = max(1, min(limit, _RECONCILE_OUTBOX_PAGE_SIZE))
+    try:
+        from sqlalchemy import select as _sa_select  # noqa: PLC0415
+
+        from apme_gateway.db import get_session as _get_session  # noqa: PLC0415
+        from apme_gateway.db.models import NotificationOutbox  # noqa: PLC0415
+
+        async with _get_session() as db:
+            rows = list(
+                (
+                    await db.execute(
+                        _sa_select(NotificationOutbox)
+                        .where(NotificationOutbox.sent_at.is_(None))
+                        .order_by(NotificationOutbox.attempts, NotificationOutbox.created_at)
+                        .limit(page)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+    except Exception:
+        logger.warning("Notification outbox reconciliation failed (query)", exc_info=True)
+        return 0
+    scan_ids = [row.scan_id for row in rows]
+    semaphore = asyncio.Semaphore(_RECONCILE_OUTBOX_CONCURRENCY)
+
+    async def _one(scan_id: str) -> bool:
+        async with semaphore:
+            return await _deliver_scan_notifications(scan_id)
+
+    results = await asyncio.gather(*(_one(scan_id) for scan_id in scan_ids), return_exceptions=True)
+    delivered = sum(1 for r in results if r is True)
+    if scan_ids:
+        logger.info(
+            "Notification outbox reconciliation delivered %d/%d scan(s)",
+            delivered,
+            len(scan_ids),
+        )
+    return delivered

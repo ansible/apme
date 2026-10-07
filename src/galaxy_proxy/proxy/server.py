@@ -15,6 +15,7 @@ import io
 import ipaddress
 import json
 import logging
+import math
 import os
 import platform
 import re
@@ -24,6 +25,7 @@ import stat
 import tempfile
 import time
 import zipfile
+from collections.abc import Callable
 from contextlib import asynccontextmanager, suppress
 from dataclasses import asdict
 from email.parser import Parser
@@ -80,6 +82,84 @@ _ADMIN_TOKEN_HEADER = "x-apme-proxy-token"
 _UNAUTH_TRUTHY = frozenset({"1", "true", "yes", "on"})
 _ON_DEMAND_WHEEL_TTL_S = 300.0
 _ON_DEMAND_WHEEL_LIMIT_BYTES = 64 * 1024 * 1024
+
+_GALAXY_LOCK_TIMEOUT_DEFAULT_S = 30.0  # APME_GALAXY_LOCK_TIMEOUT_S
+
+#: Bounds on the in-memory proxy caches. Lock keys are per-collection
+#: (``namespace.name:version``) and wheel names embed version, so steady
+#: state is small — but both key spaces derive from request input, so LRU
+#: caps stop unbounded growth. Evicting a download lock still referenced
+#: elsewhere is safe (holders keep their own reference).
+_MAX_DOWNLOAD_LOCKS = 512
+_MAX_WHEEL_HASHES = 512
+
+
+def clear_proxy_caches(app: FastAPI) -> None:
+    """Drop proxied download locks and cached wheel hashes (test helper).
+
+    Args:
+        app: FastAPI application created by :func:`create_app`.
+    """
+    download_locks = getattr(app.state, "download_locks", None)
+    if isinstance(download_locks, dict):
+        download_locks.clear()
+    wheel_hashes = getattr(app.state, "wheel_hashes", None)
+    if isinstance(wheel_hashes, dict):
+        wheel_hashes.clear()
+    wheel_stats = getattr(app.state, "wheel_hash_stats", None)
+    if isinstance(wheel_stats, dict):
+        wheel_stats.clear()
+
+
+def _galaxy_lock_timeout_s() -> float:
+    """Return per-collection download-lock timeout in seconds.
+
+    Returns:
+        ``APME_GALAXY_LOCK_TIMEOUT_S`` when set to a finite positive
+        value, otherwise 30s.
+    """
+    raw = os.environ.get("APME_GALAXY_LOCK_TIMEOUT_S", "").strip()
+    if not raw:
+        return _GALAXY_LOCK_TIMEOUT_DEFAULT_S
+    try:
+        value = float(raw)
+    except ValueError:
+        logger.warning(
+            "Invalid APME_GALAXY_LOCK_TIMEOUT_S=%r — using default %s",
+            raw,
+            _GALAXY_LOCK_TIMEOUT_DEFAULT_S,
+        )
+        return _GALAXY_LOCK_TIMEOUT_DEFAULT_S
+    if not math.isfinite(value) or value <= 0:
+        logger.warning(
+            "Non-positive/non-finite APME_GALAXY_LOCK_TIMEOUT_S=%r — using default %s",
+            raw,
+            _GALAXY_LOCK_TIMEOUT_DEFAULT_S,
+        )
+        return _GALAXY_LOCK_TIMEOUT_DEFAULT_S
+    return value
+
+
+async def _acquire_lock_or_503(lock: asyncio.Lock, *, operation: str) -> bool:
+    """Acquire *lock* within the configured timeout.
+
+    Uses ``asyncio.timeout`` (not ``wait_for``) so a timeout cancels a
+    pending acquire without leaving the mutex held on an
+    acquire-then-timeout race (#20).
+
+    Args:
+        lock: Per-collection asyncio lock.
+        operation: Human-readable operation label for the 503 message.
+
+    Returns:
+        True when acquired, False on timeout (caller raises 503).
+    """
+    try:
+        async with asyncio.timeout(_galaxy_lock_timeout_s()):
+            await lock.acquire()
+    except TimeoutError:
+        return False
+    return True
 
 
 def _unauth_admin_allowed() -> bool:
@@ -553,6 +633,140 @@ def create_app(
     # pip can invoke the wheel route's exact-version Hub retry.
     _prepare_fallback_wheels: dict[str, float] = {}
 
+    # In-memory wheel SHA256 (hex) cache, populated at put_wheel time from
+    # the in-hand bytes so project pages avoid re-hashing files per request.
+    # Filesystem remains the source of truth; this only skips repeated reads.
+    # LRU-capped (see _MAX_WHEEL_HASHES); entries are revalidated against
+    # file mtime+size so a replaced wheel is re-hashed, never served stale.
+    _wheel_sha256_cache: dict[str, str] = {}
+    # File identity (mtime_ns, size) captured when each hash was computed.
+    _wheel_hash_stat: dict[str, tuple[int, int]] = {}
+
+    def _is_download_lock_idle(lock: object) -> bool:
+        """Return True when a download lock has no holders or waiters.
+
+        A lock that is locked or has live waiters still serializes an
+        in-flight download — evicting it would hand a newcomer a fresh
+        lock and break mutual exclusion.  Unknown lock types (test
+        doubles without ``locked()``) are treated as busy (fail-closed:
+        the map temporarily grows over cap instead of risking a split).
+
+        Args:
+            lock: Per-collection asyncio lock (or test double).
+
+        Returns:
+            True when the lock is provably idle.
+        """
+        locked = getattr(lock, "locked", None)
+        if not callable(locked):
+            return False
+        try:
+            if locked():
+                return False
+        except Exception:  # noqa: BLE001 — fail closed on introspection errors
+            return False
+        waiters = getattr(lock, "_waiters", None)
+        if waiters:
+            try:
+                live = [w for w in waiters if not w.cancelled()]
+            except Exception:  # noqa: BLE001 — fail closed
+                return False
+            if live:
+                return False
+        return True
+
+    def _evict_lru(mapping: dict[str, Any], cap: int, *, is_idle: Callable[[Any], bool] | None = None) -> None:
+        """Evict least-recently-used entries until under cap.
+
+        When ``is_idle`` is given, only entries proving idle are evicted
+        (oldest first); when every entry is busy the map temporarily
+        grows over cap instead of breaking mutual exclusion.
+
+        NOTE (#5 reviewed, kept bespoke): ``apme_engine.cache.BoundedCache``
+        covers LRU + idle-aware eviction for new maps, but these two maps
+        stay plain dicts — ``app.state`` exposes them for test doubles
+        that assign straight in, and the wheel-hash map is kept in
+        lock-step with a paired stat-identity map. Revisit if the paired
+        maps are ever unified.
+
+        Args:
+            mapping: Cache dict (insertion-ordered; hits refresh below).
+            cap: Maximum entries to retain.
+            is_idle: Optional predicate marking an entry safe to evict.
+        """
+        while len(mapping) >= cap:
+            if is_idle is None:
+                mapping.pop(next(iter(mapping)))
+                continue
+            for key in list(mapping):
+                if is_idle(mapping[key]):
+                    del mapping[key]
+                    break
+            else:
+                break  # All busy — allow temporary over-capacity.
+
+    def _lru_refresh(mapping: dict[str, Any], key: str) -> None:
+        """Mark a cache hit as most-recently-used.
+
+        Args:
+            mapping: Cache dict holding the key.
+            key: Recently used key to move to the back.
+        """
+        try:
+            value = mapping.pop(key)
+        except KeyError:
+            return
+        mapping[key] = value
+
+    def _get_download_lock(lock_key: str) -> asyncio.Lock:
+        """Return the per-collection download lock, creating it if absent.
+
+        LRU-capped at ``_MAX_DOWNLOAD_LOCKS`` with refresh-on-hit so hot
+        collections keep their locks while one-shot key churn is evicted.
+        Only idle locks are evicted — a held or waited-on lock is never
+        dropped (the map grows temporarily over cap instead of splitting
+        mutual exclusion).
+
+        Args:
+            lock_key: ``namespace.name:version`` (or ``:latest``) key.
+
+        Returns:
+            Shared asyncio lock for the key.
+        """
+        lock = _download_locks.get(lock_key)
+        if lock is None:
+            _evict_lru(_download_locks, _MAX_DOWNLOAD_LOCKS, is_idle=_is_download_lock_idle)
+            lock = _download_locks.setdefault(lock_key, asyncio.Lock())
+        else:
+            _lru_refresh(_download_locks, lock_key)
+        return lock
+
+    async def _remember_wheel_hash(filename: str, digest: str, wheel_path: Path | None = None) -> None:
+        """Store a wheel hash with its file identity for mtime revalidation.
+
+        The identity ``stat`` runs off the event loop via
+        ``asyncio.to_thread`` so a slow filesystem never stalls request
+        handling.
+
+        Args:
+            filename: Wheel filename key.
+            digest: Hex SHA256 to cache.
+            wheel_path: On-disk wheel path for identity capture, if known.
+        """
+        if filename not in _wheel_sha256_cache:
+            _evict_lru(_wheel_sha256_cache, _MAX_WHEEL_HASHES)
+        # Keep the stat map in lock-step with the hash map.
+        if filename not in _wheel_hash_stat:
+            while len(_wheel_hash_stat) >= _MAX_WHEEL_HASHES:
+                _wheel_hash_stat.pop(next(iter(_wheel_hash_stat)))
+        _wheel_sha256_cache[filename] = digest
+        if wheel_path is not None:
+            try:
+                st = await asyncio.to_thread(wheel_path.stat)
+                _wheel_hash_stat[filename] = (st.st_mtime_ns, st.st_size)
+            except OSError:
+                _wheel_hash_stat.pop(filename, None)
+
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:  # noqa: ARG001
         yield
@@ -702,6 +916,44 @@ def create_app(
         """
         if not app.state.galaxy_config_ready:
             raise HTTPException(status_code=503, detail="Galaxy configuration is being restored")
+
+    # Exposed for tests/ops: same objects as the closure caches.
+    app.state.download_locks = _download_locks
+    app.state.wheel_hashes = _wheel_sha256_cache
+    app.state.wheel_hash_stats = _wheel_hash_stat
+
+    async def _wheel_hash_hex(filename: str) -> str:
+        """Return cached hex SHA256, hashing the file once on miss.
+
+        A cached entry is only reused when the on-disk file still has
+        the same mtime+size captured at hash time; a replaced wheel is
+        re-hashed so the cache never serves a stale digest.
+
+        Args:
+            filename: Wheel filename to hash.
+
+        Returns:
+            Hex digest string, or ``""`` when the wheel is absent/unreadable.
+        """
+        cached = _wheel_sha256_cache.get(filename)
+        wheel_path = await asyncio.to_thread(cache.wheel_path, filename)
+        if wheel_path is None:
+            return ""
+        try:
+            st = await asyncio.to_thread(wheel_path.stat)
+            identity = (st.st_mtime_ns, st.st_size)
+        except OSError:
+            return ""
+        if cached is not None and _wheel_hash_stat.get(filename) == identity:
+            _lru_refresh(_wheel_sha256_cache, filename)
+            return cached
+        try:
+            digest = await asyncio.to_thread(sha256_file_hex, wheel_path)
+        except OSError:
+            return ""
+        if digest:
+            await _remember_wheel_hash(filename, digest, wheel_path)
+        return digest
 
     if _admin_token_configured() == "" and not _unauth_admin_allowed():
         logger.warning(
@@ -1041,7 +1293,7 @@ def create_app(
             ) from exc
 
         generation = app.state.galaxy_config_generation
-        cached_wheel_set = set(_list_cached_wheels(cache, namespace, name))
+        cached_wheel_set = set(await asyncio.to_thread(_list_cached_wheels, cache, namespace, name))
         now = time.monotonic()
         for filename, expires_at in list(_prepare_fallback_wheels.items()):
             if expires_at <= now:
@@ -1054,14 +1306,49 @@ def create_app(
             elif filename.startswith(f"ansible_collection_{namespace}_{name}-"):
                 cached_wheel_set.add(filename)
 
-        if not cached_wheel_set:
+        versions: list[str] | None = None
+        meta = await asyncio.to_thread(cache.get_metadata, namespace, name)
+        _require_current_config(generation)
+        if meta is not None:
+            versions = meta.versions
+            logger.info("metadata_cache_hit collection=%s.%s versions=%d", namespace, name, len(versions))
+        else:
+            logger.info("metadata_cache_miss collection=%s.%s", namespace, name)
+
+        if versions is None:
+            cfg_path, servers_cfg, _galaxy_bin = await asyncio.to_thread(_get_galaxy_config)
+            _require_current_config(generation)
+            try:
+                versions = await _fetch_galaxy_versions(namespace, name, servers=servers_cfg)
+            except CollectionResolutionError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+            _require_current_config(generation)
+            if versions:
+                async with _config_lock:
+                    _require_current_config(generation)
+                    try:
+                        cache.put_metadata(namespace, name, versions)
+                    except OSError as exc:
+                        logger.warning(
+                            "metadata_cache_write_failed collection=%s.%s error_type=%s",
+                            namespace,
+                            name,
+                            type(exc).__name__,
+                        )
+
+        if not versions and not cached_wheel_set:
             lock_key = f"{namespace}.{name}:latest"
-            lock = _download_locks.get(lock_key)
-            if lock is None:
-                lock = _download_locks.setdefault(lock_key, asyncio.Lock())
-            async with lock:
+            lock = _get_download_lock(lock_key)
+            if not await _acquire_lock_or_503(lock, operation="project page download"):
+                raise HTTPException(
+                    status_code=503,
+                    detail="Collection download busy; retry later (lock timeout)",
+                    headers={"Retry-After": str(max(1, math.ceil(_galaxy_lock_timeout_s())))},
+                )
+            try:
                 _require_current_config(generation)
-                cached_wheel_set = set(_list_cached_wheels(cache, namespace, name))
+                cached_wheel_set = set(await asyncio.to_thread(_list_cached_wheels, cache, namespace, name))
+                _require_current_config(generation)
                 if not cached_wheel_set:
                     try:
                         cfg_path, servers_cfg, galaxy_bin = await asyncio.to_thread(_get_galaxy_config)
@@ -1075,7 +1362,10 @@ def create_app(
                             ansible_galaxy_bin=galaxy_bin,
                         )
                         _require_current_config(generation)
-                        if not _cache_downloaded_wheel(cache, whl_name, whl_data):
+                        if _cache_downloaded_wheel(cache, whl_name, whl_data):
+                            wheel_path = await asyncio.to_thread(cache.wheel_path, whl_name)
+                            await _remember_wheel_hash(whl_name, hashlib.sha256(whl_data).hexdigest(), wheel_path)
+                        else:
                             _remember_on_demand_wheel(_on_demand_wheels, whl_name, whl_data)
                         logger.info("On-demand download for %s.%s: %s", namespace, name, whl_name)
                         cached_wheel_set = {whl_name}
@@ -1094,19 +1384,28 @@ def create_app(
                             status_code=502,
                             detail=f"Failed to download {namespace}.{name} via ansible-galaxy",
                         ) from exc
+            finally:
+                lock.release()
 
         links: list[str] = []
+        seen_versions: set[str] = set()
 
         for whl_name in sorted(cached_wheel_set):
-            try:
-                cached_wheel = cache.wheel_path(whl_name)
-                whl_hash = sha256_file_hex(cached_wheel) if cached_wheel else ""
-            except OSError:
-                whl_hash = ""
+            whl_hash = await _wheel_hash_hex(whl_name)
             href = f"/wheels/{whl_name}"
             if whl_hash:
                 href += f"#sha256={whl_hash}"
             links.append(f'<a href="{href}">{whl_name}</a>')
+            parts = whl_name.split("-")
+            if len(parts) >= 2:
+                seen_versions.add(parts[1])
+
+        if versions:
+            for version in versions:
+                if version in seen_versions:
+                    continue
+                whl_name = wheel_filename(namespace, name, version)
+                links.append(f'<a href="/wheels/{whl_name}">{whl_name}</a>')
 
         html = "<!DOCTYPE html>\n<html><body>\n" + "\n".join(links) + "\n</body></html>\n"
         return HTMLResponse(content=html)
@@ -1146,7 +1445,9 @@ def create_app(
             except Exception:  # noqa: BLE001 — never fail serves for metrics
                 logger.debug("Failed to record Galaxy wheel serve metrics", exc_info=True)
 
-        cached = _read_cached_wheel(cache, filename)
+        initial_generation = app.state.galaxy_config_generation
+        cached = await asyncio.to_thread(_read_cached_wheel, cache, filename)
+        _require_current_config(initial_generation)
         if cached is None:
             cached = _take_on_demand_wheel(_on_demand_wheels, filename)
         if cached:
@@ -1181,12 +1482,18 @@ def create_app(
         )
 
         lock_key = f"{ns}.{coll_name}:{version}"
-        lock = _download_locks.get(lock_key)
-        if lock is None:
-            lock = _download_locks.setdefault(lock_key, asyncio.Lock())
-        async with lock:
+        lock = _get_download_lock(lock_key)
+        if not await _acquire_lock_or_503(lock, operation="wheel download"):
+            raise HTTPException(
+                status_code=503,
+                detail="Collection download busy; retry later (lock timeout)",
+                headers={"Retry-After": str(max(1, math.ceil(_galaxy_lock_timeout_s())))},
+            )
+        try:
             _require_config_ready()
-            cached = _read_cached_wheel(cache, filename)
+            generation = app.state.galaxy_config_generation
+            cached = await asyncio.to_thread(_read_cached_wheel, cache, filename)
+            _require_current_config(generation)
             if cached is None:
                 cached = _take_on_demand_wheel(_on_demand_wheels, filename)
             if cached:
@@ -1199,8 +1506,8 @@ def create_app(
                 )
 
             logger.info("wheel_cache_miss filename=%s", filename)
-            generation = app.state.galaxy_config_generation
 
+            servers: list[GalaxyServerConfig] | None = None
             try:
                 cfg_path, servers, galaxy_bin = await asyncio.to_thread(_get_galaxy_config)
                 cfg_for_download, servers_for_download = _download_auth(cfg_path, servers)
@@ -1235,7 +1542,13 @@ def create_app(
                 ) from exc
 
             _require_current_config(generation)
-            _cache_downloaded_wheel(cache, whl_name, whl_data)
+            if _cache_downloaded_wheel(cache, whl_name, whl_data):
+                wheel_path = await asyncio.to_thread(cache.wheel_path, whl_name)
+                await _remember_wheel_hash(whl_name, hashlib.sha256(whl_data).hexdigest(), wheel_path)
+            else:
+                _remember_on_demand_wheel(_on_demand_wheels, whl_name, whl_data)
+        finally:
+            lock.release()
 
         _record_serve("miss")
         return Response(
@@ -1271,8 +1584,9 @@ def create_app(
         failed: list[str] = []
         generation = app.state.galaxy_config_generation
 
-        for tb in sorted(tarball_path.glob("*.tar.gz")):
-            if tb.is_symlink() or not tb.is_file():
+        tarballs = await asyncio.to_thread(lambda: sorted(tarball_path.glob("*.tar.gz")))
+        for tb in tarballs:
+            if await asyncio.to_thread(tb.is_symlink) or not await asyncio.to_thread(tb.is_file):
                 logger.warning("Skipping non-regular tarball entry: %s", tb)
                 failed.append(tb.name)
                 continue
@@ -1281,6 +1595,8 @@ def create_app(
                 whl_name, whl_data = await asyncio.to_thread(tarball_to_wheel, tarball_data)
                 _require_current_config(generation)
                 cache.put_wheel(whl_name, whl_data)
+                wheel_path = await asyncio.to_thread(cache.wheel_path, whl_name)
+                await _remember_wheel_hash(whl_name, hashlib.sha256(whl_data).hexdigest(), wheel_path)
                 converted.append(whl_name)
                 logger.info("Converted tarball: %s -> %s", tb.name, whl_name)
             except HTTPException:

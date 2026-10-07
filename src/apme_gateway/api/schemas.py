@@ -735,6 +735,9 @@ class SubmitRequest(BaseModel):  # type: ignore[misc]
         title: PR title (default auto-generated from remediation stats).
         body: PR body in Markdown (default auto-generated).
         scm_token: One-time SCM token (overrides project/global token).
+        submit_token: Idempotency token from ``POST /approve`` (N19) or
+            client-generated ``Idempotency-Key``; double-submit with the
+            same token replays the stored result instead of pushing again.
     """
 
     activity_id: str | None = None
@@ -751,6 +754,7 @@ class SubmitRequest(BaseModel):  # type: ignore[misc]
     title: str | None = None
     body: str | None = None
     scm_token: str | None = None
+    submit_token: str | None = None
 
     @field_validator("branch_name")  # type: ignore[untyped-decorator]
     @classmethod
@@ -861,6 +865,231 @@ class OperationRequestOptions(BaseModel):  # type: ignore[misc]
     collection_specs: list[str] = Field(default_factory=list)
     enable_ai: bool = False
     ai_model: str = ""
+
+
+# ── Atomic operate schemas (agent operability, additive) ──────────────
+
+
+class AtomicOperateSubmitOptions(BaseModel):  # type: ignore[misc]
+    """Submit options for atomic ``POST /operate`` (additive).
+
+    Attributes:
+        create_pr: Whether to open a PR after pushing.
+        branch_name: Explicit branch name (auto-generated when omitted).
+        submit_token: Optional idempotency token forwarded to the embedded
+            submit (``Idempotency-Key`` header is preferred when present).
+    """
+
+    create_pr: bool = True
+    branch_name: str | None = None
+    submit_token: str | None = None
+
+
+class AtomicOperateOptions(BaseModel):  # type: ignore[misc]
+    """Server-side gate options for atomic ``POST /operate`` (additive).
+
+    Attributes:
+        auto_approve_tier1: Auto-approve Tier 1 deterministic proposals.
+        auto_approve_ai: Auto-escalate AI candidates and auto-approve AI proposals.
+        enable_ai: Enable Tier 2 AI tier (implied by auto_approve_ai).
+        ai_model: Optional model override.
+        ansible_version: Target ansible-core version.
+        collection_specs: Galaxy collection install specs.
+        submit: Optional submit-after-complete options.
+    """
+
+    auto_approve_tier1: bool = False
+    auto_approve_ai: bool = False
+    enable_ai: bool = False
+    ai_model: str = ""
+    ansible_version: str = ""
+    collection_specs: list[str] = Field(default_factory=list)
+    submit: AtomicOperateSubmitOptions | None = None
+
+
+class AtomicOperateRequest(BaseModel):  # type: ignore[misc]
+    """Request body for atomic ``POST /api/v1/projects/{id}/operate``.
+
+    Attributes:
+        action: ``check`` or ``remediate``. Defaults to ``check`` (unlike
+            ``OperateRequest.action``, which is required): a bare POST with
+            no body is read-only by default so agent one-call automation
+            cannot accidentally start a remediate.
+        options: Atomic gate/submit options.
+        abandon_working_set: Allow flush of interactive draft working set.
+    """
+
+    action: str = Field(default="check", pattern="^(check|remediate)$")
+    options: AtomicOperateOptions = Field(default_factory=AtomicOperateOptions)
+    abandon_working_set: bool = False
+
+
+# ── External scan import schemas (CLI-local -> Gateway, additive) ─────
+
+
+class ImportViolationSchema(BaseModel):  # type: ignore[misc]
+    """One violation row for ``POST /api/v1/scans/import`` (additive).
+
+    Attributes:
+        rule_id: Rule identifier (e.g. L001).
+        level: Severity level string.
+        message: Human-readable description.
+        file: Relative file path.
+        line: Line number or None.
+        path: YAML path within the file.
+        remediation_class: Remediation tier label (``auto-fixable``,
+            ``ai-candidate``, ``manual-review``) as emitted by
+            ``apme check --json``. Empty when unknown — the import
+            endpoint counts such rows as ``manual_review`` (pending
+            triage) and stores ``0`` (unspecified) on the violation row.
+    """
+
+    rule_id: str = Field(default="", max_length=64)
+    level: str = Field(default="warning", max_length=16)
+    message: str = Field(default="", max_length=4000)
+    file: str = Field(default="", max_length=1000)
+    line: int | None = None
+    path: str = Field(default="", max_length=2000)
+    remediation_class: str = Field(default="", max_length=32)
+
+
+class ImportScanRequest(BaseModel):  # type: ignore[misc]
+    """Request body for ``POST /api/v1/scans/import`` (additive).
+
+    Stores CLI-local ``apme check --json`` output as Gateway activity
+    without requiring a registered project scan run.
+
+    Per-field ``max_length`` caps plus the 5000-row cap bound the
+    worst-case JSON payload; total request-body size itself is bounded
+    by the ASGI server / reverse-proxy max-body setting (not by
+    Pydantic — FastAPI has no per-route body-size knob).
+
+    Attributes:
+        project_id: Optional registered project UUID to link.
+        project_path: Local project path label (stored on the scan row).
+        scan_type: ``check`` or ``remediate``.
+        violations: Violation rows from ``apme check --json`` (max 5000).
+        source: Origin label (default ``cli``).
+    """
+
+    project_id: str | None = Field(default=None, max_length=100)
+    project_path: str = Field(default="external", max_length=1000)
+    scan_type: str = Field(default="check", pattern="^(check|remediate)$")
+    violations: list[ImportViolationSchema] = Field(default_factory=list, max_length=5000)
+    source: str = Field(default="cli", max_length=32)
+
+
+class ImportScanResponse(BaseModel):  # type: ignore[misc]
+    """Response for ``POST /api/v1/scans/import`` (additive).
+
+    Attributes:
+        scan_id: UUID of the stored run.
+        session_id: Owning session hash.
+        violation_count: Number of stored violation rows.
+    """
+
+    scan_id: str
+    session_id: str
+    violation_count: int
+
+
+# ── Project format schemas (additive) ──────────────────────────────────
+
+
+class ProjectFormatRequest(BaseModel):  # type: ignore[misc]
+    """Request body for ``POST /api/v1/projects/{id}/format`` (additive).
+
+    Attributes:
+        branch: Branch override (defaults to the project branch).
+    """
+
+    branch: str | None = Field(
+        default=None,
+        max_length=100,
+        description=(
+            "Branch override (defaults to the project branch). 1-100 chars; "
+            "letters, digits, '.', '_', '/', '-'; must satisfy git "
+            "check-ref-format component rules. Invalid names fail with 422."
+        ),
+    )
+
+    @field_validator("branch")  # type: ignore[untyped-decorator]
+    @classmethod
+    def _validate_branch(cls, v: str | None) -> str | None:
+        """Ensure a branch override is safe before cloning.
+
+        Shared rules live in :func:`apme_gateway.scm.urls.validate_branch_name`
+        so REST validation and ``clone_repo`` agree; invalid names raise
+        ``ValueError`` from that helper and surface as 422.
+
+        Args:
+            v: The branch override (``None`` selects the project branch).
+
+        Returns:
+            The validated branch name unchanged.
+        """
+        from apme_gateway.scm.urls import validate_branch_name  # noqa: PLC0415
+
+        return validate_branch_name(v)
+
+
+class ProjectFormatFileDiff(BaseModel):  # type: ignore[misc]
+    """One formatted file diff (additive).
+
+    Attributes:
+        path: Relative file path.
+        diff: Unified diff text.
+    """
+
+    path: str
+    diff: str = ""
+
+
+class ProjectFormatResponse(BaseModel):  # type: ignore[misc]
+    """Response for ``POST /api/v1/projects/{id}/format`` (additive).
+
+    Attributes:
+        project_id: Owning project UUID.
+        commit: HEAD SHA of the cloned repo.
+        diffs: Per-file format diffs.
+    """
+
+    project_id: str
+    commit: str = ""
+    diffs: list[ProjectFormatFileDiff] = Field(default_factory=list)
+
+
+# ── Session venv schemas (read-only, additive) ─────────────────────────
+
+
+class SessionVenvInfo(BaseModel):  # type: ignore[misc]
+    """Read-only session venv view (additive, Engine-owned venvs).
+
+    Sourced from persisted Gateway session/scan rows only — never writes
+    to Engine venv state (ADR-022 single-writer invariant).
+
+    Attributes:
+        session_id: Deterministic session hash.
+        project_path: Filesystem path of the project.
+        requirements_hash: Hash of the requirements set for the session.
+            Legacy name — superseded by ``manifest_hash``; both carry the
+            same value.
+        manifest_hash: Canonical name for the requirements-set hash
+            (additive alias of ``requirements_hash``).
+        ansible_core_version: ansible-core version from the latest manifest.
+        age_seconds: Session dwell in seconds (``last_seen`` minus
+            ``first_seen``), not wall-clock age since creation. The field
+            name is kept for REST contract stability (ADR-060).
+        last_seen: ISO 8601 timestamp of most recent event.
+    """
+
+    session_id: str
+    project_path: str = ""
+    requirements_hash: str = ""
+    manifest_hash: str = ""
+    ansible_core_version: str = ""
+    age_seconds: int = 0
+    last_seen: str = ""
 
 
 # ── Galaxy server schemas (ADR-045) ──────────────────────────────────

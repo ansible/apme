@@ -4,7 +4,84 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+
+from apme_engine.graph.content_graph import ContentGraph, ContentNode, NodeIdentity, NodeType
+from apme_engine.graph.rule_base import GraphRule, GraphRuleResult
+from apme_engine.remediation.ai_context import AINodeContext
+from apme_engine.remediation.ai_provider import AINodeFix
+from apme_engine.remediation.graph_engine import AIPolicyContext, GraphRemediationEngine
+from apme_engine.remediation.registry import TransformRegistry
 from apme_gateway.operation_types import OperationStatus, SSEEventType
+
+
+class _PolicyCmdRule(GraphRule):
+    """Match tasks missing ``changed_when`` (shared policy-engine fixture)."""
+
+    def __init__(self) -> None:
+        super().__init__(rule_id="L013", description="Use changed_when", enabled=True, precedence=2)
+
+    def match(self, graph: ContentGraph, node_id: str) -> bool:
+        node = graph.get_node(node_id)
+        return node is not None and "changed_when" not in (node.yaml_lines or "")
+
+    def process(self, graph: ContentGraph, node_id: str) -> GraphRuleResult | None:
+        node = graph.get_node(node_id)
+        if node is None:
+            return None
+        return GraphRuleResult(
+            rule=self.get_metadata(),
+            verdict=True,
+            node_id=node_id,
+            file=(node.file_path, node.line_start or 0),
+            detail={"message": "Use changed_when"},
+        )
+
+
+class _RecordingAI:
+    """Mock AI provider that records the contexts it was offered."""
+
+    def __init__(self) -> None:
+        self.contexts: list[AINodeContext] = []
+
+    async def propose_node_fix(
+        self,
+        context: AINodeContext,
+        *,
+        model: str | None = None,
+    ) -> AINodeFix | None:
+        self.contexts.append(context)
+        return None
+
+
+def _make_policy_engine(policy: AIPolicyContext | None) -> tuple[GraphRemediationEngine, _RecordingAI]:
+    """Build a single-node engine plus recording AI for policy tests.
+
+    Args:
+        policy: Live-policy snapshot (or None for unavailable).
+
+    Returns:
+        Tuple of (engine, recording AI provider).
+    """
+    graph = ContentGraph()
+    graph.add_node(
+        ContentNode(
+            identity=NodeIdentity(path="p::0", node_type=NodeType.TASK),
+            file_path="play.yml",
+            line_start=1,
+            line_end=2,
+            yaml_lines="- name: Run\n  ansible.builtin.command: hostname\n",
+        )
+    )
+    mock_ai = _RecordingAI()
+    engine = GraphRemediationEngine(
+        TransformRegistry(),
+        graph,
+        [_PolicyCmdRule()],
+        ai_provider=mock_ai,
+        ai_policy_context=policy,
+    )
+    return engine, mock_ai
 
 
 def test_awaiting_ai_triage_status_is_non_terminal() -> None:
@@ -75,6 +152,7 @@ def test_ai_triage_candidates_use_current_yaml_not_scan_baseline() -> None:
                 "message": "needs AI",
                 "file": "play.yml",
                 "remediation_class": RemediationClass.AI_CANDIDATE,
+                "scope": "task",
             }
         ],
         0,
@@ -117,6 +195,7 @@ def test_decline_skipped_ai_escalation_keeps_allow_list_open() -> None:
             "message": "ai",
             "file": "play.yml",
             "remediation_class": RemediationClass.AI_CANDIDATE,
+            "scope": "task",
         },
         {
             "path": "b::1",
@@ -124,6 +203,7 @@ def test_decline_skipped_ai_escalation_keeps_allow_list_open() -> None:
             "message": "ai",
             "file": "play.yml",
             "remediation_class": RemediationClass.AI_CANDIDATE,
+            "scope": "task",
         },
     ]
     graph.register_violations(viols, 0)
@@ -392,5 +472,171 @@ def test_escalate_ai_endpoint_resolves_future() -> None:
             assert op.escalate_ai_future.result() == [{"path": "x::0", "rule_ids": []}]
         finally:
             await registry.shutdown()
+
+    asyncio.run(_run())
+
+
+# ---------------------------------------------------------------------------
+# _ai_policy_kwargs / AIPolicyContext (graph_engine live-policy forwarding)
+# ---------------------------------------------------------------------------
+
+
+def test_ai_policy_kwargs_none_returns_unavailable_fallback() -> None:
+    """None policy fails closed to the unavailable defaults.
+
+    Returns:
+        None.
+    """
+    from apme_engine.remediation.graph_engine import _ai_policy_kwargs
+
+    kwargs = _ai_policy_kwargs(None)
+    assert kwargs == {
+        "resolved_severities": {},
+        "rule_enabled": {},
+        "suppression_hashes": [],
+        "ansible_core_version": "",
+        "collection_pins": [],
+        "live_policy_available": False,
+    }
+
+
+def test_ai_policy_kwargs_dataclass_copies_values() -> None:
+    """AIPolicyContext values are copied (not aliased) into kwargs.
+
+    Returns:
+        None.
+    """
+    from apme_engine.remediation.graph_engine import AIPolicyContext, _ai_policy_kwargs
+
+    policy = AIPolicyContext(
+        resolved_severities={"M001": "HIGH"},
+        rule_enabled={"M001": True},
+        suppression_hashes=["abc123"],
+        ansible_core_version="2.17",
+        collection_pins=["ansible.builtin>=2.0"],
+        live_policy_available=True,
+    )
+    kwargs = _ai_policy_kwargs(policy)
+    assert kwargs["resolved_severities"] == {"M001": "HIGH"}
+    assert kwargs["rule_enabled"] == {"M001": True}
+    assert kwargs["suppression_hashes"] == ["abc123"]
+    assert kwargs["ansible_core_version"] == "2.17"
+    assert kwargs["collection_pins"] == ["ansible.builtin>=2.0"]
+    assert kwargs["live_policy_available"] is True
+    # Mutating the result must not mutate the source dataclass.
+    assert kwargs["resolved_severities"] is not policy.resolved_severities
+    assert kwargs["suppression_hashes"] is not policy.suppression_hashes
+
+
+def test_ai_policy_kwargs_mapping_coerced() -> None:
+    """Plain mappings are rejected: only AIPolicyContext carries policy (#18).
+
+    Returns:
+        None.
+    """
+    from apme_engine.remediation.graph_engine import _ai_policy_kwargs
+
+    mapping = {
+        "resolved_severities": {"M001": "HIGH"},
+        "rule_enabled": {"M001": 1},
+        "suppression_hashes": ["abc"],
+        "ansible_core_version": "2.17",
+        "collection_pins": ["ns.coll"],
+        "live_policy_available": 1,
+    }
+    kwargs = _ai_policy_kwargs(mapping)  # type: ignore[arg-type]
+    assert kwargs["live_policy_available"] is False
+    assert kwargs["resolved_severities"] == {}
+
+
+def test_ai_policy_kwargs_wrong_type_returns_fallback() -> None:
+    """Unusable policy types fail closed without crashing.
+
+    Returns:
+        None.
+    """
+    from apme_engine.remediation.graph_engine import _ai_policy_kwargs
+
+    for bad in ("not-a-policy", 42, ["M001"], object()):
+        kwargs = _ai_policy_kwargs(bad)  # type: ignore[arg-type]
+        assert kwargs["live_policy_available"] is False
+        assert kwargs["resolved_severities"] == {}
+
+
+def test_ai_policy_kwargs_bad_values_return_fallback() -> None:
+    """Mappings with bad value shapes fail closed without crashing.
+
+    Returns:
+        None.
+    """
+    from apme_engine.remediation.graph_engine import _ai_policy_kwargs
+
+    kwargs = _ai_policy_kwargs({"resolved_severities": "not-a-dict"})  # type: ignore[arg-type]
+    assert kwargs["live_policy_available"] is False
+    assert kwargs["resolved_severities"] == {}
+
+
+def test_ai_policy_kwargs_coercion_exception_warns_and_falls_back(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Non-dataclass policy payloads fail closed to unavailable (#18).
+
+    Args:
+        caplog: Pytest log capture fixture.
+
+    Returns:
+        None.
+    """
+    from apme_engine.remediation.graph_engine import _ai_policy_kwargs
+
+    class _ExplodingMapping(dict):  # type: ignore[type-arg]
+        """Dict subclass simulating a broken policy payload."""
+
+        def __getitem__(self, key: str) -> object:
+            raise RuntimeError("boom")
+
+    kwargs = _ai_policy_kwargs(_ExplodingMapping())  # type: ignore[arg-type]
+    assert kwargs["live_policy_available"] is False
+    assert kwargs["resolved_severities"] == {}
+
+
+def test_engine_forwards_ai_policy_context_into_node_context() -> None:
+    """GraphRemediationEngine forwards the policy snapshot to prompts.
+
+    Returns:
+        None.
+    """
+
+    async def _run() -> None:
+        policy = AIPolicyContext(
+            resolved_severities={"L013": "HIGH"},
+            rule_enabled={"L013": True},
+            ansible_core_version="2.17",
+            live_policy_available=True,
+        )
+        engine, mock_ai = _make_policy_engine(policy)
+        await engine.remediate()
+        assert mock_ai.contexts, "expected the AI provider to be called"
+        context = mock_ai.contexts[0]
+        assert context.live_policy_available is True
+        assert context.resolved_severities == {"L013": "HIGH"}
+        assert context.rule_enabled == {"L013": True}
+        assert context.ansible_core_version == "2.17"
+
+    asyncio.run(_run())
+
+
+def test_engine_none_policy_means_live_policy_unavailable() -> None:
+    """None policy context renders prompts with live_policy_available=False.
+
+    Returns:
+        None.
+    """
+
+    async def _run() -> None:
+        engine, mock_ai = _make_policy_engine(None)
+        await engine.remediate()
+        assert mock_ai.contexts, "expected the AI provider to be called"
+        assert mock_ai.contexts[0].live_policy_available is False
 
     asyncio.run(_run())

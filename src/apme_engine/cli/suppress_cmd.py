@@ -15,6 +15,36 @@ from apme_engine.cli._suppressions import (
 )
 from apme_engine.fingerprint import canonicalize_rule_id, compute_fingerprint
 
+# Fingerprint modes the Gateway server accepts (POST /suppressions, ADR-055).
+# ``rule_module`` is accepted as a deprecated alias for ``rule_only``:
+# violation rows do not store resolved module FQCNs, so a rule_module
+# suppression could never match server-side. The shared
+# ``compute_fingerprint`` helper still supports all three modes for
+# library use — only new CLI entries map rule_module to rule_only.
+_SERVER_MODES = ("full", "rule_only")
+_RULE_MODULE_DEPRECATED = (
+    "Warning: --mode 'rule_module' is deprecated and maps to 'rule_only' "
+    "(violation rows do not store resolved module FQCNs, so a rule_module "
+    "suppression could never match server-side). Update your invocation to "
+    "'rule_only'.\n"
+)
+
+
+def _deprecated_rule_module(mode: str) -> str:
+    """Map the deprecated ``rule_module`` mode to ``rule_only`` behavior.
+
+    Args:
+        mode: Requested fingerprint granularity mode.
+
+    Returns:
+        ``"rule_only"`` when *mode* is ``"rule_module"`` (with a stderr
+        deprecation warning), otherwise *mode* unchanged.
+    """
+    if mode == "rule_module":
+        sys.stderr.write(_RULE_MODULE_DEPRECATED)
+        return "rule_only"
+    return mode
+
 
 def run_suppress(args: argparse.Namespace) -> None:
     """Execute the suppress subcommand.
@@ -29,8 +59,10 @@ def run_suppress(args: argparse.Namespace) -> None:
         _suppress_list(args)
     elif subcmd == "remove":
         _suppress_remove(args)
+    elif subcmd == "fingerprint":
+        _suppress_fingerprint(args)
     else:
-        sys.stderr.write("Error: suppress requires a subcommand (add, list, remove)\n")
+        sys.stderr.write("Error: suppress requires a subcommand (add, list, remove, fingerprint)\n")
         sys.exit(EXIT_ERROR)
 
 
@@ -44,7 +76,7 @@ def _suppress_add(args: argparse.Namespace) -> None:
     project_root = discover_project_root(target)
 
     rule_id = canonicalize_rule_id(args.rule_id)
-    mode = getattr(args, "mode", "full") or "full"
+    mode = _deprecated_rule_module(getattr(args, "mode", "full") or "full")
     reason = getattr(args, "reason", "") or ""
     original_yaml = getattr(args, "original_yaml", None) or ""
     module_fqcn = getattr(args, "module_fqcn", None) or ""
@@ -63,9 +95,6 @@ def _suppress_add(args: argparse.Namespace) -> None:
             sys.stderr.write(
                 "Error: --original-yaml is required for 'full' mode (or provide --fingerprint directly)\n",
             )
-            sys.exit(EXIT_ERROR)
-        if mode == "rule_module" and not module_fqcn:
-            sys.stderr.write("Error: --module-fqcn is required for 'rule_module' mode\n")
             sys.exit(EXIT_ERROR)
         fp = compute_fingerprint(rule_id, original_yaml, mode=mode, module_fqcn=module_fqcn)
 
@@ -138,6 +167,44 @@ def _suppress_remove(args: argparse.Namespace) -> None:
     sys.stdout.write(f"Removed suppression: {matches[0].rule_id} {matches[0].fingerprint[:16]}...\n")
 
 
+def _suppress_fingerprint(args: argparse.Namespace) -> None:
+    """Print the canonical fingerprint hash without writing (dry-run).
+
+    Uses the shared ``compute_fingerprint`` logic so CLI output matches
+    the Gateway ``_violation_fingerprint`` server computation (ADR-055).
+    Recipe: ``apme check --json`` → copy ``original_yaml`` → ``apme
+    suppress fingerprint --rule-id <id> --file <snippet>`` → ``apme
+    suppress add --rule-id <id> --fingerprint <hash>``.
+
+    Args:
+        args: Parsed CLI arguments.
+    """
+    from pathlib import Path  # noqa: PLC0415
+
+    rule_id = canonicalize_rule_id(args.rule_id)
+    mode = _deprecated_rule_module(getattr(args, "mode", "full") or "full")
+    module_fqcn = getattr(args, "module_fqcn", None) or ""
+    original_yaml = getattr(args, "original_yaml", None) or ""
+    snippet_file = getattr(args, "file", None)
+    if snippet_file:
+        try:
+            original_yaml = Path(snippet_file).read_text(encoding="utf-8")
+        except OSError as exc:
+            sys.stderr.write(f"Error: cannot read --file {snippet_file!r}: {exc}\n")
+            sys.exit(EXIT_ERROR)
+    if mode == "rule_only":
+        original_yaml = ""
+    elif mode == "full" and not original_yaml:
+        sys.stderr.write("Error: --file or --original-yaml is required for 'full' mode\n")
+        sys.exit(EXIT_ERROR)
+    try:
+        fp = compute_fingerprint(rule_id, original_yaml, mode=mode, module_fqcn=module_fqcn)
+    except ValueError as exc:
+        sys.stderr.write(f"Error: {exc}\n")
+        sys.exit(EXIT_ERROR)
+    sys.stdout.write(f"{fp}\n")
+
+
 def register_suppress_parser(
     subparsers: argparse._SubParsersAction,  # type: ignore[type-arg]
     global_opts: argparse.ArgumentParser,
@@ -171,13 +238,13 @@ def register_suppress_parser(
     add_p.add_argument(
         "--module-fqcn",
         default=None,
-        help="Module FQCN (for 'rule_module' mode)",
+        help="Accepted for backward compatibility; ignored (server modes only)",
     )
     add_p.add_argument(
         "--mode",
         default="full",
-        choices=["full", "rule_module", "rule_only"],
-        help="Fingerprint granularity (default: full)",
+        choices=["full", "rule_only", "rule_module"],
+        help="Granularity: 'full' or 'rule_only' ('rule_module' is deprecated, maps to 'rule_only')",
     )
     add_p.add_argument("--reason", default="", help="Justification for the suppression")
     add_p.add_argument("target", nargs="?", default=".", help="Project root")
@@ -190,3 +257,31 @@ def register_suppress_parser(
     rm_p = suppress_sub.add_parser("remove", help="Remove a suppression by fingerprint prefix")
     rm_p.add_argument("fingerprint", help="Fingerprint prefix (at least 8 chars recommended)")
     rm_p.add_argument("target", nargs="?", default=".", help="Project root")
+
+    # ── suppress fingerprint (dry-run hash printer) ──
+    fp_p = suppress_sub.add_parser(
+        "fingerprint",
+        help="Print the canonical fingerprint hash without writing (dry-run)",
+    )
+    fp_p.add_argument("--rule-id", required=True, help="Rule ID to fingerprint (e.g. L046)")
+    fp_p.add_argument(
+        "--file",
+        default=None,
+        help="File containing the original YAML snippet to hash",
+    )
+    fp_p.add_argument(
+        "--original-yaml",
+        default=None,
+        help="Inline original YAML content to hash (alternative to --file)",
+    )
+    fp_p.add_argument(
+        "--mode",
+        default="full",
+        choices=["full", "rule_only", "rule_module"],
+        help="Granularity: 'full' or 'rule_only' ('rule_module' is deprecated, maps to 'rule_only')",
+    )
+    fp_p.add_argument(
+        "--module-fqcn",
+        default=None,
+        help="Accepted for backward compatibility; ignored (server modes only)",
+    )

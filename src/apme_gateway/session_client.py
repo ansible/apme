@@ -22,7 +22,7 @@ Protocol (gateway -> browser, JSON over WS)::
     {"type": "tier1_complete",   ...}
     {"type": "ai_triage",        "candidates": [...], "status": "...", "ttl_seconds": N}
     {"type": "proposals",        "proposals": [...], "tier": N}
-    {"type": "approval_ack",     "applied_count": N, "status": "..."}
+    {"type": "approval_ack",     "applied_count": N, "status": "...", "unpatched_count": N, "unpatched_files": [...]}
     {"type": "result",           ...}
     {"type": "error",            "message": "..."}
     {"type": "closed"}
@@ -36,9 +36,10 @@ import contextlib
 import logging
 import shutil
 import tempfile
+import time
 import uuid
 from collections.abc import AsyncIterator, Iterator
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any, cast
 
 import grpc
@@ -60,6 +61,7 @@ from apme.v1.engine_pb2 import (
     ScanChunk,
     SessionCommand,
 )
+from apme_engine.config_env import get_env_float, get_env_int
 from apme_engine.daemon.chunked_fs import yield_scan_chunks
 from apme_engine.graph.severity import severity_from_proto, severity_to_label
 from apme_engine.rule_ids import normalize_rule_id
@@ -71,6 +73,127 @@ logger = logging.getLogger(__name__)
 
 # PE-26: same 50 MiB send/receive limits as scan/driver.py (_GRPC_MAX_MSG).
 _GRPC_MAX_MSG = 50 * 1024 * 1024  # 50 MiB — matches Engine
+
+# Upload ingress caps (mirror Engine PE-35 aggregates). Parsed per-call via
+# helpers below so tests can monkeypatch env without reimport.
+_UPLOAD_IDLE_TIMEOUT_DEFAULT_S = 60.0
+# Interactive command-phase idle timeout: reviewing proposals routinely
+# takes longer than the 60s upload idle bound, so the command reader gets
+# its own limit aligned with the Engine session TTL (APME_SESSION_TTL,
+# default 1800s) instead of reusing the upload timeout.
+_COMMAND_IDLE_TIMEOUT_DEFAULT_S = 1800.0
+_UPLOAD_MAX_FILE_BYTES_DEFAULT = 10 * 1024 * 1024  # 10 MiB per file
+_UPLOAD_MAX_TOTAL_BYTES_DEFAULT = 256 * 1024 * 1024  # 256 MiB aggregate
+_UPLOAD_MAX_FILES_DEFAULT = 2000
+_UPLOAD_MAX_MESSAGES_DEFAULT = 2000
+_UPLOAD_MAX_DURATION_S_DEFAULT = 300.0
+
+
+def _upload_idle_timeout_s() -> float:
+    """Return idle timeout between upload WS messages in seconds.
+
+    Returns:
+        Idle timeout in seconds from ``APME_UPLOAD_IDLE_TIMEOUT_S``.
+    """
+    return get_env_float(
+        "APME_UPLOAD_IDLE_TIMEOUT_S",
+        _UPLOAD_IDLE_TIMEOUT_DEFAULT_S,
+        positive_only=True,
+    )
+
+
+def _command_idle_timeout_s() -> float:
+    """Return idle timeout for interactive command WS messages in seconds.
+
+    Interactive review (reading proposals before approving) routinely
+    exceeds the upload idle bound, so this separate, session-TTL-aligned
+    limit applies to the command phase only.
+
+    Returns:
+        Idle timeout in seconds from ``APME_COMMAND_IDLE_TIMEOUT_S``.
+    """
+    return get_env_float(
+        "APME_COMMAND_IDLE_TIMEOUT_S",
+        _COMMAND_IDLE_TIMEOUT_DEFAULT_S,
+        positive_only=True,
+    )
+
+
+def _upload_max_file_bytes() -> int:
+    """Return per-file upload cap in bytes.
+
+    Returns:
+        Per-file cap from ``APME_UPLOAD_MAX_FILE_BYTES``.
+    """
+    return get_env_int(
+        "APME_UPLOAD_MAX_FILE_BYTES",
+        _UPLOAD_MAX_FILE_BYTES_DEFAULT,
+        min_value=1,
+    )
+
+
+def _upload_max_total_bytes() -> int:
+    """Return aggregate upload cap in bytes.
+
+    Returns:
+        Aggregate cap from ``APME_UPLOAD_MAX_TOTAL_BYTES``.
+    """
+    return get_env_int(
+        "APME_UPLOAD_MAX_TOTAL_BYTES",
+        _UPLOAD_MAX_TOTAL_BYTES_DEFAULT,
+        min_value=1,
+    )
+
+
+def _upload_max_files() -> int:
+    """Return aggregate upload file-count cap.
+
+    Returns:
+        File-count cap from ``APME_UPLOAD_MAX_FILES``.
+    """
+    return get_env_int(
+        "APME_UPLOAD_MAX_FILES",
+        _UPLOAD_MAX_FILES_DEFAULT,
+        min_value=1,
+    )
+
+
+def _upload_max_messages() -> int:
+    """Return total WebSocket message bound for one upload.
+
+    Counts file frames plus invalid/unknown frames (anything except
+    ``start``/``files_done``) so an active sender cannot pin the upload
+    loop with frames that never trip the file/byte caps, while a
+    legitimate upload of exactly ``APME_UPLOAD_MAX_FILES`` files still
+    fits: the ``start`` + ``files_done`` framing overhead is excluded
+    from the bound.
+
+    Returns:
+        Message cap from ``APME_UPLOAD_MAX_MESSAGES``.
+    """
+    return get_env_int(
+        "APME_UPLOAD_MAX_MESSAGES",
+        _UPLOAD_MAX_MESSAGES_DEFAULT,
+        min_value=1,
+    )
+
+
+def _upload_max_duration_s() -> float:
+    """Return wall-clock bound for one whole upload.
+
+    Monotonic deadline complementing the per-message idle timeout:
+    the idle timeout catches a silent client, this catches a chatty
+    one that keeps sending invalid/unknown frames.
+
+    Returns:
+        Duration cap from ``APME_UPLOAD_MAX_DURATION_S``.
+    """
+    return get_env_float(
+        "APME_UPLOAD_MAX_DURATION_S",
+        _UPLOAD_MAX_DURATION_S_DEFAULT,
+        positive_only=True,
+    )
+
 
 _STATUS_NAMES: dict[int, str] = {
     0: "SESSION_STATUS_UNSPECIFIED",
@@ -84,6 +207,12 @@ _STATUS_NAMES: dict[int, str] = {
 def _sanitize_path(relative_path: str) -> str:
     """Sanitize a user-provided relative path to prevent directory traversal.
 
+    Delegates to the engine's canonical
+    :func:`apme_engine.daemon.fs_utils.canonicalize_upload_relpath` so
+    WebSocket uploads, ``write_chunked_fs``, and FixSession ingress accept
+    or reject one payload identically (backslash-tolerant,
+    ``./``/``//``-collapsing; absolute/``..`` escapes rejected).
+
     Args:
         relative_path: Raw path from the upload filename.
 
@@ -91,16 +220,20 @@ def _sanitize_path(relative_path: str) -> str:
         Sanitized relative path string.
 
     Raises:
-        ValueError: If the path contains ``..`` components or resolves to
-            an empty / directory-only path (e.g. ``"."``).
+        ValueError: If the path escapes the session root or is empty.
     """
-    cleaned = PurePosixPath(relative_path.replace("\\", "/"))
-    parts = [p for p in cleaned.parts if p not in ("/", "\\", ".")]
-    if ".." in parts:
-        raise ValueError(f"Path traversal detected: {relative_path!r}")
-    if not parts:
-        raise ValueError(f"Invalid file path: {relative_path!r}")
-    return str(PurePosixPath(*parts))
+    from apme_engine.daemon.fs_utils import canonicalize_upload_relpath
+
+    try:
+        return canonicalize_upload_relpath(relative_path)
+    except ValueError as exc:
+        # Preserve legacy message fragments expected by existing callers:
+        # empty/blank/dot-only names -> "Invalid file path", everything
+        # else -> "Path traversal detected". Branch on the input (not the
+        # wrapped message) so the traversal branch is reachable.
+        if not isinstance(relative_path, str) or not relative_path.strip() or set(relative_path.strip()) <= {".", "/"}:
+            raise ValueError(f"Invalid file path: {relative_path!r}") from exc
+        raise ValueError(f"Path traversal detected: {relative_path!r}") from exc
 
 
 def _status_name(status: int) -> str:
@@ -113,6 +246,38 @@ def _status_name(status: int) -> str:
         Human-readable status name.
     """
     return _STATUS_NAMES.get(status, "UNKNOWN")
+
+
+def _decode_upload_b64(content: str) -> bytes:
+    """Base64-decode one uploaded file's content (blocking helper).
+
+    Runs in a worker thread via :func:`asyncio.to_thread` so large
+    decodes never stall the event loop.
+
+    Args:
+        content: Base64-encoded file content from the WS ``file`` message.
+
+    Returns:
+        Decoded file bytes (invalid input propagates the decoder's
+        exception to the caller).
+    """
+    return base64.b64decode(content, validate=True)
+
+
+def _write_upload_file(temp_dir: Path, safe: str, content: bytes) -> None:
+    """Write one decoded upload to *temp_dir* (blocking helper).
+
+    Runs in a worker thread via :func:`asyncio.to_thread` so per-file
+    ``mkdir`` + ``write_bytes`` syscalls never stall the event loop.
+
+    Args:
+        temp_dir: Session upload directory (already created).
+        safe: Sanitized relative path for this file.
+        content: Decoded file bytes to write.
+    """
+    dest = temp_dir / safe
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(content)
 
 
 async def _load_scan_rule_configs() -> list[RuleConfig]:
@@ -180,6 +345,30 @@ async def _load_scan_rule_configs() -> list[RuleConfig]:
 async def _collect_uploads(ws: WebSocket, temp_dir: Path) -> dict[str, Any]:
     """Read start/file/files_done messages and write files to *temp_dir*.
 
+    Each ``receive_json`` is bounded by ``APME_UPLOAD_IDLE_TIMEOUT_S``
+    (default 60s). Per-file (``APME_UPLOAD_MAX_FILE_BYTES``, default 10MiB)
+    and aggregate (``APME_UPLOAD_MAX_TOTAL_BYTES`` default 256MiB,
+    ``APME_UPLOAD_MAX_FILES`` default 2000, mirroring Engine PE-35) caps
+    fail fast with an ``error`` frame followed by ``ValueError``.
+
+    Cap accounting:
+
+    * Message cap (``APME_UPLOAD_MAX_MESSAGES``) counts per-frame file
+      data plus invalid/unknown frames, excluding the ``start`` and
+      ``files_done`` framing overhead — so exactly ``max_files`` files
+      in one upload stays reachable when both caps are 2000.
+    * File-count cap counts unique canonical paths (``seen`` set): an
+      exact repeat upload of the same path overwrites the file on disk
+      without consuming another file slot, while two distinct raw paths
+      collapsing to one canonical key fail fast instead of dropping a
+      file (#17).
+    * Byte cap counts unique-file bytes (overwrite replaces the prior
+      size instead of double-counting).
+    * Malformed ``file`` frames (missing path, traversal, non-string or
+      undecodable content) surface an ``error`` frame and are skipped
+      without writing or counting toward file/byte caps (they still
+      count toward the message cap when applicable).
+
     Args:
         ws: Active WebSocket connection.
         temp_dir: Directory to write uploaded files into.
@@ -188,14 +377,53 @@ async def _collect_uploads(ws: WebSocket, temp_dir: Path) -> dict[str, Any]:
         Options dict from the ``start`` message.
 
     Raises:
-        ValueError: If no files were received before ``files_done``.
+        ValueError: If no files were received before ``files_done``, on
+            idle timeout, or when any upload cap is exceeded.
     """
     options: dict[str, Any] = {}
+    seen_sizes: dict[str, int] = {}
+    seen_raw: dict[str, str] = {}
     files_received = 0
+    total_bytes = 0
+    messages_received = 0
+    upload_start = time.monotonic()
+    idle_timeout = _upload_idle_timeout_s()
+    max_file_bytes = _upload_max_file_bytes()
+    max_total_bytes = _upload_max_total_bytes()
+    max_files = _upload_max_files()
+    max_messages = _upload_max_messages()
+    max_duration_s = _upload_max_duration_s()
+    # Encoded-size fast gate: base64 expands ~4/3 over raw bytes; +1KiB
+    # slack covers JSON framing/padding so legitimate files never trip.
+    max_encoded_bytes = (max_file_bytes * 4 + 2) // 3 + 1024
 
     while True:
-        msg = await ws.receive_json()
-        msg_type = msg.get("type")
+        try:
+            msg = await asyncio.wait_for(ws.receive_json(), timeout=idle_timeout)
+        except TimeoutError:
+            err = f"Upload idle timeout after {idle_timeout:g}s waiting for next message"
+            with contextlib.suppress(Exception):
+                await ws.send_json({"type": "error", "message": err})
+            raise ValueError(err) from None
+        msg_type = msg.get("type") if isinstance(msg, dict) else None
+        # Total upload bound: count file/invalid/unknown frames (every
+        # message except the start/files_done framing overhead) plus a
+        # monotonic whole-upload deadline, so a chatty sender cannot
+        # hold the WS/temp dir indefinitely without tripping the idle
+        # timeout, while max_files files remain reachable when
+        # max_messages == max_files.
+        if msg_type not in ("start", "files_done"):
+            messages_received += 1
+            if messages_received > max_messages:
+                err = f"Upload message limit exceeded: {messages_received} messages (max {max_messages})"
+                with contextlib.suppress(Exception):
+                    await ws.send_json({"type": "error", "message": err})
+                raise ValueError(err)
+        if time.monotonic() - upload_start > max_duration_s:
+            err = f"Upload time limit exceeded: {max_duration_s:g}s (max {max_duration_s:g}s)"
+            with contextlib.suppress(Exception):
+                await ws.send_json({"type": "error", "message": err})
+            raise ValueError(err)
 
         if msg_type == "start":
             raw_options = msg.get("options") or {}
@@ -205,16 +433,79 @@ async def _collect_uploads(ws: WebSocket, temp_dir: Path) -> dict[str, Any]:
             options = raw_options
 
         elif msg_type == "file":
-            safe = _sanitize_path(msg["path"])
+            raw_path = msg.get("path") if isinstance(msg, dict) else None
             try:
-                content = base64.b64decode(msg["content"], validate=True)
+                safe = _sanitize_path(raw_path)  # type: ignore[arg-type]
+            except (ValueError, KeyError, TypeError) as exc:
+                detail = str(exc) if isinstance(exc, ValueError) else f"Invalid file path: {raw_path!r}"
+                await ws.send_json({"type": "error", "message": detail})
+                continue
+            assert isinstance(raw_path, str)
+            # Distinct raw paths collapsing to one canonical key would
+            # silently drop a file (#17); trivial respellings
+            # (``a.yml`` vs ``./a.yml``) and exact repeats stay last-wins.
+            from apme_engine.daemon.fs_utils import is_trivial_respelling  # noqa: PLC0415
+
+            first_raw = seen_raw.setdefault(safe, raw_path)
+            if first_raw != raw_path and not is_trivial_respelling(first_raw, raw_path):
+                err = (
+                    f"Upload paths collide after canonicalization: {first_raw!r} and {raw_path!r} "
+                    f"both map to {safe!r}; rename one file"
+                )
+                await ws.send_json({"type": "error", "message": err})
+                raise ValueError(err)
+            seen_raw[safe] = raw_path
+            old_size = seen_sizes.get(safe, 0)
+            raw_content = msg.get("content", "") if isinstance(msg, dict) else ""
+            if isinstance(raw_content, str):
+                # Pre-decode fast gate: reject an oversized base64 frame
+                # before buffering/decoding it (fail fast prior to the
+                # ~2-3x transient allocation of str+bytes). Post-decode
+                # checks below remain as the second gate.
+                if len(raw_content) > max_encoded_bytes:
+                    err = (
+                        f"File {safe} exceeds per-file limit: "
+                        f"encoded {len(raw_content)} bytes (max {max_file_bytes} bytes)"
+                    )
+                    await ws.send_json({"type": "error", "message": err})
+                    raise ValueError(err)
+                # Aggregate fast gate on estimated decoded size (no
+                # allocation) caps total WS buffered bytes. Overwrites
+                # replace the prior size instead of double-counting.
+                estimated_bytes = (len(raw_content) * 3) // 4
+                if total_bytes - old_size + estimated_bytes > max_total_bytes:
+                    err = (
+                        f"Upload size limit exceeded: "
+                        f"~{total_bytes - old_size + estimated_bytes} bytes (max {max_total_bytes} bytes)"
+                    )
+                    await ws.send_json({"type": "error", "message": err})
+                    raise ValueError(err)
+            else:
+                await ws.send_json({"type": "error", "message": f"Invalid base64 content for {safe}"})
+                continue
+            try:
+                content = await asyncio.to_thread(_decode_upload_b64, raw_content)
             except Exception:
                 await ws.send_json({"type": "error", "message": f"Invalid base64 content for {safe}"})
                 continue
-            dest = temp_dir / safe
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_bytes(content)
-            files_received += 1
+            if len(content) > max_file_bytes:
+                err = f"File {safe} exceeds per-file limit: {len(content)} bytes (max {max_file_bytes} bytes)"
+                await ws.send_json({"type": "error", "message": err})
+                raise ValueError(err)
+            new_total = total_bytes - old_size + len(content)
+            if new_total > max_total_bytes:
+                err = f"Upload size limit exceeded: {new_total} bytes (max {max_total_bytes} bytes)"
+                await ws.send_json({"type": "error", "message": err})
+                raise ValueError(err)
+            new_unique = len(seen_sizes) + (0 if safe in seen_sizes else 1)
+            if new_unique > max_files:
+                err = f"Upload file limit exceeded: {new_unique} files (max {max_files} files)"
+                await ws.send_json({"type": "error", "message": err})
+                raise ValueError(err)
+            await asyncio.to_thread(_write_upload_file, temp_dir, safe, content)
+            seen_sizes[safe] = len(content)
+            total_bytes = new_total
+            files_received = len(seen_sizes)
 
         elif msg_type == "files_done":
             break
@@ -237,7 +528,12 @@ async def _ws_command_reader(
 
     Keeps the command stream alive until ``done`` is set so a browser
     disconnect during scan processing does not prematurely terminate the
-    gRPC FixSession stream.
+    gRPC FixSession stream. Command-phase receives are bounded by a
+    dedicated idle timeout (``APME_COMMAND_IDLE_TIMEOUT_S``, default
+    aligned with the Engine session TTL) so a silent-but-connected client
+    cannot park the reader task, gRPC stream, and temp dir indefinitely
+    (#24) while normal interactive review (minutes, not seconds) is
+    unaffected; the engine drain still finishes on its own.
 
     Args:
         ws: Active WebSocket connection.
@@ -245,13 +541,19 @@ async def _ws_command_reader(
         done: Event signalling the session is finished.
     """
     ws_alive = True
+    idle_timeout = _command_idle_timeout_s()
     try:
         while not done.is_set():
             if not ws_alive:
                 await asyncio.sleep(0.5)
                 continue
             try:
-                msg = await ws.receive_json()
+                msg = await asyncio.wait_for(ws.receive_json(), timeout=idle_timeout)
+            except TimeoutError:
+                logger.warning("WebSocket command idle timeout after %gs; closing command reader", idle_timeout)
+                with contextlib.suppress(Exception):
+                    await ws.send_json({"type": "error", "message": f"Command idle timeout after {idle_timeout:g}s"})
+                break
             except WebSocketDisconnect:
                 ws_alive = False
                 logger.info("WebSocket disconnected; keeping gRPC stream alive until session completes")
@@ -508,6 +810,10 @@ async def _forward_events(
                     "applied_count": ack.applied_count,
                     "status": _status_name(ack.status),
                     "ttl_seconds": ack.ttl_seconds,
+                    # Additive ApprovalAck surfacing (unpatched splice
+                    # skips); getattr keeps mixed-version stubs working.
+                    "unpatched_count": int(getattr(ack, "unpatched_count", 0) or 0),
+                    "unpatched_files": list(getattr(ack, "unpatched_files", []) or []),
                 },
             )
 

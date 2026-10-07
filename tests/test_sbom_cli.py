@@ -190,3 +190,110 @@ class TestRunSbom:
         run_sbom(_make_args(gateway_url="http://custom:9999"))
 
         mock_cls.assert_called_once_with(base_url="http://custom:9999")
+
+
+class TestBuildLocalSbom:
+    """Tests for the local ``--path`` manifest SBOM builder (#4)."""
+
+    def test_missing_dir_exits_2(self, tmp_path: Path) -> None:
+        """Nonexistent --path exits 2.
+
+        Args:
+            tmp_path: Pytest temp dir.
+        """
+        from apme_engine.cli.sbom_cmd import _build_local_sbom
+
+        with pytest.raises(SystemExit) as exc_info:
+            _build_local_sbom(tmp_path / "nope")
+        assert exc_info.value.code == 2
+
+    def test_file_path_exits_2(self, tmp_path: Path) -> None:
+        """File --path exits 2 instead of scanning its parent.
+
+        Args:
+            tmp_path: Pytest temp dir.
+        """
+        from apme_engine.cli.sbom_cmd import _build_local_sbom
+
+        target = tmp_path / "site.yml"
+        target.write_text("- hosts: all\n", encoding="utf-8")
+        with pytest.raises(SystemExit) as exc_info:
+            _build_local_sbom(target)
+        assert exc_info.value.code == 2
+
+    def test_requirements_yml_str_and_dict_entries(self, tmp_path: Path) -> None:
+        """String entries get unknown version; dict entries keep name/version.
+
+        Args:
+            tmp_path: Pytest temp dir.
+        """
+        from typing import cast
+
+        from apme_engine.cli.sbom_cmd import _build_local_sbom
+
+        (tmp_path / "requirements.yml").write_text(
+            "collections:\n  - ns.plain\n  - name: ns.pinned\n    version: 1.2.3\n",
+            encoding="utf-8",
+        )
+        bom = _build_local_sbom(tmp_path)
+        components = cast(list[dict[str, object]], bom["components"])
+        by_name = {c["name"]: c for c in components}
+        assert by_name["ns.plain"]["version"] == "unknown"
+        assert by_name["ns.pinned"]["version"] == "1.2.3"
+
+    def test_private_source_preserved_in_purl(self, tmp_path: Path) -> None:
+        """Dict entries with source keep their repository identity (#N0).
+
+        Args:
+            tmp_path: Pytest temp dir.
+        """
+        from typing import cast
+
+        from apme_engine.cli.sbom_cmd import _build_local_sbom
+
+        (tmp_path / "requirements.yml").write_text(
+            "collections:\n  - name: acme.widget\n    version: 2.0.0\n"
+            "    source: https://automation.example.com/api/galaxy/\n",
+            encoding="utf-8",
+        )
+        bom = _build_local_sbom(tmp_path)
+        components = cast(list[dict[str, object]], bom["components"])
+        assert len(components) == 1
+        assert components[0]["purl"] == (
+            "pkg:generic/acme.widget@2.0.0?repository_url=https://automation.example.com/api/galaxy/"
+        )
+
+    def test_malformed_yaml_continues(self, tmp_path: Path) -> None:
+        """Unparseable requirements.yml is skipped, not fatal.
+
+        Args:
+            tmp_path: Pytest temp dir.
+        """
+        from apme_engine.cli.sbom_cmd import _build_local_sbom
+
+        (tmp_path / "requirements.yml").write_text("collections: [unclosed\n", encoding="utf-8")
+        bom = _build_local_sbom(tmp_path)
+        assert bom["bomFormat"] == "CycloneDX"
+        assert bom["components"] == []
+
+    def test_requirements_txt_core_pin_and_dedup(self, tmp_path: Path) -> None:
+        """ansible-core pin surfaces once as the framework component.
+
+        Args:
+            tmp_path: Pytest temp dir.
+        """
+        from apme_engine.cli.sbom_cmd import _build_local_sbom
+
+        (tmp_path / "requirements.txt").write_text(
+            "ansible-core==2.17.0\nansible-core==2.17.0\nrequests==2.31.0\n",
+            encoding="utf-8",
+        )
+        from typing import cast
+
+        bom = _build_local_sbom(tmp_path)
+        components = cast(list[dict[str, object]], bom["components"])
+        names = [c["name"] for c in components]
+        assert names.count("ansible-core") == 1
+        assert components[0]["type"] == "framework"
+        props = cast(list[dict[str, object]], bom["properties"])
+        assert any(p["name"] == "apme:sbom-source" for p in props)

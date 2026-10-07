@@ -49,11 +49,17 @@ _parse_float_env = get_env_float
 # client can starve scans by bursting session creation (each session can
 # trigger pip/galaxy builds). The concurrent-venv-build semaphore below caps
 # the expensive resource (pip/galaxy builds) and is active by default. The
-# minimum create interval is opt-in (default 0/disabled): session creation
-# itself is cheap, and legitimate bursts (gateway fan-out, tests) must not
-# fail spuriously. Neither mechanism is authentication. Real caller auth is
-# tracked in GitHub #664.
+# creation interval (APME_SESSION_CREATE_INTERVAL_S, default 1.0s, 0 disables)
+# rate-limits session creation bursts. The legacy
+# APME_SESSION_MIN_CREATE_INTERVAL_S is honored as a deprecated alias when
+# the new variable is unset. Neither mechanism is authentication. Real caller
+# auth is tracked in GitHub #664.
 _MIN_CREATE_INTERVAL_S = _parse_float_env("APME_SESSION_MIN_CREATE_INTERVAL_S", 0.0)
+_CREATE_INTERVAL_S = _parse_float_env("APME_SESSION_CREATE_INTERVAL_S", 1.0)
+# Never-sealed sessions (upload_sealed=False) that stay idle past this age
+# are reaped early (default 10min) so abandoned uploads cannot exhaust the
+# session cap for the full TTL (N17). Zero disables the early reap.
+_IDLE_EXPIRE_NEVER_SEALED_S = _parse_float_env("APME_SESSION_IDLE_EXPIRE_S", 600.0)
 # Floors use the shared config_env capability directly so the two modules
 # cannot drift (below-minimum values fall back to defaults with a warning).
 _MAX_CONCURRENT_VENV_BUILDS = get_env_int("APME_SESSION_MAX_CONCURRENT_VENV_BUILDS", 3, min_value=1)
@@ -65,6 +71,47 @@ _MAX_CONCURRENT_VENV_BUILDS = get_env_int("APME_SESSION_MAX_CONCURRENT_VENV_BUIL
 _VENV_BUILD_WAIT_S = get_env_float("APME_SESSION_VENV_BUILD_WAIT_S", 600.0, positive_only=True)
 
 _venv_build_semaphore: asyncio.Semaphore | None = None
+
+
+def _effective_create_interval_s() -> float:
+    """Return the enforced session creation interval.
+
+    Prefers ``APME_SESSION_CREATE_INTERVAL_S`` (default 1.0s); when that
+    variable is unset, falls back to the deprecated
+    ``APME_SESSION_MIN_CREATE_INTERVAL_S`` so existing deployments keep
+    working. The environment is read at call time (never from import-time
+    globals) so operator changes apply without a daemon restart; when
+    neither variable is set, the module globals remain as a
+    monkeypatchable fallback for tests.
+
+    Returns:
+        Effective minimum seconds between session creates (0 disables).
+    """
+    if "APME_SESSION_CREATE_INTERVAL_S" in os.environ:
+        return get_env_float("APME_SESSION_CREATE_INTERVAL_S", 1.0)
+    if "APME_SESSION_MIN_CREATE_INTERVAL_S" in os.environ:
+        return get_env_float("APME_SESSION_MIN_CREATE_INTERVAL_S", 0.0)
+    # Neither variable configured: honor module globals (import-time
+    # defaults, monkeypatchable in tests) with legacy-new precedence.
+    if _MIN_CREATE_INTERVAL_S > 0:
+        return _MIN_CREATE_INTERVAL_S
+    return _CREATE_INTERVAL_S
+
+
+def _idle_expire_never_sealed_s() -> float:
+    """Return the never-sealed early-reap age, read at call time.
+
+    Reads ``APME_SESSION_IDLE_EXPIRE_S`` from the environment on every
+    call (default 600s; non-positive disables) so operator changes apply
+    without a restart. Falls back to the import-time module global when
+    the variable is unset (monkeypatchable in tests).
+
+    Returns:
+        Idle seconds after which a never-sealed session is reaped early.
+    """
+    if "APME_SESSION_IDLE_EXPIRE_S" in os.environ:
+        return get_env_float("APME_SESSION_IDLE_EXPIRE_S", 600.0)
+    return _IDLE_EXPIRE_NEVER_SEALED_S
 
 
 def get_venv_build_semaphore() -> asyncio.Semaphore:
@@ -141,7 +188,9 @@ class SessionState:
         report: Remediation report from the engine.
         temp_dir: Temporary directory for materialized files.
         created_at: Session creation timestamp.
-        last_activity_at: Last client interaction timestamp.
+        last_activity_at: Last client interaction timestamp (wall-clock,
+            for TTL display). The never-sealed idle reap uses the
+            monotonic companion ``_last_activity_mono`` instead.
         idempotency_ok: Whether formatter was idempotent.
         status: Session status (1=AWAITING_APPROVAL, 2=PROCESSING,
             3=COMPLETE, 4=AWAITING_AI_TRIAGE).
@@ -229,6 +278,11 @@ class SessionState:
     temp_dir: Path | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     last_activity_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    # Monotonic companion to ``last_activity_at`` for the never-sealed idle
+    # reap. Wall-clock can jump (NTP, VM suspend); the early reap compares
+    # monotonic timestamps so idle sessions are reaped on real elapsed time.
+    # ``touch()`` refreshes both; wall time stays for TTL display/compat.
+    _last_activity_mono: float = field(default_factory=time.monotonic)
     idempotency_ok: bool = True
     status: int = 2  # PROCESSING
     fix_options: FixOptions | None = None
@@ -315,7 +369,26 @@ class SessionState:
     @property
     def expired(self) -> bool:
         """True if session has timed out or exceeded max lifetime."""
-        return self.ttl_seconds <= 0 or self.lifetime_seconds >= _MAX_LIFETIME
+        return self.ttl_seconds <= 0 or self.lifetime_seconds >= _MAX_LIFETIME or self.never_sealed_idle_expired
+
+    @property
+    def never_sealed_idle_expired(self) -> bool:
+        """True when a never-sealed session has been idle past the early reap age.
+
+        Sealed sessions (``upload_sealed=True``) are exempt — they use the
+        full idle TTL. A non-positive ``APME_SESSION_IDLE_EXPIRE_S``
+        disables the early reap. Idle age is measured on the monotonic
+        clock (``_last_activity_mono``) so wall-clock jumps cannot extend
+        or collapse the reap window; the threshold is read at call time
+        via :func:`_idle_expire_never_sealed_s`.
+        """
+        if self.upload_sealed:
+            return False
+        idle_expire = _idle_expire_never_sealed_s()
+        if idle_expire <= 0:
+            return False
+        idle_s = time.monotonic() - self._last_activity_mono
+        return idle_s >= idle_expire
 
     @property
     def expiring_soon(self) -> bool:
@@ -323,8 +396,9 @@ class SessionState:
         return 0 < self.ttl_seconds <= 300
 
     def touch(self) -> None:
-        """Reset idle timer to now."""
+        """Reset idle timer to now (wall-clock display and monotonic reap clock)."""
         self.last_activity_at = datetime.now(UTC)
+        self._last_activity_mono = time.monotonic()
 
     def init_lifetime_deadline(self) -> None:
         """Record absolute session lifetime cap in monotonic time (ADR-068)."""
@@ -446,17 +520,18 @@ class SessionStore:
     def create(self) -> SessionState:
         """Create a new session, raising ResourceExhaustedError if at limit.
 
-        Enforces the session cap first, then the optional minimum creation
-        interval (``APME_SESSION_MIN_CREATE_INTERVAL_S``, default 0/disabled)
-        so operators can opt into burst protection for unauthenticated
-        clients (PE-20; real caller auth is GitHub #664).
+        Enforces the session cap first, then the creation interval
+        (``APME_SESSION_CREATE_INTERVAL_S``, default 1.0s, 0 disables;
+        legacy ``APME_SESSION_MIN_CREATE_INTERVAL_S`` honored when the
+        new variable is unset) so operators get burst protection for
+        unauthenticated clients (PE-20; real caller auth is GitHub #664).
 
         Returns:
             New SessionState.
 
         Raises:
             ResourceExhaustedError: If at max concurrent sessions, or if
-                called sooner than the minimum interval after the previous
+                called sooner than the creation interval after the previous
                 successful creation.
         """
         # NOTE: the cap check + interval check + insert below contain no
@@ -470,8 +545,13 @@ class SessionStore:
             )
             raise ResourceExhaustedError(msg)
         now_mono = time.monotonic()
-        if self._last_create_mono and (now_mono - self._last_create_mono) < _MIN_CREATE_INTERVAL_S:
-            msg = f"Session creation rate limited: at most one session per {_MIN_CREATE_INTERVAL_S}s. Retry shortly."
+        effective_interval = _effective_create_interval_s()
+        if (
+            self._last_create_mono
+            and effective_interval > 0
+            and (now_mono - self._last_create_mono) < effective_interval
+        ):
+            msg = f"Session creation rate limited: at most one session per {effective_interval}s. Retry shortly."
             raise ResourceExhaustedError(msg)
         session_id = uuid.uuid4().hex[:12]
         state = SessionState(session_id=session_id)
