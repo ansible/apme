@@ -394,6 +394,47 @@ class TestGetTestCache:
         assert "R402" not in cache
 
 
+class TestNativeDocRuleTestStatus:
+    """Tests that planned and stub documentation is not marked as tested."""
+
+    @pytest.mark.parametrize("status", ["planned", "stub"])  # type: ignore[untyped-decorator]
+    def test_doc_only_planned_or_stub_rule_is_not_tested(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        status: str,
+    ) -> None:
+        """Infra tests mentioning a planned/stub ID do not count as rule tests.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+            monkeypatch: Pytest monkeypatch fixture.
+            status: Frontmatter status to verify.
+        """
+        native_dir = tmp_path / "rules"
+        native_dir.mkdir()
+        (native_dir / "R402_list_all_used_variables.md").write_text(
+            f"---\nrule_id: R402\nvalidator: native\nstatus: {status}\n---\n",
+            encoding="utf-8",
+        )
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "test_violation_convert.py").write_text(
+            'def test_violation_round_trip():\n    Violation(rule_id="R402")\n',
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(_mod, "NATIVE_DIR", native_dir)
+        monkeypatch.setattr(_mod, "TESTS_DIR", tests_dir)
+        monkeypatch.setattr(_mod, "_TEST_CACHE", None)
+
+        rules = _mod._collect_native_rules()
+
+        assert len(rules) == 1
+        assert rules[0].status == status
+        assert rules[0].has_test is False
+        assert rules[0].test_files == []
+
+
 class TestParseFrontmatterYamlFallback:
     """Tests for YAML-error fallback in frontmatter parsing."""
 
