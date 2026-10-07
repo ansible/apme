@@ -632,9 +632,14 @@ export function useProjectOperationState(
   connectRef.current = connect;
 
   const poll = useCallback(
-    async (opts?: { force?: boolean; afterGatewayChange?: boolean }) => {
+    async (opts?: {
+      force?: boolean;
+      afterGatewayChange?: boolean;
+      retryAttempt?: number;
+    }) => {
       const force = opts?.force === true;
       const afterGatewayChange = opts?.afterGatewayChange === true;
+      const retryAttempt = opts?.retryAttempt ?? 0;
       if ((!enabled && !force) || !projectId) {
         if (!force) {
           setStateTracked(null);
@@ -658,11 +663,19 @@ export function useProjectOperationState(
         if (!mountedRef.current || pollGen !== pollGenRef.current) return;
         if (afterGatewayChange) {
           setStateTracked(null);
+          const delayMs = Math.min(
+            30_000,
+            1_000 * 2 ** Math.min(retryAttempt, 5),
+          );
           setTimeout(() => {
             if (mountedRef.current && pollGen === pollGenRef.current) {
-              void poll({ force: true });
+              void poll({
+                force: true,
+                afterGatewayChange: true,
+                retryAttempt: retryAttempt + 1,
+              });
             }
-          }, 1_000);
+          }, delayMs);
         }
         // Transient Gateway/network error against the same gateway — keep
         // prior state; SSE reconnect or a later refresh can recover.

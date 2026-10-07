@@ -77,11 +77,17 @@ export function useNotificationStream(): void {
   const api = useApmeApi();
   const apiRef = useRef(api);
   apiRef.current = api;
+  const gatewayKeyRef = useRef(`${api.apiBase}\0${api.origin}`);
 
   useEffect(() => {
     let cancelled = false;
     let es: EventSource | undefined;
     const isActive = () => !cancelled;
+    const gatewayKey = `${api.apiBase}\0${api.origin}`;
+    if (gatewayKeyRef.current !== gatewayKey) {
+      gatewayKeyRef.current = gatewayKey;
+      setNotificationGroups({});
+    }
 
     const startStream = async () => {
       // Buffer SSE events that arrive before the REST load completes.
