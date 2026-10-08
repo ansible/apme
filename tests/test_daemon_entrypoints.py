@@ -756,6 +756,37 @@ class TestHealthCheck:
         assert "\u2714" in out
         channel.close.assert_called_once()
 
+    def test_health_plugin_unhealthy_exits_0(self) -> None:
+        """Optional plugin sidecar rows do not fail ``health-check``.
+
+        Engine aggregate and required services are ok; ``plugin:orgpolicy``
+        is degraded.
+        """
+        native: MagicMock = MagicMock()
+        native.name = "native"
+        native.status = "ok"
+        native.address = "127.0.0.1:50055"
+        plugin: MagicMock = MagicMock()
+        plugin.name = "plugin:orgpolicy"
+        plugin.status = "error: plugin down"
+        plugin.address = "127.0.0.1:50100"
+        resp: MagicMock = MagicMock()
+        resp.status = "ok"
+        resp.downstream = [native, plugin]
+        stub: MagicMock = MagicMock()
+        stub.Health = MagicMock(return_value=resp)
+        channel: MagicMock = MagicMock()
+        channel.close = MagicMock(return_value=None)
+        with (
+            patch(
+                "apme_engine.cli.health.resolve_engine",
+                return_value=(channel, "127.0.0.1:50051"),
+            ),
+            patch("apme_engine.cli.health.engine_pb2_grpc.EngineStub", return_value=stub),
+        ):
+            run_health_check(_health_args(json=False, timeout=5.0))
+        channel.close.assert_called_once()
+
     def test_health_ok_json_output(self, capsys: CaptureFixture[str]) -> None:
         """Healthy engine with --json prints machine-readable results.
 

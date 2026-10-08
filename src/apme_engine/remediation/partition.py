@@ -7,6 +7,7 @@ R108 privilege escalation that may be legitimately required).
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -55,7 +56,11 @@ def _get_scope(violation: ViolationDict) -> str:
     return _to_str_value(violation.get("scope"), RuleScope.TASK.value)
 
 
-def is_finding_resolvable(violation: ViolationDict, registry: TransformRegistry) -> bool:
+def is_finding_resolvable(
+    violation: ViolationDict,
+    registry: TransformRegistry,
+    plugin_transform_ids: Collection[str] | None = None,
+) -> bool:
     """Return True if the violation has a registered deterministic transform (Tier 1).
 
     Cross-file / data-flow rules are never Tier 1, even if a caller registers
@@ -64,6 +69,7 @@ def is_finding_resolvable(violation: ViolationDict, registry: TransformRegistry)
     Args:
         violation: Violation dict with rule_id.
         registry: Transform registry to check for rule.
+        plugin_transform_ids: EXT-* rule IDs a plugin declared as Transform-capable.
 
     Returns:
         True if rule_id has a registered transform and is not cross-file.
@@ -71,24 +77,31 @@ def is_finding_resolvable(violation: ViolationDict, registry: TransformRegistry)
     bare_id = normalize_rule_id(str(violation.get("rule_id", "")))
     if bare_id in CROSS_FILE_RULES:
         return False
-    return bare_id in registry
+    if bare_id in registry:
+        return True
+    extra = plugin_transform_ids or frozenset()
+    return bare_id in extra
 
 
 def partition_violations(
     violations: list[ViolationDict],
     registry: TransformRegistry,
+    plugin_transform_ids: Collection[str] | None = None,
 ) -> tuple[list[ViolationDict], list[ViolationDict], list[ViolationDict]]:
     """Split violations into (tier1_fixable, tier2_ai, tier3_manual).
 
     Routing uses scope metadata (ADR-026) instead of hardcoded rule lists:
+    - Remaining ``EXT-`` findings without a plugin Transform are Tier 3
+      (manual review) until ADR-042 Phase 4.
     - Cross-file / data-flow rules (``CROSS_FILE_RULES``) are always Tier 3.
-    - Tier 1: deterministic transform exists in registry.
+    - Tier 1: deterministic transform exists in registry or plugin Transform.
     - Tier 2: scope is AI-proposable (task/block) and no cross-file constraint.
     - Tier 3: scope is not AI-proposable, or cross-file context required.
 
     Args:
         violations: List of violation dicts.
         registry: Transform registry for Tier 1 lookup.
+        plugin_transform_ids: EXT-* IDs with a plugin Transform (ADR-042).
 
     Returns:
         Tuple of (tier1_fixable, tier2_ai, tier3_manual).
@@ -107,8 +120,12 @@ def partition_violations(
         if bare_id in CROSS_FILE_RULES:
             v["remediation_resolution"] = RemediationResolution.NEEDS_CROSS_FILE
             tier3.append(v)
-        elif is_finding_resolvable(v, registry):
+        elif is_finding_resolvable(v, registry, plugin_transform_ids):
             tier1.append(v)
+        elif str(v.get("rule_id") or "").startswith("EXT-"):
+            v["remediation_class"] = RemediationClass.MANUAL_REVIEW
+            v["remediation_resolution"] = RemediationResolution.MANUAL
+            tier3.append(v)
         elif _get_scope(v) not in AI_PROPOSABLE_SCOPES:
             v["remediation_resolution"] = RemediationResolution.MANUAL
             tier3.append(v)
@@ -126,8 +143,10 @@ def classify_violation(violation: ViolationDict) -> RemediationClass:
     This is called **after** the convergence loop.  Violations that were
     fixed during convergence are classified separately as AUTO_FIXABLE by
     the caller — remaining violations are never AUTO_FIXABLE because the
-    convergence loop already tried all deterministic transforms.  What
-    remains is either AI-proposable or requires manual review.
+    convergence loop already tried all deterministic transforms.
+    Remaining ``EXT-`` findings are ``MANUAL_REVIEW`` until ADR-042 Phase 4.
+    Other remaining violations are either AI-proposable or require manual
+    review.
 
     Args:
         violation: Violation dict with rule_id and scope.
@@ -135,6 +154,8 @@ def classify_violation(violation: ViolationDict) -> RemediationClass:
     Returns:
         One of RemediationClass.AI_CANDIDATE or MANUAL_REVIEW.
     """
+    if str(violation.get("rule_id") or "").startswith("EXT-"):
+        return RemediationClass.MANUAL_REVIEW
     sev = str(violation.get("severity") or "").lower()
     if sev == "info":
         return RemediationClass.MANUAL_REVIEW

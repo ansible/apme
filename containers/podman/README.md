@@ -28,7 +28,7 @@ Only run the health-check once the pod is **Running**. Use `wait-for-pod.sh` to 
 The pod creates:
 
 - **Sessions directory** — session-scoped venvs are stored under `/sessions` in the pod. The Engine writes here (rw); the Ansible validator reads it (ro).
-- OPA Rego bundle is **copied into the image** at build time from `src/apme_engine/validators/opa/bundle` (no runtime volume mount).
+- OPA Rego bundle is **copied into the image** at build time from `src/apme_engine/validators/opa/bundle` (no runtime volume mount). Organization-specific Rego and third-party scanners are **Plugin sidecars**, not extra files in that bundle — see [PLUGIN_SIDECARS.md](../../docs/guides/PLUGIN_SIDECARS.md) (`tox -e build-plugins`).
 
 The local Abbenay UI prefers `http://127.0.0.1:8787`. If that host port is
 already occupied, `tox -e up` selects an available port in the range

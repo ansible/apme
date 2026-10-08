@@ -83,6 +83,19 @@ from apme_engine.daemon.deadline import (
 )
 from apme_engine.daemon.event_emitter import emit_fix_completed, emit_register_rules, start_sinks
 from apme_engine.daemon.fs_utils import write_chunked_fs as _write_chunked_fs
+from apme_engine.daemon.plugins import (
+    PLUGIN_TRANSFORM_TRANSPORT,
+    DiscoveredPlugin,
+    call_plugin_transform,
+    call_plugin_validate,
+    describe_plugin,
+    discover_plugin_addresses,
+    filter_plugin_violations,
+    inferred_rule_id_prefix,
+    plugin_for_rule,
+    probe_plugin_health_outcome,
+    transform_rule_ids,
+)
 from apme_engine.daemon.session import (
     ResourceExhaustedError,
     SessionState,
@@ -91,7 +104,8 @@ from apme_engine.daemon.session import (
 )
 from apme_engine.daemon.violation_convert import violation_dict_to_proto, violation_proto_to_dict
 from apme_engine.engine.models import RemediationClass, ViolationDict
-from apme_engine.graph.content_graph import ContentGraph
+from apme_engine.graph.content_graph import ContentGraph, NodeType
+from apme_engine.graph.relpath import norm_relpath
 from apme_engine.graph.scanner import filter_noqa_violations, graph_rule_opt_in_from_rule_configs
 from apme_engine.log_bridge import attach_collector
 from apme_engine.remediation.graph_engine import FilePatch as SplicedFilePatch
@@ -500,6 +514,363 @@ async def _call_validator(
         await channel.close(grace=None)
 
 
+def _plugin_validate_request(request: ValidateRequest) -> ValidateRequest:
+    """Build a Plugin.Validate payload with only the ADR-042 public fields.
+
+    Args:
+        request: Full engine ValidateRequest (may include native scandata).
+
+    Returns:
+        Request carrying ``request_id``, ``files``, ``hierarchy_payload``,
+        ``ansible_core_version``, and ``collection_specs`` (ADR-042 §6).
+        Native-only fields (``scandata``, ``venv_path``, ``content_graph_data``)
+        are omitted.
+    """
+    return ValidateRequest(
+        request_id=request.request_id,
+        files=request.files,
+        hierarchy_payload=request.hierarchy_payload,
+        ansible_core_version=request.ansible_core_version,
+        collection_specs=request.collection_specs,
+    )
+
+
+def _plugin_hierarchy_payload(graph: ContentGraph, scan_id: str) -> bytes:
+    """Serialize the graph with the same hierarchy shape as the initial Validate.
+
+    Args:
+        graph: Current ContentGraph.
+        scan_id: Scan or rescan identifier.
+
+    Returns:
+        JSON bytes with ``hierarchy``, ``collection_set``, and ``metadata``.
+    """
+    from apme_engine.engine.graph_opa_payload import build_hierarchy_from_graph
+
+    payload = build_hierarchy_from_graph(
+        graph,
+        scan_type="project",
+        scan_name=scan_id,
+        scan_id=scan_id,
+    )
+    return json.dumps(payload, default=str).encode()
+
+
+def _build_plugin_rescan_request(
+    session: SessionState,
+    graph: ContentGraph,
+    scan_id: str,
+) -> ValidateRequest:
+    """Build Plugin.Validate rescan payload (blocking; call via executor).
+
+    Args:
+        session: FixSession with working files and collection specs.
+        graph: Current ContentGraph (may include pending Transform YAML).
+        scan_id: Parent scan identifier.
+
+    Returns:
+        Public-field ValidateRequest for every discovered plugin.
+    """
+    from apme_engine.remediation.graph_engine import splice_modifications
+
+    merged = dict(session.working_files)
+    originals: dict[str, str] = {}
+    for path, content in merged.items():
+        originals[path] = content.decode("utf-8", errors="replace")
+    for node in graph.nodes():
+        if not node.file_path:
+            continue
+        rel = _working_files_key(session.temp_dir, node.file_path)
+        src = merged.get(rel, merged.get(node.file_path))
+        if src is not None and node.file_path not in originals:
+            originals[node.file_path] = src.decode("utf-8", errors="replace")
+    for patch in splice_modifications(graph, originals, include_pending=True):
+        rel = _working_files_key(session.temp_dir, patch.path)
+        data = patch.patched.encode("utf-8")
+        if rel in merged:
+            merged[rel] = data
+        elif patch.path in merged:
+            merged[patch.path] = data
+    rescan_files = [File(path=p, content=c) for p, c in merged.items()]
+    return _plugin_validate_request(
+        ValidateRequest(
+            request_id=f"{scan_id}-rescan",
+            files=rescan_files,
+            hierarchy_payload=_plugin_hierarchy_payload(graph, f"{scan_id}-rescan"),
+            ansible_core_version=session.ansible_core_version,
+            collection_specs=_plugin_collection_specs(session),
+        )
+    )
+
+
+def _plugin_collection_specs(session: SessionState) -> list[str]:
+    """Collection specs for Plugin.Validate / Transform (venv, then request).
+
+    Args:
+        session: FixSession state.
+
+    Returns:
+        ``name:version`` strings when the venv is known, else request specs.
+    """
+    specs: list[str] = []
+    for row in session.installed_collections:
+        if not row:
+            continue
+        fqcn = str(row[0])
+        version = str(row[1]) if len(row) > 1 else ""
+        if fqcn:
+            specs.append(f"{fqcn}:{version}" if version else fqcn)
+    if specs:
+        return specs
+    plugin_opts = session.fix_options or session.scan_options
+    if plugin_opts is None:
+        return []
+    return list(getattr(plugin_opts, "collection_specs", []) or [])
+
+
+def _plugin_unavailable_finding(plugin: DiscoveredPlugin) -> ViolationDict:
+    """Build the fail-closed finding for a plugin that did not Validate.
+
+    Args:
+        plugin: Configured plugin (env token + prefix).
+
+    Returns:
+        ``EXT-<name>-unavailable`` violation dict.
+    """
+    return {
+        "rule_id": f"{plugin.rule_id_prefix}unavailable",
+        "message": "Plugin Validate failed; results are incomplete.",
+        "severity": "high",
+        "source": f"plugin:{plugin.name}",
+        "file": "",
+        "path": "",
+        "scope": "playbook",
+    }
+
+
+def _parse_finding_line(line: object) -> int:
+    """Coerce a plugin finding line value to a 1-based int.
+
+    Args:
+        line: Proto/JSON line (int, numeric string, or ``[start, end]``).
+
+    Returns:
+        Line number, or 0 when missing/unusable.
+    """
+    if isinstance(line, bool):
+        return 0
+    if isinstance(line, int):
+        return line
+    if isinstance(line, str):
+        token = line.strip()
+        if token.isdigit():
+            return int(token)
+        return 0
+    if isinstance(line, list) and line:
+        return _parse_finding_line(line[0])
+    return 0
+
+
+def _fallback_plugin_node(graph: ContentGraph) -> str:
+    """Return a stable node id so unavailable findings stay on the ledger.
+
+    Args:
+        graph: Current ContentGraph.
+
+    Returns:
+        Playbook node id, else the first node id, else empty.
+    """
+    nodes = list(graph.nodes())
+    if not nodes:
+        return ""
+    playbooks = [n for n in nodes if getattr(n, "node_type", None) == NodeType.PLAYBOOK]
+    chosen = playbooks[0] if playbooks else nodes[0]
+    return chosen.node_id
+
+
+def _unbound_ext_violations(
+    violations: Sequence[ViolationDict],
+    graph: ContentGraph | None,
+) -> list[ViolationDict]:
+    """EXT- rows whose ``path`` is not a graph node (dropped by the ledger).
+
+    Args:
+        violations: Mixed findings after bind.
+        graph: ContentGraph, or None.
+
+    Returns:
+        Copies of unbound EXT- findings.
+    """
+    unbound: list[ViolationDict] = []
+    for item in violations:
+        if not str(item.get("rule_id") or "").startswith("EXT-"):
+            continue
+        path = str(item.get("path") or "")
+        if graph is None or graph.get_node(path) is None:
+            unbound.append(dict(item))
+    return unbound
+
+
+def _append_unbound_ext(
+    remaining: list[ViolationDict],
+    unbound: Sequence[ViolationDict],
+    graph: ContentGraph | None,
+) -> None:
+    """Append unbound EXT- rows that are not already in ``remaining``.
+
+    Args:
+        remaining: Graph-authoritative remaining list (mutated).
+        unbound: Candidate unbound EXT- findings.
+        graph: ContentGraph used to skip rows that later bound.
+    """
+    seen = {
+        (
+            str(v.get("path") or ""),
+            str(v.get("rule_id") or ""),
+            str(v.get("file") or ""),
+            str(v.get("line") or ""),
+        )
+        for v in remaining
+    }
+    for item in unbound:
+        path = str(item.get("path") or "")
+        if graph is not None and path and graph.get_node(path) is not None:
+            continue
+        key = (
+            path,
+            str(item.get("rule_id") or ""),
+            str(item.get("file") or ""),
+            str(item.get("line") or ""),
+        )
+        if key in seen:
+            continue
+        remaining.append(dict(item))
+        seen.add(key)
+
+
+def _bind_ext_findings_to_graph(
+    violations: list[ViolationDict],
+    graph: ContentGraph | None,
+) -> list[ViolationDict]:
+    """Fill ``path`` on EXT- findings so the graph ledger can keep them.
+
+    File-oriented plugins (SAST wrappers) often know file+line but not the
+    ContentGraph node id. Without a matching ``path``, ``register_violations``
+    drops the finding and ``apme check`` never shows it.
+
+    Args:
+        violations: Mixed built-in and plugin findings.
+        graph: ContentGraph from the current scan, or None.
+
+    Returns:
+        The same list (mutated in place for EXT- rows).
+    """
+    if graph is None:
+        return violations
+    fallback = _fallback_plugin_node(graph)
+    for item in violations:
+        rule_id = str(item.get("rule_id") or "")
+        if not rule_id.startswith("EXT-"):
+            continue
+        current = str(item.get("path") or "")
+        if current and graph.get_node(current) is not None:
+            continue
+        node_id = _nearest_graph_node(
+            graph,
+            str(item.get("file") or ""),
+            item.get("line"),
+        )
+        if not node_id and str(item.get("file") or "") == "" and rule_id.rsplit("-", 1)[-1] == "unavailable":
+            node_id = fallback
+        if node_id:
+            item["path"] = node_id
+    return violations
+
+
+def _nearest_graph_node(graph: ContentGraph, file_path: str, line: object) -> str:
+    """Return the most specific node id covering ``file_path`` + line.
+
+    Args:
+        graph: ContentGraph.
+        file_path: Relative path from the plugin finding.
+        line: 1-based line number, if present.
+
+    Returns:
+        Node id, or empty string when nothing matches.
+    """
+    if not file_path:
+        return ""
+    line_n = _parse_finding_line(line)
+    matches = [n for n in graph.nodes() if _same_scan_path(n.file_path, file_path)]
+    if not matches:
+        return ""
+    if line_n > 0:
+        covering = [n for n in matches if n.line_start <= line_n <= (n.line_end if n.line_end > 0 else n.line_start)]
+        if covering:
+            covering.sort(key=lambda n: ((n.line_end or n.line_start) - n.line_start, n.line_start))
+            return covering[0].node_id
+        return ""
+    if len(matches) == 1:
+        return matches[0].node_id
+    return ""
+
+
+def _same_scan_path(node_path: str, finding_path: str) -> bool:
+    """Return True when two project-relative paths are the same file.
+
+    Exact match after slash normalization. Suffix matching is unsafe
+    (``main.yml`` vs ``roles/db/tasks/main.yml``).
+
+    Args:
+        node_path: Path stored on the ContentNode.
+        finding_path: Path from a plugin finding.
+
+    Returns:
+        True on exact relative-path equality.
+    """
+    if not node_path or not finding_path:
+        return False
+    left = norm_relpath(node_path)
+    right = norm_relpath(finding_path)
+    return bool(left) and left == right
+
+
+async def _call_plugin_validate_result(
+    plugin: DiscoveredPlugin,
+    request: ValidateRequest,
+) -> _ValidatorResult:
+    """Call Plugin.Validate and keep only EXT-prefixed findings.
+
+    Any dropped row (wrong prefix or reserved ``*-unavailable``) is
+    incomplete input: emit ``EXT-<name>-unavailable`` alongside kept
+    findings so a mixed payload cannot silently pass.
+
+    Args:
+        plugin: Discovered plugin (address + prefix).
+        request: ValidateRequest with only public Plugin fields.
+
+    Returns:
+        ``_ValidatorResult`` (errors are non-fatal).
+    """
+    violations, error = await call_plugin_validate(plugin.address, request)
+    if error:
+        return _ValidatorResult(violations=[_plugin_unavailable_finding(plugin)], error=error)
+    filtered = filter_plugin_violations(plugin, violations)
+    if len(filtered) < len(violations):
+        logger.warning(
+            "Plugin %s returned %d finding(s); kept %d matching prefix %s",
+            plugin.name,
+            len(violations),
+            len(filtered),
+            plugin.rule_id_prefix,
+        )
+        return _ValidatorResult(
+            violations=[*filtered, _plugin_unavailable_finding(plugin)],
+            error="prefix mismatch",
+        )
+    return _ValidatorResult(violations=filtered)
+
+
 _REQUIREMENTS_PATHS = {"requirements.yml", "collections/requirements.yml"}
 
 
@@ -805,6 +1176,65 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
 
     _venv_mgr: VenvSessionManager | None = None
     _galaxy_proxy_cfg_lock: asyncio.Lock | None = None
+    _plugin_cache: list[DiscoveredPlugin] | None = None
+    _plugin_lock: asyncio.Lock | None = None
+
+    def __init__(self) -> None:
+        """Initialize per-servicer plugin discovery cache (ADR-042)."""
+        super().__init__()
+        self._plugin_cache = None
+        self._plugin_lock = None
+
+    async def _ensure_plugins(self) -> list[DiscoveredPlugin]:
+        """Discover plugins; cache successful Describes and retry misses.
+
+        An empty first attempt (sidecar not listening yet) must not pin
+        a permanent miss list for the process lifetime.
+
+        Returns:
+            Described plugins, plus stubs for addresses whose Describe failed
+            so Validate can still emit ``EXT-<name>-unavailable``.
+        """
+        if self._plugin_lock is None:
+            self._plugin_lock = asyncio.Lock()
+        async with self._plugin_lock:
+            wanted = discover_plugin_addresses()
+            previous = list(self._plugin_cache or [])
+            by_key = {(p.name, p.address): p for p in previous}
+            loaded: list[DiscoveredPlugin] = []
+            cached: list[DiscoveredPlugin] = []
+            for name, address in wanted:
+                existing = by_key.get((name, address))
+                if existing is not None:
+                    loaded.append(existing)
+                    cached.append(existing)
+                    continue
+                try:
+                    plugin = await describe_plugin(name, address)
+                except Exception:  # noqa: BLE001 - plugins are optional
+                    logger.warning(
+                        "Plugin %s at %s Describe failed; Validate will still run",
+                        name,
+                        address,
+                        exc_info=True,
+                    )
+                    loaded.append(
+                        DiscoveredPlugin(
+                            name=name,
+                            address=address,
+                            rule_id_prefix=inferred_rule_id_prefix(name),
+                        )
+                    )
+                    continue
+                loaded.append(plugin)
+                cached.append(plugin)
+            self._plugin_cache = cached
+            prev_keys = {(p.name, p.address) for p in previous}
+            now_keys = {(p.name, p.address) for p in loaded}
+            if now_keys != prev_keys and loaded:
+                names = ", ".join(p.name for p in loaded)
+                logger.info("Plugins: loaded %d (%s)", len(loaded), names)
+            return loaded
 
     def _get_venv_manager(self) -> VenvSessionManager:
         """Return (or create) the singleton VenvSessionManager.
@@ -1173,6 +1603,8 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             content_graph_data=content_graph_data,
             graph_rule_opt_in=graph_rule_opt_in_from_rule_configs(rule_configs),
         )
+        plugin_request = _plugin_validate_request(validate_request)
+        plugins = await self._ensure_plugins()
 
         _pcb = progress_callback
 
@@ -1201,6 +1633,9 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         task_coros: list[Awaitable[_ValidatorResult]] = [
             _call_validator(addr, validate_request) for _name, addr in validator_targets
         ]
+        for plugin in plugins:
+            task_names.append(f"plugin:{plugin.name}")
+            task_coros.append(_call_plugin_validate_result(plugin, plugin_request))
 
         violations: list[ViolationDict] = []
         validator_diagnostics: list[ValidatorDiagnostics] = []
@@ -1261,12 +1696,20 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                     if vname in REQUIRED_VALIDATORS:
                         msg = f"Required validator {vname} failed: {item}"
                         raise RequiredValidatorDependencyError(msg) from item
+                    if vname.startswith("plugin:"):
+                        pname = vname.removeprefix("plugin:")
+                        plug = next((p for p in plugins if p.name == pname), None)
+                        if plug is not None:
+                            violations.append(_plugin_unavailable_finding(plug))
+                            counts[vname] = 1
                     continue
                 name, result = item
                 if name in REQUIRED_VALIDATORS and result.error:
                     msg = f"Required validator {name} RPC failed: {result.error}"
                     logger.error("%s (req=%s)", msg, scan_id)
                     raise RequiredValidatorDependencyError(msg)
+                if result.error:
+                    logger.warning("Fan-out: %s RPC failed (req=%s): %s", name, scan_id, result.error)
                 counts[name] = len(result.violations)
                 violations.extend(result.violations)
                 if result.diagnostics:
@@ -1275,8 +1718,15 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                     validator_logs.append(list(result.logs))
 
             parts = " ".join(f"{n.title()}={counts.get(n, 0)}" for n in VALIDATOR_ENV_VARS)
+            if plugins:
+                plugin_parts = " ".join(f"{p.name}={counts.get(f'plugin:{p.name}', 0)}" for p in plugins)
+                parts = f"{parts} {plugin_parts}".strip()
             logger.info("Fan-out: done (%.0fms) %s Total=%d (req=%s)", fan_out_ms, parts, len(violations), scan_id)
 
+        violations = _bind_ext_findings_to_graph(
+            violations,
+            content_graph if isinstance(content_graph, ContentGraph) else None,
+        )
         before_noqa = len(violations)
         violations = filter_noqa_violations(
             violations, content_graph if isinstance(content_graph, ContentGraph) else None
@@ -2246,6 +2696,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         ai_violations: list[ViolationDict] | None = None,
         max_ai_attempts: int = 2,
         concurrency: int | None = None,
+        plugin_transform_ids: frozenset[str] | None = None,
     ) -> None:
         """Re-anchor budget at the AI gate with AI-only estimate (ADR-068).
 
@@ -2256,6 +2707,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             ai_violations: Pre-partitioned tier-2 violations (skips partition).
             max_ai_attempts: AI resubmission cap from graph engine.
             concurrency: Parallel AI calls (default env).
+            plugin_transform_ids: EXT-* IDs with a plugin Transform (ADR-042).
 
         Raises:
             BudgetConfigError: When AI budget inputs are invalid.
@@ -2265,7 +2717,11 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         elif violations is not None and registry is not None:
             from apme_engine.remediation.partition import partition_violations  # noqa: PLC0415
 
-            _, tier2, _ = partition_violations(violations, registry)  # type: ignore[arg-type]
+            _, tier2, _ = partition_violations(
+                violations,
+                registry,  # type: ignore[arg-type]
+                plugin_transform_ids,
+            )
             ai_nodes = count_ai_nodes(tier2)
         else:
             ai_nodes = 0
@@ -2431,6 +2887,8 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                 scan_id,
             )
             graph = ContentGraph()
+
+        session.plugin_unbound_violations = _unbound_ext_violations(initial_violations, graph)
 
         loop = asyncio.get_running_loop()
         originals = await loop.run_in_executor(None, _load_yaml_originals, yaml_paths, temp_dir)
@@ -2615,6 +3073,19 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                     )
                     ext_names.append("ansible")
 
+            plugins = await self._ensure_plugins()
+            if plugins:
+                plugin_req = await asyncio.get_running_loop().run_in_executor(
+                    None,
+                    _build_plugin_rescan_request,
+                    session,
+                    g,
+                    scan_id,
+                )
+                for plugin in plugins:
+                    ext_coros.append(_call_plugin_validate_result(plugin, plugin_req))
+                    ext_names.append(f"plugin:{plugin.name}")
+
             if ext_coros:
                 results = await asyncio.gather(*ext_coros, return_exceptions=True)
                 for name, result in zip(ext_names, results, strict=True):
@@ -2623,13 +3094,23 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                             msg = f"Required validator {name} failed during rescan: {result}"
                             raise RequiredValidatorDependencyError(msg) from result
                         logger.warning("Rescan: %s failed: %s", name, result)
-                        continue
-                    if name in REQUIRED_VALIDATORS and result.error:
+                        if name.startswith("plugin:"):
+                            pname = name.removeprefix("plugin:")
+                            plug = next((p for p in plugins if p.name == pname), None)
+                            if plug is not None:
+                                all_violations.append(_plugin_unavailable_finding(plug))
+                    elif name in REQUIRED_VALIDATORS and result.error:
                         msg = f"Required validator {name} RPC failed during rescan: {result.error}"
                         raise RequiredValidatorDependencyError(msg)
-                    all_violations.extend(result.violations)
+                    elif result.error:
+                        logger.warning("Rescan: %s RPC failed: %s", name, result.error)
+                        all_violations.extend(result.violations)
+                    else:
+                        all_violations.extend(result.violations)
 
-            return filter_noqa_violations(all_violations, g)
+            bound = filter_noqa_violations(_bind_ext_findings_to_graph(all_violations, g), g)
+            session.plugin_unbound_violations = _unbound_ext_violations(bound, g)
+            return bound
 
         ai_provider = self._resolve_ai_provider(session.fix_options)
         assess_pause = bool(session.fix_options and session.fix_options.assess_pause)
@@ -2643,6 +3124,36 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
 
         ai_concurrency = parse_ai_concurrency()
 
+        plugins_for_fix = await self._ensure_plugins()
+        plugin_ids = transform_rule_ids(plugins_for_fix)
+        plugin_hierarchy: list[bytes] = []
+
+        async def _plugin_transform_fn(
+            violation: ViolationDict,
+            yaml_lines: str,
+            file_path: str,
+        ) -> str | None:
+            plugin = plugin_for_rule(plugins_for_fix, str(violation.get("rule_id", "")))
+            if plugin is None:
+                return None
+            loop = asyncio.get_running_loop()
+            if not plugin_hierarchy:
+                plugin_hierarchy.append(await loop.run_in_executor(None, _plugin_hierarchy_payload, graph, scan_id))
+            applied, new_yaml, err = await call_plugin_transform(
+                plugin.address,
+                request_id=scan_id,
+                file_path=file_path,
+                yaml_content=yaml_lines,
+                violation=violation,
+                hierarchy_payload=plugin_hierarchy[0],
+            )
+            if err == PLUGIN_TRANSFORM_TRANSPORT:
+                raise RuntimeError(err)
+            if not applied or new_yaml is None:
+                return None
+            plugin_hierarchy.clear()
+            return new_yaml
+
         graph_engine = GraphRemediationEngine(
             registry=registry,  # type: ignore[arg-type]
             graph=graph,
@@ -2653,6 +3164,8 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             rescan_fn=_rescan_bridge,
             ai_provider=ai_provider,  # type: ignore[arg-type]
             ai_phase_start_cb=None,
+            plugin_transform_ids=plugin_ids,
+            plugin_transform_fn=_plugin_transform_fn if plugin_ids else None,
         )
         if ai_provider and not skip_ai:
 
@@ -2739,6 +3252,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         # the graph-owned NodeState snapshot objects.
         remaining = [dict(v) for v in graph_report.remaining_violations]
         remaining.extend(dep_health_violations)
+        _append_unbound_ext(remaining, session.plugin_unbound_violations, graph)
         add_classification_to_violations(remaining)
         session.dep_health_violations = [dict(v) for v in remaining if str(v.get("source", "")) in dep_health_sources]
 
@@ -3382,6 +3896,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                 registry=engine._registry,  # noqa: SLF001
                 max_ai_attempts=engine._max_ai_attempts,  # noqa: SLF001
                 concurrency=ai_concurrency,
+                plugin_transform_ids=getattr(engine, "_plugin_transform_ids", None) or frozenset(),
             )
         except BudgetConfigError as exc:
             yield SessionEvent(error=SessionError(code="invalid_budget_config", message=str(exc)))
@@ -3417,6 +3932,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
 
         remaining = [dict(v) for v in graph_report.remaining_violations]
         remaining.extend(session.dep_health_violations)
+        _append_unbound_ext(remaining, session.plugin_unbound_violations, graph)
         add_classification_to_violations(remaining)
         rem_counts = count_by_remediation_class(remaining)
         _enrich_violations_from_graph(remaining, graph, fixed=False)
@@ -3928,7 +4444,8 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         """Aggregate health including required validators and Galaxy Proxy.
 
         Engine is ok only when required validators and Galaxy Proxy are
-        configured and healthy.
+        configured and healthy. Third-party plugins (ADR-042) are probed
+        in the same fan-out (``required=False``) and never fail the aggregate.
 
         Required validators (native, OPA, Ansible) missing from the environment
         yield an unhealthy aggregate status so probes fail before scan setup.
@@ -3962,6 +4479,11 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                 continue
             metas.append((name, addr, required))
             coros.append(engine_health._probe_validator_health(name, addr, required=required))
+
+        for plugin_name, plugin_addr in discover_plugin_addresses():
+            pname = f"plugin:{plugin_name}"
+            metas.append((pname, plugin_addr, False))
+            coros.append(probe_plugin_health_outcome(plugin_name, plugin_addr))
 
         # Galaxy Proxy is required (HTTP /health) — sole collection install path.
         proxy_url = os.environ.get("APME_GALAXY_PROXY_URL", "").strip()
@@ -4315,6 +4837,7 @@ def _reconcile_after_approval(
         v["remediation_class"] = RemediationClass.MANUAL_REVIEW
     _enrich_violations_from_graph(remaining, graph, fixed=False)
     remaining.extend(dict(v) for v in session.dep_health_violations)
+    _append_unbound_ext(remaining, session.plugin_unbound_violations, graph)
 
     fixed = [dict(v) for v in graph.query_violations(status="fixed")]
     for v in fixed:

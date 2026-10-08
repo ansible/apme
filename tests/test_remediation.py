@@ -151,6 +151,29 @@ class TestPartition:
         assert is_finding_resolvable({"rule_id": "L021"}, reg) is True
         assert is_finding_resolvable({"rule_id": "L999"}, reg) is False
 
+    def test_plugin_transform_ids_are_tier1(self) -> None:
+        """EXT-* IDs declared by a plugin Transform are resolvable without registry."""
+        reg = TransformRegistry()
+        plugin_ids = frozenset({"EXT-orgpolicy-002"})
+        assert is_finding_resolvable({"rule_id": "EXT-orgpolicy-002"}, reg, plugin_ids) is True
+        assert is_finding_resolvable({"rule_id": "EXT-orgpolicy-001"}, reg, plugin_ids) is False
+        t1, t2, t3 = partition_violations(
+            [{"rule_id": "EXT-orgpolicy-002", "severity": "high", "scope": "task"}],
+            reg,
+            plugin_ids,
+        )
+        assert len(t1) == 1
+        assert t2 == []
+        assert t3 == []
+        t1, t2, t3 = partition_violations(
+            [{"rule_id": "EXT-orgpolicy-001", "severity": "high", "scope": "task"}],
+            reg,
+            plugin_ids,
+        )
+        assert t1 == []
+        assert t2 == []
+        assert len(t3) == 1
+
     def test_normalize_rule_id_strips_native_prefix(self) -> None:
         """Verifies normalize_rule_id strips 'native:' prefix."""
         assert normalize_rule_id("native:L021") == "L021"
@@ -211,6 +234,7 @@ class TestPartition:
     def test_classify_violation_manual_review(self) -> None:
         """Verifies classify_violation returns manual-review when ai_proposable is False."""
         assert classify_violation({"rule_id": "POLICY", "ai_proposable": False}) == RemediationClass.MANUAL_REVIEW
+        assert classify_violation({"rule_id": "EXT-orgpolicy-001", "scope": "task"}) == RemediationClass.MANUAL_REVIEW
 
     def test_add_classification_to_violations(self) -> None:
         """Verifies add_classification_to_violations classifies remaining violations."""

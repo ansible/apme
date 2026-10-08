@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed
+Partially Implemented (operator `spec.plugins[]`, PyPI SDK, per-plugin AI batching pending)
 
 ## Date
 
@@ -77,10 +77,10 @@ message DescribeResponse {
 }
 ```
 
-- **Validate** reuses existing `ValidateRequest`/`ValidateResponse`. Plugins consume `files` and `hierarchy_payload` (JSON). They ignore `scandata` (Python-specific serialization) — the contract is language-agnostic.
+- **Validate** reuses existing `ValidateRequest`/`ValidateResponse`. The Engine sends `request_id`, `files`, `hierarchy_payload` (JSON), `ansible_core_version`, and `collection_specs`. It does not forward `scandata`, `venv_path`, or `content_graph_data`.
 - **Transform** receives one file and the violation to fix, plus hierarchy context. Returns the transformed file or `applied=false` / an error.
-- **Describe** lets the plugin self-declare its name, rule ID prefix, and which rule IDs support transforms. The Engine calls this at startup to build the routing table.
-- **Health** reuses the existing `HealthRequest`/`HealthResponse` from `common.proto`.
+- **Describe** is used for version, optional prefix, and `transform_rule_ids`. Plugin **identity** is the env-var token (`APME_PLUGIN_<NAME>_ADDRESS` → name `<name>`), never `Describe.name` (a sidecar must not impersonate `opa` / `native`). The Engine keeps only Transform IDs under `EXT-<name>-`.
+- **Health** reuses the existing `HealthRequest`/`HealthResponse` from `common.proto`. Plugin Health is probed with the required validators but is never `required` for Engine aggregate status.
 
 ### 2. Rule ID convention: EXT- prefix
 
@@ -107,8 +107,8 @@ APME_PLUGIN_<NAME>_ADDRESS=host:port
 Examples:
 
 ```bash
-APME_PLUGIN_SECTEAM_ADDRESS=localhost:50060
-APME_PLUGIN_ORGPOLICY_ADDRESS=localhost:50061
+APME_PLUGIN_SECTEAM_ADDRESS=localhost:50100
+APME_PLUGIN_ORGPOLICY_ADDRESS=localhost:50101
 ```
 
 - The Engine scans env vars matching `APME_PLUGIN_*_ADDRESS` at startup.
@@ -123,13 +123,21 @@ During fix passes, the Engine (or Remediation Engine) routes violations by rule 
 - **Built-in prefixes** (L, M, R, P, SEC) — routed to the built-in `TransformRegistry` as today.
 - **EXT- prefix** — routed to the originating plugin's `Transform` RPC. The Engine maintains a `rule_prefix -> plugin_address` map built from `Describe` responses.
 
-Plugin transforms participate in the same convergence loop: scan -> fix -> rescan -> repeat until stable. The plugin receives one `TransformRequest` per violation, returns the fixed file (or `applied=false`), and the Engine writes the result back before rescanning.
+Plugin transforms participate in the same convergence loop: scan -> fix -> rescan -> repeat until stable.
 
-If a plugin's `Transform` returns an error or `applied=false` for a given violation, the violation is reclassified as `REMEDIATION_CLASS_AI_CANDIDATE` with `REMEDIATION_RESOLUTION_TRANSFORM_FAILED` (Tier 2), matching the built-in remediation engine's handling of transform failures. The violation then enters the AI escalation path described below.
+**Graph-safe Transform (amendment, ADR-044):** Built-in Tier 1 uses node-local `CommentedMap` functions via `TransformRegistry` / `ContentGraph.apply_transform`. Plugins do **not** receive `TransformSession` over gRPC (that API is engine-internal). Instead:
 
-### 5. AI escalation for plugin violations
+- `TransformRequest.file.content` is the **current node YAML fragment** (`ContentNode.yaml_lines`); `file.path` is the playbook path.
+- The plugin returns replacement node YAML (`applied=true`) or `applied=false`.
+- The Engine checks YAML well-formedness, then `ContentGraph.apply_yaml()` and marks the node dirty. Plugins never write `/sessions` or the user tree.
 
-When plugin violations reach Tier 2 (no transform registered, or transform failed), they enter AI-assisted remediation. Plugin violations require different handling than built-in violations because APME's AI prompts are tuned for built-in rules and have no domain knowledge about third-party checks.
+Whole-file rewrites (e.g. wrapping a SAST tool that emits unified diffs) remain a future extension; v1 is node-scoped so identity and convergence stay intact.
+
+If a plugin's `Transform` returns an error or `applied=false` for a given violation, the Engine stamps `REMEDIATION_CLASS_MANUAL_REVIEW` with `REMEDIATION_RESOLUTION_TRANSFORM_FAILED` on **that finding**. Transport failures (RPC raise) also drop the rule ID from further plugin Transform routing. Phase 4 (per-plugin AI batching) is **not** implemented yet: EXT- findings are excluded from the built-in mixed-node AI pass so they are not merged into built-in prompts.
+
+### 5. AI escalation for plugin violations (Phase 4 — not implemented)
+
+When Phase 4 ships, plugin violations that have no Transform (or whose Transform failed) enter a **separate** AI pass per plugin prefix. Until then, remaining ``EXT-`` findings are ``MANUAL_REVIEW``. Plugin violations require different handling than built-in violations because APME's AI prompts are tuned for built-in rules and have no domain knowledge about third-party checks.
 
 #### AI guidance via violation metadata
 
@@ -148,7 +156,7 @@ The SDK provides a convenience parameter:
 ```python
 self.violation(
     rule_id="001",
-    level="warning",
+    severity="high",
     message="Plays must have a department tag",
     file=node["file"],
     line=node["line"][0],
@@ -195,10 +203,10 @@ The plugin system is not viable without a low-friction authoring experience. The
 
 - Async gRPC server lifecycle (startup, graceful shutdown, signal handling)
 - `Describe` response auto-generated from class attributes (`name`, `version`)
-- `Health` endpoint (always returns `"ok"`)
+- `Health` endpoint (override ``PluginBase.health()``; default ``ok``. Example sidecars fail Health when the wrapped tool/bundle is missing.)
 - `EXT-` prefix enforcement on rule IDs
 - Proto serialization/deserialization (plugin author works with plain dicts and dataclasses)
-- Configurable listen address via `APME_PLUGIN_LISTEN` env var (default `:50060`)
+- Configurable listen address via `APME_PLUGIN_LISTEN` env var (default `0.0.0.0:50100`). Plugin ports are **50100–50199** so they never collide with Engine `:50051`, validators `:50053–50059` / `:50062`, Gateway `:50060`, or Abbenay `:50057`.
 
 **Plugin author implements two methods:**
 
@@ -223,7 +231,7 @@ class MyOrgPlugin(PluginBase):
                     violations.append(
                         self.violation(
                             rule_id="001",
-                            level="warning",
+                            severity="warning",
                             message="Plays must have a department tag",
                             file=node["file"],
                             line=node["line"][0],
@@ -233,30 +241,26 @@ class MyOrgPlugin(PluginBase):
                     )
         return violations
 
-    def transform(self, file, violation):
+    def transform_rule_ids(self):
+        return [self.prefixed_id("001")]
+
+    def transform(self, file_path, content, violation, hierarchy=None):
+        del file_path, hierarchy
         if violation.rule_id != self.prefixed_id("001"):
             return None
-
         import yaml
 
-        docs = list(yaml.safe_load_all(file.content.decode()))
-        changed = False
-        for doc in docs:
-            if not isinstance(doc, dict):
-                continue
-            tags = doc.get("tags")
-            if tags is None:
-                doc["tags"] = ["dept:unassigned"]
-                changed = True
-            elif isinstance(tags, list) and not any(t.startswith("dept:") for t in tags):
-                tags.append("dept:unassigned")
-                changed = True
-
-        if not changed:
+        doc = yaml.safe_load(content.decode())
+        if not isinstance(doc, dict):
             return None
-
-        out = yaml.dump_all(docs, default_flow_style=False).encode()
-        return self.file(path=file.path, content=out)
+        tags = doc.get("tags")
+        if tags is None:
+            doc["tags"] = ["dept:unassigned"]
+        elif isinstance(tags, list) and not any(str(t).startswith("dept:") for t in tags):
+            tags.append("dept:unassigned")
+        else:
+            return None
+        return yaml.safe_dump(doc, default_flow_style=False).encode()
 
 
 if __name__ == "__main__":
@@ -393,6 +397,10 @@ apme-reviews/
 3. Update `scripts/gen_grpc.sh` to generate stubs for both packages
 4. Write an example plugin (e.g., "all plays must have a department tag")
 
+Local Podman images and `pod.yaml` containers for a private OPA bundle and
+[ansible-security-scanner](https://github.com/cpeoples/ansible-security-scanner):
+[PLUGIN_SIDECARS.md](../../docs/guides/PLUGIN_SIDECARS.md).
+
 ### Phase 2: Engine integration
 
 1. Add `APME_PLUGIN_*_ADDRESS` env var scanning to `engine_server.py`
@@ -402,8 +410,8 @@ apme-reviews/
 
 ### Phase 3: Remediation routing
 
-1. Update `normalize_rule_id()` in `partition.py` to recognize `EXT-` prefix
-2. Route `EXT-` violations to plugin `Transform` RPC instead of built-in registry
+1. Keep `EXT-` IDs as full strings (``normalize_rule_id`` lives in `rule_ids.py` and does not strip ``EXT-``)
+2. Route `EXT-` violations with declared `transform_rule_ids` to plugin `Transform` RPC instead of the built-in registry
 3. Integrate plugin transforms into the convergence loop
 4. Update `launcher.py` if plugins should be discoverable in local daemon mode
 
@@ -440,6 +448,7 @@ apme-reviews/
 - `src/apme_engine/daemon/engine_server.py` — Engine fan-out and remediation orchestration
 - `src/apme_engine/remediation/partition.py` — Rule ID normalization and tier classification
 - `src/apme_engine/remediation/registry.py` — Built-in TransformRegistry
+- [docs/guides/PLUGIN_SIDECARS.md](../../docs/guides/PLUGIN_SIDECARS.md) — build plugin images; add OPA / ansible-security-scanner containers to the Podman pod
 
 ---
 
@@ -450,3 +459,10 @@ apme-reviews/
 | 2026-03-20 | APME Team | Initial proposal |
 | 2026-03-20 | APME Team | Add AI escalation: per-plugin batching and ai_guidance metadata |
 | 2026-04-20 | APME Team | Link options briefing design doc in References |
+| 2026-10-05 | APME Team | Accept for implementation: node-scoped Transform + apply_yaml (ADR-044); plugin ports 50100+ (not Gateway 50060); operator attach is `Apme.spec.plugins[]` ([apme-operator#39](https://github.com/ansible/apme-operator/issues/39)) |
+| 2026-10-05 | APME Team | APME Engine: `plugin.proto`, SDK, discovery, Validate fan-out, EXT Transform routing |
+| 2026-10-05 | APME Team | Document Podman plugin sidecar images (custom OPA + ansible-security-scanner) |
+| 2026-10-05 | APME Team | Pin plugin identity to env token; retry Describe misses; strip Validate extras; bind file-scoped EXT- findings; stamp TRANSFORM_FAILED without mixed-node AI |
+| 2026-10-05 | APME Team | Honest Phase 4 gap: EXT- remaining is manual review; Validate sends ansible_core_version/collection_specs; Transform sends hierarchy; Health is overridable |
+| 2026-10-05 | APME Team | Pin unavailable findings on the ledger; Describe failures still Validate; exact path bind; demote finding not rule on applied=false |
+| 2026-10-05 | APME Team | Fail-closed prefix mismatch; plugin rescan cannot mark EXT- fixed; refresh unbound; Validate-shaped hierarchy on rescan/Transform |

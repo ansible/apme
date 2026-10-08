@@ -1,0 +1,44 @@
+syntax = "proto3";
+
+package apme.v1;
+
+import "apme/v1/common.proto";
+import "apme/v1/validate.proto";
+
+// Plugin is the third-party extension contract (ADR-042).
+// Separate from Validator so built-in validators stay read-only (ADR-009).
+service Plugin {
+  rpc Validate(ValidateRequest) returns (ValidateResponse);
+  rpc Transform(TransformRequest) returns (TransformResponse);
+  rpc Describe(DescribeRequest) returns (DescribeResponse);
+  rpc Health(HealthRequest) returns (HealthResponse);
+}
+
+// TransformRequest asks a plugin to fix one EXT-* violation.
+// file.content is the current node YAML fragment (graph-safe, ADR-044);
+// file.path is the playbook/role file path.
+message TransformRequest {
+  string request_id = 1;
+  File file = 2;
+  Violation violation = 3;
+  bytes hierarchy_payload = 4;
+}
+
+message TransformResponse {
+  string request_id = 1;
+  File file = 2;
+  bool applied = 3;
+  string error = 4;
+}
+
+message DescribeRequest {}
+
+message DescribeResponse {
+  string name = 1;
+  string version = 2;
+  // e.g. "EXT-orgpolicy-". Engine uses this to route Transform and drop
+  // violations that do not match.
+  string rule_id_prefix = 3;
+  repeated string transform_rule_ids = 4;
+  map<string, string> metadata = 5;
+}

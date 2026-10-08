@@ -189,6 +189,7 @@ module = [
     "apme.v1.engine_pb2_grpc",
     "apme.v1.validate_pb2_grpc",
     "apme.v1.reporting_pb2_grpc",
+    "apme.v1.plugin_pb2_grpc",
 ]
 ignore_errors = true
 

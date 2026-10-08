@@ -531,6 +531,35 @@ class TestLoadAiPrompts:
         assert "Rule-Specific Guidance" not in prompt
         _load_ai_prompts.cache_clear()
 
+    def test_node_prompt_includes_plugin_ai_guidance(self, tmp_path: Path) -> None:
+        """Plugin ``ai_guidance`` is injected when catalog has no ai_prompt.
+
+        Args:
+            tmp_path: Pytest temporary directory fixture.
+        """
+        _load_ai_prompts.cache_clear()
+        with patch(
+            "apme_engine.remediation.abbenay_provider._RULE_DOC_DIRS",
+            [tmp_path],
+        ):
+            ctx = AINodeContext(
+                node_id="task-ext",
+                node_type="task",
+                file_path="test.yml",
+                yaml_lines="- name: test\n  community.general.apk:\n    name: x",
+                violations=[
+                    {
+                        "rule_id": "EXT-orgpolicy-001",
+                        "message": "Banned collection",
+                        "ai_guidance": "Use ansible.builtin instead.",
+                    }
+                ],
+            )
+            prompt = _build_node_prompt(ctx)
+        assert "Use ansible.builtin instead." in prompt
+        assert "EXT-orgpolicy-001" in prompt
+        _load_ai_prompts.cache_clear()
+
 
 def _make_provider_with_client(mock_client: MagicMock) -> AbbenayProvider:
     """Build an AbbenayProvider bypassing __init__ with a mocked chat client.

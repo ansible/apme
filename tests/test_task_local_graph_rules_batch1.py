@@ -838,6 +838,7 @@ class TestNoqaSuppression:
         assert parse_noqa("- name: X  #noqa: L068 lola\n") == frozenset({"L068"})
         assert parse_noqa("- name: X  # noqa: R114 - why trusted\n") == frozenset({"R114"})
         assert parse_noqa("- name: X  # noqa: L068, R108 intentional\n") == frozenset({"L068", "R108"})
+        assert parse_noqa("- name: X  # noqa: EXT-orgpolicy-001\n") == frozenset({"EXT-ORGPOLICY-001"})
 
     def test_filter_noqa_violations_drops_opa_l068(self) -> None:
         """Engine-side filter drops OPA L068 when the task has ``# noqa: L068``."""

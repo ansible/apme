@@ -17,6 +17,7 @@ from apme_engine.graph.content_graph import (
     NodeScope,
     NodeType,
 )
+from apme_engine.graph.relpath import norm_relpath
 from apme_engine.graph.rule_base import (
     GraphRule,
     GraphRuleResult,
@@ -29,6 +30,7 @@ from apme_engine.graph.scanner import (
 from apme_engine.graph.types import RemediationResolution, RuleScope
 from apme_engine.remediation.graph_engine import (
     GraphRemediationEngine,
+    _resolve_dirty_violations,
     splice_modifications,
 )
 from apme_engine.remediation.registry import TransformRegistry
@@ -60,6 +62,13 @@ _TASK_YAML_COPY = """\
     src: a.txt
     dest: /tmp/a.txt
 """
+
+
+def test_norm_relpath_strips_dot_slash_and_backslashes() -> None:
+    """Binder and remediation must agree on ``./`` and Windows slashes."""
+    assert norm_relpath("./playbooks/site.yml") == "playbooks/site.yml"
+    assert norm_relpath(r"playbooks\site.yml") == "playbooks/site.yml"
+    assert norm_relpath("") == ""
 
 
 def _make_node(
@@ -980,6 +989,268 @@ class TestGraphRemediationEngine:
         assert step["phase"] == "transformed"
         assert isinstance(step["diff"], str)
         assert len(str(step["diff"])) > 0
+
+    async def test_plugin_transform_applies_yaml(self) -> None:
+        """EXT-* findings with a plugin Transform rewrite node YAML via apply_yaml."""
+        graph = ContentGraph()
+        node = _make_node(module="apt")
+        graph.add_node(node)
+        registry = TransformRegistry()
+        rule_id = "EXT-orgpolicy-002"
+
+        async def _fn(
+            _violation: ViolationDict,
+            _yaml_lines: str,
+            _file_path: str,
+        ) -> str | None:
+            return _TASK_YAML_FQCN
+
+        async def _rescan(_graph: ContentGraph, _dirty: frozenset[str]) -> list[ViolationDict]:
+            return []
+
+        engine = GraphRemediationEngine(
+            registry,
+            graph,
+            [],
+            plugin_transform_ids=frozenset({rule_id}),
+            plugin_transform_fn=_fn,
+            rescan_fn=_rescan,
+            max_passes=2,
+        )
+        report = await engine.remediate(
+            initial_violations=[
+                {
+                    "rule_id": rule_id,
+                    "path": node.node_id,
+                    "file": node.file_path,
+                    "severity": "high",
+                    "scope": "task",
+                }
+            ]
+        )
+        assert report.fixed == 1
+        updated = graph.get_node(node.node_id)
+        assert updated is not None
+        assert "ansible.builtin.apt" in updated.yaml_lines
+
+    async def test_plugin_transform_rejects_invalid_yaml(self) -> None:
+        """Malformed plugin YAML is skipped (node unchanged)."""
+        graph = ContentGraph()
+        node = _make_node(module="apt")
+        graph.add_node(node)
+        original = node.yaml_lines
+        registry = TransformRegistry()
+        rule_id = "EXT-orgpolicy-002"
+
+        async def _fn(
+            _violation: ViolationDict,
+            _yaml_lines: str,
+            _file_path: str,
+        ) -> str | None:
+            return ": this: is: [not yaml"
+
+        async def _rescan(_graph: ContentGraph, _dirty: frozenset[str]) -> list[ViolationDict]:
+            return []
+
+        engine = GraphRemediationEngine(
+            registry,
+            graph,
+            [],
+            plugin_transform_ids=frozenset({rule_id}),
+            plugin_transform_fn=_fn,
+            rescan_fn=_rescan,
+            max_passes=2,
+        )
+        report = await engine.remediate(
+            initial_violations=[
+                {
+                    "rule_id": rule_id,
+                    "path": node.node_id,
+                    "file": node.file_path,
+                    "severity": "high",
+                    "scope": "task",
+                }
+            ]
+        )
+        assert report.fixed == 0
+        updated = graph.get_node(node.node_id)
+        assert updated is not None
+        assert updated.yaml_lines == original
+        remaining = report.remaining_violations
+        assert remaining
+        assert remaining[0]["remediation_resolution"] == RemediationResolution.TRANSFORM_FAILED
+        assert rule_id in engine._plugin_transform_ids
+
+    async def test_plugin_transform_rejects_root_shape_mismatch(self) -> None:
+        """A mapping must not replace a sequence node fragment."""
+        graph = ContentGraph()
+        node = _make_node(module="apt")
+        graph.add_node(node)
+        registry = TransformRegistry()
+        rule_id = "EXT-orgpolicy-002"
+        original = node.yaml_lines
+
+        async def _fn(
+            _violation: ViolationDict,
+            _yaml_lines: str,
+            _file_path: str,
+        ) -> str | None:
+            return "name: Install nginx\nansible.builtin.apt:\n  name: nginx\n"
+
+        async def _rescan(_graph: ContentGraph, _dirty: frozenset[str]) -> list[ViolationDict]:
+            return []
+
+        engine = GraphRemediationEngine(
+            registry,
+            graph,
+            [],
+            plugin_transform_ids=frozenset({rule_id}),
+            plugin_transform_fn=_fn,
+            rescan_fn=_rescan,
+            max_passes=2,
+        )
+        report = await engine.remediate(
+            initial_violations=[
+                {
+                    "rule_id": rule_id,
+                    "path": node.node_id,
+                    "file": node.file_path,
+                    "severity": "high",
+                    "scope": "task",
+                }
+            ]
+        )
+        assert report.fixed == 0
+        updated = graph.get_node(node.node_id)
+        assert updated is not None
+        assert updated.yaml_lines == original
+        remaining = report.remaining_violations
+        assert remaining
+        assert remaining[0]["remediation_resolution"] == RemediationResolution.TRANSFORM_FAILED
+
+    def test_resolve_dirty_keeps_ext_on_plugin_unavailable(self) -> None:
+        """A plugin Validate failure must not mark that plugin's findings fixed."""
+        graph = ContentGraph()
+        node = _make_node(module="apt")
+        graph.add_node(node)
+        graph.register_violations(
+            [
+                {
+                    "rule_id": "EXT-orgpolicy-001",
+                    "path": node.node_id,
+                    "file": node.file_path,
+                    "severity": "high",
+                    "scope": "task",
+                }
+            ],
+            0,
+        )
+        _resolve_dirty_violations(
+            graph,
+            [{"rule_id": "EXT-orgpolicy-unavailable", "path": "site.yml", "file": ""}],
+            frozenset({node.node_id}),
+            fixed_by="deterministic",
+            pass_number=1,
+        )
+        record = node.violation_ledger.get((node.node_id, "EXT-orgpolicy-001"))
+        assert record is not None
+        assert record.status == "open"
+
+    def test_resolve_dirty_unbound_ext_stays_file_scoped(self) -> None:
+        """Unbound EXT- findings do not keep a different file's node open."""
+        graph = ContentGraph()
+        node_a = _make_node(
+            "playbooks/a.yml/plays[0]/tasks[0]",
+            file_path="playbooks/a.yml",
+        )
+        node_b = _make_node(
+            "playbooks/b.yml/plays[0]/tasks[0]",
+            file_path="playbooks/b.yml",
+            line_start=10,
+            line_end=14,
+        )
+        graph.add_node(node_a)
+        graph.add_node(node_b)
+        rule_id = "EXT-secscan-hardcoded-secret"
+        graph.register_violations(
+            [
+                {
+                    "rule_id": rule_id,
+                    "path": node_a.node_id,
+                    "file": node_a.file_path,
+                    "severity": "high",
+                    "scope": "task",
+                },
+                {
+                    "rule_id": rule_id,
+                    "path": node_b.node_id,
+                    "file": node_b.file_path,
+                    "severity": "high",
+                    "scope": "task",
+                },
+            ],
+            0,
+        )
+        _resolve_dirty_violations(
+            graph,
+            [{"rule_id": rule_id, "path": "", "file": f"./{node_b.file_path}"}],
+            frozenset({node_a.node_id, node_b.node_id}),
+            fixed_by="deterministic",
+            pass_number=1,
+        )
+        rec_a = node_a.violation_ledger.get((node_a.node_id, rule_id))
+        rec_b = node_b.violation_ledger.get((node_b.node_id, rule_id))
+        assert rec_a is not None
+        assert rec_a.status == "fixed"
+        assert rec_b is not None
+        assert rec_b.status == "open"
+
+    async def test_plugin_ext_findings_skip_builtin_ai(self) -> None:
+        """EXT- findings are not sent through the built-in mixed-node AI pass."""
+        from unittest.mock import AsyncMock
+
+        graph = ContentGraph()
+        node = _make_node(module="apt")
+        graph.add_node(node)
+        registry = TransformRegistry()
+        rule_id = "EXT-orgpolicy-002"
+        ai_provider = AsyncMock()
+        ai_provider.propose_node_fix = AsyncMock(side_effect=AssertionError("EXT- must not enter built-in AI"))
+
+        async def _fn(
+            _violation: ViolationDict,
+            _yaml_lines: str,
+            _file_path: str,
+        ) -> str | None:
+            return None
+
+        async def _rescan(_graph: ContentGraph, _dirty: frozenset[str]) -> list[ViolationDict]:
+            return []
+
+        engine = GraphRemediationEngine(
+            registry,
+            graph,
+            [],
+            plugin_transform_ids=frozenset({rule_id}),
+            plugin_transform_fn=_fn,
+            rescan_fn=_rescan,
+            ai_provider=ai_provider,
+            max_passes=2,
+        )
+        report = await engine.remediate(
+            initial_violations=[
+                {
+                    "rule_id": rule_id,
+                    "path": node.node_id,
+                    "file": node.file_path,
+                    "severity": "high",
+                    "scope": "task",
+                }
+            ]
+        )
+        ai_provider.propose_node_fix.assert_not_called()
+        assert report.fixed == 0
+        assert report.remaining_violations
 
 
 # ---------------------------------------------------------------------------

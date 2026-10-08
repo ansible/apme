@@ -105,7 +105,9 @@ artifact type, translate it:
 1. **Does every statement mean what it says?** Check every type
    annotation, return value, error code, version range, log level,
    comment, and docstring. If the code declares it, the runtime must
-   honor it on every path.
+   honor it on every path. Required Protocol/base hooks must not
+   silently succeed with an empty result when the contract says the
+   method is mandatory — raise so callers fail closed.
 
 2. **Does this expose more than it should?** Check every log call,
    error message, and user-facing string. Does it contain user content,
@@ -147,6 +149,10 @@ artifact type, translate it:
    or runs untrusted/repo scripts after checkout, is
    `persist-credentials: false` set so `GITHUB_TOKEN` is not left
    in local Git config? Match sibling jobs in the same workflow.
+   Generated gRPC stubs are a dependency: `GRPC_GENERATED_VERSION` in
+   `*_pb2_grpc.py` must match the locked grpcio. Pin `tox -e grpc`
+   (`grpcio-tools==…`) to that same version — `>=` lets a newer
+   toolchain rewrite stubs that then refuse to import against the lock.
 
 6. **Is there dead weight?** Check for unused imports, unreachable
    branches, written-but-never-read variables, parameters accepted
@@ -237,7 +243,10 @@ artifact type, translate it:
      of a different class (e.g. Tier 1 fixed + AI-candidate +
      MANUAL_REVIEW on the same node path)? Filters must be
      allowlists of the intended class, not "everything except X"
-     — the latter silently includes unrelated classes.
+     — the latter silently includes unrelated classes. When a leftover
+     / unbound finding set is unioned onto every dirty node, construct
+     two nodes in different files that share a rule ID — carry-over
+     must be scoped to a matching ``file`` (empty file may mean global).
    - **Docstring vs deny-by-default** — if prose says "only when
      compatible" / "same class", the fallback branch must not return
      ``True`` unconditionally for unknown/sentinel sources.
@@ -248,6 +257,10 @@ artifact type, translate it:
    but expected behaviors (validators must be read-only per ADR-009,
    gRPC servicers must use `grpc.aio` per ADR-007, transforms must
    call `submit()` for changes to take effect per ADR-044).
+   Async servicers (including the plugin SDK) must run blocking
+   hooks — Validate, Transform, *and* Health — via
+   `run_in_executor()`; matching two of three RPCs is not the
+   full ADR-007 contract.
 
 Only proceed to Step 3b after completing this review.
 
@@ -361,8 +374,18 @@ unavoidable; when checking membership of a *small* candidate set
 against a large table, query the intersection of those candidates —
 never load the full table into Python just to filter a handful of ids),
 silent ``OSError``/I/O suppress on paths later re-read by the pipeline
-(stale content), writes that skip the same path-safety checks as
+(stale content), ``errors="replace"`` / ``errors="ignore"`` on bytes
+that will be persisted or re-parsed (treat invalid encoding as
+failure), writes that skip the same path-safety checks as
 sibling helpers (``resolve`` + ``is_relative_to`` / reject ``..``),
+path equality across modules that must share one normalizer
+(backslashes, leading ``./`` — do not compare raw plugin ``file``
+to ``node.file_path``),
+helpers that write a tree then pass *relative* ``target_files`` to a
+scanner whose ``directory=`` is not CWD (paths resolve from CWD —
+pass absolute paths under the tree root), fail-closed filters that
+keep some valid rows and drop others without a diagnostic (mixed
+valid+invalid is still incomplete),
 and short-circuiting ``a() or b()`` / ``a() and b()`` when both calls
 have required side effects (e.g. promote ledger status after approving
 progression — evaluate both unconditionally).
@@ -399,6 +422,10 @@ GitHub ``run:``), construct interpolator collisions: unescaped
 ``{...}`` that tox substitutes before Python runs. For
 ``next(glob(...))``, construct the empty-match path and require an
 explicit error instead of ``StopIteration``.
+When a docs/shell recipe starts a foreground server, construct the
+one-shell reader: later ``export`` / client commands never run. Put
+env exports before the blocking command and say a second shell
+consumes them.
 
 For any text unescape/decode normalizer, construct inputs with one and
 multiple escaping layers, structural boundaries at root and nested
@@ -452,6 +479,8 @@ critical/high/medium/low.
 - Silent no-ops, dead branches, wrong defaults
 - **Dependencies pinned to intent** — version ranges, GitHub Action
   tags, base images, pip/uv specs (not tighter, not looser);
+  generated ``GRPC_GENERATED_VERSION`` vs locked grpcio (pin
+  ``tox -e grpc`` ``grpcio-tools==`` that version, not ``>=``);
   checkout `persist-credentials: false` when write-scoped tokens
   must not remain in local Git config for later steps.
   Tool versions in workflow YAML vs the repo-managed source
@@ -486,7 +515,8 @@ AGENTS.md architectural invariants, and the implementation. Ask:
 - Is the grain/grouping/API shape honest for the UX story?
 - Do filters or demotions contradict docs/ADR claims?
 - Any invariant violations (validators read-only ADR-009, grpc.aio
-  ADR-007, engine never queries out ADR-020/029, REST additive-only
+  ADR-007 including plugin SDK Health/Validate/Transform executors,
+  engine never queries out ADR-020/029, REST additive-only
   ADR-060, transforms submit() ADR-044, tox-only ADR-047, etc.)?
 - Do Protocol / base-class implementations honor full runtime contracts,
   not just compiler-required members?

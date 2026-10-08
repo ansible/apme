@@ -139,6 +139,10 @@ apme health-check --json                  # machine-readable
 apme health-check --timeout 5             # custom timeout (seconds)
 ```
 
+Exit code 1 when Engine or a **required** downstream service is not `ok`.
+Optional plugin sidecars (`plugin:<name>`) are listed but do not fail the
+command.
+
 ### `apme suppress` — manage violation suppressions
 
 ```bash

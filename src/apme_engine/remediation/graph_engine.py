@@ -23,8 +23,11 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+import yaml
+
 from apme_engine.engine.models import ViolationDict
 from apme_engine.graph.content_graph import ContentGraph
+from apme_engine.graph.relpath import norm_relpath
 from apme_engine.graph.rule_base import GraphRule
 from apme_engine.graph.scanner import (
     expand_dirty_node_ids,
@@ -32,6 +35,7 @@ from apme_engine.graph.scanner import (
     rescan_dirty,
     scan,
 )
+from apme_engine.graph.types import RemediationClass, RemediationResolution
 from apme_engine.remediation.partition import partition_violations
 from apme_engine.remediation.registry import TransformRegistry
 from apme_engine.rule_ids import normalize_rule_id
@@ -44,6 +48,45 @@ logger = logging.getLogger("apme.remediation.graph")
 ProgressCallback = Callable[[str, str, float, int], None]
 RescanFn = Callable[[ContentGraph, frozenset[str]], Awaitable[list["ViolationDict"]]]
 AiPhaseStartCallback = Callable[[list[ViolationDict]], Awaitable[None] | None]
+PluginTransformFn = Callable[[ViolationDict, str, str], Awaitable[str | None]]
+
+
+def _yaml_root_kind(text: str) -> str | None:
+    """Return ``map`` or ``seq`` when ``text`` is a node-shaped YAML document.
+
+    Args:
+        text: YAML document or node fragment.
+
+    Returns:
+        ``map`` for a mapping, ``seq`` for a one-item list of mapping, else None.
+    """
+    if not text.strip():
+        return None
+    try:
+        docs = list(yaml.safe_load_all(text))
+    except yaml.YAMLError:
+        return None
+    if len(docs) != 1 or docs[0] is None:
+        return None
+    data = docs[0]
+    if isinstance(data, dict):
+        return "map"
+    if isinstance(data, list) and len(data) == 1 and isinstance(data[0], dict):
+        return "seq"
+    return None
+
+
+def _yaml_is_well_formed(text: str) -> bool:
+    """Return True when ``text`` is a single non-null YAML document.
+
+    Args:
+        text: Node YAML fragment from a plugin Transform.
+
+    Returns:
+        False when empty, multi-document, null, not a mapping, or
+        ``yaml.safe_load_all`` raises.
+    """
+    return _yaml_root_kind(text) is not None
 
 
 @dataclass
@@ -192,6 +235,8 @@ class GraphRemediationEngine:
         rescan_fn: RescanFn | None = None,
         ai_provider: AIProvider | None = None,
         ai_phase_start_cb: AiPhaseStartCallback | None = None,
+        plugin_transform_ids: frozenset[str] | None = None,
+        plugin_transform_fn: PluginTransformFn | None = None,
     ) -> None:
         """Initialize the graph remediation engine.
 
@@ -214,6 +259,8 @@ class GraphRemediationEngine:
                 only in-memory graph rules.
             ai_provider: Optional AI provider for Tier 2 transforms.
             ai_phase_start_cb: Optional callback when Tier 2 begins (ADR-068).
+            plugin_transform_ids: EXT-* rule IDs a plugin can Transform (ADR-042).
+            plugin_transform_fn: Async ``(violation, yaml, file_path) -> new_yaml``.
         """
         self._registry = registry
         self._graph = graph
@@ -225,6 +272,8 @@ class GraphRemediationEngine:
         self._rescan_fn = rescan_fn
         self._ai_provider = ai_provider
         self._ai_phase_start_cb = ai_phase_start_cb
+        self._plugin_transform_ids: set[str] = set(plugin_transform_ids or ())
+        self._plugin_transform_fn = plugin_transform_fn
 
     def _progress(
         self,
@@ -324,7 +373,7 @@ class GraphRemediationEngine:
         for pass_num in range(1, self._max_passes + 1):
             passes = pass_num
             tier1_stalled = False
-            tier1, tier2, tier3 = partition_violations(violations, registry)
+            tier1, tier2, tier3 = partition_violations(violations, registry, self._plugin_transform_ids)
             logger.debug(
                 "Graph remediation pass %d: %d violations -> tier1=%d tier2=%d "
                 "tier3=%d (ai_provider=%s skip_ai=%s skip_tier1=%s)",
@@ -371,11 +420,12 @@ class GraphRemediationEngine:
 
                 if applied_this_pass == 0:
                     tier1_stalled = True
-                    tier2.extend(tier1)
+                    promoted = [v for v in tier1 if not str(v.get("rule_id") or "").startswith("EXT-")]
+                    tier2.extend(promoted)
                     logger.debug(
                         "Graph remediation pass %d: tier1 stalled (0 applied); promoted %d to tier2 (total tier2=%d)",
                         pass_num,
-                        len(tier1),
+                        len(promoted),
                         len(tier2),
                     )
                 else:
@@ -388,7 +438,7 @@ class GraphRemediationEngine:
                         resolve_status=resolve_status,
                     )
                     violations = graph.collect_violations()
-                    new_tier1, new_tier2, _ = partition_violations(violations, registry)
+                    new_tier1, new_tier2, _ = partition_violations(violations, registry, self._plugin_transform_ids)
                     new_fixable = len(new_tier1)
 
                     if new_fixable >= prev_count:
@@ -437,7 +487,7 @@ class GraphRemediationEngine:
                     violations = graph.collect_violations()
 
                     # Phase C: Post-AI Tier 1 cleanup
-                    new_tier1, new_tier2, _ = partition_violations(violations, registry)
+                    new_tier1, new_tier2, _ = partition_violations(violations, registry, self._plugin_transform_ids)
                     if new_tier1:
                         self._progress(
                             "graph-tier1",
@@ -456,7 +506,7 @@ class GraphRemediationEngine:
                             resolve_status="pending_review" if interactive else "fixed",
                         )
                         violations = graph.collect_violations()
-                        _, new_tier2, _ = partition_violations(violations, registry)
+                        _, new_tier2, _ = partition_violations(violations, registry, self._plugin_transform_ids)
 
                     if new_tier2:
                         ai_feedback_by_node = _build_ai_feedback(new_tier2)
@@ -538,11 +588,14 @@ class GraphRemediationEngine:
             node_id = str(v.get("path", ""))
 
             transform_fn = registry.get_node_transform(rule_id)
-            if transform_fn is None:
+            if transform_fn is not None:
+                applied = await graph.apply_transform(node_id, transform_fn, v)
+            elif rule_id in self._plugin_transform_ids:
+                applied = await self._apply_plugin_transform(graph, node_id, v)
+            else:
                 skipped_no_transform += 1
                 continue
 
-            applied = await graph.apply_transform(node_id, transform_fn, v)
             if applied:
                 applied_this_pass += 1
             else:
@@ -568,6 +621,108 @@ class GraphRemediationEngine:
 
         return applied_this_pass
 
+    async def _apply_plugin_transform(
+        self,
+        graph: ContentGraph,
+        node_id: str,
+        violation: ViolationDict,
+    ) -> bool:
+        """Apply a plugin Transform RPC result onto one graph node.
+
+        Args:
+            graph: ContentGraph to mutate.
+            node_id: Node path.
+            violation: EXT-* finding.
+
+        Returns:
+            True when YAML was applied.
+        """
+        if self._plugin_transform_fn is None:
+            return False
+        node = graph.get_node(node_id)
+        if node is None or not node.yaml_lines:
+            self._stamp_plugin_transform_failed(graph, node_id, violation)
+            return False
+        try:
+            new_yaml = await self._plugin_transform_fn(violation, node.yaml_lines, node.file_path)
+        except Exception:  # noqa: BLE001 - plugin RPC failures must not abort convergence
+            logger.warning(
+                "Plugin transform raised for %s; demoting to MANUAL_REVIEW",
+                violation.get("rule_id"),
+                exc_info=True,
+            )
+            self._demote_failed_plugin_rule(graph, node_id, violation)
+            return False
+        if new_yaml is None:
+            self._stamp_plugin_transform_failed(graph, node_id, violation)
+            return False
+        if not _yaml_is_well_formed(new_yaml):
+            logger.warning(
+                "Plugin transform for %s failed or returned invalid YAML; skipping",
+                violation.get("rule_id"),
+            )
+            self._stamp_plugin_transform_failed(graph, node_id, violation)
+            return False
+        orig_kind = _yaml_root_kind(node.yaml_lines)
+        new_kind = _yaml_root_kind(new_yaml)
+        if orig_kind is not None and new_kind is not None and orig_kind != new_kind:
+            logger.warning(
+                "Plugin transform for %s returned a different YAML root shape; skipping",
+                violation.get("rule_id"),
+            )
+            self._stamp_plugin_transform_failed(graph, node_id, violation)
+            return False
+        return graph.apply_yaml(node_id, new_yaml)
+
+    def _stamp_plugin_transform_failed(
+        self,
+        graph: ContentGraph,
+        node_id: str,
+        violation: ViolationDict,
+    ) -> None:
+        """Stamp TRANSFORM_FAILED on one finding without retiring the rule.
+
+        Args:
+            graph: ContentGraph whose ledger holds the finding.
+            node_id: Node path.
+            violation: EXT-* finding that was not applied.
+        """
+        rule_id = normalize_rule_id(str(violation.get("rule_id", "")))
+        violation["remediation_class"] = RemediationClass.MANUAL_REVIEW
+        violation["remediation_resolution"] = RemediationResolution.TRANSFORM_FAILED
+        node = graph.get_node(node_id)
+        if node is None:
+            return
+        key = (node_id, rule_id)
+        record = node.violation_ledger.get(key)
+        if record is None:
+            return
+        updated = dict(record.violation)
+        updated["remediation_class"] = RemediationClass.MANUAL_REVIEW
+        updated["remediation_resolution"] = RemediationResolution.TRANSFORM_FAILED
+        record.violation = updated
+
+    def _demote_failed_plugin_rule(
+        self,
+        graph: ContentGraph,
+        node_id: str,
+        violation: ViolationDict,
+    ) -> None:
+        """Drop a plugin Transform ID after a transport failure (ADR-042).
+
+        Phase 4 (per-plugin AI batching) is not implemented; remaining EXT-
+        findings are ``MANUAL_REVIEW`` so they are not mixed into built-in
+        AI prompts or counted as AI work.
+
+        Args:
+            graph: ContentGraph whose ledger holds the finding.
+            node_id: Node path.
+            violation: EXT-* finding that failed Transform.
+        """
+        rule_id = normalize_rule_id(str(violation.get("rule_id", "")))
+        self._plugin_transform_ids.discard(rule_id)
+        self._stamp_plugin_transform_failed(graph, node_id, violation)
+
     async def _apply_ai_transforms(
         self,
         graph: ContentGraph,
@@ -576,6 +731,9 @@ class GraphRemediationEngine:
         feedback_by_node: dict[str, str],
     ) -> list[AINodeProposal]:
         """Apply AI transforms for Tier 2 violations.
+
+        EXT- plugin findings are skipped here (ADR-042 Phase 4 pending):
+        they must not share a prompt with built-in L/M/R/P/SEC rules.
 
         Proposals are fetched concurrently (bounded by
         ``max_ai_concurrency``), then applied serially because
@@ -595,6 +753,9 @@ class GraphRemediationEngine:
 
         by_node: dict[str, list[ViolationDict]] = defaultdict(list)
         for v in tier2:
+            rule_id = str(v.get("rule_id") or "")
+            if rule_id.startswith("EXT-"):
+                continue
             node_id = str(v.get("path", ""))
             if node_id:
                 by_node[node_id].append(v)
@@ -996,6 +1157,12 @@ def _resolve_dirty_violations(
     and calls ``graph.resolve_violations`` so that absent violations
     transition to *status* with the given attribution.
 
+    When the rescan includes ``EXT-<plugin>-unavailable``, open findings
+    for that plugin prefix stay remaining so a down sidecar cannot mark
+    them fixed. Unbound ``EXT-`` findings (no node ``path``) keep a
+    dirty node's ledger open only when the finding ``file`` is empty or
+    matches that node's ``file_path``.
+
     Args:
         graph: ContentGraph whose ledger to update.
         rescan_violations: Violations returned by the rescan.
@@ -1005,15 +1172,38 @@ def _resolve_dirty_violations(
         status: Target status (``"fixed"`` or ``"proposed"``).
     """
     remaining_by_node: dict[str, set[str]] = defaultdict(set)
+    unbound_ext: dict[str, set[str]] = defaultdict(set)
+    incomplete_prefixes: set[str] = set()
     for v in rescan_violations:
+        rule_id = normalize_rule_id(str(v.get("rule_id", "")))
         node_id = str(v.get("path", ""))
+        if rule_id.startswith("EXT-") and rule_id.rsplit("-", 1)[-1] == "unavailable":
+            incomplete_prefixes.add(rule_id[: -len("unavailable")])
         if node_id:
-            remaining_by_node[node_id].add(
-                normalize_rule_id(str(v.get("rule_id", ""))),
-            )
+            remaining_by_node[node_id].add(rule_id)
+        elif rule_id.startswith("EXT-"):
+            unbound_ext[rule_id].add(norm_relpath(str(v.get("file") or "")))
 
     for nid in dirty_ids:
         remaining = remaining_by_node.get(nid, set())
+        node = graph.get_node(nid)
+        if node is not None:
+            open_ext = {
+                normalize_rule_id(str(rec.violation.get("rule_id", "")))
+                for rec in node.violation_ledger.values()
+                if str(rec.violation.get("rule_id", "")).startswith("EXT-")
+            }
+            if unbound_ext:
+                remaining = remaining | {
+                    rid
+                    for rid in open_ext
+                    if rid in unbound_ext
+                    and ("" in unbound_ext[rid] or norm_relpath(node.file_path) in unbound_ext[rid])
+                }
+            if incomplete_prefixes:
+                remaining = remaining | {
+                    rid for rid in open_ext if any(rid.startswith(prefix) for prefix in incomplete_prefixes)
+                }
         graph.resolve_violations(
             nid,
             remaining,
