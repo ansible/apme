@@ -30,10 +30,10 @@
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-i18next": "^17.0.11",
-    "react-router": "^8.3.0",
+    "react-router": "^8.3.1",
     "react-syntax-highlighter": "^16.1.1",
     "styled-components": "^6.5.3",
-    "swr": "^2.4.2",
+    "swr": "^2.5.1",
     "undici": "8.10.0"
   },
   "devDependencies": {
@@ -48,7 +48,7 @@
     "@types/luxon": "^3.7.5",
     "@types/node": "^26.3.0",
     "@types/react": "^19.2.18",
-    "@types/react-dom": "^19.2.4",
+    "@types/react-dom": "^19.2.7",
     "@types/react-syntax-highlighter": "^15.5.13",
     "@vitejs/plugin-react": "^6.0.5",
     "debounce": "^3.0.0",
@@ -61,16 +61,16 @@
     "react-hook-form": "^7.86.0",
     "type-fest": "^5.9.0",
     "typescript": "^7.0.2",
-    "vite": "^8.2.0",
-    "vitest": "4.1.11",
+    "vite": "^8.2.2",
+    "vitest": "5.0.0",
     "zustand": "^5.0.15"
   },
   "overrides": {
     "undici": "8.10.0",
     "@babel/core": ">=7.29.6",
     "postcss": "8.5.23",
-    "vitest": "4.1.11",
-    "@vitest/mocker": "4.1.11"
+    "vitest": "5.0.0",
+    "@vitest/mocker": "5.0.0"
   },
   "workspaces": [
     "packages/*"

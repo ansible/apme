@@ -206,3 +206,50 @@ jobs:
                 });
               }
             }
+
+  close-dependabot-duplicates:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        with:
+          script: |
+            const combinedPullNumber = 768;
+            const duplicatePullNumbers = [760, 761, 762, 763, 764, 765, 766];
+
+            const { data: combinedPull } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: combinedPullNumber,
+            });
+
+            if (!combinedPull.merged_at) {
+              console.log(`PR #${combinedPullNumber} has not merged; skipping.`);
+              return;
+            }
+
+            for (const pullNumber of duplicatePullNumbers) {
+              const { data: pull } = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: pullNumber,
+              });
+
+              if (pull.state !== "open") {
+                console.log(`PR #${pullNumber} is already ${pull.state}; skipping.`);
+                continue;
+              }
+
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pullNumber,
+                body: `Closed because the combined Dependabot update in #${combinedPullNumber} was merged.`,
+              });
+              await github.rest.pulls.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: pullNumber,
+                state: "closed",
+              });
+            }
