@@ -16,6 +16,53 @@ _PATCH_INSTALL = "apme_engine.venv_manager.session.install_collections_increment
 _INSTALL_RETURN: list[str] = []
 
 
+def _wait_for(predicate: object, timeout: float = 2.0, interval: float = 0.005) -> bool:
+    """Poll predicate until true or deadline passes (deterministic wait).
+
+    Args:
+        predicate: Zero-arg callable returning truthy when the condition holds.
+        timeout: Maximum seconds to wait.
+        interval: Poll interval in seconds.
+
+    Returns:
+        Final predicate value (truthy when the condition was met).
+    """
+    deadline = time.monotonic() + timeout
+    result: object = None
+    while time.monotonic() < deadline:
+        result = predicate()  # type: ignore[operator]
+        if result:
+            return True
+        time.sleep(interval)
+    result = predicate()  # type: ignore[operator]
+    return bool(result)
+
+
+def _wait_for_clock_advance(since: float, timeout: float = 2.0) -> None:
+    """Wait until wall-clock advances past *since* (replaces bare sleeps).
+
+    Args:
+        since: Earlier ``time.time()`` value to advance beyond.
+        timeout: Maximum seconds to wait.
+    """
+    assert _wait_for(lambda: time.time() > since, timeout=timeout), "clock did not advance"
+
+
+@pytest.fixture(autouse=True)  # type: ignore[untyped-decorator]
+def _no_live_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Block live network in unit tests; network belongs behind integration marker.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+    import urllib.request
+
+    def _blocked(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("live network blocked in unit tests - use integration marker")
+
+    monkeypatch.setattr(urllib.request, "urlopen", _blocked)
+
+
 def _fake_create_base_venv(venv_dir: Path, ansible_core_version: str, **_kw: object) -> None:
     """Create a minimal venv skeleton for testing.
 
@@ -167,7 +214,7 @@ class TestWarmHit:
         """
         s1 = manager.acquire("sid", "2.17")
         t1 = s1.last_used_at
-        time.sleep(0.05)
+        _wait_for_clock_advance(t1)
         s2 = manager.acquire("sid", "2.17")
         assert s2.last_used_at > t1
 
@@ -287,7 +334,9 @@ class TestMultiVersion:
             manager: VenvSessionManager fixture.
         """
         manager.acquire("sid", "2.17")
-        time.sleep(0.05)
+        first = manager.get("sid", "2.17")
+        assert first is not None
+        _wait_for_clock_advance(first.last_used_at)
         manager.acquire("sid", "2.18")
         latest = manager.get("sid")
         assert latest is not None
@@ -313,8 +362,8 @@ class TestTTLReaping:
             sessions_root: Temporary sessions root fixture.
         """
         mgr = VenvSessionManager(sessions_root=sessions_root, ttl_seconds=0)
-        mgr.acquire("sid", "2.17")
-        time.sleep(0.05)
+        acquired = mgr.acquire("sid", "2.17")
+        _wait_for_clock_advance(acquired.last_used_at)
         count = mgr.reap_expired()
         assert count == 1
         assert mgr.get("sid", "2.17") is None
@@ -356,8 +405,8 @@ class TestTTLReaping:
             sessions_root: Temporary sessions root fixture.
         """
         mgr = VenvSessionManager(sessions_root=sessions_root, ttl_seconds=1)
-        mgr.acquire("sid", "2.17")
-        time.sleep(0.05)
+        first_acquired = mgr.acquire("sid", "2.17")
+        _wait_for_clock_advance(first_acquired.last_used_at)
         mgr.acquire("sid", "2.18")
 
         meta_path = sessions_root / "sid" / "2.17.0" / "meta.json"
@@ -392,7 +441,8 @@ class TestTouchAndRelease:
         """
         manager.acquire("sid", "2.17")
         manager.acquire("sid", "2.18")
-        time.sleep(0.05)
+        before = time.time()
+        _wait_for_clock_advance(before)
         assert manager.touch("sid") is True
         v17 = manager.get("sid", "2.17")
         v18 = manager.get("sid", "2.18")
@@ -446,9 +496,13 @@ class TestListAndDelete:
             manager: VenvSessionManager fixture.
         """
         manager.acquire("a", "2.17")
-        time.sleep(0.05)
+        got = manager.get("a", "2.17")
+        assert got is not None
+        _wait_for_clock_advance(got.last_used_at)
         manager.acquire("a", "2.18")
-        time.sleep(0.05)
+        got2 = manager.get("a", "2.18")
+        assert got2 is not None
+        _wait_for_clock_advance(got2.last_used_at)
         manager.acquire("b", "2.17")
         sessions = manager.list_sessions()
         assert len(sessions) == 3
@@ -1156,3 +1210,107 @@ class TestRunSubprocessTimed:
 
         mock_term.assert_called_once_with(mock_proc)
         mock_kill.assert_called_once_with(mock_proc)
+
+
+class TestWaitOutWorkerDoubleCancel:
+    """wait_out_worker survives repeated cancellation (finding #2)."""
+
+    async def test_double_cancel_waits_out_worker(self) -> None:
+        """Two cancels still hold the caller until the worker finishes.
+
+        A single shield re-wait releases early on the second cancel; the
+        loop-until-done form must keep the waiter pending through both
+        cancels, then surface CancelledError only after the worker result
+        is in.
+        """
+        import asyncio
+        import time as _time
+
+        from apme_engine.venv_manager.session import wait_out_worker
+
+        loop = asyncio.get_running_loop()
+        worker_done = asyncio.Event()
+
+        def _slow() -> str:
+            _time.sleep(1.0)
+            loop.call_soon_threadsafe(worker_done.set)
+            return "built"
+
+        worker = loop.run_in_executor(None, _slow)
+        waiter = asyncio.create_task(wait_out_worker(worker))
+        await asyncio.sleep(0.05)
+        assert not worker_done.is_set()
+        waiter.cancel()
+        await asyncio.sleep(0.05)
+        assert not waiter.done()
+        waiter.cancel()
+        await asyncio.sleep(0.1)
+        assert not waiter.done()
+        assert not worker_done.is_set()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(waiter, timeout=5.0)
+        assert worker_done.is_set()
+        assert worker.result() == "built"
+
+    async def test_double_cancel_holds_write_guard_until_worker_done(self) -> None:
+        """The install write guard stays held across two cancels.
+
+        Mirrors the pipeline shape (``async with venv_write_guard`` around
+        ``wait_out_worker``): cancelling twice must not release the guard
+        early — a same-key contender must stay blocked until the worker
+        finishes and the holder exits.
+        """
+        import asyncio
+        import time as _time
+
+        from apme_engine.venv_manager.session import (
+            venv_write_guard,
+            wait_out_worker,
+        )
+
+        loop = asyncio.get_running_loop()
+        sid = "double-cancel-guard-sid"
+        guard_exited = asyncio.Event()
+        contender_acquired = asyncio.Event()
+        worker_done = asyncio.Event()
+
+        def _slow() -> str:
+            # Long enough that every pre-completion assert below runs
+            # while the worker is still in flight (no wall-clock race).
+            _time.sleep(2.0)
+            loop.call_soon_threadsafe(worker_done.set)
+            return "built"
+
+        async def _holder() -> None:
+            async with venv_write_guard(sid, "2.17"):
+                try:
+                    await wait_out_worker(loop.run_in_executor(None, _slow))
+                finally:
+                    guard_exited.set()
+
+        async def _contender() -> None:
+            async with venv_write_guard(sid, "2.17", timeout=5.0):
+                contender_acquired.set()
+
+        holder = asyncio.create_task(_holder())
+        await asyncio.sleep(0.05)
+        holder.cancel()
+        await asyncio.sleep(0.05)
+        holder.cancel()
+        await asyncio.sleep(0.1)
+        assert not holder.done()
+        assert not guard_exited.is_set()
+
+        contender = asyncio.create_task(_contender())
+        await asyncio.sleep(0.1)
+        # Guard still held through both cancels: contender stays blocked
+        # while the worker is still in flight.
+        assert not worker_done.is_set()
+        assert not contender_acquired.is_set()
+
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(holder, timeout=5.0)
+        assert worker_done.is_set()
+        assert guard_exited.is_set()
+        await asyncio.wait_for(contender, timeout=5.0)
+        assert contender_acquired.is_set()

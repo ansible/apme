@@ -167,6 +167,78 @@ class Tier1NodeProposal:
     node_type: str = ""
 
 
+@dataclass
+class AIPolicyContext:
+    """Live policy snapshot forwarded into AI node contexts.
+
+    Carries the scan/project policy the engine already holds
+    (``RuleConfig`` overrides, target ansible-core version, collection
+    pins) so Tier 2 prompts render a live-policy block instead of
+    failing closed as unavailable. The engine never fetches policy
+    itself — the caller (daemon session setup) assembles this from the
+    request context before constructing the engine.
+
+    Attributes:
+        resolved_severities: Resolved severity per rule (override > default).
+        rule_enabled: Whether each rule is enabled in live policy.
+        suppression_hashes: Active suppression fingerprints hiding findings
+            (empty when the caller has none to share).
+        ansible_core_version: Target ansible-core version for live policy.
+        collection_pins: Pinned collection specs for live policy.
+        live_policy_available: True when at least one live-policy signal
+            was resolved; False fails prompts closed (unavailable block).
+    """
+
+    resolved_severities: dict[str, str] = field(default_factory=dict)
+    rule_enabled: dict[str, bool] = field(default_factory=dict)
+    suppression_hashes: list[str] = field(default_factory=list)
+    ansible_core_version: str = ""
+    collection_pins: list[str] = field(default_factory=list)
+    live_policy_available: bool = False
+
+
+def _ai_policy_kwargs(
+    policy: AIPolicyContext | None,
+) -> dict[str, object]:
+    """Resolve ``build_ai_node_context`` policy kwargs with safe fallback.
+
+    Copies the live-policy snapshot into the keyword arguments accepted
+    by :func:`build_ai_node_context`. Any unusable policy (wrong type,
+    bad values, resolution failure) falls back to the unavailable
+    defaults so prompts fail closed instead of crashing the AI pass.
+
+    Args:
+        policy: ``AIPolicyContext`` assembled by the caller, or ``None``
+            when no live policy was resolved.
+
+    Returns:
+        Kwargs dict for ``build_ai_node_context``.
+    """
+    fallback: dict[str, object] = {
+        "resolved_severities": {},
+        "rule_enabled": {},
+        "suppression_hashes": [],
+        "ansible_core_version": "",
+        "collection_pins": [],
+        "live_policy_available": False,
+    }
+    if policy is None:
+        return fallback
+    try:
+        if isinstance(policy, AIPolicyContext):
+            return {
+                "resolved_severities": dict(policy.resolved_severities),
+                "rule_enabled": dict(policy.rule_enabled),
+                "suppression_hashes": list(policy.suppression_hashes),
+                "ansible_core_version": str(policy.ansible_core_version),
+                "collection_pins": list(policy.collection_pins),
+                "live_policy_available": bool(policy.live_policy_available),
+            }
+    except Exception:
+        logger.warning("AI policy context unusable; failing closed to unavailable", exc_info=True)
+    return fallback
+
+
 class GraphRemediationEngine:
     """In-memory convergence loop on a ContentGraph.
 
@@ -192,6 +264,7 @@ class GraphRemediationEngine:
         rescan_fn: RescanFn | None = None,
         ai_provider: AIProvider | None = None,
         ai_phase_start_cb: AiPhaseStartCallback | None = None,
+        ai_policy_context: AIPolicyContext | None = None,
     ) -> None:
         """Initialize the graph remediation engine.
 
@@ -214,6 +287,12 @@ class GraphRemediationEngine:
                 only in-memory graph rules.
             ai_provider: Optional AI provider for Tier 2 transforms.
             ai_phase_start_cb: Optional callback when Tier 2 begins (ADR-068).
+            ai_policy_context: Optional live-policy snapshot (see
+                :class:`AIPolicyContext`) forwarded into every
+                ``build_ai_node_context`` call so Tier 2 prompts render
+                live policy instead of the unavailable fallback. The
+                unavailable fallback applies only when this is ``None``
+                or unusable.
         """
         self._registry = registry
         self._graph = graph
@@ -225,6 +304,7 @@ class GraphRemediationEngine:
         self._rescan_fn = rescan_fn
         self._ai_provider = ai_provider
         self._ai_phase_start_cb = ai_phase_start_cb
+        self._ai_policy_context = ai_policy_context
 
     def _progress(
         self,
@@ -630,11 +710,13 @@ class GraphRemediationEngine:
                 before_yaml = node.yaml_lines
 
                 feedback = feedback_by_node.get(node_id, "")
+                policy_kwargs = _ai_policy_kwargs(self._ai_policy_context)
                 context = build_ai_node_context(
                     graph,
                     node_id,
                     node_violations,
                     feedback=feedback,
+                    **policy_kwargs,  # type: ignore[arg-type]
                 )
                 if context is None:
                     logger.warning("AI: context is None for node %s — skipping", node_id)
@@ -833,18 +915,127 @@ class GraphRemediationEngine:
         return new_violations
 
 
+class SpliceResult(list["FilePatch"]):
+    """File patches with the skipped (unpatched) file list attached.
+
+    A plain ``list`` subclass so existing callers (iteration, indexing,
+    ``== []``) keep working, while callers that must account for every
+    modification can read ``.unpatched`` instead of relying on log
+    scraping.
+
+    .. warning::
+        ``result == []`` does **not** mean every modification landed — a
+        file whose modifications were skipped (no original content or no
+        scan baseline) simply produces no patch, and a file spliced from
+        an approximate baseline (legacy ``progression[0]`` fallback)
+        produces a best-effort patch that is STILL listed in
+        ``.unpatched``. Callers that require full coverage must check
+        ``.unpatched`` (or ``.unpatched_count``) and must not treat an
+        empty patch list as success.
+
+    Attributes:
+        unpatched: Sorted file paths that had node modifications but
+            were skipped (no entry in ``originals`` or no scan
+            baseline), plus files spliced from an approximate baseline
+            whose diff may be truncated.
+    """
+
+    unpatched: list[str]
+
+    def __init__(self, patches: list[FilePatch] | None = None, *, unpatched: list[str] | None = None) -> None:
+        """Initialise with patches and the skipped file list.
+
+        Args:
+            patches: File patches that were produced.
+            unpatched: File paths skipped during splicing.
+        """
+        super().__init__(patches or [])
+        self.unpatched = list(unpatched or [])
+
+    @property
+    def unpatched_count(self) -> int:
+        """Return the number of modified files skipped during splicing.
+
+        Mirrors the ``unpatched_count`` field on the ``ApprovalAck`` proto
+        so callers can forward one integer without recomputing
+        ``len(result.unpatched)``.
+
+        Returns:
+            Count of skipped (unpatched) files.
+        """
+        return len(self.unpatched)
+
+
+@dataclass
+class SpliceOutcome:
+    """Explicit splice outcome: patches plus the skipped file list.
+
+    Preferred over :class:`SpliceResult` (a ``list`` subclass whose
+    ``.unpatched`` side-channel is easy to miss): the fields are named,
+    so callers cannot silently drop the skipped files. New code should
+    use :func:`splice_with_outcome`; :func:`splice_modifications` is a
+    thin list-compatible wrapper over it for external callers.
+
+    .. warning::
+        An outcome with ``patches == []`` is **not** proof that every
+        modification landed — skipped files land in ``unpatched`` with no
+        patch, and files spliced from an approximate baseline land in
+        ``unpatched`` WITH a best-effort patch. Callers must check
+        ``.unpatched`` (or ``.unpatched_count``);
+        only ``strict=True`` (which raises ``ValueError`` on any skip)
+        makes "no exception" equivalent to "fully patched".
+
+    Attributes:
+        patches: File patches for files that changed.
+        unpatched: Sorted file paths that had node modifications but
+            were skipped (no entry in ``originals`` or no scan
+            baseline), plus files spliced from an approximate baseline
+            whose diff may be truncated.
+    """
+
+    patches: list[FilePatch] = field(default_factory=list)
+    unpatched: list[str] = field(default_factory=list)
+
+    @property
+    def unpatched_count(self) -> int:
+        """Return the number of modified files skipped during splicing.
+
+        Mirrors the ``unpatched_count`` field on the ``ApprovalAck`` proto
+        so engine-server code can forward one integer without recomputing
+        ``len(outcome.unpatched)``.
+
+        Returns:
+            Count of skipped (unpatched) files.
+        """
+        return len(self.unpatched)
+
+
 def splice_modifications(
     graph: ContentGraph,
     originals: dict[str, str],
     *,
     include_pending: bool = False,
-) -> list[FilePatch]:
+    strict: bool = False,
+) -> SpliceResult:
     """Splice modified ``yaml_lines`` back into original files.
 
-    Groups modified nodes by ``file_path``, sorts by ``line_start``
+    Legacy ``list``-compatible wrapper over :func:`splice_with_outcome`
+    (new code should prefer the explicit :class:`SpliceOutcome`). Groups
+    modified nodes by ``file_path``, sorts by ``line_start``
     descending (bottom-up) so that splicing one node does not shift
     line numbers for nodes above it, and produces a unified diff per
     file.
+
+    Nodes whose ``file_path`` has no entry in ``originals``, and nodes
+    with no scan baseline (legacy payloads that never recorded a
+    snapshot), cannot be spliced. They are skipped with a
+    ``logger.warning`` naming the files (never silently dropped) and are
+    surfaced to the caller on the returned :class:`SpliceResult` as
+    ``result.unpatched``. Nodes spliced from an approximate baseline
+    (legacy ``progression[0]`` fallback) emit a best-effort patch but
+    are ALSO listed in ``result.unpatched`` with an "approximate
+    baseline" warning. ``strict=True`` escalates every skip class to
+    ``ValueError`` for callers that require every modification to land.
 
     Args:
         graph: ContentGraph after convergence (nodes may have updated
@@ -855,12 +1046,93 @@ def splice_modifications(
             entry (approved or not) instead of the last approved one.
             Set to ``True`` during convergence re-scans so external
             validators see the current in-memory state.
+        strict: When ``True``, raise ``ValueError`` listing files with
+            modifications that could not be spliced (missing original
+            content, missing scan baseline, or approximate baseline)
+            instead of skipping them.
 
     Returns:
-        List of ``FilePatch`` objects for files that changed.
+        ``SpliceResult`` (a ``list[FilePatch]``) for files that changed,
+        with ``.unpatched`` listing skipped files plus approximate-
+        baseline files that still produced a best-effort patch.
+        ``strict=True`` escalates skipped files to ``ValueError`` (raised
+        by the delegated :func:`splice_with_outcome` core).
+    """  # noqa: DOC502 -- ValueError surfaces from the delegated core below
+    outcome = splice_with_outcome(
+        graph,
+        originals,
+        include_pending=include_pending,
+        strict=strict,
+    )
+    return SpliceResult(outcome.patches, unpatched=outcome.unpatched)
+
+
+def splice_with_outcome(
+    graph: ContentGraph,
+    originals: dict[str, str],
+    *,
+    include_pending: bool = False,
+    strict: bool = False,
+) -> SpliceOutcome:
+    """Splice modified ``yaml_lines`` back, returning an explicit outcome.
+
+    Preferred entry point (see :class:`SpliceOutcome`): the single core
+    that the legacy :func:`splice_modifications` wrapper (list with
+    ``.unpatched``) delegates to.
+
+    Nodes whose ``file_path`` has no entry in ``originals``, and nodes
+    with no scan baseline (legacy payloads that never recorded a
+    snapshot), cannot be spliced. They are skipped with a
+    ``logger.warning`` naming the files (never silently dropped) and are
+    surfaced on the returned outcome as ``outcome.unpatched``. Nodes
+    spliced from an approximate baseline (legacy ``progression[0]``
+    fallback) emit a best-effort patch but are ALSO listed in
+    ``outcome.unpatched`` with an "approximate baseline" warning, so a
+    truncated diff never surfaces with ``unpatched_count == 0``.
+    ``strict=True`` escalates every skip class to ``ValueError`` for
+    callers that require every modification to land.
+
+    Args:
+        graph: ContentGraph after convergence (nodes may have updated
+            ``yaml_lines``).
+        originals: Map of ``file_path`` to original file content
+            (before any transforms).
+        include_pending: When ``True``, use the latest progression
+            entry (approved or not) instead of the last approved one.
+            Set to ``True`` during convergence re-scans so external
+            validators see the current in-memory state.
+        strict: When ``True``, raise ``ValueError`` listing files with
+            modifications that could not be spliced (missing original
+            content, missing scan baseline, or approximate baseline)
+            instead of skipping them.
+
+    Returns:
+        ``SpliceOutcome`` with patches for files that changed and the
+        sorted unpatched file paths (skipped files plus approximate-
+        baseline files that still produced a best-effort patch).
+        Check ``outcome.unpatched`` (or
+        ``outcome.unpatched_count``) — an empty ``patches`` list alone
+        does not imply every modification landed.
+
+    Raises:
+        ValueError: If ``strict`` is ``True`` and any modified file was
+            skipped or approximate (missing from ``originals``,
+            baseline-less, or legacy fallback).
     """
     _Edit = tuple[int, int, str, list[str]]
     modified_by_file: dict[str, list[_Edit]] = defaultdict(list)
+    # Files with node modifications that cannot be spliced because the
+    # node has no scan baseline (e.g. legacy payloads that never recorded
+    # a snapshot). Tracked separately so strict=True covers them too.
+    baseline_skipped: set[str] = set()
+    # Files spliced from an approximate baseline: the node has snapshots
+    # but no recorded ``_baseline``, so ``baseline_state()`` fell back to
+    # ``progression[0]`` which may post-date evicted history and
+    # under-report the real change. Non-strict still emits the
+    # best-effort patch, but the file is ALSO listed in ``unpatched``
+    # (with a warning) so callers never see a truncated diff with
+    # ``unpatched_count == 0``.
+    approximate: set[str] = set()
 
     for node in graph.nodes():
         if not node.progression or len(node.progression) < 2:
@@ -872,16 +1144,34 @@ def splice_modifications(
         if node.line_end < node.line_start:
             continue
 
-        original_hash = node.progression[0].content_hash
+        baseline_entry = node.baseline_state()
+        if baseline_entry is None:
+            baseline_skipped.add(node.file_path)
+            continue
+        if strict and not node.has_recorded_baseline():
+            # Legacy node: snapshots exist but no recorded baseline, so
+            # the ``progression[0]`` fallback base may post-date evicted
+            # history and under-report the change. Skip instead of
+            # emitting a short diff — ``strict`` raises below via
+            # ``unpatched``. Non-strict keeps the best-effort fallback.
+            baseline_skipped.add(node.file_path)
+            continue
+        original_hash = baseline_entry.content_hash
         if include_pending:
             effective = node.progression[-1]
         else:
             effective = next(
                 (s for s in reversed(node.progression) if s.approved),
-                node.progression[0],
+                baseline_entry,
             )
         if original_hash == effective.content_hash:
             continue
+
+        if not node.has_recorded_baseline():
+            # Legacy fallback: baseline_state() returned progression[0],
+            # which may post-date evicted history. Keep the best-effort
+            # patch but flag the file as approximate below.
+            approximate.add(node.file_path)
 
         node_rule_ids = [rec.key[1] for rec in node.violation_ledger.values()]
 
@@ -889,10 +1179,35 @@ def splice_modifications(
             (node.line_start, node.line_end, effective.yaml_lines, node_rule_ids),
         )
 
+    if baseline_skipped:
+        logger.warning(
+            "splice_modifications: %d file(s) with modifications have no scan baseline — skipping: %s",
+            len(baseline_skipped),
+            sorted(baseline_skipped),
+        )
+
+    if approximate:
+        logger.warning(
+            "splice_modifications: %d file(s) use approximate baseline "
+            "(progression[0] fallback after eviction) — diff may be truncated: %s",
+            len(approximate),
+            sorted(approximate),
+        )
+
     patches: list[FilePatch] = []
+    unpatched: list[str] = []
     for file_path, edits in modified_by_file.items():
         original = originals.get(file_path)
         if original is None:
+            logger.warning(
+                "splice_modifications: no original content for %s — skipping %d modification(s) (rules=%s)",
+                file_path,
+                len(edits),
+                sorted({r for _, _, _, rs in edits for r in rs}),
+            )
+            # modified_by_file keys are unique per file, so no
+            # dedup check is needed here.
+            unpatched.append(file_path)
             continue
 
         lines = original.splitlines(keepends=True)
@@ -933,7 +1248,20 @@ def splice_modifications(
                 )
             )
 
-    return patches
+    unpatched.extend(sorted((baseline_skipped | approximate) - set(unpatched)))
+    if unpatched:
+        logger.warning(
+            "splice_modifications: %d file(s) with modifications skipped (no original content, no scan baseline, "
+            "or approximate baseline): %s",
+            len(unpatched),
+            sorted(unpatched),
+        )
+    if strict and unpatched:
+        raise ValueError(
+            f"splice_modifications: {len(unpatched)} modified file(s) could not be spliced: {sorted(unpatched)}"
+        )
+
+    return SpliceOutcome(patches=patches, unpatched=sorted(unpatched))
 
 
 def _record_violations(
@@ -1073,8 +1401,11 @@ def collect_tier1_proposals(graph: ContentGraph) -> list[Tier1NodeProposal]:
         has_pending_det = any((not entry.approved) and entry.source == "deterministic" for entry in prog)
         if not has_pending_det:
             continue
-        # Baseline = last approved snapshot, else first entry.
-        baseline = next((s for s in reversed(prog) if s.approved), prog[0])
+        # Baseline = last approved snapshot, else the immutable scan baseline
+        # (never progression[0] after eviction — see ContentNode.baseline_state).
+        baseline = next((s for s in reversed(prog) if s.approved), node.baseline_state())
+        if baseline is None:
+            continue
         after = prog[-1]
         if baseline.content_hash == after.content_hash:
             continue
@@ -1124,6 +1455,9 @@ def _count_modified_nodes(graph: ContentGraph) -> int:
     """
     count = 0
     for node in graph.nodes():
-        if len(node.progression) >= 2 and node.progression[0].content_hash != node.progression[-1].content_hash:
+        baseline = node.baseline_state()
+        if baseline is None or len(node.progression) < 2:
+            continue
+        if baseline.content_hash != node.progression[-1].content_hash:
             count += 1
     return count

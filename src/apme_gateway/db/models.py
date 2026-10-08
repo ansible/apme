@@ -96,6 +96,10 @@ class Scan(Base):
         pr_url: URL of the pull request created from this activity (ADR-050).
         branch_name: Head branch pushed during SCM submit (ADR-050), if any.
         commit_sha: SHA of the commit pushed during SCM submit (ADR-050), if any.
+        submit_token: Idempotency token for POST /submit replay (N19).
+        scm_provider: SCM provider used for submit (ADR-050, additive).
+            Persisted so restart replay resolves the actual provider
+            instead of a hardcoded default.
         session: Back-reference to owning Session.
         project: Back-reference to owning Project (ADR-037).
         violations: Related violation rows.
@@ -131,6 +135,8 @@ class Scan(Base):
     pr_url: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
     branch_name: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
     commit_sha: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
+    submit_token: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
+    scm_provider: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
 
     session: Mapped[Session] = relationship(back_populates="scans")
     project: Mapped[Project | None] = relationship(back_populates="scans")
@@ -612,6 +618,50 @@ class ScanGraph(Base):
     edge_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     scan: Mapped[Scan] = relationship(back_populates="graph")
+
+
+# ── Notification outbox table (N18) ───────────────────────────────────
+
+
+class NotificationOutbox(Base):
+    """Durable intent to generate notifications for a scan (N18).
+
+    Written in a separate best-effort transaction after the scan commit
+    and before the RPC acknowledgement — not in the same transaction as
+    the scan — so a restart between ACK and background notification
+    generation cannot lose notifications, while outbox failures can never
+    fail the already-committed scan persist. The background task marks
+    the row sent after ``_generate_scan_notifications`` succeeds (bumping
+    ``attempts`` on every try); startup reconciliation replays unsent rows.
+
+    Attributes:
+        id: Auto-increment primary key.
+        scan_id: Owning scan UUID (unique — one outbox row per scan; FK to
+            scans with cascade delete so removing a scan cleans its intent).
+        created_at: ISO 8601 enqueue timestamp.
+        sent_at: ISO 8601 completion timestamp, None while pending (indexed
+            for the ``sent_at IS NULL`` reconciliation query).
+        attempts: Number of generation tries, incremented on every attempt
+            (success or failure) for observability.
+        content_hash: SHA-256 over the scan's violation set (#21); a
+            duplicate delivery with a different hash re-queues, while a
+            matching hash stays silent.
+    """
+
+    __tablename__ = "notification_outbox"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    scan_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("scans.scan_id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    created_at: Mapped[str] = mapped_column(Text, nullable=False)
+    sent_at: Mapped[str | None] = mapped_column(Text, nullable=True, default=None, index=True)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    content_hash: Mapped[str | None] = mapped_column(
+        Text, nullable=True, default=None
+    )  # SHA-256 over the scan's violation set (#21): a duplicate
+    # ReportFixCompleted with genuinely new violations re-queues (hash
+    # differs) while true duplicates stay silent (hash matches).
 
 
 # ── Notification table ─────────────────────────────────────────────────

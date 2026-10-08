@@ -17,12 +17,14 @@ import inspect
 import logging
 import os
 import shutil
+import stat
 import subprocess
 import tempfile
 import time
 import uuid
 from collections.abc import AsyncIterator, Callable, Coroutine
 from functools import partial
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote, unquote, urlparse, urlunparse
 
@@ -30,14 +32,18 @@ import grpc
 import grpc.aio
 
 from apme.v1 import engine_pb2, engine_pb2_grpc
+from apme.v1.common_pb2 import File as ProtoFile
 from apme.v1.common_pb2 import GalaxyServerDef
-from apme_engine.config_env import get_env_float
+from apme_engine.config_env import get_env_float, get_env_int
 from apme_engine.daemon.chunked_fs import yield_scan_chunks
-from apme_gateway.scan.operator_queue import (
-    OperatorAnswerQueue as OperatorAnswerQueue,
-)
-from apme_gateway.scan.operator_queue import (
-    _drain_queue as _drain_queue,  # noqa: F401 -- re-exported (tests import from driver)
+from apme_gateway.scan.operator_queue import OperatorAnswerQueue
+from apme_gateway.scan.repo_url import (
+    GlobalTokenScopeError,
+    _parse_ip_literal,
+    _parse_repo_url,
+    _resolve_host_ips,
+    _validate_parsed_url,
+    prepare_clone_inputs,
 )
 from apme_gateway.scm.redaction import redact_credentials as _redact_credentials
 from apme_gateway.scm.repo_url import normalize_repo_url
@@ -63,6 +69,48 @@ _OP_APPROVE_TIMEOUT_DEFAULT_S = 1800.0  # APME_OP_APPROVE_TIMEOUT_S
 _op_timeout = partial(get_env_float, positive_only=True)
 
 # ADR-068: server enforces adaptive deadlines; no fixed client gRPC timeout.
+
+# Aggregate scan caps (fail-fast before streaming to Engine). The Engine
+# enforces its own PE-35 session caps; these gateway-side guards prevent a
+# large clone from ballooning RAM in the chunk list or saturating gRPC.
+_SCAN_MAX_FILES_DEFAULT = 2000  # APME_SCAN_MAX_FILES
+_SCAN_MAX_BYTES_DEFAULT = 256 * 1024 * 1024  # APME_SCAN_MAX_BYTES (256MiB)
+
+
+def _scan_max_files() -> int:
+    """Return maximum files per project scan operation.
+
+    Returns:
+        File-count cap from ``APME_SCAN_MAX_FILES``.
+    """
+    return get_env_int(
+        "APME_SCAN_MAX_FILES",
+        _SCAN_MAX_FILES_DEFAULT,
+        min_value=1,
+    )
+
+
+def _scan_max_bytes() -> int:
+    """Return maximum aggregate content bytes per project scan operation.
+
+    Returns:
+        Byte cap from ``APME_SCAN_MAX_BYTES``.
+    """
+    return get_env_int(
+        "APME_SCAN_MAX_BYTES",
+        _SCAN_MAX_BYTES_DEFAULT,
+        min_value=1,
+    )
+
+
+class ScanCapExceeded(ValueError):
+    """Aggregate or per-file scan cap exceeded (maps to HTTP 413).
+
+    Subclasses :class:`ValueError` so existing ``except ValueError``
+    handling (branch/URL validation paths, background task logging) is
+    unchanged; REST handlers catch this type first to return 413.
+    """
+
 
 _FALSEY_OPTION_STRINGS = frozenset({"", "0", "false", "no", "off", "n"})
 _TRUTHY_OPTION_STRINGS = frozenset({"1", "true", "yes", "on", "y"})
@@ -115,7 +163,12 @@ def derive_session_id(project_id: str) -> str:
     return hashlib.sha256(project_id.encode()).hexdigest()[:16]
 
 
-_ALLOWED_SCHEMES = ("https://",)
+# SSRF trust-boundary helpers (URL parsing, IP checks, DNS resolution,
+# token scoping) live in :mod:`apme_gateway.scan.repo_url`; this module
+# imports only the names it uses. External callers import the canonical
+# homes directly (``repo_url`` for trust-boundary helpers and patch
+# targets, ``operator_queue`` for the answer queue).
+
 
 _REMOTE_HEAD_CACHE: dict[str, tuple[float, str | None]] = {}
 _REMOTE_HEAD_TTL = 60.0  # seconds
@@ -135,20 +188,59 @@ def _git_subprocess_env() -> dict[str, str]:
     the container only exposes it via generic CA variables such as
     ``SSL_CERT_FILE`` or ``REQUESTS_CA_BUNDLE``.
 
+    Every git subprocess env also pins ``http.followRedirects=false`` so a
+    validated clone URL cannot redirect (server-side) to an unvalidated
+    host such as instance metadata — redirects fail closed instead of being
+    followed. Pre-existing ``GIT_CONFIG_*`` entries are preserved via
+    :func:`_merge_git_config_env`.
+
     Returns:
         Copy of ``os.environ`` with ``GIT_SSL_CAINFO`` populated when a CA bundle
-        path is available via another standard environment variable.
+        path is available via another standard environment variable, plus the
+        redirect-pinning git-config entry.
     """
     env = os.environ.copy()
-    if env.get("GIT_SSL_CAINFO"):
-        return env
+    if not env.get("GIT_SSL_CAINFO"):
+        for key in ("SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "NODE_EXTRA_CA_CERTS"):
+            candidate = env.get(key, "").strip()
+            if candidate:
+                env["GIT_SSL_CAINFO"] = candidate
+                break
+    return _merge_git_config_env(env, [("http.followRedirects", "false")])
 
-    for key in ("SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "NODE_EXTRA_CA_CERTS"):
-        candidate = env.get(key, "").strip()
-        if candidate:
-            env["GIT_SSL_CAINFO"] = candidate
-            break
-    return env
+
+async def _revalidate_host_before_spawn(validated_url: str) -> None:
+    """Re-resolve *validated_url* immediately before spawning git.
+
+    Narrows the DNS-rebinding (TOCTOU) window between
+    :func:`validate_repo_url_async` and the ``git`` subprocess (which
+    re-resolves DNS itself): the host is resolved again and the fresh
+    address set must still pass :func:`_validate_parsed_url`. Any change
+    to a blocked address (loopback, link-local, metadata, private, …)
+    aborts before git is spawned. IP literals need no re-resolution.
+
+    Residual risk: git performs a third resolution at connect time, so a
+    rebinding between this check and connect can still reach a blocked
+    address. Production deployments must enforce egress-firewall rules
+    for the forge allowlist; credentials travel via per-origin
+    ``http.extraHeader`` (never URL-embedded) to limit exposure.
+
+    Args:
+        validated_url: Already-validated clone URL.
+
+    Raises:
+        ValueError: When re-resolution fails or yields blocked addresses.
+    """
+    value, host = _parse_repo_url(validated_url)
+    if _parse_ip_literal(host) is not None:
+        _validate_parsed_url(value, host, None)
+        return
+    fresh_infos = await _resolve_host_ips(host)
+    try:
+        _validate_parsed_url(value, host, fresh_infos)
+    except ValueError as exc:
+        msg = f"Repo URL re-resolution failed trust boundary: {exc}"
+        raise ValueError(msg) from exc
 
 
 def _scm_basic_credentials(
@@ -497,6 +589,14 @@ async def fetch_remote_head(
     are cached for 10 seconds so a flapping SCM does not cause a subprocess
     per poll while still recovering quickly.
 
+    SSRF hardening: the URL passes :func:`validate_repo_url_async`, the git
+    subprocess env pins ``http.followRedirects=false`` (see
+    :func:`_git_subprocess_env`) so redirects fail closed, and the host is
+    re-resolved immediately before spawn
+    (:func:`_revalidate_host_before_spawn`) so a rebinding to a blocked
+    address aborts. Residual TOCTOU (git re-resolves DNS itself) requires
+    egress-firewall enforcement for the forge allowlist in production.
+
     Args:
         repo_url: HTTPS clone URL.
         branch: Branch name to resolve.
@@ -505,17 +605,22 @@ async def fetch_remote_head(
 
     Returns:
         40-char hex SHA, or ``None`` if the lookup fails.
+
+    Raises:
+        GlobalTokenScopeError: When only a global SCM token is available
+            for a non-allowlisted host (fail closed, matching
+            :func:`clone_repo` — configure a per-project ``scm_token``
+            or add the host to ``APME_SCM_ALLOWED_HOSTS``).
+            Other validation failures return ``None``.
     """
     url_userpass = _url_embedded_userpass(repo_url) if not scm_token else None
     repo_url = _strip_url_userinfo(repo_url)
-    if not any(repo_url.startswith(scheme) for scheme in _ALLOWED_SCHEMES):
-        return None
-    if not isinstance(branch, str):
-        return None
-    from apme_gateway.scm.urls import validate_branch_name  # noqa: PLC0415
-
     try:
-        validate_branch_name(branch)
+        validated_url = await prepare_clone_inputs(repo_url, branch, scm_token)
+    except GlobalTokenScopeError:
+        # Fail closed (raise) so the global credential never reaches an
+        # attacker host via a silent unauthenticated probe — same as clone_repo.
+        raise
     except ValueError:
         return None
 
@@ -532,7 +637,8 @@ async def fetch_remote_head(
         return None
 
     # Pass the token via a per-origin http.extraHeader env entry so it never
-    # appears in argv; pre-existing GIT_CONFIG_* entries are preserved.
+    # appears in argv; pre-existing GIT_CONFIG_* entries are preserved
+    # (including the http.followRedirects=false redirect pinning).
     env = _git_subprocess_env()
     try:
         env = _apply_git_auth_env(
@@ -544,6 +650,11 @@ async def fetch_remote_head(
         )
     except ValueError:
         logger.debug("ls-remote auth env failed for %s branch %s", repo_url, branch, exc_info=True)
+        return None
+    try:
+        await _revalidate_host_before_spawn(validated_url)
+    except ValueError:
+        logger.debug("ls-remote re-resolution failed for %s branch %s", repo_url, branch, exc_info=True)
         return None
     cmd = ["git", "ls-remote", "--exit-code", repo_url, f"refs/heads/{branch}"]
     loop = asyncio.get_running_loop()
@@ -613,7 +724,23 @@ async def clone_repo(
     """Shallow-clone an SCM repo into *dest*.
 
     Only ``https://`` URLs are permitted to prevent SSRF via ``file://``,
-    ``ssh://``, or other git transports.
+    ``ssh://``, or other git transports. The URL passes
+    :func:`validate_repo_url_async`, the git subprocess env pins
+    ``http.followRedirects=false`` (redirects fail closed instead of
+    carrying the connection to an unvalidated host), and the host is
+    re-resolved immediately before spawn
+    (:func:`_revalidate_host_before_spawn`) so a DNS rebinding to a
+    blocked address aborts. Residual TOCTOU (git re-resolves DNS itself)
+    requires egress-firewall enforcement for the forge allowlist in
+    production.
+
+    The clone passes ``--filter=blob:limit=`` to reduce unneeded blob
+    traffic, but a checking-out clone lazily fetches every blob HEAD
+    needs — including oversized ones — so the filter is not a disk
+    bound. The enforcing gate is the post-clone on-disk size walk
+    (:func:`_temp_dir_disk_bytes`, surfaced via
+    :func:`run_project_operation` caps), which rejects oversized clones
+    before scanning.
 
     Args:
         repo_url: HTTPS clone URL.
@@ -623,30 +750,27 @@ async def clone_repo(
         scm_provider: Optional explicit SCM provider for auth username selection.
 
     Raises:
+        GlobalTokenScopeError: If only a global SCM token is available
+            for a non-allowlisted host (fail closed).
         ValueError: If *repo_url* uses a disallowed scheme or *branch* is
             not a valid git ref name.
         RuntimeError: If ``git clone`` fails or times out.
     """
     url_userpass = _url_embedded_userpass(repo_url) if not scm_token else None
     repo_url = _strip_url_userinfo(repo_url)
-    if not any(repo_url.startswith(scheme) for scheme in _ALLOWED_SCHEMES):
-        msg = f"Only https:// clone URLs are allowed, got: {repo_url[:60]}"
-        raise ValueError(msg)
-
-    if not isinstance(branch, str):
-        msg = f"Invalid branch name: {branch!r}"
-        raise ValueError(msg)
-
-    from apme_gateway.scm.urls import validate_branch_name  # noqa: PLC0415
-
     try:
-        validate_branch_name(branch)
+        validated_url = await prepare_clone_inputs(repo_url, branch, scm_token)
+    except GlobalTokenScopeError:
+        raise
     except ValueError as exc:
-        msg = f"Invalid branch name: {branch[:60]}: {exc}"
+        if str(exc).startswith("Invalid branch name"):
+            raise
+        msg = f"Invalid repository URL: {exc}"
         raise ValueError(msg) from exc
 
     # Pass the token via a per-origin http.extraHeader env entry so it never
-    # appears in argv; pre-existing GIT_CONFIG_* entries are preserved.
+    # appears in argv; pre-existing GIT_CONFIG_* entries are preserved
+    # (including the http.followRedirects=false redirect pinning).
     env = _git_subprocess_env()
     try:
         env = _apply_git_auth_env(
@@ -659,6 +783,15 @@ async def clone_repo(
     except ValueError as exc:
         msg = f"Invalid repository URL for authentication: {repo_url[:60]}"
         raise ValueError(msg) from exc
+    try:
+        await _revalidate_host_before_spawn(validated_url)
+    except ValueError as exc:
+        msg = f"Invalid repository URL: {exc}"
+        raise ValueError(msg) from exc
+    # Blob-filtered shallow clone (reduces unneeded blob traffic; NOT a
+    # disk bound — checkout fetches every blob HEAD needs). Oversized
+    # clones are rejected by the post-clone on-disk size walk.
+    blob_limit = min(_scan_max_bytes(), 50 * 1024 * 1024)
     cmd = [
         "git",
         "clone",
@@ -667,6 +800,7 @@ async def clone_repo(
         "--single-branch",
         "--depth",
         "1",
+        f"--filter=blob:limit={blob_limit}",
         repo_url,
         dest,
     ]
@@ -689,7 +823,102 @@ async def clone_repo(
         raise RuntimeError(f"git clone failed (exit {result.returncode}): {safe_stderr}")
 
 
+def _temp_dir_disk_bytes(temp_dir: str) -> int:
+    """Return total on-disk bytes under *temp_dir* (best-effort).
+
+    Walks the cloned tree summing regular-file sizes. VCS metadata dirs
+    (``.git``, ``.hg``) are pruned — they are not scanned content and must
+    not consume the content cap. ``os.lstat`` never follows symlinks and
+    only regular files are counted, so a symlink pointing at a large
+    target cannot inflate the total. Errors on individual entries are
+    ignored (fail-open per file — the streaming content caps below remain
+    authoritative).
+
+    Args:
+        temp_dir: Cloned repository directory.
+
+    Returns:
+        Summed file sizes in bytes.
+    """
+    total = 0
+    for root, dirs, files in os.walk(temp_dir, followlinks=False):
+        dirs[:] = [d for d in dirs if d not in (".git", ".hg")]
+        for name in files:
+            try:
+                st = os.lstat(os.path.join(root, name))
+            except OSError:
+                continue
+            if not stat.S_ISREG(st.st_mode):
+                continue
+            total += st.st_size
+    return total
+
+
 ProgressCallback = Callable[[engine_pb2.SessionEvent], Coroutine[Any, Any, None]]
+
+
+def _collect_scan_chunks_capped(
+    temp_dir: str,
+    *,
+    scan_id: str,
+    session_id: str,
+    ansible_version: str = "",
+    collection_specs: list[str] | None = None,
+    galaxy_servers: list[GalaxyServerDef] | None = None,
+    max_files: int = 0,
+    max_bytes: int = 0,
+) -> list[Any]:
+    """Walk the clone and collect scan chunks with incremental cap enforcement.
+
+    Blocking FS I/O — callers run this off the event loop via
+    ``run_in_executor`` (see :func:`run_project_operation`). Caps are
+    enforced *during* generation: the ``yield_scan_chunks`` generator is
+    consumed one chunk at a time and each file's content length is counted
+    **before** its chunk is appended, so an over-cap scan raises before
+    the offending chunk's bytes are retained (peak RAM stays bounded
+    instead of materializing the full chunk list first).
+
+    Args:
+        temp_dir: Cloned repository directory.
+        scan_id: Scan identifier stamped on chunks.
+        session_id: Engine session identifier.
+        ansible_version: Target ansible-core version.
+        collection_specs: Collection install specs.
+        galaxy_servers: Global Galaxy server defs (ADR-045).
+        max_files: Aggregate file-count cap (``APME_SCAN_MAX_FILES``).
+        max_bytes: Aggregate content-byte cap (``APME_SCAN_MAX_BYTES``).
+
+    Returns:
+        Collected chunk list, cap-checked.
+
+    Raises:
+        ScanCapExceeded: When the file or byte cap is exceeded mid-stream.
+    """
+    chunks: list[Any] = []
+    file_count = 0
+    byte_count = 0
+    for chunk in yield_scan_chunks(
+        temp_dir,
+        scan_id=scan_id,
+        project_root_name="project",
+        ansible_core_version=ansible_version or None,
+        collection_specs=collection_specs or None,
+        session_id=session_id,
+        galaxy_servers=galaxy_servers,
+    ):
+        for f in chunk.files:
+            file_count += 1
+            try:
+                content_len = len(f.content)  # type: ignore[attr-defined]
+            except Exception:  # noqa: BLE001 — defensive; treat as empty
+                content_len = 0
+            byte_count += content_len
+            if file_count > max_files:
+                raise ScanCapExceeded(f"Scan file limit exceeded: {file_count} files (max {max_files})")
+            if byte_count > max_bytes:
+                raise ScanCapExceeded(f"Scan size limit exceeded: {byte_count} bytes (max {max_bytes} bytes)")
+        chunks.append(chunk)
+    return chunks
 
 
 async def run_project_operation(
@@ -779,6 +1008,19 @@ async def run_project_operation(
     Raises:
         asyncio.CancelledError: When the driving task is cancelled; closes the
             FixSession command stream before propagating.
+        ScanCapExceeded: When aggregate scan caps (``APME_SCAN_MAX_FILES`` /
+            ``APME_SCAN_MAX_BYTES``) are exceeded (a ``ValueError``
+            subclass, so existing ``except ValueError`` handling is
+            unchanged). The on-disk size check below fails fast before
+            chunking (the blob filter only reduces traffic), and the
+            streaming content counters inside
+            :func:`_collect_scan_chunks_capped` bound RAM/gRPC held in the
+            chunk list.
+
+    Caps are enforced during streaming — inside the executor helper each
+    file's content length is counted **before** its chunk is appended, so
+    an over-cap scan raises before the offending chunk's bytes are
+    retained for the FixSession stream.
     """
     if scan_id is None:
         scan_id = uuid.uuid4().hex
@@ -788,18 +1030,38 @@ async def run_project_operation(
 
     try:
         await clone_repo(repo_url, branch, temp_dir, scm_token=scm_token, scm_provider=scm_provider)
-        clone_sha = await asyncio.get_running_loop().run_in_executor(None, get_clone_head, temp_dir) or ""
+        loop = asyncio.get_running_loop()
+        clone_sha = await loop.run_in_executor(None, get_clone_head, temp_dir) or ""
 
-        chunks = list(
-            yield_scan_chunks(
+        max_files = _scan_max_files()
+        max_bytes = _scan_max_bytes()
+        # Fail fast on oversized clones before chunking: this on-disk
+        # aggregate check (best-effort — counting cannot prevent clone
+        # disk use, only the downstream RAM/gRPC blowup) gates chunking.
+        disk_bytes = await loop.run_in_executor(None, _temp_dir_disk_bytes, temp_dir)
+        if disk_bytes > max_bytes:
+            raise ScanCapExceeded(f"Scan size limit exceeded: {disk_bytes} bytes on disk (max {max_bytes} bytes)")
+
+        # yield_scan_chunks walks the FS and reads file bytes synchronously;
+        # collect off-loop so the event loop never blocks on clone I/O.
+        # Caps (APME_SCAN_MAX_FILES / APME_SCAN_MAX_BYTES) are enforced
+        # incrementally inside the helper during generation — each file is
+        # counted before its chunk is appended, so an over-cap scan raises
+        # before the offending chunk's bytes are retained (no full-RAM
+        # materialization before the 413).
+        chunks: list[Any] = await loop.run_in_executor(
+            None,
+            partial(
+                _collect_scan_chunks_capped,
                 temp_dir,
                 scan_id=scan_id,
-                project_root_name="project",
-                ansible_core_version=ansible_version or None,
-                collection_specs=collection_specs or None,
                 session_id=session_id,
+                ansible_version=ansible_version,
+                collection_specs=collection_specs,
                 galaxy_servers=galaxy_servers,
-            )
+                max_files=max_files,
+                max_bytes=max_bytes,
+            ),
         )
 
         attach_fix = remediate or assess_pause
@@ -813,7 +1075,7 @@ async def run_project_operation(
                 interactive=interactive,
                 assess_pause=assess_pause,
             )
-            chunks[0].fix_options.CopyFrom(fix_opts)  # type: ignore[union-attr]
+            chunks[0].fix_options.CopyFrom(fix_opts)
 
         command_queue: asyncio.Queue[engine_pb2.SessionCommand | None] = asyncio.Queue()
 
@@ -1030,3 +1292,144 @@ async def run_project_scan(
         scm_token=scm_token,
         scm_provider=scm_provider,
     )
+
+
+def _collect_format_files(root: Path, max_files: int, max_bytes: int) -> list[tuple[str, bytes]]:
+    """Collect ``*.yml``/``*.yaml`` files under *root* with symlink + cap guards.
+
+    Symlinks are skipped outright (never followed); every candidate's
+    resolved path must stay within *root*. Each file's size is stat'ed
+    (``st_size``) against *max_bytes* BEFORE ``read_bytes`` so a single
+    huge file fails fast without loading it into RAM; aggregate file/byte
+    counts are enforced as a second gate while appending.
+
+    Blocking FS I/O — callers run this off the event loop (see
+    :func:`run_project_format`).
+
+    Args:
+        root: Clone directory (resolved once for containment checks).
+        max_files: Aggregate file-count cap (``APME_SCAN_MAX_FILES``).
+        max_bytes: Per-file and aggregate byte cap (``APME_SCAN_MAX_BYTES``).
+
+    Returns:
+        List of ``(relative_path, content)`` tuples (``*.yml`` first, each
+        group sorted — same order as the previous router inline walk).
+
+    Raises:
+        ScanCapExceeded: When the per-file or aggregate caps are exceeded.
+    """
+    base = root.resolve()
+    candidates: list[Path] = []
+    for pattern in ("*.yml", "*.yaml"):
+        candidates.extend(sorted(base.rglob(pattern)))
+    collected: list[tuple[str, bytes]] = []
+    file_count = 0
+    byte_count = 0
+    for path in candidates:
+        if path.is_symlink():
+            continue
+        try:
+            resolved = path.resolve()
+        except OSError:
+            continue
+        if not resolved.is_relative_to(base):
+            continue
+        if not resolved.is_file():
+            continue
+        try:
+            size = resolved.stat().st_size
+        except OSError:
+            continue
+        if size > max_bytes:
+            raise ScanCapExceeded(f"Format file too large: {path.name} ({size} bytes, max {max_bytes} bytes)")
+        try:
+            content = resolved.read_bytes()
+        except OSError:
+            continue
+        file_count += 1
+        byte_count += len(content)
+        if file_count > max_files:
+            raise ScanCapExceeded(f"Format file limit exceeded: {file_count} files (max {max_files})")
+        if byte_count > max_bytes:
+            raise ScanCapExceeded(f"Format size limit exceeded: {byte_count} bytes (max {max_bytes} bytes)")
+        collected.append((str(resolved.relative_to(base)), content))
+    return collected
+
+
+async def run_project_format(
+    *,
+    repo_url: str,
+    branch: str,
+    engine_address: str,
+    scm_token: str | None = None,
+    scm_provider: str | None = None,
+) -> tuple[str, list[dict[str, str]]]:
+    """Clone a project repo and return Engine Format diffs (read-only preview).
+
+    Owns clone + cap-checked collection + ``Format`` gRPC + tempdir
+    cleanup. The Gateway never writes: Engine ``Format`` (unary) returns
+    per-file diffs only — apply via CLI ``apme format --apply`` or
+    ``apme remediate``.
+
+    Args:
+        repo_url: SCM clone URL.
+        branch: Branch to clone (validated by the caller / ``clone_repo``).
+        engine_address: ``host:port`` for the Engine gRPC service.
+        scm_token: Optional SCM token for private repository access.
+        scm_provider: Optional explicit SCM provider for clone auth selection.
+
+    Returns:
+        Tuple of (clone_commit_sha, diffs as ``[{path, diff}]`` with empty
+        diffs omitted).
+
+    Raises:
+        ValueError: When the repo URL or branch is invalid.
+        ScanCapExceeded: When format caps are exceeded (HTTP 413).
+        RuntimeError: When ``git clone`` (``Clone failed: ...``) or Engine
+            ``Format`` (``Engine Format failed: ...``) fails.
+    """
+    temp_dir = tempfile.mkdtemp(prefix="apme_project_format_")
+    try:
+        try:
+            await clone_repo(
+                repo_url,
+                branch,
+                temp_dir,
+                scm_token=scm_token,
+                scm_provider=scm_provider,
+            )
+        except ScanCapExceeded:
+            raise
+        except RuntimeError as exc:
+            raise RuntimeError(f"Clone failed: {exc}") from exc
+        except ValueError as exc:
+            raise ValueError(f"Invalid repository or branch: {exc}") from exc
+        loop = asyncio.get_running_loop()
+        commit = await loop.run_in_executor(None, get_clone_head, temp_dir) or ""
+        max_files = _scan_max_files()
+        # Bound collection below the gRPC message ceiling (1 MiB headroom)
+        # so oversized previews return 413 via ScanCapExceeded instead of
+        # failing late with RESOURCE_EXHAUSTED (→ 502) at the Engine.
+        max_bytes = min(_scan_max_bytes(), _GRPC_MAX_MSG - 1024 * 1024)
+        collected = await loop.run_in_executor(
+            None,
+            partial(_collect_format_files, Path(temp_dir), max_files, max_bytes),
+        )
+        files = [ProtoFile(path=rel, content=content) for rel, content in collected]
+        channel = grpc.aio.insecure_channel(
+            engine_address,
+            options=[
+                ("grpc.max_send_message_length", _GRPC_MAX_MSG),
+                ("grpc.max_receive_message_length", _GRPC_MAX_MSG),
+            ],
+        )
+        try:
+            stub = engine_pb2_grpc.EngineStub(channel)  # type: ignore[no-untyped-call]
+            resp = await stub.Format(engine_pb2.FormatRequest(files=files), timeout=120)
+        except Exception as exc:
+            raise RuntimeError(f"Engine Format failed: {exc}") from exc
+        finally:
+            await channel.close(grace=None)
+        return commit, [{"path": d.path, "diff": d.diff} for d in resp.diffs if d.diff]
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)

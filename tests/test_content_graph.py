@@ -1368,3 +1368,49 @@ class TestPlayYamlLines:
         assert end1 == 9
 
         assert _find_play_lines(content, 2) == (0, 0)
+
+
+# ---------------------------------------------------------------------------
+# Graph fallbacks: cyclic order + malformed YAML (N22)
+# ---------------------------------------------------------------------------
+
+
+class TestGraphFallbacks:
+    """Fallbacks keep scans progressing on cyclic or malformed inputs."""
+
+    def test_cyclic_graph_topological_order_fallback(self) -> None:
+        """Cyclic graph returns node order instead of raising NetworkXUnfeasible."""
+        import networkx as nx  # type: ignore[import-untyped]
+
+        g = ContentGraph()
+        for nid in ("a", "b", "c"):
+            g.add_node(ContentNode(identity=NodeIdentity(path=nid, node_type=NodeType.TASK)))
+        g.add_edge("a", "b", EdgeType.DATA_FLOW)
+        g.add_edge("b", "c", EdgeType.DATA_FLOW)
+        g.add_edge("c", "a", EdgeType.DATA_FLOW)
+
+        assert not g.is_acyclic()
+        with pytest.raises(nx.NetworkXUnfeasible):
+            list(nx.topological_sort(g.g))
+        order = g.topological_order()
+        assert sorted(order) == ["a", "b", "c"]
+        assert len(order) == 3
+
+    def test_malformed_yaml_returns_none_continues_scan(self) -> None:
+        """YAMLError in task YAML parses to None so the scan continues."""
+        from apme_engine.graph.content_graph import _parse_yaml_for_update
+
+        malformed = "- name: broken\n  bad: [unclosed\n    indent: : :\n"
+        assert _parse_yaml_for_update(malformed) is None
+
+        valid = "- name: ok\n  ansible.builtin.debug:\n    msg: hi\n"
+        parsed = _parse_yaml_for_update(valid)
+        assert parsed is not None
+        assert parsed.get("name") == "ok"
+
+    def test_malformed_yaml_scalar_returns_none(self) -> None:
+        """Non-mapping YAML (scalar/list-of-scalars) maps to None, not raise."""
+        from apme_engine.graph.content_graph import _parse_yaml_for_update
+
+        assert _parse_yaml_for_update("just a string\n") is None
+        assert _parse_yaml_for_update("- a\n- b\n") is None

@@ -48,12 +48,13 @@ def _fake_create_base_venv(venv_dir: Path, ansible_core_version: str, **_kw: obj
     (bindir / "python").touch()
 
 
-def _noop_install(venv_dir: Path, specs: list[str]) -> list[str]:
+def _noop_install(venv_dir: Path, specs: list[str], env: dict[str, str] | None = None) -> list[str]:
     """Report full install success without doing anything.
 
     Args:
         venv_dir: Target venv directory (unused).
         specs: Requested collection specs (unused).
+        env: Optional Galaxy env (ignored by mocks).
 
     Returns:
         Empty list signalling full install success.
@@ -104,12 +105,13 @@ class TestWarmHitExactMatch:
         monkeypatch.setattr(venv_session, "create_base_venv", _fake_create_base_venv)
         install_calls: list[list[str]] = []
 
-        def _ok_install(venv_dir: Path, specs: list[str]) -> list[str]:
+        def _ok_install(venv_dir: Path, specs: list[str], env: dict[str, str] | None = None) -> list[str]:
             """Record install specs and report full success.
 
             Args:
                 venv_dir: Target venv directory.
                 specs: Requested collection specs.
+                env: Optional Galaxy env (ignored by mocks).
 
             Returns:
                 Empty list signalling full install success.
@@ -159,12 +161,13 @@ class TestPinnedSpecReconcile:
         monkeypatch.setattr(venv_session, "create_base_venv", _fake_create_base_venv)
         install_calls: list[list[str]] = []
 
-        def _ok_install(venv_dir: Path, specs: list[str]) -> list[str]:
+        def _ok_install(venv_dir: Path, specs: list[str], env: dict[str, str] | None = None) -> list[str]:
             """Record install specs and report full success.
 
             Args:
                 venv_dir: Target venv directory.
                 specs: Requested collection specs.
+                env: Optional Galaxy env (ignored by mocks).
 
             Returns:
                 Empty list signalling full install success.
@@ -213,12 +216,13 @@ class TestStaleOnlyRemoval:
         monkeypatch.setattr(venv_session, "create_base_venv", _fake_create_base_venv)
         install_calls: list[list[str]] = []
 
-        def _ok_install(venv_dir: Path, specs: list[str]) -> list[str]:
+        def _ok_install(venv_dir: Path, specs: list[str], env: dict[str, str] | None = None) -> list[str]:
             """Record install specs and report full success.
 
             Args:
                 venv_dir: Target venv directory.
                 specs: Requested collection specs.
+                env: Optional Galaxy env (ignored by mocks).
 
             Returns:
                 Empty list signalling full install success.
@@ -249,12 +253,13 @@ class TestUninstallFailure:
         """
         monkeypatch.setattr(venv_session, "create_base_venv", _fake_create_base_venv)
 
-        def _ok_install(venv_dir: Path, specs: list[str]) -> list[str]:
+        def _ok_install(venv_dir: Path, specs: list[str], env: dict[str, str] | None = None) -> list[str]:
             """Report full install success.
 
             Args:
                 venv_dir: Target venv directory.
                 specs: Requested collection specs.
+                env: Optional Galaxy env (ignored by mocks).
 
             Returns:
                 Empty list signalling full install success.
@@ -282,12 +287,13 @@ class TestInstallFailure:
         """
         monkeypatch.setattr(venv_session, "create_base_venv", _fake_create_base_venv)
 
-        def _ok_install(venv_dir: Path, specs: list[str]) -> list[str]:
+        def _ok_install(venv_dir: Path, specs: list[str], env: dict[str, str] | None = None) -> list[str]:
             """Report full install success for the seed acquire.
 
             Args:
                 venv_dir: Target venv directory.
                 specs: Requested collection specs.
+                env: Optional Galaxy env (ignored by mocks).
 
             Returns:
                 Empty list signalling full install success.
@@ -298,12 +304,13 @@ class TestInstallFailure:
         first = manager.acquire("install-fail-sid", "2.17", collection_specs=["a.b"])
         old_hash = first.requirements_hash
 
-        def _fail_all(venv_dir: Path, specs: list[str]) -> list[str]:
+        def _fail_all(venv_dir: Path, specs: list[str], env: dict[str, str] | None = None) -> list[str]:
             """Report every requested spec as failed.
 
             Args:
                 venv_dir: Target venv directory.
                 specs: Requested collection specs.
+                env: Optional Galaxy env (ignored by mocks).
 
             Returns:
                 All requested specs reported as failed.
@@ -333,12 +340,13 @@ class TestColdStartInstallFailure:
         monkeypatch.setattr(venv_session, "create_base_venv", _fake_create_base_venv)
         outcomes: list[list[str]] = [["a.b"], []]
 
-        def _install(venv_dir: Path, specs: list[str]) -> list[str]:
+        def _install(venv_dir: Path, specs: list[str], env: dict[str, str] | None = None) -> list[str]:
             """Fail the first install pass, succeed on retry.
 
             Args:
                 venv_dir: Target venv directory.
                 specs: Requested collection specs.
+                env: Optional Galaxy env (ignored by mocks).
 
             Returns:
                 Failed specs for the first call, none thereafter.
@@ -371,12 +379,13 @@ class TestProbeFailClosed:
         """
         monkeypatch.setattr(venv_session, "create_base_venv", _fake_create_base_venv)
 
-        def _ok_install(venv_dir: Path, specs: list[str]) -> list[str]:
+        def _ok_install(venv_dir: Path, specs: list[str], env: dict[str, str] | None = None) -> list[str]:
             """Report full install success.
 
             Args:
                 venv_dir: Target venv directory.
                 specs: Requested collection specs.
+                env: Optional Galaxy env (ignored by mocks).
 
             Returns:
                 Empty list signalling full install success.
@@ -581,6 +590,7 @@ class TestSessionAdmission:
         """
         monkeypatch.setattr(daemon_session, "_MAX_SESSIONS", 2)
         monkeypatch.setattr(daemon_session, "_MIN_CREATE_INTERVAL_S", 0.0)
+        monkeypatch.setattr(daemon_session, "_CREATE_INTERVAL_S", 0.0)
         store = SessionStore()
         store.create()
         store.create()
@@ -594,6 +604,7 @@ class TestSessionAdmission:
             monkeypatch: Pytest monkeypatch fixture.
         """
         monkeypatch.setattr(daemon_session, "_MIN_CREATE_INTERVAL_S", 0.0)
+        monkeypatch.setattr(daemon_session, "_CREATE_INTERVAL_S", 0.0)
         monkeypatch.setattr(daemon_session, "_MAX_SESSIONS", 10)
         store = SessionStore()
         first = store.create()
@@ -608,6 +619,7 @@ class TestSessionAdmission:
             monkeypatch: Pytest monkeypatch fixture.
         """
         monkeypatch.setattr(daemon_session, "_MIN_CREATE_INTERVAL_S", 60.0)
+        monkeypatch.setattr(daemon_session, "_CREATE_INTERVAL_S", 60.0)
         monkeypatch.setattr(daemon_session, "_MAX_SESSIONS", 10)
         store = SessionStore()
         store.create()

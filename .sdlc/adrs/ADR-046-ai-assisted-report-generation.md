@@ -340,8 +340,20 @@ Add Gateway endpoints to support queries that existing endpoints cannot answer:
 
 ---
 
+## Implementation Status (2026-10-05, additive)
+
+The `Engine.Inference` RPC from the Decision section is **deferred** — no
+`Inference` RPC, Gateway report endpoint, or `ReportViewer` is implemented
+yet. Agent operability does not require it: agents use `apme check
+--json`, Gateway REST + SSE (`/operation`, `/operate`), and the Engine
+`Format`/`FixSession` gRPC paths. `RemediationResolution.NEEDS_CROSS_FILE`
+remains a classification only; cross-file MCP tooling is likewise deferred
+(see `src/apme_engine/graph/types.py`). This note records the deferral so
+the `NEEDS_CROSS_FILE` pointer is not dangling.
+
 ## Revision History
 
 | Date | Author | Change |
 |------|--------|--------|
 | 2026-03-30 | AI-assisted | Initial proposal |
+| 2026-10-05 | Agent | Record Inference RPC + MCP cross-file as deferred (no code) |

@@ -477,6 +477,16 @@ class ContentNode:
     # Progression (ADR-044 Phase 3) — temporal YAML state tracking
     state: NodeState | None = None
     progression: list[NodeState] = field(default_factory=list)
+    # Monotonic sequence for NodeState ids — independent of
+    # ``len(progression)`` so ids never reuse after eviction at
+    # ``MAX_PROGRESSION``.  Serialized explicitly (see ``_node_to_dict``).
+    _state_seq: int = 0
+    # Immutable scan baseline: the first snapshot ever recorded.  Retained
+    # outside the capped ``progression`` window so ``progression[0]`` is
+    # never mistaken for the original after eviction.  Use
+    # :meth:`baseline_state` instead of ``progression[0]`` when the
+    # original content is needed.
+    _baseline: NodeState | None = None
 
     # Violation ledger — single source of truth for violation lifecycle
     violation_ledger: dict[ViolationKey, ViolationRecord] = field(default_factory=dict)
@@ -492,6 +502,47 @@ class ContentNode:
         return str(self.identity)
 
     MAX_PROGRESSION: ClassVar[int] = 20
+
+    def baseline_state(self) -> NodeState | None:
+        """Return the immutable scan baseline for this node.
+
+        The baseline is the first snapshot ever recorded via
+        :meth:`record_state` and is retained even after the capped
+        ``progression`` window evicts old entries.  Falls back to
+        ``progression[0]`` for nodes constructed before baseline
+        tracking (e.g. legacy deserialized payloads).
+
+        One-time skew limitation: the ``progression[0]`` fallback is
+        only the true baseline when no eviction has occurred. For a
+        legacy node whose window already evicted entries before
+        ``_baseline`` existed, ``progression[0]`` is a later snapshot,
+        so diffs against it under-report the real change exactly once
+        (until the node re-records and ``_baseline`` is set on the next
+        :meth:`record_state`). New nodes always set ``_baseline`` on
+        their first snapshot and are unaffected.
+
+        Returns:
+            The baseline ``NodeState``, or ``None`` when the node has
+            no snapshots yet.
+        """
+        if self._baseline is not None:
+            return self._baseline
+        if self.progression:
+            return self.progression[0]
+        return None
+
+    def has_recorded_baseline(self) -> bool:
+        """Return whether a true scan baseline was recorded.
+
+        Distinguishes nodes with a retained ``_baseline`` snapshot from
+        legacy nodes that only have the :meth:`baseline_state`
+        ``progression[0]`` fallback (which may post-date evicted history
+        and under-report the real change).
+
+        Returns:
+            True when :meth:`record_state` captured a baseline snapshot.
+        """
+        return self._baseline is not None
 
     def record_state(
         self,
@@ -509,7 +560,10 @@ class ContentNode:
 
         If progression already contains ``MAX_PROGRESSION`` entries the
         oldest entry is dropped to prevent unbounded growth from bugs in
-        the convergence loop.
+        the convergence loop.  The scan baseline (first snapshot) is
+        retained in ``_baseline`` outside the capped window, and
+        ``NodeState.id`` uses a monotonic ``_state_seq`` counter so ids
+        never reuse after eviction.
 
         Args:
             pass_number: Convergence pass (0 = initial scan).
@@ -521,7 +575,8 @@ class ContentNode:
         Returns:
             The newly created ``NodeState``.
         """
-        seq = len(self.progression)
+        seq = self._state_seq
+        self._state_seq += 1
         ns = NodeState(
             id=f"{self.node_id}@{seq}",
             pass_number=pass_number,
@@ -531,6 +586,8 @@ class ContentNode:
             timestamp=datetime.now(UTC).isoformat(),
             source=source,
         )
+        if self._baseline is None and not self.progression:
+            self._baseline = ns
         if len(self.progression) >= self.MAX_PROGRESSION:
             self.progression.pop(0)
         self.progression.append(ns)
@@ -1209,7 +1266,9 @@ class ContentGraph:
         self.decline_pending_review(node_id)
 
         if first_unapproved == 0:
-            baseline = node.progression[0]
+            baseline = node.baseline_state()
+            if baseline is None:
+                return True
             node.progression[:] = [baseline]
             node.state = baseline
             node.update_from_yaml(baseline.yaml_lines)
@@ -1894,6 +1953,9 @@ def _node_to_dict(node: ContentNode, *, slim: bool = False) -> dict[str, object]
         d[fname] = getattr(node, fname)
 
     if not slim:
+        d["state_seq"] = node._state_seq
+        if node._baseline is not None:
+            d["baseline"] = _node_state_to_dict(node._baseline)
         if node.state is not None:
             d["state"] = _node_state_to_dict(node.state)
         if node.progression:
@@ -1928,6 +1990,13 @@ def _node_from_dict(d: dict[str, object]) -> ContentNode:
 
     node = ContentNode(**kwargs)  # type: ignore[arg-type]
 
+    raw_seq = d.get("state_seq")
+    if isinstance(raw_seq, int) and not isinstance(raw_seq, bool) and raw_seq >= 0:
+        node._state_seq = raw_seq
+    raw_baseline = d.get("baseline")
+    if isinstance(raw_baseline, dict):
+        node._baseline = _node_state_from_dict(cast(dict[str, object], raw_baseline))
+
     raw_state = d.get("state")
     deserialized_state: NodeState | None = None
     if isinstance(raw_state, dict):
@@ -1950,8 +2019,44 @@ def _node_from_dict(d: dict[str, object]) -> ContentNode:
                 deserialized_progression[i] = replace(entry, id=f"{nid}@{i}")
         node.progression = deserialized_progression
         node.state = deserialized_progression[-1]
+        # No backfill for pre-baseline payloads (no "baseline" key): the
+        # progression[0] fallback may post-date evicted history, so leaving
+        # _baseline None keeps has_recorded_baseline() False and lets the
+        # strict splice guard raise instead of emitting a short diff.
+        # Backfill only when the payload carries baseline keys (a "baseline"
+        # entry that failed to parse above) — never for legacy formats.
+        if node._baseline is None and "baseline" in d:
+            node._baseline = deserialized_progression[0]
+        if not isinstance(raw_seq, int) or isinstance(raw_seq, bool):
+            # Derive a safe seq greater than any id suffix seen.
+            max_suffix = -1
+            for entry in deserialized_progression:
+                try:
+                    suffix = int(entry.id.rsplit("@", 1)[1])
+                except (ValueError, IndexError):
+                    continue
+                max_suffix = max(max_suffix, suffix)
+            node._state_seq = max(max_suffix + 1, len(deserialized_progression))
     elif deserialized_state is not None:
         node.state = deserialized_state
+
+    # Always reconcile _state_seq against @N suffixes already present: a
+    # valid-but-stale raw_seq (serialized before later snapshots were
+    # recorded) must not reuse an id. Clamp up to max(raw_seq,
+    # max_suffix + 1). The invalid-raw branch above already derived a safe
+    # seq; max() keeps that guarantee when suffixes exceed it.
+    if isinstance(raw_seq, int) and not isinstance(raw_seq, bool) and raw_seq >= 0:
+        max_suffix = -1
+        candidates: list[NodeState | None] = [node._baseline, node.state, *node.progression]
+        for cand in candidates:
+            if cand is None or not cand.id:
+                continue
+            try:
+                suffix = int(cand.id.rsplit("@", 1)[1])
+            except (ValueError, IndexError):
+                continue
+            max_suffix = max(max_suffix, suffix)
+        node._state_seq = max(raw_seq, max_suffix + 1)
 
     # Restore violation ledger.
     raw_ledger = d.get("violation_ledger")

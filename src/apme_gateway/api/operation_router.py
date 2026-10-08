@@ -11,6 +11,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import re
 import time
 import uuid
 from collections.abc import AsyncIterator, Sequence
@@ -22,6 +23,23 @@ from pydantic import BaseModel, Field
 
 from apme_engine.graph.severity import severity_from_proto, severity_to_label
 from apme_gateway.api.schemas import SubmitRequest, SubmitResponse
+from apme_gateway.api.submit_idempotency import (
+    _SUBMIT_IDEMPOTENCY_LOCK,
+    SubmitBinding,
+    SubmitIdempotencyKey,
+    _acquire_lock_with_timeout,
+    _check_idempotency_binding,
+    _coded_detail,
+    _compute_patch_hash,
+    _effective_submit_token,
+    _find_conflicting_entry,
+    _get_idempotency_entry,
+    _get_scan_lock,
+    _get_submit_inflight_lock,
+    _is_valid_submit_token,
+    _put_idempotency_entry,
+    _SubmitIdempotencyEntry,
+)
 from apme_gateway.db import get_session
 from apme_gateway.db import queries as q
 from apme_gateway.db.models import PatchedFile, Scan
@@ -41,9 +59,18 @@ from apme_gateway.operation_types import (
 if TYPE_CHECKING:
     from apme_gateway.scan.operator_queue import OperatorAnswerQueue
 
+from apme_gateway.api._request import _RequestOpt  # noqa: F401 -- single definition (#30)
+
 logger = logging.getLogger(__name__)
 
 operation_router = APIRouter(prefix="/api/v1/projects/{project_id}/operation")
+
+
+# ── Submit idempotency ──────────────────────────────────────────────
+# Store, locks, entry dataclass, and helpers live in
+# apme_gateway.api.submit_idempotency (BoundedCache-backed); this module
+# imports only the names it uses. External callers import the canonical
+# homes directly (submit_idempotency, atomic_operate).
 
 
 async def _retire_approval_gate_on_timeout(
@@ -204,6 +231,79 @@ class EscalateAiRequest(BaseModel):  # type: ignore[misc]
 # ── REST endpoints ────────────────────────────────────────────────────
 
 
+async def _claim_project_operation(
+    project_id: str,
+    action: str,
+    abandon_working_set: bool,
+) -> tuple[str, str, Any]:
+    """Claim a fresh operation slot for a project (shared preamble, #19).
+
+    Holds the per-project lock across active-check → draft-guard →
+    create so a concurrent remediate cannot interleave and wipe another
+    operation's drafts. Used by both the stepped ``initiate_operation``
+    and the atomic ``atomic_operate`` flows so gate policy (locking,
+    409 conflict codes, draft semantics) exists exactly once.
+
+    Args:
+        project_id: Target project UUID (must already be resolved).
+        action: ``check`` or ``remediate``.
+        abandon_working_set: Discard an interactive draft working set.
+
+    Returns:
+        Tuple of (operation_id, scan_id, operation state).
+
+    Raises:
+        HTTPException: 409 if an operation is active or a draft working
+            set blocks remediate without abandon opt-in.
+    """
+    registry = get_operation_registry()
+    operation_id = uuid.uuid4().hex
+    scan_id = uuid.uuid4().hex
+
+    # Hold the per-project lock across active-check → abandon → create so a
+    # concurrent remediate cannot interleave and wipe another op's drafts.
+    async with registry.project_lock(project_id):
+        prior_op = registry.get_by_project(project_id)
+        if prior_op is not None and prior_op.status not in TERMINAL_STATUSES:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Project already has an active operation {prior_op.operation_id}",
+            )
+        extra_scan_ids = [prior_op.scan_id] if prior_op is not None else []
+
+        if action == "remediate":
+            from apme_gateway.proposals.draft import (  # noqa: PLC0415
+                abandon_project_drafts,
+                project_has_draft_proposals,
+            )
+
+            async with get_session() as db:
+                has_draft = await project_has_draft_proposals(db, project_id, extra_scan_ids=extra_scan_ids)
+                if has_draft and not abandon_working_set:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=_coded_detail(
+                            "working_set_in_progress",
+                            "Project has an interactive draft working set; "
+                            "retry with abandon_working_set=true to discard it.",
+                        ),
+                    )
+                if has_draft and abandon_working_set:
+                    await abandon_project_drafts(db, project_id, extra_scan_ids=extra_scan_ids)
+                    await db.commit()
+
+        try:
+            state = registry.create(
+                operation_id=operation_id,
+                project_id=project_id,
+                scan_id=scan_id,
+                scan_type=action,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return operation_id, scan_id, state
+
+
 @operation_router.post("", status_code=201)  # type: ignore[untyped-decorator]
 async def initiate_operation(project_id: str, body: OperateRequest) -> OperateResponse:
     """Initiate a new check or remediate operation for a project.
@@ -231,52 +331,8 @@ async def initiate_operation(project_id: str, body: OperateRequest) -> OperateRe
     if not proj:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    registry = get_operation_registry()
-    operation_id = uuid.uuid4().hex
-    scan_id = uuid.uuid4().hex
     scan_type = body.action
-
-    # Hold the per-project lock across active-check → abandon → create so a
-    # concurrent remediate cannot interleave and wipe another op's drafts.
-    async with registry.project_lock(proj.id):
-        prior_op = registry.get_by_project(proj.id)
-        if prior_op is not None and prior_op.status not in TERMINAL_STATUSES:
-            raise HTTPException(
-                status_code=409,
-                detail=f"Project already has an active operation {prior_op.operation_id}",
-            )
-        extra_scan_ids = [prior_op.scan_id] if prior_op is not None else []
-
-        if body.action == "remediate":
-            from apme_gateway.proposals.draft import (  # noqa: PLC0415
-                abandon_project_drafts,
-                project_has_draft_proposals,
-            )
-
-            async with get_session() as db:
-                has_draft = await project_has_draft_proposals(db, proj.id, extra_scan_ids=extra_scan_ids)
-                if has_draft and not body.abandon_working_set:
-                    raise HTTPException(
-                        status_code=409,
-                        detail={
-                            "code": "working_set_in_progress",
-                            "message": "Project has an interactive draft working set; "
-                            "retry with abandon_working_set=true to discard it.",
-                        },
-                    )
-                if has_draft and body.abandon_working_set:
-                    await abandon_project_drafts(db, proj.id, extra_scan_ids=extra_scan_ids)
-                    await db.commit()
-
-        try:
-            state = registry.create(
-                operation_id=operation_id,
-                project_id=proj.id,
-                scan_id=scan_id,
-                scan_type=scan_type,
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
+    operation_id, scan_id, state = await _claim_project_operation(proj.id, body.action, body.abandon_working_set)
 
     cfg = load_config()
     galaxy_servers = await load_galaxy_server_defs()
@@ -297,7 +353,7 @@ async def initiate_operation(project_id: str, body: OperateRequest) -> OperateRe
         )
     )
     state.grpc_task = task
-    registry.start_reaper()
+    get_operation_registry().start_reaper()
 
     return OperateResponse(operation_id=operation_id)
 
@@ -330,15 +386,16 @@ async def approve_proposals(project_id: str, body: ApproveRequest) -> dict[str, 
     analytics when claimable, then resolves the operation's
     ``approval_gate`` so the background gRPC task can send the approval
     to Engine. ``review_status`` is stamped when violation ids are already
-    linked; otherwise FixCompleted stamps after the id bridge. Request /
-    response shape is unchanged (ADR-060).
+    linked; otherwise FixCompleted stamps after the id bridge. Returns an
+    additive ``submit_token`` (uuid) for idempotent ``POST /submit``
+    (N19); existing ``status`` field is unchanged (ADR-060).
 
     Args:
         project_id: Target project UUID.
         body: Approved **engine** proposal IDs.
 
     Returns:
-        Confirmation message.
+        Confirmation message plus ``submit_token`` for idempotent submit.
 
     Raises:
         HTTPException: 404 if no operation, 409 if not in awaiting_approval.
@@ -354,10 +411,16 @@ async def approve_proposals(project_id: str, body: ApproveRequest) -> dict[str, 
         )
     gate = state.approval_gate
     if gate is None or gate.future.done():
+        # Idempotent retry: a duplicate approve after success replays the
+        # already-issued token instead of 500/unbound-local (#17).
+        if state.submit_token is not None:
+            return {"status": "approved", "submit_token": state.submit_token}
         raise HTTPException(status_code=409, detail="Approval already submitted")
 
     async with state.approval_gate_lock:
         if gate.future.done():
+            if state.submit_token is not None:
+                return {"status": "approved", "submit_token": state.submit_token}
             raise HTTPException(status_code=409, detail="Approval already submitted")
         if state.approval_gate is not gate:
             raise HTTPException(
@@ -403,7 +466,11 @@ async def approve_proposals(project_id: str, body: ApproveRequest) -> dict[str, 
 
         gate.future.set_result(approved)
 
-    return {"status": "approved"}
+        # N19: issue an idempotency token for POST /submit (additive).
+        submit_token = uuid.uuid4().hex
+        state.submit_token = submit_token
+
+    return {"status": "approved", "submit_token": submit_token}
 
 
 @operation_router.post("/begin-remediate")  # type: ignore[untyped-decorator]
@@ -430,10 +497,10 @@ async def begin_remediate(project_id: str) -> dict[str, str]:
     if state.status != OperationStatus.ASSESSED:
         raise HTTPException(
             status_code=409,
-            detail={
-                "code": "invalid_status",
-                "message": f"Operation is in '{state.status.value}', not 'assessed'",
-            },
+            detail=_coded_detail(
+                "invalid_status",
+                f"Operation is in '{state.status.value}', not 'assessed'",
+            ),
         )
     # Bridge clears begin_remediate_future after wake while status may still be
     # ASSESSED — treat scan_type==remediate as already-begun (idempotent retry).
@@ -442,10 +509,10 @@ async def begin_remediate(project_id: str) -> dict[str, str]:
             return {"status": "begin_remediate"}
         raise HTTPException(
             status_code=409,
-            detail={
-                "code": "session_expired",
-                "message": "Assess session is no longer waiting for begin-remediate; start a new remediate operation.",
-            },
+            detail=_coded_detail(
+                "session_expired",
+                "Assess session is no longer waiting for begin-remediate; start a new remediate operation.",
+            ),
         )
     # Idempotent: first click resolves the future; duplicates must not look like expiry.
     if not state.begin_remediate_future.done():
@@ -479,18 +546,18 @@ async def escalate_ai(project_id: str, body: EscalateAiRequest) -> dict[str, str
     if state.status != OperationStatus.AWAITING_AI_TRIAGE:
         raise HTTPException(
             status_code=409,
-            detail={
-                "code": "invalid_status",
-                "message": (f"Operation is in '{state.status.value}', not 'awaiting_ai_triage'"),
-            },
+            detail=_coded_detail(
+                "invalid_status",
+                f"Operation is in '{state.status.value}', not 'awaiting_ai_triage'",
+            ),
         )
     if state.escalate_ai_future is None:
         raise HTTPException(
             status_code=409,
-            detail={
-                "code": "session_expired",
-                "message": ("AI triage session is no longer waiting for escalate-ai; start a new remediate operation."),
-            },
+            detail=_coded_detail(
+                "session_expired",
+                "AI triage session is no longer waiting for escalate-ai; start a new remediate operation.",
+            ),
         )
     if not state.escalate_ai_future.done():
         targets = [{"path": t.path, "rule_ids": list(t.rule_ids)} for t in body.targets]
@@ -595,6 +662,44 @@ async def cancel_operation(project_id: str) -> dict[str, str]:
 async def submit_operation(
     project_id: str,
     body: SubmitRequest | None = None,
+    request: _RequestOpt = None,
+) -> SubmitResponse:
+    """Push patched files to a branch and optionally open a PR (ADR-050).
+
+    Thin wrapper serializing concurrent same-token submits on a
+    per-(project_id, token) in-flight lock held from cache check through
+    persist, so duplicates await the winner and then replay instead of
+    pushing/opening duplicate PRs. Untokened calls run unlocked. The wait
+    is bounded (#29, 30s -> 503 + Retry-After) so a hung submit fails
+    fast instead of queueing. Lock order is token-lock (outer, here)
+    then scan-lock (inner, in the impl); never reversed.
+
+    Args:
+        project_id: Target project UUID.
+        body: Optional submit options (branch name, create_pr flag, etc.).
+        request: Incoming request (for ``Idempotency-Key`` header).
+
+    Returns:
+        Branch, commit SHA, optional PR URL, and provider.
+    """
+    lock_token = _effective_submit_token(request, body.submit_token if body is not None else None)
+    inflight = (
+        _get_submit_inflight_lock(SubmitIdempotencyKey(project_id=project_id, token=lock_token)) if lock_token else None
+    )
+    if inflight is None:
+        return await _submit_operation_impl(project_id, body, request)
+    await _acquire_lock_with_timeout(inflight)
+    try:
+        return await _submit_operation_impl(project_id, body, request)
+    finally:
+        with contextlib.suppress(RuntimeError):
+            inflight.release()
+
+
+async def _submit_operation_impl(
+    project_id: str,
+    body: SubmitRequest | None = None,
+    request: _RequestOpt = None,
 ) -> SubmitResponse:
     """Push patched files to a branch and optionally open a PR (ADR-050).
 
@@ -610,9 +715,16 @@ async def submit_operation(
       files from the database — works for any past remediation that still
       has stored patches.
 
+    Idempotency (N19, additive): callers may pass the ``submit_token``
+    returned by ``POST /approve`` (body field) or an ``Idempotency-Key``
+    header. A repeated submit with the same token replays the stored
+    result instead of pushing again. Double-submit without a token still
+    returns 409 when ``scan.pr_url`` is set.
+
     Args:
         project_id: Target project UUID.
         body: Optional submit options (branch name, create_pr flag, etc.).
+        request: Incoming request (for ``Idempotency-Key`` header).
 
     Returns:
         Branch, commit SHA, optional PR URL, and provider.
@@ -626,103 +738,336 @@ async def submit_operation(
     if body is None:
         body = SubmitRequest()
 
+    idempotency_token = _effective_submit_token(request, body.submit_token)
+    if idempotency_token is not None and not _is_valid_submit_token(idempotency_token):
+        raise HTTPException(
+            status_code=400,
+            detail=_coded_detail(
+                "invalid_idempotency_token",
+                "Idempotency token must be uuid-hex with at least 32 hex chars (128-bit).",
+            ),
+        )
+
     cfg = load_config()
 
     if body.activity_id:
         scan_id, state = body.activity_id, None
     else:
-        scan_id, state = _resolve_live_operation(project_id)
-
-    async with get_session() as db:
-        scan = await q.get_scan(db, scan_id)
-        if scan is None:
-            if state:
-                registry = get_operation_registry()
-                registry.transition(state.operation_id, OperationStatus.COMPLETED)
-            raise HTTPException(status_code=404, detail="Activity not found")
-
-        if body.activity_id and scan.project_id != project_id:
-            raise HTTPException(
-                status_code=404,
-                detail="Activity does not belong to this project",
-            )
-
-        if body.activity_id and scan.scan_type != "remediate":
-            raise HTTPException(
-                status_code=409,
-                detail="Submit requires a remediate activity",
-            )
-
-        if scan.pr_url:
-            if state:
-                get_operation_registry().set_pr_url(state.operation_id, scan.pr_url)
-            raise HTTPException(
-                status_code=409,
-                detail=f"PR already created for this activity: {scan.pr_url}",
-            )
-
-        project = await q.get_project(db, project_id)
-        if project is None:
-            if state:
-                get_operation_registry().transition(
-                    state.operation_id,
-                    OperationStatus.COMPLETED,
-                )
-            raise HTTPException(status_code=404, detail="Project not found")
-
-        patched = await q.get_patched_files(db, scan_id)
-        if not patched:
-            if state:
-                get_operation_registry().transition(
-                    state.operation_id,
-                    OperationStatus.COMPLETED,
-                )
-            raise HTTPException(status_code=404, detail="No patched files found")
-
-    if state:
-        get_operation_registry().transition(
-            state.operation_id,
-            OperationStatus.SUBMITTING_PR,
-        )
-
-    inline_token = body.scm_token.strip() if body.scm_token else None
-    token = inline_token or project.scm_token or cfg.scm_token
-    if not token:
-        if state:
-            get_operation_registry().transition(
-                state.operation_id,
-                OperationStatus.COMPLETED,
-            )
-        raise HTTPException(status_code=422, detail="No SCM token configured")
-
-    provider_type = project.scm_provider or detect_provider(project.repo_url)
-    if not provider_type:
-        if state:
-            get_operation_registry().transition(
-                state.operation_id,
-                OperationStatus.COMPLETED,
-            )
-        raise HTTPException(
-            status_code=422,
-            detail=f"Cannot detect SCM provider from URL: {project.repo_url}",
-        )
-
-    api_base: str | None = None
-    from apme_gateway.scm.urls import (
-        resolve_bitbucket_api_url,
-        resolve_gitlab_api_url,
-    )
-
-    api_base_resolvers: dict[str, tuple[str, Any]] = {
-        "github": (cfg.github_api_url, _resolve_github_api_base),
-        "gitlab": (cfg.gitlab_api_url, resolve_gitlab_api_url),
-        "bitbucket": (cfg.bitbucket_api_url, resolve_bitbucket_api_url),
-    }
-    resolver_entry = api_base_resolvers.get(provider_type)
-    if resolver_entry is not None:
-        configured, resolve = resolver_entry
         try:
-            api_base = resolve(configured, project.repo_url)
+            scan_id, state = _resolve_live_operation(project_id)
+        except HTTPException as resolve_exc:
+            # Tokened retry after submit: the live op has moved to
+            # PR_SUBMITTED, so the COMPLETED-only resolve 409s before the
+            # idempotency replay below can run. Reuse the submitted op's
+            # scan/state so token replay and binding checks run; the 409
+            # stands when no replay matches (new token or mismatch).
+            if idempotency_token is None or resolve_exc.status_code != 409:
+                raise
+            prior = get_operation_registry().get_by_project(project_id)
+            if prior is None or prior.status != OperationStatus.PR_SUBMITTED:
+                raise
+            scan_id, state = prior.scan_id, prior
+
+    # Fast fail-fast branch/activity check (no hash yet) for speed.
+    # A mismatch 409s here without touching the DB; a match defers to the
+    # hash-verified replay after patched load below (#5). A fast-path check
+    # without a hash replays only when hashes are missing
+    # (single-use-per-operation guidance).
+    _replay_key = (
+        SubmitIdempotencyKey(project_id=project_id, token=idempotency_token) if idempotency_token is not None else None
+    )
+    if _replay_key is not None:
+        _fast_binding = SubmitBinding(
+            branch_name=body.branch_name,
+            activity_id=body.activity_id,
+            scan_id=scan_id,
+        )
+        async with _SUBMIT_IDEMPOTENCY_LOCK:
+            _fast_entry = _get_idempotency_entry(_replay_key)
+            if _fast_entry is not None:
+                # Pre-load fast path: the patch set is not loaded yet, so
+                # hash enforcement waits for the hash-verified check below.
+                _check_idempotency_binding(_fast_entry, _fast_binding, enforce_hash=False)
+
+    # Cross-token per-scan mutex (#14): serialize same-scan submits
+    # regardless of token so concurrent different-token submits await
+    # the winner instead of pushing/opening duplicate PRs. Lock order is
+    # token-lock (outer, wrapper) then scan-lock (inner, here) — never
+    # reversed — and both waits are bounded (#29, 30s -> 503).
+    scan_lock = _get_scan_lock(project_id, scan_id)
+    await _acquire_lock_with_timeout(scan_lock)
+    try:
+        async with get_session() as db:
+            scan = await q.get_scan(db, scan_id)
+            if scan is None:
+                if state:
+                    registry = get_operation_registry()
+                    registry.transition(state.operation_id, OperationStatus.COMPLETED)
+                raise HTTPException(status_code=404, detail="Activity not found")
+
+            if body.activity_id and scan.project_id != project_id:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Activity does not belong to this project",
+                )
+
+            if body.activity_id and scan.scan_type != "remediate":
+                raise HTTPException(
+                    status_code=409,
+                    detail="Submit requires a remediate activity",
+                )
+
+            project = await q.get_project(db, project_id)
+            if project is None:
+                if state:
+                    get_operation_registry().transition(
+                        state.operation_id,
+                        OperationStatus.COMPLETED,
+                    )
+                raise HTTPException(status_code=404, detail="Project not found")
+
+            # Patch set loads EARLY so the incoming hash is available for
+            # every replay check below (#5). All SubmitBindings for replay
+            # carry patch_hash; a mismatch 409s instead of replaying stale.
+            patched = await q.get_patched_files(db, scan_id)
+            incoming_hash = _compute_patch_hash(patched)
+
+            # Hash-verified in-memory replay (branch/activity + patch hash).
+            if _replay_key is not None:
+                async with _SUBMIT_IDEMPOTENCY_LOCK:
+                    cached_entry = _get_idempotency_entry(_replay_key)
+                    if cached_entry is not None:
+                        _check_idempotency_binding(
+                            cached_entry,
+                            SubmitBinding(
+                                branch_name=body.branch_name,
+                                activity_id=body.activity_id,
+                                scan_id=scan_id,
+                                patch_hash=incoming_hash,
+                            ),
+                        )
+                        if state and cached_entry.response.pr_url:
+                            get_operation_registry().set_pr_url(state.operation_id, cached_entry.response.pr_url)
+                        return cached_entry.response
+
+            # Project/token-scoped durable replay (#3): a retried /operate
+            # mints a fresh scan_id per attempt, so the current scan row
+            # alone misses prior attempts. The most-recent scan with this
+            # project+token and a stored branch proves a push persisted
+            # (branch-only safe, pr_url independent). Runs before any SCM
+            # push; patched files above were loaded only for hash binding,
+            # not for pushing. Different scan_id is allowed (scan mismatch
+            # never 409s); branch/hash mismatches still 409 via the helper.
+            if _replay_key is not None and idempotency_token is not None:
+                durable_row = await q.get_scan_by_submit_token(db, project_id, idempotency_token)
+                if durable_row is not None and durable_row.branch_name:
+                    durable_provider = (
+                        getattr(durable_row, "scm_provider", None)
+                        or project.scm_provider
+                        or detect_provider(project.repo_url)
+                        or "unknown"
+                    )
+                    durable_response = SubmitResponse(
+                        branch_name=durable_row.branch_name,
+                        commit_sha=durable_row.commit_sha or "",
+                        pr_url=durable_row.pr_url,
+                        provider=durable_provider,
+                    )
+                    # Patch-hash enforcement when both sides are available:
+                    # hash the durable row's patch set and compare to the
+                    # incoming set; stale patch sets under a reused token
+                    # 409 instead of replaying (#5).
+                    durable_hash: str | None = None
+                    try:
+                        if durable_row.scan_id == scan_id:
+                            durable_hash = incoming_hash
+                        else:
+                            durable_patched = await q.get_patched_files(db, durable_row.scan_id)
+                            durable_hash = _compute_patch_hash(durable_patched)
+                    except Exception:
+                        logger.warning(
+                            "Durable patch load failed for scan %s; skipping durable replay",
+                            durable_row.scan_id,
+                            exc_info=True,
+                        )
+                        durable_hash = None
+                        # Fall through to live submit/409 instead of replaying
+                        # with an unverified hash (#51).
+                        durable_hash_failed = True
+                    else:
+                        durable_hash_failed = False
+                    if not durable_hash_failed:
+                        stored_hash = durable_hash if durable_hash is not None else incoming_hash
+                        # DB rows carry no activity binding, so the synthetic
+                        # entry mirrors the incoming activity (activity check
+                        # lives in the in-memory path where the original
+                        # binding is known); branch/hash still enforce via helper.
+                        _durable_entry = _SubmitIdempotencyEntry(
+                            response=durable_response,
+                            branch_name=body.branch_name,
+                            activity_id=body.activity_id,
+                            scan_id=durable_row.scan_id,
+                            patch_hash=stored_hash,
+                        )
+                        _check_idempotency_binding(
+                            _durable_entry,
+                            SubmitBinding(
+                                branch_name=body.branch_name,
+                                activity_id=body.activity_id,
+                                scan_id=scan_id,
+                                patch_hash=incoming_hash,
+                            ),
+                        )
+                        async with _SUBMIT_IDEMPOTENCY_LOCK:
+                            _put_idempotency_entry(
+                                _replay_key,
+                                durable_response,
+                                SubmitBinding(
+                                    branch_name=body.branch_name,
+                                    activity_id=body.activity_id,
+                                    scan_id=scan_id,
+                                    patch_hash=stored_hash,
+                                ),
+                            )
+                        if state and durable_row.pr_url:
+                            get_operation_registry().set_pr_url(state.operation_id, durable_row.pr_url)
+                        return durable_response
+
+            if scan.pr_url:
+                if state:
+                    get_operation_registry().set_pr_url(state.operation_id, scan.pr_url)
+                # N19: idempotent replay — same token returns the stored result
+                # instead of 409 so safe retries succeed.
+                if _replay_key is not None:
+                    async with _SUBMIT_IDEMPOTENCY_LOCK:
+                        replay_entry = _get_idempotency_entry(_replay_key)
+                        if replay_entry is not None:
+                            _check_idempotency_binding(
+                                replay_entry,
+                                SubmitBinding(
+                                    branch_name=body.branch_name,
+                                    activity_id=body.activity_id,
+                                    scan_id=scan_id,
+                                    patch_hash=incoming_hash,
+                                ),
+                            )
+                            return replay_entry.response
+                    # Token matches the persisted submit token: rebuild the
+                    # response from stored scan metadata (survives restarts where
+                    # the in-memory cache was lost). Resolve the provider via the
+                    # same path as live submit — never a hardcoded default.
+                    if getattr(scan, "submit_token", None) == idempotency_token:
+                        replay_provider = (
+                            getattr(scan, "scm_provider", None)
+                            or project.scm_provider
+                            or detect_provider(project.repo_url)
+                            or "unknown"
+                        )
+                        replay_response = SubmitResponse(
+                            branch_name=scan.branch_name or f"apme/remediate-{scan_id[:8]}",
+                            commit_sha=scan.commit_sha or "",
+                            pr_url=scan.pr_url,
+                            provider=replay_provider,
+                        )
+                        async with _SUBMIT_IDEMPOTENCY_LOCK:
+                            _put_idempotency_entry(
+                                _replay_key,
+                                replay_response,
+                                SubmitBinding(
+                                    branch_name=body.branch_name,
+                                    activity_id=body.activity_id,
+                                    scan_id=scan_id,
+                                    patch_hash=incoming_hash,
+                                ),
+                            )
+                        return replay_response
+                    # Same scan re-submitted with a *different* token (or no
+                    # binding): fall through to the 409 below. Mismatched-token
+                    # replay with an explicit different branch also 409s via
+                    # the binding check above when an entry exists.
+                    if body.branch_name is not None:
+                        async with _SUBMIT_IDEMPOTENCY_LOCK:
+                            # Any prior entry for this scan with a different token
+                            # and different branch is a conflict, not a replay
+                            # (#26: shared _is_live_entry semantic inside —
+                            # TTL-dead rows are evicted like the single-key
+                            # path treats them as a miss, so a stale entry
+                            # must not block a legitimate fresh-token submit).
+                            _conflict = _find_conflicting_entry(project_id, scan_id, body.branch_name)
+                            if _conflict is not None:
+                                raise HTTPException(
+                                    status_code=409,
+                                    detail=_coded_detail(
+                                        "idempotency_conflict",
+                                        "Idempotency token was already used with a different branch_name.",
+                                    ),
+                                )
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"PR already created for this activity: {scan.pr_url}",
+                )
+
+            if not patched:
+                if state:
+                    get_operation_registry().transition(
+                        state.operation_id,
+                        OperationStatus.COMPLETED,
+                    )
+                raise HTTPException(status_code=404, detail="No patched files found")
+
+        if state:
+            get_operation_registry().transition(
+                state.operation_id,
+                OperationStatus.SUBMITTING_PR,
+            )
+
+        inline_token = body.scm_token.strip() if body.scm_token else None
+        token = inline_token or project.scm_token or cfg.scm_token
+        if not token:
+            if state:
+                get_operation_registry().transition(
+                    state.operation_id,
+                    OperationStatus.COMPLETED,
+                )
+            raise HTTPException(status_code=422, detail="No SCM token configured")
+
+        provider_type = project.scm_provider or detect_provider(project.repo_url)
+        if not provider_type:
+            if state:
+                get_operation_registry().transition(
+                    state.operation_id,
+                    OperationStatus.COMPLETED,
+                )
+            raise HTTPException(
+                status_code=422,
+                detail=f"Cannot detect SCM provider from URL: {project.repo_url}",
+            )
+
+        api_base: str | None = None
+        from apme_gateway.scm.urls import (
+            resolve_bitbucket_api_url,
+            resolve_gitlab_api_url,
+        )
+
+        api_base_resolvers: dict[str, tuple[str, Any]] = {
+            "github": (cfg.github_api_url, _resolve_github_api_base),
+            "gitlab": (cfg.gitlab_api_url, resolve_gitlab_api_url),
+            "bitbucket": (cfg.bitbucket_api_url, resolve_bitbucket_api_url),
+        }
+        resolver_entry = api_base_resolvers.get(provider_type)
+        if resolver_entry is not None:
+            configured, resolve = resolver_entry
+            try:
+                api_base = resolve(configured, project.repo_url)
+            except ValueError as exc:
+                if state:
+                    get_operation_registry().transition(
+                        state.operation_id,
+                        OperationStatus.COMPLETED,
+                    )
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+        try:
+            provider = get_provider(provider_type, api_base_url=api_base)
         except ValueError as exc:
             if state:
                 get_operation_registry().transition(
@@ -730,122 +1075,239 @@ async def submit_operation(
                     OperationStatus.COMPLETED,
                 )
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-    try:
-        provider = get_provider(provider_type, api_base_url=api_base)
-    except ValueError as exc:
-        if state:
-            get_operation_registry().transition(
-                state.operation_id,
-                OperationStatus.COMPLETED,
-            )
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    short_id = scan_id[:8]
-    branch_name = body.branch_name or f"apme/remediate-{short_id}"
-    commit_title = body.title or f"fix: APME remediation — {scan.fixed_count} findings resolved"
-
-    try:
-        existing_head: str | None = None
-        branch_head_sha = getattr(provider, "branch_head_sha", None)
-        if callable(branch_head_sha):
-            head = await branch_head_sha(project.repo_url, branch_name, token)
-            if isinstance(head, str) and head:
-                existing_head = head
-
-        files = {pf.path: pf.content for pf in patched}
-        # Always push patched files when the branch already exists. Skipping
-        # push on create_pr=true caused empty PRs after a failed first attempt
-        # where create_branch succeeded but push_files did not.
-        if existing_head is None:
-            parent_sha = await provider.create_branch(project.repo_url, project.branch, branch_name, token)
-            commit_sha = await provider.push_files(
-                project.repo_url,
-                branch_name,
-                files,
-                commit_title,
-                token,
-                parent_commit_sha=parent_sha,
-            )
+        # Deterministic auto-branch per token so retried /operate attempts
+        # (fresh scan_id each) converge on one branch (#3). Untokened
+        # behavior is unchanged (scan_id[:8]).
+        if body.branch_name:
+            branch_name = body.branch_name
+        elif idempotency_token is not None:
+            # Lowercase first: validators accept uppercase hex, and without
+            # this an uppercase key yields an empty prefix, breaking the
+            # deterministic-branch convergence for retried /operate calls.
+            _token_hex = re.sub(r"[^0-9a-f]", "", idempotency_token.lower())[:8]
+            branch_name = f"apme/remediate-{_token_hex if _token_hex else scan_id[:8]}"
         else:
-            commit_sha = await provider.push_files(
-                project.repo_url,
-                branch_name,
-                files,
-                commit_title,
-                token,
-                parent_commit_sha=existing_head,
+            branch_name = f"apme/remediate-{scan_id[:8]}"
+        commit_title = body.title or f"fix: APME remediation — {scan.fixed_count} findings resolved"
+
+        # Claim-first idempotency (#10): persist the submit_token
+        # compare-and-set BEFORE any mutating SCM call. A retry after an
+        # SCM timeout finds the claim without a completed result and
+        # gets an explicit 409 (retry with a fresh token) instead of
+        # silently pushing a duplicate commit and opening a duplicate PR.
+        if idempotency_token is not None:
+            try:
+                from sqlalchemy import update as _sa_claim_update
+
+                _claim_result = await db.execute(
+                    _sa_claim_update(Scan)
+                    .where(Scan.scan_id == scan_id, Scan.submit_token.is_(None))
+                    .values(submit_token=idempotency_token)
+                )
+                await db.commit()
+                if _claim_result.rowcount == 0:
+                    _claimed = await q.get_scan(db, scan_id)
+                    if (
+                        _claimed is not None
+                        and getattr(_claimed, "submit_token", None) == idempotency_token
+                        and not getattr(_claimed, "pr_url", None)
+                        and not getattr(_claimed, "branch_name", None)
+                    ):
+                        if state:
+                            get_operation_registry().transition(
+                                state.operation_id,
+                                OperationStatus.COMPLETED,
+                                error="Prior submit attempt did not complete",
+                            )
+                        raise HTTPException(
+                            status_code=409,
+                            detail=_coded_detail(
+                                "idempotency_conflict",
+                                "A prior submit with this token did not complete "
+                                "(no branch recorded). Retry with a fresh token.",
+                            ),
+                        )
+            except HTTPException:
+                raise
+            except Exception:
+                logger.warning("Submit-token claim failed for scan %s", scan_id, exc_info=True)
+                try:
+                    await db.rollback()
+                except Exception:
+                    logger.debug("Rollback after claim failure also failed", exc_info=True)
+
+        # SCM calls run under a bounded timeout (#15): token/scan locks are
+        # held across this block, so a hung provider must fail fast (504)
+        # instead of wedging the scan key for every waiter.
+        _SCM_TIMEOUT_S = 120.0
+        try:
+            existing_head: str | None = None
+            branch_head_sha = getattr(provider, "branch_head_sha", None)
+            if callable(branch_head_sha):
+                async with asyncio.timeout(_SCM_TIMEOUT_S):
+                    head = await branch_head_sha(project.repo_url, branch_name, token)
+                if isinstance(head, str) and head:
+                    existing_head = head
+
+            files = {pf.path: pf.content for pf in patched}
+            # Always push patched files when the branch already exists. Skipping
+            # push on create_pr=true caused empty PRs after a failed first attempt
+            # where create_branch succeeded but push_files did not.
+            async with asyncio.timeout(_SCM_TIMEOUT_S):
+                if existing_head is None:
+                    parent_sha = await provider.create_branch(project.repo_url, project.branch, branch_name, token)
+                    commit_sha = await provider.push_files(
+                        project.repo_url,
+                        branch_name,
+                        files,
+                        commit_title,
+                        token,
+                        parent_commit_sha=parent_sha,
+                    )
+                else:
+                    commit_sha = await provider.push_files(
+                        project.repo_url,
+                        branch_name,
+                        files,
+                        commit_title,
+                        token,
+                        parent_commit_sha=existing_head,
+                    )
+
+            pr_url: str | None = None
+            if body.create_pr:
+                pr_body = body.body or _build_pr_body(scan, patched)
+                async with asyncio.timeout(_SCM_TIMEOUT_S):
+                    pr_result = await provider.create_pull_request(
+                        project.repo_url,
+                        project.branch,
+                        branch_name,
+                        commit_title,
+                        pr_body,
+                        token,
+                    )
+                pr_url = pr_result.pr_url
+        except TimeoutError as exc:
+            logger.error("SCM provider timed out for project %s", project_id)
+            if state:
+                get_operation_registry().transition(
+                    state.operation_id,
+                    OperationStatus.COMPLETED,
+                    error="SCM provider timed out",
+                )
+            raise HTTPException(status_code=504, detail="SCM provider timed out") from exc
+        except Exception as exc:
+            # Do not log raw httpx response bodies (may echo tokens / internal hosts).
+            logger.error(
+                "SCM provider error for project %s: %s: %s",
+                project_id,
+                type(exc).__name__,
+                _safe_scm_error(exc),
+            )
+            if state:
+                get_operation_registry().transition(
+                    state.operation_id,
+                    OperationStatus.COMPLETED,
+                    error=_safe_scm_error(exc),
+                )
+            raise HTTPException(status_code=502, detail="SCM provider error") from exc
+
+        try:
+            async with get_session() as db:
+                record = await q.record_scan_scm_publish(
+                    db,
+                    scan_id,
+                    branch_name=branch_name,
+                    commit_sha=commit_sha,
+                    pr_url=pr_url,
+                )
+        except Exception:
+            logger.exception("Failed to persist SCM publish metadata for scan %s", scan_id)
+            if state:
+                get_operation_registry().transition(
+                    state.operation_id,
+                    OperationStatus.COMPLETED,
+                    error="Failed to persist SCM publish metadata",
+                )
+            raise HTTPException(status_code=500, detail="Failed to persist SCM publish metadata") from None
+        if not record.found:
+            if state:
+                get_operation_registry().transition(
+                    state.operation_id,
+                    OperationStatus.COMPLETED,
+                    error="Activity not found",
+                )
+            raise HTTPException(status_code=404, detail="Activity not found")
+        pr_url = record.pr_url
+        if pr_url:
+            if state:
+                get_operation_registry().set_pr_url(state.operation_id, pr_url)
+        elif state:
+            get_operation_registry().transition(
+                state.operation_id,
+                OperationStatus.COMPLETED,
             )
 
-        pr_url: str | None = None
-        if body.create_pr:
-            pr_body = body.body or _build_pr_body(scan, patched)
-            pr_result = await provider.create_pull_request(
-                project.repo_url,
-                project.branch,
-                branch_name,
-                commit_title,
-                pr_body,
-                token,
-            )
-            pr_url = pr_result.pr_url
-    except Exception as exc:
-        # Do not log raw httpx response bodies (may echo tokens / internal hosts).
-        logger.error(
-            "SCM provider error for project %s: %s: %s",
-            project_id,
-            type(exc).__name__,
-            _safe_scm_error(exc),
+        response = SubmitResponse(
+            branch_name=branch_name,
+            commit_sha=commit_sha,
+            pr_url=pr_url,
+            provider=provider_type,
         )
-        if state:
-            get_operation_registry().transition(
-                state.operation_id,
-                OperationStatus.COMPLETED,
-                error=_safe_scm_error(exc),
-            )
-        raise HTTPException(status_code=502, detail="SCM provider error") from exc
+        if _replay_key is not None:
+            # Bind the entry to the patch content hash when available (#28):
+            # same token + same branch/activity but a different patch set
+            # replays as 409 instead of silently returning a stale result.
+            # Tokens remain single-use-per-operation: callers that cannot
+            # supply a hash reuse the token for the same logical operation.
+            # incoming_hash was computed from the early patched load (#5).
+            async with _SUBMIT_IDEMPOTENCY_LOCK:
+                _put_idempotency_entry(
+                    _replay_key,
+                    response,
+                    SubmitBinding(
+                        branch_name=body.branch_name,
+                        activity_id=body.activity_id,
+                        scan_id=scan_id,
+                        patch_hash=incoming_hash,
+                    ),
+                )
+            # Persist the token + provider binding so restarts can still replay
+            # (N19). submit_token uses compare-and-set (WHERE NULL) as the durable
+            # path; provider is additive and safe to stamp unconditionally.
+            try:
+                from sqlalchemy import update as _sa_update
 
-    try:
-        async with get_session() as db:
-            record = await q.record_scan_scm_publish(
-                db,
-                scan_id,
-                branch_name=branch_name,
-                commit_sha=commit_sha,
-                pr_url=pr_url,
-            )
-    except Exception:
-        logger.exception("Failed to persist SCM publish metadata for scan %s", scan_id)
-        if state:
-            get_operation_registry().transition(
-                state.operation_id,
-                OperationStatus.COMPLETED,
-                error="Failed to persist SCM publish metadata",
-            )
-        raise HTTPException(status_code=500, detail="Failed to persist SCM publish metadata") from None
-    if not record.found:
-        if state:
-            get_operation_registry().transition(
-                state.operation_id,
-                OperationStatus.COMPLETED,
-                error="Activity not found",
-            )
-        raise HTTPException(status_code=404, detail="Activity not found")
-    pr_url = record.pr_url
-    if pr_url:
-        if state:
-            get_operation_registry().set_pr_url(state.operation_id, pr_url)
-    elif state:
-        get_operation_registry().transition(
-            state.operation_id,
-            OperationStatus.COMPLETED,
-        )
+                async with get_session() as _token_db:
+                    await _token_db.execute(
+                        _sa_update(Scan)
+                        .where(Scan.scan_id == scan_id, Scan.submit_token.is_(None))
+                        .values(submit_token=idempotency_token)
+                    )
+                    await _token_db.execute(
+                        _sa_update(Scan).where(Scan.scan_id == scan_id).values(scm_provider=provider_type)
+                    )
+                    await _token_db.commit()
+            except Exception:
+                logger.warning("Failed to persist submit_token for scan %s", scan_id, exc_info=True)
+        else:
+            # Branch-only / no-token submits still persist the provider so a
+            # later token replay can resolve it without hardcoding.
+            try:
+                from sqlalchemy import update as _sa_update
 
-    return SubmitResponse(
-        branch_name=branch_name,
-        commit_sha=commit_sha,
-        pr_url=pr_url,
-        provider=provider_type,
-    )
+                async with get_session() as _prov_db:
+                    await _prov_db.execute(
+                        _sa_update(Scan).where(Scan.scan_id == scan_id).values(scm_provider=provider_type)
+                    )
+                    await _prov_db.commit()
+            except Exception:
+                logger.warning("Failed to persist scm_provider for scan %s", scan_id, exc_info=True)
+        return response
+    finally:
+        with contextlib.suppress(RuntimeError):
+            scan_lock.release()
 
 
 def _resolve_live_operation(project_id: str) -> tuple[str, OperationState]:
@@ -1622,3 +2084,8 @@ async def _drive_operation(
     except Exception as exc:
         logger.exception("Operation %s failed", operation_id[:12])
         registry.transition(operation_id, OperationStatus.FAILED, error=str(exc))
+
+
+# ── Atomic operate ──────────────────────────────────────────────────
+# Lives in apme_gateway.api.atomic_operate; shared initiation logic is
+# :func:`_claim_project_operation` above.

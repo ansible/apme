@@ -79,6 +79,9 @@ class RemediationResolution(str, Enum):
         AI_LOW_CONFIDENCE: AI returned a low-confidence proposal.
         USER_REJECTED: User rejected the proposed fix.
         NEEDS_CROSS_FILE: Requires cross-file context (deferred to MCP tool).
+            MCP cross-file tooling is deferred (ADR-046 Inference deferred):
+            no MCP client exists yet, so treat as manual review. Do not add
+            an MCP dependency to built-in validators (closed-bundle invariant).
         MANUAL: Requires manual review (play-level or structural issue).
         INFORMATIONAL: Report-only rule (severity=none), no fix needed.
     """

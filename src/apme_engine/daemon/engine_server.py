@@ -70,6 +70,7 @@ from apme.v1.reporting_pb2 import (
     ProposalOutcome,
 )
 from apme.v1.validate_pb2 import ValidateRequest
+from apme_engine.cache import BoundedCache
 from apme_engine.daemon import engine_health, engine_upload
 from apme_engine.daemon.deadline import (
     FALLBACK_NON_AI_OPERATION_BUDGET,
@@ -94,6 +95,7 @@ from apme_engine.engine.models import RemediationClass, ViolationDict
 from apme_engine.graph.content_graph import ContentGraph
 from apme_engine.graph.scanner import filter_noqa_violations, graph_rule_opt_in_from_rule_configs
 from apme_engine.log_bridge import attach_collector
+from apme_engine.remediation.graph_engine import AIPolicyContext
 from apme_engine.remediation.graph_engine import FilePatch as SplicedFilePatch
 from apme_engine.rule_ids import normalize_rule_id
 from apme_engine.runner import run_scan
@@ -103,6 +105,9 @@ from apme_engine.venv_manager.session import (
     get_dependency_tree,
     list_installed_collections,
     list_installed_packages,
+    venv_read_guard,
+    venv_write_guard,
+    wait_out_worker,
 )
 
 logger = logging.getLogger("apme.engine")
@@ -125,6 +130,13 @@ class _FormatBatchResult:
 
 _MAX_CONCURRENT_RPCS = int(os.environ.get("APME_ENGINE_MAX_RPCS", "16"))
 _GRPC_MAX_MSG = 50 * 1024 * 1024  # 50 MiB — hierarchy+scandata can exceed the 4 MiB default
+
+# Venv guard contention: when another session's install holds the
+# generation write guard, re-queue with backoff instead of aborting the
+# scan on first contention. Only guard-acquisition timeouts retry —
+# a TimeoutError raised by the install worker itself re-raises at once.
+_VENV_GUARD_ACQUIRE_RETRIES = 3
+_VENV_GUARD_ACQUIRE_BACKOFF_S = 5.0
 
 
 @dataclass
@@ -277,7 +289,10 @@ def _enrich_violations_from_graph(
         if not node.progression:
             continue
 
-        v["original_yaml"] = node.progression[0].yaml_lines
+        baseline = node.baseline_state()
+        if baseline is None:
+            continue
+        v["original_yaml"] = baseline.yaml_lines
         v["node_line_start"] = node.line_start
 
         if not fixed:
@@ -508,6 +523,15 @@ def _discover_collection_specs(files: Sequence[File]) -> tuple[list[str], list[s
 
     Looks for ``requirements.yml`` and ``collections/requirements.yml``.
     Parses the ``collections`` key and returns ``name[:version]`` strings.
+    Bare string entries are stripped; duplicate bare names resolve
+    last-wins so a later version override replaces an earlier pin.
+
+    Version constraints (``>=1.0.0``, ``>=1.0.0,<2.0.0``, pinned ``1.2.3``)
+    are passed through verbatim as ``name:version`` — never degraded to a
+    bare name.  The sole exception is ``"*"`` (any version), which is
+    equivalent to a bare name.  Downstream
+    :func:`~apme_engine.venv_manager.venv_collections._spec_to_pip`
+    translates the constraint into a PEP 440 pip specifier end-to-end.
 
     Args:
         files: Uploaded File protos (or duck-typed objects with ``path``/``content``).
@@ -535,16 +559,19 @@ def _discover_collection_specs(files: Sequence[File]) -> tuple[list[str], list[s
             continue
         for entry in collections:
             if isinstance(entry, str):
-                specs.setdefault(entry, entry)
+                spec = entry.strip()
+                if not spec:
+                    continue
+                bare = spec.split(":")[0].strip()
+                if not bare:
+                    continue
+                specs[bare] = spec
             elif isinstance(entry, dict) and entry.get("name"):
-                name = str(entry["name"])
+                name = str(entry["name"]).strip()
                 version = entry.get("version")
-                spec = (
-                    f"{name}:{version}"
-                    if version and not str(version).startswith((">=", ">", "<", "!=", "*"))
-                    else name
-                )
-                specs.setdefault(name, spec)
+                version_str = str(version).strip() if version is not None else ""
+                spec = f"{name}:{version_str}" if version_str and version_str != "*" else name
+                specs[name] = spec
     return list(specs.values()), found_paths
 
 
@@ -789,7 +816,112 @@ def _apply_rule_configs(
     return filtered
 
 
+def _build_ai_policy_context(
+    rule_configs: Sequence[object] | None,
+    ansible_core_version: str = "",
+    collection_specs: Sequence[str] | None = None,
+) -> AIPolicyContext:
+    """Assemble live policy for Tier 2 AI prompts from request context.
+
+    Resolves per-rule severity/enabled overrides from ``RuleConfig``
+    protos using the existing severity helpers (same mapping as
+    :func:`_apply_rule_configs`), plus the target ansible-core version
+    and collection pins from scan/fix options. The engine never fetches
+    policy itself — this only passes through available scan/project
+    context fields. Suppression hashes stay empty: suppressions live in
+    the Gateway/CLI layer, which the engine cannot query (ADR-020).
+
+    Args:
+        rule_configs: Proto ``RuleConfig`` messages from ``ScanOptions``.
+        ansible_core_version: Target ansible-core version (may be empty).
+        collection_specs: Pinned collection specs (may be empty).
+
+    Returns:
+        ``AIPolicyContext`` with ``live_policy_available`` true when at
+        least one live-policy signal resolved; unavailable (fail closed)
+        when resolution yields nothing or raises.
+    """
+    try:
+        from apme_engine.graph.severity import severity_from_proto, severity_to_label
+
+        resolved: dict[str, str] = {}
+        enabled: dict[str, bool] = {}
+        for rc in rule_configs or []:
+            norm = normalize_rule_id(str(getattr(rc, "rule_id", "") or ""))
+            if not norm:
+                continue
+            enabled[norm] = bool(getattr(rc, "enabled", False))
+            sev = int(getattr(rc, "severity", 0) or 0)
+            if sev:
+                resolved[norm] = severity_to_label(severity_from_proto(sev))
+        pins = [str(s) for s in (collection_specs or []) if str(s)]
+        core = str(ansible_core_version or "")
+        available = bool(resolved or enabled or core or pins)
+        return AIPolicyContext(
+            resolved_severities=resolved,
+            rule_enabled=enabled,
+            suppression_hashes=[],
+            ansible_core_version=core,
+            collection_pins=pins,
+            live_policy_available=available,
+        )
+    except Exception:
+        logger.warning("AI policy resolution failed; failing closed to unavailable", exc_info=True)
+        return AIPolicyContext()
+
+
 _known_rule_ids: set[str] = set()
+
+#: Bound on cached per-config Galaxy locks (LRU, least-recently-used
+#: evicted first). Config identities are content hashes, but distinct
+#: credential churn is still untrusted input — the cap stops unbounded
+#: growth. See :meth:`EngineServicer._get_galaxy_proxy_cfg_lock_for`.
+_MAX_GALAXY_CFG_LOCKS = 512
+
+
+def _galaxy_cfg_content_key(galaxy_cfg_path: Path | None) -> str:
+    """Return the lock-map key for a session Galaxy config.
+
+    Keys by content hash (SHA-256 over the sorted server names + URLs),
+    not the temp path: every session config is written to a unique temp
+    path, so a path key would never repeat — sessions with identical
+    credentials would never share a lock while the map grew one entry
+    per session. Server entries are sorted before hashing so the same
+    set in a different order still shares one lock. ``None`` (public
+    Galaxy) maps to ``"__none__"``; an unreadable or unparsable path
+    falls back to the raw file-bytes hash, then the path string, so
+    locking never raises.
+
+    Args:
+        galaxy_cfg_path: Session-scoped ``ansible.cfg`` path, if any.
+
+    Returns:
+        Content-hash key (``"galaxy:<hex>"``), ``"__none__"``, or a
+        fallback key when the file cannot be read.
+    """
+    import configparser
+    import hashlib
+
+    if galaxy_cfg_path is None:
+        return "__none__"
+    try:
+        raw = Path(galaxy_cfg_path).read_bytes()
+    except OSError:
+        return str(galaxy_cfg_path)
+    try:
+        cfg = configparser.ConfigParser(interpolation=None)
+        cfg.read_string(raw.decode("utf-8"))
+        pairs = sorted(
+            (name.partition("galaxy_server.")[2], cfg[name].get("url", ""))
+            for name in cfg.sections()
+            if name.startswith("galaxy_server.") and name != "galaxy_server."
+        )
+        if pairs:
+            canonical = "\0".join(f"{name}\0{url}" for name, url in pairs)
+            return f"galaxy:{hashlib.sha256(canonical.encode('utf-8')).hexdigest()}"
+    except (configparser.Error, UnicodeDecodeError, ValueError):
+        pass
+    return f"galaxy:{hashlib.sha256(raw).hexdigest()}"
 
 
 class EngineServicer(engine_pb2_grpc.EngineServicer):
@@ -805,6 +937,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
 
     _venv_mgr: VenvSessionManager | None = None
     _galaxy_proxy_cfg_lock: asyncio.Lock | None = None
+    _galaxy_cfg_locks: BoundedCache[str, asyncio.Lock] | None = None
 
     def _get_venv_manager(self) -> VenvSessionManager:
         """Return (or create) the singleton VenvSessionManager.
@@ -816,14 +949,89 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             self._venv_mgr = VenvSessionManager()
         return self._venv_mgr
 
-    def _get_galaxy_proxy_cfg_lock(self) -> asyncio.Lock:
-        """Return the lock guarding temporary ``ANSIBLE_CONFIG`` overrides.
+    async def _acquire_venv_session_with_retries(
+        self,
+        *,
+        sid: str,
+        core_version: str,
+        collection_specs: list[str] | None,
+        galaxy_cfg_path: Path | None,
+        scan_id: str,
+        ctx: contextvars.Context,
+    ) -> VenvSession:
+        """Cold-build/install a venv with guard-contention retries (#5).
 
-        The local daemon runs Engine and Galaxy Proxy in the same process.
-        When a scan provides session-scoped Galaxy credentials, Engine
-        temporarily exposes that config via ``ANSIBLE_CONFIG`` so the in-process
-        proxy can use it during venv acquisition. The lock serializes that
-        process-wide override.
+        Extracted from the scan pipeline so the contention branches are
+        unit-testable: guard ``TimeoutError`` before the worker starts
+        re-queues with backoff (up to ``_VENV_GUARD_ACQUIRE_RETRIES``),
+        while a worker ``TimeoutError`` after the worker started fails
+        at once (retrying would redo a failed install).
+
+        Args:
+            sid: Session identity for the venv.
+            core_version: Ansible-core version pin.
+            collection_specs: Collection specs for the install.
+            galaxy_cfg_path: Session Galaxy config path (or None).
+            scan_id: Request ID for log lines.
+            ctx: Context to run the blocking acquire under.
+
+        Returns:
+            The acquired venv session.
+
+        Raises:
+            TimeoutError: On guard exhaustion or worker timeout.
+        """
+        worker_started = False
+        for _guard_attempt in range(_VENV_GUARD_ACQUIRE_RETRIES):
+            try:
+                async with (
+                    venv_write_guard(sid, core_version),
+                    limit_venv_builds() as release_on,
+                    self._activate_galaxy_proxy_config(galaxy_cfg_path) as galaxy_env,
+                ):
+                    loop = asyncio.get_event_loop()
+
+                    def _run_acquire() -> VenvSession:
+                        return ctx.run(
+                            self._get_venv_manager().acquire,
+                            sid,
+                            core_version,
+                            collection_specs,
+                            galaxy_env,
+                        )
+
+                    acquire_future = loop.run_in_executor(None, _run_acquire)
+                    # Hold the build slot until the worker finishes, even if cancelled.
+                    release_on(cast(asyncio.Future[object], acquire_future))
+                    worker_started = True
+                    # Wait out the worker on cancellation (holds the
+                    # write guard until the mutating thread finishes
+                    # instead of splitting exclusion on cancel).
+                    return await wait_out_worker(acquire_future)
+            except TimeoutError:
+                if worker_started:
+                    # The install worker itself timed out — not guard
+                    # contention. Fail at once; retrying would redo a
+                    # failed install and mask the real error.
+                    raise
+                if _guard_attempt + 1 >= _VENV_GUARD_ACQUIRE_RETRIES:
+                    raise
+                logger.info(
+                    "Venv write guard busy (session=%s req=%s); re-queueing install (%d/%d)",
+                    sid,
+                    scan_id,
+                    _guard_attempt + 1,
+                    _VENV_GUARD_ACQUIRE_RETRIES,
+                )
+                await asyncio.sleep(_VENV_GUARD_ACQUIRE_BACKOFF_S * (_guard_attempt + 1))
+        raise TimeoutError(f"Venv write guard stayed contended for session={sid} req={scan_id}")
+
+    def _get_galaxy_proxy_cfg_lock(self) -> asyncio.Lock:
+        """Return the legacy process-wide Galaxy config lock.
+
+        Retained for backward compatibility; new code scopes by config
+        hash via :meth:`_get_galaxy_proxy_cfg_lock_for` so sessions with
+        unrelated credentials do not serialize on one lock.
 
         Returns:
             Lock protecting process-wide Galaxy proxy config activation.
@@ -832,33 +1040,89 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             self._galaxy_proxy_cfg_lock = asyncio.Lock()
         return self._galaxy_proxy_cfg_lock
 
+    def _get_galaxy_proxy_cfg_lock_for(self, galaxy_cfg_path: Path | None) -> asyncio.Lock:
+        """Return the lock for a Galaxy config identity.
+
+        The key is a content hash (SHA-256 over the file bytes, which
+        encode the sorted server names + URLs), **not** the temp path:
+        session configs live at unique temp paths, so keying by path
+        would never share — identical credentials would never serialize
+        while the map grew without bound. ``None`` (no session config /
+        public Galaxy) shares one lock.
+
+        The map is a :class:`BoundedCache` capped at
+        ``_MAX_GALAXY_CFG_LOCKS`` (512) with idle-aware eviction, so
+        distinct credential churn cannot grow it without bound; only
+        UNLOCKED entries are evicted (evicting a held lock would split
+        mutual exclusion — a newcomer would share a fresh lock while the
+        old holder still runs). When every entry is locked the map
+        temporarily grows over cap.
+
+        Args:
+            galaxy_cfg_path: Session-scoped ``ansible.cfg`` path, if any.
+
+        Returns:
+            Asyncio lock scoped to the config identity.
+        """
+        if self._galaxy_cfg_locks is None:
+            self._galaxy_cfg_locks = BoundedCache(
+                maxsize=_MAX_GALAXY_CFG_LOCKS,
+                is_idle=lambda lk: not lk.locked(),
+            )
+        key = _galaxy_cfg_content_key(galaxy_cfg_path)
+        return self._galaxy_cfg_locks.get_or_create(key, asyncio.Lock)
+
+    def _clear_galaxy_cfg_locks(self) -> None:
+        """Drop all cached Galaxy config locks (test helper)."""
+        self._galaxy_cfg_locks = None
+
+    def _galaxy_proxy_env_snapshot(self, galaxy_cfg_path: Path | None) -> dict[str, str]:
+        """Build an env snapshot carrying the session Galaxy config.
+
+        Does not mutate ``os.environ`` — callers pass the snapshot
+        explicitly to the venv-acquire downloader so concurrent sessions
+        cannot observe each other's credentials via process-global state.
+
+        Args:
+            galaxy_cfg_path: Session-scoped ``ansible.cfg`` path, if any.
+
+        Returns:
+            Copy of ``os.environ`` with ``ANSIBLE_CONFIG`` set when a
+            session config is present.
+        """
+        env = dict(os.environ)
+        if galaxy_cfg_path is not None:
+            env["ANSIBLE_CONFIG"] = str(galaxy_cfg_path)
+        return env
+
     @contextlib.asynccontextmanager
-    async def _activate_galaxy_proxy_config(self, galaxy_cfg_path: Path | None) -> AsyncIterator[None]:
-        """Temporarily expose a session-scoped Galaxy config to the proxy.
+    async def _activate_galaxy_proxy_config(self, galaxy_cfg_path: Path | None) -> AsyncIterator[dict[str, str]]:
+        """Provide a session-scoped Galaxy env snapshot without global mutation.
 
         This only affects local daemon mode where Engine and Galaxy Proxy share
         a process. Pod deployments use the Gateway's proxy config sync instead.
+
+        Sessions with identical Galaxy configs serialize on a per-config-hash
+        lock; sessions with unrelated credentials do not block each other
+        (previously one process-wide lock serialized all Galaxy-config
+        sessions and the ``ANSIBLE_CONFIG`` override leaked credentials to
+        lock-free sessions via the in-process proxy).
 
         Args:
             galaxy_cfg_path: Session-scoped ``ansible.cfg`` path, if any.
 
         Yields:
-            None: Control while the temporary ``ANSIBLE_CONFIG`` override is active.
+            dict[str, str]: Env snapshot with ``ANSIBLE_CONFIG`` set when
+            applicable. ``os.environ`` is left unchanged; pass the snapshot
+            explicitly to the venv-acquire downloader (per-call env in the
+            executor thread).
         """
         if galaxy_cfg_path is None:
-            yield
+            yield dict(os.environ)
             return
 
-        async with self._get_galaxy_proxy_cfg_lock():
-            previous = os.environ.get("ANSIBLE_CONFIG")
-            os.environ["ANSIBLE_CONFIG"] = str(galaxy_cfg_path)
-            try:
-                yield
-            finally:
-                if previous is None:
-                    os.environ.pop("ANSIBLE_CONFIG", None)
-                else:
-                    os.environ["ANSIBLE_CONFIG"] = previous
+        async with self._get_galaxy_proxy_cfg_lock_for(galaxy_cfg_path):
+            yield self._galaxy_proxy_env_snapshot(galaxy_cfg_path)
 
     # ── internal: reusable scan pipeline ──────────────────────────────
 
@@ -1099,12 +1363,35 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         # slot when a cold build or incremental install is actually needed
         # (acquire re-checks under the same file lock, so the peek cannot
         # race a concurrent build into an inconsistent venv).
-        # peek_warm installs nothing, so it runs outside the Galaxy config
-        # override; the build slot is acquired before activating the config
-        # so a session never waits up to _VENV_BUILD_WAIT_S while holding
-        # the process-wide Galaxy lock and ANSIBLE_CONFIG override (which
-        # would leak its credentials to lock-free sessions via the
-        # in-process proxy and block all other Galaxy-config sessions).
+        # peek_warm installs nothing, so it runs outside the Galaxy env
+        # snapshot; the build slot is acquired before snapshotting the
+        # config so a session never waits up to _VENV_BUILD_WAIT_S while
+        # holding its per-config Galaxy lock. Lock ordering is generation
+        # write guard -> build semaphore -> per-config Galaxy lock
+        # (outermost first): a cold build blocked on another session's
+        # install waits holding no scarce slots. Taking the semaphore
+        # first would pin one of only
+        # APME_SESSION_MAX_CONCURRENT_VENV_BUILDS slots (and the Galaxy
+        # lock) while blocked on the generation lock, starving unrelated
+        # sessions. The generation guard itself fails fast after its own
+        # timeout instead of waiting forever. The snapshot is passed
+        # explicitly to the acquire downloader (per-call env in the
+        # executor thread) — os.environ is never mutated, so concurrent
+        # sessions cannot observe each other's Galaxy credentials via the
+        # in-process proxy. Sessions sharing one config identity serialize
+        # on a per-hash lock; unrelated creds proceed concurrently.
+        # #7 wedge verdict (evidence, not reorder): no lock-order wedge
+        # exists here. Generation guards are keyed per
+        # ``(session_id, core_version)`` (venv_manager/session.py:
+        # ``get_generation_lock``), so distinct sids never contend on the
+        # write/read guards; and the write guard above is released when
+        # its ``async with`` exits, strictly before the validator fan-out
+        # takes ``venv_read_guard(sid, core_version)`` below — the two
+        # guards are sequential, never nested. Both guards carry bounded
+        # timeouts (default 60s) and the semaphore wait is bounded by
+        # ``APME_SESSION_VENV_BUILD_WAIT_S``, so even a hung peer fails
+        # fast instead of wedging. See
+        # tests/test_galaxy_env_isolation.py::test_concurrent_public_galaxy_no_read_wedge.
         venv_session = await asyncio.get_event_loop().run_in_executor(
             None,
             ctx.run,
@@ -1114,19 +1401,14 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             collection_specs,
         )
         if venv_session is None:
-            async with limit_venv_builds() as release_on, self._activate_galaxy_proxy_config(galaxy_cfg_path):
-                loop = asyncio.get_event_loop()
-                acquire_future = loop.run_in_executor(
-                    None,
-                    ctx.run,
-                    self._get_venv_manager().acquire,
-                    sid,
-                    core_version,
-                    collection_specs,
-                )
-                # Hold the build slot until the worker finishes, even if cancelled.
-                release_on(cast(asyncio.Future[object], acquire_future))
-                venv_session = await asyncio.shield(acquire_future)
+            venv_session = await self._acquire_venv_session_with_retries(
+                sid=sid,
+                core_version=core_version,
+                collection_specs=collection_specs,
+                galaxy_cfg_path=galaxy_cfg_path,
+                scan_id=scan_id,
+                ctx=ctx,
+            )
         venv_path = str(venv_session.venv_root)
         if venv_session.failed_collections:
             logger.error(
@@ -1248,10 +1530,18 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                     )
                     return name, result
 
-            named_results = await asyncio.gather(
-                *[_run_validator(n, c) for n, c in zip(task_names, task_coros, strict=True)],
-                return_exceptions=True,
-            )
+            # Hold the generation read lock for the whole fan-out so an
+            # incremental install (write side) cannot mutate the venv an
+            # in-flight validator is executing against (N15). This is taken
+            # strictly after the venv-acquire write guard above was
+            # released (sequential, never nested), and guards are keyed per
+            # (session_id, core_version) — distinct sids do not contend
+            # (see the #7 wedge verdict comment at venv acquisition).
+            async with venv_read_guard(sid, core_version):
+                named_results = await asyncio.gather(
+                    *[_run_validator(n, c) for n, c in zip(task_names, task_coros, strict=True)],
+                    return_exceptions=True,
+                )
             fan_out_ms = (time.monotonic() - fan_t0) * 1000
 
             counts: dict[str, int] = {}
@@ -2410,7 +2700,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         )
         from apme_engine.remediation.graph_engine import (
             GraphRemediationEngine,
-            splice_modifications,
+            splice_with_outcome,
         )
         from apme_engine.remediation.partition import (
             add_classification_to_violations,
@@ -2643,6 +2933,13 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
 
         ai_concurrency = parse_ai_concurrency()
 
+        # Live policy for Tier 2 prompts comes from request context already
+        # on the session (RuleConfig overrides, target ansible-core
+        # version, collection pins) — fix_options first, scan_options as
+        # fallback, mirroring the scan-context resolution above.
+        _policy_opts = session.fix_options or session.scan_options
+        _policy_version = str(getattr(_policy_opts, "ansible_core_version", "") or "")
+        _policy_specs = [str(s) for s in (getattr(_policy_opts, "collection_specs", None) or [])]
         graph_engine = GraphRemediationEngine(
             registry=registry,  # type: ignore[arg-type]
             graph=graph,
@@ -2653,6 +2950,11 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             rescan_fn=_rescan_bridge,
             ai_provider=ai_provider,  # type: ignore[arg-type]
             ai_phase_start_cb=None,
+            ai_policy_context=_build_ai_policy_context(
+                rule_configs,
+                _policy_version,
+                _policy_specs,
+            ),
         )
         if ai_provider and not skip_ai:
 
@@ -2711,7 +3013,16 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         # 3. Splice approved modifications and write patched files.
         # Interactive / assess-pause: defer splice until ApprovalRequest or
         # BeginRemediate auto-apply (no disk writes yet).
-        patches = [] if defer_tier1 and tier1_node_proposals else splice_modifications(graph, originals)
+        splice_outcome = None if defer_tier1 and tier1_node_proposals else splice_with_outcome(graph, originals)
+        patches = splice_outcome.patches if splice_outcome is not None else []
+        if splice_outcome is not None and splice_outcome.unpatched:
+            # Never treat an empty patch list as full success (#8): files
+            # skipped or spliced from an approximate baseline are explicit.
+            logger.warning(
+                "Splice left %d file(s) unpatched: %s",
+                splice_outcome.unpatched_count,
+                ", ".join(splice_outcome.unpatched[:8]),
+            )
 
         for patch in patches:
             fmt_result = format_content(patch.patched, filename=Path(patch.path).name)
@@ -3174,22 +3485,35 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         if was_tier1_gate:
             files_touched = len(temp_patches) if temp_patches else 0
             report_fixed = session.report.fixed if session.report else applied
+            # Surface splice skips (never silently dropped): SpliceResult
+            # carries .unpatched, but plain-list mocks/legacy paths do not —
+            # getattr keeps the approval path total. Approximate-baseline
+            # files ride in .unpatched alongside skips (graph_engine
+            # splice_with_outcome), so ApprovalAck.unpatched_count covers
+            # truncated diffs too.
+            unpatched_files = sorted(getattr(temp_patches, "unpatched", None) or [])
             _apply_msg = ProgressUpdate(
                 message=(
                     f"Applied {applied} approved Tier 1 proposal(s) "
                     f"({report_fixed} violation(s) fixed, {files_touched} file(s) written); "
-                    "declined proposals reverted"
+                    "declined proposals reverted; "
+                    f"{len(unpatched_files)} unpatched file(s)"
+                    + (f": {', '.join(unpatched_files[:8])}" if unpatched_files else "")
                 ),
                 phase="graph-tier1",
                 level=2,
             )
             session.progress_logs.append(_apply_msg)
             yield SessionEvent(progress=_apply_msg)
+        else:
+            unpatched_files = sorted(getattr(temp_patches, "unpatched", None) or [])
         yield SessionEvent(
             approval_ack=ApprovalAck(
                 applied_count=applied,
                 status=session.status,
                 ttl_seconds=session.ttl_seconds,
+                unpatched_count=len(unpatched_files),
+                unpatched_files=unpatched_files,
             ),
         )
 
@@ -3484,9 +3808,16 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             _reject_unapproved_graph_progress(graph)
             originals = session.graph_originals or {}
             from apme_engine.formatter import format_content  # noqa: PLC0415
-            from apme_engine.remediation.graph_engine import splice_modifications  # noqa: PLC0415
+            from apme_engine.remediation.graph_engine import splice_with_outcome  # noqa: PLC0415
 
-            patches = splice_modifications(graph, originals)
+            splice_outcome = splice_with_outcome(graph, originals)
+            patches = splice_outcome.patches
+            if splice_outcome.unpatched:
+                logger.warning(
+                    "Splice left %d file(s) unpatched: %s",
+                    splice_outcome.unpatched_count,
+                    ", ".join(splice_outcome.unpatched[:8]),
+                )
             for patch in patches:
                 fmt_result = format_content(patch.patched, filename=Path(patch.path).name)
                 if getattr(fmt_result, "changed", False):
@@ -4179,7 +4510,8 @@ def _apply_graph_approvals(
     from apme_engine.graph.content_graph import ContentGraph  # noqa: PLC0415
     from apme_engine.remediation.graph_engine import (  # noqa: PLC0415
         AINodeProposal,
-        splice_modifications,
+        SpliceResult,
+        splice_with_outcome,
     )
 
     if not isinstance(graph, ContentGraph):
@@ -4253,7 +4585,14 @@ def _apply_graph_approvals(
 
     from apme_engine.formatter import format_content
 
-    patches = splice_modifications(graph, originals)
+    splice_outcome = splice_with_outcome(graph, originals)
+    patches = splice_outcome.patches
+    if splice_outcome.unpatched:
+        logger.warning(
+            "Splice left %d file(s) unpatched: %s",
+            splice_outcome.unpatched_count,
+            ", ".join(splice_outcome.unpatched[:8]),
+        )
     for patch in patches:
         fmt_result = format_content(patch.patched, filename=Path(patch.path).name)
         if getattr(fmt_result, "changed", False):
@@ -4266,7 +4605,7 @@ def _apply_graph_approvals(
         by_path = {_working_files_key(session.temp_dir, p.path): p for p in restored_patches}
         for patch in patches:
             by_path[_working_files_key(session.temp_dir, patch.path)] = patch
-        patches = list(by_path.values())
+        patches = SpliceResult(list(by_path.values()), unpatched=splice_outcome.unpatched)
 
     return (applied, rejected_node_ids, approved_node_ids, patches)
 
