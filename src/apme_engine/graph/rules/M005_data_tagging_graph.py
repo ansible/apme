@@ -150,6 +150,10 @@ class DataTaggingGraphRule(GraphRule):
         if node is None:
             return None
 
+        # A malformed assert cannot render its module messages, but task-level
+        # expressions such as ``when`` are still evaluated before the module.
+        malformed_assert = node.module in _ASSERT_MODULES and "that" not in node.module_options
+
         registered = _registered_vars_via_data_flow(graph, node_id)
         if not registered:
             registered = _registered_vars_via_siblings(graph, node_id)
@@ -170,9 +174,14 @@ class DataTaggingGraphRule(GraphRule):
         # ``fail_msg``/``success_msg`` ARE rendered output and stay scanned.
         # (List-form ``that`` items were never scanned — pre-existing gap.)
         that_excluded = frozenset({"that"}) if node.module in _ASSERT_MODULES else frozenset()
-        all_strings = _string_values(node.options, excluded_keys=frozenset({"loop"})) + _string_values(
-            node.module_options, excluded_keys=that_excluded
-        )
+        if node.module in _ASSERT_MODULES and node.module_options.get("that") == []:
+            # With zero conditions assert succeeds immediately, so only
+            # success_msg is rendered; fail_msg is not an output sink.
+            that_excluded = frozenset({"that", "fail_msg"})
+        module_strings: list[str] = []
+        if not malformed_assert:
+            module_strings = _string_values(node.module_options, excluded_keys=that_excluded)
+        all_strings = _string_values(node.options, excluded_keys=frozenset({"loop"})) + module_strings
         flagged: set[str] = set()
         for val in all_strings:
             for m in _JINJA_VAR_REF.finditer(val):

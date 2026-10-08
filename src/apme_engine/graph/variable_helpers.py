@@ -555,6 +555,8 @@ def no_log_true_in_scope(
     inherits it (safe for redaction: R402). Pass ``require_all_paths=True``
     when claiming protection for suppression (L110): execution via any
     unprotected path still leaks, so every in-scope path must inherit it.
+    Without a play context, all positional ancestor paths in the graph are
+    considered with the same any/all semantics.
 
     Args:
         graph: ContentGraph for the scan.
@@ -579,9 +581,7 @@ def no_log_true_in_scope(
         if require_all_paths:
             return _no_log_all_play_scoped_paths(graph, node_id, scope)
         return _no_log_any_play_scoped_path(graph, node_id, scope)
-    for ancestor in graph.positional_ancestors(node_id):
-        if ancestor.no_log is False:
-            return False
-        if ancestor.no_log is True:
-            return True
-    return False
+    scope = graph.positional_ancestor_ids(node_id)
+    if require_all_paths:
+        return _no_log_all_play_scoped_paths(graph, node_id, scope)
+    return _no_log_any_play_scoped_path(graph, node_id, scope)

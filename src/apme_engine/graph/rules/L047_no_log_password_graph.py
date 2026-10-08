@@ -7,10 +7,11 @@ not only as a literal on the task block.
 
 from dataclasses import dataclass
 
-from apme_engine.graph.content_graph import ContentGraph, ContentNode, NodeType
+from apme_engine.graph.content_graph import ContentGraph, NodeType
 from apme_engine.graph.rule_base import GraphRule, GraphRuleResult
 from apme_engine.graph.types import RuleTag as Tag
 from apme_engine.graph.types import Severity, YAMLDict
+from apme_engine.graph.variable_helpers import enclosing_play_ids, no_log_true_in_scope
 
 _TASK_TYPES = frozenset({NodeType.TASK, NodeType.HANDLER})
 
@@ -29,23 +30,6 @@ def _option_keys_look_like_password(module_options: object) -> bool:
     if not isinstance(module_options, dict):
         return False
     return any(k and str(k).lower() in PASSWORD_LIKE_KEYS for k in module_options)
-
-
-def _no_log_true_in_scope(graph: ContentGraph, node_id: str) -> bool:
-    """Return True if any scope in the chain sets ``no_log`` to True.
-
-    Args:
-        graph: Content graph for the scan.
-        node_id: Task or handler node id.
-
-    Returns:
-        True when ``no_log`` is explicitly true on the node or an ancestor.
-    """
-    node = graph.get_node(node_id)
-    if node is None:
-        return False
-    chain: list[ContentNode] = [node] + graph.ancestors(node_id)
-    return any(scope.no_log is True for scope in chain)
 
 
 @dataclass
@@ -101,7 +85,24 @@ class NoLogPasswordGraphRule(GraphRule):
         node = graph.get_node(node_id)
         if node is None:
             return None
-        if _no_log_true_in_scope(graph, node_id):
+        play_ids = enclosing_play_ids(graph, node_id)
+        if play_ids:
+            # A shared include is protected only if every execution context
+            # is protected, and every include path within each play inherits
+            # no_log. Any unprotected execution can expose the password.
+            protected = all(
+                no_log_true_in_scope(
+                    graph,
+                    node_id,
+                    play_context_id=play_id,
+                    play_scope=graph.play_scoped_node_ids(play_id),
+                    require_all_paths=True,
+                )
+                for play_id in play_ids
+            )
+        else:
+            protected = no_log_true_in_scope(graph, node_id, require_all_paths=True)
+        if protected:
             return GraphRuleResult(
                 verdict=False,
                 node_id=node_id,

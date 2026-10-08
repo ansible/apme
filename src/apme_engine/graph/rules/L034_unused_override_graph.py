@@ -14,6 +14,7 @@ from apme_engine.graph.content_graph import ContentGraph, NodeType
 from apme_engine.graph.rule_base import GraphRule, GraphRuleResult
 from apme_engine.graph.types import RuleTag as Tag
 from apme_engine.graph.types import Severity, YAMLDict, YAMLValue
+from apme_engine.graph.variable_helpers import enclosing_play_ids
 from apme_engine.graph.variable_provenance import (
     ProvenanceSource,
     VariableProvenanceResolver,
@@ -165,26 +166,42 @@ class UnusedOverrideGraphRule(GraphRule):
             )
 
         resolver = VariableProvenanceResolver(graph)
-        all_defs = resolver.resolve_all_definitions(node_id)
+        play_ids = enclosing_play_ids(graph, node_id)
+        if play_ids:
+            definitions_by_scope = [
+                resolver.resolve_all_definitions(
+                    node_id,
+                    play_context_id=play_id,
+                    play_scope=graph.play_scoped_node_ids(play_id),
+                )
+                for play_id in play_ids
+            ]
+        else:
+            definitions_by_scope = [resolver.resolve_all_definitions(node_id)]
 
         ineffective: list[YAMLValue] = []
+        seen: set[tuple[str, str, str, str]] = set()
 
         for var_name, local_source in local_vars:
             local_prec = _PRECEDENCE_ORDER.get(local_source, 0)
-            defs = all_defs.get(var_name, [])
-            for prov in defs:
-                if prov.defining_node_id == node_id:
-                    continue
-                existing_prec = _PRECEDENCE_ORDER.get(prov.source, 0)
-                if existing_prec > local_prec:
-                    entry: YAMLDict = {
-                        "name": var_name,
-                        "local_precedence": local_source.value,
-                        "shadowed_by": prov.source.value,
-                        "shadowed_by_node": prov.defining_node_id,
-                    }
-                    ineffective.append(entry)
-                    break
+            for all_defs in definitions_by_scope:
+                for prov in all_defs.get(var_name, []):
+                    if prov.defining_node_id == node_id:
+                        continue
+                    existing_prec = _PRECEDENCE_ORDER.get(prov.source, 0)
+                    if existing_prec > local_prec:
+                        key = (var_name, local_source.value, prov.source.value, prov.defining_node_id)
+                        if key not in seen:
+                            seen.add(key)
+                            ineffective.append(
+                                {
+                                    "name": var_name,
+                                    "local_precedence": local_source.value,
+                                    "shadowed_by": prov.source.value,
+                                    "shadowed_by_node": prov.defining_node_id,
+                                }
+                            )
+                        break
 
         verdict = len(ineffective) > 0
         detail: YAMLDict = {"variables": ineffective}

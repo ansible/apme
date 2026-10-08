@@ -176,7 +176,7 @@ class DebugSensitiveVarsGraphRule(GraphRule):
         # (and, within a play, every include path — require_all_paths).
         play_ids = enclosing_play_ids(graph, node_id)
         if not play_ids:
-            protected = no_log_true_in_scope(graph, node_id)
+            protected = no_log_true_in_scope(graph, node_id, require_all_paths=True)
         else:
             scopes = {play_id: graph.play_scoped_node_ids(play_id) for play_id in play_ids}
             protected = all(

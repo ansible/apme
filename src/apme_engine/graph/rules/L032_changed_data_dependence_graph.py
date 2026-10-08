@@ -14,6 +14,7 @@ from apme_engine.graph.content_graph import ContentGraph, NodeType
 from apme_engine.graph.rule_base import GraphRule, GraphRuleResult
 from apme_engine.graph.types import RuleTag as Tag
 from apme_engine.graph.types import Severity, YAMLDict, YAMLValue
+from apme_engine.graph.variable_helpers import enclosing_play_ids
 from apme_engine.graph.variable_provenance import VariableProvenanceResolver
 
 _TASK_TYPES = frozenset({NodeType.TASK, NodeType.HANDLER})
@@ -137,18 +138,36 @@ class ChangedDataDependenceGraphRule(GraphRule):
             )
 
         resolver = VariableProvenanceResolver(graph)
-        all_vars = resolver.resolve_variables(node_id)
+        play_ids = enclosing_play_ids(graph, node_id)
+        if play_ids:
+            scopes = [
+                resolver.resolve_variables(
+                    node_id,
+                    play_context_id=play_id,
+                    play_scope=graph.play_scoped_node_ids(play_id),
+                )
+                for play_id in play_ids
+            ]
+        else:
+            scopes = [resolver.resolve_variables(node_id)]
 
         redefined: list[YAMLValue] = []
+        seen: set[tuple[str, str, str]] = set()
         for var_name in local_names:
-            prov = all_vars.get(var_name)
-            if prov is not None and prov.defining_node_id != node_id:
-                entry: YAMLDict = {
-                    "name": var_name,
-                    "also_defined_at": prov.defining_node_id,
-                    "source": prov.source.value,
-                }
-                redefined.append(entry)
+            for all_vars in scopes:
+                prov = all_vars.get(var_name)
+                if prov is None or prov.defining_node_id == node_id:
+                    continue
+                key = (var_name, prov.defining_node_id, prov.source.value)
+                if key not in seen:
+                    seen.add(key)
+                    redefined.append(
+                        {
+                            "name": var_name,
+                            "also_defined_at": prov.defining_node_id,
+                            "source": prov.source.value,
+                        }
+                    )
 
         verdict = len(redefined) > 0
         detail: YAMLDict = {"variables": redefined}

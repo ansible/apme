@@ -719,6 +719,57 @@ class TestM005GraphRule:
         assert result is not None
         assert result.verdict is True
 
+    @pytest.mark.parametrize(  # type: ignore[untyped-decorator]
+        ("module_options", "expected_violation"),
+        [
+            ({"fail_msg": "failed with {{ slurp_result }}"}, False),
+            ({"that": [], "fail_msg": "failed with {{ slurp_result }}"}, False),
+            ({"that": [], "success_msg": "passed with {{ slurp_result }}"}, True),
+        ],
+        ids=["missing-that", "empty-that-fail-message", "empty-that-success-message"],
+    )
+    def test_assert_without_conditions_scans_only_rendered_m005_messages(
+        self,
+        rule: DataTaggingGraphRule,
+        module_options: YAMLDict,
+        expected_violation: bool,
+    ) -> None:
+        """Missing/empty ``that`` only leaves actual rendered messages in scope.
+
+        Args:
+            rule: Rule instance under test.
+            module_options: Assert arguments, including any rendered message.
+            expected_violation: Whether a rendered message uses a registered var.
+        """
+        g, task_id = self._build_register_then_use(
+            register_name="slurp_result",
+            consumer_module="ansible.builtin.assert",
+            consumer_module_options=module_options,
+        )
+
+        result = rule.process(g, task_id)
+
+        assert result is not None
+        assert result.verdict is expected_violation
+
+    def test_missing_assert_that_does_not_skip_task_expressions(self, rule: DataTaggingGraphRule) -> None:
+        """Task conditions are still checked when an assert task is malformed.
+
+        Args:
+            rule: Rule instance under test.
+        """
+        g, task_id = self._build_register_then_use(
+            register_name="slurp_result",
+            consumer_module="ansible.builtin.assert",
+            consumer_options={"when": "{{ slurp_result.rc }} == 0"},
+            consumer_module_options={"fail_msg": "failed with {{ slurp_result }}"},
+        )
+
+        result = rule.process(g, task_id)
+
+        assert result is not None
+        assert result.verdict is True
+
 
 # ---------------------------------------------------------------------------
 # Scanner integration
