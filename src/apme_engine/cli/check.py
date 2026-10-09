@@ -142,7 +142,11 @@ def run_check(args: argparse.Namespace) -> None:
     except FileNotFoundError as e:
         sys.stderr.write(f"{e}\n")
         sys.exit(EXIT_ERROR)
-    galaxy_servers = discover_galaxy_servers(project_root) or None
+    try:
+        galaxy_servers = discover_galaxy_servers(project_root) or None
+    except ValueError as exc:
+        sys.stderr.write(f"{exc}\n")
+        sys.exit(EXIT_ERROR)
     rule_cfgs = load_rule_configs_from_project(project_root)
 
     try:

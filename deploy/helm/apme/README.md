@@ -247,6 +247,9 @@ Gateway DB and Abbenay down together.
 | `image.tag` | `2026.9.4` | APME image tag (GitHub release `v2026.9.4`; stays here until the next APME release) |
 | `engine.replicas` | `1` | Must be `1` (ADR-069) |
 | `engine.galaxyProxy.logLevel` | `INFO` | Galaxy Proxy log level (`DEBUG`, `INFO`, `WARNING`, `ERROR`, or `CRITICAL`) |
+| `engine.galaxyProxy.tls.verify` | `null` | Deployment TLS default; per-server policy takes precedence |
+| `engine.galaxyProxy.tls.caBundleConfigMapRef.name` | `""` | ConfigMap containing additional Hub CA trust |
+| `engine.galaxyProxy.tls.caBundleConfigMapRef.key` | `ca-bundle.crt` | PEM bundle key in the CA ConfigMap; restart after CA changes |
 | `gitleaks.enabled` | `true` | Enable Gitleaks validator |
 | `collectionHealth.enabled` | `true` | Enable Collection Health validator |
 | `depAudit.enabled` | `true` | Enable Dependency Audit validator |

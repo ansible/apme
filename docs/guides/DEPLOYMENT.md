@@ -200,7 +200,7 @@ proxy gRPC requests to it.
 |----------|---------|-------------|
 | `APME_GALAXY_PROXY_URL` | `http://127.0.0.1:8765` | Galaxy proxy base URL |
 | `APME_PROXY_ADMIN_TOKEN` | chart-managed secret | Shared token used by Engine to request collection preparation and by Gateway to sync Hub configuration |
-| `APME_PROXY_REQUIRE_GATEWAY_CONFIG` | `1` in Helm/Podman pods | Wait for authenticated Gateway configuration before collection access, including when the cache is empty or unavailable. Standalone CLI proxies omit this setting. |
+| `APME_PROXY_REQUIRE_GATEWAY_CONFIG` | `1` in Helm/Podman/bootc pods | Wait for authenticated Gateway configuration before collection access, including when the cache is empty or unavailable. Standalone CLI proxies omit this setting. |
 | `LOG_LEVEL` | `INFO` | Galaxy Proxy logging level: `DEBUG`, `INFO`, `WARNING`, `ERROR`, or `CRITICAL`. Invalid values fail startup. |
 
 At `INFO` level, Galaxy Proxy logs collection requests, wheel cache
@@ -224,7 +224,9 @@ previous Hub configuration returns 503 for collection requests until Gateway
 restores it. Gateway reconciles every 15 seconds, so proxy-only restarts and
 failed startup pushes recover. Managed pods wait for that configuration even
 when the cache marker is missing; standalone CLI proxies track their active
-native configuration. Cache storage failures bypass disk caching and allow fresh Hub
+native configuration. A native daemon preserves unmatched cached artifacts with
+reads disabled at startup, binding them only once a collection request establishes
+the active scan source. Cache storage failures bypass disk caching and allow fresh Hub
 downloads. Before pip resolves the proxy index,
 Engine sends the scan's collection specs to the authenticated proxy prepare
 endpoint. The proxy calls `ansible-galaxy collection download` with each exact

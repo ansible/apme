@@ -256,10 +256,26 @@ restored, collection routes must not serve its cached artifacts under default
 CLI discovery. Unavailable disk cache falls back to configured Hub downloads.
 The source marker records cache ownership; deployment mode is selected
 explicitly and is never inferred from a shared cache's previous owner. Native
-CLI deployments rebind their own cache at startup. Gateway reconciles every
+CLI deployments bind before serving collections. Startup preserves unmatched
+artifacts with reads disabled until a scan activates its source, so an identical
+Hub configuration can reuse them after a native daemon restart. Gateway reconciles every
 15 seconds so a failed startup push or proxy-only restart recovers.
 Gateway deployments require an authenticated config push before collection
 access regardless of cache availability (`APME_PROXY_REQUIRE_GATEWAY_CONFIG=1`).
+Trust identity includes certificate contents from both `SSL_CERT_FILE` and
+`SSL_CERT_DIR`, including certificate symlink targets and default system trust.
+Native file-token inputs follow the active configuration, environment, and
+Ansible home; cache identity hashes their contents without copying credentials.
+Directory configuration overrides and native fallback candidates are tracked.
+Native request paths
+probe file metadata in a worker and recompute content digests only when inputs
+change; repeated Gateway refreshes similarly preserve unchanged artifacts.
+Configuration conflicts during conversion abort with a retry response.
+Periodic sync logs show initial failures and recovery, keeping repeated
+outcomes at DEBUG.
+Equivalent session configuration files retain the same source identity even
+when a scan writes a new temporary filename. Gateway startup gating and shared
+admin authentication also apply to the bootc Quadlet deployment.
 
 ## Related Decisions
 
@@ -298,3 +314,4 @@ access regardless of cache availability (`APME_PROXY_REQUIRE_GATEWAY_CONFIG=1`).
 | 2026-03-28 | Human review | Implementation split into 3 PRs: proxy, CLI+proto, UI |
 | 2026-07-08 | Brad Thornton | Accepted — core decision fully implemented |
 | 2026-10-09 | AI-assisted | Clarify per-server TLS delegation and durable cache source identity |
+| 2026-10-09 | AI-assisted | Track CA directory rotation, worker-based metadata probes, and reconciliation outcomes |

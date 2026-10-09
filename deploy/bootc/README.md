@@ -112,7 +112,7 @@ starting APME. The bootc image does **not** include database credentials.
 ```bash
 sudo install -o apme -g apme -m 0600 /usr/share/apme/apme.env.example /etc/apme/env/apme.env
 sudo vi /etc/apme/env/apme.env
-# Set APME_DATABASE_URL (required) and optional API keys
+# Set APME_DATABASE_URL and APME_PROXY_ADMIN_TOKEN (required), plus optional API keys
 sudo systemctl restart apme-pod.service
 ```
 
@@ -139,11 +139,18 @@ edit the quadlet files under `/usr/share/containers/systemd/` and run
 | Variable | Purpose |
 |----------|---------|
 | `APME_AI_MODEL` | AI model for Abbenay (empty = disabled) |
+| `APME_PROXY_ADMIN_TOKEN` | Required shared ASCII admin token for Engine, Gateway, and Galaxy Proxy |
 | `OPENROUTER_API_KEY` | API key for OpenRouter |
 | `VERTEX_ANTHROPIC_API_KEY` | API key for Vertex AI |
 | `APME_FEEDBACK_ENABLED` | Enable Gateway feedback feature |
 | `APME_FEEDBACK_GITHUB_REPO` | GitHub repo for feedback issues |
 | `APME_FEEDBACK_GITHUB_TOKEN` | GitHub token for feedback |
+
+Galaxy Proxy waits for authenticated Gateway configuration before serving
+collections, including after a restart. Set a random ASCII
+`APME_PROXY_ADMIN_TOKEN` in the shared environment file before starting the pod;
+an empty token causes configuration pushes to be rejected and collection
+requests to remain unavailable.
 
 ## Service Management
 

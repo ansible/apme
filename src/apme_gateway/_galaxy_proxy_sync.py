@@ -40,7 +40,7 @@ async def reconcile_galaxy_config(interval: float = 15.0) -> None:
         interval: Seconds between reconciliation attempts.
     """
     while True:
-        schedule_push()
+        schedule_push(periodic=True)
         await asyncio.sleep(interval)
 
 
@@ -130,8 +130,11 @@ def _admin_token_headers() -> dict[str, str]:
     return {}
 
 
-async def push_galaxy_config() -> bool:
+async def push_galaxy_config(*, periodic: bool = False) -> bool:
     """Load Galaxy servers from the DB and POST them to the proxy.
+
+    Args:
+        periodic: Routine reconciliation logs repeated outcomes at DEBUG.
 
     Returns:
         bool: ``True`` on success, ``False`` on any failure (logged, never raised).
@@ -150,7 +153,8 @@ async def push_galaxy_config() -> bool:
     except asyncio.CancelledError:
         raise
     except Exception as exc:
-        logger.warning("Failed to load Galaxy servers from DB for proxy sync", exc_info=True)
+        log = logger.debug if _last_push_ok is False else logger.warning
+        log("Failed to load Galaxy servers from DB for proxy sync", exc_info=_last_push_ok is not False)
         _record_push_result(ok=False, error=f"db load failed: {type(exc).__name__}: {exc}"[:200])
         return False
 
@@ -172,7 +176,8 @@ async def push_galaxy_config() -> bool:
         async with httpx.AsyncClient(timeout=5) as client:
             resp = await client.post(url, json=payload, headers=_admin_token_headers())
             resp.raise_for_status()
-        logger.info(
+        log = logger.debug if periodic and _last_push_ok is True else logger.info
+        log(
             "Pushed %d Galaxy server(s) to proxy at %s",
             len(servers),
             url,
@@ -182,18 +187,22 @@ async def push_galaxy_config() -> bool:
     except asyncio.CancelledError:
         raise
     except Exception as exc:
-        logger.warning("Failed to push Galaxy config to proxy at %s", url, exc_info=True)
+        log = logger.debug if _last_push_ok is False else logger.warning
+        log("Failed to push Galaxy config to proxy at %s", url, exc_info=_last_push_ok is not False)
         _record_push_result(ok=False, error=f"push failed: {type(exc).__name__}: {exc}"[:200])
         return False
 
 
-def schedule_push() -> None:
+def schedule_push(*, periodic: bool = False) -> None:
     """Schedule a background push of Galaxy configs to the proxy.
 
     Safe to call from any async context — the push runs as a fire-and-forget
     task that logs errors but never propagates them.  Consecutive calls are
     coalesced: if a push is already in flight the new request is skipped
     (the in-flight push will pick up the latest DB state anyway).
+
+    Args:
+        periodic: Whether this push comes from routine reconciliation.
     """
     global _pending_push  # noqa: PLW0603
 
@@ -210,7 +219,7 @@ def schedule_push() -> None:
     async def _bg_push() -> None:
         global _pending_push  # noqa: PLW0603
         try:
-            await push_galaxy_config()
+            await push_galaxy_config(periodic=periodic)
         except asyncio.CancelledError:
             raise
         except Exception:

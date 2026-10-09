@@ -82,7 +82,11 @@ def run_remediate(args: argparse.Namespace) -> None:
     explicit_session = getattr(args, "session", None)
     session_id = explicit_session or derive_session_id(project_root)
 
-    galaxy_servers = discover_galaxy_servers(project_root) or None
+    try:
+        galaxy_servers = discover_galaxy_servers(project_root) or None
+    except ValueError as exc:
+        sys.stderr.write(f"{exc}\n")
+        sys.exit(EXIT_ERROR)
     rule_cfgs = load_rule_configs_from_project(project_root)
 
     def _make_chunks() -> Iterator[ScanChunk]:

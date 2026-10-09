@@ -79,7 +79,7 @@ def parse_galaxy_servers(cfg_path: Path) -> list[GalaxyServerDef]:
 
     Raises:
         ValueError: When a configured TLS policy is invalid.
-    """  # noqa: DOC502 -- TLS parsing raises in shared helper
+    """
     cfg = configparser.ConfigParser(interpolation=None)
     try:
         cfg.read(str(cfg_path), encoding="utf-8")
@@ -110,7 +110,10 @@ def parse_galaxy_servers(cfg_path: Path) -> list[GalaxyServerDef]:
 
         token = cfg.get(section, "token", fallback="").strip()
         auth_url = cfg.get(section, "auth_url", fallback="").strip()
-        validate_certs = read_server_validate_certs(cfg, name)
+        try:
+            validate_certs = read_server_validate_certs(cfg, name)
+        except ValueError as exc:
+            raise ValueError(f"{cfg_path}: Galaxy server {name!r}: {exc}") from None
 
         servers.append(
             GalaxyServerDef(

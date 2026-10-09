@@ -3,8 +3,10 @@ Description=APME Galaxy Proxy (PEP 503)
 After=apme-pod.service
 
 [Container]
+Environment=APME_PROXY_REQUIRE_GATEWAY_CONFIG=1
 Image=ghcr.io/ansible/apme-galaxy-proxy:latest
 Pod=apme.pod
+EnvironmentFile=/etc/apme/env/apme.env
 Environment=LOG_LEVEL=INFO
 Volume=/var/lib/apme/proxy-cache:/cache:rw,z
 

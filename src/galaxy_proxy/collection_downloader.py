@@ -37,25 +37,25 @@ def read_server_validate_certs(parser: configparser.ConfigParser, name: str) -> 
         ValueError: When a configured TLS boolean is invalid.
     """  # noqa: DOC502 -- nested boolean parser raises
 
-    def parse(value: str) -> bool:
+    def parse(value: str, setting: str) -> bool:
         normalized = value.strip().lower()
         if normalized in {"1", "yes", "y", "true", "t", "on"}:
             return True
         if normalized in {"0", "no", "n", "false", "f", "off"}:
             return False
-        raise ValueError("Invalid Galaxy TLS boolean")
+        raise ValueError(f"Invalid Galaxy TLS boolean for {setting}")
 
     per_server = os.environ.get(f"ANSIBLE_GALAXY_SERVER_{name.upper()}_VALIDATE_CERTS")
     if per_server is not None:
-        return parse(per_server)
+        return parse(per_server, f"ANSIBLE_GALAXY_SERVER_{name.upper()}_VALIDATE_CERTS")
     section = f"galaxy_server.{name}"
     if parser.has_option(section, "validate_certs"):
-        return parse(parser.get(section, "validate_certs"))
+        return parse(parser.get(section, "validate_certs"), f"[{section}] validate_certs")
     global_override = os.environ.get("ANSIBLE_GALAXY_IGNORE")
     if global_override is not None:
-        return not parse(global_override)
+        return not parse(global_override, "ANSIBLE_GALAXY_IGNORE")
     if parser.has_option("galaxy", "ignore_certs"):
-        return not parse(parser.get("galaxy", "ignore_certs"))
+        return not parse(parser.get("galaxy", "ignore_certs"), "[galaxy] ignore_certs")
     return None
 
 
@@ -247,7 +247,11 @@ def download_error_summary(stderr: str) -> str:
     message = stderr.lower()
     if "certificate_verify_failed" in message or "certificate verify failed" in message:
         return "TLS certificate verification failed; configure Hub CA trust or an explicit TLS opt-out"
-    if "401" in message or "403" in message or "unauthorized" in message or "forbidden" in message:
+    if (
+        re.search(r"\bhttp(?:\s+error|\s+status(?:\s+code)?)?\s*[:=]?\s*(?:401|403)\b", message)
+        or "unauthorized" in message
+        or "forbidden" in message
+    ):
         return "Configured Galaxy servers rejected authentication or permissions"
     if "could not satisfy" in message or "failed to resolve" in message:
         return "Configured Galaxy servers could not resolve the required collection version or dependencies"

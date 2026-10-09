@@ -106,6 +106,11 @@ artifact type, translate it:
    annotation, return value, error code, version range, log level,
    comment, and docstring. If the code declares it, the runtime must
    honor it on every path.
+   For recurring background work, compare steady-state and transition logs:
+   unchanged successes and repeated failures should not crowd out meaningful
+   changes; initial failures and recoveries must remain visible.
+   When classifying free-form diagnostics, require context and token boundaries
+   for numeric identifiers so unrelated values do not acquire error semantics.
 
 2. **Does this expose more than it should?** Check every log call,
    error message, and user-facing string. Does it contain user content,
@@ -123,6 +128,10 @@ artifact type, translate it:
    the same module? When a helper opens a channel, socket, or other
    closeable resource, does every return path (success and failure)
    close it — typically via `finally` — or can a failed RPC leak it?
+   Trace async entry points through helpers to every filesystem operation,
+   including discovery, metadata probes, and parsing. Blocking storage must
+   stay off the event loop, and unchanged hot paths should avoid repeated
+   content reads and unnecessary shared-lock contention.
 
 4. **Is everything still true after this change?** Diff comments and
    docstrings against the code they describe. Did you rename something
@@ -218,6 +227,13 @@ artifact type, translate it:
    What happens when `asyncio.gather()`
    returns a mix of results and exceptions — does every caller
    handle `return_exceptions=True` correctly?
+   Trace intentional control-flow exceptions through enclosing broad catches:
+   retries, cancellations, and source conflicts must retain their caller-visible
+   meaning. Malformed user configuration must reach the public entry point's
+   error contract with useful setting context and without exposing raw values.
+   For persisted identity, enumerate all transitive inputs (including trust
+   files, directory entries, and symlink targets); rotate their contents at
+   unchanged paths and verify both invalidation and steady-state reuse.
    When the change schedules fire-and-forget tasks (notifications,
    broadcasts, cleanup), construct the fixture/lifecycle race: does
    teardown dispose shared resources (DB engine, clients) while a
