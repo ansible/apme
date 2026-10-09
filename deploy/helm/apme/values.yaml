@@ -42,6 +42,9 @@ engine:
     existingSecret:
       name: ""
       key: proxy-admin-token
+    # -- Additional environment variables for Galaxy Proxy. Set
+    # ANSIBLE_GALAXY_IGNORE=true only for untrusted lab certificates.
+    extraEnv: []
   # Recreate avoids RWO PVC conflicts during single-replica rolling updates.
   strategy:
     type: Recreate

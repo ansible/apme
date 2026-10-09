@@ -198,6 +198,15 @@ assert_template_contains "engine override preserves default memory request" "${E
 assert_template_contains "engine max concurrent RPCs" "${ENGINE_OVERRIDE_RENDER}" \
   'name: APME_ENGINE_MAX_RPCS'
 
+GALAXY_PROXY_ENV_RENDER="$(${HELM_BIN} template test-release "${CHART_DIR}" \
+  "${HELM_TEST_DB_SET[@]}" \
+  --set-string 'engine.galaxyProxy.extraEnv[0].name=ANSIBLE_GALAXY_IGNORE' \
+  --set-string 'engine.galaxyProxy.extraEnv[0].value=true')"
+assert_template_contains "Galaxy Proxy extra environment name" "${GALAXY_PROXY_ENV_RENDER}" \
+  'name: ANSIBLE_GALAXY_IGNORE'
+assert_template_contains "Galaxy Proxy extra environment value" "${GALAXY_PROXY_ENV_RENDER}" \
+  'value: "true"'
+
 PORTAL_RENDER="$("${HELM_BIN}" template test-release "${CHART_DIR}" \
   "${HELM_TEST_DB_SET[@]}" \
   -f "${CHART_DIR}/values-portal.yaml")"

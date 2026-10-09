@@ -115,7 +115,6 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument("--pypi-url", default="https://pypi.org", help="Upstream PyPI URL for passthrough.")
     parser.add_argument("--cache-dir", type=Path, default=None, help="Wheel cache directory.")
-    parser.add_argument("--metadata-ttl", type=int, default=600, help="Metadata cache TTL in seconds.")
     parser.add_argument("--no-passthrough", action="store_true", help="Disable PyPI passthrough.")
     parser.add_argument("-v", "--verbose", action="count", default=0, help="Increase logging verbosity.")
 
@@ -144,7 +143,6 @@ def main(argv: list[str] | None = None) -> None:
     app = create_app(
         pypi_url=args.pypi_url,
         cache_dir=args.cache_dir,
-        metadata_ttl=float(args.metadata_ttl),
         enable_passthrough=not args.no_passthrough,
         ansible_cfg_path=args.ansible_cfg,
         galaxy_servers=parsed_servers,

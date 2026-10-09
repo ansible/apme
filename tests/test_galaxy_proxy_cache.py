@@ -75,7 +75,7 @@ class TestProxyCacheWheelAccess:
         assert cache.get_wheel("demo-1.0.0-py3-none-any.whl") == data
 
     def test_clear_preserves_cache_root_and_clears_subdirs(self, tmp_path: Path) -> None:
-        """clear() wipes wheels/metadata only and leaves the cache root intact.
+        """clear() wipes cached wheels and leaves the cache root intact.
 
         The cache root is often a volume mount at ``/cache``; removing it
         fails with ``PermissionError`` on Podman/K8s.
@@ -86,7 +86,6 @@ class TestProxyCacheWheelAccess:
         root = tmp_path / "cache"
         cache = ProxyCache(cache_dir=root)
         cache.put_wheel("demo-1.0.0-py3-none-any.whl", b"wheel")
-        cache.put_metadata("ansible", "posix", ["1.0.0"])
         marker = root / ".volume-mount"
         marker.write_text("preserved", encoding="utf-8")
 
@@ -95,15 +94,13 @@ class TestProxyCacheWheelAccess:
         assert root.is_dir()
         assert marker.read_text(encoding="utf-8") == "preserved"
         assert cache.wheels_dir.is_dir()
-        assert cache.metadata_dir.is_dir()
         assert cache.get_wheel("demo-1.0.0-py3-none-any.whl") is None
-        assert cache.get_metadata("ansible", "posix") is None
 
     def test_clear_replaces_directory_symlinks(self, tmp_path: Path) -> None:
         """clear() unlinks managed directory symlinks and recreates real dirs.
 
         ``shutil.rmtree`` rejects symlinks; a custom cache root with linked
-        ``wheels`` / ``metadata`` must still clear successfully.
+        ``wheels`` must still clear successfully.
 
         Args:
             tmp_path: Pytest-provided temporary directory.
@@ -111,13 +108,9 @@ class TestProxyCacheWheelAccess:
         root = tmp_path / "cache"
         root.mkdir()
         real_wheels = tmp_path / "real-wheels"
-        real_meta = tmp_path / "real-metadata"
         real_wheels.mkdir()
-        real_meta.mkdir()
         (real_wheels / "stale.whl").write_bytes(b"stale")
-        (real_meta / "ns-name.json").write_text("{}", encoding="utf-8")
         (root / "wheels").symlink_to(real_wheels)
-        (root / "metadata").symlink_to(real_meta)
 
         cache = ProxyCache(cache_dir=root)
         cache.clear()
@@ -125,8 +118,6 @@ class TestProxyCacheWheelAccess:
         assert root.is_dir()
         assert cache.wheels_dir.is_dir()
         assert not cache.wheels_dir.is_symlink()
-        assert cache.metadata_dir.is_dir()
-        assert not cache.metadata_dir.is_symlink()
         assert not (cache.wheels_dir / "stale.whl").exists()
         # Symlink targets are left intact; only the managed links are replaced.
         assert (real_wheels / "stale.whl").exists()
@@ -140,16 +131,12 @@ class TestProxyCacheWheelAccess:
         root = tmp_path / "cache"
         cache = ProxyCache(cache_dir=root)
         cache.wheels_dir.rmdir()
-        cache.metadata_dir.rmdir()
         cache.wheels_dir.symlink_to(tmp_path / "missing-wheels")
-        cache.metadata_dir.symlink_to(tmp_path / "missing-metadata")
 
         cache.clear()
 
         assert cache.wheels_dir.is_dir()
         assert not cache.wheels_dir.is_symlink()
-        assert cache.metadata_dir.is_dir()
-        assert not cache.metadata_dir.is_symlink()
 
     def test_get_wheel_rejects_traversal(self, tmp_path: Path) -> None:
         """get_wheel rejects traversal attempts before reading the filesystem.

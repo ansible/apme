@@ -199,13 +199,49 @@ proxy gRPC requests to it.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `APME_GALAXY_PROXY_URL` | `http://127.0.0.1:8765` | Galaxy proxy base URL |
+| `APME_PROXY_ADMIN_TOKEN` | chart-managed secret | Shared token used by Engine to request collection preparation and by Gateway to sync Hub configuration |
 | `LOG_LEVEL` | `INFO` | Galaxy Proxy logging level: `DEBUG`, `INFO`, `WARNING`, `ERROR`, or `CRITICAL`. Invalid values fail startup. |
 
-At `INFO` level, Galaxy Proxy logs collection requests, metadata and wheel
-cache hits/misses, sanitized upstream Galaxy operations and responses, HTTP
+At `INFO` level, Galaxy Proxy logs collection requests, wheel cache
+hits/misses, sanitized upstream Galaxy operations and responses, HTTP
 response status, download duration, and download size. Tokens, authorization
 headers, and response bodies are not logged. Set `LOG_LEVEL=DEBUG` while
 diagnosing Galaxy or Automation Hub connectivity.
+
+Collection installation uses the proxy's cached wheels first. On a cache
+miss or a cache read failure, the proxy downloads from the configured Galaxy
+servers with `ansible-galaxy`, converts the collection to a wheel, and serves
+it even if saving the wheel to cache fails.
+
+Portal supplies its connected Private Automation Hub repositories and tokens
+through Gateway. Identical configuration refreshes preserve the cache; changes
+to sources or credentials invalidate it. Before pip resolves the proxy index,
+Engine sends the scan's collection specs to the authenticated proxy prepare
+endpoint. The proxy calls `ansible-galaxy collection download` with each exact
+pin or unpinned FQCN, lets the CLI resolve collection dependencies, converts
+the returned tarballs to wheels, and serves them from the cache. No remote
+version catalog is fetched. Configured Hub failures do not trigger an implicit
+public Galaxy fallback.
+
+The engine, Gateway, and proxy share `APME_PROXY_ADMIN_TOKEN`; Helm injects the
+same secret into each container. Downloads verify TLS certificates by default.
+Use `ANSIBLE_GALAXY_IGNORE=true` only when connecting to a Hub with an
+untrusted lab certificate; install its CA into the system trust store instead
+for normal verified connections.
+
+For Helm deployments, the proxy container accepts additional environment
+variables through `engine.galaxyProxy.extraEnv`:
+
+```yaml
+engine:
+  galaxyProxy:
+    extraEnv:
+      - name: ANSIBLE_GALAXY_IGNORE
+        value: "true"
+```
+
+This setting disables TLS certificate verification for Galaxy downloads and
+should be limited to isolated lab environments.
 
 #### Gateway
 

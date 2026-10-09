@@ -44,6 +44,8 @@ from dataclasses import asdict, dataclass, field
 from functools import partial
 from pathlib import Path
 
+import httpx
+
 from apme_engine.config_env import get_env_int
 from apme_engine.venv_manager.venv_collections import (
     _SAFE_VERSION_RE,
@@ -61,6 +63,8 @@ from apme_engine.venv_manager.venv_collections import (
 logger = logging.getLogger("apme.venv")
 
 _PROXY_ENV = "APME_GALAXY_PROXY_URL"
+_PROXY_ADMIN_TOKEN_ENV = "APME_PROXY_ADMIN_TOKEN"
+_PROXY_ADMIN_TOKEN_HEADER = "x-apme-proxy-token"
 
 
 def get_data_root() -> Path:
@@ -354,6 +358,38 @@ def _extract_unbuildable_packages(output: str) -> list[str]:
     return result
 
 
+def _prepare_collections_via_proxy(proxy_url: str, collection_specs: list[str]) -> None:
+    """Ask the proxy to resolve pins/latest versions using its Galaxy CLI.
+
+    Args:
+        proxy_url: Base URL of the Galaxy Proxy.
+        collection_specs: Collection FQCNs with optional version constraints.
+
+    Raises:
+        RuntimeError: If the proxy cannot prepare the requested collections.
+    """
+    token = os.environ.get(_PROXY_ADMIN_TOKEN_ENV, "").strip()
+    headers = {_PROXY_ADMIN_TOKEN_HEADER: token} if token else {}
+    try:
+        response = httpx.post(
+            proxy_url.rstrip("/") + "/admin/prepare-collections",
+            headers=headers,
+            json={"specs": collection_specs},
+            timeout=360.0,
+        )
+        response.raise_for_status()
+    except httpx.HTTPError as exc:
+        raise RuntimeError(f"Galaxy proxy could not prepare requested collections: {type(exc).__name__}") from exc
+
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise RuntimeError("Galaxy proxy returned an invalid prepare response") from exc
+    failed = payload.get("failed_specs", []) if isinstance(payload, dict) else []
+    if failed:
+        logger.warning("Galaxy proxy could not prepare collection specs: %s", failed)
+
+
 def _install_collections_via_proxy(
     pip_python: Path,
     collection_specs: list[str],
@@ -388,6 +424,22 @@ def _install_collections_via_proxy(
     """
     simple_url = proxy_url.rstrip("/") + "/simple/"
     pip_specs = [_spec_to_pip(s) for s in collection_specs]
+
+    # Preparation resolves exact pins because the project page lists prepared
+    # wheels and does not enumerate remote Galaxy versions. A config update can
+    # race this request and return 409, so retry once after that conflict.
+    for attempt in range(2):
+        try:
+            _prepare_collections_via_proxy(proxy_url, collection_specs)
+            break
+        except RuntimeError as exc:
+            cause = exc.__cause__
+            conflict = isinstance(cause, httpx.HTTPStatusError) and cause.response.status_code == 409
+            if conflict and attempt == 0:
+                logger.info("Galaxy configuration changed during collection preparation; retrying once")
+                continue
+            logger.warning("Collection preparation failed; continuing with install: %s", exc)
+            break
 
     result = _run_pip_install(pip_python, pip_specs, simple_url, use_uv)
     if result.returncode == 0:

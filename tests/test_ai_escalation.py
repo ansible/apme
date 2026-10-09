@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import sys
@@ -31,6 +32,7 @@ from apme_engine.remediation.abbenay_provider import (
 )
 from apme_engine.remediation.ai_context import AINodeContext
 from apme_engine.remediation.ai_provider import (
+    AIProviderError,
     AISkipped,
 )
 
@@ -536,13 +538,15 @@ def _make_provider_with_client(mock_client: MagicMock) -> AbbenayProvider:
     """Build an AbbenayProvider bypassing __init__ with a mocked chat client.
 
     Args:
-        mock_client: Mocked chat client assigned to ``_client``.
+        mock_client: Mocked chat client returned by ``_make_client``.
 
     Returns:
         Provider wired to the mocked client.
     """
     provider: AbbenayProvider = AbbenayProvider.__new__(AbbenayProvider)
-    provider._client = mock_client
+    mock_client.connect = AsyncMock()
+    mock_client.disconnect = AsyncMock()
+    provider._make_client = MagicMock(return_value=mock_client)  # type: ignore[method-assign]
     provider._addr = "unix:///tmp/fake-abbenay.sock"
     provider._token = None
     provider._model = None
@@ -579,7 +583,6 @@ class TestChatWithReconnectTransient:
             mock_client.chat.side_effect = [exc, _ok_chunks()]
             provider = _make_provider_with_client(mock_client)
             with (
-                patch.object(provider, "reconnect", new_callable=AsyncMock) as mock_reconnect,
                 patch(
                     "apme_engine.remediation.abbenay_provider.asyncio.sleep",
                     new_callable=AsyncMock,
@@ -588,7 +591,8 @@ class TestChatWithReconnectTransient:
                 result = await provider._chat_with_reconnect("model", "prompt", {})
             assert result == "fixed"
             assert mock_client.chat.call_count == 2
-            mock_reconnect.assert_awaited_once()
+            assert mock_client.connect.await_count == 2
+            assert mock_client.disconnect.await_count == 2
 
     async def test_transient_retry_exhausted_raises(self) -> None:
         """A second transient failure propagates without further retry."""
@@ -596,7 +600,6 @@ class TestChatWithReconnectTransient:
         mock_client.chat.side_effect = [OSError("down"), OSError("still down")]
         provider = _make_provider_with_client(mock_client)
         with (
-            patch.object(provider, "reconnect", new_callable=AsyncMock),
             patch(
                 "apme_engine.remediation.abbenay_provider.asyncio.sleep",
                 new_callable=AsyncMock,
@@ -612,7 +615,6 @@ class TestChatWithReconnectTransient:
         mock_client.chat.side_effect = TimeoutError("slow stream")
         provider = _make_provider_with_client(mock_client)
         with (
-            patch.object(provider, "reconnect", new_callable=AsyncMock) as mock_reconnect,
             patch(
                 "apme_engine.remediation.abbenay_provider.asyncio.sleep",
                 new_callable=AsyncMock,
@@ -621,7 +623,8 @@ class TestChatWithReconnectTransient:
         ):
             await provider._chat_with_reconnect("model", "prompt", {})
         assert mock_client.chat.call_count == 1
-        mock_reconnect.assert_not_awaited()
+        mock_client.connect.assert_awaited_once()
+        mock_client.disconnect.assert_awaited_once()
 
 
 def _grpc_error(code: grpc.StatusCode, message: str = "rpc failed") -> grpc.aio.AioRpcError:
@@ -665,7 +668,6 @@ class TestChatWithReconnectGrpcCodes:
         mock_client.chat.side_effect = [_grpc_error(code), _ok_chunks()]
         provider = _make_provider_with_client(mock_client)
         with (
-            patch.object(provider, "reconnect", new_callable=AsyncMock) as mock_reconnect,
             patch(
                 "apme_engine.remediation.abbenay_provider.asyncio.sleep",
                 new_callable=AsyncMock,
@@ -674,7 +676,8 @@ class TestChatWithReconnectGrpcCodes:
             result = await provider._chat_with_reconnect("model", "prompt", {})
         assert result == "fixed"
         assert mock_client.chat.call_count == 2
-        mock_reconnect.assert_awaited_once()
+        assert mock_client.connect.await_count == 2
+        assert mock_client.disconnect.await_count == 2
 
     @pytest.mark.parametrize(  # type: ignore[untyped-decorator]
         "code",
@@ -699,7 +702,6 @@ class TestChatWithReconnectGrpcCodes:
         mock_client.chat.side_effect = _grpc_error(code)
         provider = _make_provider_with_client(mock_client)
         with (
-            patch.object(provider, "reconnect", new_callable=AsyncMock) as mock_reconnect,
             patch(
                 "apme_engine.remediation.abbenay_provider.asyncio.sleep",
                 new_callable=AsyncMock,
@@ -708,7 +710,8 @@ class TestChatWithReconnectGrpcCodes:
         ):
             await provider._chat_with_reconnect("model", "prompt", {})
         assert mock_client.chat.call_count == 1
-        mock_reconnect.assert_not_awaited()
+        mock_client.connect.assert_awaited_once()
+        mock_client.disconnect.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
@@ -717,7 +720,7 @@ class TestChatWithReconnectGrpcCodes:
 
 
 class TestAbbenayFailureSurfacing:
-    """Abbenay transport/provider failures should log cleanly and soft-fail."""
+    """Provider failures are surfaced separately from AI abstentions."""
 
     def test_format_preserves_server_error_message(self) -> None:
         """Upstream Abbenay INTERNAL errors keep their readable message."""
@@ -726,11 +729,11 @@ class TestAbbenayFailureSurfacing:
         )
         assert _format_abbenay_error(exc).startswith("Server error [INTERNAL]:")
 
-    async def test_propose_node_fix_soft_fails_without_raising(
+    async def test_propose_node_fix_surfaces_provider_failure(
         self,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """Chat failures return None with a warning, not a traceback ERROR.
+        """Chat failures raise a provider error with a readable warning.
 
         Args:
             caplog: Pytest log-capture fixture.
@@ -741,6 +744,9 @@ class TestAbbenayFailureSurfacing:
                 pass
 
             async def connect(self) -> None:
+                return None
+
+            async def disconnect(self) -> None:
                 return None
 
             async def chat(self, **kwargs: object) -> AsyncIterator[object]:
@@ -771,9 +777,9 @@ class TestAbbenayFailureSurfacing:
                 "unix:///tmp/abbenay-run/abbenay/daemon.sock",
                 model="openai/gpt-oss-120b",
             )
-            result = await provider.propose_node_fix(ctx)
+            with pytest.raises(AIProviderError, match="text part abc-123 not found"):
+                await provider.propose_node_fix(ctx)
 
-        assert result is None
         assert any(
             "Could not get a valid AI response from Abbenay" in r.message
             and "text part abc-123 not found" in r.message
@@ -781,3 +787,161 @@ class TestAbbenayFailureSurfacing:
             for r in caplog.records
         )
         assert not any(r.levelname == "ERROR" for r in caplog.records)
+
+
+class TestAbbenayClientLifecycle:
+    """Every chat attempt owns a connected client and releases it."""
+
+    async def test_connects_before_chat_and_disconnects_afterward(self) -> None:
+        """A fresh provider can chat without an external preflight call."""
+        connected = False
+        events: list[str] = []
+
+        class Client:
+            async def connect(self) -> None:
+                nonlocal connected
+                connected = True
+                events.append("connect")
+
+            async def disconnect(self) -> None:
+                nonlocal connected
+                connected = False
+                events.append("disconnect")
+
+            async def chat(self, **kwargs: object) -> AsyncIterator[SimpleNamespace]:
+                if not connected:
+                    raise RuntimeError("Not connected")
+                events.append("chat")
+                yield SimpleNamespace(text="fixed")
+
+        with patch(
+            "apme_engine.remediation.abbenay_provider.make_abbenay_client",
+            return_value=Client(),
+        ):
+            provider = AbbenayProvider("unix:///tmp/test.sock", model="test/model")
+            assert await provider._chat_with_reconnect("test/model", "prompt", {}) == "fixed"
+
+        assert events == ["connect", "chat", "disconnect"]
+        assert not connected
+
+    async def test_disconnects_when_chat_fails(self) -> None:
+        """Permanent provider errors still release the connected client."""
+        client = MagicMock()
+        client.connect = AsyncMock()
+        client.disconnect = AsyncMock()
+        client.chat.side_effect = RuntimeError("invalid model")
+        with patch(
+            "apme_engine.remediation.abbenay_provider.make_abbenay_client",
+            return_value=client,
+        ):
+            provider = AbbenayProvider("unix:///tmp/test.sock", model="test/model")
+            with pytest.raises(RuntimeError, match="invalid model"):
+                await provider._chat_with_reconnect("test/model", "prompt", {})
+        client.connect.assert_awaited_once()
+        client.disconnect.assert_awaited_once()
+
+    async def test_stalled_unregister_still_closes_channel(self) -> None:
+        """Cleanup has its own deadline and forces local channel closure."""
+        channel = MagicMock(spec=grpc.aio.Channel)
+        channel.close = AsyncMock()
+        client = MagicMock()
+        client._channel = channel
+
+        async def stall() -> None:
+            await asyncio.Event().wait()
+
+        client.disconnect = stall
+        with patch("apme_engine.remediation.abbenay_provider._CLIENT_CLEANUP_TIMEOUT_S", 0.01):
+            await asyncio.wait_for(AbbenayProvider._disconnect_client(client), timeout=1)
+        channel.close.assert_awaited_once_with(grace=None)
+
+    @pytest.mark.parametrize("code", [grpc.StatusCode.UNAVAILABLE, grpc.StatusCode.UNAUTHENTICATED])  # type: ignore[untyped-decorator]
+    async def test_sdk_wrapped_registration_error_obeys_retry_policy(self, code: grpc.StatusCode) -> None:
+        """SDK registration wrappers preserve transient versus permanent policy.
+
+        Args:
+            code: Original registration RPC error code.
+        """
+        sdk = pytest.importorskip("abbenay_grpc.client")
+        client = MagicMock()
+        provider = _make_provider_with_client(client)
+        error = sdk.ConnectionError("registration failed")
+        error.__cause__ = _grpc_error(code)
+        client.connect.side_effect = [error, None]
+
+        async def chunks(**kwargs: object) -> AsyncIterator[SimpleNamespace]:
+            yield SimpleNamespace(text="fixed")
+
+        client.chat = chunks
+        with patch("apme_engine.remediation.abbenay_provider.asyncio.sleep", AsyncMock()):
+            if code == grpc.StatusCode.UNAVAILABLE:
+                assert await provider._chat_with_reconnect("model", "prompt", {}) == "fixed"
+                assert client.connect.await_count == 2
+                assert client.disconnect.await_count == 2
+            else:
+                with pytest.raises(sdk.ConnectionError):
+                    await provider._chat_with_reconnect("model", "prompt", {})
+                client.connect.assert_awaited_once()
+
+    async def test_cancelled_chat_finishes_cleanup(self) -> None:
+        """A cancelled chat cannot hang in unregister."""
+        client = MagicMock()
+        client.connect = AsyncMock()
+        client._channel = MagicMock(spec=grpc.aio.Channel)
+        client._channel.close = AsyncMock()
+        started = asyncio.Event()
+
+        async def stall() -> None:
+            await asyncio.Event().wait()
+
+        async def chat(**kwargs: object) -> AsyncIterator[SimpleNamespace]:
+            started.set()
+            await stall()
+            yield SimpleNamespace(text="unreachable")
+
+        client.disconnect = stall
+        client.chat = chat
+        provider = _make_provider_with_client(client)
+        client.disconnect = stall
+        with patch("apme_engine.remediation.abbenay_provider._CLIENT_CLEANUP_TIMEOUT_S", 0.01):
+            task = asyncio.create_task(provider._consume_chat("test/model", "prompt", {}))
+            await asyncio.wait_for(started.wait(), timeout=1)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(task, timeout=1)
+        client._channel.close.assert_awaited_once_with(grace=None)
+
+    async def test_concurrent_chats_use_independent_connections(self) -> None:
+        """One node finishing cannot disconnect another node's chat."""
+        clients: list[MagicMock] = []
+        ready = asyncio.Event()
+
+        def make_client(addr: str) -> MagicMock:
+            client = MagicMock()
+            client.connect = AsyncMock()
+            client.disconnect = AsyncMock()
+            clients.append(client)
+
+            async def chat(**kwargs: object) -> AsyncIterator[SimpleNamespace]:
+                if len(clients) >= 3:
+                    ready.set()
+                await asyncio.wait_for(ready.wait(), timeout=1)
+                client.connect.assert_awaited_once()
+                client.disconnect.assert_not_awaited()
+                yield SimpleNamespace(text="fixed")
+
+            client.chat = chat
+            return client
+
+        with patch(
+            "apme_engine.remediation.abbenay_provider.make_abbenay_client",
+            side_effect=make_client,
+        ):
+            provider = AbbenayProvider("unix:///tmp/test.sock", model="test/model")
+            results = await asyncio.gather(
+                provider._chat_with_reconnect("test/model", "one", {}),
+                provider._chat_with_reconnect("test/model", "two", {}),
+            )
+        assert tuple(results) == ("fixed", "fixed")
+        for client in clients[1:]:
+            client.disconnect.assert_awaited_once()

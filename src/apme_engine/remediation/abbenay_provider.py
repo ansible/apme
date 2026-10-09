@@ -26,6 +26,7 @@ from apme_engine.fingerprint import canonicalize_rule_id
 from apme_engine.remediation.ai_context import AINodeContext
 from apme_engine.remediation.ai_provider import (
     AINodeFix,
+    AIProviderError,
     AISkipped,
     AIValidationResult,
     AIValidationVerdict,
@@ -61,6 +62,7 @@ _CHAT_TRANSIENT_CODES: frozenset[grpc.StatusCode] = frozenset(
 )
 
 _BEST_PRACTICES: dict[str, list[str]] | None = None
+_CLIENT_CLEANUP_TIMEOUT_S = 5.0
 
 
 def _format_abbenay_error(exc: BaseException) -> str:
@@ -773,7 +775,10 @@ class AbbenayProvider:
             token: Optional consumer auth token for inline policy access.
             model: Optional default model (e.g. 'openai/gpt-4o').
         """
-        self._client: object = make_abbenay_client(addr)
+        # Validate the address and optional client dependency eagerly. Channels
+        # belong to individual attempts, not to the shared provider: graph AI
+        # calls run concurrently and one reconnect must not disrupt another.
+        make_abbenay_client(addr)
         self._addr = addr
         self._token = token
         self._model = model
@@ -793,18 +798,16 @@ class AbbenayProvider:
             True if the daemon is healthy, False otherwise.
         """
         try:
-            self._client = self._make_client()
-            await self._client.connect()  # type: ignore[attr-defined]
-            result: bool = await self._client.health_check()  # type: ignore[attr-defined]
-            return result
+            client = self._make_client()
+            try:
+                await client.connect()  # type: ignore[attr-defined]
+                result: bool = await client.health_check()  # type: ignore[attr-defined]
+                return result
+            finally:
+                await self._disconnect_client(client)
         except Exception as exc:
             _log_abbenay_failure("Abbenay health check failed", exc)
             return False
-
-    async def reconnect(self) -> None:
-        """Recreate client and reconnect for the current event loop."""
-        self._client = self._make_client()
-        await self._client.connect()  # type: ignore[attr-defined]
 
     async def _chat_with_reconnect(
         self,
@@ -869,14 +872,10 @@ class AbbenayProvider:
                 if attempt > 0:
                     raise
                 logger.debug("Chat transient gRPC failure, reconnecting to Abbenay and retrying")
-                # A failed reconnect must not mask the original error or
-                # consume the remaining attempt: suppress it and retry the
-                # chat anyway.
-                with contextlib.suppress(Exception):
-                    await self.reconnect()
+                # _consume_chat creates a fresh connected client per attempt.
             # This path is purely gRPC: _consume_chat streams
             # AbbenayClient.chat (abbenay_grpc, unix-socket or TCP) and
-            # reconnect rebuilds that same client — no httpx client exists
+            # each attempt opens its own client — no httpx client exists
             # here (the only HTTP/httpx Abbenay usage is the Gateway's
             # admin proxy, a different service and path). Socket-level
             # dial failures surface as OSError and may heal on reconnect.
@@ -884,15 +883,19 @@ class AbbenayProvider:
                 if attempt > 0:
                     raise
                 logger.debug("Chat connection failed, reconnecting to Abbenay and retrying")
-                # A failed reconnect must not mask the original error or
-                # consume the remaining attempt: suppress it and retry the
-                # chat anyway.
-                with contextlib.suppress(Exception):
-                    await self.reconnect()
-            except Exception:
-                # Permanent failures (auth, not-found/invalid-model,
-                # validation) will not heal on reconnect — fail fast.
-                raise
+                # _consume_chat creates a fresh connected client per attempt.
+            except Exception as exc:
+                # The SDK wraps registration RPC failures in its own
+                # ConnectionError; classify the original cause, not the wrapper.
+                cause = exc.__cause__
+                transient = (
+                    cause.code() in _CHAT_TRANSIENT_CODES
+                    if isinstance(cause, grpc.aio.AioRpcError)
+                    else isinstance(cause, OSError) and not isinstance(cause, TimeoutError)
+                )
+                if not transient or attempt > 0:
+                    raise
+                logger.debug("Abbenay registration failed transiently, retrying with a fresh client")
         raise AssertionError("unreachable: chat retry loop exhausted")
 
     async def _consume_chat(
@@ -911,16 +914,42 @@ class AbbenayProvider:
         Returns:
             Concatenated response text from the model.
         """
-        response_text = ""
-        async for chunk in self._client.chat(  # type: ignore[attr-defined]
-            model=model,
-            message=prompt,
-            policy=policy,
-            token=self._token,
-        ):
-            if hasattr(chunk, "text") and chunk.text:
-                response_text += chunk.text
-        return response_text
+        client = self._make_client()
+        try:
+            await client.connect()  # type: ignore[attr-defined]
+            response_text = ""
+            async for chunk in client.chat(  # type: ignore[attr-defined]
+                model=model,
+                message=prompt,
+                policy=policy,
+                token=self._token,
+            ):
+                if hasattr(chunk, "text") and chunk.text:
+                    response_text += chunk.text
+            return response_text
+        finally:
+            await self._disconnect_client(client)
+
+    @staticmethod
+    async def _disconnect_client(client: object) -> None:
+        """Bound SDK unregister and close its channel even if unregister stalls.
+
+        Args:
+            client: Attempt-local Abbenay client.
+        """
+        # The SDK's disconnect does not close its channel if Unregister is
+        # cancelled. Capture the channel before disconnect clears its fields.
+        channel = getattr(client, "_channel", None)
+        try:
+            await asyncio.wait_for(client.disconnect(), timeout=_CLIENT_CLEANUP_TIMEOUT_S)  # type: ignore[attr-defined]
+        except Exception as exc:
+            logger.warning("Abbenay disconnect failed: %s", type(exc).__name__)
+        finally:
+            if isinstance(channel, grpc.aio.Channel):
+                try:
+                    await asyncio.wait_for(channel.close(grace=None), timeout=_CLIENT_CLEANUP_TIMEOUT_S)
+                except Exception as exc:
+                    logger.warning("Abbenay channel close failed: %s", type(exc).__name__)
 
     async def propose_node_fix(
         self,
@@ -936,8 +965,10 @@ class AbbenayProvider:
 
         Returns:
             ``AINodeFix`` with corrected YAML, or ``None`` when Abbenay
-            cannot return a usable response (transport/provider/stream
-            errors are logged and treated as a soft skip).
+            returns no usable fix.
+
+        Raises:
+            AIProviderError: If connection, authentication, or chat fails.
         """
         prompt = _build_node_prompt(context)
         effective_model = model or self._model
@@ -965,7 +996,7 @@ class AbbenayProvider:
                 f"{context.node_id} ({len(context.violations)} violation(s))",
                 exc,
             )
-            return None
+            raise AIProviderError(f"AI remediation failed for {context.node_id}: {_format_abbenay_error(exc)}") from exc
 
         if not response_text.strip():
             logger.warning(

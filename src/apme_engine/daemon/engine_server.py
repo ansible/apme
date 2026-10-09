@@ -539,11 +539,8 @@ def _discover_collection_specs(files: Sequence[File]) -> tuple[list[str], list[s
             elif isinstance(entry, dict) and entry.get("name"):
                 name = str(entry["name"])
                 version = entry.get("version")
-                spec = (
-                    f"{name}:{version}"
-                    if version and not str(version).startswith((">=", ">", "<", "!=", "*"))
-                    else name
-                )
+                version_text = str(version).strip().replace(" ", "") if version else ""
+                spec = f"{name}:{version_text}" if version_text and version_text != "*" else name
                 specs.setdefault(name, spec)
     return list(specs.values()), found_paths
 

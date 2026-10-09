@@ -31,6 +31,7 @@ _ENV_KEYS = (
     "APME_DATA_DIR",
     "APME_ENGINE_ADDRESS",
     "APME_GALAXY_PROXY_URL",
+    "APME_PROXY_ADMIN_TOKEN",
     "APME_REPORTING_ENDPOINT",
     "APME_DATABASE_URL",
     "OPA_USE_PODMAN",
@@ -143,6 +144,7 @@ def _start_infrastructure() -> None:
 
     original_env = {k: os.environ.get(k) for k in _ENV_KEYS}
     data_dir = tempfile.mkdtemp(prefix="apme-integration-")
+    os.environ["APME_PROXY_ADMIN_TOKEN"] = "integration-proxy-admin-token"
 
     proxy_port = _free_port()
     proxy_stderr = Path(data_dir) / "proxy_stderr.log"
