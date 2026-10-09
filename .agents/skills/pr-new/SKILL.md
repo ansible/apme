@@ -448,7 +448,9 @@ critical/high/medium/low.
   _DEFAULT_PORTS ↔ started services; Helm template ↔ Podman
   ``pod.yaml`` for the same in-pod env/volume/probe wiring — if Helm
   mounts a shared socket for Gateway health, Podman Gateway must too)
-- Test gaps for behaviors the code/docs claim
+- Test gaps for behaviors the code/docs claim; verify each regression test
+  reaches the changed logic and would fail without the fix (use a positive
+  control or the pre-fix behavior when practical)
 - Silent no-ops, dead branches, wrong defaults
 - **Dependencies pinned to intent** — version ranges, GitHub Action
   tags, base images, pip/uv specs (not tighter, not looser);
