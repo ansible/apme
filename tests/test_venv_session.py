@@ -1266,8 +1266,10 @@ def test_prepare_retries_once_after_config_conflict(monkeypatch: pytest.MonkeyPa
 
 def test_spec_to_pip_preserves_range_constraints() -> None:
     """Galaxy version constraints survive conversion to pip requirements."""
-    from apme_engine.venv_manager.venv_collections import _spec_to_pip
+    from apme_engine.venv_manager.venv_collections import _spec_to_bare_pip, _spec_to_pip
 
     assert _spec_to_pip("ansible.posix:1.5.4") == "ansible-collection-ansible-posix==1.5.4"
     assert _spec_to_pip("community.general:>=9,<10") == "ansible-collection-community-general>=9,<10"
     assert _spec_to_pip("ansible.posix:*") == "ansible-collection-ansible-posix"
+    assert _spec_to_bare_pip("community.general:>=9,<10") == "ansible-collection-community-general"
+    assert _spec_to_bare_pip("ansible.posix:1.5.4") == "ansible-collection-ansible-posix"

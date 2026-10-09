@@ -138,7 +138,7 @@ def _spec_to_bare_pip(spec: str) -> str:
     Returns:
         Bare pip package name for uninstall, e.g. ``ansible-collection-community-general``.
     """
-    return _spec_to_pip(spec).split("==")[0]
+    return _spec_to_pip(spec.split(":", 1)[0])
 
 
 def _has_valid_meta(version_dir: Path) -> bool:
