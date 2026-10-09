@@ -16,9 +16,6 @@ from __future__ import annotations
 import re
 
 from apme_engine.graph.content_graph import (
-    _POSITIONAL_EDGE_VALUES as _POSITIONAL_EDGE_TYPES,  # canonical set; single source in content_graph
-)
-from apme_engine.graph.content_graph import (
     ContentGraph,
     NodeType,
 )
@@ -401,7 +398,9 @@ def _sorted_positional_parent_ids(graph: ContentGraph, node_id: str) -> list[str
         Parent node IDs sorted lexicographically.
     """
     return sorted(
-        src for src, _, data in graph.g.in_edges(node_id, data=True) if data.get("edge_type") in _POSITIONAL_EDGE_TYPES
+        src
+        for src, _, data in graph.g.in_edges(node_id, data=True)
+        if graph.is_positional_edge(src, node_id, data.get("edge_type"))
     )
 
 

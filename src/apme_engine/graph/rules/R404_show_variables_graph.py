@@ -12,7 +12,7 @@ rule_id_list when loading rules.
 from dataclasses import dataclass
 from typing import cast
 
-from apme_engine.graph.content_graph import ContentGraph, EdgeType
+from apme_engine.graph.content_graph import ContentGraph
 from apme_engine.graph.rule_base import GraphRule, GraphRuleResult
 from apme_engine.graph.sensitivity import (
     REDACTED,
@@ -84,7 +84,7 @@ def _positional_paths(
         parents = sorted(
             parent_id
             for parent_id, attrs in graph.edges_to(current_id)
-            if attrs.get("edge_type") in {EdgeType.CONTAINS.value, EdgeType.INCLUDE.value, EdgeType.IMPORT.value}
+            if graph.is_positional_edge(parent_id, current_id, attrs.get("edge_type"))
             and parent_id in scope
             and parent_id not in path
         )

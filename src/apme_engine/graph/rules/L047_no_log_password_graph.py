@@ -99,7 +99,7 @@ class NoLogPasswordGraphRule(GraphRule):
                     require_all_paths=True,
                 )
                 for play_id in play_ids
-            )
+            ) and no_log_true_in_scope(graph, node_id, require_all_paths=True)
         else:
             protected = no_log_true_in_scope(graph, node_id, require_all_paths=True)
         if protected:

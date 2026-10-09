@@ -107,10 +107,9 @@ class EdgeType(str, Enum):
     CONTAINS = "contains"
 
 
-# Canonical set of edge-type values that carry positional (structural)
-# ancestry: CONTAINS, INCLUDE, IMPORT. Shared by the positional-ancestor
-# queries below and by ``variable_helpers`` — add a new positional edge
-# type here, not in a per-method copy.
+# Base edge-type values that carry positional (structural) ancestry.
+# Static role dependencies also carry positional ancestry when the parent
+# is a PLAY or ROLE and the child is a ROLE; see ``is_positional_edge``.
 _POSITIONAL_EDGE_VALUES = frozenset(
     {
         EdgeType.CONTAINS.value,
@@ -1388,6 +1387,41 @@ class ContentGraph:
             result.append((source, dict(data)))
         return result
 
+    def is_positional_edge(self, source_id: str, target_id: str, edge_type: object) -> bool:
+        """Return whether an edge carries structural ancestry.
+
+        CONTAINS, INCLUDE, and IMPORT edges are positional. A DEPENDENCY edge
+        is positional only when it connects a PLAY or ROLE to a ROLE, which
+        models statically declared roles without treating other dependencies
+        as execution context.
+
+        Args:
+            source_id: Parent/source node ID.
+            target_id: Child/target node ID.
+            edge_type: Edge type value stored on the graph edge.
+
+        Returns:
+            True when the edge should participate in positional traversal.
+        """
+        if isinstance(edge_type, EdgeType):
+            edge_value = edge_type.value
+        elif isinstance(edge_type, str):
+            edge_value = edge_type
+        else:
+            return False
+        if edge_value in _POSITIONAL_EDGE_VALUES:
+            return True
+        if edge_value != EdgeType.DEPENDENCY.value:
+            return False
+        source_node = self.get_node(source_id)
+        target_node = self.get_node(target_id)
+        return (
+            source_node is not None
+            and source_node.node_type in {NodeType.PLAY, NodeType.ROLE}
+            and target_node is not None
+            and target_node.node_type == NodeType.ROLE
+        )
+
     def edge_count(self) -> int:
         """Return the number of edges in the graph.
 
@@ -1469,11 +1503,11 @@ class ContentGraph:
         play_context_id: str | None = None,
         play_scope: set[str] | None = None,
     ) -> list[ContentNode]:
-        """Return ancestor nodes via CONTAINS, INCLUDE, or IMPORT edges.
+        """Return positional ancestor nodes from the closest parent outward.
 
         Like :meth:`ancestors`, walks parent-first toward the root, but also
-        follows include/import links so included task files inherit play-level
-        settings such as ``no_log``.
+        follows include/import links and static role dependencies so nested
+        role tasks inherit play-level settings such as ``no_log``.
 
         When ``play_context_id`` is set, disambiguates shared included tasks
         by following only parents within that play's scoped subtree.
@@ -1492,10 +1526,11 @@ class ContentGraph:
         current = node_id
         if play_scope is None and play_context_id is not None:
             play_scope = self.play_scoped_node_ids(play_context_id)
-        positional = _POSITIONAL_EDGE_VALUES
         while True:
             parents = sorted(
-                src for src, _, data in self.g.in_edges(current, data=True) if data.get("edge_type") in positional
+                src
+                for src, _, data in self.g.in_edges(current, data=True)
+                if self.is_positional_edge(src, current, data.get("edge_type"))
             )
             if play_scope is not None:
                 scoped_parents = [parent for parent in parents if parent in play_scope]
@@ -1515,12 +1550,13 @@ class ContentGraph:
         return result
 
     def play_scoped_positional_ancestors(self, node_id: str, play_scope: set[str]) -> list[ContentNode]:
-        """Return merged positional ancestors from all in-scope include paths.
+        """Return merged positional ancestors from all in-scope paths.
 
         Unlike :meth:`positional_ancestors`, follows every in-scope parent
-        edge instead of choosing the lexicographically first parent. Ancestors
-        are ordered closest-first; same-depth parents are sorted by node id
-        for deterministic conflict resolution.
+        edge, including static role dependencies, instead of choosing the
+        lexicographically first parent. Ancestors are ordered closest-first;
+        same-depth parents are sorted by node id for deterministic conflict
+        resolution.
 
         Args:
             node_id: Node whose in-scope ancestor chain is walked upward.
@@ -1531,11 +1567,10 @@ class ContentGraph:
         """
         result: list[ContentNode] = []
         seen: set[str] = set()
-        positional = _POSITIONAL_EDGE_VALUES
         current_level = sorted(
             src
             for src, _, data in self.g.in_edges(node_id, data=True)
-            if data.get("edge_type") in positional and src in play_scope
+            if self.is_positional_edge(src, node_id, data.get("edge_type")) and src in play_scope
         )
         while current_level:
             next_level: list[str] = []
@@ -1547,17 +1582,21 @@ class ContentGraph:
                 if parent_node is not None:
                     result.append(parent_node)
                 for src, _, data in self.g.in_edges(parent_id, data=True):
-                    if data.get("edge_type") in positional and src in play_scope and src not in seen:
+                    if (
+                        self.is_positional_edge(src, parent_id, data.get("edge_type"))
+                        and src in play_scope
+                        and src not in seen
+                    ):
                         next_level.append(src)
             current_level = sorted(set(next_level))
         return result
 
     def positional_ancestor_ids(self, node_id: str) -> set[str]:
-        """Return ancestor node IDs via CONTAINS, INCLUDE, or IMPORT edges.
+        """Return positional ancestor node IDs, including static role parents.
 
         Unlike :meth:`ancestors`, this walks all positional parent edges
-        (not only ``CONTAINS``), so included/imported task files link back
-        to the enclosing play or include task.
+        (not only ``CONTAINS``), so included/imported task files and tasks in
+        statically declared roles link back to the enclosing play.
 
         Args:
             node_id: Node whose positional ancestors are collected.
@@ -1568,11 +1607,10 @@ class ContentGraph:
         result: set[str] = set()
         seen: set[str] = set()
         stack = [node_id]
-        positional = _POSITIONAL_EDGE_VALUES
         while stack:
             current = stack.pop()
             for src, _, data in self.g.in_edges(current, data=True):
-                if data.get("edge_type") not in positional:
+                if not self.is_positional_edge(src, current, data.get("edge_type")):
                     continue
                 if src in seen:
                     continue
@@ -1701,20 +1739,8 @@ class ContentGraph:
 
         for src, tgt, data in self.g.edges(data=True):
             etype = data.get("edge_type", "")
-            is_positional = etype in (
-                EdgeType.CONTAINS.value,
-                EdgeType.INCLUDE.value,
-                EdgeType.IMPORT.value,
-            )
-            source_node = self.get_node(src)
-            target_node = self.get_node(tgt)
-            is_role_dependency = (
-                etype == EdgeType.DEPENDENCY.value
-                and source_node is not None
-                and source_node.node_type in {NodeType.PLAY, NodeType.ROLE}
-                and target_node is not None
-                and target_node.node_type == NodeType.ROLE
-            )
+            is_positional = self.is_positional_edge(src, tgt, etype)
+            is_role_dependency = etype == EdgeType.DEPENDENCY.value and is_positional
             if is_positional or is_role_dependency:
                 if etype == EdgeType.CONTAINS.value and (src, tgt) in rescue_always_pairs:
                     continue

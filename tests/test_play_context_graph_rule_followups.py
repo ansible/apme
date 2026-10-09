@@ -283,6 +283,60 @@ def test_runtime_definition_in_static_play_role_is_available_to_later_tasks() ->
     assert result.verdict is False
 
 
+def test_static_play_role_tasks_resolve_play_context_and_no_log() -> None:
+    """Resolve play variables and protection inherited by a static role task."""
+    graph = ContentGraph()
+    play = ContentNode(
+        identity=NodeIdentity(path="site.yml/plays[0]", node_type=NodeType.PLAY),
+        file_path="site.yml",
+        variables={"play_value": "available"},
+        no_log=True,
+        scope=NodeScope.OWNED,
+    )
+    role = ContentNode(
+        identity=NodeIdentity(path="roles/web", node_type=NodeType.ROLE),
+        file_path="roles/web",
+        scope=NodeScope.OWNED,
+    )
+    taskfile = ContentNode(
+        identity=NodeIdentity(path="roles/web/tasks/main.yml", node_type=NodeType.TASKFILE),
+        file_path="roles/web/tasks/main.yml",
+        scope=NodeScope.OWNED,
+    )
+    task = ContentNode(
+        identity=NodeIdentity(path="roles/web/tasks/main.yml/tasks[0]", node_type=NodeType.TASK),
+        file_path="roles/web/tasks/main.yml",
+        module="ansible.builtin.user",
+        module_options={"password": "{{ play_value }}"},
+        scope=NodeScope.OWNED,
+    )
+    for node in (play, role, taskfile, task):
+        graph.add_node(node)
+    graph.add_edge(play.node_id, role.node_id, EdgeType.DEPENDENCY, position=0)
+    graph.add_edge(role.node_id, taskfile.node_id, EdgeType.CONTAINS, position=0)
+    graph.add_edge(taskfile.node_id, task.node_id, EdgeType.CONTAINS, position=0)
+
+    assert play.node_id in graph.positional_ancestor_ids(task.node_id)
+    assert play.node_id in {
+        ancestor.node_id
+        for ancestor in graph.play_scoped_positional_ancestors(
+            task.node_id,
+            graph.play_scoped_node_ids(play.node_id),
+        )
+    }
+    undefined = UndefinedVariableGraphRule().process(graph, task.node_id)
+    assert undefined is not None
+    assert undefined.verdict is False
+    no_log = NoLogPasswordGraphRule().process(graph, task.node_id)
+    assert no_log is not None
+    assert no_log.verdict is False
+    variables = ShowVariablesGraphRule().process(graph, task.node_id)
+    assert variables is not None
+    assert variables.detail is not None
+    entries = cast(list[YAMLDict], variables.detail["variable_set"])
+    assert any(entry["name"] == "play_value" for entry in entries)
+
+
 @pytest.mark.parametrize("branch_edge", (EdgeType.RESCUE, EdgeType.ALWAYS))  # type: ignore[untyped-decorator]
 def test_runtime_producer_in_rescue_or_always_reaches_task_after_block(branch_edge: EdgeType) -> None:
     """Keep runtime definitions from a block branch available after the block.
@@ -780,6 +834,60 @@ def test_l047_requires_no_log_for_every_shared_play(
     )
 
     result = NoLogPasswordGraphRule().process(graph, task_id)
+
+    assert result is not None
+    assert result.verdict is expected_violation
+
+
+@pytest.mark.parametrize(  # type: ignore[untyped-decorator]
+    ("unscoped_no_log", "expected_violation"),
+    [(None, True), (True, False)],
+)
+def test_l047_checks_unscoped_paths_alongside_play_paths(
+    unscoped_no_log: bool | None,
+    expected_violation: bool,
+) -> None:
+    """Check unscoped executions when a shared task also has a play path.
+
+    Args:
+        unscoped_no_log: no_log value on the unscoped include path.
+        expected_violation: Whether the unprotected path should be reported.
+    """
+    graph = ContentGraph()
+    play = ContentNode(
+        identity=NodeIdentity(path="site.yml/plays[0]", node_type=NodeType.PLAY),
+        file_path="site.yml",
+        no_log=True,
+        scope=NodeScope.OWNED,
+    )
+    play_include = ContentNode(
+        identity=NodeIdentity(path="site.yml/plays[0]/tasks[0]", node_type=NodeType.TASK),
+        file_path="site.yml",
+        module="ansible.builtin.include_tasks",
+        no_log=None,
+        scope=NodeScope.OWNED,
+    )
+    unscoped_include = ContentNode(
+        identity=NodeIdentity(path="standalone.yml/tasks[0]", node_type=NodeType.TASK),
+        file_path="standalone.yml",
+        module="ansible.builtin.include_tasks",
+        no_log=unscoped_no_log,
+        scope=NodeScope.OWNED,
+    )
+    task = ContentNode(
+        identity=NodeIdentity(path="shared.yml/tasks[0]", node_type=NodeType.TASK),
+        file_path="shared.yml",
+        module="ansible.builtin.user",
+        module_options={"password": "secret"},
+        scope=NodeScope.OWNED,
+    )
+    for node in (play, play_include, unscoped_include, task):
+        graph.add_node(node)
+    graph.add_edge(play.node_id, play_include.node_id, EdgeType.CONTAINS, position=0)
+    graph.add_edge(play_include.node_id, task.node_id, EdgeType.INCLUDE, position=0)
+    graph.add_edge(unscoped_include.node_id, task.node_id, EdgeType.INCLUDE, position=0)
+
+    result = NoLogPasswordGraphRule().process(graph, task.node_id)
 
     assert result is not None
     assert result.verdict is expected_violation
