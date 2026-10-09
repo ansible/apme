@@ -14,6 +14,10 @@ if TYPE_CHECKING:
     from apme_engine.remediation.ai_context import AINodeContext
 
 
+class AIProviderError(RuntimeError):
+    """AI infrastructure failed before it could return a remediation decision."""
+
+
 @dataclass
 class AISkipped:
     """A violation the AI could not fix, with an explanation.
@@ -115,12 +119,16 @@ class AIProvider(Protocol):
         Returns an ``AINodeFix`` with the corrected YAML, or ``None``
         if the AI cannot fix any of the violations.
 
+        Infrastructure failures should raise ``AIProviderError`` instead of
+        reporting that the provider made a decision to abstain.
+
         Args:
             context: Graph-derived context bundle for this node.
             model: Optional model identifier.
 
         Returns:
-            ``AINodeFix`` with corrected YAML, or ``None`` on failure.
+            ``AINodeFix`` with corrected YAML, or ``None`` when no fix is available.
+
         """
         ...
 

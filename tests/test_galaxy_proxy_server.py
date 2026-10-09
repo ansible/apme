@@ -11,7 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from galaxy_proxy.proxy import server as proxy_server
-from galaxy_proxy.proxy.server import CollectionResolutionError, _safe_server_label, create_app
+from galaxy_proxy.proxy.server import _safe_server_label, create_app
 
 
 @pytest.fixture(autouse=True)  # type: ignore[untyped-decorator]
@@ -146,7 +146,6 @@ class TestProjectPage:
         mock_download = AsyncMock(
             return_value=DownloadResult(tarball_paths=[fake_tarball]),
         )
-        mock_versions = AsyncMock(return_value=[])
         whl_data = b"PK\x03\x04converted-wheel"
         whl_name = "ansible_collection_ansible_posix-1.5.4-py3-none-any.whl"
 
@@ -157,7 +156,6 @@ class TestProjectPage:
                 "galaxy_proxy.proxy.server.tarball_to_wheel",
                 return_value=(whl_name, whl_data),
             ),
-            patch("galaxy_proxy.proxy.server._fetch_galaxy_versions", mock_versions),
         ):
             resp = client.get("/simple/ansible-collection-ansible-posix/")
 
@@ -175,31 +173,25 @@ class TestProjectPage:
         application = create_app(cache_dir=cache_dir, enable_passthrough=False)
 
         mock_download = AsyncMock(side_effect=RuntimeError("Galaxy unreachable"))
-        mock_versions = AsyncMock(return_value=[])
-
         with (
             TestClient(application) as client,
             patch("galaxy_proxy.proxy.server.download_collections", mock_download),
-            patch("galaxy_proxy.proxy.server._fetch_galaxy_versions", mock_versions),
         ):
             resp = client.get("/simple/ansible-collection-ansible-posix/")
 
         assert resp.status_code == 502
 
-    def test_empty_versions_are_not_cached(self, tmp_path: Path) -> None:
-        """Empty version results are retried instead of being cached as failures.
+    def test_failed_latest_download_is_retried(self, tmp_path: Path) -> None:
+        """Failed latest downloads are retried instead of cached as failures.
 
         Args:
             tmp_path: Pytest-provided temporary directory.
         """
         cache_dir = tmp_path / "cache"
-        application = create_app(cache_dir=cache_dir, enable_passthrough=False, metadata_ttl=600.0)
-
-        mock_versions = AsyncMock(return_value=[])
+        application = create_app(cache_dir=cache_dir, enable_passthrough=False)
 
         with (
             TestClient(application) as client,
-            patch("galaxy_proxy.proxy.server._fetch_galaxy_versions", mock_versions),
             patch("galaxy_proxy.proxy.server.download_collections", AsyncMock(side_effect=RuntimeError("fail"))),
         ):
             resp1 = client.get("/simple/ansible-collection-ansible-posix/")
@@ -207,8 +199,6 @@ class TestProjectPage:
 
             resp2 = client.get("/simple/ansible-collection-ansible-posix/")
             assert resp2.status_code == 502
-
-        assert mock_versions.call_count == 2
 
     def test_collection_with_cached_wheel(self, tmp_path: Path) -> None:
         """Collection with cached wheel lists it in the project page.
@@ -222,12 +212,8 @@ class TestProjectPage:
         whl_name = "ansible_collection_ansible_posix-1.5.4-py3-none-any.whl"
         (wheels_dir / whl_name).write_bytes(b"fake-wheel")
 
-        mock_versions = AsyncMock(return_value=[])
         application = create_app(cache_dir=cache_dir, enable_passthrough=False)
-        with (
-            TestClient(application) as client,
-            patch("galaxy_proxy.proxy.server._fetch_galaxy_versions", mock_versions),
-        ):
+        with TestClient(application) as client:
             resp = client.get("/simple/ansible-collection-ansible-posix/")
         assert resp.status_code == 200
         assert whl_name in resp.text
@@ -470,7 +456,7 @@ class TestAdminGalaxyConfig:
         assert resp.json()["servers"] == ["automation-hub"]
 
     def test_push_clears_cache(self, tmp_path: Path) -> None:
-        """Pushing new Galaxy config clears cached wheels and metadata.
+        """Pushing new Galaxy config clears cached wheels.
 
         Prevents stale data from previous server selection being served
         after a configuration change.
@@ -486,14 +472,12 @@ class TestAdminGalaxyConfig:
             from galaxy_proxy.proxy.cache import ProxyCache
 
             cache = ProxyCache(cache_dir=cache_dir)
-            cache.put_metadata("ansible", "posix", ["1.0.0", "2.0.0"])
             cache.put_wheel(
                 "ansible_collection_ansible_posix-1.0.0-py3-none-any.whl",
                 b"fake wheel data",
             )
 
             # Verify cache has data
-            assert cache.get_metadata("ansible", "posix") is not None
             assert cache.get_wheel("ansible_collection_ansible_posix-1.0.0-py3-none-any.whl") is not None
 
             # Push new Galaxy config
@@ -505,487 +489,7 @@ class TestAdminGalaxyConfig:
 
             # Verify cache is cleared
             fresh_cache = ProxyCache(cache_dir=cache_dir)
-            assert fresh_cache.get_metadata("ansible", "posix") is None
             assert fresh_cache.get_wheel("ansible_collection_ansible_posix-1.0.0-py3-none-any.whl") is None
-
-
-class TestVersionDiscoveryWithServers:
-    """Tests for _fetch_galaxy_versions using configured Galaxy servers."""
-
-    def test_version_discovery_uses_configured_server(self, tmp_path: Path) -> None:
-        """Version discovery queries configured servers before public Galaxy.
-
-        Args:
-            tmp_path: Pytest-provided temporary directory.
-        """
-        from galaxy_proxy.collection_downloader import GalaxyServerConfig
-
-        cache_dir = tmp_path / "cache"
-        application = create_app(cache_dir=cache_dir, enable_passthrough=False)
-
-        with TestClient(application) as client:
-            client.post(
-                "/admin/galaxy-config",
-                json={"servers": [{"name": "hub", "url": "https://hub.example.com", "token": "tok"}]},
-            )
-
-            mock_fetch = AsyncMock(return_value=["2.0.0", "1.0.0"])
-            with patch("galaxy_proxy.proxy.server._fetch_galaxy_versions", mock_fetch):
-                resp = client.get("/simple/ansible-collection-ansible-posix/")
-
-            assert resp.status_code == 200
-            mock_fetch.assert_called_once()
-            call_kwargs = mock_fetch.call_args
-            servers = call_kwargs.kwargs.get("servers") or call_kwargs[1].get("servers")
-            assert servers is not None
-            assert len(servers) == 1
-            assert isinstance(servers[0], GalaxyServerConfig)
-            assert servers[0].url == "https://hub.example.com"
-            assert servers[0].token == "tok"
-
-    def test_version_discovery_falls_back_to_public_galaxy(self, tmp_path: Path) -> None:
-        """Without configured servers, version discovery falls back to public Galaxy.
-
-        Args:
-            tmp_path: Pytest-provided temporary directory.
-        """
-        cache_dir = tmp_path / "cache"
-        application = create_app(cache_dir=cache_dir, enable_passthrough=False)
-
-        mock_fetch = AsyncMock(return_value=["1.5.4"])
-        with (
-            TestClient(application) as client,
-            patch("galaxy_proxy.proxy.server._fetch_galaxy_versions", mock_fetch),
-        ):
-            resp = client.get("/simple/ansible-collection-ansible-posix/")
-
-        assert resp.status_code == 200
-        call_kwargs = mock_fetch.call_args
-        servers = call_kwargs.kwargs.get("servers") or call_kwargs[1].get("servers")
-        assert servers is None
-
-    def test_version_discovery_uses_ansible_config_env_when_no_pushed_servers(self, tmp_path: Path) -> None:
-        """Version discovery reads Galaxy servers from ``ANSIBLE_CONFIG`` in daemon mode.
-
-        Args:
-            tmp_path: Pytest-provided temporary directory.
-        """
-        from galaxy_proxy.collection_downloader import GalaxyServerConfig
-
-        cfg = tmp_path / "ansible.cfg"
-        cfg.write_text(
-            "[galaxy]\n"
-            "server_list = certified\n"
-            "\n"
-            "[galaxy_server.certified]\n"
-            "url = https://hub.example.com/api/galaxy/\n"
-            "token = secret-token\n"
-            "auth_url = https://sso.example.com/token\n"
-        )
-        application = create_app(cache_dir=tmp_path / "cache", enable_passthrough=False)
-
-        mock_fetch = AsyncMock(return_value=["1.5.4"])
-        with (
-            patch.dict("os.environ", {"ANSIBLE_CONFIG": str(cfg)}),
-            TestClient(application) as client,
-            patch("galaxy_proxy.proxy.server._fetch_galaxy_versions", mock_fetch),
-        ):
-            resp = client.get("/simple/ansible-collection-ansible-posix/")
-
-        assert resp.status_code == 200
-        call_kwargs = mock_fetch.call_args
-        servers = call_kwargs.kwargs.get("servers") or call_kwargs[1].get("servers")
-        assert servers is not None
-        assert len(servers) == 1
-        assert isinstance(servers[0], GalaxyServerConfig)
-        assert servers[0].name == "certified"
-        assert servers[0].url == "https://hub.example.com/api/galaxy/"
-        assert servers[0].token == "secret-token"
-        assert servers[0].auth_url == "https://sso.example.com/token"
-
-    def test_fetch_versions_tries_servers_in_order(self) -> None:
-        """_fetch_galaxy_versions tries configured servers before public Galaxy.
-
-        Verifies that the first successful server short-circuits further attempts.
-        """
-        import asyncio
-
-        from galaxy_proxy.collection_downloader import GalaxyServerConfig
-        from galaxy_proxy.proxy.server import _fetch_galaxy_versions
-
-        servers = [
-            GalaxyServerConfig(name="hub", url="https://hub.example.com", token="tok"),
-        ]
-
-        with patch(
-            "galaxy_proxy.proxy.server._fetch_versions_from",
-            new_callable=AsyncMock,
-            return_value=["3.0.0", "2.0.0"],
-        ) as mock_inner:
-            result = asyncio.run(
-                _fetch_galaxy_versions("ansible", "posix", servers=servers),
-            )
-
-        assert result == ["2.0.0", "3.0.0"]
-        mock_inner.assert_called_once_with(
-            "ansible",
-            "posix",
-            "https://hub.example.com",
-            token="tok",
-        )
-
-    def test_fetch_versions_falls_through_on_failure(self) -> None:
-        """When a configured server fails, _fetch_galaxy_versions tries the next configured server.
-
-        First server returns None (failure), second server returns versions.
-        No implicit public Galaxy fallback.
-        """
-        import asyncio
-
-        from galaxy_proxy.collection_downloader import GalaxyServerConfig
-        from galaxy_proxy.proxy.server import _fetch_galaxy_versions
-
-        servers = [
-            GalaxyServerConfig(name="hub", url="https://hub.example.com", token="tok"),
-            GalaxyServerConfig(name="backup", url="https://backup.example.com"),
-        ]
-
-        async def _side_effect(
-            ns: str,
-            name: str,
-            base_url: str,
-            *,
-            token: str | None = None,
-        ) -> list[str] | None:
-            if base_url == "https://hub.example.com":
-                return None
-            return ["1.5.4"]
-
-        with patch(
-            "galaxy_proxy.proxy.server._fetch_versions_from",
-            new_callable=AsyncMock,
-            side_effect=_side_effect,
-        ) as mock_inner:
-            result = asyncio.run(
-                _fetch_galaxy_versions("ansible", "posix", servers=servers),
-            )
-
-        assert result == ["1.5.4"]
-        assert mock_inner.call_count == 2
-
-    def test_fetch_versions_all_servers_fail_raises_resolution_error(self) -> None:
-        """Total server failure raises CollectionResolutionError (no silent None)."""
-        import asyncio
-
-        from galaxy_proxy.collection_downloader import GalaxyServerConfig
-        from galaxy_proxy.proxy.server import _fetch_galaxy_versions
-
-        servers = [
-            GalaxyServerConfig(name="hub", url="https://hub.example.com", token="tok"),
-        ]
-
-        with (
-            patch(
-                "galaxy_proxy.proxy.server._fetch_versions_from",
-                new_callable=AsyncMock,
-                return_value=None,
-            ),
-            pytest.raises(CollectionResolutionError, match="ansible.posix"),
-        ):
-            asyncio.run(
-                _fetch_galaxy_versions("ansible", "posix", servers=servers),
-            )
-
-    def test_fetch_versions_sends_auth_token(self) -> None:
-        """_fetch_versions_from passes the auth token in the Authorization header.
-
-        Verifies the httpx client is configured with the token.
-        """
-        import asyncio
-
-        from galaxy_proxy.proxy.server import _fetch_versions_from
-
-        captured_headers: dict[str, str] = {}
-
-        def _capture_client(**kwargs: object) -> unittest.mock.MagicMock:
-            hdrs = kwargs.get("headers")
-            if isinstance(hdrs, dict):
-                captured_headers.update(hdrs)
-            mock_resp = unittest.mock.MagicMock()
-            mock_resp.status_code = 200
-            mock_resp.json.return_value = {"data": [{"version": "1.0.0"}], "links": {}}
-            mock_resp.raise_for_status.return_value = None
-
-            client = unittest.mock.MagicMock()
-            client.get = AsyncMock(return_value=mock_resp)
-            client.__aenter__ = AsyncMock(return_value=client)
-            client.__aexit__ = AsyncMock(return_value=False)
-            return client
-
-        with patch("galaxy_proxy.proxy.server.httpx.AsyncClient", side_effect=_capture_client):
-            result = asyncio.run(
-                _fetch_versions_from("ansible", "posix", "https://hub.example.com", token="secret"),
-            )
-
-        assert result == ["1.0.0"]
-        assert captured_headers["Authorization"] == "Token secret"
-
-    def test_fetch_versions_no_token_no_auth_header(self) -> None:
-        """_fetch_versions_from omits Authorization header when no token is provided."""
-        import asyncio
-
-        from galaxy_proxy.proxy.server import _fetch_versions_from
-
-        captured_headers: dict[str, str] = {}
-
-        def _capture_client(**kwargs: object) -> unittest.mock.MagicMock:
-            hdrs = kwargs.get("headers")
-            if isinstance(hdrs, dict):
-                captured_headers.update(hdrs)
-            mock_resp = unittest.mock.MagicMock()
-            mock_resp.status_code = 200
-            mock_resp.json.return_value = {"data": [{"version": "2.0.0"}], "links": {}}
-            mock_resp.raise_for_status.return_value = None
-
-            client = unittest.mock.MagicMock()
-            client.get = AsyncMock(return_value=mock_resp)
-            client.__aenter__ = AsyncMock(return_value=client)
-            client.__aexit__ = AsyncMock(return_value=False)
-            return client
-
-        with patch("galaxy_proxy.proxy.server.httpx.AsyncClient", side_effect=_capture_client):
-            result = asyncio.run(
-                _fetch_versions_from("ansible", "posix", "https://galaxy.ansible.com"),
-            )
-
-        assert result == ["2.0.0"]
-        assert "Authorization" not in captured_headers
-
-    def test_fetch_versions_truncation_returns_none(self) -> None:
-        """A perpetual ``links.next`` is a failure signal, not a partial answer."""
-        import asyncio
-
-        from galaxy_proxy import MAX_VERSION_PAGES
-        from galaxy_proxy.proxy.server import _fetch_versions_from
-
-        calls = 0
-
-        def _capture_client(**kwargs: object) -> unittest.mock.MagicMock:
-            mock_resp = unittest.mock.MagicMock()
-            mock_resp.status_code = 200
-            mock_resp.json.return_value = {"data": [{"version": "1.0.0"}], "links": {"next": "more"}}
-            mock_resp.raise_for_status.return_value = None
-
-            async def _get(url: str, **kw: object) -> unittest.mock.MagicMock:
-                nonlocal calls
-                calls += 1
-                return mock_resp
-
-            client = unittest.mock.MagicMock()
-            client.get = _get
-            client.__aenter__ = AsyncMock(return_value=client)
-            client.__aexit__ = AsyncMock(return_value=False)
-            return client
-
-        with patch("galaxy_proxy.proxy.server.httpx.AsyncClient", side_effect=_capture_client):
-            result = asyncio.run(
-                _fetch_versions_from("ansible", "posix", "https://galaxy.ansible.com"),
-            )
-
-        assert result is None
-        assert calls == MAX_VERSION_PAGES
-
-
-class TestGalaxyClientTruncation:
-    """All-truncated listings report truncation, not missing configuration."""
-
-    def test_list_versions_all_truncated_raises_truncation_error(self) -> None:
-        """Every server truncated with no other error names the page bound."""
-        import asyncio
-
-        from galaxy_proxy import MAX_VERSION_PAGES
-        from galaxy_proxy.galaxy_client import GalaxyClient, GalaxyServer
-
-        client = GalaxyClient(servers=[GalaxyServer(url="https://galaxy.example.com")])
-        try:
-            with (
-                patch.object(
-                    GalaxyClient,
-                    "_list_versions_from",
-                    AsyncMock(return_value=None),
-                ),
-                pytest.raises(RuntimeError, match=f"truncated at {MAX_VERSION_PAGES} pages") as excinfo,
-            ):
-                asyncio.run(client.list_versions("ansible", "posix"))
-        finally:
-            asyncio.run(client.close())
-
-        assert MAX_VERSION_PAGES > 0
-        assert f"truncated at {MAX_VERSION_PAGES} pages" in str(excinfo.value)
-        # Pure truncation has no chained per-server failure to report.
-        assert excinfo.value.__cause__ is None
-
-    @pytest.mark.parametrize("payload_error", [ValueError("bad json"), KeyError("version")])  # type: ignore[untyped-decorator]
-    def test_list_versions_exhaustion_wraps_payload_errors_with_cause(self, payload_error: Exception) -> None:
-        """Exhausted listings surface as RuntimeError chained from the payload error.
-
-        Callers must never see a bare ``ValueError``/``KeyError`` from a
-        malformed Galaxy payload; the last failure is chained via
-        ``__cause__``.
-
-        Args:
-            payload_error: Malformed-payload error raised by the fake server.
-        """
-        import asyncio
-
-        from galaxy_proxy.galaxy_client import GalaxyClient, GalaxyServer
-
-        client = GalaxyClient(servers=[GalaxyServer(url="https://galaxy.example.com")])
-        try:
-            with (
-                patch.object(
-                    GalaxyClient,
-                    "_list_versions_from",
-                    AsyncMock(side_effect=payload_error),
-                ),
-                pytest.raises(RuntimeError, match="failed") as excinfo,
-            ):
-                asyncio.run(client.list_versions("ansible", "posix"))
-        finally:
-            asyncio.run(client.close())
-
-        assert isinstance(excinfo.value.__cause__, type(payload_error))
-        assert str(excinfo.value.__cause__) == str(payload_error)
-
-    @pytest.mark.parametrize("payload_error", [ValueError("bad json"), KeyError("download_url")])  # type: ignore[untyped-decorator]
-    def test_get_version_detail_exhaustion_wraps_errors_with_cause(self, payload_error: Exception) -> None:
-        """Exhausted detail fetches surface as RuntimeError chained from the last failure.
-
-        Symmetric with ``list_versions``: callers must never see a bare
-        ``httpx``/payload error from a malformed Galaxy response; the last
-        failure is chained via ``__cause__``.
-
-        Args:
-            payload_error: Malformed-payload error raised by the fake server.
-        """
-        import asyncio
-
-        from galaxy_proxy.galaxy_client import GalaxyClient, GalaxyServer
-
-        client = GalaxyClient(servers=[GalaxyServer(url="https://galaxy.example.com")])
-        try:
-            with (
-                patch.object(
-                    GalaxyClient,
-                    "_get_detail_from",
-                    AsyncMock(side_effect=payload_error),
-                ),
-                pytest.raises(RuntimeError, match="failed") as excinfo,
-            ):
-                asyncio.run(client.get_version_detail("ansible", "posix", "1.0.0"))
-        finally:
-            asyncio.run(client.close())
-
-        assert isinstance(excinfo.value.__cause__, type(payload_error))
-        assert str(excinfo.value.__cause__) == str(payload_error)
-
-    @pytest.mark.parametrize(  # type: ignore[untyped-decorator]
-        ("raw_url", "expected"),
-        [
-            ("https://galaxy.ansible.com", "https://galaxy.ansible.com"),
-            ("https://galaxy.ansible.com/", "https://galaxy.ansible.com"),
-            ("https://galaxy.ansible.com/api/", "https://galaxy.ansible.com"),
-            ("https://hub.example.com/api/galaxy/", "https://hub.example.com"),
-            (
-                "https://hub.example.com/api/galaxy/content/published/",
-                "https://hub.example.com",
-            ),
-            ("https://console.redhat.com/api/automation-hub", "https://console.redhat.com"),
-            ("https://api.example.com", "https://api.example.com"),
-            ("https://api.example.com/", "https://api.example.com"),
-            ("https://api.galaxy.example.com/api/", "https://api.galaxy.example.com"),
-        ],
-    )
-    def test_normalize_galaxy_url(self, raw_url: str, expected: str) -> None:
-        """_normalize_galaxy_url strips /api... suffixes from server URLs.
-
-        Args:
-            raw_url: Input URL to normalize.
-            expected: Expected normalized URL.
-        """
-        from galaxy_proxy.proxy.server import _normalize_galaxy_url
-
-        assert _normalize_galaxy_url(raw_url) == expected
-
-    def test_fetch_versions_from_normalizes_api_url(self) -> None:
-        """_fetch_versions_from normalizes URLs that include /api/ to avoid /api/api/v3/...."""
-        import asyncio
-
-        from galaxy_proxy.proxy.server import _fetch_versions_from
-
-        captured_urls: list[str] = []
-
-        def _capture_client(**kwargs: object) -> unittest.mock.MagicMock:
-            mock_resp = unittest.mock.MagicMock()
-            mock_resp.status_code = 200
-            mock_resp.json.return_value = {"data": [{"version": "1.0.0"}], "links": {}}
-            mock_resp.raise_for_status.return_value = None
-
-            async def _get(url: str, **kw: object) -> unittest.mock.MagicMock:
-                captured_urls.append(url)
-                return mock_resp
-
-            client = unittest.mock.MagicMock()
-            client.get = _get
-            client.__aenter__ = AsyncMock(return_value=client)
-            client.__aexit__ = AsyncMock(return_value=False)
-            return client
-
-        with patch("galaxy_proxy.proxy.server.httpx.AsyncClient", side_effect=_capture_client):
-            result = asyncio.run(
-                _fetch_versions_from(
-                    "ansible",
-                    "posix",
-                    "https://hub.example.com/api/",
-                    token="tok",
-                ),
-            )
-
-        assert result == ["1.0.0"]
-        assert len(captured_urls) == 1
-        assert "/api/api/" not in captured_urls[0]
-        assert "/api/v3/plugin/ansible/" in captured_urls[0]
-
-    def test_version_discovery_with_api_url_through_project_page(self, tmp_path: Path) -> None:
-        """Version discovery handles configured server URLs that include /api/.
-
-        Args:
-            tmp_path: Pytest-provided temporary directory.
-        """
-        from galaxy_proxy.collection_downloader import GalaxyServerConfig
-
-        cache_dir = tmp_path / "cache"
-        application = create_app(cache_dir=cache_dir, enable_passthrough=False)
-
-        with TestClient(application) as client:
-            client.post(
-                "/admin/galaxy-config",
-                json={"servers": [{"name": "hub", "url": "https://hub.example.com/api/", "token": "tok"}]},
-            )
-
-            mock_fetch = AsyncMock(return_value=["2.0.0", "1.0.0"])
-            with patch("galaxy_proxy.proxy.server._fetch_galaxy_versions", mock_fetch):
-                resp = client.get("/simple/ansible-collection-ansible-posix/")
-
-            assert resp.status_code == 200
-            mock_fetch.assert_called_once()
-            call_kwargs = mock_fetch.call_args
-            servers = call_kwargs.kwargs.get("servers") or call_kwargs[1].get("servers")
-            assert servers is not None
-            assert len(servers) == 1
-            assert isinstance(servers[0], GalaxyServerConfig)
-            assert servers[0].url == "https://hub.example.com/api/"
-            assert servers[0].token == "tok"
 
 
 class TestConvertTarballs:
@@ -1302,464 +806,8 @@ class TestGalaxyClientDownload:
         assert excinfo.value is wrapped
 
 
-class TestGalaxyNonDictPayload:
-    """Non-dict JSON bodies fail over instead of raising AttributeError."""
-
-    @pytest.mark.parametrize("payload", [[{"version": "1.0.0"}], "ok"])  # type: ignore[untyped-decorator]
-    def test_list_versions_from_non_dict_returns_none(self, payload: object) -> None:
-        """A non-dict listing body is a failover signal, not a crash.
-
-        Args:
-            payload: Non-dict JSON body returned by the fake server.
-        """
-        import asyncio
-        from typing import cast
-
-        import httpx
-
-        from galaxy_proxy.galaxy_client import GalaxyClient
-
-        mock_resp = unittest.mock.MagicMock()
-        mock_resp.raise_for_status.return_value = None
-        mock_resp.json.return_value = payload
-        fake_client = unittest.mock.MagicMock()
-        fake_client.get = AsyncMock(return_value=mock_resp)
-
-        result = asyncio.run(
-            GalaxyClient._list_versions_from(cast(httpx.AsyncClient, fake_client), "ansible", "posix"),
-        )
-
-        assert result is None
-
-    def test_get_detail_from_null_metadata_uses_empty_defaults(self) -> None:
-        """A null metadata field is treated as empty object fields."""
-        import asyncio
-        from typing import cast
-
-        import httpx
-
-        from galaxy_proxy.galaxy_client import GalaxyClient
-
-        mock_resp = unittest.mock.MagicMock()
-        mock_resp.raise_for_status.return_value = None
-        mock_resp.json.return_value = {
-            "download_url": "https://cdn.example.com/coll.tar.gz",
-            "metadata": None,
-        }
-        fake_client = unittest.mock.MagicMock()
-        fake_client.get = AsyncMock(return_value=mock_resp)
-
-        detail = asyncio.run(
-            GalaxyClient._get_detail_from(cast(httpx.AsyncClient, fake_client), "ansible", "posix", "1.0.0"),
-        )
-
-        assert detail.dependencies == {}
-        assert detail.description == ""
-
-    def test_get_detail_from_non_object_metadata_raises_value_error(self) -> None:
-        """Non-object metadata raises ValueError, which fails over."""
-        import asyncio
-        from typing import cast
-
-        import httpx
-
-        from galaxy_proxy.galaxy_client import GalaxyClient
-
-        mock_resp = unittest.mock.MagicMock()
-        mock_resp.raise_for_status.return_value = None
-        mock_resp.json.return_value = {
-            "download_url": "https://cdn.example.com/coll.tar.gz",
-            "metadata": ["bad"],
-        }
-        fake_client = unittest.mock.MagicMock()
-        fake_client.get = AsyncMock(return_value=mock_resp)
-
-        with pytest.raises(ValueError, match="non-object metadata"):
-            asyncio.run(
-                GalaxyClient._get_detail_from(cast(httpx.AsyncClient, fake_client), "ansible", "posix", "1.0.0"),
-            )
-
-    @pytest.mark.parametrize("payload", [[{"version": "1.0.0"}], "ok"])  # type: ignore[untyped-decorator]
-    def test_get_detail_from_non_dict_raises_value_error(self, payload: object) -> None:
-        """A non-dict detail body raises ValueError, which fails over.
-
-        Args:
-            payload: Non-dict JSON body returned by the fake server.
-        """
-        import asyncio
-        from typing import cast
-
-        import httpx
-
-        from galaxy_proxy.galaxy_client import GalaxyClient
-
-        mock_resp = unittest.mock.MagicMock()
-        mock_resp.raise_for_status.return_value = None
-        mock_resp.json.return_value = payload
-        fake_client = unittest.mock.MagicMock()
-        fake_client.get = AsyncMock(return_value=mock_resp)
-
-        with pytest.raises(ValueError, match="non-dict payload"):
-            asyncio.run(
-                GalaxyClient._get_detail_from(cast(httpx.AsyncClient, fake_client), "ansible", "posix", "1.0.0"),
-            )
-
-    def test_list_versions_non_dict_payload_fails_over(self) -> None:
-        """A non-dict first response falls through to the next server."""
-        import asyncio
-
-        from galaxy_proxy.galaxy_client import GalaxyClient, GalaxyServer
-
-        client = GalaxyClient(
-            servers=[
-                GalaxyServer(url="https://first.example.com"),
-                GalaxyServer(url="https://second.example.com"),
-            ]
-        )
-        try:
-            with patch.object(
-                GalaxyClient,
-                "_list_versions_from",
-                AsyncMock(side_effect=[None, ["1.0.0"]]),
-            ):
-                result = asyncio.run(client.list_versions("ansible", "posix"))
-        finally:
-            asyncio.run(client.close())
-
-        assert result == ["1.0.0"]
-
-    def test_get_version_detail_non_dict_payload_fails_over(self) -> None:
-        """A non-dict detail body falls through to the next server."""
-        import asyncio
-
-        from galaxy_proxy.galaxy_client import CollectionVersion, GalaxyClient, GalaxyServer
-
-        detail = CollectionVersion(
-            namespace="ansible",
-            name="posix",
-            version="1.0.0",
-            download_url="https://cdn.example.com/coll.tar.gz",
-        )
-        client = GalaxyClient(
-            servers=[
-                GalaxyServer(url="https://first.example.com"),
-                GalaxyServer(url="https://second.example.com"),
-            ]
-        )
-        try:
-            with patch.object(
-                GalaxyClient,
-                "_get_detail_from",
-                AsyncMock(side_effect=[ValueError("non-dict payload"), detail]),
-            ):
-                result = asyncio.run(client.get_version_detail("ansible", "posix", "1.0.0"))
-        finally:
-            asyncio.run(client.close())
-
-        assert result == detail
-
-    @pytest.mark.parametrize("payload", [[{"version": "1.0.0"}], "ok"])  # type: ignore[untyped-decorator]
-    def test_fetch_versions_from_non_dict_returns_none(self, payload: object) -> None:
-        """A non-dict version body is a failover signal, not a crash.
-
-        Args:
-            payload: Non-dict JSON body returned by the fake server.
-        """
-        import asyncio
-
-        from galaxy_proxy.proxy.server import _fetch_versions_from
-
-        def _capture_client(**kwargs: object) -> unittest.mock.MagicMock:
-            mock_resp = unittest.mock.MagicMock()
-            mock_resp.raise_for_status.return_value = None
-            mock_resp.json.return_value = payload
-
-            client = unittest.mock.MagicMock()
-            client.get = AsyncMock(return_value=mock_resp)
-            client.__aenter__ = AsyncMock(return_value=client)
-            client.__aexit__ = AsyncMock(return_value=False)
-            return client
-
-        with patch("galaxy_proxy.proxy.server.httpx.AsyncClient", side_effect=_capture_client):
-            result = asyncio.run(
-                _fetch_versions_from("ansible", "posix", "https://galaxy.ansible.com"),
-            )
-
-        assert result is None
-
-    @pytest.mark.parametrize(
-        "payload",
-        [
-            {"data": None, "links": {}},
-            {"data": ["1.0.0"], "links": {}},
-            {"data": [{"version": "1.0.0"}], "links": None},
-        ],
-    )  # type: ignore[untyped-decorator]
-    def test_fetch_versions_from_malformed_nested_returns_none(self, payload: dict[str, object]) -> None:
-        """Malformed nested version payloads fail over instead of raising.
-
-        Args:
-            payload: Dict body with invalid nested data/links shapes.
-        """
-        import asyncio
-
-        from galaxy_proxy.proxy.server import _fetch_versions_from
-
-        def _capture_client(**kwargs: object) -> unittest.mock.MagicMock:
-            mock_resp = unittest.mock.MagicMock()
-            mock_resp.raise_for_status.return_value = None
-            mock_resp.json.return_value = payload
-
-            client = unittest.mock.MagicMock()
-            client.get = AsyncMock(return_value=mock_resp)
-            client.__aenter__ = AsyncMock(return_value=client)
-            client.__aexit__ = AsyncMock(return_value=False)
-            return client
-
-        with patch("galaxy_proxy.proxy.server.httpx.AsyncClient", side_effect=_capture_client):
-            result = asyncio.run(
-                _fetch_versions_from("ansible", "posix", "https://galaxy.ansible.com"),
-            )
-
-        assert result is None
-
-
-class TestNoImplicitGalaxyFallback:
-    """Gate 1: No implicit public Galaxy fallback when servers are configured."""
-
-    def test_no_public_fallback_when_servers_configured(self) -> None:
-        """When configured servers all fail, public Galaxy is NOT tried."""
-        import asyncio
-
-        from galaxy_proxy.collection_downloader import GalaxyServerConfig
-        from galaxy_proxy.proxy.server import _fetch_galaxy_versions
-
-        servers = [
-            GalaxyServerConfig(name="hub", url="https://hub.example.com", token="tok"),
-        ]
-
-        call_urls: list[str] = []
-
-        async def _tracking_fetch(
-            ns: str,
-            name: str,
-            base_url: str,
-            *,
-            token: str | None = None,
-        ) -> list[str] | None:
-            call_urls.append(base_url)
-            return None
-
-        with (
-            patch(
-                "galaxy_proxy.proxy.server._fetch_versions_from",
-                new_callable=AsyncMock,
-                side_effect=_tracking_fetch,
-            ),
-            pytest.raises(CollectionResolutionError) as exc_info,
-        ):
-            asyncio.run(
-                _fetch_galaxy_versions("ansible", "posix", servers=servers),
-            )
-
-        assert call_urls == ["https://hub.example.com"]
-        assert exc_info.value.fqcn == "ansible.posix"
-        assert exc_info.value.servers_tried == ["hub.example.com"]
-
-    def test_public_galaxy_used_when_no_servers_configured(self) -> None:
-        """Without configured servers, public Galaxy is the default."""
-        import asyncio
-
-        from galaxy_proxy.proxy.server import _fetch_galaxy_versions
-
-        with patch(
-            "galaxy_proxy.proxy.server._fetch_versions_from",
-            new_callable=AsyncMock,
-            return_value=["1.0.0"],
-        ) as mock_inner:
-            result = asyncio.run(
-                _fetch_galaxy_versions("ansible", "posix", servers=None),
-            )
-
-        assert result == ["1.0.0"]
-        mock_inner.assert_called_once_with(
-            "ansible",
-            "posix",
-            "https://galaxy.ansible.com",
-            token=None,
-        )
-
-    def test_all_configured_servers_fail_raises_resolution_error(self) -> None:
-        """Total configured server failure raises CollectionResolutionError."""
-        import asyncio
-
-        from galaxy_proxy.collection_downloader import GalaxyServerConfig
-        from galaxy_proxy.proxy.server import _fetch_galaxy_versions
-
-        servers = [
-            GalaxyServerConfig(name="hub1", url="https://hub1.example.com"),
-            GalaxyServerConfig(name="hub2", url="https://hub2.example.com"),
-        ]
-
-        with (
-            patch(
-                "galaxy_proxy.proxy.server._fetch_versions_from",
-                new_callable=AsyncMock,
-                return_value=None,
-            ),
-            pytest.raises(CollectionResolutionError, match="version_lookup failed") as exc_info,
-        ):
-            asyncio.run(
-                _fetch_galaxy_versions("community", "general", servers=servers),
-            )
-
-        assert exc_info.value.fqcn == "community.general"
-        assert exc_info.value.operation == "version_lookup"
-        assert len(exc_info.value.servers_tried) == 2
-
-    def test_empty_server_list_raises_immediately(self) -> None:
-        """Empty server list (broken config) raises without querying public Galaxy."""
-        import asyncio
-
-        from galaxy_proxy.proxy.server import _fetch_galaxy_versions
-
-        with pytest.raises(CollectionResolutionError, match="no configured servers"):
-            asyncio.run(
-                _fetch_galaxy_versions("ansible", "posix", servers=[]),
-            )
-
-    def test_unparseable_ansible_cfg_fails_closed(self, tmp_path: Path) -> None:
-        """A Galaxy config that cannot be parsed does not fall through to public Galaxy.
-
-        Args:
-            tmp_path: Pytest-provided temporary directory.
-        """
-        from galaxy_proxy.proxy.server import _load_servers_from_ansible_cfg
-
-        cfg = tmp_path / "ansible.cfg"
-        cfg.write_text("[galaxy]\n[galaxy]\n", encoding="utf-8")
-
-        assert _load_servers_from_ansible_cfg(cfg) == []
-
-    def test_empty_pushed_servers_do_not_query_public_galaxy(self, tmp_path: Path) -> None:
-        """POST /admin/galaxy-config with no servers stays fail-closed.
-
-        Args:
-            tmp_path: Pytest-provided temporary directory.
-        """
-        application = create_app(cache_dir=tmp_path / "cache", enable_passthrough=False)
-        mock_fetch = AsyncMock(
-            side_effect=CollectionResolutionError(
-                "ansible.posix",
-                operation="version_lookup",
-                servers_tried=[],
-            ),
-        )
-
-        with TestClient(application) as client:
-            pushed = client.post("/admin/galaxy-config", json={"servers": []})
-            assert pushed.status_code == 200
-            with patch("galaxy_proxy.proxy.server._fetch_galaxy_versions", mock_fetch):
-                resp = client.get("/simple/ansible-collection-ansible-posix/")
-
-        assert resp.status_code == 404
-        servers = mock_fetch.call_args.kwargs.get("servers")
-        assert servers == []
-
-    def test_broken_ansible_cfg_does_not_query_public_galaxy(self, tmp_path: Path) -> None:
-        """ansible.cfg with server_list but no usable URLs fails closed (no public Galaxy).
-
-        Args:
-            tmp_path: Pytest-provided temporary directory.
-        """
-        from galaxy_proxy.collection_downloader import GalaxyServerConfig
-
-        cfg = tmp_path / "ansible.cfg"
-        cfg.write_text(
-            "[galaxy]\nserver_list = broken\n\n[galaxy_server.broken]\nurl = \n",
-            encoding="utf-8",
-        )
-        application = create_app(cache_dir=tmp_path / "cache", enable_passthrough=False)
-        servers_seen: list[list[GalaxyServerConfig] | None] = []
-
-        async def record_servers(
-            namespace: str,
-            name: str,
-            *,
-            servers: list[GalaxyServerConfig] | None = None,
-        ) -> list[str]:
-            servers_seen.append(servers)
-            raise CollectionResolutionError(
-                f"{namespace}.{name}",
-                operation="version_lookup",
-                servers_tried=[],
-            )
-
-        with (
-            patch.dict("os.environ", {"ANSIBLE_CONFIG": str(cfg)}),
-            TestClient(application) as client,
-            patch("galaxy_proxy.proxy.server._fetch_galaxy_versions", side_effect=record_servers),
-        ):
-            resp = client.get("/simple/ansible-collection-ansible-posix/")
-
-        assert resp.status_code == 404
-        assert servers_seen == [[]]
-        assert "no configured servers" in resp.json()["detail"]
-
-
-class TestCollectionResolutionErrorMessages:
-    """Gate 2: Error messages include collection FQCN, version, and server labels."""
-
-    def test_resolution_error_includes_fqcn_and_servers(self) -> None:
-        """CollectionResolutionError message names the collection and servers."""
-        err = CollectionResolutionError(
-            "ansible.posix",
-            version_constraint=">=1.5",
-            operation="version_lookup",
-            servers_tried=["hub.example.com", "galaxy.ansible.com"],
-        )
-        msg = str(err)
-        assert "ansible.posix:>=1.5" in msg
-        assert "version_lookup" in msg
-        assert err.servers_tried == ["hub.example.com", "galaxy.ansible.com"]
-        assert f"[{', '.join(err.servers_tried)}]" in msg
-
-    def test_resolution_error_no_version(self) -> None:
-        """CollectionResolutionError without version constraint formats correctly."""
-        err = CollectionResolutionError(
-            "community.general",
-            operation="download",
-            servers_tried=["hub.example.com"],
-        )
-        msg = str(err)
-        assert "community.general" in msg
-        assert "download" in msg
-        assert ":>=" not in msg
-
-    def test_project_page_returns_404_on_resolution_failure(self, tmp_path: Path) -> None:
-        """project_page returns 404 with actionable message when all servers fail.
-
-        Args:
-            tmp_path: Pytest-provided temporary directory.
-        """
-        cache_dir = tmp_path / "cache"
-        application = create_app(cache_dir=cache_dir, enable_passthrough=False)
-
-        resolution_err = CollectionResolutionError(
-            "ansible.posix",
-            operation="version_lookup",
-            servers_tried=["hub.example.com"],
-        )
-        mock_versions = AsyncMock(side_effect=resolution_err)
-
-        with (
-            TestClient(application) as client,
-            patch("galaxy_proxy.proxy.server._fetch_galaxy_versions", mock_versions),
-        ):
-            resp = client.get("/simple/ansible-collection-ansible-posix/")
-
-        assert resp.status_code == 404
-        assert resp.json()["detail"] == str(resolution_err)
+class TestDownloadFailureMessages:
+    """Download failures identify the requested collection and source."""
 
     def test_serve_wheel_download_failure_includes_server_labels(self, tmp_path: Path) -> None:
         """serve_wheel download failure includes configured server labels in 502.
@@ -1841,14 +889,12 @@ class TestCollectionResolutionErrorMessages:
             ],
         )
 
-        mock_versions = AsyncMock(return_value=[])
         mock_download = AsyncMock(
             side_effect=RuntimeError("Galaxy server unreachable"),
         )
 
         with (
             TestClient(application) as client,
-            patch("galaxy_proxy.proxy.server._fetch_galaxy_versions", mock_versions),
             patch("galaxy_proxy.proxy.server.download_collections", mock_download),
         ):
             resp = client.get("/simple/ansible-collection-ansible-posix/")

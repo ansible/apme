@@ -20,6 +20,7 @@ def _spec_to_pip(spec: str) -> str:
     """Convert a collection spec to a pip package name.
 
     ``community.general:9.0.0`` -> ``ansible-collection-community-general==9.0.0``
+    ``community.general:>=9``   -> ``ansible-collection-community-general>=9``
     ``ansible.posix``           -> ``ansible-collection-ansible-posix``
 
     Args:
@@ -38,8 +39,9 @@ def _spec_to_pip(spec: str) -> str:
     pkg = f"ansible-collection-{namespace}-{collection}"
     if ":" in spec:
         version = spec.split(":", 1)[1].strip()
-        if version:
-            pkg = f"{pkg}=={version}"
+        if version and version != "*":
+            constraint = version if version.startswith(("<", ">", "!", "=", "~")) else f"=={version}"
+            pkg = f"{pkg}{constraint}"
     return pkg
 
 

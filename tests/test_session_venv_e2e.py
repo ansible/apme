@@ -85,6 +85,8 @@ def galaxy_proxy_url(tmp_path_factory: pytest.TempPathFactory) -> Generator[str,
     Yields:
         str: Base URL of the running proxy.
     """
+    previous_admin_token = os.environ.get("APME_PROXY_ADMIN_TOKEN")
+    os.environ["APME_PROXY_ADMIN_TOKEN"] = "e2e-proxy-admin-token"
     port = _free_port()
     stderr_log = tmp_path_factory.mktemp("proxy") / "stderr.log"
     stderr_fh = open(stderr_log, "w")  # noqa: SIM115
@@ -116,6 +118,10 @@ def galaxy_proxy_url(tmp_path_factory: pytest.TempPathFactory) -> Generator[str,
             proc.kill()
             proc.wait()
         stderr_fh.close()
+        if previous_admin_token is None:
+            os.environ.pop("APME_PROXY_ADMIN_TOKEN", None)
+        else:
+            os.environ["APME_PROXY_ADMIN_TOKEN"] = previous_admin_token
 
 
 @pytest.fixture(scope="module")  # type: ignore[untyped-decorator]

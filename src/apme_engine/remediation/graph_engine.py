@@ -32,6 +32,7 @@ from apme_engine.graph.scanner import (
     rescan_dirty,
     scan,
 )
+from apme_engine.remediation.ai_provider import AIProviderError
 from apme_engine.remediation.partition import partition_violations
 from apme_engine.remediation.registry import TransformRegistry
 from apme_engine.rule_ids import normalize_rule_id
@@ -94,6 +95,7 @@ class GraphFixReport:
         ai_proposals: AI-proposed node fixes pending human approval.
         tier1_proposals: Deterministic node fixes pending approval when
             ``interactive=True`` (empty when auto-approved).
+        ai_error: Safe warning when the optional AI provider failed.
     """
 
     passes: int = 0
@@ -107,6 +109,7 @@ class GraphFixReport:
     step_diffs: list[dict[str, object]] = field(default_factory=list)
     ai_proposals: list[AINodeProposal] = field(default_factory=list)
     tier1_proposals: list[Tier1NodeProposal] = field(default_factory=list)
+    ai_error: str | None = None
 
 
 @dataclass
@@ -225,6 +228,7 @@ class GraphRemediationEngine:
         self._rescan_fn = rescan_fn
         self._ai_provider = ai_provider
         self._ai_phase_start_cb = ai_phase_start_cb
+        self._ai_error: str | None = None
 
     def _progress(
         self,
@@ -318,6 +322,7 @@ class GraphRemediationEngine:
         ai_proposals: list[AINodeProposal] = []
         oscillation = False
         ai_attempts = 0
+        ai_provider_failed = False
         ai_feedback_by_node: dict[str, str] = {}
         run_ai = self._ai_provider is not None and not skip_ai
 
@@ -408,7 +413,13 @@ class GraphRemediationEngine:
                     tier1, tier2 = new_tier1, new_tier2
 
             # Phase B: Tier 2 AI transforms (also when tier1 stalled)
-            if (not tier1 or tier1_stalled) and tier2 and run_ai and ai_attempts < self._max_ai_attempts:
+            if (
+                (not tier1 or tier1_stalled)
+                and tier2
+                and run_ai
+                and not ai_provider_failed
+                and ai_attempts < self._max_ai_attempts
+            ):
                 if ai_attempts == 0 and self._ai_phase_start_cb is not None:
                     cb_result = self._ai_phase_start_cb(tier2)
                     if inspect.isawaitable(cb_result):
@@ -426,6 +437,7 @@ class GraphRemediationEngine:
                     ai_feedback_by_node,
                 )
                 ai_proposals.extend(new_ai_proposals)
+                ai_provider_failed = self._ai_error is not None
 
                 if graph.dirty_nodes:
                     await self._rescan_and_record(
@@ -470,7 +482,7 @@ class GraphRemediationEngine:
                 logger.info("Graph remediation: fully converged at pass %d", pass_num)
                 break
 
-            ai_exhausted = (not run_ai) or ai_attempts >= self._max_ai_attempts
+            ai_exhausted = (not run_ai) or ai_provider_failed or ai_attempts >= self._max_ai_attempts
             if (not tier1 or tier1_stalled) and ai_exhausted:
                 logger.info(
                     "Graph remediation: Tier 1 exhausted, %d remaining AI candidates (ai_attempts=%d/%d skip_ai=%s)",
@@ -505,6 +517,7 @@ class GraphRemediationEngine:
             step_diffs=step_diffs,
             ai_proposals=ai_proposals,
             tier1_proposals=tier1_proposals,
+            ai_error=self._ai_error,
         )
 
     async def _apply_tier1(
@@ -589,6 +602,9 @@ class GraphRemediationEngine:
 
         Returns:
             List of AI proposals applied.
+
+        Provider failures abort the current AI batch while retaining deterministic
+        work and any earlier accepted proposals.
         """
         from apme_engine.remediation.ai_context import build_ai_node_context
         from apme_engine.remediation.ai_provider import AINodeFix
@@ -679,6 +695,8 @@ class GraphRemediationEngine:
                 return await _propose_one(node_id, node_violations)
             except asyncio.CancelledError:
                 raise
+            except AIProviderError:
+                raise
             except Exception as exc:  # noqa: BLE001 — reported per-node, not raised
                 return exc
             finally:
@@ -692,9 +710,18 @@ class GraphRemediationEngine:
                         ai_total=total_nodes,
                     )
 
-        results = await asyncio.gather(
-            *[_propose_one_tracked(nid, nvs) for nid, nvs in by_node.items()],
-        )
+        tasks = [asyncio.create_task(_propose_one_tracked(nid, nvs)) for nid, nvs in by_node.items()]
+        try:
+            results = await asyncio.gather(*tasks)
+        except AIProviderError as exc:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            self._ai_error = "AI provider unavailable; this AI batch was not applied."
+            logger.warning("AI proposal batch aborted: %s", type(exc).__name__)
+            self._progress("graph-ai", self._ai_error, level=3)
+            return []
 
         # Apply accepted fixes serially (graph mutations are not thread-safe)
         proposals: list[AINodeProposal] = []
@@ -704,8 +731,8 @@ class GraphRemediationEngine:
         for idx, r in enumerate(results):
             if isinstance(r, BaseException):
                 failed_node_ids.add(node_id_list[idx])
-                # Soft providers (e.g. Abbenay) already log a clean warning and
-                # return None; this path covers unexpected provider raises.
+                # Infrastructure errors were surfaced above; this path covers
+                # unexpected exceptions from other provider implementations.
                 logger.warning(
                     "AI proposal failed for %s: %s",
                     node_id_list[idx],

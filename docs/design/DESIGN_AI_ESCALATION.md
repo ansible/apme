@@ -141,11 +141,11 @@ class AIProvider(Protocol):
 Responsibilities:
 
 - **Auto-discovery**: find the Abbenay daemon via `$XDG_RUNTIME_DIR/abbenay/daemon.sock`, `/run/user/<uid>/abbenay/daemon.sock`, or `/tmp/abbenay/daemon.sock`
-- **Provider resolution**: `_resolve_ai_provider()` does not preflight the daemon; it returns `None` only when AI is disabled or required configuration is missing (address, model, import). Runtime failures surface during `propose_node_fix()` and the graph engine catches/skips those nodes
+- **Provider resolution**: `_resolve_ai_provider()` does not preflight the daemon; it returns `None` only when AI is disabled or required configuration is missing (address, model, import). Infrastructure failures surface as `AIProviderError` during `propose_node_fix()` and abort the current AI batch before any proposals from that batch are applied
 - **Prompt construction**: build a graph-native prompt from `AINodeContext` (node YAML, violations, parent context, sibling snippets, best practices)
 - **Inline policy**: send policy on every request (temperature: 0.0, json_only format, max_tokens: 8192, timeout: 60000)
 - **Response parsing**: extract `fixed_snippet`, `changes[]`, `skipped[]` from structured JSON response; aggregate confidence from `changes`
-- **Error handling**: connection errors, timeouts, and API failures raise exceptions; the graph engine catches them and skips the node
+- **Error handling**: connection errors, timeouts, and API failures raise `AIProviderError`; the graph engine surfaces the infrastructure failure without marking violations as AI abstentions. Each chat attempt owns a connected client and releases it with bounded cleanup
 
 ```python
 def discover_abbenay() -> str | None:
@@ -181,6 +181,7 @@ The core innovation: every AI proposal is re-validated through APME's own valida
 
   2. LLM call
      +-- ai_provider.propose_node_fix(context) -> AINodeFix | None
+     +-- AIProviderError -> abort batch before applying proposals
 
   3. Parse check
      +-- None / parse error -> skip node
@@ -543,7 +544,7 @@ Future MCP integration (when implemented) would allow the LLM to autonomously ca
 
 ### Graceful Degradation
 
-`_resolve_ai_provider()` returns `None` only when AI configuration or prerequisites are missing (no daemon address, no model configured, or the optional client import is unavailable). In that case, AI escalation is not activated. If `--ai` is set and a provider is resolved but the daemon is unreachable at proposal time, `propose_node_fix()` raises; the graph engine catches that failure and skips proposal generation for the affected node. Remaining Tier 2 violations are still reported as "AI-candidate", but with no proposals. Without `--ai`, Tier 2 violations are also reported as "AI-candidate" with no proposals.
+`_resolve_ai_provider()` returns `None` only when AI configuration or prerequisites are missing (no daemon address, no model configured, or the optional client import is unavailable). In that case, AI escalation is not activated. If `--ai` is set and a provider is resolved but the daemon is unreachable at proposal time, `propose_node_fix()` raises `AIProviderError`; the graph engine aborts the current AI batch before applying proposals from any node in that batch, emits a warning progress event, and returns the remaining violations. FixSession preserves the deterministic results and reports those violations as open rather than marking them as AI abstentions or emitting `remediation_failed`. A usable response with no fix still returns `None` and follows the abstention path. Without `--ai`, Tier 2 violations are also reported as "AI-candidate" with no proposals.
 
 ---
 
