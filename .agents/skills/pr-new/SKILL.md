@@ -390,6 +390,10 @@ skipped list, WARNING progress/log) so failure is not presented as
 success. If that diagnostic is logged inside ``run_in_executor``,
 require ``contextvars.copy_context()`` (or an explicit progress event)
 so ADR-033 collectors and FixSession clients actually see it.
+When a graph builder maps ordered source sections to sibling edges,
+compare edge positions with the source language's execution phases, not
+only build order. Test a producer in an earlier phase consumed by a later
+phase (for Ansible plays: ``pre_tasks → roles → tasks → post_tasks``).
 Treat structured health/status bodies as contracts: reject
 substring/`"ok" in body` checks when the peer emits JSON with a
 ``status`` field — require exact equality (``status == "ok"``).
@@ -448,6 +452,10 @@ critical/high/medium/low.
   _DEFAULT_PORTS ↔ started services; Helm template ↔ Podman
   ``pod.yaml`` for the same in-pod env/volume/probe wiring — if Helm
   mounts a shared socket for Gateway health, Podman Gateway must too)
+- Sibling-rule parity: when rules enforce the same security condition,
+  compare their scope enumeration and all-path requirements so a protected
+  path cannot hide an unprotected path in another rule (for example, L047
+  and L110 handling shared include contexts).
 - Test gaps for behaviors the code/docs claim
 - Silent no-ops, dead branches, wrong defaults
 - **Dependencies pinned to intent** — version ranges, GitHub Action

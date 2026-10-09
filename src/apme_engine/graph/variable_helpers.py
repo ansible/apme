@@ -16,9 +16,6 @@ from __future__ import annotations
 import re
 
 from apme_engine.graph.content_graph import (
-    _POSITIONAL_EDGE_VALUES as _POSITIONAL_EDGE_TYPES,  # canonical set; single source in content_graph
-)
-from apme_engine.graph.content_graph import (
     ContentGraph,
     NodeType,
 )
@@ -401,7 +398,9 @@ def _sorted_positional_parent_ids(graph: ContentGraph, node_id: str) -> list[str
         Parent node IDs sorted lexicographically.
     """
     return sorted(
-        src for src, _, data in graph.g.in_edges(node_id, data=True) if data.get("edge_type") in _POSITIONAL_EDGE_TYPES
+        src
+        for src, _, data in graph.g.in_edges(node_id, data=True)
+        if graph.is_positional_edge(src, node_id, data.get("edge_type"))
     )
 
 
@@ -555,6 +554,8 @@ def no_log_true_in_scope(
     inherits it (safe for redaction: R402). Pass ``require_all_paths=True``
     when claiming protection for suppression (L110): execution via any
     unprotected path still leaks, so every in-scope path must inherit it.
+    Without a play context, all positional ancestor paths in the graph are
+    considered with the same any/all semantics.
 
     Args:
         graph: ContentGraph for the scan.
@@ -579,9 +580,7 @@ def no_log_true_in_scope(
         if require_all_paths:
             return _no_log_all_play_scoped_paths(graph, node_id, scope)
         return _no_log_any_play_scoped_path(graph, node_id, scope)
-    for ancestor in graph.positional_ancestors(node_id):
-        if ancestor.no_log is False:
-            return False
-        if ancestor.no_log is True:
-            return True
-    return False
+    scope = graph.positional_ancestor_ids(node_id)
+    if require_all_paths:
+        return _no_log_all_play_scoped_paths(graph, node_id, scope)
+    return _no_log_any_play_scoped_path(graph, node_id, scope)

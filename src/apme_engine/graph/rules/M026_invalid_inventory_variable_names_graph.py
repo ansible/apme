@@ -12,6 +12,7 @@ from apme_engine.graph.content_graph import ContentGraph, NodeType
 from apme_engine.graph.rule_base import GraphRule, GraphRuleResult
 from apme_engine.graph.types import RuleTag as Tag
 from apme_engine.graph.types import Severity, YAMLDict, YAMLValue
+from apme_engine.graph.variable_helpers import enclosing_play_ids
 from apme_engine.graph.variable_provenance import VariableProvenance, VariableProvenanceResolver
 
 _TASK_TYPES = frozenset({NodeType.TASK, NodeType.HANDLER})
@@ -69,7 +70,18 @@ class InvalidInventoryVariableNamesGraphRule(GraphRule):
             return None
 
         resolver = VariableProvenanceResolver(graph)
-        resolved = resolver.resolve_variables(node_id)
+        play_ids = enclosing_play_ids(graph, node_id)
+        if play_ids:
+            resolved_scopes = [
+                resolver.resolve_variables(
+                    node_id,
+                    play_context_id=play_id,
+                    play_scope=graph.play_scoped_node_ids(play_id),
+                )
+                for play_id in play_ids
+            ]
+        else:
+            resolved_scopes = [resolver.resolve_variables(node_id)]
 
         by_name: dict[str, VariableProvenance | None] = {}
 
@@ -79,8 +91,9 @@ class InvalidInventoryVariableNamesGraphRule(GraphRule):
             if name not in by_name or by_name[name] is None and prov is not None:
                 by_name[name] = prov
 
-        for vname, vprov in resolved.items():
-            record(vname, vprov)
+        for resolved in resolved_scopes:
+            for vname, vprov in resolved.items():
+                record(vname, vprov)
         for key in node.module_options:
             record(key, None)
         for key in node.variables:

@@ -9,6 +9,10 @@ scope: task
 
 Set no_log for password-like parameters.
 
+For tasks shared through includes, every play and include path that can reach
+the task must inherit `no_log: true`; any unprotected execution can expose the
+password.
+
 ### Example: violation
 
 ```yaml

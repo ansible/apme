@@ -20,6 +20,7 @@ from apme_engine.graph.types import Severity, YAMLDict
 from apme_engine.graph.variable_helpers import (
     TASK_TYPES,
     collect_timed_strings,
+    enclosing_play_ids,
     extract_bare_refs,
     extract_jinja_refs,
 )
@@ -189,14 +190,25 @@ class UndefinedVariableGraphRule(GraphRule):
             )
 
         resolver = VariableProvenanceResolver(graph)
-        defined = set(resolver.resolve_variables(node_id))
-
-        # Register is available only in changed_when/failed_when (post-task).
-        post_defined = defined
-        if node.register:
-            post_defined = defined | {node.register}
-
-        undefined = sorted((pre_non_magic - defined) | (post_non_magic - post_defined))
+        play_ids = enclosing_play_ids(graph, node_id)
+        if play_ids:
+            undefined_by_context: set[str] = set()
+            for play_id in play_ids:
+                play_scope = graph.play_scoped_node_ids(play_id)
+                defined = resolver.variables_defined_on_all_paths(
+                    node_id,
+                    play_context_id=play_id,
+                    play_scope=play_scope,
+                )
+                # Register is available only in changed_when/failed_when (post-task).
+                post_defined = defined | ({node.register} if node.register else set())
+                undefined_by_context.update((pre_non_magic - defined) | (post_non_magic - post_defined))
+            undefined = sorted(undefined_by_context)
+        else:
+            defined = set(resolver.resolve_variables(node_id))
+            # Register is available only in changed_when/failed_when (post-task).
+            post_defined = defined | ({node.register} if node.register else set())
+            undefined = sorted((pre_non_magic - defined) | (post_non_magic - post_defined))
         if not undefined:
             return GraphRuleResult(
                 verdict=False,

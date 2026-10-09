@@ -34,10 +34,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   ([#593](https://github.com/ansible/apme/issues/593)).
 - **R402** — Play-scoped variable provenance for tasks reached via shared
   includes ([#592](https://github.com/ansible/apme/issues/592)).
-
-### Known gaps (tracked)
-
-- [#748](https://github.com/ansible/apme/issues/748) — Play-context scoping for
-  L039, L032, L047, R404, M026, L034.
-- [#749](https://github.com/ansible/apme/issues/749) — M005 edge case for assert
-  tasks with empty `that` list.
+- **L039, L032, M026, L034, R404, L047, L110** — Resolve shared-task variable
+  and `no_log` context independently for each enclosing play and include path;
+  L047 and L110 require protection across every execution context
+  ([#748](https://github.com/ansible/apme/issues/748)).
+- **M005** — For `that: []`, scan rendered `success_msg` but not the
+  unrendered `fail_msg`; skip module messages when required `that` is missing
+  ([#749](https://github.com/ansible/apme/issues/749)).

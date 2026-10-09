@@ -173,10 +173,12 @@ class DebugSensitiveVarsGraphRule(GraphRule):
         # Shared task files included from several plays resolve no_log per
         # play: execution under any unprotected play leaks the values, so
         # the task is protected only when every enclosing play protects it
-        # (and, within a play, every include path — require_all_paths).
+        # (and, within a play, every include path — require_all_paths). The
+        # graph-wide check also covers standalone include paths that coexist
+        # with a play-scoped path.
         play_ids = enclosing_play_ids(graph, node_id)
         if not play_ids:
-            protected = no_log_true_in_scope(graph, node_id)
+            protected = no_log_true_in_scope(graph, node_id, require_all_paths=True)
         else:
             scopes = {play_id: graph.play_scoped_node_ids(play_id) for play_id in play_ids}
             protected = all(
@@ -188,7 +190,7 @@ class DebugSensitiveVarsGraphRule(GraphRule):
                     require_all_paths=True,
                 )
                 for play_id in play_ids
-            )
+            ) and no_log_true_in_scope(graph, node_id, require_all_paths=True)
         if protected:
             return GraphRuleResult(
                 verdict=False,
