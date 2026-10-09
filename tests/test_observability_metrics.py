@@ -281,7 +281,7 @@ def test_record_venv_acquire_with_inmemory_reader(monkeypatch: pytest.MonkeyPatc
 
 
 def test_record_galaxy_fetch_with_inmemory_reader(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Galaxy fetch metrics cover download and version_lookup operations.
+    """Galaxy fetch metrics cover CLI downloads and their outcomes.
 
     Args:
         monkeypatch: Pytest monkeypatch fixture.
@@ -326,12 +326,6 @@ def test_record_galaxy_fetch_with_inmemory_reader(monkeypatch: pytest.MonkeyPatc
         collections_requested=2,
     )
     metrics_mod.record_galaxy_fetch(
-        0.35,
-        operation="version_lookup",
-        status="ok",
-        server="galaxy.ansible.com",
-    )
-    metrics_mod.record_galaxy_fetch(
         15.0,
         operation="download",
         status="timeout",
@@ -351,7 +345,7 @@ def test_record_galaxy_fetch_with_inmemory_reader(monkeypatch: pytest.MonkeyPatc
                     for point in metric.data.data_points:
                         assert list(point.explicit_bounds) == list(GALAXY_FETCH_DURATION_BUCKETS_S)
                         ops.add(point.attributes["operation"])
-    assert ops == {"download", "version_lookup"}
+    assert ops == {"download"}
     provider.shutdown()
 
 

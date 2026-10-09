@@ -316,15 +316,14 @@ def record_galaxy_fetch(
     collections_requested: int = 0,
     server: str = "",
 ) -> None:
-    """Record an outbound Ansible Galaxy fetch (download or version lookup).
+    """Record an outbound Ansible Galaxy collection download.
 
     Args:
         duration_s: Wall time for the fetch attempt.
-        operation: ``download`` (``ansible-galaxy collection download``) or
-            ``version_lookup`` (Galaxy API versions HTTP).
+        operation: Operation label, currently ``download``.
         status: ``ok``, ``error``, or ``timeout``.
-        collections_requested: Specs requested for ``download`` (0 otherwise).
-        server: Galaxy server host for ``version_lookup`` (omit for download).
+        collections_requested: Number of collection specs requested.
+        server: Optional Galaxy server host.
     """
     if not _ensure_instruments():
         return

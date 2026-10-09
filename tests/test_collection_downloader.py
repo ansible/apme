@@ -82,7 +82,7 @@ class TestWriteTempAnsibleCfg:
         parser = configparser.ConfigParser()
         parser.read(cfg_path)
         assert parser.get("galaxy", "server_list") == "galaxy"
-        assert parser.get("galaxy", "ignore_certs") == "true"
+        assert parser.get("galaxy", "ignore_certs") == "false"
         assert parser.get("galaxy_server.galaxy", "url") == "https://galaxy.ansible.com"
 
     def test_multiple_servers_with_auth(self, tmp_path: Path) -> None:
@@ -293,6 +293,33 @@ class TestDownloadCollections:
         assert result.failed_specs == []
 
     @pytest.mark.asyncio  # type: ignore[untyped-decorator]
+    async def test_dependency_download_leaves_dependency_resolution_to_ansible_galaxy(self, tmp_path: Path) -> None:
+        """Prepare uses CLI dependency resolution while the normal path stays no-deps.
+
+        Args:
+            tmp_path: Temporary directory for downloaded artifacts.
+        """
+        captured: list[str] = []
+        process = AsyncMock()
+        process.returncode = 0
+        process.communicate = AsyncMock(return_value=(b"OK", b""))
+
+        async def fake_exec(*args: object, **_kwargs: object) -> AsyncMock:
+            captured.extend(str(arg) for arg in args)
+            return process
+
+        with patch("galaxy_proxy.collection_downloader.asyncio.create_subprocess_exec", side_effect=fake_exec):
+            result = await download_collections(
+                ["ansible.posix:1.5.4"],
+                tmp_path / "downloads",
+                include_dependencies=True,
+            )
+
+        assert result.failed_specs == []
+        assert "--no-deps" not in captured
+        assert captured[-1] == "ansible.posix:1.5.4"
+
+    @pytest.mark.asyncio  # type: ignore[untyped-decorator]
     async def test_failed_download_does_not_log_subprocess_output(
         self,
         tmp_path: Path,
@@ -444,7 +471,7 @@ class TestDownloadCollections:
         assert captured_env.get("ANSIBLE_GALAXY_SERVER_LIST") == "hub"
         assert captured_env.get("ANSIBLE_GALAXY_SERVER_HUB_URL") == "https://hub.example.com"
         assert captured_env.get("ANSIBLE_GALAXY_SERVER_HUB_TOKEN") == "tok"
-        assert captured_env.get("ANSIBLE_GALAXY_IGNORE") == "true"
+        assert captured_env.get("ANSIBLE_GALAXY_IGNORE") == "false"
         assert "ANSIBLE_CONFIG" not in captured_env
 
     @pytest.mark.asyncio  # type: ignore[untyped-decorator]

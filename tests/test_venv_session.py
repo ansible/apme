@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 
 from apme_engine.venv_manager.session import VenvSessionManager
@@ -1156,3 +1157,119 @@ class TestRunSubprocessTimed:
 
         mock_term.assert_called_once_with(mock_proc)
         mock_kill.assert_called_once_with(mock_proc)
+
+
+def test_prepare_collections_uses_shared_proxy_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Engine prepares exact and range specs through the authenticated proxy.
+
+    Args:
+        monkeypatch: Pytest environment fixture.
+    """
+    from apme_engine.venv_manager.session import _prepare_collections_via_proxy
+
+    monkeypatch.setenv("APME_PROXY_ADMIN_TOKEN", "shared-secret")
+    response = MagicMock()
+    response.raise_for_status.return_value = None
+    response.json.return_value = {"prepared": [], "failed_specs": []}
+    with patch("apme_engine.venv_manager.session.httpx.post", return_value=response) as post:
+        _prepare_collections_via_proxy("http://127.0.0.1:8765/", ["ansible.posix:1.5.4", "community.general:>=9"])
+
+    assert post.call_args.args[0] == "http://127.0.0.1:8765/admin/prepare-collections"
+    assert post.call_args.kwargs["headers"] == {"x-apme-proxy-token": "shared-secret"}
+    assert post.call_args.kwargs["json"] == {"specs": ["ansible.posix:1.5.4", "community.general:>=9"]}
+
+
+def test_prepare_collection_error_does_not_skip_pip_install(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A failed prepare request still allows the ordinary install fallback.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing external calls.
+    """
+    from types import SimpleNamespace
+
+    from apme_engine.venv_manager.session import _install_collections_via_proxy
+
+    monkeypatch.setenv("APME_PROXY_ADMIN_TOKEN", "shared-secret")
+    with (
+        patch("apme_engine.venv_manager.session.httpx.post", side_effect=httpx.ConnectError("proxy down")),
+        patch(
+            "apme_engine.venv_manager.session._run_pip_install",
+            return_value=SimpleNamespace(returncode=0, stdout="", stderr=""),
+        ) as install,
+    ):
+        failures = _install_collections_via_proxy(
+            Path("/venv/bin/python"), ["ansible.posix:1.5.4"], "http://proxy", use_uv=False
+        )
+    assert failures == []
+    install.assert_called_once()
+
+
+def test_prepare_invalid_json_does_not_skip_pip_install(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A malformed success response still allows the ordinary install path.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing external calls.
+    """
+    from types import SimpleNamespace
+
+    from apme_engine.venv_manager.session import _install_collections_via_proxy
+
+    monkeypatch.setenv("APME_PROXY_ADMIN_TOKEN", "shared-secret")
+    response = MagicMock()
+    response.raise_for_status.return_value = None
+    response.json.side_effect = ValueError("invalid JSON")
+    with (
+        patch("apme_engine.venv_manager.session.httpx.post", return_value=response),
+        patch(
+            "apme_engine.venv_manager.session._run_pip_install",
+            return_value=SimpleNamespace(returncode=0, stdout="", stderr=""),
+        ) as install,
+    ):
+        failures = _install_collections_via_proxy(
+            Path("/venv/bin/python"), ["ansible.posix:1.5.4"], "http://proxy", use_uv=False
+        )
+    assert failures == []
+    install.assert_called_once()
+
+
+def test_prepare_retries_once_after_config_conflict(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A config-sync conflict retries preparation before pip resolution.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing external calls.
+    """
+    from types import SimpleNamespace
+
+    from apme_engine.venv_manager.session import _install_collections_via_proxy
+
+    monkeypatch.setenv("APME_PROXY_ADMIN_TOKEN", "shared-secret")
+    request = httpx.Request("POST", "http://proxy/admin/prepare-collections")
+    response_409 = httpx.Response(409, request=request)
+    conflict = httpx.HTTPStatusError("config changed", request=request, response=response_409)
+    success = MagicMock()
+    success.raise_for_status.return_value = None
+    success.json.return_value = {"prepared": [], "failed_specs": []}
+    with (
+        patch("apme_engine.venv_manager.session.httpx.post", side_effect=[conflict, success]) as prepare,
+        patch(
+            "apme_engine.venv_manager.session._run_pip_install",
+            return_value=SimpleNamespace(returncode=0, stdout="", stderr=""),
+        ) as install,
+    ):
+        failures = _install_collections_via_proxy(
+            Path("/venv/bin/python"), ["ansible.posix:1.5.4"], "http://proxy", use_uv=False
+        )
+    assert failures == []
+    assert prepare.call_count == 2
+    install.assert_called_once()
+
+
+def test_spec_to_pip_preserves_range_constraints() -> None:
+    """Galaxy version constraints survive conversion to pip requirements."""
+    from apme_engine.venv_manager.venv_collections import _spec_to_bare_pip, _spec_to_pip
+
+    assert _spec_to_pip("ansible.posix:1.5.4") == "ansible-collection-ansible-posix==1.5.4"
+    assert _spec_to_pip("community.general:>=9,<10") == "ansible-collection-community-general>=9,<10"
+    assert _spec_to_pip("ansible.posix:*") == "ansible-collection-ansible-posix"
+    assert _spec_to_bare_pip("community.general:>=9,<10") == "ansible-collection-community-general"
+    assert _spec_to_bare_pip("ansible.posix:1.5.4") == "ansible-collection-ansible-posix"

@@ -163,6 +163,19 @@ spec:
             {{- end }}
             - name: APME_GALAXY_PROXY_URL
               value: "http://127.0.0.1:8765"
+            {{- if .Values.engine.galaxyProxy.existingSecret.name }}
+            - name: APME_PROXY_ADMIN_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.engine.galaxyProxy.existingSecret.name }}
+                  key: {{ .Values.engine.galaxyProxy.existingSecret.key }}
+            {{- else }}
+            - name: APME_PROXY_ADMIN_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $fullname }}-secrets
+                  key: proxy-admin-token
+            {{- end }}
             - name: APME_REPORTING_ENDPOINT
               value: "127.0.0.1:50060"
             {{- if .Values.abbenay.enabled }}
@@ -386,6 +399,9 @@ spec:
                 secretKeyRef:
                   name: {{ $fullname }}-secrets
                   key: proxy-admin-token
+            {{- end }}
+            {{- with .Values.engine.galaxyProxy.extraEnv }}
+            {{- toYaml . | nindent 12 }}
             {{- end }}
           {{- with .Values.securityContext }}
           securityContext:

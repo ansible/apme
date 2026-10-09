@@ -7,6 +7,7 @@ with ``source_filter``.
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
 
 import pytest
@@ -29,7 +30,7 @@ from apme_engine.remediation.ai_context import (
     _truncate_snippet,
     build_ai_node_context,
 )
-from apme_engine.remediation.ai_provider import AINodeFix, AISkipped
+from apme_engine.remediation.ai_provider import AINodeFix, AIProviderError, AISkipped
 from apme_engine.remediation.graph_engine import (
     AINodeProposal,
     GraphRemediationEngine,
@@ -680,6 +681,67 @@ class TestUnifiedConvergence:
         report = await engine.remediate()
 
         assert len(report.ai_proposals) == 0
+
+    async def test_provider_failure_is_reported_without_failing_remediation(self) -> None:
+        """Infrastructure failures retain open violations and are not retried as abstentions."""
+        graph = ContentGraph()
+        node = _make_node(
+            module="ansible.builtin.command",
+            yaml_lines="- name: Run thing\n  ansible.builtin.command: hostname\n",
+        )
+        graph.add_node(node)
+
+        class FailedProvider:
+            calls = 0
+
+            async def propose_node_fix(self, context: AINodeContext, *, model: str | None = None) -> AINodeFix | None:
+                self.calls += 1
+                raise AIProviderError("AI service unavailable")
+
+        provider = FailedProvider()
+        engine = GraphRemediationEngine(TransformRegistry(), graph, [_L013Rule()], ai_provider=provider)
+        report = await engine.remediate()
+
+        assert provider.calls == 1
+        assert report.ai_error == "AI provider unavailable; this AI batch was not applied."
+        assert graph.query_violations(status="ai_abstained") == []
+        assert graph.query_violations(status="open")
+        assert node.yaml_lines == "- name: Run thing\n  ansible.builtin.command: hostname\n"
+
+    async def test_provider_failure_cancels_siblings_and_does_not_apply_batch(self) -> None:
+        """A provider failure cancels in-flight siblings and leaves batch unapplied."""
+        graph = ContentGraph()
+        original = "- name: Run thing\n  ansible.builtin.command: hostname\n"
+        nodes = [_make_node(f"task-{i}", module="ansible.builtin.command", yaml_lines=original) for i in range(2)]
+        for node in nodes:
+            graph.add_node(node)
+        calls: list[str] = []
+        sibling_cancelled = asyncio.Event()
+        sibling_started = asyncio.Event()
+
+        class MixedProvider:
+            async def propose_node_fix(self, context: AINodeContext, *, model: str | None = None) -> AINodeFix | None:
+                calls.append(context.node_id)
+                if context.node_id == "task-0":
+                    await sibling_started.wait()
+                    raise AIProviderError("AI service unavailable")
+                sibling_started.set()
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    sibling_cancelled.set()
+                    raise
+                return AINodeFix(fixed_snippet=original + "  changed_when: false\n", rule_ids=["L013"])
+
+        engine = GraphRemediationEngine(
+            TransformRegistry(), graph, [_L013Rule()], ai_provider=MixedProvider(), max_ai_concurrency=2
+        )
+        report = await engine.remediate()
+        assert set(calls) == {"task-0", "task-1"}
+        assert sibling_cancelled.is_set()
+        assert report.ai_error is not None
+        assert all(node.yaml_lines == original for node in nodes)
+        assert graph.query_violations(status="ai_abstained") == []
 
     async def test_ai_returns_none(self) -> None:
         """AI returning None produces no proposal."""

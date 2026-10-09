@@ -74,11 +74,14 @@ The proxy caches downloaded wheels and serves them via its simple index at
 
 ### Version-Pinned Collection Installs
 
-The proxy's PEP 503 project page lists **all available versions** of a
-collection from Galaxy, not just cached wheels. When `requirements.yml`
-pins a specific version (e.g., `community.vmware: 1.8.0`), `uv` can
-request that exact version and the proxy downloads the tarball on demand.
-Version metadata is fetched via the Galaxy V3 API and cached locally.
+Before invoking pip/uv, the Engine sends the scan's collection specs to the
+proxy's authenticated prepare endpoint. The proxy passes exact pins and
+unpinned FQCNs to `ansible-galaxy collection download`, which resolves latest
+for unpinned entries and downloads declared collection dependencies. The proxy
+converts the returned tarballs to wheels and lists the prepared wheels in its
+PEP 503 page. This avoids remote version enumeration; the CLI resolves the
+requested version directly. A cache hit for a matching wheel and its collection
+dependency closure skips the Hub request.
 
 ### Python Dependency Extraction
 
