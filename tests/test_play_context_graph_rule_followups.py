@@ -296,7 +296,19 @@ def test_pre_tasks_run_before_static_roles_for_variable_provenance() -> None:
     role_task = Task(
         key="task roles/web/tasks/main.yml#task[0]",
         module="ansible.builtin.debug",
+        options={"register": "role_task_result"},
         module_options={"msg": "{{ pre_task_result }}"},
+    )
+    main_task = Task(
+        key="task site.yml#play[0]#tasks[0]",
+        module="ansible.builtin.debug",
+        options={"register": "main_task_result"},
+        module_options={"msg": "{{ role_task_result }}"},
+    )
+    post_task = Task(
+        key="task site.yml#play[0]#post_tasks[0]",
+        module="ansible.builtin.debug",
+        module_options={"msg": "{{ main_task_result }}"},
     )
     role_taskfile = TaskFile(
         key="taskfile roles/web/tasks/main.yml",
@@ -316,6 +328,8 @@ def test_pre_tasks_run_before_static_roles_for_variable_provenance() -> None:
         defined_in="site.yml",
         pre_tasks=[pre_task],
         roles=[RoleInPlay(name="web", defined_in="site.yml")],
+        tasks=[main_task],
+        post_tasks=[post_task],
     )
     playbook = Playbook(
         key="playbook site.yml",
@@ -331,16 +345,21 @@ def test_pre_tasks_run_before_static_roles_for_variable_provenance() -> None:
     }
 
     graph = GraphBuilder(definitions, {}).build()
-    role_task_node_id = "roles/web/tasks/main.yml/tasks[0]"
     play_id = "site.yml/plays[0]"
     play_scope = graph.play_scoped_node_ids(play_id)
-    resolved = VariableProvenanceResolver(graph).resolve_variables(
-        role_task_node_id,
-        play_context_id=play_id,
-        play_scope=play_scope,
-    )
-
-    assert "pre_task_result" in resolved
+    resolver = VariableProvenanceResolver(graph)
+    expected_variables = {
+        "roles/web/tasks/main.yml/tasks[0]": "pre_task_result",
+        "site.yml/plays[0]/tasks[2]": "role_task_result",
+        "site.yml/plays[0]/tasks[3]": "main_task_result",
+    }
+    for node_id, expected_variable in expected_variables.items():
+        resolved = resolver.resolve_variables(
+            node_id,
+            play_context_id=play_id,
+            play_scope=play_scope,
+        )
+        assert expected_variable in resolved
 
 
 def test_static_play_role_tasks_resolve_play_context_and_no_log() -> None:
