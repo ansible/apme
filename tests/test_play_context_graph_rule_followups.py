@@ -286,7 +286,7 @@ def test_runtime_definition_in_static_play_role_is_available_to_later_tasks() ->
 
 
 def test_pre_tasks_run_before_static_roles_for_variable_provenance() -> None:
-    """Keep pre-task register values available to tasks in a static role."""
+    """Preserve register provenance across ordered play phases."""
     pre_task = Task(
         key="task site.yml#play[0]#pre_tasks[0]",
         module="ansible.builtin.command",
@@ -349,17 +349,21 @@ def test_pre_tasks_run_before_static_roles_for_variable_provenance() -> None:
     play_scope = graph.play_scoped_node_ids(play_id)
     resolver = VariableProvenanceResolver(graph)
     expected_variables = {
-        "roles/web/tasks/main.yml/tasks[0]": "pre_task_result",
-        "site.yml/plays[0]/tasks[2]": "role_task_result",
-        "site.yml/plays[0]/tasks[3]": "main_task_result",
+        "roles/web/tasks/main.yml/tasks[0]": (
+            "pre_task_result",
+            {"role_task_result", "main_task_result"},
+        ),
+        "site.yml/plays[0]/tasks[2]": ("role_task_result", {"main_task_result"}),
+        "site.yml/plays[0]/tasks[3]": ("main_task_result", set()),
     }
-    for node_id, expected_variable in expected_variables.items():
+    for node_id, (expected_variable, unavailable_variables) in expected_variables.items():
         resolved = resolver.resolve_variables(
             node_id,
             play_context_id=play_id,
             play_scope=play_scope,
         )
         assert expected_variable in resolved
+        assert unavailable_variables.isdisjoint(resolved)
 
 
 def test_static_play_role_tasks_resolve_play_context_and_no_log() -> None:
