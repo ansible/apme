@@ -724,9 +724,10 @@ class TestM005GraphRule:
         [
             ({"fail_msg": "failed with {{ slurp_result }}"}, False),
             ({"that": [], "fail_msg": "failed with {{ slurp_result }}"}, False),
+            ({"that": [], "msg": "failed with {{ slurp_result }}"}, False),
             ({"that": [], "success_msg": "passed with {{ slurp_result }}"}, True),
         ],
-        ids=["missing-that", "empty-that-fail-message", "empty-that-success-message"],
+        ids=["missing-that", "empty-that-fail-message", "empty-that-msg-alias", "empty-that-success-message"],
     )
     def test_assert_without_conditions_scans_only_rendered_m005_messages(
         self,

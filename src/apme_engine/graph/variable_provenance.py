@@ -19,8 +19,6 @@ from enum import Enum
 from apme_engine.graph.content_graph import ContentGraph, ContentNode, EdgeType, NodeType
 from apme_engine.graph.types import YAMLValue
 
-_MAX_RUNTIME_PATHS = 256
-
 # ---------------------------------------------------------------------------
 # Provenance classification
 # ---------------------------------------------------------------------------
@@ -140,6 +138,7 @@ class VariableProvenanceResolver:
         """
         self._graph = graph
         self._execution_successors: dict[str, set[str]] | None = None
+        self._runtime_sources_cache: dict[tuple[str, frozenset[str] | None], dict[str, set[str]]] = {}
 
     def resolve_variables(
         self,
@@ -148,6 +147,7 @@ class VariableProvenanceResolver:
         play_context_id: str | None = None,
         play_scope: set[str] | None = None,
         positional_scope: set[str] | None = None,
+        positional_path: tuple[str, ...] | None = None,
     ) -> dict[str, VariableProvenance]:
         """Resolve all variables in scope for a node.
 
@@ -162,6 +162,7 @@ class VariableProvenanceResolver:
             positional_scope: Optional subset of positional nodes used to
                 resolve one include path while ``play_scope`` continues to
                 bound runtime data-flow definitions to the enclosing play.
+            positional_path: Ordered node IDs on the selected include path.
 
         Returns:
             Map from variable name to ``VariableProvenance`` (shadowing applied).
@@ -219,6 +220,7 @@ class VariableProvenanceResolver:
             play_scope=runtime_scope,
             play_context_id=play_context_id,
             positional_scope=positional_scope,
+            positional_path=positional_path,
         )
         self._collect_loop_vars(node, result)
 
@@ -368,72 +370,112 @@ class VariableProvenanceResolver:
             return False
 
         runtime_sources = self._runtime_source_ids_by_name(node_id, scope)
-
-        def runtime_defined_on_all_paths(variable_name: str) -> bool:
-            source_ids = runtime_sources.get(variable_name, set())
-            if not source_ids:
-                return False
-            paths, paths_truncated = self._positional_paths_to_play(node_id, play_context_id, scope)
-            return (
-                bool(paths)
-                and not paths_truncated
-                and all(
-                    any(
-                        self._runtime_source_applies_to_path(
-                            source_id,
-                            node_id=node_id,
-                            play_context_id=play_context_id,
-                            play_scope=scope,
-                            positional_scope=set(path),
-                        )
-                        for source_id in source_ids
-                    )
-                    for path in paths
-                )
-            )
-
-        def defined_on_all_paths(
-            current_id: str,
-            variable_name: str,
-            cache: dict[str, bool],
-            in_progress: set[str],
-        ) -> bool:
-            if current_id in cache:
-                return cache[current_id]
-            if current_id in in_progress:
-                return False
-            if defines_at(current_id, variable_name, include_runtime=current_id == node_id):
-                cache[current_id] = True
-                return True
-            if current_id == play_context_id:
-                value = any(
-                    defines_at(ancestor.node_id, variable_name, include_runtime=False)
-                    for ancestor in playbook_ancestors
-                )
-                cache[current_id] = value
-                return value
-
-            parents = sorted(
-                {
-                    parent_id
-                    for edge_type in (EdgeType.CONTAINS, EdgeType.INCLUDE, EdgeType.IMPORT)
-                    for parent_id, _attrs in self._graph.edges_to(current_id, edge_type)
-                    if parent_id in scope
-                }
-            )
-            if not parents:
-                cache[current_id] = False
-                return False
-            in_progress.add(current_id)
-            try:
-                value = all(defined_on_all_paths(parent_id, variable_name, cache, in_progress) for parent_id in parents)
-            finally:
-                in_progress.discard(current_id)
-            cache[current_id] = value
-            return value
+        consumer_ancestors = self._positional_ancestor_ids(node_id, scope)
+        consumer_include_boundaries = {
+            ancestor_id
+            for ancestor_id in consumer_ancestors
+            if self._is_include_task(self._graph.get_node(ancestor_id))
+        }
+        nearest_boundaries, has_direct_path = self._nearest_include_boundaries(
+            node_id,
+            play_context_id=play_context_id,
+            play_scope=scope,
+        )
 
         for variable_name in candidates:
-            if defined_on_all_paths(node_id, variable_name, {}, set()) or runtime_defined_on_all_paths(variable_name):
+            runtime_coverage: set[str] = set()
+            direct_runtime = False
+            for source_id in runtime_sources.get(variable_name, set()):
+                source_context = self._runtime_source_context_ids(
+                    source_id,
+                    play_context_id=play_context_id,
+                    play_scope=scope,
+                )
+                source_boundaries = {
+                    context_id
+                    for context_id in source_context
+                    if self._is_include_task(self._graph.get_node(context_id))
+                }
+
+                shared_boundaries = source_boundaries & consumer_include_boundaries
+                for boundary_id in shared_boundaries:
+                    branch_scope = self._positional_descendant_ids(boundary_id, scope)
+                    branch_scope.discard(boundary_id)
+                    if self._execution_reaches(source_id, node_id, branch_scope):
+                        runtime_coverage.add(boundary_id)
+
+                for boundary_id in nearest_boundaries:
+                    target_ancestors = self._positional_ancestor_ids(boundary_id, scope)
+                    target_boundaries = {
+                        ancestor_id
+                        for ancestor_id in target_ancestors
+                        if self._is_include_task(self._graph.get_node(ancestor_id))
+                    }
+                    shared_target_boundaries = source_boundaries & target_boundaries
+                    if shared_target_boundaries:
+                        for shared_id in shared_target_boundaries:
+                            branch_scope = self._positional_descendant_ids(shared_id, scope)
+                            branch_scope.discard(shared_id)
+                            if self._execution_reaches(source_id, node_id, branch_scope):
+                                runtime_coverage.add(shared_id)
+                    elif self._execution_reaches(source_id, boundary_id, scope):
+                        runtime_coverage.add(boundary_id)
+
+                if has_direct_path and self._execution_reaches(source_id, node_id, scope):
+                    direct_runtime = True
+
+            path_cache: dict[tuple[str, bool], bool] = {}
+            in_progress: set[tuple[str, bool]] = set()
+
+            def defined_on_all_paths(
+                current_id: str,
+                saw_include: bool = False,
+                *,
+                variable_name: str = variable_name,
+                runtime_coverage: set[str] = runtime_coverage,
+                direct_runtime: bool = direct_runtime,
+                path_cache: dict[tuple[str, bool], bool] = path_cache,
+                in_progress: set[tuple[str, bool]] = in_progress,
+            ) -> bool:
+                state = (current_id, saw_include)
+                if state in path_cache:
+                    return path_cache[state]
+                if state in in_progress:
+                    return False
+                if defines_at(current_id, variable_name, include_runtime=current_id == node_id):
+                    path_cache[state] = True
+                    return True
+                if current_id in runtime_coverage:
+                    path_cache[state] = True
+                    return True
+
+                current_node = self._graph.get_node(current_id)
+                saw_include = saw_include or self._is_include_task(current_node)
+                if current_id == play_context_id:
+                    value = (
+                        direct_runtime
+                        and not saw_include
+                        or any(
+                            defines_at(ancestor.node_id, variable_name, include_runtime=False)
+                            for ancestor in playbook_ancestors
+                        )
+                    )
+                    path_cache[state] = value
+                    return value
+
+                parents = self._positional_parent_ids(current_id, scope)
+                if not parents:
+                    path_cache[state] = False
+                    return False
+                in_progress.add(state)
+                try:
+                    value = all(defined_on_all_paths(parent_id, saw_include) for parent_id in parents)
+                finally:
+                    in_progress.discard(state)
+                path_cache[state] = value
+                return value
+
+            if defined_on_all_paths(node_id):
                 resolved.add(variable_name)
 
         return resolved
@@ -458,6 +500,11 @@ class VariableProvenanceResolver:
         Returns:
             Runtime variable names mapped to producer node IDs.
         """
+        cache_key = (node_id, None if play_scope is None else frozenset(play_scope))
+        cached = self._runtime_sources_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         referenced_names: set[str] = set()
         direct_sources: set[str] = set()
         for source_id, _attrs in self._graph.edges_to(node_id, EdgeType.DATA_FLOW):
@@ -490,6 +537,7 @@ class VariableProvenanceResolver:
             for variable_name in source.set_facts:
                 if variable_name in referenced_names:
                     result.setdefault(variable_name, set()).add(source_id)
+        self._runtime_sources_cache[cache_key] = result
         return result
 
     def _order_runtime_sources(self, source_ids: set[str], scope: set[str] | None) -> list[str]:
@@ -579,54 +627,102 @@ class VariableProvenanceResolver:
                     stack.append((parent_id, lineage | {parent_id}))
         return context_ids
 
-    def _positional_paths_to_play(
-        self,
-        node_id: str,
-        play_context_id: str | None,
-        scope: set[str],
-        *,
-        limit: int = _MAX_RUNTIME_PATHS,
-    ) -> tuple[list[tuple[str, ...]], bool]:
-        """Enumerate positional paths from a node to a play or scoped root.
+    def _positional_parent_ids(self, node_id: str, scope: set[str]) -> list[str]:
+        """Return in-scope positional parents, including static role edges.
 
         Args:
-            node_id: Starting task node.
-            play_context_id: Optional play where each path should terminate.
-            scope: Positional node IDs allowed during traversal.
-            limit: Maximum number of paths to enumerate.
+            node_id: Node whose parent nodes are selected.
+            scope: Node IDs permitted in the current play context.
 
         Returns:
-            Paths ordered from the node toward the play/root and a truncation
-            flag when additional paths exist beyond ``limit``.
+            Sorted parent IDs that form the node's execution context.
         """
-        paths: list[tuple[str, ...]] = []
-        truncated = False
+        parents = {
+            parent_id
+            for edge_type in (EdgeType.CONTAINS, EdgeType.INCLUDE, EdgeType.IMPORT)
+            for parent_id, _attrs in self._graph.edges_to(node_id, edge_type)
+            if parent_id in scope
+        }
+        node = self._graph.get_node(node_id)
+        if node is not None and node.node_type == NodeType.ROLE:
+            for parent_id, _attrs in self._graph.edges_to(node_id, EdgeType.DEPENDENCY):
+                parent = self._graph.get_node(parent_id)
+                if parent_id in scope and parent is not None and parent.node_type in {NodeType.PLAY, NodeType.ROLE}:
+                    parents.add(parent_id)
+        return sorted(parents)
 
-        def walk(current_id: str, path: tuple[str, ...]) -> None:
-            nonlocal truncated
-            if len(paths) >= limit:
-                truncated = True
-                return
+    def _positional_ancestor_ids(self, node_id: str, scope: set[str]) -> set[str]:
+        """Return all positional ancestors inside a play scope.
+
+        Args:
+            node_id: Node whose ancestors are collected.
+            scope: Node IDs permitted in the current play context.
+
+        Returns:
+            In-scope positional ancestors, including role dependency parents.
+        """
+        ancestors: set[str] = set()
+        pending = [node_id]
+        while pending:
+            current_id = pending.pop()
+            for parent_id in self._positional_parent_ids(current_id, scope):
+                if parent_id not in ancestors:
+                    ancestors.add(parent_id)
+                    pending.append(parent_id)
+        return ancestors
+
+    def _nearest_include_boundaries(
+        self,
+        node_id: str,
+        *,
+        play_context_id: str | None,
+        play_scope: set[str],
+    ) -> tuple[set[str], bool]:
+        """Find nearest include parents on each path without enumerating paths.
+
+        Args:
+            node_id: Consumer task whose paths are examined.
+            play_context_id: Play node where positional traversal stops.
+            play_scope: Node IDs reachable from the selected play.
+
+        Returns:
+            Include-task IDs that are nearest on at least one path and whether
+            at least one path reaches the play without crossing an include.
+        """
+        cache: dict[str, tuple[set[str], bool]] = {}
+        in_progress: set[str] = set()
+
+        def walk(current_id: str) -> tuple[set[str], bool]:
+            if current_id in cache:
+                cached_boundaries, direct = cache[current_id]
+                return set(cached_boundaries), direct
+            if current_id in in_progress:
+                return set(), False
             if current_id == play_context_id:
-                paths.append(path)
-                return
-            parents = sorted(
-                {
-                    parent_id
-                    for edge_type in (EdgeType.CONTAINS, EdgeType.INCLUDE, EdgeType.IMPORT)
-                    for parent_id, _attrs in self._graph.edges_to(current_id, edge_type)
-                    if parent_id in scope and parent_id not in path
-                }
-            )
-            if not parents:
-                if play_context_id is None:
-                    paths.append(path)
-                return
-            for parent_id in parents:
-                walk(parent_id, (*path, parent_id))
+                return set(), True
 
-        walk(node_id, (node_id,))
-        return paths, truncated
+            parents = self._positional_parent_ids(current_id, play_scope)
+            if not parents:
+                return set(), play_context_id is None
+
+            boundaries: set[str] = set()
+            has_direct_path = False
+            in_progress.add(current_id)
+            try:
+                for parent_id in parents:
+                    if self._is_include_task(self._graph.get_node(parent_id)):
+                        boundaries.add(parent_id)
+                    else:
+                        parent_boundaries, parent_has_direct = walk(parent_id)
+                        boundaries.update(parent_boundaries)
+                        has_direct_path = has_direct_path or parent_has_direct
+            finally:
+                in_progress.discard(current_id)
+
+            cache[current_id] = (set(boundaries), has_direct_path)
+            return boundaries, has_direct_path
+
+        return walk(node_id)
 
     def _execution_reaches(self, source_id: str, target_id: str, scope: set[str] | None) -> bool:
         """Return whether a source precedes a target in the execution graph.
@@ -642,70 +738,7 @@ class VariableProvenanceResolver:
         if source_id == target_id or (scope is not None and (source_id not in scope or target_id not in scope)):
             return False
         if self._execution_successors is None:
-            successors: dict[str, set[str]] = {}
-            for edge in self._graph.execution_edges():
-                successors.setdefault(edge["source"], set()).add(edge["target"])
-            for parent in self._graph.nodes():
-                parent_id = parent.node_id
-                rescue_children = sorted(
-                    self._graph.edges_from(parent_id, EdgeType.RESCUE),
-                    key=lambda item: (item[1].get("position", 0), item[0]),
-                )
-                always_children = sorted(
-                    self._graph.edges_from(parent_id, EdgeType.ALWAYS),
-                    key=lambda item: (item[1].get("position", 0), item[0]),
-                )
-                if not rescue_children and not always_children:
-                    continue
-
-                def positional_descendants(roots: list[str]) -> set[str]:
-                    descendants: set[str] = set()
-                    pending = list(roots)
-                    while pending:
-                        current_id = pending.pop()
-                        if current_id in descendants:
-                            continue
-                        descendants.add(current_id)
-                        for edge_type in (EdgeType.CONTAINS, EdgeType.INCLUDE, EdgeType.IMPORT):
-                            for child_id, _attrs in self._graph.edges_from(current_id, edge_type):
-                                pending.append(child_id)
-                    return descendants
-
-                branch_child_ids = {
-                    child_id
-                    for branch_type in (EdgeType.RESCUE, EdgeType.ALWAYS)
-                    for child_id, _attrs in self._graph.edges_from(parent_id, branch_type)
-                }
-                mainline_children = [
-                    child_id
-                    for child_id, attrs in self._graph.edges_from(parent_id, EdgeType.CONTAINS)
-                    if child_id not in branch_child_ids
-                ]
-                mainline_nodes = positional_descendants(mainline_children)
-                rescue_nodes = positional_descendants([child_id for child_id, _attrs in rescue_children])
-
-                if rescue_children:
-                    rescue_first = rescue_children[0][0]
-                    rescue_sources = mainline_nodes or {parent_id}
-                    for source_id in rescue_sources:
-                        if source_id != rescue_first:
-                            successors.setdefault(source_id, set()).add(rescue_first)
-                for (previous_id, _previous_attrs), (next_id, _next_attrs) in zip(
-                    rescue_children, rescue_children[1:], strict=False
-                ):
-                    successors.setdefault(previous_id, set()).add(next_id)
-
-                if always_children:
-                    always_first = always_children[0][0]
-                    always_sources = mainline_nodes | rescue_nodes or {parent_id}
-                    for source_id in always_sources:
-                        if source_id != always_first:
-                            successors.setdefault(source_id, set()).add(always_first)
-                for (previous_id, _previous_attrs), (next_id, _next_attrs) in zip(
-                    always_children, always_children[1:], strict=False
-                ):
-                    successors.setdefault(previous_id, set()).add(next_id)
-            self._execution_successors = successors
+            self._execution_successors = self._graph.execution_successors()
 
         pending = [source_id]
         seen = {source_id}
@@ -895,6 +928,37 @@ class VariableProvenanceResolver:
                     )
                 )
 
+    def _positional_path_from_scope(
+        self,
+        node_id: str,
+        play_context_id: str | None,
+        positional_scope: set[str],
+    ) -> tuple[str, ...]:
+        """Recover the ordered selected path from its node-ID scope.
+
+        Args:
+            node_id: Consumer node at the start of the path.
+            play_context_id: Optional enclosing play where the path ends.
+            positional_scope: Node IDs from one selected path.
+
+        Returns:
+            Ordered node IDs from the consumer toward the play or root.
+        """
+        path = [node_id]
+        seen = {node_id}
+        current_id = node_id
+        while current_id != play_context_id:
+            parents = self._positional_parent_ids(current_id, positional_scope)
+            if not parents:
+                break
+            parent_id = parents[0]
+            if parent_id in seen:
+                break
+            path.append(parent_id)
+            seen.add(parent_id)
+            current_id = parent_id
+        return tuple(path)
+
     def _collect_runtime_vars(
         self,
         node_id: str,
@@ -903,6 +967,7 @@ class VariableProvenanceResolver:
         play_scope: set[str] | None = None,
         play_context_id: str | None = None,
         positional_scope: set[str] | None = None,
+        positional_path: tuple[str, ...] | None = None,
     ) -> None:
         """Collect variables from data_flow edges (register/set_fact).
 
@@ -914,10 +979,14 @@ class VariableProvenanceResolver:
             play_context_id: Optional enclosing play used to check whether a
                 runtime producer belongs to the selected include path.
             positional_scope: Optional positional path for the consumer task.
+            positional_path: Ordered node IDs on the selected consumer path.
         """
         sources_by_name = self._runtime_source_ids_by_name(node_id, play_scope)
         source_ids = {source_id for ids in sources_by_name.values() for source_id in ids}
         applicable_sources: set[str] = set()
+        selected_path = positional_path
+        if positional_scope is not None and selected_path is None:
+            selected_path = self._positional_path_from_scope(node_id, play_context_id, positional_scope)
         for source_id in source_ids:
             if positional_scope is not None:
                 if not self._runtime_source_applies_to_path(
@@ -925,7 +994,7 @@ class VariableProvenanceResolver:
                     node_id=node_id,
                     play_context_id=play_context_id,
                     play_scope=play_scope,
-                    positional_scope=positional_scope,
+                    positional_path=selected_path or (),
                 ):
                     continue
             elif (
@@ -973,7 +1042,7 @@ class VariableProvenanceResolver:
         node_id: str,
         play_context_id: str | None,
         play_scope: set[str] | None,
-        positional_scope: set[str],
+        positional_path: tuple[str, ...],
     ) -> bool:
         """Return whether a runtime source can reach one selected include path.
 
@@ -982,7 +1051,7 @@ class VariableProvenanceResolver:
             node_id: Runtime consumer node ID.
             play_context_id: Enclosing play ID, if available.
             play_scope: Optional full play scope for filtering unrelated plays.
-            positional_scope: Positional nodes on one consumer execution path.
+            positional_path: Ordered node IDs on one consumer execution path.
 
         Returns:
             True when the producer is on this include path and executes before
@@ -990,11 +1059,9 @@ class VariableProvenanceResolver:
         """
         if play_scope is not None and source_id not in play_scope:
             return False
-        path_scope = play_scope if play_scope is not None else positional_scope
-        paths, _paths_truncated = self._positional_paths_to_play(node_id, play_context_id, path_scope)
-        path = next((candidate for candidate in paths if set(candidate) == positional_scope), None)
-        if path is None:
+        if not positional_path or positional_path[0] != node_id:
             return False
+        path = positional_path
         source_context = self._runtime_source_context_ids(
             source_id,
             play_context_id=play_context_id,
@@ -1015,7 +1082,10 @@ class VariableProvenanceResolver:
                 # consumer's nearest nested include) so producers in an
                 # enclosing task file can flow into its nested includes.
                 include_boundary = shared_boundaries[0]
-                branch_scope = self._positional_descendant_ids(include_boundary, play_scope or positional_scope)
+                branch_scope = self._positional_descendant_ids(
+                    include_boundary,
+                    play_scope if play_scope is not None else set(path),
+                )
                 branch_scope.discard(include_boundary)
                 return self._execution_reaches(source_id, node_id, branch_scope)
 
@@ -1054,17 +1124,38 @@ class VariableProvenanceResolver:
         Returns:
             True when at least one execution path can reach the producer first.
         """
-        paths, paths_truncated = self._positional_paths_to_play(node_id, play_context_id, play_scope)
-        return not paths_truncated and any(
-            self._runtime_source_applies_to_path(
-                source_id,
-                node_id=node_id,
-                play_context_id=play_context_id,
-                play_scope=play_scope,
-                positional_scope=set(path),
-            )
-            for path in paths
+        if source_id not in play_scope:
+            return False
+
+        source_context = self._runtime_source_context_ids(
+            source_id,
+            play_context_id=play_context_id,
+            play_scope=play_scope,
         )
+        source_boundaries = {
+            context_id for context_id in source_context if self._is_include_task(self._graph.get_node(context_id))
+        }
+        consumer_ancestors = self._positional_ancestor_ids(node_id, play_scope)
+        consumer_boundaries = {
+            ancestor_id
+            for ancestor_id in consumer_ancestors
+            if self._is_include_task(self._graph.get_node(ancestor_id))
+        }
+
+        for boundary_id in source_boundaries & consumer_boundaries:
+            branch_scope = self._positional_descendant_ids(boundary_id, play_scope)
+            branch_scope.discard(boundary_id)
+            if self._execution_reaches(source_id, node_id, branch_scope):
+                return True
+
+        target_boundaries, has_direct_path = self._nearest_include_boundaries(
+            node_id,
+            play_context_id=play_context_id,
+            play_scope=play_scope,
+        )
+        if has_direct_path and self._execution_reaches(source_id, node_id, play_scope):
+            return True
+        return any(self._execution_reaches(source_id, boundary_id, play_scope) for boundary_id in target_boundaries)
 
     def _collect_runtime_vars_all(
         self,

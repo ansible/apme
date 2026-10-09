@@ -170,6 +170,170 @@ def test_runtime_definition_on_one_include_path_is_not_shared_across_paths() -> 
     assert cast(list[str], path_entries[0]["execution_path"])[-2] == "site.yml/plays[0]/tasks[0]"
 
 
+def test_static_and_runtime_definitions_together_cover_all_include_paths() -> None:
+    """Accept a name statically defined on one path and at runtime on another."""
+    graph, play_ids, task_id, include_ids = _shared_include_graph(
+        play_vars=({}, {"shared_value": "playbook value"}),
+        task_module_options={"msg": "{{ shared_value }}"},
+    )
+    static_include = ContentNode(
+        identity=NodeIdentity(path="site.yml/plays[0]/tasks[static]", node_type=NodeType.TASK),
+        file_path="site.yml",
+        module="ansible.builtin.include_tasks",
+        module_options={"file": "shared.yml"},
+        variables={"shared_value": "static"},
+        scope=NodeScope.OWNED,
+    )
+    producer = ContentNode(
+        identity=NodeIdentity(path="site.yml/plays[0]/tasks[0]/tasks[0]", node_type=NodeType.TASK),
+        file_path="shared-parent.yml",
+        register="shared_value",
+        scope=NodeScope.OWNED,
+    )
+    graph.add_node(static_include)
+    graph.add_node(producer)
+    graph.add_edge(play_ids[0], static_include.node_id, EdgeType.CONTAINS, position=0)
+    graph.add_edge(static_include.node_id, task_id, EdgeType.INCLUDE, position=1)
+    graph.add_edge(include_ids[0], producer.node_id, EdgeType.CONTAINS, position=0)
+    graph.add_edge(producer.node_id, task_id, EdgeType.DATA_FLOW)
+
+    result = UndefinedVariableGraphRule().process(graph, task_id)
+
+    assert result is not None
+    assert result.verdict is False
+
+
+def test_runtime_definition_is_resolved_with_more_than_256_include_paths() -> None:
+    """Keep play-scoped runtime vars when a shared task has many paths."""
+    graph, play_ids, task_id, _include_ids = _shared_include_graph(
+        play_vars=({}, {"many_path_result": "other play value"}),
+        task_module_options={"msg": "{{ many_path_result }}"},
+    )
+    producer = ContentNode(
+        identity=NodeIdentity(path="site.yml/plays[0]/tasks[producer]", node_type=NodeType.TASK),
+        file_path="site.yml",
+        register="many_path_result",
+        scope=NodeScope.OWNED,
+    )
+    graph.add_node(producer)
+    graph.add_edge(play_ids[0], producer.node_id, EdgeType.CONTAINS, position=0)
+    graph.add_edge(producer.node_id, task_id, EdgeType.DATA_FLOW)
+
+    for index in range(256):
+        include = ContentNode(
+            identity=NodeIdentity(path=f"site.yml/plays[0]/tasks[branch-{index:03}]", node_type=NodeType.TASK),
+            file_path="site.yml",
+            module="ansible.builtin.include_tasks",
+            module_options={"file": "shared.yml"},
+            scope=NodeScope.OWNED,
+        )
+        graph.add_node(include)
+        graph.add_edge(play_ids[0], include.node_id, EdgeType.CONTAINS, position=index + 2)
+        graph.add_edge(include.node_id, task_id, EdgeType.INCLUDE, position=1)
+
+    result = UndefinedVariableGraphRule().process(graph, task_id)
+
+    assert result is not None
+    assert result.verdict is False
+
+
+def test_runtime_definition_in_static_play_role_is_available_to_later_tasks() -> None:
+    """Include static role tasks in play runtime provenance and execution order."""
+    graph = ContentGraph()
+    play = ContentNode(
+        identity=NodeIdentity(path="site.yml/plays[0]", node_type=NodeType.PLAY),
+        file_path="site.yml",
+        scope=NodeScope.OWNED,
+    )
+    role = ContentNode(
+        identity=NodeIdentity(path="roles/web", node_type=NodeType.ROLE),
+        file_path="roles/web",
+        scope=NodeScope.OWNED,
+    )
+    taskfile = ContentNode(
+        identity=NodeIdentity(path="roles/web/tasks/main.yml", node_type=NodeType.TASKFILE),
+        file_path="roles/web/tasks/main.yml",
+        scope=NodeScope.OWNED,
+    )
+    producer = ContentNode(
+        identity=NodeIdentity(path="roles/web/tasks/main.yml/tasks[0]", node_type=NodeType.TASK),
+        file_path="roles/web/tasks/main.yml",
+        register="role_result",
+        scope=NodeScope.OWNED,
+    )
+    consumer = ContentNode(
+        identity=NodeIdentity(path="site.yml/plays[0]/tasks[0]", node_type=NodeType.TASK),
+        file_path="site.yml",
+        module="ansible.builtin.debug",
+        module_options={"msg": "{{ role_result }}"},
+        scope=NodeScope.OWNED,
+    )
+    for node in (play, role, taskfile, producer, consumer):
+        graph.add_node(node)
+    graph.add_edge(play.node_id, role.node_id, EdgeType.DEPENDENCY, position=0)
+    graph.add_edge(role.node_id, taskfile.node_id, EdgeType.CONTAINS, position=0)
+    graph.add_edge(taskfile.node_id, producer.node_id, EdgeType.CONTAINS, position=0)
+    graph.add_edge(play.node_id, consumer.node_id, EdgeType.CONTAINS, position=1)
+    graph.add_edge(producer.node_id, consumer.node_id, EdgeType.DATA_FLOW)
+
+    result = UndefinedVariableGraphRule().process(graph, consumer.node_id)
+
+    assert producer.node_id in graph.play_scoped_node_ids(play.node_id)
+    assert result is not None
+    assert result.verdict is False
+
+
+@pytest.mark.parametrize("branch_edge", (EdgeType.RESCUE, EdgeType.ALWAYS))  # type: ignore[untyped-decorator]
+def test_runtime_producer_in_rescue_or_always_reaches_task_after_block(branch_edge: EdgeType) -> None:
+    """Keep runtime definitions from a block branch available after the block.
+
+    Args:
+        branch_edge: Rescue or always branch containing the producer.
+    """
+    graph = ContentGraph()
+    play = ContentNode(
+        identity=NodeIdentity(path="site.yml/plays[0]", node_type=NodeType.PLAY),
+        file_path="site.yml",
+        scope=NodeScope.OWNED,
+    )
+    block = ContentNode(
+        identity=NodeIdentity(path="site.yml/plays[0]/block[0]", node_type=NodeType.BLOCK),
+        file_path="site.yml",
+        scope=NodeScope.OWNED,
+    )
+    mainline = ContentNode(
+        identity=NodeIdentity(path="site.yml/plays[0]/block[0]/tasks[0]", node_type=NodeType.TASK),
+        file_path="site.yml",
+        scope=NodeScope.OWNED,
+    )
+    producer = ContentNode(
+        identity=NodeIdentity(path=f"site.yml/plays[0]/block[0]/{branch_edge.value}[0]", node_type=NodeType.TASK),
+        file_path="site.yml",
+        register="branch_result",
+        scope=NodeScope.OWNED,
+    )
+    consumer = ContentNode(
+        identity=NodeIdentity(path="site.yml/plays[0]/tasks[after-block]", node_type=NodeType.TASK),
+        file_path="site.yml",
+        module="ansible.builtin.debug",
+        module_options={"msg": "{{ branch_result }}"},
+        scope=NodeScope.OWNED,
+    )
+    for node in (play, block, mainline, producer, consumer):
+        graph.add_node(node)
+    graph.add_edge(play.node_id, block.node_id, EdgeType.CONTAINS, position=0)
+    graph.add_edge(play.node_id, consumer.node_id, EdgeType.CONTAINS, position=1)
+    graph.add_edge(block.node_id, mainline.node_id, EdgeType.CONTAINS, position=0)
+    graph.add_edge(block.node_id, producer.node_id, EdgeType.CONTAINS, position=1)
+    graph.add_edge(block.node_id, producer.node_id, branch_edge, position=0)
+    graph.add_edge(producer.node_id, consumer.node_id, EdgeType.DATA_FLOW)
+
+    result = UndefinedVariableGraphRule().process(graph, consumer.node_id)
+
+    assert result is not None
+    assert result.verdict is False
+
+
 def test_shared_play_runtime_definitions_are_recovered_from_each_play_scope() -> None:
     """Recover matching runtime definitions separately for each play."""
     graph, play_ids, task_id, _include_ids = _shared_include_graph(task_module_options={"msg": "{{ result }}"})
@@ -752,3 +916,65 @@ def test_r404_reports_separate_scope_for_each_include_path() -> None:
         ("left_only", "site.yml/plays[0]/tasks[left]"),
         ("right_only", "site.yml/plays[0]/tasks[right]"),
     }
+
+
+def test_r404_retains_later_play_after_an_earlier_play_reaches_its_path_limit() -> None:
+    """Reserve a context for each play before using the shared path budget."""
+    graph, play_ids, task_id, _include_ids = _shared_include_graph(
+        play_vars=({}, {"later_play_value": "visible"}),
+    )
+    for index in range(64):
+        include = ContentNode(
+            identity=NodeIdentity(path=f"site.yml/plays[0]/tasks[branch-{index:03}]", node_type=NodeType.TASK),
+            file_path="site.yml",
+            module="ansible.builtin.include_tasks",
+            module_options={"file": "shared.yml"},
+            scope=NodeScope.OWNED,
+        )
+        graph.add_node(include)
+        graph.add_edge(play_ids[0], include.node_id, EdgeType.CONTAINS, position=index + 2)
+        graph.add_edge(include.node_id, task_id, EdgeType.INCLUDE, position=1)
+
+    result = ShowVariablesGraphRule().process(graph, task_id)
+
+    assert result is not None
+    assert result.verdict is True
+    assert result.detail is not None
+    variables = cast(list[YAMLDict], result.detail["variable_set"])
+    assert any(entry["name"] == "later_play_value" and entry.get("play") == "site.yml/plays[1]" for entry in variables)
+    assert result.detail["execution_paths_truncated"] is True
+
+
+def test_r404_reports_truncation_when_only_omitted_paths_have_variables() -> None:
+    """Do not return a clean result when every retained scope is empty."""
+    graph, play_ids, task_id, _include_ids = _shared_include_graph()
+    for index in range(63):
+        include = ContentNode(
+            identity=NodeIdentity(path=f"site.yml/plays[0]/tasks[branch-{index:03}]", node_type=NodeType.TASK),
+            file_path="site.yml",
+            module="ansible.builtin.include_tasks",
+            module_options={"file": "shared.yml"},
+            scope=NodeScope.OWNED,
+        )
+        graph.add_node(include)
+        graph.add_edge(play_ids[0], include.node_id, EdgeType.CONTAINS, position=index + 2)
+        graph.add_edge(include.node_id, task_id, EdgeType.INCLUDE, position=1)
+    last_include = ContentNode(
+        identity=NodeIdentity(path="site.yml/plays[0]/tasks[zzzz]", node_type=NodeType.TASK),
+        file_path="site.yml",
+        module="ansible.builtin.include_tasks",
+        module_options={"file": "shared.yml"},
+        variables={"omitted_path_value": "visible"},
+        scope=NodeScope.OWNED,
+    )
+    graph.add_node(last_include)
+    graph.add_edge(play_ids[0], last_include.node_id, EdgeType.CONTAINS, position=100)
+    graph.add_edge(last_include.node_id, task_id, EdgeType.INCLUDE, position=1)
+
+    result = ShowVariablesGraphRule().process(graph, task_id)
+
+    assert result is not None
+    assert result.verdict is True
+    assert result.detail is not None
+    assert result.detail["variable_set"] == []
+    assert result.detail["execution_paths_truncated"] is True

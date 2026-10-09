@@ -120,8 +120,8 @@ def _play_contexts(
         standalone_contexts = [_ExecutionContext(None, None, set(path), path) for path in paths]
         return standalone_contexts or [_ExecutionContext(None, None, scope, (task_node_id,))], truncated
 
-    contexts: list[_ExecutionContext] = []
-    truncated = False
+    paths_by_play: list[tuple[str, set[str], list[tuple[str, ...]], bool]] = []
+    truncated = len(play_ids) > _MAX_EXECUTION_PATHS
     for play_id in play_ids:
         play_scope = graph.play_scoped_node_ids(play_id)
         paths, play_truncated = _positional_paths(
@@ -129,14 +129,36 @@ def _play_contexts(
             task_node_id,
             scope=play_scope,
             stop_at=play_id,
-            limit=max(_MAX_EXECUTION_PATHS - len(contexts), 1),
+            limit=1,
         )
+        paths_by_play.append((play_id, play_scope, paths, play_truncated))
+
+    contexts_by_play: list[list[_ExecutionContext]] = [
+        [_ExecutionContext(play_id, play_scope, set(path), path) for path in paths]
+        for play_id, play_scope, paths, _play_truncated in paths_by_play
+    ]
+    remaining_paths = max(_MAX_EXECUTION_PATHS - sum(map(len, contexts_by_play)), 0)
+    for index, (play_id, play_scope, first_paths, play_truncated) in enumerate(paths_by_play):
+        if not first_paths:
+            continue
+        if remaining_paths == 0:
+            truncated = truncated or play_truncated
+            continue
+        paths, play_truncated = _positional_paths(
+            graph,
+            task_node_id,
+            scope=play_scope,
+            stop_at=play_id,
+            limit=remaining_paths + 1,
+        )
+        additional_paths = paths[1 : remaining_paths + 1]
+        contexts_by_play[index].extend(
+            _ExecutionContext(play_id, play_scope, set(path), path) for path in additional_paths
+        )
+        remaining_paths -= len(additional_paths)
         truncated = truncated or play_truncated
-        contexts.extend(_ExecutionContext(play_id, play_scope, set(path), path) for path in paths)
-        if len(contexts) >= _MAX_EXECUTION_PATHS:
-            truncated = truncated or len(play_ids) > 1 or play_truncated
-            break
-    return contexts, truncated
+
+    return [context for play_contexts in contexts_by_play for context in play_contexts], truncated
 
 
 def _should_redact_value(
@@ -295,10 +317,12 @@ class ShowVariablesGraphRule(GraphRule):
                 play_context_id=context.play_context_id,
                 play_scope=context.play_scope,
                 positional_scope=context.positional_scope,
+                positional_path=context.path_ids,
             )
             resolved_by_context.append((context, resolved))
 
-        if not any(resolved for _context, resolved in resolved_by_context):
+        has_resolved_variables = any(resolved for _context, resolved in resolved_by_context)
+        if not has_resolved_variables and not paths_truncated:
             return GraphRuleResult(
                 verdict=False,
                 node_id=node_id,
@@ -347,7 +371,11 @@ class ShowVariablesGraphRule(GraphRule):
         if truncated:
             var_list = var_list[:_MAX_VARIABLE_SET]
         detail: YAMLDict = {
-            "message": f"Task has {total_vars} variable(s) in scope" + (" (truncated)" if truncated else ""),
+            "message": (
+                "Execution paths were truncated before variables could be fully resolved"
+                if paths_truncated and not has_resolved_variables
+                else f"Task has {total_vars} variable(s) in scope" + (" (truncated)" if truncated else "")
+            ),
             "variable_set": cast(YAMLValue, var_list),
         }
         if paths_truncated:

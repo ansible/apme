@@ -176,8 +176,8 @@ class DataTaggingGraphRule(GraphRule):
         that_excluded = frozenset({"that"}) if node.module in _ASSERT_MODULES else frozenset()
         if node.module in _ASSERT_MODULES and node.module_options.get("that") == []:
             # With zero conditions assert succeeds immediately, so only
-            # success_msg is rendered; fail_msg is not an output sink.
-            that_excluded = frozenset({"that", "fail_msg"})
+            # success_msg is rendered; fail_msg and its msg alias are not.
+            that_excluded = frozenset({"that", "fail_msg", "msg"})
         module_strings: list[str] = []
         if not malformed_assert:
             module_strings = _string_values(node.module_options, excluded_keys=that_excluded)

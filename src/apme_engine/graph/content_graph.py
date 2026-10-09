@@ -575,6 +575,7 @@ class ContentGraph:
         """Initialize an empty content graph."""
         self.g: nx.MultiDiGraph = nx.MultiDiGraph()
         self._dirty_nodes: set[str] = set()
+        self._execution_successors_cache: dict[str, set[str]] | None = None
 
     # -- Serialization (ADR-044 Phase 2 switchover) -------------------------
 
@@ -669,6 +670,7 @@ class ContentGraph:
         """
         nid = node.node_id
         self.g.add_node(nid, node=node)
+        self._execution_successors_cache = None
 
     def get_node(self, node_id: str) -> ContentNode | None:
         """Return the ContentNode for a given node_id, or None.
@@ -1327,6 +1329,7 @@ class ContentGraph:
             when_expr=when_expr or "",
             tags=tags or [],
         )
+        self._execution_successors_cache = None
 
     def edges_from(self, node_id: str, edge_type: EdgeType | None = None) -> list[tuple[str, dict[str, object]]]:
         """Return outgoing edges from a node as (target_id, attrs) pairs.
@@ -1426,11 +1429,12 @@ class ContentGraph:
         return result
 
     def play_scoped_node_ids(self, play_id: str) -> set[str]:
-        """Return node IDs reachable from a play via structural/include edges.
+        """Return node IDs reachable through a play's tasks and static roles.
 
         Traverses ``CONTAINS``, ``INCLUDE``, and ``IMPORT`` edges starting
-        from ``play_id``.  Used to disambiguate shared included task files
-        that are linked from multiple plays.
+        from ``play_id`` and follows ``DEPENDENCY`` edges from plays or roles
+        only when their targets are roles. Used to disambiguate shared task
+        files and scope runtime producers from statically declared roles.
 
         Args:
             play_id: Play node whose scoped subtree is collected.
@@ -1450,6 +1454,12 @@ class ContentGraph:
             for edge_type in (EdgeType.CONTAINS, EdgeType.INCLUDE, EdgeType.IMPORT):
                 for target, _attrs in self.edges_from(current, edge_type):
                     stack.append(target)
+            current_node = self.get_node(current)
+            if current_node is not None and current_node.node_type in {NodeType.PLAY, NodeType.ROLE}:
+                for target, _attrs in self.edges_from(current, EdgeType.DEPENDENCY):
+                    target_node = self.get_node(target)
+                    if target_node is not None and target_node.node_type == NodeType.ROLE:
+                        stack.append(target)
         return result
 
     def positional_ancestors(
@@ -1664,8 +1674,9 @@ class ContentGraph:
     def execution_edges(self) -> list[dict[str, str]]:
         """Compute the execution-order edge list for the graph.
 
-        All positional edges (CONTAINS, INCLUDE, IMPORT) are treated
-        uniformly as parent-to-child relationships for execution flow.
+        Positional edges (CONTAINS, INCLUDE, IMPORT) and static role
+        dependency edges are treated as parent-to-child relationships for
+        execution flow.
         This ensures ``import_playbook`` entries are threaded inline at
         their declared position alongside regular plays, and
         ``include_tasks``/``import_tasks`` targets appear as children of
@@ -1678,7 +1689,7 @@ class ContentGraph:
             not itself a global topological ordering — each edge
             encodes a local flow dependency.
         """
-        children_by_parent: dict[str, list[tuple[str, int]]] = {}
+        children_by_parent: dict[str, list[tuple[str, int, int]]] = {}
 
         # Rescue/always children are wired with both a CONTAINS edge and
         # a RESCUE/ALWAYS edge.  Collect those pairs so we can exclude
@@ -1690,18 +1701,29 @@ class ContentGraph:
 
         for src, tgt, data in self.g.edges(data=True):
             etype = data.get("edge_type", "")
-            if etype in (
+            is_positional = etype in (
                 EdgeType.CONTAINS.value,
                 EdgeType.INCLUDE.value,
                 EdgeType.IMPORT.value,
-            ):
+            )
+            source_node = self.get_node(src)
+            target_node = self.get_node(tgt)
+            is_role_dependency = (
+                etype == EdgeType.DEPENDENCY.value
+                and source_node is not None
+                and source_node.node_type in {NodeType.PLAY, NodeType.ROLE}
+                and target_node is not None
+                and target_node.node_type == NodeType.ROLE
+            )
+            if is_positional or is_role_dependency:
                 if etype == EdgeType.CONTAINS.value and (src, tgt) in rescue_always_pairs:
                     continue
                 pos = data.get("position", 0)
-                children_by_parent.setdefault(src, []).append((tgt, pos))
+                dependency_priority = 0 if is_role_dependency else 1
+                children_by_parent.setdefault(src, []).append((tgt, pos, dependency_priority))
 
         for children in children_by_parent.values():
-            children.sort(key=lambda t: t[1])
+            children.sort(key=lambda t: (t[1], t[2]))
 
         def last_exit(node_id: str, visited: set[str] | None = None) -> str:
             if visited is None:
@@ -1726,6 +1748,109 @@ class ContentGraph:
                 edges.append({"source": exit_node, "target": children[i + 1][0]})
 
         return edges
+
+    def execution_successors(self) -> dict[str, set[str]]:
+        """Return cached execution-order successors, including block branches.
+
+        The graph's positional execution edges describe mainline ordering.
+        This method adds transitions into rescue/always sections and from
+        their final tasks to tasks following the enclosing block. Static role
+        dependency edges are already included in :meth:`execution_edges`.
+
+        Returns:
+            A mapping from each node ID to its possible next execution nodes.
+        """
+        if self._execution_successors_cache is not None:
+            return self._execution_successors_cache
+
+        successors: dict[str, set[str]] = {}
+        for edge in self.execution_edges():
+            successors.setdefault(edge["source"], set()).add(edge["target"])
+
+        positional_edges = (EdgeType.CONTAINS, EdgeType.INCLUDE, EdgeType.IMPORT)
+
+        def positional_descendants(roots: list[str]) -> set[str]:
+            descendants: set[str] = set()
+            pending = list(roots)
+            while pending:
+                current_id = pending.pop()
+                if current_id in descendants:
+                    continue
+                descendants.add(current_id)
+                for edge_type in positional_edges:
+                    pending.extend(child_id for child_id, _attrs in self.edges_from(current_id, edge_type))
+            return descendants
+
+        def positional_leaves(node_ids: set[str]) -> set[str]:
+            return {
+                node_id
+                for node_id in node_ids
+                if not any(
+                    child_id in node_ids
+                    for edge_type in positional_edges
+                    for child_id, _attrs in self.edges_from(node_id, edge_type)
+                )
+            }
+
+        for parent in self.nodes():
+            parent_id = parent.node_id
+            rescue_children = sorted(
+                self.edges_from(parent_id, EdgeType.RESCUE),
+                key=lambda item: (item[1].get("position", 0), item[0]),
+            )
+            always_children = sorted(
+                self.edges_from(parent_id, EdgeType.ALWAYS),
+                key=lambda item: (item[1].get("position", 0), item[0]),
+            )
+            if not rescue_children and not always_children:
+                continue
+
+            branch_child_ids = {
+                child_id
+                for branch_type in (EdgeType.RESCUE, EdgeType.ALWAYS)
+                for child_id, _attrs in self.edges_from(parent_id, branch_type)
+            }
+            mainline_children = [
+                child_id
+                for child_id, _attrs in self.edges_from(parent_id, EdgeType.CONTAINS)
+                if child_id not in branch_child_ids
+            ]
+            mainline_nodes = positional_descendants(mainline_children)
+            rescue_nodes = positional_descendants([child_id for child_id, _attrs in rescue_children])
+
+            if rescue_children:
+                rescue_first = rescue_children[0][0]
+                for source_id in mainline_nodes or {parent_id}:
+                    if source_id != rescue_first:
+                        successors.setdefault(source_id, set()).add(rescue_first)
+                for (previous_id, _), (next_id, _) in zip(rescue_children, rescue_children[1:], strict=False):
+                    for source_id in positional_leaves(positional_descendants([previous_id])):
+                        successors.setdefault(source_id, set()).add(next_id)
+
+            if always_children:
+                always_first = always_children[0][0]
+                for source_id in mainline_nodes | rescue_nodes or {parent_id}:
+                    if source_id != always_first:
+                        successors.setdefault(source_id, set()).add(always_first)
+                for (previous_id, _), (next_id, _) in zip(always_children, always_children[1:], strict=False):
+                    for source_id in positional_leaves(positional_descendants([previous_id])):
+                        successors.setdefault(source_id, set()).add(next_id)
+
+            block_scope = positional_descendants([parent_id])
+            following_nodes = {
+                target_id
+                for source_id in block_scope
+                for target_id in successors.get(source_id, set())
+                if target_id not in block_scope
+            }
+            final_children = always_children or rescue_children
+            if following_nodes and final_children:
+                final_scope = positional_descendants([final_children[-1][0]])
+                for exit_id in positional_leaves(final_scope):
+                    successors.setdefault(exit_id, set()).update(following_nodes)
+
+        self._execution_successors_cache = successors
+        return successors
 
 
 # ---------------------------------------------------------------------------
