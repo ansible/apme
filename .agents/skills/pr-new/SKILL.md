@@ -111,6 +111,8 @@ artifact type, translate it:
    changes; initial failures and recoveries must remain visible.
    When classifying free-form diagnostics, require context and token boundaries
    for numeric identifiers so unrelated values do not acquire error semantics.
+   Check real diagnostics from the upstream producer, including every supported
+   output format, so restrictive matching still recognizes actual failures.
 
 2. **Does this expose more than it should?** Check every log call,
    error message, and user-facing string. Does it contain user content,

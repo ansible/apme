@@ -521,11 +521,15 @@ def test_cli_error_classification_never_exposes_upstream_text(diagnostic: str) -
         ("HTTP Error 401: denied", True),
         ("HTTP 403", True),
         ("HTTP status code: 403", True),
+        ("(HTTP Code: 401, Message: Authentication credentials were not provided. Code: not_authenticated)", True),
+        ("(HTTP Code: 403, Message: You do not have permission to perform this action. Code: permission_denied)", True),
         ("unauthorized", True),
         ("forbidden", True),
         ("version 1.401.0 is unavailable", False),
         ("artifact 4030 missing", False),
         ("HTTP Error 4030", False),
+        ("HTTP Code: 4010", False),
+        ("(HTTP Code: 404, Message: Collection version 1.401.0 not found)", False),
     ],
 )  # type: ignore[untyped-decorator]
 def test_cli_numeric_auth_errors_require_http_context(diagnostic: str, auth_failure: bool) -> None:

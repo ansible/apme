@@ -248,7 +248,7 @@ def download_error_summary(stderr: str) -> str:
     if "certificate_verify_failed" in message or "certificate verify failed" in message:
         return "TLS certificate verification failed; configure Hub CA trust or an explicit TLS opt-out"
     if (
-        re.search(r"\bhttp(?:\s+error|\s+status(?:\s+code)?)?\s*[:=]?\s*(?:401|403)\b", message)
+        re.search(r"\bhttp(?:\s+error|\s+code|\s+status(?:\s+code)?)?\s*[:=]?\s*(?:401|403)\b", message)
         or "unauthorized" in message
         or "forbidden" in message
     ):
