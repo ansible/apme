@@ -6,6 +6,7 @@ coupling the proxy to the gateway DB, the gateway pushes the current config
 to the proxy's ``POST /admin/galaxy-config`` endpoint:
 
 - On gateway startup (best-effort; proxy may not be ready yet)
+- Every 15 seconds, including after a proxy-only restart or failed push
 - After every create / update / delete of a Galaxy server via the REST API
 
 The push is fire-and-forget: failures are logged but never block the
@@ -30,6 +31,26 @@ _PROXY_ADMIN_TOKEN_ENV = "APME_PROXY_ADMIN_TOKEN"
 _PROXY_ADMIN_TOKEN_HEADER = "x-apme-proxy-token"
 
 _pending_push: asyncio.Task[None] | None = None
+
+
+async def reconcile_galaxy_config(interval: float = 15.0) -> None:
+    """Keep proxy configuration synchronized across independent restarts.
+
+    Args:
+        interval: Seconds between reconciliation attempts.
+    """
+    while True:
+        schedule_push()
+        await asyncio.sleep(interval)
+
+
+async def stop_pending_push() -> None:
+    """Cancel and await any config push during Gateway shutdown."""
+    pending = _pending_push
+    if pending is not None:
+        pending.cancel()
+        await asyncio.gather(pending, return_exceptions=True)
+
 
 # Last-push outcome for the /health freshness signal. Updated on every
 # attempted push (success or failure) so a token-skewed 403 surfaces as a
@@ -140,6 +161,7 @@ async def push_galaxy_config() -> bool:
                 "url": s.url,
                 "token": s.token or "",
                 "auth_url": s.auth_url or "",
+                "validate_certs": s.validate_certs,
             }
             for s in servers
         ],

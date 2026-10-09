@@ -42,6 +42,23 @@ async def test_list_galaxy_servers_empty(client: AsyncClient) -> None:
 # ── Create ───────────────────────────────────────────────────────────
 
 
+async def test_galaxy_server_tls_roundtrip(client: AsyncClient) -> None:
+    """Persist explicit policy and support resetting it to the deployment default.
+
+    Args:
+        client: Async HTTP test client.
+    """
+    base = "/api/v1/settings/galaxy-servers"
+    created = await client.post(base, json={"name": "hub", "url": "https://hub.example.com/", "validate_certs": False})
+    assert created.status_code == 201
+    assert created.json()["validate_certs"] is False
+    endpoint = f"{base}/{created.json()['id']}"
+    assert (await client.get(endpoint)).json()["validate_certs"] is False
+    assert (await client.patch(endpoint, json={"validate_certs": True})).json()["validate_certs"] is True
+    assert (await client.patch(endpoint, json={"url": "https://new.example.com/"})).json()["validate_certs"] is True
+    assert (await client.patch(endpoint, json={"validate_certs": None})).json()["validate_certs"] is None
+
+
 async def test_create_galaxy_server(client: AsyncClient) -> None:
     """POST /settings/galaxy-servers creates and returns a server (token masked).
 

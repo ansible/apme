@@ -1813,6 +1813,7 @@ async def create_galaxy_server(
     url: str,
     token: str = "",
     auth_url: str = "",
+    validate_certs: bool | None = None,
 ) -> GalaxyServer:
     """Insert a new Galaxy server definition.
 
@@ -1822,6 +1823,7 @@ async def create_galaxy_server(
         url: Base API URL.
         token: API token (may be empty).
         auth_url: SSO endpoint (may be empty).
+        validate_certs: TLS policy, or None to inherit the proxy deployment default.
 
     Returns:
         The newly created GalaxyServer row.
@@ -1832,6 +1834,7 @@ async def create_galaxy_server(
         url=url,
         token=token,
         auth_url=auth_url,
+        validate_certs=validate_certs,
         created_at=now,
         updated_at=now,
     )
@@ -1844,14 +1847,14 @@ async def create_galaxy_server(
 async def update_galaxy_server(
     db: AsyncSession,
     server_id: int,
-    **fields: str,
+    **fields: str | bool | None,
 ) -> GalaxyServer | None:
     """Update mutable fields on a Galaxy server.
 
     Args:
         db: Async database session.
         server_id: Primary key.
-        **fields: Column values to update (name, url, token, auth_url).
+        **fields: Column values to update (name, url, token, auth_url, validate_certs).
 
     Returns:
         Updated GalaxyServer or None if not found.
@@ -1859,7 +1862,7 @@ async def update_galaxy_server(
     server: GalaxyServer | None = await db.get(GalaxyServer, server_id)
     if server is None:
         return None
-    allowed = {"name", "url", "token", "auth_url"}
+    allowed = {"name", "url", "token", "auth_url", "validate_certs"}
     for key, value in fields.items():
         if key in allowed:
             setattr(server, key, value)

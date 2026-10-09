@@ -1,4 +1,12 @@
 {{- /* ADR-069: Simple all-in-one — single Deployment, replicas must be 1 */ -}}
+{{- if and (ne .Values.engine.galaxyProxy.tls.verify nil) (not (kindIs "bool" .Values.engine.galaxyProxy.tls.verify)) }}
+{{- fail "engine.galaxyProxy.tls.verify must be a boolean or null" }}
+{{- end }}
+{{- if .Values.engine.galaxyProxy.tls.caBundleConfigMapRef.name }}
+{{- if not .Values.engine.galaxyProxy.tls.caBundleConfigMapRef.key }}
+{{- fail "engine.galaxyProxy.tls.caBundleConfigMapRef.key is required when name is set" }}
+{{- end }}
+{{- end }}
 {{- if ne (int .Values.engine.replicas) 1 }}
 {{- fail "ADR-069 Simple topology: engine.replicas must be 1 (Gateway uses in-pod PostgreSQL; Abbenay shares this pod). Multi-replica requires a future topology ADR." }}
 {{- end }}
@@ -88,8 +96,39 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       {{- end }}
-      {{- if or .Values.ui.enabled .Values.abbenay.enabled }}
+      {{- if or .Values.ui.enabled .Values.abbenay.enabled .Values.engine.galaxyProxy.tls.caBundleConfigMapRef.name }}
       initContainers:
+        {{- if .Values.engine.galaxyProxy.tls.caBundleConfigMapRef.name }}
+        - name: init-galaxy-ca
+          image: {{ include "apme.image" (dict "registry" .Values.image.registry "name" "galaxy-proxy" "tag" .Values.image.tag "fallbackTag" .Chart.AppVersion) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              BUNDLE=/work/ca-bundle.crt
+              rm -f "$BUNDLE"
+              if [ -f /etc/pki/tls/certs/ca-bundle.crt ]; then
+                cat /etc/pki/tls/certs/ca-bundle.crt > "$BUNDLE"
+              elif [ -f /etc/ssl/certs/ca-certificates.crt ]; then
+                cat /etc/ssl/certs/ca-certificates.crt > "$BUNDLE"
+              else
+                : > "$BUNDLE"
+              fi
+              printf '\n' >> "$BUNDLE"
+              cat /hub-ca/ca-bundle.crt >> "$BUNDLE"
+          volumeMounts:
+            - name: galaxy-ca
+              mountPath: /hub-ca
+              readOnly: true
+            - name: galaxy-ca-bundle
+              mountPath: /work
+        {{- end }}
         {{- if .Values.ui.enabled }}
         - name: init-nginx-conf
           image: {{ include "apme.image" (dict "registry" .Values.image.registry "name" "ui" "tag" .Values.image.tag "fallbackTag" .Chart.AppVersion) }}
@@ -387,6 +426,16 @@ spec:
           env:
             - name: LOG_LEVEL
               value: {{ .Values.engine.galaxyProxy.logLevel | quote }}
+            - name: APME_PROXY_REQUIRE_GATEWAY_CONFIG
+              value: "1"
+            {{- if ne .Values.engine.galaxyProxy.tls.verify nil }}
+            - name: ANSIBLE_GALAXY_IGNORE
+              value: {{ not .Values.engine.galaxyProxy.tls.verify | quote }}
+            {{- end }}
+            {{- if .Values.engine.galaxyProxy.tls.caBundleConfigMapRef.name }}
+            - name: SSL_CERT_FILE
+              value: /etc/apme/galaxy-ca/ca-bundle.crt
+            {{- end }}
             {{- if .Values.engine.galaxyProxy.existingSecret.name }}
             - name: APME_PROXY_ADMIN_TOKEN
               valueFrom:
@@ -420,6 +469,11 @@ spec:
           volumeMounts:
             - name: proxy-cache
               mountPath: /cache
+            {{- if .Values.engine.galaxyProxy.tls.caBundleConfigMapRef.name }}
+            - name: galaxy-ca-bundle
+              mountPath: /etc/apme/galaxy-ca
+              readOnly: true
+            {{- end }}
           resources:
             {{- toYaml .Values.engine.resources.galaxyProxy | nindent 12 }}
 
@@ -737,6 +791,16 @@ spec:
         {{- end }}
 
       volumes:
+        {{- if .Values.engine.galaxyProxy.tls.caBundleConfigMapRef.name }}
+        - name: galaxy-ca
+          configMap:
+            name: {{ .Values.engine.galaxyProxy.tls.caBundleConfigMapRef.name | quote }}
+            items:
+              - key: {{ .Values.engine.galaxyProxy.tls.caBundleConfigMapRef.key | quote }}
+                path: ca-bundle.crt
+        - name: galaxy-ca-bundle
+          emptyDir: {}
+        {{- end }}
         - name: sessions
           persistentVolumeClaim:
             claimName: {{ $fullname }}-sessions

@@ -643,7 +643,7 @@
         "type": "object"
       },
       "CreateGalaxyServerRequest": {
-        "description": "Request body for creating a Galaxy server.\n\nAttributes:\n    name: Short label.\n    url: Base API URL (``https://`` only \u2014 mirrors the proxy's 422 gate).\n    token: API token (optional, empty for public Galaxy).\n    auth_url: SSO/Keycloak token endpoint (optional).",
+        "description": "Request body for creating a Galaxy server.\n\nAttributes:\n    name: Short label.\n    url: Base API URL (``https://`` only \u2014 mirrors the proxy's 422 gate).\n    token: API token (optional, empty for public Galaxy).\n    auth_url: SSO/Keycloak token endpoint (optional).\n    validate_certs: TLS verification override, or null to inherit the proxy default.",
         "properties": {
           "auth_url": {
             "default": "",
@@ -662,6 +662,17 @@
           "url": {
             "title": "Url",
             "type": "string"
+          },
+          "validate_certs": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Validate Certs"
           }
         },
         "required": [
@@ -991,7 +1002,7 @@
         "type": "object"
       },
       "GalaxyServerSchema": {
-        "description": "A globally configured Galaxy/Automation Hub server.\n\nAttributes:\n    id: Auto-increment primary key.\n    name: Short label (e.g. ``automation_hub``).\n    url: Base URL of the Galaxy / Automation Hub API.\n    auth_url: SSO/Keycloak token endpoint (empty if not applicable).\n    has_token: Whether a token is configured (token value is never exposed).\n    created_at: ISO 8601 creation timestamp.\n    updated_at: ISO 8601 last-update timestamp.",
+        "description": "A globally configured Galaxy/Automation Hub server.\n\nAttributes:\n    id: Auto-increment primary key.\n    name: Short label (e.g. ``automation_hub``).\n    url: Base URL of the Galaxy / Automation Hub API.\n    auth_url: SSO/Keycloak token endpoint (empty if not applicable).\n    has_token: Whether a token is configured (token value is never exposed).\n    validate_certs: TLS verification override, or null to inherit the proxy default.\n    created_at: ISO 8601 creation timestamp.\n    updated_at: ISO 8601 last-update timestamp.",
         "properties": {
           "auth_url": {
             "default": "",
@@ -1022,6 +1033,17 @@
           "url": {
             "title": "Url",
             "type": "string"
+          },
+          "validate_certs": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Validate Certs"
           }
         },
         "required": [
@@ -2461,7 +2483,7 @@
         "type": "object"
       },
       "UpdateGalaxyServerRequest": {
-        "description": "Partial update for Galaxy server fields.\n\nAttributes:\n    name: New display label.\n    url: New base API URL (``https://`` only when provided).\n    token: New API token (omit or None to leave unchanged).\n    auth_url: New SSO endpoint.",
+        "description": "Partial update for Galaxy server fields.\n\nAttributes:\n    name: New display label.\n    url: New base API URL (``https://`` only when provided).\n    token: New API token (omit or None to leave unchanged).\n    auth_url: New SSO endpoint.\n    validate_certs: TLS policy; explicit null resets to the proxy default.",
         "properties": {
           "auth_url": {
             "anyOf": [
@@ -2506,6 +2528,17 @@
               }
             ],
             "title": "Url"
+          },
+          "validate_certs": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Validate Certs"
           }
         },
         "title": "UpdateGalaxyServerRequest",

@@ -210,9 +210,8 @@ class TestProjectPage:
         wheels_dir = cache_dir / "wheels"
         wheels_dir.mkdir(parents=True)
         whl_name = "ansible_collection_ansible_posix-1.5.4-py3-none-any.whl"
-        (wheels_dir / whl_name).write_bytes(b"fake-wheel")
-
         application = create_app(cache_dir=cache_dir, enable_passthrough=False)
+        (wheels_dir / whl_name).write_bytes(b"fake-wheel")
         with TestClient(application) as client:
             resp = client.get("/simple/ansible-collection-ansible-posix/")
         assert resp.status_code == 200
@@ -234,9 +233,8 @@ class TestServeWheel:
         wheels_dir.mkdir(parents=True)
         whl_name = "ansible_collection_ansible_posix-1.5.4-py3-none-any.whl"
         whl_data = b"PK\x03\x04fake-wheel-contents"
-        (wheels_dir / whl_name).write_bytes(whl_data)
-
         application = create_app(cache_dir=cache_dir)
+        (wheels_dir / whl_name).write_bytes(whl_data)
         with TestClient(application) as client:
             resp = client.get(f"/wheels/{whl_name}")
         assert resp.status_code == 200

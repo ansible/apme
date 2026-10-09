@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import asyncio
 import configparser
+import hashlib
 import hmac
 import io
 import ipaddress
+import json
 import logging
 import os
 import re
@@ -20,6 +22,7 @@ import tempfile
 import time
 import zipfile
 from contextlib import asynccontextmanager
+from dataclasses import asdict
 from email.parser import Parser
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -39,6 +42,8 @@ from pydantic import BaseModel
 from galaxy_proxy.collection_downloader import (
     GalaxyServerConfig,
     download_collections,
+    download_error_summary,
+    read_server_validate_certs,
 )
 from galaxy_proxy.converter import tarball_to_wheel
 from galaxy_proxy.metadata import sha256_file_hex
@@ -242,12 +247,14 @@ class _GalaxyServerPayload(BaseModel):  # type: ignore[misc]
         url: Galaxy API URL.
         token: Authentication token (optional).
         auth_url: SSO auth URL for token refresh (optional).
+        validate_certs: TLS verification override, or None to inherit the CLI default.
     """
 
     name: str
     url: str
     token: str = ""
     auth_url: str = ""
+    validate_certs: bool | None = None
 
 
 class _GalaxyConfigPayload(BaseModel):  # type: ignore[misc]
@@ -268,6 +275,44 @@ class _PrepareCollectionsPayload(BaseModel):  # type: ignore[misc]
     """
 
     specs: list[str]
+
+
+def _source_fingerprint(servers: list[GalaxyServerConfig] | None, cfg_path: Path | None) -> str:
+    """Hash source configuration and TLS trust without persisting credentials.
+
+    Args:
+        servers: Explicit server definitions, or None for CLI discovery.
+        cfg_path: Optional ansible.cfg used by the CLI.
+
+    Returns:
+        SHA-256 digest identifying the effective collection source configuration.
+    """
+    config: dict[str, Any] = {
+        "servers": None if servers is None else [asdict(server) for server in servers],
+        "environment": {
+            key: value
+            for key, value in os.environ.items()
+            if key.startswith("ANSIBLE_GALAXY_") or key in {"SSL_CERT_FILE", "SSL_CERT_DIR"}
+        },
+    }
+    for label, path in (
+        ("ansible_cfg", cfg_path),
+        ("ca_bundle", Path(os.environ["SSL_CERT_FILE"]) if os.environ.get("SSL_CERT_FILE") else None),
+    ):
+        if path is not None:
+            try:
+                config[label] = hashlib.sha256(path.read_bytes()).hexdigest()
+            except OSError:
+                config[label] = {"path": str(path), "unreadable": True}
+    if servers is None and cfg_path is None:
+        # Include native CLI discovery candidates, even when a higher-priority
+        # file makes another candidate unused. Extra invalidation is safe.
+        for candidate in (Path.cwd() / "ansible.cfg", Path.home() / ".ansible.cfg", Path("/etc/ansible/ansible.cfg")):
+            try:
+                config[str(candidate)] = hashlib.sha256(candidate.read_bytes()).hexdigest()
+            except OSError:
+                config[str(candidate)] = None
+    return hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest()
 
 
 def create_app(
@@ -313,6 +358,7 @@ def create_app(
     passthrough = PyPIPassthrough(pypi_url=pypi_url) if enable_passthrough else None
     _download_locks: dict[str, asyncio.Lock] = {}
     _prepare_locks: dict[str, asyncio.Lock] = {}
+    _config_lock = asyncio.Lock()
     # Short-lived handoff for a project page whose disk cache write failed.
     # The pip wheel request can still succeed without another upstream fetch.
     _on_demand_wheels: dict[str, tuple[float, bytes]] = {}
@@ -342,6 +388,17 @@ def create_app(
         Raises:
             Exception: Re-raises an unhandled downstream request exception.
         """
+        path = request.url.path
+        simple_package = normalize_pep503(path.removeprefix("/simple/").rstrip("/"))
+        collection_path = (
+            path.startswith("/wheels/")
+            or path == "/simple/"
+            or (path.startswith("/simple/") and is_collection_package(simple_package))
+        )
+        if collection_path or path in {"/admin/prepare-collections", "/convert-tarballs"}:
+            await _reconcile_native_config()
+        if collection_path and not app.state.galaxy_config_ready:
+            return Response("Galaxy configuration has not been restored yet", status_code=503)
         started = time.perf_counter()
         try:
             response = await call_next(request)
@@ -372,10 +429,64 @@ def create_app(
     app.state.ansible_cfg_path = ansible_cfg_path
     app.state.ansible_galaxy_bin = ansible_galaxy_bin
     app.state.galaxy_config_generation = 0
+    initial_cfg = ansible_cfg_path
+    if initial_cfg is None and os.environ.get("ANSIBLE_CONFIG", "").strip():
+        initial_cfg = Path(os.environ["ANSIBLE_CONFIG"]).expanduser()
+    initial_fingerprint = _source_fingerprint(app.state.galaxy_servers, initial_cfg)
+    require_gateway = os.environ.get("APME_PROXY_REQUIRE_GATEWAY_CONFIG", "").strip().lower() in {"1", "true", "yes"}
+    app.state.galaxy_config_ready = not require_gateway
+    if app.state.galaxy_config_ready:
+        cache.bind_config(initial_fingerprint)
+    app.state.galaxy_config_managed = not app.state.galaxy_config_ready
+    app.state.galaxy_source_fingerprint = initial_fingerprint
+
+    async def _bind_cache_config(fingerprint: str, *, managed: bool) -> None:
+        """Bind in a worker and hold the config lock until disk work completes.
+
+        Args:
+            fingerprint: Effective source digest.
+            managed: Whether Gateway owns configuration.
+
+        Raises:
+            asyncio.CancelledError: After any in-flight disk binding completes.
+        """
+        binding = asyncio.create_task(asyncio.to_thread(cache.bind_config, fingerprint, managed=managed))
+        try:
+            await asyncio.shield(binding)
+        except asyncio.CancelledError:
+            await binding
+            raise
+
+    async def _reconcile_native_config() -> None:
+        """Rebind native CLI cache when a local scan activates another source."""
+        async with _config_lock:
+            if app.state.galaxy_config_managed:
+                return
+            cfg_path, _, _ = _get_galaxy_config(allow_transition=True)
+            fingerprint = await asyncio.to_thread(_source_fingerprint, app.state.galaxy_servers, cfg_path)
+            if fingerprint == app.state.galaxy_source_fingerprint and app.state.galaxy_config_ready:
+                return
+            app.state.galaxy_config_ready = False
+            cache.enabled = False
+            app.state.galaxy_config_generation += 1
+            _on_demand_wheels.clear()
+            _prepare_fallback_wheels.clear()
+            await _bind_cache_config(fingerprint, managed=False)
+            app.state.galaxy_source_fingerprint = fingerprint
+            app.state.galaxy_config_ready = True
 
     def _require_current_config(generation: int) -> None:
         if generation != app.state.galaxy_config_generation:
             raise HTTPException(status_code=409, detail="Galaxy configuration changed; retry the request")
+
+    def _require_config_ready() -> None:
+        """Reject collection access while source configuration is in transition.
+
+        Raises:
+            HTTPException: When source configuration is unavailable.
+        """
+        if not app.state.galaxy_config_ready:
+            raise HTTPException(status_code=503, detail="Galaxy configuration is being restored")
 
     if _admin_token_configured() == "" and not _unauth_admin_allowed():
         logger.warning(
@@ -392,7 +503,9 @@ def create_app(
             "single-host daemon; set APME_PROXY_ADMIN_TOKEN everywhere else."
         )
 
-    def _get_galaxy_config() -> tuple[Path | None, list[GalaxyServerConfig] | None, str | None]:
+    def _get_galaxy_config(
+        *, allow_transition: bool = False
+    ) -> tuple[Path | None, list[GalaxyServerConfig] | None, str | None]:
         """Read current Galaxy config from app state.
 
         ``None`` means no explicit server list (public Galaxy, or servers
@@ -400,9 +513,17 @@ def create_app(
         empty list is explicit configuration with no usable servers and
         must stay empty so callers fail closed.
 
+        Args:
+            allow_transition: Internal native reconciliation may recover an interrupted binding.
+
         Returns:
             tuple: (ansible_cfg_path, galaxy_servers, ansible_galaxy_bin).
+
+        Raises:
+            HTTPException: If a configuration transition is in progress.
         """
+        if not allow_transition and not app.state.galaxy_config_ready:
+            raise HTTPException(status_code=503, detail="Galaxy configuration is being restored")
         servers: list[GalaxyServerConfig] | None = app.state.galaxy_servers
         cfg_path = app.state.ansible_cfg_path
         if cfg_path is None:
@@ -484,16 +605,25 @@ def create_app(
                 url=s.url,
                 token=s.token or None,
                 auth_url=s.auth_url or None,
+                validate_certs=s.validate_certs,
             )
             for s in body.servers
         ]
-        if desired_servers != app.state.galaxy_servers or app.state.ansible_cfg_path is not None:
-            cache.clear()
-            _on_demand_wheels.clear()
-            _prepare_fallback_wheels.clear()
-            app.state.galaxy_config_generation += 1
-        app.state.galaxy_servers = desired_servers
-        app.state.ansible_cfg_path = None
+        async with _config_lock:
+            changed = desired_servers != app.state.galaxy_servers or app.state.ansible_cfg_path is not None
+            if changed or not app.state.galaxy_config_ready:
+                app.state.galaxy_config_ready = False
+                cache.enabled = False
+                app.state.galaxy_config_generation += 1
+                _on_demand_wheels.clear()
+                _prepare_fallback_wheels.clear()
+                fingerprint = await asyncio.to_thread(_source_fingerprint, desired_servers, None)
+                await _bind_cache_config(fingerprint, managed=True)
+                app.state.galaxy_servers = desired_servers
+                app.state.ansible_cfg_path = None
+                app.state.galaxy_config_managed = True
+                app.state.galaxy_source_fingerprint = fingerprint
+                app.state.galaxy_config_ready = True
         names = [s.name.strip() for s in body.servers]
         logger.info("Galaxy config updated: %d server(s): %s", len(names), ", ".join(names))
         return {"accepted": len(names), "servers": names}
@@ -519,6 +649,8 @@ def create_app(
         _require_admin_token(request)
         if not body.specs or len(body.specs) > 100:
             raise HTTPException(status_code=422, detail="specs must contain between 1 and 100 collections")
+        if not app.state.galaxy_config_ready:
+            raise HTTPException(status_code=503, detail="Galaxy configuration has not been restored yet")
 
         specs = [spec.strip() for spec in body.specs]
         if any(
@@ -679,6 +811,7 @@ def create_app(
             return HTMLResponse(content=html, status_code=status)
 
         logger.info("collection_requested package=%s type=collection endpoint=project", normalized)
+        _require_config_ready()
 
         try:
             namespace, name = python_to_fqcn(normalized)
@@ -778,6 +911,7 @@ def create_app(
         """
         if not filename.endswith(".whl") or "/" in filename or "\\" in filename or ".." in filename:
             raise HTTPException(status_code=404, detail=f"Invalid wheel filename: {filename}")
+        _require_config_ready()
 
         started = time.perf_counter()
 
@@ -832,6 +966,7 @@ def create_app(
         if lock is None:
             lock = _download_locks.setdefault(lock_key, asyncio.Lock())
         async with lock:
+            _require_config_ready()
             cached = _read_cached_wheel(cache, filename)
             if cached is None:
                 cached = _take_on_demand_wheel(_on_demand_wheels, filename)
@@ -858,6 +993,8 @@ def create_app(
                     galaxy_servers=servers_for_download,
                     ansible_galaxy_bin=galaxy_bin,
                 )
+            except HTTPException:
+                raise
             except Exception as exc:
                 server_labels = [_safe_server_label(s.url) for s in servers] if servers else ["default"]
                 logger.error(
@@ -908,9 +1045,12 @@ def create_app(
         """  # noqa: DOC502 -- the 403 raise lives in _require_admin_token
         _require_admin_token(request)
         tarball_path = _validate_tarball_dir(tarball_dir)
+        if not app.state.galaxy_config_ready:
+            raise HTTPException(status_code=503, detail="Galaxy configuration has not been restored yet")
 
         converted: list[str] = []
         failed: list[str] = []
+        generation = app.state.galaxy_config_generation
 
         for tb in sorted(tarball_path.glob("*.tar.gz")):
             if tb.is_symlink() or not tb.is_file():
@@ -920,6 +1060,7 @@ def create_app(
             try:
                 tarball_data = await asyncio.to_thread(tb.read_bytes)
                 whl_name, whl_data = await asyncio.to_thread(tarball_to_wheel, tarball_data)
+                _require_current_config(generation)
                 cache.put_wheel(whl_name, whl_data)
                 converted.append(whl_name)
                 logger.info("Converted tarball: %s -> %s", tb.name, whl_name)
@@ -1023,12 +1164,18 @@ def _load_servers_from_ansible_cfg(cfg_path: Path) -> list[GalaxyServerConfig] |
             continue
         token = parser.get(section, "token", fallback="").strip() or None
         auth_url = parser.get(section, "auth_url", fallback="").strip() or None
+        try:
+            validate_certs = read_server_validate_certs(parser, name)
+        except ValueError:
+            logger.warning("Invalid Galaxy TLS policy for server %r", name)
+            return []
         servers.append(
             GalaxyServerConfig(
                 name=name,
                 url=url,
                 token=token,
                 auth_url=auth_url,
+                validate_certs=validate_certs,
             )
         )
     return servers
@@ -1119,6 +1266,8 @@ def _list_cached_wheels(cache: ProxyCache, namespace: str, name: str) -> list[st
     Returns:
         Sorted list of matching wheel filenames.
     """
+    if not cache.enabled:
+        return []
     prefix = f"ansible_collection_{namespace}_{name}-"
     wheels: list[str] = []
     try:
@@ -1293,7 +1442,8 @@ async def _download_and_convert(
 
         if result.failed_specs:
             server_labels = [_safe_server_label(s.url) for s in galaxy_servers] if galaxy_servers else ["default"]
-            msg = f"Failed to download {spec} from configured Galaxy servers [{', '.join(server_labels)}]"
+            summary = download_error_summary(result.stderr)
+            msg = f"Failed to download {spec} from configured Galaxy servers [{', '.join(server_labels)}]: {summary}"
             raise RuntimeError(msg)
 
         if not result.tarball_paths:

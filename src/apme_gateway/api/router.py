@@ -329,6 +329,7 @@ def _to_galaxy_schema(gs: GalaxyServer) -> GalaxyServerSchema:
         url=gs.url,
         auth_url=gs.auth_url,
         has_token=bool(gs.token),
+        validate_certs=gs.validate_certs,
         created_at=gs.created_at,
         updated_at=gs.updated_at,
     )
@@ -369,6 +370,7 @@ async def create_galaxy_server(body: CreateGalaxyServerRequest) -> GalaxyServerS
                 url=body.url,
                 token=body.token,
                 auth_url=body.auth_url,
+                validate_certs=body.validate_certs,
             )
     except IntegrityError:
         raise HTTPException(
@@ -422,7 +424,7 @@ async def update_galaxy_server(
     """
     from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
 
-    updates: dict[str, str] = {}
+    updates: dict[str, str | bool | None] = {}
     if body.name is not None:
         updates["name"] = body.name
     if body.url is not None:
@@ -431,6 +433,8 @@ async def update_galaxy_server(
         updates["token"] = body.token
     if body.auth_url is not None:
         updates["auth_url"] = body.auth_url
+    if "validate_certs" in body.model_fields_set:
+        updates["validate_certs"] = body.validate_certs
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")
     try:

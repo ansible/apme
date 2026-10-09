@@ -85,6 +85,7 @@ class GalaxyServerDef:
     url: str
     token: str
     auth_url: str
+    validate_certs: bool
     def __init__(
         self,
         *,
@@ -92,10 +93,12 @@ class GalaxyServerDef:
         url: str = "",
         token: str = "",
         auth_url: str = "",
+        validate_certs: bool | None = None,
         **kwargs: object,
     ) -> None: ...
     def SerializeToString(self) -> bytes: ...
     def ParseFromString(self, data: bytes) -> int: ...
+    def HasField(self, name: str) -> bool: ...
 
 # Severity enum constants (ADR-043)
 SEVERITY_UNSPECIFIED: int

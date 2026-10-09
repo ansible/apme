@@ -163,6 +163,7 @@ message GalaxyServerDef {
   string url = 2;          // Base URL of Galaxy / Automation Hub API
   string token = 3;        // API token (optional)
   string auth_url = 4;     // SSO/Keycloak token endpoint (optional, for Automation Hub)
+  optional bool validate_certs = 5; // Unset inherits the proxy/CLI TLS default
 }
 
 // Log level for structured log transport (ADR-033).
