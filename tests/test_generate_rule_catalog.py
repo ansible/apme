@@ -420,12 +420,17 @@ class TestNativeDocRuleTestStatus:
         tests_dir = tmp_path / "tests"
         tests_dir.mkdir()
         (tests_dir / "test_violation_convert.py").write_text(
-            'def test_violation_round_trip():\n    Violation(rule_id="R402")\n',
+            "from tools.rule_analysis import RuleMetadata\n"
+            "def test_rule_metadata_round_trip():\n"
+            '    RuleMetadata(rule_id="R402")\n',
             encoding="utf-8",
         )
         monkeypatch.setattr(_mod, "NATIVE_DIR", native_dir)
         monkeypatch.setattr(_mod, "TESTS_DIR", tests_dir)
         monkeypatch.setattr(_mod, "_TEST_CACHE", None)
+
+        cache = _mod._get_test_cache()
+        assert cache["R402"] == ["test_violation_convert.py"]
 
         rules = _mod._collect_native_rules()
 
