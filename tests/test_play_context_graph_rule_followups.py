@@ -6,6 +6,8 @@ from typing import cast
 
 import pytest
 
+from apme_engine.engine.graph_builder import GraphBuilder
+from apme_engine.engine.models import ObjectList, Play, Playbook, Role, RoleInPlay, Task, TaskFile
 from apme_engine.graph.content_graph import (
     ContentGraph,
     ContentNode,
@@ -281,6 +283,64 @@ def test_runtime_definition_in_static_play_role_is_available_to_later_tasks() ->
     assert producer.node_id in graph.play_scoped_node_ids(play.node_id)
     assert result is not None
     assert result.verdict is False
+
+
+def test_pre_tasks_run_before_static_roles_for_variable_provenance() -> None:
+    """Keep pre-task register values available to tasks in a static role."""
+    pre_task = Task(
+        key="task site.yml#play[0]#pre_tasks[0]",
+        module="ansible.builtin.command",
+        options={"register": "pre_task_result"},
+        module_options={"cmd": "true"},
+    )
+    role_task = Task(
+        key="task roles/web/tasks/main.yml#task[0]",
+        module="ansible.builtin.debug",
+        module_options={"msg": "{{ pre_task_result }}"},
+    )
+    role_taskfile = TaskFile(
+        key="taskfile roles/web/tasks/main.yml",
+        name="main.yml",
+        defined_in="roles/web/tasks/main.yml",
+        tasks=[role_task],
+    )
+    role = Role(
+        key="role roles/web",
+        name="web",
+        fqcn="web",
+        defined_in="roles/web",
+        taskfiles=[role_taskfile],
+    )
+    play = Play(
+        key="play site.yml#play[0]",
+        defined_in="site.yml",
+        pre_tasks=[pre_task],
+        roles=[RoleInPlay(name="web", defined_in="site.yml")],
+    )
+    playbook = Playbook(
+        key="playbook site.yml",
+        defined_in="site.yml",
+        plays=[play],
+    )
+    definitions: dict[str, object] = {
+        "definitions": {
+            "roles": ObjectList(items=[role]),
+            "playbooks": ObjectList(items=[playbook]),
+        },
+        "mappings": None,
+    }
+
+    graph = GraphBuilder(definitions, {}).build()
+    role_task_node_id = "roles/web/tasks/main.yml/tasks[0]"
+    play_id = "site.yml/plays[0]"
+    play_scope = graph.play_scoped_node_ids(play_id)
+    resolved = VariableProvenanceResolver(graph).resolve_variables(
+        role_task_node_id,
+        play_context_id=play_id,
+        play_scope=play_scope,
+    )
+
+    assert "pre_task_result" in resolved
 
 
 def test_static_play_role_tasks_resolve_play_context_and_no_log() -> None:
@@ -965,6 +1025,59 @@ def test_l110_requires_no_log_on_every_unscoped_include_path() -> None:
 
     assert result is not None
     assert result.verdict is True
+
+
+@pytest.mark.parametrize(  # type: ignore[untyped-decorator]
+    ("unscoped_no_log", "expected_violation"),
+    [(None, True), (True, False)],
+)
+def test_l110_checks_unscoped_paths_alongside_play_paths(
+    unscoped_no_log: bool | None,
+    expected_violation: bool,
+) -> None:
+    """Check unscoped executions when a debug task also has a play path.
+
+    Args:
+        unscoped_no_log: no_log value on the unscoped include path.
+        expected_violation: Whether the unprotected path should be reported.
+    """
+    graph = ContentGraph()
+    play = ContentNode(
+        identity=NodeIdentity(path="site.yml/plays[0]", node_type=NodeType.PLAY),
+        file_path="site.yml",
+        no_log=True,
+        scope=NodeScope.OWNED,
+    )
+    play_include = ContentNode(
+        identity=NodeIdentity(path="site.yml/plays[0]/tasks[0]", node_type=NodeType.TASK),
+        file_path="site.yml",
+        module="ansible.builtin.include_tasks",
+        scope=NodeScope.OWNED,
+    )
+    unscoped_include = ContentNode(
+        identity=NodeIdentity(path="standalone.yml/tasks[0]", node_type=NodeType.TASK),
+        file_path="standalone.yml",
+        module="ansible.builtin.include_tasks",
+        no_log=unscoped_no_log,
+        scope=NodeScope.OWNED,
+    )
+    task = ContentNode(
+        identity=NodeIdentity(path="shared.yml/tasks[0]", node_type=NodeType.TASK),
+        file_path="shared.yml",
+        module="ansible.builtin.debug",
+        module_options={"msg": "{{ db_password }}"},
+        scope=NodeScope.OWNED,
+    )
+    for node in (play, play_include, unscoped_include, task):
+        graph.add_node(node)
+    graph.add_edge(play.node_id, play_include.node_id, EdgeType.CONTAINS, position=0)
+    graph.add_edge(play_include.node_id, task.node_id, EdgeType.INCLUDE, position=0)
+    graph.add_edge(unscoped_include.node_id, task.node_id, EdgeType.INCLUDE, position=0)
+
+    result = DebugSensitiveVarsGraphRule().process(graph, task.node_id)
+
+    assert result is not None
+    assert result.verdict is expected_violation
 
 
 def test_r404_reports_each_shared_play_variable_scope() -> None:

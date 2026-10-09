@@ -473,16 +473,13 @@ class GraphBuilder:
                 self._graph.add_edge(nid, vf_nid, EdgeType.VARS_INCLUDE, position=position)
                 position += 1
 
-        # static roles
-        for rip_or_key in getattr(play, "roles", []) or []:
-            if isinstance(rip_or_key, RoleInPlay):
-                role_nid = self._resolve_role_nid(rip_or_key)
-                if role_nid:
-                    self._graph.add_edge(nid, role_nid, EdgeType.DEPENDENCY, position=position)
-                    position += 1
+        def build_task_list(task_list_attr: str) -> None:
+            """Build one play task section at the current execution position.
 
-        # pre_tasks, tasks, post_tasks
-        for task_list_attr in ("pre_tasks", "tasks", "post_tasks"):
+            Args:
+                task_list_attr: Play attribute containing the ordered tasks.
+            """
+            nonlocal position
             task_list = getattr(play, task_list_attr, []) or []
             for task_or_key in task_list:
                 task_obj: Task | None = None
@@ -495,6 +492,22 @@ class GraphBuilder:
                     task_nid = self._build_task(task_obj, nid, file_path, play_index, position, scope)
                     self._graph.add_edge(nid, task_nid, EdgeType.CONTAINS, position=position)
                     position += 1
+
+        # Ansible executes pre_tasks before static roles, then regular tasks
+        # and post_tasks. Keep edge positions in that semantic order so role
+        # provenance can see values registered by pre_tasks.
+        build_task_list("pre_tasks")
+
+        # Static roles
+        for rip_or_key in getattr(play, "roles", []) or []:
+            if isinstance(rip_or_key, RoleInPlay):
+                role_nid = self._resolve_role_nid(rip_or_key)
+                if role_nid:
+                    self._graph.add_edge(nid, role_nid, EdgeType.DEPENDENCY, position=position)
+                    position += 1
+
+        build_task_list("tasks")
+        build_task_list("post_tasks")
 
         # handlers
         handler_list = getattr(play, "handlers", []) or []
