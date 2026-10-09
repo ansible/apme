@@ -120,6 +120,7 @@ def _install_push_stubs(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
             self.url = "https://hub.example.com"
             self.token = "secret"
             self.auth_url = ""
+            self.validate_certs = None
 
     class _FakeSession:
         async def __aenter__(self) -> object:
@@ -547,6 +548,7 @@ class TestPushGalaxyConfigForwardsToken:
                     "url": "https://hub.example.com",
                     "token": "secret",
                     "auth_url": "",
+                    "validate_certs": None,
                 },
             ]
         }

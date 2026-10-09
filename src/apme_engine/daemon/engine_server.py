@@ -186,6 +186,7 @@ def _write_session_galaxy_cfg(
                 url=url,
                 token=s.token or None,
                 auth_url=s.auth_url or None,
+                validate_certs=s.validate_certs if s.HasField("validate_certs") else None,
             )
         )
     if not configs:

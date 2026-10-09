@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import shutil
@@ -64,7 +65,75 @@ class ProxyCache:
         """
         self.root = cache_dir or _default_cache_dir()
         self.wheels_dir = self.root / "wheels"
-        self.wheels_dir.mkdir(parents=True, exist_ok=True)
+        self.enabled = True
+        try:
+            self.wheels_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            self.enabled = False
+            logger.warning(
+                "wheel_cache_unavailable error_type=%s; downloads will bypass disk cache", type(exc).__name__
+            )
+
+    def config_identity(self) -> tuple[str, bool] | None:
+        """Read the persisted source digest without loading credentials.
+
+        Returns:
+            The SHA-256 digest and admin-managed flag, or None when unavailable.
+        """
+        try:
+            path = _safe_wheel_path(self.root, ".galaxy-source.sha256")
+            with path.open(encoding="ascii") as stream:
+                raw = stream.read(256)
+            value = json.loads(raw)
+            fingerprint = value.get("fingerprint") if isinstance(value, dict) else None
+            managed = value.get("managed") if isinstance(value, dict) else None
+            if (
+                isinstance(fingerprint, str)
+                and len(fingerprint) == 64
+                and all(char in "0123456789abcdef" for char in fingerprint)
+                and isinstance(managed, bool)
+            ):
+                return fingerprint, managed
+        except (OSError, ValueError, UnicodeError):
+            return None
+        return None
+
+    def bind_config(self, fingerprint: str, *, managed: bool = False) -> None:
+        """Retain wheels only when their persisted source identity matches.
+
+        Storage failure disables disk caching for this process, allowing fresh
+        Hub downloads without serving artifacts from an unverified old source.
+
+        Args:
+            fingerprint: SHA-256 digest of effective source configuration.
+            managed: Whether the Gateway must restore this configuration after restart.
+
+        Raises:
+            ValueError: When the fingerprint is not a SHA-256 hex digest.
+        """
+        if len(fingerprint) != 64 or any(char not in "0123456789abcdef" for char in fingerprint):
+            raise ValueError("Invalid Galaxy source fingerprint")
+        self.enabled = False
+        try:
+            identity = self.config_identity()
+            if identity != (fingerprint, managed):
+                if identity is None or identity[0] != fingerprint:
+                    self.clear()
+                path = _safe_wheel_path(self.root, ".galaxy-source.sha256")
+                fd, filename = tempfile.mkstemp(dir=self.root, suffix=".tmp")
+                temporary = Path(filename)
+                try:
+                    with os.fdopen(fd, "w", encoding="ascii") as stream:
+                        json.dump({"fingerprint": fingerprint, "managed": managed}, stream)
+                    temporary.replace(path)
+                finally:
+                    temporary.unlink(missing_ok=True)
+        except (OSError, ValueError) as exc:
+            logger.warning(
+                "wheel_cache_binding_unavailable error_type=%s; downloads will bypass disk cache", type(exc).__name__
+            )
+            return
+        self.enabled = True
 
     def get_wheel(self, filename: str) -> bytes | None:
         """Return cached wheel bytes, or None if not cached.
@@ -75,6 +144,8 @@ class ProxyCache:
         Returns:
             Cached wheel bytes, or None if the file is not present.
         """
+        if not self.enabled:
+            return None
         path = _safe_wheel_path(self.wheels_dir, filename)
         if path.exists():
             return path.read_bytes()
@@ -93,6 +164,8 @@ class ProxyCache:
         Raises:
             OSError: When the temporary file cannot be written or renamed.
         """
+        if not self.enabled:
+            raise OSError("Wheel cache is unavailable for the current Galaxy configuration")
         path = _safe_wheel_path(self.wheels_dir, filename)
         fd, tmp = tempfile.mkstemp(dir=self.wheels_dir, suffix=".tmp")
         tmp_path = Path(tmp)
@@ -114,6 +187,8 @@ class ProxyCache:
         Returns:
             Path to the cached file, or None if it does not exist.
         """
+        if not self.enabled:
+            return None
         path = _safe_wheel_path(self.wheels_dir, filename)
         return path if path.exists() else None
 

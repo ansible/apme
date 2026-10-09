@@ -290,6 +290,8 @@ spec:
     - name: galaxy-proxy
       image: apme-galaxy-proxy:latest
       env:
+        - name: APME_PROXY_REQUIRE_GATEWAY_CONFIG
+          value: "1"
         - name: LOG_LEVEL
           value: "INFO"
         # Must match the gateway container above (ADR-048).

@@ -45,6 +45,14 @@ engine:
     # -- Additional environment variables for Galaxy Proxy. Set
     # ANSIBLE_GALAXY_IGNORE=true only for untrusted lab certificates.
     extraEnv: []
+    tls:
+      # -- Null inherits the CLI default (verification enabled) or extraEnv.
+      # Per-server validate_certs from Gateway takes precedence.
+      verify: null
+      # -- Additional PEM CA trust, merged with the proxy image's system roots.
+      caBundleConfigMapRef:
+        name: ""
+        key: ca-bundle.crt
   # Recreate avoids RWO PVC conflicts during single-replica rolling updates.
   strategy:
     type: Recreate

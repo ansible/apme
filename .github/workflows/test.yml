@@ -17,12 +17,15 @@ env:
   PY_COLORS: 1
   APME_TEST_DATABASE_URL: postgresql+asyncpg://apme:apme@localhost:5432/apme_test
 
+# Use Google's public Docker Hub cache to avoid anonymous Hub pull limits.
+# Keep the PostgreSQL 16 index digest identical across all service jobs.
+
 jobs:
   test:
     runs-on: ubuntu-24.04
     services:
       postgres:
-        image: postgres:16
+        image: mirror.gcr.io/library/postgres:16@sha256:ca0bd484cb98bf4b24eb1010e73fb3fcbd6714d240fbc1a10eea5b7dbecb641d
         env:
           POSTGRES_USER: apme
           POSTGRES_PASSWORD: apme
@@ -58,7 +61,7 @@ jobs:
         opa-transport: [local, podman]
     services:
       postgres:
-        image: postgres:16
+        image: mirror.gcr.io/library/postgres:16@sha256:ca0bd484cb98bf4b24eb1010e73fb3fcbd6714d240fbc1a10eea5b7dbecb641d
         env:
           POSTGRES_USER: apme
           POSTGRES_PASSWORD: apme
@@ -112,7 +115,7 @@ jobs:
     runs-on: ubuntu-24.04
     services:
       postgres:
-        image: postgres:16
+        image: mirror.gcr.io/library/postgres:16@sha256:ca0bd484cb98bf4b24eb1010e73fb3fcbd6714d240fbc1a10eea5b7dbecb641d
         env:
           POSTGRES_USER: apme
           POSTGRES_PASSWORD: apme

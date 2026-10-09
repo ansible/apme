@@ -623,7 +623,7 @@ async def _run_daemon(services: dict[str, str]) -> None:
 
         log_level = _setup_logging(0)
 
-        proxy_app = create_app()
+        proxy_app = await asyncio.to_thread(create_app)
         config = uvicorn.Config(
             proxy_app,
             host=proxy_host or "127.0.0.1",

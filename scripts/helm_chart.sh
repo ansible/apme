@@ -336,6 +336,19 @@ for d in services:
 print("OK: Simple topology template checks passed")
 PY
 mkdir -p "${OUT_DIR}"
+TLS_RENDER="$("${HELM_BIN}" template test-release "${CHART_DIR}" \
+  "${HELM_TEST_DB_SET[@]}" --set engine.galaxyProxy.tls.verify=false \
+  --set engine.galaxyProxy.tls.caBundleConfigMapRef.name=hub-ca)"
+assert_template_contains "Hub CA initializer" "${TLS_RENDER}" 'name: init-galaxy-ca'
+assert_template_contains "Hub CA trust env" "${TLS_RENDER}" 'name: SSL_CERT_FILE'
+assert_template_contains "Hub TLS opt-out" "${TLS_RENDER}" $'name: ANSIBLE_GALAXY_IGNORE\n              value: "true"'
+assert_template_contains "Hub CA ConfigMap" "${TLS_RENDER}" 'name: "hub-ca"'
+if TLS_ERROR="$("${HELM_BIN}" template test-release "${CHART_DIR}" \
+  "${HELM_TEST_DB_SET[@]}" --set-string engine.galaxyProxy.tls.verify=false 2>&1)"; then
+  echo "FAIL: string TLS policy must be rejected" >&2
+  exit 1
+fi
+assert_fail_message "TLS value type" "${TLS_ERROR}" 'must be a boolean or null'
 echo "==> helm package ${CHART_DIR} -> ${OUT_DIR}"
 "${HELM_BIN}" package "${CHART_DIR}" -d "${OUT_DIR}"
 

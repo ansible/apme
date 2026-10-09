@@ -572,6 +572,7 @@ class GalaxyServer(Base):
         url: Base URL of the Galaxy / Automation Hub API.
         token: API token (may be empty for public Galaxy).
         auth_url: SSO/Keycloak token endpoint (optional, for Automation Hub).
+        validate_certs: Per-server TLS verification, or null to inherit the proxy default.
         created_at: ISO 8601 creation timestamp.
         updated_at: ISO 8601 last-update timestamp.
     """
@@ -583,6 +584,7 @@ class GalaxyServer(Base):
     url: Mapped[str] = mapped_column(Text, nullable=False)
     token: Mapped[str] = mapped_column(Text, nullable=False, default="")
     auth_url: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    validate_certs: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=None)
     created_at: Mapped[str] = mapped_column(Text, nullable=False)
     updated_at: Mapped[str] = mapped_column(Text, nullable=False)
 

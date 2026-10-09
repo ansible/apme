@@ -875,6 +875,7 @@ class GalaxyServerSchema(BaseModel):  # type: ignore[misc]
         url: Base URL of the Galaxy / Automation Hub API.
         auth_url: SSO/Keycloak token endpoint (empty if not applicable).
         has_token: Whether a token is configured (token value is never exposed).
+        validate_certs: TLS verification override, or null to inherit the proxy default.
         created_at: ISO 8601 creation timestamp.
         updated_at: ISO 8601 last-update timestamp.
     """
@@ -884,6 +885,7 @@ class GalaxyServerSchema(BaseModel):  # type: ignore[misc]
     url: str
     auth_url: str = ""
     has_token: bool = False
+    validate_certs: bool | None = None
     created_at: str
     updated_at: str
 
@@ -939,12 +941,14 @@ class CreateGalaxyServerRequest(BaseModel):  # type: ignore[misc]
         url: Base API URL (``https://`` only — mirrors the proxy's 422 gate).
         token: API token (optional, empty for public Galaxy).
         auth_url: SSO/Keycloak token endpoint (optional).
+        validate_certs: TLS verification override, or null to inherit the proxy default.
     """
 
     name: str
     url: str
     token: str = ""
     auth_url: str = ""
+    validate_certs: bool | None = None
 
     @field_validator("url")  # type: ignore[untyped-decorator]
     @classmethod
@@ -968,12 +972,14 @@ class UpdateGalaxyServerRequest(BaseModel):  # type: ignore[misc]
         url: New base API URL (``https://`` only when provided).
         token: New API token (omit or None to leave unchanged).
         auth_url: New SSO endpoint.
+        validate_certs: TLS policy; explicit null resets to the proxy default.
     """
 
     name: str | None = None
     url: str | None = None
     token: str | None = None
     auth_url: str | None = None
+    validate_certs: bool | None = None
 
     @field_validator("url")  # type: ignore[untyped-decorator]
     @classmethod

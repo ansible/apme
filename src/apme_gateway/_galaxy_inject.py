@@ -48,6 +48,7 @@ async def load_galaxy_server_defs() -> list[GalaxyServerDef]:
                 url=s.url,
                 token=s.token,
                 auth_url=s.auth_url,
+                validate_certs=s.validate_certs,
             )
         )
     return defs

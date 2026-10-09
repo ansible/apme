@@ -9,18 +9,25 @@ from __future__ import annotations
 
 import asyncio
 import configparser
+import hashlib
 import hmac
 import io
 import ipaddress
+import json
 import logging
 import os
+import platform
 import re
 import socket
+import ssl
+import stat
 import tempfile
 import time
 import zipfile
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
+from dataclasses import asdict
 from email.parser import Parser
+from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
@@ -39,6 +46,8 @@ from pydantic import BaseModel
 from galaxy_proxy.collection_downloader import (
     GalaxyServerConfig,
     download_collections,
+    download_error_summary,
+    read_server_validate_certs,
 )
 from galaxy_proxy.converter import tarball_to_wheel
 from galaxy_proxy.metadata import sha256_file_hex
@@ -242,12 +251,14 @@ class _GalaxyServerPayload(BaseModel):  # type: ignore[misc]
         url: Galaxy API URL.
         token: Authentication token (optional).
         auth_url: SSO auth URL for token refresh (optional).
+        validate_certs: TLS verification override, or None to inherit the CLI default.
     """
 
     name: str
     url: str
     token: str = ""
     auth_url: str = ""
+    validate_certs: bool | None = None
 
 
 class _GalaxyConfigPayload(BaseModel):  # type: ignore[misc]
@@ -270,6 +281,226 @@ class _PrepareCollectionsPayload(BaseModel):  # type: ignore[misc]
     specs: list[str]
 
 
+def _source_environment() -> dict[str, str]:
+    """Return native Galaxy configuration and trust environment inputs.
+
+    Returns:
+        Relevant environment variables, including the config discovery override.
+    """
+    return {
+        key: value
+        for key, value in os.environ.items()
+        if key.startswith("ANSIBLE_GALAXY_")
+        or key in {"ANSIBLE_CONFIG", "ANSIBLE_HOME", "SSL_CERT_FILE", "SSL_CERT_DIR"}
+    }
+
+
+@lru_cache(maxsize=32)
+def _native_path_settings(cfg_path: Path, identity: tuple[int, ...]) -> tuple[str, str]:
+    """Cache native token-path inputs by configuration file revision.
+
+    Args:
+        cfg_path: Active native config file.
+        identity: File metadata used as the cache key.
+
+    Returns:
+        Optional Galaxy token path and Ansible home overrides.
+
+    Raises:
+        OSError: If the file cannot be read.
+        configparser.Error: If the configuration cannot be parsed.
+        UnicodeError: If the configuration is not UTF-8.
+    """  # noqa: DOC502 -- delegated parser/file errors
+    parser = configparser.ConfigParser(interpolation=None)
+    with cfg_path.open(encoding="utf-8") as stream:
+        parser.read_file(stream)
+    return parser.get("galaxy", "token_path", fallback=""), parser.get("defaults", "home", fallback="")
+
+
+def _config_candidates(cfg_path: Path | None) -> list[Path]:
+    """Enumerate native config candidates, including directory overrides.
+
+    Args:
+        cfg_path: Explicit configuration override, or None for environment/discovery.
+
+    Returns:
+        Candidate files in Ansible discovery order.
+    """
+    override = Path(os.path.expandvars(str(cfg_path))).expanduser() if cfg_path is not None else None
+    if override is None and os.environ.get("ANSIBLE_CONFIG"):
+        override = Path(os.path.expandvars(os.environ["ANSIBLE_CONFIG"])).expanduser()
+    candidates = []
+    if override is not None:
+        candidates.append(override / "ansible.cfg" if override.is_dir() else override)
+    cwd = Path.cwd()
+    with suppress(OSError):
+        if not cwd.stat().st_mode & 0o002:
+            candidates.append(cwd / "ansible.cfg")
+    candidates.extend((Path.home() / ".ansible.cfg", Path("/etc/ansible/ansible.cfg")))
+    return candidates
+
+
+def _effective_cfg(cfg_path: Path | None) -> Path | None:
+    """Select a readable file for cache input tracking; the CLI still owns parsing.
+
+    Args:
+        cfg_path: Optional native configuration override.
+
+    Returns:
+        Selected config file or None when discovery finds no readable file.
+    """
+    return next((path for path in _config_candidates(cfg_path) if path.is_file() and os.access(path, os.R_OK)), None)
+
+
+def _native_token_path(cfg_path: Path | None) -> Path:
+    """Locate the file-token input without performing Galaxy authentication.
+
+    Args:
+        cfg_path: Explicit native config or None for discovery.
+
+    Returns:
+        Token file selected by environment, INI, or the Ansible home default.
+    """
+    cfg_path = _effective_cfg(cfg_path)
+    token_path, home = "", ""
+    if cfg_path is not None:
+        with suppress(OSError, configparser.Error, UnicodeError):
+            stat = cfg_path.stat()
+            token_path, home = _native_path_settings(
+                cfg_path, (stat.st_dev, stat.st_ino, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size)
+            )
+    value = os.environ.get("ANSIBLE_GALAXY_TOKEN_PATH") or token_path
+    env_home = os.environ.get("ANSIBLE_HOME")
+    origin = None
+    if value:
+        origin = cfg_path if token_path and not os.environ.get("ANSIBLE_GALAXY_TOKEN_PATH") else None
+    else:
+        value = env_home or home or str(Path.home() / ".ansible")
+        origin = cfg_path if home and not env_home else None
+    path = Path(os.path.expandvars(value.replace("{{CWD}}", str(Path.cwd())))).expanduser()
+    if not path.is_absolute() and origin is not None:
+        path = origin.absolute().parent / path
+    return path if os.environ.get("ANSIBLE_GALAXY_TOKEN_PATH") or token_path else path / "galaxy_token"
+
+
+def _source_files(servers: list[GalaxyServerConfig] | None, cfg_path: Path | None) -> list[Path]:
+    """Find configuration and trust inputs, including CA-directory entries.
+
+    Args:
+        servers: Explicit definitions, or None for native discovery.
+        cfg_path: Selected configuration file.
+
+    Returns:
+        Sorted input paths; directory entries follow certificate symlinks.
+    """
+    paths = set(_config_candidates(cfg_path))
+    if os.environ.get("SSL_CERT_FILE"):
+        paths.add(Path(os.environ["SSL_CERT_FILE"]))
+    if servers is None:
+        paths.add(_native_token_path(cfg_path))
+    trust = ssl.get_default_verify_paths()
+    paths.add(Path(trust.cafile or trust.openssl_cafile))
+    directories = [(Path(value), False) for value in os.environ.get("SSL_CERT_DIR", "").split(os.pathsep) if value]
+    directories.append((Path(trust.capath or trust.openssl_capath), False))
+    fallback_dirs = {
+        "Linux": ("/etc/pki/ca-trust/extracted/pem", "/etc/pki/tls/certs", "/usr/share/ca-certificates/cacert.org"),
+        "FreeBSD": ("/usr/local/share/certs",),
+        "OpenBSD": ("/etc/ssl",),
+        "NetBSD": ("/etc/openssl/certs",),
+        "SunOS": ("/opt/local/etc/openssl/certs",),
+        "AIX": ("/var/ssl/certs", "/opt/freeware/etc/ssl/certs"),
+        "Darwin": ("/usr/local/etc/openssl",),
+    }
+    directories.extend((Path(value), True) for value in (*fallback_dirs.get(platform.system(), ()), "/etc/ansible"))
+    for directory, cert_only in directories:
+        paths.add(directory)
+        with suppress(OSError):
+            paths.update(
+                entry for entry in directory.iterdir() if not cert_only or entry.suffix in {".pem", ".cer", ".crt"}
+            )
+    return sorted(paths, key=str)
+
+
+def _source_probe(servers: list[GalaxyServerConfig] | None, cfg_path: Path | None) -> str:
+    """Build a metadata key without certificate reads, caching INI path settings.
+
+    Args:
+        servers: Explicit definitions, or None for native discovery.
+        cfg_path: Selected configuration file.
+
+    Returns:
+        Deterministic key including file identity, timestamps, and size.
+    """
+    metadata: list[tuple[str, int, int, int, int, int] | tuple[str, None]] = []
+    for path in _source_files(servers, cfg_path):
+        try:
+            stat = path.stat()
+            metadata.append((str(path), stat.st_dev, stat.st_ino, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size))
+        except OSError:
+            metadata.append((str(path), None))
+    return json.dumps(
+        {
+            "servers": None if servers is None else [asdict(s) for s in servers],
+            "environment": _source_environment(),
+            "files": metadata,
+        },
+        sort_keys=True,
+    )
+
+
+@lru_cache(maxsize=1024)
+def _file_content_digest(path: Path, identity: tuple[int, ...]) -> str:
+    """Cache a content digest by file revision, retaining no credential bytes.
+
+    Args:
+        path: Configuration, token, or certificate file.
+        identity: File identity, timestamps, and size that control digest reuse.
+
+    Returns:
+        SHA-256 content digest.
+
+    Raises:
+        OSError: If the file cannot be read.
+    """  # noqa: DOC502 -- delegated file read
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _source_fingerprint(servers: list[GalaxyServerConfig] | None, cfg_path: Path | None) -> str:
+    """Hash source configuration and TLS trust without persisting credentials.
+
+    Args:
+        servers: Explicit server definitions, or None for CLI discovery.
+        cfg_path: Optional ansible.cfg used by the CLI.
+
+    Returns:
+        SHA-256 digest identifying the effective collection source configuration.
+    """
+    environment = _source_environment()
+    environment.pop("ANSIBLE_CONFIG", None)
+    config: dict[str, Any] = {
+        "servers": None if servers is None else [asdict(server) for server in servers],
+        "environment": environment,
+    }
+    active_cfg = _effective_cfg(cfg_path)
+    token_path = _native_token_path(cfg_path) if servers is None else None
+    candidates = set(_config_candidates(cfg_path))
+    for path in _source_files(servers, cfg_path):
+        if path in candidates and path != active_cfg:
+            continue
+        # A fresh scan writes an equivalent config at a new temporary path.
+        # Metadata tracks that path, but cache identity tracks its contents.
+        label = "ansible_cfg" if path == active_cfg else str(path)
+        if path == token_path:
+            label = "galaxy_token"
+        try:
+            metadata = path.stat()
+            identity = (metadata.st_dev, metadata.st_ino, metadata.st_mtime_ns, metadata.st_ctime_ns, metadata.st_size)
+            config[label] = _file_content_digest(path, identity) if stat.S_ISREG(metadata.st_mode) else None
+        except OSError:
+            config[label] = None
+    return hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest()
+
+
 def create_app(
     pypi_url: str = "https://pypi.org",
     cache_dir: Path | None = None,
@@ -285,8 +516,9 @@ def create_app(
     ``ansible-galaxy`` (ADR-045).  The proxy's role is tarball-to-wheel
     conversion and PEP 503 serving.
 
-    When ``galaxy_servers`` is provided, the proxy writes a temporary
-    ``ansible.cfg`` for each download invocation.  When ``ansible_cfg_path``
+    When ``galaxy_servers`` is provided, downloads use native Galaxy environment
+    settings, with a temporary ``ansible.cfg`` fallback for names that cannot
+    be represented in environment variables. When ``ansible_cfg_path``
     is provided, the user's existing config is used directly.  If neither
     is set, ``ansible-galaxy`` uses its default config discovery.
 
@@ -313,6 +545,7 @@ def create_app(
     passthrough = PyPIPassthrough(pypi_url=pypi_url) if enable_passthrough else None
     _download_locks: dict[str, asyncio.Lock] = {}
     _prepare_locks: dict[str, asyncio.Lock] = {}
+    _config_lock = asyncio.Lock()
     # Short-lived handoff for a project page whose disk cache write failed.
     # The pip wheel request can still succeed without another upstream fetch.
     _on_demand_wheels: dict[str, tuple[float, bytes]] = {}
@@ -342,6 +575,17 @@ def create_app(
         Raises:
             Exception: Re-raises an unhandled downstream request exception.
         """
+        path = request.url.path
+        simple_package = normalize_pep503(path.removeprefix("/simple/").rstrip("/"))
+        collection_path = (
+            path.startswith("/wheels/")
+            or path == "/simple/"
+            or (path.startswith("/simple/") and is_collection_package(simple_package))
+        )
+        if collection_path or path in {"/admin/prepare-collections", "/convert-tarballs"}:
+            await _reconcile_native_config()
+        if collection_path and not app.state.galaxy_config_ready:
+            return Response("Galaxy configuration has not been restored yet", status_code=503)
         started = time.perf_counter()
         try:
             response = await call_next(request)
@@ -358,7 +602,8 @@ def create_app(
         else:
             duration_ms = (time.perf_counter() - started) * 1000
             size = response.headers.get("content-length", "unknown")
-            logger.info(
+            log = logger.debug if path == "/admin/galaxy-config" and response.status_code == 200 else logger.info
+            log(
                 "server_response method=%s path=%s status=%d duration_ms=%.1f size_bytes=%s",
                 request.method,
                 request.url.path,
@@ -372,10 +617,91 @@ def create_app(
     app.state.ansible_cfg_path = ansible_cfg_path
     app.state.ansible_galaxy_bin = ansible_galaxy_bin
     app.state.galaxy_config_generation = 0
+    initial_cfg = ansible_cfg_path
+    if initial_cfg is None and os.environ.get("ANSIBLE_CONFIG", "").strip():
+        initial_cfg = Path(os.environ["ANSIBLE_CONFIG"]).expanduser()
+    initial_fingerprint = _source_fingerprint(app.state.galaxy_servers, initial_cfg)
+    require_gateway = os.environ.get("APME_PROXY_REQUIRE_GATEWAY_CONFIG", "").strip().lower() in {"1", "true", "yes"}
+    identity = cache.config_identity()
+    empty_cache = False
+    with suppress(OSError):
+        empty_cache = next(cache.wheels_dir.iterdir(), None) is None
+    # A native daemon starts before a scan activates its session config.
+    # Keep unverified artifacts until that request establishes the source,
+    # but never allow cache reads before binding to it.
+    native_verified = (identity is not None and identity[0] == initial_fingerprint) or empty_cache
+    app.state.galaxy_config_ready = not require_gateway and native_verified
+    if app.state.galaxy_config_ready:
+        cache.bind_config(initial_fingerprint)
+    else:
+        cache.enabled = False
+    app.state.galaxy_config_managed = require_gateway
+    app.state.galaxy_source_fingerprint = initial_fingerprint
+    app.state.galaxy_source_probe = _source_probe(app.state.galaxy_servers, initial_cfg)
+
+    async def _bind_cache_config(fingerprint: str, *, managed: bool) -> None:
+        """Bind in a worker and hold the config lock until disk work completes.
+
+        Args:
+            fingerprint: Effective source digest.
+            managed: Whether Gateway owns configuration.
+
+        Raises:
+            asyncio.CancelledError: After any in-flight disk binding completes.
+        """
+        binding = asyncio.create_task(asyncio.to_thread(cache.bind_config, fingerprint, managed=managed))
+        try:
+            await asyncio.shield(binding)
+        except asyncio.CancelledError:
+            await binding
+            raise
+
+    async def _reconcile_native_config() -> None:
+        """Rebind native CLI cache when a local scan activates another source."""
+        if app.state.galaxy_config_managed:
+            return
+
+        def probe() -> tuple[Path | None, str]:
+            cfg_path = app.state.ansible_cfg_path
+            if cfg_path is None and os.environ.get("ANSIBLE_CONFIG", "").strip():
+                cfg_path = Path(os.environ["ANSIBLE_CONFIG"]).expanduser()
+            return cfg_path, _source_probe(app.state.galaxy_servers, cfg_path)
+
+        _, key = await asyncio.to_thread(probe)
+        if key == app.state.galaxy_source_probe and app.state.galaxy_config_ready:
+            return
+        async with _config_lock:
+            if app.state.galaxy_config_managed:
+                return
+            cfg_path, key = await asyncio.to_thread(probe)
+            if key == app.state.galaxy_source_probe and app.state.galaxy_config_ready:
+                return
+            fingerprint = await asyncio.to_thread(_source_fingerprint, app.state.galaxy_servers, cfg_path)
+            if fingerprint == app.state.galaxy_source_fingerprint and app.state.galaxy_config_ready:
+                app.state.galaxy_source_probe = key
+                return
+            app.state.galaxy_config_ready = False
+            cache.enabled = False
+            app.state.galaxy_config_generation += 1
+            _on_demand_wheels.clear()
+            _prepare_fallback_wheels.clear()
+            await _bind_cache_config(fingerprint, managed=False)
+            app.state.galaxy_source_fingerprint = fingerprint
+            app.state.galaxy_source_probe = key
+            app.state.galaxy_config_ready = True
 
     def _require_current_config(generation: int) -> None:
         if generation != app.state.galaxy_config_generation:
             raise HTTPException(status_code=409, detail="Galaxy configuration changed; retry the request")
+
+    def _require_config_ready() -> None:
+        """Reject collection access while source configuration is in transition.
+
+        Raises:
+            HTTPException: When source configuration is unavailable.
+        """
+        if not app.state.galaxy_config_ready:
+            raise HTTPException(status_code=503, detail="Galaxy configuration is being restored")
 
     if _admin_token_configured() == "" and not _unauth_admin_allowed():
         logger.warning(
@@ -402,7 +728,12 @@ def create_app(
 
         Returns:
             tuple: (ansible_cfg_path, galaxy_servers, ansible_galaxy_bin).
+
+        Raises:
+            HTTPException: If a configuration transition is in progress.
         """
+        if not app.state.galaxy_config_ready:
+            raise HTTPException(status_code=503, detail="Galaxy configuration is being restored")
         servers: list[GalaxyServerConfig] | None = app.state.galaxy_servers
         cfg_path = app.state.ansible_cfg_path
         if cfg_path is None:
@@ -484,18 +815,36 @@ def create_app(
                 url=s.url,
                 token=s.token or None,
                 auth_url=s.auth_url or None,
+                validate_certs=s.validate_certs,
             )
             for s in body.servers
         ]
-        if desired_servers != app.state.galaxy_servers or app.state.ansible_cfg_path is not None:
-            cache.clear()
-            _on_demand_wheels.clear()
-            _prepare_fallback_wheels.clear()
-            app.state.galaxy_config_generation += 1
-        app.state.galaxy_servers = desired_servers
-        app.state.ansible_cfg_path = None
+        async with _config_lock:
+            changed = desired_servers != app.state.galaxy_servers or app.state.ansible_cfg_path is not None
+            key = await asyncio.to_thread(_source_probe, desired_servers, None)
+            fingerprint = None
+            if key != app.state.galaxy_source_probe:
+                fingerprint = await asyncio.to_thread(_source_fingerprint, desired_servers, None)
+                changed = changed or fingerprint != app.state.galaxy_source_fingerprint
+            restored = changed or not app.state.galaxy_config_ready or not app.state.galaxy_config_managed
+            if restored:
+                app.state.galaxy_config_ready = False
+                cache.enabled = False
+                app.state.galaxy_config_generation += 1
+                _on_demand_wheels.clear()
+                _prepare_fallback_wheels.clear()
+                if fingerprint is None:
+                    fingerprint = await asyncio.to_thread(_source_fingerprint, desired_servers, None)
+                await _bind_cache_config(fingerprint, managed=True)
+                app.state.galaxy_servers = desired_servers
+                app.state.ansible_cfg_path = None
+                app.state.galaxy_config_managed = True
+                app.state.galaxy_source_fingerprint = fingerprint
+                app.state.galaxy_config_ready = True
+            app.state.galaxy_source_probe = key
         names = [s.name.strip() for s in body.servers]
-        logger.info("Galaxy config updated: %d server(s): %s", len(names), ", ".join(names))
+        log = logger.info if restored else logger.debug
+        log("Galaxy config updated: %d server(s): %s", len(names), ", ".join(names))
         return {"accepted": len(names), "servers": names}
 
     @app.post("/admin/prepare-collections")  # type: ignore[untyped-decorator]
@@ -519,6 +868,8 @@ def create_app(
         _require_admin_token(request)
         if not body.specs or len(body.specs) > 100:
             raise HTTPException(status_code=422, detail="specs must contain between 1 and 100 collections")
+        if not app.state.galaxy_config_ready:
+            raise HTTPException(status_code=503, detail="Galaxy configuration has not been restored yet")
 
         specs = [spec.strip() for spec in body.specs]
         if any(
@@ -577,7 +928,7 @@ def create_app(
             failed: list[str] = []
 
             if unresolved:
-                cfg_path, servers, galaxy_bin = _get_galaxy_config()
+                cfg_path, servers, galaxy_bin = await asyncio.to_thread(_get_galaxy_config)
                 cfg_for_download, servers_for_download = _download_auth(cfg_path, servers)
                 with tempfile.TemporaryDirectory(prefix="apme-galaxy-prepare-") as tmp:
                     result = await download_collections(
@@ -679,6 +1030,7 @@ def create_app(
             return HTMLResponse(content=html, status_code=status)
 
         logger.info("collection_requested package=%s type=collection endpoint=project", normalized)
+        _require_config_ready()
 
         try:
             namespace, name = python_to_fqcn(normalized)
@@ -712,7 +1064,7 @@ def create_app(
                 cached_wheel_set = set(_list_cached_wheels(cache, namespace, name))
                 if not cached_wheel_set:
                     try:
-                        cfg_path, servers_cfg, galaxy_bin = _get_galaxy_config()
+                        cfg_path, servers_cfg, galaxy_bin = await asyncio.to_thread(_get_galaxy_config)
                         cfg_for_download, servers_for_download = _download_auth(cfg_path, servers_cfg)
                         whl_name, whl_data = await _download_and_convert(
                             namespace,
@@ -778,6 +1130,7 @@ def create_app(
         """
         if not filename.endswith(".whl") or "/" in filename or "\\" in filename or ".." in filename:
             raise HTTPException(status_code=404, detail=f"Invalid wheel filename: {filename}")
+        _require_config_ready()
 
         started = time.perf_counter()
 
@@ -832,6 +1185,7 @@ def create_app(
         if lock is None:
             lock = _download_locks.setdefault(lock_key, asyncio.Lock())
         async with lock:
+            _require_config_ready()
             cached = _read_cached_wheel(cache, filename)
             if cached is None:
                 cached = _take_on_demand_wheel(_on_demand_wheels, filename)
@@ -848,7 +1202,7 @@ def create_app(
             generation = app.state.galaxy_config_generation
 
             try:
-                cfg_path, servers, galaxy_bin = _get_galaxy_config()
+                cfg_path, servers, galaxy_bin = await asyncio.to_thread(_get_galaxy_config)
                 cfg_for_download, servers_for_download = _download_auth(cfg_path, servers)
                 whl_name, whl_data = await _download_and_convert(
                     ns,
@@ -858,6 +1212,8 @@ def create_app(
                     galaxy_servers=servers_for_download,
                     ansible_galaxy_bin=galaxy_bin,
                 )
+            except HTTPException:
+                raise
             except Exception as exc:
                 server_labels = [_safe_server_label(s.url) for s in servers] if servers else ["default"]
                 logger.error(
@@ -908,9 +1264,12 @@ def create_app(
         """  # noqa: DOC502 -- the 403 raise lives in _require_admin_token
         _require_admin_token(request)
         tarball_path = _validate_tarball_dir(tarball_dir)
+        if not app.state.galaxy_config_ready:
+            raise HTTPException(status_code=503, detail="Galaxy configuration has not been restored yet")
 
         converted: list[str] = []
         failed: list[str] = []
+        generation = app.state.galaxy_config_generation
 
         for tb in sorted(tarball_path.glob("*.tar.gz")):
             if tb.is_symlink() or not tb.is_file():
@@ -920,9 +1279,12 @@ def create_app(
             try:
                 tarball_data = await asyncio.to_thread(tb.read_bytes)
                 whl_name, whl_data = await asyncio.to_thread(tarball_to_wheel, tarball_data)
+                _require_current_config(generation)
                 cache.put_wheel(whl_name, whl_data)
                 converted.append(whl_name)
                 logger.info("Converted tarball: %s -> %s", tb.name, whl_name)
+            except HTTPException:
+                raise
             except Exception:
                 logger.exception("Failed to convert tarball: %s", tb.name)
                 failed.append(tb.name)
@@ -1023,12 +1385,18 @@ def _load_servers_from_ansible_cfg(cfg_path: Path) -> list[GalaxyServerConfig] |
             continue
         token = parser.get(section, "token", fallback="").strip() or None
         auth_url = parser.get(section, "auth_url", fallback="").strip() or None
+        try:
+            validate_certs = read_server_validate_certs(parser, name)
+        except ValueError:
+            logger.warning("Invalid Galaxy TLS policy for server %r", name)
+            return []
         servers.append(
             GalaxyServerConfig(
                 name=name,
                 url=url,
                 token=token,
                 auth_url=auth_url,
+                validate_certs=validate_certs,
             )
         )
     return servers
@@ -1119,6 +1487,8 @@ def _list_cached_wheels(cache: ProxyCache, namespace: str, name: str) -> list[st
     Returns:
         Sorted list of matching wheel filenames.
     """
+    if not cache.enabled:
+        return []
     prefix = f"ansible_collection_{namespace}_{name}-"
     wheels: list[str] = []
     try:
@@ -1293,7 +1663,8 @@ async def _download_and_convert(
 
         if result.failed_specs:
             server_labels = [_safe_server_label(s.url) for s in galaxy_servers] if galaxy_servers else ["default"]
-            msg = f"Failed to download {spec} from configured Galaxy servers [{', '.join(server_labels)}]"
+            summary = download_error_summary(result.stderr)
+            msg = f"Failed to download {spec} from configured Galaxy servers [{', '.join(server_labels)}]: {summary}"
             raise RuntimeError(msg)
 
         if not result.tarball_paths:

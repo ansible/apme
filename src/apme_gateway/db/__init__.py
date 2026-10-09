@@ -47,6 +47,7 @@ async def init_db(database_url: str) -> None:
                 await conn.run_sync(_migrate_proposals_table)
                 await conn.run_sync(_migrate_scans_table)
                 await conn.run_sync(_migrate_projects_table)
+                await conn.run_sync(_migrate_galaxy_servers_table)
         except (OperationalError, OSError):
             if engine is not None:
                 await engine.dispose()
@@ -91,6 +92,20 @@ async def reset_db() -> None:
         await conn.run_sync(_migrate_proposals_table)
         await conn.run_sync(_migrate_scans_table)
         await conn.run_sync(_migrate_projects_table)
+        await conn.run_sync(_migrate_galaxy_servers_table)
+
+
+def _migrate_galaxy_servers_table(conn: Connection) -> None:
+    """Add nullable TLS policy to existing Gateway Galaxy server rows.
+
+    Args:
+        conn: Synchronous connection used during database initialization.
+    """
+    inspector = inspect(conn)
+    if inspector.has_table("galaxy_servers"):
+        columns = {column["name"] for column in inspector.get_columns("galaxy_servers")}
+        if "validate_certs" not in columns:
+            conn.execute(text("ALTER TABLE galaxy_servers ADD COLUMN validate_certs BOOLEAN DEFAULT NULL"))
 
 
 def get_engine() -> AsyncEngine:

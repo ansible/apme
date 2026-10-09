@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from apme_gateway._galaxy_proxy_sync import schedule_push
+from apme_gateway._galaxy_proxy_sync import reconcile_galaxy_config, stop_pending_push
 from apme_gateway.api.abbenay_proxy import router as abbenay_proxy_router
 from apme_gateway.api.feedback import router as feedback_router
 from apme_gateway.api.operation_router import operation_router
@@ -19,8 +20,8 @@ from apme_gateway.operation_registry import get_operation_registry
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:  # noqa: ARG001
     """Gateway startup/shutdown lifecycle.
 
-    On startup, schedule a background push of Galaxy server configs from
-    the DB to the Galaxy Proxy and start the operation registry reaper.
+    On startup, reconcile Galaxy server configs from the DB to the Galaxy
+    Proxy periodically and start the operation registry reaper.
     On shutdown, clean up in-flight operations.
 
     Args:
@@ -29,10 +30,15 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:  # noqa: ARG001
     Yields:
         None: Control to the application.
     """
-    schedule_push()
+    galaxy_sync = asyncio.create_task(reconcile_galaxy_config())
     get_operation_registry().start_reaper()
-    yield
-    await get_operation_registry().shutdown()
+    try:
+        yield
+    finally:
+        galaxy_sync.cancel()
+        await asyncio.gather(galaxy_sync, return_exceptions=True)
+        await stop_pending_push()
+        await get_operation_registry().shutdown()
 
 
 def create_app() -> FastAPI:

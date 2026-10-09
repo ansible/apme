@@ -240,6 +240,43 @@ These changes are valuable regardless of the auth delegation decision:
   for any fallback role)
 - `remediate.py`: type annotation cleanup (`list[object]` → `list[Proposal]`)
 
+### TLS and cache identity clarification (2026-10-09)
+
+Global server definitions include optional `validate_certs`. Gateway persists
+and forwards it to Galaxy Proxy and scan metadata; the proxy writes native
+per-server Ansible configuration so `ansible-galaxy` remains responsible for
+TLS and authentication. Omission inherits the deployment TLS default. A
+supplied Hub CA bundle augments the proxy image's system roots.
+
+The wheel cache records a digest of effective source configuration, including
+credentials and TLS policy, rather than persisting credentials themselves.
+An identical first Gateway push after restart retains wheels. Different
+sources invalidate them. Until the previous explicit Hub configuration is
+restored, collection routes must not serve its cached artifacts under default
+CLI discovery. Unavailable disk cache falls back to configured Hub downloads.
+The source marker records cache ownership; deployment mode is selected
+explicitly and is never inferred from a shared cache's previous owner. Native
+CLI deployments bind before serving collections. Startup preserves unmatched
+artifacts with reads disabled until a scan activates its source, so an identical
+Hub configuration can reuse them after a native daemon restart. Gateway reconciles every
+15 seconds so a failed startup push or proxy-only restart recovers.
+Gateway deployments require an authenticated config push before collection
+access regardless of cache availability (`APME_PROXY_REQUIRE_GATEWAY_CONFIG=1`).
+Trust identity includes certificate contents from both `SSL_CERT_FILE` and
+`SSL_CERT_DIR`, including certificate symlink targets and default system trust.
+Native file-token inputs follow the active configuration, environment, and
+Ansible home; cache identity hashes their contents without copying credentials.
+Directory configuration overrides and native fallback candidates are tracked.
+Native request paths
+probe file metadata in a worker and recompute content digests only when inputs
+change; repeated Gateway refreshes similarly preserve unchanged artifacts.
+Configuration conflicts during conversion abort with a retry response.
+Periodic sync logs show initial failures and recovery, keeping repeated
+outcomes at DEBUG.
+Equivalent session configuration files retain the same source identity even
+when a scan writes a new temporary filename. Gateway startup gating and shared
+admin authentication also apply to the bootc Quadlet deployment.
+
 ## Related Decisions
 
 - [ADR-031](ADR-031-unified-collection-cache.md): Unified Collection Cache —
@@ -276,3 +313,5 @@ These changes are valuable regardless of the auth delegation decision:
 | 2026-03-28 | Human review | Galaxy server defs are global, not per-project (cache coherence) |
 | 2026-03-28 | Human review | Implementation split into 3 PRs: proxy, CLI+proto, UI |
 | 2026-07-08 | Brad Thornton | Accepted — core decision fully implemented |
+| 2026-10-09 | AI-assisted | Clarify per-server TLS delegation and durable cache source identity |
+| 2026-10-09 | AI-assisted | Track CA directory rotation, worker-based metadata probes, and reconciliation outcomes |
