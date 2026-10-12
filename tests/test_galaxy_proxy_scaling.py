@@ -9,9 +9,9 @@ import tarfile
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-import pytest
 
 from galaxy_proxy.proxy import server as proxy_server
 from galaxy_proxy.proxy.server import create_app
@@ -97,13 +97,7 @@ def test_project_page_lock_timeout_returns_503(tmp_path: Path, monkeypatch: pyte
     application = create_app(cache_dir=tmp_path / "cache", enable_passthrough=False)
     lock_key = "ansible.posix:latest"
     application.state.download_locks[lock_key] = _HangingLock()
-    with (
-        TestClient(application, raise_server_exceptions=False) as client,
-        patch(
-            "galaxy_proxy.proxy.server._fetch_galaxy_versions",
-            AsyncMock(return_value=[]),
-        ),
-    ):
+    with TestClient(application, raise_server_exceptions=False) as client:
         resp = client.get("/simple/ansible-collection-ansible-posix/")
     assert resp.status_code == 503
     assert "lock timeout" in resp.json()["detail"]
@@ -129,7 +123,6 @@ def test_wheel_hash_cache_hit_avoids_rehash(tmp_path: Path) -> None:
 
     with (
         TestClient(application) as client,
-        patch("galaxy_proxy.proxy.server._fetch_galaxy_versions", AsyncMock(return_value=[])),
         patch("galaxy_proxy.proxy.server.sha256_file_hex", side_effect=_counting),
     ):
         first = client.get("/simple/ansible-collection-ansible-posix/")
@@ -190,10 +183,7 @@ def test_wheel_hash_revalidated_after_overwrite(tmp_path: Path) -> None:
 
     application = create_app(cache_dir=cache_dir, enable_passthrough=False)
     wheel_path = _seed_cached_wheel(application, cache_dir, whl_name, v1)
-    with (
-        TestClient(application) as client,
-        patch("galaxy_proxy.proxy.server._fetch_galaxy_versions", AsyncMock(return_value=[])),
-    ):
+    with TestClient(application) as client:
         first = client.get("/simple/ansible-collection-ansible-posix/")
         assert first.status_code == 200
         hash_v1 = hashlib.sha256(v1).hexdigest()
@@ -219,7 +209,6 @@ def test_wheel_hash_missing_file_serves_empty_hash(tmp_path: Path) -> None:
     whl_name = "ansible_collection_ansible_posix-1.5.4-py3-none-any.whl"
     with (
         TestClient(application) as client,
-        patch("galaxy_proxy.proxy.server._fetch_galaxy_versions", AsyncMock(return_value=[])),
         patch.object(proxy_server, "_list_cached_wheels", return_value=[whl_name]),
     ):
         resp = client.get("/simple/ansible-collection-ansible-posix/")
@@ -243,7 +232,6 @@ def test_wheel_hash_unreadable_file_serves_empty_hash(tmp_path: Path) -> None:
     application.state.wheel_hash_stats.clear()
     with (
         TestClient(application) as client,
-        patch("galaxy_proxy.proxy.server._fetch_galaxy_versions", AsyncMock(return_value=[])),
         patch("galaxy_proxy.proxy.server.sha256_file_hex", side_effect=OSError("unreadable")),
     ):
         resp = client.get("/simple/ansible-collection-ansible-posix/")
@@ -368,7 +356,6 @@ async def test_download_lock_eviction_skips_held_locks(tmp_path: Path) -> None:
 
     with (
         TestClient(application, raise_server_exceptions=False) as client,
-        patch("galaxy_proxy.proxy.server._fetch_galaxy_versions", AsyncMock(return_value=[])),
         patch(
             "galaxy_proxy.proxy.server._download_and_convert",
             AsyncMock(side_effect=CollectionResolutionError("evict.probe")),

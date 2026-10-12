@@ -94,6 +94,10 @@ _MAX_DOWNLOAD_LOCKS = 512
 _MAX_WHEEL_HASHES = 512
 
 
+class CollectionResolutionError(RuntimeError):
+    """Raised when a configured Galaxy server cannot resolve a collection."""
+
+
 def clear_proxy_caches(app: FastAPI) -> None:
     """Drop proxied download locks and cached wheel hashes (test helper).
 
@@ -1306,37 +1310,7 @@ def create_app(
             elif filename.startswith(f"ansible_collection_{namespace}_{name}-"):
                 cached_wheel_set.add(filename)
 
-        versions: list[str] | None = None
-        meta = await asyncio.to_thread(cache.get_metadata, namespace, name)
-        _require_current_config(generation)
-        if meta is not None:
-            versions = meta.versions
-            logger.info("metadata_cache_hit collection=%s.%s versions=%d", namespace, name, len(versions))
-        else:
-            logger.info("metadata_cache_miss collection=%s.%s", namespace, name)
-
-        if versions is None:
-            cfg_path, servers_cfg, _galaxy_bin = await asyncio.to_thread(_get_galaxy_config)
-            _require_current_config(generation)
-            try:
-                versions = await _fetch_galaxy_versions(namespace, name, servers=servers_cfg)
-            except CollectionResolutionError as exc:
-                raise HTTPException(status_code=404, detail=str(exc)) from exc
-            _require_current_config(generation)
-            if versions:
-                async with _config_lock:
-                    _require_current_config(generation)
-                    try:
-                        cache.put_metadata(namespace, name, versions)
-                    except OSError as exc:
-                        logger.warning(
-                            "metadata_cache_write_failed collection=%s.%s error_type=%s",
-                            namespace,
-                            name,
-                            type(exc).__name__,
-                        )
-
-        if not versions and not cached_wheel_set:
+        if not cached_wheel_set:
             lock_key = f"{namespace}.{name}:latest"
             lock = _get_download_lock(lock_key)
             if not await _acquire_lock_or_503(lock, operation="project page download"):
@@ -1371,6 +1345,8 @@ def create_app(
                         cached_wheel_set = {whl_name}
                     except HTTPException:
                         raise
+                    except CollectionResolutionError as exc:
+                        raise HTTPException(status_code=404, detail=str(exc)) from exc
                     except Exception as exc:
                         logger.error(
                             "collection_download_failed operation=download "
@@ -1388,7 +1364,6 @@ def create_app(
                 lock.release()
 
         links: list[str] = []
-        seen_versions: set[str] = set()
 
         for whl_name in sorted(cached_wheel_set):
             whl_hash = await _wheel_hash_hex(whl_name)
@@ -1396,16 +1371,6 @@ def create_app(
             if whl_hash:
                 href += f"#sha256={whl_hash}"
             links.append(f'<a href="{href}">{whl_name}</a>')
-            parts = whl_name.split("-")
-            if len(parts) >= 2:
-                seen_versions.add(parts[1])
-
-        if versions:
-            for version in versions:
-                if version in seen_versions:
-                    continue
-                whl_name = wheel_filename(namespace, name, version)
-                links.append(f'<a href="/wheels/{whl_name}">{whl_name}</a>')
 
         html = "<!DOCTYPE html>\n<html><body>\n" + "\n".join(links) + "\n</body></html>\n"
         return HTMLResponse(content=html)
@@ -1521,6 +1486,9 @@ def create_app(
                 )
             except HTTPException:
                 raise
+            except CollectionResolutionError as exc:
+                _record_serve("miss", status="error")
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
             except Exception as exc:
                 server_labels = [_safe_server_label(s.url) for s in servers] if servers else ["default"]
                 logger.error(
@@ -1955,6 +1923,7 @@ async def _download_and_convert(
         Tuple of ``(wheel_filename, wheel_bytes)``.
 
     Raises:
+        CollectionResolutionError: If Galaxy reports the collection is missing.
         RuntimeError: If download or conversion fails.
     """
     spec = f"{namespace}.{name}:{version}" if version else f"{namespace}.{name}"
@@ -1980,6 +1949,8 @@ async def _download_and_convert(
         if result.failed_specs:
             server_labels = [_safe_server_label(s.url) for s in galaxy_servers] if galaxy_servers else ["default"]
             summary = download_error_summary(result.stderr)
+            if _is_collection_not_found(result.stderr):
+                raise CollectionResolutionError(f"Collection {spec} was not found")
             msg = f"Failed to download {spec} from configured Galaxy servers [{', '.join(server_labels)}]: {summary}"
             raise RuntimeError(msg)
 
@@ -2016,3 +1987,20 @@ async def _download_and_convert(
             len(whl_data),
         )
         return whl_name, whl_data
+
+
+def _is_collection_not_found(diagnostic: str) -> bool:
+    """Identify a Galaxy 404 response without mistaking other numbers for status codes.
+
+    Args:
+        diagnostic: Raw ``ansible-galaxy`` diagnostic text.
+
+    Returns:
+        True when the diagnostic contains an HTTP 404 and a not-found message.
+    """
+    has_http_404 = re.search(
+        r"\bHTTP(?:\s+(?:Error|Code|Status(?:\s+Code)?))?\s*[:=]?\s*404\b",
+        diagnostic,
+        re.IGNORECASE,
+    )
+    return has_http_404 is not None and re.search(r"\bnot found\b", diagnostic, re.IGNORECASE) is not None
