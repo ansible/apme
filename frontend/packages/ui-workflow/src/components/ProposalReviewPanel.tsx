@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Button, Label } from '@patternfly/react-core';
+import { Alert, Button, Label } from '@patternfly/react-core';
+import {
+  applyImplicitDeclinesToMap,
+  hiddenUndecidedCount,
+} from '../remediation/reviewNextGating';
+import { ReviewPartialNextConfirmModal } from './ReviewPartialNextConfirmModal';
 import { RuleId } from '../shared/RuleId';
 import type { OperationProposal } from '../types/operation';
 import { DiffView } from './DiffView';
@@ -216,6 +221,7 @@ export function ProposalReviewPanel({
   const [ruleFilters, setRuleFilters] = useState<string[]>([]);
   const [showDeclined, setShowDeclined] = useState(false);
   const [feedbackTarget, setFeedbackTarget] = useState<OperationProposal | null>(null);
+  const [confirmPartialNext, setConfirmPartialNext] = useState(false);
   const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const prevGateKey = useRef<string>('');
 
@@ -425,15 +431,41 @@ export function ProposalReviewPanel({
 
   const pendingCount = pendingIds.length;
 
+  const nextBlocked = pendingCount > 0 && acceptedIds.length === 0;
+
+  const submitApprove = useCallback(
+    (decisionMap: Map<string, NodeDecision>) => {
+      const ids: string[] = [];
+      for (const p of actionable) {
+        if (decisionMap.get(p.id) === 'accepted') ids.push(p.id);
+      }
+      onApprove(ids);
+    },
+    [actionable, onApprove],
+  );
+
+  const handleNext = useCallback(() => {
+    if (pendingCount > 0 && acceptedIds.length > 0) {
+      setConfirmPartialNext(true);
+      return;
+    }
+    submitApprove(decisions);
+  }, [acceptedIds.length, decisions, pendingCount, submitApprove]);
+
+  const confirmPartialNextAction = useCallback(() => {
+    setConfirmPartialNext(false);
+    const resolved = applyImplicitDeclinesToMap(decisions, pendingIds);
+    setDecisions(resolved);
+    flushDraft(resolved);
+    submitApprove(resolved);
+  }, [decisions, flushDraft, pendingIds, submitApprove]);
+
   const workflowNext = useMemo((): WorkflowNextConfig => {
-    // No silent default: every location must be Accept or Decline before Next.
-    if (pendingCount > 0) {
+    if (nextBlocked) {
       return {
         label: 'Next',
-        summary: `${pendingCount} location${
-          pendingCount !== 1 ? 's' : ''
-        } still undecided. Accept or Decline each one, then Next unlocks. Accept remaining / Decline remaining only decide currently visible rows — widen filters to reach the rest.`,
-        onNext: () => onApprove(acceptedIds),
+        summary: `Accept at least one fix, or Decline remaining (${pendingCount}), to continue.`,
+        onNext: handleNext,
         isDisabled: true,
       };
     }
@@ -442,7 +474,11 @@ export function ProposalReviewPanel({
         ? ` (${declinedCount} declined)`
         : '';
     let summary: string;
-    if (isAiGate) {
+    if (pendingCount > 0 && acceptedIds.length > 0) {
+      summary = isAiGate
+        ? `Apply ${acceptedIds.length} accepted AI fix${acceptedIds.length !== 1 ? 'es' : ''}; confirm to Decline the other ${pendingCount}.`
+        : `Apply ${acceptedIds.length} accepted rule-based fix${acceptedIds.length !== 1 ? 'es' : ''}; confirm to Decline the other ${pendingCount}.`;
+    } else if (isAiGate) {
       summary =
         acceptedIds.length > 0
           ? `Apply ${acceptedIds.length} accepted AI fix${acceptedIds.length !== 1 ? 'es' : ''}${declinedNote}, then finish remediation.`
@@ -456,16 +492,15 @@ export function ProposalReviewPanel({
     return {
       label: 'Next',
       summary,
-      onNext: () => onApprove(acceptedIds),
-      // No actionable diffs (e.g. only "Declined by AI") — still allow continue.
+      onNext: handleNext,
       isDisabled: false,
     };
   }, [
     acceptedIds,
-    actionable.length,
     declinedCount,
+    handleNext,
     isAiGate,
-    onApprove,
+    nextBlocked,
     pendingCount,
   ]);
 
@@ -614,6 +649,11 @@ export function ProposalReviewPanel({
     const visible = new Set(filteredActionableItems.map((i) => i.id));
     return pendingIds.filter((id) => visible.has(id));
   }, [filteredActionableItems, pendingIds]);
+
+  const hiddenPendingCount = hiddenUndecidedCount(
+    pendingCount,
+    visiblePendingIds.length,
+  );
 
   const acceptRemaining = useCallback(() => {
     setDecisionForIds(visiblePendingIds, 'accepted');
@@ -778,10 +818,9 @@ export function ProposalReviewPanel({
         {actionable.length > 0 ? (
           pendingCount > 0 ? (
             <>
-              Every location starts undecided. Next stays disabled until you Accept
-              or Decline each one. Decided rows collapse. Accept remaining /
-              Decline remaining only apply to currently visible rows — widen
-              filters to decide the rest, or Clear to reset and expand again.
+              Accept the fixes you want; Next can confirm Decline for any still
+              undecided. Or Decline remaining on visible rows. Decided rows
+              collapse; Clear resets and expands again.
             </>
           ) : (
             <>
@@ -807,7 +846,34 @@ export function ProposalReviewPanel({
     </div>
   );
 
+  const declineVerb = isAiGate ? 'Decline' : 'Decline';
+
   return (
+    <>
+      {hiddenPendingCount > 0 ? (
+        <Alert
+          variant="warning"
+          isInline
+          title={`${pendingCount} undecided — not all visible`}
+          style={{ marginBottom: 12 }}
+        >
+          {hiddenPendingCount} undecided location
+          {hiddenPendingCount !== 1 ? 's are' : ' is'} hidden by filters or the
+          current list view. Clear filters, expand the list, or use Accept/
+          Decline remaining on visible rows.
+        </Alert>
+      ) : null}
+      <ReviewPartialNextConfirmModal
+        isOpen={confirmPartialNext}
+        title="Decline remaining fixes?"
+        confirmLabel="Apply accepted"
+        onClose={() => setConfirmPartialNext(false)}
+        onConfirm={confirmPartialNextAction}
+      >
+        Apply {acceptedIds.length} accepted fix
+        {acceptedIds.length !== 1 ? 'es' : ''} and treat the remaining{' '}
+        {pendingCount} as <strong>{declineVerb}</strong>?
+      </ReviewPartialNextConfirmModal>
     <ReviewStepShell
       title={title}
       description={inventoryDescription}
@@ -917,5 +983,6 @@ export function ProposalReviewPanel({
         </div>
       )}
     </ReviewStepShell>
+    </>
   );
 }

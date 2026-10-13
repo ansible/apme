@@ -106,4 +106,9 @@ export {
 
 export { DiffView, textsFromUnifiedDiff, CurrentYamlView } from './components/DiffView';
 
+export {
+  applyImplicitDeclinesToMap,
+  hiddenUndecidedCount,
+} from './remediation/reviewNextGating';
+
 export { toPrFilesDiffUrl } from './utils/prDiffUrl';

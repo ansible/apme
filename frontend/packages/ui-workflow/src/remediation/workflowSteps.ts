@@ -141,7 +141,7 @@ export function updateWorkflowLatch(
 
   if (status === 'awaiting_ai_triage') {
     next.pastFindings = true;
-    next.pastAiEscalation = true;
+    // User is still on AI escalation — do not latch pastAiEscalation yet.
     if (next.pastTier1Review && !next.tier1GateSkipped) {
       next.pastTier1Applied = true;
     }
@@ -154,8 +154,10 @@ export function updateWorkflowLatch(
         next.pastTier1Applied = true;
       }
       next.pastAiEscalation = true;
-      // Latch review reached; pastAiReview/pastAiApplied set only after approve.
+      // Gate 2 review screen — not applied until user approves.
       next.seenGate2Review = true;
+      next.pastAiReview = false;
+      next.pastAiApplied = false;
     } else {
       next.pastTier1Review = true;
       next.tier1GateSkipped = false;
@@ -168,8 +170,12 @@ export function updateWorkflowLatch(
       // Applying after Gate 2 approve — show AI applied, not AI proposals.
       next.pastAiReview = true;
       next.pastAiApplied = true;
-    } else if (next.pastAiEscalation) {
-      // AI running after escalate-ai — stay on AI escalation.
+    } else if (
+      next.pastAiEscalation ||
+      (state.ai_triage_candidates?.length ?? 0) > 0
+    ) {
+      // AI running after escalate-ai — latch escalation complete for stepper.
+      next.pastAiEscalation = true;
     } else if (next.pastTier1Review) {
       next.pastTier1Applied = true;
       // Do not mark pastAiEscalation — wait for awaiting_ai_triage.

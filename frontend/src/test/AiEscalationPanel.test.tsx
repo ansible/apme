@@ -26,7 +26,7 @@ const candidates: AssessFinding[] = [
 ];
 
 describe("AiEscalationPanel", () => {
-  it("disables Next until every location is Include or Skip", async () => {
+  it("disables Next until at least one Include or all Skip", async () => {
     const user = userEvent.setup();
     const onEscalate = vi.fn();
     render(
@@ -37,10 +37,15 @@ describe("AiEscalationPanel", () => {
 
     const includeButtons = screen.getAllByRole("button", { name: /^Include$/i });
     await user.click(includeButtons[0]!);
-    expect(screen.getByRole("button", { name: /^Next$/i })).toBeDisabled();
-
-    await user.click(includeButtons[1]!);
     expect(screen.getByRole("button", { name: /^Next$/i })).toBeEnabled();
+
+    await user.click(screen.getByRole("button", { name: /^Next$/i }));
+    await user.click(
+      screen.getByRole("button", { name: /Run AI on included/i }),
+    );
+    expect(onEscalate).toHaveBeenCalledWith([
+      { path: "play.yml/plays[0]/tasks[0]", rule_ids: [] },
+    ]);
   });
 
   it("Next with all Skip sends empty targets (skip AI)", async () => {
