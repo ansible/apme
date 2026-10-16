@@ -57,6 +57,20 @@ describe("ProposalReviewPanel", () => {
     expect(onApprove).toHaveBeenCalledWith(["t1-0000"]);
   });
 
+  it("partial Accept enables Next and confirms implicit Decline", async () => {
+    const user = userEvent.setup();
+    const onApprove = vi.fn();
+    render(
+      <ProposalReviewPanel proposals={nodeProposals} onApprove={onApprove} />,
+    );
+    const acceptButtons = screen.getAllByRole("button", { name: /^Accept$/i });
+    await user.click(acceptButtons[0]!);
+    expect(screen.getByRole("button", { name: /^Next$/i })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: /^Next$/i }));
+    await user.click(screen.getByRole("button", { name: /Apply accepted/i }));
+    expect(onApprove).toHaveBeenCalledWith(["t1-0000"]);
+  });
+
   it("Decline remaining then Next sends empty approved_ids", async () => {
     const user = userEvent.setup();
     const onApprove = vi.fn();

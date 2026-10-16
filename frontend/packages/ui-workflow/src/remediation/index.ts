@@ -27,6 +27,10 @@ export {
   type ProposalReviewGate,
 } from './proposalTier';
 export {
+  applyImplicitDeclinesToMap,
+  hiddenUndecidedCount,
+} from './reviewNextGating';
+export {
   filterByRuleKeepingNodeContext,
   matchesRuleFilters,
   normalizeInitialRuleFilters,

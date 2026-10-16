@@ -3,11 +3,17 @@
  *
  * Same review chrome as Assess / Gate panels: inventory, Decision/Severity/Kind
  * filters, YAML expand detail. Grain is per location (path). Defaults:
- * undecided. Next requires every location decided; none Included skips AI.
+ * undecided by default. Next with a subset Included confirms implicit Skip
+ * for remaining pending locations; none Included skips AI.
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, Label } from '@patternfly/react-core';
+import {
+  applyImplicitDeclinesToMap,
+  hiddenUndecidedCount,
+} from '../remediation/reviewNextGating';
+import { ReviewPartialNextConfirmModal } from './ReviewPartialNextConfirmModal';
 import type { AssessFinding } from '../hooks/useProjectOperationState';
 import {
   normalizeFindingNodeType,
@@ -142,6 +148,7 @@ export function AiEscalationPanel({
     () => new Set(presentNodeTypeOptions(candidates)),
   );
   const [ruleFilters, setRuleFilters] = useState<string[]>([]);
+  const [confirmPartialNext, setConfirmPartialNext] = useState(false);
 
   useEffect(() => {
     const paths = pathKey ? pathKey.split('\0') : [];
@@ -361,19 +368,55 @@ export function AiEscalationPanel({
     );
   }, [allGroups]);
 
+  const pendingPaths = useMemo(
+    () =>
+      allGroups
+        .map((g) => g.path)
+        .filter((p) => (decisions.get(p) ?? 'pending') === 'pending'),
+    [allGroups, decisions],
+  );
+
+  const hiddenPendingCount = hiddenUndecidedCount(
+    pendingCount,
+    visiblePendingPaths.length,
+  );
+
+  const runEscalate = useCallback(
+    (decisionMap: Map<string, NodeDecision>) => {
+      const targets: AiEscalateTarget[] = allGroups
+        .filter((g) => decisionMap.get(g.path) === 'accepted')
+        .map((g) => ({ path: g.path, rule_ids: [] }));
+      void onEscalate(targets);
+    },
+    [allGroups, onEscalate],
+  );
+
   const handleNext = useCallback(() => {
-    const targets: AiEscalateTarget[] = allGroups
-      .filter((g) => decisions.get(g.path) === 'accepted')
-      .map((g) => ({ path: g.path, rule_ids: [] }));
-    void onEscalate(targets);
-  }, [allGroups, decisions, onEscalate]);
+    if (pendingCount > 0 && includeCount > 0) {
+      setConfirmPartialNext(true);
+      return;
+    }
+    runEscalate(decisions);
+  }, [decisions, includeCount, pendingCount, runEscalate]);
+
+  const confirmPartialNextAction = useCallback(() => {
+    setConfirmPartialNext(false);
+    const resolved = applyImplicitDeclinesToMap(decisions, pendingPaths);
+    setDecisions(resolved);
+    runEscalate(resolved);
+  }, [decisions, pendingPaths, runEscalate]);
+
+  const nextBlocked =
+    pendingCount > 0 && includeCount === 0;
 
   const nextSummary =
-    pendingCount > 0
-      ? `Decide Include or Skip for ${pendingCount} remaining location${pendingCount !== 1 ? 's' : ''}.`
-      : includeCount === 0
-        ? 'Skip AI escalation and finish remediation (no AI proposals).'
-        : `Run AI on ${includeCount} location${includeCount !== 1 ? 's' : ''} (${includeFindings} finding${includeFindings !== 1 ? 's' : ''})${skipCount > 0 ? `; skip ${skipCount}` : ''}.`;
+    nextBlocked
+      ? `Include at least one location, or Skip remaining (${pendingCount}), to continue.`
+      : pendingCount > 0 && includeCount > 0
+        ? `Run AI on ${includeCount} included location${includeCount !== 1 ? 's' : ''}; confirm to Skip the other ${pendingCount}.`
+        : includeCount === 0
+          ? 'Skip AI escalation and finish remediation (no AI proposals).'
+          : `Run AI on ${includeCount} location${includeCount !== 1 ? 's' : ''} (${includeFindings} finding${includeFindings !== 1 ? 's' : ''})${skipCount > 0 ? `; skip ${skipCount}` : ''}.`;
 
   const filterGroups: ReviewFilterGroup[] = useMemo(
     () => [
@@ -467,16 +510,39 @@ export function AiEscalationPanel({
         ]}
       />
       <div style={{ marginTop: 8, fontSize: 13, opacity: 0.7 }}>
-        Every location starts undecided. Next stays disabled until you Include
-        or Skip each one. Include remaining / Skip remaining only apply to
-        currently visible rows — widen filters to decide the rest, or Clear to
-        reset. Next with none Included skips AI entirely.
+        Include only the locations you want AI to review; use Next to confirm
+        Skip for any still undecided, or Skip remaining to decide visible rows.
+        Next with none Included skips AI entirely.
       </div>
     </div>
   );
 
   return (
     <>
+      {hiddenPendingCount > 0 ? (
+        <Alert
+          variant="warning"
+          isInline
+          title={`${pendingCount} undecided — not all visible`}
+          style={{ marginBottom: 12 }}
+        >
+          {hiddenPendingCount} undecided location
+          {hiddenPendingCount !== 1 ? 's are' : ' is'} hidden by filters or the
+          current list view. Clear filters, expand the list, or use Include/Skip
+          remaining on visible rows.
+        </Alert>
+      ) : null}
+      <ReviewPartialNextConfirmModal
+        isOpen={confirmPartialNext}
+        title="Skip remaining locations?"
+        confirmLabel="Run AI on included"
+        onClose={() => setConfirmPartialNext(false)}
+        onConfirm={confirmPartialNextAction}
+      >
+        Run AI on {includeCount} included location
+        {includeCount !== 1 ? 's' : ''} and treat the remaining {pendingCount}{' '}
+        as <strong>Skip</strong>?
+      </ReviewPartialNextConfirmModal>
       {error ? (
         <Alert
           variant="danger"
@@ -495,7 +561,7 @@ export function AiEscalationPanel({
           summary: nextSummary,
           onNext: handleNext,
           isLoading: escalating,
-          isDisabled: escalating || pendingCount > 0,
+          isDisabled: escalating || nextBlocked,
         }}
         filterGroups={filterGroups}
         filterAccessory={

@@ -147,7 +147,7 @@ describe('resolveCurrentWorkflowStep', () => {
     latch = updateWorkflowLatch(latch, state, true);
     expect(resolveCurrentWorkflowStep(state, true, latch)).toBe('ai_escalation');
     expect(latch.pastTier1Applied).toBe(false);
-    expect(latch.pastAiEscalation).toBe(true);
+    expect(latch.pastAiEscalation).toBe(false);
     expect(workflowStepDefs(true, { skipTier1: true }).map((s) => s.id)).not.toContain(
       'tier1_proposals',
     );
@@ -157,14 +157,36 @@ describe('resolveCurrentWorkflowStep', () => {
     let latch = emptyWorkflowLatch();
     latch = updateWorkflowLatch(
       latch,
-      baseState({ status: 'awaiting_ai_triage', ai_triage_candidates: [] }),
+      baseState({
+        status: 'awaiting_ai_triage',
+        ai_triage_candidates: [
+          {
+            rule_id: 'L001',
+            message: 'needs AI',
+            file: 'a.yml',
+            path: 'playbooks/a.yml::0',
+          },
+        ],
+      }),
       true,
     );
-    const applying = baseState({ status: 'applying', scan_type: 'remediate' });
+    const applying = baseState({
+      status: 'applying',
+      scan_type: 'remediate',
+      ai_triage_candidates: [
+        {
+          rule_id: 'L001',
+          message: 'needs AI',
+          file: 'a.yml',
+          path: 'playbooks/a.yml::0',
+        },
+      ],
+    });
     latch = updateWorkflowLatch(latch, applying, true);
     expect(resolveCurrentWorkflowStep(applying, true, latch)).toBe(
       'ai_escalation',
     );
+    expect(latch.pastAiEscalation).toBe(true);
   });
 
   it('uses AI proposals for Gate 2 awaiting_approval', () => {
@@ -550,7 +572,7 @@ describe('edge cases', () => {
       baseState({ status: 'awaiting_ai_triage', ai_triage_candidates: [{ rule_id: 'L001', message: 'x', file: 'a.yml', path: 'a.yml::0' }] }),
       true,
     );
-    expect(latch.pastAiEscalation).toBe(true);
+    expect(latch.pastAiEscalation).toBe(false);
 
     // Gate 2 proposals
     latch = updateWorkflowLatch(
@@ -561,6 +583,7 @@ describe('edge cases', () => {
       }),
       true,
     );
+    expect(latch.pastAiEscalation).toBe(true);
     expect(latch.seenGate2Review).toBe(true);
     expect(latch.pastAiReview).toBe(false);
 
