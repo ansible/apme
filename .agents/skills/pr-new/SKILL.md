@@ -205,6 +205,9 @@ artifact type, translate it:
    an empty-but-not-falsy value. Trace it through the code path.
    If it fails silently, sends a vacuous request, or produces a
    return value that violates the declared type, that's a finding.
+   When tests exercise optional OS or native capabilities, trace both
+   available and unavailable cases: gate capability-specific assertions
+   and separately assert the documented fallback.
    When a check treats a character as a metacharacter (shell `|`,
    glob `*`, YAML `&`), construct an input where that character is
    a token in a *different* grammar in the same string — Jinja

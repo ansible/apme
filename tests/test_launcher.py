@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ctypes
 import errno
 import json
 import signal
@@ -23,6 +24,19 @@ from apme_engine.daemon.launcher import (
     _proc_starttime,
     daemon_status,
 )
+
+
+def _getifaddrs_available() -> bool:
+    """Return whether the host exposes both interface enumeration calls.
+
+    Returns:
+        Whether both getifaddrs and freeifaddrs are available.
+    """
+    try:
+        libc = ctypes.CDLL(None, use_errno=True)
+    except OSError:
+        return False
+    return hasattr(libc, "getifaddrs") and hasattr(libc, "freeifaddrs")
 
 
 def _ephemeral_port() -> int:
@@ -166,17 +180,33 @@ def test_probe_targets_ipv6_wildcard_includes_ipv4() -> None:
 
 def test_assigned_interface_addresses_reads_ipv4_loopback() -> None:
     """Interface enumeration reads the concrete IPv4 loopback address."""
+    if not _getifaddrs_available():
+        pytest.skip("getifaddrs and freeifaddrs are unavailable")
     assert "127.0.0.1" in _assigned_interface_addresses(socket.AF_INET)
 
 
 def test_assigned_interface_addresses_reads_ipv6_loopback() -> None:
     """Interface enumeration reads IPv6 loopback when the host supports it."""
+    if not _getifaddrs_available():
+        pytest.skip("getifaddrs and freeifaddrs are unavailable")
     try:
         with socket.socket(socket.AF_INET6, socket.SOCK_STREAM) as sock:
             sock.bind(("::1", 0))
     except OSError:
         pytest.skip("IPv6 loopback is unavailable")
     assert "::1" in _assigned_interface_addresses(socket.AF_INET6)
+
+
+def test_assigned_interface_addresses_returns_empty_without_getifaddrs(monkeypatch: MonkeyPatch) -> None:
+    """Unavailable native interface enumeration returns an empty set.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+    monkeypatch.setattr("apme_engine.daemon.launcher.ctypes.CDLL", lambda *_args, **_kwargs: object())
+
+    assert _assigned_interface_addresses(socket.AF_INET) == set()
+    assert _assigned_interface_addresses(socket.AF_INET6) == set()
 
 
 def test_wildcard_probe_includes_secondary_interface_addresses(monkeypatch: MonkeyPatch) -> None:
