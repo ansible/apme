@@ -43,19 +43,20 @@ def test_session_galaxy_proxy_payload_preserves_settings_and_unique_names() -> N
     payloads = _session_galaxy_server_payloads(
         [
             GalaxyServerDef(
-                name="hub",
+                name=" Hub ",
                 url=" https://hub.example.com/api/ ",
                 token="private-token",
                 validate_certs=False,
             ),
             GalaxyServerDef(name="hub", url="https://mirror.example.com/api/"),
+            GalaxyServerDef(name="   ", url="https://third.example.com/api/"),
             GalaxyServerDef(name="ignored", url="  "),
         ]
     )
 
     assert payloads == [
         {
-            "name": "hub",
+            "name": "Hub",
             "url": "https://hub.example.com/api/",
             "token": "private-token",
             "auth_url": "",
@@ -64,6 +65,13 @@ def test_session_galaxy_proxy_payload_preserves_settings_and_unique_names() -> N
         {
             "name": "hub_1",
             "url": "https://mirror.example.com/api/",
+            "token": "",
+            "auth_url": "",
+            "validate_certs": None,
+        },
+        {
+            "name": "server_2",
+            "url": "https://third.example.com/api/",
             "token": "",
             "auth_url": "",
             "validate_certs": None,

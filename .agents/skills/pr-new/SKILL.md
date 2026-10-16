@@ -242,6 +242,10 @@ artifact type, translate it:
    What happens when `asyncio.gather()`
    returns a mix of results and exceptions — does every caller
    handle `return_exceptions=True` correctly?
+   For temporary bounded stores, trace active consumers across scopes and
+   concurrency. Exercise per-scope and process-wide capacity boundaries:
+   preserve unexpired data another request may still consume, and return an
+   explicit capacity error instead of silently evicting active data.
    Trace intentional control-flow exceptions through enclosing broad catches:
    retries, cancellations, and source conflicts must retain their caller-visible
    meaning. Malformed user configuration must reach the public entry point's

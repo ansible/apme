@@ -99,6 +99,12 @@ UI  (global server defs) ──► Gateway ──► gRPC ScanOptions     ──
                                                               pip/uv install wheel
 ```
 
+For scan-scoped definitions, the proxy keeps converted wheels in an opaque,
+short-lived session handoff instead of the process-wide wheel cache and index.
+The handoff enforces both per-scope and process-wide byte limits, reports
+capacity exhaustion to the prepare request, and preserves unexpired scopes
+while installs may still be using them.
+
 ## Alternatives Considered
 
 ### Alternative 1: Reimplement Galaxy auth in the proxy (PR #130's approach)
@@ -315,3 +321,4 @@ admin authentication also apply to the bootc Quadlet deployment.
 | 2026-07-08 | Brad Thornton | Accepted — core decision fully implemented |
 | 2026-10-09 | AI-assisted | Clarify per-server TLS delegation and durable cache source identity |
 | 2026-10-09 | AI-assisted | Track CA directory rotation, worker-based metadata probes, and reconciliation outcomes |
+| 2026-10-16 | AI-assisted | Record isolated scoped wheel handoffs and explicit capacity behavior |

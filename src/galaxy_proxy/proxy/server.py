@@ -83,6 +83,8 @@ _ADMIN_TOKEN_HEADER = "x-apme-proxy-token"
 _UNAUTH_TRUTHY = frozenset({"1", "true", "yes", "on"})
 _ON_DEMAND_WHEEL_TTL_S = 300.0
 _ON_DEMAND_WHEEL_LIMIT_BYTES = 64 * 1024 * 1024
+_MAX_SESSION_WHEEL_SCOPE_BYTES = _ON_DEMAND_WHEEL_LIMIT_BYTES
+_MAX_SESSION_WHEEL_TOTAL_BYTES = _ON_DEMAND_WHEEL_LIMIT_BYTES
 _MAX_SESSION_WHEEL_SCOPES = 128
 
 _GALAXY_LOCK_TIMEOUT_DEFAULT_S = 30.0  # APME_GALAXY_LOCK_TIMEOUT_S
@@ -1166,7 +1168,8 @@ def create_app(
 
         The engine calls this before pip resolves the local PEP 503 page. The
         CLI downloads the requested versions and their collection dependencies;
-        converted wheels are then served from the shared proxy cache.
+        converted wheels use the shared proxy cache for process-wide settings
+        and a private short-lived handoff for request-scoped settings.
 
         Args:
             request: Admin request carrying the shared proxy token.
@@ -1176,7 +1179,8 @@ def create_app(
             Prepared wheel filenames and specs that could not be resolved.
 
         Raises:
-            HTTPException: If auth fails, the specs are invalid, or config changes mid-download.
+            HTTPException: If auth fails, the specs are invalid, config changes
+                mid-download, or request-scoped wheel capacity is exceeded.
         """
         _require_admin_token(request)
         if not body.specs or len(body.specs) > 100:
@@ -1288,6 +1292,10 @@ def create_app(
                             elif not _cache_downloaded_wheel(cache, whl_name, whl_data):
                                 _remember_on_demand_wheel(_on_demand_wheels, whl_name, whl_data)
                             prepared.append(whl_name)
+                        except HTTPException:
+                            if session_scope_id is not None:
+                                _session_wheels.pop(session_scope_id, None)
+                            raise
                         except Exception as exc:  # noqa: BLE001 — keep processing partial CLI results
                             logger.warning(
                                 "collection_conversion_failed tarball=%s error_type=%s",
@@ -1937,42 +1945,45 @@ def _remember_session_wheel(
     filename: str,
     data: bytes,
 ) -> None:
-    """Retain a bounded, short-lived wheel under one session scope.
+    """Retain a short-lived wheel without evicting data from another scope.
 
     Args:
         store: Per-app map of opaque scope IDs to wheel data.
         scope_id: Random identifier returned to the requesting Engine.
         filename: Wheel basename.
         data: Converted wheel bytes.
+
+    Raises:
+        HTTPException: If the scope, total byte, or active scope limit is exceeded.
     """
-    if len(data) > _ON_DEMAND_WHEEL_LIMIT_BYTES:
-        return
     now = time.monotonic()
-    for old_scope, wheels in list(store.items()):
-        for old_name, (expires_at, _old_data) in list(wheels.items()):
+    for old_scope, old_wheels in list(store.items()):
+        for old_name, (expires_at, _old_data) in list(old_wheels.items()):
             if expires_at <= now:
-                del wheels[old_name]
-        if not wheels:
+                del old_wheels[old_name]
+        if not old_wheels:
             del store[old_scope]
 
-    wheels = store.pop(scope_id, {})
-    while len(store) >= _MAX_SESSION_WHEEL_SCOPES:
-        store.pop(next(iter(store)))
-    store[scope_id] = wheels
-    existing = wheels.get(filename)
+    wheels = store.get(scope_id)
+    existing = None if wheels is None else wheels.get(filename)
+    existing_size = 0 if existing is None else len(existing[1])
+    scope_size = 0 if wheels is None else sum(len(item[1]) for item in wheels.values())
+    if len(data) > _MAX_SESSION_WHEEL_SCOPE_BYTES or (
+        scope_size - existing_size + len(data) > _MAX_SESSION_WHEEL_SCOPE_BYTES
+    ):
+        raise HTTPException(status_code=413, detail="Prepared wheels exceed the session scope size limit")
+
     total_size = sum(len(item[1]) for scope in store.values() for item in scope.values())
-    if existing is not None:
-        total_size -= len(existing[1])
-    while total_size + len(data) > _ON_DEMAND_WHEEL_LIMIT_BYTES:
-        oldest_scope_id = next(iter(store))
-        oldest_wheels = store[oldest_scope_id]
-        oldest_name = next(iter(oldest_wheels))
-        _expires_at, old_data = oldest_wheels.pop(oldest_name)
-        total_size -= len(old_data)
-        if not oldest_wheels:
-            del store[oldest_scope_id]
-        if scope_id not in store:
-            store[scope_id] = wheels
+    if total_size - existing_size + len(data) > _MAX_SESSION_WHEEL_TOTAL_BYTES:
+        raise HTTPException(
+            status_code=503,
+            detail="Session wheel capacity is full; retry after existing scopes expire",
+        )
+    if wheels is None:
+        if len(store) >= _MAX_SESSION_WHEEL_SCOPES:
+            raise HTTPException(status_code=503, detail="Too many active session wheel scopes; retry later")
+        wheels = {}
+        store[scope_id] = wheels
     wheels[filename] = (now + _ON_DEMAND_WHEEL_TTL_S, data)
 
 

@@ -707,7 +707,7 @@ class TestImportScanCaps:
     """Caps, redaction, and naming for POST /api/v1/scans/import."""
 
     def test_violations_array_capped(self) -> None:
-        """More than 5000 violations are rejected at the schema boundary."""
+        """More than 5000 violations fail validation; 5000 are accepted."""
         from pydantic import ValidationError
 
         from apme_gateway.api.schemas import ImportScanRequest
@@ -716,6 +716,18 @@ class TestImportScanCaps:
             ImportScanRequest(violations=[{"rule_id": "L001"}] * 5001)
         ok = ImportScanRequest(violations=[{"rule_id": "L001"}] * 5000)
         assert len(ok.violations) == 5000
+
+    async def test_violations_over_cap_return_422(self, client: AsyncClient) -> None:
+        """The public import endpoint returns 422 before entering the handler.
+
+        Args:
+            client: Async HTTP test client.
+        """
+        response = await client.post(
+            "/api/v1/scans/import",
+            json={"violations": [{"rule_id": "L001"}] * 5001},
+        )
+        assert response.status_code == 422
 
     def test_message_and_file_length_caps(self) -> None:
         """Per-field lengths are enforced (message 4k, file 1k)."""
@@ -1304,37 +1316,6 @@ class TestImportScanHandler:
         assert len(rows) == 1
         assert len(rows[0].message) == 4000
         assert len(rows[0].file) == 1000
-
-
-async def test_import_scan_handler_rejects_over_cap_400() -> None:
-    """The import handler rejects >5000 violations with 400 (above the schema cap).
-
-    DB-free: the cap check raises before any session is opened.
-    """
-    from apme_gateway.api.router import import_external_scan
-    from apme_gateway.api.schemas import ImportScanRequest, ImportViolationSchema
-
-    body = ImportScanRequest.model_construct(
-        project_id=None,
-        project_path="external",
-        scan_type="check",
-        source="cli",
-        violations=[
-            ImportViolationSchema.model_construct(
-                rule_id="L001",
-                level="warning",
-                message="m",
-                file="f.yml",
-                line=1,
-                path="",
-                remediation_class="",
-            )
-        ]
-        * 5001,
-    )
-    with pytest.raises(HTTPException) as exc_info:
-        await import_external_scan(body)
-    assert exc_info.value.status_code == 400
 
 
 async def test_project_format_invalid_branch_422(client: AsyncClient) -> None:

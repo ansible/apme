@@ -959,7 +959,8 @@ class ImportScanRequest(BaseModel):  # type: ignore[misc]
     Stores CLI-local ``apme check --json`` output as Gateway activity
     without requiring a registered project scan run.
 
-    Per-field ``max_length`` caps plus the 5000-row cap bound the
+    Per-field ``max_length`` caps plus the 5000-row cap (requests above
+    the cap fail with 422) bound the
     worst-case JSON payload; total request-body size itself is bounded
     by the ASGI server / reverse-proxy max-body setting (not by
     Pydantic — FastAPI has no per-route body-size knob).

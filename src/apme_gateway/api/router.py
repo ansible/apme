@@ -1492,7 +1492,6 @@ async def get_session_venv_info(session_id: str) -> SessionVenvInfo:
     )
 
 
-_IMPORT_MAX_VIOLATIONS = 5000
 _IMPORT_MAX_MESSAGE_CHARS = 4000
 _IMPORT_MAX_FILE_CHARS = 1000
 _IMPORT_MAX_PATH_CHARS = 2000
@@ -1692,7 +1691,8 @@ async def import_external_scan(body: ImportScanRequest) -> ImportScanResponse:
     ``ai-candidate`` → ``ai_candidate``); rows with an empty/unknown
     label are counted as ``manual_review`` (pending triage) and stored
     with ``remediation_class=0`` (unspecified). At most 5000 violations
-    are stored per import; per-violation ``message`` is capped at 4000
+    may be submitted per import; requests with more are rejected with 422
+    during Pydantic validation. Per-violation ``message`` is capped at 4000
     chars, ``file`` at 1000 chars, ``path`` at 2000 chars, ``rule_id``
     at 64, ``level`` at 16, ``remediation_class`` at 32
     (Pydantic enforces the caps with 422; the handler truncates
@@ -1712,8 +1712,7 @@ async def import_external_scan(body: ImportScanRequest) -> ImportScanResponse:
 
     Raises:
         HTTPException: 404 if a provided project_id does not exist;
-            400 if more than 5000 violations are supplied; 429 when the
-            per-project import rate limit is exceeded.
+            429 when the per-project import rate limit is exceeded.
     """
     import uuid as _uuid  # noqa: PLC0415
     from datetime import UTC as _UTC  # noqa: PLC0415
@@ -1723,11 +1722,6 @@ async def import_external_scan(body: ImportScanRequest) -> ImportScanResponse:
     from apme_gateway.db.models import Session as _Session
     from apme_gateway.db.models import Violation as _Violation
 
-    if len(body.violations) > _IMPORT_MAX_VIOLATIONS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Too many violations: {len(body.violations)} (max {_IMPORT_MAX_VIOLATIONS})",
-        )
     _rate_key = (body.project_id or "external")[:_IMPORT_MAX_PROJECT_PATH_CHARS]
     _check_import_rate_limit(_rate_key, unlinked=body.project_id is None)
     scan_id = _uuid.uuid4().hex

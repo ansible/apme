@@ -173,13 +173,13 @@ def _normalized_session_galaxy_servers(
         url = (server.url or "").strip()
         if not url:
             continue
-        base_name = server.name or f"server_{i}"
+        base_name = (server.name or "").strip() or f"server_{i}"
         name = base_name
         suffix = 1
-        while name in seen_names:
+        while name.upper() in seen_names:
             name = f"{base_name}_{suffix}"
             suffix += 1
-        seen_names.add(name)
+        seen_names.add(name.upper())
         entries.append((name, url, server))
     return entries
 
