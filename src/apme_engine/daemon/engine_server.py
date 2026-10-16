@@ -156,6 +156,58 @@ class _ValidatorResult:
     error: str | None = None
 
 
+def _normalized_session_galaxy_servers(
+    galaxy_servers: Sequence[GalaxyServerDef],
+) -> list[tuple[str, str, GalaxyServerDef]]:
+    """Return session Galaxy servers with unique config section names.
+
+    Args:
+        galaxy_servers: Ordered scan-scoped Galaxy server definitions.
+
+    Returns:
+        Tuples of normalized section name, trimmed URL, and source proto.
+    """
+    seen_names: set[str] = set()
+    entries: list[tuple[str, str, GalaxyServerDef]] = []
+    for i, server in enumerate(galaxy_servers):
+        url = (server.url or "").strip()
+        if not url:
+            continue
+        base_name = server.name or f"server_{i}"
+        name = base_name
+        suffix = 1
+        while name in seen_names:
+            name = f"{base_name}_{suffix}"
+            suffix += 1
+        seen_names.add(name)
+        entries.append((name, url, server))
+    return entries
+
+
+def _session_galaxy_server_payloads(
+    galaxy_servers: Sequence[GalaxyServerDef],
+) -> list[dict[str, object]] | None:
+    """Build the request-scoped proxy payload from session Galaxy settings.
+
+    Args:
+        galaxy_servers: Ordered scan-scoped Galaxy server definitions.
+
+    Returns:
+        JSON-ready server configs, or ``None`` when no server URL was given.
+    """
+    payloads: list[dict[str, object]] = []
+    for name, url, server in _normalized_session_galaxy_servers(galaxy_servers):
+        payload: dict[str, object] = {
+            "name": name,
+            "url": url,
+            "token": server.token,
+            "auth_url": server.auth_url,
+            "validate_certs": server.validate_certs if server.HasField("validate_certs") else None,
+        }
+        payloads.append(payload)
+    return payloads or None
+
+
 def _write_session_galaxy_cfg(
     galaxy_servers: Sequence[GalaxyServerDef],
 ) -> Path | None:
@@ -179,26 +231,15 @@ def _write_session_galaxy_cfg(
         write_temp_ansible_cfg,
     )
 
-    seen_names: set[str] = set()
     configs: list[GalaxyServerConfig] = []
-    for i, s in enumerate(galaxy_servers):
-        url = (s.url or "").strip()
-        if not url:
-            continue
-        base_name = s.name or f"server_{i}"
-        name = base_name
-        suffix = 1
-        while name in seen_names:
-            name = f"{base_name}_{suffix}"
-            suffix += 1
-        seen_names.add(name)
+    for name, url, server in _normalized_session_galaxy_servers(galaxy_servers):
         configs.append(
             GalaxyServerConfig(
                 name=name,
                 url=url,
-                token=s.token or None,
-                auth_url=s.auth_url or None,
-                validate_certs=s.validate_certs if s.HasField("validate_certs") else None,
+                token=server.token or None,
+                auth_url=server.auth_url or None,
+                validate_certs=server.validate_certs if server.HasField("validate_certs") else None,
             )
         )
     if not configs:
@@ -572,7 +613,7 @@ def _discover_collection_specs(files: Sequence[File]) -> tuple[list[str], list[s
                 version = entry.get("version")
                 version_text = str(version).strip().replace(" ", "") if version is not None else ""
                 spec = f"{name}:{version_text}" if version_text and version_text != "*" else name
-                specs.setdefault(name, spec)
+                specs[name] = spec
     return list(specs.values()), found_paths
 
 
@@ -957,6 +998,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         core_version: str,
         collection_specs: list[str] | None,
         galaxy_cfg_path: Path | None,
+        galaxy_server_configs: list[dict[str, object]] | None = None,
         scan_id: str,
         ctx: contextvars.Context,
     ) -> VenvSession:
@@ -973,6 +1015,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             core_version: Ansible-core version pin.
             collection_specs: Collection specs for the install.
             galaxy_cfg_path: Session Galaxy config path (or None).
+            galaxy_server_configs: Request-scoped Galaxy settings for the proxy.
             scan_id: Request ID for log lines.
             ctx: Context to run the blocking acquire under.
 
@@ -999,6 +1042,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                             core_version,
                             collection_specs,
                             galaxy_env,
+                            galaxy_server_configs,
                         )
 
                     acquire_future = loop.run_in_executor(None, _run_acquire)
@@ -1080,9 +1124,9 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
     def _galaxy_proxy_env_snapshot(self, galaxy_cfg_path: Path | None) -> dict[str, str]:
         """Build an env snapshot carrying the session Galaxy config.
 
-        Does not mutate ``os.environ`` — callers pass the snapshot
-        explicitly to the venv-acquire downloader so concurrent sessions
-        cannot observe each other's credentials via process-global state.
+        Does not mutate ``os.environ``. The snapshot is only passed to local
+        install subprocesses; proxy preparation receives structured server
+        settings in its authenticated request.
 
         Args:
             galaxy_cfg_path: Session-scoped ``ansible.cfg`` path, if any.
@@ -1100,14 +1144,10 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
     async def _activate_galaxy_proxy_config(self, galaxy_cfg_path: Path | None) -> AsyncIterator[dict[str, str]]:
         """Provide a session-scoped Galaxy env snapshot without global mutation.
 
-        This only affects local daemon mode where Engine and Galaxy Proxy share
-        a process. Pod deployments use the Gateway's proxy config sync instead.
-
         Sessions with identical Galaxy configs serialize on a per-config-hash
-        lock; sessions with unrelated credentials do not block each other
-        (previously one process-wide lock serialized all Galaxy-config
-        sessions and the ``ANSIBLE_CONFIG`` override leaked credentials to
-        lock-free sessions via the in-process proxy).
+        lock, while sessions with unrelated credentials can proceed in parallel.
+        The proxy receives request-scoped server settings and never reads this
+        snapshot from process-global state.
 
         Args:
             galaxy_cfg_path: Session-scoped ``ansible.cfg`` path, if any.
@@ -1115,8 +1155,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         Yields:
             dict[str, str]: Env snapshot with ``ANSIBLE_CONFIG`` set when
             applicable. ``os.environ`` is left unchanged; pass the snapshot
-            explicitly to the venv-acquire downloader (per-call env in the
-            executor thread).
+            explicitly to local venv install subprocesses.
         """
         if galaxy_cfg_path is None:
             yield dict(os.environ)
@@ -1139,6 +1178,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         session_id: str = "",
         progress_callback: Callable[[str, str, float, int], None] | None = None,
         galaxy_cfg_path: Path | None = None,
+        galaxy_server_configs: list[dict[str, object]] | None = None,
         rule_configs: list[object] | None = None,
         rule_configs_complete: bool = False,
         skip_validators: frozenset[str] = frozenset(),
@@ -1181,8 +1221,9 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             progress_callback: Optional callback ``(phase, message, fraction)``
                 for streaming per-validator progress to callers.
             galaxy_cfg_path: Session-scoped ``ansible.cfg`` for Galaxy auth
-                (ADR-045). In daemon mode this is temporarily exposed to the
-                in-process Galaxy Proxy during venv acquisition.
+                (ADR-045), passed to local install subprocesses.
+            galaxy_server_configs: Request-scoped Galaxy settings sent to the
+                authenticated proxy preparation endpoint.
             rule_configs: Per-rule overrides from ``ScanOptions`` (ADR-041).
                 When provided, disabled rules are filtered and severity is
                 overridden after validator fan-out.
@@ -1219,6 +1260,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                 session_id=session_id,
                 progress_callback=progress_callback,
                 galaxy_cfg_path=galaxy_cfg_path,
+                galaxy_server_configs=galaxy_server_configs,
                 rule_configs=rule_configs,
                 rule_configs_complete=rule_configs_complete,
                 skip_validators=skip_validators,
@@ -1247,6 +1289,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
         session_id: str = "",
         progress_callback: Callable[[str, str, float, int], None] | None = None,
         galaxy_cfg_path: Path | None = None,
+        galaxy_server_configs: list[dict[str, object]] | None = None,
         rule_configs: list[object] | None = None,
         rule_configs_complete: bool = False,
         skip_validators: frozenset[str] = frozenset(),
@@ -1275,8 +1318,9 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             progress_callback: Optional callback ``(phase, message, fraction)``
                 for streaming per-validator progress to callers.
             galaxy_cfg_path: Session-scoped ``ansible.cfg`` for Galaxy auth
-                (ADR-045). In daemon mode this is temporarily exposed to the
-                in-process Galaxy Proxy during venv acquisition.
+                (ADR-045), passed to local install subprocesses.
+            galaxy_server_configs: Request-scoped Galaxy settings sent to the
+                authenticated proxy preparation endpoint.
             rule_configs: Per-rule overrides from ``ScanOptions`` (ADR-041).
                 When provided, disabled rules are filtered and severity is
                 overridden after validator fan-out.
@@ -1407,6 +1451,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                 core_version=core_version,
                 collection_specs=collection_specs,
                 galaxy_cfg_path=galaxy_cfg_path,
+                galaxy_server_configs=galaxy_server_configs,
                 scan_id=scan_id,
                 ctx=ctx,
             )
@@ -2135,6 +2180,8 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
             fix_session_id = scan_opts.session_id
             galaxy_servers = scan_opts.galaxy_servers
 
+        galaxy_server_configs = _session_galaxy_server_payloads(galaxy_servers)
+
         scan_rule_configs, scan_rule_configs_complete = _scan_rule_audit_inputs(scan_opts)
 
         skip_validators: set[str] = set()
@@ -2369,6 +2416,7 @@ class EngineServicer(engine_pb2_grpc.EngineServicer):
                 session_id=fix_session_id,
                 progress_callback=_progress_callback,
                 galaxy_cfg_path=session.galaxy_cfg_path,
+                galaxy_server_configs=galaxy_server_configs,
                 rule_configs=scan_rule_configs or None,
                 rule_configs_complete=scan_rule_configs_complete,
                 skip_validators=frozenset(skip_validators),

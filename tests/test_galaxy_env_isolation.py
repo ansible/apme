@@ -31,6 +31,46 @@ async def test_galaxy_env_snapshot_leaves_os_environ_unchanged(tmp_path: Path, m
     assert "ANSIBLE_CONFIG" not in os.environ
 
 
+def test_session_galaxy_proxy_payload_preserves_settings_and_unique_names() -> None:
+    """Proxy prep gets normalized request-scoped server details.
+
+    Returns:
+        None.
+    """
+    from apme.v1.common_pb2 import GalaxyServerDef
+    from apme_engine.daemon.engine_server import _session_galaxy_server_payloads
+
+    payloads = _session_galaxy_server_payloads(
+        [
+            GalaxyServerDef(
+                name="hub",
+                url=" https://hub.example.com/api/ ",
+                token="private-token",
+                validate_certs=False,
+            ),
+            GalaxyServerDef(name="hub", url="https://mirror.example.com/api/"),
+            GalaxyServerDef(name="ignored", url="  "),
+        ]
+    )
+
+    assert payloads == [
+        {
+            "name": "hub",
+            "url": "https://hub.example.com/api/",
+            "token": "private-token",
+            "auth_url": "",
+            "validate_certs": False,
+        },
+        {
+            "name": "hub_1",
+            "url": "https://mirror.example.com/api/",
+            "token": "",
+            "auth_url": "",
+            "validate_certs": None,
+        },
+    ]
+
+
 async def test_galaxy_locks_scoped_per_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Unrelated Galaxy configs do not share one process-wide lock.
 

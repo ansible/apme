@@ -1233,6 +1233,104 @@ def test_prepare_collections_uses_shared_proxy_token(monkeypatch: pytest.MonkeyP
     assert post.call_args.kwargs["json"] == {"specs": ["ansible.posix:1.5.4", "community.general:>=9"]}
 
 
+def test_prepare_collections_forwards_session_galaxy_servers(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Session credentials travel in the authenticated, request-scoped payload.
+
+    Args:
+        monkeypatch: Pytest environment fixture.
+    """
+    from apme_engine.venv_manager.session import _prepare_collections_via_proxy
+
+    monkeypatch.setenv("APME_PROXY_ADMIN_TOKEN", "shared-secret")
+    response = MagicMock()
+    response.raise_for_status.return_value = None
+    response.json.return_value = {"prepared": [], "failed_specs": [], "scope_id": "A" * 32}
+    galaxy_servers = [
+        {
+            "name": "private_hub",
+            "url": "https://hub.example.com/api/galaxy/content/",
+            "token": "session-secret",
+            "auth_url": "",
+            "validate_certs": True,
+        }
+    ]
+    with patch("apme_engine.venv_manager.session.httpx.post", return_value=response) as post:
+        scope_id = _prepare_collections_via_proxy(
+            "http://127.0.0.1:8765",
+            ["ansible.posix:1.5.4"],
+            galaxy_servers,
+        )
+
+    assert post.call_args.kwargs["headers"] == {"x-apme-proxy-token": "shared-secret"}
+    assert post.call_args.kwargs["json"] == {"specs": ["ansible.posix:1.5.4"], "servers": galaxy_servers}
+    assert scope_id == "A" * 32
+
+
+def test_scoped_prepare_uses_its_isolated_package_index(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Scoped Galaxy credentials install only from their matching wheel scope.
+
+    Args:
+        monkeypatch: Pytest environment fixture.
+    """
+    from types import SimpleNamespace
+
+    from apme_engine.venv_manager.session import _install_collections_via_proxy
+
+    monkeypatch.setenv("APME_PROXY_ADMIN_TOKEN", "shared-secret")
+    response = MagicMock()
+    response.raise_for_status.return_value = None
+    scope_id = "B" * 32
+    response.json.return_value = {"prepared": [], "failed_specs": [], "scope_id": scope_id}
+    galaxy_servers: list[dict[str, object]] = [
+        {"name": "private", "url": "https://hub.example.com/", "token": "secret"}
+    ]
+    with (
+        patch("apme_engine.venv_manager.session.httpx.post", return_value=response),
+        patch(
+            "apme_engine.venv_manager.session._run_pip_install",
+            return_value=SimpleNamespace(returncode=0, stdout="", stderr=""),
+        ) as install,
+    ):
+        failures = _install_collections_via_proxy(
+            Path("/venv/bin/python"),
+            ["ansible.posix:1.5.4"],
+            "http://proxy",
+            use_uv=False,
+            galaxy_server_configs=galaxy_servers,
+        )
+
+    assert failures == []
+    assert install.call_args.args[2] == f"http://proxy/simple/session/{scope_id}/"
+
+
+def test_scoped_prepare_failure_does_not_fall_back_to_global_index(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A scoped source failure cannot silently install from the global Hub.
+
+    Args:
+        monkeypatch: Pytest environment fixture.
+    """
+    from apme_engine.venv_manager.session import _install_collections_via_proxy
+
+    monkeypatch.setenv("APME_PROXY_ADMIN_TOKEN", "shared-secret")
+    galaxy_servers: list[dict[str, object]] = [
+        {"name": "private", "url": "https://hub.example.com/", "token": "secret"}
+    ]
+    with (
+        patch("apme_engine.venv_manager.session.httpx.post", side_effect=httpx.ConnectError("proxy down")),
+        patch("apme_engine.venv_manager.session._run_pip_install") as install,
+    ):
+        failures = _install_collections_via_proxy(
+            Path("/venv/bin/python"),
+            ["ansible.posix:1.5.4"],
+            "http://proxy",
+            use_uv=False,
+            galaxy_server_configs=galaxy_servers,
+        )
+
+    assert failures == ["ansible.posix:1.5.4"]
+    install.assert_not_called()
+
+
 def test_prepare_collection_error_does_not_skip_pip_install(monkeypatch: pytest.MonkeyPatch) -> None:
     """A failed prepare request still allows the ordinary install fallback.
 
@@ -1327,6 +1425,7 @@ def test_spec_to_pip_preserves_range_constraints() -> None:
     assert _spec_to_pip("ansible.posix:*") == "ansible-collection-ansible-posix"
     assert _spec_to_bare_pip("community.general:>=9,<10") == "ansible-collection-community-general"
     assert _spec_to_bare_pip("ansible.posix:1.5.4") == "ansible-collection-ansible-posix"
+
 
 class TestWaitOutWorkerDoubleCancel:
     """wait_out_worker survives repeated cancellation (finding #2)."""

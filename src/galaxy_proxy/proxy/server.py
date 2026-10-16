@@ -19,6 +19,7 @@ import math
 import os
 import platform
 import re
+import secrets
 import socket
 import ssl
 import stat
@@ -82,6 +83,7 @@ _ADMIN_TOKEN_HEADER = "x-apme-proxy-token"
 _UNAUTH_TRUTHY = frozenset({"1", "true", "yes", "on"})
 _ON_DEMAND_WHEEL_TTL_S = 300.0
 _ON_DEMAND_WHEEL_LIMIT_BYTES = 64 * 1024 * 1024
+_MAX_SESSION_WHEEL_SCOPES = 128
 
 _GALAXY_LOCK_TIMEOUT_DEFAULT_S = 30.0  # APME_GALAXY_LOCK_TIMEOUT_S
 
@@ -360,9 +362,48 @@ class _PrepareCollectionsPayload(BaseModel):  # type: ignore[misc]
 
     Attributes:
         specs: Collection FQCNs with optional version constraints.
+        servers: Optional session-scoped Galaxy server settings. When omitted,
+            the proxy's configured source is used.
     """
 
     specs: list[str]
+    servers: list[_GalaxyServerPayload] | None = None
+
+
+def _validated_galaxy_servers(payloads: list[_GalaxyServerPayload]) -> list[GalaxyServerConfig]:
+    """Validate and normalize Galaxy server settings without changing app state.
+
+    Args:
+        payloads: Galaxy settings from an authenticated admin request.
+
+    Returns:
+        Normalized server definitions ready for ``ansible-galaxy``.
+
+    Raises:
+        HTTPException: If a name is invalid or duplicated, or a URL is unsafe.
+    """
+    seen_names: set[str] = set()
+    servers: list[GalaxyServerConfig] = []
+    for payload in payloads:
+        name = payload.name.strip()
+        if not name:
+            raise HTTPException(status_code=422, detail="Server name must not be empty")
+        if not re.match(r"^[A-Za-z0-9_\-]+$", name):
+            raise HTTPException(status_code=422, detail=f"Invalid server name: {payload.name!r}")
+        if name.upper() in seen_names:
+            raise HTTPException(status_code=422, detail=f"Duplicate server name: {payload.name!r}")
+        seen_names.add(name.upper())
+        _validate_galaxy_server_url(payload.url)
+        servers.append(
+            GalaxyServerConfig(
+                name=name,
+                url=payload.url,
+                token=payload.token or None,
+                auth_url=payload.auth_url or None,
+                validate_certs=payload.validate_certs,
+            )
+        )
+    return servers
 
 
 def _source_environment() -> dict[str, str]:
@@ -633,6 +674,8 @@ def create_app(
     # Short-lived handoff for a project page whose disk cache write failed.
     # The pip wheel request can still succeed without another upstream fetch.
     _on_demand_wheels: dict[str, tuple[float, bytes]] = {}
+    # Request-scoped downloads stay out of the process-wide cache and index.
+    _session_wheels: dict[str, dict[str, tuple[float, bytes]]] = {}
     # Exact pins that failed preparation still need a versioned wheel link so
     # pip can invoke the wheel route's exact-version Hub retry.
     _prepare_fallback_wheels: dict[str, float] = {}
@@ -641,10 +684,10 @@ def create_app(
     # the in-hand bytes so project pages avoid re-hashing files per request.
     # Filesystem remains the source of truth; this only skips repeated reads.
     # LRU-capped (see _MAX_WHEEL_HASHES); entries are revalidated against
-    # file mtime+size so a replaced wheel is re-hashed, never served stale.
+    # device, inode, mtime, and size so a replaced wheel is re-hashed.
     _wheel_sha256_cache: dict[str, str] = {}
-    # File identity (mtime_ns, size) captured when each hash was computed.
-    _wheel_hash_stat: dict[str, tuple[int, int]] = {}
+    # File identity captured before and after hashing.
+    _wheel_hash_stat: dict[str, tuple[int, int, int, int]] = {}
 
     def _is_download_lock_idle(lock: object) -> bool:
         """Return True when a download lock has no holders or waiters.
@@ -722,6 +765,26 @@ def create_app(
             return
         mapping[key] = value
 
+    def _hash_wheel_stably(wheel_path: Path) -> tuple[str, tuple[int, int, int, int]] | None:
+        """Hash a wheel only when its identity stays stable across the read.
+
+        Args:
+            wheel_path: Cached wheel path.
+
+        Returns:
+            Digest and file identity, or ``None`` after repeated replacement.
+
+        """
+        for _attempt in range(2):
+            before = wheel_path.stat()
+            before_identity = (before.st_dev, before.st_ino, before.st_mtime_ns, before.st_size)
+            digest = sha256_file_hex(wheel_path)
+            after = wheel_path.stat()
+            after_identity = (after.st_dev, after.st_ino, after.st_mtime_ns, after.st_size)
+            if before_identity == after_identity:
+                return digest, after_identity
+        return None
+
     def _get_download_lock(lock_key: str) -> asyncio.Lock:
         """Return the per-collection download lock, creating it if absent.
 
@@ -748,9 +811,9 @@ def create_app(
     async def _remember_wheel_hash(filename: str, digest: str, wheel_path: Path | None = None) -> None:
         """Store a wheel hash with its file identity for mtime revalidation.
 
-        The identity ``stat`` runs off the event loop via
+        File hashing and identity checks run off the event loop via
         ``asyncio.to_thread`` so a slow filesystem never stalls request
-        handling.
+        handling. The helper retries once when replacement occurs mid-hash.
 
         Args:
             filename: Wheel filename key.
@@ -763,13 +826,21 @@ def create_app(
         if filename not in _wheel_hash_stat:
             while len(_wheel_hash_stat) >= _MAX_WHEEL_HASHES:
                 _wheel_hash_stat.pop(next(iter(_wheel_hash_stat)))
-        _wheel_sha256_cache[filename] = digest
-        if wheel_path is not None:
-            try:
-                st = await asyncio.to_thread(wheel_path.stat)
-                _wheel_hash_stat[filename] = (st.st_mtime_ns, st.st_size)
-            except OSError:
-                _wheel_hash_stat.pop(filename, None)
+        if wheel_path is None:
+            _wheel_sha256_cache[filename] = digest
+            _wheel_hash_stat.pop(filename, None)
+            return
+        try:
+            stable = await asyncio.to_thread(_hash_wheel_stably, wheel_path)
+        except OSError:
+            stable = None
+        if stable is None:
+            _wheel_sha256_cache.pop(filename, None)
+            _wheel_hash_stat.pop(filename, None)
+            return
+        stable_digest, identity = stable
+        _wheel_sha256_cache[filename] = stable_digest
+        _wheel_hash_stat[filename] = identity
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:  # noqa: ARG001
@@ -929,9 +1000,9 @@ def create_app(
     async def _wheel_hash_hex(filename: str) -> str:
         """Return cached hex SHA256, hashing the file once on miss.
 
-        A cached entry is only reused when the on-disk file still has
-        the same mtime+size captured at hash time; a replaced wheel is
-        re-hashed so the cache never serves a stale digest.
+        A cached entry is only reused when device, inode, mtime, and size
+        still match the identity captured at hash time. Hashing retries once
+        when replacement occurs during the read.
 
         Args:
             filename: Wheel filename to hash.
@@ -945,18 +1016,32 @@ def create_app(
             return ""
         try:
             st = await asyncio.to_thread(wheel_path.stat)
-            identity = (st.st_mtime_ns, st.st_size)
         except OSError:
+            _wheel_sha256_cache.pop(filename, None)
+            _wheel_hash_stat.pop(filename, None)
             return ""
+        identity = (st.st_dev, st.st_ino, st.st_mtime_ns, st.st_size)
         if cached is not None and _wheel_hash_stat.get(filename) == identity:
             _lru_refresh(_wheel_sha256_cache, filename)
             return cached
         try:
-            digest = await asyncio.to_thread(sha256_file_hex, wheel_path)
+            stable = await asyncio.to_thread(_hash_wheel_stably, wheel_path)
         except OSError:
+            _wheel_sha256_cache.pop(filename, None)
+            _wheel_hash_stat.pop(filename, None)
             return ""
+        if stable is None:
+            _wheel_sha256_cache.pop(filename, None)
+            _wheel_hash_stat.pop(filename, None)
+            return ""
+        digest, identity = stable
         if digest:
-            await _remember_wheel_hash(filename, digest, wheel_path)
+            if filename not in _wheel_sha256_cache:
+                _evict_lru(_wheel_sha256_cache, _MAX_WHEEL_HASHES)
+            while len(_wheel_hash_stat) >= _MAX_WHEEL_HASHES and filename not in _wheel_hash_stat:
+                _wheel_hash_stat.pop(next(iter(_wheel_hash_stat)))
+            _wheel_sha256_cache[filename] = digest
+            _wheel_hash_stat[filename] = identity
         return digest
 
     if _admin_token_configured() == "" and not _unauth_admin_allowed():
@@ -1042,39 +1127,11 @@ def create_app(
         Returns:
             dict: Confirmation with count and names of accepted servers.
 
-        Raises:
-            HTTPException: 403 if the admin token is invalid or unconfigured;
-                422 if any server name is empty, invalid, or duplicated, or
-                any server URL is unsafe (non-https, embedded userinfo, or
-                local/link-local target).
         """
         _require_admin_token(request)
-        seen: set[str] = set()
-        for s in body.servers:
-            name = s.name.strip()
-            if not name:
-                raise HTTPException(status_code=422, detail="Server name must not be empty")
-            if not re.match(r"^[A-Za-z0-9_\-]+$", name):
-                raise HTTPException(status_code=422, detail=f"Invalid server name: {s.name!r}")
-            if name.upper() in seen:
-                raise HTTPException(status_code=422, detail=f"Duplicate server name: {s.name!r}")
-            seen.add(name.upper())
-            # Fail closed before storing: a stored URL later receives the
-            # victim's Galaxy token on every download, so an unsafe URL must
-            # never reach app state (tokens are never attached to hosts that
-            # fail validation because they are never stored).
-            _validate_galaxy_server_url(s.url)
-
-        desired_servers = [
-            GalaxyServerConfig(
-                name=s.name.strip(),
-                url=s.url,
-                token=s.token or None,
-                auth_url=s.auth_url or None,
-                validate_certs=s.validate_certs,
-            )
-            for s in body.servers
-        ]
+        # Fail closed before storing: configured URLs later receive Galaxy
+        # tokens on every download, so never retain unsafe endpoints.
+        desired_servers = _validated_galaxy_servers(body.servers)
         async with _config_lock:
             changed = desired_servers != app.state.galaxy_servers or app.state.ansible_cfg_path is not None
             key = await asyncio.to_thread(_source_probe, desired_servers, None)
@@ -1124,8 +1181,10 @@ def create_app(
         _require_admin_token(request)
         if not body.specs or len(body.specs) > 100:
             raise HTTPException(status_code=422, detail="specs must contain between 1 and 100 collections")
-        if not app.state.galaxy_config_ready:
+        if body.servers is None and not app.state.galaxy_config_ready:
             raise HTTPException(status_code=503, detail="Galaxy configuration has not been restored yet")
+        request_servers = None if body.servers is None else _validated_galaxy_servers(body.servers)
+        session_scope_id = secrets.token_urlsafe(24) if request_servers is not None else None
 
         specs = [spec.strip() for spec in body.specs]
         if any(
@@ -1143,6 +1202,15 @@ def create_app(
             return {spec: _cache_satisfies_spec(cache, handoff_snapshot, spec, _memo=memo) for spec in spec_list}
 
         async def _check_specs(spec_list: list[str]) -> dict[str, bool]:
+            if request_servers is not None:
+                # A scan-specific Hub is authoritative for this prepare call;
+                # only wheels downloaded into this request's private handoff
+                # may satisfy its specs.
+                assert session_scope_id is not None
+                handoff_snapshot = dict(_session_wheels.get(session_scope_id, {}))
+                return await asyncio.to_thread(
+                    lambda: {spec: _cache_satisfies_spec(None, handoff_snapshot, spec, _memo={}) for spec in spec_list}
+                )
             # Snapshot mutable app state on the event loop, then do wheel
             # listing, file reads, and ZIP metadata parsing in a worker thread.
             handoff_snapshot = dict(_on_demand_wheels)
@@ -1170,22 +1238,34 @@ def create_app(
             unresolved = [spec for spec in unresolved if not satisfaction[spec]]
 
             def _list_prepared_wheels() -> list[str]:
-                return sorted(
-                    {
-                        wheel
-                        for spec in specs
-                        if satisfaction[spec]
-                        for wheel in _list_cached_wheels(cache, *spec.split(":", 1)[0].split(".", 1))
-                    }
-                )
+                wheels: set[str] = set()
+                for spec in specs:
+                    if not satisfaction[spec]:
+                        continue
+                    namespace, collection = spec.split(":", 1)[0].split(".", 1)
+                    if session_scope_id is None:
+                        wheels.update(_list_cached_wheels(cache, namespace, collection))
+                    else:
+                        prefix = f"ansible_collection_{namespace}_{collection}-"
+                        wheels.update(
+                            filename
+                            for filename, (expires_at, _data) in _session_wheels.get(session_scope_id, {}).items()
+                            if expires_at > time.monotonic() and filename.startswith(prefix)
+                        )
+                return sorted(wheels)
 
             prepared = await asyncio.to_thread(_list_prepared_wheels)
             _require_current_config(generation)
             failed: list[str] = []
 
             if unresolved:
-                cfg_path, servers, galaxy_bin = await asyncio.to_thread(_get_galaxy_config)
-                cfg_for_download, servers_for_download = _download_auth(cfg_path, servers)
+                if request_servers is None:
+                    cfg_path, servers, galaxy_bin = await asyncio.to_thread(_get_galaxy_config)
+                    cfg_for_download, servers_for_download = _download_auth(cfg_path, servers)
+                else:
+                    cfg_for_download = None
+                    servers_for_download = request_servers
+                    galaxy_bin = app.state.ansible_galaxy_bin
                 with tempfile.TemporaryDirectory(prefix="apme-galaxy-prepare-") as tmp:
                     result = await download_collections(
                         unresolved,
@@ -1203,7 +1283,9 @@ def create_app(
                             # No await may occur between this generation check
                             # and publishing to disk or the in-memory handoff.
                             _require_current_config(generation)
-                            if not _cache_downloaded_wheel(cache, whl_name, whl_data):
+                            if session_scope_id is not None:
+                                _remember_session_wheel(_session_wheels, session_scope_id, whl_name, whl_data)
+                            elif not _cache_downloaded_wheel(cache, whl_name, whl_data):
                                 _remember_on_demand_wheel(_on_demand_wheels, whl_name, whl_data)
                             prepared.append(whl_name)
                         except Exception as exc:  # noqa: BLE001 — keep processing partial CLI results
@@ -1225,20 +1307,27 @@ def create_app(
             for filename, expires_at in list(_prepare_fallback_wheels.items()):
                 if expires_at <= now:
                     del _prepare_fallback_wheels[filename]
-            for spec in failed:
-                fqcn, separator, requested = spec.partition(":")
-                if not separator or not requested or requested.startswith(("<", ">", "!", "=", "~", "*")):
-                    continue
-                namespace, collection = fqcn.split(".", 1)
-                filename = wheel_filename(namespace, collection, requested)
-                _prepare_fallback_wheels[filename] = now + _ON_DEMAND_WHEEL_TTL_S
-            while len(_prepare_fallback_wheels) > 500:
-                del _prepare_fallback_wheels[next(iter(_prepare_fallback_wheels))]
+            if session_scope_id is None:
+                for spec in failed:
+                    fqcn, separator, requested = spec.partition(":")
+                    if not separator or not requested or requested.startswith(("<", ">", "!", "=", "~", "*")):
+                        continue
+                    namespace, collection = fqcn.split(".", 1)
+                    filename = wheel_filename(namespace, collection, requested)
+                    _prepare_fallback_wheels[filename] = now + _ON_DEMAND_WHEEL_TTL_S
+                while len(_prepare_fallback_wheels) > 500:
+                    del _prepare_fallback_wheels[next(iter(_prepare_fallback_wheels))]
         finally:
             for lock in reversed(acquired):
                 lock.release()
 
-        return {"prepared": sorted(set(prepared)), "failed_specs": sorted(set(failed))}
+        response: dict[str, Any] = {
+            "prepared": sorted(set(prepared)),
+            "failed_specs": sorted(set(failed)),
+        }
+        if session_scope_id is not None:
+            response["scope_id"] = session_scope_id
+        return response
 
     @app.get("/simple/", response_class=HTMLResponse)  # type: ignore[untyped-decorator]
     async def root_index() -> str:
@@ -1253,6 +1342,107 @@ def create_app(
             "<h1>Ansible Collection Proxy</h1>\n"
             "<p>Use pip install --extra-index-url to install collections.</p>\n"
             "</body></html>\n"
+        )
+
+    @app.get("/simple/session/{scope_id}/", response_class=HTMLResponse)  # type: ignore[untyped-decorator]
+    async def session_root_index(scope_id: str) -> HTMLResponse:
+        """List collection projects prepared for one short-lived session scope.
+
+        Args:
+            scope_id: Opaque identifier returned by the authenticated prepare request.
+
+        Returns:
+            PEP 503 root page containing only this scope's collections.
+
+        Raises:
+            HTTPException: If the scope ID is invalid or no longer available.
+        """
+        if not re.fullmatch(r"[A-Za-z0-9_-]{32}", scope_id):
+            raise HTTPException(status_code=404, detail="Session wheel scope is unavailable")
+        scope = _session_wheels.get(scope_id)
+        if scope is None:
+            raise HTTPException(status_code=404, detail="Session wheel scope is unavailable")
+        now = time.monotonic()
+        projects: set[str] = set()
+        for filename, (expires_at, _data) in scope.items():
+            if expires_at <= now:
+                continue
+            try:
+                distribution = parse_wheel_filename(filename)[0]
+            except InvalidWheelFilename:
+                continue
+            projects.add(normalize_pep503(distribution))
+        links = [f'<a href="/simple/session/{scope_id}/{package}/">{package}</a>' for package in sorted(projects)]
+        html = "<!DOCTYPE html>\n<html><body>\n" + "\n".join(links) + "\n</body></html>\n"
+        return HTMLResponse(content=html)
+
+    @app.get("/simple/session/{scope_id}/{package_name}/", response_class=HTMLResponse)  # type: ignore[untyped-decorator]
+    async def session_project_page(scope_id: str, package_name: str) -> HTMLResponse:
+        """List only the wheels prepared under the given request scope.
+
+        Args:
+            scope_id: Opaque identifier returned by the authenticated prepare request.
+            package_name: Requested PEP 503 package name.
+
+        Returns:
+            PEP 503 page with links to this scope's prepared wheels.
+
+        Raises:
+            HTTPException: If the package name or scope ID is invalid.
+        """
+        if not re.fullmatch(r"[A-Za-z0-9_-]{32}", scope_id):
+            raise HTTPException(status_code=404, detail="Session wheel scope is unavailable")
+        normalized = normalize_pep503(package_name)
+        if not is_collection_package(normalized):
+            raise HTTPException(status_code=404, detail="Session scope only serves prepared collections")
+        try:
+            namespace, name = python_to_fqcn(normalized)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail="Invalid collection package name") from exc
+        scope = _session_wheels.get(scope_id)
+        if scope is None:
+            raise HTTPException(status_code=404, detail="Session wheel scope is unavailable")
+        prefix = f"ansible_collection_{namespace}_{name}-"
+        now = time.monotonic()
+        links = []
+        for filename, (expires_at, data) in sorted(scope.items()):
+            if expires_at <= now or not filename.startswith(prefix):
+                continue
+            digest = hashlib.sha256(data).hexdigest()
+            href = f"/session-wheels/{scope_id}/{filename}#sha256={digest}"
+            links.append(f'<a href="{href}">{filename}</a>')
+        html = "<!DOCTYPE html>\n<html><body>\n" + "\n".join(links) + "\n</body></html>\n"
+        return HTMLResponse(content=html)
+
+    @app.get("/session-wheels/{scope_id}/{filename}")  # type: ignore[untyped-decorator]
+    async def serve_session_wheel(scope_id: str, filename: str) -> Response:
+        """Serve a wheel retained for one short-lived request scope.
+
+        Args:
+            scope_id: Opaque identifier returned by the authenticated prepare request.
+            filename: Prepared wheel basename.
+
+        Returns:
+            Binary wheel response.
+
+        Raises:
+            HTTPException: If the scope or wheel has expired or is invalid.
+        """
+        if (
+            not re.fullmatch(r"[A-Za-z0-9_-]{32}", scope_id)
+            or not filename.endswith(".whl")
+            or "/" in filename
+            or "\\" in filename
+            or ".." in filename
+        ):
+            raise HTTPException(status_code=404, detail="Session wheel is unavailable")
+        data = _session_wheel(_session_wheels, scope_id, filename)
+        if data is None:
+            raise HTTPException(status_code=404, detail="Session wheel is unavailable")
+        return Response(
+            content=data,
+            media_type="application/octet-stream",
+            headers={"Content-Disposition": f"attachment; filename={filename}"},
         )
 
     @app.get("/simple/{package_name}/", response_class=HTMLResponse)  # type: ignore[untyped-decorator]
@@ -1741,6 +1931,76 @@ def _remember_on_demand_wheel(store: dict[str, tuple[float, bytes]], filename: s
     store[filename] = (now + _ON_DEMAND_WHEEL_TTL_S, data)
 
 
+def _remember_session_wheel(
+    store: dict[str, dict[str, tuple[float, bytes]]],
+    scope_id: str,
+    filename: str,
+    data: bytes,
+) -> None:
+    """Retain a bounded, short-lived wheel under one session scope.
+
+    Args:
+        store: Per-app map of opaque scope IDs to wheel data.
+        scope_id: Random identifier returned to the requesting Engine.
+        filename: Wheel basename.
+        data: Converted wheel bytes.
+    """
+    if len(data) > _ON_DEMAND_WHEEL_LIMIT_BYTES:
+        return
+    now = time.monotonic()
+    for old_scope, wheels in list(store.items()):
+        for old_name, (expires_at, _old_data) in list(wheels.items()):
+            if expires_at <= now:
+                del wheels[old_name]
+        if not wheels:
+            del store[old_scope]
+
+    wheels = store.pop(scope_id, {})
+    while len(store) >= _MAX_SESSION_WHEEL_SCOPES:
+        store.pop(next(iter(store)))
+    store[scope_id] = wheels
+    existing = wheels.get(filename)
+    total_size = sum(len(item[1]) for scope in store.values() for item in scope.values())
+    if existing is not None:
+        total_size -= len(existing[1])
+    while total_size + len(data) > _ON_DEMAND_WHEEL_LIMIT_BYTES:
+        oldest_scope_id = next(iter(store))
+        oldest_wheels = store[oldest_scope_id]
+        oldest_name = next(iter(oldest_wheels))
+        _expires_at, old_data = oldest_wheels.pop(oldest_name)
+        total_size -= len(old_data)
+        if not oldest_wheels:
+            del store[oldest_scope_id]
+        if scope_id not in store:
+            store[scope_id] = wheels
+    wheels[filename] = (now + _ON_DEMAND_WHEEL_TTL_S, data)
+
+
+def _session_wheel(store: dict[str, dict[str, tuple[float, bytes]]], scope_id: str, filename: str) -> bytes | None:
+    """Return a live wheel from one request scope without consuming it.
+
+    Args:
+        store: Per-app map of opaque scope IDs to wheel data.
+        scope_id: Random identifier returned to the requesting Engine.
+        filename: Wheel basename.
+
+    Returns:
+        Unexpired wheel bytes, or ``None`` when unavailable.
+    """
+    scope = store.get(scope_id)
+    if scope is None:
+        return None
+    entry = scope.get(filename)
+    if entry is None:
+        return None
+    if entry[0] <= time.monotonic():
+        del scope[filename]
+        if not scope:
+            del store[scope_id]
+        return None
+    return entry[1]
+
+
 def _take_on_demand_wheel(store: dict[str, tuple[float, bytes]], filename: str) -> bytes | None:
     """Return and consume a live in-memory wheel handoff.
 
@@ -1785,7 +2045,7 @@ def _list_cached_wheels(cache: ProxyCache, namespace: str, name: str) -> list[st
 
 
 def _cache_satisfies_spec(
-    cache: ProxyCache,
+    cache: ProxyCache | None,
     handoffs: dict[str, tuple[float, bytes]],
     spec: str,
     _visiting: set[str] | None = None,
@@ -1794,7 +2054,7 @@ def _cache_satisfies_spec(
     """Return whether cache has a matching wheel and its collection dependencies.
 
     Args:
-        cache: Proxy's on-disk wheel cache.
+        cache: Proxy's on-disk wheel cache, or ``None`` for handoffs only.
         handoffs: Temporary in-memory wheels from failed disk writes.
         spec: Galaxy FQCN with an optional version constraint.
         _visiting: Specs already being checked to break dependency cycles.
@@ -1823,7 +2083,7 @@ def _cache_satisfies_spec(
         return True
     visiting = visiting | {spec}
     now = time.monotonic()
-    filenames = set(_list_cached_wheels(cache, namespace, name))
+    filenames = set() if cache is None else set(_list_cached_wheels(cache, namespace, name))
     handoff_data = {
         filename: data
         for filename, (expires_at, data) in handoffs.items()
@@ -1852,7 +2112,7 @@ def _cache_satisfies_spec(
 
     for _version, filename in sorted(candidates, reverse=True):
         data = handoff_data.get(filename)
-        if data is None:
+        if data is None and cache is not None:
             try:
                 data = cache.get_wheel(filename)
             except OSError:

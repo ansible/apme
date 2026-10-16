@@ -391,7 +391,7 @@ def _report_check_to_gateway(
                     "level": str(v.get("level") or v.get("severity") or "warning"),
                     "message": str(v.get("message", "")),
                     "file": str(v.get("file", "")),
-                    "line": v.get("line"),
+                    "line": _import_line(v.get("line")),
                     "path": str(v.get("path", "")),
                     "remediation_class": str(v.get("remediation_class") or ""),
                 }
@@ -407,3 +407,17 @@ def _report_check_to_gateway(
             sys.stderr.write(f"  Reported to Gateway: scan {reported_id}\n")
     except Exception as exc:  # noqa: BLE001 — best-effort mirror only
         sys.stderr.write(f"  Warning: --report-to-gateway failed: {exc}\n")
+
+
+def _import_line(line: object) -> int | None:
+    """Normalize violation locations for the Gateway import schema.
+
+    Args:
+        line: Single line number or a line range from a validator.
+
+    Returns:
+        The first line number when it is an integer, otherwise ``None``.
+    """
+    if isinstance(line, list | tuple):
+        line = line[0] if line else None
+    return line if isinstance(line, int) and not isinstance(line, bool) else None

@@ -194,6 +194,70 @@ def test_prepare_collections_uses_cli_for_requested_pin_and_dependencies(
     assert ProxyCache(tmp_path).get_wheel(WHEEL) == _wheel_bytes()
 
 
+def test_prepare_collections_uses_session_scoped_servers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A scan-specific Hub is used without changing proxy-wide configuration.
+
+    Args:
+        tmp_path: Temporary cache directory.
+        monkeypatch: Pytest environment fixture.
+    """
+    monkeypatch.setenv("APME_PROXY_ADMIN_TOKEN", ADMIN_TOKEN)
+    app = create_app(cache_dir=tmp_path, enable_passthrough=False)
+    original_fingerprint = app.state.galaxy_source_fingerprint
+    session_server_url = "https://session-hub.example.com/api/galaxy/content/"
+    session_server = {
+        "name": "session_hub",
+        "url": session_server_url,
+        "token": "session-token",
+        "auth_url": "",
+        "validate_certs": True,
+    }
+
+    async def fake_download(specs: list[str], download_dir: Path, **kwargs: object) -> DownloadResult:
+        tarball = download_dir / "ansible-posix-1.5.4.tar.gz"
+        tarball.write_bytes(b"tarball")
+        assert specs == ["ansible.posix:1.5.4"]
+        return DownloadResult(tarball_paths=[tarball])
+
+    with (
+        TestClient(app) as client,
+        patch("galaxy_proxy.proxy.server.download_collections", side_effect=fake_download) as download,
+        patch("galaxy_proxy.proxy.server.tarball_to_wheel", return_value=(WHEEL, _wheel_bytes())),
+    ):
+        response = client.post(
+            "/admin/prepare-collections",
+            json={"specs": ["ansible.posix:1.5.4"], "servers": [session_server]},
+            headers=_admin_headers(),
+        )
+
+    assert response.status_code == 200
+    assert response.json()["prepared"] == [WHEEL]
+    assert response.json()["failed_specs"] == []
+    scope_id = response.json()["scope_id"]
+    assert isinstance(scope_id, str) and len(scope_id) == 32
+    assert download.await_args is not None
+    assert download.await_args.kwargs["servers"] == [
+        GalaxyServerConfig(
+            name="session_hub",
+            url=session_server_url,
+            token="session-token",
+            auth_url=None,
+            validate_certs=True,
+        )
+    ]
+    assert app.state.galaxy_servers is None
+    assert app.state.galaxy_source_fingerprint == original_fingerprint
+    assert ProxyCache(tmp_path).get_wheel(WHEEL) is None
+
+    with TestClient(app) as client:
+        scoped_page = client.get(f"/simple/session/{scope_id}/ansible-collection-ansible-posix/")
+        scoped_wheel = client.get(f"/session-wheels/{scope_id}/{WHEEL}")
+
+    assert scoped_page.status_code == 200
+    assert WHEEL in scoped_page.text
+    assert scoped_wheel.content == _wheel_bytes()
+
+
 def test_prepare_collections_serves_cached_pin_without_hub_access(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import io
+import os
 import tarfile
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -169,8 +170,8 @@ def test_put_wheel_precomputes_hash(tmp_path: Path) -> None:
 def test_wheel_hash_revalidated_after_overwrite(tmp_path: Path) -> None:
     """Overwriting a wheel with different bytes serves the new SHA256.
 
-    The mtime+size identity captured at hash time must not pin a stale
-    digest: a replaced wheel is re-hashed on the next project page.
+    The file identity captured at hash time must not pin a stale digest:
+    a replaced wheel is re-hashed on the next project page.
 
     Args:
         tmp_path: Pytest-provided temporary directory.
@@ -197,6 +198,51 @@ def test_wheel_hash_revalidated_after_overwrite(tmp_path: Path) -> None:
     assert hash_v2 in second.text
     assert hash_v1 not in second.text
     assert application.state.wheel_hashes[whl_name] == hash_v2
+
+
+def test_wheel_hash_retries_when_file_is_replaced_during_hash(tmp_path: Path) -> None:
+    """A hash is never cached with the identity of a replacement wheel.
+
+    Args:
+        tmp_path: Pytest-provided temporary directory.
+    """
+    cache_dir = tmp_path / "cache"
+    whl_name = "ansible_collection_ansible_posix-1.5.4-py3-none-any.whl"
+    v1 = b"first-wheel-content"
+    v2 = b"other-wheel-content"
+    assert len(v1) == len(v2)
+
+    application = create_app(cache_dir=cache_dir, enable_passthrough=False)
+    wheel_path = _seed_cached_wheel(application, cache_dir, whl_name, v1)
+    from galaxy_proxy.metadata import sha256_file_hex as real_hash
+
+    calls = 0
+
+    def _replace_after_hash(path: Path) -> str:
+        nonlocal calls
+        calls += 1
+        digest = real_hash(path)
+        if calls == 1:
+            before = path.stat()
+            replacement = path.with_name("replacement.whl")
+            replacement.write_bytes(v2)
+            os.utime(replacement, ns=(before.st_atime_ns, before.st_mtime_ns))
+            replacement.replace(path)
+        return digest
+
+    with (
+        TestClient(application) as client,
+        patch("galaxy_proxy.proxy.server.sha256_file_hex", side_effect=_replace_after_hash),
+    ):
+        response = client.get("/simple/ansible-collection-ansible-posix/")
+
+    expected = hashlib.sha256(v2).hexdigest()
+    assert response.status_code == 200
+    assert f"#sha256={expected}" in response.text
+    assert hashlib.sha256(v1).hexdigest() not in response.text
+    assert calls == 2
+    assert application.state.wheel_hashes[whl_name] == expected
+    assert application.state.wheel_hash_stats[whl_name][1] == wheel_path.stat().st_ino
 
 
 def test_wheel_hash_missing_file_serves_empty_hash(tmp_path: Path) -> None:

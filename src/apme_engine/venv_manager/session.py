@@ -47,6 +47,7 @@ from functools import partial
 from pathlib import Path
 
 import httpx
+
 from apme_engine.cache import BoundedCache
 from apme_engine.config_env import get_env_int
 from apme_engine.venv_manager.venv_collections import (
@@ -368,23 +369,35 @@ def _extract_unbuildable_packages(output: str) -> list[str]:
     return result
 
 
-def _prepare_collections_via_proxy(proxy_url: str, collection_specs: list[str]) -> None:
+def _prepare_collections_via_proxy(
+    proxy_url: str,
+    collection_specs: list[str],
+    galaxy_server_configs: list[dict[str, object]] | None = None,
+) -> str | None:
     """Ask the proxy to resolve pins/latest versions using its Galaxy CLI.
 
     Args:
         proxy_url: Base URL of the Galaxy Proxy.
         collection_specs: Collection FQCNs with optional version constraints.
+        galaxy_server_configs: Optional scan-scoped server settings forwarded
+            to the authenticated proxy request.
 
     Raises:
         RuntimeError: If the proxy cannot prepare the requested collections.
+
+    Returns:
+        Opaque PEP 503 scope ID for session-specific settings, otherwise ``None``.
     """
     token = os.environ.get(_PROXY_ADMIN_TOKEN_ENV, "").strip()
     headers = {_PROXY_ADMIN_TOKEN_HEADER: token} if token else {}
+    payload: dict[str, object] = {"specs": collection_specs}
+    if galaxy_server_configs is not None:
+        payload["servers"] = galaxy_server_configs
     try:
         response = httpx.post(
             proxy_url.rstrip("/") + "/admin/prepare-collections",
             headers=headers,
-            json={"specs": collection_specs},
+            json=payload,
             timeout=360.0,
         )
         response.raise_for_status()
@@ -398,6 +411,8 @@ def _prepare_collections_via_proxy(proxy_url: str, collection_specs: list[str]) 
     failed = payload.get("failed_specs", []) if isinstance(payload, dict) else []
     if failed:
         logger.warning("Galaxy proxy could not prepare collection specs: %s", failed)
+    scope_id = payload.get("scope_id") if isinstance(payload, dict) else None
+    return scope_id if isinstance(scope_id, str) and re.fullmatch(r"[A-Za-z0-9_-]{32}", scope_id) else None
 
 
 def _install_collections_via_proxy(
@@ -406,6 +421,7 @@ def _install_collections_via_proxy(
     proxy_url: str,
     use_uv: bool,
     env: dict[str, str] | None = None,
+    galaxy_server_configs: list[dict[str, object]] | None = None,
 ) -> list[str]:
     """Install collections into the venv via the galaxy proxy (PEP 503).
 
@@ -427,6 +443,8 @@ def _install_collections_via_proxy(
         use_uv: Whether to use uv for installation.
         env: Explicit subprocess environment for per-session Galaxy
             isolation (defaults to process inheritance).
+        galaxy_server_configs: Optional scan-scoped server settings passed to
+            the authenticated proxy preparation request.
 
     Returns:
         List of collection specs that failed to install (empty on full success).
@@ -441,9 +459,10 @@ def _install_collections_via_proxy(
     # Preparation resolves exact pins because the project page lists prepared
     # wheels and does not enumerate remote Galaxy versions. A config update can
     # race this request and return 409, so retry once after that conflict.
+    session_scope_id: str | None = None
     for attempt in range(2):
         try:
-            _prepare_collections_via_proxy(proxy_url, collection_specs)
+            session_scope_id = _prepare_collections_via_proxy(proxy_url, collection_specs, galaxy_server_configs)
             break
         except RuntimeError as exc:
             cause = exc.__cause__
@@ -451,8 +470,16 @@ def _install_collections_via_proxy(
             if conflict and attempt == 0:
                 logger.info("Galaxy configuration changed during collection preparation; retrying once")
                 continue
+            if galaxy_server_configs is not None:
+                logger.warning("Scoped collection preparation failed: %s", exc)
+                return list(collection_specs)
             logger.warning("Collection preparation failed; continuing with install: %s", exc)
             break
+
+    if galaxy_server_configs is not None and session_scope_id is None:
+        return list(collection_specs)
+    if session_scope_id is not None:
+        simple_url = proxy_url.rstrip("/") + f"/simple/session/{session_scope_id}/"
 
     result = _run_pip_install(pip_python, pip_specs, simple_url, use_uv, env=env)
     if result.returncode == 0:
@@ -663,6 +690,7 @@ def install_collections_incremental(
     venv_dir: Path,
     collection_specs: list[str],
     env: dict[str, str] | None = None,
+    galaxy_server_configs: list[dict[str, object]] | None = None,
 ) -> list[str]:
     """Install collections into an existing venv via the galaxy proxy.
 
@@ -679,6 +707,8 @@ def install_collections_incremental(
         collection_specs: Collection specifiers to install.
         env: Explicit subprocess environment carrying the session Galaxy
             config (per-call, no global mutation).
+        galaxy_server_configs: Optional session Galaxy servers for proxy
+            collection preparation.
 
     Returns:
         List of collection specs that failed to install (empty on full success).
@@ -697,7 +727,7 @@ def install_collections_incremental(
 
     pip_python = get_venv_python(venv_dir)
     use_uv = _uv_available()
-    return _install_collections_via_proxy(pip_python, collection_specs, proxy, use_uv, env)
+    return _install_collections_via_proxy(pip_python, collection_specs, proxy, use_uv, env, galaxy_server_configs)
 
 
 def list_installed_packages(venv_dir: Path) -> list[tuple[str, str, str, str]]:
@@ -1451,6 +1481,7 @@ class VenvSessionManager:
         ansible_version: str,
         collection_specs: list[str] | None = None,
         galaxy_env: dict[str, str] | None = None,
+        galaxy_server_configs: list[dict[str, object]] | None = None,
     ) -> VenvSession:
         """Get or create a session venv, reconciling collections with the request.
 
@@ -1485,6 +1516,8 @@ class VenvSessionManager:
                 session-scoped Galaxy config (``ANSIBLE_CONFIG``). Passed
                 per-call to install subprocesses so concurrent sessions
                 never observe each other via global ``os.environ``.
+            galaxy_server_configs: Session-scoped Galaxy settings forwarded to
+                the authenticated proxy preparation request.
 
         Returns:
             A ``VenvSession`` with a ready-to-use venv.
@@ -1548,7 +1581,12 @@ class VenvSessionManager:
                         failed: list[str] = []
                         if missing:
                             logger.debug("Venv: installing %d missing collections", len(missing))
-                            failed = install_collections_incremental(venv_dir, sorted(missing), galaxy_env)
+                            failed = install_collections_incremental(
+                                venv_dir,
+                                sorted(missing),
+                                galaxy_env,
+                                galaxy_server_configs,
+                            )
                             # Every still-requested past failure was retried
                             # above, so this round's failures are the full set.
                             existing.failed_collections = sorted(failed)
@@ -1613,7 +1651,12 @@ class VenvSessionManager:
                         failed = []
                         if specs:
                             logger.debug("Venv: installing %d collections", len(specs))
-                            failed = install_collections_incremental(venv_dir, specs, galaxy_env)
+                            failed = install_collections_incremental(
+                                venv_dir,
+                                specs,
+                                galaxy_env,
+                                galaxy_server_configs,
+                            )
                     except Exception:
                         # Never leave a cap-counted orphan: a failed cold
                         # build removes its version dir before re-raising so

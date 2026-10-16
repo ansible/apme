@@ -109,6 +109,9 @@ artifact type, translate it:
    For recurring background work, compare steady-state and transition logs:
    unchanged successes and repeated failures should not crowd out meaningful
    changes; initial failures and recoveries must remain visible.
+   For every public API description, compare generated OpenAPI prose with the
+   actual enforcement: quota key, scope, window, and all global and local caps
+   must match the handler.
    When classifying free-form diagnostics, require context and token boundaries
    for numeric identifiers so unrelated values do not acquire error semantics.
    Check real diagnostics from the upstream producer, including every supported
@@ -134,6 +137,9 @@ artifact type, translate it:
    including discovery, metadata probes, and parsing. Blocking storage must
    stay off the event loop, and unchanged hot paths should avoid repeated
    content reads and unnecessary shared-lock contention.
+   When a request carries session-scoped configuration, trace it through every
+   helper and service boundary to the operation that uses it; an environment
+   snapshot does not change a downstream process's global configuration.
 
 4. **Is everything still true after this change?** Diff comments and
    docstrings against the code they describe. Did you rename something
@@ -195,7 +201,10 @@ artifact type, translate it:
    Do rule IDs follow ADR-008 conventions (L/M/R/P/SEC)? Does
    `_DEFAULT_PORTS` match the services actually started? Are
    `event_emitter` calls consistent with the reporting sink
-   protocol? Cross-artifact mismatches (proto declaration vs Python
+   protocol? For outbound payloads built from proto or domain objects,
+   compare every value shape with the destination schema; normalize ranges,
+   optional values, and unions before sending and cover those shapes in a
+   request-level test. Cross-artifact mismatches (proto declaration vs Python
    implementation) are the easiest to miss and the most embarrassing
    to ship.
 
@@ -425,6 +434,10 @@ GitHub ``run:``), construct interpolator collisions: unescaped
 ``{...}`` that tox substitutes before Python runs. For
 ``next(glob(...))``, construct the empty-match path and require an
 explicit error instead of ``StopIteration``.
+For file-backed hashes and metadata, construct an atomic replacement between
+the read and the later stat, including a replacement with the same size and
+mtime. Compare file identity before and after hashing; retry a bounded number
+of times or omit the cache entry when identity changes.
 
 For any text unescape/decode normalizer, construct inputs with one and
 multiple escaping layers, structural boundaries at root and nested

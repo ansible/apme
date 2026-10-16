@@ -1698,9 +1698,11 @@ async def import_external_scan(body: ImportScanRequest) -> ImportScanResponse:
     (Pydantic enforces the caps with 422; the handler truncates
     defensively after redaction). Obvious ``api_key``/``token``-style
     secrets in messages are replaced with ``[REDACTED]`` before persistence.
-    Throttle policy (best-effort, in-memory): at most 10 imports per
-    60s per project key (``project_id`` or ``project_path``); excess
-    calls fail with 429 before any DB write.
+    Throttle policy (best-effort, in-memory, per gateway process): at
+    most 10 imports per 60s per ``project_id`` (unlinked imports share
+    one ``"external"`` bucket regardless of ``project_path``) and at most
+    100 imports per 60s globally; excess calls fail with 429 before any
+    DB write.
 
     Args:
         body: External scan payload (violations + project linkage).
