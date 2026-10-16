@@ -1546,6 +1546,26 @@ class VenvSessionManager:
         logger.info("Venv: acquiring session=%s core=%s", session_id, pip_version)
         t0 = time.monotonic()
         outcome = "create"
+
+        def install_requested_collections(target_venv: Path, requested_specs: list[str]) -> list[str]:
+            """Install collection specs with the legacy call shape when unscoped.
+
+            Args:
+                target_venv: Venv receiving the requested collections.
+                requested_specs: Collection specs to install.
+
+            Returns:
+                Collection specs that failed to install.
+            """
+            if galaxy_server_configs is None:
+                return install_collections_incremental(target_venv, requested_specs, galaxy_env)
+            return install_collections_incremental(
+                target_venv,
+                requested_specs,
+                galaxy_env,
+                galaxy_server_configs,
+            )
+
         try:
             with open(lock_path, "w") as lock_fd:
                 fcntl.flock(lock_fd, fcntl.LOCK_EX)
@@ -1581,12 +1601,7 @@ class VenvSessionManager:
                         failed: list[str] = []
                         if missing:
                             logger.debug("Venv: installing %d missing collections", len(missing))
-                            failed = install_collections_incremental(
-                                venv_dir,
-                                sorted(missing),
-                                galaxy_env,
-                                galaxy_server_configs,
-                            )
+                            failed = install_requested_collections(venv_dir, sorted(missing))
                             # Every still-requested past failure was retried
                             # above, so this round's failures are the full set.
                             existing.failed_collections = sorted(failed)
@@ -1651,12 +1666,7 @@ class VenvSessionManager:
                         failed = []
                         if specs:
                             logger.debug("Venv: installing %d collections", len(specs))
-                            failed = install_collections_incremental(
-                                venv_dir,
-                                specs,
-                                galaxy_env,
-                                galaxy_server_configs,
-                            )
+                            failed = install_requested_collections(venv_dir, specs)
                     except Exception:
                         # Never leave a cap-counted orphan: a failed cold
                         # build removes its version dir before re-raising so
