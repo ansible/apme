@@ -134,7 +134,9 @@ registered project by passing its id (`--project-id <uuid>` /
 `"project_id": "<uuid>"`, picked from Discovery `create`, never
 hardcoded); an unknown id fails with 404. Unlinked imports store under
 `project_path` with a fresh per-scan session id, so they never share one
-session row and never appear under the project's activity.
+session row and never appear under the project's activity. Import request
+bodies are limited to 16 MiB (larger requests receive 413); more than 5,000
+violations or over-length fields receive 422.
 
 ## Product skills
 

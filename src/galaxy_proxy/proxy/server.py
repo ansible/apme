@@ -1229,6 +1229,7 @@ def create_app(
         lock_keys = sorted({spec.split(":", 1)[0].lower() for spec in unresolved})
         locks = [_prepare_locks.setdefault(key, asyncio.Lock()) for key in lock_keys]
         acquired: list[asyncio.Lock] = []
+        success = False
         try:
             for lock in locks:
                 await lock.acquire()
@@ -1293,8 +1294,6 @@ def create_app(
                                 _remember_on_demand_wheel(_on_demand_wheels, whl_name, whl_data)
                             prepared.append(whl_name)
                         except HTTPException:
-                            if session_scope_id is not None:
-                                _session_wheels.pop(session_scope_id, None)
                             raise
                         except Exception as exc:  # noqa: BLE001 — keep processing partial CLI results
                             logger.warning(
@@ -1325,17 +1324,20 @@ def create_app(
                     _prepare_fallback_wheels[filename] = now + _ON_DEMAND_WHEEL_TTL_S
                 while len(_prepare_fallback_wheels) > 500:
                     del _prepare_fallback_wheels[next(iter(_prepare_fallback_wheels))]
+
+            response: dict[str, Any] = {
+                "prepared": sorted(set(prepared)),
+                "failed_specs": sorted(set(failed)),
+            }
+            if session_scope_id is not None:
+                response["scope_id"] = session_scope_id
+            success = True
+            return response
         finally:
+            if session_scope_id is not None and not success:
+                _session_wheels.pop(session_scope_id, None)
             for lock in reversed(acquired):
                 lock.release()
-
-        response: dict[str, Any] = {
-            "prepared": sorted(set(prepared)),
-            "failed_specs": sorted(set(failed)),
-        }
-        if session_scope_id is not None:
-            response["scope_id"] = session_scope_id
-        return response
 
     @app.get("/simple/", response_class=HTMLResponse)  # type: ignore[untyped-decorator]
     async def root_index() -> str:

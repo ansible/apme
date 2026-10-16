@@ -14,6 +14,7 @@ from apme_gateway.api.abbenay_proxy import router as abbenay_proxy_router
 from apme_gateway.api.atomic_operate import operate_router
 from apme_gateway.api.feedback import router as feedback_router
 from apme_gateway.api.operation_router import operation_router
+from apme_gateway.api.request_limits import IMPORT_SCAN_MAX_BODY_BYTES, ImportScanBodyLimitMiddleware
 from apme_gateway.api.router import router
 from apme_gateway.operation_registry import get_operation_registry
 
@@ -79,6 +80,7 @@ def create_app() -> FastAPI:
     app.include_router(operation_router)
     app.include_router(operate_router)
     app.include_router(abbenay_proxy_router)
+    app.add_middleware(ImportScanBodyLimitMiddleware, max_body_bytes=IMPORT_SCAN_MAX_BODY_BYTES)
     from apme_engine.observability.http_middleware import HttpMetricsMiddleware
 
     app.add_middleware(HttpMetricsMiddleware, service="gateway")

@@ -89,6 +89,50 @@ def test_prepare_session_wheel_overflow_returns_413(tmp_path: Path, monkeypatch:
     assert response.json()["detail"] == "Prepared wheels exceed the session scope size limit"
 
 
+def test_prepare_cleans_scope_after_post_publish_config_change(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A failed prepare removes wheels already published under its scope.
+
+    Args:
+        tmp_path: Temporary cache directory.
+        monkeypatch: Pytest fixture for replacing prepare helpers.
+    """
+    monkeypatch.setenv("APME_PROXY_ADMIN_TOKEN", ADMIN_TOKEN)
+    app = create_app(cache_dir=tmp_path, enable_passthrough=False)
+    remember = proxy_server._remember_session_wheel
+
+    async def fake_download(specs: list[str], download_dir: Path, **_kwargs: object) -> DownloadResult:
+        assert specs == ["ansible.posix:1.5.4"]
+        tarball = download_dir / "ansible-posix-1.5.4.tar.gz"
+        tarball.write_bytes(b"tarball")
+        return DownloadResult(tarball_paths=[tarball])
+
+    def remember_then_mark(
+        store: dict[str, dict[str, tuple[float, bytes]]], scope_id: str, filename: str, data: bytes
+    ) -> None:
+        remember(store, scope_id, filename, data)
+        app.state.galaxy_config_generation += 1
+
+    with (
+        TestClient(app) as client,
+        patch("galaxy_proxy.proxy.server.secrets.token_urlsafe", return_value="A" * 32),
+        patch("galaxy_proxy.proxy.server.download_collections", side_effect=fake_download),
+        patch("galaxy_proxy.proxy.server.tarball_to_wheel", return_value=(WHEEL, _wheel_bytes())),
+        patch.object(proxy_server, "_remember_session_wheel", side_effect=remember_then_mark),
+    ):
+        response = client.post(
+            "/admin/prepare-collections",
+            json={
+                "specs": ["ansible.posix:1.5.4"],
+                "servers": [{"name": "hub", "url": HUB_URL, "token": "hub-token"}],
+            },
+            headers=_admin_headers(),
+        )
+        page = client.get("/simple/session/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/")
+
+    assert response.status_code == 409
+    assert page.status_code == 404
+
+
 def _wheel_bytes(
     distribution: str = "ansible_collection_ansible_posix", version: str = "1.5.4", deps: tuple[str, ...] = ()
 ) -> bytes:

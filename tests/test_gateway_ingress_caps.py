@@ -729,6 +729,43 @@ class TestImportScanCaps:
         )
         assert response.status_code == 422
 
+    async def test_import_body_limit_precedes_json_validation(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Oversized fixed-length bodies return 413 before JSON parsing.
+
+        Args:
+            monkeypatch: Pytest fixture for lowering the body-size limit.
+        """
+        from httpx import ASGITransport
+
+        import apme_gateway.app as app_module
+
+        monkeypatch.setattr(app_module, "IMPORT_SCAN_MAX_BODY_BYTES", 4)
+        app = app_module.create_app()
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as import_client:
+            response = await import_client.post("/api/v1/scans/import", content=b"not-json")
+        assert response.status_code == 413
+
+    async def test_import_body_limit_counts_streamed_chunks(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Bodies without Content-Length are capped while ASGI receives chunks.
+
+        Args:
+            monkeypatch: Pytest fixture for lowering the body-size limit.
+        """
+        from httpx import ASGITransport
+
+        import apme_gateway.app as app_module
+
+        monkeypatch.setattr(app_module, "IMPORT_SCAN_MAX_BODY_BYTES", 4)
+        app = app_module.create_app()
+
+        async def streamed_body() -> AsyncIterator[bytes]:
+            yield b"not"
+            yield b"-json"
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as import_client:
+            response = await import_client.post("/api/v1/scans/import", content=streamed_body())
+        assert response.status_code == 413
+
     def test_message_and_file_length_caps(self) -> None:
         """Per-field lengths are enforced (message 4k, file 1k)."""
         from pydantic import ValidationError

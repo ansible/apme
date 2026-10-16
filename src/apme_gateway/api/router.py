@@ -1675,7 +1675,11 @@ def _import_remediation_class_to_int(label: str | None) -> int:
     return _IMPORT_REMEDIATION_CLASS_TO_INT.get((label or "").strip().lower(), 0)
 
 
-@router.post("/scans/import", status_code=201)  # type: ignore[untyped-decorator]
+@router.post(
+    "/scans/import",
+    status_code=201,
+    responses={413: {"description": "Request body exceeds the 16 MiB limit"}},
+)  # type: ignore[untyped-decorator]
 async def import_external_scan(body: ImportScanRequest) -> ImportScanResponse:
     """Store CLI-local ``apme check --json`` output as Gateway activity.
 
@@ -1692,7 +1696,8 @@ async def import_external_scan(body: ImportScanRequest) -> ImportScanResponse:
     label are counted as ``manual_review`` (pending triage) and stored
     with ``remediation_class=0`` (unspecified). At most 5000 violations
     may be submitted per import; requests with more are rejected with 422
-    during Pydantic validation. Per-violation ``message`` is capped at 4000
+    during Pydantic validation. The complete JSON body is limited to 16 MiB;
+    larger bodies receive 413 before parsing. Per-violation ``message`` is capped at 4000
     chars, ``file`` at 1000 chars, ``path`` at 2000 chars, ``rule_id``
     at 64, ``level`` at 16, ``remediation_class`` at 32
     (Pydantic enforces the caps with 422; the handler truncates

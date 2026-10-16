@@ -112,6 +112,9 @@ artifact type, translate it:
    For every public API description, compare generated OpenAPI prose with the
    actual enforcement: quota key, scope, window, and all global and local caps
    must match the handler.
+   For large request bodies, verify the size cap runs before framework parsing,
+   covers both declared and streamed bodies, and matches the published API
+   description and error response.
    When classifying free-form diagnostics, require context and token boundaries
    for numeric identifiers so unrelated values do not acquire error semantics.
    Check real diagnostics from the upstream producer, including every supported
