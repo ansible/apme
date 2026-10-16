@@ -326,6 +326,20 @@ _WILDCARD_IPV4 = frozenset({"", "0.0.0.0"})
 _WILDCARD_IPV6 = frozenset({"::", "[::]"})
 
 
+def _unbracket_host(host: str) -> str:
+    """Strip IPv6 brackets from *host* when present.
+
+    Args:
+        host: Host string, optionally bracketed.
+
+    Returns:
+        Host without surrounding ``[]``.
+    """
+    if host.startswith("[") and host.endswith("]"):
+        return host[1:-1]
+    return host
+
+
 def _is_unspecified_ipv6(host: str) -> bool:
     """Return True when *host* is an IPv6 unspecified (all-interfaces) address.
 
@@ -335,12 +349,48 @@ def _is_unspecified_ipv6(host: str) -> bool:
     Returns:
         True for ``::``, ``0:0:0:0:0:0:0:0``, and equivalent expanded forms.
     """
-    candidate = host[1:-1] if host.startswith("[") and host.endswith("]") else host
     try:
-        address = ipaddress.ip_address(candidate)
+        address = ipaddress.ip_address(_unbracket_host(host))
     except ValueError:
         return False
     return isinstance(address, ipaddress.IPv6Address) and address.is_unspecified
+
+
+def _resolved_bind_ips(host: str) -> list[ipaddress.IPv4Address | ipaddress.IPv6Address]:
+    """Resolve *host* to IP addresses the kernel would use for bind/connect.
+
+    Empty string is treated as IPv4 unspecified (``INADDR_ANY``). Literal IPs
+    are parsed directly; other forms (``0``, ``0x0``, hostnames) go through
+    ``getaddrinfo`` so alternate unspecified spellings are not missed.
+
+    Args:
+        host: Bind host from a listen address or probe target.
+
+    Returns:
+        Parsed addresses (may be empty when resolution fails).
+    """
+    if host in {"", "0.0.0.0"}:
+        return [ipaddress.IPv4Address("0.0.0.0")]
+    if host in {"::", "[::]"}:
+        return [ipaddress.IPv6Address("::")]
+    candidate = _unbracket_host(host)
+    try:
+        return [ipaddress.ip_address(candidate)]
+    except ValueError:
+        pass
+    found: list[ipaddress.IPv4Address | ipaddress.IPv6Address] = []
+    try:
+        for info in socket.getaddrinfo(candidate, None, type=socket.SOCK_STREAM):
+            raw_ip = info[4][0]
+            if not isinstance(raw_ip, str):
+                continue
+            try:
+                found.append(ipaddress.ip_address(raw_ip.split("%", 1)[0]))
+            except ValueError:
+                continue
+    except OSError:
+        pass
+    return found
 
 
 def _ipv6_wildcard_probe_targets() -> list[tuple[int, str]]:
@@ -352,6 +402,58 @@ def _ipv6_wildcard_probe_targets() -> list[tuple[int, str]]:
     targets: list[tuple[int, str]] = [(socket.AF_INET6, addr) for addr in sorted(_local_addresses(socket.AF_INET6))]
     targets.extend((socket.AF_INET, addr) for addr in sorted(_local_addresses(socket.AF_INET)))
     return targets
+
+
+def _is_wildcard_bind_addr(addr: str) -> bool:
+    """Return True when *addr* would bind all interfaces.
+
+    Covers canonical wildcards, expanded IPv6 unspecified forms, and
+    alternate IPv4 spellings the kernel maps to ``INADDR_ANY`` (``0``,
+    ``0x0``, ``00.00.00.00``, hostnames that resolve to ``0.0.0.0``, …).
+
+    Args:
+        addr: Candidate bind address or hostname.
+
+    Returns:
+        True when any resolved address is unspecified.
+    """
+    if addr in _WILDCARD_IPV4 or addr in _WILDCARD_IPV6:
+        return True
+    return any(ip.is_unspecified for ip in _resolved_bind_ips(addr))
+
+
+def _is_ipv4_wildcard_host(host: str) -> bool:
+    """Return True when *host* is an IPv4 all-interfaces bind target.
+
+    Args:
+        host: Bind host from a listen address or probe target.
+
+    Returns:
+        True for ``''`` / ``0.0.0.0`` and equivalent IPv4 unspecified forms.
+    """
+    if host in _WILDCARD_IPV4:
+        return True
+    ips = _resolved_bind_ips(host)
+    return bool(ips) and all(isinstance(ip, ipaddress.IPv4Address) and ip.is_unspecified for ip in ips)
+
+
+def _resolved_concrete_bind_ip(addr: str) -> str | None:
+    """Resolve *addr* to a concrete IP string safe for ``sock.bind()``.
+
+    Args:
+        addr: Candidate bind address or hostname.
+
+    Returns:
+        A non-unspecified IP string, or ``None`` when *addr* is/resolves to
+        an all-interfaces address or cannot be resolved.
+    """
+    if addr in _WILDCARD_IPV4 or addr in _WILDCARD_IPV6:
+        return None
+    for ip in _resolved_bind_ips(addr):
+        if ip.is_unspecified:
+            return None
+        return str(ip)
+    return None
 
 
 def _local_addresses(family: int) -> frozenset[str]:
@@ -374,6 +476,8 @@ def _local_addresses(family: int) -> frozenset[str]:
                 continue
             if family == socket.AF_INET6 and raw_ip.lower().startswith("fe80:"):
                 continue
+            if _is_wildcard_bind_addr(raw_ip):
+                continue
             found.add(raw_ip)
     except OSError:
         pass
@@ -383,7 +487,7 @@ def _local_addresses(family: int) -> frozenset[str]:
         with socket.socket(family, socket.SOCK_DGRAM) as sock:
             sock.connect(remote)
             raw_ip = sock.getsockname()[0]
-            if isinstance(raw_ip, str) and raw_ip and "%" not in raw_ip:
+            if isinstance(raw_ip, str) and raw_ip and "%" not in raw_ip and not _is_wildcard_bind_addr(raw_ip):
                 found.add(raw_ip)
     except OSError:
         pass
@@ -404,9 +508,10 @@ def _probe_targets(host: str) -> list[tuple[int, str]]:
     Returns:
         One or more ``(address_family, ip)`` pairs to probe.
     """
-    if host in _WILDCARD_IPV4:
-        return [(socket.AF_INET, addr) for addr in sorted(_local_addresses(socket.AF_INET))]
-    if host in _WILDCARD_IPV6 or _is_unspecified_ipv6(host):
+    if _is_wildcard_bind_addr(host):
+        # IPv4 wildcards stay on AF_INET; IPv6 / unspecified forms probe both.
+        if _is_ipv4_wildcard_host(host):
+            return [(socket.AF_INET, addr) for addr in sorted(_local_addresses(socket.AF_INET))]
         return _ipv6_wildcard_probe_targets()
     if host.startswith("[") and host.endswith("]"):
         return [(socket.AF_INET6, host[1:-1])]
@@ -420,18 +525,22 @@ def _bind_probe(family: int, addr: str, port: int) -> bool | None:
 
     Args:
         family: Address family for the temporary socket.
-        addr: Concrete IP to bind (never a wildcard).
+        addr: Candidate bind address; wildcards return ``None`` without binding.
         port: TCP port number.
 
     Returns:
         ``True`` if the bind succeeded (port free), ``False`` if the port is
-        in use, or ``None`` if *addr* is not assignable on this host.
+        in use, or ``None`` if *addr* is a wildcard or not assignable on this
+        host.
     """
+    concrete = _resolved_concrete_bind_ip(addr)
+    if concrete is None:
+        return None
     try:
         with socket.socket(family, socket.SOCK_STREAM) as sock:
             if family == socket.AF_INET6:
                 sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
-            sock.bind((addr, port))
+            sock.bind((concrete, port))
     except OSError as exc:
         # Address not present / family disabled — skip, do not treat as busy.
         if exc.errno in {errno.EADDRNOTAVAIL, errno.EAFNOSUPPORT}:

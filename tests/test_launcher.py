@@ -16,7 +16,9 @@ from apme_engine.daemon.launcher import (
     DaemonState,
     _address_port_bound,
     _assert_ports_free,
+    _bind_probe,
     _check_port_available,
+    _local_addresses,
     _probe_targets,
     _proc_starttime,
     daemon_status,
@@ -57,6 +59,34 @@ def test_probe_targets_expands_unspecified_ipv6_forms() -> None:
     assert canonical == _probe_targets("0:0:0:0:0:0:0:0")
     assert canonical == _probe_targets("[0:0:0:0:0:0:0:0]")
     assert all(addr not in {"", "::", "0:0:0:0:0:0:0:0"} for _, addr in canonical)
+
+
+def test_bind_probe_rejects_wildcard_addresses() -> None:
+    """Wildcard candidates (including alternate IPv4 spellings) never reach sock.bind."""
+    ipv4_wildcards = ("0.0.0.0", "", "0", "0x0", "00.00.00.00", "0.0.0")
+    ipv6_wildcards = ("::", "::0", "0:0:0:0:0:0:0:0")
+    with patch("apme_engine.daemon.launcher.socket.socket") as mock_socket:
+        for addr in ipv4_wildcards:
+            assert _bind_probe(socket.AF_INET, addr, 9) is None, addr
+        for addr in ipv6_wildcards:
+            assert _bind_probe(socket.AF_INET6, addr, 9) is None, addr
+        mock_socket.assert_not_called()
+
+
+def test_probe_targets_expands_alternate_ipv4_wildcards() -> None:
+    """Alternate IPv4 unspecified spellings expand like ``0.0.0.0``."""
+    canonical = _probe_targets("0.0.0.0")
+    for host in ("0", "0x0", "00.00.00.00"):
+        targets = _probe_targets(host)
+        assert targets == canonical
+        assert all(addr not in {"", "0", "0.0.0.0", "0x0"} for _, addr in targets)
+
+
+def test_local_addresses_exclude_wildcard_ips() -> None:
+    """Discovered local addresses never include all-interfaces hosts."""
+    forbidden = {"", "0.0.0.0", "::", "[::]"}
+    assert forbidden.isdisjoint(_local_addresses(socket.AF_INET))
+    assert forbidden.isdisjoint(_local_addresses(socket.AF_INET6))
 
 
 def test_check_port_available_skips_unsupported_ipv6_family(monkeypatch: MonkeyPatch) -> None:

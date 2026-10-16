@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import os
 import subprocess
 import tempfile
@@ -15,6 +16,7 @@ from apme.v1 import engine_pb2
 from apme_gateway.scan.driver import (
     _REMOTE_HEAD_CACHE,
     _REMOTE_HEAD_NEG_CACHE,
+    _auth_cache_marker,
     _git_auth_env,
     _git_subprocess_env,
     _inject_token_in_url,
@@ -667,6 +669,24 @@ async def test_fetch_remote_head_separates_distinct_tokens() -> None:
         assert mock_run.call_count == 2
 
 
+def test_auth_cache_marker_separates_url_userpass() -> None:
+    """Embedded URL credentials produce distinct BLAKE2 cache markers."""
+    marker_a = _auth_cache_marker(None, ("deployer", "secret-a"))
+    marker_b = _auth_cache_marker(None, ("deployer", "secret-b"))
+    assert marker_a.startswith(":auth:")
+    assert marker_b.startswith(":auth:")
+    assert marker_a != marker_b
+    material = "deployer:secret-a"
+    expected = hashlib.blake2b(
+        material.encode(),
+        digest_size=8,
+        person=b"apme-auth-cache",
+    ).hexdigest()
+    assert marker_a == f":auth:{expected}"
+    # Domain-separated from raw SHA-256 of the same material.
+    assert marker_a != f":auth:{hashlib.sha256(material.encode()).hexdigest()[:16]}"
+
+
 @pytest.mark.asyncio  # type: ignore[untyped-decorator]
 async def test_clone_repo_timeout_expired_surfaces_runtime_error() -> None:
     """clone_repo TimeoutExpired surfaces as RuntimeError, never raw."""
@@ -707,7 +727,10 @@ async def test_clone_repo_strips_embedded_userinfo(
     assert "s3cret-token" not in " ".join(call_args)
     env = mock_run.call_args.kwargs["env"]
     assert _decode_auth_env(env) == "deployer:s3cret-token"
-    assert "github.com" in caplog.text
+    assert any(
+        record.getMessage() == "Stripping embedded credentials from repo URL for host github.com"
+        for record in caplog.records
+    )
     assert "s3cret-token" not in caplog.text
 
 
@@ -782,7 +805,10 @@ async def test_fetch_remote_head_strips_embedded_userinfo(
     assert "ghp_test" not in " ".join(call_args)
     env = mock_run.call_args.kwargs["env"]
     assert _decode_auth_env(env) == "x-access-token:ghp_test"
-    assert "github.com" in caplog.text
+    assert any(
+        record.getMessage() == "Stripping embedded credentials from repo URL for host github.com"
+        for record in caplog.records
+    )
     assert "s3cret-token" not in caplog.text
 
 
