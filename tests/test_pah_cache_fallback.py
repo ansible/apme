@@ -11,15 +11,126 @@ from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from galaxy_proxy.collection_downloader import DownloadResult, GalaxyServerConfig
+from galaxy_proxy.proxy import server as proxy_server
 from galaxy_proxy.proxy.cache import ProxyCache
 from galaxy_proxy.proxy.server import create_app
 
 WHEEL = "ansible_collection_ansible_posix-1.5.4-py3-none-any.whl"
 HUB_URL = "https://hub.example.com/api/galaxy/content/rh-certified/"
 ADMIN_TOKEN = "admin-token"
+
+
+def test_session_wheel_capacity_preserves_unexpired_scopes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Capacity failures never evict wheels an in-flight install may need.
+
+    Args:
+        monkeypatch: Pytest fixture for lowering storage limits.
+    """
+    monkeypatch.setattr(proxy_server, "_MAX_SESSION_WHEEL_SCOPE_BYTES", 8)
+    monkeypatch.setattr(proxy_server, "_MAX_SESSION_WHEEL_TOTAL_BYTES", 8)
+    store: dict[str, dict[str, tuple[float, bytes]]] = {}
+
+    proxy_server._remember_session_wheel(store, "scope-a", "a.whl", b"1234")
+    with pytest.raises(HTTPException) as global_limit:
+        proxy_server._remember_session_wheel(store, "scope-b", "b.whl", b"56789")
+    assert global_limit.value.status_code == 503
+    assert proxy_server._session_wheel(store, "scope-a", "a.whl") == b"1234"
+    assert "scope-b" not in store
+
+    with pytest.raises(HTTPException) as scope_limit:
+        proxy_server._remember_session_wheel(store, "scope-a", "extra.whl", b"56789")
+    assert scope_limit.value.status_code == 413
+    assert proxy_server._session_wheel(store, "scope-a", "a.whl") == b"1234"
+
+    monkeypatch.setattr(proxy_server, "_MAX_SESSION_WHEEL_SCOPES", 1)
+    with pytest.raises(HTTPException) as scope_count:
+        proxy_server._remember_session_wheel(store, "scope-c", "c.whl", b"x")
+    assert scope_count.value.status_code == 503
+    assert proxy_server._session_wheel(store, "scope-a", "a.whl") == b"1234"
+
+
+def test_prepare_session_wheel_overflow_returns_413(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A scope over budget fails preparation instead of returning missing wheels.
+
+    Args:
+        tmp_path: Temporary cache directory.
+        monkeypatch: Pytest fixture for lowering storage limits.
+    """
+    monkeypatch.setenv("APME_PROXY_ADMIN_TOKEN", ADMIN_TOKEN)
+    monkeypatch.setattr(proxy_server, "_MAX_SESSION_WHEEL_SCOPE_BYTES", 1)
+    monkeypatch.setattr(proxy_server, "_MAX_SESSION_WHEEL_TOTAL_BYTES", 8)
+    app = create_app(cache_dir=tmp_path, enable_passthrough=False)
+
+    async def fake_download(specs: list[str], download_dir: Path, **_kwargs: object) -> DownloadResult:
+        assert specs == ["ansible.posix:1.5.4"]
+        tarball = download_dir / "ansible-posix-1.5.4.tar.gz"
+        tarball.write_bytes(b"tarball")
+        return DownloadResult(tarball_paths=[tarball])
+
+    with (
+        TestClient(app) as client,
+        patch("galaxy_proxy.proxy.server.download_collections", side_effect=fake_download),
+        patch("galaxy_proxy.proxy.server.tarball_to_wheel", return_value=(WHEEL, b"oversized")),
+    ):
+        response = client.post(
+            "/admin/prepare-collections",
+            json={
+                "specs": ["ansible.posix:1.5.4"],
+                "servers": [{"name": "hub", "url": HUB_URL, "token": "hub-token"}],
+            },
+            headers=_admin_headers(),
+        )
+
+    assert response.status_code == 413
+    assert response.json()["detail"] == "Prepared wheels exceed the session scope size limit"
+
+
+def test_prepare_cleans_scope_after_post_publish_config_change(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A failed prepare removes wheels already published under its scope.
+
+    Args:
+        tmp_path: Temporary cache directory.
+        monkeypatch: Pytest fixture for replacing prepare helpers.
+    """
+    monkeypatch.setenv("APME_PROXY_ADMIN_TOKEN", ADMIN_TOKEN)
+    app = create_app(cache_dir=tmp_path, enable_passthrough=False)
+    remember = proxy_server._remember_session_wheel
+
+    async def fake_download(specs: list[str], download_dir: Path, **_kwargs: object) -> DownloadResult:
+        assert specs == ["ansible.posix:1.5.4"]
+        tarball = download_dir / "ansible-posix-1.5.4.tar.gz"
+        tarball.write_bytes(b"tarball")
+        return DownloadResult(tarball_paths=[tarball])
+
+    def remember_then_mark(
+        store: dict[str, dict[str, tuple[float, bytes]]], scope_id: str, filename: str, data: bytes
+    ) -> None:
+        remember(store, scope_id, filename, data)
+        app.state.galaxy_config_generation += 1
+
+    with (
+        TestClient(app) as client,
+        patch("galaxy_proxy.proxy.server.secrets.token_urlsafe", return_value="A" * 32),
+        patch("galaxy_proxy.proxy.server.download_collections", side_effect=fake_download),
+        patch("galaxy_proxy.proxy.server.tarball_to_wheel", return_value=(WHEEL, _wheel_bytes())),
+        patch.object(proxy_server, "_remember_session_wheel", side_effect=remember_then_mark),
+    ):
+        response = client.post(
+            "/admin/prepare-collections",
+            json={
+                "specs": ["ansible.posix:1.5.4"],
+                "servers": [{"name": "hub", "url": HUB_URL, "token": "hub-token"}],
+            },
+            headers=_admin_headers(),
+        )
+        page = client.get("/simple/session/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/")
+
+    assert response.status_code == 409
+    assert page.status_code == 404
 
 
 def _wheel_bytes(
@@ -192,6 +303,70 @@ def test_prepare_collections_uses_cli_for_requested_pin_and_dependencies(
     assert response.json() == {"prepared": [WHEEL], "failed_specs": []}
     assert download.await_count == 1
     assert ProxyCache(tmp_path).get_wheel(WHEEL) == _wheel_bytes()
+
+
+def test_prepare_collections_uses_session_scoped_servers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A scan-specific Hub is used without changing proxy-wide configuration.
+
+    Args:
+        tmp_path: Temporary cache directory.
+        monkeypatch: Pytest environment fixture.
+    """
+    monkeypatch.setenv("APME_PROXY_ADMIN_TOKEN", ADMIN_TOKEN)
+    app = create_app(cache_dir=tmp_path, enable_passthrough=False)
+    original_fingerprint = app.state.galaxy_source_fingerprint
+    session_server_url = "https://session-hub.example.com/api/galaxy/content/"
+    session_server = {
+        "name": "session_hub",
+        "url": session_server_url,
+        "token": "session-token",
+        "auth_url": "",
+        "validate_certs": True,
+    }
+
+    async def fake_download(specs: list[str], download_dir: Path, **kwargs: object) -> DownloadResult:
+        tarball = download_dir / "ansible-posix-1.5.4.tar.gz"
+        tarball.write_bytes(b"tarball")
+        assert specs == ["ansible.posix:1.5.4"]
+        return DownloadResult(tarball_paths=[tarball])
+
+    with (
+        TestClient(app) as client,
+        patch("galaxy_proxy.proxy.server.download_collections", side_effect=fake_download) as download,
+        patch("galaxy_proxy.proxy.server.tarball_to_wheel", return_value=(WHEEL, _wheel_bytes())),
+    ):
+        response = client.post(
+            "/admin/prepare-collections",
+            json={"specs": ["ansible.posix:1.5.4"], "servers": [session_server]},
+            headers=_admin_headers(),
+        )
+
+    assert response.status_code == 200
+    assert response.json()["prepared"] == [WHEEL]
+    assert response.json()["failed_specs"] == []
+    scope_id = response.json()["scope_id"]
+    assert isinstance(scope_id, str) and len(scope_id) == 32
+    assert download.await_args is not None
+    assert download.await_args.kwargs["servers"] == [
+        GalaxyServerConfig(
+            name="session_hub",
+            url=session_server_url,
+            token="session-token",
+            auth_url=None,
+            validate_certs=True,
+        )
+    ]
+    assert app.state.galaxy_servers is None
+    assert app.state.galaxy_source_fingerprint == original_fingerprint
+    assert ProxyCache(tmp_path).get_wheel(WHEEL) is None
+
+    with TestClient(app) as client:
+        scoped_page = client.get(f"/simple/session/{scope_id}/ansible-collection-ansible-posix/")
+        scoped_wheel = client.get(f"/session-wheels/{scope_id}/{WHEEL}")
+
+    assert scoped_page.status_code == 200
+    assert WHEEL in scoped_page.text
+    assert scoped_wheel.content == _wheel_bytes()
 
 
 def test_prepare_collections_serves_cached_pin_without_hub_access(

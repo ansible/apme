@@ -46,6 +46,12 @@ AI_REVIEWABLE_RULES: frozenset[str] = frozenset(
 def _get_scope(violation: ViolationDict) -> str:
     """Extract the scope string from a violation, defaulting to task.
 
+    Note: the ``task`` default is for backward-compatible *display* only.
+    Routing decisions (:func:`partition_violations`,
+    :func:`classify_violation`) treat a missing scope as non-AI-routable
+    (Tier 3 manual) via :func:`_has_explicit_scope` — validators must stamp
+    ``scope`` explicitly (ADR-026).
+
     Args:
         violation: Violation dict, possibly with a ``scope`` field.
 
@@ -55,19 +61,52 @@ def _get_scope(violation: ViolationDict) -> str:
     return _to_str_value(violation.get("scope"), RuleScope.TASK.value)
 
 
+def _has_explicit_scope(violation: ViolationDict) -> bool:
+    """Return True when the violation carries an explicit non-empty scope.
+
+    Validators must stamp ``scope`` (ADR-026).  Scope-less violations are
+    non-AI-routable: without structural scope the engine cannot prove a
+    node-local fix is safe, so they route to Tier 3 manual review rather
+    than defaulting to task/AI-proposable.
+
+    Args:
+        violation: Violation dict, possibly with a ``scope`` field.
+
+    Returns:
+        True if ``scope`` is present and non-empty (string or enum).
+    """
+    scope = violation.get("scope")
+    if scope is None:
+        return False
+    if isinstance(scope, str):
+        return bool(scope.strip())
+    value = getattr(scope, "value", scope)
+    return bool(str(value).strip())
+
+
 def is_finding_resolvable(violation: ViolationDict, registry: TransformRegistry) -> bool:
     """Return True if the violation has a registered deterministic transform (Tier 1).
 
     Cross-file / data-flow rules are never Tier 1, even if a caller registers
     a node-local transform. Those rewrites are unsafe without project context.
 
+    Scope-less violations are never Tier 1 either: the scope check runs
+    before the transform-registry lookup so this agrees with
+    :func:`classify_violation` (both return MANUAL for scope-less).
+    Without structural scope the engine cannot prove a node-local fix is
+    safe, so the finding routes to Tier 3 manual review even when a
+    transform is registered.
+
     Args:
         violation: Violation dict with rule_id.
         registry: Transform registry to check for rule.
 
     Returns:
-        True if rule_id has a registered transform and is not cross-file.
+        True if the violation carries an explicit scope, has a registered
+        transform, and is not cross-file.
     """
+    if not _has_explicit_scope(violation):
+        return False
     bare_id = normalize_rule_id(str(violation.get("rule_id", "")))
     if bare_id in CROSS_FILE_RULES:
         return False
@@ -82,9 +121,11 @@ def partition_violations(
 
     Routing uses scope metadata (ADR-026) instead of hardcoded rule lists:
     - Cross-file / data-flow rules (``CROSS_FILE_RULES``) are always Tier 3.
-    - Tier 1: deterministic transform exists in registry.
+    - Tier 1: explicit scope stamped **and** deterministic transform exists
+      in registry (scope-less never Tier 1, even with a transform —
+      agrees with :func:`classify_violation` returning MANUAL).
     - Tier 2: scope is AI-proposable (task/block) and no cross-file constraint.
-    - Tier 3: scope is not AI-proposable, or cross-file context required.
+    - Tier 3: scope is not AI-proposable, missing, or cross-file context required.
 
     Args:
         violations: List of violation dicts.
@@ -109,6 +150,12 @@ def partition_violations(
             tier3.append(v)
         elif is_finding_resolvable(v, registry):
             tier1.append(v)
+        elif not _has_explicit_scope(v):
+            # Scope-less: validators must stamp scope (ADR-026).  Without
+            # structural scope the fix is not provably node-local, so the
+            # finding is non-AI-routable (Tier 3 manual), never Tier 2.
+            v["remediation_resolution"] = RemediationResolution.MANUAL
+            tier3.append(v)
         elif _get_scope(v) not in AI_PROPOSABLE_SCOPES:
             v["remediation_resolution"] = RemediationResolution.MANUAL
             tier3.append(v)
@@ -140,6 +187,8 @@ def classify_violation(violation: ViolationDict) -> RemediationClass:
         return RemediationClass.MANUAL_REVIEW
     bare_id = normalize_rule_id(str(violation.get("rule_id", "")))
     if bare_id in CROSS_FILE_RULES:
+        return RemediationClass.MANUAL_REVIEW
+    if not _has_explicit_scope(violation):
         return RemediationClass.MANUAL_REVIEW
     if _get_scope(violation) not in AI_PROPOSABLE_SCOPES:
         return RemediationClass.MANUAL_REVIEW

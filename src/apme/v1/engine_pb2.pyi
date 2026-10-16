@@ -237,6 +237,8 @@ class ApprovalAck:
     applied_count: int
     status: int
     ttl_seconds: int
+    unpatched_count: int
+    unpatched_files: list[str]
     def __init__(self, **kwargs: object) -> None: ...
 
 class SessionResult:

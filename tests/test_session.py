@@ -35,6 +35,7 @@ from apme.v1.engine_pb2 import (
     SessionResult,
     Tier1Summary,
 )
+from apme_engine.daemon import session as daemon_session_module
 from apme_engine.daemon.session import (
     _DEFAULT_TTL,
     _MAX_LIFETIME,
@@ -44,6 +45,8 @@ from apme_engine.daemon.session import (
     SessionStore,
 )
 from apme_engine.engine.models import ViolationDict
+from apme_engine.remediation.graph_engine import FilePatch as SplicedFilePatch
+from apme_engine.remediation.graph_engine import SpliceOutcome
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -158,6 +161,21 @@ class _AbortSignal(Exception):
 # ---------------------------------------------------------------------------
 # Part 1: SessionState unit tests
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)  # type: ignore[untyped-decorator]
+def _disable_create_rate_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Disable session creation rate-limit for legacy burst tests (N17).
+
+    N17 enables APME_SESSION_CREATE_INTERVAL_S (default 1.0s); existing
+    tests create bursts and must opt out explicitly. New rate-limit
+    behavior is covered in test_session_admission_idle.py.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+    monkeypatch.setattr(daemon_session_module, "_CREATE_INTERVAL_S", 0.0)
+    monkeypatch.setattr(daemon_session_module, "_MIN_CREATE_INTERVAL_S", 0.0)
 
 
 class TestSessionState:
@@ -796,8 +814,18 @@ class TestSessionApprovalGates:
         with (
             patch("apme_engine.remediation.graph_engine.GraphRemediationEngine", _DummyGraphEngine),
             patch(
-                "apme_engine.remediation.graph_engine.splice_modifications",
-                return_value=[SimpleNamespace(path="play.yml", patched="- name: test\n  debug:\n    msg: hi\n")],
+                "apme_engine.remediation.graph_engine.splice_with_outcome",
+                return_value=SpliceOutcome(
+                    patches=[
+                        SplicedFilePatch(
+                            path="play.yml",
+                            original="",
+                            patched="- name: test\n  debug:\n    msg: hi\n",
+                            diff="",
+                        )
+                    ],
+                    unpatched=[],
+                ),
             ),
             patch(
                 "apme_engine.formatter.format_content",
@@ -879,10 +907,18 @@ class TestSessionApprovalGates:
         with (
             patch("apme_engine.remediation.graph_engine.GraphRemediationEngine", _DummyGraphEngine),
             patch(
-                "apme_engine.remediation.graph_engine.splice_modifications",
-                return_value=[
-                    SimpleNamespace(path="play.yml", patched="- name: test\n  debug:\n    msg: GUTTED\n"),
-                ],
+                "apme_engine.remediation.graph_engine.splice_with_outcome",
+                return_value=SpliceOutcome(
+                    patches=[
+                        SplicedFilePatch(
+                            path="play.yml",
+                            original="",
+                            patched="- name: test\n  debug:\n    msg: GUTTED\n",
+                            diff="",
+                        )
+                    ],
+                    unpatched=[],
+                ),
             ),
         ):
             events = [e async for e in servicer._session_run_ai_gate(session)]
@@ -1164,10 +1200,10 @@ class TestSessionApprovalGates:
 
 
 class TestGalaxyProxyConfigActivation:
-    """Tests for temporary Galaxy proxy config activation in daemon mode."""
+    """Tests for session-scoped Galaxy proxy config (no global mutation)."""
 
     async def test_sets_and_restores_ansible_config(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Session-scoped Galaxy config is exposed only for the wrapped operation.
+        """Session Galaxy config travels in the yielded env snapshot, not os.environ.
 
         Args:
             tmp_path: Pytest temporary directory fixture.
@@ -1180,15 +1216,16 @@ class TestGalaxyProxyConfigActivation:
         servicer = EngineServicer()
         monkeypatch.setenv("ANSIBLE_CONFIG", "/tmp/original.cfg")
 
-        async with servicer._activate_galaxy_proxy_config(cfg):
-            assert os.environ["ANSIBLE_CONFIG"] == str(cfg)
+        async with servicer._activate_galaxy_proxy_config(cfg) as env:
+            assert env["ANSIBLE_CONFIG"] == str(cfg)
+            assert os.environ["ANSIBLE_CONFIG"] == "/tmp/original.cfg"
 
         assert os.environ["ANSIBLE_CONFIG"] == "/tmp/original.cfg"
 
     async def test_clears_ansible_config_when_unset_beforehand(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Temporary activation removes ``ANSIBLE_CONFIG`` afterward if it was unset.
+        """Snapshot carries the session config; global env stays unset.
 
         Args:
             tmp_path: Pytest temporary directory fixture.
@@ -1201,8 +1238,9 @@ class TestGalaxyProxyConfigActivation:
         servicer = EngineServicer()
         monkeypatch.delenv("ANSIBLE_CONFIG", raising=False)
 
-        async with servicer._activate_galaxy_proxy_config(cfg):
-            assert os.environ["ANSIBLE_CONFIG"] == str(cfg)
+        async with servicer._activate_galaxy_proxy_config(cfg) as env:
+            assert env["ANSIBLE_CONFIG"] == str(cfg)
+            assert "ANSIBLE_CONFIG" not in os.environ
 
         assert "ANSIBLE_CONFIG" not in os.environ
 
@@ -1354,7 +1392,10 @@ class TestSessionGraphRemediate:
         with (
             patch("apme_engine.graph.scanner.load_graph_rules", return_value=([], [])),
             patch("apme_engine.remediation.graph_engine.GraphRemediationEngine") as MockGRE,
-            patch("apme_engine.remediation.graph_engine.splice_modifications", return_value=mock_patches),
+            patch(
+                "apme_engine.remediation.graph_engine.splice_with_outcome",
+                return_value=SpliceOutcome(patches=mock_patches, unpatched=[]),
+            ),
             patch("apme_engine.remediation.partition.add_classification_to_violations"),
         ):
             MockGRE.return_value.remediate = AsyncMock(return_value=mock_report)
@@ -1438,7 +1479,10 @@ class TestSessionGraphRemediate:
         with (
             patch("apme_engine.graph.scanner.load_graph_rules", return_value=([], [])),
             patch("apme_engine.remediation.graph_engine.GraphRemediationEngine") as MockGRE,
-            patch("apme_engine.remediation.graph_engine.splice_modifications", return_value=[]),
+            patch(
+                "apme_engine.remediation.graph_engine.splice_with_outcome",
+                return_value=SpliceOutcome(patches=[], unpatched=[]),
+            ),
             patch("apme_engine.remediation.partition.add_classification_to_violations"),
         ):
             MockGRE.return_value.remediate = AsyncMock(return_value=GraphFixReport(passes=1, fixed=0))
@@ -1495,7 +1539,10 @@ class TestSessionGraphRemediate:
         with (
             patch("apme_engine.graph.scanner.load_graph_rules", return_value=([], [])),
             patch("apme_engine.remediation.graph_engine.GraphRemediationEngine") as MockGRE,
-            patch("apme_engine.remediation.graph_engine.splice_modifications", return_value=[]),
+            patch(
+                "apme_engine.remediation.graph_engine.splice_with_outcome",
+                return_value=SpliceOutcome(patches=[], unpatched=[]),
+            ),
             patch("apme_engine.remediation.partition.add_classification_to_violations"),
         ):
             MockGRE.return_value.remediate = AsyncMock(return_value=GraphFixReport(passes=1, fixed=0))
@@ -1564,7 +1611,10 @@ class TestSessionGraphRemediate:
         with (
             patch("apme_engine.graph.scanner.load_graph_rules", return_value=([], [])),
             patch("apme_engine.remediation.graph_engine.GraphRemediationEngine") as MockGRE,
-            patch("apme_engine.remediation.graph_engine.splice_modifications", return_value=[]),
+            patch(
+                "apme_engine.remediation.graph_engine.splice_with_outcome",
+                return_value=SpliceOutcome(patches=[], unpatched=[]),
+            ),
             patch("apme_engine.remediation.partition.add_classification_to_violations"),
         ):
             MockGRE.return_value.remediate = AsyncMock(return_value=mock_report)
@@ -1653,7 +1703,10 @@ class TestSessionGraphRemediate:
         with (
             patch("apme_engine.graph.scanner.load_graph_rules", return_value=([], [])),
             patch("apme_engine.remediation.graph_engine.GraphRemediationEngine") as MockGRE,
-            patch("apme_engine.remediation.graph_engine.splice_modifications", return_value=[]),
+            patch(
+                "apme_engine.remediation.graph_engine.splice_with_outcome",
+                return_value=SpliceOutcome(patches=[], unpatched=[]),
+            ),
             patch("apme_engine.remediation.partition.add_classification_to_violations"),
         ):
             MockGRE.return_value.remediate = AsyncMock(return_value=GraphFixReport(passes=1, fixed=0))
@@ -1757,7 +1810,10 @@ class TestSessionRescanBridge:
                 "apme_engine.remediation.graph_engine.GraphRemediationEngine",
                 side_effect=capture_gre_init,
             ),
-            patch("apme_engine.remediation.graph_engine.splice_modifications", return_value=mock_patches),
+            patch(
+                "apme_engine.remediation.graph_engine.splice_with_outcome",
+                return_value=SpliceOutcome(patches=mock_patches, unpatched=[]),
+            ),
             patch("apme_engine.remediation.partition.add_classification_to_violations"),
         ):
             events: list[SessionEvent] = []
@@ -1816,7 +1872,10 @@ class TestSessionRescanBridge:
         with (
             patch("apme_engine.graph.scanner.load_graph_rules", side_effect=mock_load_graph_rules),
             patch("apme_engine.remediation.graph_engine.GraphRemediationEngine") as MockGRE,
-            patch("apme_engine.remediation.graph_engine.splice_modifications", return_value=[]),
+            patch(
+                "apme_engine.remediation.graph_engine.splice_with_outcome",
+                return_value=SpliceOutcome(patches=[], unpatched=[]),
+            ),
             patch("apme_engine.remediation.partition.add_classification_to_violations"),
         ):
             MockGRE.return_value.remediate = AsyncMock(return_value=GraphFixReport())

@@ -104,7 +104,8 @@ async def test_approve_ignores_unknown_ids(client: AsyncClient) -> None:
         json={"approved_ids": ["t1-aaa", "zzz-unknown"], "approval_gate_id": gate.gate_id},
     )
     assert resp.status_code == 200
-    assert resp.json() == {"status": "approved"}
+    assert resp.json()["status"] == "approved"
+    assert isinstance(resp.json()["submit_token"], str)  # N19 additive token
     assert state.approval_gate is not None
     assert state.approval_gate.future.done()
     assert state.approval_gate.future.result() == ["t1-aaa"]
@@ -148,7 +149,10 @@ async def test_approve_requires_matching_gate_id(client: AsyncClient) -> None:
 
 
 async def test_approve_rejects_second_submit_after_first_succeeds(client: AsyncClient) -> None:
-    """Concurrent or repeated /approve calls cannot overwrite the first decision.
+    """Repeated /approve calls replay the first token without overwriting (#17).
+
+    A duplicate approve after success is idempotent: it returns 200 with
+    the already-issued token and leaves the first decision intact.
 
     Args:
         client: Async HTTPX test client.
@@ -170,8 +174,8 @@ async def test_approve_rejects_second_submit_after_first_succeeds(client: AsyncC
         _operation_url(project_id, "/approve"),
         json={"approved_ids": ["t1-bbb"], "approval_gate_id": gate.gate_id},
     )
-    assert second.status_code == 409
-    assert second.json()["detail"] == "Approval already submitted"
+    assert second.status_code == 200
+    assert second.json()["submit_token"] == first.json()["submit_token"]
     assert gate.future.result() == ["t1-aaa"]
 
 

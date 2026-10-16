@@ -27,6 +27,7 @@ Storage layout::
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import fcntl
 import json
@@ -40,12 +41,14 @@ import sys
 import tempfile
 import textwrap
 import time
+from collections.abc import AsyncIterator
 from dataclasses import asdict, dataclass, field
 from functools import partial
 from pathlib import Path
 
 import httpx
 
+from apme_engine.cache import BoundedCache
 from apme_engine.config_env import get_env_int
 from apme_engine.venv_manager.venv_collections import (
     _SAFE_VERSION_RE,
@@ -199,6 +202,7 @@ def _run_subprocess_timed(
     *,
     timeout: float,
     check: bool = False,
+    env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run ``cmd`` in an isolated process group with a wall-clock bound.
 
@@ -211,6 +215,9 @@ def _run_subprocess_timed(
         cmd: Command argv.
         timeout: Wall-clock bound in seconds.
         check: If True, raise ``CalledProcessError`` on non-zero exit.
+        env: Explicit subprocess environment (defaults to inheriting
+            ``os.environ``). Per-session Galaxy configs travel here so
+            concurrent sessions never observe each other via global state.
 
     Returns:
         CompletedProcess with stdout/stderr captured.
@@ -225,6 +232,7 @@ def _run_subprocess_timed(
         stderr=subprocess.PIPE,
         text=True,
         start_new_session=True,
+        env=env,
     )
     try:
         stdout, stderr = proc.communicate(timeout=timeout)
@@ -251,6 +259,7 @@ def _run_pip_install(
     *,
     exclude_file: Path | None = None,
     no_build: bool = False,
+    env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run a single pip/uv install command and return the result.
 
@@ -266,6 +275,8 @@ def _run_pip_install(
             that packages requiring native compilation are skipped.  Only
             used as a last-resort fallback when ``exclude_file`` is not
             available (non-uv installs).
+        env: Explicit subprocess environment for per-session Galaxy
+            isolation (defaults to process inheritance).
 
     Returns:
         CompletedProcess with stdout/stderr captured.
@@ -307,7 +318,7 @@ def _run_pip_install(
             cmd.extend(["--only-binary", ":all:"])
         cmd.extend(pip_specs)
     try:
-        return _run_subprocess_timed(cmd, timeout=_PIP_INSTALL_TIMEOUT_S)
+        return _run_subprocess_timed(cmd, timeout=_PIP_INSTALL_TIMEOUT_S, env=env)
     except subprocess.TimeoutExpired as exc:
         logger.warning(
             "pip/uv install timed out after %ds, failing fast (no exclude/no-build retry)",
@@ -358,23 +369,35 @@ def _extract_unbuildable_packages(output: str) -> list[str]:
     return result
 
 
-def _prepare_collections_via_proxy(proxy_url: str, collection_specs: list[str]) -> None:
+def _prepare_collections_via_proxy(
+    proxy_url: str,
+    collection_specs: list[str],
+    galaxy_server_configs: list[dict[str, object]] | None = None,
+) -> str | None:
     """Ask the proxy to resolve pins/latest versions using its Galaxy CLI.
 
     Args:
         proxy_url: Base URL of the Galaxy Proxy.
         collection_specs: Collection FQCNs with optional version constraints.
+        galaxy_server_configs: Optional scan-scoped server settings forwarded
+            to the authenticated proxy request.
 
     Raises:
         RuntimeError: If the proxy cannot prepare the requested collections.
+
+    Returns:
+        Opaque PEP 503 scope ID for session-specific settings, otherwise ``None``.
     """
     token = os.environ.get(_PROXY_ADMIN_TOKEN_ENV, "").strip()
     headers = {_PROXY_ADMIN_TOKEN_HEADER: token} if token else {}
+    payload: dict[str, object] = {"specs": collection_specs}
+    if galaxy_server_configs is not None:
+        payload["servers"] = galaxy_server_configs
     try:
         response = httpx.post(
             proxy_url.rstrip("/") + "/admin/prepare-collections",
             headers=headers,
-            json={"specs": collection_specs},
+            json=payload,
             timeout=360.0,
         )
         response.raise_for_status()
@@ -388,6 +411,8 @@ def _prepare_collections_via_proxy(proxy_url: str, collection_specs: list[str]) 
     failed = payload.get("failed_specs", []) if isinstance(payload, dict) else []
     if failed:
         logger.warning("Galaxy proxy could not prepare collection specs: %s", failed)
+    scope_id = payload.get("scope_id") if isinstance(payload, dict) else None
+    return scope_id if isinstance(scope_id, str) and re.fullmatch(r"[A-Za-z0-9_-]{32}", scope_id) else None
 
 
 def _install_collections_via_proxy(
@@ -395,6 +420,8 @@ def _install_collections_via_proxy(
     collection_specs: list[str],
     proxy_url: str,
     use_uv: bool,
+    env: dict[str, str] | None = None,
+    galaxy_server_configs: list[dict[str, object]] | None = None,
 ) -> list[str]:
     """Install collections into the venv via the galaxy proxy (PEP 503).
 
@@ -414,6 +441,10 @@ def _install_collections_via_proxy(
         collection_specs: Collection specifiers to install.
         proxy_url: Base URL of the galaxy proxy.
         use_uv: Whether to use uv for installation.
+        env: Explicit subprocess environment for per-session Galaxy
+            isolation (defaults to process inheritance).
+        galaxy_server_configs: Optional scan-scoped server settings passed to
+            the authenticated proxy preparation request.
 
     Returns:
         List of collection specs that failed to install (empty on full success).
@@ -428,9 +459,10 @@ def _install_collections_via_proxy(
     # Preparation resolves exact pins because the project page lists prepared
     # wheels and does not enumerate remote Galaxy versions. A config update can
     # race this request and return 409, so retry once after that conflict.
+    session_scope_id: str | None = None
     for attempt in range(2):
         try:
-            _prepare_collections_via_proxy(proxy_url, collection_specs)
+            session_scope_id = _prepare_collections_via_proxy(proxy_url, collection_specs, galaxy_server_configs)
             break
         except RuntimeError as exc:
             cause = exc.__cause__
@@ -438,10 +470,18 @@ def _install_collections_via_proxy(
             if conflict and attempt == 0:
                 logger.info("Galaxy configuration changed during collection preparation; retrying once")
                 continue
+            if galaxy_server_configs is not None:
+                logger.warning("Scoped collection preparation failed: %s", exc)
+                return list(collection_specs)
             logger.warning("Collection preparation failed; continuing with install: %s", exc)
             break
 
-    result = _run_pip_install(pip_python, pip_specs, simple_url, use_uv)
+    if galaxy_server_configs is not None and session_scope_id is None:
+        return list(collection_specs)
+    if session_scope_id is not None:
+        simple_url = proxy_url.rstrip("/") + f"/simple/session/{session_scope_id}/"
+
+    result = _run_pip_install(pip_python, pip_specs, simple_url, use_uv, env=env)
     if result.returncode == 0:
         return []
 
@@ -455,6 +495,7 @@ def _install_collections_via_proxy(
             use_uv,
             unbuildable,
             bulk_output,
+            env,
         )
         if result.returncode == 0:
             return []
@@ -468,7 +509,7 @@ def _install_collections_via_proxy(
     failed: list[str] = []
     for spec in collection_specs:
         pip_spec = _spec_to_pip(spec)
-        individual = _run_pip_install(pip_python, [pip_spec], simple_url, use_uv)
+        individual = _run_pip_install(pip_python, [pip_spec], simple_url, use_uv, env=env)
         if individual.returncode != 0:
             ind_output = individual.stderr or individual.stdout
             if _is_build_failure(ind_output):
@@ -480,6 +521,7 @@ def _install_collections_via_proxy(
                     use_uv,
                     unbuildable,
                     ind_output,
+                    env,
                 )
                 if retry.returncode == 0:
                     logger.info("Collection installed successfully (excluded native deps): %s", spec)
@@ -507,6 +549,7 @@ def _retry_without_native(
     use_uv: bool,
     unbuildable: list[str],
     original_output: str,
+    env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Retry an install after excluding unbuildable native packages.
 
@@ -522,6 +565,7 @@ def _retry_without_native(
         use_uv: Whether to use uv for installation.
         unbuildable: Package names that failed to build from source.
         original_output: The original error output (for logging context).
+        env: Explicit subprocess environment for per-session isolation.
 
     Returns:
         CompletedProcess from the last retry attempt.
@@ -533,7 +577,7 @@ def _retry_without_native(
             fallback,
             original_output,
         )
-        return _run_pip_install(pip_python, pip_specs, simple_url, use_uv, no_build=True)
+        return _run_pip_install(pip_python, pip_specs, simple_url, use_uv, no_build=True, env=env)
 
     all_excluded: set[str] = set(unbuildable)
     excludes_dir = Path(tempfile.mkdtemp(prefix="apme-excludes-"))
@@ -555,6 +599,7 @@ def _retry_without_native(
                 simple_url,
                 use_uv,
                 exclude_file=excludes_file,
+                env=env,
             )
             if result.returncode == 0:
                 return result
@@ -644,6 +689,8 @@ def create_base_venv(
 def install_collections_incremental(
     venv_dir: Path,
     collection_specs: list[str],
+    env: dict[str, str] | None = None,
+    galaxy_server_configs: list[dict[str, object]] | None = None,
 ) -> list[str]:
     """Install collections into an existing venv via the galaxy proxy.
 
@@ -658,6 +705,10 @@ def install_collections_incremental(
     Args:
         venv_dir: Root of the virtualenv (must already exist with ansible-core).
         collection_specs: Collection specifiers to install.
+        env: Explicit subprocess environment carrying the session Galaxy
+            config (per-call, no global mutation).
+        galaxy_server_configs: Optional session Galaxy servers for proxy
+            collection preparation.
 
     Returns:
         List of collection specs that failed to install (empty on full success).
@@ -676,7 +727,7 @@ def install_collections_incremental(
 
     pip_python = get_venv_python(venv_dir)
     use_uv = _uv_available()
-    return _install_collections_via_proxy(pip_python, collection_specs, proxy, use_uv)
+    return _install_collections_via_proxy(pip_python, collection_specs, proxy, use_uv, env, galaxy_server_configs)
 
 
 def list_installed_packages(venv_dir: Path) -> list[tuple[str, str, str, str]]:
@@ -945,6 +996,312 @@ def _normalize_version(raw: str) -> str:
     return ".".join(parts[:2]) + ".0" if len(parts) < 3 else raw.strip()
 
 
+class VenvGenerationLock:
+    """Async readers-writer lock for one venv generation.
+
+    The fcntl ``.lock`` serialises on-disk mutation, but it is released
+    before validator fan-out reads the venv. This in-process RW lock
+    covers that window: installs take the write (exclusive) side while
+    validator fan-out holds the read (shared) side for its whole
+    duration, so an incremental install cannot mutate a venv an
+    in-flight scan is executing against.
+
+    Writer-preference: a writer announces itself in ``_writer_waiting``
+    before blocking; new readers arriving while a writer waits (or holds)
+    park on the condition instead of barging, so a steady stream of
+    readers cannot starve an install. Every reader rendezvous through the
+    shared condition — a second concurrent reader therefore blocks on an
+    active or pending writer just like the first one does (the old
+    ``readers == 1`` shortcut let the second reader slip past a writer
+    holding the exclusive side).
+
+    Acquisition is fail-fast: ``acquire_read`` / ``acquire_write`` take an
+    optional ``timeout`` (default 60s) and raise ``TimeoutError`` instead
+    of parking a scan forever behind a wedged peer.
+    """
+
+    def __init__(self) -> None:
+        """Initialise an unlocked generation lock."""
+        self._mu = asyncio.Lock()
+        self._cond = asyncio.Condition(self._mu)
+        self._readers = 0
+        self._writer_active = False
+        self._writer_waiting = 0
+
+    def in_use_count(self) -> int:
+        """Return the number of holders plus queued waiters.
+
+        Counts shared holders (``_readers``), the exclusive holder
+        (``_writer_active``), and queued writers (``_writer_waiting``).
+        Queued readers always coincide with writer state — readers only
+        park while a writer is active or announced — so the sum also
+        covers every parked reader. Best-effort snapshot for cache
+        eviction only (callers must stay on the event-loop thread, where
+        the counters cannot change mid-read); never a sync primitive.
+
+        Returns:
+            Holders + waiters (0 means provably idle).
+        """
+        return self._readers + (1 if self._writer_active else 0) + self._writer_waiting
+
+    def is_idle(self) -> bool:
+        """Return True when no holder or waiter references this lock.
+
+        Returns:
+            True when ``in_use_count()`` is zero.
+        """
+        return self.in_use_count() == 0
+
+    async def acquire_read(self, timeout: float | None = 60.0) -> None:
+        """Acquire shared read access for validator fan-out.
+
+        Args:
+            timeout: Max seconds to wait for the exclusive side to clear
+                (``None`` waits forever).
+
+        Raises:
+            TimeoutError: If the lock is not acquired within ``timeout``.
+        """  # noqa: DOC502 -- TimeoutError surfaces from asyncio.wait_for on expiry
+        async with self._cond:
+            # Monotonic deadline: every wait consumes the same budget, so
+            # the documented timeout holds under notify_all churn instead
+            # of resetting on each wake.
+            deadline = None if timeout is None else time.monotonic() + timeout
+            while self._writer_active or self._writer_waiting > 0:
+                remaining = None if deadline is None else max(0.0, deadline - time.monotonic())
+                await asyncio.wait_for(self._cond.wait(), remaining)
+            self._readers += 1
+
+    async def release_read(self) -> None:
+        """Release shared read access."""
+        async with self._cond:
+            self._readers = max(0, self._readers - 1)
+            if self._readers == 0:
+                self._cond.notify_all()
+
+    async def acquire_write(self, timeout: float | None = 60.0) -> None:
+        """Acquire exclusive write access for installs.
+
+        Args:
+            timeout: Max seconds to wait for readers to drain
+                (``None`` waits forever).
+
+        Raises:
+            TimeoutError: If the lock is not acquired within ``timeout``.
+        """  # noqa: DOC502 -- TimeoutError surfaces from asyncio.wait_for on expiry
+        async with self._cond:
+            self._writer_waiting += 1
+            acquired = False
+            try:
+                # Monotonic deadline (same budget across wakes as the read
+                # side) so repeated notifications cannot extend the wait
+                # past the documented timeout.
+                deadline = None if timeout is None else time.monotonic() + timeout
+                while self._writer_active or self._readers > 0:
+                    remaining = None if deadline is None else max(0.0, deadline - time.monotonic())
+                    await asyncio.wait_for(self._cond.wait(), remaining)
+                self._writer_active = True
+                acquired = True
+            finally:
+                self._writer_waiting -= 1
+                if not acquired:
+                    # Abandoned wait (timeout/cancel): wake readers parked
+                    # on writer-preference so they re-check the cleared
+                    # announcement instead of hanging on a gone writer.
+                    self._cond.notify_all()
+            self._cond.notify_all()
+
+    async def release_write(self) -> None:
+        """Release exclusive write access."""
+        async with self._cond:
+            self._writer_active = False
+            self._cond.notify_all()
+
+    @contextlib.asynccontextmanager
+    async def read(self, timeout: float | None = 60.0) -> AsyncIterator[None]:
+        """Hold shared read access for the enclosed fan-out.
+
+        Args:
+            timeout: Max seconds to wait for the exclusive side to clear
+                (``None`` waits forever).
+
+        Yields:
+            None: Control to the fan-out body.
+
+        Raises:
+            TimeoutError: If the lock is not acquired within ``timeout``.
+        """  # noqa: DOC502 -- TimeoutError surfaces from asyncio.wait_for on expiry
+        await self.acquire_read(timeout)
+        try:
+            yield
+        finally:
+            await self.release_read()
+
+    @contextlib.asynccontextmanager
+    async def write(self, timeout: float | None = 60.0) -> AsyncIterator[None]:
+        """Hold exclusive write access for the enclosed install.
+
+        Args:
+            timeout: Max seconds to wait for readers to drain
+                (``None`` waits forever).
+
+        Yields:
+            None: Control to the install body.
+
+        Raises:
+            TimeoutError: If the lock is not acquired within ``timeout``.
+        """  # noqa: DOC502 -- TimeoutError surfaces from asyncio.wait_for on expiry
+        await self.acquire_write(timeout)
+        try:
+            yield
+        finally:
+            await self.release_write()
+
+
+async def wait_out_worker[T](worker: asyncio.Future[T]) -> T:
+    """Await a shielded worker, waiting it out when cancelled.
+
+    ``asyncio.shield`` detaches the worker from outer cancellation, but a
+    plain ``await shield(...)`` still exits at once when the awaiting
+    coroutine is cancelled — releasing any guard the caller holds while
+    the worker thread keeps mutating shared state (split exclusion).
+    This helper re-waits (still shielded) so the caller keeps its guard
+    until the worker finishes, then re-raises the cancellation.
+
+    Args:
+        worker: Executor future doing guarded mutation.
+
+    Returns:
+        The worker result when it completes without cancellation.
+
+    Raises:
+        asyncio.CancelledError: When the awaiting coroutine was
+            cancelled (after the worker finished). A worker failure
+            during the wait-out is swallowed: the scan is cancelling
+            anyway and slot release is arranged separately.
+    """
+    try:
+        return await asyncio.shield(worker)
+    except asyncio.CancelledError:
+        # Loop until the worker finishes: a second cancel during the
+        # re-wait must not release the caller's guard early (double-cancel
+        # would otherwise split exclusion while the worker thread still
+        # mutates shared state). ``asyncio.wait`` never cancels the worker
+        # itself, so worker failures surface only as completion here and
+        # stay swallowed — the scan is cancelling anyway.
+        while not worker.done():
+            with contextlib.suppress(asyncio.CancelledError):
+                await asyncio.wait({worker})
+        raise
+
+
+#: Bound on cached per-generation RW locks. The key space is
+#: ``(session_id, core_version)`` — small per deployment, but client
+#: session ids are untrusted input, so a bounded cap stops unbounded growth
+#: from session-id churn. Least-recently-used IDLE entries are evicted
+#: first; a lock that is still held or waited on is never evicted (the map
+#: temporarily grows over cap instead of splitting mutual exclusion).
+_MAX_GENERATION_LOCKS = 512
+
+_GENERATION_LOCKS: BoundedCache[tuple[str, str], VenvGenerationLock] = BoundedCache(
+    maxsize=_MAX_GENERATION_LOCKS,
+    is_idle=lambda lock: lock.is_idle(),
+)
+
+
+def _generation_key(session_id: str, ansible_version: str) -> tuple[str, str]:
+    """Normalise the per-generation lock key.
+
+    Args:
+        session_id: Raw session identifier.
+        ansible_version: Raw ansible-core version constraint.
+
+    Returns:
+        Tuple of (sanitised session id, normalised version). Invalid
+        inputs fall back to the raw strings so locking never raises.
+    """
+    try:
+        sid = _sanitize_session_id(session_id)
+    except ValueError:
+        sid = session_id
+    try:
+        ver = _normalize_version(ansible_version)
+    except ValueError:
+        ver = ansible_version
+    return (sid, ver)
+
+
+def get_generation_lock(session_id: str, ansible_version: str) -> VenvGenerationLock:
+    """Return the shared RW lock for a venv generation.
+
+    The backing map is LRU-capped via :class:`BoundedCache`: hits refresh
+    recency, and inserts evict the oldest IDLE entry only (all-busy maps
+    grow temporarily over cap instead of splitting mutual exclusion).
+
+    Args:
+        session_id: Session identifier.
+        ansible_version: Ansible-core version constraint.
+
+    Returns:
+        Shared ``VenvGenerationLock`` for ``(session_id, version)``.
+    """
+    key = _generation_key(session_id, ansible_version)
+    lock = _GENERATION_LOCKS.get(key)
+    if lock is None:
+        lock = VenvGenerationLock()
+        _GENERATION_LOCKS[key] = lock
+    return lock
+
+
+def venv_read_guard(
+    session_id: str,
+    ansible_version: str,
+    timeout: float | None = 60.0,
+) -> contextlib._AsyncGeneratorContextManager[None]:
+    """Hold shared read access for validator fan-out.
+
+    Args:
+        session_id: Session identifier.
+        ansible_version: Ansible-core version constraint.
+        timeout: Max seconds to wait for the exclusive side to clear
+            (``None`` waits forever).
+
+    Returns:
+        Async context manager holding the generation read lock.
+
+    Raises:
+        TimeoutError: If the lock is not acquired within ``timeout``.
+    """  # noqa: DOC502 -- TimeoutError surfaces from the generation lock on expiry
+    return get_generation_lock(session_id, ansible_version).read(timeout)
+
+
+def venv_write_guard(
+    session_id: str,
+    ansible_version: str,
+    timeout: float | None = 60.0,
+) -> contextlib._AsyncGeneratorContextManager[None]:
+    """Hold exclusive write access for venv installs.
+
+    Args:
+        session_id: Session identifier.
+        ansible_version: Ansible-core version constraint.
+        timeout: Max seconds to wait for readers to drain
+            (``None`` waits forever).
+
+    Returns:
+        Async context manager holding the generation write lock.
+
+    Raises:
+        TimeoutError: If the lock is not acquired within ``timeout``.
+    """  # noqa: DOC502 -- TimeoutError surfaces from the generation lock on expiry
+    return get_generation_lock(session_id, ansible_version).write(timeout)
+
+
+def clear_generation_locks() -> None:
+    """Drop all cached generation locks (test helper)."""
+    _GENERATION_LOCKS.clear()
+
+
 @dataclass
 class VenvSession:
     """Metadata for a session-scoped venv (one per core version within a session).
@@ -1123,6 +1480,8 @@ class VenvSessionManager:
         session_id: str,
         ansible_version: str,
         collection_specs: list[str] | None = None,
+        galaxy_env: dict[str, str] | None = None,
+        galaxy_server_configs: list[dict[str, object]] | None = None,
     ) -> VenvSession:
         """Get or create a session venv, reconciling collections with the request.
 
@@ -1153,6 +1512,12 @@ class VenvSessionManager:
             session_id: Client-provided session identifier.
             ansible_version: e.g. ``"2.17.0"`` or ``"2.17"``.
             collection_specs: Collection specifiers to ensure are installed.
+            galaxy_env: Explicit subprocess environment carrying the
+                session-scoped Galaxy config (``ANSIBLE_CONFIG``). Passed
+                per-call to install subprocesses so concurrent sessions
+                never observe each other via global ``os.environ``.
+            galaxy_server_configs: Session-scoped Galaxy settings forwarded to
+                the authenticated proxy preparation request.
 
         Returns:
             A ``VenvSession`` with a ready-to-use venv.
@@ -1181,6 +1546,26 @@ class VenvSessionManager:
         logger.info("Venv: acquiring session=%s core=%s", session_id, pip_version)
         t0 = time.monotonic()
         outcome = "create"
+
+        def install_requested_collections(target_venv: Path, requested_specs: list[str]) -> list[str]:
+            """Install collection specs with the legacy call shape when unscoped.
+
+            Args:
+                target_venv: Venv receiving the requested collections.
+                requested_specs: Collection specs to install.
+
+            Returns:
+                Collection specs that failed to install.
+            """
+            if galaxy_server_configs is None:
+                return install_collections_incremental(target_venv, requested_specs, galaxy_env)
+            return install_collections_incremental(
+                target_venv,
+                requested_specs,
+                galaxy_env,
+                galaxy_server_configs,
+            )
+
         try:
             with open(lock_path, "w") as lock_fd:
                 fcntl.flock(lock_fd, fcntl.LOCK_EX)
@@ -1216,7 +1601,7 @@ class VenvSessionManager:
                         failed: list[str] = []
                         if missing:
                             logger.debug("Venv: installing %d missing collections", len(missing))
-                            failed = install_collections_incremental(venv_dir, sorted(missing))
+                            failed = install_requested_collections(venv_dir, sorted(missing))
                             # Every still-requested past failure was retried
                             # above, so this round's failures are the full set.
                             existing.failed_collections = sorted(failed)
@@ -1281,7 +1666,7 @@ class VenvSessionManager:
                         failed = []
                         if specs:
                             logger.debug("Venv: installing %d collections", len(specs))
-                            failed = install_collections_incremental(venv_dir, specs)
+                            failed = install_requested_collections(venv_dir, specs)
                     except Exception:
                         # Never leave a cap-counted orphan: a failed cold
                         # build removes its version dir before re-raising so

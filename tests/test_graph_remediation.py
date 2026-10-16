@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import pytest
+
 from apme_engine.engine.models import ViolationDict
 from apme_engine.graph.content_graph import (
     ContentGraph,
@@ -29,7 +31,10 @@ from apme_engine.graph.scanner import (
 from apme_engine.graph.types import RemediationResolution, RuleScope
 from apme_engine.remediation.graph_engine import (
     GraphRemediationEngine,
+    SpliceOutcome,
+    SpliceResult,
     splice_modifications,
+    splice_with_outcome,
 )
 from apme_engine.remediation.registry import TransformRegistry
 
@@ -1104,7 +1109,7 @@ class TestSpliceModifications:
         assert "ansible.builtin.copy" in p.patched
 
     def test_missing_original_skipped(self) -> None:
-        """Nodes whose file is not in originals are silently skipped."""
+        """Nodes whose file is not in originals are skipped with a warning."""
         graph = ContentGraph()
         node = _make_node(file_path="/unknown/path.yml")
         graph.add_node(node)
@@ -1115,6 +1120,172 @@ class TestSpliceModifications:
 
         patches = splice_modifications(graph, {})
         assert patches == []
+        # An empty patch list alone does not imply success — the skip
+        # must be surfaced on the result object.
+        assert isinstance(patches, SpliceResult)
+        assert patches.unpatched == ["/unknown/path.yml"]
+        assert patches.unpatched_count == 1
+
+    def test_missing_original_outcome_and_tuple(self) -> None:
+        """Outcome and tuple wrappers surface the same unpatched entry."""
+        graph = ContentGraph()
+        node = _make_node(file_path="/unknown/path.yml")
+        graph.add_node(node)
+        node.record_state(0, "scanned")
+        node.update_from_yaml(_TASK_YAML_FQCN)
+        node.record_state(1, "transformed")
+        graph.approve_pending()
+
+        outcome = splice_with_outcome(graph, {})
+        assert isinstance(outcome, SpliceOutcome)
+        assert outcome.patches == []
+        assert outcome.unpatched == ["/unknown/path.yml"]
+        assert outcome.unpatched_count == 1
+
+        outcome2 = splice_with_outcome(graph, {})
+        assert outcome2.patches == []
+        assert outcome2.unpatched == ["/unknown/path.yml"]
+
+    def test_empty_patches_does_not_imply_success(self) -> None:
+        """`result == []` must not be read as success without .unpatched."""
+        graph = ContentGraph()
+        node = _make_node(file_path="/unknown/path.yml")
+        graph.add_node(node)
+        node.record_state(0, "scanned")
+        node.update_from_yaml(_TASK_YAML_FQCN)
+        node.record_state(1, "transformed")
+        graph.approve_pending()
+
+        result = splice_modifications(graph, {})
+        assert result == []  # list-equality holds for the empty result
+        assert result.unpatched != []  # ...but the modification did NOT land
+        assert result.unpatched_count == 1
+
+    def test_missing_original_warns(self, caplog: pytest.LogCaptureFixture) -> None:
+        """A modified node with no originals entry logs a warning (never silent).
+
+        Args:
+            caplog: Pytest log capture fixture.
+        """
+        import logging
+
+        graph = ContentGraph()
+        node = _make_node(file_path="/unknown/path.yml")
+        graph.add_node(node)
+        node.record_state(0, "scanned")
+        node.update_from_yaml(_TASK_YAML_FQCN)
+        node.record_state(1, "transformed")
+        graph.approve_pending()
+
+        with caplog.at_level(logging.WARNING, logger="apme.remediation.graph"):
+            patches = splice_modifications(graph, {})
+        assert patches == []
+        assert patches.unpatched == ["/unknown/path.yml"]
+        assert patches.unpatched_count == 1
+        assert any("/unknown/path.yml" in r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING)
+
+    def test_missing_original_strict_raises(self) -> None:
+        """strict=True raises ValueError listing unpatched files."""
+        import pytest
+
+        graph = ContentGraph()
+        node = _make_node(file_path="/unknown/path.yml")
+        graph.add_node(node)
+        node.record_state(0, "scanned")
+        node.update_from_yaml(_TASK_YAML_FQCN)
+        node.record_state(1, "transformed")
+        graph.approve_pending()
+
+        with pytest.raises(ValueError, match="/unknown/path.yml"):
+            splice_modifications(graph, {}, strict=True)
+
+    def test_baseline_less_strict_raises(self) -> None:
+        """strict=True raises for legacy nodes without a recorded baseline."""
+        import pytest
+
+        graph = ContentGraph()
+        node = _make_node()
+        graph.add_node(node)
+        node.record_state(0, "scanned")
+        node.update_from_yaml(_TASK_YAML_FQCN)
+        node.record_state(1, "transformed")
+        graph.approve_pending()
+        node._baseline = None  # simulate a legacy payload predating baseline tracking
+
+        with pytest.raises(ValueError, match="/workspace/site.yml"):
+            splice_modifications(graph, {"/workspace/site.yml": self._ORIGINAL}, strict=True)
+
+    def test_baseline_less_non_strict_splices_fallback(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Non-strict keeps the best-effort progression[0] fallback for legacy nodes.
+
+        Args:
+            caplog: Pytest log capture fixture.
+
+        Returns:
+            None.
+        """
+        import logging
+
+        graph = ContentGraph()
+        node = _make_node()
+        graph.add_node(node)
+        node.record_state(0, "scanned")
+        node.update_from_yaml(_TASK_YAML_FQCN)
+        node.record_state(1, "transformed")
+        graph.approve_pending()
+        node._baseline = None  # simulate a legacy payload predating baseline tracking
+
+        with caplog.at_level(logging.WARNING, logger="apme.remediation.graph"):
+            patches = splice_modifications(graph, {"/workspace/site.yml": self._ORIGINAL})
+        assert len(patches) == 1
+        assert "ansible.builtin.apt" in patches[0].patched
+        # The fallback diff may be truncated: the file must ALSO be
+        # flagged so ApprovalAck never reports unpatched_count == 0.
+        assert patches.unpatched == ["/workspace/site.yml"]
+        assert patches.unpatched_count == 1
+        assert any(
+            "approximate baseline" in r.getMessage() and "/workspace/site.yml" in r.getMessage()
+            for r in caplog.records
+            if r.levelno >= logging.WARNING
+        )
+
+    def test_baseline_less_outcome_and_tuple_flag_approximate(self) -> None:
+        """Outcome and tuple wrappers flag the approximate-baseline file too."""
+        graph = ContentGraph()
+        node = _make_node()
+        graph.add_node(node)
+        node.record_state(0, "scanned")
+        node.update_from_yaml(_TASK_YAML_FQCN)
+        node.record_state(1, "transformed")
+        graph.approve_pending()
+        node._baseline = None  # simulate a legacy payload predating baseline tracking
+
+        outcome = splice_with_outcome(graph, {"/workspace/site.yml": self._ORIGINAL})
+        assert len(outcome.patches) == 1
+        assert outcome.unpatched == ["/workspace/site.yml"]
+        assert outcome.unpatched_count == 1
+
+        outcome2 = splice_with_outcome(graph, {"/workspace/site.yml": self._ORIGINAL})
+        assert len(outcome2.patches) == 1
+        assert outcome2.unpatched == ["/workspace/site.yml"]
+
+    def test_baseline_less_strict_outcome_raises(self) -> None:
+        """strict=True raises through the outcome core as well."""
+        import pytest
+
+        graph = ContentGraph()
+        node = _make_node()
+        graph.add_node(node)
+        node.record_state(0, "scanned")
+        node.update_from_yaml(_TASK_YAML_FQCN)
+        node.record_state(1, "transformed")
+        graph.approve_pending()
+        node._baseline = None  # simulate a legacy payload predating baseline tracking
+
+        with pytest.raises(ValueError, match="/workspace/site.yml"):
+            splice_with_outcome(graph, {"/workspace/site.yml": self._ORIGINAL}, strict=True)
+        with pytest.raises(ValueError, match="/workspace/site.yml"):
+            splice_modifications(graph, {"/workspace/site.yml": self._ORIGINAL}, strict=True)
 
     def test_unchanged_content_no_patch(self) -> None:
         """If progression exists but content hash is unchanged, no patch."""
@@ -1280,3 +1451,139 @@ class TestAnsibleNodeLookup:
 
         assert build_node_lookup(b"") == {}
         assert build_node_lookup(b"{}") == {}
+
+
+# ---------------------------------------------------------------------------
+# Graph engine per-node cancellation (N23)
+# ---------------------------------------------------------------------------
+
+
+class TestGraphEngineCancellation:
+    """CancelledError propagates; RuntimeError is captured, others complete."""
+
+    async def test_cancelled_error_propagates(self) -> None:
+        """A per-node CancelledError aborts the AI phase instead of being swallowed."""
+        import asyncio
+
+        from apme_engine.remediation.ai_context import AINodeContext
+        from apme_engine.remediation.ai_provider import AINodeFix
+
+        graph = ContentGraph()
+        graph.add_node(_make_node("site.yml/plays[0]/tasks[0]", module="ansible.builtin.command"))
+        graph.add_node(
+            _make_node(
+                "site.yml/plays[0]/tasks[1]",
+                module="ansible.builtin.command",
+                yaml_lines="- name: Other\n  ansible.builtin.command: whoami\n",
+                line_start=7,
+                line_end=10,
+            )
+        )
+
+        class _CancellingProvider:
+            async def propose_node_fix(self, context: AINodeContext, **_kw: object) -> AINodeFix | None:
+                if context.node_id.endswith("tasks[0]"):
+                    raise asyncio.CancelledError
+                return AINodeFix(
+                    fixed_snippet="- name: Other\n  ansible.builtin.command: whoami\n  changed_when: false\n",
+                    rule_ids=["L013"],
+                )
+
+        engine = GraphRemediationEngine(
+            TransformRegistry(),
+            graph,
+            [],
+            ai_provider=_CancellingProvider(),
+        )
+        tier2: list[ViolationDict] = [
+            {
+                "rule_id": "L013",
+                "path": "site.yml/plays[0]/tasks[0]",
+                "file": "/workspace/site.yml",
+                "line": 3,
+                "message": "Use changed_when",
+                "severity": "medium",
+                "source": "native",
+                "scope": "task",
+            },
+            {
+                "rule_id": "L013",
+                "path": "site.yml/plays[0]/tasks[1]",
+                "file": "/workspace/site.yml",
+                "line": 7,
+                "message": "Use changed_when",
+                "severity": "medium",
+                "source": "native",
+                "scope": "task",
+            },
+        ]
+        with pytest.raises(asyncio.CancelledError):
+            await engine._apply_ai_transforms(graph, tier2, 1, {})
+
+    async def test_runtime_error_captured_others_complete(self) -> None:
+        """A per-node RuntimeError is captured; sibling nodes still get fixes."""
+        from apme_engine.remediation.ai_context import AINodeContext
+        from apme_engine.remediation.ai_provider import AINodeFix
+
+        graph = ContentGraph()
+        graph.add_node(_make_node("site.yml/plays[0]/tasks[0]", module="ansible.builtin.command"))
+        good_yaml = "- name: Other\n  ansible.builtin.command: whoami\n  changed_when: false\n"
+        graph.add_node(
+            _make_node(
+                "site.yml/plays[0]/tasks[1]",
+                module="ansible.builtin.command",
+                yaml_lines="- name: Other\n  ansible.builtin.command: whoami\n",
+                line_start=7,
+                line_end=10,
+            )
+        )
+
+        class _FlakyProvider:
+            def __init__(self) -> None:
+                self.calls: list[str] = []
+
+            async def propose_node_fix(self, context: AINodeContext, **_kw: object) -> AINodeFix | None:
+                self.calls.append(context.node_id)
+                if context.node_id.endswith("tasks[0]"):
+                    raise RuntimeError("provider boom")
+                return AINodeFix(fixed_snippet=good_yaml, rule_ids=["L013"])
+
+        provider = _FlakyProvider()
+        engine = GraphRemediationEngine(
+            TransformRegistry(),
+            graph,
+            [],
+            ai_provider=provider,
+        )
+        tier2: list[ViolationDict] = [
+            {
+                "rule_id": "L013",
+                "path": "site.yml/plays[0]/tasks[0]",
+                "file": "/workspace/site.yml",
+                "line": 3,
+                "message": "Use changed_when",
+                "severity": "medium",
+                "source": "native",
+                "scope": "task",
+            },
+            {
+                "rule_id": "L013",
+                "path": "site.yml/plays[0]/tasks[1]",
+                "file": "/workspace/site.yml",
+                "line": 7,
+                "message": "Use changed_when",
+                "severity": "medium",
+                "source": "native",
+                "scope": "task",
+            },
+        ]
+        proposals = await engine._apply_ai_transforms(graph, tier2, 1, {})
+        # Failing node yields no proposal; healthy sibling completes.
+        assert sorted(provider.calls) == [
+            "site.yml/plays[0]/tasks[0]",
+            "site.yml/plays[0]/tasks[1]",
+        ]
+        assert [p.node_id for p in proposals] == ["site.yml/plays[0]/tasks[1]"]
+        node = graph.get_node("site.yml/plays[0]/tasks[1]")
+        assert node is not None
+        assert "changed_when" in (node.yaml_lines or "")

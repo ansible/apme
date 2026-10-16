@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "APME Health Contract (additive, N37)",
+  "description": "Machine-readable alias map between Gateway GET /api/v1/health fields and CLI apme health-check --json names. Gateway field names are unchanged (ADR-060 additive-only).",
+  "gateway_endpoint": "GET /api/v1/health",
+  "cli_command": "apme health-check --json",
+  "fields": {
+    "status": {"gateway": "status", "cli": "engine.status", "values": ["ok", "degraded"]},
+    "database": {"gateway": "database", "cli": "engine.database", "values": ["ok", "unavailable"]},
+    "database_type": {"gateway": "database_type", "cli": "engine.database_type"},
+    "components": {"gateway": "components[]", "cli": "<name>.status"},
+    "component_name": {"gateway": "components[].name", "cli": "<key>"},
+    "component_status": {"gateway": "components[].status", "cli": "<key>.status", "values": ["ok", "unavailable", "degraded"]},
+    "component_address": {"gateway": "components[].address", "cli": "<key>.address"},
+    "component_detail": {"gateway": "components[].detail", "cli": "<key>.detail"}
+  },
+  "component_aliases": {
+    "Engine": "engine",
+    "Native Validator": "native",
+    "OPA Validator": "opa",
+    "Ansible Validator": "ansible",
+    "Gitleaks Validator": "gitleaks",
+    "Collection Health": "collection_health",
+    "Dep Audit": "dep_audit",
+    "Galaxy Proxy": "galaxy_proxy",
+    "Abbenay AI": "abbenay"
+  },
+  "shape": {
+    "detail_unchanged": false,
+    "detail": "components[].detail (string|null) is additive per ADR-060 — set only for Galaxy Proxy config-push freshness, null otherwise — and is preserved verbatim (no dict restructuring) by the alias map."
+  },
+  "notes": [
+    "Gateway response shape is additive-only (ADR-060); components[].detail is the additive field (unchanged=false) and is preserved verbatim.",
+    "CLI --json nests Engine aggregate health as {engine: {status, address}, <service>: {status, address}}.",
+    "submit_token (N19 idempotency token from POST /approve, or client Idempotency-Key) is additive and covered: present only when issued, absent otherwise — clients must not require it.",
+    "pr_url is null until a PR exists: a null .pr_url in a submit/operate snapshot means no PR was recorded — check error/submit_error and status before treating null as failure.",
+    "Read-only venv view: GET /api/v1/sessions/venvs/{id} returns hash/requirements/age (Engine-owned venvs, read-only). age_seconds is session dwell (last_seen minus first_seen), not wall-clock age."
+  ]
+}

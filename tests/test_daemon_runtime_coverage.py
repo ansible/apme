@@ -2398,6 +2398,8 @@ def test_session_store_reap_loop_removes_expired(monkeypatch: pytest.MonkeyPatch
 
     async def _run() -> None:
         monkeypatch.setattr(session_mod, "_REAP_INTERVAL", 0.01)
+        monkeypatch.setattr(session_mod, "_CREATE_INTERVAL_S", 0.0)
+        monkeypatch.setattr(session_mod, "_MIN_CREATE_INTERVAL_S", 0.0)
         store = SessionStore()
         stale = store.create()
         stale.last_activity_at = datetime.now(UTC) - timedelta(seconds=session_mod._DEFAULT_TTL + 5)

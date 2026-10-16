@@ -252,6 +252,86 @@ class TestDiscoverCollectionSpecs:
         assert specs == []
         assert paths == ["requirements.yml"]
 
+    def test_discovers_version_range_gte(self) -> None:
+        """Range constraints (>=) are preserved end-to-end, not degraded to bare."""
+        content = "collections:\n  - name: community.general\n    version: '>=1.0.0'\n"
+        files = [self._file("requirements.yml", content)]
+        specs, paths = _discover_collection_specs(files)
+        assert specs == ["community.general:>=1.0.0"]
+        assert paths == ["requirements.yml"]
+
+    def test_discovers_compound_version_range(self) -> None:
+        """Compound ranges (>=,<) are preserved verbatim."""
+        content = "collections:\n  - name: community.general\n    version: '>=1.0.0,<2.0.0'\n"
+        files = [self._file("requirements.yml", content)]
+        specs, paths = _discover_collection_specs(files)
+        assert specs == ["community.general:>=1.0.0,<2.0.0"]
+
+    def test_star_version_maps_to_bare_name(self) -> None:
+        """'*' (any version) is equivalent to a bare name."""
+        content = "collections:\n  - name: community.general\n    version: '*'\n"
+        files = [self._file("requirements.yml", content)]
+        specs, _ = _discover_collection_specs(files)
+        assert specs == ["community.general"]
+
+    def test_bare_string_entries_are_stripped(self) -> None:
+        """Bare string specs with surrounding whitespace are stripped."""
+        content = "collections:\n  - '  community.general  '\n"
+        files = [self._file("requirements.yml", content)]
+        specs, _ = _discover_collection_specs(files)
+        assert specs == ["community.general"]
+
+    def test_duplicate_names_resolve_last_wins(self) -> None:
+        """A later version override replaces an earlier pin (not first-wins)."""
+        content = (
+            "collections:\n"
+            "  - name: community.general\n"
+            "    version: '1.0.0'\n"
+            "  - name: community.general\n"
+            "    version: '>=2.0.0'\n"
+        )
+        files = [self._file("requirements.yml", content)]
+        specs, _ = _discover_collection_specs(files)
+        assert specs == ["community.general:>=2.0.0"]
+
+
+class TestSpecToPipRanges:
+    """Tests for _spec_to_pip PEP 440 range handling (N12 end-to-end)."""
+
+    def test_bare_pin_uses_double_equals(self) -> None:
+        """Bare 1.2.3 becomes ==1.2.3."""
+        from apme_engine.venv_manager.venv_collections import _spec_to_pip
+
+        assert _spec_to_pip("community.general:1.2.3") == "ansible-collection-community-general==1.2.3"
+
+    def test_gte_range_pass_through(self) -> None:
+        """'>=1.0.0' is preserved, not turned into '==>=1.0.0'."""
+        from apme_engine.venv_manager.venv_collections import _spec_to_pip
+
+        assert _spec_to_pip("community.general:>=1.0.0") == "ansible-collection-community-general>=1.0.0"
+
+    def test_compound_range_pass_through(self) -> None:
+        """'>=1.0.0,<2.0.0' is preserved verbatim."""
+        from apme_engine.venv_manager.venv_collections import _spec_to_pip
+
+        assert _spec_to_pip("community.general:>=1.0.0,<2.0.0") == "ansible-collection-community-general>=1.0.0,<2.0.0"
+
+    def test_invalid_range_raises(self) -> None:
+        """Unsupported range syntax raises ValueError instead of degrading."""
+        import pytest
+
+        from apme_engine.venv_manager.venv_collections import _spec_to_pip
+
+        with pytest.raises(ValueError):
+            _spec_to_pip("community.general:>=not-a-version!!!")
+
+    def test_bare_pip_strips_range(self) -> None:
+        """_spec_to_bare_pip strips range constraints for uninstall."""
+        from apme_engine.venv_manager.venv_collections import _spec_to_bare_pip
+
+        assert _spec_to_bare_pip("community.general:>=1.0.0,<2.0.0") == "ansible-collection-community-general"
+        assert _spec_to_bare_pip("community.general:1.2.3") == "ansible-collection-community-general"
+
 
 class TestBuildManifest:
     """Tests for _build_manifest ProjectManifest construction."""
