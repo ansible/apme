@@ -9,14 +9,15 @@ IMPORT_SCAN_MAX_BODY_BYTES = 16 * 1024 * 1024
 
 
 class ImportScanBodyLimitMiddleware:
-    """Reject oversized scan imports before FastAPI parses their JSON bodies.
-
-    Args:
-        app: Wrapped ASGI application.
-        max_body_bytes: Maximum number of bytes accepted by the import route.
-    """
+    """Reject oversized import bodies before FastAPI parses JSON."""
 
     def __init__(self, app: ASGIApp, max_body_bytes: int = IMPORT_SCAN_MAX_BODY_BYTES) -> None:
+        """Initialize the wrapped app and maximum accepted body size.
+
+        Args:
+            app: Wrapped ASGI application.
+            max_body_bytes: Maximum number of bytes accepted by the import route.
+        """
         self.app = app
         self.max_body_bytes = max_body_bytes
 
