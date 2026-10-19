@@ -10,12 +10,12 @@ Upstream users receive a focused developer workbench, paste/upload assessment, i
 
 ## Evidence and branch discipline
 
-- Existing workflow sources: /home/bthornto/github/apme/frontend/packages/ui-workflow; reusable controller/transport hooks plus PatternFly presentation.
-- Native routes: /home/bthornto/github/apme/frontend/src/shell/useApmeNavigation.tsx. Native API: frontend/src/services/api.ts. Native Playground supports uploads; paste assessment is requested target functionality, not verified existing functionality.
-- Existing plugin review source: ansible-backstage-plugins feat/apme-eap-next-ui-workflow at f6c5bfe5aa5e6ad1eb8f66eecb41a0a32f29da80. Working checkout differs. Do not copy ignored dist/node_modules from plugin directories. No checkout in planning.
-- Future integration source: feat/portal-plugin-factory-sdk docs/next/portal-sdk-architecture.md and portal-sdk-plugin-author-guide.md. SDK branch moves APME to workspaces/apme/plugins. SDK alpha.tsx and operations.ts already implement NFS contributions and registerApmeOperations. Use this implementation as a migration input, not just older Git Repositories extensions. Phase 0 pins exact immutable revisions and reconciles branch divergence.
+- Existing workflow sources: `ansible/apme` — `frontend/packages/ui-workflow`; reusable controller/transport hooks plus PatternFly presentation.
+- Native routes: `ansible/apme` — `frontend/src/shell/useApmeNavigation.tsx`. Native API: `frontend/src/services/api.ts`. Native Playground supports uploads; paste assessment is requested target functionality, not verified existing functionality.
+- Existing plugin review source: `ansible/ansible-backstage-plugins`, branch `feat/apme-eap-next-ui-workflow`, commit `f6c5bfe5aa5e6ad1eb8f66eecb41a0a32f29da80`. Working checkout differs. Do not copy ignored dist/node_modules from plugin directories. No checkout in planning.
+- Future integration source: `ansible/ansible-backstage-plugins` contains `docs/next/portal-sdk-architecture.md`, `docs/next/portal-sdk-plugin-author-guide.md`, and the APME plugin sources under `workspaces/apme/plugins/`. The branch `feat/portal-plugin-factory-sdk` could not be verified; use only pinned revisions with verified paths and reconcile branch divergence before treating any source as a migration input. Phase 0 pins exact immutable revisions.
 - SDK: experimental host contract 0.1.0, baseline next-2.1; SDK private workspace packages; external consumption/public packages unsupported by current preview contract. APME relocation needs SDK-owner agreement. No promises of stable release support.
-- Backend-only Helm profile already exists: /home/bthornto/github/apme/deploy/helm/apme/values-portal.yaml sets ui.enabled false.
+- Backend-only Helm profile already exists: `ansible/apme` — `deploy/helm/apme/values-portal.yaml` sets `ui.enabled false`.
 - ADR-030 currently supports dual SPA/plugin paths and PatternFly; new ADR must supersede affected choices before implementation. ADR-066 governs current release tarball packaging. ADR-065/Gateway live state, ADR-052/SSE, ADR-056/SCM, ADR-060/API compatibility, ADR-069/deployment are governing references.
 
 ## Target architecture and scope
@@ -130,17 +130,17 @@ Test layers: controller unit fixtures, BUI component accessibility/state tests, 
 
 ## Critical source paths
 
-- /home/bthornto/github/apme/frontend/src/shell/useApmeNavigation.tsx — native inventory/retirement audit.
-- /home/bthornto/github/apme/frontend/src/pages/PlaygroundPage.tsx — upload behavior/reference, new paste adaptation.
-- /home/bthornto/github/apme/frontend/src/services/api.ts — missing API surface inventory.
-- /home/bthornto/github/apme/frontend/packages/ui-workflow/src/index.ts — entrypoint/style boundary.
-- /home/bthornto/github/apme/frontend/packages/ui-workflow/src/useProjectWorkflow.ts and src/hooks/useProjectOperationState.ts, useProjectOperationActions.ts — controller reuse.
-- /home/bthornto/github/apme/src/apme_gateway/api/ and operation_registry.py — only scoped additive transport work; state ownership preserved.
-- /home/bthornto/github/apme/tox.ini, frontend/package.json — package workspace and gate orchestration.
-- /home/bthornto/github/apme/.github/workflows/ui-workflow-release.yml, test.yml — extend release and CI, verify actual current names before edit.
-- /home/bthornto/github/apme/deploy/helm/apme/values-portal.yaml, containers/ui/, containers/podman/, deploy/bootc/quadlet/ — staged deployment cleanup.
-- /home/bthornto/github/ansible-backstage-plugins/plugins/backstage-apme/, backstage-apme-common/, catalog-backend-module-apme/ — original branch source paths, not assumed available in checkout.
-- /home/bthornto/github/ansible-backstage-plugins/workspaces/apme/plugins/backstage-apme/src/alpha.tsx and catalog-backend-module-apme/src/operations.ts — SDK branch source references, not current checkout paths.
+- `ansible/apme`: `frontend/src/shell/useApmeNavigation.tsx` — native inventory/retirement audit.
+- `ansible/apme`: `frontend/src/pages/PlaygroundPage.tsx` — upload behavior/reference, new paste adaptation.
+- `ansible/apme`: `frontend/src/services/api.ts` — missing API surface inventory.
+- `ansible/apme`: `frontend/packages/ui-workflow/src/index.ts` — entrypoint/style boundary.
+- `ansible/apme`: `frontend/packages/ui-workflow/src/useProjectWorkflow.ts` and `frontend/packages/ui-workflow/src/hooks/useProjectOperationState.ts`, `useProjectOperationActions.ts` — controller reuse.
+- `ansible/apme`: `src/apme_gateway/api/` and `operation_registry.py` — only scoped additive transport work; state ownership preserved.
+- `ansible/apme`: `tox.ini`, `frontend/package.json` — package workspace and gate orchestration.
+- `ansible/apme`: `.github/workflows/ui-workflow-release.yml`, `test.yml` — extend release and CI, verify actual current names before edit.
+- `ansible/apme`: `deploy/helm/apme/values-portal.yaml`, `containers/ui/`, `containers/podman/`, `deploy/bootc/quadlet/` — staged deployment cleanup.
+- `ansible/ansible-backstage-plugins` at `f6c5bfe5aa5e6ad1eb8f66eecb41a0a32f29da80`: `plugins/backstage-apme/`, `plugins/backstage-apme-common/`, `plugins/catalog-backend-module-apme/` — original branch source paths, not assumed available in current checkout.
+- `ansible/ansible-backstage-plugins`: `workspaces/apme/plugins/backstage-apme/src/alpha.tsx` and `workspaces/apme/plugins/catalog-backend-module-apme/src/operations.ts` — current source paths verified in the repository; not confirmed at the earlier pinned commit. The cited `feat/portal-plugin-factory-sdk` branch remains unverified.
 - Proposed new paths frontend/packages/apme-client/, frontend/packages/apme-ui/, frontend/plugins/backstage-apme[-portal]/ and supporting backend packages — create only after G0 naming/layout approval.
 
 ## Agent handoff contract
